@@ -23,6 +23,7 @@ import type {
   CodeRuleDslValue,
 } from "./code-rule.js";
 import { RULE_MODES } from "../catalog/rule-mode.js";
+import { ruleTitleSchema } from "../catalog/rule-schema.js";
 import type {
   CodeRuleDslArguments,
   CodeRuleDslAstWhen,
@@ -72,6 +73,8 @@ export const CODE_RULE_REGEX_SOURCES = ["file.content", "file.path"] as const;
 export type CodeRuleRegexSource = (typeof CODE_RULE_REGEX_SOURCES)[number];
 export const CLAUSE_KINDS = ["forbid", "require_each", "budget", "relational", "llm", "define"] as const;
 export type ClauseKind = (typeof CLAUSE_KINDS)[number];
+/** The sources a query reads from, exactly one per query. */
+export const CODE_RULE_QUERY_SOURCES = ["regex", "ast", "select_when", "file"] as const;
 export const CODE_RULE_STOP_BY = ["neighbor", "end"] as const;
 export const CODE_RULE_COMPARE_OPS = ["lt", "le", "eq", "ne", "gt", "ge"] as const;
 export const CODE_RULE_COMPARE_COLLATIONS = ["ordinal", "fold-lower", "fold-upper", "lowercase-first", "natural", "natural-fold-lower"] as const;
@@ -1367,7 +1370,7 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
     })
     .strict()
     .refine(
-      query => (["regex", "ast", "select_when", "file"] as const).filter(key => query[key] !== undefined).length === 1,
+      query => CODE_RULE_QUERY_SOURCES.filter(key => query[key] !== undefined).length === 1,
       "A query must contain exactly one source: regex, ast, select_when, or file.",
     ) as unknown as z.ZodType<CodeRuleDslQuery>,
 );
@@ -1775,6 +1778,7 @@ export const codeRuleResolvedRuleSchema = z
     id: nonEmptyString,
     revision: z.number().int().positive(),
     mode: z.enum(RULE_MODES),
+    title: ruleTitleSchema.optional(),
     description: z.string().optional(),
     scope: codeRuleScopeSchema.optional(),
     clauses: z.array(codeRuleClauseSchema).min(1),

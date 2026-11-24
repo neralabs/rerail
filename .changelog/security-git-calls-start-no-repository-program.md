@@ -1,0 +1,1 @@
+With Git 2.31 or later, the audit's and `rerail scan`'s diff and the session walk no longer start a filter or signature program a repository's config names, unless the config changes while the call runs. Your own drivers, Git LFS with its extensions, still run; a file under the repository's may show as changed when only its timestamp changed.

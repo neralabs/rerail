@@ -17,7 +17,12 @@ export interface CodingAgentState {
   /** Why its connection could not be checked, such as a config file that is not valid JSON; null when it could. */
   problem: string | null;
   /** Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Read-only: Rerail never changes it. */
-  rerailData: { access: "kept-out" | "file-tools" | "open"; why: string };
+  rerailData: {
+    access: "kept-out" | "file-tools" | "open";
+    why: string;
+    /** What a person can do on this computer to keep the rest of its tools out too; null when Rerail knows of nothing. */
+    fix: string | null;
+  };
 }
 export type AssistantObservation = "streaming" | "completed";
 export type ToolSurface = "native" | "event";
@@ -252,6 +257,12 @@ export type AdapterEvent =
        * `agent_id`. Absent for the session's own agent.
        */
       agentId?: string | undefined;
+      /**
+       * The folder the call runs in, where the host's hook says (its `cwd`, which follows the agent's `cd`). A shell write
+       * in another worktree is the session's own only when one of its calls ran there (`CodeRuleBridge`). Absent where a
+       * host does not say.
+       */
+      cwd?: string | undefined;
     })
   | (ContextualAdapterEvent & { kind: "result"; toolCallId: string; toolName: string; output: unknown; failed?: boolean | undefined })
   | (ContextualAdapterEvent & { kind: "turn-end"; text: string });
@@ -357,6 +368,8 @@ export interface AdapterDelivery {
 /** One rule a delivery steered (or logged) about, for the person's line and the dashboard; the coding agent never reads it. */
 export interface SteerRule {
   readonly id: string;
+  /** The rule's title, the words the person's line names it by (`steerTitle`); absent when it has none, and the id stands. */
+  readonly title?: string | undefined;
   readonly state: "steered" | "logged";
   /** Where the rule comes from (`steerOrigin`'s sentence); absent when unknown. */
   readonly origin?: string | undefined;
@@ -367,10 +380,13 @@ export interface SteerRule {
 /** A conflict a delivery surfaces to the person: its id, the line's words, and its card's page once an adapter links it. */
 export interface ConflictNotice {
   readonly id: string;
-  /** `your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher`. */
+  /** `your edit overlaps PR #398 (Sam): model.rs · GrammarMatcher`. */
   readonly text: string;
   readonly url?: string | undefined;
 }
+
+/** The fields of a `SteerRule` that are optional text. */
+const STEER_RULE_TEXT_FIELDS = ["title", "origin", "url"] as const;
 
 /** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
 export function isSteerRule(value: unknown): value is SteerRule {
@@ -378,8 +394,7 @@ export function isSteerRule(value: unknown): value is SteerRule {
   const rule = value as Partial<SteerRule>;
   return typeof rule.id === "string"
     && (rule.state === "steered" || rule.state === "logged")
-    && (rule.origin === undefined || typeof rule.origin === "string")
-    && (rule.url === undefined || typeof rule.url === "string");
+    && STEER_RULE_TEXT_FIELDS.every(field => rule[field] === undefined || typeof rule[field] === "string");
 }
 
 /** Whether `value`, read back from a file, is a `ConflictNotice`. */

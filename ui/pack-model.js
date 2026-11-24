@@ -1,13 +1,13 @@
 /**
  * What the pack pages (`#pack/<id>`, `#created`), the catalog (`#packs`) and the pack sheet derive from the rules and
- * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, and the catalog's kinds
- * and order. Nothing here touches the DOM.
+ * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, the catalog's kinds,
+ * order and the packs suggested for the repository, and the sheet's rules. Nothing here touches the DOM.
  */
-import { categoryLabel, isRunning } from "./derive.js";
+import { categoryLabel, isLog, isRunning } from "./derive.js";
 import { activityOf, fires, matches, ruleSections, titleOf, ui } from "./state.js";
 
 /** The Filter select of a pack page: `ui.filter` values `matches()` reads. */
-export const PAGE_FILTERS = [["all", "All rules"], ["on", "On"], ["off", "Off"], ["fired", "Has violations"]];
+export const PAGE_FILTERS = [["all", "All rules"], ["on", "On"], ["steer", "Steer"], ["log", "Log only"], ["off", "Off"], ["fired", "Has violations"]];
 /** The Sort select of a pack page: `ui.sort` values `sortPageRules` reads. */
 export const PAGE_SORTS = [["violations", "Most violations logged"], ["recent", "Most recent violations logged"], ["newest", "Newest first"], ["az", "A to Z"]];
 
@@ -43,15 +43,21 @@ export const shownRules = rules => sortPageRules(rules.filter(matches), ui.sort)
 export const runningOf = rules => rules.filter(isRunning).length;
 
 /**
- * The whole-pack switch over `rules`: how many are switched on, of how many, and its `aria-checked`. Binary: "true"
- * only when every one is on (and there is one), else "false"; the on-count chip says how many are on.
+ * The whole-pack switch over `rules`: how many are switched on, of how many, and its `aria-checked`: "true" when every
+ * one is on, "mixed" when some are, "false" when none is (or there are none).
  */
 export function packSwitch(rules) {
   const on = rules.filter(r => r.enabled).length, total = rules.length;
-  return { on, total, state: total > 0 && on === total ? "true" : "false" };
+  return { on, total, state: total > 0 && on === total ? "true" : on > 0 ? "mixed" : "false" };
 }
 
-/** What a click on the whole-pack switch sets: off turns the rest on; on turns them all off. */
+/** The counts line under a page's name: how many of `rules` steer, log only and are off ("6 steer · 15 log only"). */
+export function enforcementCounts(rules) {
+  const running = rules.filter(isRunning), log = running.filter(isLog).length, steer = running.length - log, off = rules.length - running.length;
+  return [[steer, "steer"], [log, "log only"], [off, "off"]].filter(([n]) => n > 0).map(([n, word]) => `${n.toLocaleString("en-US")} ${word}`).join(" · ");
+}
+
+/** What a click on the whole-pack switch sets: off or mixed turns the rest on; on turns them all off. */
 export const switchTurnsOn = state => state !== "true";
 
 /* ---------- the catalog ---------- */
@@ -70,6 +76,25 @@ export function catalogPacks(packs, kind) {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
 
+/**
+ * Why Rerail suggested pack `packId` for this repository, from `GET /api/rule-packs/recommendations` (`""` when it gave
+ * no reason), or `null` when it did not suggest it or the recommendations are not read yet.
+ */
+export function suggestedReason(recommendations, packId) {
+  const pick = (recommendations ?? []).find(r => r.packId === packId);
+  return pick === undefined ? null : pick.reason ?? "";
+}
+
+/**
+ * The catalog's packs in two groups, the ones the recommendations suggest for this repository first, each group in
+ * the order given; `null` while the recommendations are not read or suggest no pack, when the catalog is one list.
+ */
+export function suggestedSplit(packs, recommendations) {
+  if (!recommendations?.length) return null;
+  const picked = new Set(recommendations.map(r => r.packId));
+  return { suggested: packs.filter(p => picked.has(p.id)), others: packs.filter(p => !picked.has(p.id)) };
+}
+
 /** A pack sheet gets a filter box once its pack has more rules than this. */
 export const SHEET_FILTER_AT = 30;
 
@@ -79,3 +104,6 @@ export function sheetRules(pack, query) {
   return pack.rules.filter(r => q === "" || `${r.title} ${r.id}`.toLowerCase().includes(q))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
+
+/** A sheet's rows for a pack not added yet, by how each starts once it is: on, then off, each in the order given. */
+export const startGroups = rows => ({ on: rows.filter(r => r.on), off: rows.filter(r => !r.on) });

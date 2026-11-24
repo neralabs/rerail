@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
-import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, switchTurnsOn } from "../../ui/pack-model.js";
+import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, startGroups, suggestedReason, suggestedSplit, switchTurnsOn } from "../../ui/pack-model.js";
 import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
 import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/derive.js";
 import { packKind } from "../../ui/render/pack-panel.js";
@@ -50,14 +50,15 @@ afterEach(() => {
 describe("the whole-pack switch", () => {
   const rules = (...on: boolean[]) => on.map((enabled, i) => ({ rule: { id: `r${i}` }, enabled }));
 
-  it("is on only when every rule is on: some on, none on and no rules all read off", () => {
-    expect(packSwitch(rules(true, false, true))).toEqual({ on: 2, total: 3, state: "false" });
+  it("is on when every rule is on, halfway when some are, and off when none is or there are none", () => {
+    expect(packSwitch(rules(true, false, true))).toEqual({ on: 2, total: 3, state: "mixed" });
     expect(packSwitch(rules(true, true))).toEqual({ on: 2, total: 2, state: "true" });
     expect(packSwitch(rules(false, false))).toEqual({ on: 0, total: 2, state: "false" });
     expect(packSwitch([])).toEqual({ on: 0, total: 0, state: "false" });
   });
 
-  it("off with some rules on turns the rest on, then on turns everything off, then on again", () => {
+  it("halfway turns the rest on, then on turns everything off, then on again", () => {
+    expect(packSwitch(rules(true, false, false)).state).toBe("mixed");
     let set = rules(true, false, false);
     const click = () => { const on = switchTurnsOn(packSwitch(set).state); set = set.map(r => ({ ...r, enabled: on })); };
 
@@ -117,7 +118,7 @@ describe("the writes the whole-pack switch sends", () => {
 
   it("with some rules on turns every rule of the pack on, owned as the page says, and shows it at once", async () => {
     const before = packSwitch(([...data.rules.values()] as StoredRule[]).filter(r => r.source.kind === "pack"));
-    expect(before).toMatchObject({ state: "false", on: 2 });
+    expect(before).toMatchObject({ state: "mixed", on: 2 });
 
     const saving = page("checkout").setPackEnabled("typescript", switchTurnsOn(before.state), "On.");
 
@@ -281,6 +282,34 @@ describe("the catalog", () => {
     expect(catalogPacks(packs, "all").map(p => p.id)).toEqual(["blade", "next", "python", "vue"]);
     expect(catalogPacks(packs, "framework").map(p => p.id)).toEqual(["next", "vue"]);
     expect(catalogPacks(packs, "language").map(p => p.id)).toEqual(["blade", "python"]);
+  });
+
+  it("puts the packs Rerail suggests for the repo first, once the recommendations name one", () => {
+    const sorted = catalogPacks(packs, "all");
+    const recommendations = [{ packId: "vue", reason: "package.json depends on vue" }, { packId: "python" }];
+
+    expect(suggestedSplit(sorted, null)).toBeNull();
+    expect(suggestedSplit(sorted, [])).toBeNull();
+    const split = suggestedSplit(sorted, recommendations);
+    expect(split?.suggested.map(p => p.id)).toEqual(["python", "vue"]);
+    expect(split?.others.map(p => p.id)).toEqual(["blade", "next"]);
+    // A kind with no suggested pack still splits: its packs are all others.
+    expect(suggestedSplit(catalogPacks(packs, "language").filter(p => p.id === "blade"), recommendations)?.suggested).toEqual([]);
+  });
+
+  it("says why a pack is suggested, empty when the recommendation gives no reason", () => {
+    const recommendations = [{ packId: "vue", reason: "package.json depends on vue" }, { packId: "python" }];
+
+    expect(suggestedReason(recommendations, "vue")).toBe("package.json depends on vue");
+    expect(suggestedReason(recommendations, "python")).toBe("");
+    expect(suggestedReason(recommendations, "next")).toBeNull();
+    expect(suggestedReason(null, "vue")).toBeNull();
+  });
+
+  it("groups a pack not added by how its rules start, keeping their order", () => {
+    const rows = [{ id: "x:1", title: "Alpha", on: true }, { id: "x:2", title: "Beta", on: false }, { id: "x:3", title: "Gamma", on: true }];
+
+    expect(startGroups(rows)).toEqual({ on: [rows[0], rows[2]], off: [rows[1]] });
   });
 
   it("filters a pack sheet's rules by title or id, A to Z", () => {

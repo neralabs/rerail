@@ -1,12 +1,15 @@
 /**
  * The top bar, over the sidebar and content and above the sheet, so nothing in it moves when the sheet opens: the
  * sidebar toggle, the wordmark, the repository the page shows (a pill; with a chevron and a menu of the others only
- * when Rerail knows more than one), and the status. The theme is in Settings → General.
+ * when Rerail knows more than one), and the status, with the version and, while a newer one is out, "Update available"
+ * and its popover. The theme is in Settings → General.
  */
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { data, ui, repoName, stateHere } from "../state.js";
 import { invalidate } from "../shell.js";
+import { newerRelease } from "../settings-model.js";
 import { repoOption, repoHint } from "../render/repos.js";
+import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
 
 const $ = id => document.getElementById(id);
 
@@ -75,6 +78,106 @@ export function renderStatus() {
   setAttr(el.querySelector(".dot"), "hidden", s.dot === false);
   setText($("statusText"), s.text);
   setAttr(el, "title", s.title || null);
+  renderVersion(el);
+}
+
+/**
+ * The version of Rerail on this computer, "v0.2.0" in quiet text at the start of the status, whatever the status's
+ * colour; it opens Settings at About Rerail, where the release notes and how to update are. While the daemon reports a
+ * newer version, a small "Update available" beside it opens a popover with the command that updates Rerail, until
+ * Rerail is updated.
+ */
+function renderVersion(statusEl) {
+  const version = data.health?.version ?? null;
+  if (version === null) { statusEl.querySelector(".verwrap")?.remove(); return; }
+  const latest = newerRelease(data.health), el = versionSlot(statusEl), key = JSON.stringify([version, latest]);
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
+  el.replaceChildren(...versionButtons(version, latest));
+}
+
+/** The version's place at the start of the status, made the first time there is a version. */
+function versionSlot(statusEl) {
+  let el = statusEl.querySelector(".verwrap");
+  if (!el) { el = h("span.verwrap"); statusEl.prepend(el); }
+  return el;
+}
+
+function versionButtons(version, latest) {
+  const ver = h("button.ver", { "data-act": "nav", "data-i": "settings?section=about", title: `Rerail ${version}, on this computer. Open Settings to see how to update.` }, `v${version}`);
+  if (latest === null) return [ver];
+  return [ver, h("button.vnew", { "data-act": "updatepop", "aria-haspopup": "dialog", "aria-expanded": String(updateOpen), title: `Rerail ${latest} is available` }, "Update available")];
+}
+
+/* ---------- the update popover ----------
+ * "Update available" opens a small popover under it, at page level (`#updatelayer`) like the repository menu: the
+ * command to paste into a coding agent's session, Copy, and Details in Settings. A click opens it, not a hover, so it
+ * stays open to reach Copy and works from the keyboard; a click outside it, Esc, or using Copy or the link closes it. */
+
+let updateOpen = false;
+/** Copy takes the focus once the popover has drawn, when it has just opened. */
+let focusCopy = false;
+/** The chip takes the focus back once the popover has gone, when Copy closed it: the focus must not drop to the page. */
+let focusChip = false;
+
+/** The "Update available" chip, while a newer version is out. */
+const updateChip = () => (newerRelease(data.health) === null ? null : document.querySelector("#status .vnew"));
+
+function renderUpdatePop() {
+  const layer = $("updatelayer"), chip = updateChip();
+  if (chip === null) updateOpen = false;
+  else setAttr(chip, "aria-expanded", String(updateOpen));
+  if (!updateOpen) { setContent(layer, "", () => null); refocusChip(chip); return; }
+  const latest = newerRelease(data.health);
+  setContent(layer, latest, () => updatePopover(latest));
+  placeUnder(layer.firstChild, chip);
+  if (focusCopy) { focusCopy = false; layer.querySelector(".btn").focus({ preventScroll: true }); }
+}
+
+const updatePopover = latest => h("div.updpop", { role: "dialog", "aria-label": `Rerail ${latest} is available` },
+  h("b", null, `Rerail ${latest} is available`),
+  h("div.updrow", null, h("div.updcmd", null, h("code", null, AGENT_UPDATE_COMMAND)), updateCopyButton("button.btn.sm.solid", "Copy")),
+  h("p", null, "Paste it into a session with your coding agent. Your rule packs update too."),
+  updateDetailsLink());
+
+function refocusChip(chip) {
+  if (!focusChip) return;
+  focusChip = false;
+  chip?.focus();
+}
+
+/** The popover hangs under the chip, its right edge on the chip's. */
+function placeUnder(pop, chip) {
+  const at = chip.getBoundingClientRect();
+  pop.style.top = `${Math.round(at.bottom) + 6}px`;
+  pop.style.right = `${Math.max(12, Math.round(document.documentElement.clientWidth - at.right))}px`;
+}
+
+/** Whether the update popover is open (it follows the chip on resize). */
+export const updatePopOpen = () => updateOpen;
+
+/** A click that leaves the popover open: on its chip (which toggles it), or in it but not on Copy or the link. */
+function keepsUpdatePop(target) {
+  if (!(target instanceof Element)) return false;
+  if (target.closest("#status .vnew")) return true;
+  return target.closest(".updpop") !== null && target.closest("[data-act]") === null;
+}
+
+/** Close the update popover after a click anywhere it does not stay open for; `true` when it was open. */
+export function closeUpdatePop(target) {
+  if (!updateOpen || keepsUpdatePop(target)) return false;
+  updateOpen = false;
+  // Details in Settings goes to another page, so only Copy hands the focus back to the chip.
+  focusChip = target instanceof Element && target.closest(".updpop [data-act=cmdcopy]") !== null;
+  invalidate();
+  return true;
+}
+
+/** Esc: close the popover and give the focus back to its chip; `true` when it was open. */
+export function escapeUpdatePop() {
+  if (!closeUpdatePop(null)) return false;
+  updateChip()?.focus();
+  return true;
 }
 
 /* ---------- the repository and its menu ---------- */
@@ -149,6 +252,7 @@ export function renderTopbar() {
   renderNavToggle();
   renderRepoPick();
   renderStatus();
+  renderUpdatePop();
 }
 
 /** The bar's height as `--tb`: the sheet and the History views sit under it, and it wraps taller on a narrow page. */
@@ -162,4 +266,5 @@ export function trackTopbarHeight() {
 export const topbarActions = {
   repomenu: () => { menuOpen = !menuOpen; invalidate(); },
   navtoggle: () => toggleNav(),
+  updatepop: () => { updateOpen = !updateOpen; focusCopy = updateOpen; invalidate(); },
 };

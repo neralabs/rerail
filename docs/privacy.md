@@ -11,6 +11,8 @@ no hosted model.
 - **No sending your work** except to a [remote](remote-sink.md) you add.
 - **No hosted model or LLM API.** Semantic matching runs a bundled model in-process.
 - **No silent updates**, no pack install scripts, no remote Git, no third-party dashboard resources.
+- **One request on its own:** once a day, an update check. Unless you add a remote or turn Merge Assist on, no other
+  network request runs without you asking, except an npm rebuild of the SQLite binding when it fails to load.
 
 <details>
 <summary>Details and source files</summary>
@@ -27,6 +29,14 @@ no hosted model.
   `minishlab/potion-base-8M`), run in-process after a SHA-256 manifest check. The engine has no HTTP or socket code
   (`native/Cargo.toml`, `native/src/model.rs`).
 - **No silent updates.** Only `rerail update` or `rerail setup` installs a version (`src/setup/updater.ts`).
+- **One request on its own.** Once a day the daemon of an installed Rerail asks npm for the newest `@neralabs/rerail`
+  on your update channel, so the dashboard can say a newer version is out. It installs nothing and sends nothing about
+  your work: the request carries what any npm request does, npm's user agent (npm and Node versions, operating system,
+  CPU) and the credentials your npm config holds for the registry. `RERAIL_UPDATE_CHECK=0` set for the daemon turns it
+  off (`src/setup/update-check.ts`).
+  Every other network request runs because you ran a command, added a remote or turned Merge Assist on (both in
+  internal testing, below), with one exception: when the SQLite binding fails its load check, starting the daemon
+  rebuilds it with npm (below).
 - **No pack install scripts.** Packs are installed and removed with `npm --ignore-scripts`
   (`src/setup/rule-pack-store.ts`).
 - **No remote Git.** All Git commands are local, with hooks and fsmonitor disabled (`src/engine/git.ts`).
@@ -39,19 +49,21 @@ no hosted model.
 Apart from Merge Assist (below), only `npm` traffic to your configured registry, carrying package names and versions;
 rule evaluation needs no network.
 
-npm runs for updates, set-up, recommending and adding packs, and SQLite rebuilds (`src/runtime/npm.ts`).
+npm runs for the daily update check, updates, set-up, recommending and adding packs, and SQLite rebuilds
+(`src/runtime/npm.ts`).
 
 <details>
 <summary>When npm runs</summary>
 
 | When | What npm fetches |
 | --- | --- |
-| `rerail update`, `rerail update check` | Latest `@neralabs/rerail` on your channel, then that version |
+| Once a day, in the daemon of an installed Rerail, unless `RERAIL_UPDATE_CHECK=0` | The newest `@neralabs/rerail` version on your channel; nothing is installed |
+| `rerail update`, `rerail update check` | Latest `@neralabs/rerail` on your channel, then that version and this computer's engine package, `@neralabs/rerail-engine-<suffix>`, at the same version |
 | `rerail update` | The newest version of each rule pack you installed, asked by its package name on your channel (on `next` for a pack the channel has no version of) |
-| `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install |
+| `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install, with this computer's engine package, `@neralabs/rerail-engine-<suffix>` |
 | Set-up, `rerail start`, `rerail packs recommend` | Every rule pack, matched to your repository **locally**; nothing about it is sent |
 | `rerail packs add`, packs confirmed in set-up | The chosen packs |
-| SQLite binding fails its load check | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |
+| SQLite binding fails its load check, when the daemon starts or during an update | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |
 
 </details>
 
@@ -109,7 +121,7 @@ repository's `.rerail/sessions/`.
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks; a dismissed one keeps everything but its hunks and evidence: its title, files, each side's branch or pull request, commit, author, link, summary and location, who dismissed it, and the hook command's last answer: its note (up to 600 characters), status line and any error (up to 300 characters of the command's output)), its last scan, your `gh` sign-in state and login, which notes each session was handed, and your Merge Assist settings; turning Merge Assist off clears the conflicts, scans and `gh` sign-in state, and `rerail reset` clears the notes of the sessions it removes. Also daemon state and log, consent answer, rule packs, managed installs |
 | `~/.rerail/claude-status-lines/` | One file per Claude Code session, named by its session id: the status line the daemon last drew for it. That is its rule and steer counts, any problem state, the newest open Merge Assist conflict's line, and dashboard links naming the repository's key and the checkout's path. No prompts, replies or code |
-| `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v5.sqlite`: source files Rerail read, with syntax trees and check results. Sources and syntax trees from a scan are kept uncompressed in the `content-v5.sqlite.objects` folder beside it, and the facts derived from them in the `.frames` and `.memo` folders. `content-v5.sqlite.files` records the paths, sizes and times of the files Rerail looked at, with their contents' digests, so it can tell an unchanged file without reading it. On Windows, the copy an earlier release kept in `~/.cache/rerail` stays until `rerail install --remove` deletes it |
+| `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v5.sqlite`: source files Rerail read, with syntax trees and check results. Sources and syntax trees from a scan are kept uncompressed in the `content-v5.sqlite.objects` folder beside it, and the facts derived from them in the `.frames` and `.memo` folders. `content-v5.sqlite.files` records the paths, sizes and times of the files Rerail looked at, with their contents' digests, so it can tell an unchanged file without reading it. On Windows, the copy an earlier release kept in `~/.cache/rerail` stays until `rerail install --remove` deletes it. Rerail 0.1.5 and earlier kept the source files it read, compressed, with syntax trees and check results, in `content-v1.sqlite` (with `-wal` and `-shm`): 0.2.0 no longer reads it and leaves it in place, so delete it yourself, or `rerail install --remove` deletes it with the rest of the content cache |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
 Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;
@@ -137,7 +149,9 @@ text in memory (`src/engine/secret-scrub.ts`).
   since they may be passwords.
 
 Hashes, UUIDs, lockfile integrity strings and code are kept. Secrets in unknown formats can still be stored.
-`rerail scrub` covers the database, its pre-update copy, recorded checkouts' ledgers and `daemon.log`.
+`rerail scrub` covers the database, its pre-update copy, recorded checkouts' ledgers and held steers, and `daemon.log`.
+In a records folder it may not list, it covers only the sessions the database records, and its summary names that
+folder.
 
 </details>
 
@@ -157,8 +171,15 @@ Secret-like file names match `SENSITIVE_FILE_NAMES` in `src/engine/path-boundary
 ### Permissions
 
 Rerail's files are private to your user: directories `0700`, files `0600`. Windows has no such modes: a Rerail home
-or a session records folder Rerail makes outside your profile folder gets an access list that only you, SYSTEM and
-Administrators are on.
+Rerail makes outside your profile folder, and a checkout's `.rerail\sessions` it makes there, get an access list that
+only you, SYSTEM and Administrators are on. A `.rerail\sessions` that Git, you or Rerail 0.1.4 made gets one when the
+daemon first opens a session there under which each record is its maker's alone, those already in it included but
+another account's earlier ones, which keep the list they had: an
+account you share the checkout with still records its own sessions there, but lists nothing in it and reads no one
+else's records. What a session writes in its own folder is private from its first byte. Elsewhere, such a folder loses the group's and others' read then, and
+becomes sticky where they may still add to it (`2775` becomes `3731`, `0777` `1733`, `0755` `0711`): no other account
+lists it, one you share it with still records its own sessions there, and none can rename or remove your entries. A root
+`RERAIL_STORAGE_ROOT` names keeps the access list or mode it has.
 
 <details>
 <summary>What is covered and repaired</summary>
@@ -184,7 +205,9 @@ A repository controls its own `.rerail/` folder, so this stops it redirecting yo
 the error and log; the agent continues without Rerail.
 
 Exception: a symlinked or edited `.rerail/sessions/.gitignore` is overwritten with `*`, so a committed `!*` cannot make
-`git add -A` commit your records.
+`git add -A` commit your records. One Rerail cannot overwrite stops the session's records instead. Rerail writes it
+readable by every account (`0644`), since it holds only `*`; one another account's Rerail wrote and you may not read
+is left as it is when that account also owns the `sessions` folder, and rewritten when you own the folder.
 
 </details>
 

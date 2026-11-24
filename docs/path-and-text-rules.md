@@ -23,9 +23,9 @@ rule made only of `ast` queries reads only its language's files, however wide it
 <summary>Which files count as text</summary>
 
 - source files of the languages Rerail parses: Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue, Java, C,
-  C++, Go;
-- files read as text by suffix or name: `.json`, `.yaml`, `.yml`, `.toml`, `.md`, `.mdx`, `.rst`, `.txt`, `.sh`,
-  `.bash`, `.zsh`, `.html`, `.css`, `.scss`, `.gitignore`, `.npmignore`;
+  C++, C#, Go, HTML, CSS, Markdown, JSON;
+- files read as text by suffix or name: `.yaml`, `.yml`, `.toml`, `.mdx`, `.rst`, `.txt`, `.sh`, `.bash`, `.zsh`,
+  `.scss`, `.gitignore`, `.npmignore`;
 - any other file without a NUL byte, such as `Justfile`, `LICENSE`, `NOTICE`, `.gitattributes` or `Cargo.lock`, unless
   it is named like one holding secrets.
 
@@ -66,6 +66,7 @@ This one catches an old folder name anywhere it is still written, `Justfile` and
     "id": "local:no-old-tools-path",
     "revision": 1,
     "mode": "steer",
+    "title": "tools/ is now scripts/",
     "description": "Refer to scripts/ instead of the old tools/ folder, which was renamed.",
     "scope": { "include": ["**/*"], "exclude": ["CHANGELOG.md"] },
     "clauses": [
@@ -105,6 +106,7 @@ matches. Named groups (`(?<NAME>…)`) still fill in `$NAME` in the message.
     "id": "local:kebab-case-components",
     "revision": 1,
     "mode": "steer",
+    "title": "Component files are named in kebab-case",
     "description": "Name component files in kebab-case.",
     "scope": { "include": ["src/components/**/*.tsx"], "exclude": [] },
     "clauses": [
@@ -140,6 +142,7 @@ A `file` query matches every file in scope, so the scope names the unwanted file
     "id": "local:pack-json-placement",
     "revision": 1,
     "mode": "steer",
+    "title": "pack.json sits at the top of its pack folder",
     "description": "Keep each pack's pack.json at the top of its pack folder.",
     "scope": { "include": ["**/pack.json"], "exclude": ["packs/*/pack.json"] },
     "clauses": [

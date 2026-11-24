@@ -18,6 +18,7 @@ export const MOCK_CODE_RULES: readonly CodeRule[] = [
     id: "mock-no-console-log",
     revision: 1,
     mode: "steer",
+    title: "No console.log or console.debug in web/src",
     description: "Console logging leaks into production bundles; the structured logger carries context and levels.",
     scope: { include: ["web/src/**/*.ts", "web/src/**/*.tsx"], exclude: ["web/src/api/generated/**", "**/*.stories.tsx"] },
     clauses: [
@@ -33,6 +34,7 @@ export const MOCK_CODE_RULES: readonly CodeRule[] = [
     id: "mock-lazy-query-shaping",
     revision: 2,
     mode: "steer",
+    title: "Route reads stay inside the lazy query plan",
     description: "Route reads must stay inside the lazy query plan; materializing before filtering defeats the ServerPlan budget.",
     scope: { include: ["api/app/routes/**/*.py"], exclude: ["api/app/routes/health.py"] },
     clauses: [
@@ -48,6 +50,7 @@ export const MOCK_CODE_RULES: readonly CodeRule[] = [
     id: "mock-generated-client-imports",
     revision: 1,
     mode: "log",
+    title: "Frontend API calls go through the generated client",
     description: "Frontend API calls go through the Hey API generated client so the OpenAPI schema stays the contract.",
     scope: { include: ["web/src/**/*.ts", "web/src/**/*.tsx"], exclude: ["web/src/api/generated/**"] },
     clauses: [
@@ -73,6 +76,7 @@ export const MOCK_CONVERSATION_RULES: readonly ConversationRule[] = [
   {
     id: "mock-cosine-prefer-generated-client",
     mode: "steer",
+    title: "Use the generated API client, not hand-written fetch",
     reference: "Call the backend through the generated API client instead of hand-written fetch calls.",
     match: { operator: "gte", threshold: 0.62 },
     sample: { source: "assistant-text", boundary: "sentence", minimumTokens: 6 },
@@ -84,6 +88,7 @@ export const MOCK_CONVERSATION_RULES: readonly ConversationRule[] = [
   {
     id: "mock-cosine-migration-warning",
     mode: "steer",
+    title: "Schema changes need a migration note",
     reference: "Editing a database migration or altering a table schema.",
     match: { operator: "gte", threshold: 0.6 },
     sample: { source: "user-input", boundary: "message" },

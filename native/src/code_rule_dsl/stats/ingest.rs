@@ -1,5 +1,5 @@
 //! Planner statistics built at ingestion and persisted in the content store (docs/final-shape/03
-//! §6; 05 Phase 3 row 7), ported from Typing-support's `stats.py`, which follows ast-index-spike
+//! §6; 05 Phase 3 row 7), ported from Typing-support's `stats.py`, which follows the SQL index prototype
 //! (prior-work history index §2.6, Part 3 item 15):
 //! - **Small aggregates maintained at load and persisted** (`t_kfreq` S178, `efreq` S277). Statistics
 //!   held only in process memory made a reopened store plan differently (S174, S178).

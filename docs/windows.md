@@ -20,12 +20,12 @@ is reverted.
   `src/runtime/daemon-control.ts`, `RerailDaemonOptions.enginePlatform`. `openNoFollow` takes the no-follow flag, and
   its test passes `0` to run the Windows path against a real symlink on Linux.
 - **On Windows itself.** `build-windows` builds the native engine on Windows once per run and hands it to the
-  `unit-windows` shards, and `rust-windows` runs the engine's `#[cfg(windows)]` Rust tests whenever the change selects
-  the engine's tests. `package.yml`, which `release.yml` and the environment matrix call, builds the engine for Windows
-  x64 and arm64 and refuses one that imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`);
-  `release.yml` then installs the package on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The
-  [environment matrix](environment-matrix.md) installs it on Windows 11 VMs. None of these but the three CI jobs runs
-  on a pull request.
+  `unit-windows` shards, which take the JavaScript package (dist/) from the Linux build job, and `rust-windows` runs the
+  engine's `#[cfg(windows)]` Rust tests whenever the change selects the engine's tests. `package.yml`, which
+  `release.yml` and the environment matrix call, builds the engine for Windows x64 and arm64 and refuses one that
+  imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`); `release.yml` then installs the package
+  on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The [environment matrix](environment-matrix.md)
+  installs it on Windows 11 VMs. None of these but the three CI jobs runs on a pull request.
 
 <details>
 <summary>Windows-safe paths</summary>
@@ -420,6 +420,14 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 OMP and Pi load Rerail as an extension and run no hook command; a steer writes their commands for Git Bash.
 
+Claude Code's hook launcher turns on Node's compile cache before it loads the hook (`module.enableCompileCache`, in
+the folder `NODE_COMPILE_CACHE` names, else Node's own `node-compile-cache` in the user's temporary folder). Where the
+node that starts it is not the recorded node, it starts itself under the recorded node, which does the same, so the
+cache is on whatever node PATH has and the hook gets no environment variable it did not have. Every hook event starts
+a Node that loads the hook's script of over 2 MB; with the cache, V8 reads the code it compiled at an earlier event
+instead of parsing and compiling the script again. `NODE_DISABLE_COMPILE_CACHE=1` keeps it off. Codex's and Cursor's
+entries start the hook without the launcher, so they compile it at each event.
+
 Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
 But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's
 answers for Claude Code stay POSIX words that PowerShell cannot run. Its exec-form hooks run without any shell.
@@ -526,7 +534,13 @@ fallback (`fallbackPipe`), and whether a listed pipe is an engine's (`isEnginePi
   comparison, and a comparison that throws counts as a refusal, so such a holder does not hold the capability.
 - A holder that proves it is this home's engine stops the start: a second daemon must not run beside it. Any other
   holder is a squatter, and the engine listens on the same name with a random hex suffix, recorded in `daemon.json` as
-  `kernelSocketPath`, where hooks read it.
+  `kernelSocketPath`, where hooks read it. While every instance of the held pipe is taken, as when this home's engine
+  is busy, the start waits up to 30 s for a free one, as long as Node's own connect waits, so a busy engine of this
+  home that frees one in that time stops the start; the holder then has 2 s to answer.
+- When the holder made the name with a cap on its instances and has made them all, as a pipe that allows one instance
+  has, libuv reports `EBUSY`. A Node pipe server never caps its instances, so no Rerail engine holds a name that way:
+  the engine listens on the suffixed name at once, without the challenge, which would take the holder's one free
+  instance or wait for one it never frees.
 - Rerail 0.1.3 listened on the name with no check and no fallback, so a pipe another user created first made every
   daemon start fail. A probe that sent the capability to learn who holds the pipe would hand it to that user.
 
@@ -553,7 +567,34 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
   Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
-  daemon: its state file is kept and the lookup reports it unresponsive. macOS and Linux treat `EPERM` as another user's.
+  daemon: its state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
+  process (`recordedProcess`): it started more than 10 s after the `startedAt` that `daemon.json` records, or another
+  process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start
+  no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not
+  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through
+  Windows PowerShell, which loads no Rerail engine, and is ended at what is left of the lookup's limit (the stop's
+  10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. So on a
+  machine whose policy blocks `powershell.exe` itself, no start is read, and a busy daemon of 0.1.4 or earlier is not
+  shown to be this home's: `rerail daemon stop` ends nothing and says how to check the process, and `rerail install
+  --remove` stops with that error, having already taken Rerail out of the coding agents. The command that message
+  gives runs PowerShell too, so there open Task Manager's Details tab, show its Command line column, end the process
+  with the pid the message names if its command line runs Rerail's `daemon-entry.js` for this home, and run the
+  command again. The proof's limit counts
+  from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/daemon/engine-proof.ts`). It connects to the pipe
+  spelled
+  `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
+  process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails
+  at once with `ENOENT`, as it does for a pipe that is gone. A plain open of the pipe, closed at once, tells the two
+  apart (`EBUSY` while every instance is taken), and the proof tries again on each tick of Windows' timer, about every
+  16 ms, until its limit: an instance the engine frees, or a pipe that goes, is found within a tick. A hook's start
+  check, which runs before each event, waits longer (`waitForInstance`): while every instance is taken it tries again
+  for up to 30 s, as long as Node's own connect waits, and the limit then counts from the connect, so the event still
+  reaches a busy daemon that frees an instance in that time; `rerail status`, `rerail daemon start` and
+  `rerail daemon stop` keep the limit from the ask. A daemon that stays hung with every instance taken holds each
+  hook about 32 s before it gives up and logs its event as lost, and `daemon.json` is kept; `rerail status` says
+  `alive but not answering` within the limit, and `rerail daemon stop` ends that daemon. The request never
+  goes over the pipe opened as a file: a write its holder never reads would then hold the process until the holder
+  ends. macOS and Linux treat `EPERM` as another user's.
 - `recordedDaemonAlive` (`src/runtime/daemon-control.ts`) makes both checks above, and every reader of `daemon.json`
   asks it before it sends the capability the file records to the URL it records: `lookupDaemon`, the MCP bridge
   (`src/api/mcp-bridge.ts`), and the status line, the rules link and the start check
@@ -569,7 +610,21 @@ capability, refused every start as "alive but not answering", and `rerail daemon
 - `stopDaemon` sends `POST /native/shutdown` on Windows, with the capability and the native token only `daemon.json`
   holds, and waits up to 10 s for the daemon to close: requests other sessions have in flight finish, and the daemon
   removes its state file and main-instance record. It kills only a daemon still running after that. macOS and Linux
-  keep `SIGTERM`. [threat-model.md](threat-model.md) covers the route's access rules.
+  keep `SIGTERM`. Before each signal the stop proves the process again from what the system shows, never from what
+  `daemon.json` says by then: it holds the home's lock as its recorded holder, or started no later than the recorded
+  `startedAt`; one that answered as itself while it held no lock stays proven while it runs. The stop asks that after
+  the shutdown request and just before the signal, so after its lookup it reads a busy daemon's start once more, and
+  asks again before a kill. A daemon that held the home's lock when the stop began, whether it answered or was too busy
+  to, stays proven while it runs, as when its exit runs on after it let go of the lock, unless its start reads more
+  than 10 s later than `startedAt`, or, where its start does not prove it, the lock belongs by then to another live
+  process and `daemon.json` no longer names it. A process the stop does not prove gets nothing: once it has exited the
+  stop says it stopped; when the lock belongs to another live process and `daemon.json` no longer names it, the stop
+  leaves that record as it is and says it changed, or says stopped once it has sent its `SIGTERM`; one a fact shows is
+  another program is left alone and the record naming it removed, as at the lookup; otherwise the stop keeps every
+  record and says how to check the process, but leaves a daemon recorded beside a lock file that is there and held by
+  no one to exit at the kill, and says it stopped. After a stop that says stopped, `daemon.json` is removed unless it
+  cannot be read or names the live process that holds the home's lock as its recorded holder.
+  [threat-model.md](threat-model.md) covers the route's access rules.
 
 </details>
 
@@ -624,9 +679,35 @@ preimages and held steers.
 - The person's SID comes from `whoami /user`, whatever the account: `S-1-5-21-...` for a local or domain account,
   `S-1-12-1-...` for a Microsoft Entra ID (Azure AD) account, as on most company laptops.
 - A Rerail home or `.rerail\sessions` folder Rerail makes outside the profile gets the ACL when it is made, and a home
-  an earlier release made gets it at the next daemon launch. `rerail remote add` gives the `remote-tokens` folder the
-  ACL before it writes a token there, so a remote's token is private before any daemon launch. A failure is reported on
-  stderr and never fails the caller.
+  an earlier release made gets it at the next daemon launch. A `.rerail\sessions` Rerail did not make (Git makes one
+  for a repository that commits a file in it; a person, or Rerail 0.1.4, may have made it) gets it when the daemon
+  first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and, when
+  the folder still inherits its parent's, gives it one under which what each account makes there is that account's
+  alone. The person may list the folder; each account an entry the folder inherits from its parent let add a folder
+  there, unless a deny entry set on the folder itself names it, may still add one, pass through it and read its
+  attributes and ACL, never list it: it gets that right on the folder itself, added to any entry already set there
+  for it, before the folder stops inheriting. Each file and folder in it,
+  the records already there included, grants its maker (CREATOR OWNER), SYSTEM and Administrators alone. Before that,
+  each agent host's lock and held-steer folder there (`<host>-locks`, `<host>-pending`) lets those accounts add files,
+  and one made later gets the same entry from whoever makes it, so an account sharing the checkout keeps recording. If
+  a lock or held-steer folder cannot be shared because `icacls` hit its time limit or did not start, the repair stops
+  before the records folder's ACL changes, and the next session tries again. Each `icacls` that reads or sets a
+  records folder's ACL, or that of a folder in it, runs with `/l`: a junction or symbolic link another account puts in
+  place of one has its own ACL read or changed, never that of what it points to. Windows takes about 0.1 to 0.2 ms per
+  file or folder already there to pass the ACL on, twice when other accounts keep the right to add a folder there (one
+  `icacls` adds their entry, the next stops the inheritance), neither with a time limit, and no session waits for
+  that: a session waits only for the read,
+  and one whose own folder is made before the ACL has been passed on (while it is, or just before it is done) first
+  gives its own folder the same ACL, one more `icacls`, so what it writes in its own folder is private from its first
+  byte. A session, lock or held-steer folder another account made before the first
+  repair keeps the ACL it had, as on 0.1.5, since only its maker may change it: the daemon log names a lock or
+  held-steer folder, and every account's hooks still lock there through the entries it inherited. Rerail's Git status reads nothing in a records folder (its
+  walk never enters one, and its built-in ignores name it, in any letter case where `core.ignoreCase` is on, as Git
+  for Windows sets it), so an account that may not list the folder, or read a file Git put there, keeps its
+  repository reuse there.
+  `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
+  private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
+  fails the caller.
 - `loadDaemonTls` refuses a TLS private key that `openToOthers` finds other accounts can read, naming those accounts
   and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
   on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it

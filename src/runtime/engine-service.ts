@@ -17,12 +17,13 @@ import {
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { isBusy } from "../engine/storage/sqlite-wal.js";
-import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
+import { DAEMON_ACCESS_HEADER, ENGINE_ANSWER_WAIT_MS, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./daemon/engine-proof.js";
 import { isNamedPipe } from "./daemon/engine-pipe.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
 import {
   endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
@@ -262,6 +263,8 @@ interface EngineRoutingState {
    * worktree for itself held every file of every worktree once per session.
    */
   worktreeWalks: RepositoryWorktreeWalks;
+  /** Git's ignore rules of each checkout, one matcher shared by the sessions of every runtime (`GitIgnoreMatchers`). */
+  gitIgnoreMatchers: GitIgnoreMatchers;
 }
 
 /**
@@ -366,21 +369,42 @@ function resolveRuntimeRoute(
   return { runtimeKey, runtimeOptions };
 }
 
+/**
+ * Writes an event's answer and says whether it reaches a client that still waits for it (`answered`). The service
+ * writes it in the session's lane, so what an answer its write already showed undelivered took is the session's again
+ * before its next event runs.
+ */
+type EngineAnswer = (deliveries: readonly AdapterDelivery[]) => AnswerFate;
+
+/**
+ * What became of an answer: `refused` when the write itself showed it reached no client that still waited (its
+ * connection closed or ended before it, or the write failed); else `heard` resolves once the connection shows it:
+ * true once the answer was all handed to it, false when it closed first.
+ */
+interface AnswerFate {
+  readonly refused: boolean;
+  readonly heard: Promise<boolean>;
+}
+
 async function routeEngineEvent(
   event: AdapterEvent,
   configuration: EngineRuntimeConfiguration | undefined,
   options: EngineServiceOptions,
   state: EngineRoutingState,
+  answer?: EngineAnswer,
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
-  const execution = state.lanes.run(lane, () => {
+  const execution = state.lanes.run(lane, async () => {
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    return runtime.ingest(event);
+    const deliveries = await runtime.ingest(event);
+    // A hook past its own limit has closed its connection: the steers its answer took go to the session's next answer.
+    if (answer !== undefined) await keepUnheard(answer(deliveries), () => runtime.returnUndelivered(sessionId, deliveries));
+    return deliveries;
   });
   track(state, execution);
   try {
@@ -388,6 +412,17 @@ async function routeEngineEvent(
   } finally {
     if (event.kind === "session-end") afterSessionEnd(state, sessionId, runtimeKey);
   }
+}
+
+/**
+ * Gives the session back what an answer took once no client heard it (`giveBack`): before the session's next event when
+ * the write showed it, else once the connection shows it, for whichever of the session's answers comes next. The lane
+ * never waits on the write itself, which a client alive that has stopped reading never lets complete once the answer
+ * is bigger than its connection holds. A service's close waits for every connection to close, so it has each verdict.
+ */
+async function keepUnheard(fate: AnswerFate, giveBack: () => Promise<void>): Promise<void> {
+  if (fate.refused) return await giveBack();
+  void fate.heard.then(async heard => (heard ? undefined : await giveBack()));
 }
 
 /**
@@ -418,7 +453,7 @@ function runtimeFor(
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
   const runtime = new RerailRuntime({
-    ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks,
+    ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks, gitIgnoreMatchers: state.gitIgnoreMatchers,
     suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
   });
   state.runtimes.set(runtimeKey, runtime);
@@ -909,12 +944,27 @@ export interface HeldPipeListening {
 }
 
 /**
- * Where to listen when `pipe` is already held (`cause`, EACCES or EADDRINUSE): on the fallback pipe when the holder is not this
- * home's engine service, which a second daemon must never start beside. Returns the pipe it listens on.
+ * The codes a listen on a Windows pipe name fails with when another process holds the name. libuv creates a pipe's first
+ * instance alone, and reports a name whose holder may make more instances as EACCES or EADDRINUSE, and one whose holder
+ * capped its instances and has made them all as EBUSY.
+ */
+const HELD_PIPE_CODES: ReadonlySet<string | undefined> = new Set(["EACCES", "EADDRINUSE", "EBUSY"]);
+
+/** The code of the error a listen failed with. */
+function listenCode(cause: unknown): string | undefined {
+  return (cause as NodeJS.ErrnoException | undefined)?.code;
+}
+
+/**
+ * Where to listen when the listen on `pipe` failed with `cause`: on the fallback pipe when another process holds the name
+ * ({@link HELD_PIPE_CODES}) and is not this home's engine service, which a second daemon must never start beside. Any
+ * other failure, and a held name with no fallback, is the start's own. Returns the pipe it listens on. A holder that
+ * capped the name's instances (EBUSY) is not asked for the proof: a Node pipe server, as every Rerail engine is, never
+ * caps them, and the ask would take the holder's one free instance or wait for one it never frees.
  */
 export async function listenBesideHeldPipe(pipe: string, cause: unknown, listening: HeldPipeListening): Promise<string> {
-  if (listening.fallback === undefined) throw cause;
-  if (await listening.ownEngineAnswers(pipe)) {
+  if (listening.fallback === undefined || !HELD_PIPE_CODES.has(listenCode(cause))) throw cause;
+  if (listenCode(cause) !== "EBUSY" && await listening.ownEngineAnswers(pipe)) {
     throw new Error(`Rerail's engine pipe ${pipe} is in use by a running daemon; stop it with \`rerail daemon stop\` before starting another.`, { cause });
   }
   const fallback = listening.fallback();
@@ -938,8 +988,7 @@ async function listenOnSocket(
     return socketPath;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    // libuv creates a pipe's first instance alone, and reports a name another process holds as EACCES or EADDRINUSE.
-    if (isNamedPipe(socketPath) && (code === "EACCES" || code === "EADDRINUSE")) {
+    if (isNamedPipe(socketPath)) {
       return await listenBesideHeldPipe(socketPath, error, {
         listen: async path => await listen(server, path),
         ownEngineAnswers: async path => await ownEngineAnswers(path, options.accessToken),
@@ -981,6 +1030,61 @@ export function engineWorktreeWalks(): RepositoryWorktreeWalks {
   return new RepositoryWorktreeWalks({ treeWatch });
 }
 
+/**
+ * Routes a hook's event and writes its answer to `response`. Any event but a session's end is answered in its session's
+ * lane, so the steers an answer its hook no longer waited for took are the session's again before its next event runs
+ * (`routeEngineEvent`). A session's end is answered once the service has let go of the session (`afterSessionEnd`), as
+ * the hook that ends it may read what that left: there is no later event of the session to carry a steer.
+ */
+async function answerEngineEvent(
+  routed: { event: AdapterEvent; configuration: EngineRuntimeConfiguration | undefined; options: EngineServiceOptions; routing: EngineRoutingState },
+  response: ServerResponse,
+): Promise<void> {
+  const { event, configuration, options, routing } = routed;
+  const answer: EngineAnswer = deliveries => answered(response, encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+  if (event.kind !== "session-end") {
+    await routeEngineEvent(event, configuration, options, routing, answer);
+    return;
+  }
+  answer(await routeEngineEvent(event, configuration, options, routing));
+}
+
+/** Answers the challenge a hook sends to learn the engine holds the daemon's token (`ENGINE_PROOF_PATH`); false for any other request. */
+function answeredProof(incoming: IncomingMessage, response: ServerResponse, accessToken: string | undefined): boolean {
+  if (incoming.method !== "POST" || incoming.url !== ENGINE_PROOF_PATH || accessToken === undefined) return false;
+  answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], accessToken, response);
+  incoming.resume();
+  return true;
+}
+
+/**
+ * Refuses, before its body is read, a request that is no event (404) or an event without the daemon's access token
+ * (401), so nothing of it reaches a runtime; false for an event the service takes.
+ */
+function refusedEventRequest(incoming: IncomingMessage, response: ServerResponse, accessToken: string | undefined): boolean {
+  if (incoming.method !== "POST" || incoming.url !== "/events") {
+    response.writeHead(404).end();
+    return true;
+  }
+  const presented = incoming.headers[DAEMON_ACCESS_HEADER];
+  if (accessToken === undefined || sameSecret(typeof presented === "string" ? presented : undefined, accessToken)) return false;
+  response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
+  return true;
+}
+
+/** An event request's body as text; it fails past the frame limit (`RERAIL_EVENT_MAX_FRAME_BYTES`). */
+async function engineRequestBody(incoming: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of incoming) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
@@ -1001,39 +1105,17 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     ownerLockId: ownerLock.id,
     databasePath,
     worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
+    gitIgnoreMatchers: new GitIgnoreMatchers(),
   };
   // Walks a caller gave are the caller's to close.
   const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
-    if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
-      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
-      incoming.resume();
-      return;
-    }
-    if (incoming.method !== "POST" || incoming.url !== "/events") {
-      response.writeHead(404).end();
-      return;
-    }
-    const presented = incoming.headers[DAEMON_ACCESS_HEADER];
-    if (options.accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, options.accessToken)) {
-      // Refused before the body is read: nothing of the request reaches a runtime.
-      response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
-      return;
-    }
+    if (answeredProof(incoming, response, options.accessToken) || refusedEventRequest(incoming, response, options.accessToken)) return;
     try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of incoming) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.length;
-        if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-        chunks.push(bytes);
-      }
-      const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      const deliveries = await engineService.ingest(event, configuration);
-      response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+      const { event, configuration } = parseEngineRequest(JSON.parse(await engineRequestBody(incoming)));
+      await answerEngineEvent({ event, configuration, options, routing }, response);
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
@@ -1131,6 +1213,39 @@ function endAbandonedSessions(databasePath: string, idleMs: number, now: () => n
   }
 }
 
+/**
+ * Writes `body` as the answer and says whether it reaches a client that still waits for it, decided by what the
+ * connection does, never by a time limit. Refused when the connection had already closed or ended (a hook past its own
+ * limit closes it), or the write failed at once (EPIPE: the daemon wrote before it read the hook's close). Else heard
+ * once the answer is all handed to the connection (`finish`), and not when the connection closes first. An answer queued
+ * behind an earlier one on its connection is written on it once that one is.
+ */
+function answered(response: ServerResponse, body: string): AnswerFate {
+  const connection = response.req.socket;
+  // Closed or ended before the write: a hook past its own limit closed it.
+  const gone = !connection.writable;
+  const heard = new Promise<boolean>(done => {
+    const onClose = (): void => done(false);
+    connection.once("close", onClose);
+    response.once("finish", () => {
+      // A connection carries many answers: each leaves nothing on it once written.
+      connection.off("close", onClose);
+      done(true);
+    });
+  });
+  response.end(body);
+  // A write the closed connection refused leaves its error on the connection in this turn, and no finish follows.
+  return { refused: gone || connection.errored !== null, heard };
+}
+
+/**
+ * How long the event's request to `endpoint` waits for its answer, from the request: {@link ENGINE_ANSWER_WAIT_MS}, less
+ * what a proof on the engine that came first took (`proofTookMs`), and at least 1 ms, since a socket reads 0 as no limit.
+ */
+function answerWaitMs(endpoint: EngineEndpoint): number {
+  return endpoint.proofTookMs === undefined ? ENGINE_ANSWER_WAIT_MS : Math.max(1, ENGINE_ANSWER_WAIT_MS - endpoint.proofTookMs);
+}
+
 export async function ingestEngineEvent(
   endpoint: EngineEndpoint,
   event: AdapterEvent,
@@ -1168,7 +1283,7 @@ export async function ingestEngineEvent(
       });
     },
   );
-  outgoing.setTimeout(30_000, () => outgoing.destroy(new Error("Kernel request timed out")));
+  outgoing.setTimeout(answerWaitMs(endpoint), () => outgoing.destroy(new Error("Kernel request timed out")));
   outgoing.on("error", reject);
   outgoing.end(body);
   return promise;

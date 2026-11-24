@@ -11,7 +11,7 @@
 //!     the tape through `nera_tree`)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 //!
-//! From Pulling-it-all-together's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
+//! From PIAT's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
 //! capture is a store holding one batch's prefilter rows (`capture`), opened as a `ContentStore`,
 //! statements are lowered with the capture's statistics (`stats::inputs`) and run on its
 //! connection. Gone with decoding: clearing `decoded_*` tables and the structural fill.
@@ -324,7 +324,7 @@ fn capture_lab_corpus() {
         .iter()
         .map(|name| (name.clone(), super::tests::put(&store, &std::fs::read_to_string(corpus.join(name)).unwrap(), GrammarDialect::Python).0))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python");
+    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python");
     let mut documents = Vec::new();
     for dir in [pack.join("rules"), pack.join("candidates/rules")] {
         documents.extend(std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "json")));

@@ -1,11 +1,11 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { runRemoteCommand, seedRerailDatabase } from "../../src/cli/index.js";
-import { SqliteAuditStore } from "../../src/engine/index.js";
+import { SqliteAuditReader, SqliteAuditStore } from "../../src/engine/index.js";
 import { addRemote, machineId, readRemoteConfig, setRepositoryExcluded } from "../../src/runtime/remote-config.js";
 import { backoffMs, MAX_BACKOFF_MS, RemoteOutbox } from "../../src/runtime/remote-outbox.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
@@ -56,6 +56,46 @@ function seed(): { sessionId: string; auditId: string } {
   });
   audits.close();
   return { sessionId, auditId };
+}
+
+/** Writes `text` over an audit's stored paths, past the CHECK on `audits`, as a hand edit or a damaged file leaves it. */
+function setPathsText(auditId: string, text: string): void {
+  const database = new Database(databasePath());
+  database.pragma("ignore_check_constraints = ON");
+  database.prepare("UPDATE audits SET paths_json = ? WHERE audit_id = ?").run(text, auditId);
+  database.close();
+}
+
+/** Writes `text` over the stored rule provenance copy an audit names, which every audit naming it reads, past its CHECK. */
+function setProvenanceCopyText(auditId: string, text: string): void {
+  const database = new Database(databasePath());
+  database.pragma("ignore_check_constraints = ON");
+  database.prepare("UPDATE audit_rule_provenances SET rule_provenance_json = ? WHERE provenance_id = (SELECT rule_provenance_id FROM audits WHERE audit_id = ?)").run(text, auditId);
+  database.close();
+}
+
+/** `count` more finished audits of the session, each with no violation. */
+function addAudits(sessionId: string, count: number): string[] {
+  const audits = new SqliteAuditStore(databasePath());
+  const auditIds = Array.from({ length: count }, () => {
+    const auditId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: [] });
+    audits.finish(auditId, { status: "completed" });
+    return auditId;
+  });
+  audits.close();
+  return auditIds;
+}
+
+/** The hash the outbox keeps for an audit as sent, and the audit's readable and marked hashes (`auditHash`). */
+function auditHashes(auditId: string): { kept: unknown; readable: string; marked: string } {
+  const rerail = new Database(databasePath(), { readonly: true });
+  const row = rerail.prepare("SELECT status, finished_at, length(violations_json) AS size FROM audits WHERE audit_id = ?").get(auditId) as { status: string; finished_at: number; size: number };
+  rerail.close();
+  const state = new Database(join(home, "remote-outbox.sqlite"), { readonly: true });
+  const kept = state.prepare("SELECT hash FROM sent WHERE stream = 'audit' AND id = ?").pluck().get(auditId);
+  state.close();
+  const hash = (...mark: string[]): string => createHash("sha256").update(JSON.stringify([row.status, row.finished_at, row.size, ...mark])).digest("hex");
+  return { kept, readable: hash(), marked: hash("unreadable") };
 }
 
 function addEvent(sessionId: string, eventId: string): void {
@@ -146,9 +186,9 @@ describe("remote sink outbox", () => {
 
   it("names this machine by the remote's --label when it has one", async () => {
     seed();
-    addRemote({ url: sink.url, token: "test-token", content: true, label: "Jeff's laptop" }, home);
+    addRemote({ url: sink.url, token: "test-token", content: true, label: "Alex's laptop" }, home);
     await outbox().sync({ force: true });
-    expect(sink.requests[0]!.header.machineLabel).toBe("Jeff's laptop");
+    expect(sink.requests[0]!.header.machineLabel).toBe("Alex's laptop");
     expect(() => addRemote({ url: sink.url, token: "t", content: true, name: "other", label: "bad\nlabel" }, home)).toThrow(/control characters/u);
   });
 
@@ -163,6 +203,241 @@ describe("remote sink outbox", () => {
     expect(sink.requests).toHaveLength(2);
     expect(sink.requests[1]!.records.map(item => item.type)).toEqual(["event"]);
     expect(outbox().status()[0]).toMatchObject({ pendingEvents: 0, sentBatches: 2, lastError: null });
+  });
+
+  it("sends an audit whose stored paths do not read with its violations and a failure that names them, as no error", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const [result] = await outbox().sync({ force: true });
+    expect(result!.error).toBeUndefined();
+    expect(outbox().status()[0]).toMatchObject({ lastError: null, pendingEvents: 0 });
+    const records = storedRecords(sink);
+    expect(records.find(item => item.type === "audit")).toMatchObject({
+      id: auditId, paths: [], failures: [expect.objectContaining({ clauseId: "paths", code: "adapter-error" })], failureCount: 1,
+    });
+    expect(records.filter(item => item.type === "violation").map(item => item.id)).toEqual([`${auditId}:0`]);
+  });
+
+  it("sends an audit it sent with stored paths that did not read again, whole, once they are mended", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    setPathsText(auditId, '["a.ts"]');
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    const records = sink.requests[1]!.records;
+    expect(records.find(item => item.type === "audit")).toMatchObject({ id: auditId, paths: ["a.ts"], failures: [], failureCount: 0 });
+  });
+
+  it("reads no audit it sent with a stored list that did not read again while that list stays as it is", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const reads = vi.spyOn(SqliteAuditReader.prototype, "get");
+    onTestFinished(() => reads.mockRestore());
+    await outbox().sync({ force: true });
+    expect(reads).not.toHaveBeenCalled();
+    expect(sink.requests).toHaveLength(1);
+  });
+
+  it("marks a readable audit sent under the hash earlier versions sent it under, and sends it no more", async () => {
+    const { auditId } = seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const rerail = new Database(databasePath(), { readonly: true });
+    const row = rerail.prepare("SELECT status, finished_at, length(violations_json) AS size FROM audits WHERE audit_id = ?").get(auditId) as { status: string; finished_at: number; size: number };
+    rerail.close();
+    const state = new Database(join(home, "remote-outbox.sqlite"), { readonly: true });
+    const sent = state.prepare("SELECT hash FROM sent WHERE stream = 'audit' AND id = ?").pluck().get(auditId);
+    state.close();
+    // The hash `main` computes for an ongoing audit (`auditHash`): an audit it sent counts as sent here.
+    expect(sent).toBe(createHash("sha256").update(JSON.stringify([row.status, row.finished_at, row.size])).digest("hex"));
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+  });
+
+  it("sends each audit naming a damaged stored rule provenance once with a failure that names it, and again whole once it is mended", async () => {
+    const { sessionId, auditId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const other = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: [] });
+    audits.finish(other, { status: "completed" });
+    audits.close();
+    const sentAudits = (request: number): unknown[] => sink.requests[request]!.records.filter(item => item.type === "audit")
+      .map(item => [item.id, (item.failures as Array<{ clauseId: string }>).map(failure => failure.clauseId)]).sort();
+    setProvenanceCopyText(auditId, "[");
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+    expect(sentAudits(0)).toEqual([[auditId, ["rule-provenance"]], [other, ["rule-provenance"]]].sort());
+    setProvenanceCopyText(auditId, "[]");
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    expect(sentAudits(1)).toEqual([[auditId, []], [other, []]].sort());
+  });
+
+  it("sends an audit it sent whole no more once a stored list of it is damaged", async () => {
+    const { auditId } = seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    setPathsText(auditId, '["a.ts"');
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+  });
+
+  it("pushes with exit 0 while an audit whose stored paths do not read waits", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    let output = "";
+    const stdout = { write: (text: string) => { output += text; return true; } };
+    expect(await runRemoteCommand(["push"], { home, stdout })).toBe(0);
+    expect(output).not.toContain("failed");
+    expect(storedRecords(sink).filter(item => item.type === "audit").map(item => item.id)).toEqual([auditId]);
+  });
+
+  it("tests no stored list of an audit it never sent, over a sync of many batches", async () => {
+    const { sessionId } = seed();
+    addAudits(sessionId, 20);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "readableAudits");
+    onTestFinished(() => tests.mockRestore());
+    const [result] = await outbox().sync({ force: true, batchBytes: 4 * 1024 });
+    expect(result!.batches).toBeGreaterThan(1);
+    expect(tests).not.toHaveBeenCalled();
+    expect(storedRecords(sink).filter(item => item.type === "audit")).toHaveLength(21);
+  });
+
+  it("marks the hash it keeps for an audit by the record it sent, not by a test of the stored lists", async () => {
+    const { sessionId, auditId } = seed();
+    // A failure of the audit's own leaves its hash readable.
+    const audits = new SqliteAuditStore(databasePath());
+    const intact = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: [] });
+    audits.finish(intact, { status: "completed", failures: [{ clauseId: "c", code: "adapter-error", stage: "persistence", message: "The audit's own failure." }] });
+    audits.close();
+    setPathsText(auditId, '["a.ts"');
+    // The test of the stored lists says the opposite of each record.
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "readableAudits").mockImplementation(ids => new Set(ids.filter(id => id === auditId)));
+    onTestFinished(() => tests.mockRestore());
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const damaged = auditHashes(auditId);
+    expect(damaged.kept).toBe(damaged.marked);
+    const whole = auditHashes(intact);
+    expect(whole.kept).toBe(whole.readable);
+  });
+
+  it("marks the hash it keeps for an audit by the stage, code and clause id of the failure that names a stored list, whatever its message says", async () => {
+    const { auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    // The record says what a later Rerail may word otherwise.
+    const read = SqliteAuditReader.prototype.get;
+    const reads = vi.spyOn(SqliteAuditReader.prototype, "get").mockImplementation(function (this: SqliteAuditReader, id: string) {
+      const audit = read.call(this, id);
+      return audit && { ...audit, failures: audit.failures.map(failure => ({ ...failure, message: "The audit's paths are damaged." })) };
+    });
+    onTestFinished(() => reads.mockRestore());
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink).find(item => item.type === "audit")).toMatchObject({ failures: [{ clauseId: "paths", message: "The audit's paths are damaged." }] });
+    const hashes = auditHashes(auditId);
+    expect(hashes.kept).toBe(hashes.marked);
+  });
+
+  it("tests the stored lists of an audit it sent with one that did not read once a sync, over many batches", async () => {
+    const { sessionId, auditId } = seed();
+    setPathsText(auditId, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    addAudits(sessionId, 20);
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "readableAudits");
+    onTestFinished(() => tests.mockRestore());
+    const [result] = await outbox().sync({ force: true, batchBytes: 4 * 1024 });
+    expect(result!.batches).toBeGreaterThan(1);
+    expect(tests.mock.calls).toEqual([[[auditId]]]);
+  });
+
+  it("tests the stored lists of the audits it sent naming a damaged stored rule provenance in one statement a sync, however many, and reads none", async () => {
+    const { sessionId, auditId } = seed();
+    addAudits(sessionId, 20);
+    setProvenanceCopyText(auditId, "[");
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const prepared = vi.spyOn(Database.prototype, "prepare");
+    const reads = vi.spyOn(SqliteAuditReader.prototype, "get");
+    onTestFinished(() => {
+      prepared.mockRestore();
+      reads.mockRestore();
+    });
+    await outbox().sync({ force: true });
+    // Each list test in SQL (`holdsList`) begins with `json_valid`; no other statement of a sync has it.
+    expect(prepared.mock.calls.filter(([source]) => source.includes("json_valid"))).toHaveLength(1);
+    expect(reads).not.toHaveBeenCalled();
+    expect(sink.requests).toHaveLength(1);
+  });
+
+  it("sends an audit holding its own rule provenance, as an older Rerail wrote it, again whole once that is mended", async () => {
+    const { auditId } = seed();
+    const setOwnProvenanceText = (text: string): void => {
+      const database = new Database(databasePath());
+      database.pragma("ignore_check_constraints = ON");
+      database.prepare("UPDATE audits SET rule_provenance_id = NULL, rule_provenance_json = ? WHERE audit_id = ?").run(text, auditId);
+      database.close();
+    };
+    setOwnProvenanceText("[");
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+    setOwnProvenanceText("[]");
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    expect(sink.requests[1]!.records.find(item => item.type === "audit")).toMatchObject({ id: auditId, failures: [], failureCount: 0 });
+  });
+
+  it("sends a scan's audit whose stored violations do not read with a failure that names them, and again whole once they are mended", async () => {
+    const { sessionId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const scanId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", origin: "scan", revision: 1, catalogRevision: "c1", ruleRevisions: [{ ruleId: "no-todo", revision: 1 }], paths: [] });
+    audits.finish(scanId, {
+      status: "completed",
+      violations: [{
+        id: "v1", ruleId: "no-todo", clauseId: "c", code: "TODO", mode: "log", message: "No TODO", path: "a.ts",
+        span: { startByte: 0, endByte: 4, startLine: 0, startColumn: 0, endLine: 0, endColumn: 4 }, captures: {}, variables: {},
+      }],
+    });
+    audits.close();
+    // Writes what `edit` makes of the scan's stored violations past the CHECK. The history triggers parse the violations
+    // on UPDATE, so they are set aside for the write and put back: the state a damaged file leaves.
+    const editViolations = (edit: (text: string) => string): void => {
+      const database = new Database(databasePath());
+      database.pragma("ignore_check_constraints = ON");
+      const triggers = database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'audits' AND sql LIKE '%violations_json%'").all() as Array<{ name: string; sql: string }>;
+      database.transaction(() => {
+        const text = database.prepare("SELECT violations_json FROM audits WHERE audit_id = ?").pluck().get(scanId) as string;
+        for (const trigger of triggers) database.exec(`DROP TRIGGER "${trigger.name}"`);
+        database.prepare("UPDATE audits SET violations_json = ? WHERE audit_id = ?").run(edit(text), scanId);
+        for (const trigger of triggers) database.exec(trigger.sql);
+      })();
+      database.close();
+    };
+    const sentOfScan = (request: number): unknown[] => sink.requests[request]!.records.filter(item => String(item.id).startsWith(scanId))
+      .map(item => [item.type, item.id, ...(item.type === "audit" ? [(item.failures as Array<{ clauseId: string }>).map(failure => failure.clauseId)] : [])]);
+    // Its closing bracket made a space and its length kept, so only the test of its lists tells the outbox it is mended.
+    editViolations(text => `${text.slice(0, -1)} `);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const [result] = await outbox().sync({ force: true });
+    expect(result!.error).toBeUndefined();
+    expect(sentOfScan(0)).toEqual([["audit", scanId, ["violations"]]]);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+    editViolations(text => `${text.slice(0, -1)}]`);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    expect(sentOfScan(1)).toEqual([["audit", scanId, []], ["violation", `${scanId}:0`]]);
   });
 
   it("keeps the cursor on failure, backs off, and resends the same batch id once the remote is back", async () => {
@@ -213,6 +488,73 @@ describe("remote sink outbox", () => {
     await outbox().sync({ force: true });
     const events = storedRecords(sink).filter(item => item.type === "event");
     expect(events.every(item => item.content === "omitted" && !("payload" in item))).toBe(true);
+  });
+
+  /** An audit the repository owns (a change in another worktree no session made), of a checkout of {@link REPOSITORY}. */
+  function seedRepositoryAudit(sessionId: string): string {
+    const database = new Database(databasePath());
+    database.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, created_at, last_seen_at) VALUES ('/work/w', ?, 'c', 1, 1)").run(REPOSITORY);
+    database.close();
+    const audits = new SqliteAuditStore(databasePath());
+    const auditId = audits.start({
+      sessionId, owner: "repository", workspaceRoot: "/work/w", scope: "ai-output", mode: "log", revision: 1, catalogRevision: "c1",
+      ruleRevisions: [{ ruleId: "no-todo", revision: 1 }], paths: ["a.ts"],
+    });
+    audits.finish(auditId, {
+      status: "completed",
+      violations: [{
+        id: "v1", ruleId: "no-todo", clauseId: "c", code: "TODO", mode: "steer", message: "No TODO", path: "a.ts",
+        span: { startByte: 0, endByte: 4, startLine: 0, startColumn: 0, endLine: 0, endColumn: 4 }, captures: {}, variables: {},
+      }],
+    });
+    audits.close();
+    return auditId;
+  }
+
+  it("sends an audit the repository owns with no session, naming its repository, and its violations with no session", async () => {
+    const { sessionId, auditId: sessions } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const records = storedRecords(sink);
+    expect(records.filter(item => item.type === "audit").map(item => [item.id, item.sessionId, item.repositoryKey]))
+      .toEqual(expect.arrayContaining([[sessions, sessionId, null], [owned, null, REPOSITORY]]));
+    expect(records.find(item => item.type === "violation" && item.auditId === owned)).toMatchObject({ sessionId: null, logged: true });
+  });
+
+  it("holds back an audit the repository owns while that repository is excluded", async () => {
+    const { sessionId } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    setRepositoryExcluded(REPOSITORY, true, home);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink).filter(item => item.id === owned || item.auditId === owned)).toEqual([]);
+  });
+
+  // An audit with no session is told by its own repository: a test of its session would read as a repository not
+  // known, which any exclusion covers.
+  it("sends an audit the repository owns while only another repository is excluded", async () => {
+    const { sessionId } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    setRepositoryExcluded("remote:example.com/team/other", true, home);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink).filter(item => item.type === "audit").map(item => item.id)).toContain(owned);
+  });
+
+  it("sends an audit the repository owns whose stored paths do not read with no session, its repository and a failure that names them, and again whole once they are mended", async () => {
+    const { sessionId } = seed();
+    const owned = seedRepositoryAudit(sessionId);
+    setPathsText(owned, '["a.ts"');
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    setPathsText(owned, '["a.ts"]');
+    await outbox().sync({ force: true });
+    const sent = (request: number): unknown[] => sink.requests[request]!.records.filter(item => item.type === "audit" && item.id === owned);
+    expect(sent(0)).toEqual([expect.objectContaining({
+      sessionId: null, repositoryKey: REPOSITORY, paths: [], failures: [expect.objectContaining({ clauseId: "paths", code: "adapter-error" })],
+    })]);
+    expect(sent(1)).toEqual([expect.objectContaining({ sessionId: null, repositoryKey: REPOSITORY, paths: ["a.ts"], failures: [] })]);
   });
 
   it("sends nothing of an excluded repository", async () => {
@@ -362,7 +704,8 @@ describe("remote sink outbox", () => {
   it("gives the token folder an owner-only ACL on Windows on every add, in a home an earlier release made", () => {
     // The home is already there, so nothing gives it an ACL now: an earlier release made it with its parent's, under C:\.
     const restricted: Array<[string, boolean]> = [];
-    const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [] };
+    const acl = { restrictToOwner: (path: string, folder: boolean): void => { restricted.push([path, folder]); }, otherReaders: (): string[] => [], inherits: () => Promise.resolve(true), restrictFolderToOwner: () => Promise.resolve(),
+      writers: () => Promise.resolve([]), inheritedWriters: () => Promise.resolve([]), keepEachOwnersOwn: () => Promise.resolve(), letAddFiles: () => Promise.resolve() };
     const windows = { acl, platform: "win32" as const, profile: String.raw`C:\Users\nobody-here` };
     addRemote({ url: "https://rerail.example", token: "t", content: true, name: "team" }, home, clock, windows);
     expect(restricted).toEqual([[join(home, "remote-tokens"), true]]);

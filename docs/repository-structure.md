@@ -210,7 +210,10 @@ Exemptions `workbench` (an include of `docs/rule-syntax/**`, the `.rerail` libra
 
 Every test file is under `test/`, `integration/` or `e2e/`. `e2e/` holds the dashboard's Playwright browser specs,
 kept out of `test/` because vitest runs every spec file under it. Exemptions: `data-roots` (upstream projects'
-copied tests) and `workbench-samples` (the workbench explorer's sample sources, [Kept as they are](#kept-as-they-are)). Rust `#[cfg(test)]` modules are part of the crate and not counted.
+copied tests), `workbench-samples` (the workbench explorer's sample sources) and `rule-cases` (a pack rule's cases,
+`docs/rule-syntax/packs/<pack>/cases/<rule>/` or `packs/<id>/cases/<rule>/`, the small repository its `.test` blocks
+read, named as the code they stand for), both [Kept as they are](#kept-as-they-are). Rust `#[cfg(test)]` modules are
+part of the crate and not counted.
 
 ### 6. Generators follow one known pattern — target 0 misplaced
 
@@ -500,7 +503,7 @@ The gate expands every `run:` script in `.github/workflows/ci.yml` through npm s
 - entry points: `node`/`tsx`/`python`/`bash` files, the interpreter named or given by its absolute path
   (`/usr/bin/python3`).
 
-Exemptions: `data-roots` and `workbench-samples` ([Kept as they are](#kept-as-they-are)).
+Exemptions: `data-roots`, `workbench-samples` and `rule-cases` ([Kept as they are](#kept-as-they-are)).
 
 </details>
 

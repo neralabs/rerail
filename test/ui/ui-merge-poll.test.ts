@@ -23,7 +23,7 @@ const json = (body: unknown, code = 200): Response => new Response(JSON.stringif
 const status = (conflictStatus: "open" | "dismissed"): MergeAssistStatus => sampleStatus("/work/a", {
   conflicts: [conflict("c1", {
     status: conflictStatus,
-    dismissal: conflictStatus === "dismissed" ? { name: "tbelanger", at: "2026-11-02T11:00:00Z" } : null,
+    dismissal: conflictStatus === "dismissed" ? { name: "akim", at: "2026-11-02T11:00:00Z" } : null,
   })],
 });
 

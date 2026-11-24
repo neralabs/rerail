@@ -29,7 +29,8 @@ Confirm the pack is ready and your accounts can publish it.
 
 - **Not private:** its `package.json` has no `"private": true` (remove it, add `publishConfig` with `access`
   `public`, and add the pack's changeset in one pull request).
-- **Merged** on `main` at `0.1.0` with a `patch` changeset, and listed in `src/engine/catalog/pack-list.generated.ts`.
+- **Merged** on `main` at `0.1.0` with its changeset ([pack-format.md](pack-format.md#versioning-and-release)), and
+  listed in `src/engine/catalog/pack-list.generated.ts`.
 - **Pack data published** (ported packs only), and shipped rules pass the conformance check.
 - **AWS** (ported packs only): read access to the test data bucket.
 - **npm:** `npm whoami` prints a `neralabs` member with publish rights; else `npm login` interactively with 2FA.
@@ -96,19 +97,21 @@ Tag each release, then publish the tarballs to npm, as the release workflow does
 ```sh
 node scripts/release/packs-tag.mjs /tmp/rule-packs
 node scripts/release/packs-publish.mjs /tmp/rule-packs
+npm dist-tag add @neralabs/rerail-pack-<id>@<version> latest
 ```
 
 Approve the "Authenticate your account at: <url>" link in the browser. One approval covers every pack in the run.
-Reruns after a failure are safe.
+Reruns after a failure are safe. The publish script publishes under `next`, as every release does; the last command
+points `latest` at the first version too, so set-up fetches it on the default channel. A first version has no
+release candidate to test: the publish gate is its test.
 
 <details>
 <summary>What the scripts do, and how reruns work</summary>
 
 - **The tag script** pushes each release tag to GitHub. On a rerun, a version already tagged is skipped.
-- **The publish script** publishes each pack public under the `latest` dist-tag, then points `next` at it (`next`
-  never trails `latest`). It waits on nothing npm does, so it doesn't check the package is public: step 4 does. On a
-  rerun, a version npm already has has its `next` raised, not published again. A version older than the pack's
-  `latest` is never published, since that would move `latest` back.
+- **The publish script** publishes each pack public under the `next` dist-tag. It waits on nothing npm does, so it
+  doesn't check the package is public: step 4 does. On a rerun, a version npm already has is not published again. A
+  version older than the pack's `latest` or `next` is never published, since `next` would trail `latest` or move back.
 - If the publish fails after tagging, run the publish script again. Later versions don't depend on it: the release
   workflow publishes any version that is tagged but not on npm.
 
@@ -138,8 +141,8 @@ npm access list collaborators @neralabs/rerail-pack-<id>
 <details>
 <summary>Later versions and the CI read token</summary>
 
-Later versions go to `latest` too, published by the release workflow when the Release pull request that bumps them
-merges.
+Later versions are published to `next` by the release workflow when the Release pull request that bumps them merges,
+and reach `latest` when a person promotes them ([release.md](release.md#promoting)).
 
 CI's **Rule packs installed from npm** job reads the packs with the repository secret `NPM_PACKS_READ_TOKEN`, a
 read-only granular token. If that token names its packages one by one rather than the whole `@neralabs` scope, add
@@ -199,7 +202,7 @@ The workflow publishes a pack only when a **Release** pull request that bumps it
 
 - "None does" covers, for example, `main` already having the version you published by hand.
 - After approval, check that the **Publish to npmjs** job published the new version and that the **Published
-  dist-tags** job passed: `latest` is that version.
+  dist-tags** job passed: `next` is that version, until a promotion moves `latest` to it.
 - If the 2 days pass first, delete the setting on npmjs.com and add it again just before you merge.
 
 </details>
@@ -226,7 +229,7 @@ Find the message you see in the table; the fix is beside it.
 | `the checkout has changes; tag from a clean checkout of the commit to release` | Changed or untracked files in the worktree. Restart at step 1. |
 | `commit <sha> is not on GitHub, or gh cannot read the repository` | Not on a pushed commit, or `gh` isn't logged in. Use `origin/main` as in step 1; check `gh auth status`. |
 | `npm access get status` in step 4 prints `private` | npm keeps the package private. Run `npm access set status=public <name>`, then check again. |
-| `<name>@<version> is older than latest <latest>, so it was not published` | A newer version is already `latest` and supersedes this one. Nothing to do; publishing it would move `latest` back. |
+| `Superseded: <name>@<version> was not published: <version> is older than latest …` or `… older than next …` | A newer version is already `latest` or `next` and supersedes this one. Nothing to do; publishing it would move `next` back. |
 | `EOTP` or an "Authenticate your account" URL | npm needs 2FA. Approve the URL in the browser; the command carries on. |
 | The gate fails to load the native engine | Run `npm run build:native` with `~/.cargo/bin` on `PATH`. |
 | The gate says a tool-pack's test data is missing and to run `npm run fixtures:pull` | The worktree has no pack data. Run `npm run fixtures:pull -- --pack <id>` with read access to the bucket, then step 2 again. |

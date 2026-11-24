@@ -267,7 +267,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let (maintained, _) = edit(
@@ -1011,6 +1011,25 @@ fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, 
     (alone, together)
 }
 
+/// RUF034 alone: `value` answered on request, and python/ast.rerail's demand on `unparen`. `value`'s request reads
+/// `unparen`, whose demand comes from `same_pair`, which negates `same_leaf`, which reads `value`: the demand leaves
+/// `same_pair` out to stay stratified, and then joins the compared nodes by a child's position only, across files. Its
+/// answer was cross-file once preparation applied the demand, after combining had judged it file-local, and the run
+/// was refused ("`value` is answered on request in the cross-file part"). Beside a reader of `value` across files it
+/// ran, `value` eager. Alone it runs too, and finds what it finds there.
+#[test]
+fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack() {
+    let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
+                .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
+                cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
+    let across = ".language python\n.decl twin(v: symbol)\n\
+                  twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
+    let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
+    let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
+    assert_eq!(together, [["1"], ["3"]], "the same branches, literals by value");
+    assert_eq!(alone, together);
+}
+
 /// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
 /// the spans the library's rules bind it to in a pack, as alone. Lowered in its library's scope, the program held the
 /// library relation declared and not derived, so `span_patterns` took its column for an empty one: the program ran no
@@ -1395,7 +1414,7 @@ y = x{i} + 2
 fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
     // `RERAIL_CHILD_PROGRAM=<file.rerail>`: that rule file, else the pickle pack's.
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rerail"), std::path::PathBuf::from);
     let program = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
     // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
@@ -1479,7 +1498,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
     let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rerail", "ruff-pyi059-generic-not-last-base-class.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
@@ -1623,7 +1642,7 @@ fn every_switch_lowering_reads_is_classified() {
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
     ];
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
@@ -1687,10 +1706,16 @@ fn every_switch_lowering_reads_is_classified() {
         let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
         corpus[a..b].to_owned()
     };
-    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), and the `.rerail` lowering its
-    // `rr::parse` runs (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
-    let mut combining = sources(&["logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs"]);
+    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), the `.rerail` lowering its
+    // `rr::parse` runs (`logic/rr`, `front`), and the passes it replays to judge an answer as the program's own demand
+    // leaves it (`answers_where_documents_are` through `reading_demanded`: simplify, reach index, demand). The combined
+    // program is kept under `COMBINING` alone.
+    let mut combining = sources(&[
+        "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/simplify.rs", "logic/reach_form.rs", "logic/magic.rs",
+        "logic/magic",
+    ]);
     combining.push(("corpus.rs, combine_read".to_owned(), region("\nfn combine_read(", "\n}\n")));
+    combining.push(("corpus.rs, answers_where_documents_are".to_owned(), region("\nfn answers_where_documents_are(", "\n/// A measurement (dev only")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under

@@ -96,8 +96,17 @@ export const GROUPS = {
     // step bundles, and the built package.
     entries: ["vitest.config.ts", "integration/**/*.ts", ...PACKAGE_BUILD],
     // The dashboard page daemon-cli.test.ts compares, the model the OMP host loads, Codex's hooks file, the OMP host
-    // the job provisions, the pack claude-hook-rules.test.ts adds from this checkout.
-    reads: [...PACKAGE_READS, "hooks/codex.json", "scripts/host/install-omp-host.mjs", "packs/complexity/package.json"],
+    // the job provisions, the pack claude-hook-rules.test.ts adds from this checkout, the scripts updater-cli.test.ts
+    // packs this checkout and its engine package with.
+    reads: [
+      ...PACKAGE_READS,
+      "hooks/codex.json",
+      "scripts/host/install-omp-host.mjs",
+      "packs/complexity/package.json",
+      "scripts/release/engine/packages.mjs",
+      "scripts/release/shrinkwrap-pack.mjs",
+      "scripts/release/shrinkwrap.mjs",
+    ],
   },
   sessions: {
     jobs: ["real-sessions", "provider-smoke"],
@@ -105,6 +114,14 @@ export const GROUPS = {
     entries: ["scripts/host/host-lifecycle.ts", "scripts/host/host-smoke.ts", "scripts/host/host-auth.ts", "scripts/host/install-omp-host.mjs", ...PACKAGE_BUILD],
     // Claude Code and Cursor load this checkout as a plugin directory, Codex its hooks file.
     reads: [...PACKAGE_READS, "hooks/codex.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/rerail-create/SKILL.md"],
+  },
+  translations: {
+    jobs: ["translations"],
+    // The suite, and what product-run.ts imports at run time from the checkout it is given (src/engine/index.ts,
+    // conformance/engine.ts and the runner): the product's path, which esbuild cannot follow from a computed import.
+    entries: ["scripts/ship/translations.ts", "scripts/ship/product-run.ts", "src/engine/index.ts", "conformance/engine.ts", "conformance/languages/runner.ts"],
+    // The pack's rules, examples and declaration, the corpora pins, the engine's crate.
+    reads: ["packs/rerail/pack.json", "docs/rule-syntax/packs/rerail/equivalence.json", "scripts/ship/corpora.json", "native/Cargo.toml", "languages/python.json", "tsconfig.json"],
   },
 };
 

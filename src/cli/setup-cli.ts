@@ -21,7 +21,7 @@ import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { commandLine, powershellLiteral, type Shell } from "../engine/command-line.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
-import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { INSTALLED_PACKS_DIR, installedPacksPrefix, loadRuleCatalog, packsWithRulesNotRun } from "../engine/catalog/rule-catalog.js";
 import { PACK_COMPILE_CHECKS_FILE } from "../engine/catalog/pack-compile-checks.js";
 import { MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_OUTBOX_FILE, REMOTE_TOKENS_FOLDER, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
@@ -40,9 +40,13 @@ import {
   openDashboard,
   START_LOCK_DIR,
   startDaemon,
+  startingDaemonNoticeTo,
+  STOP_ANSWERS,
   stopDaemon,
+  type DaemonLookup,
   type DaemonMachine,
   type DaemonState,
+  type StopDaemonResult,
 } from "../runtime/daemon-control.js";
 import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
@@ -65,11 +69,12 @@ import { TerminalInput } from "./setup-menu.js";
 import { checkSetupAnswer, parseCodingAgents, runSetup, runSetupStep, setupAgents, setupPacks, startRerailStep, type DashboardPage, type SetupEnvironment, type SetupRequest } from "./repository-setup.js";
 import { npmPackStore, type PackStore, type PackVersion } from "../setup/rule-pack-store.js";
 import { workspaceStartState, type RepositorySetupIo } from "../runtime/repository-start.js";
-import { renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
+import { notRunLine, renderBanner, renderInstalled, renderOnPath, SETUP_FLAGS, type DashboardLink, type SetupCommand, type SetupLane } from "../harness/setup-screens.js";
 import { colourDepth } from "../presentation/rerail-mark.js";
 import { isStatusFileEntry } from "../presentation/claude-status-files.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
+import { UPDATE_CHECK_FILE } from "../setup/update-check.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
 import { streamProgress } from "../runtime/progress.js";
 import { SCRUB_HINT_FILE, scrubHintOnce } from "./scrub-cli.js";
@@ -193,6 +198,16 @@ const BACKED_UP_DATABASES = ["", "-wal", "-shm"].map(suffix => `${RERAIL_DATABAS
 const LOCKED_MOVE_MS = 10_000;
 
 /**
+ * What the uninstall says of its stop of the daemon before it backs up or deletes the data: whether it stopped one, else
+ * that none was running, unless daemon.json changed under the stop, which then ended nothing and may name a daemon that
+ * runs: that gets the stop's own answer ({@link STOP_ANSWERS}).
+ */
+function stopLine(result: StopDaemonResult): string {
+  if (result === "stopped") return "Stopped the Rerail daemon.\n";
+  return result === "record-changed" ? STOP_ANSWERS[result] : "The Rerail daemon was not running.\n";
+}
+
+/**
  * After the coding agents are disconnected, nothing reopens the database: stop the daemon, then
  * move rules and history aside so a later install starts clean and can restore them. The files are
  * listed only after the stop: closing the daemon's last connection checkpoints the WAL and deletes
@@ -202,30 +217,37 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   const target = join(backupRoot(), "rerail-home");
   const present = () => BACKED_UP_DATABASES.filter(name => existsSync(join(home, name)));
   if (dryRun) {
-    const listed = present();
-    const moves = listed.length === 0 ? "" : " and move " + listed.join(", ") + " to " + target;
-    process.stdout.write(`Would stop the Rerail daemon${moves}.\n`);
+    process.stdout.write(`Would stop the Rerail daemon${plannedMoves(present(), target)}.\n`);
     return;
   }
-  process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  process.stdout.write(stopLine(await stopDaemon(home)));
   const listed = present();
   if (listed.length === 0) {
     process.stdout.write("No rules or history to back up.\n");
     return;
   }
   await mkdir(target, { recursive: true, mode: 0o700 });
-  for (const name of listed) {
-    // Windows keeps a file locked for a moment after the process holding it has exited (and an
-    // antivirus scan can hold it too), so a locked move is retried briefly before giving up.
-    try {
-      await renameWithRetry(join(home, name), join(target, name), { retryMs: LOCKED_MOVE_MS });
-    } catch (error) {
-      const code = error instanceof Error && "code" in error ? error.code : undefined;
-      // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
-      if (code !== "ENOENT" || !/-(wal|shm)$/u.test(name)) throw error;
-    }
-  }
+  for (const name of listed) await moveIntoBackup(join(home, name), join(target, name));
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
+}
+
+/** What a dry run of the backup says it would move to `target`: the files `listed`, or nothing when there are none. */
+function plannedMoves(listed: readonly string[], target: string): string {
+  return listed.length === 0 ? "" : " and move " + listed.join(", ") + " to " + target;
+}
+
+/**
+ * Moves one file of Rerail's databases from `from` into the backup at `to`. Windows keeps a file locked for a moment
+ * after the process holding it has exited (and an antivirus scan can hold it too), so a locked move is retried briefly
+ * before giving up. A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
+ */
+async function moveIntoBackup(from: string, to: string): Promise<void> {
+  try {
+    await renameWithRetry(from, to, { retryMs: LOCKED_MOVE_MS });
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code !== "ENOENT" || !/-(wal|shm)$/u.test(from)) throw error;
+  }
 }
 
 /** Rerail's databases in its home, with every file named after them: WAL, shared memory, journal, `.restoring`, copies. */
@@ -353,7 +375,7 @@ function heldCacheCleanup(path: string): string {
  */
 async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<ReadonlySet<string>> {
   if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
-  else process.stdout.write(await stopDaemon(home) === "stopped" ? "Stopped the Rerail daemon.\n" : "The Rerail daemon was not running.\n");
+  else process.stdout.write(stopLine(await stopDaemon(home)));
   const deletion = planDataDeletion(home, machine);
   if (dryRun) {
     for (const { path, what } of deletion.remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
@@ -471,6 +493,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   MACHINE_ID_FILE,
   STATUS_LINES_FOLDER,
   UPDATE_STATE_FILE,
+  UPDATE_CHECK_FILE,
   UPDATE_LOCK_DIR,
   VERSIONS_DIR,
   CURRENT_LINK,
@@ -777,6 +800,18 @@ async function configCopies(configs: readonly string[]): Promise<Array<{ copy: s
 }
 
 /**
+ * {@link notRunLine} for the packs installed in `home`; undefined when every rule runs, or when the catalog cannot be
+ * read, which `rerail packs list` reports.
+ */
+function installedRulesNotRun(home: string): string | undefined {
+  try {
+    return notRunLine(packsWithRulesNotRun(loadRuleCatalog(home)));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * `rerail install --refresh`: register this version again with every coding agent already connected to the managed
  * install, so commands it added arrive and ones it retired go, and write the launcher again; `rerail update` runs it
  * from the version it activated. Both then name the node it runs on. Coding agents never connected stay untouched, and
@@ -813,6 +848,10 @@ async function runRefresh(context: SetupContext): Promise<number> {
   // After an update to a version that scrubs what it stores: once, the hint to scrub what earlier versions stored.
   const scrubHint = scrubHintOnce(context.home);
   if (scrubHint !== undefined) process.stdout.write(scrubHint);
+  // Every update ends with this refresh, run by the version it activated: the one place an update hears what that
+  // version's engine says of the packs it keeps at their installed versions.
+  const notRun = installedRulesNotRun(context.home);
+  if (notRun !== undefined) process.stdout.write(`${notRun}\n`);
   for (const { agent, message } of result.failures) {
     process.stderr.write(`rerail: could not refresh ${CODING_AGENT_NAMES[agent]}: ${message}\n`);
   }
@@ -976,13 +1015,25 @@ async function activeDaemon(context: SetupContext, port: number | undefined): Pr
   // The version directory, not the current link: the daemon and its SQLite binding belong to this install.
   const packageRoot = await realpath(registrationRoot(context));
   const lookup = await lookupDaemon(context.home);
-  if (lookup.status === "running" && await daemonUsesPackageRoot(lookup.state, packageRoot) && (port === undefined || lookup.state.port === port)) {
-    return lookup.state;
-  }
+  const kept = await keptDaemon(lookup, packageRoot, port);
+  if (kept !== undefined) return kept;
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
   if (lookup.status === "running") await stopDaemon(context.home);
-  const listen = port ?? (lookup.status === "running" ? lookup.state.port : undefined);
-  return (await startDaemon({ home: context.home, packageRoot }, { dev: false, ...(listen === undefined ? {} : { port: listen }) })).daemon.state;
+  return await startActiveDaemon(context.home, packageRoot, port ?? (lookup.status === "running" ? lookup.state.port : undefined));
+}
+
+/** The daemon `lookup` found, when set-up keeps it: running from `packageRoot`, and on `port` when one is named. */
+async function keptDaemon(lookup: DaemonLookup, packageRoot: string, port: number | undefined): Promise<DaemonState | undefined> {
+  if (lookup.status !== "running" || (port !== undefined && lookup.state.port !== port)) return undefined;
+  return await daemonUsesPackageRoot(lookup.state, packageRoot) ? lookup.state : undefined;
+}
+
+/**
+ * Starts the daemon of `packageRoot` in `home`, on `port` when one is named, saying so while it waits for one another
+ * process launched, still in its start.
+ */
+async function startActiveDaemon(home: string, packageRoot: string, port: number | undefined): Promise<DaemonState> {
+  return (await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, { dev: false, ...(port === undefined ? {} : { port }) })).daemon.state;
 }
 
 /** `<origin>/?repository=<key>&checkout=<path>#<page>`: the page, scoped to the repository and checkout set-up ran for. */

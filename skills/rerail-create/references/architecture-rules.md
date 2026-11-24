@@ -97,6 +97,7 @@ recent merged PRs.`
     "id": "local:parse-headers-in-dependencies",
     "revision": 1,
     "mode": "steer",
+    "title": "Routes delegate; parse headers in a dependency",
     "description": "Read request headers in FastAPI dependencies and inject the value, not inside route handlers; routes only delegate.",
     "scope": { "include": ["app/routers/**/*.py"], "exclude": ["**/*_test.py", "**/test_*.py"] },
     "clauses": [

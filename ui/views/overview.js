@@ -1,16 +1,19 @@
 /**
  * Overview (`#overview`, the default; `#rules` before v8): the banner the repository's first-open state calls for
- * (`first-open.js`), the range's four tiles, then the rules with the most violations logged and the newest sessions,
+ * (`first-open.js`), the banners that ask for approval, a newer Rerail once the daemon reports one, the range's four tiles, then the rules with the most violations logged and the newest sessions,
  * or the empty block that says what to do next.
  */
-import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
-import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { awaitingApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
-import { data, ui, ALL_TIME, activityAllOf, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { h, setText, setAttr, setClass, setContent, syncChildren, icon, pendingIcon } from "../dom.js";
+import { ago, andList, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
+import { awaitingApproval, awaitingYourApproval, isFromPack, isLog, isRunning, worktreeLeftOut } from "../derive.js";
+import { data, ui, ALL_TIME, activityAllOf, allFires, fires, isSetUp, packById, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { newerRelease } from "../settings-model.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
+import { AGENT_UPDATE_COMMAND, updateCopyButton, updateDetailsLink } from "../render/command.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { loggedTip } from "../render/rules.js";
+import { enforcementTag, ruleTableHead, updateEnforcementTag } from "../render/enforcement.js";
 import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
 
 export const needs = ["rules", "packs", "activity", "recentSessions"];
@@ -54,19 +57,31 @@ function dismissWelcome() {
   try { localStorage.setItem(welcomeKey(), "1"); } catch { /* private mode: dismissed for this visit */ }
 }
 
+/*
+ * The banners for moments where nothing is at stake (day one, a new version, a stop someone may have chosen) carry a
+ * little personality in their icon and a word or two. The ones that ask a person to approve, judge or fix something
+ * keep plain icons and words.
+ */
 function stoppedBanner(repo) {
-  return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
+  return h("div.welcome.warn", { role: "status" }, icon("melting", 22), h("div", null,
     h("b", null, `Rerail is stopped in ${repo}.`),
-    h("p", null, "No rules run here, and nothing is logged; rules and history are kept."),
+    h("p", null, "No rules run here and nothing is logged, but your rules and history are safe. Start it again whenever you’re ready."),
     h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey, title: `Starts Rerail in every checkout and worktree of ${repo}.` }, "Start Rerail"))));
 }
 
-/** The welcome shows only where Rerail is started: a repository set up but never started reads as stopped. */
+/**
+ * Day one, before the first session: which rule packs are added, how many rules steer (a pack's rules steer from the
+ * start; only the ones it starts off are off), and what Rerail adds to a linter, in set-up's own words. The welcome
+ * shows only where Rerail is started: a repository set up but never started reads as stopped.
+ */
 function welcomeBanner(repo) {
-  const on = rulesArray().filter(isRunning).length;
-  return h("div.welcome", { role: "status" }, icon("done", 22), h("div", null,
-    h("b", null, `Rerail is on. ${fmt(on)} ${plural(on, "rule is", "rules are")} running in ${repo}.`),
-    h("p", null, "Start a coding agent session here and code as usual. Violations show on this page as they’re logged.")),
+  const running = rulesArray().filter(isRunning), log = running.filter(isLog).length, steer = running.length - log;
+  const names = [...data.attachedPacks.keys()].map(id => packById(id)?.name).filter(Boolean).sort((a, b) => a.localeCompare(b));
+  return h("div.welcome", { role: "status" }, icon("wave", 22), h("div", null,
+    h("b", null, `Hi! Rerail is on in ${repo}: ${fmt(names.length)} ${plural(names.length, "rule pack")}, ${fmt(steer)} ${plural(steer, "rule")} steering${log ? `, ${fmt(log)} on Log only` : ""}.`),
+    names.length ? h("p", null, `${andList(names)}. Each pack starts some of its rules on and the rest off; turn more on from its page.`) : null,
+    h("p", null, "Your linter checks code after it’s written; Rerail tells your coding agent as it writes, so problems are fixed in the same turn."),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "packs" }, "See your rule packs"))),
   h("button.x", { "data-act": "dismisswelcome", "aria-label": "Dismiss" }, "✕"));
 }
 
@@ -74,8 +89,41 @@ function renderBanner(root, state) {
   const kind = data.loaded ? bannerFor(state, welcomeDismissed()) : null;
   const repo = repoName();
   const on = rulesArray().filter(isRunning).length;
-  setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey]), () =>
+  setContent(root, JSON.stringify([kind, repo, on, data.repository?.repositoryKey, [...data.attachedPacks.keys()], rulesArray().filter(isRunning).map(r => r.rule.mode)]), () =>
     kind === "stopped" ? stoppedBanner(repo) : kind === "welcome" ? welcomeBanner(repo) : null);
+}
+
+/* A newer Rerail: once per version, until dismissed, on a repository that is set up. */
+
+const updateKey = latest => `rerail-update-dismissed:${latest}`;
+/** The versions dismissed in this visit, which holds when storage is blocked. */
+const updateDismissedHere = new Set();
+
+function updateDismissed(latest) {
+  if (updateDismissedHere.has(latest)) return true;
+  try { return localStorage.getItem(updateKey(latest)) === "1"; } catch { return false; /* storage blocked */ }
+}
+
+function dismissUpdate() {
+  const latest = newerRelease(data.health);
+  if (latest === null) return;
+  updateDismissedHere.add(latest);
+  try { localStorage.setItem(updateKey(latest), "1"); } catch { /* private mode: dismissed for this visit */ }
+}
+
+/**
+ * "Rerail 0.3.0 just launched.", from the newest version the daemon reports (`/healthz.update`), with how to update:
+ * the command to paste into a coding agent's session and its Copy, and Details in Settings, which goes to About Rerail
+ * and its release notes. It sits below the banners that ask for something, since it doesn't.
+ */
+function renderUpdate(root) {
+  const latest = data.loaded && isSetUp() ? newerRelease(data.health) : null;
+  const show = latest !== null && !updateDismissed(latest);
+  setContent(root, show ? latest : "", () => (!show ? null : h("div.welcome", { role: "status" }, icon("rocket", 22), h("div", null,
+    h("b", null, `Rerail ${latest} just launched.`),
+    h("p", null, "To update, paste ", h("code", null, AGENT_UPDATE_COMMAND), " into a session with your coding agent. It updates your rule packs too, and backs up your rules and history first."),
+    h("p.acts", null, updateCopyButton("button.btn.sm", "Copy update command"), updateDetailsLink())),
+  h("button.x", { "data-act": "dismissupdate", "aria-label": "Dismiss" }, "✕"))));
 }
 
 /** The worktree's `.rerail/rules` files left out, each with why; they run nothing until fixed. Not dismissible. */
@@ -88,29 +136,70 @@ function renderLeftOut(root) {
     h("p", null, "Fix the file and this updates on its own. ", h("span.mono", null, "rerail packs list"), " in the worktree says the same.")))));
 }
 
+/** The rules created by you that wait for your approval, by title: the ones `/rerail-create` added in Log. */
+export const yourRulesToApprove = () => (data.loaded ? rulesArray().filter(awaitingYourApproval) : [])
+  .sort((a, b) => titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: "base" }) || a.rule.id.localeCompare(b.rule.id));
+
 /**
- * The rules here whose content, or whose pack's, waits for a person's approval: each runs in Log until then. Each item
- * opens the sheet where it is approved. Not dismissible.
+ * The rules your coding agent added that wait for your approval (`/rerail-create` adds the rules it suggests this way):
+ * how many, what they caught in Log that the agent was not told, and one button to Created by you, where each is opened
+ * and read in full before it is approved from its sheet. Not dismissible: a rule left here keeps running in Log.
  */
-function renderApprovals(root) {
+function renderYours(root) {
+  const rules = yourRulesToApprove(), n = rules.length, one = n === 1;
+  const caught = rules.reduce((sum, stored) => sum + allFires(stored.rule.id), 0);
+  setContent(root, JSON.stringify([rules.map(stored => stored.rule.id), caught]), () => (n === 0 ? null : h("div.welcome.warn.yours", { role: "status" }, pendingIcon(), h("div", null,
+    h("b", null, one ? "Your coding agent added a rule. It’s on Log only until you approve it."
+      : `Your coding agent added ${fmt(n)} rules. They’re on Log only until you approve them.`),
+    h("p", null, caught === 0 ? "Nothing caught in Log yet. "
+      : `${one ? "It" : "Together they"} caught ${fmt(caught)} ${plural(caught, "violation")} in Log, which your coding agent wasn’t told about. `,
+      `Open ${one ? "it" : "each one"} in Created by you to see what it checks and what it tells the coding agent, then approve it on its page.`),
+    h("p.acts", null, h("button.btn.sm", { "data-act": "nav", "data-i": "created" }, "Review in Created by you"))))));
+}
+
+/** A waiting rule's item in the approval banner: its pack's page for a pack that waits, else the rule's sheet. */
+function approvalItem(stored) {
+  const { kind, id } = stored.approval.subject;
+  const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
+  return kind === "pack" && packId !== undefined
+    ? { kind, label: `pack ${id}`, act: "viewpack", target: packId }
+    : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id };
+}
+
+/** The rules and packs here that someone else wrote and that wait for approval, one item each. */
+function othersToApprove() {
   const items = new Map();
   for (const stored of data.loaded ? rulesArray() : []) {
-    if (!awaitingApproval(stored)) continue;
+    if (!awaitingApproval(stored) || awaitingYourApproval(stored)) continue;
     const { kind, id } = stored.approval.subject;
-    if (items.has(`${kind}\0${id}`)) continue;
-    const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
-    items.set(`${kind}\0${id}`, kind === "pack" && packId !== undefined
-      ? { kind, label: `pack ${id}`, act: "viewpack", target: packId }
-      : { kind: "rule", label: titleOf(stored), act: "detail", target: stored.rule.id });
+    if (!items.has(`${kind}\0${id}`)) items.set(`${kind}\0${id}`, approvalItem(stored));
   }
-  const list = [...items.values()], n = list.length;
-  const packs = list.filter(item => item.kind === "pack").length, rules = n - packs;
+  return [...items.values()];
+}
+
+/** The approval banner's first line: how many rules and packs wait, and that they run in Log until approved. */
+function waitingTitle(list) {
+  const n = list.length, packs = list.filter(item => item.kind === "pack").length, rules = n - packs;
   const what = [rules && `${fmt(rules)} ${plural(rules, "rule")}`, packs && `${fmt(packs)} ${plural(packs, "pack")}`].filter(Boolean).join(" and ");
-  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
-    h("b", null, `${what} ${n === 1 ? "waits" : "wait"} for approval, so ${n === 1 ? "it runs" : "they run"} in Log and steer${n === 1 ? "s" : ""} no one.`),
-    h("p", null, `Rerail did not write ${n === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page, or ask your coding agent: `,
-      h("span.mono", null, "/rerail-create approve the rules"), "."),
-    h("p.acts", null, list.map(item => h("button.btn.sm", { "data-act": item.act, "data-i": item.target }, item.label)))))));
+  return n === 1 ? `${what} waits for approval, so it runs in Log and steers no one.` : `${what} wait for approval, so they run in Log and steer no one.`;
+}
+
+const approvalsBanner = (list, copies) => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
+  h("b", null, waitingTitle(list)),
+  h("p", null, `Rerail did not write ${list.length === 1 ? "it" : "them"}. Read what each tells the coding agent, then approve it on its page. Your coding agent can audit ${list.length === 1 ? "it" : "them"} first: `,
+    h("span.mono", null, "/rerail-create approve the rules"), "."),
+  copies ? h("p", null, `Approving an edited copy turns off the rule it was copied from in ${repoName() || "this repo"}.`) : null,
+  h("p.acts", null, list.map(item => h("button.btn.sm", { "data-act": item.act, "data-i": item.target }, item.label)))));
+
+/**
+ * The rules here whose content, or whose pack's, waits for a person's approval and that someone else wrote (a
+ * worktree's own rules, packs Rerail did not publish, your edited copies of rules Rerail ships): each runs in Log until
+ * then. Each item opens the sheet where it is approved, after it is read. Not dismissible.
+ */
+function renderApprovals(root) {
+  const list = othersToApprove();
+  const copies = data.loaded && rulesArray().some(stored => awaitingApproval(stored) && stored.copiedFromRuleId);
+  setContent(root, JSON.stringify([list, copies]), () => (list.length === 0 ? null : approvalsBanner(list, copies)));
 }
 
 /* ---------- tiles ---------- */
@@ -163,13 +252,14 @@ function renderTiles(tiles, sources, ruleCount, sessionsEver) {
 
 /* ---------- Most violations logged ---------- */
 
-const colhead = () => h("div.colhead", { "aria-hidden": "true" }, h("span", null, "Rule"), h("span", null, "Violations"), h("span", null, "On/off"));
+const colhead = ruleTableHead;
 
 function ruleRow(item) {
   return h("div.row", { "data-act": "detail", "data-i": item.id },
     h("div.rmain", null,
       h("div.rtitle", null, h("button.t", { "data-act": "detail", "data-i": item.id })),
       h("div.rside", null,
+        enforcementTag(),
         h("span.count.num", null, h("b")),
         h("button.sw", { role: "switch", "data-act": "toggle", "data-i": item.id })),
       h("div.rmeta", null, h("span.mono", null, item.id), h("span.last"))));
@@ -182,6 +272,7 @@ function updateRuleRow(row, item) {
   setClass(row, "off", !isRunning(item.stored));
   setText(row.querySelector(".count b"), fmt(item.fires));
   setAttr(row.querySelector(".count"), "title", loggedTip(item.stored, item.fires));
+  updateEnforcementTag(row.querySelector(".enftag"), item.stored);
   const sw = row.querySelector(".sw");
   setAttr(sw, "aria-checked", String(item.stored.enabled));
   setAttr(sw, "aria-label", `Toggle ${item.title}`);
@@ -268,7 +359,9 @@ let page = null;
 function build() {
   const banner = h("div.banners");
   const leftOut = h("div.banners");
+  const yours = h("div.banners");
   const approvals = h("div.banners");
+  const update = h("div.banners");
   const range = rangeControl();
   const tiles = TILES.map(tile);
   const empty = h("div.ovempty");
@@ -286,10 +379,10 @@ function build() {
     h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
-  const root = h("div.ov", null, banner, leftOut, approvals,
+  const root = h("div.ov", null, banner, leftOut, yours, approvals, update,
     h("div.rollup", null, h("div.rollhead", null, h("h2", null, "Overview"), range), h("div.tiles", null, tiles)),
     empty, lists);
-  page = { root, banner, leftOut, approvals, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
+  page = { root, banner, leftOut, yours, approvals, update, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
 }
 
 function renderLists(top, repo) {
@@ -314,10 +407,16 @@ export function render(root) {
   const repo = repoName();
   renderBanner(page.banner, state);
   renderLeftOut(page.leftOut);
+  renderYours(page.yours);
   renderApprovals(page.approvals);
+  renderUpdate(page.update);
   syncRange(page.range);
   renderTiles(page.tiles, sources, ruleCount, sessionsEver);
+  renderBody({ ruleCount, sessionsEver }, sources, repo);
+}
 
+/** Below the tiles: the most violations logged and the newest sessions, or the empty block that says what to do next. */
+function renderBody({ ruleCount, sessionsEver }, sources, repo) {
   const top = topRules(rulesArray().map(stored => ({ id: stored.rule.id, title: titleOf(stored), fires: fires(stored.rule.id), stored })));
   const body = data.loaded ? overviewBody({ ruleCount, sessionsEver, topCount: top.length }) : "loading";
   page.lists.hidden = body !== "lists";
@@ -331,4 +430,5 @@ export function render(root) {
 
 export const actions = {
   dismisswelcome: () => { dismissWelcome(); invalidate(); },
+  dismissupdate: () => { dismissUpdate(); invalidate(); },
 };

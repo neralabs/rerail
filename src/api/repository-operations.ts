@@ -50,11 +50,13 @@ import {
 } from "../engine/catalog/rule-library.js";
 import { configureBundledCodeRule } from "../engine/catalog/rule-config.js";
 import { BLOCK_STEERS_NOTE, type RuleMode } from "../engine/catalog/rule-mode.js";
+import { untitledRuleRefusal } from "../engine/catalog/rule-schema.js";
 import { blockModeEnabled, conversationRulesEnabled, experimentOffMessage, type ExperimentalFeature } from "../engine/experimental-features.js";
 import { cachedRecommendRulePacks } from "../engine/catalog/rule-packs.js";
 import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { approve, currentSubject, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { checkouts, libraryRules, repositories, ruleAttachments, ruleSettings, RULE_KINDS } from "../engine/storage/schema.js";
+import { ruleKindOf, type RuleDocument } from "../engine/catalog/rule-store.js";
 import { ApiError, defineOperation, type Operation, type RerailApiStores } from "./operation.js";
 import {
   approvalSubjectSchema,
@@ -74,6 +76,7 @@ import {
   resetBodySchema,
   resetResultSchema,
   rerailRuleSchema,
+  ruleDocumentRecord,
   ruleSettingRecordSchema,
   settingsSetBodySchema,
   startBodySchema,
@@ -293,22 +296,29 @@ export function historyScope(stores: RerailApiStores, caller: ApiCaller, reposit
   return historyRepositoryIds(stores, repositoryKey);
 }
 
-/** When each effective rule was added here and, for a rule created by you, last edited. */
+/**
+ * When each effective rule was added here and, for a rule created by you, when it was last edited and which By Rerail
+ * rule it is an edited copy of.
+ */
 interface RuleDates {
   /** `created_at` by attachment: `sourceKind\0sourceId\0folder`. */
   readonly added: ReadonlyMap<string, number>;
   /** `updated_at` by library rule id. */
   readonly updated: ReadonlyMap<string, number>;
+  /** `copied_from_rule_id` by library rule id, for the edited copies only. */
+  readonly copiedFrom: ReadonlyMap<string, string>;
 }
 
 function ruleDatesOf(db: RerailDatabase, repositoryKey: string): RuleDates {
   const attachments = db.select({
     sourceKind: ruleAttachments.sourceKind, sourceId: ruleAttachments.sourceId, folder: ruleAttachments.folder, createdAt: ruleAttachments.createdAt,
   }).from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all();
-  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt }).from(libraryRules).all();
+  const library = db.select({ ruleId: libraryRules.ruleId, updatedAt: libraryRules.updatedAt, copiedFromRuleId: libraryRules.copiedFromRuleId })
+    .from(libraryRules).all();
   return {
     added: new Map(attachments.map(row => [`${row.sourceKind}\0${row.sourceId}\0${row.folder}`, row.createdAt])),
     updated: new Map(library.map(row => [row.ruleId, row.updatedAt])),
+    copiedFrom: new Map(library.flatMap(row => (row.copiedFromRuleId === null ? [] : [[row.ruleId, row.copiedFromRuleId] as const]))),
   };
 }
 
@@ -316,6 +326,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
   const shared = {
     addedAt: dates.added.get(`${rule.source.kind}\0${rule.source.id}\0${rule.attachmentFolder}`) ?? null,
     updatedAt: rule.source.kind === "library_rule" ? dates.updated.get(rule.source.id) ?? null : null,
+    copiedFromRuleId: rule.source.kind === "library_rule" ? dates.copiedFrom.get(rule.source.id) ?? null : null,
     source: { ...rule.source },
     folder: rule.attachmentFolder,
     on: rule.on,
@@ -331,9 +342,7 @@ function effectiveRuleRecord(rule: EffectiveRule, dates: RuleDates): z.infer<typ
     payloadHash: rule.payloadHash,
     ...(rule.approval === undefined ? {} : { approval: { subject: { ...rule.approval.subject }, approved: rule.approval.approved } }),
   };
-  return rule.document.kind === "code"
-    ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
-    : { kind: "conversation", rule: rule.document.rule, ...shared };
+  return { ...ruleDocumentRecord(rule.document, rule.notRun), ...shared };
 }
 
 function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchema> {
@@ -394,6 +403,19 @@ function checkConfig(stores: RerailApiStores, catalog: RuleCatalog, change: Sett
   if (library !== undefined) throw new ApiError(400, "invalid-setting", `config applies to rules by Rerail; ${id} is your library rule`);
   const configured = configureBundledCodeRule(catalog, id, change.config);
   if (!configured.ok) throw new ApiError(400, "invalid-setting", configured.reason);
+}
+
+/** The `.rerail` rules a setting's target holds: the rule it names, or each such rule of the pack it names. */
+function rerailRulesOf(catalog: RuleCatalog, change: SettingChange): string[] {
+  const ids = change.targetKind === "rule" ? [change.targetId] : (catalog.packs.get(change.targetId)?.rules ?? []).map(rule => rule.id);
+  return ids.filter(id => catalog.documents.get(id)?.kind === "rerail");
+}
+
+/** Rejects a setting that cannot apply (`checkConfig`), or that puts a rule written in `.rerail` on block, which is not supported yet. */
+function checkSetting(stores: RerailApiStores, catalog: RuleCatalog, change: SettingChange): void {
+  const rerail = change.mode === "block" ? rerailRulesOf(catalog, change) : [];
+  if (rerail.length > 0) throw new ApiError(400, "invalid-setting", `block mode is not supported yet for a rule written in .rerail (${rerail.join(", ")}); use steer`);
+  checkConfig(stores, catalog, change);
 }
 
 /** Whether the repository is not set up yet, read inside the caller's transaction. */
@@ -593,7 +615,7 @@ export const repositoryOperations: readonly Operation[] = [
       }));
       refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
-      for (const change of changes) checkConfig(stores, catalog, change);
+      for (const change of changes) checkSetting(stores, catalog, change);
       const settings = changes.map(change => mergedSetting(db, owner, change));
       for (const setting of settings) setRuleSetting(db, setting);
       return { settings: settings.map(settingRecord), ...blockNote([input.mode]) };
@@ -619,7 +641,7 @@ export const repositoryOperations: readonly Operation[] = [
       const changes = foldedChanges((input.settings ?? []).map(change => ({ ...change, folder: folderOf(change.folder ?? "") })));
       refuseExperimentsOff(changes.map(change => settingModeWrite(db, owner, change)));
       const catalog = checkoutRuleCatalog(stores, target.checkout);
-      for (const change of changes) checkConfig(stores, catalog, change);
+      for (const change of changes) checkSetting(stores, catalog, change);
       // The attachments and the settings that go with them are one change: nobody sees a pack before its settings.
       db.transaction(tx => {
         const settings = changes.map(change => mergedSetting(tx, owner, change));
@@ -743,10 +765,8 @@ export const repositoryOperations: readonly Operation[] = [
       const ruleCatalog = stores.ruleCatalog();
       return {
         rules: [...ruleCatalog.documents.values()]
-          .filter(document => input.kind === undefined || document.kind === input.kind)
-          .map(document => document.kind === "code"
-            ? { kind: "code" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null, ...inactiveOf("code", document.rule) }
-            : { kind: "conversation" as const, rule: document.rule, packId: ruleCatalog.packOf.get(document.rule.id) ?? null }),
+          .filter(document => input.kind === undefined || ruleKindOf(document) === input.kind)
+          .map(document => ({ ...ruleDocumentRecord(document, ruleCatalog.notRun.get(document.rule.id)), packId: ruleCatalog.packOf.get(document.rule.id) ?? null })),
       };
     },
   }),
@@ -782,7 +802,7 @@ export const repositoryOperations: readonly Operation[] = [
     id: "library_rules_upsert",
     method: "PUT",
     path: "/api/library-rules/{id}",
-    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository; the original is switched off there once the copy is approved, at once for a person's write and, for a coding agent's, when a person approves it.",
+    summary: "Create or replace a rule created by you; a code rule is compiled in the kernel first. The rule needs a title (rule.title): the rule in the person's own words, which the dashboard lists it by; one without is refused. With attach: true it is also added to the target repository in folder, setting the repository up if it is not yet. Writing the id of a By Rerail rule that is not also in your library stores an edited copy instead, added wherever the original is in the target repository; the original is switched off there once the copy is approved, at once for a person's write and, for a coding agent's, when a person approves it.",
     params: libraryRuleId,
     body: libraryUpsertBodySchema,
     output: libraryUpsertResultSchema,
@@ -790,6 +810,8 @@ export const repositoryOperations: readonly Operation[] = [
       if (input.rule.id !== input.id) throw new ApiError(400, "rule-id-mismatch", `path id ${input.id} does not match rule.id ${input.rule.id}`);
       const db = stores.database();
       refuseExperimentsOff([{ mode: input.rule.mode, stored: getLibraryRule(db, input.id)?.document.rule.mode }], input.kind);
+      const untitled = untitledRuleRefusal(input.rule);
+      if (untitled !== undefined) throw new ApiError(400, "rule-title-required", untitled);
       const ruleCatalog = stores.ruleCatalog();
       const existing = db.select({ copiedFrom: libraryRules.copiedFromRuleId }).from(libraryRules).where(eq(libraryRules.ruleId, input.id)).get();
       // A library rule a later release bundled the id of wins over the By Rerail rule, so writing it edits it.
@@ -882,22 +904,28 @@ function guardRepositoriesUsing(stores: RerailApiStores, caller: ApiCaller, rule
 
 /**
  * The rules `rules_activity` reports: those present in the repository, or without one every By Rerail rule and
- * every rule created by you. An unknown repository has none.
+ * every rule created by you. An unknown repository has none. `notRun` says why this Rerail no longer runs an installed
+ * pack's rule, as `RuleCatalog.notRun` does.
  */
-export function activityRules(stores: RerailApiStores, key: string | undefined): { id: string; kind: "code" | "conversation"; rule: unknown }[] {
+export function activityRules(
+  stores: RerailApiStores,
+  key: string | undefined,
+): { id: string; kind: RuleDocument["kind"]; rule: unknown; notRun: string | null }[] {
   const db = stores.database();
   const ruleCatalog = stores.ruleCatalog();
   if (key === undefined) {
     return [
-      ...[...ruleCatalog.documents.values()].map(document => ({ id: document.rule.id, kind: document.kind, rule: document.rule as unknown })),
-      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown })),
+      ...[...ruleCatalog.documents.values()].map(document => ({
+        id: document.rule.id, kind: document.kind, rule: document.rule as unknown, notRun: ruleCatalog.notRun.get(document.rule.id) ?? null,
+      })),
+      ...listLibraryRules(db).map(rule => ({ id: rule.document.rule.id, kind: rule.document.kind, rule: rule.document.rule as unknown, notRun: null })),
     ];
   }
   const repository = findRepository(db, key);
   if (repository === undefined) return [];
   const present = new Map(listRepositoryRules(db, ruleCatalog, repository.repositoryKey).rules
-    .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown }] as const));
-  return [...present].map(([id, { kind, rule }]) => ({ id, kind, rule }));
+    .map(rule => [rule.document.rule.id, { kind: rule.document.kind, rule: rule.document.rule as unknown, notRun: rule.notRun }] as const));
+  return [...present].map(([id, entry]) => ({ id, ...entry }));
 }
 
 function startOrStop(

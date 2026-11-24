@@ -60,17 +60,32 @@ pub fn threads() -> usize {
 ///
 /// With `this_thread`, the calling thread is the pool's thread 0, so the work it does itself, and its waits that run
 /// other jobs ([`help_until`]), are the pool's too: a program's main thread, called before any other thread uses the
-/// pool. Without it (a library, a test), the pool's threads are its own. A pool already made stays as it is.
+/// pool. It is recorded as such ([`Bell::wait_as`]). Without it (a library, a test), the pool's threads are its own.
+/// A pool already made stays as it is.
 pub fn configure(this_thread: bool) {
     static MADE: OnceLock<()> = OnceLock::new();
     MADE.get_or_init(|| {
+        if this_thread {
+            let _ = MAIN.set(std::thread::current().id());
+        }
         let b = rayon::ThreadPoolBuilder::new().num_threads(threads()).thread_name(|i| format!("rerail-cpu {i}")).stack_size(POOL_STACK);
         let _ = if this_thread { b.use_current_thread() } else { b }.build_global();
     });
 }
 
-/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
-const POOL_STACK: usize = 16 << 20;
+/// The program's main thread, which [`configure`] took into the pool. Recorded, not asked of the system: Windows has
+/// no call that says which thread is a process's main one.
+static MAIN: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+/// Whether this is one of the pool's threads running a job: on the pool, and not the main thread [`configure`] took
+/// into it.
+fn in_a_job() -> bool {
+    on_pool() && MAIN.get() != Some(&std::thread::current().id())
+}
+
+/// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory. A
+/// thread that runs a job's work off the pool (`rerail_engine`'s `threads::beside`) takes the same.
+pub const POOL_STACK: usize = 16 << 20;
 
 /// The stack a wait keeps free before it runs another's job on its frames ([`help_once`]).
 const HELP_STACK_MARGIN: usize = 4 << 20;
@@ -112,9 +127,10 @@ thread_local! {
     static LAST_RUN: std::cell::Cell<(f64, &'static str)> = const { std::cell::Cell::new((0.0, "")) };
 }
 
-/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]).
+/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]). It runs inside the
+/// job fence ([`fenced`]).
 pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
-    let r = f();
+    let r = fenced(f);
     LAST_JOB.with(|j| j.set(name));
     r
 }
@@ -141,6 +157,47 @@ pub fn help_once() -> bool {
         LAST_RUN.with(|l| l.set((0.0, "")));
     }
     ran
+}
+
+/// What [`fenced`] calls around a job ([`fence_jobs`]): `enter` before it, `leave` after.
+struct FenceCalls {
+    enter: fn(),
+    leave: fn(),
+}
+
+/// The engine's fence ([`fence_jobs`]).
+static JOB_FENCE: OnceLock<FenceCalls> = OnceLock::new();
+
+/// A job's fence, closed when it ends (or unwinds).
+struct Fence(fn());
+
+impl Drop for Fence {
+    fn drop(&mut self) {
+        (self.0)();
+    }
+}
+
+/// Runs the job `f` inside the fence the engine set ([`fence_jobs`]), on whatever thread runs it: the jobs started
+/// through [`as_job`] (the engine's named jobs and the jobs beside a caller) and through a stream (a run's strata,
+/// [`crate::stream::Stream`]), which, beside a run's own thread, are the only work that queues device launches or
+/// flushes a wave. The chunks of
+/// rayon's own data-parallel loops (`par_iter`, `join`) are not fenced, and need not be: they queue and flush nothing,
+/// and a fenced job one of them takes while it waits is fenced on its own.
+pub fn fenced<R>(f: impl FnOnce() -> R) -> R {
+    let _fence = JOB_FENCE.get().map(|calls| {
+        (calls.enter)();
+        Fence(calls.leave)
+    });
+    f()
+}
+
+/// Sets what fences a job off the per-thread state of the job it may be run inside: `enter` is called before each job
+/// ([`fenced`]) and `leave` after. The engine's device wave keeps the launches a stratum queued on its thread until the
+/// stratum's wave is flushed (`rerail_engine`'s `lanes::wave`); a job taken by that thread while it waited, whose own
+/// flush took them, ran them into its own outputs, and the stratum, resumed elsewhere, found none. Set once, at start;
+/// a later call is ignored.
+pub fn fence_jobs(enter: fn(), leave: fn()) {
+    let _ = JOB_FENCE.set(FenceCalls { enter, leave });
 }
 
 /// One site's waits ([`Waiting`]): how many ran others' jobs, for how long, and how late those jobs made them.
@@ -324,8 +381,14 @@ impl Bell {
     }
 
     /// Waits until `poll` gives a value, recorded under `site` ([`waits`]), running no job: it polls each time the
-    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end).
+    /// bell rings, and at least every millisecond (a ring is never needed for the wait to end). On one of the pool's
+    /// threads running a job (a run nested in one, as the typing run `bridge::facts` starts) it runs the pool's jobs
+    /// instead ([`help_until_as`]): a job that waited running none would hold its pool thread for the whole nested run,
+    /// and with 2 threads the main thread and the typing run's both waited for chunks no thread was left to build.
     pub fn wait_as<T>(&self, site: &'static str, mut poll: impl FnMut() -> Option<T>) -> T {
+        if in_a_job() {
+            return help_until_as(site, poll);
+        }
         let mut wait = Waiting::new(site);
         loop {
             let seen = *self.rung.lock().unwrap_or_else(|p| p.into_inner());

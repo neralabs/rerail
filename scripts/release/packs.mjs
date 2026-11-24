@@ -8,25 +8,20 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { compareVersions, NEXT_TAG, raiseNext } from "./dist-tags.mjs";
+import { compareVersions, NEXT_TAG, parseExpectation, publishRefusal, raiseNext } from "./dist-tags.mjs";
 import { changeType, changeTypeRefusal, releaseNoteEntry } from "./release-notes.mjs";
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const PACKS = join(ROOT, "packs");
 export const REGISTRY = "https://registry.npmjs.org";
-/** Every pack version is published under `latest`, where set-up and `rerail packs add` fetch it. */
-export const PUBLISH_TAG = "latest";
-/** Where a pack held at an older `latest` (put back on purpose) is published instead, so the hold stays. */
-export const HELD_PUBLISH_TAG = NEXT_TAG;
+/**
+ * Every pack version is published under `next`, where it waits for a person to promote it to `latest`, which set-up
+ * and `rerail packs add` fetch on the default update channel (promotePacks; docs/release.md, "Promoting").
+ */
+export const PUBLISH_TAG = NEXT_TAG;
 
 /** The git tag that marks `name`'s `version` as released. */
 export const releaseTag = (name, version) => `${name}@${version}`;
-
-/** The npm names of the packs whose ids `held` lists (space-separated, as packs-plan.mjs writes them). */
-export function heldPackNames(held = "", packs = listPacks()) {
-  const ids = held.split(/\s+/u).filter((id) => id !== "");
-  return packs.filter((pack) => ids.includes(pack.id)).map((pack) => pack.name);
-}
 
 /** `gh api` against this repository (`GH_REPO`, else the checkout's remote), its output as text. */
 const ghApi = (args) => execFileSync("gh", ["api", ...args], { cwd: ROOT, encoding: "utf8" });
@@ -53,16 +48,13 @@ export function assertCommitOnGitHub(sha) {
 /** Whether npm publish's output says the registry already has this version. */
 export const alreadyOnRegistry = (output) => /cannot publish over the previously published versions?|EPUBLISHCONFLICT/iu.test(output);
 
-/** The dist-tag `name` is published under: `next` for a pack in `held` (held at an older `latest`), else `latest`. */
-const publishTag = (name, held) => (held.includes(name) ? HELD_PUBLISH_TAG : PUBLISH_TAG);
-
 /**
  * Tags each `{ name, version }` of a packs-pack.ts manifest `<name>@<version>` with `steps.tag(tag)`, before anything
  * is published, skipping a tag in `tags` (one that exists already), so a re-run tags only what the first run did not.
- * Returns every entry as `{ name, version, distTag }`, the dist-tag it is published under (publishTag), for its
+ * Returns every entry as `{ name, version, distTag }`, the dist-tag it is published under (PUBLISH_TAG), for its
  * GitHub Release, which a re-run rewrites.
  */
-export function tagPacks(manifest, tags, steps, held = []) {
+export function tagPacks(manifest, tags, steps) {
   const existing = new Set(tags);
   return manifest.map(({ name, version }) => {
     const tag = releaseTag(name, version);
@@ -72,42 +64,37 @@ export function tagPacks(manifest, tags, steps, held = []) {
       steps.tag(tag);
       steps.log(`tagged ${tag}`);
     }
-    return { name, version, distTag: publishTag(name, held) };
+    return { name, version, distTag: PUBLISH_TAG };
   });
 }
 
 /**
  * Publishes each `{ name, version, file }` of a packs-pack.ts manifest, tagged already (tagPacks), waiting on nothing
  * npm does after a publish, so any failed run can be run again: a version the registry already has is not published
- * again, only taken through the steps after the publish. A pack named in `held` (held at an older `latest`) is
- * published under `next`, every other under `latest`, and then `next` is pointed at it too unless `next` is already
- * at a newer version (raiseNext in dist-tags.mjs), so `next` never trails `latest`. A version older than the pack's
- * `latest` (an old run run again after a newer version shipped) is `superseded`: publishing it under `latest` would
- * move `latest` back, so it is left unpublished and the rest go on. `steps` does the I/O: `publish(file, distTag)`
- * returns `{ ok, output }`, `readLatest(name)` and `readNext(name)` resolve to that dist-tag or null, and
- * `distTag(name, version, tag)` throws on failure. Returns `{ released, superseded }`: each `{ name, version, distTag }`
- * this run released, and each `{ name, version, latest }` it left unpublished.
+ * again, only taken through the steps after the publish. Each is published under `next` (PUBLISH_TAG) and nothing else
+ * moves: `latest` waits for the promotion, so a pack put back and held there stays held. A version publishRefusal (in
+ * dist-tags.mjs) refuses is `superseded` and left unpublished, and the rest go on: one older than `latest`, which
+ * `next` must not trail, or older than `next`, which an old run run again after a newer version shipped would move
+ * back. `steps` does the I/O: `publish(file, distTag)` returns `{ ok, output }`, and `readDistTags(name)` resolves to
+ * the pack's dist-tags (`{}` when it has none). Returns `{ released, superseded }`: each `{ name, version, distTag }`
+ * this run released, and each `{ name, version, why }` it left unpublished.
  */
-export async function releasePacks(manifest, steps, held = []) {
+export async function releasePacks(manifest, steps) {
   const released = [];
   const superseded = [];
   for (const { name, version, file } of manifest) {
     const spec = releaseTag(name, version);
-    const distTag = publishTag(name, held);
-    if (distTag === PUBLISH_TAG) {
-      const latest = await steps.readLatest(name);
-      if (latest !== null && compareVersions(version, latest) < 0) {
-        steps.log(`${spec} is older than latest ${latest}: not published, since publishing it under ${PUBLISH_TAG} would move ${PUBLISH_TAG} back`);
-        superseded.push({ name, version, latest });
-        continue;
-      }
+    const why = publishRefusal(version, PUBLISH_TAG, await steps.readDistTags(name));
+    if (why !== null) {
+      steps.log(`${spec} is not published: ${why}`);
+      superseded.push({ name, version, why });
+      continue;
     }
-    const published = steps.publish(file, distTag);
+    const published = steps.publish(file, PUBLISH_TAG);
     if (!published.ok && !alreadyOnRegistry(published.output)) throw new Error(`npm publish ${spec} failed`);
     if (!published.ok) steps.log(`${spec} is already on the registry; not published again`);
-    if (distTag === PUBLISH_TAG) steps.log(await raiseNext(name, version, steps));
-    steps.log(`released ${spec} under ${distTag}${distTag === PUBLISH_TAG ? "" : ` (held at an older ${PUBLISH_TAG})`}`);
-    released.push({ name, version, distTag });
+    steps.log(`released ${spec} under ${PUBLISH_TAG}`);
+    released.push({ name, version, distTag: PUBLISH_TAG });
   }
   return { released, superseded };
 }
@@ -207,9 +194,9 @@ export function changesetNotes(changesets, name) {
 }
 
 /**
- * What the pending `changesets` bump past a patch on a pack below 1.0.0. A pack is pre-release until 1.0.0, so every
- * change to it is a patch (docs/pack-format.md, "Versioning and release"); `changeset version` would otherwise take
- * 0.1.x to 0.2.0 on a minor and to 1.0.0 on a major.
+ * What the pending `changesets` bump by a major on a pack below 1.0.0: `changeset version` would release it as 1.0.0,
+ * which declares the pack stable, a step taken on purpose and not by a changeset. A minor, 0.1.x to 0.2.0, is how a
+ * pack below 1.0.0 moves to the newer Rerail line it needs (docs/pack-format.md, "Versioning and release").
  */
 export function changesetBumpFailures(changesets, packs) {
   const versions = new Map(packs.map((pack) => [pack.name, pack.version]));
@@ -217,8 +204,8 @@ export function changesetBumpFailures(changesets, packs) {
   for (const { file, text } of changesets) {
     for (const { name, bump } of changesetEntries(text)) {
       const version = versions.get(name);
-      if (version === undefined || bump === "patch" || !version.startsWith("0.")) continue;
-      failures.push(`${file}: ${name} is ${version}, below 1.0.0, so its bump is patch, not ${bump}`);
+      if (version === undefined || bump !== "major" || !version.startsWith("0.")) continue;
+      failures.push(`${file}: ${name} is ${version}, below 1.0.0, so a major bump would release it as 1.0.0: use minor or patch`);
     }
   }
   return failures;
@@ -317,23 +304,8 @@ export function planPacks(packs, tags, npmHas) {
   return plan;
 }
 
-/** The dist-tag that holds a pack at a version put back on purpose, so a sweep and a publish leave it there. */
+/** The dist-tag that holds a pack at a version put back on purpose, so a promotion sweep leaves it there. */
 export const HOLD_TAG = "held";
-
-/**
- * Which of `names` are held, given `distTagsOf(name)` (null when npm could not be read): a pack whose `held` dist-tag
- * is its `latest`, put back on purpose. A publish leaves such a pack's `latest` alone, as a promotion sweep does.
- */
-export function heldPacks(names, distTagsOf) {
-  const held = [];
-  const unreadable = [];
-  for (const name of names) {
-    const distTags = distTagsOf(name);
-    if (distTags === null) unreadable.push(name);
-    else if (distTags[HOLD_TAG] !== undefined && distTags[HOLD_TAG] === distTags.latest) held.push(name);
-  }
-  return { held, unreadable };
-}
 
 /**
  * What one promotion run was asked for. With no `id`, every pack at its package.json version: the sweep. With one,
@@ -352,11 +324,42 @@ export function promotionRequest(packs, id, version) {
 }
 
 /**
+ * What a release run's promotion asks for: exactly the versions it published, `released` as the run names them
+ * (`<name>@<version>:<dist-tag> ...`, packs-publish.mjs), whatever `main` holds by the time it is approved, none of them
+ * a hold. A sweep (named false), so a pack held where someone put it back stays held. Throws on a package that is no
+ * published pack.
+ */
+export function releasedRequest(packs, released) {
+  const request = released.split(/\s+/u).filter((entry) => entry !== "").map((entry) => {
+    const { name, version } = parseExpectation(entry);
+    const pack = packs.find((candidate) => candidate.name === name);
+    if (pack === undefined) throw new Error(`${name} is not a published pack under packs/`);
+    return { ...pack, version, hold: false };
+  });
+  return { packs: request, named: false };
+}
+
+/**
+ * Why core `coreLatest` can't load a pack whose core range is `range` (its `peerDependencies["@neralabs/rerail"]`,
+ * undefined when it names none), or null when it can. Only one lower bound, `>=<version>`, is read: the form the
+ * release writes (raisedCoreRange in core.mjs) and every pack uses, read without semver, which the promote job does
+ * not install.
+ */
+export function coreRangeProblem(range, coreLatest) {
+  if (range === undefined) return "it names no core range, so whether the core on latest loads it is unknown";
+  const floor = /^>=\s*(\S+)$/u.exec(range.trim())?.[1];
+  if (floor === undefined) return `its core range ${range} is not one lower bound (>=<version>), so the promote can't check it`;
+  return compareVersions(coreLatest, floor) < 0 ? `it needs core ${range}, and latest is ${coreLatest}: promote core first, then run this again` : null;
+}
+
+/**
  * Which packs a promotion moves to `latest`, given the release tags and `distTagsOf(name)`: the pack's `latest` and
  * `held` dist-tags (absent when npm has none), or null when npm could not be read. A pack is promoted when its
  * version is released (its tag exists) and is not `latest` already; one without its tag is `unreleased`. A sweep
  * leaves out a pack held at its `latest` (put back on purpose); naming that pack promotes it. A promotion that is
- * not itself a hold releases any hold the pack has (`release`).
+ * not itself a hold releases any hold the pack has (`release`). Whether the core on `latest` loads a pack, and
+ * whether a newer version reached `latest` meanwhile, are checked when the promotion runs (promotePacks), after its
+ * approval, not here.
  */
 export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) {
   const existing = new Set(tags);
@@ -384,34 +387,90 @@ export function planPromotions(packs, tags, distTagsOf, { named = false } = {}) 
   return plan;
 }
 
+/** Whether a sweep's pack is held where someone put it back (its `held` dist-tag is its `latest`), as `distTags` say. */
+const heldBySweep = ({ sweep = false }, distTags) => sweep && distTags[HOLD_TAG] !== undefined && distTags[HOLD_TAG] === distTags.latest;
+
+/** Throws when `latest` is at a newer version than `version`: an older release's promotion approved after a newer one's. */
+function assertNotSuperseded(version, latest) {
+  if (latest !== undefined && compareVersions(version, latest) < 0) throw new Error(`latest is ${latest}, newer, so this release is superseded`);
+}
+
 /**
- * Points `latest` at each `{ name, version }` in `promotions`, refusing a version this repository never released (no
- * tag); a `hold` also sets the `held` dist-tag there, and a `release` removes it. Then `next` is pointed at the version
- * too unless it is already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to
- * an older version leaves it where it is. One failure does not stop the others. Returns each pack fully promoted, and
- * each failure, so the run reports them all and can be run again. `steps.promote(name, version)`,
- * `steps.hold(name, version)`, `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure, and
- * `steps.readNext(name)` resolves to `next` or null.
+ * Throws when the core on `latest` can't load `name`'s `version` (coreRangeProblem). The version's range is read first,
+ * then core's `latest` (`coreLatest()`, read once for the run), so a failed core read is always awaited at once and
+ * reported as this pack's failure.
+ */
+async function assertCoreLoads({ name, version }, steps, coreLatest) {
+  const range = await steps.readCoreRange(name, version);
+  const problem = coreRangeProblem(range, await coreLatest());
+  if (problem !== null) throw new Error(problem);
+}
+
+/**
+ * What approving `promotion` does, read as it runs, which can be days after its plan: `{ held }` for a sweep's pack held
+ * where someone put it back meanwhile, which it leaves alone, or `{ release }`, whether its `held` dist-tag is removed.
+ * A hold is never refused; any other promotion throws when superseded or when the core on `latest` can't load it.
+ */
+async function approvedPromotion(promotion, steps, coreLatest) {
+  if (promotion.hold === true) return { release: false };
+  const distTags = await steps.readDistTags(promotion.name);
+  if (heldBySweep(promotion, distTags)) return { held: distTags[HOLD_TAG] };
+  assertNotSuperseded(promotion.version, distTags.latest);
+  await assertCoreLoads(promotion, steps, coreLatest);
+  return { release: distTags[HOLD_TAG] !== undefined };
+}
+
+/** Moves `latest` (and `held`) for `promotion`, raises a trailing `next`, and logs what moved. */
+async function movePromotion({ name, version, hold = false }, release, steps) {
+  steps.promote(name, version);
+  if (hold) steps.hold(name, version);
+  if (release) steps.release(name);
+  const done = [hold ? `held there (${HOLD_TAG})` : "", release ? `${HOLD_TAG} released` : ""].filter((part) => part !== "");
+  steps.log(`promoted ${releaseTag(name, version)} to latest${done.map((part) => `, ${part}`).join("")}`);
+  steps.log(await raiseNext(name, version, steps));
+}
+
+/** `read()`, called once and its promise reused. */
+function once(read) {
+  let result;
+  return () => (result ??= read());
+}
+
+/**
+ * Points `latest` at each `{ name, version, hold, sweep }` in `promotions`, refusing a version this repository never
+ * released (no tag). A `hold` also sets the `held` dist-tag there. Anything else is checked as it runs, after its
+ * approval, which can come days after its plan (approvedPromotion): a sweep's pack someone put back and held meanwhile
+ * is left alone and listed as `held`; one whose `latest` is already newer, or that the core on `latest` can't load,
+ * fails; and a promotion past a hold removes the `held` dist-tag. Then `next` is pointed at the version too unless it
+ * is already at a newer one (raiseNext in dist-tags.mjs), so `next` never trails `latest`; a put-back to an older
+ * version leaves it where it is. One failure does not stop the others. Returns `{ promoted, held, failures }`, so the
+ * run reports them all and can be run again. `steps.promote(name, version)`, `steps.hold(name, version)`,
+ * `steps.release(name)` and `steps.distTag(name, version, tag)` throw on failure; `steps.readNext(name)` resolves to
+ * `next` or null, `steps.readDistTags(name)` to the pack's dist-tags (`{}` for none), `steps.readCoreRange(name,
+ * version)` to the published version's core range (undefined when it names none), and `steps.readCoreLatest()` to
+ * core's `latest`, read once and only when a promotion needs it.
  */
 export async function promotePacks(promotions, tags, steps) {
   const existing = new Set(tags);
-  const promoted = [];
-  const failures = [];
-  for (const { name, version, hold = false, release = false } of promotions) {
-    const tag = releaseTag(name, version);
+  const coreLatest = once(steps.readCoreLatest);
+  const result = { promoted: [], held: [], failures: [] };
+  for (const promotion of promotions) {
+    const { name, version } = promotion;
     try {
-      if (!existing.has(tag)) throw new Error("it was never released from this repository (no such git tag)");
-      steps.promote(name, version);
-      if (hold) steps.hold(name, version);
-      if (release) steps.release(name);
-      steps.log(`promoted ${tag} to latest${hold ? `, held there (${HOLD_TAG})` : ""}${release ? `, ${HOLD_TAG} released` : ""}`);
-      steps.log(await raiseNext(name, version, steps));
-      promoted.push({ name, version });
+      if (!existing.has(releaseTag(name, version))) throw new Error("it was never released from this repository (no such git tag)");
+      const approved = await approvedPromotion(promotion, steps, coreLatest);
+      if (approved.held !== undefined) {
+        steps.log(`left ${releaseTag(name, version)} unpromoted: ${name} is held at ${approved.held}, put back on purpose`);
+        result.held.push({ name, version, at: approved.held });
+        continue;
+      }
+      await movePromotion(promotion, approved.release, steps);
+      result.promoted.push({ name, version });
     } catch (error) {
-      failures.push(`${tag}: ${error instanceof Error ? error.message : String(error)}`);
+      result.failures.push(`${releaseTag(name, version)}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { promoted, failures };
+  return result;
 }
 
 /**

@@ -23,6 +23,8 @@ export const STATUS_LINES_FOLDER = "claude-status-lines";
 
 /** In the Rerail home: the updater's record of the installed versions and the update channel. */
 export const UPDATE_STATE_FILE = "update-state.json";
+/** In the Rerail home: the daemon's daily check for a newer Rerail, its last answer and when it last asked. */
+export const UPDATE_CHECK_FILE = "update-check.json";
 /** In the Rerail home: the installed versions. */
 export const VERSIONS_DIR = "versions";
 /** In the Rerail home: the link to the active package root. */

@@ -2,20 +2,21 @@
  * The page's routes, as pure functions of the URL (the shell applies them; `test/ui/ui-routes.test.ts` covers them).
  *
  * The query names the repository the page shows (`?repository=<key>&checkout=<path>`) and the selected session
- * (`sessionId=<id>`, with the `host` it ran in); every route keeps that scope. The hash names the view:
- * `#overview` (the default), `#pack/<packId>`, `#created` (rules created by you), `#packs` (the catalog),
- * `#packs?review=1` (the review before starting), `#create`, `#history` (`?rule=<id>` narrows it to one rule,
- * `?outcome=steered|logged` sets its chip), `#sessions` (`?filter=violations|in-progress` sets its chip), `#settings`,
- * `#merge` (Merge Assist; `?conflict=<id>` brings that conflict into view, as the session's line links it),
- * and `#rule/<id>`: a rule's sheet over the current view (the coding agent's steer links here). Links from steers,
- * the CLI and the status line written before v8 keep working: `#rules` is Overview, `#activity` History,
- * `#rule-packs` the catalog and `#rule-packs?review=1` the review.
+ * (`sessionId=<id>`, with the `host` it ran in); every route keeps that scope. The hash names the view: `#overview`
+ * (the default), `#pack/<packId>`, `#created` (rules created by you), `#packs` (the catalog), `#packs?review=1` (the
+ * review before starting), `#create`, `#history` (`?rule=<id>` narrows it to one rule, `?outcome=logged|steered|declined` sets
+ * its chip), `#sessions` (`?filter=violations|declined` sets its chip; an old `in-progress` opens All), `#settings`
+ * (`?section=about` scrolls to About Rerail),
+ * `#merge` (Merge Assist; `?conflict=<id>` brings that conflict into view, as the session's line links it), and
+ * `#rule/<id>`: a rule's sheet over the current view (the coding agent's steer links here). Links from steers, the CLI
+ * and the status line written before v8 keep working: `#rules` is Overview, `#activity` History, `#rule-packs` the
+ * catalog and `#rule-packs?review=1` the review.
  */
 
 /**
  * @typedef {"overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge"} ViewName
- * @typedef {"all" | "steered" | "logged"} Outcome   History by rule's chips.
- * @typedef {"all" | "corr" | "open"} SessionFilter History by session's chips: All, With violations, In progress.
+ * @typedef {"all" | "logged" | "steered" | "declined"} Outcome   History by rule's chips: All, Log only, Steered, Declined.
+ * @typedef {"all" | "corr" | "declined"} SessionFilter History by session's chips: All, With violations, Declined steers.
  * @typedef {object} Route
  * @property {ViewName | null} view  `null` for a rule link: the sheet opens over whatever view shows.
  * @property {string} [pack]         The pack a `pack` route shows.
@@ -26,6 +27,7 @@
  * @property {string} [session]      The session Sessions selects.
  * @property {boolean} [jump]        Sessions scrolls to the selected session's first violation.
  * @property {string} [conflict]     The conflict Merge Assist shows (`merge` routes only).
+ * @property {"about"} [section]     The section Settings scrolls to (`settings` routes only).
  */
 
 /** Hashes that name a view by themselves, the legacy ones included. */
@@ -43,39 +45,52 @@ const decode = text => {
 const encode = id => encodeURIComponent(id).replace(/%3A/gi, ":");
 
 /** History by rule's chips as the hash spells them; All has no parameter. */
-const OUTCOMES = { steered: true, logged: true };
+const OUTCOMES = { logged: true, steered: true, declined: true };
 /** History by session's chips: the hash's word for each, and back. */
-const SESSION_FILTER_PARAM = { corr: "violations", open: "in-progress" };
-const SESSION_FILTER = { violations: "corr", "in-progress": "open" };
+const SESSION_FILTER_PARAM = { corr: "violations", declined: "declined" };
+const SESSION_FILTER = { violations: "corr", declined: "declined" };
 /** `table[key]` for a key the table itself holds; a URL's text never reaches inherited names like "constructor". */
 const own = (table, key) => (typeof key === "string" && Object.hasOwn(table, key) ? table[key] : undefined);
+
+/** Routes whose link ends in an id (`#rule/<id>`, `#pack/<id>`): the rest of the hash is the id, `?` included. */
+const ID_ROUTES = [
+  ["rule/", rule => (rule === "" ? { view: null } : { view: null, rule })],
+  ["pack/", pack => (pack === "" ? { view: "overview" } : { view: "pack", pack })],
+];
+
+/** What each view reads from its query, merged over `{ view }`; a view missing here reads nothing. */
+const QUERY_READERS = {
+  packs: params => (params.get("review") === "1" ? { view: "review" } : {}),
+  history: params => {
+    const filterRule = params.get("rule"), outcome = params.get("outcome");
+    return { ...(filterRule ? { filterRule } : {}), ...(own(OUTCOMES, outcome) ? { outcome } : {}) };
+  },
+  sessions: params => {
+    const sessionFilter = own(SESSION_FILTER, params.get("filter"));
+    return sessionFilter ? { sessionFilter } : {};
+  },
+  merge: params => {
+    const conflict = params.get("conflict");
+    return conflict ? { conflict } : {};
+  },
+  settings: params => (params.get("section") === "about" ? { section: "about" } : {}),
+};
+
+/** `[path, params]` of a hash without its `#`. */
+function splitQuery(raw) {
+  const at = raw.indexOf("?");
+  return at < 0 ? [raw, new URLSearchParams()] : [raw.slice(0, at), new URLSearchParams(raw.slice(at + 1))];
+}
 
 /** The route a hash (with or without its `#`) names; anything unknown is Overview. */
 export function parseRoute(hash) {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
-  // The rest of a rule or pack link is the id, `?` included.
-  if (raw.startsWith("rule/")) {
-    const rule = decode(raw.slice(5));
-    return rule === "" ? { view: null } : { view: null, rule };
-  }
-  if (raw.startsWith("pack/")) {
-    const pack = decode(raw.slice(5));
-    return pack === "" ? { view: "overview" } : { view: "pack", pack };
-  }
-  const at = raw.indexOf("?");
-  const path = at < 0 ? raw : raw.slice(0, at);
-  const params = new URLSearchParams(at < 0 ? "" : raw.slice(at + 1));
+  const idRoute = ID_ROUTES.find(([prefix]) => raw.startsWith(prefix));
+  if (idRoute) return idRoute[1](decode(raw.slice(idRoute[0].length)));
+  const [path, params] = splitQuery(raw);
   const view = PLAIN[path] ?? "overview";
-  if (view === "packs" && params.get("review") === "1") return { view: "review" };
-  if (view === "history") {
-    const filterRule = params.get("rule"), outcome = params.get("outcome");
-    return { view, ...(filterRule ? { filterRule } : {}), ...(own(OUTCOMES, outcome) ? { outcome } : {}) };
-  }
-  const sessionFilter = own(SESSION_FILTER, params.get("filter"));
-  if (view === "sessions" && sessionFilter) return { view, sessionFilter };
-  const conflict = params.get("conflict");
-  if (view === "merge" && conflict) return { view, conflict };
-  return { view };
+  const read = own(QUERY_READERS, view);
+  return { view, ...(read ? read(params) : {}) };
 }
 
 /** `key=value` pairs (values encoded as ids are), joined into a hash's query; "" without any. */

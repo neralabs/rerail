@@ -203,6 +203,8 @@ describe("SqliteRuleStore", () => {
     expect(ids({ text: "GENERATED client" })).toEqual(["mock-cosine-prefer-generated-client", "mock-generated-client-imports"]);
     expect(ids({ text: "migration" })).toEqual(["mock-cosine-migration-warning"]);
     expect(ids({ text: "lazy query" })).toEqual(["mock-lazy-query-shaping"]);
+    // Only the title says console.debug: the search reads it too.
+    expect(ids({ text: "console.debug" })).toEqual(["mock-no-console-log"]);
     expect(ids({ text: "100%" })).toEqual([]);
     expect(ids({ source: "user-input" })).toEqual(["mock-cosine-migration-warning"]);
     expect(ids({ boundary: "sentence", mode: "steer" })).toEqual(["mock-cosine-prefer-generated-client"]);

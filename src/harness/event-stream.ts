@@ -126,14 +126,15 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
     const explicitDatabase = options.databasePath === undefined ? undefined : configuration.databasePath;
     const eventLoop: RerailEventLoop = {
       ingest: async (event) => {
-        // As a hook waits: a busy daemon gets HOOK_DAEMON_WAIT_MS from the event's arrival, the start check's read of
-        // it included, and no more.
+        // As a hook waits (`withDaemonDeadline`): a busy daemon gets HOOK_DAEMON_WAIT_MS from the event's arrival, the
+        // start check's read of it included, though on Windows that read may first wait up to 30 s for a free instance
+        // of a busy engine pipe.
         const deadline = Date.now() + HOOK_DAEMON_WAIT_MS;
         if (event.kind === "session-start") host = event.session.host;
         // As hooks do: where Rerail is off nothing is recorded, and asking for the socket would autostart the daemon.
         if (!await hookRerailStarted(host, workspaceRoot, explicitDatabase)) return [];
         const named = process.env.RERAIL_ENGINE_SOCKET;
-        const endpoint = named !== undefined ? await engineEndpointAt(named) : await daemonEngineEndpoint(replaceOtherPackage, deadline);
+        const endpoint = named !== undefined ? await engineEndpointAt(named, deadline) : await daemonEngineEndpoint(replaceOtherPackage, deadline);
         replaceOtherPackage = false;
         return await ingestEngineEvent(endpoint, event, configuration);
       },

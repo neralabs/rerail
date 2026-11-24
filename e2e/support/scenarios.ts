@@ -6,7 +6,7 @@
  * that stamp rows with `Date.now()` (audits, steer receipts) are given the seed clock there.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,7 @@ import {
   setRuleSetting,
   setUpRepository,
   SqliteAuditStore,
+  steerFeedback,
   upsertLibraryRule,
   approve,
   ruleSubject,
@@ -119,19 +120,51 @@ function createCheckout(reposRoot: string, spec: CheckoutSpec, gitEnvironment: N
 /**
  * Installs this repository's `packs/<id>` into the scenario home as `rerail packs add <id>` does from the registry: the
  * package in the prefix's `node_modules` (here a link to the folder) and its version in the prefix's `package.json`, so
- * each loads as Rerail's own pack rather than one installed from a folder, which would wait for approval.
+ * each loads as Rerail's own pack rather than one installed from a folder, which would wait for approval. The pack of an
+ * `olderTokenRule` is a copy instead, as it was published for an earlier Rerail ({@link writeOlderTokenPack}).
  */
-function installPacks(home: string, packIds: readonly string[]): void {
+function installPacks(home: string, packIds: readonly string[], olderTokenRule?: OlderTokenRule): void {
   const prefix = installedPacksPrefix(home);
   const scope = join(prefix, "node_modules", "@neralabs");
   mkdirSync(scope, { recursive: true });
   const dependencies: Record<string, string> = {};
   for (const id of packIds) {
     const folder = join(REPOSITORY_ROOT, "packs", id);
-    symlinkSync(folder, join(scope, `rerail-pack-${id}`), process.platform === "win32" ? "junction" : "dir");
+    const installed = join(scope, `rerail-pack-${id}`);
+    if (olderTokenRule?.packId === id) writeOlderTokenPack(folder, installed, olderTokenRule.ruleId);
+    else symlinkSync(folder, installed, process.platform === "win32" ? "junction" : "dir");
     dependencies[rulePackPackageName(id)] = (JSON.parse(readFileSync(join(folder, "package.json"), "utf8")) as { version: string }).version;
   }
   writeFileSync(join(prefix, "package.json"), `${JSON.stringify({ dependencies }, null, 2)}\n`);
+}
+
+/** A pack rule a scenario installs as a version published for an earlier Rerail wrote it. */
+interface OlderTokenRule {
+  readonly packId: string;
+  readonly ruleId: string;
+}
+
+const OLDER_TOKEN_RULES: Partial<Record<ScenarioName, OlderTokenRule>> = {
+  "pack-rule-not-running": { packId: "complexity", ruleId: "complexity-cyclomatic-python" },
+};
+
+/**
+ * Writes to `copy` the pack in `source` with rule `ruleId` asking for the `print` token of Python 2's `print >>f, x`,
+ * which a print statement implies and parsed files now leave out: Rerail loads the pack and keeps that rule, switched
+ * on, without running it (as `withOlderTokenRule` in test/support/installed-packs.ts).
+ */
+function writeOlderTokenPack(source: string, copy: string, ruleId: string): void {
+  for (const entry of ["pack.json", "package.json", "rules"]) cpSync(join(source, entry), join(copy, entry), { recursive: true });
+  const path = join(copy, "rules", `${ruleId}.json`);
+  const document = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  writeFileSync(path, JSON.stringify({
+    ...document,
+    clauses: [{
+      id: "print-token",
+      violation: { anchor: "witness.start", code: "PRINT", message: "never" },
+      forbid: { ast: { language: "python", rule: { regex: "^print$", inside: { kind: "print_statement" } } } },
+    }],
+  }));
 }
 
 /**
@@ -178,6 +211,34 @@ const NO_RAW_FETCH = regexRule(
   "Call the API through the generated client in src/api/generated.",
 );
 
+const NO_INNER_HTML = regexRule(
+  "storefront-no-inner-html",
+  "steer",
+  "Storefront renders text through React, never by writing HTML strings into the page.",
+  "\\.innerHTML\\s*=",
+  "STOREFRONT-HTML",
+  "Render the text through React instead of assigning innerHTML.",
+);
+
+/** A rule created by you and approved, which a coding agent edited: its copy waits for approval. */
+const NO_ALERT = regexRule(
+  "storefront-no-alert",
+  "steer",
+  "Storefront shows messages in its toast, never with window.alert.",
+  "\\balert\\(",
+  "STOREFRONT-ALERT",
+  "Show the message in the toast instead of alert().",
+);
+
+const NO_DEFAULT_EXPORT = regexRule(
+  "storefront-no-default-export",
+  "log",
+  "Storefront modules use named exports, so renames show up in every import.",
+  "export\\s+default\\b",
+  "STOREFRONT-EXPORT",
+  "Export it by name instead of as the default.",
+);
+
 /** A rule in the storefront checkout's own `.rerail/rules`: the pack `worktree`, there and nowhere else. */
 const NO_LEGACY_CLIENT = regexRule(
   "storefront-no-legacy-client",
@@ -197,6 +258,14 @@ interface RuleSchedule {
   readonly count: (index: number, daysAgo: number) => number;
 }
 
+/** A steer the coding agent declined, and the line it recorded with `rerail feedback` a minute after the steer. */
+interface Decline {
+  /** The session's index in its repository's plan (0-based, oldest first). */
+  readonly index: number;
+  readonly ruleId: string;
+  readonly reason: string;
+}
+
 interface SessionPlan {
   readonly sessionId: string;
   readonly host: RerailHost;
@@ -205,6 +274,31 @@ interface SessionPlan {
   readonly endedAt: number | null;
   readonly index: number;
   readonly daysAgo: number;
+}
+
+/** A place a session's turn end could not check, as its walk records it. */
+type WalkGap = Parameters<SqliteSessionStore["recordDiscoveryGap"]>[1];
+const OVERSIZE = "Source exceeds 1000000 byte policy limit";
+/** What the oldest `mature` session's turn end could not check: a folder, a file too large to read, another worktree's folder. */
+const OLDEST_SESSION_WALK_GAPS: readonly WalkGap[] = [
+  { boundary: "turn", path: "src/vendor/locked", reason: "EACCES: permission denied, opendir '/work/storefront/src/vendor/locked'", key: JSON.stringify(["src/vendor/locked", "EACCES"]) },
+  { boundary: "turn", path: "data/catalog.json", reason: OVERSIZE, key: JSON.stringify(["data/catalog.json", OVERSIZE]) },
+  {
+    boundary: "turn", path: "../storefront-hotfix/src/cache", reason: "EACCES: permission denied, opendir '/work/storefront-hotfix/src/cache'",
+    key: JSON.stringify(["../storefront-hotfix/src/cache", "EACCES"]),
+  },
+];
+
+/**
+ * In `mature`, a step for each of `OLDEST_SESSION_WALK_GAPS`, recorded at the oldest session's turn end, six minutes after
+ * it starts (`recordSession`); none in another scenario.
+ */
+function walkGapSteps(scenario: ScenarioName, context: HistoryContext, plans: readonly SessionPlan[]): Array<{ at: number; run: () => void }> {
+  const oldest = plans.find(plan => plan.index === 0);
+  if (scenario !== "mature" || oldest === undefined) return [];
+  const at = oldest.startedAt + 6 * MINUTE;
+  const session = { host: oldest.host, sessionId: oldest.sessionId, cwd: context.checkoutPath };
+  return OLDEST_SESSION_WALK_GAPS.map(gap => ({ at, run: () => atTime(at, () => context.sessions.recordDiscoveryGap(session, gap)) }));
 }
 
 /** A repository change at an instant: set-up, a setting, a new library rule, a stop. */
@@ -285,15 +379,17 @@ interface HistoryContext {
 /**
  * Records one session the way a coding agent's hooks do: it opens, a prompt and a write are recorded, the touched file
  * is audited against the rules on in the checkout at that instant (each violation carries the mode its rule had then),
- * the violations of rules on Steer or Block are steered, and the session ends, except the open one, which gets a second
- * prompt two minutes before the seed clock so it reads live.
+ * the violations of rules on Steer or Block are steered, the agent records why it declined any of `declines` it was
+ * steered on, and the session ends, except the open one, which gets a second prompt two minutes before the seed clock
+ * so it reads live.
  */
-function recordSession(context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], violating: Set<string>): void {
+function recordSession(
+  context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], declines: readonly Decline[], violating: Set<string>,
+): void {
   const { sessions, audits, repositoryKey, checkoutPath } = context;
   const session = { host: plan.host, sessionId: plan.sessionId, cwd: checkoutPath };
   const rules = listRepositoryRules(context.db, context.catalog, repositoryKey, { checkoutPath }).rules
     .filter(rule => rule.document.kind === "code" && rule.on);
-  const byId = new Map(rules.map(rule => [rule.document.rule.id, rule]));
   const path = TOUCHED_FILES[plan.index % TOUCHED_FILES.length]!;
   const at = (offset: number): number => plan.startedAt + offset;
 
@@ -302,43 +398,8 @@ function recordSession(context: HistoryContext, plan: SessionPlan, schedules: re
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt`, kind: "user-prompt", observedAt: at(MINUTE), payload: { text: PROMPTS[plan.index % PROMPTS.length] } });
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-write`, kind: "call", observedAt: at(4 * MINUTE), payload: { toolName: "write", args: { path } } });
 
-  const violations: CodeRuleViolation[] = [];
-  for (const schedule of schedules) {
-    const count = schedule.count(plan.index, plan.daysAgo);
-    if (count === 0) continue;
-    const rule = byId.get(schedule.ruleId);
-    if (rule === undefined) throw new Error(`${plan.sessionId}: ${schedule.ruleId} is not on in ${repositoryKey} at ${new Date(plan.startedAt).toISOString()}`);
-    const { clauseId, code, message } = reportingClause(rule);
-    for (let ordinal = 0; ordinal < count; ordinal += 1) {
-      const line = 3 + plan.index * 4 + ordinal * 2;
-      violations.push({
-        id: `sha256:${createHash("sha256").update(`${plan.sessionId}\0${schedule.ruleId}\0${ordinal}`).digest("hex")}`,
-        ruleId: schedule.ruleId,
-        clauseId,
-        code,
-        mode: rule.mode,
-        message,
-        path,
-        span: { startByte: line * 40, endByte: line * 40 + 12, startLine: line, startColumn: 3, endLine: line, endColumn: 15 },
-        captures: {},
-        variables: {},
-      });
-    }
-    violating.add(schedule.ruleId);
-  }
-
-  const provenance: NonNullable<AuditInput["ruleProvenance"]> = rules.map(rule => ({
-    ruleId: rule.document.rule.id,
-    revision: rule.revision,
-    payloadHash: rule.payloadHash,
-    source: { ...rule.source },
-    repositoryKey,
-    checkoutPath,
-    placement: [{
-      folder: rule.attachmentFolder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode,
-      suppressions: rule.suppressions, suppressionsFrom: rule.decidedBy.suppressions,
-    }],
-  }));
+  const violations = scheduledViolations(context, plan, schedules, rules, path, violating);
+  const provenance = ruleProvenance(rules, repositoryKey, checkoutPath);
   const auditAt = at(5 * MINUTE);
   const auditId = atTime(auditAt, () => audits.start({
     sessionId: plan.sessionId,
@@ -355,14 +416,94 @@ function recordSession(context: HistoryContext, plan: SessionPlan, schedules: re
 
   const steered = [...new Set(violations.filter(violation => violation.mode !== "log").map(violation => violation.ruleId))];
   if (steered.length > 0) atTime(auditAt + 3_000, () => sessions.recordSteer(session, `${plan.sessionId}-steer`, steered));
+  recordDeclines(context, plan, declines.filter(entry => entry.index === plan.index && steered.includes(entry.ruleId)), auditAt + MINUTE);
   sessions.append({ sessionId: plan.sessionId, eventId: `${plan.sessionId}-turn`, kind: "turn-end", observedAt: at(6 * MINUTE), payload: { turn: 1 } });
-  if (plan.endedAt !== null) sessions.closeSession(plan.sessionId, plan.endedAt);
-  else {
-    sessions.append({
-      sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt-2`, kind: "user-prompt", observedAt: context.now - 2 * MINUTE,
-      payload: { text: "Now add a test for it." },
-    });
+  endSession(context, plan);
+}
+
+/**
+ * The violations `schedules` give session `plan` in `path`, each carrying the mode its rule has at the session's start;
+ * every rule that reports one is added to `violating`.
+ */
+function scheduledViolations(
+  context: HistoryContext, plan: SessionPlan, schedules: readonly RuleSchedule[], rules: readonly EffectiveRule[], path: string, violating: Set<string>,
+): CodeRuleViolation[] {
+  const byId = new Map(rules.map(rule => [rule.document.rule.id, rule]));
+  const violations: CodeRuleViolation[] = [];
+  for (const schedule of schedules) {
+    const count = schedule.count(plan.index, plan.daysAgo);
+    if (count === 0) continue;
+    const rule = byId.get(schedule.ruleId);
+    if (rule === undefined) throw new Error(`${plan.sessionId}: ${schedule.ruleId} is not on in ${context.repositoryKey} at ${new Date(plan.startedAt).toISOString()}`);
+    for (let ordinal = 0; ordinal < count; ordinal += 1) violations.push(scheduledViolation(plan, rule, path, ordinal));
+    violating.add(schedule.ruleId);
   }
+  return violations;
+}
+
+/** The `ordinal`th violation of `rule` in session `plan`, on a line of its own in `path`. */
+function scheduledViolation(plan: SessionPlan, rule: EffectiveRule, path: string, ordinal: number): CodeRuleViolation {
+  const ruleId = rule.document.rule.id;
+  const { clauseId, code, message } = reportingClause(rule);
+  const line = 3 + plan.index * 4 + ordinal * 2;
+  return {
+    id: `sha256:${createHash("sha256").update(`${plan.sessionId}\0${ruleId}\0${ordinal}`).digest("hex")}`,
+    ruleId,
+    clauseId,
+    code,
+    mode: rule.mode,
+    message,
+    path,
+    span: { startByte: line * 40, endByte: line * 40 + 12, startLine: line, startColumn: 3, endLine: line, endColumn: 15 },
+    captures: {},
+    variables: {},
+  };
+}
+
+/** Each rule's provenance as an audit records it: where it is attached and the mode and suppressions it has there. */
+function ruleProvenance(rules: readonly EffectiveRule[], repositoryKey: string, checkoutPath: string): NonNullable<AuditInput["ruleProvenance"]> {
+  return rules.map(rule => ({
+    ruleId: rule.document.rule.id,
+    revision: rule.revision,
+    payloadHash: rule.payloadHash,
+    source: { ...rule.source },
+    repositoryKey,
+    checkoutPath,
+    placement: [{
+      folder: rule.attachmentFolder, on: rule.on, mode: rule.mode, onFrom: rule.decidedBy.on, modeFrom: rule.decidedBy.mode,
+      suppressions: rule.suppressions, suppressionsFrom: rule.decidedBy.suppressions,
+    }],
+  }));
+}
+
+/** The agent's `rerail feedback` notes on the steers it declined in session `plan`, recorded at `recordedAt`. */
+function recordDeclines(context: HistoryContext, plan: SessionPlan, declines: readonly Decline[], recordedAt: number): void {
+  for (const decline of declines) {
+    context.db.insert(steerFeedback).values({
+      id: `${plan.sessionId}-decline-${decline.ruleId}`, ruleId: decline.ruleId, host: plan.host, sessionId: plan.sessionId,
+      repositoryId: context.repositoryKey, reason: decline.reason, rerailVersion: "0.0.0-e2e", recordedAt,
+    }).run();
+  }
+}
+
+/**
+ * Ends session `plan`, except the open one: it reads a pull request through an MCP server after the audit (so no card
+ * is on that call) and gets a second prompt two minutes before the seed clock, so it reads live.
+ */
+function endSession(context: HistoryContext, plan: SessionPlan): void {
+  const { sessions } = context;
+  if (plan.endedAt !== null) {
+    sessions.closeSession(plan.sessionId, plan.endedAt);
+    return;
+  }
+  sessions.append({
+    sessionId: plan.sessionId, eventId: `${plan.sessionId}-mcp`, kind: "call", observedAt: plan.startedAt + 5.5 * MINUTE,
+    payload: { toolName: "mcp__github__get_pull_request", toolCallId: `${plan.sessionId}-mcp`, input: { pullNumber: 398 } },
+  });
+  sessions.append({
+    sessionId: plan.sessionId, eventId: `${plan.sessionId}-prompt-2`, kind: "user-prompt", observedAt: context.now - 2 * MINUTE,
+    payload: { text: "Now add a test for it." },
+  });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -375,6 +516,8 @@ interface RepositoryPlan {
   readonly changes: readonly Change[];
   readonly sessions: readonly SessionPlan[];
   readonly schedules: readonly RuleSchedule[];
+  /** Steers the coding agent declined, with its reasons; none when absent. */
+  readonly declines?: readonly Decline[];
   /** Merge Assist turned on by a person, with the checkout's in-flight conflicts; off when absent. */
   readonly mergeAssist?: MergeAssistPlan;
 }
@@ -412,7 +555,7 @@ function storedConflict(conflict: Omit<Conflict, "kind" | "status" | "dismissal"
  * on an open card, so the open ones carry the links it must refuse.
  */
 function storefrontConflicts(now: number): StoredConflict[] {
-  const mine = side({ label: "This branch", ref: "main", author: "tbelanger", summary: "Round the order total to cents." });
+  const mine = side({ label: "This branch", ref: "main", author: "akim", summary: "Round the order total to cents." });
   return [
     storedConflict({
       id: OPEN_CONFLICT_ID, shortId: "c4a7e1", quiet: false, question: "src/cart/cart.ts#1-3",
@@ -422,26 +565,26 @@ function storefrontConflicts(now: number): StoredConflict[] {
         hunk: "@@ -1,3 +1,3 @@\n export function total(prices: number[]): number {\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return Math.round(prices.reduce((sum, price) => sum + price, 0));\n",
       },
       theirs: side({
-        label: "PR #398", ref: "refs/pull/398/head", author: "Tim", summary: HOSTILE_TEXT, url: OPEN_PR_URL,
+        label: "PR #398", ref: "refs/pull/398/head", author: "Sam", summary: HOSTILE_TEXT, url: OPEN_PR_URL,
         tip: { at: isoAt(now - 4 * HOUR), pushed: true }, location: "src/cart/cart.ts:2",
         hunk: `@@ -1,3 +1,3 @@\n-  return prices.reduce((sum, price) => sum + price, 0);\n+  return prices.reduce((sum, price) => sum + price, 0); // ${HOSTILE_TEXT}\n`,
       }),
       evidence: ["Both change src/cart/cart.ts lines 1–3."],
       detectedAt: isoAt(now - 3 * HOUR),
-      summary: "PR #398 (Tim) is changing function total",
+      summary: "PR #398 (Sam) is changing function total",
     }, "src/cart/cart.ts"),
     storedConflict({
       id: "conflict:package-lock.json#10-14:bump-react", shortId: "5d02b9", quiet: true, question: "package-lock.json#10-14",
       title: "package-lock.json",
       mine: { ...mine, summary: "edits package-lock.json", location: "package-lock.json:12" },
       theirs: side({
-        label: "jbarnes/bump-react", ref: "refs/heads/jbarnes/bump-react", author: "jbarnes", summary: "Bump react to 19.2.0", url: OTHER_REPOSITORY_URL,
+        label: "jdoe/bump-react", ref: "refs/heads/jdoe/bump-react", author: "jdoe", summary: "Bump react to 19.2.0", url: OTHER_REPOSITORY_URL,
         tip: { at: isoAt(now - 2 * HOUR), pushed: false }, location: "package-lock.json:12",
         hunk: "@@ -12 +12 @@\n-      \"version\": \"19.1.0\",\n+      \"version\": \"19.2.0\",\n",
       }),
       evidence: ["Both change package-lock.json lines 10–14."],
       detectedAt: isoAt(now - HOUR),
-      summary: "jbarnes/bump-react (jbarnes) is changing package-lock.json",
+      summary: "jdoe/bump-react (jdoe) is changing package-lock.json",
     }, "package-lock.json"),
     storedConflict({
       id: "conflict:CHANGELOG.md#3-5:pr402", shortId: "7b19d4", quiet: true, question: "CHANGELOG.md#3-5",
@@ -463,7 +606,7 @@ function storefrontConflicts(now: number): StoredConflict[] {
       theirs: side({ label: HOSTILE_TEXT, ref: "refs/pull/391/head", author: HOSTILE_TEXT, summary: "Log payments", url: SCRIPT_URL }),
       evidence: ["Both change src/checkout/payment.ts lines 1–3."],
       detectedAt: isoAt(now - 5 * HOUR),
-      dismissal: { name: "tbelanger", at: isoAt(now - 2 * HOUR) },
+      dismissal: { name: "akim", at: isoAt(now - 2 * HOUR) },
       summary: "PR #391 (Ana) is changing function pay",
     }, "src/checkout/payment.ts"),
   ];
@@ -508,6 +651,24 @@ function addLibraryRule(rule: CodeRule, catalog: () => RuleCatalog, approved = t
   };
 }
 
+/** An edited copy of By Rerail rule `sourceId`, stored as editing one stores it: `<id>-copy`, added where the original is, unapproved. */
+function addRerailRuleCopy(sourceId: string, catalog: () => RuleCatalog): Change["apply"] {
+  return addRuleCopy(() => catalog().documents.get(sourceId)!.rule as CodeRule, catalog);
+}
+
+/**
+ * An edited copy of rule `original()`, stored as `rules add` stores one (of a By Rerail rule, or of your approved rule a
+ * coding agent edited): `<id>-copy`, added to the whole repository, where the original is, unapproved.
+ */
+function addRuleCopy(original: () => CodeRule, catalog: () => RuleCatalog): Change["apply"] {
+  return (db, repositoryKey, at) => {
+    const source = original(), sourceId = source.id;
+    const copy = { ...source, id: `${sourceId}-copy`, revision: source.revision + 1 };
+    upsertLibraryRule(db, catalog(), copy, "code", { copiedFromRuleId: sourceId, now: at, createdAt: at });
+    addAttachment(db, { repositoryKey, folder: "", sourceKind: "library_rule", sourceId: copy.id }, at);
+  };
+}
+
 function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: number): RepositoryPlan[] {
   const dayAt = dayClock(now);
   const noSessions = { sessions: [], schedules: [] };
@@ -516,6 +677,9 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
       return [{ checkout: { ...STOREFRONT, files: { "README.md": "# Storefront\n" } }, recordedAt: now - 30 * MINUTE, changes: [{ at: now - 30 * MINUTE, apply: setUpAndStart([]) }], ...noSessions }];
     case "packs-no-session":
       return [{ checkout: STOREFRONT, recordedAt: now - HOUR, changes: [{ at: now - HOUR, apply: setUpAndStart(["typescript", "javascript"]) }], ...noSessions }];
+    case "pack-rule-not-running":
+      // The installed complexity pack is one published for an earlier Rerail (OLDER_TOKEN_RULES).
+      return [{ checkout: STOREFRONT, recordedAt: now - HOUR, changes: [{ at: now - HOUR, apply: setUpAndStart(["complexity"]) }], ...noSessions }];
     case "not-set-up":
       // `rerail start` before set-up: started, but nothing runs until the repository is set up.
       return [{
@@ -525,13 +689,20 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
         ...noSessions,
       }];
     case "awaiting-approval":
-      // A rule a coding agent wrote into the library, and one in the checkout's own .rerail/rules: neither approved.
+      // Three rules a coding agent wrote into the library (as /rerail-create adds the rules it finds), an edited copy of
+      // a By Rerail rule, a coding agent's edited copy of your approved rule, and one in the checkout's own .rerail/rules:
+      // none approved but your rule.
       return [{
         checkout: { ...STOREFRONT, files: { ...STOREFRONT_FILES, ".rerail/rules/no-legacy-client.json": JSON.stringify(NO_LEGACY_CLIENT) } },
         recordedAt: now - HOUR,
         changes: [
           { at: now - HOUR, apply: setUpAndStart(["typescript"]) },
           { at: now - 30 * MINUTE, apply: addLibraryRule(NO_RAW_FETCH, catalog, false) },
+          { at: now - 29 * MINUTE, apply: addLibraryRule(NO_INNER_HTML, catalog, false) },
+          { at: now - 28 * MINUTE, apply: addLibraryRule(NO_DEFAULT_EXPORT, catalog, false) },
+          { at: now - 27 * MINUTE, apply: addRerailRuleCopy("typescript-eslint-no-explicit-any", catalog) },
+          { at: now - 26 * MINUTE, apply: addLibraryRule(NO_ALERT, catalog) },
+          { at: now - 25 * MINUTE, apply: addRuleCopy(() => NO_ALERT, catalog) },
         ],
         ...noSessions,
       }];
@@ -590,6 +761,12 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
           { ruleId: NO_RAW_FETCH.id, count: (index, daysAgo) => (daysAgo <= 6 && index % 3 !== 0 ? 1 : 0) },
           { ruleId: "eslint-no-debugger", count: (_, daysAgo) => (daysAgo === 0 ? 1 : 0) },
         ],
+        // The open session's agent declines its non-null assertion steer and says why.
+        declines: [{
+          index: 29,
+          ruleId: "typescript-eslint-no-non-null-assertion",
+          reason: "The cart is checked for null two lines above; the assertion only narrows a type the compiler cannot follow there.",
+        }],
       }];
     case "multi-repo":
       return [
@@ -637,7 +814,7 @@ export async function seedScenario(scenario: ScenarioName, folder: string, now: 
   const reposRoot = join(root, "repos");
   for (const directory of [rerailHome, userHome, reposRoot]) mkdirSync(directory, { recursive: true });
   if (resolve(process.env.RERAIL_HOME ?? "") !== rerailHome) throw new Error(`seedScenario needs RERAIL_HOME=${rerailHome} in its environment`);
-  installPacks(rerailHome, INSTALLED_PACKS);
+  installPacks(rerailHome, INSTALLED_PACKS, OLDER_TOKEN_RULES[scenario]);
   const catalog = (): RuleCatalog => loadRuleCatalog(rerailHome);
   const databasePath = join(rerailHome, "rerail.sqlite");
   const gitEnvironment = { ...process.env, HOME: userHome, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(userHome, ".gitconfig") };
@@ -656,7 +833,8 @@ export async function seedScenario(scenario: ScenarioName, folder: string, now: 
       const violating = new Set<string>();
       const steps = [
         ...plan.changes.map(change => ({ at: change.at, run: () => atTime(change.at, () => change.apply(db, recorded.repositoryKey, change.at)) })),
-        ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, violating) })),
+        ...plan.sessions.map(session => ({ at: session.startedAt, run: () => recordSession(context, session, plan.schedules, plan.declines ?? [], violating) })),
+        ...walkGapSteps(scenario, context, plan.sessions),
       ].sort((left, right) => left.at - right.at);
       for (const step of steps) step.run();
       const listing = listRepositories(db).find(repository => repository.repositoryKey === recorded.repositoryKey)!;

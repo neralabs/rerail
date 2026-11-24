@@ -217,6 +217,9 @@ const STATE: &[(&str, &str)] = &[
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
+    // Where each job running on this thread begins its part of the wave (`lanes::wave::fence`): state of the jobs in
+    // progress, not a result kept.
+    ("code_rule_dsl/logic/lanes.rs", "FENCES"),
     // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
     // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
@@ -294,6 +297,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
+    // The stores this process owns or was refused, with their held locks, and the slot it took of each base store
+    // (`corpus::owner`): which files are this process's, not results.
+    ("code_rule_dsl/logic/plan/corpus/owner.rs", "CLAIMS"),
+    ("code_rule_dsl/logic/plan/corpus/owner.rs", "SLOTS"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
@@ -452,7 +459,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 const NOT_YET_MAPS_PIN: usize = 23;
 
 fn src() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
 }
 
 /// The crate's source files, tests left out: a test may make what it likes.

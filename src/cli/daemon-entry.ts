@@ -6,11 +6,15 @@
 import { join } from "node:path";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome, STATUS_LINES_FOLDER } from "../engine/storage/rerail-home.js";
+import { startGitWithoutCopying } from "../engine/git-start.js";
+import { loadNativeBinding } from "../engine/native/native.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
 import type { RerailApiStores } from "../api/operation.js";
 import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
+import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
+import { startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { stampLines } from "./daemon-log.js";
 
@@ -28,12 +32,20 @@ if (!node.ok) {
   process.exit(1);
 }
 
+// On Linux Node starts a child by copying the whole daemon, which holds its event loop longer the larger it grows; the
+// daemon starts its Git through the engine, which copies nothing (`git-start.ts`).
+startGitWithoutCopying(loadNativeBinding);
+
 // A home runs one daemon, whatever starts it (`runHomeDaemon`). A TLS key other accounts can read keeps the daemon from
 // other machines only: it then serves this one (`serveRerailDaemon`). Claude Code's status line on Windows still starts
 // Node, which asks the daemon, so no status lines are kept there.
 try {
   await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
+    // A managed install asks npm once a day whether a newer Rerail is out; a checkout's build never does.
+    ...(isMainRerailBuild() && updateCheckApplies(defaultRerailHome()) ? {
+      updateChecks: () => startUpdateChecks({ home: defaultRerailHome() }),
+    } : {}),
     ...(process.platform === "win32" ? {} : {
       statusLines: (stores: RerailApiStores) => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
     }),

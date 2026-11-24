@@ -86,8 +86,9 @@ export interface HookOptions {
 
 /**
  * `options` with the daemon deadline `HOOK_DAEMON_WAIT_MS` from now. A host's hook takes it as the event arrives, so the
- * start check's read of the daemon (`hookRerailStarted`, up to 2 s) counts toward the one wait: a busy daemon held a
- * hook 2 s for the start check and then 12 s more for the endpoint lookup.
+ * start check's read of the daemon (`hookRerailStarted`: up to 2 s, and on Windows up to 30 s more while every instance
+ * of a busy engine pipe is taken) counts toward the one wait: a busy daemon held a hook 2 s for the start check and then
+ * 12 s more for the endpoint lookup.
  */
 export function withDaemonDeadline(options: HookOptions): HookOptions {
   return { daemonDeadline: Date.now() + HOOK_DAEMON_WAIT_MS, ...options };
@@ -185,7 +186,10 @@ async function runHostHookOnce(
   }
   // Found before the session's lock is taken: a session's hooks that arrive together (parallel tool calls, subagents)
   // wait out a busy daemon side by side. Under the lock, each hook would begin its wait only when the one before it
-  // gave up.
+  // gave up. For the Windows pipe RERAIL_ENGINE_SOCKET names, this lookup is the check that the pipe is the home's
+  // daemon (`engineEndpointAt`), so each event goes out on a check made before the wait for the lock, up to 30 s
+  // (`LOCK_WAIT_MS`), and before its own connection's wait for a free instance of the pipe; docs/threat-model.md
+  // states that time in full.
   const daemon = await hookDaemon(options, startsSession);
   if (daemon.status !== "running") {
     // This event is lost, so say so where `rerail status` looks. A daemon that is gone (it crashed, or was stopped)
@@ -217,8 +221,8 @@ async function runHostHookOnce(
 async function hookDaemon(options: HookOptions, startsSession: boolean): Promise<HookDaemon> {
   try {
     const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
-    if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named) };
     const { daemonDeadline } = options;
+    if (named !== undefined) return { status: "running", endpoint: await engineEndpointAt(named, daemonDeadline) };
     if (startsSession) return { status: "running", endpoint: await daemonEngineEndpoint(true, daemonDeadline) };
     return await runningDaemonEngineEndpoint(daemonDeadline);
   } catch (error) {

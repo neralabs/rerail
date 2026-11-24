@@ -4,6 +4,19 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.9 (2026-11-20)
+
+65 rules, 23 of them on by default.
+
+### Changed
+
+- This version needs Rerail 0.2.1 or newer, where rules that test punctuation or keywords such as `,`, `=>` or `require` run again; 0.2.1 skips the previous version's. What they report is unchanged.
+
+### Fixed
+
+- `typescript-eslint-no-extraneous-class` with `allowWithDecorator` set to `true` no longer reports a class whose decorator stands before `export`, as in `@NgModule({}) export class AppModule {}` or `@Injectable() export default class Store {}`, matching typescript-eslint.
+- `typescript-eslint-no-unused-vars` reports an unused `using` or `await using` declaration, as typescript-eslint does.
+
 ## 0.1.8 (2026-11-17)
 
 65 rules, 23 of them on by default.

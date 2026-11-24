@@ -19,10 +19,13 @@ import {
   checkoutStatus,
   repositories,
   installedPacksPrefix,
+  approve,
+  ruleSubject,
 } from "../../src/engine/index.js";
 import { runRuleDraftCommand, type RuleDraftReport } from "../../src/cli/rule-draft.js";
 import { BLOCK_STEERS_NOTE } from "../../src/engine/index.js";
-import { installPack } from "../support/installed-packs.js";
+import { installPack, installPackDirectory, withOlderTokenRule } from "../support/installed-packs.js";
+import { repositoryPath } from "../support/oracles.js";
 import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
@@ -61,6 +64,7 @@ function noConsolePolicy(pattern = String.raw`console\.log`) {
     id: "acme:no-console-log",
     revision: 1,
     mode: "steer",
+    title: "No console.log in src",
     description: "Use the logger, not console.log.",
     scope: { include: ["src/**/*.ts"], exclude: [] },
     clauses: [{
@@ -536,12 +540,15 @@ describe("rerail rules test", () => {
     const repo = await repository({ "src/a.ts": "console.log(1);\n" });
     mkdirSync(join(repo, ".rerail", "rules"), { recursive: true });
     const file = join(repo, ".rerail", "rules", "no-console-log.json");
-    writeFileSync(file, JSON.stringify(noConsolePolicy()));
+    // A worktree's rule loads without a title, so testing it as it is asks for none.
+    const { title: _title, ...untitled } = noConsolePolicy();
+    writeFileSync(file, JSON.stringify(untitled));
 
     const { exit, report, stdout } = await testReportText(file, repo);
 
     expect(exit).toBe(0);
     expect(report).toMatchObject({ valid: true, cases: [], repository: { matches: [{ path: "src/a.ts", line: 1 }] } });
+    expect(report).not.toHaveProperty("refusal");
     expect(stdout).toContain("● No cases to run; only the repo was checked.");
     const { exit: added, stderr } = await run("add", [file, "--repo", repo]);
     expect(added).toBe(1);
@@ -764,16 +771,41 @@ describe("rerail rules test on a .rerail file", () => {
     expect(text.stdout).toContain("1 passed, 1 failed");
   });
 
-  it("says it needs a Rerail checkout, as from an installed package, instead of running the tests without one", async () => {
+  it("fails on a .rerail path that is not there, with --json too, instead of passing with no tests", async () => {
+    const repo = await repository();
+    const file = join(repo, "nonexist.rerail");
+
+    await expect(run("test", [file])).rejects.toThrow("nonexist.rerail: cannot read the file");
+    await expect(run("test", [file, "--json"])).rejects.toThrow("nonexist.rerail: cannot read the file");
+  });
+
+  it("fails on a .rerail file that does not parse, though it holds no test", async () => {
+    const repo = await repository();
+    const file = join(repo, "junk.rerail");
+    writeFileSync(file, "garbage here (\n");
+
+    await expect(run("test", [file])).rejects.toThrow("junk.rerail: line 1:");
+  });
+
+  it("fails on a .rerail file that holds no tests, saying so, as it runs nothing", async () => {
+    const repo = await repository();
+    const file = join(repo, "no-tests.rerail");
+    writeFileSync(file, RR_WITH_TESTS.slice(0, RR_WITH_TESTS.indexOf(".test ")));
+
+    await expect(run("test", [file])).rejects.toThrow("no-tests.rerail holds no tests (.test ... .end)");
+    await expect(run("test", [file, "--json"])).rejects.toThrow("no-tests.rerail holds no tests (.test ... .end)");
+  });
+
+  it("names the engine's file that is missing, as under a broken install, instead of running the tests without it", async () => {
     const repo = await repository();
     const file = join(repo, "no-print.rerail");
     writeFileSync(file, RR_WITH_TESTS);
-    // A source root that is no Rerail checkout: what an installed package finds.
+    // A root that holds neither the engine's .rerail programs nor its rule library.
     const root = process.env.RERAIL_SOURCE_ROOT;
     process.env.RERAIL_SOURCE_ROOT = repo;
     try {
       await expect(run("test", [file])).rejects.toThrow(
-        "a .rerail file's tests read the engine's .rerail programs and rule library from a Rerail checkout",
+        "sources.rerail is missing: a .rerail file's tests read the engine's .rerail programs and rule library, which Rerail's package ships beside the engine: reinstall Rerail",
       );
     } finally {
       if (root === undefined) delete process.env.RERAIL_SOURCE_ROOT;
@@ -802,6 +834,21 @@ describe("rerail rules add", () => {
       setUp: true,
       repository: [{ id: "acme:no-console-log", kind: "library_rule", folder: "", on: true }],
     });
+  });
+
+  it("refuses a rule without a title, which rules test reports as what rules add would refuse", async () => {
+    const repo = await repository();
+    setUpEmpty(repo);
+    const { title: _title, ...untitled } = noConsolePolicy();
+    const rule = { ...untitled, id: "acme:untitled" };
+    const file = writeDraft(repo, { kind: "code", rule, cases: { caught: [{ path: "src/a.ts", content: "console.log(1);\n" }], passed: [] } });
+
+    const report = JSON.parse((await run("test", [file, "--repo", repo, "--json"])).stdout) as RuleDraftReport;
+    const added = await run("add", [file, "--repo", repo]);
+
+    expect(report).toMatchObject({ ok: true, valid: true, refusal: expect.stringMatching(/^rule\.title is required/) });
+    expect(added).toMatchObject({ exit: 1, stderr: `● The rule was not added: ${report.refusal}\n` });
+    expect(rulesOf(repo).library).not.toContain("acme:untitled");
   });
 
   it("adds the rule at the folder the draft names", async () => {
@@ -936,6 +983,12 @@ describe("rerail rules add", () => {
       return { exit, draft: JSON.parse(stdout === "" ? "null" : stdout) as { kind: string; rule: Record<string, unknown> }, stderr };
     }
 
+    /** The title the rule's pack lists for it, which `rules show` gives the draft. */
+    function packTitle(id: string): string | undefined {
+      const catalog = loadRuleCatalog();
+      return catalog.packs.get(catalog.packOf.get(id) ?? "")?.rules.find(rule => rule.id === id)?.title;
+    }
+
     /** The rules `repo` runs whose id starts with `prefix`, by rule id, with where they come from. */
     function rulesNamed(repo: string, prefix: string) {
       const database = openRerailDatabase(defaultRerailDatabasePath());
@@ -1041,6 +1094,21 @@ describe("rerail rules add", () => {
       expect(rulesNamed(repo, `${id}-copy`)).toEqual([{ id: `${id}-copy`, kind: "library_rule", folder: "api", on: true }]);
     });
 
+    it("says first that this Rerail does not run it, when the installed pack writes it in a form it no longer runs", async () => {
+      const repo = await repository();
+      setUpWithComplexity(repo);
+      installPackDirectory(withOlderTokenRule(repositoryPath("packs", "complexity"), join(repo, "older-pack"), SHIPPED), "complexity");
+      try {
+        const { exit, stderr } = await show(repo, SHIPPED);
+
+        expect(exit).toBe(0);
+        expect(stderr.split("\n")[0]).toBe(`● ${SHIPPED} does not run, whether it is on or off. ${loadRuleCatalog().notRun.get(SHIPPED)}`);
+        expect(loadRuleCatalog().notRun.get(SHIPPED)).toMatch(/^This Rerail no longer runs the rule as Function complexity /u);
+      } finally {
+        installPack("complexity");
+      }
+    });
+
     it("is shown as the repository runs it, so a copy keeps the mode a person set there", async () => {
       const repo = await repository();
       setUpWithComplexity(repo);
@@ -1055,7 +1123,7 @@ describe("rerail rules add", () => {
 
       const shown = await show(repo, id);
 
-      expect(shown.draft.rule).toEqual({ ...loadRuleCatalog().documents.get(id)?.rule, mode: "log" });
+      expect(shown.draft.rule).toEqual({ ...loadRuleCatalog().documents.get(id)?.rule, title: packTitle(id), mode: "log" });
     });
 
     it("is shown with the option values the repository sets, which the copy keeps, and as shipped when they no longer apply", async () => {
@@ -1074,7 +1142,7 @@ describe("rerail rules add", () => {
       const shipped = loadRuleCatalog().documents.get(id)?.rule;
 
       configure({ retired: true });
-      expect((await show(repo, id)).draft.rule).toEqual(shipped);
+      expect((await show(repo, id)).draft.rule).toEqual({ ...shipped, title: packTitle(id) });
 
       configure({ option: "type" });
       const configured = (await show(repo, id)).draft;
@@ -1160,6 +1228,159 @@ describe("rerail rules add", () => {
       expect(again.stderr).toBe(`● The rule was not added: ${tested.report.refusal}\n`);
       expect((await show(repo, id)).stderr).toContain(`Change that one: rerail rules show ${id}-copy`);
       expect(rulesOf(repo).library.filter(rule => rule.startsWith(id))).toEqual([`${id}-copy`]);
+    });
+  });
+
+  describe("in a coding agent's session, a draft that changes your approved rule", () => {
+    afterEach(() => { vi.unstubAllEnvs(); });
+
+    /** Rule `id` as `noConsolePolicy` writes it; the library is shared by this file's tests, so each takes its own id. */
+    const policy = (id: string, pattern?: string) => ({ ...noConsolePolicy(pattern), id });
+    const edit = (id: string) => ({ ...policy(id, String.raw`console\.(log|debug)`), revision: 2 });
+
+    /** Add rule `id` to `repo` as a person, from their own terminal, and approve it, so it steers. */
+    async function approvedRule(repo: string, id: string): Promise<void> {
+      setUpEmpty(repo);
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: policy(id) }), "--repo", repo])).exit).toBe(0);
+      approveStored(id);
+    }
+
+    function approveStored(id: string): void {
+      const database = openRerailDatabase(defaultRerailDatabasePath());
+      try {
+        approve(database, ruleSubject(id, getLibraryRule(database, id)!.payloadHash));
+      } finally {
+        database.$client.close();
+      }
+    }
+
+    /** Each rule `repo` runs, by id: whether it is on and the mode it runs in. */
+    function running(repo: string): Record<string, { on: boolean; mode: string }> {
+      const database = openRerailDatabase(defaultRerailDatabasePath());
+      try {
+        return Object.fromEntries(listRepositoryRules(database, loadRuleCatalog(), recordCheckout(database, repo).repositoryKey).rules
+          .map(rule => [rule.document.rule.id, { on: rule.on, mode: rule.mode }]));
+      } finally {
+        database.$client.close();
+      }
+    }
+
+    it("is saved as a copy in Log, the rule keeping its content and steering until a person approves the copy, which turns the rule off", async () => {
+      const id = "acme:agent-copy";
+      const repo = await repository();
+      await approvedRule(repo, id);
+      vi.stubEnv("CLAUDECODE", "1");
+
+      const { exit, stdout } = await run("add", [writeDraft(repo, { kind: "code", rule: edit(id) }), "--repo", repo]);
+
+      expect(exit).toBe(0);
+      expect(stdout).toMatch(new RegExp(`^● ${id} is approved, so this edit is saved as ${id}-copy, added to rerail-rule-draft-\\w+ where ${id} is\\.\\n`));
+      expect(stdout).toContain(`It runs in Log beside ${id} until a person approves it on its page in the dashboard, which turns ${id} off there.\n`);
+      expect(stdout).not.toContain("rerail rules approve");
+      expect(getLibraryRuleDocument(id)).toEqual(policy(id));
+      expect(getLibraryRuleDocument(`${id}-copy`)).toEqual({ ...edit(id), id: `${id}-copy` });
+      expect(running(repo)).toEqual({ [id]: { on: true, mode: "steer" }, [`${id}-copy`]: { on: true, mode: "log" } });
+
+      approveStored(`${id}-copy`);
+      expect(running(repo)).toEqual({ [id]: { on: false, mode: "steer" }, [`${id}-copy`]: { on: true, mode: "steer" } });
+    });
+
+    it("changes in place a rule that waits for approval, and takes a draft that says what the approved rule says", async () => {
+      const repo = await repository();
+      setUpEmpty(repo);
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: policy("acme:agent-waiting") }), "--repo", repo])).exit).toBe(0);
+      await approvedRule(repo, "acme:agent-same");
+      vi.stubEnv("CLAUDECODE", "1");
+
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: edit("acme:agent-waiting") }), "--repo", repo])).stdout).toMatch(/^● Added acme:agent-waiting /);
+      expect(getLibraryRuleDocument("acme:agent-waiting")).toEqual(edit("acme:agent-waiting"));
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: policy("acme:agent-same") }), "--repo", repo])).stdout).toMatch(/^● Added acme:agent-same /);
+      expect(rulesOf(repo).library.filter(rule => /^acme:agent-(waiting|same)-copy/u.test(rule))).toEqual([]);
+    });
+
+    it("refuses one that names a folder, and a second edit while a copy waits, as rules test reports", async () => {
+      const id = "acme:agent-refused";
+      const repo = await repository();
+      await approvedRule(repo, id);
+      vi.stubEnv("CLAUDECODE", "1");
+      const inFolder = writeDraft(repo, { kind: "code", rule: edit(id), folder: "web" });
+
+      const tested = await testReport(inFolder, repo);
+      const added = await run("add", [inFolder, "--repo", repo]);
+
+      expect(tested.report.refusal).toBe(`folder: ${id} is approved, so this edit is saved as a copy added where ${id} is, and the draft cannot name a folder`);
+      expect(added).toMatchObject({ exit: 1, stderr: `● The rule was not added: ${tested.report.refusal}\n` });
+
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: edit(id) }), "--repo", repo])).exit).toBe(0);
+      const again = writeDraft(repo, { kind: "code", rule: { ...edit(id), revision: 3 } });
+      const second = await testReport(again, repo);
+      expect(second.report.refusal).toMatch(new RegExp(`already has your copy of ${id}, ${id}-copy\\. Change that one: rerail rules show ${id}-copy$`));
+      expect((await run("add", [again, "--repo", repo])).exit).toBe(1);
+      expect((await run("show", [id, "--repo", repo])).stderr).toContain(`● ${second.report.refusal}\n`);
+      expect(getLibraryRuleDocument(id)).toEqual(policy(id));
+    });
+
+    it("is refused where the rule is not added, as rules test and rules show say, until the rule is added unchanged", async () => {
+      const id = "acme:agent-elsewhere";
+      await approvedRule(await repository(), id);
+      const repo = await repository();
+      setUpEmpty(repo);
+      vi.stubEnv("CLAUDECODE", "1");
+      const file = writeDraft(repo, { kind: "code", rule: edit(id) });
+
+      const tested = await testReport(file, repo);
+
+      expect(tested.report.refusal).toMatch(new RegExp(`^${id} is approved and not added to rerail-rule-draft-\\w+, so a copy of this edit would have nowhere to run here\\. Add ${id} here unchanged first, or a person changes it from a terminal of their own$`));
+      expect(await run("add", [file, "--repo", repo])).toMatchObject({ exit: 1, stderr: `● The rule was not added: ${tested.report.refusal}\n` });
+      expect((await run("show", [id, "--repo", repo])).stderr).toContain(`● ${tested.report.refusal}\n`);
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: policy(id) }), "--repo", repo])).exit).toBe(0);
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: edit(id) }), "--repo", repo])).exit).toBe(0);
+      expect(running(repo)).toEqual({ [id]: { on: true, mode: "steer" }, [`${id}-copy`]: { on: true, mode: "log" } });
+    });
+
+    it("refuses its approved copy in another repository where the rule runs, so the two never steer side by side", async () => {
+      const id = "acme:agent-copied";
+      const first = await repository();
+      await approvedRule(first, id);
+      vi.stubEnv("CLAUDECODE", "1");
+      expect((await run("add", [writeDraft(first, { kind: "code", rule: edit(id) }), "--repo", first])).exit).toBe(0);
+      approveStored(`${id}-copy`);
+      vi.unstubAllEnvs();
+      const second = await repository();
+      setUpEmpty(second);
+      expect((await run("add", [writeDraft(second, { kind: "code", rule: policy(id) }), "--repo", second])).exit).toBe(0);
+      const shown = await run("show", [`${id}-copy`, "--repo", second]);
+      expect(shown.stderr).toContain(`${id}-copy is your copy of ${id} for another repository, and is not added to rerail-rule-draft-`);
+      const file = writeDraft(second, JSON.parse(shown.stdout) as unknown);
+
+      const tested = await testReport(file, second);
+      const added = await run("add", [file, "--repo", second]);
+
+      expect(tested.report.refusal).toMatch(new RegExp(`^${id}-copy is your copy of ${id} for another repository, and ${id} runs in rerail-rule-draft-\\w+, so both would steer here\\.`));
+      expect(added).toMatchObject({ exit: 1, stderr: `● The rule was not added: ${tested.report.refusal}\n` });
+      expect(running(second)).toEqual({ [id]: { on: true, mode: "steer" } });
+
+      // A coding agent's edit of the copy there is refused the same way, and show names the original to change.
+      vi.stubEnv("CLAUDECODE", "1");
+      const edited = writeDraft(second, { kind: "code", rule: { ...edit(id), id: `${id}-copy`, revision: 3 } });
+      expect((await testReport(edited, second)).report.refusal).toBe(tested.report.refusal);
+      expect(await run("add", [edited, "--repo", second])).toMatchObject({ exit: 1, stderr: added.stderr });
+      expect((await run("show", [`${id}-copy`, "--repo", second])).stderr).toBe(shown.stderr);
+    });
+
+    it("is said by rules show, and a person's own terminal still changes the rule in place", async () => {
+      const id = "acme:agent-shown";
+      const repo = await repository();
+      await approvedRule(repo, id);
+      vi.stubEnv("CLAUDECODE", "1");
+      const shown = (await run("show", [id, "--repo", repo])).stderr;
+      expect(shown).toMatch(new RegExp(`^● ${id} is yours, added to rerail-rule-draft-\\w+\\.\\n`));
+      expect(shown).toContain(`${id} is approved, so in Claude Code's session rules add saves an edit of it as a copy`);
+      expect(shown).not.toContain("saving changes it");
+      vi.unstubAllEnvs();
+
+      expect((await run("add", [writeDraft(repo, { kind: "code", rule: edit(id) }), "--repo", repo])).stdout).toMatch(/^● Added /);
+      expect(getLibraryRuleDocument(id)).toEqual(edit(id));
     });
   });
 });
