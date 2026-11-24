@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
+import { SqliteAuditControlStore, type PolicyOwnerClaim } from "../../../src/engine/audit/audit-control.js";
 import type { AuditInput } from "../../../src/engine/audit/audit.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { BUSY_TIMEOUT_MS, failWhileWriteLocked, type RerailDatabase } from "../../../src/engine/storage/database.js";
@@ -446,6 +446,72 @@ describe("record writes while another process holds the write lock", () => {
     lockWaitTry.release();
 
     expect(probed).toBeUndefined();
+    expect(await freed).toBe(true);
+  }, 30_000);
+
+  // Each of the audit controls' transactions below reads before it writes, as the owner claim's does. Before, each met
+  // a lock wait's take as a holder, and SQLite failed its write at once with the lock's error.
+  it.each([
+    {
+      write: "a session's settings change",
+      act: (controls: SqliteAuditControlStore): unknown => controls.updateSettings(session.sessionId, { mode: "log" }).settings.mode,
+      made: "log",
+    },
+    {
+      write: "a checkout's settings change",
+      act: (controls: SqliteAuditControlStore): unknown => controls.updateWorkspaceSettings("/work", { mode: "log" }).mode,
+      made: "log",
+    },
+    {
+      write: "a repository audit's claim",
+      act: (controls: SqliteAuditControlStore): unknown => controls.claimRepositoryAudit(session.sessionId, "/work"),
+      made: true,
+    },
+    {
+      write: "the end of a session whose owner ended",
+      arrange: async (controls: SqliteAuditControlStore, path: string): Promise<void> => {
+        controls.registerOwner(session.sessionId, "background");
+        const ended = fork(join(dirname(path), "ended.cjs"), [], { stdio: "ignore" });
+        await once(ended, "exit");
+        const database = new Database(path);
+        database.prepare("UPDATE policy_session_owners SET process_id = ?").run(ended.pid);
+        database.close();
+      },
+      act: (controls: SqliteAuditControlStore): unknown => controls.endSessionsOfEndedOwners(1_000, 5_000),
+      made: 1,
+    },
+    {
+      write: "an audit request's claim",
+      arrange: async (controls: SqliteAuditControlStore): Promise<PolicyOwnerClaim> => {
+        const claim = controls.registerOwner(session.sessionId, "background");
+        await controls.requestAudit(session.sessionId, { scope: "repository" });
+        return claim;
+      },
+      act: (controls: SqliteAuditControlStore, claim?: unknown): unknown => controls.claim(session.sessionId, claim as PolicyOwnerClaim)?.status,
+      made: "running",
+    },
+  ])("leave $write no lock wait's take to meet", async ({ arrange, act, made }) => {
+    const { path, sessions } = await stores();
+    const controls = new SqliteAuditControlStore(path);
+    closers.push(() => controls.close());
+    sessions.openSession(session, 1_000);
+    await writeFile(join(dirname(path), "ended.cjs"), "");
+    const arranged = await arrange?.(controls, path);
+    const holder = holderHere(path);
+    const lockWaitTry = holdNextLockWaitTry();
+    const stop = new AbortController();
+    closers.push(() => stop.abort());
+    const { waitForWriteLock } = await import("../../../src/engine/storage/write-lock-wait.js");
+    const freed = waitForWriteLock(path, stop.signal);
+    holder.exec("COMMIT");
+    await lockWaitTry.held;
+
+    let result: unknown;
+    const failed = thrown(() => { result = act(controls, arranged); });
+    lockWaitTry.release();
+
+    expect(failed).toBeUndefined();
+    expect(result).toEqual(made);
     expect(await freed).toBe(true);
   }, 30_000);
 
