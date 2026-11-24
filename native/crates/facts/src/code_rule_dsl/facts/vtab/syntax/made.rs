@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it, places, tokens, spread
 /// nodes (`spread`'s), the token order's places (`tokens`: with a token, one before, one after) and `op`'s rows, as
 /// its projection has them; the documents' table keeps them.
-pub type ViewCounts = [u32; 10];
+pub type ViewCounts = [u32; 11];
 
 /// A document's row of the documents' table's counts (`Batch::kept_counts`, `retain::put_base_counts`): its key, path,
 /// digest, views' counts and facts' size, and whether it is a file's own tree (a guest's path is its host's).
@@ -36,7 +36,7 @@ pub struct Kept {
 /// A projection's views' counts.
 pub(super) fn view_counts(p: &Projected) -> ViewCounts {
     use super::tokens::TokRel;
-    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads(), p.token_rows(TokRel::First), p.token_rows(TokRel::Before), p.token_rows(TokRel::After), p.ops()]
+    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens(), p.spreads(), p.token_rows(TokRel::First), p.token_rows(TokRel::Before), p.token_rows(TokRel::After), p.ops(), p.text_rows()]
 }
 
 /// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
@@ -333,7 +333,16 @@ impl Docs {
         let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::clone(&d.facts.lines))));
         let new_span = profile::span(|| "projected".into());
         let token_order = core && super::tokens::VIEWS.iter().any(|r| projection.wants(r));
-        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), token_order, &self.context.block, self.context.cache.clone());
+        // `text`'s rows (`View::Text`): which nodes have text, and which positions.
+        let reads_text = core && projection.wants("text");
+        let text_rows = dialect.filter(|_| reads_text).map(|dialect| super::core_rr::TextRows::new(projection, dialect));
+        let spans = super::TextSpans {
+            tokens: projection.token_text || std::env::var("RERAIL_TOKEN_TEXT").is_ok_and(|v| v == "all"),
+            source: projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source),
+            lines: projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line),
+        };
+        let text = reads_text.then_some((text_rows.as_ref(), spans));
+        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), token_order, text, &self.context.block, self.context.cache.clone());
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
         p.file = Guest::file_key(d.guest.as_deref().map(Guest::of), d.key);
         drop(new_span);
@@ -430,6 +439,7 @@ pub(super) struct Offsets {
     pub(super) tokens: OnceLock<Vector<usize>>,
     pub(super) ends: OnceLock<Vector<usize>>,
     pub(super) spreads: OnceLock<Vector<usize>>,
+    pub(super) texts: OnceLock<Vector<usize>>,
     /// `tokens::TokRel`'s, in its order.
     pub(super) toks: [OnceLock<Vector<usize>>; 4],
 }
@@ -2151,6 +2161,22 @@ impl Tested {
         }
         let (strings, symbols) = batch.vocabulary();
         self.test(|i| strings.get(i), &symbols);
+        // `text`'s strings are the view's (decision 0656 step 4), read off the tape and interned as a read of them
+        // interns them: none is among the groups' strings. A document's at a time.
+        if batch.shape == Shape::Core && batch.projection.wants("text") {
+            for doc in 0..batch.docs.len() {
+                let p = &batch.docs[doc];
+                let (mut texts, mut syms) = (Vec::new(), Vec::new());
+                for i in 0..p.text_rows() {
+                    let (local, x) = p.text_local(i);
+                    if let Ok(a) = u32::try_from(p.text_atom(&batch.atoms, local, x)) {
+                        texts.push(p.with_text(local, x, str::to_owned));
+                        syms.push(a);
+                    }
+                }
+                self.test(|i| texts[i].as_str(), &syms);
+            }
+        }
         scanned.store(true, Ordering::Release);
     }
 }

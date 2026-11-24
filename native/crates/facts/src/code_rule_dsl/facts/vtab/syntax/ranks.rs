@@ -47,9 +47,12 @@ pub enum Item {
     /// An outermost anchor of a projection narrowed to anchors (`Projected::anchored`): a child of the root in the
     /// projection, whose place among the root's children is its rank among them (`Projected::idx`).
     Anchor = 10,
+    /// A numbered node with text, as the rules read it (`text`'s node rows, `text_view`): of a kind or field whose text
+    /// a rule reads, within the inline bound or token-like or of a kind read at any length.
+    Text = 11,
 }
 
-const _: () = assert!(Item::Anchor as i64 == rerail_clif::view_reads::ANCHOR_ITEM && Item::Anchor as u32 + 1 == rerail_clif::ids::ITEMS);
+const _: () = assert!(Item::Anchor as i64 == rerail_clif::view_reads::ANCHOR_ITEM && Item::Text as u32 + 1 == rerail_clif::ids::ITEMS);
 
 /// The items, as `Item`'s numbers.
 const ITEMS: usize = rerail_clif::ids::ITEMS as usize;
@@ -193,7 +196,7 @@ impl Ranks {
             })
             .expect("a batch's block holds its projection")
         };
-        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op, Item::Anchor].map(sample);
+        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op, Item::Anchor, Item::Text].map(sample);
         let desc = Desc::<Numbering>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live

@@ -14,7 +14,7 @@
 //! - **terms**: a leaf's text as a number of the document's (equal texts, equal terms), so a reader turns each distinct
 //!   text into its own value once, not once a leaf.
 
-use crate::aux_index::{self, AuxIndex, Kind, NONE, Sections};
+use crate::aux_index::{self, AuxIndex, Kind, NONE};
 use crate::tape::Tape;
 
 /// The sections the reads below need: an index that lacks one is refused (`DocIndex::read`).
@@ -118,6 +118,7 @@ impl<'a> DocIndex<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::aux_index::Sections;
     use crate::aux_index::sample;
 
     /// The facade answers as the document says, from an index with the sections it needs and from one with every

@@ -110,8 +110,7 @@ prototype's rule, "never key postings to known rules".
      index read back from the store), and `the_aux_indexes_ukl_reads_are_its_rust_reads`, whose kernel now reads the
      index in the tape's home through `ukl_aux_in_home`.
 4. The engine reads from it: `text` by string and by node, a child's place, kind counts, and rare kinds. The rows
-   these replace are removed, and so is the work that made them. In progress: the `text` rows are not yet removed
-   (below, **Not yet removed**).
+   these replace are removed, and so is the work that made them.
    - **One interface: `tape_format::doc_index::DocIndex`** (the user, 2026-11-23: "please put the calls behind an
      abstraction so that it's easier to switch out the design later"). The engine calls it and nothing under it:
      counts (`count`, `holds`, `counts`, `distinct`, `named_all_rooted`), listed codes (`listed`), text
@@ -128,13 +127,29 @@ prototype's rule, "never key postings to known rules".
      counts where they answer for its projection (`Docs::indexed_codes`: core.rerail's shape, no anchors, no guest,
      a named root, no strays, not withheld), so the planner's first read of them makes no document. Else its
      projection, as before (T's shape leaves comments out, which the index does not count apart).
-   - **`text` by its string.** A read of `text(n, s)` by `s` is routed (`MadeRows::route`, `keys_with_texts`) to
-     the documents whose index says a node or span can have the text: a name of its vocabulary, else text its source
-     holds. It made every document of the batch before.
-   - **`text` by node.** A leaf's `text` row takes its string by its term in its tape's index (`DocIndex::term`,
-     `core_rr::Terms`): the first leaf of a term interns its text, and every other leaf of the same text takes that
-     string, with no hash of its text. Only where the home holds an index (`FactsIn::stored_index`): for a home
-     without one, building it would cost what interning saves. A node that is no leaf interns its text as before.
+   - **`text` is a view** (`View::Text`), in core.rerail's shape: no row is made, and no text interned until a rule
+     reads it. Its rows, a document's in order: the numbered nodes with text, a rank item the projection's walk
+     marks (`Item::Text`, `core_rr::TextRows`: a node like one whose text a rule reads, `Projection::text_nodes`,
+     within the inline bound or token-like or of a kind read at any length, as the rows were), then the positions
+     with text (`TextSpans`: the tokens where a rule reads a token's text, the source and the lines where one reads
+     theirs). The walk that made a row a node, and its decoding of literals to decide a node's text, are removed;
+     so is `RERAIL_LINE_TEXT=all`, which made every line's text within the bound.
+     - *`s`* is the text's atom (`Projected::text_atom`): a leaf's by its term in its tape's index
+       (`DocIndex::term`), interned at the term's first read and read after with no hash of its text (the term's
+       atom, in the projection's block: a derived fact written once, decision 0353); any other's interned where it is
+       read, as `op`'s are.
+     - *By node* (`n`): the node's or position's row, by the rank (`Projected::text_row_of`).
+     - *By string* (`s`): the rows of the documents whose index says a node or span can have the text (a name of its
+       vocabulary, else text its source holds; `Batch::text_matches`), each one's rows compared by their bytes. A run
+       gives a batch its documents' counts (`ViewCounts`' 11th: `Projected::text_rows`), so a read makes only those
+       documents; with no counts given, the view's row numbering makes every document's projection (not its rows).
+     - *`Extra`'s spans* (the source, the lines and the regexes' matches, where a program reads `source`,
+       `src_line` or `rx_span`) have their text made with them: a relation of those rows alone, bound after the view's
+       (`places::join`, as their places are). Not counted by value (`place_statistics`): that would intern every text.
+     - The device reads no `text` (`device_chunk::device_view`), as it reads no `op`.
+     - *A text test's scan* (`contains("ol", x)` over a batch's strings, `Tested::scan`) tests the view's texts too,
+       a document's at a time: they are no group's strings. A whole scan made every document already; it interns
+       what the rows interned, and only there.
    - **A child's place** (`child`'s `i`). A projection whose numbered nodes are every named node under the root
      (core.rerail's shape, one range, not withheld) over a home that holds an index reads a place in it
      (`Projected::places_by_index`, `FactsIn::place`), and its view entry says so (`ViewDoc::places_by_index`), so the
@@ -145,17 +160,14 @@ prototype's rule, "never key postings to known rules".
      place is its rank among them, a rank item of the projection's numbering (`Item::Anchor`, `ANCHOR_ITEM`), read by
      the host and the device alike. The places column is removed, with its run in the views' entry (`ViewDoc::place`
      says which read a node's place is).
-   - **Not yet removed.**
-     - *The `text` rows*: still made a row a node, now with a leaf's string by its term. Removing them makes `text` a
-       view, and how its `s` is valued decides that view for every node, leaves included: a span (compared by its
-       bytes through the vocabulary's hash, interned only where a rule outputs it), an interned string (multi-leaf
-       texts, which have no term, interned into a table by node: the row again), or a term for every node with text
-       (an index of about 20 bytes a node). The user's to choose.
    - **The reads take the home.** `DocTape::in_place` hands the reads the home's bytes (`extent`): the tape, its
      presence and its index, which the view names (`presence`). A home ends where its index ends
      (`AuxIndex::extent`; `presence::find` refuses bytes past it).
    - **Tests:** `a_documents_index_answers_as_the_document_says` (the facade, on a home's index and a built one; one
-     without a section refused), `a_read_of_text_by_its_string_makes_only_the_documents_that_can_hold_it`,
+     without a section refused), `text_is_a_view_of_the_nodes_and_positions_with_text` (no row made; a row a node
+     with text and none past the bound, a position's, by node and by string; the leaves of one text one atom;
+     narrowed to the kinds read; `Extra`'s source span after the view's), `a_probe_makes_the_document_it_names_alone`,
+     `a_read_of_text_by_its_string_makes_only_the_documents_that_can_hold_it`,
      `a_node_columns_counts_make_no_document`, `the_clif_read_of_a_place_is_the_rust_read` (`tape_place` through the
      JIT, every node), `the_view_reads_are_the_hosts_rows` (the view reads on the JIT and a device, core.rerail's
      shape now reading places in the index), and the facts' tests of every format

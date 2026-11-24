@@ -21,8 +21,9 @@ use super::granules;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// The places core.rerail's shape reads as the `Loc` view, with rows only for `Extra`'s spans.
-pub(super) const NAMES: [&str; 4] = ["line", "end_line", "col", "docof"];
+/// The places core.rerail's shape reads as the `Loc` view, with rows only for `Extra`'s spans; and `text`, the `Text`
+/// view's likewise (decision 0656 step 4: a node's or position's text is read off the tape, a span's is made with it).
+pub(super) const NAMES: [&str; 5] = ["line", "end_line", "col", "docof", "text"];
 
 /// A place relation: the `Loc` view's rows (`view`), then the rows of `Extra`'s spans (`spans`), numbered past them.
 pub struct Places {
@@ -389,7 +390,8 @@ impl Pairs {
 /// and its postings' squares add with their cross term at its most (each value's postings in both, in proportion).
 fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     let names = p.columns();
-    if names.len() != 2 {
+    // `text`'s second column is a text: counted by value, every text of the batch would be interned to measure it.
+    if names.len() != 2 || names[1] == "s" {
         return None;
     }
     let mut view = Pairs::new();
