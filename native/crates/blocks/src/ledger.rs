@@ -100,6 +100,15 @@ fn fail(v: Verdict) {
 
 const G: usize = 1 << MIN_LOG;
 
+/// The least free chunk, merged with its free buddies (`Ledger::put`), whose pages a free gives to the OS: a smaller
+/// one stays on its list with its pages, for the next chunk of its class. A run's short-lived vectors and rows free and
+/// take chunks of a few KB thousands of times a second; giving each one's pages back and faulting them in again at the
+/// next take was a `madvise` a free and a page fault a page (t57 §8: about 2,000 of 163,000 working samples in
+/// give-back and reuse on the M3's `all`, and the kernel's page faults 30,000). A chunk of this size or more (a dead
+/// relation's chunks, which interleave with a live neighbour's and so never merge: `rows`' Q76 test), or a small one
+/// whose merge reaches it, goes back at once, as before.
+pub(crate) const GIVE_MIN: usize = 256 << 10;
+
 fn bits_range(bits: &[u64], from: usize, to: usize, mut each: impl FnMut(u64, u64) -> bool) -> bool {
     // Calls `each(word, mask)` over the words covering bits `from..to`; stops at the first `false`.
     let mut i = from;
@@ -247,16 +256,16 @@ impl Ledger {
             return;
         }
         let (class, size) = crate::free::class_of(size);
-        Self::put(&mut s, at, class);
+        let (merged, merged_size) = Self::put(&mut s, at, class);
         self.ext.free.fetch_add(size, Relaxed);
-        if self.pages {
-            self.give_free_pages(&mut s, at, size);
+        if self.pages && merged_size >= GIVE_MIN {
+            self.give_free_pages(&mut s, merged, merged_size);
         }
     }
 
     /// A free chunk of `class` at `at` (aligned to its size, or to `ALIGN_MAX`) onto its list, merged with its buddy
-    /// while the buddy is free.
-    fn put(s: &mut State, mut at: usize, mut class: usize) {
+    /// while the buddy is free. The free chunk it ends in: its offset and size.
+    fn put(s: &mut State, mut at: usize, mut class: usize) -> (usize, usize) {
         loop {
             if s.lists.len() <= class + 1 {
                 s.lists.resize_with(class + 2, Default::default);
@@ -270,7 +279,7 @@ impl Ledger {
                 continue;
             }
             s.lists[class].insert(at);
-            return;
+            return (at, size);
         }
     }
 
@@ -363,19 +372,25 @@ impl Ledger {
         let mut given = 0;
         let mut piece_at = at;
         let mut left = len;
+        // A free chunk holds no link: every page it reaches with no live byte left goes, where it is a free chunk of
+        // `GIVE_MIN` or more (a listed block's: a piece merged with its buddies; pages given already are passed over),
+        // or the block keeps no lists.
+        let give = how.pages && self.pages;
         while left > 0 {
             // A chunk of its class whole, a fitted one in its pieces (`free::piece`).
             let piece = crate::free::piece(piece_at, left);
             if s.listed {
                 let (class, size) = crate::free::class_of(piece);
-                Self::put(s, piece_at, class);
+                let (m, m_size) = Self::put(s, piece_at, class);
                 self.ext.free.fetch_add(size, Relaxed);
+                if give && m_size >= GIVE_MIN {
+                    given += self.give_free_pages(s, m, m_size);
+                }
             }
             piece_at += piece;
             left = left.saturating_sub(piece);
         }
-        if how.pages && self.pages {
-            // A free chunk holds no link: every page it reaches with no live byte left goes.
+        if give && !s.listed {
             given += self.give_free_pages(s, at, len);
         }
         given
@@ -935,14 +950,15 @@ mod tests {
         assert_eq!(unsafe { *b.ptr::<u64>(small) }, 7);
         #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(small)), "the live chunk's page kept");
-        // A retiring chunk's pages wait too, and its neighbours' pages are not given back when it finishes.
-        let big = b.try_alloc_chunk(2 * PAGE, 64).unwrap();
+        // A retiring chunk's pages wait too, and its neighbours' pages are not given back when it finishes. One of
+        // `GIVE_MIN`: a smaller free chunk keeps its pages for the next of its class (`a_small_free_keeps_its_pages`).
+        let big = b.try_alloc_chunk(GIVE_MIN, 64).unwrap();
         let after = b.try_alloc_chunk(64, 64).unwrap();
         unsafe { *b.ptr::<u64>(after) = 9 };
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, 2 * PAGE) };
+        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, GIVE_MIN) };
         let f = Fence::new();
         f.reads(&b);
-        b.free_chunk(big, 2 * PAGE);
+        b.free_chunk(big, GIVE_MIN);
         #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(big)), "a retiring chunk's pages wait");
         f.complete();
@@ -952,6 +968,33 @@ mod tests {
         // The page's modified bit is macOS's `mincore` alone; elsewhere the byte read back says it.
         #[cfg(target_vendor = "apple")]
         assert!(crate::mem::tests::modified(b.ptr::<u8>(after)), "its neighbour's page kept");
+    }
+
+    /// A free chunk smaller than `GIVE_MIN` keeps its pages (the next chunk of its class takes them with no fault), and
+    /// gives them back once a free merges it into a free chunk of `GIVE_MIN`.
+    #[test]
+    #[cfg(target_vendor = "apple")]
+    fn a_small_free_keeps_its_pages() {
+        let b = listed();
+        let size = crate::free::class_of(4 * PAGE).1;
+        let per = GIVE_MIN / size;
+        assert!(per >= 2);
+        // Small chunks handed out in a row, past the block's front: a `GIVE_MIN`-aligned window of `per` of them.
+        let chunks: Vec<usize> = (0..3 * per).map(|_| b.try_alloc_chunk(4 * PAGE, 64).unwrap()).collect();
+        let w = chunks.iter().copied().find(|&c| c % GIVE_MIN == 0 && (0..per).all(|k| chunks.contains(&(c + k * size)))).expect("an aligned window");
+        for k in 0..per {
+            unsafe { std::ptr::write_bytes(b.ptr::<u8>(w + k * size), 0xcd, 4 * PAGE) };
+        }
+        // All but the last freed: their free chunks merge to less than `GIVE_MIN`, and keep their pages.
+        for k in 0..per - 1 {
+            b.free_chunk(w + k * size, 4 * PAGE);
+            assert!(crate::mem::tests::modified(b.ptr::<u8>(w + k * size)), "a small free, under GIVE_MIN: its pages kept");
+        }
+        // The last one's free merges the window to `GIVE_MIN`: every page of it goes.
+        b.free_chunk(w + (per - 1) * size, 4 * PAGE);
+        for k in 0..per {
+            assert!(!crate::mem::tests::modified(b.ptr::<u8>(w + k * size)), "merged to GIVE_MIN: given back");
+        }
     }
 
     /// A buffer bound for a kernel is found to be its block's by its address, and holds the block's memory as any
