@@ -324,6 +324,29 @@ test linking either crate could run. Also added: `vshrn_high_n_u16`, `vpadd_u8` 
 which generated Rust on another branch calls. The fork's `tests/neon_narrow_count_lane.rs`
 checks each one's lanes against rustc's on an M-series Mac.
 
+### 20. A `pub(in …)` re-export keeps its restricted visibility
+
+The resolver counted a `pub(in path) use` (or `pub(crate) use`) as fully `pub`. A module that
+glob-imported both the re-exporting module and the original then saw the name twice, and the check
+stopped on E0252 (`rerail-sessions-base`'s `translate`). An import now records its restricted
+visibility, and the binding's visibility is that one. The fork's `tests/import_pub_in_other_crate`
+fails with E0252 on the earlier Relax.
+
+### 21. A proc macro's statics belong to the compile that calls it
+
+Relax runs every proc macro of a run in one JIT "macro world", so a macro's statics outlived the
+crate that called it. napi-derive keeps a `static STRUCTS: OnceLock<…>` registry, and the
+engine's test build, compiled after the engine itself, stopped on "Constructor has already been
+defined for struct `PackageFactsReader`". rustc runs each crate's macros in a process of its own.
+Now a macro crate that defines statics keeps each compile's static bytes apart (a compile is the
+calling crate, and its `cfg(test)` build is another), and calls switch them in and out; a macro
+crate without statics is called as before.
+
+Freeing a macro world also left the stdout flush it had registered with `atexit` pointing into
+freed code, so the run took a bus error at exit ("no image"). Retiring a world now drops the exit
+handlers whose code is the world's. The fork's `tests/proc_macro_state_per_crate` checks both: on
+the earlier Relax its second crate's check fails and the run exits on signal 10.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

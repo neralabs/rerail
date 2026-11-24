@@ -121,6 +121,26 @@ index 80e4299b..97f2e9b4 100644
 +    assert!(ours_bytes("sha512h q0, q1, v2.4s").is_err(), "the arrangement is 2d");
 +    assert!(ours_bytes("sha512su0 v0.2d, v1.4s").is_err());
 +}
+diff --git a/libs/relax/backend/src/rir.rs b/libs/relax/backend/src/rir.rs
+index 56b5417a..1a3b2cef 100644
+--- a/libs/relax/backend/src/rir.rs
++++ b/libs/relax/backend/src/rir.rs
+@@ -655,6 +655,15 @@ impl SlotTable {
+         self.bases[kind][seg].load(std::sync::atomic::Ordering::Acquire)
+     }
+ 
++    /// Is `addr` in a slot's thunk or stub (a function pointer the program took is its slot's
++    /// thunk)?
++    pub fn holds(&self, addr: u64) -> bool {
++        [SK_THUNK, SK_STUB].iter().any(|&kind| (0..SLOT_SEGS).any(|seg| {
++            let base = self.seg_base(kind, seg);
++            base != 0 && addr >= base && addr < base + Self::seg_slots(seg) as u64 * self.stride[kind]
++        }))
++    }
++
+     fn addr(&self, kind: usize, id: u32) -> u64 {
+         let (seg, ix) = Self::locate(id);
+         self.bases[kind][seg].load(std::sync::atomic::Ordering::Acquire) + ix as u64 * self.stride[kind]
 diff --git a/libs/relax/base/src/cfg.rs b/libs/relax/base/src/cfg.rs
 index 695fd45e..a07f3ade 100644
 --- a/libs/relax/base/src/cfg.rs
@@ -363,10 +383,27 @@ index 64fedf3a..2d5b07bf 100644
      use super::{Raw, MAX_FRAMES};
  
 diff --git a/libs/relax/compiler/src/jit.rs b/libs/relax/compiler/src/jit.rs
-index 1205bea4..e278d1d9 100644
+index 1205bea4..6e1d25e5 100644
 --- a/libs/relax/compiler/src/jit.rs
 +++ b/libs/relax/compiler/src/jit.rs
-@@ -5136,6 +5136,9 @@ unsafe fn materialize_fault() {
+@@ -951,6 +951,16 @@ impl CodeTables {
+         self.entry_at(pc).map(|e| e.2)
+     }
+ 
++    /// Is `pc` in this table's code: a body's, or glue's (an `extern "C"` fn's address a program
++    /// takes is its glue)?
++    pub fn holds(&self, pc: u64) -> bool {
++        if self.entry_at(pc).is_some() {
++            return true;
++        }
++        let k = self.glue.partition_point(|g| g.0 <= pc);
++        self.glue.get(k.wrapping_sub(1)).is_some_and(|&(at, len, _)| pc < at + len as u64)
++    }
++
+     /// The frame pointer of the JIT frame whose call returns to `ret`, from the stack pointer
+     /// it will have there (`sp`: the walk of a thread blocked in a syscall knows its sp and pc
+     /// only): the function's frame size and the call's staged arguments, or the glue's frame.
+@@ -5136,6 +5146,9 @@ unsafe fn materialize_fault() {
      let pinfo = PanicInfo { kind: kind.to_string(), message: format!("{} at {:#x}", label, rec.addr), site: u64::MAX, frames, fault_addr: rec.addr, location: String::new() };
      if fault_policy(&label, &pinfo, rec.guard_depth, rec.const_eval_depth) {
          crate::inspect::flightrec::fault_dump(&format!("{} {}", kind, pinfo.message));
@@ -376,7 +413,34 @@ index 1205bea4..e278d1d9 100644
          os::fault::die_by(rec.sig);
      }
      PANIC.with(|p| *p.borrow_mut() = Some(pinfo));
-@@ -8686,6 +8689,11 @@ impl Unit {
+@@ -7643,6 +7656,12 @@ impl Unit {
+         self.code.read().unwrap_or_else(|e| e.into_inner()).slot_at(pc)
+     }
+ 
++    /// Is `pc` in this unit's code: a body's, glue's, or a slot's thunk or stub (a function
++    /// pointer it handed out)?
++    pub fn holds_code(&self, pc: u64) -> bool {
++        self.slots.holds(pc) || self.code.read().unwrap_or_else(|e| e.into_inner()).holds(pc)
++    }
++
+     /// The callee-saved registers the prologue of the code body holding `pc` saved below its
+     /// frame pointer ([fp - 8k], k = 1..; rir::unwind_info_words) and the body's start.
+     pub(crate) fn saved_regs_at(&self, pc: u64) -> Option<(u64, Vec<u32>)> {
+@@ -8189,7 +8208,12 @@ impl Unit {
+             self.statics.insert(d, buf);
+             self.static_spans.insert(buf, (d, l.size as u64));
+         });
+-        self.init_static(d, t, buf, l.size as u64)
++        let r = self.init_static(d, t, buf, l.size as u64);
++        // a proc-macro world's static: its first bytes, for each compile its macros run for (pmhost)
++        if r != 0 {
++            crate::pmhost::note_static_init(self, d, buf, l.size as u64);
++        }
++        r
+     }
+ 
+     /// Runs static `d`'s initializer (type `t`, `size` bytes) into its storage `buf`, its address
+@@ -8686,6 +8710,11 @@ impl Unit {
      }
  
      pub fn put_body(&mut self, id: u32, body: std::sync::Arc<Body>) {
@@ -388,7 +452,7 @@ index 1205bea4..e278d1d9 100644
          if let Some(old) = self.bodies.remove(&id) {
              if old.file != body.file {
                  self.old_bodies.insert((id, old.file), old);
-@@ -22727,7 +22735,7 @@ pub unsafe fn compile_tier1(up: *mut Unit, id: u32) -> bool {
+@@ -22727,7 +22756,7 @@ pub unsafe fn compile_tier1(up: *mut Unit, id: u32) -> bool {
          let _preemptible = crate::preempt::Preemptible::on();
          typeck_ahead(&front, d, args, 1, false, true);
          let _want = WantConsts::on();
@@ -397,7 +461,7 @@ index 1205bea4..e278d1d9 100644
              AF_OK => unmade.remove(&c),
              why => unmade.insert(c, why),
          };
-@@ -25865,6 +25873,9 @@ pub(crate) fn loader_symbol(name: &[u8]) -> Option<usize> {
+@@ -25865,6 +25894,9 @@ pub(crate) fn loader_symbol(name: &[u8]) -> Option<usize> {
          b"relax_vfs_read" => Some(crate::vfs::relax_vfs_read as *const () as usize),
          b"relax_vfs_list" => Some(crate::vfs::relax_vfs_list as *const () as usize),
          b"relax_vfs_mounts" => Some(crate::vfs::relax_vfs_mounts as *const () as usize),
@@ -407,7 +471,7 @@ index 1205bea4..e278d1d9 100644
          b"relax_vfs_release" => Some(crate::vfs::relax_vfs_release as *const () as usize),
          b"relax_vfs_edit" => Some(crate::vfs::relax_vfs_edit as *const () as usize),
          b"relax_vfs_note" => Some(crate::reload::relax_vfs_note as *const () as usize),
-@@ -26165,7 +26176,11 @@ fn lookup_interposer(link: &str) -> Option<u64> {
+@@ -26165,7 +26197,11 @@ fn lookup_interposer(link: &str) -> Option<u64> {
          "Sleep" => Some(crate::domain_threads::waits::sleep as *const () as usize as u64),
          #[cfg(windows)]
          "SleepEx" => Some(crate::domain_threads::waits::sleep_ex as *const () as usize as u64),
@@ -420,7 +484,7 @@ index 1205bea4..e278d1d9 100644
          _ => crate::domain_res::interposer(link),
      }
  }
-@@ -26983,6 +26998,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
+@@ -26983,6 +27019,27 @@ fn prefront_slot(front: &FrontShared, id: u32) -> bool {
      false
  }
  
@@ -448,7 +512,7 @@ index 1205bea4..e278d1d9 100644
  fn prefront_slot_once(front: &FrontShared, id: u32) -> bool {
      match front.slot_keys.get(&id) {
          Some(FnKey::Closure(..)) => return prefront_closure(front, id),
-@@ -27039,6 +27075,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
+@@ -27039,6 +27096,28 @@ fn prefront_closure(front: &FrontShared, id: u32) -> bool {
  /// no front off the owner ("no body": prefront_twin takes an instance's body only), and the O3
  /// build of a hot caller that inlines it left it out (a large app: a view's draw closures, a text
  /// layout's closure, all unverified).
@@ -477,7 +541,7 @@ index 1205bea4..e278d1d9 100644
  fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u32>) -> bool {
      let Some(key @ FnKey::Closure(cfile, _, parent)) = front.slot_keys.get(&id) else { return prefront_fail(AF_NOT_BODY) };
      let up = front.unit.load(Ordering::Relaxed);
-@@ -27052,8 +27110,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27052,8 +27131,10 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
      // from the disk cache): made again here, as lower_ahead_as makes an instance's. The closures of
      // a parent built long ago are what turns hot later (a benchmark's or a frame's callback): their
      // O3 builds bailed on this for the whole run and the closure ran baseline code
@@ -490,7 +554,7 @@ index 1205bea4..e278d1d9 100644
          None => {
              let Some(FnKey::Inst(d, args)) = front.slot_keys.get(&parent) else {
                  prefront_fail(AF_NO_PARENT);
-@@ -27064,7 +27124,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
+@@ -27064,7 +27145,7 @@ fn prefront_closure_as(front: &FrontShared, into: u32, id: u32, plain: Option<u3
              let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::typeck::try_codegen_body(&u.prog, &u.tcx, d, &args)));
              let missing = !crate::program::take_missing().is_empty();
              match made {
@@ -499,7 +563,7 @@ index 1205bea4..e278d1d9 100644
                  Err(p) if !p.is::<crate::preempt::NeedsUnit>() && !crate::preempt::is_cancelled(&*p) => std::panic::resume_unwind(p),
                  _ => {
                      prefront_fail(AF_NO_PARENT);
-@@ -27727,6 +27787,16 @@ pub struct FrontShared {
+@@ -27727,6 +27808,16 @@ pub struct FrontShared {
      /// inline const blocks' bytes): any thread's lowering reads it here, the tiers of one instance
      /// share one value. A source change bumps the epoch in the key, so nothing stale is read.
      body_consts: crate::conc::MemoMap<(u64, u32, u32, bool), (u64, u32)>,
@@ -516,7 +580,7 @@ index 1205bea4..e278d1d9 100644
      /// Ahead checks are queued during startup and UI bursts.
      ahead_enabled: bool,
      /// bodies checked ahead after the first present: those no build took are dropped when a
-@@ -27802,6 +27872,7 @@ impl FrontShared {
+@@ -27802,6 +27893,7 @@ impl FrontShared {
              // helper's lowering of main raced the exit with its layout errors, limits/issue-55878)
              tls: crate::conc::MemoMap::with_bits(8),
              body_consts: crate::conc::MemoMap::with_bits(12),
@@ -800,10 +864,27 @@ index 765aa64e..015d6900 100644
                          out.push(format!("{}: `#[{}]` is not allowed in a sandboxed module -- remove it", at(f, it.lo), String::from_utf8_lossy(n)));
                      }
 diff --git a/libs/relax/compiler/src/os/proc.rs b/libs/relax/compiler/src/os/proc.rs
-index 4f714be3..4bbe077a 100644
+index 4f714be3..b9e3a81f 100644
 --- a/libs/relax/compiler/src/os/proc.rs
 +++ b/libs/relax/compiler/src/os/proc.rs
-@@ -597,7 +597,14 @@ mod imp {
+@@ -337,6 +337,16 @@ pub fn forget_program_atexit(bases: &[u64]) {
+     PROGRAM_ATEXIT.lock().unwrap_or_else(|e| e.into_inner()).retain(|h| !bases.contains(&h.0));
+ }
+ 
++/// Code that is going away (a proc-macro world freed after the load): the handlers in it go with it,
++/// not run. (A world's std registers one when a macro first writes to stdout; the exit called it in
++/// freed code: a bus error, "no image".)
++pub fn forget_program_atexit_in(code: impl Fn(u64) -> bool) -> usize {
++    let mut g = PROGRAM_ATEXIT.lock().unwrap_or_else(|e| e.into_inner());
++    let n = g.len();
++    g.retain(|h| !code(h.1 as usize as u64));
++    n - g.len()
++}
++
+ /// Runs (and empties) the program's atexit handlers, last registered first; one a handler
+ /// registers runs too. exit() runs them, and so does the exit of the run's app domain, which
+ /// ends the process from the host (domain.rs exit_current).
+@@ -597,7 +607,14 @@ mod imp {
      fn versioned_so(name: &str) -> Option<String> {
          let prefix = format!("lib{}.so.", name);
          let mut best: Option<String> = None;
@@ -893,6 +974,182 @@ index 781123aa..4760aaf3 100644
          let fs_base: rt_fn_ty!(fn() -> u64) = unsafe { std::mem::transmute(reader as usize) };
          let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
          let off = cell.wrapping_sub(fs_base()) as i64;
+diff --git a/libs/relax/compiler/src/pmhost.rs b/libs/relax/compiler/src/pmhost.rs
+index 0bbed2cc..b74f1df5 100644
+--- a/libs/relax/compiler/src/pmhost.rs
++++ b/libs/relax/compiler/src/pmhost.rs
+@@ -147,6 +147,118 @@ struct World {
+     /// unit -> why its crate is not in the world: it did not load, or a crate it builds on did not
+     /// (its macros report that; every other crate's macros work)
+     failed: Vec<Option<String>>,
++    /// unit -> its statics' state for each compile its macros run for (`enter_compile`)
++    compiles: relax_session::sync::Mutex<std::collections::HashMap<usize, std::sync::Arc<Compiles>>>,
++}
++
++/// A proc-macro crate's statics (its own, not its dependencies'), one state for each compile its
++/// macros run for. rustc runs a proc macro for each crate it builds, the crate's test build
++/// apart, so what a macro keeps in a static is that crate's: napi-derive's constructor registry
++/// (`static STRUCTS: OnceLock<..>`) refuses a struct's second constructor, and a world shared by a
++/// crate and its test build refused each `#[napi(constructor)]` of the test build. The statics
++/// hold the state of one compile at a time: another compile's calls wait for the running ones to
++/// end, then its state goes in (its saved bytes, or each static's first bytes for a new compile)
++/// and the last one's is saved. A crate with no static has nothing to keep apart, and its calls
++/// never wait.
++struct Compiles {
++    /// the crate defines a static
++    stateful: bool,
++    now: relax_session::sync::Mutex<CompileNow>,
++}
++
++#[derive(Default)]
++struct CompileNow {
++    /// the compile the statics hold now, and its calls running
++    key: String,
++    running: u32,
++    /// other compiles' bytes of the statics: compile -> (address, bytes)
++    saved: std::collections::HashMap<String, Vec<(u64, Vec<u8>)>>,
++}
++
++/// The macro worlds' units (their statics' first bytes are kept: `note_static_init`).
++static WORLD_UNITS: relax_session::sync::Mutex<Vec<usize>> = relax_session::sync::Mutex::new(Vec::new());
++/// (world unit, a static's address) -> (its crate, its bytes as its initializer left them)
++static FIRST_BYTES: relax_session::sync::Mutex<Option<std::collections::HashMap<(usize, u64), (u32, Vec<u8>)>>> = relax_session::sync::Mutex::new(None);
++
++/// jit.rs `static_addr`: static `d` of unit `u` is initialized at `buf`; a macro world keeps its
++/// first bytes.
++pub(crate) fn note_static_init(u: &crate::jit::Unit, d: DefId, buf: u64, size: u64) {
++    let key = u as *const crate::jit::Unit as usize;
++    if !WORLD_UNITS.lock().unwrap().contains(&key) {
++        return;
++    }
++    let krate = u.prog.def(d).krate;
++    let bytes = unsafe { std::slice::from_raw_parts(buf as *const u8, size as usize) }.to_vec();
++    FIRST_BYTES.lock().unwrap().get_or_insert_with(Default::default).insert((key, buf), (krate, bytes));
++}
++
++/// The calls of compile `key` into unit `unit`'s macros may run: the crate's statics hold that
++/// compile's state until the guard goes.
++fn enter_compile(w: &World, unit: usize, key: &str) -> Option<CompileGuard> {
++    let krate = *w.crate_of.get(unit)?;
++    let c = {
++        let mut all = w.compiles.lock().unwrap();
++        if let Some(c) = all.get(&unit) {
++            c.clone()
++        } else {
++            // (the program grows on the owner: read there)
++            let stateful = crate::owner::call(crate::owner::Class::Program, || {
++                let prog = unsafe { &(*w.u).prog };
++                (0..prog.defs.len()).any(|i| { let d = prog.def(DefId(i as u32)); d.krate == krate && d.kind == DefKind::Static })
++            });
++            let c = std::sync::Arc::new(Compiles { stateful, now: Default::default() });
++            all.insert(unit, c.clone());
++            c
++        }
++    };
++    if !c.stateful {
++        return None;
++    }
++    let take = |now: &mut CompileNow| -> bool {
++        if now.running > 0 && now.key != key {
++            return false;
++        }
++        if now.key != key {
++            switch_compile(w, krate, now, key);
++        }
++        now.running += 1;
++        true
++    };
++    if !take(&mut c.now.lock().unwrap()) {
++        // (the owner serves meanwhile: a running call's lazy compile asks it)
++        crate::owner::pump_wait(&|| { let n = c.now.lock().unwrap(); n.running == 0 || n.key == key });
++        while !take(&mut c.now.lock().unwrap()) {
++            crate::owner::pump_wait(&|| { let n = c.now.lock().unwrap(); n.running == 0 || n.key == key });
++        }
++    }
++    Some(CompileGuard(c))
++}
++
++/// Saves the statics of crate `krate` for the compile they hold, and puts compile `key`'s in.
++fn switch_compile(w: &World, krate: u32, now: &mut CompileNow, key: &str) {
++    let unit = w.u as usize;
++    let statics: Vec<(u64, Vec<u8>)> = FIRST_BYTES.lock().unwrap().as_ref().map_or(Vec::new(), |m| {
++        m.iter().filter(|((u, _), (k, _))| *u == unit && *k == krate).map(|((_, a), (_, b))| (*a, b.clone())).collect()
++    });
++    let current: Vec<(u64, Vec<u8>)> = statics.iter().map(|(a, b)| (*a, unsafe { std::slice::from_raw_parts(*a as *const u8, b.len()) }.to_vec())).collect();
++    let old = std::mem::replace(&mut now.key, key.to_string());
++    now.saved.insert(old, current);
++    let theirs = now.saved.remove(key).unwrap_or_default();
++    for (a, first) in &statics {
++        let bytes = theirs.iter().find(|(x, _)| x == a).map_or(first, |(_, b)| b);
++        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), *a as *mut u8, bytes.len()) };
++    }
++    if trace() {
++        eprintln!("pmhost: crate {krate}'s {} statics now hold compile `{key}`", statics.len());
++    }
++}
++
++struct CompileGuard(std::sync::Arc<Compiles>);
++
++impl Drop for CompileGuard {
++    fn drop(&mut self) {
++        self.0.now.lock().unwrap().running -= 1;
++    }
+ }
+ 
+ impl Drop for World {
+@@ -157,7 +269,17 @@ impl Drop for World {
+                 // (no call is inside: the window's pages go, its addresses stay taken)
+                 crate::sandbox::free_arena(&*self.u, a);
+             }
++            // its code goes: so do the atexit handlers in it (its std's stdout flush), found while
++            // its code table still holds them
++            let unit = &*self.u;
++            let gone = crate::os::proc::forget_program_atexit_in(|pc| unit.holds_code(pc));
++            if trace() && gone > 0 {
++                eprintln!("pmhost: the world's {gone} atexit handlers go with it");
++            }
+             crate::jit::retire_unit(self.u);
++            let key = self.u as usize;
++            WORLD_UNITS.lock().unwrap().retain(|&x| x != key);
++            if let Some(m) = FIRST_BYTES.lock().unwrap().as_mut() { m.retain(|(u, _), _| *u != key); }
+             let mut u = Box::from_raw(self.u);
+             // what it compiled since the boot's flush (a world built again for a live edit or a
+             // run-time module): retire_unit encoded its last records, and the unit is this
+@@ -726,6 +848,7 @@ fn build_world_once(sess: &std::sync::Arc<crate::Session>, units: &[crate::macro
+         })
+         .ok_or((None, "std proc_macro has no __relax::bridge".to_string()))?;
+     let mut u = crate::jit::Unit::new(prog, tcx, core);
++    WORLD_UNITS.lock().unwrap().push(&*u as *const crate::jit::Unit as usize);
+     // an auxiliary unit: never the runtime's in place of the program's (jit.rs adopt_runtime_unit)
+     u.aux = true;
+     // The whole macro world is freed after load. Its callers still need inline/closure
+@@ -776,7 +899,7 @@ fn build_world_once(sess: &std::sync::Arc<crate::Session>, units: &[crate::macro
+         s.set(x);
+     });
+     let confined = (0..units.len()).map(|i| need[i] && confined[i]).collect();
+-    Ok(World { u: Box::into_raw(u), bridge, crate_of, entries: Default::default(), broken: Default::default(), confined, sandbox, failed: Vec::new() })
++    Ok(World { u: Box::into_raw(u), bridge, crate_of, entries: Default::default(), broken: Default::default(), confined, sandbox, failed: Vec::new(), compiles: Default::default() })
+ }
+ 
+ /// Address of macro fn `fname` at the root of unit `unit`'s crate in the world.
+@@ -1028,6 +1151,8 @@ fn call(sess: &std::sync::Arc<crate::Session>, entry: &Entry, attr: Option<&Toke
+     PH[2].fetch_add(tz.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+     Ok(ts)
+     };
++    // the crate's statics hold this compile's state for the call (a confined macro's are its arena's)
++    let _compile = if w.confined.get(entry.unit) == Some(&true) { None } else { enter_compile(w, entry.unit, &crate::macro_reg::current_call_unit()) };
+     if off_owner { body() } else { crate::owner::call(crate::owner::Class::Program, body) }
+ }
+ 
+@@ -1217,7 +1342,7 @@ mod tests {
+         first.cache = Some(Box::new(crate::cache::CacheCell::new(cache)));
+         drop(std::sync::Arc::new(Ok::<_, String>(super::World {
+             u: Box::into_raw(first), bridge: 0, crate_of: vec![0], entries: Default::default(), broken: Default::default(),
+-            confined: vec![false], sandbox: Err("no arena in this test".into()), failed: Vec::new(),
++            confined: vec![false], sandbox: Err("no arena in this test".into()), failed: Vec::new(), compiles: Default::default(),
+         })));
+         let second = unit();
+         let cache = crate::cache::Cache::open_in(&second, crate::cache::Mode::On, dir.join("cache")).unwrap();
 diff --git a/libs/relax/compiler/src/sandbox/script.rs b/libs/relax/compiler/src/sandbox/script.rs
 index 9ec4e6a0..4f436410 100644
 --- a/libs/relax/compiler/src/sandbox/script.rs
@@ -1572,6 +1829,112 @@ index 00000000..a3a893dd
 +    let r = &v[..] as &[u16];
 +    println!("| {:?} {}", bytes, r.len());
 +}
+diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/.gitignore b/libs/relax/compiler/tests/import_pub_in_other_crate/.gitignore
+new file mode 100644
+index 00000000..2c96eb1b
+--- /dev/null
++++ b/libs/relax/compiler/tests/import_pub_in_other_crate/.gitignore
+@@ -0,0 +1,2 @@
++target/
++Cargo.lock
+diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/Cargo.toml b/libs/relax/compiler/tests/import_pub_in_other_crate/Cargo.toml
+new file mode 100644
+index 00000000..134f2752
+--- /dev/null
++++ b/libs/relax/compiler/tests/import_pub_in_other_crate/Cargo.toml
+@@ -0,0 +1,3 @@
++[workspace]
++members = ["dep", "app"]
++resolver = "2"
+diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/app/Cargo.toml b/libs/relax/compiler/tests/import_pub_in_other_crate/app/Cargo.toml
+new file mode 100644
+index 00000000..d3b7fb48
+--- /dev/null
++++ b/libs/relax/compiler/tests/import_pub_in_other_crate/app/Cargo.toml
+@@ -0,0 +1,7 @@
++[package]
++name = "app"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++dep = { path = "../dep" }
+diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/app/src/lib.rs b/libs/relax/compiler/tests/import_pub_in_other_crate/app/src/lib.rs
+new file mode 100644
+index 00000000..e9fb07bc
+--- /dev/null
++++ b/libs/relax/compiler/tests/import_pub_in_other_crate/app/src/lib.rs
+@@ -0,0 +1,21 @@
++//! `pub use dep::dsl::rr::translate;` imports the module only: the function is `pub(in
++//! dep::dsl)`, invisible here. So this module's own `translate` function, imported under the same
++//! name, is no E0252 (sessions_base's `rr` module, rerail).
++pub mod dsl {
++    pub mod rr {
++        pub use dep::dsl::rr::translate;
++        #[allow(unused_imports)]
++        pub(in crate::dsl) use crate::dsl::rr::translate::translate;
++    }
++    pub fn run() -> String {
++        rr::translate("x")
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn the_other_crates_restricted_fn_is_not_imported() {
++        assert_eq!(super::dsl::run(), "dep:x");
++    }
++}
+diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/dep/Cargo.toml b/libs/relax/compiler/tests/import_pub_in_other_crate/dep/Cargo.toml
+new file mode 100644
+index 00000000..578cef8b
+--- /dev/null
++++ b/libs/relax/compiler/tests/import_pub_in_other_crate/dep/Cargo.toml
+@@ -0,0 +1,4 @@
++[package]
++name = "dep"
++version = "0.1.0"
++edition = "2021"
+diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/dep/src/lib.rs b/libs/relax/compiler/tests/import_pub_in_other_crate/dep/src/lib.rs
+new file mode 100644
+index 00000000..7647ba7c
+--- /dev/null
++++ b/libs/relax/compiler/tests/import_pub_in_other_crate/dep/src/lib.rs
+@@ -0,0 +1,12 @@
++//! A module `translate` and, under the same name, a function re-exported `pub(in crate::dsl)`: from
++//! another crate the name is the module alone (rustc skips the function as invisible there).
++pub mod dsl {
++    pub mod rr {
++        pub mod translate {
++            pub fn translate(s: &str) -> String {
++                format!("dep:{s}")
++            }
++        }
++        pub(in crate::dsl) use crate::dsl::rr::translate::translate;
++    }
++}
+diff --git a/libs/relax/compiler/tests/import_pub_in_other_crate/run.sh b/libs/relax/compiler/tests/import_pub_in_other_crate/run.sh
+new file mode 100755
+index 00000000..10adb3b9
+--- /dev/null
++++ b/libs/relax/compiler/tests/import_pub_in_other_crate/run.sh
+@@ -0,0 +1,15 @@
++#!/bin/bash
++# usage: run.sh <relax binary>: another crate's `pub(in ..)` re-export is invisible here, so `pub use dep::..::translate`
++# imports the module alone and this crate's own `translate` fn is no E0252 (app/src/lib.rs). Prints
++# "import_pub_in_other_crate: ok" or "import_pub_in_other_crate: FAILED" (exit 1).
++H=$(cd "$(dirname "$0")" && pwd)
++T=$(mktemp -d) || exit 1
++[ -n "$T" ] || exit 1
++trap 'rm -rf "$T"' EXIT
++export RELAX_CACHE=off RELAX_HOME="$T/home" RELAX_STD=$H/../../std
++OUT=$(cd "$H" && "$1" test -p app --lib 2>&1)
++if echo "$OUT" | grep -q "test result: ok. 1 passed"; then
++  echo "import_pub_in_other_crate: ok"
++else
++  echo "$OUT" | tail -8; echo "import_pub_in_other_crate: FAILED"; exit 1
++fi
 diff --git a/libs/relax/compiler/tests/link_section_unsafe/.gitignore b/libs/relax/compiler/tests/link_section_unsafe/.gitignore
 new file mode 100644
 index 00000000..633fc35b
@@ -1754,6 +2117,151 @@ index 00000000..4d7901ef
 +    assert_eq!(outs, [-56, -41, 102, 103, -53, 105, -48, 107, -55, -54, -42, 111, -49, -47, 114, -51]);
 +    assert_eq!(tbl, [200, 215, 0, 0, 203, 0, 208, 0, 201, 202, 214, 0, 207, 209, 0, 205]);
 +}
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/.gitignore b/libs/relax/compiler/tests/proc_macro_state_per_crate/.gitignore
+new file mode 100644
+index 00000000..2c96eb1b
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/.gitignore
+@@ -0,0 +1,2 @@
++target/
++Cargo.lock
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/Cargo.toml b/libs/relax/compiler/tests/proc_macro_state_per_crate/Cargo.toml
+new file mode 100644
+index 00000000..f310e7bb
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/Cargo.toml
+@@ -0,0 +1,3 @@
++[workspace]
++members = ["reg", "a", "b"]
++resolver = "2"
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/a/Cargo.toml b/libs/relax/compiler/tests/proc_macro_state_per_crate/a/Cargo.toml
+new file mode 100644
+index 00000000..3ec8e55b
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/a/Cargo.toml
+@@ -0,0 +1,7 @@
++[package]
++name = "a"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++reg = { path = "../reg" }
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/a/src/lib.rs b/libs/relax/compiler/tests/proc_macro_state_per_crate/a/src/lib.rs
+new file mode 100644
+index 00000000..d8d43efa
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/a/src/lib.rs
+@@ -0,0 +1,11 @@
++//! Derives `Once` for a struct named as the other crate's: each crate's expansions are its own.
++#[derive(reg::Once)]
++pub struct Policies;
++
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn its_registry_is_its_own() {
++        assert_eq!(super::Policies::once(), "Policies");
++    }
++}
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/b/Cargo.toml b/libs/relax/compiler/tests/proc_macro_state_per_crate/b/Cargo.toml
+new file mode 100644
+index 00000000..e0d185fb
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/b/Cargo.toml
+@@ -0,0 +1,7 @@
++[package]
++name = "b"
++version = "0.1.0"
++edition = "2021"
++
++[dependencies]
++reg = { path = "../reg" }
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/b/src/lib.rs b/libs/relax/compiler/tests/proc_macro_state_per_crate/b/src/lib.rs
+new file mode 100644
+index 00000000..d8d43efa
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/b/src/lib.rs
+@@ -0,0 +1,11 @@
++//! Derives `Once` for a struct named as the other crate's: each crate's expansions are its own.
++#[derive(reg::Once)]
++pub struct Policies;
++
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn its_registry_is_its_own() {
++        assert_eq!(super::Policies::once(), "Policies");
++    }
++}
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/reg/Cargo.toml b/libs/relax/compiler/tests/proc_macro_state_per_crate/reg/Cargo.toml
+new file mode 100644
+index 00000000..1cc1e19e
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/reg/Cargo.toml
+@@ -0,0 +1,7 @@
++[package]
++name = "reg"
++version = "0.1.0"
++edition = "2021"
++
++[lib]
++proc-macro = true
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/reg/src/lib.rs b/libs/relax/compiler/tests/proc_macro_state_per_crate/reg/src/lib.rs
+new file mode 100644
+index 00000000..684f7e65
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/reg/src/lib.rs
+@@ -0,0 +1,25 @@
++//! A derive that keeps state across its calls, as napi-derive's constructor registry does
++//! (`static STRUCTS: OnceLock<..>`): a struct name registered twice is an error. rustc runs a
++//! proc macro afresh for each crate it compiles, so the state is per crate: two crates (or a
++//! crate and its test build) that each derive it for a struct of one name are no error. It also
++//! writes to stdout, as a macro may: the world's std then registers its flush at exit.
++use proc_macro::TokenStream;
++use std::collections::HashSet;
++use std::sync::{Mutex, OnceLock};
++
++static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
++
++#[proc_macro_derive(Once)]
++pub fn once(input: TokenStream) -> TokenStream {
++    let text = input.to_string();
++    let name = text.split_whitespace().skip_while(|w| *w != "struct").nth(1).unwrap_or("").trim_end_matches(';').to_string();
++    let fresh = SEEN.get_or_init(Default::default).lock().unwrap().insert(name.clone());
++    // (a macro that writes to stdout: the world's std registers its flush at exit, which must not
++    // outlive the world)
++    println!("Once: {name}");
++    if fresh {
++        format!("impl {name} {{ pub fn once() -> &'static str {{ \"{name}\" }} }}").parse().unwrap()
++    } else {
++        format!("compile_error!(\"`{name}` is registered twice in one crate\");").parse().unwrap()
++    }
++}
+diff --git a/libs/relax/compiler/tests/proc_macro_state_per_crate/run.sh b/libs/relax/compiler/tests/proc_macro_state_per_crate/run.sh
+new file mode 100755
+index 00000000..3f923114
+--- /dev/null
++++ b/libs/relax/compiler/tests/proc_macro_state_per_crate/run.sh
+@@ -0,0 +1,18 @@
++#!/bin/bash
++# usage: run.sh <relax binary>: a crate and its test build each run the `Once` derive (reg/src/lib.rs) as rustc
++# runs it, afresh: its registry of struct names is the compile's own, so neither build is refused. The derive
++# writes to stdout, so the macro world's std registers its flush at exit: the check still exits 0 (the handler
++# goes with the world, not called in its freed code). Prints
++# "proc_macro_state_per_crate: ok" or "proc_macro_state_per_crate: FAILED" (exit 1).
++H=$(cd "$(dirname "$0")" && pwd)
++T=$(mktemp -d) || exit 1
++[ -n "$T" ] || exit 1
++trap 'rm -rf "$T"' EXIT
++export RELAX_CACHE=off RELAX_HOME="$T/home" RELAX_STD=$H/../../std
++CHECK=$(cd "$H" && "$1" check -p a --tests 2>&1; echo "exit $?")
++TEST=$(cd "$H" && "$1" test a --lib 2>&1)
++if echo "$CHECK" | grep -q "body owners of the checked crates, .* 0 errors" && echo "$CHECK" | grep -q "^exit 0$" && echo "$TEST" | grep -q "test result: ok. 1 passed"; then
++  echo "proc_macro_state_per_crate: ok"
++else
++  echo "$CHECK" | tail -6; echo "$TEST" | tail -6; echo "proc_macro_state_per_crate: FAILED"; exit 1
++fi
 diff --git a/libs/relax/compiler/tests/share_folder_disk/.gitignore b/libs/relax/compiler/tests/share_folder_disk/.gitignore
 new file mode 100644
 index 00000000..633fc35b
@@ -1968,6 +2476,68 @@ index 00000000..ec8a3233
 +impl<T, const N: usize> SmallVec<[T; N]> { pub fn len(&self) -> usize { N } }
 +#[macro_export]
 +macro_rules! smallvec { ($($x:expr),*) => { $crate::SmallVec([$($x),*]) } }
+diff --git a/libs/relax/front/src/builtins.rs b/libs/relax/front/src/builtins.rs
+index 0140bb40..9311d1b8 100644
+--- a/libs/relax/front/src/builtins.rs
++++ b/libs/relax/front/src/builtins.rs
+@@ -789,6 +789,7 @@ pub fn expand(p: &crate::parser::Parser, id: u16, lo: usize, hi: usize, call_lo:
+         let mut call_span = None;
+         let ts = expand_pm_ts(p, true, lo, hi, call_lo, call_hi, |input, call| {
+             call_span = Some(call);
++            let _test = crate::macro_reg::with_call_test(p.bctx.as_ref().is_some_and(|c| c.cfg.set.iter().any(|s| s == "test")));
+             crate::macro_reg::run_bang_in(p.session, &p.krate, i, input, call)
+         })?;
+         let mut out = Expansion { text: String::new(), toks: Vec::new(), origins: Vec::new(), editions: Vec::new() };
+@@ -1763,6 +1764,7 @@ fn expand_item(sess: &std::sync::Arc<crate::Session>, krate: &str, path: &str, i
+     for name in names {
+         // The host selects a source-matched linked library or the sandboxed JIT.
+         let entry = if scoped_derive(&name) { resolve.and_then(|resolve| resolve(&name)) } else { crate::macro_reg::derive_entry(krate, &name) };
++        let _test = crate::macro_reg::with_call_test(cfg.is_some_and(|c| c.set.iter().any(|s| s == "test")));
+         let result = entry.as_ref().map(|entry| crate::macro_reg::run_derive_entry(sess, krate, &name, entry, &item_ts, call));
+         let r = match result {
+             Some(r) => r,
+@@ -2358,6 +2360,7 @@ pub fn expand_attr_macro(p: &crate::parser::Parser, attrs: &[crate::ast::Attr],
+     let item_ts = TokenStream { trees };
+     let call = span_of(item_lo, item_hi);
+     let mut out = Expansion { text: String::from(" "), toks: Vec::new(), origins: Vec::new(), editions: Vec::new() };
++    let _test = crate::macro_reg::with_call_test(p.bctx.as_ref().is_some_and(|c| c.cfg.set.iter().any(|s| s == "test")));
+     match crate::macro_reg::run_attr(p.session, &p.krate, entry, &attr_ts, &item_ts, call) {
+         Ok(ts) => {
+             emit_tokens(&ts.trees, p.edition, &mut out, &mut Vec::new()).map_err(|m| (item_lo, m))?;
+diff --git a/libs/relax/front/src/macro_reg.rs b/libs/relax/front/src/macro_reg.rs
+index 60a8375b..c8c00a3a 100644
+--- a/libs/relax/front/src/macro_reg.rs
++++ b/libs/relax/front/src/macro_reg.rs
+@@ -328,6 +328,29 @@ thread_local! {
+     static WORLD_BUILDER: Cell<bool> = const { Cell::new(false) };
+     /// the invoking crate name during a proc-macro expansion (`run_derive_entry`, `run_attr`, `run_bang_in`)
+     static CALL_KRATE: RefCell<String> = const { RefCell::new(String::new()) };
++    /// the invoking crate is its test build (`cfg(test)`): with its name, the compile a proc macro
++    /// runs for (`current_call_unit`)
++    static CALL_TEST: Cell<bool> = const { Cell::new(false) };
++}
++
++pub struct CallTestGuard(bool);
++
++impl Drop for CallTestGuard {
++    fn drop(&mut self) {
++        CALL_TEST.with(|c| c.set(self.0));
++    }
++}
++
++/// The expansions under the guard are for a crate's test build (`cfg(test)`) or not.
++pub fn with_call_test(test: bool) -> CallTestGuard {
++    CallTestGuard(CALL_TEST.with(|c| c.replace(test)))
++}
++
++/// The compile a proc macro runs for: rustc runs one for each crate it builds, and a crate's test
++/// build is a build of its own. Its name, and `#test` for the test build.
++pub fn current_call_unit() -> String {
++    let krate = current_call_krate();
++    if CALL_TEST.with(|c| c.get()) { format!("{krate}#test") } else { krate }
+ }
+ 
+ pub struct CallKrateGuard(String);
 diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
 index 20d9fcc4..2b518851 100644
 --- a/libs/relax/front/src/native.rs
@@ -2110,6 +2680,120 @@ index 4abf5799..35201414 100644
              let start = self.expand_toks(&w.s, &w.toks, self.toks.at(lo).lo);
              attr.toks = TokRange { lo: start as u32, hi: (self.toks.len() - 1) as u32 };
          }
+diff --git a/libs/relax/front/src/program.rs b/libs/relax/front/src/program.rs
+index 1d687803..3a66114b 100644
+--- a/libs/relax/front/src/program.rs
++++ b/libs/relax/front/src/program.rs
+@@ -269,6 +269,8 @@ pub struct Def {
+ 
+ pub const IMPORT_PUB: u8 = 1;
+ pub const IMPORT_EXTERN: u8 = 2;
++/// a `pub(restricted)` import: its visibility is `Module::import_vis`'s
++pub const IMPORT_RESTRICTED: u8 = 4;
+ /// `Import::bound`: the namespaces this import bound, the injected prelude crate, an empty `{}` group
+ pub const BOUND_TYPES: u8 = 1;
+ pub const BOUND_VALUES: u8 = 2;
+@@ -300,9 +302,13 @@ pub struct Module {
+     pub globs: Vec<(DefId, BindVis)>,
+     /// traits imported `as _` (in scope for method calls, no name)
+     pub anon_traits: Vec<(DefId, bool)>,
+-    /// import bindings (name, type ns) -> IMPORT_PUB (`pub use`) | IMPORT_EXTERN (`extern crate`);
+-    /// an item's own binding has its item's visibility
++    /// import bindings (name, type ns) -> IMPORT_PUB (`pub use`) | IMPORT_EXTERN (`extern crate`)
++    /// | IMPORT_RESTRICTED; an item's own binding has its item's visibility
+     pub import_pub: HashMap<(Sym, bool), u8>,
++    /// the module a `pub(crate)` / `pub(super)` / `pub(in path)` import binding (IMPORT_RESTRICTED)
++    /// is visible in: rustc's binding has the `use` item's visibility, so another crate cannot see
++    /// it (an entry outlives its binding; only the flag says it holds)
++    pub import_vis: HashMap<(Sym, bool), u32>,
+ }
+ 
+ /// How good an import path is to suggest: this crate's, then std's facade, then other crates',
+@@ -2682,7 +2688,7 @@ impl Program {
+                 if m.values.get(&name).is_some_and(|d| self.defs[d.0 as usize].scope != im.module) { m.values.remove(&name); }
+             }
+         }
+-        for m in &mut self.mods { m.globs.clear(); m.anon_traits.clear(); m.import_pub.clear(); }
++        for m in &mut self.mods { m.globs.clear(); m.anon_traits.clear(); m.import_pub.clear(); m.import_vis.clear(); }
+         self.imports.retain(|i| self.mods[i.module as usize].krate != krate);
+         for i in &mut self.imports { i.done = false; i.bound &= BOUND_INJECTED | BOUND_PREFIX_ONLY | BOUND_SELF_ONLY; }
+         let old: Vec<_> = self.defs.iter().enumerate().filter(|(_, d)| d.krate == krate).map(|(i, _)| DefId(i as u32)).collect();
+@@ -2691,7 +2697,7 @@ impl Program {
+         for (i, imp) in self.impls.iter().enumerate() { self.defs[imp.def.0 as usize].sub = i as u32; }
+         for m in &mut self.mods {
+             if m.krate == krate {
+-                m.types.clear(); m.values.clear(); m.macros.clear(); m.globs.clear(); m.anon_traits.clear(); m.import_pub.clear();
++                m.types.clear(); m.values.clear(); m.macros.clear(); m.globs.clear(); m.anon_traits.clear(); m.import_pub.clear(); m.import_vis.clear();
+             }
+         }
+         self.item_defs.retain(|_, d| self.defs[d.0 as usize].krate != krate);
+@@ -3054,6 +3060,7 @@ impl Program {
+             globs: Vec::new(),
+             anon_traits: Vec::new(),
+             import_pub: HashMap::default(),
++            import_vis: HashMap::default(),
+         });
+         idx
+     }
+@@ -4721,7 +4728,9 @@ impl Program {
+             self.scope_cache.clear();
+         }
+         let (ext, ipos, ifile, injected) = (self.imports[i].ext, self.imports[i].pos, self.imports[i].file, self.imports[i].bound & BOUND_INJECTED != 0);
+-        let flags = is_pub as u8 | if ext { IMPORT_EXTERN } else { 0 };
++        // a `pub(restricted)` import binds as visible as its `use` item, not `pub`
++        let restricted = if is_pub { self.open_import_vis(i as u32) } else { None };
++        let flags = is_pub as u8 | if ext { IMPORT_EXTERN } else { 0 } | if restricted.is_some() { IMPORT_RESTRICTED } else { 0 };
+         for (ns_type, found) in [(true, tdef), (false, vdef)] {
+             let Some(d) = found else { continue };
+             let (bit, clash) = if ns_type { (BOUND_TYPES, CLASH_TYPES) } else { (BOUND_VALUES, CLASH_VALUES) };
+@@ -4731,6 +4740,7 @@ impl Program {
+                 None => {
+                     if ns_type { m.types.insert(bind, d); } else { m.values.insert(bind, d); }
+                     m.import_pub.insert((bind, ns_type), flags);
++                    if let Some(r) = restricted { m.import_vis.insert((bind, ns_type), r); }
+                     self.imports[i].bound |= bit;
+                 }
+                 Some(old) => {
+@@ -4891,6 +4901,12 @@ impl Program {
+     fn binding_vis(&self, m: u32, name: Sym, ns_type: bool, d: DefId) -> BindVis {
+         let md = &self.mods[m as usize];
+         let is_pub = match md.import_pub.get(&(name, ns_type)) {
++            Some(p) if p & IMPORT_RESTRICTED != 0 => {
++                if let Some(&r) = md.import_vis.get(&(name, ns_type)) {
++                    return Some(r);
++                }
++                true
++            }
+             Some(p) => p & IMPORT_PUB != 0,
+             None => self.def(d).is_pub,
+         };
+diff --git a/libs/relax/front/src/program/collected.rs b/libs/relax/front/src/program/collected.rs
+index a8711b10..24c6260d 100644
+--- a/libs/relax/front/src/program/collected.rs
++++ b/libs/relax/front/src/program/collected.rs
+@@ -8,7 +8,7 @@ unsafe impl crate::image::Pod for Def {}
+ 
+ crate::collected_fields!(Def, kind, name, parent, file, item, sub, is_pub, krate, scope);
+ crate::collected_fields!(Module, def, lexical_parent, normal, parent_mod, krate, file,
+-    types, values, macros, globs, anon_traits, import_pub);
++    types, values, macros, globs, anon_traits, import_pub, import_vis);
+ crate::collected_fields!(ImplData, def, file, item, module, items);
+ crate::collected_fields!(Import, module, global, segs, bind, glob, is_pub, done, file, pos, ext, bound);
+ 
+diff --git a/libs/relax/front/src/program/privacy.rs b/libs/relax/front/src/program/privacy.rs
+index d9a7756e..bb5fa370 100644
+--- a/libs/relax/front/src/program/privacy.rs
++++ b/libs/relax/front/src/program/privacy.rs
+@@ -1,7 +1,7 @@
+ //! Privacy of paths (rustc_resolve `PrivacyError`, reported as E0603): a path segment looked
+ //! up in a module must name a binding the path's module can see. Item bindings carry their
+-//! written visibility (`pub(crate)`, `pub(super)`, `pub(in path)`); an import binding is `pub`
+-//! or private to its module.
++//! written visibility (`pub(crate)`, `pub(super)`, `pub(in path)`), and so does an import binding
++//! (its `use` item's: `Module::import_vis` for a restricted one).
+ use super::*;
+ 
+ pub struct PrivacyError {
 diff --git a/libs/relax/front/src/program/rsim.rs b/libs/relax/front/src/program/rsim.rs
 index 622ac953..592374cc 100644
 --- a/libs/relax/front/src/program/rsim.rs
