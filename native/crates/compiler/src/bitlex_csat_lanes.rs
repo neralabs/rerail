@@ -227,6 +227,12 @@ struct Search<'a> {
 
 /// The formula solved as the device solves it: the same answer, model and counts.
 pub fn solve(f: &Formula) -> Solved {
+    solve_unless(f, &|| false).expect("never stopped")
+}
+
+/// `solve`, given up (`None`) once `stop` says so: asked every 256 steps (another solver of the same search, the
+/// device, has its result).
+pub fn solve_unless(f: &Formula, stop: &dyn Fn() -> bool) -> Option<Solved> {
     let mut s = Search::new(f);
     s.start();
     let mut steps = 0u64;
@@ -235,10 +241,13 @@ pub fn solve(f: &Formula) -> Solved {
             s.status = Status::Unknown;
             break;
         }
+        if steps % 256 == 255 && stop() {
+            return None;
+        }
         steps += 1;
         s.step();
     }
-    s.solved()
+    Some(s.solved())
 }
 
 /// The variables a window's solve carries out what it learned over (`Solved::carry`): the window's, where it

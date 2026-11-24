@@ -380,4 +380,38 @@ formula").
 - Cold Kotlin on the Spark: 8.7 s and 52.9 s of CPU on the CPU; 10.8 s and 59.6 s with the rounds on the device.
   The device does not yet make it faster: the rounds stop every question at its next solve and wait for the round's
   slowest (the row modes phase 3.1 s to 4.7 s), where on the CPU alone the threads go on with other questions.
+- **A work queue in place of the rounds** (`bitlex_csat_gpu::Service`, `never_on_device`). Each question is asked as
+  on the CPU, on a thread of its own (`ASKING_A_CORE`, 4 a core), and each of its solves handed to the service and
+  waited on: the question goes on the moment its own solve is answered. The device's thread adds every solve handed
+  in to the batch on the device between launches (`Batch::add`; a batch has room for 4,096 formulas, and a new one
+  is opened where it has none), launches it again, and hands each result back the launch that finishes it. The
+  kernel's queue grows between launches: a slot that finds it empty takes its increment back, so the next launch's
+  slots take the formulas added from `args.n` on. A solve not back within `RACE_AFTER` (2 ms) is raced by its own
+  thread on the CPU (`solve_unless`, the same search, stopped when the device's result is in); where the CPU is
+  first, the device gives the formula up between launches (`GIVEN_UP` in its report: a slot running it lets it go)
+  before the thread goes on, as the formula's memory is the thread's to change then. A device that fails leaves
+  every solve to the CPU. The rounds (`never_round`, the capture, the replay, `Round`, `formula`, `solved`) are
+  removed: a question is the CPU's `never`, its solves handed out.
+  - A batch lives across many solves now, so its launches rewrap the formula block each time (`device_buffer`):
+    formulas built after the last wrap lie past its extent. Before this the first launches read past it and hung.
+  - Test `a_resumed_window_on_the_device_is_the_cpus` now also asks through the service from many threads at once:
+    each result the CPU copy's, whether the device or the CPU's race finished it.
+- Cold Kotlin on the Spark through the work queue, the shipped answers' bytes every time (the CPU alone, the same
+  build: 6.4 to 6.6 s and 49 s of CPU):
+
+  | Steps a launch | Threads a core | Wall | CPU |
+  |---|---|---|---|
+  | 4,096 | 4 | 11.1 s | 63.2 s |
+  | 512 | 4 | 8.4 s | 60.7 s |
+  | 128 | 4 | 8.2 s | 60.3 s |
+  | 128 | 16 | 8.9 s | 68.1 s |
+
+  At 4,096 steps a launch, 1,793 of the 11,130 solves finished on the device and the CPU's race the rest.
+
+  A first form took a whole batch at a time and waited for its last formula before the next: 21.5 s, 227 of its 626
+  batches one formula each, some 50 ms alone on the device. With 128 steps a launch, a batch of a few formulas
+  takes about 0.5 ms a launch, and a busy one about 3 to 4 ms. That is still several times a short solve on a
+  core: most solves are a few hundred µs on the CPU, so a solve waits longer on the device than it would take on
+  the CPU. The race then repeats it on a core, which costs CPU. More threads asking put more solves in flight but
+  repeat more work. The device does not yet make the prover faster.
 

@@ -2114,7 +2114,7 @@ impl Lowering {
         #[cfg(target_family = "wasm")]
         let on_gpu = false;
         let (answers, found): (Vec<bool>, Vec<Vec<Vec<u8>>>) = if on_gpu {
-            never_in_rounds(prover, &ops, tables, &xs, &budgets)
+            never_on_device(prover, &ops, tables, &xs, &budgets)
         } else {
             xs.par_iter()
                 .zip(&budgets)
@@ -3722,73 +3722,39 @@ fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows:
     Ok(None)
 }
 
-/// The rounds a batch's solves are searched on the GPU before the rest are the CPU's.
+/// Threads asking questions a core, with the device: most of them wait on their solves on the device at a time.
 #[cfg(not(target_family = "wasm"))]
-const GPU_ROUNDS: usize = 8;
+const ASKING_A_CORE: usize = 4;
 
-/// `either_never_many`'s answers with the solves in rounds (decision 0654, step 5): each
-/// question, on its thread, asked to its next new solve (`Induction::never_round`); the
-/// round's formulas searched on the GPU together (`bitlex_csat_gpu::solve`, read where the
-/// questions built them, each resumed from its window as the CPU resumes it, decision 0670), each
-/// search taken by its question there; the questions asked again. The answers are those of
-/// `either_never_many` on the CPU: the device's search is the CPU's (`bitlex_csat_lanes`).
+/// `either_never_many`'s answers with the solves on the device (decisions 0654, 0670). Each question is asked as on
+/// the CPU, on a thread of its own, and each of its solves handed to the device's service (`bitlex_csat_gpu::Service`)
+/// and waited on: the device takes every solve waiting as one batch and hands each back as soon as a launch finishes
+/// it, so a question goes on the moment its own solve is answered. The threads are `ASKING_A_CORE` a core: those
+/// waiting on the device leave the cores to those asking. The answers are the CPU's: the device's search is its own.
 #[cfg(not(target_family = "wasm"))]
-fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[crate::block::ClassTable], xs: &[Val], budgets: &[bitlex_prove::Budget]) -> (Vec<bool>, Vec<Vec<Vec<u8>>>) {
-    use bitlex_prove::Round;
+fn never_on_device(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[crate::block::ClassTable], xs: &[Val], budgets: &[bitlex_prove::Budget]) -> (Vec<bool>, Vec<Vec<Vec<u8>>>) {
     use rayon::prelude::*;
-    struct Q {
-        p: bitlex_prove::Induction,
-        x: Val,
-        answer: Option<bool>,
-        formula: bool,
-    }
-    let take = |q: &mut Q, r: Round| match r {
-        Round::Answered(a) => q.answer = Some(a),
-        Round::Formula => q.formula = true,
-    };
-    let trace = std::env::var_os("RERAIL_PROVING_TRACE").is_some();
-    let mut qs: Vec<Q> = xs
-        .par_iter()
-        .zip(budgets)
-        .map(|(&x, work)| {
-            let mut q = Q { p: prover.fork(work), x, answer: None, formula: false };
-            if work.left() == 0 || q.p.refutes(ops, tables, x.v, x.d) {
-                q.answer = Some(false);
-            } else if bitlex_prove::never_in_before_solve(work, ops, tables, x.v, x.d) {
-                q.answer = Some(true);
-            } else {
-                let r = q.p.never_round(ops, tables, x.v, x.d, true);
-                take(&mut q, r);
-            }
-            q
-        })
-        .collect();
-    for round in 0..GPU_ROUNDS {
-        let waiting: Vec<usize> = (0..qs.len()).filter(|&i| qs[i].formula).collect();
-        if waiting.is_empty() {
-            break;
-        }
-        let t = std::time::Instant::now();
-        let formulas: Vec<crate::bitlex_csat_gpu::Formula> = waiting.iter().map(|&i| qs[i].p.formula().expect("a captured solve")).collect();
-        let gates: usize = formulas.iter().map(|f| f.gates.len()).sum();
-        let solved = crate::bitlex_csat_gpu::solve_racing(&formulas).unwrap_or_else(|e| panic!("the prover's GPU ({}): {e}", rerail_gpu::device::backend()));
-        drop(formulas);
-        if trace {
-            let conflicts: u64 = solved.iter().map(|s| u64::from(s.conflicts)).sum();
-            let level0 = solved.iter().filter(|s| s.answer == crate::bitlex_csat_gpu::Answer::Unsat && s.conflicts == 0).count();
-            eprintln!("gpu round {round}: {} formulas, {gates} gates, {level0} refuted at level 0, {conflicts} conflicts, {:.1} ms", waiting.len(), t.elapsed().as_secs_f64() * 1e3);
-        }
-        for (&i, x) in waiting.iter().zip(solved) {
-            qs[i].p.solved(x);
-            qs[i].formula = false;
-        }
-        let last = round + 1 == GPU_ROUNDS;
-        qs.par_iter_mut().filter(|q| q.answer.is_none()).for_each(|q| {
-            let r = q.p.never_round(ops, tables, q.x.v, q.x.d, !last);
-            take(q, r);
+    let service = std::sync::Arc::new(crate::bitlex_csat_gpu::Service::default());
+    let threads = ASKING_A_CORE * std::thread::available_parallelism().map_or(1, |n| n.get());
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("the asking threads");
+    std::thread::scope(|scope| {
+        let d = scope.spawn(|| service.run());
+        let got = pool.install(|| {
+            xs.par_iter()
+                .zip(budgets)
+                .map(|(x, work)| {
+                    let mut p = prover.fork(work).on_device(service.clone());
+                    let a = work.left() > 0 && !p.refutes(ops, tables, x.v, x.d) && (bitlex_prove::never_in_before_solve(work, ops, tables, x.v, x.d) || p.never(ops, tables, x.v, x.d));
+                    (a, p.found().to_vec())
+                })
+                .unzip()
         });
-    }
-    qs.into_iter().map(|q| (q.answer.unwrap_or(false), q.p.found().to_vec())).unzip()
+        service.close();
+        if let Err(e) = d.join().expect("the device's thread") {
+            eprintln!("the prover's GPU ({}): {e}; its solves on the CPU", rerail_gpu::device::backend());
+        }
+        got
+    })
 }
 
 /// `op` with its operands `base` later: an op of a list appended to another.

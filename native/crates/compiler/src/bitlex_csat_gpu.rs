@@ -29,12 +29,15 @@ pub fn enabled() -> bool {
     std::env::var_os("RERAIL_PROVER_GPU").is_some_and(|v| v == "1")
 }
 
-/// A descriptor's words (the kernel's `DESC`).
+/// A descriptor's words (the kernel's `DESC`), and where a batch places a formula's model and what it carries.
 const DESC: usize = 32;
+const D_MODEL: usize = 12;
+const D_CARRY: usize = 30;
 /// A formula's lanes: one SIMD group.
 const LANES: u64 = 32;
-/// The steps a launch runs a slot at most (a round of propagation, a conflict, a decision).
-const STEPS: u32 = 1 << 12;
+/// The steps a launch runs a slot at most (a round of propagation, a conflict, a decision): few, so a result is out
+/// and a formula added soon after (`Service`; 4,096 had cold Kotlin at 11.1 s, 512 at 8.4 s, 128 at 8.2 s).
+const STEPS: u32 = 1 << 7;
 /// The slots' states at most, in bytes.
 pub const STATE_BYTES: usize = 1 << 30;
 /// The slots at most.
@@ -45,6 +48,7 @@ const SAT: u32 = 1;
 const UNSAT: u32 = 2;
 const ROOMLESS: u32 = 4;
 const BROKEN: u32 = 5;
+const GIVEN_UP: u32 = 6;
 /// The words a formula's report holds (`out`).
 const OUT: usize = 16;
 
@@ -89,252 +93,596 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
 
 /// `solve`, with the slots' states in `state_bytes` at most (one slot at least).
 pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>, String> {
-    Ok(solve_until(formulas, state_bytes, None)?.into_iter().map(|x| x.expect("every formula the device's")).collect())
-}
-
-/// Each formula solved on the device and on this machine's CPUs at once (`bitlex_csat_lanes::solve`: the same
-/// search, so the same result): the device takes the batch from its first formula on, the CPUs from its last back,
-/// and each formula's result is the first either finishes. A search alone is slow on the device (its reads one after
-/// another; decision 0670) and many at once fast, so a batch's many quick searches are the device's and the few
-/// hard ones at its tail the CPUs', and a batch waits for neither alone.
-pub fn solve_racing(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    let n = formulas.len();
-    let done: Vec<AtomicBool> = (0..n).map(|_| AtomicBool::new(false)).collect();
-    let here: Vec<std::sync::Mutex<Option<Solved>>> = (0..n).map(|_| std::sync::Mutex::new(None)).collect();
-    let taken = AtomicUsize::new(0);
-    let device = std::thread::scope(|scope| {
-        let device = scope.spawn(|| solve_until(formulas, STATE_BYTES, Some(&done)));
-        rayon::scope(|r| {
-            for _ in 0..rayon::current_num_threads() {
-                r.spawn(|_| {
-                    // From the batch's end back, each formula the device has not finished.
-                    loop {
-                        let t = taken.fetch_add(1, Ordering::AcqRel);
-                        if t >= n {
-                            break;
-                        }
-                        let i = n - 1 - t;
-                        if done[i].load(Ordering::Acquire) {
-                            continue;
-                        }
-                        let x = crate::bitlex_csat_lanes::solve(&formulas[i]);
-                        *here[i].lock().expect("one writer") = Some(x);
-                        done[i].store(true, Ordering::Release);
-                    }
-                });
-            }
-        });
-        device.join().map_err(|_| "the prover's GPU: its thread panicked".to_string())?
-    })?;
-    Ok(device.into_iter().zip(here).map(|(d, h)| h.into_inner().expect("one writer").or(d).expect("every formula solved")).collect())
-}
-
-/// `solve_in`, stopping where every formula is `done` (by the device, which marks it, or by another solver): the
-/// device's results, `None` for a formula it did not finish.
-fn solve_until(formulas: &[Formula], state_bytes: usize, done: Option<&[std::sync::atomic::AtomicBool]>) -> Result<Vec<Option<Solved>>, String> {
-    use std::sync::atomic::Ordering;
+    let mut out: Vec<Option<Solved>> = (0..formulas.len()).map(|_| None).collect();
     if formulas.is_empty() {
         return Ok(Vec::new());
     }
-    let shared = rerail_gpu::shared::get().ok_or("the prover's GPU: no device")?;
-    let function = program("bitlex_csat_gpu.uglykl", KERNEL)?.function("csat_solve")?;
-    let elsewhere = || "the prover's GPU: a formula not in the batch's block".to_string();
-    let block: FormulaBlock = formulas[0].gates.placed().ok_or_else(elsewhere)?.0.clone();
-    let mut table = Grown::<u32>::in_block(&block);
-    let (mut slot_words, mut model_words, mut carry_words) = (0usize, 0usize, 0usize);
-    let mut at = Vec::with_capacity(formulas.len());
-    let mut carry_at = Vec::with_capacity(formulas.len());
-    for f in formulas {
-        let (b, rec, args) = f.gates.placed().ok_or_else(elsewhere)?;
-        let (b2, lits, ends) = f.clauses.placed().ok_or_else(elsewhere)?;
-        let (fs, fg) = f.fan.placed().ok_or_else(elsewhere)?;
-        if !b.same(&block) || !b2.same(&block) {
-            return Err(elsewhere());
-        }
-        let (os, og) = match f.own {
-            Some(o) => {
-                let (s, g) = o.placed().ok_or_else(elsewhere)?;
-                (words(s)?, words(g)?)
-            }
-            None => (u32::MAX, u32::MAX),
-        };
-        let wide = wide(f.gates);
-        let model = u32::try_from(model_words).map_err(|_| "the prover's GPU: a batch's models past 16 GiB".to_string())?;
-        // A window's solve: its window's level 0 and the clauses earlier solves carried, in the block too.
-        let none = u32::MAX;
-        let mut r = [0u32, none, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, none];
-        let carried = match f.resume {
-            Some(x) => {
-                let (bs, set) = x.start.set.placed().map_or((None, 0), |(b, a)| (Some(b), a));
-                let (bc, conflict) = x.start.conflict.placed().map_or((None, 0), |(b, a)| (Some(b), a));
-                let (bl, clits, cends) = x.carried.placed().map_or((None, 0, 0), |(b, l, e)| (Some(b), l, e));
-                // An empty one may be on the heap: nothing is read from it.
-                let off = |b: Option<&FormulaBlock>, n: usize| b.is_some_and(|b| b.same(&block)) || n == 0;
-                if !off(bs, x.start.set.len()) || !off(bc, x.start.conflict.len()) || !off(bl, x.carried.len()) {
-                    return Err(elsewhere());
-                }
-                let cv = carry_vars(f);
-                r = [
-                    1,
-                    if x.assume != 0 { x.window_clauses as u32 } else { none },
-                    x.assume as u32,
-                    cv as u32,
-                    if bs.is_some() { words(set)? } else { 0 },
-                    (x.start.set.len() / 3) as u32,
-                    if bc.is_some() { words(conflict)? } else { 0 },
-                    x.start.conflict.len() as u32,
-                    u32::from(x.start.broken),
-                    if bl.is_some() { words(clits)? } else { 0 },
-                    if bl.is_some() { words(cends)? } else { 0 },
-                    x.carried.len() as u32,
-                    if cv != 0 { carry_words as u32 } else { none },
-                ];
-                carry_at.push((cv != 0).then_some(carry_words));
-                if cv != 0 {
-                    carry_words += 1 + CARRY_ROOM;
-                }
-                x.carried.len()
-            }
-            None => {
-                carry_at.push(None);
-                0
-            }
-        };
-        let d: [u32; DESC] = [
-            f.vars as u32,
-            f.base as u32,
-            f.gates.len() as u32,
-            words(rec)?,
-            words(args)?,
-            words(fs)?,
-            words(fg)?,
-            os,
-            og,
-            words(lits)?,
-            words(ends)?,
-            f.clauses.len() as u32,
-            model,
-            learned(f.vars),
-            arena(f.vars),
-            f.conflicts,
-            f.fan.vars() as u32,
-            wide as u32,
-            r[0],
-            r[1],
-            r[2],
-            r[3],
-            r[4],
-            r[5],
-            r[6],
-            r[7],
-            r[8],
-            r[9],
-            r[10],
-            r[11],
-            r[12],
-            0,
-        ];
-        table.extend_from_slice(&d);
-        at.push(model_words);
-        model_words += (f.vars + 1).div_ceil(32);
-        slot_words = slot_words.max(state_words(f.vars, f.clauses.len() + carried, wide));
-    }
-    let n = formulas.len();
-    let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(n);
-    if slots * slot_words > u32::MAX as usize {
-        return Err("the prover's GPU: the slots' states past 16 GiB".to_string());
-    }
-    let table_at = table.placed().expect("in the block").1;
-    let blk = block.block().device_buffer(&shared.device)?;
-    // The device's own memory: the host never reads a state.
-    let state = alloc_working::<u32>(slots * slot_words)?;
-    let out = alloc::<u32>(n * OUT)?;
-    let models = alloc::<u32>(model_words.max(1))?;
-    let carry = alloc::<u32>(carry_words.max(1))?;
-    let queue = alloc::<u32>(1 + slots)?;
-    let mut q = ComputeQueue::new(&shared.queue);
-    let run = |q: &mut ComputeQueue, init: u32| -> Result<(), String> {
-        let a = Args { n: n as u32, steps: STEPS, init, slots: slots as u32, slot_words: slot_words as u32, pad: [0; 3] };
-        launch(q, function)
-            .value("args", &a)
-            .buffer("blk", &blk)
-            .buffer_at("table", &blk, table_at as u64)
-            .buffer("state", &state)
-            .buffer("out", &out)
-            .buffer("models", &models)
-            .buffer("carry", &carry)
-            .buffer("queue", &queue)
-            .run(&[slots as u64], &[LANES])?;
-        q.flush().await_()
-    };
-    run(&mut q, 1)?;
-    // Each formula ends within `MAX_STEPS` of its own: past the launches that takes, the device is at fault.
-    let most = n.div_ceil(slots) * ((crate::bitlex_csat_lanes::STEPS as usize).div_ceil(STEPS as usize) + 1) + 1;
-    let mut got = Vec::new();
-    for launches in 0.. {
-        if launches > most {
-            return Err(format!("the prover's GPU: a batch past {most} launches"));
-        }
-        run(&mut q, 0)?;
-        got = read::<u32>(&out, n * OUT);
-        if let Some(d) = done {
-            for (o, d) in got.chunks(OUT).zip(d) {
-                if o[0] != 0 {
-                    d.store(true, Ordering::Release);
-                }
-            }
-        }
-        if got.chunks(OUT).all(|o| o[0] != 0) || done.is_some_and(|d| d.iter().all(|d| d.load(Ordering::Acquire))) {
-            break;
+    let mut batch = Batch::new(formulas, state_bytes)?;
+    while !batch.finished() {
+        for (i, x) in batch.step()? {
+            out[i] = Some(x);
         }
     }
-    if let Some(i) = got.chunks(OUT).position(|o| o[0] == BROKEN) {
-        return Err(format!("the device's solver broke on formula {i}: a loop past its bound"));
-    }
-    // The models, and a refuted window's solve's core, where they are.
-    let any = got.chunks(OUT).zip(formulas).any(|(o, f)| o[0] == SAT || (o[0] == UNSAT && f.resume.is_some()));
-    let words = if any { read::<u32>(&models, model_words) } else { Vec::new() };
-    let carried = if carry_words > 0 { read::<u32>(&carry, carry_words) } else { Vec::new() };
-    let carry_of = |c: Option<usize>| -> Vec<Vec<crate::bitlex_sat::Lit>> {
-        let Some(c) = c else { return Vec::new() };
-        let (n, mut k, mut out) = (carried[c] as usize, 0usize, Vec::new());
-        while k < n {
-            let len = carried[c + 1 + k] as usize;
-            out.push(carried[c + 2 + k..c + 2 + k + len].iter().map(|&l| l as i32).collect());
-            k += 1 + len;
-        }
-        out
-    };
-    drop(table);
-    Ok(got
-        .chunks(OUT)
-        .zip(formulas)
-        .zip(at)
-        .zip(carry_at)
-        .map(|(((o, f), m), c)| {
-            (o[0] != 0).then(|| Solved {
-            answer: match o[0] {
-                SAT => Answer::Sat((0..=f.vars).map(|v| words[m + v / 32] >> (v % 32) & 1 != 0).collect()),
-                UNSAT => Answer::Unsat,
-                _ => Answer::Unknown,
-            },
-            roomless: o[0] == ROOMLESS,
-            conflicts: o[1],
-            decisions: o[2],
-            rounds: o[3],
-            learned: o[4],
-            learned_literals: o[5],
-            visits: o[6],
-            items: o[7],
-            reductions: o[8],
-            carry: carry_of(c),
-            used: (o[0] == UNSAT && f.resume.is_some()).then(|| (0..=f.vars).map(|v| words[m + v / 32] >> (v % 32) & 1 != 0).collect()),
-            cycles: [o[9], o[10], o[11], o[12], o[13], o[14]],
-            })
-        })
-        .collect())
+    Ok(out.into_iter().map(|x| x.expect("every formula the device's")).collect())
 }
+
+/// A formula as the kernel reads it: its descriptor (where its model and what it carries go, the batch's to fill),
+/// what its report holds, and its state's words. Owned: a solve hands it to the device's thread (`Service`) and
+/// waits, its formula unchanged in the block meanwhile.
+pub struct Desc {
+    words: [u32; DESC],
+    vars: usize,
+    resume: bool,
+    carries: bool,
+    slot_words: usize,
+    block: FormulaBlock,
+}
+
+/// `f`'s descriptor: an error where a part of it is not in its gates' block.
+pub fn describe(f: &Formula) -> Result<Desc, String> {
+    let elsewhere = || "the prover's GPU: a formula not in its block".to_string();
+    let (b, rec, args) = f.gates.placed().ok_or_else(elsewhere)?;
+    let (b2, lits, ends) = f.clauses.placed().ok_or_else(elsewhere)?;
+    let (fs, fg) = f.fan.placed().ok_or_else(elsewhere)?;
+    if !b2.same(b) {
+        return Err(elsewhere());
+    }
+    let (os, og) = match f.own {
+        Some(o) => {
+            let (s, g) = o.placed().ok_or_else(elsewhere)?;
+            (words(s)?, words(g)?)
+        }
+        None => (u32::MAX, u32::MAX),
+    };
+    let wide = wide(f.gates);
+    // A window's solve: its window's level 0 and the clauses earlier solves carried, in the block too.
+    let none = u32::MAX;
+    let mut r = [0u32, none, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, none];
+    let carried = match f.resume {
+        Some(x) => {
+            let (bs, set) = x.start.set.placed().map_or((None, 0), |(b, a)| (Some(b), a));
+            let (bc, conflict) = x.start.conflict.placed().map_or((None, 0), |(b, a)| (Some(b), a));
+            let (bl, clits, cends) = x.carried.placed().map_or((None, 0, 0), |(b, l, e)| (Some(b), l, e));
+            // An empty one may be on the heap: nothing is read from it.
+            let off = |o: Option<&FormulaBlock>, n: usize| o.is_some_and(|o| o.same(b)) || n == 0;
+            if !off(bs, x.start.set.len()) || !off(bc, x.start.conflict.len()) || !off(bl, x.carried.len()) {
+                return Err(elsewhere());
+            }
+            let cv = carry_vars(f);
+            r = [
+                1,
+                if x.assume != 0 { x.window_clauses as u32 } else { none },
+                x.assume as u32,
+                cv as u32,
+                if bs.is_some() { words(set)? } else { 0 },
+                (x.start.set.len() / 3) as u32,
+                if bc.is_some() { words(conflict)? } else { 0 },
+                x.start.conflict.len() as u32,
+                u32::from(x.start.broken),
+                if bl.is_some() { words(clits)? } else { 0 },
+                if bl.is_some() { words(cends)? } else { 0 },
+                x.carried.len() as u32,
+                if cv != 0 { 0 } else { none },
+            ];
+            x.carried.len()
+        }
+        None => 0
+    };
+    let d: [u32; DESC] = [
+        f.vars as u32,
+        f.base as u32,
+        f.gates.len() as u32,
+        words(rec)?,
+        words(args)?,
+        words(fs)?,
+        words(fg)?,
+        os,
+        og,
+        words(lits)?,
+        words(ends)?,
+        f.clauses.len() as u32,
+        0,
+        learned(f.vars),
+        arena(f.vars),
+        f.conflicts,
+        f.fan.vars() as u32,
+        wide as u32,
+        r[0],
+        r[1],
+        r[2],
+        r[3],
+        r[4],
+        r[5],
+        r[6],
+        r[7],
+        r[8],
+        r[9],
+        r[10],
+        r[11],
+        r[12],
+        0,
+    ];
+    let cv = carry_vars(f);
+    Ok(Desc {
+        words: d,
+        vars: f.vars,
+        resume: f.resume.is_some(),
+        carries: cv != 0,
+        slot_words: state_words(f.vars, f.clauses.len() + carried, wide),
+        block: b.clone(),
+    })
+}
+
+/// A batch on the device, launch by launch (`step`): its formulas' descriptors in the block, its slots and reports.
+/// It holds no borrow of its formulas: what it reads of them is in the block, which their owners leave as it is
+/// while they wait for their results (a formula's memory may change once its result is out, as nothing reads it
+/// again; one given up, with `step` no longer called, is read by no launch).
+pub struct Batch {
+    n: usize,
+    /// Its room: formulas, model words and carry words.
+    cap: usize,
+    model_cap: usize,
+    carry_cap: usize,
+    model_words: usize,
+    carry_words: usize,
+    block: FormulaBlock,
+    slots: usize,
+    slot_words: usize,
+    function: &'static rerail_gpu::device::ComputeFunction,
+    q: ComputeQueue,
+    blk: rerail_gpu::device::Buffer,
+    /// The descriptors the launches read, kept while they run.
+    table: Grown<u32>,
+    state: rerail_gpu::device::Buffer,
+    out: rerail_gpu::device::Buffer,
+    models: rerail_gpu::device::Buffer,
+    carry: rerail_gpu::device::Buffer,
+    queue: rerail_gpu::device::Buffer,
+    /// Each formula's variables, whether it resumes a window, where its model and what it carries are.
+    meta: Vec<(usize, bool, usize, Option<usize>)>,
+    reported: Vec<bool>,
+    left: usize,
+    launches: usize,
+    most: usize,
+}
+
+/// `n` words of a buffer the host sees, from word `at`.
+fn words_of(b: &rerail_gpu::device::Buffer, at: usize, n: usize) -> Vec<u32> {
+    let p = b.contents().cast::<u32>();
+    if p.is_null() {
+        return read::<u32>(b, at + n)[at..].to_vec();
+    }
+    // SAFETY: the buffer holds at least `at + n` words (the batch sized it), and no launch runs while it is read.
+    unsafe { std::slice::from_raw_parts(p.add(at), n).to_vec() }
+}
+
+impl Batch {
+    /// The batch laid out and its reports cleared (the first launch). An error where there is no device, the kernel
+    /// does not compile, or a formula is not in the block the others are.
+    pub fn new(formulas: &[Formula], state_bytes: usize) -> Result<Batch, String> {
+        let descs = formulas.iter().map(describe).collect::<Result<Vec<_>, _>>()?;
+        Batch::of(&descs, state_bytes)
+    }
+
+    /// A batch of formulas described (`describe`), all in one block.
+    pub fn of(descs: &[Desc], state_bytes: usize) -> Result<Batch, String> {
+        let first = descs.first().ok_or("the prover's GPU: an empty batch")?;
+        let models = descs.iter().map(|d| (d.vars + 1).div_ceil(32)).sum();
+        let carries = descs.iter().filter(|d| d.carries).count() * (1 + CARRY_ROOM);
+        let slot_words = descs.iter().map(|d| d.slot_words).max().unwrap_or(1);
+        let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(descs.len());
+        let mut b = Batch::open(&first.block, descs.len(), models, carries, slot_words, slots)?;
+        for d in descs {
+            b.add(d)?.ok_or("the prover's GPU: a batch without the room its formulas took")?;
+        }
+        Ok(b)
+    }
+
+    /// An empty batch of `slots` slots of `slot_words`, with room for `cap` formulas, `model_cap` words of models
+    /// and `carry_cap` of what they carry, its queue cleared (the first launch). Formulas are added between
+    /// launches (`add`).
+    pub fn open(block: &FormulaBlock, cap: usize, model_cap: usize, carry_cap: usize, slot_words: usize, slots: usize) -> Result<Batch, String> {
+        let shared = rerail_gpu::shared::get().ok_or("the prover's GPU: no device")?;
+        let function = program("bitlex_csat_gpu.uglykl", KERNEL)?.function("csat_solve")?;
+        if slots * slot_words > u32::MAX as usize {
+            return Err("the prover's GPU: the slots' states past 16 GiB".to_string());
+        }
+        let mut b = Batch {
+            n: 0,
+            cap,
+            model_cap,
+            carry_cap,
+            model_words: 0,
+            carry_words: 0,
+            block: block.clone(),
+            slots,
+            slot_words,
+            function,
+            q: ComputeQueue::new(&shared.queue),
+            blk: block.block().device_buffer(&shared.device)?,
+            table: Grown::<u32>::in_block(block),
+            // The device's own memory: the host never reads a state.
+            state: alloc_working::<u32>(slots * slot_words)?,
+            out: alloc::<u32>(cap.max(1) * OUT)?,
+            models: alloc::<u32>(model_cap.max(1))?,
+            carry: alloc::<u32>(carry_cap.max(1))?,
+            queue: alloc::<u32>(1 + slots)?,
+            meta: Vec::with_capacity(cap),
+            reported: Vec::with_capacity(cap),
+            left: 0,
+            launches: 0,
+            most: 1,
+        };
+        b.run(1)?;
+        Ok(b)
+    }
+
+    /// `d` added, between launches: its place, or `None` where the batch has no room for it (or it is in another
+    /// block, or its state is larger than a slot).
+    pub fn add(&mut self, d: &Desc) -> Result<Option<usize>, String> {
+        let model = (d.vars + 1).div_ceil(32);
+        let carry = if d.carries { 1 + CARRY_ROOM } else { 0 };
+        if self.n == self.cap || self.model_words + model > self.model_cap || self.carry_words + carry > self.carry_cap || d.slot_words > self.slot_words || !d.block.same(&self.block) {
+            return Ok(None);
+        }
+        let mut w = d.words;
+        w[D_MODEL] = u32::try_from(self.model_words).map_err(|_| "the prover's GPU: a batch's models past 16 GiB".to_string())?;
+        let carry_at = d.carries.then_some(self.carry_words);
+        if let Some(c) = carry_at {
+            w[D_CARRY] = c as u32;
+        }
+        let k = self.n;
+        // Its report running: the host's write, as no launch runs.
+        let p = self.out.contents().cast::<u32>();
+        assert!(!p.is_null(), "the prover's GPU: a report the host can not write");
+        // SAFETY: `out` holds `cap * OUT` words, and `k < cap`.
+        unsafe { p.add(k * OUT).write_volatile(0) };
+        self.table.extend_from_slice(&w);
+        self.meta.push((d.vars, d.resume, self.model_words, carry_at));
+        self.reported.push(false);
+        self.model_words += model;
+        self.carry_words += carry;
+        self.n += 1;
+        self.left += 1;
+        // Each formula ends within `MAX_STEPS` of its own: past the launches that takes, the device is at fault.
+        self.most = self.launches + self.left.div_ceil(self.slots) * ((crate::bitlex_csat_lanes::STEPS as usize).div_ceil(STEPS as usize) + 1) + 1;
+        Ok(Some(k))
+    }
+
+    /// Whether the batch has no room left for formulas.
+    pub fn full(&self) -> bool {
+        self.n == self.cap
+    }
+
+    fn run(&mut self, init: u32) -> Result<(), String> {
+        // The block as it is now: formulas added since the last launch may lie past the extent wrapped then.
+        let shared = rerail_gpu::shared::get().ok_or("the prover's GPU: no device")?;
+        self.blk = self.block.block().device_buffer(&shared.device)?;
+        let a = Args { n: self.n as u32, steps: STEPS, init, slots: self.slots as u32, slot_words: self.slot_words as u32, pad: [0; 3] };
+        launch(&self.q, self.function)
+            .value("args", &a)
+            .buffer("blk", &self.blk)
+            .buffer_at("table", &self.blk, self.table.placed().map_or(0, |(_, at)| at) as u64)
+            .buffer("state", &self.state)
+            .buffer("out", &self.out)
+            .buffer("models", &self.models)
+            .buffer("carry", &self.carry)
+            .buffer("queue", &self.queue)
+            .run(&[self.slots as u64], &[LANES])?;
+        self.q.flush().await_()
+    }
+
+    /// Whether every formula's result is out.
+    pub fn finished(&self) -> bool {
+        self.left == 0
+    }
+
+    /// The formulas a slot has not finished: each taken from the queue and running, or not yet taken.
+    pub fn unfinished(&self) -> usize {
+        self.left
+    }
+
+    /// Whether every formula has been taken from the queue by a slot (those unfinished are all running).
+    pub fn drained(&self) -> bool {
+        words_of(&self.queue, 0, 1)[0] as usize >= self.n
+    }
+
+    /// The slots.
+    pub fn slots(&self) -> usize {
+        self.slots
+    }
+
+    /// Formula `k` given up, between launches (another solver has its result): no launch reads it again, so its
+    /// owner may change its memory.
+    pub fn give_up(&mut self, k: usize) {
+        if self.reported[k] {
+            return;
+        }
+        let p = self.out.contents().cast::<u32>();
+        assert!(!p.is_null(), "the prover's GPU: a report the host can not write");
+        // SAFETY: `out` holds `n * OUT` words, and no launch runs while the host writes it.
+        unsafe { p.add(k * OUT).write_volatile(GIVEN_UP) };
+        self.reported[k] = true;
+        self.left -= 1;
+    }
+
+    /// One launch: the formulas it finished, each with its result (by its place in the batch).
+    pub fn step(&mut self) -> Result<Vec<(usize, Solved)>, String> {
+        if self.launches > self.most {
+            return Err(format!("the prover's GPU: a batch past {} launches", self.most));
+        }
+        self.launches += 1;
+        self.run(0)?;
+        let got = words_of(&self.out, 0, self.n * OUT);
+        let mut done = Vec::new();
+        for (i, o) in got.chunks(OUT).enumerate() {
+            if o[0] == 0 || self.reported[i] {
+                continue;
+            }
+            if o[0] == BROKEN {
+                return Err(format!("the device's solver broke on formula {i}: a loop past its bound"));
+            }
+            self.reported[i] = true;
+            self.left -= 1;
+            let (vars, resume, m, c) = self.meta[i];
+            // The model, or a refuted window's solve's core, in its words.
+            let bits = (o[0] == SAT || (o[0] == UNSAT && resume)).then(|| {
+                let w = words_of(&self.models, m, (vars + 1).div_ceil(32));
+                (0..=vars).map(|v| w[v / 32] >> (v % 32) & 1 != 0).collect::<Vec<bool>>()
+            });
+            let carry = c.map_or_else(Vec::new, |c| {
+                let n = words_of(&self.carry, c, 1)[0] as usize;
+                let w = words_of(&self.carry, c + 1, n);
+                let (mut k, mut out) = (0usize, Vec::new());
+                while k < n {
+                    let len = w[k] as usize;
+                    out.push(w[k + 1..k + 1 + len].iter().map(|&l| l as crate::bitlex_sat::Lit).collect());
+                    k += 1 + len;
+                }
+                out
+            });
+            let (answer, used) = match o[0] {
+                SAT => (Answer::Sat(bits.expect("a model")), None),
+                UNSAT => (Answer::Unsat, bits),
+                _ => (Answer::Unknown, None),
+            };
+            done.push((
+                i,
+                Solved {
+                    answer,
+                    roomless: o[0] == ROOMLESS,
+                    conflicts: o[1],
+                    decisions: o[2],
+                    rounds: o[3],
+                    learned: o[4],
+                    learned_literals: o[5],
+                    visits: o[6],
+                    items: o[7],
+                    reductions: o[8],
+                    carry,
+                    used,
+                    cycles: [o[9], o[10], o[11], o[12], o[13], o[14]],
+                },
+            ));
+        }
+        Ok(done)
+    }
+}
+
+/// The device as a service to the threads that solve (decision 0670): a work queue. A thread hands it a formula
+/// (`solve`) and waits; the device's thread (`run`) takes every formula handed in since its last launch as a new batch
+/// at once, launches each batch live in turn, and hands each result back the launch that finishes it, so no solve
+/// waits for another batch's to end. A search alone is slower on the device than here (its reads one after another),
+/// many at once faster: a solve not back within `RACE_AFTER` is raced by its thread here (`solve_unless`, the same
+/// search), the first result taken, and the device gives up the other between launches before the thread goes on
+/// (the formula is the thread's to change then). With more threads than cores, those waiting leave the cores to the
+/// others. A device that fails leaves every solve to the CPU.
+pub struct Service {
+    state: std::sync::Mutex<Waiting>,
+    wake: std::sync::Condvar,
+    trace: bool,
+}
+
+struct Waiting {
+    handed: Vec<(Desc, std::sync::Arc<Reply>)>,
+    closed: bool,
+    failed: Option<String>,
+}
+
+/// A handed formula's result: the device's, or `None` (given up, or the device failed: the CPU's).
+#[derive(Default)]
+struct Reply {
+    got: std::sync::Mutex<Option<Option<Solved>>>,
+    ready: std::sync::Condvar,
+    /// Its thread has the result: the device gives the formula up.
+    abandoned: std::sync::atomic::AtomicBool,
+}
+
+impl Reply {
+    fn give(&self, x: Option<Solved>) {
+        let mut got = self.got.lock().expect("a reply");
+        if got.is_none() {
+            *got = Some(x);
+        }
+        drop(got);
+        self.ready.notify_all();
+    }
+
+    fn back(&self) -> bool {
+        self.got.lock().expect("a reply").is_some()
+    }
+}
+
+/// How long a solve waits on the device before its thread races it here.
+const RACE_AFTER: std::time::Duration = std::time::Duration::from_millis(2);
+
+impl Default for Service {
+    fn default() -> Self {
+        Service {
+            state: std::sync::Mutex::new(Waiting { handed: Vec::new(), closed: false, failed: None }),
+            wake: std::sync::Condvar::new(),
+            trace: std::env::var_os("RERAIL_PROVING_TRACE").is_some(),
+        }
+    }
+}
+
+/// A batch on the device and the threads waiting on its formulas.
+struct Live {
+    batch: Batch,
+    replies: Vec<std::sync::Arc<Reply>>,
+    at: std::time::Instant,
+    on_device: usize,
+    given_up: usize,
+}
+
+impl Service {
+    /// `f` solved: on the device or here, whichever first. The same result either way.
+    pub fn solve(&self, f: &Formula) -> Solved {
+        let reply = std::sync::Arc::new(Reply::default());
+        {
+            let mut w = self.state.lock().expect("the service");
+            let d = match describe(f) {
+                Ok(d) if w.failed.is_none() && !w.closed => d,
+                _ => {
+                    drop(w);
+                    return crate::bitlex_csat_lanes::solve(f);
+                }
+            };
+            w.handed.push((d, reply.clone()));
+        }
+        self.wake.notify_all();
+        {
+            let got = reply.got.lock().expect("a reply");
+            let (mut got, _) = reply.ready.wait_timeout_while(got, RACE_AFTER, |g| g.is_none()).expect("a reply");
+            if let Some(Some(x)) = got.take() {
+                return x;
+            }
+            if got.is_some() {
+                // Given up, or the device failed: the CPU's.
+                drop(got);
+                return crate::bitlex_csat_lanes::solve(f);
+            }
+        }
+        // Raced here.
+        if let Some(x) = crate::bitlex_csat_lanes::solve_unless(f, &|| reply.back()) {
+            reply.abandoned.store(true, std::sync::atomic::Ordering::Release);
+            self.wake.notify_all();
+            // The device done with the formula: its result, or its giving up.
+            let got = reply.got.lock().expect("a reply");
+            drop(reply.ready.wait_while(got, |g| g.is_none()).expect("a reply"));
+            return x;
+        }
+        match reply.got.lock().expect("a reply").take() {
+            Some(Some(x)) => x,
+            _ => crate::bitlex_csat_lanes::solve(f),
+        }
+    }
+
+    /// No more formulas: `run` returns once those handed in are done.
+    pub fn close(&self) {
+        self.state.lock().expect("the service").closed = true;
+        self.wake.notify_all();
+    }
+
+    /// The device's thread, until `close`: an error where the device failed (every solve then the CPU's).
+    pub fn run(&self) -> Result<(), String> {
+        let mut live: Vec<Live> = Vec::new();
+        let r = self.serve(&mut live);
+        if let Err(e) = &r {
+            let mut w = self.state.lock().expect("the service");
+            w.failed = Some(e.clone());
+            for (_, reply) in w.handed.drain(..) {
+                reply.give(None);
+            }
+            drop(w);
+            for l in &live {
+                for r in &l.replies {
+                    r.give(None);
+                }
+            }
+        }
+        r
+    }
+
+    fn serve(&self, live: &mut Vec<Live>) -> Result<(), String> {
+        let mut batches = 0usize;
+        loop {
+            let handed = {
+                let mut w = self.state.lock().expect("the service");
+                while w.handed.is_empty() && live.iter().all(|l| l.batch.finished()) && !w.closed {
+                    w = self.wake.wait(w).expect("the service");
+                }
+                if w.handed.is_empty() && live.iter().all(|l| l.batch.finished()) {
+                    for l in live.drain(..) {
+                        self.retired(&l, &mut batches);
+                    }
+                    return Ok(());
+                }
+                std::mem::take(&mut w.handed)
+            };
+            // Each added to the batch on the device, the next launch on; a new batch where it has no room.
+            for (d, reply) in handed {
+                let added = match live.last_mut() {
+                    Some(l) => l.batch.add(&d)?,
+                    None => None,
+                };
+                let l = match added {
+                    Some(_) => live.last_mut().expect("added"),
+                    None => {
+                        let slot_words = 2 * d.slot_words;
+                        let slots = (STATE_BYTES / (4 * slot_words)).clamp(1, SLOTS);
+                        let models = MODEL_ROOM.max((d.vars + 1).div_ceil(32));
+                        let batch = Batch::open(&d.block, BATCH_ROOM, models, BATCH_ROOM * (1 + CARRY_ROOM), slot_words, slots)?;
+                        live.push(Live { batch, replies: Vec::new(), at: std::time::Instant::now(), on_device: 0, given_up: 0 });
+                        let l = live.last_mut().expect("opened");
+                        l.batch.add(&d)?.ok_or("the prover's GPU: a formula without room in an empty batch")?;
+                        l
+                    }
+                };
+                l.replies.push(reply);
+            }
+            // A launch of each batch with formulas running: one, but where the last ran out of room.
+            for l in live.iter_mut() {
+                for (k, r) in l.replies.iter().enumerate() {
+                    if !l.batch.reported[k] && r.abandoned.load(std::sync::atomic::Ordering::Acquire) {
+                        l.batch.give_up(k);
+                        r.give(None);
+                        l.given_up += 1;
+                    }
+                }
+                if l.batch.finished() {
+                    continue;
+                }
+                for (k, x) in l.batch.step()? {
+                    l.on_device += 1;
+                    l.replies[k].give(Some(x));
+                }
+            }
+            // A batch out of room is done with once its formulas are.
+            let last = live.len().saturating_sub(1);
+            let mut i = 0;
+            live.retain(|l| {
+                let keep = !(l.batch.finished() && (l.batch.full() || i < last));
+                if !keep {
+                    self.retired(l, &mut batches);
+                }
+                i += 1;
+                keep
+            });
+        }
+    }
+
+    fn retired(&self, l: &Live, batches: &mut usize) {
+        if self.trace {
+            eprintln!("gpu batch {batches}: {} formulas, {} on the device, {} given up, {} launches, {:.1} ms", l.replies.len(), l.on_device, l.given_up, l.batch.launches, l.at.elapsed().as_secs_f64() * 1e3);
+        }
+        *batches += 1;
+    }
+}
+
+/// A service's batch's room: formulas, and words of their models.
+const BATCH_ROOM: usize = 1 << 12;
+const MODEL_ROOM: usize = 1 << 22;
 
 #[cfg(test)]
 mod tests {
@@ -466,9 +814,19 @@ mod tests {
                 .collect();
             let got = solve_in(&formulas, 1 << 20).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
             let here: Vec<Solved> = formulas.iter().map(crate::bitlex_csat_lanes::solve).collect();
-            // Raced with the CPUs: each the same, whichever finished it.
-            let raced = solve_racing(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
-            for (i, (x, h)) in raced.iter().zip(&here).enumerate() {
+            // Through the service, from many threads at once: each the same, the device's or the CPU's.
+            let service = Service::default();
+            let served: Vec<Solved> = std::thread::scope(|scope| {
+                let d = scope.spawn(|| service.run());
+                let got = std::thread::scope(|inner| {
+                    let hs: Vec<_> = formulas.chunks(8).map(|fs| inner.spawn(|| fs.iter().map(|f| service.solve(f)).collect::<Vec<_>>())).collect();
+                    hs.into_iter().flat_map(|h| h.join().expect("a solving thread")).collect()
+                });
+                service.close();
+                d.join().expect("the device's thread").unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+                got
+            });
+            for (i, (x, h)) in served.iter().zip(&here).enumerate() {
                 same_search(1000 * k + i, x, h);
             }
             drop(formulas);

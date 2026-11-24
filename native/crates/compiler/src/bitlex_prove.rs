@@ -805,43 +805,11 @@ pub struct Induction {
     whole_hypothesis: bool,
     /// The compile's work left (`Budget`).
     work: Budget,
-    /// A question asked in rounds (`never_round`, decision 0654): each solve's outcome so far, by
-    /// its place in the question's solves, replayed as the question is asked again.
-    replay: Vec<Replayed>,
-    /// The place of the next solve in the question being asked.
-    at: usize,
-    /// Asked in rounds: the first solve past `replay` stops the question with its formula.
-    capture: bool,
-    captured: Option<Captured>,
     /// The core of the solve that proved the last `prove` (`Outcome::Proved`).
     core: Option<Vec<bool>>,
-}
-
-/// The solve a round stopped at (decision 0654), as the device reads it (decision 0670, step 3): its window, whose
-/// gates and clauses hold the solve's own past the window's until the next round attaches it (`Window::kept`), and
-/// whose level 0 (`Start`) and carried clauses it resumes from; its variables (its assumption the last), its own
-/// gates' fanout, in the formula block; and its budget of conflicts.
-struct Captured {
-    window: usize,
-    vars: usize,
-    own: Option<Fanout>,
-    conflicts: u32,
-}
-
-/// A solve's outcome in a question asked in rounds (decision 0654).
-#[derive(Clone)]
-enum Replayed {
-    Known(Outcome),
-    /// Its search, the device's (decision 0670): taken as the search when the question reaches the solve again (its
-    /// variables already spent), what it carries kept for the window's next solves as there.
-    Device(Box<lanes::Solved>),
-}
-
-/// A round of a question (`Induction::never_round`).
-pub enum Round {
-    Answered(bool),
-    /// Stopped at a solve: its formula is `Induction::formula`'s.
-    Formula,
+    /// The device its solves are handed to (`bitlex_csat_gpu::Service`, decision 0670): the same search as here.
+    #[cfg(not(target_family = "wasm"))]
+    device: Option<std::sync::Arc<crate::bitlex_csat_gpu::Service>>,
 }
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
@@ -1229,7 +1197,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None, core: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), core: None, #[cfg(not(target_family = "wasm"))] device: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1255,46 +1223,16 @@ impl Induction {
         p
     }
 
+    /// Its solves handed to the device's service (decision 0670).
+    #[cfg(not(target_family = "wasm"))]
+    pub fn on_device(mut self, service: std::sync::Arc<crate::bitlex_csat_gpu::Service>) -> Self {
+        self.device = Some(service);
+        self
+    }
+
     /// The block its windows are built in.
     pub fn block(&self) -> &FormulaBlock {
         self.block.get_or_init(FormulaBlock::new)
-    }
-
-    /// `never` in rounds (decision 0654): the question asked again from its start, each solve
-    /// reached before answered from `replay`, until it is answered or reaches a new solve, whose
-    /// formula it returns; `decided` says how that solve came out. The solves happen in the
-    /// order `never`'s do, with the same outcomes, so the answer is `never`'s. Not `stop`: the
-    /// new solves are made on the CPU, to the answer.
-    pub fn never_round(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, stop: bool) -> Round {
-        if self.replay.is_empty() && self.refutes(ops, tables, v, d) {
-            return Round::Answered(false);
-        }
-        let mut ops = ops.to_vec();
-        self.ask(&ops);
-        self.solves = SOLVES;
-        (self.at, self.capture, self.captured) = (0, stop, None);
-        let proved = self.prove(&mut ops, tables, v, d, LEVELS, None, &[0; 4]);
-        self.capture = false;
-        match self.captured {
-            Some(_) => Round::Formula,
-            None => Round::Answered(proved),
-        }
-    }
-
-    /// The formula of the solve the last round stopped at (`Round::Formula`), as the device's solver reads it: the
-    /// search the CPU would run there (`solve_now`), resumed from its window.
-    #[cfg(not(target_family = "wasm"))]
-    pub fn formula(&self) -> Option<crate::bitlex_csat_gpu::Formula<'_>> {
-        let c = self.captured.as_ref()?;
-        let w = &self.window_list[c.window].1;
-        let start = w.start.as_ref()?;
-        let resume = lanes::Resume { start, window_clauses: w.base, carried: &w.learned, assume: c.vars as Lit, carry_vars: w.base_vars.unsigned_abs() as usize };
-        Some(lanes::Formula { resume: Some(resume), ..lanes::Formula::new(c.vars, &w.parts.gates, w.base_gates, &w.fan, c.own.as_ref(), &w.parts.clauses, c.conflicts) })
-    }
-
-    /// The device's search of the solve the last round stopped at: the question takes it there when asked again.
-    pub fn solved(&mut self, x: lanes::Solved) {
-        self.replay.push(Replayed::Device(Box::new(x)));
     }
 
     /// The streams this prover's solves found (`Streams`).
@@ -1480,36 +1418,14 @@ impl Induction {
     fn ask(&mut self, ops: &[BlockOp]) {
         // A question's lemmas are its own: its answer depends on it alone (decision 0414).
         self.lemmas.clear();
-        // Asked again in rounds (`never_round`): its windows are the same.
-        if self.replay.is_empty() {
-            self.windows.clear();
-            self.window_list.clear();
-        }
+        self.windows.clear();
+        self.window_list.clear();
         self.question = ops.len();
     }
 
     /// `bounded`: the stream begins within the window (before it past the horizon).
-    /// In rounds (`never_round`): a solve made before is its outcome; past a stopped one, none
-    /// is made.
     #[allow(clippy::too_many_arguments)]
     fn solve(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, hypothesis: Option<&Lemma>, bounded: bool, exclude: &ByteSet) -> Outcome {
-        if self.captured.is_some() {
-            return Outcome::Unknown;
-        }
-        let i = self.at;
-        self.at += 1;
-        if let Some(Replayed::Known(o)) = self.replay.get(i) {
-            return o.clone();
-        }
-        let o = self.solve_now(ops, tables, v, d, hypothesis, bounded, exclude, i);
-        if self.capture && i < self.replay.len() {
-            self.replay[i] = Replayed::Known(o.clone());
-        }
-        o
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn solve_now(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, hypothesis: Option<&Lemma>, bounded: bool, exclude: &ByteSet, i: usize) -> Outcome {
         let nexts = &self.nexts;
         // The window as the operations make it, before the solve's own clauses (the bounded
         // start, the bytes left out, the lemmas): the same for every solve of a question's value
@@ -1585,7 +1501,6 @@ impl Induction {
         };
         let window = &mut self.window_list[j].1;
         let mut u = window.attach(ops, tables, nexts);
-        let mut keep = false;
         let out = 'solve: {
         let Window { far, reach, at_position, held, fan, base_gates, base: window_base, base_vars, start, learned, .. } = &mut *window;
         let fan = &*fan;
@@ -1649,14 +1564,7 @@ impl Induction {
         }
         // Past the compile's budget: not proved. A window's variables and the solve's conflicts
         // are its steps.
-        let device = match self.replay.get_mut(i) {
-            Some(r @ Replayed::Device(_)) => match std::mem::replace(r, Replayed::Known(Outcome::Unknown)) {
-                Replayed::Device(x) => Some(*x),
-                Replayed::Known(_) => None,
-            },
-            _ => None,
-        };
-        if device.is_none() && !self.work.spend(u.vars.unsigned_abs().into()) {
+        if !self.work.spend(u.vars.unsigned_abs().into()) {
             break 'solve Outcome::Unknown;
         }
         // The device's search (`bitlex_csat_lanes`, decision 0670): the window at level 0, propagated once (`Start`);
@@ -1667,19 +1575,21 @@ impl Induction {
         let vars = sel.unsigned_abs() as usize;
         let own_fan = (base_gates < u.gates.len()).then(|| Fanout::of_range(&u.gates, base_gates..u.gates.len(), vars));
         let budget = self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX));
-        // In rounds, a new solve: its formula, for the batch (`never_round`), where it was built: the window keeps
-        // the solve's own gates and clauses until it is attached again.
-        if self.capture && i == self.replay.len() {
-            self.captured = Some(Captured { window: j, vars, own: own_fan, conflicts: budget });
-            keep = true;
-            break 'solve Outcome::Unknown;
-        }
         let t_dump = std::time::Instant::now();
-        let x = device.unwrap_or_else(|| {
+        #[cfg(not(target_family = "wasm"))]
+        let service = self.device.clone();
+        let x = {
             let resume = lanes::Resume { start, window_clauses: window_base, carried: learned, assume: sel, carry_vars: base_vars };
             let f = lanes::Formula { resume: Some(resume), ..lanes::Formula::new(vars, &u.gates, base_gates, fan, own_fan.as_ref(), &u.clauses, budget) };
-            lanes::solve(&f)
-        });
+            #[cfg(not(target_family = "wasm"))]
+            let x = match &service {
+                Some(s) => s.solve(&f),
+                None => lanes::solve(&f),
+            };
+            #[cfg(target_family = "wasm")]
+            let x = lanes::solve(&f);
+            x
+        };
         // What holds for every solve of the window, kept for its next ones (`LEARNED_KEPT` literals at most).
         for c in &x.carry {
             if learned.lits().len() + c.len() <= LEARNED_KEPT {
@@ -1749,7 +1659,7 @@ impl Induction {
         };
         answer
         };
-        window.give_back(u, keep);
+        window.give_back(u);
         out
     }
 }
@@ -1875,8 +1785,6 @@ struct Window {
     base: usize,
     base_vars: i32,
     parts: Parts,
-    /// Its gates and clauses hold a captured solve's own past its own (`give_back`).
-    kept: bool,
     /// The window at level 0, made at its first solve (decision 0670).
     start: Option<Start>,
     /// What its solves learned that holds for all of them: clauses over its own variables, none of a solve's own.
@@ -1903,10 +1811,6 @@ impl Window {
     /// The window as an `Unrolled`, for one solve: its parts lent, given back by `give_back`.
     fn attach<'a>(&mut self, ops: &'a [BlockOp], tables: &'a [ClassTable], nexts: &'a HashMap<u16, u16>) -> Unrolled<'a> {
         let p = &mut self.parts;
-        if std::mem::take(&mut self.kept) {
-            p.gates.truncate(self.base_gates);
-            p.clauses.truncate(self.base);
-        }
         Unrolled {
             ops,
             tables,
@@ -1926,16 +1830,11 @@ impl Window {
         }
     }
 
-    /// A solve's `Unrolled` back: its gates, clauses, variables and literals undone, the window's own. `keep`: its
-    /// gates and clauses kept until the window is attached again, for the device to read (`Captured`).
-    fn give_back(&mut self, u: Unrolled<'_>, keep: bool) {
+    /// A solve's `Unrolled` back: its gates, clauses, variables and literals undone, the window's own.
+    fn give_back(&mut self, u: Unrolled<'_>) {
         let Unrolled { mut gates, mut clauses, mut memo, before, past, groups, mut readers, memo_added, readers_added, .. } = u;
-        if keep {
-            self.kept = true;
-        } else {
-            gates.truncate(self.base_gates);
-            clauses.truncate(self.base);
-        }
+        gates.truncate(self.base_gates);
+        clauses.truncate(self.base);
         for k in memo_added {
             memo.remove(&k);
         }
@@ -1955,7 +1854,7 @@ impl<'a> Unrolled<'a> {
         let fan = Fanout::of(&gates, gates.len(), vars.unsigned_abs() as usize);
         // In the window's block, where the device's solver reads them (decision 0670).
         let blocked = gates.placed().map_or_else(Clauses::default, |(b, _, _)| Clauses::in_block(b));
-        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, kept: false, start: None, learned: blocked }
+        Window { reach, far, at_position, held, fan, base_gates: gates.len(), base: clauses.len(), base_vars: vars, parts: Parts { d, gates, clauses, vars, memo, before, past, groups, readers }, start: None, learned: blocked }
     }
 }
 
