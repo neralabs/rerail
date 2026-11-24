@@ -243,11 +243,11 @@ describe("rerail events in a main build", () => {
   });
 
   // Off Windows the daemon's socket sits in a folder only the person can open, so no other account can hold it.
-  it.runIf(process.platform === "win32")("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names until what holds it proves it is this home's daemon", async () => {
+  it.runIf(process.platform === "win32")("sends nothing, not even a proof's challenge, to the engine pipe RERAIL_ENGINE_SOCKET names when Windows names a holder that is not this home's daemon", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-named-"));
     cleanups.push(async () => await removeFolder(root));
     // Another process listens on the pipe daemon.json names, as after a logoff or a reboot ended the daemon that
-    // wrote it.
+    // wrote it: this process, which Windows names as the holder, started after the start daemon.json records.
     const socketPath = testEngineEndpoint(root);
     const received: string[] = [];
     const server = createServer((request, response) => {
@@ -280,8 +280,8 @@ describe("rerail events in a main build", () => {
       output,
     });
 
-    // Each event's challenge reached the pipe, and neither the capability nor an event did.
-    expect(received).toEqual(["POST /proof no capability", "POST /proof no capability"]);
+    // Nothing reached the pipe: no challenge, no capability and no event.
+    expect(received).toEqual([]);
     const notThisHome = { code: "invalid-event", message: expect.stringContaining(`${socketPath} is not this Rerail home's daemon`) };
     expect(written.trim().split("\n").map(line => JSON.parse(line) as unknown)).toEqual([
       { eventId: "start", error: notThisHome },

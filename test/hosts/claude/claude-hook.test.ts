@@ -266,7 +266,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     { names: "the pipe another process holds", inDaemonJson: true },
     // As daemon.json does when another process held the default pipe's name as the daemon started.
     { names: "the daemon's own pipe", inDaemonJson: false },
-  ])("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names until what holds it proves it is this home's daemon (daemon.json names $names)", { timeout: 60_000 }, async ({ inDaemonJson }) => {
+  ])("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names, its lookup not even a proof's challenge, when Windows names another process as its holder (daemon.json names $names)", { timeout: 60_000 }, async ({ inDaemonJson }) => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_AUTOSTART", "0");
@@ -281,11 +281,11 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
       await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath).catch((error: unknown) => error),
       await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath).catch((error: unknown) => error),
     ];
-    // Only challenges reached the pipe, each hook's own and, where daemon.json names the pipe, its start check's: neither
-    // the capability nor an event.
+    // Neither the capability nor an event reached the pipe. The hook's lookup wrote nothing to it; where daemon.json
+    // names it, the hook's start check asked it for a proof, as it does at main (docs/threat-model.md, what remains).
     const received = await otherProcessReceived();
     expect(received.filter(line => line !== "POST /proof no capability")).toEqual([]);
-    expect(received).toContain("POST /proof no capability");
+    if (!inDaemonJson) expect(received).toEqual([]);
     const notThisHome = { name: "DaemonUnreachableError", message: expect.stringContaining(`${otherProcessPipe} is not this Rerail home's daemon`) };
     expect(answers).toEqual([expect.objectContaining(notThisHome), expect.objectContaining(notThisHome)]);
     // Each event lost so is in the hook failure log `rerail status` reads, with that reason.
