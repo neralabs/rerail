@@ -80,6 +80,9 @@ pub(super) struct Cost {
     /// The joins' step CPU (profiled): the steps that only filter bound variables (`filter_steps`), every step, and
     /// the filter steps placed after a negation (outside the binding atom's row program).
     pub step_cpu: (f64, f64, f64),
+    /// By head relation: its plans' step CPU (profiled), and by plan the CPU of each step.
+    pub head_cpu: BTreeMap<String, f64>,
+    pub plan_cpu: BTreeMap<String, Vec<f64>>,
     /// By copy site: bytes, calls.
     pub copies: BTreeMap<String, (u64, u64)>,
     /// Rows of each output relation.
@@ -184,6 +187,14 @@ pub(super) fn run(files: usize, n: usize) -> Cost {
     {
         let held = profile::merged();
         for ((_, plan), cpu) in &held.native_step_cpu {
+            *cost.head_cpu.entry(profile::kinds::head(plan)).or_default() += cpu.iter().sum::<f64>();
+            let p = cost.plan_cpu.entry(plan.clone()).or_default();
+            if p.len() < cpu.len() {
+                p.resize(cpu.len(), 0.0);
+            }
+            for (a, b) in p.iter_mut().zip(cpu) {
+                *a += b;
+            }
             let body: Vec<&str> = plan.split_once(": ").map_or(plan.as_str(), |x| x.1).split(" , ").collect();
             for (k, (l, t)) in body.iter().zip(cpu).enumerate() {
                 cost.step_cpu.1 += t;
@@ -222,6 +233,17 @@ fn cost_shape_dump() {
     let c = run(files, n);
     println!("outputs {:?}", c.outputs);
     println!("step cpu: filters {:.4} s of {:.4} s in all steps, {:.4} s in steps after a negation", c.step_cpu.0, c.step_cpu.1, c.step_cpu.2);
+    let mut heads: Vec<(&String, &f64)> = c.head_cpu.iter().collect();
+    heads.sort_by(|a, b| b.1.total_cmp(a.1));
+    for (h, t) in heads.into_iter().take(25) {
+        println!("cpu {:>8.2} ms {:>9} units {:>7} rows  {h}", t * 1e3, c.work(h), c.made(h));
+        let mut plans: Vec<(&String, &Vec<f64>)> = c.plan_cpu.iter().filter(|(p, _)| profile::kinds::head(p) == *h).collect();
+        plans.sort_by(|a, b| b.1.iter().sum::<f64>().total_cmp(&a.1.iter().sum::<f64>()));
+        for (p, steps) in plans.into_iter().take(3) {
+            let ms: Vec<String> = steps.iter().map(|t| format!("{:.2}", t * 1e3)).collect();
+            println!("    [{}] {}", ms.join(" "), profile::short(p, 260));
+        }
+    }
     println!("{}", c.report(env("RERAIL_COST_TOP", 60)));
     let mut a: Vec<_> = c.alloc.iter().collect();
     a.sort_by_key(|(_, x)| std::cmp::Reverse(x.0));

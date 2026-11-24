@@ -176,6 +176,30 @@ fn lookups_agree_with_scans() {
     }
 }
 
+/// `text` read by its string (`Projected::text_rows_of`: a binary search at each place the text occurs in the source)
+/// gives the rows a scan that compares each row's text finds, in the same order: every text a row has, and texts no
+/// row has.
+#[test]
+fn a_text_read_by_its_string_gives_the_rows_with_that_text() {
+    let store = ContentStore::open(&temp("text-by-s")).unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let modules = Modules::default();
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        modules.bind(&db, name, source).unwrap();
+    }
+    let texts: Vec<i64> = db.prepare("SELECT DISTINCT s FROM text").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    assert!(texts.len() > 100, "{} texts", texts.len());
+    let rows = |sql: &str, s: i64| -> Vec<i64> { db.prepare(sql).unwrap().query_map([s], |r| r.get(0)).unwrap().map(Result::unwrap).collect() };
+    let mut found = 0;
+    for &s in texts.iter().chain(&[-1, 1 << 40]) {
+        let read = rows("SELECT n FROM text WHERE s = ?1", s);
+        let scanned = rows("SELECT n FROM text WHERE +s = ?1", s);
+        assert_eq!(read, scanned, "text {s}");
+        found += read.len();
+    }
+    assert!(found > 1000, "{found} rows found by their text");
+}
+
 /// A view's statistics (`measured`, read through its walk) are those its per-row reads give: rows, ndv, sq and sqd
 /// of every column of `node`, `child`, `field` and `tape` over several documents. The measure of the cross part's
 /// base relations (decision 0458) had read each value by its row, locating it in the batch: 0.9 s of a hogql run.

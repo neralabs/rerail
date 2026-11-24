@@ -2116,6 +2116,54 @@ impl Projected {
         let line = if t.source { k } else { k + 1 };
         (self.len() + x.tokens + line, NONE)
     }
+    /// `each` local id and tape node (`NONE` for a position) of `text`'s rows whose text is `t`, in row order: the
+    /// rows `text` read by its string answers. A node's text is its span, so a node with text `t` starts where `t`
+    /// occurs in the source and is `t`'s length long; tape nodes start in preorder at nondecreasing offsets, so those
+    /// starting at an occurrence are one run, found by a binary search on their starts (`reads::start`). The
+    /// document's other text rows are not read. Its positions (tokens, its source, its lines) are compared one by one.
+    pub fn text_rows_of(&self, t: &[u8], mut each: impl FnMut(u32, u32)) {
+        let nodes = self.ranks.count(Item::Text);
+        let f = self.f();
+        let n = self.facts.len() as u32;
+        if t.is_empty() || self.facts.tape.is_none() {
+            // A zero-width span lies at every offset: every row compared.
+            for i in 0..nodes {
+                let (local, x) = self.text_local(i);
+                if self.with_text(local, x, |s| s.as_bytes() == t) {
+                    each(local, x);
+                }
+            }
+        } else {
+            let source = self.facts.source.as_bytes();
+            let finder = memchr::memmem::Finder::new(t);
+            let mut from = 0;
+            // Occurrences may overlap (`aa` in `aaa`): each search starts one byte past the last occurrence.
+            while let Some(k) = finder.find(&source[from..]) {
+                let a = (from + k) as u32;
+                from += k + 1;
+                let (mut lo, mut hi) = (0u32, n);
+                while lo < hi {
+                    let mid = lo + (hi - lo) / 2;
+                    if f.start(mid) < a { lo = mid + 1 } else { hi = mid }
+                }
+                let mut x = lo;
+                while x < n && f.start(x) == a {
+                    if f.end(x) - a == t.len() as u32
+                        && self.ranks.local(Item::Text, x).is_some()
+                    {
+                        each(self.ranks.rank(Item::Node, x), x);
+                    }
+                    x += 1;
+                }
+            }
+        }
+        for i in nodes..self.text_rows() {
+            let (local, x) = self.text_local(i);
+            if self.with_text(local, x, |s| s.as_bytes() == t) {
+                each(local, x);
+            }
+        }
+    }
     /// `text`'s row of local id `local` (its tape node `x` where known, else `NONE`), where it has text.
     pub fn text_row_of(&self, local: u32, x: u32) -> Option<u32> {
         if local < self.len() {
@@ -4458,13 +4506,7 @@ impl Batch {
             if !may {
                 continue;
             }
-            let p = &self.docs[doc];
-            for i in 0..p.text_rows() {
-                let (local, x) = p.text_local(i);
-                if p.with_text(local, x, |s| s.as_bytes() == t) {
-                    each(doc, local, x);
-                }
-            }
+            self.docs[doc].text_rows_of(t, |local, x| each(doc, local, x));
         }
     }
     /// `row`, the node's tape node `x` known (read only by the `field` view: its rows are the fielded nodes).
