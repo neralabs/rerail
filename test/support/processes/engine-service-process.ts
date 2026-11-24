@@ -23,8 +23,9 @@ const quietAuditor = (): CodeRuleAuditor => ({
 const recordingAuditor = ({ workspaceRoot, audits }: { workspaceRoot: string; audits: AuditRecorder }): CodeRuleAuditor => ({
   ...quietAuditor(),
   // A session's first start does not wait for its evaluator: an edit that comes while it opens is answered unchecked
-  // (runtime.ts `#codeRuleWorkspaceNow`), so a test that needs the edit's check waits for this message first. The rest
-  // of the evaluator's open runs in this turn once this returns, before this process reads the test's next request.
+  // (runtime.ts `#codeRuleWorkspaceNow`), so a test that needs the edit's check waits for this message first. For a
+  // session whose ledger holds no open call, what is left of the open once this returns waits on nothing, so it is done
+  // before this process reads the test's next request.
   openWorkspace: async sessionId => {
     process.send?.({ opened: sessionId });
   },
