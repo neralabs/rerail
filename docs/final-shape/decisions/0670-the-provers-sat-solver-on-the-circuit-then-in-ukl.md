@@ -414,4 +414,27 @@ formula").
   core: most solves are a few hundred µs on the CPU, so a solve waits longer on the device than it would take on
   the CPU. The race then repeats it on a core, which costs CPU. More threads asking put more solves in flight but
   repeat more work. The device does not yet make the prover faster.
+- **One launch while the host adds formulas** (the kernel resident). The work queue above still made a launch a
+  step: the device's thread launched, waited for the launch to end, read the results and added the formulas handed
+  in since, 1,899 launches of about 2.7 ms each for cold Kotlin. A result was out only when its launch ended, and a
+  formula was taken only by the next launch. Now:
+  - The batch's queue, reports, descriptors, models and carried clauses are pinned memory the host and a running
+    launch both see. The host publishes a formula by raising `Q_AVAIL` past it, and a running launch's slots take
+    it at once. A slot that finds none left ends: the host launches again where formulas wait and no launch runs
+    (the user's choice over bounded idle polls).
+  - A slot writes a result's status last, past a system-scope fence (`ukl_fence_system`, CUDA's
+    `__threadfence_system`), with a compare-and-swap from running. The host looks at the open formulas' statuses
+    every 20 µs while the launch runs and hands each result back as it is out.
+  - A give-up is the host's compare-and-swap from running to `GIVEN_UP`. A slot that sees it, between steps, when
+    it takes the formula or when it resumes it from a launch before, writes `RELEASED` and reads the formula no
+    more. With no launch running, a given-up formula is released by the host. The formula is its thread's again
+    only once released, or once its result was out first.
+  - A launch is bounded at 4,096 steps a slot. A slot running a long search ends its launch early (its state kept,
+    resumed by the next) where formulas are published that no slot takes, or the host's stop asks it to: a formula
+    built past the block's extent the launch's wrap covers waits for the next launch, which wraps the block again.
+  - Cold Kotlin on the Spark, the shipped answers' bytes: 7.6 s and 55.8 s of CPU, the CPU alone 7.6 s and 53.7 s
+    in the same turn (the Spark busier than for the measurements above). 1,068 launches; of the 11,130 solves,
+    4,522 finished on the device and 6,608 by the CPU's race after 2 ms. With the race after 20 ms, 8,317 finished
+    on the device and 2,813 ran past 20 ms there, all within one resident launch: their time is the device's search,
+    not a launch's. The wall was then 8.8 s.
 

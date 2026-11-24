@@ -18,7 +18,7 @@
 
 pub use crate::bitlex_csat_lanes::{Answer, Formula, Solved};
 use crate::bitlex_csat_lanes::{arena, carry_vars, learned, CARRY_ROOM};
-use crate::bitlex_grown::{FormulaBlock, Grown};
+use crate::bitlex_grown::FormulaBlock;
 use rerail_gpu::device::ComputeQueue;
 use rerail_gpu::kernels::{alloc, alloc_working, launch, program, read};
 
@@ -35,9 +35,9 @@ const D_MODEL: usize = 12;
 const D_CARRY: usize = 30;
 /// A formula's lanes: one SIMD group.
 const LANES: u64 = 32;
-/// The steps a launch runs a slot at most (a round of propagation, a conflict, a decision): few, so a result is out
-/// and a formula added soon after (`Service`; 4,096 had cold Kotlin at 11.1 s, 512 at 8.4 s, 128 at 8.2 s).
-const STEPS: u32 = 1 << 7;
+/// The steps a launch runs a slot at most (a round of propagation, a conflict, a decision): a launch's time bounded.
+/// A slot ends its launch sooner where formulas wait that no slot takes (`cs_look`).
+const STEPS: u32 = 1 << 12;
 /// The slots' states at most, in bytes.
 pub const STATE_BYTES: usize = 1 << 30;
 /// The slots at most.
@@ -100,7 +100,7 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
     let mut batch = Batch::new(formulas, state_bytes)?;
     while !batch.finished() {
         for (i, x) in batch.step()? {
-            out[i] = Some(x);
+            out[i] = Some(x.expect("none given up"));
         }
     }
     Ok(out.into_iter().map(|x| x.expect("every formula the device's")).collect())
@@ -213,12 +213,15 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
     })
 }
 
-/// A batch on the device, launch by launch (`step`): its formulas' descriptors in the block, its slots and reports.
-/// It holds no borrow of its formulas: what it reads of them is in the block, which their owners leave as it is
-/// while they wait for their results (a formula's memory may change once its result is out, as nothing reads it
-/// again; one given up, with `step` no longer called, is read by no launch).
+/// A batch on the device: one launch at a time (`poll` launches where formulas wait and none runs), which runs
+/// while the host adds formulas (`add`), gives them up (`give_up`) and reads their results (`poll`), all in pinned
+/// memory both see. Its descriptors are its own buffer, which never moves under a launch. It holds no borrow of its
+/// formulas: what it reads of them is in the block, which their owners leave as it is while they wait for their
+/// results (a formula's memory may change once its result is out, or it is released).
 pub struct Batch {
     n: usize,
+    /// The formulas published to the launches (`Q_AVAIL`): those within the block's extent the running launch sees.
+    published: usize,
     /// Its room: formulas, model words and carry words.
     cap: usize,
     model_cap: usize,
@@ -226,13 +229,16 @@ pub struct Batch {
     model_words: usize,
     carry_words: usize,
     block: FormulaBlock,
+    /// Each formula's extent: the block's bytes in use when it was added, which hold it.
+    need: Vec<usize>,
+    /// The block's bytes the running launch's wrap covers.
+    extent: usize,
     slots: usize,
     slot_words: usize,
     function: &'static rerail_gpu::device::ComputeFunction,
     q: ComputeQueue,
     blk: rerail_gpu::device::Buffer,
-    /// The descriptors the launches read, kept while they run.
-    table: Grown<u32>,
+    table: rerail_gpu::device::Buffer,
     state: rerail_gpu::device::Buffer,
     out: rerail_gpu::device::Buffer,
     models: rerail_gpu::device::Buffer,
@@ -241,9 +247,11 @@ pub struct Batch {
     /// Each formula's variables, whether it resumes a window, where its model and what it carries are.
     meta: Vec<(usize, bool, usize, Option<usize>)>,
     reported: Vec<bool>,
+    /// The formulas not yet reported, to look at.
+    open: Vec<usize>,
     left: usize,
-    launches: usize,
-    most: usize,
+    running: Option<rerail_gpu::device::ComputeEvent>,
+    pub launches: usize,
 }
 
 /// `n` words of a buffer the host sees, from word `at`.
@@ -252,13 +260,28 @@ fn words_of(b: &rerail_gpu::device::Buffer, at: usize, n: usize) -> Vec<u32> {
     if p.is_null() {
         return read::<u32>(b, at + n)[at..].to_vec();
     }
-    // SAFETY: the buffer holds at least `at + n` words (the batch sized it), and no launch runs while it is read.
+    // SAFETY: the buffer holds at least `at + n` words (the batch sized it); what a launch may still write is read
+    // only once its status says it is written.
     unsafe { std::slice::from_raw_parts(p.add(at), n).to_vec() }
 }
 
+/// Word `i` of a buffer the host and a running launch share.
+fn shared_word(b: &rerail_gpu::device::Buffer, i: usize) -> &std::sync::atomic::AtomicU32 {
+    let p = b.contents().cast::<std::sync::atomic::AtomicU32>();
+    assert!(!p.is_null(), "the prover's GPU: a buffer the host can not see");
+    // SAFETY: the batch sized the buffer past `i`; the device's accesses to it are atomic or ordered by fences.
+    unsafe { &*p.add(i) }
+}
+
+/// The queue's words (the kernel's): the formulas taken (word 0), those published, the stop, each slot's formula.
+const Q_AVAIL: usize = 1;
+const Q_STOP: usize = 2;
+const Q_SLOT: usize = 3;
+const RELEASED: u32 = 7;
+
 impl Batch {
-    /// The batch laid out and its reports cleared (the first launch). An error where there is no device, the kernel
-    /// does not compile, or a formula is not in the block the others are.
+    /// The batch laid out. An error where there is no device, the kernel does not compile, or a formula is not in the
+    /// block the others are.
     pub fn new(formulas: &[Formula], state_bytes: usize) -> Result<Batch, String> {
         let descs = formulas.iter().map(describe).collect::<Result<Vec<_>, _>>()?;
         Batch::of(&descs, state_bytes)
@@ -279,47 +302,58 @@ impl Batch {
     }
 
     /// An empty batch of `slots` slots of `slot_words`, with room for `cap` formulas, `model_cap` words of models
-    /// and `carry_cap` of what they carry, its queue cleared (the first launch). Formulas are added between
-    /// launches (`add`).
+    /// and `carry_cap` of what they carry, its queue cleared.
     pub fn open(block: &FormulaBlock, cap: usize, model_cap: usize, carry_cap: usize, slot_words: usize, slots: usize) -> Result<Batch, String> {
         let shared = rerail_gpu::shared::get().ok_or("the prover's GPU: no device")?;
         let function = program("bitlex_csat_gpu.uglykl", KERNEL)?.function("csat_solve")?;
         if slots * slot_words > u32::MAX as usize {
             return Err("the prover's GPU: the slots' states past 16 GiB".to_string());
         }
-        let mut b = Batch {
+        let b = Batch {
             n: 0,
+            published: 0,
             cap,
             model_cap,
             carry_cap,
             model_words: 0,
             carry_words: 0,
             block: block.clone(),
+            need: Vec::with_capacity(cap),
+            extent: 0,
             slots,
             slot_words,
             function,
             q: ComputeQueue::new(&shared.queue),
             blk: block.block().device_buffer(&shared.device)?,
-            table: Grown::<u32>::in_block(block),
+            table: alloc::<u32>(cap.max(1) * DESC)?,
             // The device's own memory: the host never reads a state.
             state: alloc_working::<u32>(slots * slot_words)?,
             out: alloc::<u32>(cap.max(1) * OUT)?,
             models: alloc::<u32>(model_cap.max(1))?,
             carry: alloc::<u32>(carry_cap.max(1))?,
-            queue: alloc::<u32>(1 + slots)?,
+            queue: alloc::<u32>(Q_SLOT + slots)?,
             meta: Vec::with_capacity(cap),
             reported: Vec::with_capacity(cap),
+            open: Vec::with_capacity(cap),
             left: 0,
+            running: None,
             launches: 0,
-            most: 1,
         };
-        b.run(1)?;
+        use std::sync::atomic::Ordering::Relaxed;
+        for i in 0..Q_SLOT {
+            shared_word(&b.queue, i).store(0, Relaxed);
+        }
+        for s in 0..slots {
+            shared_word(&b.queue, Q_SLOT + s).store(u32::MAX, Relaxed);
+        }
         Ok(b)
     }
 
-    /// `d` added, between launches: its place, or `None` where the batch has no room for it (or it is in another
-    /// block, or its state is larger than a slot).
+    /// `d` added, at any time: its place, or `None` where the batch has no room for it (or it is in another block, or
+    /// its state is larger than a slot). A running launch takes it where the block's extent it sees holds it, else the
+    /// launch is stopped and the next takes it.
     pub fn add(&mut self, d: &Desc) -> Result<Option<usize>, String> {
+        use std::sync::atomic::Ordering::Relaxed;
         let model = (d.vars + 1).div_ceil(32);
         let carry = if d.carries { 1 + CARRY_ROOM } else { 0 };
         if self.n == self.cap || self.model_words + model > self.model_cap || self.carry_words + carry > self.carry_cap || d.slot_words > self.slot_words || !d.block.same(&self.block) {
@@ -332,21 +366,45 @@ impl Batch {
             w[D_CARRY] = c as u32;
         }
         let k = self.n;
-        // Its report running: the host's write, as no launch runs.
-        let p = self.out.contents().cast::<u32>();
-        assert!(!p.is_null(), "the prover's GPU: a report the host can not write");
-        // SAFETY: `out` holds `cap * OUT` words, and `k < cap`.
-        unsafe { p.add(k * OUT).write_volatile(0) };
-        self.table.extend_from_slice(&w);
+        for (i, &x) in w.iter().enumerate() {
+            shared_word(&self.table, k * DESC + i).store(x, Relaxed);
+        }
+        shared_word(&self.out, k * OUT).store(0, Relaxed);
         self.meta.push((d.vars, d.resume, self.model_words, carry_at));
         self.reported.push(false);
+        self.open.push(k);
+        self.need.push(self.block.block().used());
         self.model_words += model;
         self.carry_words += carry;
         self.n += 1;
         self.left += 1;
-        // Each formula ends within `MAX_STEPS` of its own: past the launches that takes, the device is at fault.
-        self.most = self.launches + self.left.div_ceil(self.slots) * ((crate::bitlex_csat_lanes::STEPS as usize).div_ceil(STEPS as usize) + 1) + 1;
+        if self.running.is_some() {
+            self.publish();
+        }
         Ok(Some(k))
+    }
+
+    /// The formulas added that the running launch can read, published to it (in order); where one lies past its
+    /// extent, the launch is stopped.
+    fn publish(&mut self) {
+        use std::sync::atomic::Ordering;
+        let mut p = self.published;
+        while p < self.n && self.need[p] <= self.extent {
+            p += 1;
+        }
+        if p > self.published {
+            self.published = p;
+            std::sync::atomic::fence(Ordering::SeqCst);
+            shared_word(&self.queue, Q_AVAIL).store(p as u32, Ordering::Release);
+        }
+        if p < self.n {
+            shared_word(&self.queue, Q_STOP).store(1, Ordering::Release);
+        }
+    }
+
+    /// Whether every formula's result is out and no launch runs.
+    pub fn finished(&self) -> bool {
+        self.left == 0 && self.running.is_none()
     }
 
     /// Whether the batch has no room left for formulas.
@@ -354,129 +412,155 @@ impl Batch {
         self.n == self.cap
     }
 
-    fn run(&mut self, init: u32) -> Result<(), String> {
-        // The block as it is now: formulas added since the last launch may lie past the extent wrapped then.
+    /// Formula `k` given up (another solver has its result): `poll` reports it released (`None`) once no slot reads
+    /// it, or its result where it was out first.
+    pub fn give_up(&mut self, k: usize) {
+        if !self.reported[k] {
+            let _ = shared_word(&self.out, k * OUT).compare_exchange(0, GIVEN_UP, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire);
+        }
+    }
+
+    /// The formulas whose results are out since the last poll: each its result, or `None` where it was given up and
+    /// no slot reads it now. A launch ended is awaited, and one made where formulas wait.
+    pub fn poll(&mut self) -> Result<Vec<(usize, Option<Solved>)>, String> {
+        use std::sync::atomic::Ordering;
+        if self.running.as_ref().is_some_and(|e| e.is_complete()) {
+            self.running.take().expect("running").await_()?;
+        }
+        let idle = self.running.is_none();
+        let mut done = Vec::new();
+        let open = std::mem::take(&mut self.open);
+        for &i in &open {
+            let st = shared_word(&self.out, i * OUT).load(Ordering::Acquire);
+            match st {
+                0 => continue,
+                BROKEN => return Err(format!("the device's solver broke on formula {i}: a loop past its bound")),
+                RELEASED => {}
+                GIVEN_UP if idle => {}
+                GIVEN_UP => continue,
+                _ => {
+                    let o = words_of(&self.out, i * OUT, OUT);
+                    done.push((i, Some(self.decode(i, &o))));
+                    continue;
+                }
+            }
+            done.push((i, None));
+        }
+        let finished: std::collections::HashSet<usize> = done.iter().map(|&(i, _)| i).collect();
+        self.open = open.into_iter().filter(|i| !finished.contains(i)).collect();
+        for &(i, _) in &done {
+            self.reported[i] = true;
+            self.left -= 1;
+        }
+        // A launch where formulas wait for one: added since, held by a slot, or given up but maybe held.
+        if self.running.is_none() && self.left > 0 {
+            self.launch()?;
+        }
+        Ok(done)
+    }
+
+    /// The results out, waiting for the running launch where none is.
+    pub fn step(&mut self) -> Result<Vec<(usize, Option<Solved>)>, String> {
+        let got = self.poll()?;
+        if got.is_empty()
+            && let Some(e) = self.running.take()
+        {
+            e.await_()?;
+            return self.poll();
+        }
+        Ok(got)
+    }
+
+    fn launch(&mut self) -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        // Each formula's every launch makes steps (7 at least before it may end early): past the launches that
+        // bounds, the device is at fault.
+        let most = self.n * ((crate::bitlex_csat_lanes::STEPS as usize).div_ceil(7) + 2) + 1;
+        if self.launches > most {
+            return Err(format!("the prover's GPU: a batch past {most} launches"));
+        }
+        self.launches += 1;
+        // The block as it is now: the formulas added lie within it.
         let shared = rerail_gpu::shared::get().ok_or("the prover's GPU: no device")?;
         self.blk = self.block.block().device_buffer(&shared.device)?;
-        let a = Args { n: self.n as u32, steps: STEPS, init, slots: self.slots as u32, slot_words: self.slot_words as u32, pad: [0; 3] };
+        self.extent = self.block.block().device_extent();
+        shared_word(&self.queue, Q_STOP).store(0, Ordering::Release);
+        self.publish();
+        let a = Args { n: self.cap as u32, steps: STEPS, init: 0, slots: self.slots as u32, slot_words: self.slot_words as u32, pad: [0; 3] };
         launch(&self.q, self.function)
             .value("args", &a)
             .buffer("blk", &self.blk)
-            .buffer_at("table", &self.blk, self.table.placed().map_or(0, |(_, at)| at) as u64)
+            .buffer("table", &self.table)
             .buffer("state", &self.state)
             .buffer("out", &self.out)
             .buffer("models", &self.models)
             .buffer("carry", &self.carry)
             .buffer("queue", &self.queue)
             .run(&[self.slots as u64], &[LANES])?;
-        self.q.flush().await_()
+        self.running = Some(self.q.flush());
+        Ok(())
     }
 
-    /// Whether every formula's result is out.
-    pub fn finished(&self) -> bool {
-        self.left == 0
-    }
-
-    /// The formulas a slot has not finished: each taken from the queue and running, or not yet taken.
-    pub fn unfinished(&self) -> usize {
-        self.left
-    }
-
-    /// Whether every formula has been taken from the queue by a slot (those unfinished are all running).
-    pub fn drained(&self) -> bool {
-        words_of(&self.queue, 0, 1)[0] as usize >= self.n
-    }
-
-    /// The slots.
-    pub fn slots(&self) -> usize {
-        self.slots
-    }
-
-    /// Formula `k` given up, between launches (another solver has its result): no launch reads it again, so its
-    /// owner may change its memory.
-    pub fn give_up(&mut self, k: usize) {
-        if self.reported[k] {
-            return;
-        }
-        let p = self.out.contents().cast::<u32>();
-        assert!(!p.is_null(), "the prover's GPU: a report the host can not write");
-        // SAFETY: `out` holds `n * OUT` words, and no launch runs while the host writes it.
-        unsafe { p.add(k * OUT).write_volatile(GIVEN_UP) };
-        self.reported[k] = true;
-        self.left -= 1;
-    }
-
-    /// One launch: the formulas it finished, each with its result (by its place in the batch).
-    pub fn step(&mut self) -> Result<Vec<(usize, Solved)>, String> {
-        if self.launches > self.most {
-            return Err(format!("the prover's GPU: a batch past {} launches", self.most));
-        }
-        self.launches += 1;
-        self.run(0)?;
-        let got = words_of(&self.out, 0, self.n * OUT);
-        let mut done = Vec::new();
-        for (i, o) in got.chunks(OUT).enumerate() {
-            if o[0] == 0 || self.reported[i] {
-                continue;
+    /// Formula `i`'s result, from its report `o`.
+    fn decode(&self, i: usize, o: &[u32]) -> Solved {
+        let (vars, resume, m, c) = self.meta[i];
+        // The model, or a refuted window's solve's core, in its words.
+        let bits = (o[0] == SAT || (o[0] == UNSAT && resume)).then(|| {
+            let w = words_of(&self.models, m, (vars + 1).div_ceil(32));
+            (0..=vars).map(|v| w[v / 32] >> (v % 32) & 1 != 0).collect::<Vec<bool>>()
+        });
+        let carry = c.map_or_else(Vec::new, |c| {
+            let n = words_of(&self.carry, c, 1)[0] as usize;
+            let w = words_of(&self.carry, c + 1, n);
+            let (mut k, mut out) = (0usize, Vec::new());
+            while k < n {
+                let len = w[k] as usize;
+                out.push(w[k + 1..k + 1 + len].iter().map(|&l| l as crate::bitlex_sat::Lit).collect());
+                k += 1 + len;
             }
-            if o[0] == BROKEN {
-                return Err(format!("the device's solver broke on formula {i}: a loop past its bound"));
-            }
-            self.reported[i] = true;
-            self.left -= 1;
-            let (vars, resume, m, c) = self.meta[i];
-            // The model, or a refuted window's solve's core, in its words.
-            let bits = (o[0] == SAT || (o[0] == UNSAT && resume)).then(|| {
-                let w = words_of(&self.models, m, (vars + 1).div_ceil(32));
-                (0..=vars).map(|v| w[v / 32] >> (v % 32) & 1 != 0).collect::<Vec<bool>>()
-            });
-            let carry = c.map_or_else(Vec::new, |c| {
-                let n = words_of(&self.carry, c, 1)[0] as usize;
-                let w = words_of(&self.carry, c + 1, n);
-                let (mut k, mut out) = (0usize, Vec::new());
-                while k < n {
-                    let len = w[k] as usize;
-                    out.push(w[k + 1..k + 1 + len].iter().map(|&l| l as crate::bitlex_sat::Lit).collect());
-                    k += 1 + len;
-                }
-                out
-            });
-            let (answer, used) = match o[0] {
-                SAT => (Answer::Sat(bits.expect("a model")), None),
-                UNSAT => (Answer::Unsat, bits),
-                _ => (Answer::Unknown, None),
-            };
-            done.push((
-                i,
-                Solved {
-                    answer,
-                    roomless: o[0] == ROOMLESS,
-                    conflicts: o[1],
-                    decisions: o[2],
-                    rounds: o[3],
-                    learned: o[4],
-                    learned_literals: o[5],
-                    visits: o[6],
-                    items: o[7],
-                    reductions: o[8],
-                    carry,
-                    used,
-                    cycles: [o[9], o[10], o[11], o[12], o[13], o[14]],
-                },
-            ));
+            out
+        });
+        let (answer, used) = match o[0] {
+            SAT => (Answer::Sat(bits.expect("a model")), None),
+            UNSAT => (Answer::Unsat, bits),
+            _ => (Answer::Unknown, None),
+        };
+        Solved {
+                answer,
+                roomless: o[0] == ROOMLESS,
+                conflicts: o[1],
+                decisions: o[2],
+                rounds: o[3],
+                learned: o[4],
+                learned_literals: o[5],
+                visits: o[6],
+                items: o[7],
+                reductions: o[8],
+                carry,
+                used,
+                cycles: [o[9], o[10], o[11], o[12], o[13], o[14]],
         }
-        Ok(done)
+    }
+}
+
+impl Drop for Batch {
+    fn drop(&mut self) {
+        // Its buffers outlive the launch reading them.
+        if let Some(e) = self.running.take() {
+            let _ = e.await_();
+        }
     }
 }
 
 /// The device as a service to the threads that solve (decision 0670): a work queue. A thread hands it a formula
-/// (`solve`) and waits; the device's thread (`run`) takes every formula handed in since its last launch as a new batch
-/// at once, launches each batch live in turn, and hands each result back the launch that finishes it, so no solve
-/// waits for another batch's to end. A search alone is slower on the device than here (its reads one after another),
-/// many at once faster: a solve not back within `RACE_AFTER` is raced by its thread here (`solve_unless`, the same
-/// search), the first result taken, and the device gives up the other between launches before the thread goes on
-/// (the formula is the thread's to change then). With more threads than cores, those waiting leave the cores to the
-/// others. A device that fails leaves every solve to the CPU.
+/// (`solve`) and waits; the device's thread (`run`) adds it to the batch on the device (`Batch::add`), which a
+/// running launch takes at once, and looks at the results every `POLL`, handing each back the moment it is out; a
+/// launch is made only where formulas wait and none runs. A search alone is slower on the device than here (its reads
+/// one after another), many at once faster: a solve not back within `RACE_AFTER` is raced by its thread here
+/// (`solve_unless`, the same search), the first result taken, and where the CPU is first the device gives the
+/// formula up (a slot releases it) before the thread goes on (the formula is the thread's to change then). With
+/// more threads than cores, those waiting leave the cores to the others. A device that fails leaves every solve to
+/// the CPU.
 pub struct Service {
     state: std::sync::Mutex<Waiting>,
     wake: std::sync::Condvar,
@@ -512,6 +596,9 @@ impl Reply {
         self.got.lock().expect("a reply").is_some()
     }
 }
+
+/// How often the device's thread looks at a running launch's results.
+const POLL: std::time::Duration = std::time::Duration::from_micros(20);
 
 /// How long a solve waits on the device before its thread races it here.
 const RACE_AFTER: std::time::Duration = std::time::Duration::from_millis(2);
@@ -609,14 +696,22 @@ impl Service {
         loop {
             let handed = {
                 let mut w = self.state.lock().expect("the service");
-                while w.handed.is_empty() && live.iter().all(|l| l.batch.finished()) && !w.closed {
-                    w = self.wake.wait(w).expect("the service");
-                }
-                if w.handed.is_empty() && live.iter().all(|l| l.batch.finished()) {
-                    for l in live.drain(..) {
-                        self.retired(&l, &mut batches);
+                loop {
+                    if !w.handed.is_empty() {
+                        break;
                     }
-                    return Ok(());
+                    // A launch running or formulas waiting: its results looked at again soon.
+                    if live.iter().any(|l| !l.batch.finished()) {
+                        w = self.wake.wait_timeout(w, POLL).expect("the service").0;
+                        break;
+                    }
+                    if w.closed {
+                        for l in live.drain(..) {
+                            self.retired(&l, &mut batches);
+                        }
+                        return Ok(());
+                    }
+                    w = self.wake.wait(w).expect("the service");
                 }
                 std::mem::take(&mut w.handed)
             };
@@ -641,21 +736,23 @@ impl Service {
                 };
                 l.replies.push(reply);
             }
-            // A launch of each batch with formulas running: one, but where the last ran out of room.
+            // Each batch's results out, its formulas the CPU finished given up, and a launch where formulas wait and
+            // none runs.
             for l in live.iter_mut() {
                 for (k, r) in l.replies.iter().enumerate() {
                     if !l.batch.reported[k] && r.abandoned.load(std::sync::atomic::Ordering::Acquire) {
                         l.batch.give_up(k);
-                        r.give(None);
-                        l.given_up += 1;
                     }
                 }
                 if l.batch.finished() {
                     continue;
                 }
-                for (k, x) in l.batch.step()? {
-                    l.on_device += 1;
-                    l.replies[k].give(Some(x));
+                for (k, x) in l.batch.poll()? {
+                    match x {
+                        Some(_) => l.on_device += 1,
+                        None => l.given_up += 1,
+                    }
+                    l.replies[k].give(x);
                 }
             }
             // A batch out of room is done with once its formulas are.

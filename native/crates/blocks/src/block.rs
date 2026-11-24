@@ -446,6 +446,15 @@ impl Block {
         Ok(b)
     }
 
+    /// The bytes from its start that `device_buffer`'s last buffer covers: a kernel running with it reads no further.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn device_extent(&self) -> usize {
+        if self.backing.as_ref().and_then(|b| b.buffer()).is_some() {
+            return self.reserved;
+        }
+        self.gpu.lock().unwrap().as_ref().map_or(0, |k| k.1)
+    }
+
     fn init(&self, kind: u32) {
         self.ext.top.store(round_up(size_of::<Header>(), 64), Relaxed);
         let h = unsafe { &mut *(self.base as *mut Header) };
