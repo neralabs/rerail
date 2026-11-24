@@ -3,7 +3,8 @@
 Status: decided (2026-11-24), by the user: "we are working on rules that don't allow node ids to progress into the
 cross-file part; facts need to be keyed on something else inside the per-file part", and, of 0665 §6 (the work in
 `Bend-language-investigation`, 94e9aafd78), "yes that is it … for now please record it as decided". The user will
-update 0665 with it. Nothing is built here yet. It amends 0094 §2 (which kept node ids out of exports and kept
+update 0665 with it. The check is built (§ Built, 2026-11-24): every pack's offenders are listed, and the list only
+shrinks. The fixes are not done yet. It amends 0094 §2 (which kept node ids out of exports and kept
 findings only), 0051's split, and 0652 (which places a relation cross-file but lets it carry nodes).
 
 ## Intro
@@ -86,11 +87,81 @@ modules it touches. It derives those two files again, and the callers whose reso
 `maintain_tests::a_moved_definition_costs_about_itself` is measured again then, and its bar set from what the
 rewrite derives.
 
+## Built: the check (2026-11-24)
+
+`typing::file_local::node_crossings` (`native/crates/typing/src/code_rule_dsl/typing/file_local/node_crossings.rs`)
+runs on every split, after the lowering. `programs_of` reports what it finds once per program version, as 0649's
+position report does. `RERAIL_STRICT_NODES=1` refuses the program instead, naming each relation with its rule.
+
+- **Which columns hold a node.** Columns typed `node` or `loc` (`node | span`) are seeded from the declarations. A
+  fixpoint over the program's rules then adds each column a rule fills from a node: a variable bound at such a
+  column, by `nearest` or an `ast` pattern; a function of one (`d + 1`, `@cat`); a `min`, `max` or `sum` of one. A
+  function whose answer is what the node says is not one: `@doc` (a document key, which may cross by §2), the text
+  and value reads (`NODE_READS`), `@tree_digest`, `@unparse`, `@place`.
+- **Where a node enters the cross part.** A relation derived in the cross part is named when one of its rules binds
+  a node per file: by a per-file relation's node column (an export's, a base relation's), a pattern or `nearest`,
+  and by no node column of another cross-file relation. A relation made natively in the cross part with a node
+  column is named too. So is any rule that reads a node column of a setting or an earlier phase's export, which
+  every file reads.
+- **What is not named, and why:**
+  - **A follower.** It reads its node from another cross-file relation: `air302_alt_1(n) :- sym_of(n, "…"),
+    kind(n, …)` holds `sym_of`'s node and goes per file with it. 0652 names a crossing, not its readers, in the same
+    way.
+  - **A file-local relation the cross part derives again for its readers** (`kind`). Each of its rows is one
+    file's. The node enters at the cross-file rule that reads it, and that rule is named.
+  - **An output.** Its node is the finding's place, written once. This settles the earlier open point: a finding
+    keeps its node, and every relation of the cross part that feeds it does not. A relation that only outputs read
+    is named (unlike 0652's `placement_only`). A set of other files' nodes (`callee(d)`) is maintained over every
+    file and changes with their ids for every finding that reads it. Keyed by a symbol instead, the finding is
+    placed in its file's own rules (§3).
+- **The crossing each is under.** It is read down the split's causes (0652's chain): through each "reads cross-file
+  X" to the first relation that is cross-file for a reason of its own, or the input it joins with no location. That
+  relation's fix takes its followers per file with it.
+- **The list.** `native/crates/boot/src/code_rule_dsl/node_crossings.txt` holds `<pack> <relation>` for every pack
+  and the data layer. `<pack>:alone` covers the data layer's policies split one by one. 0652's pack tests
+  (`tools::pack_split_tests`) prepare every policy, and fail on any relation that is not in the list. A whole pack's
+  run also fails on any listed relation that is no longer found, so the list only shrinks and stays current. A
+  python-main shard sees a twelfth of its programs, so it checks only for new relations; the shards can't tell that a listed one was fixed, and a python-main relation leaves the list by hand. Its failure prints each new
+  relation with its crossing (`<pack> <relation>  under <crossing>`).
+- **Cost.** The program with 2,523 rules takes 5 ms (spark2, a python-main shard, measured during a test run).
+  Resolving the lowering's helpers to their source relations was 110 ms of a first version. It now reads an index
+  of each relation's readers, made once. A helper's source is the least by name among the source relations of its
+  first round of readers, so it is the same whatever order the readers are read in.
+- **Not covered.** A prepared program read back from the store (`prepared.rs`, `assemble` with its kept parts)
+  keeps no causes, and is not reported again. It was reported when it was prepared.
+
+### What the list holds now
+
+3,190 relations over the packs and the data layer, by the crossing they are under (and 117 more for the data layer's
+policies split alone):
+
+| Crossing | Where | Relations | Packs |
+|---|---|---:|---|
+| `resolve_export` | `lib/python/imports.rerail`: Python name resolution (family 1) | 2,454 | python-main 2,280, python 109, django 52, data-layer 13 |
+| `value_type` | the input `value_type(v, t)`, joined with no location | 251 | python-main 249, javascript 2 |
+| `pt_wres` | `lib/python/points-to.rerail` | 39 | django |
+| `plp_anycand` | `data-layer/pure-lazy-runtime-purity.rerail` | 25 | data-layer |
+| (its own) | a relation that is cross-file for itself | 25 | |
+| `dj_model_q` | `lib/python/django.rerail` | 19 | django |
+| `subclass` | `lib/python/names.rerail`: class hierarchy (family 3) | 18 | django 14, python 4 |
+| `item_parts` | `lib/tsx/eslint-b-scope.rerail` | 18 | javascript 12, typescript 6 |
+| 145 more | 18 crossings of 5–14 relations each (132 relations), and 127 of fewer than 5 (209) | 341 | |
+
+### The fixes, in order
+
+1. **`value_type`.** Its 251 followers are one change, if it holds. The corpus memo already owns `value_type`'s rows by
+   their text (`corpus::memo::owner`: `Owner::Text(0)`, "a row is each file's whose text holds it"), as it owns a
+   string test's. The split does not: it reads `value_type` as an input with no location, so every rule joining it
+   is cross-file. Placed as a string test is, `value(n, v), value_type(v, t)` stays per file. First check that the
+   chunk is bound to its own values' rows, then change the split, and the 251 relations leave the list.
+2. **Python name resolution: the phase `py_names`.** This is family 1. It covers 2,454 relations, 77% of the list.
+   Its plan is above (§ Fixing, 1).
+3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
+   (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
+4. **The tail:** 145 crossings of 1–14 relations each, read one by one, as 0652's were.
+
 ## Open
 
-- **A cross-file rule's finding needs a place.** Under 3, the cross part answers by symbol, and the file that holds
-  the node places the finding on its next per-file read. An output that pairs two files' nodes (`call_target(call,
-  def)`) names the second by its symbol, or by the definition's place read in its own file. Which form the outputs
-  take is the user's call.
-- **Where the check is built.** 0652's crossing check and 0665 are in `Bend-language-investigation` and
-  `Native-and-GPU-strata`, not in this worktree yet. The check belongs beside them.
+- **Where a finding that pairs two files' nodes is written.** `call_target(call, def)` is an example. An output
+  keeps its node (§ Built), but once its family is rewritten it names the second file's node by that node's symbol,
+  or by the definition's place read in its own file. This is settled family by family, as each is rewritten.

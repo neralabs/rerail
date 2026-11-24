@@ -1517,3 +1517,73 @@ pieces(c, n) :- call_fmt(c, v), ok(v), n = count : { rest(v, _, _) }.
     assert!(!split.covered.contains("ok") && !split.local.contains("odd"), "{:?}", split.causes);
 }
 
+
+/// No node id crosses into the cross-file part (decision 0677). `target(r, d)` pairs a reference with another file's
+/// definition by their nodes, and `keyed(k)` makes a value of a definition's node (`d + 1`): both are named, with the
+/// column and the read that brought the node. `in_node_doc(d)` holds a document key, but its rule binds an export's
+/// node to make it: the export carries the node across. `placed(n)` reads a cross-file answer by its symbol, but
+/// places it on an export's node in the cross-file part: the node enters there (0677 §3 places it in the file's own
+/// rules). `in_doc(d)` reads a document key the file's own rule made (`def_doc`, by `@doc(n)`), which may cross, and
+/// `resolved(s)` relates symbols alone: neither is. A relation that reads its node from one named follows it, and
+/// goes per file with it (`callee(d)` follows `target`, `key_doc` follows `keyed`). A finding is not (`uncalled`,
+/// `unresolved`); nor is a per-file relation. A phase's export read by its node column is (`sig_at`), as every file reads it.
+#[test]
+fn a_node_carried_into_the_cross_file_part_is_named() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl types__sig(f: symbol, at: node)
+.input types__sig
+.decl def_name(n: node, s: symbol)
+def_name(n, s) :- node(_, n, "def", _, _), text(n, s).
+.decl ref_name(n: node, s: symbol)
+ref_name(n, s) :- node(_, n, "ref", _, _), text(n, s).
+.decl target(r: node, d: node) cross_file
+target(r, d) :- ref_name(r, s), def_name(d, s).
+.decl callee(d: node)
+callee(d) :- target(_, d).
+.decl uncalled(d: node)
+uncalled(d) :- def_name(d, _), !callee(d).
+.output uncalled
+.decl resolved(s: symbol) cross_file
+resolved(s) :- ref_name(_, s), def_name(_, s).
+.decl unresolved(r: node)
+unresolved(r) :- ref_name(r, s), !resolved(s).
+.output unresolved
+.decl placed(n: node)
+placed(n) :- resolved(s), def_name(n, s).
+.decl used_def(n: node)
+used_def(n) :- placed(n), node(_, n, _, _, _).
+.output used_def
+.decl keyed(k: number) cross_file
+keyed(k) :- def_name(d, s), ref_name(_, s), k = d + 1.
+.decl in_node_doc(d: number) cross_file
+in_node_doc(d) :- def_name(n, s), ref_name(_, s), d = @doc(n).
+.decl def_doc(d: number, s: symbol)
+def_doc(d, s) :- def_name(n, s), d = @doc(n).
+.decl in_doc(d: number) cross_file
+in_doc(d) :- def_doc(d, s), ref_name(_, s).
+.decl key_doc(k: number, d: number)
+key_doc(k, d) :- keyed(k), in_doc(d), in_node_doc(d).
+.decl counted(s: symbol)
+counted(s) :- key_doc(_, _), resolved(s).
+.output counted
+.decl sig_at(n: node, f: symbol)
+sig_at(n, f) :- text(n, f), types__sig(f, n).
+.output sig_at
+"#;
+    let p = programs_of(read(text)).unwrap();
+    let named: std::collections::BTreeMap<&str, &str> = p.nodes.iter().map(|c| (c.rel.as_str(), c.why.as_str())).collect();
+    assert!(named.get("target").is_some_and(|w| w.contains("target.r") && w.contains("target.d") && w.contains("reads ref_name's column 0")), "{named:#?}");
+    assert!(named.get("keyed").is_some_and(|w| w.contains("keyed.k")), "a value made of a node: {named:#?}");
+    assert!(named.get("sig_at").is_some_and(|w| w.contains("types__sig")), "a phase's export by its node: {named:#?}");
+    assert!(named.get("placed").is_some_and(|w| w.contains("placed.n") && w.contains("reads def_name's column 0")), "{named:#?}");
+    assert!(named.get("in_node_doc").is_some_and(|w| w.starts_with("reads a node")), "{named:#?}");
+    for kept in ["resolved", "in_doc", "def_doc", "counted", "uncalled", "unresolved", "def_name", "ref_name", "callee", "key_doc", "used_def"] {
+        assert!(!named.contains_key(kept), "{kept}: {named:#?}");
+    }
+    // Reported, not refused, until the offenders are fixed; refused under `RERAIL_STRICT_NODES`.
+    let refused = nodes_checked(&p.nodes, true).unwrap_err();
+    assert!(refused.contains("decision 0677") && refused.contains("  target: holds a node in target.r, target.d"), "{refused}");
+}

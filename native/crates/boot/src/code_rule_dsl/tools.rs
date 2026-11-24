@@ -2689,11 +2689,19 @@ mod pack_split_tests {
         pack_runs_as(dir, None, "off")
     }
 
+    /// The relations of the cross-file part that still hold a node id (decision 0677), by pack: `<pack> <relation>`, a
+    /// line each, as `NodeCrossing::named` names them. The list only shrinks: a rule that carries a node into the
+    /// cross-file part fails its pack's test, and a relation fixed leaves the list in the same commit.
+    const NODE_CROSSINGS: &str = include_str!("node_crossings.txt");
+
     fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
         // SAFETY: nextest runs each test in a process of its own.
         unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
         let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
         let tmp = tempfile::tempdir().unwrap();
+        let crossings = tmp.path().join("node-crossings");
+        // SAFETY: as above.
+        unsafe { std::env::set_var("RERAIL_NODE_CROSSINGS", &crossings) };
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = Vec::new();
         let mut walk = vec![from.clone()];
@@ -2751,6 +2759,32 @@ mod pack_split_tests {
         errors.sort();
         errors.dedup();
         assert!(errors.is_empty(), "{dir}: {} policies, {} distinct errors:\n{}", policies.len(), errors.len(), errors.join("\n\n"));
+        // A run of each policy alone splits each policy's program alone, which can place a relation the pack's does not:
+        // its list is its own.
+        let listed_as = if batch == "off" { format!("{dir}:alone") } else { dir.to_owned() };
+        let dir = listed_as.as_str();
+        // Each relation, and the crossing it is in the cross-file part under (`-`: its own).
+        let under: std::collections::BTreeMap<String, String> =
+            std::fs::read_to_string(&crossings).unwrap_or_default().lines().filter_map(|l| l.split_once(' ')).map(|(r, u)| (r.to_owned(), u.to_owned())).collect();
+        let found: std::collections::BTreeSet<String> = under.keys().cloned().collect();
+        let listed: std::collections::BTreeSet<String> =
+            NODE_CROSSINGS.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')).filter(|(d, _)| *d == dir).map(|(_, r)| r.trim().to_owned()).collect();
+        let new: Vec<&String> = found.difference(&listed).collect();
+        assert!(
+            new.is_empty(),
+            "{dir}: {} relation(s) of the cross-file part hold a node id (decision 0677), not in node_crossings.txt, the list of \
+             those still to fix, which only shrinks. Key each by a symbol (a module, a qualified name), a path, a document key \
+             or a value, relating the file's nodes to it in the file's own rules, or keep it per file \
+             (RERAIL_STRICT_NODES=1 shows each one's rule):\n{}",
+            new.len(),
+            new.iter().map(|r| format!("{dir} {r}  under {}", under[*r])).collect::<Vec<_>>().join("\n")
+        );
+        // A shard, and a run of each policy alone, sees part of the pack's programs: only the whole pack's run tells a
+        // relation fixed.
+        if shard.is_none() && batch == "strict" {
+            let fixed: Vec<&String> = listed.difference(&found).collect();
+            assert!(fixed.is_empty(), "{dir}: no longer hold a node id (decision 0677); take them out of node_crossings.txt:\n{}", fixed.iter().map(|r| format!("{dir} {r}")).collect::<Vec<_>>().join("\n"));
+        }
     }
 
     macro_rules! packs {
