@@ -152,6 +152,29 @@ fn a_join_by_a_files_own_path_stays_per_file() {
     assert_eq!(split.locations[relay], vec![0], "the relay's rows name their document: {:?}", split.locations);
 }
 
+/// A name built from a file's path names its document too (decision 0665): a module from the path (a named group of a
+/// whole-path pattern, its separators replaced), a symbol the module leads (`cat(m, ".", q)`). A relation keyed by
+/// such a symbol, and an aggregate over it (eager-resolve's `er_last_def`: the last def of each symbol), stay
+/// per-file; the symbol is a key, no location. A symbol the module does not lead is no file's name: the aggregate
+/// over it is cross-file.
+#[test]
+fn a_symbol_built_from_a_files_module_stays_per_file() {
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n\
+                .decl qual(f: node, q: symbol)\n.input qual\n.decl docof(n: node, d: number)\n.input docof\n.decl line(n: node, l: number)\n.input line\n\
+                .decl mod_of(d: number, m: symbol)\nmod_of(d, @replace_all(m, \"/\", \".\")) :- doc(d, p, _), match(\"(?<m>.*)\\\\.py\", p).\n\
+                .decl sym(f: node, s: symbol)\nsym(f, cat(m, \".\", q)) :- qual(f, q), docof(f, d), mod_of(d, m).\n\
+                .decl last_def(s: symbol, f: node)\nlast_def(s, f) :- sym(f, s), line(f, l), l = max a : { sym(g, s), line(g, a) }.\n.output last_def\n\
+                .decl tail(f: node, s: symbol)\ntail(f, cat(q, \".\", m)) :- qual(f, q), docof(f, d), mod_of(d, m).\n\
+                .decl last_tail(s: symbol, f: node)\nlast_tail(s, f) :- tail(f, s), line(f, l), l = max a : { tail(g, s), line(g, a) }.\n.output last_tail\n";
+    let split = split_of(&read(text));
+    for rel in ["mod_of", "sym", "last_def"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    assert_eq!(split.path_keys.get("sym").map(Vec::as_slice), Some(&[1][..]), "the symbol is a key: {:?}", split.path_keys);
+    assert_eq!(split.locations["sym"], vec![0], "and no location: {:?}", split.locations);
+    assert!(!split.local.contains("last_tail"), "a symbol the module does not lead: {:?}", split.local);
+}
+
 /// The project's settings (decision 0665: a package's `package.json` fields, its tsconfig, the run's environment) are
 /// read like the run's options: a per-file rule that joins them stays per-file, and a relation derived from them alone
 /// is a constant, derived in both parts. A rule that reads another file's rows, or the tree's list of files (no

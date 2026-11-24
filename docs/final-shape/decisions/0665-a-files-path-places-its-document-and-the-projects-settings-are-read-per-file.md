@@ -223,8 +223,9 @@ farm host, so it is in the slow tier.
   tests' overlay directory is each file's staged copy where the tree stages one, else the pulled one (links).
 
 - **The configuration files' rows are kept.** A run read every `package.json` and project configuration (and the
-  chain each `extends`) again. Their rows (`package`, `package_field`, `tsconfig`, `tsconfig_path`) are now kept in
-  the store under the root and the configuration files' paths, with each question their reading asked of the disk
+  chain each `extends`) again. Their rows (`package`, `package_field`, `tsconfig`, `tsconfig_path`) are now kept as
+  kept facts (0104: a cache is facts, no table of its own), in the root's settings space under the configuration
+  files' paths, each entry's reads the questions their reading asked of the disk
   (a file's digest, whether a path is a file or a folder, a real path) and its answer. A later run asks them again
   through the observer, which answers a digest from the file's kept stat without reading it, and reuses the rows when
   every answer is the same; otherwise it reads them and keeps them anew. A base that a chain looked for and that
@@ -240,6 +241,15 @@ farm host, so it is in the slow tier.
   segment holding a span's start, takes each segment's piece, and grows the run of pieces holding the first until no
   piece grows it (`SegmentMap::file_ranges(..).primary()`). The test now also pins the calls' host lines (3 and 5);
   it passes on Linux and on Metal.
+
+- **A name built from a file's path names its document.** The split placed a column copied from `doc`'s path, but
+  not a module made from it (eager-resolve's `er_doc(d, m)`: a named group of the path, its `/` replaced) nor a
+  symbol the module leads (`er_sym`'s `cat(m, ".", q)`), so `er_last_def`, the last def of each symbol, was
+  cross-file. A variable built through `rx_group`, `replace_all` or `concat` from a placed one that leads the
+  string, and a head term so built, now place what that one places, as a key and no location
+  (`a_symbol_built_from_a_files_module_stays_per_file`). A symbol the module does not lead places nothing. Two files
+  whose paths spell one module (`a/b.py` and `a.b.py`) would each keep their own last def, where the linter's one map
+  keeps one: the goal's call, that a module's symbol names its file.
 
 ## Left open
 

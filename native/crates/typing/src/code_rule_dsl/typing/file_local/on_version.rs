@@ -534,7 +534,7 @@ impl<'v> Program<'v> {
                 .filter_map(|&r| {
                     let rules = &rels.rules[r as usize];
                     let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_classes(rels, &locs)).collect();
-                    let kept: Vec<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
+                    let kept: Vec<usize> = locs[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed_built(self.v, self.rules[k], c, p))).collect();
                     (kept != locs[r as usize]).then_some((r, kept))
                 })
                 .collect();
@@ -1589,6 +1589,24 @@ struct Form {
     /// a column that places a document is a file's path (a location is a node or a number), so each names one
     /// document, the same for every atom that writes it (decision 0665).
     paths: u32,
+    /// A variable built from another (`x = f(y, …)`), by class: (x's, y's), where y leads the string x is built from
+    /// (`name_built`). It names y's document where y does (decision 0665): a module from its file's path, a symbol
+    /// from its module.
+    built: Vec<(u32, u32)>,
+}
+
+/// The functions a document's name is built through (decision 0665): a named group of a whole-text pattern (`match`'s
+/// capture, `rx_group`), a replacement in a string (`@replace_all`), and a string the name leads (`cat`'s `concat`).
+const NAME_BUILDERS: [&str; 3] = ["rx_group", "replace_all", "concat"];
+
+/// The variable a term's string is built from, where it leads it: the term itself, or the first argument of a
+/// `NAME_BUILDERS` call, through each such call (`cat(cat(m, "."), q)`'s `m`).
+fn name_built(v: &Version, t: TermRef<'_>) -> Option<crate::code_rule_dsl::logic::program_image::Slot> {
+    match t {
+        TermRef::Var(s) => Some(s),
+        TermRef::Call(f, mut xs) if NAME_BUILDERS.contains(&v.text(f)) => xs.next().and_then(|x| name_built(v, x)),
+        _ => None,
+    }
 }
 
 impl Form {
@@ -1674,7 +1692,16 @@ impl Form {
         let binders = (n + tapes.len()) as u32;
         let paths = binders + lits.len() as u32;
         let ids = paths as usize + strings.len();
-        Form { named, class, lits, splices, ids, binders, paths }
+        let built = rule
+            .body()
+            .filter_map(|l| match l.view() {
+                L::Cmp { l: TermRef::Var(x), op: CmpOp::Eq, r: r @ TermRef::Call(..) } | L::Cmp { l: r @ TermRef::Call(..), op: CmpOp::Eq, r: TermRef::Var(x) } => {
+                    name_built(v, r).map(|y| (class[x.0 as usize], class[y.0 as usize]))
+                }
+                _ => None,
+            })
+            .collect();
+        Form { named, class, lits, splices, ids, binders, paths, built }
     }
 
     /// The slot a head argument is, when the body names it.
@@ -1693,8 +1720,16 @@ impl Form {
         })
     }
 
+    /// The classes the placing columns place, and each built from one of them (`built`).
     fn placed_classes(&self, rels: &Rels<'_>, locs: &[Vec<usize>]) -> Bits {
-        self.placed_classes_over(rels, locs, &rels.base_locs)
+        let mut out = self.placed_classes_over(rels, locs, &rels.base_locs);
+        loop {
+            let grew: Vec<u32> = self.built.iter().filter(|&&(x, y)| out.has(y) && !out.has(x)).map(|&(x, _)| x).collect();
+            if grew.is_empty() {
+                return out;
+            }
+            grew.into_iter().for_each(|x| out.set(x));
+        }
     }
 
     /// `placed_classes` with the base relations' columns `base`: their placing columns, or their locations alone.
@@ -1737,6 +1772,12 @@ impl Form {
 
     fn head_placed(&self, rule: RuleRef<'_>, c: usize, placed: &Bits) -> bool {
         rule.head().args().nth(c).and_then(|t| self.var(t)).is_some_and(|v| placed.has(self.class[v as usize]))
+    }
+
+    /// `head_placed`, or a string built from a placed variable (`name_built`): a placing column, not a location.
+    fn head_placed_built(&self, v: &Version, rule: RuleRef<'_>, c: usize, placed: &Bits) -> bool {
+        self.head_placed(rule, c, placed)
+            || rule.head().args().nth(c).filter(|t| matches!(t, TermRef::Call(..))).and_then(|t| name_built(v, t)).is_some_and(|s| self.named[s.0 as usize] && placed.has(self.class[s.0 as usize]))
     }
 
     fn filters(&self, rule: RuleRef<'_>, rels: &Rels<'_>, filters: &[bool]) -> bool {
