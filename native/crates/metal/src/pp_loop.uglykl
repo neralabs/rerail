@@ -127,6 +127,11 @@
 // read (`lp_rq_finish`); its hole passed through a rescan (`lp_piece`): a live result's holder is read again.
 #define RQ_FIN (128u)
 #define RQ_RESCAN (256u)
+// Its hole taken whole into a call's arguments (`lp_collect_hole`): a guess that its result's parentheses are
+// balanced, and (`RQ_NOCOMMA`) that it has no comma at its depth 0. Its result's delimiters' summary (`LN_*`,
+// row 6's `pexp`) is written with its live names; a wrong guess reads its holder again (`lp_rq_finish`).
+#define RQ_DELIM (512u)
+#define RQ_NOCOMMA (1024u)
 #define RQ_SHARED (RQ_TAIL | RQ_INLINE | RQ_OWN)
 // The queue's items (`LPQ`, `ukl/workqueue.h`'s protocol): a piece's start, a request's record, a piece read
 // again inline.
@@ -597,7 +602,10 @@ UKL_INLINE uint32_t lp_xref(LpTok t) {
 // Whether region 0's entries `[lo, hi)` hold no node: a request's raw arguments are its holders' tokens by their
 // index (`XP_ARG`), and a node's entry holds an offset, not a reference.
 UKL_INLINE bool lp_raw_flat(UKL_LOCAL LpRun* r, Ar a, uint32_t lo, uint32_t hi) {
-    for (uint32_t k = lo; k < hi; k++) if (lp_is_node(lp_get(r, a, 0u, k))) return false;
+    for (uint32_t k = lo; k < hi; k++) {
+        LpTok e = lp_get(r, a, 0u, k);
+        if (lp_is_node(e) || LP_IS_HOLE(e)) return false;
+    }
     return true;
 }
 // A call's row (`lp_log`'s reference), in its table's first entry (`pxp`: the table's entries are its arguments').
@@ -931,7 +939,7 @@ UKL_INLINE uint64_t lp_tok_mix(Ux u, uint64_t h, LpTok t) {
 // An entry by its spelling and shape: a node by its spelling's hash (`lp_node_seal`'s) and its count and
 // space, a piece by its count and each token's spelling, another token by its own.
 UKL_INLINE uint64_t lp_entry_spell(Ux u, Ar a, uint64_t h, LpTok e) {
-    if (LP_IS_HOLE(e)) return key_mix(h, 0x2545f4914f6cdd1dul ^ (uint64_t)(e.st));
+    if (LP_IS_HOLE(e)) return key_mix(key_mix(h, 0x2545f4914f6cdd1dul ^ (uint64_t)(e.st)), (uint64_t)(e.org));
     if (lp_is_node(e)) {
         uint64_t c = (((uint64_t)(a.pexp[e.st + 2u])) << 32) | ((uint64_t)(a.pn[e.st + 2u]));
         return key_mix(key_mix(h, c ^ 0x3c6ef372fe94f82bul), (uint64_t)(e.flags));
@@ -2622,10 +2630,51 @@ UKL_INLINE void lp_rq_end(UKL_LOCAL LpRun* r, Ux u, Ar a, uint32_t step) {
     ukl_atomic_add(&a.lpq[7], step);
     lp_rq_dec(a, rq);
 }
+// Token `p` of span `def`'s (`LP_TOPSRC`: the top text's) byte if it is `(`, `)` or `,`, else 0.
+UKL_INLINE uint8_t lp_delim(Ux u, uint32_t def, uint32_t p) {
+    LpTok t; t.src = lp_span_src(def); t.st = p; t.flags = 0u; t.org = 0u; t.xp = 0u;
+    uint8_t c = ref_punct(u, lp_ref(u, t));
+    return c == ((uint8_t)('(')) || c == ((uint8_t)(')')) || c == ((uint8_t)(',')) ? c : ((uint8_t)(0));
+}
+// Entries `at..at + n`'s delimiters' summary: their tokens' `(`, `)` and `,`, a node in it by its own summary, a
+// request's hole by its result's once done (`lp_rq_finish`). One not known (a node not summarized yet, a hole
+// not done) makes it unbalanced, not known.
+UKL_INLINE uint32_t lp_entries_sum(Ux u, Ar a, uint32_t at, uint32_t n) {
+    uint32_t depth = 0u;
+    bool ok = true, comma = false, known = true;
+    for (uint32_t k = 0u; k < n; k++) {
+        LpTok e = lp_gget(a, at + k);
+        bool node = lp_is_node(e), hole = LP_IS_HOLE(e);
+        uint32_t s2 = 0u;
+        if (node) s2 = a.pst[e.st];
+        else if (hole && (ukl_atomic_load(&a.pn[LP_ROW(e.st) + 2u]) & RQ_FIN) != 0u) s2 = a.pexp[LP_ROW(e.st) + 6u];
+        known = known && (!(node || hole) || (s2 & LN_KNOWN) != 0u);
+        ok = ok && (!(node || hole) || (s2 & LN_BALANCED) != 0u);
+        comma = comma || ((node || hole) && (s2 & LN_COMMA) != 0u && depth == 0u);
+        uint32_t m = node || hole ? 0u : lp_is_span(e) ? lp_span_len(e) : 1u;
+        for (uint32_t i = 0u; i < m; i++) {
+            uint8_t c = lp_is_span(e) ? lp_delim(u, e.src & ~P_KIND, e.st + i) : lp_placemarker(e) ? ((uint8_t)(0)) : ref_punct(u, lp_ref(u, e));
+            ok = ok && !(c == ((uint8_t)(')')) && depth == 0u);
+            depth += c == ((uint8_t)('(')) ? 1u : (c == ((uint8_t)(')')) && depth != 0u) ? 0xffffffffu : 0u;
+            comma = comma || (c == ((uint8_t)(',')) && depth == 0u);
+        }
+    }
+    ok = ok && depth == 0u;
+    return !known ? 0u : LN_KNOWN | (ok ? LN_BALANCED : 0u) | (comma ? LN_COMMA : 0u);
+}
+// Node `nb`'s delimiters' summary (`LN_*`), made once, the first time a call's arguments are read through it
+// (one not known yet is read token by token, and made then).
+UKL_INLINE uint32_t lp_node_sum(Ux u, Ar a, uint32_t nb) {
+    uint32_t have = a.pst[nb];
+    if ((have & LN_KNOWN) != 0u) return have;
+    uint32_t sum = lp_entries_sum(u, a, nb + LN_ENTRIES, a.psrc[nb]);
+    a.pst[nb] = sum;
+    return sum;
+}
 // A request done, its reading and its holes (`LQ_FIN`): its result's tokens and leaves (`lp_leaves`, its holes'
 // in them), the hash of its disabled macros it looked up; its holder told (its flags, its looked-up set), then
 // its waiters (their holders: a reread where the result is not theirs), their list closed (`RQ_DONEW`).
-UKL_INLINE void lp_rq_finish(Ar a, PP_GLOBAL uint32_t* trn, uint32_t rq) {
+UKL_INLINE void lp_rq_finish(Ux u, Ar a, PP_GLOBAL uint32_t* trn, uint32_t rq) {
     ukl_fence_device();
     // Its result's live names: its own, its holes' (done), one for a node with any; written, then its flags read
     // with its mark (`RQ_FIN`): a rescan that marked it before is seen here, one after reads them.
@@ -2636,6 +2685,9 @@ UKL_INLINE void lp_rq_finish(Ar a, PP_GLOBAL uint32_t* trn, uint32_t rq) {
         else if (lp_is_node(e) && a.pn[e.st] != 0u) live += 1u;
     }
     a.pn[rq + 6u] = live;
+    // Its delimiters' summary, for a hole taken whole into arguments (`lp_collect_hole`).
+    uint32_t sum = at == LP_NONE ? 0u : lp_entries_sum(u, a, at, a.pst[rq + 2u]);
+    a.pexp[rq + 6u] = sum;
     ukl_fence_device();
     uint32_t fl = ukl_atomic_or(&a.pn[rq + 2u], RQ_FIN), lb = a.pn[rq + 5u];
     bool ok = at != LP_NONE && (fl & RQ_INLINE) == 0u;
@@ -2652,6 +2704,8 @@ UKL_INLINE void lp_rq_finish(Ar a, PP_GLOBAL uint32_t* trn, uint32_t rq) {
     if ((fl & RQ_OWN) != 0u && mt != 0u) ukl_atomic_or(&a.psrc[LP_ROW(LP_MEMO_STRIDE * mt + LP_MEMO_HOT + ((m >> 5) & (LP_MEMO_HOT - 1u)))], 1u << (m & 31u));
     ukl_fence_device();
     uint32_t hd = a.pn[rq + 3u];
+    // A guess of its delimiters wrong: its holders read again.
+    if (((fl & RQ_DELIM) != 0u && (sum & LN_BALANCED) == 0u) || ((fl & RQ_NOCOMMA) != 0u && (sum & LN_COMMA) != 0u)) ok = false;
     if (!ok || lp_rq_again(fl, (fl & RQ_NEXTP) != 0u, false) || ((fl & RQ_RESCAN) != 0u && live != 0u)) lp_hold_again(a, hd);
     else if ((fl & RQ_TAIL) != 0u && (fl & RQ_ATEND) != 0u) lp_hold_tail(a, hd);
     if ((fl & RQ_OWN) != 0u) lp_hold_own(a, hd);
@@ -2993,44 +3047,6 @@ UKL_INLINE void lp_overruns(PP_GLOBAL const uint32_t* ovr, PP_GLOBAL const uint3
 // lane each: which are plain, each a token or a span of tokens no macro, so the thread takes them in
 // one step (`lp_list_take`).
 #define LQ_LIST (3u)
-// Token `p` of span `def`'s (`LP_TOPSRC`: the top text's) byte if it is `(`, `)` or `,`, else 0.
-UKL_INLINE uint8_t lp_delim(Ux u, uint32_t def, uint32_t p) {
-    LpTok t; t.src = lp_span_src(def); t.st = p; t.flags = 0u; t.org = 0u; t.xp = 0u;
-    uint8_t c = ref_punct(u, lp_ref(u, t));
-    return c == ((uint8_t)('(')) || c == ((uint8_t)(')')) || c == ((uint8_t)(',')) ? c : ((uint8_t)(0));
-}
-// Node `nb`'s delimiters' summary (`LN_*`), made once, the first time a call's arguments are read
-// through it: its tokens' `(`, `)` and `,`, a node in it by its own summary (one not known yet makes
-// it unbalanced, not known: it is read token by token, and made then).
-UKL_INLINE uint32_t lp_node_sum(Ux u, Ar a, uint32_t nb) {
-    uint32_t have = a.pst[nb];
-    if ((have & LN_KNOWN) != 0u) return have;
-    uint32_t n = a.psrc[nb], depth = 0u, at = nb + LN_ENTRIES;
-    bool ok = true, comma = false, known = true;
-    for (uint32_t k = 0u; k < n; k++) {
-        LpTok e = lp_gget(a, at + k);
-        bool node = lp_is_node(e);
-        // A request's hole: its delimiters not known (not taken whole into arguments).
-        ok = ok && !LP_IS_HOLE(e);
-        uint32_t s2 = node ? a.pst[e.st] : 0u;
-        known = known && (!node || (s2 & LN_KNOWN) != 0u);
-        ok = ok && (!node || (s2 & LN_BALANCED) != 0u);
-        comma = comma || (node && (s2 & LN_COMMA) != 0u && depth == 0u);
-        uint32_t m = node ? 0u : lp_is_span(e) ? lp_span_len(e) : 1u;
-        for (uint32_t i = 0u; i < m; i++) {
-            uint8_t c = lp_is_span(e) ? lp_delim(u, e.src & ~P_KIND, e.st + i) : lp_placemarker(e) ? ((uint8_t)(0)) : ref_punct(u, lp_ref(u, e));
-            ok = ok && !(c == ((uint8_t)(')')) && depth == 0u);
-            depth += c == ((uint8_t)('(')) ? 1u : (c == ((uint8_t)(')')) && depth != 0u) ? 0xffffffffu : 0u;
-            comma = comma || (c == ((uint8_t)(',')) && depth == 0u);
-        }
-    }
-    ok = ok && depth == 0u;
-    // A node in it not summarized yet: not known (read token by token now, summarized when read through).
-    uint32_t sum = !known ? 0u : LN_KNOWN | (ok ? LN_BALANCED : 0u) | (comma ? LN_COMMA : 0u);
-    a.pst[nb] = sum;
-    return sum;
-}
-
 // The frames read to their end popped, as `lp_lex` pops them before it reads (an argument's end and
 // the top stay): the entry next is the top frame's.
 UKL_INLINE void lp_settle(UKL_LOCAL LpRun* r, Ar a) {
@@ -3066,7 +3082,7 @@ UKL_INLINE void lp_took(UKL_LOCAL LpRun* r) {
 // Whether the call whose arguments are being read takes node `e` whole into its argument: its body
 // reads no parameter raw (`#`, `##`: their spellings and edges are tokens'), and the node's
 // parentheses are balanced, with no comma at its depth 0 unless the argument is the variadic rest.
-UKL_INLINE bool lp_collect_whole(UKL_LOCAL LpRun* r, Ux u, Ar a, LpTok e) {
+UKL_INLINE __attribute__((always_inline)) bool lp_cl_raw(UKL_LOCAL LpRun* r, Ux u) {
     if (r->cl_raw == 0u) {
         PpDef d = u.defs[r->cl_m];
         bool raw = false;
@@ -3076,10 +3092,29 @@ UKL_INLINE bool lp_collect_whole(UKL_LOCAL LpRun* r, Ux u, Ar a, LpTok e) {
         }
         r->cl_raw = raw ? ((uint8_t)(2)) : ((uint8_t)(1));
     }
-    if (r->cl_raw == 2u) return false;
+    return r->cl_raw == 2u;
+}
+UKL_INLINE __attribute__((always_inline)) bool lp_collect_whole(UKL_LOCAL LpRun* r, Ux u, Ar a, LpTok e) {
+    if (lp_cl_raw(r, u)) return false;
     uint32_t sum = lp_node_sum(u, a, e.st);
     if ((sum & LN_BALANCED) == 0u) return false;
     return (sum & LN_COMMA) == 0u || (r->cl_var && r->cl_nargs == r->cl_n);
+}
+
+// Whether the call whose arguments are being read takes request hole `e` whole into its argument (decision
+// 0613 §4): its body reads no parameter raw, and its result is balanced with no comma at its depth 0 (unless the
+// argument is the variadic rest): known if it is done, else a guess its record checks when it is
+// (`RQ_DELIM`, `RQ_NOCOMMA`, `lp_rq_finish`: a mark set before its `RQ_FIN` is seen there, one after reads
+// its summary here).
+UKL_INLINE __attribute__((always_inline)) bool lp_collect_hole(UKL_LOCAL LpRun* r, Ux u, Ar a, LpTok e) {
+    if (lp_cl_raw(r, u)) return false;
+    bool rest = r->cl_var && r->cl_nargs == r->cl_n;
+    uint32_t q = LP_ROW(e.st);
+    uint32_t old = ukl_atomic_or(&a.pn[q + 2u], RQ_DELIM | (rest ? 0u : RQ_NOCOMMA));
+    if ((old & RQ_FIN) == 0u) return true;
+    ukl_fence_device();
+    uint32_t sum = a.pexp[q + 6u];
+    return (sum & LN_BALANCED) != 0u && (rest || (sum & LN_COMMA) == 0u);
 }
 
 // The window `at..end` of source `def` (`LQ_PUNCT`'s, at most `LP_WIN` tokens): a lane reads
@@ -3286,6 +3321,12 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                         bool nd = false;
                         LpTok e = lp_next_node(rp, a, &nd);
                         if (nd && lp_collect_whole(rp, u, a, e)) {
+                            if (!lp_push(rp, a, 0u, rp->cl_astart, e)) break;
+                            lp_took(rp);
+                            continue;
+                        }
+                        // A request's hole next: into the argument whole, its delimiters guessed.
+                        if (!nd && LP_IS_HOLE(e) && lp_collect_hole(rp, u, a, e)) {
                             if (!lp_push(rp, a, 0u, rp->cl_astart, e)) break;
                             lp_took(rp);
                             continue;
@@ -3719,7 +3760,7 @@ UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint
         skip = ukl_sg_shuffle(skip, 0u __UKL_ARGS);
         if (skip != 0u) {
         } else if (kind == LQ_FIN) {
-            if (ln == 0u) lp_rq_finish(a, trn, x);
+            if (ln == 0u) lp_rq_finish(u, a, trn, x);
         } else {
             lp_piece(u, a, ops, state, lookups, start, v, opv, lob, plast, pend, pjoin, joined, trn, ovr, grid, s0, kind == LQ_REQ ? x : LP_NONE, kind == LQ_AGAIN, rp, ln == 0u, ln, 0u __UKL_ARGS);
         }
