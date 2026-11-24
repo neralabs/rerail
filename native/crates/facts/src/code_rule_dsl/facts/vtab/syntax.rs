@@ -4601,7 +4601,10 @@ impl Viewed {
                 }
             } else if matches!(self.view, View::Unit) && column == 1 {
                 // A unit's nodes, walked on the tape (`Projected::each_of_unit`); the root's are those no unit holds.
-                if let Some((doc, local)) = b.node(v) {
+                // The roots' own rows hold `-1` (the root has no unit): each document's root.
+                if v == -1 {
+                    rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).filter_map(|doc| b.row(self.view, doc, 0)));
+                } else if let Some((doc, local)) = b.node(v) {
                     let p = &b.docs[doc];
                     p.each_of_unit(&b.dialects[p.tag], local, |l| rows.extend(b.row(self.view, doc, l)));
                 }
@@ -4849,7 +4852,11 @@ impl Viewed {
                 });
             }
         } else if matches!(self.view, View::Unit) && column == 1 {
-            // A unit's nodes, walked on the tape: each match with its local id.
+            // A unit's nodes, walked on the tape: each match with its local id. The roots' rows (`-1`) are the row
+            // lookup's, as a parent's `-1` is.
+            if value == -1 {
+                return false;
+            }
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
                 let p = &b.docs[doc];
                 p.each_of_unit(&b.dialects[p.tag], local, |l| emit(doc, l, NONE, None, None, Known::default()));

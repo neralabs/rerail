@@ -8137,6 +8137,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
         BTreeSet::new()
     };
     let to_sql: Vec<String> = written.iter().filter(|r| !native_out.contains(*r)).cloned().collect();
+    // An output no rule made and no fact filled is read empty: its table, left to be made when SQL first needs it, is
+    // made now (decision 0665: a constant of the settings that a run's options leave with no row).
+    run.ensure(&to_sql)?;
     run.materialize(&to_sql)?;
     let outputs_of: Vec<&str> = f0.outputs().collect();
     let (outputs, nodes) = decoded_outputs(&outputs_of, &|r| f0.is_input(r), &|r| f0.columns(r).map(|c| c.into_iter().map(|(_, t)| t.to_owned()).collect()), db, lowered, &facts, atoms, &kept, &native_out)?;

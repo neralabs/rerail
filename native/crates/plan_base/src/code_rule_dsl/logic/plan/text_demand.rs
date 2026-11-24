@@ -541,6 +541,8 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             match fixed {
                 _ if text.neg() && short_constant(v, text) => {}
                 Some(k) => kinds.extend(k),
+                // A span's text is read whole (`span_text_demand`), not a node's within the bound: no twin reads it.
+                None if span(rule, s) => {}
                 None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) => {}
                 None if text.neg() => negated_any += 1,
                 None if twinned(head, name) => {}

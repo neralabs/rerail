@@ -1928,6 +1928,11 @@ fn run_observed_within(
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
     // run, its outputs are those relations.
     let fold_constants = |v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>, added: &added::Added| -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>)> {
+        // The run's options, stated first (decision 0665), in the constants' own run too: a test of them is decided
+        // before the run.
+        let mut rows = crate::code_rule_dsl::facts::repository::Rows::default();
+        crate::code_rule_dsl::facts::repository::options(&crate::code_rule_dsl::facts::repository::with_declared(&ProgramFields::settings(&**v), options), &mut rows);
+        constants::state_options(v, &rows.option, &rows.option_item)?;
         match options.get(constants::OWN).and_then(|v| v.as_array()) {
             Some(wanted) => {
                 let wanted: Vec<String> = wanted.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect();
@@ -2851,7 +2856,10 @@ fn run_observed_within(
     // pausing for answers. A load's answer is the loaded document's rows of every per-file relation the cone reads,
     // made by the chunk path as any file's are; the rest of the cross-file part reads the cone's rows as inputs.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the cone of requests".into()));
-    let loading: Option<(Arc<crate::code_rule_dsl::logic::program_image::Version>, BTreeSet<String>)> = if loading_run {
+    // A program whose every file read its preparation decided away (decision 0665: a read of a setting the run does
+    // not give, `env("python.venv", e)`) loads nothing.
+    let still_reads_world = loading_run && !world::answers(&super::body::Placed::whole(shared_split.versions.cross.clone()).fields()?).is_empty();
+    let loading: Option<(Arc<crate::code_rule_dsl::logic::program_image::Version>, BTreeSet<String>)> = if still_reads_world {
         // The prepared split's cone, made once, of the cross-file part's version.
         let cone = shared_cone
             .get_or_init(|| cone_of(&super::body::Placed::whole(shared_split.versions.cross.clone()), &split.exports, &split.base, head).map(Arc::new).map_err(|e| e.to_string()))

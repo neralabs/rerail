@@ -2417,6 +2417,83 @@ fn a_files_entry_is_kept_under_its_own_packages_settings() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0665: a rule over another file's rows, read through an option (`doc_ignored`: a decorator the
+/// `pydocstyle.ignore-decorators` option lists, resolved across files), and a constant of the run's settings
+/// (`py_version`: `env`, else a file read, else a default). The option's name reaches `option_item` from its
+/// reader, as `naming.rerail`'s `method_dec_named(e, o)` from `method_dec_named(e, "pep8-naming.…")`. And an option
+/// named by a computed name, as pytest's
+/// `option(cat(c, "-require-match-for"), p)`: `option` stays an input, `option_item` is stated still.
+const OPTION_READ: &str = r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl dec_named(n: node, o: symbol) cross_file
+dec_named(n, o) :- def(n, _), option_item(o, _, q), def(_, q).
+.decl ignored(n: node) cross_file
+ignored(n) :- dec_named(n, "ignore").
+.decl ver(v: symbol)
+ver(v) :- env("demo.version", v).
+ver(v) :- !env("demo.version", _), env("demo.venv", e), f = cat(e, "/demo.cfg"), file_line(f, _, v).
+ver("3.13") :- !env("demo.version", _), !env("demo.venv", _).
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- def(n, x), !ignored(n), ver("3.13"), docof(n, d), doc(d, p, _).
+.output shown
+.decl flagged(n: node)
+flagged(n) :- def(n, x), option(cat(x, "-on"), _).
+.output flagged
+"#;
+
+/// A run of `OPTION_READ` with `options` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn option_read_run(dir: &std::path::Path, options: &serde_json::Value) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, OPTION_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run_with_options(&[&program], &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), options).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: the run's options and settings are decided before the run. With no `ignore` option, the rule that
+/// reads every file's definitions through it cannot hold and goes, and with no `env` the version is the default,
+/// folded first: `shown` is per-file, and an edit of one file reads the others from the memo. With the option set,
+/// the rule holds and reads across files. Each run's rows are a fresh run's.
+#[test]
+fn an_option_the_run_does_not_set_is_decided_before_the_run() {
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in [("x.py", "def f():\n    pass\n"), ("y.py", "def g():\n    pass\n"), ("z.py", "def h():\n    pass\n")] {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let none = serde_json::Value::Null;
+    let dir = make("option-decided");
+    let (first, rows) = option_read_run(&dir, &none);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "no option: nothing ignored, the default version");
+    std::fs::write(dir.join("ws/z.py"), "# an edit\ndef h():\n    pass\n").unwrap();
+    let (edited, rows) = option_read_run(&dir, &none);
+    assert_eq!(edited.memo.0, edited.files - 1, "shown is per-file: every other file is read from the memo: {:?} of {} (first {:?})", edited.memo, edited.files, first.memo);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")]);
+    let _ = std::fs::remove_dir_all(&dir);
+    // The option set: any file defining `h` ignores every definition.
+    let set = serde_json::json!({"ignore": ["h"]});
+    let dir = make("option-set");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, Vec::<Vec<String>>::new(), "the option set: every definition ignored");
+    let _ = std::fs::remove_dir_all(&dir);
+    let set = serde_json::json!({"ignore": ["k"]});
+    let dir = make("option-set-unmatched");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "an option naming no definition ignores none");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0665: which settings a memoised relation's rows can read. A read keyed by the file's own path, or by a
 /// folder its own path's row names (directly or through a relation keyed by it), is the file's own; one through
 /// another key (a constant folder, any file's row) is every file's.

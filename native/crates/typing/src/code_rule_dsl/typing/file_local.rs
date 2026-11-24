@@ -194,6 +194,14 @@ pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 // cratify: `tests` is rerail-device-metal's (it mounts it)
 
+/// The relations whose every row the run states (decision 0665): its options and its settings (`env`, decision 0249).
+/// Given as facts, not bound as inputs, they are whole, none or some: a test of them is decided before the run
+/// (`DecidedFactTests`): with no `env` row, `py_version`'s reads of the settings and of `pyvenv.cfg` go, and its
+/// default is left. A relation made of them alone is a constant (`constants::foldable_of`).
+pub fn run_stated(rel: &str) -> bool {
+    option_input(rel) || rel == "env"
+}
+
 /// The inputs whose rows are the run's options (`facts::repository::options`): the same beside every chunk and the
 /// cross-file part, and named by the corpus memo's key (`corpus::memo::with_options`), so constants to the split.
 pub fn option_input(rel: &str) -> bool {

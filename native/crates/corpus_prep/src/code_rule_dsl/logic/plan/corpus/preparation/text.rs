@@ -786,7 +786,7 @@ fn vocabulary_columns(v: &Version) -> (HashMap<String, HashSet<usize>>, HashSet<
                 continue;
             }
             for (column, (_, ty)) in d.cols().enumerate() {
-                if v.text(ty) != "sym" || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
+                if !matches!(v.text(ty), "sym" | "symbol") || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
                     continue;
                 }
                 // Every producer must copy a text column's symbol. One computed or constant arm is enough
