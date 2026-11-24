@@ -206,8 +206,21 @@ farm host, so it is in the slow tier.
   (`native_shards_match_the_original_batch_and_both_probe_directions`). It is each document's root now, as `tape`'s
   parent `-1` is. `tests_sql`'s memo test declares its `dup` cross-file (0652).
 
+- **React's `cap_name` joined documents by accident.** `cap_name(x)` was the names of every file's identifiers and
+  property names that pass `isFirstLetterCapitalized`; `fn_component` read it for its own name's text, so a file's
+  components depended on every other file's names. ESLint's test is of the string alone. It is written where it is
+  read (`!match("_*[a-z].*", x)`, `lib/tsx/react-class.rerail`). The split could not cover it (0652's `covers`): a
+  reader's name is not always a node of the view's kinds (a member's `property` may be a private name). Checked
+  against the original over React's seven label fixtures: the same findings (72 rows). React's four chains through
+  `p36` now root at `sym_of` (`wrapper_call`'s `react#memo`, `create_element`), the import resolution.
+
 ## Left open
 
+- **React's four `p36` chains root at `sym_of`.** `sym_of(f, "react#memo")` resolves an identifier through every
+  file's `exports` (re-exports): cross-file work, keyed by names, with no position. A per-file rule that reads such a
+  relation of names stays per-file only once the cross part's rows of names are an input of the per-file part, a
+  second round of the per-file fixpoint (the two-phase design). The same holds of the docstring rules with
+  `ignore-decorators` set.
 - **Eager-resolve's `er_last_def` stays cross-file.** Its symbols are built as `cat(module, ".", name)` from
   `er_doc(d, m)`. `cat` is not injective (`a.b` + `c` and `a` + `b.c` are one string), so a symbol does not name one
   document, and the split cannot treat it as one. Making it per-file is a rule rewrite: key the relation by the
@@ -223,4 +236,6 @@ farm host, so it is in the slow tier.
   `revision_cli_reads_commit_metadata_without_its_tree` fails on a missing tree object. Both fail the same way at
   this branch's base.
 - `cpu_and_metal_read_the_same_tape_values` fails on Linux hosts with a stratum past its launch budget (0603). It
-  fails the same way on this branch's base (`872f3a300b`), so this change did not cause it.
+  fails the same way on this branch's base (`872f3a300b`), so this change did not cause it. Its 8 dispatches are its
+  3 programs, 3 relaunches and 2 of the UKL library's launches (`Pass::library` adds them to `dispatches`), which
+  `one_launch` does not count among the launches.
