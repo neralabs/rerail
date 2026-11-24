@@ -9,15 +9,18 @@
 //! order, the integer activities' heap), and `bitlex_csat_lanes` is the same search on the CPU: the same answer,
 //! model and counts on every backend and without a device.
 //!
-//! Memory, a batch: a descriptor of `DESC` words a formula, in the block; the states, `state_words` each. Launches:
-//! a threadgroup of `LANES` (a SIMD group) a formula; each launch runs a formula `STEPS` steps at most, the GPU's time
-//! a launch bounded; at most `LAUNCHES` launches, past which a formula still running is unknown.
+//! Memory, a batch: a descriptor of `DESC` words a formula, in the block; the slots' states, each its largest
+//! formula's `state_words`. A slot is a threadgroup of `LANES` (a SIMD group), which takes the batch's formulas from
+//! a queue one after another: as many slots as fit in `STATE_BYTES`, so a batch's memory is bounded however many
+//! formulas it holds, and the device has as many searches running at once as it keeps resident, each hiding the
+//! others' memory reads. (With a state a formula, a batch of 768 of a 31,841-variable formula, 2.5 GB, took 28
+//! times what 384 did.) Each launch runs a slot `STEPS` steps at most, the GPU's time a launch bounded.
 
 pub use crate::bitlex_csat_lanes::{Answer, Formula, Solved};
 use crate::bitlex_csat_lanes::{arena, learned};
 use crate::bitlex_grown::{FormulaBlock, Grown};
 use rerail_gpu::device::ComputeQueue;
-use rerail_gpu::kernels::{alloc, launch, program, read};
+use rerail_gpu::kernels::{alloc, alloc_working, launch, program, read};
 
 const KERNEL: &str = include_str!("bitlex_csat_gpu.uglykl");
 
@@ -30,10 +33,12 @@ pub fn enabled() -> bool {
 const DESC: usize = 20;
 /// A formula's lanes: one SIMD group.
 const LANES: u64 = 32;
-/// The steps a launch runs a formula at most (a round of propagation, a conflict, a decision).
+/// The steps a launch runs a slot at most (a round of propagation, a conflict, a decision).
 const STEPS: u32 = 1 << 12;
-/// The launches a batch takes at most.
-const LAUNCHES: usize = 1 << 12;
+/// The slots' states at most, in bytes.
+pub const STATE_BYTES: usize = 1 << 30;
+/// The slots at most.
+const SLOTS: usize = 1 << 13;
 /// The state's header (the kernel's `HEADER`) and the statuses it reports.
 const HEADER: usize = 32;
 const SAT: u32 = 1;
@@ -49,9 +54,11 @@ struct Args {
     n: u32,
     steps: u32,
     init: u32,
-    pad: u32,
+    slots: u32,
+    slot_words: u32,
+    pad: [u32; 3],
 }
-// SAFETY: four u32s, no padding.
+// SAFETY: eight u32s, no padding.
 unsafe impl rerail_gpu::Pod for Args {}
 
 /// A formula's state, in words (the kernel's layout).
@@ -71,6 +78,11 @@ fn words(at: usize) -> Result<u32, String> {
 /// Each formula solved on the process's device. An error where there is no device, the kernel does not compile, or
 /// a formula is not in the block the others are.
 pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
+    solve_in(formulas, STATE_BYTES)
+}
+
+/// `solve`, with the slots' states in `state_bytes` at most (one slot at least).
+pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>, String> {
     if formulas.is_empty() {
         return Ok(Vec::new());
     }
@@ -79,7 +91,7 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
     let elsewhere = || "the prover's GPU: a formula not in the batch's block".to_string();
     let block: FormulaBlock = formulas[0].gates.placed().ok_or_else(elsewhere)?.0.clone();
     let mut table = Grown::<u32>::in_block(&block);
-    let mut states = 0usize;
+    let (mut slot_words, mut model_words) = (0usize, 0usize);
     let mut at = Vec::with_capacity(formulas.len());
     for f in formulas {
         let (b, rec, args) = f.gates.placed().ok_or_else(elsewhere)?;
@@ -95,7 +107,7 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
             }
             None => (u32::MAX, u32::MAX),
         };
-        let state = u32::try_from(states).map_err(|_| "the prover's GPU: a batch's states past 16 GiB".to_string())?;
+        let model = u32::try_from(model_words).map_err(|_| "the prover's GPU: a batch's models past 16 GiB".to_string())?;
         let d: [u32; DESC] = [
             f.vars as u32,
             f.base as u32,
@@ -109,7 +121,7 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
             words(lits)?,
             words(ends)?,
             f.clauses.len() as u32,
-            state,
+            model,
             learned(f.vars),
             arena(f.vars),
             f.conflicts,
@@ -119,47 +131,63 @@ pub fn solve(formulas: &[Formula]) -> Result<Vec<Solved>, String> {
             0,
         ];
         table.extend_from_slice(&d);
-        at.push(states);
-        states += state_words(f.vars, f.clauses.len());
+        at.push(model_words);
+        model_words += (f.vars + 1).div_ceil(32);
+        slot_words = slot_words.max(state_words(f.vars, f.clauses.len()));
     }
     let n = formulas.len();
+    let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(n);
+    if slots * slot_words > u32::MAX as usize {
+        return Err("the prover's GPU: the slots' states past 16 GiB".to_string());
+    }
     let table_at = table.placed().expect("in the block").1;
     let blk = block.block().device_buffer(&shared.device)?;
-    let state = alloc::<u32>(states)?;
+    // The device's own memory: the host never reads a state.
+    let state = alloc_working::<u32>(slots * slot_words)?;
     let out = alloc::<u32>(n * OUT)?;
+    let models = alloc::<u32>(model_words.max(1))?;
+    let queue = alloc::<u32>(1 + slots)?;
     let mut q = ComputeQueue::new(&shared.queue);
     let run = |q: &mut ComputeQueue, init: u32| -> Result<(), String> {
+        let a = Args { n: n as u32, steps: STEPS, init, slots: slots as u32, slot_words: slot_words as u32, pad: [0; 3] };
         launch(q, function)
-            .value("args", &Args { n: n as u32, steps: STEPS, init, pad: 0 })
+            .value("args", &a)
             .buffer("blk", &blk)
             .buffer_at("table", &blk, table_at as u64)
             .buffer("state", &state)
             .buffer("out", &out)
-            .run(&[n as u64], &[LANES])?;
+            .buffer("models", &models)
+            .buffer("queue", &queue)
+            .run(&[slots as u64], &[LANES])?;
         q.flush().await_()
     };
     run(&mut q, 1)?;
-    let mut got = read::<u32>(&out, n * OUT);
-    for _ in 0..LAUNCHES {
-        if got.chunks(OUT).all(|o| o[0] != 0) {
-            break;
+    // Each formula ends within `MAX_STEPS` of its own: past the launches that takes, the device is at fault.
+    let most = n.div_ceil(slots) * ((crate::bitlex_csat_lanes::STEPS as usize).div_ceil(STEPS as usize) + 1) + 1;
+    let mut got = Vec::new();
+    for launches in 0.. {
+        if launches > most {
+            return Err(format!("the prover's GPU: a batch past {most} launches"));
         }
         run(&mut q, 0)?;
         got = read::<u32>(&out, n * OUT);
+        if got.chunks(OUT).all(|o| o[0] != 0) {
+            break;
+        }
     }
     if let Some(i) = got.chunks(OUT).position(|o| o[0] == BROKEN) {
         return Err(format!("the device's solver broke on formula {i}: a loop past its bound"));
     }
     let any_sat = got.chunks(OUT).any(|o| o[0] == SAT);
-    let words = if any_sat { read::<u32>(&state, states) } else { Vec::new() };
+    let words = if any_sat { read::<u32>(&models, model_words) } else { Vec::new() };
     drop(table);
     Ok(got
         .chunks(OUT)
         .zip(formulas)
         .zip(at)
-        .map(|((o, f), s)| Solved {
+        .map(|((o, f), m)| Solved {
             answer: match o[0] {
-                SAT => Answer::Sat((0..=f.vars).map(|v| words[s + HEADER + v] & 1 != 0).collect()),
+                SAT => Answer::Sat((0..=f.vars).map(|v| words[m + v / 32] >> (v % 32) & 1 != 0).collect()),
                 UNSAT => Answer::Unsat,
                 _ => Answer::Unknown,
             },
@@ -184,8 +212,8 @@ mod tests {
     use crate::bitlex_csat_lanes::tests::{circuit, holds, same_search, Rng};
     use crate::bitlex_sat::{Answer as CpuAnswer, Clauses};
 
-    /// Random circuits, some with a solve's own gates: the device's answers are the CPU solver's, and each model it
-    /// gives holds.
+    /// Random circuits, some with a solve's own gates, through fewer slots than formulas: the device's answers are the
+    /// CPU solver's, each model it gives holds, and its search is `bitlex_csat_lanes`'s.
     #[test]
     fn the_devices_answers_are_the_cpus() {
         if rerail_gpu::shared::get().is_none() {
@@ -208,7 +236,8 @@ mod tests {
             .zip(&fans)
             .map(|((g, c, vars, base), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 100_000 })
             .collect();
-        let got = solve(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        // A megabyte of states: a few dozen slots, each taking formulas from the queue one after another.
+        let got = solve_in(&formulas, 1 << 20).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
         for (i, (f, x)) in formulas.iter().zip(&got).enumerate() {
             same_search(i, x, &crate::bitlex_csat_lanes::solve(f));
         }
@@ -288,6 +317,13 @@ mod tests {
         let Some(dir) = std::env::var_os("RERAIL_CSAT_DUMPS") else { return };
         let mut paths: Vec<_> = std::fs::read_dir(dir).expect("the dumps").map(|e| e.expect("a dump").path()).collect();
         paths.sort();
+        // `RERAIL_CSAT_ONLY`: one dump, by name; `RERAIL_CSAT_COPIES`: each dump that many times in the batch (what
+        // a batch of searches costs, not one's latency).
+        if let Some(only) = std::env::var_os("RERAIL_CSAT_ONLY") {
+            paths.retain(|p| p.file_name() == Some(only.as_os_str()));
+        }
+        let copies: usize = std::env::var("RERAIL_CSAT_COPIES").ok().and_then(|c| c.parse().ok()).unwrap_or(1);
+        let paths: Vec<_> = paths.iter().flat_map(|p| std::iter::repeat_n(p.clone(), copies)).collect();
         let block = FormulaBlock::new();
         let made: Vec<(Gates, usize, usize, Clauses)> = paths
             .iter()
@@ -300,10 +336,11 @@ mod tests {
             .map(|((g, vars, base, c), (fan, own))| Formula { vars: *vars, gates: g, base: *base, fan, own: (*base < g.len()).then_some(own), clauses: c, conflicts: 100_000 })
             .collect();
         let t = std::time::Instant::now();
-        let got = solve(&formulas).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        let bytes = std::env::var("RERAIL_CSAT_STATE_MB").ok().and_then(|m| m.parse::<usize>().ok()).map_or(STATE_BYTES, |m| m << 20);
+        let got = solve_in(&formulas, bytes).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
         eprintln!("the device: {} formulas, {:.1} ms", formulas.len(), t.elapsed().as_secs_f64() * 1e3);
         let mut s = Solver::default();
-        for ((p, (g, vars, base, c)), ((x, (fan, _)), f)) in paths.iter().zip(&made).zip(got.iter().zip(&fans).zip(&formulas)) {
+        for ((p, (g, vars, base, c)), ((x, (fan, _)), f)) in paths.iter().zip(&made).zip(got.iter().zip(&fans).zip(&formulas)).step_by(copies) {
             let t = std::time::Instant::now();
             let twin = crate::bitlex_csat_lanes::solve(f);
             eprintln!("the device's search on the CPU: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);

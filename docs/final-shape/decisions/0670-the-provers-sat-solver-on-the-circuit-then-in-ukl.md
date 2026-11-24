@@ -289,6 +289,21 @@ formula").
   take either's, and its answers do not depend on the machine. Its cost on the CPU is the search's: the hardest dump
   in 2.7 s (the CPU's own solver: 0.5 s), as it takes 22,006 conflicts to the solver's 9,160 and checks a round's
   gates whole.
+- **A batch's throughput, not a search's latency.** One search alone is a chain of dependent reads; the device
+  hides their latency with other searches resident at once. Measured on 1,536 copies of one hard formula (31,841
+  variables, 706 conflicts; the CPU's solver 0.31 s) on a DGX Spark:
+  - with a state a formula, laid out at once (3.2 MB each), 384 copies ran in 7.2 s and 768 in 203 s: past about
+    1 GB of states, the reads miss what the device's caches and page tables hold.
+  - **Slots** (`csat_solve`): a fixed number of SIMD groups, each with one state, take the batch's formulas from a
+    queue (an atomic counter) one after another, a satisfiable one's model written out by ballot. A batch's memory is
+    the slots', however many formulas it holds; a formula's steps are bounded by its own count (`H_STEPS`, as
+    `bitlex_csat_lanes`), not by the launches.
+  - **The states in the device's own memory** (`rerail_gpu::kernels::alloc_working`, `cuMemAlloc` on CUDA: the
+    device's page tables and pages, where `alloc` is pinned host memory mapped for it): 512 MB of slots, 29.0 s to
+    18.1 s; 2 GB, over 150 s to 36.6 s.
+  - By the slots' memory: 128 MB (40 slots) 60.3 s, 256 MB 35.3 s, 512 MB 18.1 s, **1 GB (320 slots) 11.1 s**, 2 GB
+    36.6 s. `STATE_BYTES` is 1 GB: 138 hard searches a second, about twice what the machine's 20 CPU cores give with
+    the CPU's own solver (3.2 a second a core).
 - **The device's search is not used yet**: its answers past level 0 are not the CPU's (an unsatisfiable formula
   the CPU's budget leaves unknown; conflicts spent that are not the CPU's), so a compile's answers would depend on
   the machine having a GPU. Using it needs one solver whose answers are the same everywhere: the kernel itself on

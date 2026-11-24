@@ -20,7 +20,7 @@ use crate::compute_kernel_opencl as cl;
 #[cfg(target_os = "macos")]
 mod native {
     pub use crate::compute_kernel_metal::{
-        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, MetalComputeEvent as Event,
+        alloc_uninitialized_array_sync, alloc_uninitialized_array_sync as alloc_working_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, MetalComputeEvent as Event,
         MetalComputeFunction as Function, MetalComputeFunctionLibrary as Library, MetalComputeQueue as Queue,
     };
     /// The kernels' address of a buffer's first byte.
@@ -41,7 +41,7 @@ mod native {
 #[cfg(target_os = "linux")]
 mod native {
     pub use crate::compute_kernel_cuda::{
-        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, CudaBuffer as Buffer,
+        alloc_uninitialized_array_sync, alloc_working_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, CudaBuffer as Buffer,
         CudaComputeEvent as Event, CudaComputeFunction as Function, CudaComputeFunctionLibrary as Library, CudaComputeQueue as Queue, CudaDevice as Device,
         CudaQueueRoot as QueueRoot, CudaSharedEvent as SharedEvent,
     };
@@ -62,7 +62,7 @@ mod native {
 #[cfg(windows)]
 mod native {
     pub use crate::compute_kernel_opencl::{
-        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, ClBindContext as BindContext,
+        alloc_uninitialized_array_sync, alloc_uninitialized_array_sync as alloc_working_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, ClBindContext as BindContext,
         ClBuffer as Buffer, ClComputeEvent as Event, ClComputeFunction as Function, ClComputeFunctionLibrary as Library, ClComputeQueue as Queue,
         ClDevice as Device, ClQueueRoot as QueueRoot, ClSharedEvent as SharedEvent,
     };
@@ -710,6 +710,15 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.launch_indirect(b, offset, max_groups, block),
             _ => other(),
         }
+    }
+}
+
+/// The device's own memory for `length` elements, uninitialized: a kernel's working state, which the host never reads
+/// or writes. CUDA's is the device's (`cuMemAlloc`); elsewhere it is `alloc_uninitialized_array_sync`'s.
+pub fn alloc_working_array_sync<T>(device: &Device, length: usize) -> Buffer {
+    match device {
+        Device::Native(d) => Buffer::Native(native::alloc_working_array_sync::<T>(d, length)),
+        _ => alloc_uninitialized_array_sync::<T>(device, length),
     }
 }
 

@@ -37,6 +37,7 @@ struct Api {
     cu_device_primary_ctx_retain: unsafe extern "C" fn(*mut Ptr, i32) -> CUresult,
     cu_ctx_set_current: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_mem_host_alloc: unsafe extern "C" fn(*mut Ptr, usize, u32) -> CUresult,
+    cu_mem_alloc: unsafe extern "C" fn(*mut DevPtr, usize) -> CUresult,
     cu_mem_host_get_device_pointer: unsafe extern "C" fn(*mut DevPtr, Ptr, u32) -> CUresult,
     cu_mem_host_register: unsafe extern "C" fn(Ptr, usize, u32) -> CUresult,
     cu_mem_host_unregister: unsafe extern "C" fn(Ptr) -> CUresult,
@@ -139,6 +140,7 @@ fn api() -> Result<&'static Api, String> {
             cu_device_primary_ctx_retain: sym!(cuda, "cuDevicePrimaryCtxRetain"),
             cu_ctx_set_current: sym!(cuda, "cuCtxSetCurrent"),
             cu_mem_host_alloc: sym!(cuda, "cuMemHostAlloc"),
+            cu_mem_alloc: sym!(cuda, "cuMemAlloc_v2"),
             cu_mem_host_get_device_pointer: sym!(cuda, "cuMemHostGetDevicePointer_v2"),
             cu_mem_host_register: sym!(cuda, "cuMemHostRegister_v2" | "cuMemHostRegister"),
             cu_mem_host_unregister: sym!(cuda, "cuMemHostUnregister"),
@@ -316,7 +318,8 @@ impl Drop for Allocation {
             }
             return;
         }
-        POOL.lock().unwrap().entry(self.class).or_default().push(Block { host: self.host, dev: self.dev });
+        let pool = if self.host.is_null() { &WORKING } else { &POOL };
+        pool.lock().unwrap().entry(self.class).or_default().push(Block { host: self.host, dev: self.dev });
     }
 }
 
@@ -330,6 +333,8 @@ unsafe impl Send for Block {}
 
 /// The free pinned blocks, by size (a power of two, at least 256 bytes).
 static POOL: std::sync::Mutex<std::collections::BTreeMap<u64, Vec<Block>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+/// The free blocks of the device's own memory (`alloc_working_array_sync`), by size.
+static WORKING: std::sync::Mutex<std::collections::BTreeMap<u64, Vec<Block>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
 /// A buffer (`metal::Buffer`): shared by its clones, freed when the last goes (a queue keeps those it uses until
 /// its work is awaited).
@@ -346,7 +351,7 @@ impl std::fmt::Debug for CudaBuffer {
 }
 
 impl CudaBuffer {
-    /// The host's pointer to the buffer's bytes.
+    /// The host's pointer to the buffer's bytes (null for the device's own memory, `alloc_working_array_sync`).
     pub fn contents(&self) -> *mut c_void {
         self.0.host.cast()
     }
@@ -382,6 +387,28 @@ impl CudaSharedEvent {
     pub fn signaled_value(&self) -> u64 {
         unsafe { self.word.contents().cast::<u64>().read_volatile() }
     }
+}
+
+/// The device's own memory for `length` elements, uninitialized: a kernel's working state, which the host never
+/// reads or writes (`contents` is null). `cuMemAlloc`'s: mapped by the device's page tables in its large pages,
+/// where the pinned host memory of `alloc_uninitialized_array_sync` is the host's pages, mapped for the device. (A
+/// GB10's SAT solver state, read at random by many SIMD groups at once: a batch of 1,536 hard searches in 29 s with
+/// 512 MB of states and over 150 s with 2 GB, in pinned host memory.) Of a size class, pooled as that is.
+pub fn alloc_working_array_sync<T>(device: &CudaDevice, length: usize) -> CudaBuffer {
+    let len = (length * std::mem::size_of::<T>()).max(16) as u64;
+    let class = len.max(256).next_power_of_two();
+    sweep_pending(device.current());
+    let reused = WORKING.lock().unwrap().get_mut(&class).and_then(Vec::pop);
+    let dev = reused.map_or_else(
+        || {
+            let a = device.current();
+            let mut dev = 0;
+            must(unsafe { (a.cu_mem_alloc)(&mut dev, class as usize) }, "cuMemAlloc");
+            dev
+        },
+        |b| b.dev,
+    );
+    CudaBuffer(Arc::new(Allocation { host: std::ptr::null_mut(), dev, len, class, registered: Registration::None }))
 }
 
 /// `allocUninitializedArraySync`: memory for `length` elements (at least 16 bytes, as on Metal).

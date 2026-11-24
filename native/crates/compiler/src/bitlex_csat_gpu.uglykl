@@ -23,12 +23,15 @@
 //   clause again. Each clause's levels (LBD) are counted when it is learned.
 // - **Every loop is bounded** (a heap walk by its depth, a watch list by its nodes, a gate's items by its width,
 //   analysis by the trail): a fault ends the formula `BROKEN`, never a launch that does not end.
-// - **Launches are bounded**: a launch runs each formula `args.steps` steps (a round, a conflict, a decision) and
-//   leaves its state; the host launches again while any runs. The first launch (`args.init`) lays the state out.
+// - **Slots**: a SIMD group is a slot, which takes the batch's formulas from a queue one after another, its state
+//   in the slot; the batch's memory is the slots' (see `csat_solve`).
+// - **Launches are bounded**: a launch runs each slot `args.steps` steps (a round, a conflict, a decision) and
+//   leaves its state; the host launches again while any formula runs.
 //
 // Memory: `blk` the formula block (u32 words); `table` `DESC` words a formula (its descriptor, below, in the block
-// too); `state` the formulas' states (`state_words` on the host), one after another; `out` 16 words a formula, after
-// each launch: its status, conflicts, decisions, rounds, learned clauses and their literals. A literal is DIMACS (`v` or
+// too); `state` the slots' states (`slot_words` each, a formula's `state_words` on the host); `out` 16 words a
+// formula, once it is done: its status, conflicts, decisions, rounds, learned clauses and their literals; `models` a
+// satisfiable formula's model; `queue` the slots' queue. A literal is DIMACS (`v` or
 // `-v`, a variable from 1). A gate's record is 4 words: `kind | width << 2`, its output, and its arguments where at
 // most two, else where in `D_ARGS` they begin.
 
@@ -51,7 +54,7 @@
 #define D_LITS 9u
 #define D_ENDS 10u
 #define D_CLAUSES 11u
-#define D_STATE 12u   // word offset of its state in `state`
+#define D_MODEL 12u   // word offset of its model in `models`
 #define D_LEARNED 13u
 #define D_ARENA 14u
 #define D_BUDGET 15u  // conflicts
@@ -67,6 +70,7 @@
 #define H_LEARNED 5u
 #define H_USED 6u
 #define H_HEAP 7u     // the heap's size
+#define H_STEPS 8u    // the steps it took
 #define H_BUMP 10u    // the next bump
 
 // The bumps: the first, and where every activity is scaled down (an activity stays below 21 bumps, in 32 bits).
@@ -101,6 +105,8 @@
 #define REDUCE_STEP 300u
 // (Or when the clauses fill three quarters of the room, `D_LEARNED` or `D_ARENA`.)
 #define KEEP_LBD 3u
+// A formula's steps at most (a round, a conflict, a decision), past which it is unknown.
+#define MAX_STEPS (1u << 24)
 #define HEADER 32u
 
 // Statuses.
@@ -122,9 +128,13 @@ typedef struct Args {
     uint32_t n;
     uint32_t steps;
     uint32_t init;
-    uint32_t pad;
+    uint32_t slots;
+    uint32_t slot_words;
+    uint32_t pad0;
+    uint32_t pad1;
+    uint32_t pad2;
 } Args;
-UKL_REFLECT_STRUCT(Args, n, steps, init, pad)
+UKL_REFLECT_STRUCT(Args, n, steps, init, slots, slot_words, pad0, pad1, pad2)
 
 typedef struct Csat {
     UKL_GLOBAL const uint32_t* b;
@@ -1115,23 +1125,9 @@ UKL_INLINE void cs_start(UKL_PRIVATE Csat* c __UKL_PARAMS)
     }
 }
 
-DEFINE_KERNEL2(prover, csat_solve,
-               ARGS,     Args,     args,  ,
-               ROBUFFER, uint32_t, blk,   "[block]",
-               ROBUFFER, uint32_t, table, "[n * 20]",
-               RWBUFFER, uint32_t, state, "[states]",
-               RWBUFFER, uint32_t, out,   "[n * 16]",
-               TGID0,    uint32_t, f,     ,
-               LANE,     uint32_t, lane,  )
+// A formula's state laid out in its slot, from its descriptor.
+UKL_INLINE void cs_setup(UKL_PRIVATE Csat* c, UKL_GLOBAL const uint32_t* d)
 {
-    if (f >= args.n)
-        return;
-    UKL_GLOBAL const uint32_t* d = table + f * DESC;
-    Csat cs;
-    UKL_PRIVATE Csat* c = &cs;
-    c->b = blk;
-    c->s = state + d[D_STATE];
-    c->lane = lane;
     c->vars = d[D_VARS];
     c->fvars = d[D_FVARS];
     c->base = d[D_BASE];
@@ -1168,40 +1164,21 @@ DEFINE_KERNEL2(prover, csat_solve,
     c->lmark = c->ebuf + n + 1u;
     c->lbd = c->lmark + n;
     c->scratch = c->lbd + c->lcap;
-    if (args.init != 0u) {
-        cs_start(c __UKL_ARGS);
-    } else {
-        for (uint32_t step = 0u; step < args.steps && c->s[H_STATUS] == RUNNING; step++) {
-            // The trail within its room: past it, every loop over it would be unbounded.
-            if (c->s[H_TRAIL] > n || c->s[H_HEAD] > c->s[H_TRAIL] || c->s[H_LEVEL] >= n) {
-                cs_finish(c, BROKEN);
-                break;
-            }
-            if (c->s[H_HEAD] == c->s[H_TRAIL]) {
-                if (c->s[H_LEARNED] >= c->s[H_REDUCE] || 4u * c->s[H_LEARNED] >= 3u * c->lcap || 4u * c->s[H_USED] >= 3u * c->acap) {
-                    uint64_t t_r = ukl_clock();
-                    if (!cs_reduce(c __UKL_ARGS))
-                        cs_finish(c, UNSAT);
-                    if (c->lane == 0u)
-                        c->s[H_T_REDUCE] += (uint32_t)((ukl_clock() - t_r) >> 8);
-                    continue;
-                }
-                uint64_t t_d = ukl_clock();
-                cs_decide(c);
-                if (c->lane == 0u)
-                    c->s[H_T_DECIDE] += (uint32_t)((ukl_clock() - t_d) >> 8);
-                continue;
-            }
+}
+
+// Every lane: a finished formula's report (`out`, 16 words) and, satisfiable, its model (`models`, a bit a variable).
+UKL_INLINE void cs_report(UKL_PRIVATE Csat* c, UKL_GLOBAL uint32_t* o, UKL_GLOBAL uint32_t* model __UKL_PARAMS)
+{
+    if (c->s[H_STATUS] == SAT)
+        for (uint32_t v0 = 0u; v0 <= c->vars; v0 += UKL_SIMD_WIDTH) {
+            uint32_t v = v0 + c->lane;
+            ukl_mask_t m = ukl_sg_ballot(v <= c->vars && (c->s[c->val + v] & 1u) != 0u __UKL_ARGS);
             if (c->lane == 0u)
-                c->s[H_ROUNDS]++;
-            if (cs_round(c __UKL_ARGS))
-                cs_conflict(c __UKL_ARGS);
+                model[v0 / 32u] = (uint32_t)m;
         }
-    }
-    ukl_sg_barrier();
-    if (lane == 0u) {
-        UKL_GLOBAL uint32_t* o = out + f * 16u;
-        o[0] = c->s[H_STATUS];
+    if (c->lane == 0u) {
+        for (uint32_t k = 1u; k < 16u; k++)
+            o[k] = 0u;
         o[1] = c->s[H_CONFLICTS];
         o[2] = c->s[H_DECISIONS];
         o[3] = c->s[H_ROUNDS];
@@ -1212,5 +1189,105 @@ DEFINE_KERNEL2(prover, csat_solve,
         o[8] = c->s[H_REDUCES];
         for (uint32_t k = 0u; k < 6u; k++)
             o[9u + k] = c->s[H_T_VISIT + k];
+        // The status last: the host reads a formula's report once it is set.
+        ukl_fence_device();
+        o[0] = c->s[H_STATUS];
+    }
+    ukl_sg_barrier();
+}
+
+// A slot (a SIMD group) solves the batch's formulas one after another, each taken from the queue (`queue[0]`, the
+// next formula's number) when its last one is done; `queue[1 + slot]` its formula, or NONE. A formula's state is in
+// its slot, so a batch's memory is the slots', not the formulas': as many slots as the device keeps running at once,
+// each a search whose memory reads the others' hide. A launch runs a slot `args.steps` steps at most; a formula is
+// unknown past `MAX_STEPS` of its own (`bitlex_csat_lanes::STEPS`). The first launch (`args.init`) clears the
+// reports and the queue.
+DEFINE_KERNEL2(prover, csat_solve,
+               ARGS,     Args,     args,   ,
+               ROBUFFER, uint32_t, blk,    "[block]",
+               ROBUFFER, uint32_t, table,  "[n * 20]",
+               RWBUFFER, uint32_t, state,  "[slots * slot_words]",
+               RWBUFFER, uint32_t, out,    "[n * 16]",
+               RWBUFFER, uint32_t, models, "[model words]",
+               RWBUFFER, uint32_t, queue,  "[1 + slots]",
+               TGID0,    uint32_t, slot,   ,
+               LANE,     uint32_t, lane,   )
+{
+    if (args.init != 0u) {
+        for (uint32_t i = slot * UKL_SIMD_WIDTH + lane; i < args.n; i += args.slots * UKL_SIMD_WIDTH)
+            out[i * 16u] = RUNNING;
+        if (lane == 0u)
+            queue[1u + slot] = NONE;
+        if (slot == 0u && lane == 0u)
+            queue[0] = 0u;
+        return;
+    }
+    Csat cs;
+    UKL_PRIVATE Csat* c = &cs;
+    c->b = blk;
+    c->s = state + slot * args.slot_words;
+    c->lane = lane;
+    uint32_t steps = 0u;
+    while (steps < args.steps) {
+        uint32_t f = queue[1u + slot];
+        ukl_sg_barrier();
+        if (f == NONE) {
+            uint32_t got = 0u;
+            if (lane == 0u)
+                got = ukl_atomic_add(queue, 1u);
+            f = ukl_sg_shuffle(got, 0u __UKL_ARGS);
+            if (f >= args.n)
+                return;
+            if (lane == 0u)
+                queue[1u + slot] = f;
+            cs_setup(c, table + f * DESC);
+            cs_start(c __UKL_ARGS);
+            steps++;
+        } else {
+            cs_setup(c, table + f * DESC);
+        }
+        uint32_t n = c->vars + 1u;
+        while (steps < args.steps && c->s[H_STATUS] == RUNNING) {
+            if (c->s[H_STEPS] >= MAX_STEPS) {
+                cs_finish(c, UNKNOWN);
+                break;
+            }
+            steps++;
+            if (lane == 0u)
+                c->s[H_STEPS]++;
+            ukl_sg_barrier();
+            // The trail within its room: past it, every loop over it would be unbounded.
+            if (c->s[H_TRAIL] > n || c->s[H_HEAD] > c->s[H_TRAIL] || c->s[H_LEVEL] >= n) {
+                cs_finish(c, BROKEN);
+                break;
+            }
+            if (c->s[H_HEAD] == c->s[H_TRAIL]) {
+                if (c->s[H_LEARNED] >= c->s[H_REDUCE] || 4u * c->s[H_LEARNED] >= 3u * c->lcap || 4u * c->s[H_USED] >= 3u * c->acap) {
+                    uint64_t t_r = ukl_clock();
+                    if (!cs_reduce(c __UKL_ARGS))
+                        cs_finish(c, UNSAT);
+                    if (lane == 0u)
+                        c->s[H_T_REDUCE] += (uint32_t)((ukl_clock() - t_r) >> 8);
+                    continue;
+                }
+                uint64_t t_d = ukl_clock();
+                cs_decide(c);
+                if (lane == 0u)
+                    c->s[H_T_DECIDE] += (uint32_t)((ukl_clock() - t_d) >> 8);
+                continue;
+            }
+            if (lane == 0u)
+                c->s[H_ROUNDS]++;
+            if (cs_round(c __UKL_ARGS))
+                cs_conflict(c __UKL_ARGS);
+        }
+        ukl_sg_barrier();
+        if (c->s[H_STATUS] == RUNNING)
+            return;
+        UKL_GLOBAL const uint32_t* d = table + f * DESC;
+        cs_report(c, out + f * 16u, models + d[D_MODEL] __UKL_ARGS);
+        if (lane == 0u)
+            queue[1u + slot] = NONE;
+        ukl_sg_barrier();
     }
 }

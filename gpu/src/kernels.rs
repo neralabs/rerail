@@ -4,7 +4,7 @@
 //! are bound by their names in the kernel's rows.
 
 use crate::compute_kernel_grid::GridBindContext;
-use crate::device::{alloc_uninitialized_array_sync, transfer_to_host_sync, Buffer, BufferRef, ComputeFunction, ComputeFunctionLibrary, ComputeQueue};
+use crate::device::{alloc_uninitialized_array_sync, alloc_working_array_sync, transfer_to_host_sync, Buffer, BufferRef, ComputeFunction, ComputeFunctionLibrary, ComputeQueue};
 use crate::{Pod, Preprocessing};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -183,6 +183,13 @@ impl<B: GridBindContext> Launch<'_, B> {
 pub fn alloc<T: Pod>(n: usize) -> Result<Buffer, String> {
     let shared = crate::shared::get().ok_or("no device")?;
     Ok(alloc_uninitialized_array_sync::<T>(&shared.device, n.max(1)))
+}
+
+/// The device's own memory for `n` values of `T` (at least one), uninitialized: a kernel's working state, which the
+/// host never reads or writes (`device::alloc_working_array_sync`).
+pub fn alloc_working<T: Pod>(n: usize) -> Result<Buffer, String> {
+    let shared = crate::shared::get().ok_or("no device")?;
+    Ok(alloc_working_array_sync::<T>(&shared.device, n.max(1)))
 }
 
 /// A buffer holding `data` (written in place: the host's view of the device's memory).
