@@ -17,6 +17,9 @@
 // the `gen-*.py` beside them that writes them; they are workbench records, never engine or host sources.
 // Exemption `engine-layout`: the engine line's files ENGINE_LAYOUT lists by exact path, with their reasons, until
 // they are settled with their owner in a follow-up.
+// Exemption `rule-cases`: a pack rule's cases (`packs/<id>/cases/<rule>/`, `packs/<id>/candidates/cases/<rule>/`) are
+// the small repository its `.test` blocks read, written as the code they stand for: a Prisma `migration_lock.toml` or a
+// generated API client carries its tool's own marker there, and no generator here writes it (#24 exempts them likewise).
 // The manifest itself and this gate's own sources and tests (which spell out the marker) are not scanned.
 
 import { finding, sortFindings } from "../lib.mjs";
@@ -28,6 +31,8 @@ export const target = "100%";
 
 /** Exemption `workbench`. */
 const WORKBENCH = "docs/rule-syntax/";
+/** Exemption `rule-cases`. */
+const RULE_CASES = /^packs\/[^/]+(?:\/candidates)?\/cases\//;
 
 /** Exemption `engine-layout`: a generated file and why it is left as it is. */
 const ENGINE_LAYOUT = new Map([
@@ -42,7 +47,7 @@ export function check(repo) {
   const findings = [];
   let generated = 0;
   for (const path of repo.files) {
-    if (ENGINE_LAYOUT.has(path) || path.startsWith(WORKBENCH)) continue;
+    if (ENGINE_LAYOUT.has(path) || path.startsWith(WORKBENCH) || RULE_CASES.test(path)) continue;
     const named = isGeneratedName(path);
     if (!named && !hasGeneratedMarker(repo, path)) continue;
     generated += 1;

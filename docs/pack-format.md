@@ -68,7 +68,8 @@ packs/<id>/
 │                       (fixtures/, rename variants under fixtures/renamed/) and expected findings (*.expected.json)
 │                       are pack test data, not in git (see Pack data); publish/ while a pull request publishes data
 └── candidates/         ports still being evaluated: scored and reported, never gated, never shipped; README.md
-                        says what each is waiting on and holds their rule details
+                        says what each is waiting on and holds their rule details. An own `.rerail` rule left out of
+                        the pack keeps its file and cases here (`candidates/rules/`, `candidates/cases/`), unlisted
 ```
 
 `<id>` is lowercase letters, digits and dashes. It is the directory name, the `id` in `pack.json` and the npm name
@@ -736,9 +737,11 @@ conformance check (`npm run test:conformance`), not here.
    rule's examples are matched alone through the conversation engine (`ConversationRuleRegistry`, repeat ignored),
    built as [Conversation rules](#packjson) says: the caught one must fire the rule, the passes one must not.
    A `.rerail` rule's examples run through the `.rerail` runner over a repository of the example's file and the files
-   its `with` names (`conformance/rerail-pack-rules.ts`): the run must complete with no failure, a `caught` example
-   must give a finding of the rule on its own `path` with one of the codes the rule reports, and a `passes` example
-   none there. Every `.test` block of the file must pass, as `rerail rules test <file>.rerail` runs it.
+   its `with` names (`conformance/rerail-pack-rules.ts`): a Git repository with one empty commit whose files are all
+   untracked, as a session's new files are, so a rule that reads the Git base sees them as pending. The run must
+   complete with no failure, a `caught` example must give a finding of the rule on its own `path` with one of the codes
+   the rule reports, and a `passes` example none there. Every `.test` block of the file must pass, as
+   `rerail rules test <file>.rerail` runs it.
 
 </details>
 

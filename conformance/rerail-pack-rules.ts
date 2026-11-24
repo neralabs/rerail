@@ -3,6 +3,7 @@
  * .rerail"): the engine's reading of each rule file (check 1), its proof (check 2), and its examples and `.test` blocks
  * run (check 3). pack-validation.ts calls these beside its checks on JSON rules.
  */
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, matchesGlob, relative, resolve, sep } from "node:path";
@@ -81,10 +82,15 @@ function inScope(described: RerailDescription, path: string): boolean {
 /**
  * The example's repository written to a new folder: its own file and the files `with` names. pack.json's schema
  * already refuses a path that leaves it; one that would is refused here too, and nothing is written outside it.
+ *
+ * The folder is a Git repository with one empty commit, and the example's files stay untracked, as a session's new
+ * files are. A rule that reads `git_rev` (a migration rule asks which migrations have not run yet) is withheld where no
+ * repository is readable, so without it such a rule's caught example could never fire.
  */
 function writeCorpus(path: string, example: RerailExample): string {
   const root = mkdtempSync(join(tmpdir(), "rerail-pack-example-"));
   try {
+    initEmptyRepository(root);
     for (const file of [{ path, text: example.text }, ...(example.with ?? [])]) {
       const target = resolve(root, file.path);
       const inside = relative(root, target);
@@ -97,6 +103,27 @@ function writeCorpus(path: string, example: RerailExample): string {
     rmSync(root, { recursive: true, force: true });
     throw error;
   }
+}
+
+/** `git init` and one empty commit in `root`, the same every time: no user or system config, no hooks, a fixed author and date. */
+function initEmptyRepository(root: string): void {
+  const date = "2000-01-01T00:00:00Z";
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "rerail",
+    GIT_AUTHOR_EMAIL: "rerail@example.invalid",
+    GIT_AUTHOR_DATE: date,
+    GIT_COMMITTER_NAME: "rerail",
+    GIT_COMMITTER_EMAIL: "rerail@example.invalid",
+    GIT_COMMITTER_DATE: date,
+  };
+  const git = (...args: string[]): void => {
+    execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", ...args], { cwd: root, env, stdio: "ignore" });
+  };
+  git("init", "-q", "-b", "main");
+  git("commit", "-q", "--allow-empty", "-m", "example base");
 }
 
 /** The codes of the rule's findings on `path` in the example's repository, or why the run gave none to judge. */

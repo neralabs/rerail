@@ -15,12 +15,18 @@
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 // Exemption `fixture-trees`: files below any `fixtures/` directory mimic the projects under test (framework
 // route files such as `pages/_app.tsx` or `app/(shop)/[id]/`); #3 decides where they may live.
+// Exemption `rule-cases`: a pack rule's cases (`packs/<id>/cases/<rule>/`, `packs/<id>/candidates/cases/<rule>/`) are the
+// small repository its `.test` blocks read, named as the project they stand for (`components/OrderTable.tsx`,
+// `app/(site)/[slug]/page.tsx`), as fixture trees are.
 // Exemption `kept-records` (the `.rerail` workbench and the design notes, kept in git as they are:
 // docs/repository-structure.md, "Kept as they are"): the directories KEPT_RECORDS lists, with their reasons.
 // Exemption `engine-layout`: the engine line's files ENGINE_LAYOUT lists by exact path, with their reasons, until its
 // layout is settled with its owner in a follow-up.
 
 import { extension, finding, isDataPath, isVendored, sortFindings } from "../lib.mjs";
+
+/** Exemption `rule-cases`. */
+const RULE_CASES = /^packs\/[^/]+(?:\/candidates)?\/cases\//;
 
 export const id = 18;
 export const title = "One case convention per language";
@@ -86,7 +92,7 @@ export function check(repo) {
   const findings = [];
   let checked = 0;
   for (const path of repo.files) {
-    if (isDataPath(path) || isVendored(path) || path.split("/").slice(0, -1).includes("fixtures") || kept(path)) continue;
+    if (isDataPath(path) || isVendored(path) || path.split("/").slice(0, -1).includes("fixtures") || RULE_CASES.test(path) || kept(path)) continue;
     const ext = extension(path);
     let problem;
     if (SCRIPT.includes(ext)) problem = scriptProblem(path);

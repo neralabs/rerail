@@ -23,7 +23,8 @@
 // are"): a scenario of the workbench's explorer (`docs/rule-syntax/site/explorer/scenarios/`) holds the sample source
 // a rule is shown on, named as the code it stands for (`test_parse.py` for a pytest rule); nothing runs it.
 // Exemption `rule-cases`: a pack rule's cases (`docs/rule-syntax/packs/<pack>/cases/<rule>/` in the workbench,
-// `packs/<id>/cases/<rule>/` for a published pack's `.rerail` rules) are the small repository its `.test` blocks read
+// `packs/<id>/cases/<rule>/` for a published pack's `.rerail` rules, `packs/<id>/candidates/cases/<rule>/` for one left
+// out of the pack) are the small repository its `.test` blocks read
 // (`.fixture … from`), named as the code they stand for (`shop/tests/test_views.py`, a Django test module a rule leaves
 // alone); the engine reads them, nothing runs them.
 // Rust tests run through `cargo test`, which is outside this metric.
@@ -40,7 +41,7 @@ export const WORKFLOW = ".github/workflows/ci.yml";
 /** Exemption `workbench-samples`. */
 const WORKBENCH_SAMPLES = "docs/rule-syntax/site/explorer/scenarios/";
 /** Exemption `rule-cases`. */
-const RULE_CASES = /^(?:docs\/rule-syntax\/packs|packs)\/[^/]+\/cases\//;
+const RULE_CASES = /^(?:docs\/rule-syntax\/packs\/[^/]+|packs\/[^/]+(?:\/candidates)?)\/cases\//;
 
 /** The interpreters a command may name by an absolute path. */
 const INTERPRETERS = new Set(["node", "tsx", "python", "python3", "bash", "sh"]);
