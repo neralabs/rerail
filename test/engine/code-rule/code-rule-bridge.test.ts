@@ -36,6 +36,7 @@ import { readGitHead } from "../../../src/engine/git-head-reader.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 import { WorktreeWalks } from "../../../src/engine/code-rule/worktree-walks.js";
+import type { WorktreeListLearning } from "../../../src/engine/catalog/repository-identity.js";
 import { holdDeletePending } from "../../support/platform/delete-pending.js";
 import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
@@ -4908,6 +4909,34 @@ function recordedIn(root: string, worktree: string, batches: readonly CodeRuleEd
   return batches.flatMap(batch => batch.edits).filter(edit => edit.path.startsWith(prefix))
     .map(edit => [basename(edit.path), edit.previousReadError ?? "none"]);
 }
+/**
+ * An auditor's list of the other worktrees that learns Git's list before a walk takes it, as the router does
+ * (`learnWorktreeRoots`): `roots` stands for Git's registry. A list taken where none was learnt for the registry as it is
+ * now would start Git on the daemon's thread: `blocking` counts those.
+ */
+function learningRoots(roots: readonly string[]) {
+  const state: { blocking: number; learnt?: { readonly key: string; readonly list: readonly string[] } } = { blocking: 0 };
+  const key = (): string => roots.join("\0");
+  const learnWorktreeRoots = (git: Git.GitReads): WorktreeListLearning | undefined => {
+    if (state.learnt?.key === key()) return undefined;
+    // Read before Git runs, as the registry is: a change meanwhile leaves the list taken after it to Git.
+    const learnt = { key: key(), list: [...roots] };
+    return { kind: "learning", done: git.run(async () => {
+      await new Promise(resolve => setImmediate(resolve));
+      state.learnt = learnt;
+    }) };
+  };
+  const worktreeRoots = (): string[] => {
+    let learnt = state.learnt;
+    if (learnt?.key !== key()) {
+      state.blocking += 1;
+      learnt = { key: key(), list: [...roots] };
+      state.learnt = learnt;
+    }
+    return [...learnt.list];
+  };
+  return { state, auditor: { learnWorktreeRoots, worktreeRoots } };
+}
 
 describe("CodeRuleBridge and every worktree of the repository", () => {
   /**
@@ -5987,6 +6016,38 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     // a preimage, and a write there after is measured from the new worktree's text.
     expect(recordedIn(root, worktree, batches)).toEqual([]);
     expect(await writtenThere(bridge, worktree, () => batches)).toEqual([["a.py", "old\nmine\n"]]);
+  });
+
+  // Each walk learns Git's list of the worktrees before it takes it (`learnWorktreeRoots`), so the lists that let go of a
+  // removed worktree and find another at its path start no Git on the daemon's thread, and each list taken still decides
+  // what the session holds of a worktree (`walkHeld`): what the walk running meanwhile read of the removed worktree is
+  // none of the new one's, which the walk after reads as new.
+  it("reads as new a worktree Git listed again at its path while a walk ran, each list learnt off the daemon's thread", async () => {
+    const root = await twoBranches();
+    git(root, "branch", "third", "main");
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const place = join(await workspace(), "kept");
+    git(root, "worktree", "add", "--quiet", "--detach", place, "main");
+    const kept = await realpath(place);
+    roots.push(kept);
+    const file = join(kept, "src", "a.py");
+    const registry = learningRoots(roots);
+    const { bridge, auditGeneratedEdits } = await opened(root, { ...extra, ...registry.auditor });
+    discovery.lstats.set(file, [async () => {
+      roots.splice(roots.indexOf(worktree), 1);
+      await bridge.checkpoint("turn");
+      await addedAgain(root, worktree);
+      roots.push(worktree);
+      await bridge.checkpoint("turn");
+    }]);
+    await shell(bridge, () => writeFile(file, "old\nmine\n"));
+    await bridge.settleWorktreeWalk();
+    expect(discovery.lstats.get(file)).toEqual([]);
+    // Its first read is its baseline, as of any worktree new to the session: a write there after is measured from the
+    // new worktree's text.
+    const batches = () => auditGeneratedEdits.mock.calls.map(([, batch]) => batch);
+    expect({ blocking: registry.state.blocking, recorded: recordedIn(root, worktree, batches()) }).toEqual({ blocking: 0, recorded: [] });
+    expect(await writtenThere(bridge, worktree, batches)).toEqual([["a.py", "old\nmine\n"]]);
   });
 
   // A session folder walk re-syncs the worktrees while a walk of the other worktrees reads them, so Git can stop listing
