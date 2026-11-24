@@ -171,3 +171,35 @@ before.
 Tests: the rr suite (its records against the interpreter's and its tapes against the JIT's on every case) and both
 corpus tests over the repository's 1,949 `.rerail` files (`corpus_tier1s_records_are_the_interpreters`,
 `corpus_tapes_are_the_jits`). JSON's and Kotlin's tier 1 are unchanged.
+
+## Step 7: a rare token's bytes read as lean's arms read them (done)
+
+The user, 2026-11-23, after steps 1 to 6: "address the substantive differences until we hit a point of diminishing
+returns". Read whole again, tier 1's rare arms still differed from lean's in how they read a token's bytes: each was a
+window function over 64 bytes from the token's first (`first_bit`, `run_last`, `count_in` of a mask made there), where
+lean's arms call its micro-lexers or loop on the bytes. Where the loop is lean's (`lean_loop`), `Bytes` now writes the
+arms' reads as lean's (`lean_read`):
+
+- **A token's end by lean's micro-lexers**: a line comment's `micro::find` of the newline, a block comment's and a
+  double backtick's `micro::find_pair`, a triple backtick's `find_fence` (lean's, written into the file where an arm
+  reads a fence), a string's `micro::string_end`. `micro_first` knows them by the mask the grammar's `first` reads: one
+  byte, two bytes in a row, a fence, a quote not escaped.
+- **A run by a loop on the bytes**, as lean's digit and word loops: `while P(l + 1) { l += 1 }`, `P` the class's byte test
+  (`matches!(src[i], b'0'..=b'9' | …)`). A run that may take one byte of another class once (a number's `.`) holds a
+  `once` flag. A count, a first byte or a test over the token is an iterator over its bytes (`any`, `all`, `find`), an
+  escape carried byte to byte as `string_end` carries it.
+- **A long test a function of its own** (`u_ok`, `h4`, `b_six`, …): a named class whose test is long is written once, as
+  lean's `unescape` is one function, not inlined at each read.
+- **The rare token's row by one `match`**: the row's pick and the rows' match were two matches, a group's tests
+  picking its row and the row's arm testing its bytes again. Now one `match pick` (`one_pick`), a group's tests the arms'
+  guards (`12 if src[s + 1] == b'/'`), a region's openers one arm each, as lean's `b'/' if …` arms. An arm whose region
+  is always closed holds no `open_bad`.
+- **No dead code**: `drop_uncalled_fns` counts a call (a name and `(`, `::<`, or the name given as `dispatch!` takes it)
+  outside the function's own body and outside comments. A variable of the same name, a doc comment's mention or the
+  function calling itself kept `block`, `escaped` and `padded` before.
+
+The arms' code is then tidied as lean writes it (`tidy_lean`): `l` for `(l + 1) - 1`, `.any(…)` for a count `>= 1`,
+`.all(P)` for a `find` of `!P` that is none.
+
+Tests: the rr suite and both corpus tests over the 1,949 files; JSON's and Kotlin's generated Rust is unchanged
+(their lexers are not `lean_loop`'s), and their suites pass; clippy.

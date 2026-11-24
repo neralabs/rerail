@@ -6137,6 +6137,8 @@ impl Gen<'_> {
                 // In the lean lexer's shape (decision 0655 steps 4, 5): the rows' `match` reads the rare tokens only (and the
                 // common rows a group's tests pick), each read of the bytes from its first (its windows, its bytes), not of
                 // the block's masks.
+                // Each read of a mask in the lean lexer's form: its micro-lexer, or the bytes in a loop (decision 0655 step 7).
+                by.lean = lean_rows.is_some();
                 let branches_t = &match &lean_rows {
                     Some((common, ..)) => {
                         let picked = group_rows(branches_t);
@@ -6166,10 +6168,7 @@ impl Gen<'_> {
                     Some((_, rare, w, pair)) => {
                         let space = starts.strip_prefix('!').ok_or("the starts are no mask's complement")?.to_owned();
                         let kw = by.block_word(w);
-                        let (wfn, esc) = by.window_fn(w)?;
-                        if esc {
-                            return Err(format!("`{w}` reads escapes"));
-                        }
+                        let wfn = by.byte_test(w)?;
                         let kp = match pair.as_str() {
                             "none" => "0u64".to_owned(),
                             p if p.starts_with("pairs ") => format!("k_{}", &p[6..]),
@@ -6413,6 +6412,16 @@ impl Gen<'_> {
         // Only what the loop calls, where it reads the bytes (decision 0655 step 3).
         if from_bytes.is_some() {
             out = drop_uncalled_fns(&out);
+        }
+        // One `match` of the rare tokens' first byte, a group's tests its guards (decision 0655 step 7).
+        if let Some(o) = one_pick(&out) {
+            out = tidy_lean(&o);
+        }
+        // The lean lexer's micro-lexers, where a read is one (decision 0655 step 7).
+        if out.contains("micro::")
+            && let Some(at) = out.find("\n\n")
+        {
+            out.insert_str(at + 2, "use rerail_simd8::micro;\n\n");
         }
         Ok(out)
     }
@@ -7359,7 +7368,7 @@ fn lean_loop(space: &str, kw: &str, wfn: &str, kp: &str, open: &str, branches: &
                 run &= run - 1;
                 let s = base + q;
                 let (_, kind1, word1) = TOKEN[usize::from(src[s])];
-                let l = if {kw} >> q & 1 == 1 {{ brun_last(n, base, {kw}, s, {wfn}) }} else {{ s + ({kp} >> q & 1) as usize }};
+                let l = if {kw} >> q & 1 == 1 {{ word_last(n, base, {kw}, s, {wfn}) }} else {{ s + ({kp} >> q & 1) as usize }};
                 let word = if l == s {{ u32::from(word1) }} else {{ word_at(src, s, l + 1 - s) }};
                 debug_assert!(len < n, \"a token a byte at most\");
                 // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
@@ -7402,6 +7411,241 @@ fn lean_loop(space: &str, kw: &str, wfn: &str, kp: &str, open: &str, branches: &
 fn group_rows(branches: &str) -> Vec<usize> {
     let picks = branches.split("match row {").next().unwrap_or_default();
     picks.lines().filter_map(|l| l.trim().parse::<usize>().ok()).collect()
+}
+
+/// The rows' `match` in the lean lexer's shape (decision 0655 step 7): one `match` on the first byte's pick (`TOKEN`), a
+/// group's tests its arms' guards, and a region's openers (`//` or `/*`, one, two or three backticks) an arm each, as lean's
+/// `b'/' if d == b'/'`: no row picked by the tests, then the same tests again in the row. None where the loop's text is
+/// not of that form.
+fn one_pick(out: &str) -> Option<String> {
+    let head = "let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = {\n";
+    let at = out.find(head)?;
+    let open = at + head.len() - 2;
+    let close = closing_brace(out, open)?;
+    let lines: Vec<&str> = out[open + 2..close].lines().collect();
+    let pad = |l: &str| l.len() - l.trim_start().len();
+    // The picks: `p if usize::from(p) < K => usize::from(p),`, each group's `G => if C {` chain of rows, `_ => usize::MAX`.
+    let p0 = lines.iter().position(|l| l.trim() == "let row = match pick {")?;
+    let ind = pad(lines[p0]);
+    let p1 = (p0 + 1..lines.len()).find(|&i| pad(lines[i]) == ind && lines[i].trim() == "};")?;
+    let mut direct = 0usize;
+    // Each group: its comment, its byte's pick, its rows by their tests, its row where none holds.
+    let mut groups: Vec<(String, String, Vec<(String, usize)>, Option<usize>)> = Vec::new();
+    let mut comment = String::new();
+    let mut i = p0 + 1;
+    while i < p1 {
+        let t = lines[i].trim();
+        if let Some(k) = t.strip_prefix("p if usize::from(p) < ").and_then(|r| r.strip_suffix(" => usize::from(p),")) {
+            direct = k.parse().ok()?;
+        } else if t.starts_with("//") {
+            comment = lines[i].to_owned();
+        } else if t == "_ => usize::MAX," {
+        } else if let Some((g, c)) = t.split_once(" => if ") {
+            let mut chain = Vec::new();
+            let mut cond = c.strip_suffix(" {")?.to_owned();
+            let dflt;
+            i += 1;
+            loop {
+                let v = lines[i].trim();
+                let row = if v == "usize::MAX" { None } else { Some(v.parse::<usize>().ok()?) };
+                let next = lines.get(i + 1)?.trim();
+                match next.strip_prefix("} else if ").and_then(|c| c.strip_suffix(" {")) {
+                    Some(c2) => {
+                        chain.push((std::mem::replace(&mut cond, c2.to_owned()), row?));
+                        i += 2;
+                    }
+                    None if next == "} else {" => {
+                        chain.push((cond.clone(), row?));
+                        dflt = if lines.get(i + 2)?.trim() == "usize::MAX" { None } else { Some(lines[i + 2].trim().parse().ok()?) };
+                        if lines.get(i + 3)?.trim() != "}," {
+                            return None;
+                        }
+                        i += 3;
+                        break;
+                    }
+                    None => return None,
+                }
+            }
+            groups.push((std::mem::take(&mut comment), g.to_owned(), chain, dflt));
+        } else {
+            return None;
+        }
+        i += 1;
+    }
+    // The rows: `K => {` … `},` and the last, `_ => {` … `}`.
+    let m0 = (p1 + 1..lines.len()).find(|&i| lines[i].trim() == "match row {")?;
+    let ai = pad(lines[m0]) + 4;
+    let mut rows: Vec<(usize, Vec<&str>)> = Vec::new();
+    let mut none_arm: Vec<&str> = Vec::new();
+    let mut i = m0 + 1;
+    while i < lines.len() && pad(lines[i]) >= ai {
+        let t = lines[i].trim();
+        let end = (i + 1..lines.len()).find(|&j| pad(lines[j]) == ai && lines[j].trim_start().starts_with('}'))?;
+        if let Some(k) = t.strip_suffix(" => {").and_then(|k| k.parse::<usize>().ok()) {
+            rows.push((k, lines[i + 1..end].to_vec()));
+        } else if t == "_ => {" {
+            none_arm = lines[i + 1..end].to_vec();
+        } else {
+            return None;
+        }
+        i = end + 1;
+    }
+    // Which rows a byte picks itself (`TOKEN`'s first of each byte under `direct`).
+    let table = out.split_once("static TOKEN: [(u8, u8, u8); 256] = [")?.1.split_once("];")?.0;
+    let picked: Vec<usize> = table.split("), (").filter_map(|e| e.trim_start_matches('(').split(',').next()?.trim().parse::<usize>().ok()).filter(|&p| p < direct).collect();
+    let norm = |c: &str| c.chars().filter(|c| !matches!(c, '(' | ')' | ' ')).collect::<String>();
+    let body = |r: usize| rows.iter().find(|x| x.0 == r).map(|x| x.1.clone());
+    let arm = |pat: &str, b: &[&str]| format!("{}{pat} => {{\n{}\n{}}},\n", " ".repeat(ai), b.join("\n"), " ".repeat(ai));
+    let mut arms = String::new();
+    let mut split: Vec<usize> = Vec::new();
+    for (comment, g, chain, _) in &groups {
+        if !comment.is_empty() {
+            let _ = writeln!(arms, "{}{}", " ".repeat(ai), comment.trim());
+        }
+        for (c, r) in chain {
+            let b = body(*r)?;
+            // A region read by its openers' alternatives, which are the group's test: an arm each.
+            let l0 = b.iter().position(|l| l.trim().starts_with("let l = if ") && l.trim().ends_with(" {"));
+            let alts = l0.and_then(|l0| {
+                let li = pad(b[l0]);
+                let l1 = (l0 + 1..b.len()).find(|&j| pad(b[j]) == li && b[j].trim() == "};")?;
+                let mut alts: Vec<(String, Vec<&str>)> = vec![(b[l0].trim().strip_prefix("let l = if ")?.strip_suffix(" {")?.to_owned(), Vec::new())];
+                for &l in &b[l0 + 1..l1] {
+                    if pad(l) == li && l.trim().starts_with("} else") {
+                        let c = l.trim().strip_prefix("} else if ").and_then(|c| c.strip_suffix(" {")).unwrap_or("").to_owned();
+                        alts.push((c, Vec::new()));
+                    } else if !l.trim().is_empty() {
+                        alts.last_mut()?.1.push(l);
+                    }
+                }
+                // The last, none of the openers: a refusal, as the byte no token begins with.
+                let last = alts.pop()?;
+                (last.0.is_empty() && last.1.iter().any(|l| l.contains("refused = true"))).then_some(())?;
+                (norm(c) == norm(&alts.iter().map(|a| a.0.as_str()).collect::<Vec<_>>().join("||"))).then_some((l0, l1, li, alts))
+            });
+            match alts {
+                Some((l0, l1, li, alts)) => {
+                    for (a, x) in alts {
+                        let mut nb: Vec<String> = b[..l0].iter().map(|l| (*l).to_owned()).collect();
+                        let mut first = true;
+                        for (k, l) in x.iter().enumerate() {
+                            let rel = pad(l).saturating_sub(li + 4);
+                            let mut s = if first { format!("{}let l = {}", " ".repeat(li), l.trim_start()) } else { format!("{}{}", " ".repeat(li + rel), l.trim_start()) };
+                            if k + 1 == x.len() {
+                                s.push(';');
+                            }
+                            first = false;
+                            nb.push(s);
+                        }
+                        nb.extend(b[l1 + 1..].iter().map(|l| (*l).to_owned()));
+                        let mut text = nb.join("\n");
+                        // A read that is never open: no `open_bad`, its record as when closed.
+                        if !text.contains("open_bad = true") {
+                            text = text.lines().filter(|l| l.trim() != "let mut open_bad = false;").collect::<Vec<_>>().join("\n").replace("!open_bad", "true");
+                            while let Some(k) = text.find("if open_bad { 0 } else { ") {
+                                let from = k + "if open_bad { 0 } else { ".len();
+                                let Some(e) = text[from..].find(" }").map(|e| from + e) else { break };
+                                let x = text[from..e].to_owned();
+                                text.replace_range(k..e + 2, &x);
+                            }
+                        }
+                        let _ = write!(arms, "{}{g} if {a} => {{\n{text}\n{}}},\n", " ".repeat(ai), " ".repeat(ai));
+                    }
+                    split.push(*r);
+                }
+                None => arms.push_str(&arm(&format!("{g} if {c}"), &b)),
+            }
+        }
+    }
+    // Each row: the bytes that pick it, and the groups it is the row of where none of their tests holds.
+    for (r, b) in &rows {
+        let mut pats: Vec<String> = Vec::new();
+        if picked.contains(r) {
+            pats.push(r.to_string());
+        }
+        pats.extend(groups.iter().filter(|g| g.3 == Some(*r)).map(|g| g.1.clone()));
+        if pats.is_empty() {
+            if !split.contains(r) && !groups.iter().any(|g| g.2.iter().any(|x| x.1 == *r)) {
+                return None;
+            }
+            continue;
+        }
+        arms.push_str(&arm(&pats.join(" | "), b));
+    }
+    let _ = write!(arms, "{}_ => {{\n{}\n{}}}\n", " ".repeat(ai), none_arm.join("\n"), " ".repeat(ai));
+    let new = format!("let (l, kind, extra, marks, word): (usize, u32, bool, u32, u32) = match pick {{\n{arms}{}}}", " ".repeat(ind));
+    // Each arm a level out: the `match row` arms were one deeper than the one `match`'s.
+    let new = dedent_from(&new, 4);
+    Some(format!("{}{}{}", &out[..at], new, &out[close + 1..]))
+}
+
+/// The lean form's reads as hand-written Rust: a count that asks for one as `any`, a test of every byte as `all`, a
+/// region's end found as it is (`c`, not `c + 0`), the run's next byte by its index (`l + 1`).
+fn tidy_lean(out: &str) -> String {
+    let mut out = out.replace("Some(c) => c + 0,", "Some(c) => c,").replace("(l + 1) >= 1 && ", "").replace("(l + 1) - 1", "l").replace("(l + 1) + 1", "l + 2").replace("((l + 1) < n", "(l + 1 < n");
+    // `(a..=b).filter(|&i| P).count() as u32 } >= 1`: whether one holds.
+    while let Some(e) = out.find(".count() as u32 } >= 1") {
+        let Some(f) = out[..e].rfind(".filter(|&i| ") else { break };
+        out.replace_range(e..e + ".count() as u32 } >= 1".len(), " }");
+        out.replace_range(f..f + ".filter(|&i| ".len(), ".any(|i| ");
+    }
+    // `(a..b).find(|&i| !(P)).is_none()`: whether every byte holds.
+    while let Some(f) = out.find(".find(|&i| !(") {
+        let open = f + ".find(|&i| !".len();
+        let Some(close) = closing_paren(&out, open) else { break };
+        if !out[close + 1..].starts_with(").is_none()") {
+            break;
+        }
+        let p = out[open..=close].to_owned();
+        out.replace_range(f..close + 1 + ").is_none()".len(), &format!(".all(|i| {p})"));
+    }
+    out
+}
+
+/// The index of the `)` closing the `(` at `open`.
+fn closing_paren(s: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s[open..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The index of the `}` closing the `{` at `open`.
+fn closing_brace(s: &str, open: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `s`'s lines after its first, `k` spaces less indented.
+fn dedent_from(s: &str, k: usize) -> String {
+    let mut out = String::new();
+    for (i, l) in s.split_inclusive('\n').enumerate() {
+        let lead = l.len() - l.trim_start_matches(' ').len();
+        out.push_str(if i == 0 { l } else { &l[lead.min(k)..] });
+    }
+    out
 }
 
 /// The rows' `match` (`branches`) without the arms of rows `drop`.
@@ -7552,14 +7796,28 @@ fn drop_uncalled_fns(code: &str) -> String {
             }
             i += 1;
         }
-        let named = |n: &str| {
-            lines.iter().map(|l| l.match_indices(n).filter(|&(k, _)| {
-                let before = l[..k].chars().next_back();
-                let after = l[k + n.len()..].chars().next();
-                !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') && !after.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-            }).count()).sum::<usize>()
+        // A call of the function: its name and `(`, or the name given (`= lex_on, on …;`, as `dispatch!` takes it, or `f::<S>(`); not in
+        // a comment, not a method's (`.any(`), not in its own body (a variable of the same name is no call, nor is the
+        // function calling itself).
+        let named = |n: &str, own: (usize, usize)| {
+            lines
+                .iter()
+                .enumerate()
+                .filter(|&(j, l)| !(own.0..=own.1).contains(&j) && !l.trim_start().starts_with("//"))
+                .map(|(_, l)| {
+                    l.match_indices(n)
+                        .filter(|&(k, _)| {
+                            let before = l[..k].chars().next_back();
+                            !before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') && {
+                                let rest = &l[k + n.len()..];
+                                rest.starts_with(['(', ',', ';']) || rest.starts_with("::<")
+                            }
+                        })
+                        .count()
+                })
+                .sum::<usize>()
         };
-        let gone: Vec<(usize, usize)> = items.iter().filter(|(_, _, n)| named(n) <= 1).map(|&(a, b, _)| (a, b)).collect();
+        let gone: Vec<(usize, usize)> = items.iter().filter(|(a, b, n)| named(n, (*a, *b)) == 0).map(|&(a, b, _)| (a, b)).collect();
         if gone.is_empty() {
             break;
         }
@@ -7568,6 +7826,10 @@ fn drop_uncalled_fns(code: &str) -> String {
             let b = if lines.get(b + 1).is_some_and(|l| l.is_empty()) { b + 1 } else { b };
             lines.drain(a..=b);
         }
+    }
+    // The blank line before a last function gone too.
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
     }
     let mut s = lines.join("\n");
     if code.ends_with('\n') {

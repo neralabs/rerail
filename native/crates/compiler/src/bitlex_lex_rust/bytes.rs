@@ -45,6 +45,15 @@ pub(super) struct Bytes<'a> {
     /// The bytes a rare token starts with (the lean lexer's `rare`, decision 0655 step 4): where set, a block word of its
     /// own (`k_rare`), of its nibble tables.
     pub(super) rare: Option<[bool; 256]>,
+    /// The lean lexer's reads (decision 0655 step 7): where set, a search, a count or a run of a mask is lean's: a
+    /// micro-lexer (`micro::find`, `find_pair`, `string_end`, a fence) where the mask is one, else a loop of the bytes,
+    /// each tested where it is. No window of the mask.
+    pub(super) lean: bool,
+    /// A fence of three bytes or more searched (`find_fence`, written once).
+    pub(super) fence: bool,
+    /// The named masks a loop of the bytes tests by a function of their own (a long test, `u_ok`), each written once:
+    /// its name and its code.
+    named: std::cell::RefCell<Vec<(String, String)>>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
@@ -68,7 +77,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default() }
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -99,7 +108,12 @@ impl<'a> Bytes<'a> {
             Expr::Empty => "false".to_owned(),
             Expr::Name(n) => {
                 if let Some(rs) = self.classes.get(n.as_str()) {
-                    if at == "s" { pattern_test("src[s]", rs) } else { format!("({at} < n && {})", pattern_test(&format!("src[{at}]"), rs)) }
+                    if at == "s" {
+                        pattern_test("src[s]", rs)
+                    } else {
+                        let i = at.strip_prefix('(').and_then(|x| x.strip_suffix(')')).filter(|x| !x.contains('(')).unwrap_or(at);
+                        format!("({i} < n && {})", pattern_test(&format!("src[{i}]"), rs))
+                    }
                 } else if let Some(d) = self.defs.get(n) {
                     self.at(d, at, depth + 1)?
                 } else {
@@ -226,6 +240,188 @@ impl<'a> Bytes<'a> {
         })
     }
 
+    /// `e` with the masks it names in place, its classes kept by name. None where a definition reads itself.
+    fn resolved(&self, e: &Expr, depth: usize) -> Option<Expr> {
+        if depth > 64 {
+            return None;
+        }
+        let r = |x: &Expr| self.resolved(x, depth + 1).map(Box::new);
+        Some(match e {
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) => self.resolved(self.defs.get(n)?, depth + 1)?,
+            Expr::Not(a) => Expr::Not(r(a)?),
+            Expr::And(a, b) => Expr::And(r(a)?, r(b)?),
+            Expr::Or(a, b) => Expr::Or(r(a)?, r(b)?),
+            Expr::Xor(a, b) => Expr::Xor(r(a)?, r(b)?),
+            Expr::Call(f, args) => Expr::Call(f.clone(), args.iter().map(|a| match a { Arg::E(x) => self.resolved(x, depth + 1).map(Arg::E), o => Some(o.clone()) }).collect::<Option<_>>()?),
+            other => other.clone(),
+        })
+    }
+
+    /// The one byte class `e` is.
+    fn byte(&self, e: &Expr) -> Option<u8> {
+        let Expr::Name(n) = e else { return None };
+        match self.classes.get(n.as_str())? {
+            [(lo, hi)] if lo == hi => u8::try_from(*lo).ok(),
+            _ => None,
+        }
+    }
+
+    /// The bytes of `e` where it is a conjunction of one byte each at a distance (`tick & next(tick)`, `slash &
+    /// prev(star)`): each byte and its distance.
+    fn bytes_at(&self, e: &Expr, out: &mut Vec<(u8, i64)>) -> Option<()> {
+        match e {
+            Expr::And(a, b) => {
+                self.bytes_at(a, out)?;
+                self.bytes_at(b, out)
+            }
+            Expr::Call(f, args) => {
+                let (a, k) = Self::shift(f, args)?;
+                out.push((self.byte(&a)?, k));
+                Some(())
+            }
+            e => {
+                out.push((self.byte(e)?, 0));
+                Some(())
+            }
+        }
+    }
+
+    /// Lean's micro-lexer for the first byte from `from` that mask `e` holds, where `e` is one: a byte (`micro::find`),
+    /// two bytes (`find_pair`), more (`find_fence`), a quote no backslash escapes (`string_end`, as the lean lexer reads
+    /// a string's body). A mask's byte after the first of its bytes (`prev`) is found by the first, from as far before.
+    fn micro_first(&mut self, e: &Expr, from: &str) -> Option<String> {
+        let e = self.resolved(e, 0)?;
+        if let Expr::And(a, b) = &e
+            && self.byte(a) == Some(b'"')
+            && let Expr::Not(x) = b.as_ref()
+            && let Expr::Call(f, args) = x.as_ref()
+            && f == "escaped"
+            && matches!(args.as_slice(), [Arg::E(bs)] if self.byte(bs) == Some(b'\\'))
+        {
+            return Some(format!("micro::string_end(&src[..n], {from}).0"));
+        }
+        let mut bs = Vec::new();
+        self.bytes_at(&e, &mut bs)?;
+        bs.sort_by_key(|b| b.1);
+        let lo = bs[0].1;
+        if lo > 0 || bs.iter().enumerate().any(|(i, b)| b.1 != lo + i as i64) {
+            return None;
+        }
+        let back = usize::try_from(-lo).ok()?;
+        let start = match (from.strip_suffix(&format!(" + {back}")), back) {
+            (_, 0) => from.to_owned(),
+            (Some(f), _) => f.to_owned(),
+            (None, k) => format!("{from} - {k}"),
+        };
+        let found = match bs.as_slice() {
+            [(x, _)] => format!("micro::find(&src[..n], {start}, {})", lit(*x)),
+            [(x, _), (y, _)] => format!("micro::find_pair(&src[..n], {start}, {}, {})", lit(*x), lit(*y)),
+            _ => {
+                self.fence = true;
+                format!("find_fence(&src[..n], {start}, &[{}])", bs.iter().map(|b| lit(b.0)).collect::<Vec<_>>().join(", "))
+            }
+        };
+        Some(if back == 0 { found } else { format!("{found}.map(|a| a + {back})") })
+    }
+
+    /// `e` at byte `at`, a test of the bytes there, as `at`; `escaped(B)` at byte `var` the loop's `esc` (the byte
+    /// before ends a run of an odd count of `B`'s), `B` kept in `esc_of`. None where an escape is read elsewhere.
+    fn pred(&self, e: &Expr, at: &str, var: &str, esc_of: &mut Option<Expr>, depth: usize) -> Option<String> {
+        if depth > 64 {
+            return None;
+        }
+        let mut go = |e: &Expr, at: &str| self.pred(e, at, var, esc_of, depth + 1);
+        Some(match e {
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) => {
+                let d = self.defs.get(n)?;
+                let mut none = None;
+                // A long test that reads no escape: a function of its own, by the mask's name (lean's `unescape`).
+                match self.pred(d, "i", "i", &mut none, depth + 1) {
+                    Some(t) if t.len() > 160 && none.is_none() => {
+                        let f = ident(n);
+                        if !self.named.borrow().iter().any(|x| x.0 == f) {
+                            let code = format!("/// Mask `{n}` at byte `i`, a test of the bytes there.\n#[inline]\nfn {f}(src: &[u8], n: usize, i: usize) -> bool {{\n    {t}\n}}\n\n");
+                            self.named.borrow_mut().push((f.clone(), code));
+                        }
+                        format!("{f}(src, n, {at})")
+                    }
+                    _ => go(d, at)?,
+                }
+            }
+            Expr::Not(a) => format!("({at} < n && !{})", go(a, at)?),
+            Expr::And(a, b) => format!("({} && {})", go(a, at)?, go(b, at)?),
+            Expr::Or(a, b) => format!("({} || {})", go(a, at)?, go(b, at)?),
+            Expr::Xor(a, b) => format!("({} != {})", go(a, at)?, go(b, at)?),
+            Expr::Call(f, args) if f == "escaped" => {
+                let [Arg::E(b)] = args.as_slice() else { return None };
+                if at != var || esc_of.as_ref().is_some_and(|x| format!("{x:?}") != format!("{b:?}")) {
+                    return None;
+                }
+                *esc_of = Some(b.clone());
+                "esc".to_owned()
+            }
+            Expr::Call(f, args) => {
+                let (a, k) = Self::shift(f, args)?;
+                if k < 0 { format!("({at} >= {} && {})", -k, go(&a, &format!("{at} - {}", -k))?) } else { go(&a, &format!("{at} + {k}"))? }
+            }
+            e => self.at(e, at, depth + 1).ok()?,
+        })
+    }
+
+    /// Mask `m` tested at byte `i` of a loop of the bytes, the escape it reads carried along (`esc` for the next byte:
+    /// this one is `B` and not escaped itself). None where it reads an escape elsewhere.
+    fn tested_at(&self, m: &str, i: &str) -> Option<(String, Option<String>)> {
+        let e = self.expr(m).ok()?;
+        let mut esc_of = None;
+        let p = self.pred(&e, i, i, &mut esc_of, 0)?;
+        let carry = match esc_of {
+            Some(b) => Some(format!("esc = !esc && {}", self.at(&b, i, 0).ok()?)),
+            None => None,
+        };
+        Some((p, carry))
+    }
+
+    /// One read of the loop in the lean lexer's form: a micro-lexer, else the bytes in a loop, each tested where it is
+    /// (a run by `while`, a search by `find`, a count by `filter`). None where a mask has no such form.
+    fn lean_read(&mut self, name: &str, args: &[String], m: &str) -> Result<Option<String>, String> {
+        let a = |k: usize| args.get(k).map(|x| x.trim().to_owned()).unwrap_or_default();
+        if name == "first_bit"
+            && let Some(r) = self.micro_first(&self.expr(m)?, &a(1))
+        {
+            return Ok(Some(r));
+        }
+        let Some((p, carry)) = self.tested_at(m, "i") else { return Ok(None) };
+        // A test whose escape is carried: the closure updates it after its byte's test.
+        let test = |p: &str| match &carry {
+            Some(c) => format!("{{ let hit = {p}; {c}; hit }}"),
+            None => p.to_owned(),
+        };
+        let esc = if carry.is_some() { "let mut esc = false; " } else { "" };
+        let next = self.tested_at(m, "(l + 1)").map(|t| t.0).unwrap_or_default();
+        Ok(Some(match (name, args.len()) {
+            ("first_bit", 2) => format!("{{ {esc}({}..n).find(|&i| {}) }}", a(1), test(&p)),
+            ("first_in", 3) => format!("{{ {esc}({}..={}).find(|&i| {}) }}", a(1), a(2), test(&p)),
+            ("any_in", 3) => format!("{{ {esc}({}..={}).any(|i| {}) }}", a(1), a(2), test(&p)),
+            ("count_in", 3) => format!("{{ {esc}({}..={}).filter(|&i| {}).count() as u32 }}", a(1), a(2), test(&p)),
+            ("first_clear", 3) if carry.is_none() => format!("({}..n.min({})).find(|&i| !{p})", a(1), a(2)),
+            ("run_last", 2) if carry.is_none() => format!("{{ let mut l = {}; while {next} {{ l += 1; }} l }}", a(1)),
+            ("run_once_last", 3) if carry.is_none() => {
+                let Some(d) = args[1].trim().strip_prefix('&') else { return Ok(None) };
+                let Some((pd, None)) = self.tested_at(d, "(l + 1)") else { return Ok(None) };
+                format!("{{ let (mut l, mut once) = ({}, false); while {next} {{ if {pd} {{ if once {{ break; }} once = true; }} l += 1; }} l }}", a(2))
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    /// Mask `m` as a test of byte `i` (`|i: usize| …`), for a run read past its block (the lean lexer's `word_end`).
+    pub(super) fn byte_test(&self, m: &str) -> Result<String, String> {
+        match self.tested_at(m, "i") {
+            Some((p, None)) => Ok(format!("|i: usize| {p}")),
+            _ => Err(format!("`{m}` is no test of a byte")),
+        }
+    }
+
     /// The local's expression.
     fn expr(&self, local: &str) -> Result<Expr, String> {
         self.locals.get(local).cloned().ok_or_else(|| format!("`{local}` is no mask of the bytes"))
@@ -321,6 +517,12 @@ impl<'a> Bytes<'a> {
                 }
                 _ => return Err(format!("`{name}` with {} arguments has no form of the bytes", args.len())),
             }));
+        }
+        if self.lean
+            && name != "bit"
+            && let Some(r) = self.lean_read(name, args, &m)?
+        {
+            return Ok(Some(r));
         }
         Ok(Some(match (name, args.len()) {
             ("bit", 2) => {
@@ -606,7 +808,8 @@ impl<'a> Bytes<'a> {
 
     /// The window functions and helpers the rewritten reads call.
     pub(super) fn code(&self) -> String {
-        format!("{HELPERS}{}", self.code)
+        let named: String = self.named.borrow().iter().map(|x| x.1.as_str()).collect();
+        format!("{HELPERS}{}{named}{}", if self.fence { FENCE } else { "" }, self.code)
     }
 }
 
@@ -653,8 +856,27 @@ fn pattern_test(b: &str, rs: &[(u32, u32)]) -> String {
     if rs.is_empty() {
         return "false".to_owned();
     }
-    let arms: Vec<String> = rs.iter().map(|&(lo, hi)| if lo == hi { format!("{lo:#04x}") } else { format!("{lo:#04x}..={hi:#04x}") }).collect();
-    format!("matches!({b}, {})", arms.join(" | "))
+    // `src[(s + 1)]` as `src[s + 1]`; a byte by its literal where it has one (`b'/'`), as hand-written Rust.
+    let b = match b.strip_prefix("src[(").and_then(|x| x.strip_suffix(")]")).filter(|x| !x.contains('(')) {
+        Some(i) => format!("src[{i}]"),
+        None => b.to_owned(),
+    };
+    let byte = |x: u32| u8::try_from(x).map_or_else(|_| format!("{x:#04x}"), lit);
+    match rs {
+        [(lo, hi)] if lo == hi => format!("({b} == {})", byte(*lo)),
+        _ => format!("matches!({b}, {})", rs.iter().map(|&(lo, hi)| if lo == hi { byte(lo) } else { format!("{}..={}", byte(lo), byte(hi)) }).collect::<Vec<_>>().join(" | ")),
+    }
+}
+
+/// Byte `x` as Rust writes it (`b'*'`, `b'\\n'`).
+fn lit(x: u8) -> String {
+    match x {
+        b'\n' => "b'\\n'".to_owned(),
+        b'\\' => "b'\\\\'".to_owned(),
+        b'\'' => "b'\\''".to_owned(),
+        0x20..=0x7e => format!("b'{}'", x as char),
+        _ => format!("{x:#04x}"),
+    }
 }
 
 fn ident(n: &str) -> String {
@@ -853,7 +1075,43 @@ pub(super) fn strip_pauses(code: &str) -> String {
 
 /// The helpers every window reads: the 64 bytes loaded where they are, the bits of the file's bytes, the escapes
 /// carried from window to window, and the searches 64 bytes at a time.
-const HELPERS: &str = r#"/// The 64 bytes from `p` as loaded, and the byte they start at: at the file's first byte for a window before it. None
+/// The lean lexer's `find_fence`: where a fence of bytes next starts from `from`, by its first two (`find_pair`), then the
+/// rest compared.
+const FENCE: &str = r#"/// Where `fence` next starts, from `from`: its first two bytes (`micro::find_pair`), then the rest compared, as the lean
+/// lexer's `find_fence`.
+fn find_fence(b: &[u8], from: usize, fence: &[u8]) -> Option<usize> {
+    let mut i = from;
+    loop {
+        let at = micro::find_pair(b, i, fence[0], fence[1])?;
+        if b[at..].starts_with(fence) {
+            return Some(at);
+        }
+        i = at + 1;
+    }
+}
+
+"#;
+
+const HELPERS: &str = r#"/// The last byte of a run after byte `s`: from block `base`'s word `k` where the run's next byte is in the block (the
+/// lean lexer's `micro::run`), then the bytes past it, `w` each one's test (its `word_end`).
+#[inline(always)]
+fn word_last(n: usize, base: usize, k: u64, s: usize, w: impl Fn(usize) -> bool) -> usize {
+    let q = s + 1 - base;
+    let mut l = s;
+    if q < 64 {
+        let ones = (!(k >> q)).trailing_zeros() as usize;
+        if q + ones < 64 {
+            return s + ones;
+        }
+        l = base + 63;
+    }
+    while l + 1 < n && w(l + 1) {
+        l += 1;
+    }
+    l
+}
+
+/// The 64 bytes from `p` as loaded, and the byte they start at: at the file's first byte for a window before it. None
 /// for a window past the file's end.
 ///
 /// # Safety
