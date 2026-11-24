@@ -277,7 +277,10 @@ without hooks or network.
   Windows the first of them in a process can start the first `git.exe` on `PATH` to find the system config file. The
   opener starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
-  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). Before
+  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). In a
+  linked worktree it reads the includes Git reads there; where gix's own open fails on an include that only the main
+  checkout's condition selects, it opens that worktree again with includes off only in a repository the user owns,
+  since in another user's such an open would skip an included `safe.directory`. Before
   gix reads them it refuses the top-level config files (system, installation, global, the repository's `config` and
   `config.worktree`), `info/exclude`, `info/attributes` and the global exclude and attribute files when one holds more
   than 100 MiB or is neither a regular file nor a folder (a FIFO or a device, which a read would wait on for ever); the
