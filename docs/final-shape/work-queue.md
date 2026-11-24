@@ -11521,3 +11521,8 @@ asks for the new check), c-directives eval::tests 50.
 - gate/executor-coverage/packs.tsv blessed again (RERAIL_BLESS_COVERAGE=1); both coverage tests pass.
 - The feeder's 31 cost-shape cases (t57 §7, slow tier): 14 pass here; the feeder's note says 13 of 31 with E1. The 17 red are its open targets, not this merge's.
 - Relax: blocks 102, facts-base 84, setfix 137, vector, tape-format 51, typing 13; the feeder's changed tests in tests-corpus (21), tests-logic, tests-rr, tests-lang: green. Checks: 0 errors.
+
+### Q554. Roll-up 126 (django-bugs 2f20b02a6f onto Pulling-it-all-together): what the merge chose
+
+- 0679 (a program cut from another runs once that one is whole): a clean merge; device-metal checks with 0 errors under Relax.
+- Its test (a_program_cut_from_one_that_parks_reads_its_rows) is Metal-only: not run here (no Metal on this Mac); it goes with the farm Metal checks.

@@ -1094,6 +1094,9 @@ struct Building {
     encoded: bool,
     /// Its work committed, and so told to its block (`Facts::ix`, `InFlight`): another batch's probe takes it.
     queued: bool,
+    /// Its program is held (`Batch::held`): told to no other batch until it launches, as no submission committed
+    /// before then holds its work.
+    held: bool,
     /// Whether it was queued after a gate (`Batch::gate`): not built when the gate stopped its program.
     gated: bool,
     /// Queued after its program's round ends (`Batch::round_end`): its program's round count, and how many ends lie
@@ -1724,6 +1727,10 @@ pub(in crate::code_rule_dsl) struct Batch {
     spoiled: bool,
     /// The programs launched since the last `finish`: read when their work is done.
     programs: Vec<Ran>,
+    /// Programs that go on from one before them (`Program::continues`), launched once every program before them is
+    /// whole (`finish`, decision 0679): one launched before then would read what its predecessor's later phases write
+    /// (its placed tables, its counts, its indexes) while a park or a next stack of it was still to run.
+    held: Vec<Ran>,
     committed: Vec<Submitted>,
     done: Done,
     dummy: Held,
@@ -1814,6 +1821,7 @@ impl Batch {
             program: Program::default(),
             spoiled: false,
             programs: Vec::new(),
+            held: Vec::new(),
             gated: false,
             again_on_rewrap: false,
             ends: None,
@@ -1968,7 +1976,7 @@ impl Batch {
         // committed after this and so run after (`InFlight`). One queued after a gate, or a live relation's, may not
         // be built (`finish`), as may one queued after a round end (decision 0657): none is told. Nor is any of a spoiled
         // batch's (`flush`): its builders may never launch.
-        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.gated && !b.live && b.behind.is_none() && !self.spoiled) {
+        for b in self.building.iter_mut().filter(|b| b.encoded && !b.queued && !b.held && !b.gated && !b.live && b.behind.is_none() && !self.spoiled) {
             // Launched, or not told: its program is what says whether it was built.
             let Some(whole) = b.whole.clone() else { continue };
             let view = b.view.clone();
@@ -2015,12 +2023,28 @@ impl Batch {
             }
             if failed > 0 {
                 self.programs.clear();
+                self.held.clear();
                 break;
             }
             let (whole, again) = self.programs_done()?;
             failed += usize::from(!whole || self.spoiled);
-            if again.is_empty() || failed > 0 {
+            if failed > 0 {
+                self.held.clear();
                 break;
+            }
+            if again.is_empty() {
+                // Every program launched is whole: the first held one goes on from them, its builders told with its
+                // stack's submission, which holds their work.
+                if self.held.is_empty() {
+                    break;
+                }
+                let r = self.held.remove(0);
+                for b in self.building.iter_mut().filter(|b| b.held && b.whole.as_ref().is_some_and(|w| std::sync::Arc::ptr_eq(&w.ctl, &r.ctl))) {
+                    b.held = false;
+                }
+                self.launch(r)?;
+                self.submit_open()?;
+                continue;
             }
             for (r, remap) in again {
                 // A remap (an arena mapped further) is a run again with more room: its launch charges the run's
@@ -2244,6 +2268,11 @@ impl Batch {
             // `within` by an index this batch built in its last submission found 0 or 879 of its 66,093 rows).
             if let Some(b) = self.building.iter().find(|b| b.encoded && b.live == rel.live && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.index_rows()) {
                 let (room, queued, at, built_by) = (b.room, b.queued, b.at(), b.buffer.clone());
+                // Built by an earlier program of this batch (launched or held): what reads it goes on from that one, so
+                // it runs once that one is whole, a park or a next stack of it included (`Batch::held`).
+                if b.whole.is_some() && !rel.live {
+                    self.program.continues = true;
+                }
                 if rel.live {
                     // A live relation's index in this batch's room for it, built again of its rows now: each round's,
                     // in the open submission, so its probes after it, binding the buffer it binds, are ordered after it.
@@ -2368,7 +2397,7 @@ impl Batch {
         // is done (`finish`), as the batch's work may already write it.
         let held = self.building.len();
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, gated: self.gated, behind: self.ends.clone(), live: rel.live, view: rel.view.clone(), buffer: None, whole: None });
+        self.building.push(Building { home: home.clone(), rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before, encoded: false, queued: false, held: false, gated: self.gated, behind: self.ends.clone(), live: rel.live, view: rel.view.clone(), buffer: None, whole: None });
         let buffer = bound(&home)?;
         self.building[held].buffer = Some(buffer.buffer.clone());
         self.queue_index(rel, cols, &room, &buffer)?;
@@ -2381,6 +2410,8 @@ impl Batch {
     fn cut(&mut self) -> Result<(), Error> {
         let residents = self.pass.as_ref().map(|p| p.residents()).unwrap_or_default();
         self.submit_open()?;
+        // What follows reads what the work before wrote: it runs once that work is whole (`Batch::held`).
+        self.program.continues = true;
         crate::code_rule_dsl::prof::count_named("device.batch cut: a block reached through a grown wrap".into(), 1);
         let pass = self.open()?;
         for (b, write) in &residents {
@@ -3502,6 +3533,7 @@ impl Batch {
         }
         self.done.programs += 1;
         let mut prog = std::mem::take(&mut self.program);
+        let continues = prog.continues;
         // The next program's round ends are its own.
         self.ends = None;
         // The next program's claims go on past this one's, in the same arena: a table one places, a later one reads.
@@ -3617,6 +3649,21 @@ impl Batch {
             holds.uses_address(b.contents() as usize);
         }
         let r = Ran { ctl: std::sync::Arc::new(Words::zeroed(16)?), slots: Words::zeroed(2 * cap)?, cap, at: Some(0), list: 0, rounds, seq: 1, grids: None, kit, holds };
+        // One that goes on from a program that may still launch again (a park, a next stack: `finish`) is held until
+        // every program before it is whole: launched now, it would read that one's tables and counts before its later
+        // phases wrote them, and nothing would run it again (decision 0679: a waved stratum's heads, cut from its
+        // joins at a block wrapped again, were placed from a count of none, and the host took rows never written).
+        if continues && !(self.programs.is_empty() && self.held.is_empty()) {
+            // Its builders are its own: marked now, as its launch would mark them, so no other program's launch takes
+            // them; and told to no other batch until it launches (`Building::held`), as no submission committed before
+            // then holds their work.
+            for b in self.building.iter_mut().filter(|b| b.encoded && b.whole.is_none()) {
+                b.whole = Some(Built { ctl: r.ctl.clone() });
+                b.held = true;
+            }
+            self.held.push(r);
+            return Ok(());
+        }
         self.launch(r)
     }
 
@@ -4699,6 +4746,9 @@ const SEG_EMPTY: u32 = 1 << 31;
 /// before it set (`join_grid`), stacked into launches (decision 0648). A phase reads what the phases before it wrote.
 #[derive(Default)]
 struct Program {
+    /// It goes on from a program before it (`Batch::cut`, or an index that one builds): its jobs read what that one's
+    /// wrote, so it runs once that one is whole (`Batch::held`).
+    continues: bool,
     descs: Vec<JobDesc>,
     items: Vec<[u32; 4]>,
     /// Each phase's first item, its items, its first segment and its segments.
@@ -6240,6 +6290,49 @@ pub mod tests {
         let got: Vec<(i64, i64)> = (0..got_n).map(|x| (out.column(0, got_n)[x], out.column(1, got_n)[x])).collect();
         assert!(want.len() < n && want.len() > 100);
         assert_eq!(got, want);
+    }
+
+    /// Decision 0679: a program cut from the one before it (`Batch::cut`, a block reached through a wrap made since)
+    /// reads what that one wrote, its placed table and its count. With a first arena of 16 bytes, the first program's
+    /// size script parks, and the program goes on only at `finish`, its arena mapped further; the second, launched at
+    /// once, copied by a count of none, and nothing ran it again (a waved stratum's heads, placed from its joins' rows,
+    /// were never written, and the host took its rooms' old bytes as rows). Held until the first is whole, it copies
+    /// every row the first made.
+    #[test]
+    fn a_program_cut_from_one_that_parks_reads_its_rows() {
+        if rerail_accel_gpu::gpu::join::device().is_err() {
+            return;
+        }
+        let _sizes = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_PROGRAM_ARENA", "16")]);
+        let (cap, n) = (5000, 4321);
+        let a = rows(cap, 7, 40);
+        let b = rows(cap, 11, 30);
+        let t = Table::new(3, cap).unwrap();
+        // SAFETY: the table holds 3 * cap values and nothing else refers to it yet.
+        let v = unsafe { std::slice::from_raw_parts_mut(t.buffer.buffer.contents().cast::<i64>(), 3 * cap) };
+        v[..cap].fill(0);
+        v[cap..2 * cap].copy_from_slice(&a);
+        v[2 * cap..].copy_from_slice(&b);
+        let totals = Words::zeroed(2).unwrap();
+        totals.set(0, n as u32);
+        let out = Table::new(2, cap).unwrap();
+        let _evaluation = rerail_accel::gpu::launch::LaunchScope::enter();
+        let mut batch = Batch::new().unwrap();
+        batch.arena_reserved(true);
+        // The first program: the distinct rows, placed in its arena by its size script.
+        let distinct = batch.table(2, cap).unwrap();
+        batch.dedup(&t, &[2, 1], 0, 1, &totals, &distinct).unwrap();
+        // The second, cut from it: its rows copied by its count.
+        batch.cut().unwrap();
+        batch.copy(Rows::Table(&distinct), cap, Some((1, &totals)), &[Col::From(0), Col::From(1)], Rows::Table(&out), 0, None).unwrap();
+        let done = batch.finish().unwrap();
+        assert!(done.remaps > 0 && done.programs >= 2, "the first program parked at its arena, the second cut from it: {:?}", (done.remaps, done.programs));
+        let mut seen = std::collections::HashSet::new();
+        let want: Vec<(i64, i64)> = (0..n).map(|x| (b[x], a[x])).filter(|r| seen.insert(*r)).collect();
+        let got_n = totals.get(1) as usize;
+        assert_eq!(got_n, want.len(), "the first program's count");
+        let got: Vec<(i64, i64)> = (0..got_n).map(|x| (out.column(0, got_n)[x], out.column(1, got_n)[x])).collect();
+        assert_eq!(got, want, "the second program copied the first's rows");
     }
 
 }
