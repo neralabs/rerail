@@ -176,6 +176,5 @@ What each part of `join_run`'s queue (0603) becomes:
      claim, mark and scatter, the copies: 234 dispatches each in the closure) are segments whose rows are past their
      encoded items: a segment's items are fixed when the program is encoded, from the host's guess at its rows, so a
      phase is no wider on the device than that guess, and each item strides the rows past it. These are not small
-     phases but too narrow ones. Next: a segment's items virtual (group `g` of a segment its `g`-th, past its
-     encoded items), so a phase is as wide as its rows.
+     phases but too narrow ones.
 4. Measured: the keyed join and the closure, per phase and whole, Metal against the CPU executor.
