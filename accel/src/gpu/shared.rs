@@ -576,14 +576,6 @@ pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blo
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))
 }
 
-/// A scratch region (`rerail_blocks::scratch`) in a pooled slab of at least `bytes`: freeze's and pack's
-/// temporaries counted in the one Metal budget, and readable by a kernel. Install it on a thread
-/// (`rerail_blocks::scratch::install`) for that thread's freezes; it goes back to the pool when dropped.
-pub fn lease_scratch(bytes: usize) -> Result<rerail_blocks::scratch::Scratch, String> {
-    let slab = lease_within(bytes.max(SLAB_MIN))?;
-    Ok(rerail_blocks::scratch::Scratch::over(Box::new(slab)))
-}
-
 /// Moves an open block into a pooled slab of at least `bytes`: one copy of what it holds. No command may be
 /// reading the block (it is moved between passes, as its chunks are made).
 pub fn grow_block(b: rerail_blocks::Block, bytes: usize) -> Result<rerail_blocks::Block, String> {
@@ -1261,41 +1253,6 @@ mod tests {
         assert!(unsafe { std::slice::from_raw_parts(b.ptr::<u8>(at), 1 << 20) }.iter().all(|&x| x == 0));
     }
 
-    /// A freeze whose temporaries come from a pooled scratch slab: the same relation as from the thread's own, and
-    /// the slab back in the pool after.
-    #[test]
-    fn a_freeze_takes_its_scratch_from_a_pooled_slab() {
-        use rerail_blocks::block::kind;
-        use rerail_blocks::relation::{self, RelW, Relation, Spec, View};
-        if layer().is_none() {
-            return;
-        }
-        let _big = big_leases();
-        set_slab_idle_limit(1 << 30);
-        let spec = Spec { widths: vec![4, 4], order: vec![0, 1], indexes: vec![vec![1]], min_log: 10 };
-        let rows: Vec<i64> = (0..200_000).flat_map(|i| [i % 3_000, i % 17]).collect();
-        let lock = Mutex::new(());
-        let digest = |scratch: Option<rerail_blocks::scratch::Scratch>| {
-            let was = scratch.map(rerail_blocks::scratch::install);
-            let b = rerail_blocks::Block::anon(kind::FACTS, 64 << 20);
-            let r = Relation::create(&b, &spec, None);
-            RelW { block: &b, rel: r, lock: &lock }.extend(&rows);
-            relation::freeze(&b, r, &spec, None);
-            if let Some(was) = was {
-                // Put the thread's own back; the pooled one drops here.
-                drop(was.map(rerail_blocks::scratch::install));
-            }
-            View::full(r).digest()
-        };
-        let own = digest(None);
-        // 29 MiB: a class (32 MiB) no other test leases.
-        let s = lease_scratch(29 << 20).unwrap();
-        assert_eq!(digest(Some(s)), own, "the same relation");
-        let back = dev().pool.lock().unwrap().idle.get(&class(29 << 20)).is_some_and(|v| !v.is_empty());
-        assert!(back, "the scratch slab went back to the pool");
-    }
-
-    /// A lease handed to a command buffer goes back to the pool when it completes.
     #[test]
     #[cfg(target_os = "macos")]
     fn a_lease_after_a_command_returns_when_it_completes() {

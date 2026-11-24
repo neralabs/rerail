@@ -110,7 +110,8 @@ impl Region {
 }
 
 /// Where a structure lives: a region of `bytes` bytes in a block of the right life, its first byte at a multiple of
-/// `align` (at least 8).
+/// `align` (at least 8), reading zero, as every room's region has (a free list's chunk zeroed, the heap's
+/// `alloc_zeroed`): a structure may read a byte it has not written.
 pub trait Room: Send + Sync {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region;
 }

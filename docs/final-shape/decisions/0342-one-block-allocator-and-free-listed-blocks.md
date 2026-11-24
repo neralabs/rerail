@@ -204,18 +204,42 @@ sections, the program image, the corpus memo, setfix, the planner); 257 sites on
    header (the previous header's offset, a state word) and its bytes, bumped from the top. Its going sets the state
    free, one atomic store, from any thread; the owning thread pops freed headers off the top at its next take
    (`settle`) and moves the top back. Past `KEEP` bytes above the top, pages go back to the OS, and a take that
-   reaches them marks them in use again. A region is not zeroed: a vector writes before it reads, and a map
-   zeroes its own (`Mem::new`), as the heap's `Vec` was.
+   reaches them marks them in use again. A room's region is zeroed, as every room's has been (`Room`): a
+   structure may read a byte it has not written. A use's takes are not.
 2. **The thread's scratch is that stack** (`scratch::with`): a use's takes are its regions, tagged with the use, and
    its end frees them, so a freeze's temporaries and the room's regions are one memory, and a use may nest. Its
    ledger is the block's: a use's end with GPU work that binds its bytes queued fails, as before.
 3. **Where a region lies is still a block and an offset** (`place_of`), so a kernel and the JIT read a stack's
    structure in place.
-4. **Long-lived structures go in their owners' rooms**, family by family, the census finding them: what lives with a
-   tape, a plan store, a syntax table, a program image, takes a room that goes with it.
-5. **Then the stack is the run's default room** (`default_room`), and `AnonRoom` is removed. The census of an edit
-   then finds no region left long on a stack.
+4. **Large regions go to free-listed blocks** (`maps::LargeRoom`, one a thread): a region of `scratch::LARGE` bytes
+   (4 KB) or more. The census showed the stack's pinning was mostly large arrays freed out of its order (a tape
+   writer's parts, a growing vector's later regions), not long-lived small ones: replayed, every region on the stack
+   held 9.0 times the live bytes (headers counted), and with the large ones off it 3.2 times. They are about 2% of
+   the regions, the big pieces this record's free lists were made for. A large room's chunk under 256 KB keeps its
+   pages when freed (`Block::keeping_pages_below`), as a growing vector's next step takes them again.
+5. **The stack is the run's default room** (`default_room`), and `AnonRoom` is gone: its free-listed blocks are the
+   large room, a thread's own, with no shards.
+6. **An owner's family is made in its room** (`maps::within(room, f)`: every structure made with no room on the
+   thread while `f` runs takes `room`). What still pins the stack is the planner's run: its join specs' and step
+   plans' sections (`JoinSpec::encode`, `setfix::analysed`) and its strata's `LiveRel` maps, small and many, living
+   for the run. Placed in the run's own room they bring the replay to 1.8 times live. That room is the next step: it
+   must not keep a run's blocks for what a cache holds past the run.
 
 Tests: a use's takes go back at its end; a region outliving the use is kept, the stack held under it until it goes;
-a free from another thread is settled by the owner; pages past `KEEP` go back and are taken again; the census of a
-run shows no long-lived region on a stack. Measured: an edit against the pre-merge engine's.
+a free from another thread is settled by the owner; pages past `KEEP` go back and are taken again; nothing is popped
+under queued GPU work; the block's used bytes reach every region (the device wraps them); a large region is not on
+the stack; a large room's small chunk keeps its pages; a structure
+made within an owner takes the owner's room.
+
+### Measured (2026-11-24, M3, 15 files of corpus0, one-file edits)
+
+Each engine from nothing (a cold run, two warm, two edits), twice, alternating; against the engine before the merge:
+
+| One edit | Instructions | CPU | Resident |
+|---|---|---|---|
+| `AnonRoom` (before this amendment) | 1.41 | 1.33 | 1.18 |
+| Every region on the stack | 1.26 | 1.30 | 1.48 |
+| The stack and the large room (built) | 1.26 | 1.36 | 1.22 |
+
+Time profiles put the allocators' code, vectors' growth with it, at about 5% of an edit's samples, under the
+pre-merge engine's share in jemalloc. The rest of the edit's gap to the pre-merge engine is not allocation.

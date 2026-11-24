@@ -4,7 +4,7 @@
 //! - **A region** is a 16-byte header (the previous header's offset, a state word) and its bytes, bumped from the
 //!   top. Its going sets the state free, one atomic store, from any thread. The owning thread pops freed headers off
 //!   the top (`settle`) at its next take, or at the going itself when it is the owner's, and moves the top back. A
-//!   region's bytes are whatever was there: a vector writes before it reads, a map zeroes its own (`maps::Mem`).
+//!   room's region is zeroed, as every room's reads (`Room`); a use's takes are not (`zeroed` where it needs it).
 //! - **A use** (`with`) takes slices tagged with the use; its end frees them, and it may nest. A slice is a region:
 //!   a freeze's temporaries and the room's structures are one memory.
 //! - **The room** (`StackRoom`) gives a structure a region of the calling thread's stack. Where a region lies is a
@@ -31,8 +31,13 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 const ANON: usize = 1 << 36;
 #[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
+/// The least bytes of a large region: it goes to the thread's free-listed blocks (`maps::LargeRoom`), not the stack.
+/// A large array is freed out of the stack's order (a writer's parts, a tape) and would hold every region under it; in
+/// the census of an edit, regions of a page and more are about 2% of them, and kept off the stack they leave its
+/// footprint at about a third of what it is with them (decision 0342, amended 2026-11-24).
+pub const LARGE: usize = 4096;
 /// Bytes above the top kept resident; past them, freed pages go back to the OS.
-const KEEP: usize = 64 << 20;
+const KEEP: usize = 16 << 20;
 /// The fewest bytes past `KEEP` given back at once, so a top that swings round it does not advise at each pop.
 const GIVE_STEP: usize = 4 << 20;
 /// A region's header: the previous header's offset (0: none) with, above `PREV_BITS`, the padding between the top
@@ -124,6 +129,8 @@ impl Stack {
         if end > self.touched.load(Relaxed) {
             self.touched.store(end, Relaxed);
         }
+        // The device wraps a block's used bytes: they reach every region handed out.
+        self.block.reach(end);
         (head, at)
     }
 
@@ -206,10 +213,17 @@ pub struct StackRoom;
 
 impl crate::maps::Room for StackRoom {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
+        if bytes >= LARGE {
+            thread_local! { static LARGE_ROOM: crate::maps::LargeRoom = crate::maps::LargeRoom::default(); }
+            return LARGE_ROOM.try_with(|r| r.region(bytes, align, name)).unwrap_or_else(|_| crate::maps::LargeRoom::default().region(bytes, align, name));
+        }
         let stack = mine(bytes + align);
         let (head, at) = stack.push(bytes, align, LIVE);
         // SAFETY: the stack's bytes past the header just pushed, this region's alone until it goes.
         let ptr = unsafe { stack.base.add(at) };
+        // Zeroed, as every room's region reads (a free list's chunk, the heap's `alloc_zeroed`).
+        // SAFETY: the region's own `bytes`.
+        unsafe { std::ptr::write_bytes(ptr, 0, bytes) };
         let census = crate::census::counted(name, bytes);
         // SAFETY: `bytes` writable bytes at `ptr`, aligned as asked, held by `OnStack` while the region lives.
         unsafe { crate::maps::Region::new(ptr, bytes, Box::new(OnStack { stack, head, at, _census: census })) }
@@ -311,7 +325,7 @@ mod tests {
     fn a_region_outliving_those_after_it_holds_the_stack_under_it() {
         let s = stack();
         let before = s.used();
-        let a = StackRoom.region(4096, 8, "a");
+        let a = StackRoom.region(1024, 8, "a");
         let b = StackRoom.region(64, 8, "b");
         let after_b = s.used();
         drop(a);
@@ -334,12 +348,42 @@ mod tests {
         assert_eq!(block.base_ptr() as usize + at, p);
     }
 
+    /// A region of `LARGE` bytes or more goes to the thread's free-listed blocks, not the stack.
+    #[test]
+    fn a_large_region_is_not_on_the_stack() {
+        let s = stack();
+        let before = s.used();
+        let r = StackRoom.region(LARGE, 8, "large");
+        assert_eq!(s.used(), before, "nothing taken on the stack");
+        let (block, _) = crate::maps::place_of(&r).expect("a large region lies in a block");
+        assert!(!Arc::ptr_eq(block, s.block()), "in a block of its own room");
+        assert!(block.has_free_list());
+        let small = StackRoom.region(LARGE - 1, 8, "small");
+        assert!(s.used() > before, "one byte less is the stack's");
+        drop((r, small));
+        assert_eq!(s.used(), before);
+    }
+
+    /// The block's used bytes reach every region of its stack: the device wraps them (`Block::device_buffer`), so a
+    /// region past them would be read outside the wrap.
+    #[test]
+    fn the_blocks_used_bytes_reach_every_region() {
+        let s = stack();
+        with(|u| {
+            u.take::<u8>(3 << 20);
+            let r = StackRoom.region(1024, 8, "high");
+            let (block, at) = crate::maps::place_of(&r).unwrap();
+            assert!(block.used() >= at + 1024, "the region lies within the used bytes");
+            assert!(Arc::ptr_eq(block, s.block()));
+        });
+    }
+
     /// A region freed on another thread is popped by its owner at its next take.
     #[test]
     fn a_free_from_another_thread_is_settled_by_the_owner() {
         let s = stack();
         let before = s.used();
-        let r = StackRoom.region(1 << 16, 8, "sent");
+        let r = StackRoom.region(2048, 8, "sent");
         assert!(s.used() > before);
         std::thread::spawn(move || drop(r)).join().unwrap();
         assert!(s.used() > before, "its owner has not taken since");

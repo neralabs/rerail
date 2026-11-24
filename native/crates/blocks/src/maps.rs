@@ -68,56 +68,42 @@ impl Room for InBlock {
     }
 }
 
-/// A run's room for the structures no life places (`default_room`): blocks of its own, each with a free list, the
-/// next leased when one is full; a block goes when its last region does. A shard's block a thread at a time: each
-/// thread takes its regions from its own shard's (`shard`), as an allocator's arenas are. With one block for the run,
-/// its every small array (a plan's steps, a body's variable sets, a section's lists) waited on one lock, and the run's
-/// stream workers spent most of an edit's time there.
+/// The room of a thread's large regions (`scratch::LARGE` bytes and more; `scratch::StackRoom` sends them here):
+/// blocks with a free list (decision 0342: big pieces, not millions of small ones), the next leased when one is full;
+/// a block goes when its last region does. One a thread, so its lock is its own thread's but for a free from another.
 #[derive(Default)]
-pub struct AnonRoom {
-    open: [std::sync::Mutex<Option<Arc<Block>>>; ANON_SHARDS],
+pub struct LargeRoom {
+    open: std::sync::Mutex<Option<Arc<Block>>>,
 }
 
-/// The bytes an anonymous room's block reserves (address space; pages are touched as used).
-const ANON_BLOCK: usize = 64 << 20;
+/// A large region freed under this many bytes keeps its pages for the next (`Block::keeping_pages_below`): a growing
+/// vector's regions, made and freed in turn, gave theirs to the OS and took them back at every step.
+const LARGE_RESIDENT: usize = 256 << 10;
 
-/// An anonymous room's shards: a block each, reserved when a thread first takes a region there.
-const ANON_SHARDS: usize = 16;
+/// The bytes a large room's block reserves (address space; pages are touched as used).
+const LARGE_BLOCK: usize = 64 << 20;
 
-/// The calling thread's shard of an anonymous room: threads take the shards in turn as each first asks.
-fn shard() -> usize {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
-    thread_local! {
-        static SHARD: usize = NEXT.fetch_add(1, Ordering::Relaxed) % ANON_SHARDS;
-    }
-    SHARD.with(|s| *s)
-}
-
-impl Room for AnonRoom {
+impl Room for LargeRoom {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region {
-        let mut open = self.open[shard()].lock().unwrap_or_else(|e| e.into_inner());
+        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(b) = &*open
             && let Some(r) = Mutable::alloc_aligned(b, bytes, align, name)
         {
-            return region_of(r, crate::census::counted(name, bytes));
+            return region_of(r, None);
         }
         // Room for the chunk the free list takes for `bytes` (its class, a power of two), aligned to its size up to
         // `ALIGN_MAX` past the block's first byte, and a page.
         let size = crate::free::class_of(bytes).1;
         let need = size + align.max(size.min(crate::free::ALIGN_MAX)) + 4096;
-        let b = Arc::new(Block::anon(crate::block::kind::FACTS, ANON_BLOCK.max(need)).with_free_list());
+        let b = Arc::new(Block::anon(crate::block::kind::FACTS, LARGE_BLOCK.max(need)).with_free_list().keeping_pages_below(LARGE_RESIDENT));
         let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
         *open = Some(b);
-        region_of(r, crate::census::counted(name, bytes))
+        region_of(r, None)
     }
 }
 
-/// The run's own room (`rerail_context::local`): where a structure made with no room (`Default`) lives.
-#[derive(Default)]
-struct RunRoom(std::sync::OnceLock<Arc<dyn Room>>);
-
-/// The room of the run under way (its `AnonRoom`; outside a run, its shared object's: `run_room`).
+/// The room of a structure made with no room: its owner's while it makes it (`within`), else the calling thread's stack
+/// (`scratch::StackRoom`).
 pub fn default_room() -> Arc<dyn Room> {
     run_room()
 }
@@ -128,12 +114,35 @@ pub fn install() {
     rerail_vector::install_default_room("rerail-blocks", run_room);
 }
 
+thread_local! {
+    /// The room an owner's structures take on this thread while it makes them (`within`).
+    static WITHIN: std::cell::RefCell<Option<Arc<dyn Room>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with `room` the room of every structure made on this thread with no room (`default_room`): an owner's
+/// family made in its room (a writer's parts, an image's tables), where a structure that outlives what is made after
+/// it belongs, not on the thread's stack (decision 0342, amended 2026-11-24). Scopes nest; the one before comes back
+/// at the end, a panic's included.
+pub fn within<R>(room: &Arc<dyn Room>, f: impl FnOnce() -> R) -> R {
+    struct Back(Option<Arc<dyn Room>>);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            let _ = WITHIN.try_with(|w| *w.borrow_mut() = self.0.take());
+        }
+    }
+    let _back = Back(WITHIN.with(|w| w.borrow_mut().replace(room.clone())));
+    f()
+}
+
 fn run_room() -> Arc<dyn Room> {
-    // Outside a run (a test's thread, which calls the engine's parts directly), the room of the shared object such a
-    // read takes (`rerail_context::shared`: the tests' one): a run's locals are made afresh at each read there, so a
-    // room of its own each time would reserve a block for each structure, and drop it with the structure.
-    let room = if rerail_context::run_own().is_some() { rerail_context::local::<RunRoom>() } else { rerail_context::shared::<RunRoom>() };
-    room.0.get_or_init(|| Arc::new(AnonRoom::default())).clone()
+    if let Some(room) = WITHIN.try_with(|w| w.borrow().clone()).ok().flatten() {
+        return room;
+    }
+    // The calling thread's stack (decision 0342, amended 2026-11-24): its handle made once a thread.
+    thread_local! {
+        static STACK: Arc<dyn Room> = Arc::new(crate::scratch::StackRoom);
+    }
+    STACK.try_with(Arc::clone).unwrap_or_else(|_| Arc::new(crate::scratch::StackRoom))
 }
 
 /// One structure's region: its first byte, kept beside the handle so a read is one load.
@@ -1312,6 +1321,23 @@ impl<T: Pod> std::ops::Deref for Rec<T> {
 mod tests {
     use super::*;
 
+    /// A structure made with no room inside an owner's scope (`within`) takes the owner's room; outside it, the
+    /// thread's stack; the scope before comes back at its end, nested or after a panic.
+    #[test]
+    fn a_structure_made_within_an_owner_takes_its_room() {
+        let owner = Arc::new(Block::anon(crate::block::kind::FACTS, 1 << 20));
+        let room: Arc<dyn Room> = Arc::new(InBlock(owner.clone()));
+        let in_owner = || {
+            let r = default_room().region(64, 8, "a test's");
+            Arc::ptr_eq(place_of(&r).expect("placed").0, &owner)
+        };
+        assert!(within(&room, in_owner), "the owner's block");
+        assert!(within(&room, || within(&room, in_owner) && in_owner()), "nested, and the outer scope after");
+        assert!(!in_owner(), "outside the scope, the thread's stack");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| within(&room, || panic!("inside"))));
+        assert!(!in_owner(), "a panic's end restores the scope before");
+    }
+
     /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
     /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
     /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
@@ -1348,7 +1374,7 @@ mod tests {
     /// a block of its own that holds the free list's chunk for it, aligned to its size.
     #[test]
     fn an_anonymous_room_holds_a_region_past_a_power_of_two() {
-        let room = AnonRoom::default();
+        let room = LargeRoom::default();
         for bytes in [(32 << 20) + 68, (64 << 20) + 1, 100] {
             let r = room.region(bytes, 8, "a test's region");
             assert_eq!(r.len(), bytes);
