@@ -49,7 +49,7 @@ async function ranToEnd(child: GitProcess, command: string, timeoutMs: number | 
   }
   try {
     const [code, signal] = await ended(child);
-    if (code === 0 && signal === null && !killed) return printed;
+    if (code === 0 && signal === null) return printed;
     throw Object.assign(new Error(`Command failed: ${command}\n${printed.stderr}`), { code, killed, signal, cmd: command, ...printed });
   } finally {
     clearTimeout(limit);
