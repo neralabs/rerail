@@ -3127,6 +3127,12 @@ fn text_is_a_view_of_the_nodes_and_positions_with_text() {
             assert!(n >> 32 == 1, "the document's id");
         }
         assert_eq!(by_value, 3, "the three leaves `x`, one term's atom");
+        // A document's texts interned together (a text test's scan) are the atoms each row's read gives.
+        let rows: Vec<(u32, u32)> = (0..p.text_rows()).map(|i| p.text_local(i)).collect();
+        let atoms = store.atoms_handle();
+        let together = p.text_atoms(&atoms, &rows);
+        let alone: Vec<i64> = rows.iter().map(|&(local, x)| p.text_atom(&atoms, local, x)).collect();
+        assert_eq!((together.len(), together), (t.len(), alone), "text_atoms is text_atom of each row");
         let positions = t.len() - p.node_ids().filter(|&(_, _, n)| !t.lookup(0, &[n]).unwrap().is_empty()).count();
         assert_eq!(positions as u32, p.extra.as_ref().map_or(0, |x| x.tokens), "a row a token (`token_text`)");
         assert_eq!(batch.groups(), 0, "no rows made");

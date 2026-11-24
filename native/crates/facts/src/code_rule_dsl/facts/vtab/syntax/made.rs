@@ -2176,16 +2176,16 @@ impl Tested {
         let (strings, symbols) = batch.vocabulary();
         self.test(|i| strings.get(i), &symbols);
         // `text`'s strings are the view's (decision 0656 step 4), read off the tape and interned as a read of them
-        // interns them (`text_atom`, which fills the document's term table its later reads take): none is among the
-        // groups' strings. A document's at a time, each text tested where it lies, and each symbol once a run
-        // (`Vocabulary::rows`' `seen`).
+        // interns them (`text_atoms`, which fills the document's term table its later reads take): none is among the
+        // groups' strings. A document's at a time, its texts interned together, each tested where it lies, and each
+        // symbol once a run (`Vocabulary::rows`' `seen`).
         if batch.shape == Shape::Core && batch.projection.wants("text") {
             for doc in 0..batch.docs.len() {
                 let p = &batch.docs[doc];
+                let rows: Vec<(u32, u32)> = (0..p.text_rows()).map(|i| p.text_local(i)).collect();
                 let (mut texts, mut syms) = (Vec::new(), Vec::new());
-                for i in 0..p.text_rows() {
-                    let (local, x) = p.text_local(i);
-                    if let Ok(a) = u32::try_from(p.text_atom(&batch.atoms, local, x)) {
+                for (&(local, x), a) in rows.iter().zip(p.text_atoms(&batch.atoms, &rows)) {
+                    if let Ok(a) = u32::try_from(a) {
                         texts.push(p.text_str(local, x));
                         syms.push(a);
                     }
