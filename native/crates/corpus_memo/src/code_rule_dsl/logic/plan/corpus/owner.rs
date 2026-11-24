@@ -9,8 +9,11 @@
 //! by guessing. `<store>-owner.json` beside it names the holder, for a message only.
 //!
 //! - A store the engine picks (`slot`: the project's, testing mode's) is the first of `<name>.sqlite`,
-//!   `<name>-2.sqlite`, `<name>-3.sqlite`, … that no other process owns. It never waits: a run alone, or runs one
-//!   after another, keep using the first and what it caches; runs at once each get their own.
+//!   `<name>-2.sqlite`, `<name>-3.sqlite`, … that no other process owns, and no other shared object of this process
+//!   holds (decision 0442: two objects behave as two processes do). It never waits: a run alone, or runs one after
+//!   another, keep using the first and what it caches; runs at once each get their own. The slot is the caller's
+//!   shared object's while the object lives (`Slots`); the lock file stays the process's, so the next object takes
+//!   the slot again.
 //! - A store the user names (`RERAIL_TAPE_CACHE`) is waited for (`named`): a process that finds another owning it
 //!   says so and starts once that one ends, or gives up after `NAMED_WAIT` with an error that names it.
 //! - A store whose lock cannot be made or taken at all (no file locks: the browser build, the only process on its
@@ -19,7 +22,7 @@
 //! Each answer is the process's for its life: asked again, a store is owned, used without a lock, or refused as it
 //! was the first time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex, MutexGuard};
@@ -38,15 +41,49 @@ enum Claim {
     Refused(String),
 }
 
-/// The stores this process claimed, by path. Held only to look up and record, never across a wait.
-static CLAIMS: LazyLock<Mutex<HashMap<PathBuf, Claim>>> = LazyLock::new(Default::default);
-/// The slot this process owns of each base store it asked for (`slot`).
-static SLOTS: LazyLock<Mutex<HashMap<PathBuf, PathBuf>>> = LazyLock::new(Default::default);
+/// The stores this process claimed, by path, and the slots a shared object of it holds (`Slots`). Held only to look
+/// up and record, never across a wait.
+static CLAIMS: LazyLock<Mutex<Claims>> = LazyLock::new(Default::default);
+
+/// The process's claims by path (it reads as them), and the slots its shared objects hold now.
+#[derive(Default)]
+struct Claims {
+    by_path: HashMap<PathBuf, Claim>,
+    held: HashSet<PathBuf>,
+}
+
+impl std::ops::Deref for Claims {
+    type Target = HashMap<PathBuf, Claim>;
+    fn deref(&self) -> &Self::Target {
+        &self.by_path
+    }
+}
+
+impl std::ops::DerefMut for Claims {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.by_path
+    }
+}
+
+/// The slot a shared object holds of each base store it asked for (`slot`), until it drops: then the slots are the
+/// next object's to take (decision 0442: the object's, not the process's).
+#[derive(Default)]
+pub struct Slots(Mutex<HashMap<PathBuf, PathBuf>>);
+
+impl Drop for Slots {
+    fn drop(&mut self) {
+        let slots = self.0.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut claims = claims();
+        for path in slots.values() {
+            claims.held.remove(path);
+        }
+    }
+}
 /// Held by the thread waiting for a named store (`named_within`): another thread of the process asking for one waits
 /// for its answer, and never takes the lock file a second time against its own process.
 static WAITING: Mutex<()> = Mutex::new(());
 
-fn claims() -> MutexGuard<'static, HashMap<PathBuf, Claim>> {
+fn claims() -> MutexGuard<'static, Claims> {
     CLAIMS.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
@@ -187,15 +224,25 @@ fn numbered(base: &Path, k: usize) -> PathBuf {
     base.with_file_name(name)
 }
 
-/// The first slot of `base` that no other process owns, this process's from here on: the same one at every call.
+/// The first slot of `base` that no other process owns and no other shared object of this one holds: the caller's
+/// shared object's from here on, the same one at every call of its runs.
 pub fn slot(base: &Path) -> PathBuf {
-    let mut slots = SLOTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(path) = slots.get(base) {
+    slot_of(&crate::code_rule_dsl::logic::profile::shared::<Slots>(), base)
+}
+
+/// `slot` for the object whose slots are `slots`.
+pub fn slot_of(slots: &Slots, base: &Path) -> PathBuf {
+    let mut mine = slots.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(path) = mine.get(base) {
         return path.clone();
     }
     let mut claims = claims();
-    let path = (1..).map(|k| numbered(base, k)).find(|path| try_own(path, &mut claims)).expect("a slot no process owns");
-    slots.insert(base.to_path_buf(), path.clone());
+    let path = (1..)
+        .map(|k| numbered(base, k))
+        .find(|path| !claims.held.contains(path) && try_own(path, &mut claims))
+        .expect("a slot no process owns");
+    claims.held.insert(path.clone());
+    mine.insert(base.to_path_buf(), path.clone());
     path
 }
 
@@ -214,7 +261,7 @@ pub fn named_within(store: &Path, wait: Duration) -> Result<(), String> {
     {
         let claims = claims();
         if claims.contains_key(store) {
-            return refused(&claims);
+            return refused(&claims.by_path);
         }
     }
     let _one = WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -222,13 +269,13 @@ pub fn named_within(store: &Path, wait: Duration) -> Result<(), String> {
     {
         let claims = claims();
         if claims.contains_key(store) {
-            return refused(&claims);
+            return refused(&claims.by_path);
         }
     }
     let claim = wait_for(store, wait);
     let mut claims = claims();
     claims.insert(store.to_path_buf(), claim);
-    refused(&claims)
+    refused(&claims.by_path)
 }
 
 /// `store`'s claim once its lock is this process's, or another process kept it past `wait`; no map held meanwhile.

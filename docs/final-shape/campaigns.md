@@ -840,14 +840,14 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 
 **Worktrees.** Final-shape-quality, oscar (this tree).
 
-**Kept by.** `check_no_global_state.py` (4 `shared` statics left), `check_thread_state.py`, `check_machine_pool.py`, `check_no_relation_maps.py` (0478: none left).
+**Kept by.** `check_no_global_state.py` (no `shared` static left, 2026-11-23), `check_thread_state.py`, `check_machine_pool.py`, `check_no_relation_maps.py` (0478: none left).
 
 **To apply it everywhere:**
 
-- The 4 `shared` statics onto the shared object (`profile::Shared`): `plan/corpus/owner.rs::SLOTS`, `regexes::TABLE`, `git_access/pool.rs::ROOTS`, `model.rs::SHARED_MODELS`.
+- Done 2026-11-23: the last `shared` statics are gone (0442): the regex table, the store slots and the embedding models are the caller's object's, the Node environment has an object of its own for the runtime's calls, and the Git opens' map stays the process's, with its reason.
 - 0094's incremental layout-invariance gate (§8): a moved definition costs about itself. §5's searches are 0144's demand rules and §6 is t24's record, both built.
 
-**Closes when.** No `shared` entry left in `global-state.txt`, and 0094's gate in the tests.
+**Closes when.** 0094's gate in the tests (no `shared` entry is left in `global-state.txt`).
 
 **Your words:**
 

@@ -55,7 +55,8 @@ impl CodeRuleDslRuntime {
     /// library (`logic::rr::library`) from a checkout (`source_tree`), which the package does not ship: without them,
     /// an error that says so.
     #[napi(catch_unwind)]
-    pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
+    pub fn test_rr(env: napi::Env, paths_json: String, filter: Option<String>) -> Result<String> {
+        let _in = in_environment(&env)?;
         let paths: Vec<std::path::PathBuf> =
             serde_json::from_str(&paths_json).map_err(json::json_error)?;
         let programs =
@@ -76,13 +77,13 @@ impl CodeRuleDslRuntime {
 
     #[napi(catch_unwind)]
     pub fn compile(
+        env: napi::Env,
         source: String,
         format: String,
         capabilities_json: String,
     ) -> Result<CompiledCodeRuleDsl> {
-        compile_contained(&source, &format, &capabilities_json).map(|rule| CompiledCodeRuleDsl {
-            inner: Arc::new(rule),
-        })
+        let _in = in_environment(&env)?;
+        compile_here(&source, &format, &capabilities_json)
     }
 
     /// `compile`, run on a thread of the host's worker pool: the promise settles with the
@@ -93,16 +94,32 @@ impl CodeRuleDslRuntime {
     #[cfg(not(feature = "headless"))]
     #[napi]
     pub fn compile_async(
+        env: napi::Env,
         source: String,
         format: String,
         capabilities_json: String,
-    ) -> napi::bindgen_prelude::AsyncTask<CompileTask> {
-        napi::bindgen_prelude::AsyncTask::new(CompileTask {
+    ) -> Result<napi::bindgen_prelude::AsyncTask<CompileTask>> {
+        let shared = Arc::clone(&rerail_workspace::code_rule_dsl::workspace::api::environment(&env)?.shared);
+        Ok(napi::bindgen_prelude::AsyncTask::new(CompileTask {
             source,
             format,
             capabilities_json,
-        })
+            shared,
+        }))
     }
+}
+
+/// `CodeRuleDslRuntime::compile` under the object already on this thread (a caller that put the environment's there).
+pub(crate) fn compile_here(source: &str, format: &str, capabilities_json: &str) -> Result<CompiledCodeRuleDsl> {
+    compile_contained(source, format, capabilities_json).map(|rule| CompiledCodeRuleDsl { inner: Arc::new(rule) })
+}
+
+/// The Node environment's own object on this thread until the guard drops (`api::environment`): the runtime's caller
+/// is the environment, so the rules it compiles share their regexes, and testing mode keeps its store's slot while it
+/// runs (decision 0442).
+pub(crate) fn in_environment(env: &napi::Env) -> Result<impl Drop> {
+    let environment = rerail_workspace::code_rule_dsl::workspace::api::environment(env)?;
+    Ok(logic::profile::within(Arc::clone(&environment.shared)))
 }
 
 /// `compile_rule`, with a panic in it an error that reads the same whether `compile` ran it on
@@ -132,6 +149,8 @@ pub struct CompileTask {
     source: String,
     format: String,
     capabilities_json: String,
+    /// The environment's object, which the compile runs under on the pool's thread (`in_environment`).
+    shared: Arc<logic::profile::Shared>,
 }
 
 #[cfg(not(feature = "headless"))]
@@ -140,6 +159,7 @@ impl napi::Task for CompileTask {
     type JsValue = CompiledCodeRuleDsl;
 
     fn compute(&mut self) -> Result<CompiledCodeRule> {
+        let _in = logic::profile::within(Arc::clone(&self.shared));
         compile_contained(&self.source, &self.format, &self.capabilities_json)
     }
 
@@ -169,11 +189,7 @@ mod compile_panic_tests {
     #[test]
     fn a_compile_that_panics_reads_the_same_from_compile_and_from_compile_async() {
         let reason = Some("code rule compile panicked: index out of range");
-        let compiled = super::CodeRuleDslRuntime::compile(
-            PANICKING_SOURCE.to_owned(),
-            "json".to_owned(),
-            "{}".to_owned(),
-        );
+        let compiled = super::compile_here(PANICKING_SOURCE, "json", "{}");
         assert_eq!(compiled.err().map(|error| error.reason).as_deref(), reason);
         #[cfg(not(feature = "headless"))]
         {
@@ -181,6 +197,7 @@ mod compile_panic_tests {
                 source: PANICKING_SOURCE.to_owned(),
                 format: "json".to_owned(),
                 capabilities_json: "{}".to_owned(),
+                shared: super::logic::profile::default_shared(),
             };
             let computed = napi::Task::compute(&mut task);
             assert_eq!(computed.err().map(|error| error.reason).as_deref(), reason);

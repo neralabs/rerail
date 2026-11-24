@@ -54,7 +54,6 @@ native/crates/context/src/lib.rs::MISSES	stays	the reads outside any run (decisi
 native/crates/context/src/lib.rs::N	stays	the most threads of a machine's pool (RERAIL_THREADS, else the cores): the process's environment, read once; every machine of the process is the same machine
 native/crates/context/src/lib.rs::TESTS	stays	test builds only (`test-hooks`): the tests' shared object, for a test that models no caller
 native/crates/corpus_memo/src/code_rule_dsl/logic/plan/corpus/owner.rs::CLAIMS	stays	the process's claims of its stores' lock files: a lock file is held by a process, as the OS keeps it
-native/crates/corpus_memo/src/code_rule_dsl/logic/plan/corpus/owner.rs::SLOTS	shared	the slot of each base store this process owns: a one-per-store resource
 native/crates/corpus_memo/src/code_rule_dsl/logic/plan/corpus/owner.rs::WAITING	stays	a lock, not a result
 native/crates/corpus_memo/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/corpus_prep/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
@@ -137,7 +136,6 @@ native/crates/lang/src/code_rule_dsl/language.rs::JSX_IMPORT_SOURCE_PRAGMA	stays
 native/crates/lang/src/code_rule_dsl/language.rs::JSX_PRAGMA	stays	a regex of a literal
 native/crates/lang/src/code_rule_dsl/language.rs::MANIFEST_READER	stays	code registered at load
 native/crates/lang/src/code_rule_dsl/language.rs::NO_MANIFEST	stays	code a crate above registers at load
-native/crates/lang/src/code_rule_dsl/regexes/mod.rs::TABLE	shared	compiled regexes while a handle lives: a cache
 native/crates/lang/src/code_rule_dsl/semver/mod.rs::MINIMUM_VERSION	stays	computed once from the engine's constants
 native/crates/lang/src/code_rule_dsl/semver/mod.rs::REGEXES	stays	computed once from the engine's constants
 native/crates/lang/src/code_rule_dsl/suppress/kinds.rs::KINDS	stays	code registered at load
@@ -201,7 +199,7 @@ native/crates/metal/src/pp_expand.rs::RUNS	stays	an id counter: append-only, a c
 native/crates/metal/src/slabs.rs::ONE	stays	a test lock
 native/crates/observe/src/content_store/observe.rs::JOURNAL	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build (a test process's choice of the journal; a run's is its setting)
 native/crates/observe/src/git_access/opener.rs::ASSUME_ANOTHER_OWNER	stays	a test hook (test-hooks), set in a test's own child process
-native/crates/observe/src/git_access/pool.rs::ROOTS	shared	one-per-repository resources (Git's opened roots)
+native/crates/observe/src/git_access/pool.rs::ROOTS	stays	this process's threads stuck opening a root, by path: a thread blocked in the OS cannot be ended, so a later open of the root fails at once rather than strand another; no caller's data, and the threads are the process's whoever asked
 native/crates/observe/src/git_access/setup.rs::INSTALLED	stays	the Git setup the host installs once (code registered at load)
 native/crates/observe/src/git_snapshot.rs::CHECK_SOURCES	stays	code registered at load: the source checker a crate above installs (a function pointer)
 native/crates/observe/src/git_snapshot.rs::NEXT	stays	a process-unique number naming a view's directory: invocations only ever get distinct values
@@ -396,5 +394,4 @@ native/crates/workspace/src/code_rule_dsl/workspace/storage.rs::NEXT	stays	an id
 native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)
 native/src/lib.rs::ONCE	stays	a hook registered once
 native/src/lib.rs::SQLITE_ALLOCATOR	stays	code registered at load
-native/src/model.rs::SHARED_MODELS	shared	the loaded embedding models: shared by design
 native/src/process.rs::LAUNCHED	stays	this process's children's handles (Windows): an OS object of the process

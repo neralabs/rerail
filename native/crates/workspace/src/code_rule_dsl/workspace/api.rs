@@ -329,12 +329,29 @@ fn check_store_identity(store: &crate::content_store::ContentStore, expected: Op
 /// call, so even a pool of one thread has its own worker (98c76de865; the CLI's `main` alone takes its thread,
 /// `Machine::here`).
 fn environment_machine(env: &napi::Env) -> Result<Arc<crate::code_rule_dsl::logic::profile::Machine>> {
-    if let Some(machine) = env.get_instance_data::<Arc<crate::code_rule_dsl::logic::profile::Machine>>()? {
-        return Ok(Arc::clone(machine));
+    Ok(Arc::clone(&environment(env)?.machine))
+}
+
+/// What the Node environment keeps in its instance data (Node keeps one value an addon an environment): its machine,
+/// and the shared object of the calls whose caller is the environment itself, not a workspace (`shared`).
+pub struct Environment {
+    machine: Arc<crate::code_rule_dsl::logic::profile::Machine>,
+    /// The environment's own shared object, on its machine (decision 0442: what is shared by design comes from an
+    /// object the caller holds): the runtime's rule compiles share their regexes in it, its conversation engines their
+    /// models, and testing mode holds its store's slot in it.
+    pub shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
+}
+
+/// The Node environment's object (`Environment`), made at its first use.
+pub fn environment(env: &napi::Env) -> Result<Arc<Environment>> {
+    if let Some(held) = env.get_instance_data::<Arc<Environment>>()? {
+        return Ok(Arc::clone(held));
     }
     let machine = crate::code_rule_dsl::logic::profile::Machine::new();
-    env.set_instance_data(Arc::clone(&machine), (), |_| {})?;
-    Ok(machine)
+    let shared = crate::code_rule_dsl::logic::profile::Shared::on(&machine);
+    let made = Arc::new(Environment { machine, shared });
+    env.set_instance_data(Arc::clone(&made), (), |_| {})?;
+    Ok(made)
 }
 
 #[napi]

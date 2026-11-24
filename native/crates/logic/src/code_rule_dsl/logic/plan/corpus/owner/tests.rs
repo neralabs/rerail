@@ -71,6 +71,22 @@
         finished("c", c);
     }
 
+    /// Two shared objects of one process at once own a slot each, as two processes do (decision 0442: a slot is the
+    /// object's); one made after the first drops takes the first slot again. Before, the process held one slot for
+    /// every object.
+    #[test]
+    fn two_shared_objects_own_a_slot_each_and_a_later_one_takes_the_first_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("objects.sqlite");
+        let (one, other) = (super::Slots::default(), super::Slots::default());
+        assert_eq!(super::slot_of(&one, &base), base, "the first object owns the first slot");
+        assert_eq!(super::slot_of(&one, &base), base, "and keeps it");
+        assert_eq!(super::slot_of(&other, &base), dir.path().join("objects-2.sqlite"), "the second, at once, the next");
+        drop(one);
+        let later = super::Slots::default();
+        assert_eq!(super::slot_of(&later, &base), base, "an object after the first takes its slot again");
+    }
+
     /// A store the user names for two processes at once is the first's until it ends: the second says whose it is,
     /// waits, and then runs on it (`a.done` there: the first's last act). Before, both opened it, and the second's run
     /// waited for the first's atoms lease and went on once the first's run gave it back, before the first process

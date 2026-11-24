@@ -907,15 +907,19 @@ pub struct ConversationEngine {
 
 #[napi]
 impl ConversationEngine {
+    /// The engine of the model at `model_path`. Its caller is the Node environment: its engines share one copy of each
+    /// model, held by the environment's object (`api::environment`, decision 0442).
     #[napi(factory, catch_unwind)]
-    pub fn load(model_path: String, max_input_tokens: u32) -> Result<Self> {
+    pub fn load(env: napi::Env, model_path: String, max_input_tokens: u32) -> Result<Self> {
         if max_input_tokens == 0 {
             return Err(Error::new(
                 Status::InvalidArg,
                 "max_input_tokens must be positive",
             ));
         }
-        let model = shared_model(Path::new(&model_path))?;
+        let environment = rerail_workspace::code_rule_dsl::workspace::api::environment(&env)?;
+        let models = environment.shared.get::<model::Models>();
+        let model = shared_model(&models, Path::new(&model_path))?;
         let dimensions = model.fingerprint.dimensions as usize;
         Ok(Self {
             encoder: ModelEncoder {
