@@ -772,6 +772,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         labels.push((label.clone(), k));
         at.push(low.program.outputs[usize::from(k)]);
     }
+    phase_mark(&low, "outputs");
     let mut words = "  0000 STOP 0\n".to_owned();
     let mut machine = String::new();
     if let Some((text, lowered, _, mark_masks, records)) = tier2 {
@@ -858,8 +859,10 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 })
                 .collect();
             let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
+            phase_mark(&low, "before tier 2 as Rust");
             let rust = crate::bitlex_rust::tier2(&x);
             low.rust = Some(rust);
+            phase_mark(&low, "tier 2 as Rust");
             // Tier 1 as Rust, from the lexer's statements and the tables (`bitlex_lex_rust`).
             let mark_bits: Vec<Option<u8>> = t.mark_bits.iter().map(|b| b.0).collect();
             let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
@@ -869,6 +872,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 crate::bitlex_lex_rust::tier1(&x)
             };
             low.lexer_rust = Some(lexer);
+            phase_mark(&low, "tier 1 as Rust");
         }
     }
     low.program.delay = delay;
@@ -884,7 +888,9 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             Cost { what: what.clone(), ops: live.count() as u32, back_fills }
         })
         .collect();
+    phase_mark(&low, "kept");
     let program = live(&low.program);
+    phase_mark(&low, "live");
     // Each kept operation's statement, at its place in the live program.
     let mut origin = vec![String::new(); program.ops.len()];
     let mut place = vec![usize::MAX; keep.len()];

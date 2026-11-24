@@ -76,7 +76,7 @@ pub struct Nest {
     pub whole: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Arg {
     E(Expr),
     N(u64),
@@ -369,7 +369,7 @@ impl TokenRule {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Expr {
     Name(String),
     Empty,

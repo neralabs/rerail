@@ -198,4 +198,5 @@ tree section).
 
 **Where the prover's time is now.** The proved questions' solves, which the GPU can speed up only by building
 their windows itself; the per-check searches between row modes and gap ends (6 s); and outside the prover, the
-53 s of compile work after the tree section, the largest part of a cold compile (67 s).
+53 s of compile work after the tree section, the largest part of a cold compile (67 s): tier 1 as Rust,
+now 6 s (decision 0662; a cold compile 20 s).
