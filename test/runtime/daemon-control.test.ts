@@ -1612,6 +1612,52 @@ describe("a state file Windows left behind", () => {
     expect(probes).toBe(2);
   });
 
+  // A daemon of Rerail 0.1.4 or earlier holds no lock, so a daemon of this release can take the home while a start
+  // looks. The start ends the older one first and launches its own, never waiting for the other in its start: that
+  // daemon takes the home at the lookup's read of the older one's start, and exits at once if the start waits for it.
+  it("ends a daemon whose engine has no proof that a start found while a daemon of this release took the home", async () => {
+    const events: string[] = [];
+    const older = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, events);
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    const launched = DEAD_PID - 1;
+    const other = DEAD_PID - 2;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: launched })));
+    let running = true;
+    let otherRuns = true;
+    const machine: DaemonMachine = {
+      ...older,
+      homeDaemonLockHeld: () => true,
+      processStartedAt: (pid, timeoutMs) => {
+        if (pid === DEAD_PID) writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: other, starting: true }));
+        return older.processStartedAt(pid, timeoutMs);
+      },
+      kill: pid => {
+        if (pid === launched || (pid === other && otherRuns) || (pid === DEAD_PID && running)) return true;
+        throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      },
+      endProcessStartedBy: () => {
+        events.push("end");
+        running = false;
+        return "ended";
+      },
+      spawnDetached: () => {
+        events.push("launch");
+        writeFileSync(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: launched, kernelSocketPath: PIPE })));
+        return { pid: launched };
+      },
+    };
+    const told: number[] = [];
+    const onWaiting = (pid: number): void => {
+      told.push(pid);
+      otherRuns = false;
+    };
+    const control = { home, packageRoot: OWN_ROOT, onWaiting, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const result = await startDaemon(control, { dev: true, port: 0 }, machine);
+    expect(told).toEqual([]);
+    expect(events).toEqual(["end", "launch"]);
+    expect(result).toMatchObject({ started: true, daemon: { state: { pid: launched } }, replaced: { pid: DEAD_PID, version: "0.1.4" } });
+  });
+
   // Every event of a session after its start asks the same: a daemon whose engine has no proof does not take it, even
   // when it ran from the hook's own package. Its replacement ends here at the end of its process, which the test makes
   // fail.

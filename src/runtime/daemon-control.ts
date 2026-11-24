@@ -1367,14 +1367,15 @@ async function foundStarting(home: string, machine: DaemonMachine): Promise<Comi
  * What a start finds in `home`, a daemon still in its start first: that one has not answered yet, recorded or not, and
  * is waited for, never reported as a daemon that does not answer nor started beside. One that takes the home while the
  * lookup runs is found after it: the lookup's wait for a holder to record itself ends once that holder says it is in
- * its start.
+ * its start. A daemon the lookup found running is the answer even then, one of a release before the engine's proof
+ * included: that one holds no lock, so the start ends it rather than leave it running beside the one in its start.
  */
 async function startLookup(home: string, machine: DaemonMachine): Promise<DaemonLookup | ComingUp> {
   const before = await foundStarting(home, machine);
   if (before !== undefined) return before;
   const holderWaits = (at: string, on: DaemonMachine): boolean => homeDaemonRuns(at, on) && daemonComingUp(at, on) === undefined;
   const lookup = await lookupHomeDaemon(home, machine, PROBE_TIMEOUT_MS, holderNotRecorded, holderWaits);
-  if (lookup.status === "running") return lookup;
+  if (foundRunning(lookup)) return lookup;
   return (await foundStarting(home, machine)) ?? lookup;
 }
 

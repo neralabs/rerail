@@ -48,6 +48,7 @@ import {
   dashboardAccessLink,
   dashboardLink,
   daemonNotRunningMessage,
+  foundRunning,
   homeDaemonInStart,
   lookupDaemon,
   NOT_HOME_DAEMON_NOTE,
@@ -426,10 +427,11 @@ function hookHealthLines(home: string): string[] {
 /**
  * What `rerail status` says of a daemon still in its start that does not answer yet, with the exit code of a daemon that
  * does not answer: that it is starting, never to stop it, after the note that the lookup removed a daemon.json naming
- * another process when it did. Undefined when the lookup found it answering, or none is in its start.
+ * another process when it did. Undefined when the lookup found it answering, found one of a release before the
+ * engine's proof, which holds no lock and so can run beside a daemon in its start, or none is in its start.
  */
 function printStartingDaemon(home: string, lookup: DaemonLookup): number | undefined {
-  if (lookup.status === "running" || lookup.status === "refused") return undefined;
+  if (foundRunning(lookup) || lookup.status === "refused") return undefined;
   const pid = homeDaemonInStart(home);
   if (pid === undefined) return undefined;
   if (lookup.status === "absent" && lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);

@@ -15,8 +15,11 @@ interface OlderFound { status: "older"; state: DaemonState }
 /** What a start that ended such a daemon and launched this release's answers. */
 interface ReplacingStart { started: true; daemon: { state: DaemonState; health: DaemonHealth }; replaced: Pick<DaemonState, "pid" | "version"> }
 
-// Each lookup and start answers what a case sets, as a Windows lookup beside a daemon of 0.1.4 answers.
-const answers = vi.hoisted(() => ({ lookup: undefined as OlderFound | undefined, start: undefined as ReplacingStart | undefined }));
+// Each lookup and start answers what a case sets, as a Windows lookup beside a daemon of 0.1.4 answers, and so does
+// the record beside the home's lock of a daemon in its start (`inStart`, its pid).
+const answers = vi.hoisted(() => ({
+  lookup: undefined as OlderFound | undefined, start: undefined as ReplacingStart | undefined, inStart: undefined as number | undefined,
+}));
 vi.mock("../../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../../src/runtime/daemon-control.js")>("../../../src/runtime/daemon-control.js");
   return {
@@ -24,6 +27,7 @@ vi.mock("../../../src/runtime/daemon-control.js", async () => {
     lookupDaemon: async () => answers.lookup,
     findRunningDaemon: async () => answers.lookup,
     startDaemon: async () => answers.start,
+    homeDaemonInStart: () => answers.inStart,
   };
 });
 
@@ -46,6 +50,7 @@ beforeEach(async () => {
   vi.stubEnv("RERAIL_HOME", root);
   stubUserHome(root);
   answers.lookup = OLDER_FOUND;
+  answers.inStart = undefined;
 });
 
 afterEach(async () => {
@@ -77,6 +82,15 @@ describe("a daemon of Rerail 0.1.4 or earlier", () => {
   it("is named by rerail status, which exits 4", { timeout: 60_000 }, async () => {
     const { stdout, exit } = await rerail(["status"]);
     expect(stdout.split("\n")).toContain(OLDER_LINE);
+    expect(exit).toBe(4);
+  });
+
+  // A release before 0.1.5 holds no lock, so a daemon of this release can hold the home in its start beside it.
+  it("is named by rerail status while a daemon in its start holds the home, never as that one still starting", { timeout: 60_000 }, async () => {
+    answers.inStart = 4343;
+    const { stdout, exit } = await rerail(["status"]);
+    expect(stdout.split("\n")).toContain(OLDER_LINE);
+    expect(stdout).not.toContain("is still starting");
     expect(exit).toBe(4);
   });
 
