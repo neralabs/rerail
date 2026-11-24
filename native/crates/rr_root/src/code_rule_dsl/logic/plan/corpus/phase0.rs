@@ -719,14 +719,6 @@ impl Images {
         for d in &g.plans {
             put("p0g_plan", vec![hex(d)]);
         }
-        // The modules it plans and their lowerings (decision 0639 step 1), as its image holds them (`encode`): read
-        // back without them, a graph planned no module, and a run of a text in another process failed its plan.
-        for (m, r) in &g.plan {
-            put("p0g_module", vec![s(m.clone()), Value::Int(r.rank), s(r.key.clone()), s(r.scope.iter().cloned().collect::<Vec<_>>().join(","))]);
-        }
-        for (k, d) in &g.lowered {
-            put("p0g_lowered", vec![s(k.clone()), s(d.clone())]);
-        }
         // A graph holds a row at least: every seed's graph names the modules it reached (`p0g_digest`).
         f
     }
@@ -771,15 +763,6 @@ impl Images {
         for r in rows("p0g_plan") {
             let [a] = &r[..] else { return None };
             g.plans.push(read.digest(a)?);
-        }
-        for r in rows("p0g_module") {
-            let [m, rank, key, scope] = &r[..] else { return None };
-            let scope = text(scope)?.split(',').filter(|s| !s.is_empty()).map(str::to_owned).collect();
-            g.plan.insert(text(m)?, PlanModule { rank: int(rank)?, key: text(key)?, scope });
-        }
-        for r in rows("p0g_lowered") {
-            let [k, d] = &r[..] else { return None };
-            g.lowered.insert(text(k)?, text(d)?);
         }
         Some(g)
     }
@@ -1088,10 +1071,6 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&bootstrap_spelling(&dir.to_string_lossy()))));
     }
     // The library is already a permitted input root. Phase zero only loads the files its seeds request.
-    // The module images the store holds, read before the run's first wave: its lowering requests are answered
-    // inside the waves, where no statement is sent (decision 0104), and a module the store holds is read, not
-    // lowered again (0639 §3).
-    crate::code_rule_dsl::logic::rr::read_held_modules();
     let options = serde_json::json!({ "reuse": true, "inputFiles": [] });
     let mut image = Vec::new();
     let phase_0 = in_phase_0();

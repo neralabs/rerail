@@ -16,16 +16,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// A source an owner pins (`ContentStore::pinned_by_alias`): its length, its place (`seg`, `seg_at`, `seg_len`), its
-/// id, and when its pin's lease ends.
-#[derive(Clone, Copy, Debug)]
-pub struct PinnedSource {
-    pub length: i64,
-    pub place: [i64; 3],
-    pub id: SourceId,
-    pub lease_until: i64,
-}
-
 /// The codec of a row whose bytes are in a segment, uncompressed.
 pub(super) const CODEC_RAW: i64 = 0;
 
@@ -452,33 +442,6 @@ impl ContentStore {
             out.push(Some((frame.bytes(length).map_err(|e| StoreError::Corrupt(format!("a source's bytes: {e}")))?, SourceId(source))));
         }
         Ok(out)
-    }
-
-    /// Every source `owner` pins, by each of its aliases, with where it lies and its pin's lease: one statement,
-    /// for a run's read before its first wave (decision 0104). What it names is read inside the waves with
-    /// `placed_in_place`, mapped, no statement.
-    pub fn pinned_by_alias(&self, owner: &str) -> StoreResult<Vec<(HashKey, PinnedSource)>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut st = connection.prepare_cached(
-            "SELECT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, s.raw_length, s.seg, s.seg_at, s.seg_len, s.source_id, p.lease_until \
-             FROM strings o JOIN object_pins p ON p.owner_string_id = o.string_id \
-             JOIN source_objects s ON s.source_id = p.object_id \
-             JOIN source_aliases a ON a.source_id = s.source_id JOIN hashes h ON h.hash_id = a.alias_hash_id \
-             WHERE o.domain_id = ?1 AND o.value = ?2 AND p.object_kind_id = ?3 AND s.seg > 0",
-        )?;
-        let rows = st.query_map(params![super::STRING_OWNER, owner, super::reclamation::OBJECT_SOURCE], |r| {
-            let key = HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] };
-            Ok((key, PinnedSource { length: r.get(5)?, place: [r.get(6)?, r.get(7)?, r.get(8)?], id: SourceId(r.get(9)?), lease_until: r.get(10)? }))
-        })?;
-        rows.collect::<Result<_, _>>().map_err(StoreError::from)
-    }
-
-    /// The bytes of a source `pinned_by_alias` listed, read in its segment, mapped: no statement. `None` where its
-    /// segment is gone (archived or collected since the listing), which its caller makes again.
-    pub fn placed_in_place(&self, s: &PinnedSource) -> Option<ObjectBytes> {
-        let mut maps = SegmentMaps::new(object_dir(&self.database_path));
-        let [seg, at, len] = s.place;
-        row_frame(&mut maps, seg, at, len)?.bytes(usize::try_from(s.length).ok()?).ok()
     }
 
     /// The source `alias` names, read where the store holds it (`sources_by_alias_in_place`).

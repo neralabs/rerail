@@ -218,7 +218,7 @@ pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::V
     // A base, as its image reads back: the same program, its atom and relation ids kept.
     let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
     if let Some(image) = version.own_image().filter(|_| version.base_bytes().is_some()) {
-        keep_image(store.as_deref(), "a parsed program's image", IMAGE_OWNER, key, image.clone());
+        keep_image(store.as_deref(), "a parsed program's image", key, image.clone());
     }
     Ok(version)
 }
@@ -431,7 +431,7 @@ impl Text {
             version.fold().map_err(Error::Syntax)?
         };
         let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's image kept".into());
-        if keep_image(store, "a program image", IMAGE_OWNER, key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
+        if keep_image(store, "a program image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
             crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
         }
         Ok(Some(version))
@@ -652,7 +652,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
                 let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "a linked library's image kept, its kind sets".into());
-                if keep_image(store, "a linked library's image", IMAGE_OWNER, key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
+                if keep_image(store, "a linked library's image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
                 let version = lower::keep_declared_kind_sets(&version, &modules)?;
@@ -844,43 +844,6 @@ const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
 /// The owner of the images' pins.
 const IMAGE_OWNER: &str = "rr images (decision 0246)";
 
-/// The owner of the module images' pins (decision 0639 §3), apart from the other images': phase 0's run reads the
-/// module images the store holds in one statement before its first wave (`read_held_modules`).
-const MODULE_OWNER: &str = "rr module images (decision 0639)";
-
-/// The module images each store held when phase 0's run last read them before its first wave
-/// (`read_held_modules`), by the store's path and the image's key: what the answer to a lowering request reads
-/// inside the waves, where it sends no statement (decision 0104).
-#[derive(Default)]
-struct HeldModuleImages(std::sync::Mutex<std::collections::HashMap<Option<PathBuf>, std::sync::Arc<std::collections::HashMap<crate::content_store::HashKey, crate::content_store::PinnedSource>>>>);
-
-/// Reads which module images the store the run reads holds, and where: one statement, before phase 0's first wave
-/// (decision 0104). A module the store holds is then read, not lowered again (0639 §3,
-/// `phase_0_lowers_each_module_its_store_does_not_hold`).
-pub fn read_held_modules() {
-    let Some(store) = image_store() else { return };
-    let held: std::collections::HashMap<_, _> = store.pinned_by_alias(MODULE_OWNER).unwrap_or_default().into_iter().collect();
-    crate::code_rule_dsl::logic::profile::shared::<HeldModuleImages>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(image_store_path(), std::sync::Arc::new(held));
-}
-
-/// The module of key `k` from the image the store held before the run's first wave (`read_held_modules`), read in
-/// its segment, mapped, and decoded; its lease renewed behind the run once half of it has run. No statement.
-fn stored_module(k: crate::content_store::HashKey) -> Option<(lower::Module, String)> {
-    let at = image_store_path();
-    let held = crate::code_rule_dsl::logic::profile::shared::<HeldModuleImages>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&at).cloned()?;
-    let placed = held.get(&k)?;
-    let store = image_store()?;
-    let bytes = store.placed_in_place(placed)?;
-    let digest = image_digest(bytes.as_ref());
-    let m = module_image::decode(std::sync::Arc::new(bytes) as super::program_image::SharedBytes).ok()?;
-    if lease_half_run(placed.lease_until) {
-        queue_lease(&store, placed.id, MODULE_OWNER);
-    }
-    crate::code_rule_dsl::prof::count("rr.module_image_read", 1);
-    crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((at, k), (m.clone(), digest.clone(), false));
-    Some((m, digest))
-}
-
 fn image_lease() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) + IMAGE_LEASE_SECS
 }
@@ -965,7 +928,7 @@ fn planned_module(key: &str) -> Option<(lower::Module, String)> {
     let store = image_store();
     let (bytes, id) = images::read_image(store.as_deref(), k)?;
     if let (Some(store), Some(id)) = (store.as_deref(), id) {
-        renew_image_of(store, id, MODULE_OWNER);
+        renew_image(store, id);
     }
     let digest = image_digest((*bytes).as_ref());
     let m = module_image::decode(bytes).ok()?;
@@ -989,9 +952,8 @@ pub fn planned_module_held(key: &str) -> bool {
 /// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
 /// kept under its key; or found held by the process. Its image's digest.
 ///
-/// Answered inside the run's waves, so it sends the store no statement (decision 0104: SQL only before the first wave,
-/// writes behind the run): a module the process holds is taken, else one the store held before the first wave
-/// (`read_held_modules`), read in its segment, mapped; else it is lowered (deterministic, and cheap: the library's 64 files
+/// Answered inside the run's waves, so it reads no store (decision 0104: SQL only before the first wave, writes
+/// behind the run): a module the process does not hold is lowered (deterministic, and cheap: the library's 64 files
 /// in tens of milliseconds, decision 0639), and its image kept behind the run. Its scope's modules rank below it in
 /// the same wave's requests, answered first, so the process holds them.
 pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) -> Result<String, Error> {
@@ -999,9 +961,6 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
         return Ok(digest);
     }
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
-    if let Some((_, digest)) = stored_module(k) {
-        return Ok(digest);
-    }
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
     let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_module(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
     // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
@@ -1027,7 +986,7 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
     let bytes: crate::content_store::record::Bytes = std::sync::Arc::new(module_image::encode(&m).map_err(Error::Syntax)?);
     let digest = image_digest((*bytes).as_ref());
     let store = image_store();
-    keep_image(store.as_deref(), "a module image", MODULE_OWNER, k, bytes);
+    keep_image(store.as_deref(), "a module image", k, bytes);
     crate::code_rule_dsl::prof::count("rr.module_lowered_for_the_plan", 1);
     crate::code_rule_dsl::logic::profile::shared::<PlannedModules>().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert((image_store_path(), k), (m, digest.clone(), true));
     Ok(digest)
@@ -1036,20 +995,20 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
 /// Keeps `bytes`, an image, in `store` under alias `key`, pinned for its lease: written by the store's writer, behind
 /// the run (decisions 0104, 0240 §1), and dropped where its queue is full, as a tape is (the next run lowers it
 /// again). Whether it was queued.
-fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static str, owner: &'static str, key: crate::content_store::HashKey, bytes: crate::content_store::record::Bytes) -> bool {
+fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static str, key: crate::content_store::HashKey, bytes: crate::content_store::record::Bytes) -> bool {
     use crate::content_store::write_back::{Key, Syms};
     images::export(key, (*bytes).as_ref());
     let Some(store) = store else { return false };
     // A record of its own (decision 0306), dropped where the queue is full: the image its piece, as its maker holds
     // it, placed in a segment by the writer and read there (decision 0464).
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
-        let (key, owner): (crate::content_store::HashKey, String) = crate::content_store::record::codec::from_body("an image", body)?;
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
         let hash = crate::content_store::HashKey::sha256(cx.bytes);
         let id = cx.store.put_sources_placed(&[(cx.bytes, hash, &[key])])?[0];
-        cx.store.pin_source(id, &owner, image_lease())
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
     }
     let queued = Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
-    store.queue_record_held(Syms::None, what, vec![queued], &(key, owner), vec![bytes], apply, true)
+    store.queue_record_held(Syms::None, what, vec![queued], &key, vec![bytes], apply, true)
 }
 
 /// The text tests' compiled groups of automata as images (decisions 0075, 0264): each under its key, read from the
@@ -1083,7 +1042,7 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
         let mut entry = vec![u8::from(dfa.is_some())];
         entry.extend_from_slice(dfa.unwrap_or_default());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-        keep_image(self.0.as_deref(), "a group of automata", IMAGE_OWNER, Self::key(group), std::sync::Arc::new(entry));
+        keep_image(self.0.as_deref(), "a group of automata", Self::key(group), std::sync::Arc::new(entry));
     }
 }
 
@@ -1248,30 +1207,16 @@ pub(in crate::code_rule_dsl) fn renew_images(store: &crate::content_store::Conte
 }
 
 fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId) {
-    renew_image_of(store, id, IMAGE_OWNER);
-}
-
-/// `renew_image` of an image `owner` pins.
-fn renew_image_of(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId, owner: &'static str) {
-    if !store.source_lease(id, owner).ok().flatten().is_some_and(|until| !lease_half_run(until)) {
-        queue_lease(store, id, owner);
-    }
-}
-
-/// Whether more than half of a lease that ends at `until` has run: the image is then pinned again.
-fn lease_half_run(until: i64) -> bool {
-    until - (image_lease() - IMAGE_LEASE_SECS) <= IMAGE_LEASE_SECS / 2
-}
-
-/// Pins image `id` for `owner` for a lease from now, behind the run: a record the store's writer applies, dropped
-/// where its queue is full (no statement here, so a wave may queue it).
-fn queue_lease(store: &crate::content_store::ContentStore, id: crate::content_store::SourceId, owner: &'static str) {
     use crate::content_store::write_back::Syms;
-    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
-        let (id, owner): (crate::content_store::SourceId, String) = crate::content_store::record::codec::from_body("an image's lease", body)?;
-        cx.store.pin_source(id, &owner, image_lease())
+    let now = image_lease() - IMAGE_LEASE_SECS;
+    if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
+        return;
     }
-    store.queue_record(Syms::None, "an image's lease", Vec::new(), &(id, owner), None, apply, true);
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let id: crate::content_store::SourceId = crate::content_store::record::codec::from_body("an image's lease", body)?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    store.queue_record(Syms::None, "an image's lease", Vec::new(), &id, None, apply, true);
 }
 
 /// A text's own program lowered (`Text::lowered_own`), and what it asks of the library.
