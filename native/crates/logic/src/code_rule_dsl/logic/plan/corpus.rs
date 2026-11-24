@@ -2728,9 +2728,11 @@ fn run_observed_within(
     let unlocated: Vec<&str> = split.exports.iter().map(String::as_str).chain(local_f.outputs()).filter(|r| split.locations.get(*r).is_none_or(Vec::is_empty)).collect();
     // A file-local part reading the run's options (`file_local::option_input`) is memoised under them too.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the memo's program and the components' plan".into()));
-    // A digest under the rows of the phases' exports among `reads`, which are not in the program's text.
+    // A digest under the rows of the phases' exports among `reads`, which are not in the program's text. Those read as
+    // settings (`file_local::setting_input`, `tsx_names`'s) key each file's entry by the rows it can read of them
+    // instead (`memo::settings_scopes`), not every file's by all of them.
     let under_phased = |digest: [u8; 32], reads: &BTreeSet<&str>| -> [u8; 32] {
-        let by_rows: BTreeSet<&str> = reads.iter().copied().filter(|r| phased.contains_key(*r)).collect();
+        let by_rows: BTreeSet<&str> = reads.iter().copied().filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r)).collect();
         if by_rows.is_empty() { digest } else { memo::with_rows(digest, by_rows.iter().map(|r| (*r, &phased[*r]))) }
     };
     let memo_local = memo::program_digest(&local_v);
@@ -3103,28 +3105,6 @@ fn run_observed_within(
             })
             .collect()
     };
-    // The project's settings (decision 0665): a file's entry is kept under the settings rows its relations can read,
-    // its own (its package's, its tsconfig's) or every file's (`memo::settings_scopes`), so an edit of a package's
-    // `package.json` misses the files under it alone, and a source file's edit none. A file's ids are made once per
-    // digest of its own settings.
-    let settings_scopes = memo::settings_scopes(&local_placed, &memo_ids.keys().cloned().collect());
-    let settings = {
-        let bound: Vec<(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)> =
-            repository.iter().filter(|(name, ..)| crate::code_rule_dsl::typing::file_local::setting_input(name)).map(|(name, source, _)| (name.as_str(), source.as_ref())).collect();
-        memo::SettingsDigests::of(&bound)
-    };
-    let all_ids = Arc::new(memo_ids.clone());
-    let by_settings: parking_lot::Mutex<HashMap<[u8; 32], Arc<BTreeMap<String, [u8; 32]>>>> = Default::default();
-    // A file's ids: `memo_ids`, each relation reading the settings under those it reads of them.
-    let ids_of = |path: &str| -> Arc<BTreeMap<String, [u8; 32]>> {
-        if settings_scopes.is_empty() {
-            return Arc::clone(&all_ids);
-        }
-        // A path the store cannot name holds no settings rows: its own are none.
-        let atom = store.intern_atoms(&[path]).ok().and_then(|a| a.first().map(|&a| i64::from(a))).unwrap_or(i64::MIN);
-        let own = settings.digest(memo::SettingsScope::OwnFile, atom);
-        Arc::clone(by_settings.lock().entry(own).or_insert_with(|| Arc::new(settings.identities(&memo_ids, &settings_scopes, atom))))
-    };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the phases' exports".into()));
     // The phases' exports the program reads, as relations of atoms (`add_phased`).
     let repository = {
@@ -3157,6 +3137,28 @@ fn run_observed_within(
             repository.push((rel.clone(), source, measured));
         }
         repository
+    };
+    // The project's settings (decision 0665): a file's entry is kept under the settings rows its relations can read,
+    // its own (its package's, its tsconfig's) or every file's (`memo::settings_scopes`), so an edit of a package's
+    // `package.json` misses the files under it alone, and a source file's edit none. A file's ids are made once per
+    // digest of its own settings. The phases' exports read as settings (`tsx_names`'s) are bound by now, below.
+    let settings_scopes = memo::settings_scopes(&local_placed, &memo_ids.keys().cloned().collect());
+    let settings = {
+        let bound: Vec<(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)> =
+            repository.iter().filter(|(name, ..)| crate::code_rule_dsl::typing::file_local::setting_input(name)).map(|(name, source, _)| (name.as_str(), source.as_ref())).collect();
+        memo::SettingsDigests::of(&bound)
+    };
+    let all_ids = Arc::new(memo_ids.clone());
+    let by_settings: parking_lot::Mutex<HashMap<[u8; 32], Arc<BTreeMap<String, [u8; 32]>>>> = Default::default();
+    // A file's ids: `memo_ids`, each relation reading the settings under those it reads of them.
+    let ids_of = |path: &str| -> Arc<BTreeMap<String, [u8; 32]>> {
+        if settings_scopes.is_empty() {
+            return Arc::clone(&all_ids);
+        }
+        // A path the store cannot name holds no settings rows: its own are none.
+        let atom = store.intern_atoms(&[path]).ok().and_then(|a| a.first().map(|&a| i64::from(a))).unwrap_or(i64::MIN);
+        let own = settings.digest(memo::SettingsScope::OwnFile, atom);
+        Arc::clone(by_settings.lock().entry(own).or_insert_with(|| Arc::new(settings.identities(&memo_ids, &settings_scopes, atom))))
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the base relations' columns".into()));
     for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {

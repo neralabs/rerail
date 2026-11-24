@@ -7,7 +7,7 @@
 //   ref_site(r, site)     identifier r refers to the declaration at site, in this file
 //   sym_of(n, q)          identifier or member chain n denotes the exported symbol q, across files
 //   global_ref(r, x)      r names a global (window, process, …) that nothing in the file declares
-//   exports(m, x, q)      module m exports name x, which is symbol q
+//   tsx_names__exports(m, x, q)  module m exports name x, which is symbol q (the phase tsx_names')
 //   jsx_tag_ref(r)        r is a component tag `<Row/>`, a value reference here (typescript-eslint's view; espree
 //                         makes none, so a rule following plain ESLint excludes these)
 //   spec_name(n, x)       an import or export list's name n reads x: `a`, or the value of a string `"a-b"`
@@ -440,11 +440,6 @@ unresolved_ref(r) :- field(p, "name", r), kind(p, "export_specifier"), within(p,
 .decl import_binding(site: node, local: symbol, src: symbol, imported: symbol)
 import_binding(sp, l, m, x) :- kind(sp, "import_specifier"), field(sp, "name", n), spec_name(n, x),
     local_of(sp, l), source_of(sp, m).
-// spec_name(n, x): a name in an import or export list, an identifier or (ES2022) a string, `{ "a-b" as c }`,
-// read as its value.
-.decl spec_name(n: node, x: symbol)
-spec_name(n, x) :- (field(sp, "name", n) ; field(sp, "alias", n)), (kind(sp, "import_specifier") ;
-    kind(sp, "export_specifier")), (kind(n, "string"), str(n, x) ; !kind(n, "string"), text(n, x)).
 // Default import: the clause's first child is the identifier (in `import D, { a } from "m"` that is D).
 import_binding(c, l, m, "default") :- kind(c, "import_clause"), child(c, id, 0), kind(id, "identifier"),
     text(id, l), source_of(c, m).
@@ -457,114 +452,40 @@ local_of(sp, l) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, l)
 .decl source_of(n: node, m: symbol)
 source_of(n, m) :- nearest(n, i, "import_statement"), field(i, "source", s), str(s, m).
 
-// target(d, spec, t): specifier spec in document d names t: a workspace document's module, or a package name.
-// Resolution, in the order TypeScript tries it:
-//   "./a" or "../a"   relative to the importing file's directory, then extensions and index files (resolve_base)
-//   "@/lib/x"         a tsconfig `paths` pattern ("@/*": ["src/*"]) rewrites it to a path under the tsconfig dir
-//   "react", "@a/b"   anything else is a package; the target is the package specifier itself, not its files
-// So target(d, "./util", "src/util") and target(d, "react", "react").
+// target(d, spec, t): specifier spec in document d names t, a workspace document's module or a package name;
+// exports(m, x, q): module m exports name x, which is symbol q. Both are resolved across the workspace's files
+// (relative paths against every file, tsconfig `paths`, chains of re-exports) by the phase `tsx_names`
+// (native/src/code_rule_dsl/typing/programs/tsx_names.rerail), which runs first over the same files and hands on
+// symbols alone: here they are read as settings are, so a rule reading them stays per-file (decision 0665).
+.decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)
+.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tsx_names__module(m: symbol)
 .decl target(d: number, spec: symbol, t: symbol)
-// Relative: `import "../c"` from src/a/b.ts joins to src/c, then tries src/c.ts, src/c.tsx, src/c/index.ts, ….
-target(d, s, t) :- docof(i, d), import_spec(i, s), prefix(".", s), doc(d, p, _),
-    base = @join(@dir(p), s), resolve_base(base, t).
-// tsconfig paths: find the tsconfig governing the file, substitute the `*` of a matching pattern into its target.
-target(d, s, t) :- docof(i, d), import_spec(i, s), doc(d, p, _), tsconfig_for(p, dir),
-    tsconfig_path(dir, pat, to), sub = @glob_sub(pat, to, s), sub != "", resolve_base(@join(dir, sub), t).
-// Bare package: neither relative nor matched by a paths pattern. The package is opaque (no node_modules reading),
-// so symbols from it are just "react#useState" and rules match on those names.
-target(d, s, @package_of(s)) :- docof(i, d), import_spec(i, s), !prefix(".", s), !path_mapped(d, s).
-// path_mapped(d, s): some tsconfig paths pattern for d's tsconfig matches s, so s is not a package name.
-// Needed as its own relation so the bare-package rule can negate it.
-.decl path_mapped(d: number, s: symbol)
-path_mapped(d, s) :- docof(i, d), import_spec(i, s), doc(d, p, _), tsconfig_for(p, dir),
-    tsconfig_path(dir, pat, to), @glob_sub(pat, to, s) != "".
-// resolve_base(base, module): the first existing file among base's candidate names, as a module name.
-// TypeScript lets imports omit the extension and lets a directory stand for its index file.
-.decl resolve_base(base: symbol, t: symbol)  // base, base.ts, base.tsx, …, base/index.*
-// Read backwards from the files that exist: b is a file's path with one candidate ending removed.
-resolve_base(b, m) :- doc(_, f, m), ts_ext(ext), k = strlen(f) - strlen(ext), k >= 0,
-    b = substr(f, 0, k), f = cat(b, ext).
-.decl ts_ext(e: symbol)
-ts_ext(""). ts_ext(".ts"). ts_ext(".tsx"). ts_ext(".js"). ts_ext(".jsx"). ts_ext(".mts").
-ts_ext("/index.ts"). ts_ext("/index.tsx"). ts_ext("/index.js").
-// import_spec(i, s): statement i names module s. Covers `import … from "s"` and `export … from "s"`, since a
-// re-export has to resolve its source the same way an import does.
-.decl import_spec(i: node, s: symbol)
-import_spec(i, s) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", n), str(n, s).
-
-// exports(m, x, q): module m exports x, which is symbol q.
-// Three ways a name gets exported, one rule each:
-//   export function f() {} / export const x = 1 / export default …  -> q is m's own symbol "m#f"
-//   export { y as x } from "./other"                               -> q is whatever ./other's y is
-//   export * from "./other"                                        -> every name ./other exports, except default
-// The last two recurse through exports, so a chain of barrel files (index.ts re-exporting index.ts …) resolves to
-// the module that really defines the name.
-.decl exports(m: symbol, x: symbol, q: symbol)
-exports(m, x, @qname(m, x)) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), exported_decl(e, x).
-exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), export_from(e, s, y, x),
-    target(d, s, t), symbol(t, y, q).
-// `export *` never re-exports `default` (ECMAScript rule), hence x != "default".
-exports(m, x, q) :- kind(e, "export_statement"), docof(e, d), doc(d, _, m), star_export(e, s),
-    target(d, s, t), exports(t, x, q), x != "default".
-// exported_decl(e, x): the export statement e exports a local name x (no `from`).
-.decl exported_decl(e: node, x: symbol)  // export function f / export const x / export default
-// `export function f`, `export class C`, `export const x`: the name of the attached declaration.
-exported_decl(e, x) :- field(e, "declaration", d), def_of(d, x).
-// `export default <expression>`: exported under the name "default".
-exported_decl(e, "default") :- child(e, v, _), field(e, "value", v).
-// `export { a, b as c }` with no source: exports a and c.
-exported_decl(e, x) :- !field(e, "source", _), child(e, c, _), kind(c, "export_clause"), child(c, s, _),
-    kind(s, "export_specifier"), export_name(s, x).
-// def_of(d, x): the name declared by declaration d, for the declaration kinds that can follow `export`.
-.decl def_of(d: node, x: symbol)
-def_of(d, x) :- kind(d, k),
-    (k = "function_declaration" ; k = "class_declaration" ; k = "interface_declaration" ; k = "type_alias_declaration"),
-    field(d, "name", n), text(n, x).
-// `export const a = 1, b = 2` declares a and b: one row per declarator.
-def_of(d, x) :- kind(d, "lexical_declaration"), child(d, v, _), kind(v, "variable_declarator"), field(v, "name", n), text(n, x).
-// export_from(e, s, y, x): e re-exports s's name y under the name x.
-.decl export_from(e: node, s: symbol, y: symbol, x: symbol)  // export { y as x } from "s"
-export_from(e, s, y, x) :- field(e, "source", src), str(src, s), child(e, c, _), kind(c, "export_clause"),
-    child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), spec_name(n, y), export_name(sp, x).
-// export_name: the name the outside world sees: the alias if present (`y as x` -> x), else the name itself.
-.decl export_name(sp: node, x: symbol)
-export_name(sp, x) :- field(sp, "alias", a), spec_name(a, x).
-export_name(sp, x) :- !field(sp, "alias", _), field(sp, "name", n), spec_name(n, x).
-// star_export: an export statement with a source and no `{ … }` clause is `export * from "s"` (or `export * as
-// ns from "s"`). An import statement has a source too and is never one.
-.decl star_export(e: node, s: symbol)  // export * from "s"
-star_export(e, s) :- kind(e, "export_statement"), field(e, "source", src), str(src, s),
-    count : { child(e, c, _), kind(c, "export_clause") } = 0.
-
-// symbol(t, x, q): name x of resolved target t is symbol q.
-// Workspace module: follow its exports (possibly through re-exports to another file).
-// Not a workspace module (a package): stop and name it directly, "react-router-dom#Link".
-.decl symbol(t: symbol, x: symbol, q: symbol)  // what name x of target t is: followed in the workspace, opaque outside it
-symbol(t, x, q) :- exports(t, x, q).
-symbol(t, x, @qname(t, x)) :- symbol_query(t, x), !doc(_, _, t).
-// symbol_query(t, x): the (target, name) pairs asked about: re-exports, imports and namespace members. The rule
-// above needs them, since there t and x would otherwise appear only under `!`.
-.decl symbol_query(t: symbol, x: symbol)
-symbol_query(t, y) :- kind(e, "export_statement"), docof(e, d), export_from(e, s, y, _), target(d, s, t).
-symbol_query(t, x) :- import_binding(sp, _, s, x), x != "*", docof(sp, d), target(d, s, t).
-symbol_query(t, x) :- ns_target(o, t), field(n, "object", o), field(n, "property", p), text(p, x).
+target(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
 
 // sym_of(n, q): an identifier or member chain denotes q.
 // The main relation rules use: `sym_of(tag, "react-router-dom#BrowserRouter")` matches the tag however the
 // router was imported, renamed or re-exported. Four cases:
 .decl sym_of(n: node, q: symbol)
-// 1. An imported name: `import { Link as L } from "./nav"; L` -> follow ./nav's export Link to its symbol.
-sym_of(n, q) :- kind(n, "identifier"), ref_site(n, sp), import_binding(sp, _, s, x), x != "*",
-    docof(n, d), target(d, s, t), symbol(t, x, q).
-// 2. A member of a namespace import: `import * as RR from "react-router"; RR.Routes` -> "react-router#Routes".
-sym_of(n, q) :- kind(n, "member_expression"), field(n, "object", o), ns_target(o, t),
-    field(n, "property", p), text(p, x), symbol(t, x, q).
+// Cases 1, 2 and 4 name x of a resolved target t (`resolved_name`): a workspace module's export, followed through
+// re-exports by the phase (`tsx_names__exports`), else (a package, no workspace module) opaque, "react-router-dom#Link". Read
+// by the node's own target, each stays in its file (decision 0665).
+sym_of(n, q) :- resolved_name(n, t, x), tsx_names__exports(t, x, q).
+sym_of(n, @qname(t, x)) :- resolved_name(n, t, x), !tsx_names__module(t).
 // 3. A name declared at the top level of this file: `function App() {}; App` -> "src/app#App". This is the same
 // symbol other files get when they import App, so cross-file joins meet here.
-sym_of(n, @qname(m, x)) :- kind(n, "identifier"), ref_site(n, site), top_level(site, x), docof(n, d), doc(d, _, m).
+sym_of(n, @qname(m, x)) :- kind(n, "identifier"), ref_site(n, site), top_level(site, x), docof(n, d), ts_module(d, m).
+// resolved_name(n, t, x): n names x of target t.
+.decl resolved_name(n: node, t: symbol, x: symbol)
+// 1. An imported name: `import { Link as L } from "./nav"; L` -> ./nav's export Link.
+resolved_name(n, t, x) :- kind(n, "identifier"), ref_site(n, sp), import_binding(sp, _, s, x), x != "*",
+    docof(n, d), target(d, s, t).
+// 2. A member of a namespace import: `import * as RR from "react-router"; RR.Routes` -> "react-router#Routes".
+resolved_name(n, t, x) :- kind(n, "member_expression"), field(n, "object", o), ns_target(o, t),
+    field(n, "property", p), text(p, x).
 // 4. As 2, where the grammar calls the chain nested_identifier: type position (`RR.Props`), some JSX tag forms.
-sym_of(n, q) :- kind(n, "nested_identifier"), field(n, "object", o), ns_target(o, t),
-    field(n, "property", p), text(p, x), symbol(t, x, q).
+resolved_name(n, t, x) :- kind(n, "nested_identifier"), field(n, "object", o), ns_target(o, t),
+    field(n, "property", p), text(p, x).
 .decl ns_target(o: node, t: symbol)  // `import * as RR from "m"`: RR names module m
 ns_target(o, t) :- ref_site(o, sp), import_binding(sp, _, s, "*"), docof(o, d), target(d, s, t).
 // top_level(site, x): site declares x in the file's top scope, other than by import (imports are case 1).
@@ -608,6 +529,7 @@ imported_sym(n, q) :- sym_of(n, q), ref_site(n, sp), import_binding(sp, _, _, _)
 // es_global(x): names that exist without a declaration: "window", "document", "Promise", "process", ….
 // No rules here; the facts are generated and shipped with the library.
 .decl es_global(x: symbol)  // shipped as facts, generated from ESLint's and TypeScript's lib tables
+#include "tsx/exports.rerail"
 #include "tsx/es-globals.rerail"
 
 // write_anchor(a, d): where ESLint reports the variable that site d defines (main's `resolves.write: "last"`,

@@ -22,7 +22,8 @@ Two kinds of rule failed that proof though they are about one file:
   These inputs have no location, so every reader went cross-file, and with it 10 of React's chains of position reads.
 
 Both are about one file. The change teaches the split why, and keeps the memo sound now that per-file results read
-the settings.
+the settings. A third kind took a rule rewrite: React's import resolution read every file's paths and exports, and is
+now a phase whose names a file's rules read as settings, keyed by the rows of that file's own imports (§6).
 
 ## 1. A file's path places its document
 
@@ -140,6 +141,42 @@ key is its version's identity, which holds the stated rows, so other options are
 A program whose every file read was decided away (the constants' own run, whose `pyvenv.cfg` read cannot hold with
 no `env`) loads nothing, where it used to refuse for want of a request.
 
+## 6. Module resolution is a phase, read as a setting
+
+TypeScript's and JavaScript's import resolution (`lib/tsx/names.rerail`) read every document's path (`resolve_base`)
+and every file's re-exports (`exports`, `symbol`): React's `sym_of(f, "react#memo")` was cross-file, and so was every
+rule above it (`p36`'s four chains). The resolution is now the phase `tsx_names`
+(`native/src/code_rule_dsl/typing/programs/tsx_names.rerail`, decision 0083): run first over the same files, to its
+fixed point in its own fact space, it hands on symbols alone:
+
+- `target_at(p, spec, t)`: specifier `spec` in the file at path `p` names `t` (a workspace module, or a package);
+- `exports(m, x, q)`: module `m` exports `x`, which is `q`, followed through `export … from` and `export *`;
+- `module(m)`: `m` is a workspace module (a target that is none is a package, named opaquely).
+
+What each file's statements say (`import_spec`, `export_from`, `star_export`, `exported_decl`, `spec_name`) is
+`lib/tsx/exports.rerail`, included by both. `names.rerail` reads the exports as `tsx_names__*`: `target(d, s, t)` is
+its own path's `target_at` rows, and `sym_of`'s imported cases read the name's own target's rows
+(`resolved_name(n, t, x)`, then `tsx_names__exports(t, x, q)` or `!tsx_names__module(t)`). A phase naming no
+`.language` runs in its reader's (TypeScript's dialects, Vue's).
+
+**Read as a setting, keyed per file.** 0083 §2.3 kept a phase's exports placed nowhere: a per-file rule joining one
+made every file's memo entry a function of all its rows, and each edit that changed them missed every file. These
+three are read as the settings are (§3, `file_local::setting_input`): placeless to the split, and a file's memo entry
+is keyed by the rows it can read of them, its own path's `target_at` rows and the `exports` and `module` rows of the
+targets those name (`SETTINGS_BY_PATH` carries the target column, `SETTINGS_BY_FOLDER` the keyed exports). A derived
+relation carries such a target (`target(d, s, t)` from `target_at` at its own path, then `resolved_name`): the
+analysis (`memo::settings_scopes`) finds those columns to their fixed point first, then each read's scope, as a read
+decided before its key's anchor was known was marked every file's and stayed so. The phases' whole-row digests (the
+memo program's and each relation's identity) leave these three out. Adding `g` to `b.ts`'s exports misses `b.ts` and
+its importer alone (`a_files_entry_is_kept_under_its_own_imports_resolution`); 0083 §2.3's every-file miss is a read
+of every file's rows, which this is not, and a rule that does read them so (a constant key) is keyed by all of them.
+
+**Each file its own module.** Core names no module for a TypeScript or JavaScript document (`doc`'s module is ""), so
+`resolve_base` mapped every workspace file to "", and `exports` read every file's exports as one module's (`#h` for
+`d.ts`'s `h`). `ts_module(d, m)` is core's module where it names one, else the path without its extension (`d.ts` ->
+"d", `d#h`), as the library's own comment said (`target(d, "./util", "src/util")`); `jsx.rerail`'s `component` and
+`sym_of`'s top-level case read it too.
+
 ## Found on the way
 
 - **A line's text was twinned as a node's.** `text_demand::text_kind_demand` skipped a span's `text(sp, t)` for the
@@ -172,6 +209,8 @@ no `env`) loads nothing, where it used to refuse for want of a request.
 | A source edit leaves the settings as they were and every other file hits; a `package.json` edit misses the files under that package alone; after each edit the rows are a fresh run's | `corpus::tests::a_files_entry_is_kept_under_its_own_packages_settings` |
 | A constant's join read by a file's rule is not restricted by its requests | `product_demand::deferred::tests::a_constants_join_is_not_restricted_by_its_readers_requests` |
 | An option the run does not set is decided before the run, and `env`'s default folds: the reader is per-file; with the option set it reads across files; rows are each run's | `corpus::tests::an_option_the_run_does_not_set_is_decided_before_the_run` |
+| A rule resolving a file's imports through a phase's names stays per-file; the same resolution made in the run is cross-file | `file_local::tests::a_rule_resolving_through_a_phases_names_stays_per_file` |
+| An export edit misses the edited file and its importers alone; the rows are a fresh run's | `corpus::tests::a_files_entry_is_kept_under_its_own_imports_resolution` |
 | The data layer's refusals are caught as one policy's run makes them | `pack_split_tests::the_data_layer_is_split_with_its_crossings_declared_policy_by_policy` |
 
 **Why the pack test missed the refusal.** `pack_split_tests` runs a directory's policies as one pack
@@ -200,6 +239,13 @@ farm host, so it is in the slow tier.
   (`rr_agg52`) are per-file. No rule is newly flagged. `tests_corpus` is 236 of 236 and `rerail-logic` 301 of 301
   with the segments read and the kept settings (below).
 
+- With module resolution a phase (§6), the report flags 56: React's four `p36` chains are gone, and `pack-react`
+  reads no position. No rule is newly flagged. React's policies over its `pack.json`'s 102 examples (each rule's
+  caught and passing file, scope paths dropped) give the same 54 findings with the library before and after; the
+  55th, `react-no-unknown-property`'s, is a run the older library's copy could not include its property table in.
+  `tests_corpus` 237, the 32 pack split tests, the split's 38, `rerail-logic` 301, `tests_logic` 226, `tests_lang`
+  166, `tests_rr` 272 and `rerail-boot` 105 pass; the executors' coverage ledger is blessed for the phase's functors.
+
 - **The data layer's reference graph declares its two crossings.** `rf_own_fn` (a scope's function, defined in any
   file) and `rf_imported` (a module's from-imports, by its name) are cross-file by meaning; since 0652 the split
   refused them undeclared, and `reference_stage_tests`' three tests were red. Declared in
@@ -215,7 +261,7 @@ farm host, so it is in the slow tier.
   read (`!match("_*[a-z].*", x)`, `lib/tsx/react-class.rerail`). The split could not cover it (0652's `covers`): a
   reader's name is not always a node of the view's kinds (a member's `property` may be a private name). Checked
   against the original over React's seven label fixtures: the same findings (72 rows). React's four chains through
-  `p36` now root at `sym_of` (`wrapper_call`'s `react#memo`, `create_element`), the import resolution.
+  `p36` now root at `sym_of` (`wrapper_call`'s `react#memo`, `create_element`), the import resolution; §6 makes them per-file.
 
 - **The root's settings are read one way.** The run decided whether to read `rerail.env` (not over a Git revision
   whose outputs read metadata alone and no `env`: the commit's tree may be absent), but its summary and its reuse key
@@ -256,14 +302,5 @@ farm host, so it is in the slow tier.
 
 ## Left open
 
-- **React's four `p36` chains root at `sym_of`.** `sym_of(f, "react#memo")` resolves an identifier through `symbol`
-  (`symbol(t, x, q)`: name x of target t is q, followed through every file's re-exports, opaque for a package that no
-  document is), and `target` reads every document's path (`resolve_base`). Both are cross-file and name only
-  symbols. The engine runs such work first already (decision 0083): a `.phase` program, run over the corpus to its
-  fixed point in its own fact space, whose exports (symbols, never nodes) a later program reads as
-  `<phase>__<export>`, bound like a setting (`run_constant`), so a per-file rule reading them stays per-file. The
-  route is a rule change: the tsx library's resolution (`target`, `exports`, `symbol` and what they read) as a phase
-  program exporting `symbol` and `target` (keyed by the importing file's path, not its document number), and
-  `sym_of` reading the exports. This milestone takes no rule rewrite, so it is left for the next.
 - **With `pydocstyle.ignore-decorators` set**, the docstring rules read `sym_of`'s cross-file resolution, and are
   cross-file: that is the cross-file part's own work (the position report's mechanism A), not a setting.
