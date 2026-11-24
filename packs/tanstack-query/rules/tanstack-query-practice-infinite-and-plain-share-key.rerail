@@ -1,0 +1,287 @@
+.policy "tanstack-query-practice-infinite-and-plain-share-key" revision 1
+.description "Give an infinite query its own query key: a plain query (useQuery, queryOptions, prefetchQuery, ...) with the same key shares its cache entry, so one of them reads the other's data shape."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. TanStack Query has one cache, keyed by the query key alone. An infinite query
+// stores `{ pages, pageParams }` under its key; a plain query stores the fetched value. When both use one key, the
+// one that runs second reads the other's shape: `data.pages` is undefined in the infinite one (getNextPageParam
+// throws "Cannot read properties of undefined"), or the plain one renders the wrapper object. TkDodo: "you cannot use
+// the same key for useQuery and useInfiniteQuery". @tanstack/eslint-plugin-query reads one call; this rule joins the
+// query sites of a package across its files.
+// A site is the options object of useInfiniteQuery, useSuspenseInfiniteQuery, infiniteQueryOptions,
+// prefetchInfiniteQuery, fetchInfiniteQuery, ensureInfiniteQueryData or any object with a queryKey and a page param
+// option (infinite); of useQuery, useSuspenseQuery, queryOptions, prefetchQuery, fetchQuery, ensureQueryData or a
+// useQueries entry (plain); or the v4 positional key, `useInfiniteQuery(['k', id], fn)`. The hooks are names imported
+// from a TanStack Query package; the client methods are on any receiver in a file that imports one, or on a receiver
+// named like a client. A key is compared as written: string and number elements by value, every other element by
+// its tokens, with an imported or top-level name read as its file and export (so `projectKeys.list(orgId)` is one key
+// in every file that imports projectKeys, by `@/` or a relative path). A key held in a const (here or imported) is
+// read through it.
+//   useQuery({ queryKey: ['todos', filters] })  +  useInfiniteQuery({ queryKey: ['todos', filters] })   reported
+//   queryOptions({ queryKey: projectKeys.list(orgId) })  +  useInfiniteQuery({ queryKey: projectKeys.list(orgId) })
+//                                                                                     reported (across files)
+//   prefetchQuery({ queryKey: ['comments', id] }) in a page  +  useInfiniteQuery({ queryKey }) with that key   reported
+//   useInfiniteQuery(['members', id], fn) + useQuery(['members', id], fn)            reported (v4 positional)
+//   qc.setQueryData(['notes', id], (old) => [n, ...old]) on an infinite query's key  reported: no `pages` in the write
+// It leaves alone:
+//   ['todos', 'infinite', f] vs ['todos', f], or projectKeys.feed(orgId) vs projectKeys.list(orgId): different keys;
+//   ['users', orgId] vs ['users', userId]: elements written differently are taken as different values;
+//   two apps of a monorepo (apps/a, apps/b): separate QueryClients; a library package (packages/x, libs/x) meets
+//   only the packages that import it by name;
+//   tRPC's `trpc.x.useInfiniteQuery` / `.useQuery` (tRPC keys them apart) and other libraries' useQuery (Apollo);
+//   setQueryData whose call mentions pages or InfiniteData, or whose value is a named function (shape unread);
+//   test and story files (scope).
+// Gaps: an options object held in a variable or spread into the call; key factories are compared by call, not by
+// the array they return (a factory call on one side and its literal array on the other are missed); re-exports
+// through a barrel file; tsconfig `paths` other than `@/`, `~/`, `#/` to the package's `src/` or root; package
+// boundaries by layout (apps/*, packages/*, libs/*, services/*, ...), not by package.json; a key held in
+// `useMemo(() => key, deps)` or chosen by `cond ? a : b` is read as written, not as its value; a .tsx file and a .ts
+// file are not joined until the engine puts them in one partition.
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-common.rerail"
+
+.violation InfiniteAndPlainShareKey(at: node, key: symbol, api: symbol, other: symbol, oline: number, oapi: symbol)
+    "The key {key} of this infinite query ({api}) is also the key of a plain query ({oapi} at {other}:{oline}). TanStack Query keeps one cache entry per key, and an infinite query stores a pages/pageParams object there: whichever runs second reads the other's shape (`data.pages` undefined, getNextPageParam throwing, or a list rendering the wrapper). Give the infinite query its own key, e.g. add an 'infinite' element or use a separate key-factory entry, and point any setQueryData/getQueryData meant for the paged data at it; invalidating the shared prefix still reaches both. Leave it if the two run under different QueryClients (separate apps)."
+InfiniteAndPlainShareKey(kn, key, x, p2, l2, x2) :- tqis_keyed(_, "infinite", x, kn, t, k1), tqis_keyed(s2, "plain", x2, _, t, k2),
+    tqis_share(k1, k2), text(kn, key), docof(s2, d2), doc(d2, p2, _), line(s2, l2).
+
+.violation InfiniteKeyWrittenFlat(at: node, key: symbol, other: symbol, oline: number)
+    "setQueryData writes {key}, the key of the infinite query at {other}:{oline}, with a value that has no `pages`: the infinite query then reads a flat value where it expects a pages/pageParams object and breaks (`data.pages` undefined). Update the cached pages instead (return `old` spread with `pages: old.pages.map(...)`), or invalidate the key. If this write is meant for a plain query that shares the key, give the infinite query its own key."
+InfiniteKeyWrittenFlat(kn, key, p2, l2) :- tqis_flat_write(c, kn), tqis_val(kn, v), tqis_tpl(v, t), tqis_pkg_of(c, k1),
+    tqis_keyed(s2, "infinite", _, _, t, k2), tqis_share(k1, k2), !tqis_plain_tpl(t, k1), text(kn, key),
+    docof(s2, d2), doc(d2, p2, _), line(s2, l2).
+
+// ---- TanStack Query names ----------------------------------------------------------------------------------------
+.decl tqis_lib(s: symbol)
+tqis_lib("@tanstack/react-query"). tqis_lib("@tanstack/query-core"). tqis_lib("@tanstack/vue-query").
+tqis_lib("@tanstack/solid-query"). tqis_lib("@tanstack/svelte-query"). tqis_lib("@tanstack/angular-query-experimental").
+tqis_lib("react-query").
+// tqis_fn(x, k): an imported function whose first argument is a query's options (or v4 key): k plain, infinite, or
+// queries (useQueries, whose `queries` entries are plain).
+.decl tqis_fn(x: symbol, k: symbol)
+tqis_fn("useQuery", "plain"). tqis_fn("useSuspenseQuery", "plain"). tqis_fn("queryOptions", "plain").
+tqis_fn("createQuery", "plain"). tqis_fn("injectQuery", "plain").
+tqis_fn("useInfiniteQuery", "infinite"). tqis_fn("useSuspenseInfiniteQuery", "infinite").
+tqis_fn("infiniteQueryOptions", "infinite"). tqis_fn("createInfiniteQuery", "infinite").
+tqis_fn("injectInfiniteQuery", "infinite").
+tqis_fn("useQueries", "queries"). tqis_fn("useSuspenseQueries", "queries").
+.decl tqis_method(x: symbol, k: symbol)
+tqis_method("prefetchQuery", "plain"). tqis_method("fetchQuery", "plain"). tqis_method("ensureQueryData", "plain").
+tqis_method("prefetchInfiniteQuery", "infinite"). tqis_method("fetchInfiniteQuery", "infinite").
+tqis_method("ensureInfiniteQueryData", "infinite").
+.decl tqis_page_opt(x: symbol)
+tqis_page_opt("initialPageParam"). tqis_page_opt("getNextPageParam"). tqis_page_opt("getPreviousPageParam").
+
+// tqis_doc(d): document d imports from a TanStack Query package.
+.decl tqis_doc(d: number)
+tqis_doc(d) :- import_binding(sp, _, s, _), tqis_lib(s), docof(sp, d).
+// tqis_callee(f, x): f names TanStack's x: an imported name (renamed too) or a member of a namespace import.
+.decl tqis_callee(f: node, x: symbol)
+tqis_callee(f, x) :- kind(f, "identifier"), ref_site(f, sp), import_binding(sp, _, s, x), tqis_lib(s).
+tqis_callee(f, x) :- static_prop(f, o, x), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, s, "*"), tqis_lib(s).
+// tqis_call(c, k, x): call c of TanStack's x, of kind k.
+.decl tqis_call(c: node, k: symbol, x: symbol)
+tqis_call(c, k, x) :- called(c, f), tqis_callee(f, x), tqis_fn(x, k).
+tqis_call(c, k, x) :- called(c, f), static_prop(f, o, x), tqis_method(x, k), tqis_client(c, o).
+// tqis_client(c, o): o is taken for a QueryClient: c's file imports TanStack Query, or o is named like a client
+// (`queryClient`, `getQueryClient()`, `this.client`).
+.decl tqis_client(c: node, o: node)
+tqis_client(c, o) :- called(c, f), static_prop(f, o, m), tqis_client_method(m), docof(c, d), tqis_doc(d).
+tqis_client(c, o) :- called(c, f), static_prop(f, o, m), tqis_client_method(m), text(o, t), icontains("client", t).
+.decl tqis_client_method(m: symbol)
+tqis_client_method(m) :- tqis_method(m, _).
+tqis_client_method("setQueryData").
+
+// ---- query sites -------------------------------------------------------------------------------------------------
+// tqis_prop(o, x, v): object literal o has `x: v`, or the shorthand `{ x }` (v the shorthand itself).
+.decl tqis_prop(o: node, x: symbol, v: node)
+tqis_prop(o, x, v) :- kind(p, "pair"), field(p, "key", n), tqis_key_name(n, x), field(p, "value", v), child(o, p, _),
+    kind(o, "object").
+tqis_prop(o, x, v) :- kind(v, "shorthand_property_identifier"), child(o, v, _), kind(o, "object"), text(v, x).
+// tqis_key_name(n, x): a property key `x` or `'x'`. (eslint-a-common's key_static here makes a later negation on
+// the object, `!tqis_direct_arg(o)`, hold where it should not: an engine bug, see the notes.)
+.decl tqis_key_name(n: node, x: symbol)
+tqis_key_name(n, x) :- kind(n, "property_identifier"), text(n, x).
+tqis_key_name(n, x) :- kind(n, "string"), str(n, x).
+// tqis_site(s, k, x, kn): site s (a call, or a useQueries entry) of kind k through x has the key expression kn.
+.decl tqis_site(s: node, k: symbol, x: symbol, kn: node)
+tqis_site(c, k, x, kn) :- tqis_call(c, k, x), k != "queries", call_arg(c, a, 0), tqis_strip(a, o), kind(o, "object"),
+    tqis_prop(o, "queryKey", kn).
+tqis_site(c, k, x, kn) :- tqis_call(c, k, x), k != "queries", call_arg(c, kn, 0), tqis_strip(kn, v), kind(v, "array").
+tqis_site(e, "plain", x, kn) :- tqis_call(c, "queries", x), call_arg(c, a, 0), tqis_strip(a, o), kind(o, "object"),
+    tqis_prop(o, "queries", qv), kind(e, "object"), within(e, qv), tqis_prop(e, "queryKey", kn).
+// An object with a queryKey and a page param option is an infinite query's options, whatever wraps it (a
+// project's own useInfiniteQuery wrapper).
+tqis_site(o, "infinite", "infinite query options", kn) :- tqis_prop(o, "queryKey", kn), tqis_prop(o, y, _),
+    tqis_page_opt(y), !tqis_direct_arg(o).
+.decl tqis_direct_arg(o: node)
+tqis_direct_arg(o) :- kind(o, "object"), child(al, o, 0), kind(al, "arguments"), field(c, "arguments", al), tqis_call(c, _, _).
+
+// tqis_flat_write(c, kn): `qc.setQueryData(kn, v)` whose v is written inline (a function or a literal) and whose
+// call mentions neither pages nor InfiniteData.
+.decl tqis_flat_write(c: node, kn: node)
+tqis_flat_write(c, kn) :- called(c, f), static_prop(f, o, "setQueryData"), tqis_client(c, o), call_arg(c, kn, 0),
+    call_arg(c, u, 1), deparen(u, w), kind(w, k), (k = "arrow_function" ; k = "function_expression" ; k = "object" ;
+    k = "array"), text(c, s), !icontains("page", s), !contains("Infinite", s).
+
+// ---- key values --------------------------------------------------------------------------------------------------
+// tqis_ask(e): the expressions whose value is read: options arguments, keys, and the consts they name.
+.decl tqis_ask(e: node)
+tqis_ask(a) :- tqis_call(c, _, _), call_arg(c, a, 0).
+tqis_ask(kn) :- tqis_site(_, _, _, kn).
+tqis_ask(kn) :- tqis_flat_write(_, kn).
+tqis_ask(w) :- tqis_hop(_, w).
+// tqis_unwrap(e, x): e without parentheses, `as const`, `satisfies T` and `!`.
+.decl tqis_unwrap(e: node, x: node)
+tqis_unwrap(e, e) :- tqis_ask(e).
+tqis_unwrap(e, x) :- tqis_unwrap(e, w), tqis_wrapper(w), child(w, x, 0), !kind(x, "comment").
+.decl tqis_wrapper(w: node)
+tqis_wrapper(w) :- kind(w, k), (k = "parenthesized_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "non_null_expression").
+.decl tqis_strip(e: node, x: node)
+tqis_strip(e, x) :- tqis_unwrap(e, x), !tqis_wrapper(x).
+// tqis_hop(i, w): name i is a const whose initialiser is w: in this file, or exported by a file it imports.
+.decl tqis_hop(i: node, w: node)
+tqis_hop(i, w) :- tqis_strip(_, i), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), ref_site(i, s),
+    tqis_const(s, w).
+tqis_hop(i, w) :- tqis_strip(_, i), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), ref_site(i, sp),
+    import_binding(sp, _, src, x), docof(i, d), tqis_resolve(d, src, p), doc(d2, p, _), top_level(s, x), docof(s, d2),
+    tqis_const(s, w).
+.decl tqis_const(s: node, w: node)
+tqis_const(s, w) :- kind(s, "variable_declarator"), binding_value(s, w), child(l, s, _), kind(l, "lexical_declaration"),
+    op(l, "const").
+// tqis_val(e, v): e's value expression, through consts.
+.decl tqis_val(e: node, v: node)
+tqis_val(e, v) :- tqis_strip(e, v), !tqis_hop(v, _).
+tqis_val(e, v) :- tqis_strip(e, i), tqis_hop(i, w), tqis_val(w, v).
+
+// ---- key templates -----------------------------------------------------------------------------------------------
+.decl tqis_keyv(v: node)
+tqis_keyv(v) :- tqis_site(_, _, _, kn), tqis_val(kn, v).
+tqis_keyv(v) :- tqis_flat_write(_, kn), tqis_val(kn, v).
+.decl tqis_el(a: node, e: node, i: number)
+tqis_el(a, e, i) :- tqis_keyv(a), kind(a, "array"), child(a, e, i), !kind(e, "comment").
+// tqis_lit(e, t): a literal element by value: 'a' and `a` alike, numbers and keywords as written.
+.decl tqis_lit(e: node, t: symbol)
+tqis_lit(e, cat("'", v, "'")) :- tqis_el(_, e, _), (kind(e, "string") ; kind(e, "template_string")), str(e, v).
+tqis_lit(e, t) :- tqis_el(_, e, _), kind(e, k), (k = "number" ; k = "true" ; k = "false" ; k = "null" ; k = "undefined"),
+    text(e, t).
+// tqis_expr(e, t): any other expression by its tokens; one rooted in an imported or top-level name is prefixed
+// with that name's file and export, so the same factory reads the same in every file.
+.decl tqis_need(e: node)
+tqis_need(e) :- tqis_el(_, e, _), !tqis_lit(e, _).
+tqis_need(v) :- tqis_keyv(v), !kind(v, "array").
+token_text_ask(e) :- tqis_need(e).
+.decl tqis_down(e: node, n: node)
+tqis_down(e, e) :- tqis_need(e).
+tqis_down(e, m) :- tqis_down(e, n), (kind(n, "member_expression"), field(n, "object", m) ;
+    kind(n, "call_expression"), field(n, "function", m) ; kind(n, "subscript_expression"), field(n, "object", m) ;
+    (kind(n, "spread_element") ; tqis_wrapper(n)), child(n, m, 0), !kind(m, "comment")).
+.decl tqis_rsym(e: node, q: symbol)
+tqis_rsym(e, cat(p, "#", x)) :- tqis_down(e, r), kind(r, "identifier"), ref_site(r, sp), import_binding(sp, _, src, x),
+    docof(r, d), tqis_resolve(d, src, p).
+tqis_rsym(e, cat(src, "#", x)) :- tqis_down(e, r), kind(r, "identifier"), ref_site(r, sp), import_binding(sp, _, src, x),
+    !prefix(".", src), docof(r, d), !tqis_resolve(d, src, _).
+tqis_rsym(e, cat(p, "#", x)) :- tqis_down(e, r), kind(r, "identifier"), ref_site(r, s), top_level(s, x), docof(r, d),
+    doc(d, p, _).
+.decl tqis_expr(e: node, t: symbol)
+tqis_expr(e, cat(q, "|", s)) :- tqis_need(e), token_text(e, s), tqis_rsym(e, q).
+tqis_expr(e, s) :- tqis_need(e), token_text(e, s), !tqis_rsym(e, _).
+.decl tqis_tok(e: node, t: symbol)
+tqis_tok(e, t) :- tqis_lit(e, t).
+tqis_tok(e, t) :- tqis_el(_, e, _), tqis_expr(e, t).
+// tqis_tpl(v, t): key value v as a comparable string.
+.decl tqis_tpl(v: node, t: symbol)
+tqis_tpl(a, cat("[", s, "]")) :- tqis_keyv(a), kind(a, "array"), s = join t by i sep ", " : { tqis_el(a, e, i), tqis_tok(e, t) }.
+tqis_tpl(v, t) :- tqis_keyv(v), !kind(v, "array"), tqis_expr(v, t).
+// tqis_keyed(s, k, x, kn, t, pk): site s's key kn reads t, in package pk.
+.decl tqis_keyed(s: node, k: symbol, x: symbol, kn: node, t: symbol, pk: symbol)
+tqis_keyed(s, k, x, kn, t, pk) :- tqis_site(s, k, x, kn), tqis_val(kn, v), tqis_tpl(v, t), tqis_pkg_of(s, pk).
+.decl tqis_plain_tpl(t: symbol, pk: symbol)
+tqis_plain_tpl(t, pk) :- tqis_keyed(_, "plain", _, _, t, k2), tqis_share(pk, k2), tqis_pkg_of(_, pk).
+
+// ---- library candidate: packages by layout -----------------------------------------------------------------------
+// The engine's package.json facts (package_for) are not bound in .rerail runs, and a file read cannot be asked from
+// a document's path, so a package is read off the layout: apps/<x>, packages/<x>, libs/<x>, services/<x>, ... are
+// packages; everything else is the root package "".
+.decl tqis_pkg(d: number, pk: symbol)
+tqis_pkg(d, pk) :- doc(d, p, _), match("(?<pk>(?:apps|packages|libs|services|examples|sites|templates|tooling|modules|workers)/[^/]+)/.*", p).
+tqis_pkg(d, "") :- doc(d, p, _), !match("(?:apps|packages|libs|services|examples|sites|templates|tooling|modules|workers)/[^/]+/.*", p).
+.decl tqis_pkg_of(n: node, pk: symbol)
+tqis_pkg_of(n, pk) :- tqis_site(n, _, _, _), docof(n, d), tqis_pkg(d, pk).
+tqis_pkg_of(n, pk) :- tqis_flat_write(n, _), docof(n, d), tqis_pkg(d, pk).
+// tqis_share(a, b): code of packages a and b can run under one QueryClient: the same package, or a library package
+// (packages/<n>, libs/<n>) that a file of the other imports by a name ending in <n> (`@acme/<n>`).
+.decl tqis_share(a: symbol, b: symbol)
+tqis_share(a, a) :- tqis_pkg_of(_, a).
+tqis_share(a, b) :- tqis_uses(a, b).
+tqis_share(b, a) :- tqis_uses(a, b).
+.decl tqis_lib_pkg(pk: symbol, n: symbol)
+tqis_lib_pkg(pk, n) :- tqis_pkg_of(_, pk), match("(?:packages|libs)/(?<n>[^/]+)", pk).
+.decl tqis_uses(a: symbol, b: symbol)
+tqis_uses(a, b) :- tqis_lib_pkg(b, n), import_binding(sp, _, src, _), match("(?:@[^/]+/)?(?<m>[^/]+)(?:/.*)?", src), m = n,
+    docof(sp, d), tqis_pkg(d, a), a != b.
+
+// ---- library candidate: import resolution ------------------------------------------------------------------------
+// tqis_resolve(d, src, p): import specifier src in document d names the file p: relative to d, or an alias (`@/x`,
+// `~/x`, `#/x`) under d's package's src/ or root, the extensions and index files TypeScript tries. tsconfig paths
+// are not read (the engine's tsconfig facts are not bound in .rerail runs).
+.decl tqis_resolve(d: number, src: symbol, p: symbol)
+tqis_resolve(d, src, p) :- import_binding(sp, _, src, _), prefix(".", src), docof(sp, d), doc(d, f, _),
+    b = @join(@dir(f), src), tqis_ext(e), p = cat(b, e), doc(_, p, _).
+tqis_resolve(d, src, p) :- import_binding(sp, _, src, _), match("[@~#]/(?<rest>.*)", src), docof(sp, d), tqis_pkg(d, pk),
+    tqis_alias_root(pk, r), b = @join(r, rest), tqis_ext(e), p = cat(b, e), doc(_, p, _).
+.decl tqis_alias_root(pk: symbol, r: symbol)
+tqis_alias_root("", "src"). tqis_alias_root("", "").
+tqis_alias_root(pk, cat(pk, "/src")) :- tqis_pkg(_, pk), pk != "".
+tqis_alias_root(pk, pk) :- tqis_pkg(_, pk), pk != "".
+.decl tqis_ext(e: symbol)
+tqis_ext(""). tqis_ext(".ts"). tqis_ext(".tsx"). tqis_ext(".js"). tqis_ext(".jsx"). tqis_ext("/index.ts").
+tqis_ext("/index.tsx"). tqis_ext("/index.js").
+
+// The cases, `cases/tanstack-query-practice-infinite-and-plain-share-key/`, read as one repository: each line ending
+// in `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "apps/admin/package.json" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/apps/admin/package.json"
+    .fixture "apps/admin/src/audit.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/apps/admin/src/audit.ts"
+    .fixture "package.json" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/package.json"
+    .fixture "packages/feed-hooks/package.json" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/packages/feed-hooks/package.json"
+    .fixture "packages/feed-hooks/src/use-activity-feed.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/packages/feed-hooks/src/use-activity-feed.ts"
+    .fixture "src/app/posts/[postId]/page.tsx" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/app/posts/[postId]/page.tsx"
+    .fixture "src/features/activity/activity-panel.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/activity/activity-panel.ts"
+    .fixture "src/features/activity/audit-summary.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/activity/audit-summary.ts"
+    .fixture "src/features/activity/use-activity-count.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/activity/use-activity-count.ts"
+    .fixture "src/features/chat/messages.tsx" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/chat/messages.tsx"
+    .fixture "src/features/comments/comments.tsx" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/comments/comments.tsx"
+    .fixture "src/features/drafts/use-drafts.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/drafts/use-drafts.ts"
+    .fixture "src/features/inbox/inbox-badge.tsx" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/inbox/inbox-badge.tsx"
+    .fixture "src/features/inbox/use-inbox-count.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/inbox/use-inbox-count.ts"
+    .fixture "src/features/inbox/use-inbox.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/inbox/use-inbox.ts"
+    .fixture "src/features/inbox/use-unread-feed.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/inbox/use-unread-feed.ts"
+    .fixture "src/features/legacy/legacy-feed.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/legacy/legacy-feed.ts"
+    .fixture "src/features/notifications/use-notifications.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/notifications/use-notifications.ts"
+    .fixture "src/features/projects/project-queries.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/projects/project-queries.ts"
+    .fixture "src/features/projects/use-project-feed.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/projects/use-project-feed.ts"
+    .fixture "src/features/todos/__tests__/todo-feed.test.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/todos/__tests__/todo-feed.test.ts"
+    .fixture "src/features/todos/use-todo-feed.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/todos/use-todo-feed.ts"
+    .fixture "src/features/todos/use-todos.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/todos/use-todos.ts"
+    .fixture "src/features/users/users.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/features/users/users.ts"
+    .fixture "src/lib/api.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/lib/api.ts"
+    .fixture "src/lib/query-keys.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/lib/query-keys.ts"
+    .fixture "src/lib/trpc.ts" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/src/lib/trpc.ts"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-infinite-and-plain-share-key/tsconfig.json"
+    .expect _ at "packages/feed-hooks/src/use-activity-feed.ts":6
+    .expect _ at "src/features/comments/comments.tsx":9
+    .expect _ at "src/features/inbox/use-inbox.ts":7
+    .expect _ at "src/features/legacy/legacy-feed.ts":6
+    .expect _ at "src/features/notifications/use-notifications.ts":20
+    .expect _ at "src/features/projects/use-project-feed.ts":8
+    .expect _ at "src/features/todos/use-todo-feed.ts":7
+.end

@@ -1,0 +1,200 @@
+.policy "tanstack-query-practice-server-action-as-query-fn" revision 1
+.description "A TanStack Query queryFn that runs on the client must not be or call a Server Action from a 'use server' module; fetch through a Route Handler and keep Server Actions for mutations."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. A Server Action (a function exported from a module that starts with 'use server')
+// called from the browser is a POST that Next.js runs one at a time per client. React Query runs queries in
+// parallel and refetches them on focus, mount and invalidation, so a query whose queryFn is an action queues behind
+// every other action call and can stay pending or never run; passed by reference, the action also gets React Query's
+// QueryFunctionContext (an AbortSignal), which cannot be serialised and throws. The TanStack docs and React both say
+// to keep Server Functions for mutations. It reports, in a file that imports TanStack Query, the action inside a
+// `queryFn` (a `queryFn:` property, a `queryFn() {}` method, or the shorthand `{ queryFn }`):
+//   queryFn: getProjects                               reported: the action by reference
+//   queryFn: () => getProjects()                       reported: a call anywhere in the function's body
+//   queryFn: async () => actions.getProject(id)        reported: through `import * as actions`
+//   queryFn: () => listProjects()                      reported: an index.ts that re-exports the action
+//   queryFn: loadProjectCount                          reported: a workspace function (this file's or an imported
+//                                                      one) whose own body references an action, one call deep
+//   queryOptions({ queryKey, queryFn: () => getProjects() })    reported: options a client hook will use
+//   usePrefetch() { … queryClient.prefetchQuery({ queryFn: () => getProject(id) }) }   reported: in a `use*` hook
+// Near misses it leaves alone:
+//   useMutation({ mutationFn: createProject })         not reported: mutations are what actions are for
+//   await queryClient.prefetchQuery({ queryFn: () => getProjects() })  in a Server Component (no 'use client', not
+//                                                      in a `use*` function): on the server it is a plain call
+//   queryOptions(…) in a module that imports 'server-only', or in a 'use server' module: never on the client
+//   queryFn: fetchProjectsFromApi / () => fetch('/api/projects')        not reported: no action
+//   RTK Query's `build.query({ queryFn })` in a file without a TanStack Query import: not this library
+//   test and story files (scope)
+// Gaps: an action that reaches the queryFn as a prop or a function argument (`useQueryFactory(listAction)`) is not
+// seen; helpers are followed one call deep; a `'use server'` barrel that re-exports plain functions, and inline
+// `'use server'` functions (only Server Components can define them, and they reach clients as props) are not seen.
+// A prefetch in a component file without 'use client' (an event handler) counts as server code.
+
+#include "tsx/modules.rerail"
+
+.violation ServerActionQueryFn(at: node, x: symbol, p: symbol)
+    "This `queryFn` runs `{x}`, a Server Action from the 'use server' module {p}. Next.js runs Server Actions one at a time, while React Query runs queries in parallel and refetches them, so this query queues behind other actions and can stay pending; passed by reference, the action is also sent React Query's AbortSignal, which cannot be serialised. Read the data through a Route Handler (`app/api/…/route.ts`) that calls the same server code and `fetch` it here, or load it in a Server Component and pass it down; keep Server Actions for mutations (`useMutation`). If this query only ever runs on the server (a prefetch in a Server Component), leave it."
+ServerActionQueryFn(n, x, p) :- saqf_client_fn(v), saqf_part(v, n), saqf_sym(n, q), saqf_action(q, x, p).
+
+.violation ServerActionViaHelper(at: node, g: symbol, x: symbol, p: symbol, o: node)
+    "This `queryFn` runs `{g}`, which calls `{x}` ({p}:{o.line}), a Server Action from a 'use server' module. Next.js runs Server Actions one at a time, while React Query runs queries in parallel and refetches them, so this query queues behind other actions and can stay pending. Have `{g}` read the data through a Route Handler (`app/api/…/route.ts`) that calls the same server code, or load it in a Server Component and pass it down; keep Server Actions for mutations (`useMutation`). If this query only ever runs on the server (a prefetch in a Server Component), leave it."
+ServerActionViaHelper(n, g, x, p, o) :- saqf_client_fn(v), saqf_part(v, n), saqf_helper(n, h), !saqf_sym_action(n),
+    text(n, g), o = min y : { saqf_inner(h, y, _) }, saqf_inner(h, o, q), saqf_action(q, x, p).
+
+// ---- TanStack Query and its queryFn ------------------------------------------------------------------------------
+// saqf_tq_doc(d): d imports @tanstack/react-query, @tanstack/query-core, another @tanstack/*-query package or v3's
+// react-query.
+.decl saqf_tq_doc(d: number)
+saqf_tq_doc(d) :- import_spec(i, s), docof(i, d),
+    match("@tanstack/([a-z]+-)?query(-[a-z-]+)?(/.*)?|react-query(/.*)?", s).
+// saqf_fn(o, v): object o, in a TanStack Query file, has a queryFn v: `queryFn: v`, `queryFn() {}` (v the
+// method), `{ queryFn }` (v the shorthand name).
+.decl saqf_fn(o: node, v: node)
+saqf_fn(o, w) :- kind(pr, "pair"), field(pr, "key", k), text(k, "queryFn"), field(pr, "value", v), deparen(v, w),
+    child(o, pr, _), kind(o, "object"), docof(o, d), saqf_tq_doc(d).
+saqf_fn(o, m) :- kind(m, "method_definition"), field(m, "name", k), text(k, "queryFn"), child(o, m, _),
+    kind(o, "object"), docof(o, d), saqf_tq_doc(d).
+saqf_fn(o, s) :- kind(s, "shorthand_property_identifier"), text(s, "queryFn"), child(o, s, _), kind(o, "object"),
+    docof(o, d), saqf_tq_doc(d).
+
+// saqf_client_fn(v): queryFn v can run in the browser: every queryFn but one in server code (saqf_server_site).
+.decl saqf_client_fn(v: node)
+saqf_client_fn(v) :- saqf_fn(o, v), !saqf_server_site(o).
+// saqf_server_site(o): the options o sit in server code: a file without 'use client' that imports 'server-only'
+// or starts with 'use server', or a prefetchQuery/fetchQuery/ensureQueryData/… argument outside any `use*` function.
+.decl saqf_server_site(o: node)
+saqf_server_site(o) :- saqf_fn(o, _), docof(o, d), !saqf_directive_doc(d, "use client"), saqf_server_doc(d).
+saqf_server_site(o) :- saqf_fn(o, _), docof(o, d), !saqf_directive_doc(d, "use client"), saqf_prefetch_arg(o),
+    !saqf_in_hook(o).
+.decl saqf_server_doc(d: number)
+saqf_server_doc(d) :- saqf_directive_doc(d, "use server").
+saqf_server_doc(d) :- import_spec(i, "server-only"), docof(i, d).
+.decl saqf_directive_doc(d: number, x: symbol)
+saqf_directive_doc(d, x) :- program(d, p), directive(p, _, x), (x = "use client" ; x = "use server").
+.decl saqf_prefetch_arg(o: node)
+saqf_prefetch_arg(o) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", pr), text(pr, m), saqf_prefetch(m), field(c, "arguments", a), child(a, o, _).
+.decl saqf_prefetch(m: symbol)
+saqf_prefetch("prefetchQuery"). saqf_prefetch("fetchQuery"). saqf_prefetch("ensureQueryData").
+saqf_prefetch("prefetchInfiniteQuery"). saqf_prefetch("fetchInfiniteQuery"). saqf_prefetch("ensureInfiniteQueryData").
+// saqf_in_hook(o): o is inside a function named like a hook, `function useX()` or `const useX = () => …`.
+.decl saqf_in_hook(o: node)
+saqf_in_hook(o) :- saqf_prefetch_arg(o), inside(o, f, saqf_fn_kind), saqf_fn_name(f, x), match("use[A-Z0-9].*", x).
+.decl saqf_fn_name(f: node, x: symbol)
+saqf_fn_name(f, x) :- kind(f, "function_declaration"), field(f, "name", n), text(n, x).
+saqf_fn_name(f, x) :- kind(v, "variable_declarator"), field(v, "value", f), saqf_fn_node(f), field(v, "name", n),
+    kind(n, "identifier"), text(n, x).
+
+// ---- what the queryFn names ----------------------------------------------------------------------------------------
+.decl saqf_fn_kind(k: symbol)
+saqf_fn_kind("arrow_function"). saqf_fn_kind("function_expression"). saqf_fn_kind("function").
+saqf_fn_kind("method_definition"). saqf_fn_kind("function_declaration"). saqf_fn_kind("generator_function").
+saqf_fn_kind("generator_function_declaration").
+.decl saqf_fn_node(f: node)
+saqf_fn_node(f) :- kind(f, k), saqf_fn_kind(k).
+.decl saqf_type_kind(k: symbol)
+saqf_type_kind("type_query"). saqf_type_kind("type_annotation"). saqf_type_kind("type_arguments").
+// saqf_part(v, n): n is queryFn v itself (a name), or a name or namespace member in v's body, outside types.
+.decl saqf_part(v: node, n: node)
+saqf_part(v, v) :- saqf_client_fn(v), !saqf_fn_node(v).
+saqf_part(v, n) :- saqf_name(n), inside(n, v, saqf_fn_kind), saqf_client_fn(v).
+.decl saqf_name(n: node)
+saqf_name(n) :- kind(n, "identifier"), !inside(n, _, saqf_type_kind), !field(_, "object", n).
+saqf_name(n) :- kind(n, "shorthand_property_identifier").
+saqf_name(n) :- kind(n, "member_expression"), field(n, "object", o), kind(o, "identifier"), saqf_ns(o, _).
+// saqf_sym(n, q): n denotes symbol q, "<file path>#<name>": an imported name (followed through re-exports,
+// saqf_export), a namespace member `actions.getProject`, or a top-level name of n's own file. (tsx/names' sym_of
+// does this, but the runner leaves its inputs empty; see the resolver at the bottom.)
+.decl saqf_sym(n: node, q: symbol)
+saqf_sym(n, q) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier")), ref_site(n, sp),
+    import_binding(sp, _, s, x), x != "*", docof(n, d), saqf_target(d, s, t), saqf_export(t, x, q).
+saqf_sym(n, q) :- kind(n, "member_expression"), field(n, "object", o), saqf_ns(o, t), field(n, "property", pr),
+    text(pr, x), saqf_export(t, x, q).
+saqf_sym(n, @qname(p, x)) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier")), ref_site(n, site),
+    top_level(site, x), docof(n, d), doc(d, p, _).
+.decl saqf_ns(o: node, t: symbol)  // `import * as actions from "./actions"`: actions names module t
+saqf_ns(o, t) :- kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, s, "*"), docof(o, d), saqf_target(d, s, t).
+// saqf_action(q, x, p): symbol q is x, exported by the 'use server' module in file p.
+.decl saqf_action(q: symbol, x: symbol, p: symbol)
+saqf_action(q, x, p) :- saqf_sym(_, q), match("(?<p>.*)#(?<x>[^#]*)", q), doc(d, p, _),
+    saqf_directive_doc(d, "use server").
+.decl saqf_sym_action(n: node)
+saqf_sym_action(n) :- saqf_sym(n, q), saqf_action(q, _, _).
+
+// saqf_helper(n, h): name n denotes h, a function declared in the workspace (this file or another, not a 'use server'
+// module): a function declaration or a variable set to an arrow or function expression.
+.decl saqf_helper(n: node, h: node)
+saqf_helper(n, h) :- saqf_client_fn(v), saqf_part(v, n), saqf_sym(n, q), match("(?<m>.*)#(?<y>[^#]*)", q),
+    doc(d, m, _), !saqf_directive_doc(d, "use server"), top_level(site, y), docof(site, d), saqf_site_fn(site, h).
+saqf_helper(n, h) :- saqf_client_fn(v), saqf_part(v, n), ref_site(n, site), !top_level(site, _),
+    saqf_site_fn(site, h).
+.decl saqf_site_fn(site: node, h: node)
+saqf_site_fn(f, f) :- kind(f, "function_declaration").
+saqf_site_fn(s, f) :- kind(s, "variable_declarator"), field(s, "value", f), saqf_fn_node(f).
+// saqf_inner(h, y, q): name y in helper h's body denotes the action q.
+.decl saqf_inner(h: node, y: node, q: symbol)
+saqf_inner(h, y, q) :- saqf_helper(_, h), saqf_name(y), inside(y, h, saqf_fn_kind), saqf_sym(y, q),
+    saqf_action(q, _, _).
+
+// ---- library candidate: import resolution -------------------------------------------------------------------------
+// The runner binds no tsconfig_for/tsconfig_path rows and gives TypeScript documents no module name (doc's third
+// column is ""), so tsx/names' `target`, `exports` and `sym_of` find nothing across files. This resolver keys modules
+// on file paths instead.
+// saqf_target(d, s, t): import specifier s in document d names the workspace file t: "./x" and "../x" from d's
+// directory, and the aliases "@/x" and "~/x" as `<dir>/src/x` or `<dir>/x` for any directory above d (the
+// create-next-app and T3 layouts), each with TypeScript's extension and index candidates (saqf_file).
+.decl saqf_target(d: number, s: symbol, t: symbol)
+saqf_target(d, s, t) :- import_spec(i, s), prefix(".", s), docof(i, d), doc(d, p, _), saqf_file(@join(@dir(p), s), t).
+saqf_target(d, s, t) :- import_spec(i, s), match("[@~]/(?<r>.+)", s), docof(i, d), doc(d, p, _), saqf_anc(p, a),
+    (b = @join(a, cat("src/", r)) ; b = @join(a, r)), saqf_file(b, t).
+.decl saqf_anc(p: symbol, a: symbol)  // a is a directory above document p ("" for the root)
+saqf_anc(p, a) :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _), match("(?<a>.*)/[^/]*", p).
+saqf_anc(p, "") :- import_spec(i, s), match("[@~]/.+", s), docof(i, d), doc(d, p, _).
+saqf_anc(p, a) :- saqf_anc(p, b), match("(?<a>.*)/[^/]*", b).
+// saqf_file(b, f): f is a document whose path is b plus one of the candidate endings (b, b.ts, b/index.tsx, …).
+.decl saqf_file(b: symbol, f: symbol)
+saqf_file(b, f) :- doc(_, f, _), ts_ext(ext), k = strlen(f) - strlen(ext), k >= 0, b = substr(f, 0, k),
+    f = cat(b, ext).
+// saqf_export(f, x, q): file f exports x, which is symbol q: its own declaration, or followed through
+// `export { y as x } from "s"` and `export * from "s"`.
+.decl saqf_export(f: symbol, x: symbol, q: symbol)
+saqf_export(f, x, @qname(f, x)) :- kind(e, "export_statement"), exported_decl(e, x), docof(e, d), doc(d, f, _).
+saqf_export(f, x, q) :- kind(e, "export_statement"), export_from(e, s, y, x), docof(e, d), doc(d, f, _),
+    saqf_target(d, s, t), saqf_export(t, y, q).
+saqf_export(f, x, q) :- star_export(e, s), docof(e, d), doc(d, f, _), saqf_target(d, s, t), saqf_export(t, x, q),
+    x != "default".
+
+// The cases, `cases/tanstack-query-practice-server-action-as-query-fn/`, read as one repository: each line ending
+// in `// caught` is reported, and no other line. project-list.tsx's two queries, marked `cross-lane`, are real
+// violations the runner misses today: a .tsx file's imports do not reach .ts files.
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-server-action-as-query-fn/package.json"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-server-action-as-query-fn/tsconfig.json"
+    .fixture "src/app/projects/actions.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/projects/actions.ts"
+    .fixture "src/app/projects/index.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/projects/index.ts"
+    .fixture "src/app/projects/page.tsx" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/projects/page.tsx"
+    .fixture "src/app/projects/project-list.test.tsx" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/projects/project-list.test.tsx"
+    .fixture "src/app/projects/project-list.tsx" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/projects/project-list.tsx"
+    .fixture "src/app/projects/queries.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/projects/queries.ts"
+    .fixture "src/app/reports/actions.tsx" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/reports/actions.tsx"
+    .fixture "src/app/reports/page.tsx" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/reports/page.tsx"
+    .fixture "src/app/reports/report-summary.tsx" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/app/reports/report-summary.tsx"
+    .fixture "src/hooks/use-prefetch-project.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/hooks/use-prefetch-project.ts"
+    .fixture "src/hooks/use-project-details.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/hooks/use-project-details.ts"
+    .fixture "src/lib/api.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/lib/api.ts"
+    .fixture "src/lib/db.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/lib/db.ts"
+    .fixture "src/lib/server-queries.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/lib/server-queries.ts"
+    .fixture "src/store/api.ts" from "../cases/tanstack-query-practice-server-action-as-query-fn/src/store/api.ts"
+    .expect _ at "src/app/projects/queries.ts":7
+    .expect _ at "src/app/projects/queries.ts":14
+    .expect _ at "src/app/reports/report-summary.tsx":9
+    .expect _ at "src/hooks/use-prefetch-project.ts":7
+    .expect _ at "src/hooks/use-project-details.ts":10
+    .expect _ at "src/hooks/use-project-details.ts":18
+.end

@@ -1,0 +1,246 @@
+.policy "tanstack-query-practice-module-query-client-in-ssr" revision 1
+.description "In an app that renders on the server, create TanStack Query's QueryClient per request or per browser session, never once in module scope where every request shares its cache."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/*.clienttest.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/testing/**", "**/e2e/**", "**/__mocks__/**", "**/test-utils/**", "**/test-utils.*", "**/*.setup.*", "**/setupTests.*", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/.storybook/**", "**/.ladle/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/*.d.ts", "**/*.min.js", "**/generated/**", "**/__generated__/**"
+// Rerail's own rule, not a port. A module is evaluated once per server process. A QueryClient made in module scope,
+// or cached in a module variable, is therefore one cache for every request the server renders: data one user's
+// request fetched, prefetched or set (suspense queries, prefetchQuery, setQueryData, hydration) renders into the next
+// user's HTML, and the cache grows for the life of the process. TanStack Query's SSR guide: "NEVER DO THIS". Only
+// files whose nearest package.json depends on a server-rendering framework are read: Next.js, Remix, React Router's
+// framework mode, TanStack Start. QueryClient is TanStack Query's (`@tanstack/react-query`, `@tanstack/query-core`,
+// any `@tanstack/*-query`), imported by name, renamed or through a namespace; a factory is a top-level function that
+// returns a new one (directly, through a variable of its own or a `?:` branch, or as another factory's result), in
+// this file or in one it imports by a relative path or a tsconfig `paths` alias.
+//   export const queryClient = new QueryClient()                     reported: module scope
+//   export const queryClient = makeQueryClient()                     reported: a factory called in module scope
+//   let c; export const get = () => (c ??= new QueryClient())        reported: cached in a module variable
+//   let c; function get() { if (!c) c = makeQueryClient(); return c } reported, the factory imported or local
+//   export const globalQueryClient = getQueryClient()                reported: the docs' getter called at import makes
+//                                                                    one server client for the whole process
+//   const [qc] = useState(() => new QueryClient())                   not reported: one per mounted provider
+//   export const getQueryClient = cache(() => new QueryClient())     not reported: React's cache is per request
+//   export function makeQueryClient() { return new QueryClient() }   not reported: a factory makes a new one per call
+//   let b; if (isServer) return makeQueryClient(); return (b ??= …)  not reported: the docs' getQueryClient; the
+//                                                                    function holding the store tests isServer /
+//                                                                    typeof window / document, itself or through a
+//                                                                    module const it reads (a comment does not count)
+//   export const qc = typeof window === "undefined" ? null : new QueryClient()   not reported: the statement tests it
+//   class Store { client = new QueryClient() }                       not reported: one per instance
+//   new QueryClient() in a Vite SPA, React Native or library-mode React Router package   not reported: no SSR
+//   export const api = new QueryClient(url) of another library       not reported: not TanStack Query's
+//   tests, stories, fixtures, test setup (vitest.setup.*, jest.setup.*, setupTests.*, testing/)   not reported (scope)
+// Gaps: a module client in a package without its own server-rendering dependency, imported by an app that has one
+// (a shared monorepo package); a module client only ever loaded in the browser (`dynamic(…, { ssr: false })`);
+// caches in an object or Map property (`cache.client = …`), `globalThis`, or a class's static field; a guard that
+// lives only in another file (`if (isServer())` imported).
+
+#include "tsx/names.rerail"
+#include "tsx/modules.rerail"
+
+.violation ModuleQueryClient(at: node, what: symbol, framework: symbol) "{what}: this package renders on the server ({framework}), where a module is evaluated once per process, so every request shares this QueryClient's cache, and data fetched, prefetched or set for one user can render into another user's page. Create the client per request instead: in a client provider `const [queryClient] = useState(() => new QueryClient())`, or the TanStack Query docs' `getQueryClient()`, which returns a new client when `isServer` and keeps one only in the browser; in Server Components, `cache(() => new QueryClient())`. Leave it if this module never runs on the server (it is loaded only with `ssr: false` or only by a browser-only entry), or if the client comes from a getter with an `isServer` branch and only browser code reads it (the server's copy stays empty); then keep the export browser code relies on."
+// Shape A: made in module scope, no function or class around it, and its top-level statement does not test where it runs.
+ModuleQueryClient(n, w, fw) :- mqc_fresh(n, w0), !inside(n, _, mqc_fn), mqc_top_stmt(n, st), !mqc_guarded(st),
+    w = cat(w0, " runs once, when this module is first imported"), mqc_ssr_doc(n, fw).
+// Shape B: a function stores a fresh client in a module-level variable, and that function's top-level statement
+// never tests where it runs.
+ModuleQueryClient(a, w, fw) :- mqc_store(a, x, v), mqc_fresh(v, _), mqc_store_stmt(a, st), !mqc_guards(st),
+    w = cat("`", x, "` caches one QueryClient in a module variable"), mqc_ssr_doc(a, fw).
+
+// mqc_fn: code inside these runs when it is called (per render, per request), or once per instance.
+.decl mqc_fn(k: symbol)
+mqc_fn("function_declaration"). mqc_fn("function_expression"). mqc_fn("function"). mqc_fn("arrow_function").
+mqc_fn("method_definition"). mqc_fn("generator_function_declaration"). mqc_fn("generator_function").
+mqc_fn("class_body").
+
+// mqc_fresh(e, w): expression e makes a new TanStack QueryClient: `new QueryClient(…)`, or a call of a factory;
+// w describes it for the message.
+.decl mqc_fresh(e: node, w: symbol)
+mqc_fresh(e, "`new QueryClient()`") :- kind(e, "new_expression"), field(e, "constructor", c), mqc_qc_class(c).
+mqc_fresh(e, cat("`", t, "()`, which returns a new QueryClient,")) :- kind(e, "call_expression"), field(e, "function", f),
+    kind(f, "identifier"), mqc_factory_ref(f), text(f, t).
+// mqc_qc_class(c): c names TanStack Query's QueryClient class: `QueryClient` (or an alias) imported from
+// `@tanstack/react-query`, `@tanstack/query-core` or any `@tanstack/*-query`, or `RQ.QueryClient` of a namespace
+// import of one.
+.decl mqc_qc_class(c: node)
+mqc_qc_class(c) :- kind(c, "identifier"), ref_site(c, sp), import_binding(sp, _, s, "QueryClient"), mqc_tq_spec(s).
+mqc_qc_class(c) :- kind(c, "member_expression"), field(c, "property", p), text(p, "QueryClient"), field(c, "object", o),
+    kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, s, "*"), mqc_tq_spec(s).
+.decl mqc_tq_spec(s: symbol)
+mqc_tq_spec(s) :- import_binding(_, _, s, _), match("@tanstack/(query-core|[a-z0-9-]+-query)", s).
+
+// mqc_factory(d, x): document d declares, at its top level, a function x that returns a fresh client.
+.decl mqc_factory(d: number, x: symbol)
+mqc_factory(d, x) :- mqc_ret_val(f, e), mqc_fresh(e, _), mqc_named_fn(f, x, _), docof(f, d).
+// mqc_factory_ref(f): identifier f names a factory: one declared in this file, or imported from a file that
+// declares it (mqc_target resolves the import).
+.decl mqc_factory_ref(f: node)
+mqc_factory_ref(f) :- ref_site(f, site), mqc_named_fn(fn, x, site), mqc_factory(d, x), docof(fn, d).
+mqc_factory_ref(f) :- ref_site(f, sp), import_binding(sp, _, s, x), docof(f, d), mqc_target(d, s, t), mqc_factory(t, x).
+// mqc_returns(f, e): function f returns e: an arrow's expression body, or a `return e` of f's own.
+.decl mqc_returns(f: node, e: node)
+mqc_returns(f, e) :- kind(f, "arrow_function"), field(f, "body", b), deparen(b, e).
+mqc_returns(f, e) :- kind(r, "return_statement"), child(r, b, _), deparen(b, e), nearest(r, f, mqc_fn).
+// mqc_ret_val(f, e): e is a value f returns: the returned expression, either branch of a returned `c ? a : b`, or the
+// value of a variable of f's own that it returns (`const client = new QueryClient(…); return client`).
+.decl mqc_ret_val(f: node, e: node)
+mqc_ret_val(f, e) :- mqc_ret_one(f, e).
+mqc_ret_val(f, e) :- mqc_ret_one(f, r), kind(r, "identifier"), ref_site(r, v), kind(v, "variable_declarator"),
+    nearest(v, f, mqc_fn), field(v, "value", x), deparen(x, e).
+.decl mqc_ret_one(f: node, e: node)
+mqc_ret_one(f, e) :- mqc_returns(f, e).
+mqc_ret_one(f, e) :- mqc_returns(f, t), kind(t, "ternary_expression"),
+    (field(t, "consequence", b) ; field(t, "alternative", b)), deparen(b, e).
+// mqc_named_fn(f, x, site): f is declared at the top of its file under the name x, at the declaration site that
+// references to it resolve to: `function x() {}` or `const x = () => …` / `const x = function () {}`, exported or not.
+.decl mqc_named_fn(f: node, x: symbol, site: node)
+mqc_named_fn(f, x, f) :- kind(f, "function_declaration"), field(f, "name", n), text(n, x), mqc_top_level(f).
+mqc_named_fn(f, x, v) :- kind(v, "variable_declarator"), field(v, "value", f0), deparen(f0, f),
+    (kind(f, "arrow_function") ; kind(f, "function_expression") ; kind(f, "function")),
+    field(v, "name", n), kind(n, "identifier"), text(n, x), mqc_top_level(v).
+.decl mqc_top_level(n: node)
+mqc_top_level(n) :- child(p, n, _), kind(p, "program").
+mqc_top_level(n) :- child(e, n, _), kind(e, "export_statement"), child(p, e, _), kind(p, "program").
+mqc_top_level(v) :- child(l, v, _), kind(l, "lexical_declaration"), mqc_top_level(l).
+mqc_top_level(v) :- child(l, v, _), kind(l, "variable_declaration"), mqc_top_level(l).
+
+// mqc_store(a, x, v): assignment a, inside a function, stores v in the module-level variable x:
+// `x = v`, `x ??= v`, `x ||= v`.
+.decl mqc_store(a: node, x: symbol, v: node)
+mqc_store(a, x, v) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
+    field(a, "left", l), kind(l, "identifier"), field(a, "right", r), deparen(r, v), inside(a, _, mqc_fn),
+    ref_site(l, s), mqc_top_level(s), text(l, x).
+
+// mqc_guarded(st): the statement tests whether it runs on the server or in the browser.
+.decl mqc_guarded(st: node)
+mqc_guarded(st) :- mqc_top_stmt(_, st), text(st, t), mqc_guard_re(r), match(r, t).
+// mqc_store_stmt(a, st): st is the top-level statement of the file holding store a (the getter function).
+.decl mqc_store_stmt(a: node, st: node)
+mqc_store_stmt(a, st) :- mqc_store(a, _, _), child(p, st, _), kind(p, "program"), within(a, st).
+// mqc_guards(st): code in st (not a comment) tests where it runs: `isServer`, `typeof window`, …, or reads a
+// module-level const whose value does (`const onServer = typeof window === "undefined"`).
+.decl mqc_guards(st: node)
+mqc_guards(st) :- mqc_store_stmt(_, st), mqc_guard_in(st).
+mqc_guards(st) :- mqc_store_stmt(_, st), has(st, r, "identifier"), ref_site(r, s), kind(s, "variable_declarator"),
+    mqc_top_level(s), mqc_guard_in(s).
+.decl mqc_guard_in(n: node)
+mqc_guard_in(n) :- has(n, g, "identifier"), mqc_guard_name(g).
+mqc_guard_in(n) :- has(n, g, "property_identifier"), mqc_guard_name(g).
+mqc_guard_in(n) :- has(n, g, "unary_expression"), text(g, t),
+    match("typeof\\s+(window|document|globalThis\\.window)\\b.*", t).
+.decl mqc_guard_name(g: node)
+mqc_guard_name(g) :- (text(g, "isServer") ; text(g, "isBrowser") ; text(g, "IS_SERVER") ; text(g, "IS_BROWSER")).
+.decl mqc_guard_re(r: symbol)
+mqc_guard_re("(?s).*(\\bisServer\\b|\\bisBrowser\\b|\\bIS_SERVER\\b|\\bIS_BROWSER\\b|typeof\\s+window\\b|typeof\\s+document\\b|typeof\\s+globalThis\\.window\\b).*").
+
+// mqc_top_stmt(n, st): st is the statement at the top of n's file that holds n.
+.decl mqc_top_stmt(n: node, st: node)
+mqc_top_stmt(n, st) :- mqc_fresh(n, _), child(p, st, _), kind(p, "program"), within(n, st).
+
+// mqc_ssr_doc(n, fw): n's file belongs to a package (its nearest package.json) that depends on the server-rendering
+// framework fw.
+.decl mqc_ssr_doc(n: node, fw: symbol)
+mqc_ssr_doc(n, fw) :- docof(n, d), doc(d, f, _), package_for(f, dir), mqc_ssr_pkg(m, fw), mqc_dep_list(l),
+    package_field(dir, cat(l, "/", @replace_all(m, "/", "~1")), _).
+.decl mqc_dep_list(l: symbol)
+mqc_dep_list("dependencies"). mqc_dep_list("devDependencies"). mqc_dep_list("peerDependencies").
+// mqc_ssr_pkg(m, fw): package m means the app renders on the server with framework fw. Plain `react-router` is not
+// one: its library mode is a browser router.
+.decl mqc_ssr_pkg(m: symbol, fw: symbol)
+mqc_ssr_pkg("next", "Next.js"). mqc_ssr_pkg("@remix-run/react", "Remix"). mqc_ssr_pkg("@remix-run/node", "Remix").
+mqc_ssr_pkg("@react-router/dev", "React Router framework mode"). mqc_ssr_pkg("@react-router/node", "React Router framework mode").
+mqc_ssr_pkg("@tanstack/react-start", "TanStack Start"). mqc_ssr_pkg("@tanstack/start", "TanStack Start").
+mqc_ssr_pkg("@tanstack/solid-start", "TanStack Start").
+
+// ---- library candidate: import resolution -------------------------------------------------------------------------
+// The `.rerail` runner binds no tsconfig_for or tsconfig_path, so tsx/names' cross-file `target` and `sym_of` are
+// refused; this resolves only the imports the rule follows (a called, imported name).
+// mqc_target(d, s, t): specifier s, imported in document d, names workspace document t: a relative path, or a
+// tsconfig/jsconfig `paths` alias (`"@/*": ["./src/*"]`) of the nearest folder above d that configures one; then the
+// extensions and index files TypeScript tries.
+.decl mqc_target(d: number, s: symbol, t: number)
+mqc_target(d, s, t) :- mqc_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), mqc_ext(e),
+    doc(t, cat(b, e), _).
+mqc_target(d, s, t) :- mqc_spec(d, s), !prefix(".", s), mqc_alias(d, dir, a, to), prefix(a, s),
+    b = @join(dir, cat(to, substr(s, strlen(a), strlen(s) - strlen(a)))), mqc_ext(e), doc(t, cat(b, e), _).
+// mqc_spec(d, s): d calls a name it imports from s.
+.decl mqc_spec(d: number, s: symbol)
+mqc_spec(d, s) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), ref_site(f, sp),
+    import_binding(sp, _, s, _), docof(f, d).
+.decl mqc_ext(e: symbol)
+mqc_ext(""). mqc_ext(".ts"). mqc_ext(".tsx"). mqc_ext(".js"). mqc_ext(".jsx"). mqc_ext(".mts"). mqc_ext(".mjs").
+mqc_ext("/index.ts"). mqc_ext("/index.tsx"). mqc_ext("/index.js"). mqc_ext("/index.jsx").
+// mqc_alias(d, dir, a, to): the nearest folder above d whose tsconfig.json or jsconfig.json maps aliases is dir, and
+// it maps `a*` to `to*`.
+.decl mqc_alias(d: number, dir: symbol, a: symbol, to: symbol)
+mqc_alias(d, dir, a, to) :- mqc_spec(d, s), !prefix(".", s), doc(d, p, _), mqc_cfg_alias(dir, a, to),
+    (dir = "" ; prefix(cat(dir, "/"), p)),
+    strlen(dir) = max k : { mqc_cfg_alias(o, _, _), (o = "" ; prefix(cat(o, "/"), p)), k = strlen(o) }.
+// mqc_cfg_alias(dir, a, to): dir's tsconfig.json or jsconfig.json maps `a*` to `to*` (read as text, one `"a*":
+// ["to*"` entry per line, its first target; `baseUrl` is taken as the config's folder).
+.decl mqc_cfg_alias(dir: symbol, a: symbol, to: symbol)
+mqc_cfg_alias(dir, x, y) :- mqc_config_file(dir, f), file_line(f, _, line),
+    match(".*?\"(?<x>[^\"*]+)\\*\"\\s*:\\s*\\[\\s*\"(?<y>[^\"*]*)\\*\".*", line).
+// mqc_config_file(dir, f): f is a tsconfig.json or jsconfig.json in dir: the root, or a folder at most four deep.
+.decl mqc_config_file(dir: symbol, f: symbol)
+mqc_config_file("", n) :- dir_entry("", n, 0), (n = "tsconfig.json" ; n = "jsconfig.json").
+mqc_config_file(dir, cat(dir, "/", n)) :- mqc_dir(dir, _), dir_entry(dir, n, 0), (n = "tsconfig.json" ; n = "jsconfig.json").
+.decl mqc_dir(dir: symbol, k: number)
+mqc_dir(n, 1) :- dir_entry("", n, 1), !mqc_skip_dir(n).
+mqc_dir(c, k + 1) :- mqc_dir(p, k), k < 4, dir_entry(p, n, 1), !mqc_skip_dir(n), c = cat(p, "/", n).
+.decl mqc_skip_dir(n: symbol)
+mqc_skip_dir(n) :- dir_entry(_, n, 1), (prefix(".", n) ; n = "node_modules" ; n = "dist" ; n = "build" ; n = "out" ;
+    n = "coverage" ; n = "vendor" ; n = "public" ; n = "migrations").
+
+// The cases, `cases/tanstack-query-practice-module-query-client-in-ssr/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "apps/admin/package.json" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/admin/package.json"
+    .fixture "apps/admin/src/app.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/admin/src/app.tsx"
+    .fixture "apps/admin/src/main.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/admin/src/main.tsx"
+    .fixture "apps/remix/app/root.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/remix/app/root.tsx"
+    .fixture "apps/remix/package.json" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/remix/package.json"
+    .fixture "apps/spa-router/package.json" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/spa-router/package.json"
+    .fixture "apps/spa-router/src/main.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/spa-router/src/main.tsx"
+    .fixture "apps/web/package.json" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/package.json"
+    .fixture "apps/web/src/app/projects/page.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/app/projects/page.tsx"
+    .fixture "apps/web/src/app/projects/project-list.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/app/projects/project-list.tsx"
+    .fixture "apps/web/src/app/providers.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/app/providers.tsx"
+    .fixture "apps/web/src/app/query-provider.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/app/query-provider.tsx"
+    .fixture "apps/web/src/components/app-shell.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/components/app-shell.tsx"
+    .fixture "apps/web/src/components/browser-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/components/browser-client.ts"
+    .fixture "apps/web/src/components/make-shell-client.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/components/make-shell-client.tsx"
+    .fixture "apps/web/src/lib/cached-query-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/cached-query-client.ts"
+    .fixture "apps/web/src/lib/clients/index.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/clients/index.ts"
+    .fixture "apps/web/src/lib/const-guard-getter.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/const-guard-getter.ts"
+    .fixture "apps/web/src/lib/get-query-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/get-query-client.ts"
+    .fixture "apps/web/src/lib/legacy-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/legacy-client.ts"
+    .fixture "apps/web/src/lib/make-query-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/make-query-client.ts"
+    .fixture "apps/web/src/lib/namespace-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/namespace-client.ts"
+    .fixture "apps/web/src/lib/query-client.test.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/query-client.test.ts"
+    .fixture "apps/web/src/lib/query-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/query-client.ts"
+    .fixture "apps/web/src/lib/query-store.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/query-store.ts"
+    .fixture "apps/web/src/lib/search-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/search-client.ts"
+    .fixture "apps/web/src/lib/server-query-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/server-query-client.ts"
+    .fixture "apps/web/src/lib/unguarded-getter.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/lib/unguarded-getter.ts"
+    .fixture "apps/web/src/testing/render.tsx" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/testing/render.tsx"
+    .fixture "apps/web/src/trpc/query-client.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/trpc/query-client.ts"
+    .fixture "apps/web/src/trpc/server.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/src/trpc/server.ts"
+    .fixture "apps/web/tsconfig.json" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/tsconfig.json"
+    .fixture "apps/web/vitest.setup.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/apps/web/vitest.setup.ts"
+    .fixture "package.json" from "../cases/tanstack-query-practice-module-query-client-in-ssr/package.json"
+    .fixture "packages/graphql/package.json" from "../cases/tanstack-query-practice-module-query-client-in-ssr/packages/graphql/package.json"
+    .fixture "packages/graphql/src/index.ts" from "../cases/tanstack-query-practice-module-query-client-in-ssr/packages/graphql/src/index.ts"
+    .expect _ at "apps/remix/app/root.tsx":4
+    .expect _ at "apps/web/src/components/app-shell.tsx":7
+    .expect _ at "apps/web/src/lib/cached-query-client.ts":6
+    .expect _ at "apps/web/src/lib/get-query-client.ts":14
+    .expect _ at "apps/web/src/lib/legacy-client.ts":7
+    .expect _ at "apps/web/src/lib/namespace-client.ts":3
+    .expect _ at "apps/web/src/lib/query-client.ts":3
+    .expect _ at "apps/web/src/lib/unguarded-getter.ts":8
+    .expect _ at "apps/web/src/trpc/query-client.ts":3
+    .expect _ at "apps/web/src/trpc/server.ts":3
+    .expect _ at "apps/web/src/trpc/server.ts":4
+.end

@@ -1,0 +1,313 @@
+{
+  "format": "rerail.rule-pack/v1",
+  "id": "tanstack-query",
+  "name": "TanStack Query",
+  "category": "framework",
+  "covers": "Rerail's own TanStack Query rules, from the TanStack docs and maintainers' advice, for query keys and functions that agree across files, one QueryClient per request, and safe server rendering.",
+  "reason": "matches TanStack Query",
+  "match": {
+    "any": [
+      {
+        "dependencies": {
+          "ecosystem": "npm",
+          "names": [
+            "@tanstack/react-query",
+            "@tanstack/query-core",
+            "@tanstack/vue-query",
+            "@tanstack/solid-query",
+            "@tanstack/svelte-query"
+          ]
+        }
+      }
+    ]
+  },
+  "rules": [
+    {
+      "id": "tanstack-query-practice-module-query-client-in-ssr",
+      "document": "rules/tanstack-query-practice-module-query-client-in-ssr.rerail",
+      "title": "TanStack Query practice: in an app that renders on the server, make the QueryClient per request, never once in module scope",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "lib/query-client.ts",
+          "text": "import { QueryClient } from \"@tanstack/react-query\";\n\nexport const queryClient = new QueryClient({\n  defaultOptions: { queries: { staleTime: 60 * 1000 } },\n});\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{ \"dependencies\": { \"next\": \"15.1.0\", \"@tanstack/react-query\": \"^5.62.0\" } }\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "app/providers.tsx",
+          "text": "\"use client\";\n\nimport { QueryClient, QueryClientProvider } from \"@tanstack/react-query\";\nimport { useState, type ReactNode } from \"react\";\n\nexport function Providers({ children }: { children: ReactNode }) {\n  const [queryClient] = useState(() => new QueryClient());\n  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;\n}\n",
+          "with": [
+            {
+              "path": "package.json",
+              "text": "{ \"dependencies\": { \"next\": \"15.1.0\", \"@tanstack/react-query\": \"^5.62.0\" } }\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-set-query-data-mutates-cache",
+      "document": "rules/tanstack-query-practice-set-query-data-mutates-cache.rerail",
+      "title": "TanStack Query practice: return a new value from a setQueryData updater, never change cached data in place",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/hooks/use-add-todo.ts",
+          "text": "import { useMutation, useQueryClient } from \"@tanstack/react-query\";\nimport { createTodo, type Todo } from \"@/lib/api/todos\";\n\nexport function useAddTodo() {\n  const queryClient = useQueryClient();\n  return useMutation({\n    mutationFn: createTodo,\n    onSuccess: (todo) => {\n      queryClient.setQueryData<Todo[]>([\"todos\"], (old) => {\n        old?.push(todo);\n        return old;\n      });\n    },\n  });\n}\n"
+        },
+        "passes": {
+          "path": "src/hooks/use-add-todo.ts",
+          "text": "import { useMutation, useQueryClient } from \"@tanstack/react-query\";\nimport { createTodo, type Todo } from \"@/lib/api/todos\";\n\nexport function useAddTodo() {\n  const queryClient = useQueryClient();\n  return useMutation({\n    mutationFn: createTodo,\n    onSuccess: (todo) => {\n      queryClient.setQueryData<Todo[]>([\"todos\"], (old) => [...(old ?? []), todo]);\n    },\n  });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-query-data-copied-to-state",
+      "document": "rules/tanstack-query-practice-query-data-copied-to-state.rerail",
+      "title": "TanStack Query practice: read query data from the query, never copy it into useState",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/features/todos/todo-list.tsx",
+          "text": "\"use client\";\nimport { useEffect, useState } from \"react\";\nimport { useQuery } from \"@tanstack/react-query\";\n\ntype Todo = { id: string; title: string };\n\nexport function TodoList() {\n  const { data } = useQuery({ queryKey: [\"todos\"], queryFn: fetchTodos });\n  const [todos, setTodos] = useState<Todo[]>([]);\n\n  useEffect(() => {\n    if (data) setTodos(data);\n  }, [data]);\n\n  return <ul>{todos.map((t) => <li key={t.id}>{t.title}</li>)}</ul>;\n}\n\nasync function fetchTodos(): Promise<Todo[]> {\n  const res = await fetch(\"/api/todos\");\n  if (!res.ok) throw new Error(`todos: ${res.status}`);\n  return res.json();\n}\n"
+        },
+        "passes": {
+          "path": "src/features/todos/todo-list.tsx",
+          "text": "\"use client\";\nimport { useQuery } from \"@tanstack/react-query\";\n\ntype Todo = { id: string; title: string };\n\nexport function TodoList() {\n  const { data: todos = [] } = useQuery({ queryKey: [\"todos\"], queryFn: fetchTodos });\n  return <ul>{todos.map((t) => <li key={t.id}>{t.title}</li>)}</ul>;\n}\n\nasync function fetchTodos(): Promise<Todo[]> {\n  const res = await fetch(\"/api/todos\");\n  if (!res.ok) throw new Error(`todos: ${res.status}`);\n  return res.json();\n}\n"
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-server-action-as-query-fn",
+      "document": "rules/tanstack-query-practice-server-action-as-query-fn.rerail",
+      "title": "TanStack Query practice: never use a Server Action as a browser queryFn; fetch through a Route Handler and keep actions for mutations",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/hooks/use-project.ts",
+          "text": "import { useQuery } from '@tanstack/react-query'\nimport { getProject } from '@/app/projects/actions'\n\nexport function useProject(id: string) {\n  return useQuery({ queryKey: ['project', id], queryFn: () => getProject(id) })\n}\n",
+          "with": [
+            {
+              "path": "src/app/projects/actions.ts",
+              "text": "'use server'\n\nimport { db } from '@/lib/db'\n\nexport async function getProject(id: string) {\n  return db.project.findUnique({ where: { id } })\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/hooks/use-project.ts",
+          "text": "import { useQuery } from '@tanstack/react-query'\n\nexport function useProject(id: string) {\n  return useQuery({\n    queryKey: ['project', id],\n    queryFn: ({ signal }) => fetch(`/api/projects/${id}`, { signal }).then((r) => r.json()),\n  })\n}\n"
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-dehydrated-state-json-stringify",
+      "document": "rules/tanstack-query-practice-dehydrated-state-json-stringify.rerail",
+      "title": "TanStack Query practice: write the dehydrated query cache into HTML with an HTML-safe serialiser, never bare JSON.stringify or superjson.stringify",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "server/render.ts",
+          "text": "import { QueryClient, dehydrate } from \"@tanstack/react-query\";\n\nexport async function renderPage(html: string) {\n  const queryClient = new QueryClient();\n  const state = dehydrate(queryClient);\n  return html.replace(\"<!--state-->\", `<script>window.__REACT_QUERY_STATE__ = ${JSON.stringify(state)}</script>`);\n}\n"
+        },
+        "passes": {
+          "path": "server/render.ts",
+          "text": "import { QueryClient, dehydrate } from \"@tanstack/react-query\";\n\nexport async function renderPage(html: string) {\n  const queryClient = new QueryClient();\n  const state = dehydrate(queryClient);\n  return html.replace(\"<!--state-->\", `<script>window.__REACT_QUERY_STATE__ = ${JSON.stringify(state).replace(/</g, \"\\\\u003c\")}</script>`);\n}\n"
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-fetch-without-ok-check",
+      "document": "rules/tanstack-query-practice-fetch-without-ok-check.rerail",
+      "title": "TanStack Query practice: a queryFn or mutationFn that calls fetch() throws when the response is not ok",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/lib/api/todos.ts",
+          "text": "export async function getTodos() {\n  const res = await fetch(\"/api/todos\");\n  return res.json();\n}\n",
+          "with": [
+            {
+              "path": "src/features/todos/use-todos.ts",
+              "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getTodos } from \"../../lib/api/todos\";\n\nexport function useTodos() {\n  return useQuery({ queryKey: [\"todos\"], queryFn: getTodos });\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/features/todos/use-todos.ts",
+          "text": "import { useQuery } from \"@tanstack/react-query\";\n\nexport function useTodos() {\n  return useQuery({\n    queryKey: [\"todos\"],\n    queryFn: async () => {\n      const res = await fetch(\"/api/todos\");\n      if (!res.ok) throw new Error(`GET /api/todos failed: ${res.status}`);\n      return res.json();\n    },\n  });\n}\n"
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-query-fn-input-hidden-from-key",
+      "document": "rules/tanstack-query-practice-query-fn-input-hidden-from-key.rerail",
+      "title": "TanStack Query practice: every input the queryFn reads goes into the queryKey, also through a key factory or a queryFn passed by name",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/features/projects/use-projects.ts",
+          "text": "import { useQuery } from '@tanstack/react-query';\nimport { projectKeys, type ProjectFilter } from './keys';\nimport { listProjects } from './api';\n\nexport function useProjects(filter: ProjectFilter) {\n  return useQuery({\n    queryKey: projectKeys.list(filter),\n    queryFn: () => listProjects(filter.page, filter.status),\n  });\n}\n",
+          "with": [
+            {
+              "path": "src/features/projects/keys.ts",
+              "text": "export type ProjectFilter = { page: number; status: string };\n\nexport const projectKeys = {\n  all: ['projects'] as const,\n  list: (filter: ProjectFilter) => [...projectKeys.all, 'list', filter.page] as const,\n};\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/features/projects/use-projects.ts",
+          "text": "import { useQuery } from '@tanstack/react-query';\nimport { projectKeys, type ProjectFilter } from './keys';\nimport { listProjects } from './api';\n\nexport function useProjects(filter: ProjectFilter) {\n  return useQuery({\n    queryKey: projectKeys.list(filter),\n    queryFn: () => listProjects(filter.page, filter.status),\n  });\n}\n",
+          "with": [
+            {
+              "path": "src/features/projects/keys.ts",
+              "text": "export type ProjectFilter = { page: number; status: string };\n\nexport const projectKeys = {\n  all: ['projects'] as const,\n  list: (filter: ProjectFilter) => [...projectKeys.all, 'list', filter] as const,\n};\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-same-key-different-query-fn",
+      "document": "rules/tanstack-query-practice-same-key-different-query-fn.rerail",
+      "title": "TanStack Query practice: one query key, one query function",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/features/billing/use-billing-user.ts",
+          "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUserWithInvoices } from \"@/lib/api\";\n\nexport function useBillingUser(userId: string) {\n  return useQuery({\n    queryKey: [\"user\", userId],\n    queryFn: () => getUserWithInvoices(userId),\n  });\n}\n",
+          "with": [
+            {
+              "path": "src/features/user/use-user.ts",
+              "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUser } from \"@/lib/api\";\n\nexport function useUser(id: string) {\n  return useQuery({\n    queryKey: [\"user\", id],\n    queryFn: () => getUser(id),\n  });\n}\n"
+            },
+            {
+              "path": "package.json",
+              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\" } }\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/features/billing/use-billing-user.ts",
+          "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUserWithInvoices } from \"@/lib/api\";\n\nexport function useBillingUser(userId: string) {\n  return useQuery({\n    queryKey: [\"user\", userId, \"with-invoices\"],\n    queryFn: () => getUserWithInvoices(userId),\n  });\n}\n",
+          "with": [
+            {
+              "path": "src/features/user/use-user.ts",
+              "text": "import { useQuery } from \"@tanstack/react-query\";\nimport { getUser } from \"@/lib/api\";\n\nexport function useUser(id: string) {\n  return useQuery({\n    queryKey: [\"user\", id],\n    queryFn: () => getUser(id),\n  });\n}\n"
+            },
+            {
+              "path": "package.json",
+              "text": "{ \"dependencies\": { \"@tanstack/react-query\": \"^5.62.0\" } }\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-query-client-factory-called-in-render",
+      "document": "rules/tanstack-query-practice-query-client-factory-called-in-render.rerail",
+      "title": "TanStack Query practice: make a component's QueryClient once, never by calling a factory on every render",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/app/providers.tsx",
+          "text": "\"use client\";\n\nimport { QueryClientProvider } from \"@tanstack/react-query\";\nimport type { ReactNode } from \"react\";\nimport { makeQueryClient } from \"@/lib/query-client\";\n\nexport function Providers({ children }: { children: ReactNode }) {\n  const queryClient = makeQueryClient();\n  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;\n}\n",
+          "with": [
+            {
+              "path": "src/lib/query-client.tsx",
+              "text": "import { QueryClient } from \"@tanstack/react-query\";\n\nexport function makeQueryClient() {\n  return new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } });\n}\n"
+            },
+            {
+              "path": "tsconfig.json",
+              "text": "{\n  \"compilerOptions\": {\n    \"jsx\": \"preserve\",\n    \"baseUrl\": \".\",\n    \"paths\": { \"@/*\": [\"./src/*\"] }\n  }\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/app/providers.tsx",
+          "text": "\"use client\";\n\nimport { QueryClientProvider } from \"@tanstack/react-query\";\nimport { useState, type ReactNode } from \"react\";\nimport { makeQueryClient } from \"@/lib/query-client\";\n\nexport function Providers({ children }: { children: ReactNode }) {\n  const [queryClient] = useState(() => makeQueryClient());\n  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;\n}\n",
+          "with": [
+            {
+              "path": "src/lib/query-client.tsx",
+              "text": "import { QueryClient } from \"@tanstack/react-query\";\n\nexport function makeQueryClient() {\n  return new QueryClient({ defaultOptions: { queries: { staleTime: 60_000 } } });\n}\n"
+            },
+            {
+              "path": "tsconfig.json",
+              "text": "{\n  \"compilerOptions\": {\n    \"jsx\": \"preserve\",\n    \"baseUrl\": \".\",\n    \"paths\": { \"@/*\": [\"./src/*\"] }\n  }\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-infinite-and-plain-share-key",
+      "document": "rules/tanstack-query-practice-infinite-and-plain-share-key.rerail",
+      "title": "TanStack Query practice: give an infinite query its own query key, never one a plain query also uses",
+      "group": "TanStack Query practice",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "src/features/todos/use-todo-feed.ts",
+          "text": "import { useInfiniteQuery } from '@tanstack/react-query'\nimport { getTodos, type TodoFilters } from './api'\n\nexport function useTodoFeed(filters: TodoFilters) {\n  return useInfiniteQuery({\n    queryKey: ['todos', filters],\n    queryFn: ({ pageParam }) => getTodos(filters, pageParam),\n    initialPageParam: 0,\n    getNextPageParam: (last) => last.nextCursor,\n  })\n}\n",
+          "with": [
+            {
+              "path": "src/features/todos/use-todos.ts",
+              "text": "import { useQuery } from '@tanstack/react-query'\nimport { getTodos, type TodoFilters } from './api'\n\nexport function useTodos(filters: TodoFilters) {\n  return useQuery({ queryKey: ['todos', filters], queryFn: () => getTodos(filters, 0) })\n}\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/features/todos/use-todo-feed.ts",
+          "text": "import { useInfiniteQuery } from '@tanstack/react-query'\nimport { getTodos, type TodoFilters } from './api'\n\nexport function useTodoFeed(filters: TodoFilters) {\n  return useInfiniteQuery({\n    queryKey: ['todos', 'infinite', filters],\n    queryFn: ({ pageParam }) => getTodos(filters, pageParam),\n    initialPageParam: 0,\n    getNextPageParam: (last) => last.nextCursor,\n  })\n}\n",
+          "with": [
+            {
+              "path": "src/features/todos/use-todos.ts",
+              "text": "import { useQuery } from '@tanstack/react-query'\nimport { getTodos, type TodoFilters } from './api'\n\nexport function useTodos(filters: TodoFilters) {\n  return useQuery({ queryKey: ['todos', filters], queryFn: () => getTodos(filters, 0) })\n}\n"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "tanstack-query-practice-cache-key-matches-no-query",
+      "document": "rules/tanstack-query-practice-cache-key-matches-no-query.rerail",
+      "title": "TanStack Query practice: invalidate and update the cache only with keys a query uses",
+      "group": "TanStack Query practice",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "src/features/todos/use-add-todo.ts",
+          "text": "\"use client\";\nimport { useMutation, useQueryClient } from \"@tanstack/react-query\";\nimport { addTodo } from \"@/lib/api\";\n\nexport function useAddTodo() {\n  const queryClient = useQueryClient();\n  return useMutation({\n    mutationFn: addTodo,\n    onSuccess: () => queryClient.invalidateQueries({ queryKey: [\"todo\"] }),\n  });\n}\n",
+          "with": [
+            {
+              "path": "src/features/todos/queries.ts",
+              "text": "import { queryOptions } from \"@tanstack/react-query\";\nimport { fetchTodos } from \"@/lib/api\";\n\nexport const todoKeys = { all: [\"todos\"] as const };\n\nexport const todoListOptions = () =>\n  queryOptions({ queryKey: [...todoKeys.all, \"list\"], queryFn: fetchTodos });\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "src/features/todos/use-add-todo.ts",
+          "text": "\"use client\";\nimport { useMutation, useQueryClient } from \"@tanstack/react-query\";\nimport { addTodo } from \"@/lib/api\";\nimport { todoKeys } from \"./queries\";\n\nexport function useAddTodo() {\n  const queryClient = useQueryClient();\n  return useMutation({\n    mutationFn: addTodo,\n    onSuccess: () => queryClient.invalidateQueries({ queryKey: todoKeys.all }),\n  });\n}\n",
+          "with": [
+            {
+              "path": "src/features/todos/queries.ts",
+              "text": "import { queryOptions } from \"@tanstack/react-query\";\nimport { fetchTodos } from \"@/lib/api\";\n\nexport const todoKeys = { all: [\"todos\"] as const };\n\nexport const todoListOptions = () =>\n  queryOptions({ queryKey: [...todoKeys.all, \"list\"], queryFn: fetchTodos });\n"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

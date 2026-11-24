@@ -1,0 +1,11 @@
+{
+  "name": "todo-app",
+  "private": true,
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.2.0",
+    "@tanstack/react-query": "^5.59.0",
+    "ky": "^1.7.0",
+    "next": "15.0.3",
+    "react": "19.0.0"
+  }
+}

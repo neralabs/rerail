@@ -1,0 +1,393 @@
+.policy "tanstack-query-practice-query-fn-input-hidden-from-key" revision 1
+.description "Everything a queryFn reads that can change must reach the queryKey, also through a key factory in another file and a queryFn passed by name."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. TanStack Query caches by queryKey alone: "If your query function depends on a
+// variable, include it in your query key". When an input of the queryFn is missing from the key, two values of it
+// share one cache entry, so after a switch of workspace, filter or page the UI shows the data fetched for the old
+// value and does not refetch. @tanstack/eslint-plugin-query's exhaustive-deps checks only an inline queryFn against
+// the identifiers written in the key, and counts any identifier passed to a key-factory call as covered; this rule
+// reports the two shapes it cannot see. A query site is an object literal with both `queryKey` and `queryFn` (useQuery,
+// useSuspenseQuery, useInfiniteQuery, useQueries entries, queryOptions, prefetchQuery, fetchQuery, a wrapper's options).
+//   queryKey: keys.list(filter), queryFn: () => get(filter.page, filter.status)
+//       with list: (f) => ['projects', f.page]                              reported (the factory keeps no `status`)
+//   queryKey: keys.byOwner({ ownerId, archived }), queryFn: () => get(ownerId, archived)
+//       with byOwner: ({ ownerId }) => [..., ownerId]                       reported (`archived` dropped)
+//   queryKey: keys.members(projectId), queryFn: () => get(projectId)
+//       with members(projectId) { return ['members'] }                     reported (argument ignored)
+//   queryKey: keys.activity(id, since), with activity: (id) => [...]        reported (second argument has no parameter)
+//   const load = () => get(filter); useQuery({ queryKey: ['todos'], queryFn: load })
+//                                                                           reported (queryFn by name; also useCallback)
+//   the factory is resolved in the same file, or through an import: relative, `@/`/`~/` aliases, index files,
+//   `export *` and `export { a as b } from` re-exports, a `const keys = {...}` object, nested `keys.a.b(...)`
+//   factory keeps the field or the whole argument (`[..., f]`, `f.join()`, `...f`)  not reported
+//   the queryFn does not read the dropped value                              not reported
+//   a literal argument (`keys.list({ done: false })`), a rest pattern (`({ cursor, ...rest }) => [rest]`)  not reported
+//   a factory with a rest parameter or one reading `arguments`              not reported
+//   queryFn by name: a module-level fetcher, a value read through a useRef, a callee (`api.get()`), a name the key
+//   holds anywhere (also inside a factory call, as exhaustive-deps counts it)  not reported
+//   test, story and generated files                                           not reported
+//   a credential or request plumbing, by name: `token`, `accessToken`, `auth`, `session`, `jwt`, `csrf`, `secret`,
+//   `password`, `apiKey`, `cookie(s)`, `credentials`, `headers`, `signal`, `*_token`  not reported: it does not
+//   say which data is fetched, and in the key it would sit in devtools and persisted caches and refetch on every
+//   token refresh
+// Gaps: fetchers one hop away that read ambient state (a store's getState(), localStorage, window.location, a
+// module-level let) are not followed; a queryFn passed by name that is imported, or a method; a key built in a
+// wrapper hook (`queryKey` a parameter); factories from @lukemorales/query-key-factory or `createQueryKeys`; key
+// factories in another workspace package (`@acme/api/keys`) or behind a tsconfig `paths` alias other than `@/`/`~/`
+// (the runner gives no tsconfig rows, so aliases are resolved by file layout); a dropped field the queryFn reads
+// through a fetcher it passes the whole object to (`get(filter)` where the factory keeps `filter.page` only); a key
+// call passing one member of an object whose other members the queryFn reads (`keys.version(dto.id)` with
+// `get(dto.id, dto.offset)`); a `.tsx` query site whose factory is in a `.ts` file (the engine runs them apart).
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-functions.rerail"
+
+.violation FactoryDropsArgument(at: node, call: symbol, fname: symbol, path: symbol, f: node, n: number, arg: symbol)
+    "The queryKey `{call}` comes from `{fname}` ({path}:{f.line}), which ignores its argument {n} (`{arg}`), but the queryFn reads `{arg}`: every value of `{arg}` shares one cache entry, so after `{arg}` changes the UI shows the data fetched for the old value and does not refetch. Make the factory return `{arg}` in the key array. Leave it when `{arg}` cannot change what the queryFn fetches (a credential such as an auth token or a session, an abort signal, request headers: never put those in a key); then stop passing it to the factory."
+FactoryDropsArgument(c, t, fn, p, f, i + 1, at) :- qfh_kcall(c, fe, fv), qfh_fn_of(fe, f), text(fe, fn), text(c, t),
+    qfh_arg(c, i, a), qfh_varying(a), !qfh_secret_val(a), text(a, at), qfh_fn_uses(fv, a), qfh_ignores_arg(f, i),
+    qfh_path(f, p).
+
+.violation FactoryDropsField(at: node, call: symbol, fname: symbol, path: symbol, f: node, k: symbol)
+    "The queryKey `{call}` comes from `{fname}` ({path}:{f.line}), which keeps no `{k}` from its argument, but the queryFn reads `{k}`: queries that differ only in `{k}` share one cache entry, so after `{k}` changes the UI shows the data fetched for the old value and does not refetch. Make the factory put `{k}` (or the whole argument) into the key array. Leave it when `{k}` cannot change what the queryFn fetches (a credential, an abort signal, request headers: never put those in a key)."
+FactoryDropsField(c, t, fn, p, f, k) :- qfh_kcall(c, fe, fv), qfh_fn_of(fe, f), text(fe, fn), text(c, t),
+    qfh_field_demand(c, fv, i, k), !qfh_secret(k), qfh_param(f, i, _), !qfh_whole(f, i), !qfh_reads(f, i, k),
+    qfh_used(f, i), !qfh_open_fn(f), qfh_path(f, p).
+
+.violation QueryFnByNameReadsMissing(at: node, q: symbol, g: node, x: symbol)
+    "The queryFn `{q}` (line {g.line}) reads `{x}`, which the queryKey does not contain: queries for two values of `{x}` share one cache entry, so after `{x}` changes the UI shows the data fetched for the old value and does not refetch. exhaustive-deps does not check a queryFn passed by name. Add `{x}` to the queryKey. Leave it when `{x}` cannot change what `{q}` fetches (a credential, an abort signal, request headers: never put those in a key)."
+QueryFnByNameReadsMissing(fv, q, g, x) :- qfh_named_fn(o, fv, g, comp), text(fv, q), qfh_fn_dep(g, comp, x, fv),
+    !qfh_secret(x), qfh_prop(o, "queryKey", kv), qfh_key_known(kv, comp), !qfh_key_has(kv, x).
+
+// qfh_secret(x): the name x is a credential or request plumbing, not an input that selects data: `token`,
+// `accessToken`, `auth`, `authToken`, `session`, `jwt`, `csrfToken`, `apiKey`, `access_token`, `headers`, `signal`.
+// Putting one in a key shows it in devtools and persisted caches and refetches on every token refresh.
+.decl qfh_secret(x: symbol)
+qfh_secret(x) :- qfh_name(x), match("(?:[A-Za-z0-9_]*[a-z0-9])?(?:Token|Jwt|JWT|Bearer|Csrf|CSRF|Secret|Password|Credentials?|Cookies?|ApiKey|APIKey|Auth|Authorization|Headers|Signal)s?", x).
+qfh_secret(x) :- qfh_name(x), match("(?:token|jwt|bearer|csrf|secret|password|credentials?|cookies?|apiKey|api_key|auth|authorization|headers|signal|session|[a-z0-9_]*_(?:token|secret|password|api_key))s?", x).
+// qfh_name(x): the names the three violations would report.
+.decl qfh_name(x: symbol)
+qfh_name(x) :- qfh_arg(_, _, a), qfh_last_name(a, x).
+qfh_name(k) :- qfh_field_demand(_, _, _, k).
+qfh_name(x) :- qfh_named_fn(_, fv, g, comp), qfh_fn_dep(g, comp, x, fv).
+// qfh_last_name(a, x): x is a name's text, or the last property of a member chain (`session.accessToken`).
+.decl qfh_last_name(a: node, x: symbol)
+qfh_last_name(a, x) :- kind(a, "identifier"), text(a, x).
+qfh_last_name(a, x) :- kind(a, "member_expression"), field(a, "property", p), text(p, x).
+// qfh_secret_val(a): argument a names a credential.
+.decl qfh_secret_val(a: node)
+qfh_secret_val(a) :- qfh_arg(_, _, a), qfh_last_name(a, x), qfh_secret(x).
+
+// ---- query sites -------------------------------------------------------------------------------------------------
+// qfh_strip(e, x): x is e without parentheses and one `as const`, `as T` or `satisfies T`. (A demand set for it,
+// recursive with the factory lookup, cost four times this on 324 files.)
+.decl qfh_strip(e: node, x: node)
+qfh_strip(e, x) :- deparen(e, x), !kind(x, "as_expression"), !kind(x, "satisfies_expression").
+qfh_strip(e, x) :- deparen(e, y), (kind(y, "as_expression") ; kind(y, "satisfies_expression")), child(y, z, 0),
+    deparen(z, x), !kind(x, "as_expression"), !kind(x, "satisfies_expression").
+// qfh_obj(o): the object literals read: a query's options (it has a `queryKey`), a key factory's holder, an argument.
+.decl qfh_obj(o: node)
+qfh_obj(o) :- kind(kn, "property_identifier"), text(kn, "queryKey"), field(p, "key", kn), kind(p, "pair"),
+    child(o, p, _), kind(o, "object").
+qfh_obj(ov) :- qfh_val(_, ov), kind(ov, "object").
+qfh_obj(o) :- qfh_arg(_, _, o), kind(o, "object").
+// qfh_prop(o, k, v): object literal o has `k: v`, the shorthand `{ k }` (v the name) or the method `k() {}` (v it).
+.decl qfh_prop(o: node, k: symbol, v: node)
+qfh_prop(o, k, v) :- qfh_obj(o), child(o, p, _), kind(p, "pair"), field(p, "key", kn), key_static(kn, k),
+    field(p, "value", v0), qfh_strip(v0, v).
+qfh_prop(o, k, p) :- qfh_obj(o), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, k).
+qfh_prop(o, k, m) :- qfh_obj(o), child(o, m, _), kind(m, "method_definition"), field(m, "name", kn), key_static(kn, k).
+// qfh_site(o, kv, fv): o is a query's options: both a queryKey kv and a queryFn fv.
+.decl qfh_site(o: node, kv: node, fv: node)
+qfh_site(o, kv, fv) :- qfh_prop(o, "queryKey", kv), qfh_prop(o, "queryFn", fv).
+.decl qfh_inline_fn(f: node)
+qfh_inline_fn(f) :- kind(f, "arrow_function").
+qfh_inline_fn(f) :- kind(f, "function_expression").
+// qfh_kcall(c, fe, fv): the queryKey is the call c of the factory fe, the queryFn the inline function fv.
+.decl qfh_kcall(c: node, fe: node, fv: node)
+qfh_kcall(c, fe, fv) :- qfh_site(_, c, fv), kind(c, "call_expression"), field(c, "function", fe), qfh_inline_fn(fv),
+    !qfh_spread_args(c).
+.decl qfh_spread_args(c: node)
+qfh_spread_args(c) :- kind(c, "call_expression"), field(c, "arguments", as), child(as, s, _), kind(s, "spread_element").
+// qfh_arg(c, i, a): a is c's i-th argument, stripped.
+.decl qfh_arg(c: node, i: number, a: node)
+qfh_arg(c, i, a) :- qfh_kcall(c, _, _), call_arg(c, a0, i), qfh_strip(a0, a).
+// qfh_varying(a): an argument that can change between renders: a name or a member chain, not a literal.
+.decl qfh_varying(a: node)
+qfh_varying(a) :- qfh_arg(_, _, a), kind(a, "identifier").
+qfh_varying(a) :- qfh_arg(_, _, a), kind(a, "member_expression"), !qfh_has_call(a).
+.decl qfh_has_call(a: node)
+qfh_has_call(a) :- kind(a, "member_expression"), has(a, _, "call_expression").
+
+// ---- what the queryFn reads ----------------------------------------------------------------------------------------
+// qfh_fn_uses(fv, a): the inline queryFn fv reads the value a: a name that resolves to the same declaration, or the
+// same member chain written the same way.
+.decl qfh_fn_uses(fv: node, a: node)
+qfh_fn_uses(fv, a) :- qfh_kcall(c, _, fv), qfh_val_of_arg(c, a), kind(a, "identifier"), ref_site(a, s),
+    qfh_fn_ref(fv, r), ref_site(r, s).
+qfh_fn_uses(fv, a) :- qfh_kcall(c, _, fv), qfh_val_of_arg(c, a), kind(a, "shorthand_property_identifier"), ref_site(a, s),
+    qfh_fn_ref(fv, r), ref_site(r, s).
+qfh_fn_uses(fv, a) :- qfh_kcall(c, _, fv), qfh_val_of_arg(c, a), kind(a, "member_expression"), text(a, t),
+    has(fv, m, "member_expression"), text(m, t).
+// qfh_val_of_arg(c, a): a is an argument of c, or the value of a property of an object-literal argument.
+.decl qfh_val_of_arg(c: node, a: node)
+qfh_val_of_arg(c, a) :- qfh_arg(c, _, a).
+qfh_val_of_arg(c, v) :- qfh_arg(c, _, o), kind(o, "object"), qfh_prop(o, _, v).
+.decl qfh_fn_ref(fv: node, r: node)
+qfh_fn_ref(fv, r) :- qfh_kcall(_, _, fv), has(fv, r, "identifier").
+qfh_fn_ref(fv, r) :- qfh_kcall(_, _, fv), has(fv, r, "shorthand_property_identifier").
+// qfh_field_demand(c, fv, i, k): the queryFn reads field k of argument i of the key call c: argument i is an object
+// literal whose k is a value the queryFn reads, or a name y of which the queryFn reads `y.k` (not a method call).
+.decl qfh_field_demand(c: node, fv: node, i: number, k: symbol)
+qfh_field_demand(c, fv, i, k) :- qfh_kcall(c, _, fv), qfh_arg(c, i, o), kind(o, "object"), qfh_prop(o, k, v),
+    qfh_varying_val(v), qfh_fn_uses(fv, v).
+qfh_field_demand(c, fv, i, k) :- qfh_kcall(c, _, fv), qfh_arg(c, i, y), kind(y, "identifier"), ref_site(y, s),
+    has(fv, m, "member_expression"), static_prop(m, o, k), kind(o, "identifier"), ref_site(o, s), !qfh_callee(m).
+.decl qfh_varying_val(v: node)
+qfh_varying_val(v) :- qfh_val_of_arg(_, v), (kind(v, "identifier") ; kind(v, "shorthand_property_identifier")).
+qfh_varying_val(v) :- qfh_val_of_arg(_, v), kind(v, "member_expression"), !qfh_has_call(v).
+// qfh_callee(m): m is called: `m()`, or `new m()`.
+.decl qfh_callee(m: node)
+qfh_callee(m) :- kind(c, "call_expression"), field(c, "function", m).
+qfh_callee(m) :- kind(c, "new_expression"), field(c, "constructor", m).
+
+// ---- the key factory ------------------------------------------------------------------------------------------------
+// qfh_fn_of(fe, f): the callee fe of a key call is the function f: a function, an arrow or a method, declared in
+// this file or imported, directly or as a property path of an object (`keys.list`, `keys.todos.list`).
+.decl qfh_fn_of(fe: node, f: node)
+qfh_fn_of(fe, f) :- qfh_kcall(_, fe, _), qfh_val(fe, f), function_node(f).
+.decl qfh_want(e: node)
+qfh_want(fe) :- qfh_kcall(_, fe, _).
+qfh_want(o) :- qfh_want(e), static_prop(e, o, _).
+// qfh_val(e, v): the value expression e has, read statically.
+.decl qfh_val(e: node, v: node)
+qfh_val(e, v) :- qfh_want(e), kind(e, "identifier"), ref_site(e, s), qfh_site_val(s, v).
+qfh_val(e, v) :- qfh_want(e), static_prop(e, o, x), qfh_val(o, ov), kind(ov, "object"), qfh_prop(ov, x, v).
+// qfh_site_val(s, v): the declaration s holds v: a const's value, a function declaration itself, an import's export.
+.decl qfh_site_val(s: node, v: node)
+qfh_site_val(s, v) :- qfh_want_site(s), qfh_decl_val(s, v).
+qfh_site_val(s, v) :- qfh_want_site(s), import_binding(s, _, src, x), x != "*", docof(s, d), qfh_resolve(d, src, d2),
+    qfh_export_val(d2, x, v).
+.decl qfh_want_site(s: node)
+qfh_want_site(s) :- qfh_want(e), kind(e, "identifier"), ref_site(e, s).
+.decl qfh_decl_val(s: node, v: node)
+qfh_decl_val(s, v) :- qfh_dv(s), kind(s, "variable_declarator"), field(s, "value", v0), qfh_strip(v0, v).
+qfh_decl_val(s, s) :- qfh_dv(s), kind(s, "function_declaration").
+// qfh_dv(s): the declarations whose values are read: a key factory's name, a queryFn's name, a name the queryFn
+// reads, a queryKey's name, and the declarations behind the exports asked for.
+.decl qfh_dv(s: node)
+qfh_dv(s) :- qfh_want_site(s).
+qfh_dv(s) :- qfh_fnref(s).
+qfh_dv(s) :- qfh_dep_site(s).
+qfh_dv(s) :- qfh_site(_, kv, fv), kind(fv, "identifier"), (kind(kv, "identifier") ; kind(kv, "shorthand_property_identifier")),
+    ref_site(kv, s).
+qfh_dv(site) :- qfh_need_export(d, x), kind(e, "export_statement"), docof(e, d), exported_local(e, x, y),
+    top_level(site, y), docof(site, d).
+.decl qfh_path(f: node, p: symbol)
+qfh_path(f, p) :- qfh_fn_of(_, f), docof(f, d), doc(d, p, _).
+
+// ---- parameters of the factory --------------------------------------------------------------------------------------
+// qfh_param(f, i, pat): f's i-th parameter binds the name or object pattern pat (a TypeScript annotation or a
+// default stripped).
+.decl qfh_param(f: node, i: number, pat: node)
+qfh_param(f, i, pat) :- qfh_fn_of(_, f), fn_param(f, p, i), qfh_param_pat(p, pat).
+.decl qfh_param_pat(p: node, pat: node)
+qfh_param_pat(p, p) :- kind(p, "identifier").
+qfh_param_pat(p, p) :- kind(p, "object_pattern").
+qfh_param_pat(p, x) :- (kind(p, "required_parameter") ; kind(p, "optional_parameter")), field(p, "pattern", q),
+    qfh_param_pat(q, x).
+qfh_param_pat(p, x) :- kind(p, "assignment_pattern"), field(p, "left", q), qfh_param_pat(q, x).
+// qfh_open_fn(f): f can see arguments past its parameters: a rest parameter, or `arguments`.
+.decl qfh_open_fn(f: node)
+qfh_open_fn(f) :- qfh_fn_of(_, f), fn_param(f, p, _), rest_param(p).
+qfh_open_fn(f) :- qfh_fn_of(_, f), has(f, a, "identifier"), text(a, "arguments").
+// qfh_param_ref(f, i, r): r reads the name parameter i binds.
+.decl qfh_param_ref(f: node, i: number, r: node)
+qfh_param_ref(f, i, r) :- qfh_param(f, i, pat), kind(pat, "identifier"), ref_site(r, pat).
+// qfh_field(f, i, k, site): parameter i destructures field k into the binding at site; a nested pattern has no site.
+.decl qfh_field(f: node, i: number, k: symbol, site: node)
+qfh_field(f, i, k, c) :- qfh_param(f, i, pat), kind(pat, "object_pattern"), child(pat, c, _),
+    kind(c, "shorthand_property_identifier_pattern"), text(c, k).
+qfh_field(f, i, k, l) :- qfh_param(f, i, pat), kind(pat, "object_pattern"), child(pat, c, _),
+    kind(c, "object_assignment_pattern"), field(c, "left", l), text(l, k).
+qfh_field(f, i, k, v) :- qfh_param(f, i, pat), kind(pat, "object_pattern"), child(pat, c, _), kind(c, "pair_pattern"),
+    field(c, "key", kn), key_static(kn, k), field(c, "value", v0), qfh_param_pat(v0, v).
+// qfh_whole(f, i): f uses argument i as a whole value: the name read other than as `name.k`, through a method call
+// (`ids.join()`), or an object pattern with a rest element.
+.decl qfh_whole(f: node, i: number)
+qfh_whole(f, i) :- qfh_param_ref(f, i, r), !qfh_member_obj(r).
+.decl qfh_member_obj(r: node)
+qfh_member_obj(r) :- qfh_param_ref(_, _, r), static_prop(_, r, _).
+qfh_whole(f, i) :- qfh_param_ref(f, i, r), static_prop(m, r, _), qfh_callee(m).
+qfh_whole(f, i) :- qfh_param(f, i, pat), kind(pat, "object_pattern"), child(pat, c, _), kind(c, "rest_pattern").
+// qfh_reads(f, i, k): f reads field k of argument i.
+.decl qfh_reads(f: node, i: number, k: symbol)
+qfh_reads(f, i, k) :- qfh_param_ref(f, i, r), static_prop(_, r, k).
+qfh_reads(f, i, k) :- qfh_field(f, i, k, s), ref_site(_, s).
+qfh_reads(f, i, k) :- qfh_field(f, i, k, s), kind(s, "object_pattern").
+.decl qfh_used(f: node, i: number)
+qfh_used(f, i) :- qfh_param_ref(f, i, _).
+qfh_used(f, i) :- qfh_reads(f, i, _).
+qfh_used(f, i) :- qfh_whole(f, i).
+// qfh_ignores_arg(f, i): f never reads its argument i: no parameter takes it, or the parameter is never read.
+.decl qfh_ignores_arg(f: node, i: number)
+qfh_ignores_arg(f, i) :- qfh_param(f, i, _), !qfh_used(f, i), !qfh_open_fn(f).
+qfh_ignores_arg(f, i) :- qfh_fn_of(fe, f), qfh_kcall(c, fe, _), qfh_arg(c, i, _), !qfh_has_param(f, i), !qfh_open_fn(f).
+.decl qfh_has_param(f: node, i: number)
+qfh_has_param(f, i) :- qfh_fn_of(_, f), fn_param(f, _, i).
+
+// ---- a queryFn passed by name --------------------------------------------------------------------------------------
+// qfh_named_fn(o, fv, g, comp): the queryFn of o is the name fv of the function g, declared in the function comp
+// that holds the query too: `const load = () => …`, `const load = useCallback(() => …, deps)`, `function load() {}`.
+.decl qfh_named_fn(o: node, fv: node, g: node, comp: node)
+qfh_named_fn(o, fv, g, comp) :- qfh_site(o, _, fv), kind(fv, "identifier"), ref_site(fv, s), qfh_local_fn(s, g),
+    nearest(s, comp, function_kind), nearest(o, comp, function_kind).
+// qfh_fnref(s): a queryFn is the name declared at s.
+.decl qfh_fnref(s: node)
+qfh_fnref(s) :- qfh_site(_, _, fv), kind(fv, "identifier"), ref_site(fv, s).
+.decl qfh_local_fn(s: node, g: node)
+qfh_local_fn(s, g) :- qfh_fnref(s), kind(s, "variable_declarator"), field(s, "value", v0), qfh_strip(v0, g),
+    qfh_inline_fn(g).
+qfh_local_fn(s, g) :- qfh_fnref(s), kind(s, "variable_declarator"), field(s, "value", v0), qfh_strip(v0, c),
+    qfh_cb_call(c), call_arg(c, a, 0), qfh_strip(a, g), qfh_inline_fn(g).
+// qfh_cb_call(c): c is `useCallback(…)` or `React.useCallback(…)`.
+.decl qfh_cb_call(c: node)
+qfh_cb_call(c) :- qfh_dv(s), field(s, "value", v0), qfh_strip(v0, c), kind(c, "call_expression"), field(c, "function", cf),
+    qfh_hook_name(cf, "useCallback").
+qfh_local_fn(s, s) :- qfh_fnref(s), kind(s, "function_declaration").
+// qfh_hook_name(f, h): callee f is the hook h, plain or as `React.h`.
+.decl qfh_hook_name(f: node, h: symbol)
+qfh_hook_name(f, h) :- kind(f, "identifier"), text(f, h), (h = "useCallback" ; h = "useRef").
+qfh_hook_name(f, h) :- kind(f, "member_expression"), field(f, "property", p), text(p, h), (h = "useCallback" ; h = "useRef").
+// qfh_fn_dep(g, comp, x, fv): g reads x, declared in comp outside g: a parameter or a variable of the component,
+// not as a callee, not a function, not a ref.
+.decl qfh_fn_dep(g: node, comp: node, x: symbol, fv: node)
+qfh_fn_dep(g, comp, x, fv) :- qfh_named_fn(_, fv, g, comp), has(g, r, "identifier"), ref_site(r, ds), text(r, x),
+    within(ds, comp), !within(ds, g), ds != g, !qfh_callee(r), !qfh_callee_root(r), !qfh_fn_site(ds), !qfh_ref_site(ds),
+    !qfh_type_pos(r).
+qfh_fn_dep(g, comp, x, fv) :- qfh_named_fn(_, fv, g, comp), has(g, r, "shorthand_property_identifier"), ref_site(r, ds),
+    text(r, x), within(ds, comp), !within(ds, g), !qfh_fn_site(ds), !qfh_ref_site(ds).
+// qfh_callee_root(r): r is the object a called member chain starts at: `api.get()`, `client.todos.list()`.
+.decl qfh_callee_root(r: node)
+qfh_callee_root(r) :- qfh_dep_cand(r), qfh_up(r, m), qfh_callee(m).
+.decl qfh_dep_cand(r: node)
+qfh_dep_cand(r) :- qfh_named_fn(_, _, g, _), has(g, r, "identifier").
+// qfh_up(r, m): m is a member chain with r at its start: `r.a`, `r.a.b`.
+.decl qfh_up(r: node, m: node)
+qfh_up(r, m) :- qfh_dep_cand(r), field(m, "object", r), kind(m, "member_expression").
+qfh_up(r, m2) :- qfh_up(r, m), field(m2, "object", m), kind(m2, "member_expression").
+// qfh_dep_site(ds): a declaration of the component that a queryFn passed by name reads.
+.decl qfh_dep_site(ds: node)
+qfh_dep_site(ds) :- qfh_named_fn(_, _, g, comp), has(g, r, "identifier"), ref_site(r, ds), within(ds, comp).
+qfh_dep_site(ds) :- qfh_named_fn(_, _, g, comp), has(g, r, "shorthand_property_identifier"), ref_site(r, ds),
+    within(ds, comp).
+.decl qfh_fn_site(s: node)
+qfh_fn_site(s) :- qfh_dep_site(s), kind(s, "function_declaration").
+qfh_fn_site(s) :- qfh_dep_site(s), qfh_decl_val(s, v), qfh_inline_fn(v).
+// qfh_ref_site(s): `const r = useRef(…)`: reading r.current in a queryFn is the documented escape hatch.
+.decl qfh_ref_site(s: node)
+qfh_ref_site(s) :- qfh_dep_site(s), qfh_decl_val(s, c), kind(c, "call_expression"), field(c, "function", cf),
+    qfh_hook_name(cf, "useRef").
+.decl qfh_type_pos(r: node)
+qfh_type_pos(r) :- inside(r, _, "type_annotation").
+// qfh_key_known(kv, comp): the key is an array or a call written here, or a const of comp holding one.
+.decl qfh_key_known(kv: node, comp: node)
+qfh_key_known(kv, comp) :- qfh_named_fn(o, _, _, comp), qfh_prop(o, "queryKey", kv), qfh_key_expr(kv).
+qfh_key_known(kv, comp) :- qfh_named_fn(o, _, _, comp), qfh_prop(o, "queryKey", kv), kind(kv, "identifier"),
+    ref_site(kv, s), within(s, comp), qfh_decl_val(s, v), qfh_key_expr(v).
+qfh_key_known(kv, comp) :- qfh_named_fn(o, _, _, comp), qfh_prop(o, "queryKey", kv),
+    kind(kv, "shorthand_property_identifier"), ref_site(kv, s), within(s, comp), qfh_decl_val(s, v), qfh_key_expr(v).
+.decl qfh_key_expr(v: node)
+qfh_key_expr(v) :- kind(v, "array").
+qfh_key_expr(v) :- kind(v, "call_expression").
+// qfh_key_has(kv, x): the name x appears in the key, or in the value of the local const the key names.
+.decl qfh_key_has(kv: node, x: symbol)
+qfh_key_has(kv, x) :- qfh_key_known(kv, _), qfh_key_node(kv, e), has(e, r, "identifier"), text(r, x).
+qfh_key_has(kv, x) :- qfh_key_known(kv, _), qfh_key_node(kv, e), has(e, r, "shorthand_property_identifier"), text(r, x).
+.decl qfh_key_node(kv: node, e: node)
+qfh_key_node(kv, kv) :- qfh_key_known(kv, _).
+qfh_key_node(kv, v) :- qfh_key_known(kv, _), ref_site(kv, s), qfh_decl_val(s, v).
+
+// ---- library candidate: import resolution ---------------------------------------------------------------------------
+// The runner gives no tsconfig or file rows, so names.rerail's `target` has none across files. These resolve a
+// specifier from the documents' paths: relative (`./keys`, `../todos` with its index file), and the `@/` and `~/`
+// aliases by layout: `@/lib/keys` names the file `<root>lib/keys.ts` whose root is above the importing file.
+// qfh_resolve(d, s, d2): specifier s in document d names document d2.
+.decl qfh_resolve(d: number, s: symbol, d2: number)
+qfh_resolve(d, s, d2) :- qfh_need_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), qfh_ext(e),
+    doc(d2, cat(b, e), _).
+qfh_resolve(d, s, d2) :- qfh_need_spec(d, s), qfh_alias(s, rest), qfh_root(d, root), qfh_ext(e),
+    f = cat(root, cat(rest, e)), doc(d2, f, _).
+// qfh_alias(s, rest): s is `@/rest` or `~/rest`.
+.decl qfh_alias(s: symbol, rest: symbol)
+qfh_alias(s, substr(s, 2, strlen(s) - 2)) :- qfh_need_spec(_, s), (prefix("@/", s) ; prefix("~/", s)).
+// qfh_root(d, root): root is a directory above document d (with its trailing slash), for an alias import in d.
+.decl qfh_root(d: number, root: symbol)
+qfh_root(d, cat(x, "/")) :- qfh_dirs(d, x).
+.decl qfh_dirs(d: number, x: symbol)  // x is a directory above document d: src/a/b.ts gives src/a and src
+qfh_dirs(d, @dir(p)) :- qfh_need_spec(d, s), qfh_alias(s, _), doc(d, p, _), contains("/", p).
+qfh_dirs(d, @dir(x)) :- qfh_dirs(d, x), contains("/", x).
+qfh_resolve(d, s, d2) :- qfh_need_spec(d, s), (prefix("@/", s) ; prefix("~/", s)), rest = substr(s, 2, strlen(s) - 2),
+    qfh_ext(e), doc(d2, cat(rest, e), _).
+.decl qfh_ext(e: symbol)
+qfh_ext(".ts"). qfh_ext(".tsx"). qfh_ext(".js"). qfh_ext(".jsx"). qfh_ext(".mts").
+qfh_ext("/index.ts"). qfh_ext("/index.tsx"). qfh_ext("/index.js").
+.decl qfh_need_spec(d: number, s: symbol)
+qfh_need_spec(d, s) :- qfh_want_site(site), import_binding(site, _, s, _), docof(site, d).
+qfh_need_spec(d, s) :- qfh_need_export(d, x), kind(e, "export_statement"), docof(e, d), export_from(e, s, _, x).
+qfh_need_spec(d, s) :- qfh_need_export(d, _), kind(e, "export_statement"), docof(e, d), star_export(e, s).
+.decl qfh_need_export(d: number, x: symbol)
+qfh_need_export(d2, x) :- qfh_want_site(site), import_binding(site, _, s, x), x != "*", docof(site, d),
+    qfh_resolve(d, s, d2).
+qfh_need_export(d3, y) :- qfh_need_export(d, x), kind(e, "export_statement"), docof(e, d), export_from(e, s, y, x),
+    qfh_resolve(d, s, d3).
+qfh_need_export(d3, x) :- qfh_need_export(d, x), kind(e, "export_statement"), docof(e, d), star_export(e, s),
+    qfh_resolve(d, s, d3), x != "default".
+// qfh_export_val(d, x, v): document d exports the name x, whose declaration holds v; through `export { y as x }`,
+// `export { y as x } from "s"` and `export * from "s"`.
+.decl qfh_export_val(d: number, x: symbol, v: node)
+qfh_export_val(d, x, v) :- qfh_need_export(d, x), kind(e, "export_statement"), docof(e, d), exported_local(e, x, y),
+    top_level(site, y), docof(site, d), qfh_decl_val(site, v).
+qfh_export_val(d, x, v) :- qfh_need_export(d, x), kind(e, "export_statement"), docof(e, d), export_from(e, s, y, x),
+    qfh_resolve(d, s, d3), qfh_export_val(d3, y, v).
+qfh_export_val(d, x, v) :- qfh_need_export(d, x), kind(e, "export_statement"), docof(e, d), star_export(e, s),
+    qfh_resolve(d, s, d3), qfh_export_val(d3, x, v).
+// exported_local(e, x, y): e exports the local y as x: `export const x`, `export function x`, `export { y as x }`.
+.decl exported_local(e: node, x: symbol, y: symbol)
+exported_local(e, x, x) :- kind(e, "export_statement"), field(e, "declaration", dl), def_of(dl, x).
+exported_local(e, x, y) :- kind(e, "export_statement"), !field(e, "source", _), child(e, c, _), kind(c, "export_clause"),
+    child(c, sp, _), kind(sp, "export_specifier"), field(sp, "name", n), spec_name(n, y), export_name(sp, x).
+
+// The cases, `cases/tanstack-query-practice-query-fn-input-hidden-from-key/`, read as one repository: each line
+// ending in `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/package.json"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/tsconfig.json"
+    .fixture "src/lib/http.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/lib/http.ts"
+    .fixture "src/features/projects/keys.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/projects/keys.ts"
+    .fixture "src/features/projects/api.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/projects/api.ts"
+    .fixture "src/features/projects/use-projects.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/projects/use-projects.ts"
+    .fixture "src/features/todos/keys.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/todos/keys.ts"
+    .fixture "src/features/todos/index.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/todos/index.ts"
+    .fixture "src/features/todos/use-todos.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/todos/use-todos.ts"
+    .fixture "src/components/todo-list.tsx" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/components/todo-list.tsx"
+    .fixture "src/components/__tests__/todo-list.test.tsx" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/components/__tests__/todo-list.test.tsx"
+    .fixture "src/components/project-activity.tsx" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/components/project-activity.tsx"
+    .fixture "src/features/teams/keys.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/teams/keys.ts"
+    .fixture "src/features/teams/use-team.ts" from "../cases/tanstack-query-practice-query-fn-input-hidden-from-key/src/features/teams/use-team.ts"
+    .expect _ at "src/components/todo-list.tsx":11
+    .expect _ at "src/components/todo-list.tsx":14
+    .expect _ at "src/features/projects/use-projects.ts":7
+    .expect _ at "src/features/projects/use-projects.ts":31
+    .expect _ at "src/features/projects/use-projects.ts":53
+    .expect _ at "src/features/projects/use-projects.ts":60
+    .expect _ at "src/features/todos/use-todos.ts":7
+    .expect _ at "src/features/teams/use-team.ts":19
+.end

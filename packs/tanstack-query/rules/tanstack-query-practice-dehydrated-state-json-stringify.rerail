@@ -1,0 +1,168 @@
+.policy "tanstack-query-practice-dehydrated-state-json-stringify" revision 1
+.description "Write a dehydrated query cache into HTML with an HTML-safe serialiser, not JSON.stringify or superjson.stringify, which leave a closing script tag in cached data free to run script."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. Server rendering by hand (Express or Vite SSR, a custom document) hands the
+// prefetched query cache to the browser by writing it into the page. JSON.stringify and superjson.stringify do not
+// escape `<`, so a cached string holding `</script><script>…` (a product name, a comment, a display name) ends the
+// script element and runs as script in every page that embeds it: stored XSS. TanStack's SSR guide names this exact
+// mistake. The state is a dehydrate() call of a TanStack Query package (or react-query v3), named, renamed or
+// `RQ.dehydrate` of a namespace import; a name bound to one in the same scope; or a name or property called
+// dehydratedState, dehydrated or trpcState (tRPC's SSR helpers).
+// Reported, at the stringify call:
+//   `<script>window.__RQ__ = ${JSON.stringify(dehydrate(qc))}</script>`           markup template
+//   "<script>window.__RQ__ = " + superjson.stringify(state) + "</script>"         markup concatenation
+//   <script dangerouslySetInnerHTML={{ __html: `…${JSON.stringify(state)}` }} />    raw-HTML prop
+//   <Script id="s">{`window.__RQ__ = ${JSON.stringify(trpcState)}`}</Script>       next/script inline children
+//   const json = JSON.stringify(props.dehydratedState); … {{ __html: json }}       one hop through a const
+//   `<script>${JSON.stringify({ queries: state, user })}</script>`               the state as a property value
+// Left alone:
+//   JSON.stringify(state).replace(/</g, "\\u003c")        escaped: the result is the object of a member call
+//   htmlEscapeJsonString(JSON.stringify(state))          passed to any function before the HTML (an escaper)
+//   serialize(state, { isJSON: true }), devalue           HTML-safe serialisers are not stringify
+//   res.type("json").send(JSON.stringify(dehydrate(qc)))  no markup around it: a JSON response
+//   JSON.parse(JSON.stringify(dehydrate(qc)))             a deep copy
+//   <HydrationBoundary state={dehydrate(qc)}>, getServerSideProps' { dehydratedState }: the framework escapes it
+//   <div data-state={JSON.stringify(state)} />            React escapes attribute values
+//   <pre>{JSON.stringify(state, null, 2)}</pre>           React escapes text children
+//   JSON.stringify(state) !== JSON.stringify(prev)        a comparison writes nothing
+//   `var s=${JSON.stringify(state)};for(…;i<n.length;…)`  script code: `i<n` is no HTML tag
+//   JSON.stringify(jsonLd) in dangerouslySetInnerHTML     not the query cache
+//   dehydrate imported from the app's own module          not TanStack Query's
+// Gaps: tRPC's `helpers.dehydrate()` (a method, not the import) is caught only through a trpcState name; state built
+// in another function or file and passed in under another name; dehydrate re-exported through the app's own module
+// (imports are read in the file only); a template that reaches the HTML through more than one const or through a
+// function's return; markup assembled with a template engine (EJS, Handlebars) or kept in index.html and filled by
+// `html.replace("__STATE__", JSON.stringify(state))`, with no `<` in the code around the call.
+
+#include "tsx/modules.rerail"
+
+.violation dsj_unsafe_state(at: node, how: symbol)
+    "This writes the dehydrated query cache into HTML with {how}, which does not escape `<`: a cached string such as `</script><script>…` ends the script and runs in every page that embeds it (stored XSS). Escape it, `{how}(state).replace(/</g, '\\u003c')`, or use an HTML-safe serialiser (serialize-javascript with isJSON, devalue's uneval); in Next.js App Router pass the state to <HydrationBoundary> and let the framework serialise it. Keep it only if this markup never reaches a browser."
+dsj_unsafe_state(c, how) :- dsj_stringify(c, a, how), dsj_state(a), dsj_reaches_html(c).
+
+// dsj_dehydrate_call(c): c calls dehydrate from a TanStack Query package (@tanstack/react-query, query-core, the
+// vue/solid/svelte adapters) or from react-query v3, named, renamed or through a namespace import.
+.decl dsj_dehydrate_call(c: node)
+dsj_dehydrate_call(c) :- kind(c, "call_expression"), field(c, "function", f), dsj_import(f, s, "dehydrate"),
+    glob("{@tanstack/*query*,react-query}", s).
+
+// dsj_import(n, s, x): identifier or member n is export x of package s, imported in this file: `import { x } from
+// "s"`, `import { x as y }` then `y`, `import * as NS from "s"` then `NS.x`, and for x "default" a default import.
+// File-local on purpose: tsx/names' sym_of reaches tsconfig resolution, which the runner does not bind.
+.decl dsj_import(n: node, s: symbol, x: symbol)
+dsj_import(n, s, x) :- kind(n, "identifier"), ref_site(n, sp), import_binding(sp, _, s, x), x != "*".
+dsj_import(n, s, x) :- kind(n, "member_expression"), field(n, "object", o), kind(o, "identifier"), ref_site(o, sp),
+    import_binding(sp, _, s, "*"), field(n, "property", p), text(p, x).
+
+// dsj_bare(e, x): x is e without parentheses, `as T`, `satisfies T` or a `!` assertion.
+.decl dsj_bare(e: node, x: node)
+dsj_bare(e, x) :- deparen(e, y), !dsj_cast(y, _), x = y.
+dsj_bare(e, x) :- deparen(e, y), dsj_cast(y, z), dsj_bare(z, x).
+.decl dsj_cast(e: node, inner: node)
+dsj_cast(e, z) :- kind(e, k), (k = "as_expression" ; k = "satisfies_expression" ; k = "non_null_expression"),
+    child(e, z, 0).
+
+// dsj_state(e): expression e is a dehydrated query cache.
+.decl dsj_state(e: node)
+dsj_state(e) :- dsj_bare(e, x), dsj_dehydrate_call(x).
+// const state = dehydrate(queryClient); … state
+dsj_state(e) :- dsj_bare(e, x), kind(x, "identifier"), ref_site(x, s), binding_value(s, v), dsj_bare(v, c),
+    dsj_dehydrate_call(c).
+// dehydratedState, props.dehydratedState, pageProps.trpcState: the names TanStack's and tRPC's docs give the state.
+dsj_state(e) :- dsj_bare(e, x), kind(x, "identifier"), dsj_state_name(x).
+dsj_state(e) :- dsj_bare(e, x), kind(x, "member_expression"), field(x, "property", p), dsj_state_name(p).
+// { queries: state }, { rq: dehydrate(qc), user }, { dehydratedState }: an object literal holding the state as a
+// property value is written out with it.
+dsj_state(e) :- dsj_bare(e, x), kind(x, "object"), child(x, p, _), kind(p, "pair"), field(p, "value", v), dsj_state(v).
+dsj_state(e) :- dsj_bare(e, x), kind(x, "object"), child(x, p, _), kind(p, "shorthand_property_identifier"),
+    iglob("{dehydrated,dehydratedState,*DehydratedState,trpcState}", p).
+dsj_state(e) :- dsj_bare(e, x), kind(x, "object"), child(x, p, _), kind(p, "shorthand_property_identifier"),
+    ref_site(p, s), binding_value(s, v), dsj_bare(v, c), dsj_dehydrate_call(c).
+.decl dsj_state_name(n: node)
+dsj_state_name(n) :- kind(n, k), (k = "identifier" ; k = "property_identifier"),
+    iglob("{dehydrated,dehydratedState,*DehydratedState,trpcState}", n).
+
+// dsj_stringify(c, a, how): c turns a into a string with JSON.stringify or superjson.stringify (default, namespace
+// or named import); how names the call for the message.
+.decl dsj_stringify(c: node, a: node, how: symbol)
+dsj_stringify(c, a, "JSON.stringify") :- kind(c, "call_expression"), field(c, "function", f),
+    field(f, "object", o), kind(o, "identifier"), text(o, "JSON"), !ref_site(o, _),
+    field(f, "property", p), text(p, "stringify"), dsj_arg0(c, a).
+dsj_stringify(c, a, "superjson.stringify") :- kind(c, "call_expression"), field(c, "function", f),
+    field(f, "object", o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, "superjson", x),
+    (x = "default" ; x = "*"), field(f, "property", p), text(p, "stringify"), dsj_arg0(c, a).
+dsj_stringify(c, a, "superjson.stringify") :- kind(c, "call_expression"), field(c, "function", f),
+    dsj_import(f, "superjson", "stringify"), dsj_arg0(c, a).
+.decl dsj_arg0(c: node, a: node)
+dsj_arg0(c, a) :- field(c, "arguments", args), child(args, a, 0).
+
+// dsj_carry(n, p): p's value holds n's text as it is: a template around it, a `+` concatenation, parentheses, a
+// conditional's branch, a type assertion, and the `{{ __html: n }}` object of a JSX attribute. Anything else ends the
+// climb: a call it is passed to (the function may escape it), a member it is the object of (`.replace(/</g, …)`), a
+// comparison, a JSX child (React escapes text), another attribute.
+.decl dsj_carry(n: node, p: node)
+dsj_carry(n, p) :- kind(p, "template_substitution"), child(p, n, _).
+dsj_carry(n, p) :- kind(p, "template_string"), child(p, n, _), kind(n, "template_substitution").
+dsj_carry(n, p) :- kind(p, "binary_expression"), op(p, "+"), (field(p, "left", n) ; field(p, "right", n)).
+dsj_carry(n, p) :- kind(p, "ternary_expression"), (field(p, "consequence", n) ; field(p, "alternative", n)).
+dsj_carry(n, p) :- kind(p, k), (k = "parenthesized_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "non_null_expression"), child(p, n, 0).
+dsj_carry(n, p) :- kind(p, "pair"), field(p, "value", n), field(p, "key", k), (text(k, "__html") ; str(k, "__html")).
+dsj_carry(n, p) :- kind(p, "object"), child(p, n, _), kind(n, "pair").
+dsj_carry(n, p) :- kind(p, "jsx_expression"), child(p, n, 0).
+dsj_carry(n, p) :- kind(p, "jsx_attribute"), child(p, n, 1).
+
+// dsj_up(n, p): p carries n's text, through any number of dsj_carry steps, from a stringify call or from a reference
+// to a const one initialises (`const json = JSON.stringify(state)`, or a template around it).
+.decl dsj_up(n: node, p: node)
+dsj_up(c, c) :- dsj_stringify(c, _, _).
+dsj_up(r, r) :- dsj_stringify(c, _, _), dsj_up(c, v), binding_value(s, v), ref_site(r, s).
+dsj_up(n, p) :- dsj_up(n, q), dsj_carry(q, p).
+
+// dsj_html_at(n): the value of n is written into HTML as it is.
+.decl dsj_html_at(n: node)
+// Into a template literal or a `+` chain that holds an HTML tag or comment: `<script>…${n}…</script>`. A `<` in
+// script code (`i<c.length`) is not a tag.
+dsj_html_at(n) :- dsj_up(n, t), (kind(t, "template_string") ; kind(t, "binary_expression")),
+    match("(?s).*(<[A-Za-z][A-Za-z0-9-]*[\\s/>]|</[A-Za-z]|<!).*", t).
+// Into the dangerouslySetInnerHTML prop of any element.
+dsj_html_at(n) :- dsj_up(n, a), kind(a, "jsx_attribute"), child(a, x, 0), text(x, "dangerouslySetInnerHTML").
+// Into the children of next/script's <Script>, which it writes into the page as the script's inline body.
+dsj_html_at(n) :- dsj_up(n, j), kind(j, "jsx_expression"), child(e, j, _), kind(e, "jsx_element"),
+    field(e, "open_tag", o), field(o, "name", t), dsj_import(t, "next/script", "default").
+
+// dsj_reaches_html(c): the stringified text reaches HTML directly, or through one const it initialises.
+.decl dsj_reaches_html(c: node)
+dsj_reaches_html(c) :- dsj_stringify(c, _, _), dsj_html_at(c).
+dsj_reaches_html(c) :- dsj_stringify(c, _, _), dsj_up(c, v), binding_value(s, v), ref_site(r, s), dsj_html_at(r).
+
+// The cases, `cases/tanstack-query-practice-dehydrated-state-json-stringify/`, read as one repository: each line
+// ending in `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/package.json"
+    .fixture "app/document.tsx" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/app/document.tsx"
+    .fixture "pages/products/[id].tsx" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/pages/products/[id].tsx"
+    .fixture "server/render.test.ts" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/server/render.test.ts"
+    .fixture "server/render.ts" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/server/render.ts"
+    .fixture "server/vite-ssr.ts" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/server/vite-ssr.ts"
+    .fixture "src/App.tsx" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/src/App.tsx"
+    .fixture "src/escape.ts" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/src/escape.ts"
+    .fixture "src/queries.ts" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/src/queries.ts"
+    .fixture "src/store.ts" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/src/store.ts"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-dehydrated-state-json-stringify/tsconfig.json"
+    .expect _ at "app/document.tsx":14
+    .expect _ at "app/document.tsx":22
+    .expect _ at "app/document.tsx":27
+    .expect _ at "server/render.ts":15
+    .expect _ at "server/render.ts":23
+    .expect _ at "server/vite-ssr.ts":5
+    .expect _ at "server/vite-ssr.ts":16
+    .expect _ at "server/vite-ssr.ts":17
+.end

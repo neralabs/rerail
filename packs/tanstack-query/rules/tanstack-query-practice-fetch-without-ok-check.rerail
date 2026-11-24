@@ -1,0 +1,251 @@
+.policy "tanstack-query-practice-fetch-without-ok-check" revision 1
+.description "A fetch() that feeds a TanStack Query queryFn or mutationFn must throw on an HTTP error status (check res.ok), or the failed request counts as success."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**"
+.scope exclude "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*"
+.scope exclude "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. fetch() resolves, not rejects, on a 404 or a 500; TanStack Query only sees an error
+// when the queryFn or mutationFn throws. A fetch whose response is read without a status check makes a failed request
+// a success: a query caches the error body as data (no error state, no retry, no error boundary) and a mutation runs
+// onSuccess. Reported at the fetch() call, citing the option it feeds, in a function that runs for a `queryFn` or
+// `mutationFn` option (pair or method) of a file that imports @tanstack/*query* or react-query: the option's own
+// function, inline or named (same file, or imported: relative, `@/`/`~/` alias, barrel re-exports, namespace
+// imports; resolved below), and any function it calls by name, transitively. The fetch is the global one (also
+// window./globalThis./self.fetch), and its
+// response is read (`.json()`, `.text()`, `.blob()`, `.arrayBuffer()`, `.formData()`) or thrown away (`await
+// fetch(...);`), through a variable, `await`, or a `.then(r => ...)` callback.
+//   lib/api.ts:   export async function getTodos() { const r = await fetch("/api/todos"); return r.json() }
+//   use-todos.ts: useQuery({ queryKey: ["todos"], queryFn: getTodos })         reported at fetch, cites queryFn
+//   queryFn: () => fetcher("/api/stats")  with  fetcher = (u) => fetch(u).then((r) => r.json())   reported
+//   queryFn: () => projectService.getAll()  with  projectService = { async getAll() { …fetch… } }  reported
+//   mutationFn: async (t) => { await fetch("/api/todos", { method: "PUT", body }) }                reported
+// Not reported, near misses:
+//   if (!res.ok) throw ... / res.status === 404 / const { ok } = res     any `.ok` or `.status` in the function
+//   const body = await res.json(); if (body.error) throw ...             a throw after the fetch, outside a catch
+//   return handleResponse(res) / fetch(u).then(check)                    the response goes to another function
+//   return fetch(u) / return res                                         the caller gets the Response to check
+//   a fetch in useEffect, or in a function no queryFn/mutationFn reaches; RTK Query's queryFn (no TanStack import)
+//   fetch(u, { mode: "no-cors" })  (or an init const holding it)       an opaque response: `ok` is always false and
+//                                                                       the status 0, so a check would always throw
+//   axios, ky, ofetch, tRPC: they reject on error statuses
+// Gaps: class methods and `this.m()`, a function passed as a value (`queryFn: () => request(getTodos)`), a custom
+// wrapper hook in a file that does not import TanStack Query, workspace packages (`@acme/api`) and `paths` aliases
+// other than `@/`, `~/`, `#/`, and a Response held in an array (`Promise.all([...])`) are not followed. Any
+// `.ok`/`.status` name or Promise.reject in the function counts as a check, even when it reads something else.
+
+#include "tsx/names.rerail"
+
+.violation FetchWithoutOkCheck(at: node, k: symbol, p: symbol, o: node)
+    "fetch() resolves on HTTP errors (404, 500), and nothing checks this response before it feeds `{k}` at {p}:{o.line}: TanStack Query then takes the failed request as success (a query caches the error body as data, a mutation runs onSuccess) and never shows its error state or retries. Throw on a bad status before reading the body, `if (!res.ok) throw new Error(...)`, or call the project's fetch helper that already does. Leave it when this endpoint's error responses are meant to reach the UI as data."
+FetchWithoutOkCheck(c, k, p, o) :- fwoc_unchecked(c), o = min y : { fwoc_feeds(c, y) }, fwoc_option(o, k, _),
+    docof(o, d), doc(d, p, _).
+
+// fwoc_tq_doc(d): document d imports TanStack Query (@tanstack/react-query, @tanstack/query-core, @tanstack/vue-query,
+// …, or v3's react-query).
+.decl fwoc_tq_doc(d: number)
+fwoc_tq_doc(d) :- import_binding(sp, _, s, _), match("@tanstack/(?:[a-z]+-)?query(?:-[a-z-]+)?|react-query", s),
+    docof(sp, d).
+// fwoc_option(o, k, v): o is a `queryFn` or `mutationFn` option of value v; a method `queryFn() {}` is its own value.
+.decl fwoc_option(o: node, k: symbol, v: node)
+fwoc_option(o, k, v) :- kind(o, "pair"), field(o, "key", n), kind(n, "property_identifier"), text(n, k), fwoc_key(k),
+    field(o, "value", v), docof(o, d), fwoc_tq_doc(d).
+fwoc_option(o, k, o) :- kind(o, "method_definition"), field(o, "name", n), kind(n, "property_identifier"), text(n, k),
+    fwoc_key(k), docof(o, d), fwoc_tq_doc(d).
+.decl fwoc_key(k: symbol)
+fwoc_key("queryFn"). fwoc_key("mutationFn").
+
+// fwoc_fn_value(v, g): expression v is function g, or names it. fwoc_value(v, n): v is, or names, n, a function or
+// an object literal: a local function or a const bound to one, an imported name (resolved by fwoc_def below), a
+// member of a namespace import (`api.getTodos`) or of an object literal (`todoService.getAll`, `api.todos.list`).
+.decl fwoc_fn_kind(k: symbol)
+fwoc_fn_kind("arrow_function"). fwoc_fn_kind("function_expression"). fwoc_fn_kind("function").
+fwoc_fn_kind("function_declaration"). fwoc_fn_kind("generator_function"). fwoc_fn_kind("generator_function_declaration").
+fwoc_fn_kind("method_definition").
+.decl fwoc_fn_value(v: node, g: node)
+fwoc_fn_value(v, g) :- fwoc_value(v, g), kind(g, k), fwoc_fn_kind(k).
+.decl fwoc_value(v: node, n: node)
+fwoc_value(v, v) :- kind(v, k), fwoc_fn_kind(k).
+fwoc_value(v, v) :- kind(v, "object").
+fwoc_value(v, n) :- kind(v, "identifier"), ref_site(v, s), fwoc_site_val(s, n).
+fwoc_value(v, n) :- kind(v, "identifier"), ref_site(v, sp), import_binding(sp, _, s, x), x != "*", docof(sp, d),
+    fwoc_resolve(d, s, d2), fwoc_def(d2, x, n).
+fwoc_value(v, n) :- kind(v, "member_expression"), field(v, "object", o), kind(o, "identifier"), ref_site(o, sp),
+    import_binding(sp, _, s, "*"), field(v, "property", p), text(p, x), docof(sp, d), fwoc_resolve(d, s, d2),
+    fwoc_def(d2, x, n).
+fwoc_value(v, n) :- kind(v, "member_expression"), field(v, "object", o), fwoc_value(o, b), kind(b, "object"),
+    field(v, "property", p), text(p, x), fwoc_member(b, x, n).
+// fwoc_member(b, x, n): object literal b's member x is n: `x: <value>` or a method `x() {}`.
+.decl fwoc_member(b: node, x: symbol, n: node)
+fwoc_member(b, x, n) :- child(b, p, _), kind(p, "pair"), field(p, "key", k), kind(k, "property_identifier"),
+    text(k, x), field(p, "value", v), fwoc_value(v, n).
+fwoc_member(b, x, m) :- child(b, m, _), kind(m, "method_definition"), field(m, "name", k), text(k, x).
+.decl fwoc_site_val(s: node, n: node)
+fwoc_site_val(s, s) :- kind(s, "function_declaration").
+fwoc_site_val(s, n) :- kind(s, "variable_declarator"), field(s, "value", n), kind(n, k),
+    (fwoc_fn_kind(k) ; k = "object").
+
+// fwoc_reach(g, o): function g runs when option o's function runs: that function, or one it (or a function it
+// reaches) calls by name.
+.decl fwoc_reach(g: node, o: node)
+fwoc_reach(g, o) :- fwoc_option(o, _, v), fwoc_fn_value(v, g).
+fwoc_reach(h, o) :- fwoc_reach(g, o), has(g, c, "call_expression"), field(c, "function", f), fwoc_fn_value(f, h).
+
+// fwoc_fetch(c): c calls the global fetch: a `fetch` (or window./globalThis./self.fetch) nothing in the file declares
+// or imports (es_global holds ECMAScript's globals only, not the browser's).
+.decl fwoc_fetch(c: node)
+fwoc_fetch(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), fwoc_global(f, "fetch").
+fwoc_fetch(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", p), text(p, "fetch"), field(f, "object", w), fwoc_global(w, x),
+    (x = "window" ; x = "globalThis" ; x = "self").
+.decl fwoc_global(r: node, x: symbol)
+fwoc_global(r, x) :- kind(r, "identifier"), text(r, x), (x = "fetch" ; x = "window" ; x = "globalThis" ; x = "self"),
+    ref(r, x, "value"), !ref_site(r, _).
+// fwoc_scope(c, s): s is a function around fetch call c; fwoc_feeds(c, o): one of them runs for option o.
+.decl fwoc_scope(c: node, s: node)
+fwoc_scope(c, s) :- fwoc_fetch(c), nearest(c, s, fwoc_fn_kind).
+fwoc_scope(c, s) :- fwoc_scope(c, i), nearest(i, s, fwoc_fn_kind).
+.decl fwoc_feeds(c: node, o: node)
+fwoc_feeds(c, o) :- fwoc_scope(c, s), fwoc_reach(s, o).
+// fwoc_cscope(c, s): where a check of c's response may stand: a function around c, inside a reached one (or it).
+.decl fwoc_cscope(c: node, s: node)
+fwoc_cscope(c, s) :- fwoc_scope(c, s), fwoc_scope(c, r), fwoc_reach(r, _), (s = r ; within(s, r)).
+
+// fwoc_resp(c, e): expression e holds fetch call c's Response: c, `await c`, a const bound to it, the parameter of
+// a `.then` callback on it.
+.decl fwoc_resp(c: node, e: node)
+fwoc_resp(c, c) :- fwoc_feeds(c, _).
+fwoc_resp(c, a) :- fwoc_resp(c, e), child(a, e, _), kind(a, k), fwoc_wrap(k).
+fwoc_resp(c, r) :- fwoc_resp(c, e), kind(s, "variable_declarator"), field(s, "value", e), field(s, "name", n),
+    kind(n, "identifier"), ref_site(r, s).
+fwoc_resp(c, r) :- fwoc_then(c, _, g), kind(g, k), fwoc_fn_kind(k), decl_site(g, _, s, "param", _), ref_site(r, s).
+.decl fwoc_wrap(k: symbol)
+fwoc_wrap("await_expression"). fwoc_wrap("parenthesized_expression"). fwoc_wrap("as_expression").
+fwoc_wrap("non_null_expression"). fwoc_wrap("satisfies_expression").
+// fwoc_then(c, e, a): `e.then(a, …)`, e holding c's Response.
+.decl fwoc_then(c: node, e: node, a: node)
+fwoc_then(c, e, a) :- fwoc_resp(c, e), fwoc_method_call(e, "then", t), field(t, "arguments", args), child(args, a, 0).
+// fwoc_method_call(e, x, t): t is the call `e.x(…)`.
+.decl fwoc_method_call(e: node, x: symbol, t: node)
+fwoc_method_call(e, x, t) :- fwoc_resp(_, e), kind(m, "member_expression"), field(m, "object", e),
+    field(m, "property", p), text(p, x), kind(t, "call_expression"), field(t, "function", m).
+
+// fwoc_consumed(c): c's response body is read, or the response is dropped (`await fetch(...);`).
+.decl fwoc_consumed(c: node)
+fwoc_consumed(c) :- fwoc_resp(c, e), fwoc_method_call(e, x, _), fwoc_body_read(x).
+fwoc_consumed(c) :- fwoc_resp(c, e), child(s, e, _), kind(s, "expression_statement").
+.decl fwoc_body_read(x: symbol)
+fwoc_body_read("json"). fwoc_body_read("text"). fwoc_body_read("blob"). fwoc_body_read("arrayBuffer").
+fwoc_body_read("formData").
+// fwoc_escapes(c): the response goes where this function cannot see what happens to it: an argument, a return
+// value, an arrow's result, an element of an object or array, an assignment, a `.then` handler named elsewhere.
+.decl fwoc_escapes(c: node)
+fwoc_escapes(c) :- fwoc_resp(c, e), child(a, e, _), kind(a, k), fwoc_escape_parent(k).
+fwoc_escapes(c) :- fwoc_resp(c, e), kind(g, "arrow_function"), field(g, "body", e).
+fwoc_escapes(c) :- fwoc_resp(c, e), kind(a, "assignment_expression"), field(a, "right", e).
+fwoc_escapes(c) :- fwoc_then(c, _, a), kind(a, k), !fwoc_fn_kind(k).
+.decl fwoc_escape_parent(k: symbol)
+fwoc_escape_parent("arguments"). fwoc_escape_parent("return_statement"). fwoc_escape_parent("array").
+fwoc_escape_parent("object"). fwoc_escape_parent("pair"). fwoc_escape_parent("yield_expression").
+fwoc_escape_parent("spread_element"). fwoc_escape_parent("ternary_expression").
+
+// fwoc_checked(c): a function around c that runs for the query checks a status (`.ok`, `.status`, `{ ok }`),
+// rejects, or throws after c outside a catch clause (a catch only sees network errors and parse errors).
+.decl fwoc_checked(c: node)
+fwoc_checked(c) :- fwoc_cscope(c, s), has(s, k, fwoc_status_kind), (text(k, "ok") ; text(k, "status")).
+fwoc_checked(c) :- fwoc_cscope(c, s), has(s, t, "throw_statement"), fwoc_after(c, t), !inside(t, _, "catch_clause").
+fwoc_checked(c) :- fwoc_cscope(c, s), has(s, m, "member_expression"), text(m, "Promise.reject").
+// fwoc_after(c, t): t starts after c starts (earlier and visit_index have no TypeScript rows in this runner).
+.decl fwoc_after(c: node, t: node)
+fwoc_after(c, t) :- fwoc_cscope(c, s), has(s, t, "throw_statement"), line(c, a), line(t, b),
+    (b > a ; b = a, col(c, x), col(t, y), y > x).
+.decl fwoc_status_kind(k: symbol)
+fwoc_status_kind("property_identifier"). fwoc_status_kind("shorthand_property_identifier_pattern").
+fwoc_status_kind("shorthand_property_identifier").
+
+// fwoc_no_cors(c): fetch call c asks for an opaque response, `mode: "no-cors"` in its init (written in the call or in
+// a const it passes): a reachability probe, whose `ok` is always false.
+.decl fwoc_no_cors(c: node)
+fwoc_no_cors(c) :- fwoc_fetch(c), field(c, "arguments", args), has(args, p, "pair"), fwoc_no_cors_pair(p).
+fwoc_no_cors(c) :- fwoc_fetch(c), field(c, "arguments", args), child(args, a, _), kind(a, "identifier"),
+    ref_site(a, s), kind(s, "variable_declarator"), field(s, "value", o), kind(o, "object"), child(o, p, _),
+    fwoc_no_cors_pair(p).
+.decl fwoc_no_cors_pair(p: node)
+fwoc_no_cors_pair(p) :- kind(p, "pair"), field(p, "key", k), text(k, "mode"), field(p, "value", v),
+    (text(v, "\"no-cors\"") ; text(v, "'no-cors'")).
+
+.decl fwoc_unchecked(c: node)
+fwoc_unchecked(c) :- fwoc_consumed(c), !fwoc_escapes(c), !fwoc_checked(c), !fwoc_no_cors(c).
+
+// ---- library candidate: import resolution ----------------------------------------------------------------------
+// The runner binds no tsconfig_for/tsconfig_path (core.rerail's inputs), so tsx/names' target and sym_of cannot
+// cross files here. fwoc_resolve(d, s, d2): document d's import or re-export source s names workspace document d2:
+//   "./a", "../a"            from d's directory, then .ts, .tsx, .js, .jsx, .mts, .mjs and index.* candidates
+//   "@/a", "~/a", "#/a"      by layout: a under any directory above d (src/a.ts for "@/*": ["./src/*"]), the
+//                            usual tsconfig `paths` alias; tsconfig.json itself is not read
+// Workspace packages (`@acme/api`) and other `paths` keys are not resolved.
+.decl fwoc_spec(d: number, s: symbol)
+fwoc_spec(d, s) :- import_spec(i, s), docof(i, d).
+.decl fwoc_ext(e: symbol)
+fwoc_ext(""). fwoc_ext(".ts"). fwoc_ext(".tsx"). fwoc_ext(".js"). fwoc_ext(".jsx"). fwoc_ext(".mts"). fwoc_ext(".mjs").
+fwoc_ext("/index.ts"). fwoc_ext("/index.tsx"). fwoc_ext("/index.js"). fwoc_ext("/index.jsx").
+.decl fwoc_resolve(d: number, s: symbol, d2: number)
+fwoc_resolve(d, s, d2) :- fwoc_spec(d, s), prefix(".", s), doc(d, p, _), b = @join(@dir(p), s), fwoc_ext(e),
+    doc(d2, cat(b, e), _).
+fwoc_resolve(d, s, d2) :- fwoc_alias(d, s, r), doc(d, p, _), fwoc_up(p, a), fwoc_ext(e),
+    (a = "", f = cat(r, e) ; a != "", f = cat(cat(a, "/"), cat(r, e))), doc(d2, f, _).
+// fwoc_alias(d, s, r): d imports s, "@/r", "~/r" or "#/r".
+.decl fwoc_alias(d: number, s: symbol, r: symbol)
+fwoc_alias(d, s, substr(s, 2, strlen(s) - 2)) :- fwoc_spec(d, s), (prefix("@/", s) ; prefix("~/", s) ; prefix("#/", s)).
+// fwoc_up(p, a): a is a directory above file p ("" for the root).
+.decl fwoc_up(p: symbol, a: symbol)
+fwoc_up(p, a) :- fwoc_alias(d, _, _), doc(d, p, _), a0 = @dir(p), (a0 = ".", a = "" ; a0 != ".", a = a0).
+fwoc_up(p, a) :- fwoc_up(p, b), b != "", a0 = @dir(b), (a0 = "." , a = "" ; a0 != ".", a = a0), a != b.
+// fwoc_def(d, x, n): document d exports x as n, a function or an object literal: its own top-level function or
+// const, `export default`, or through `export { y as x } from` and `export * from` (barrels).
+.decl fwoc_def(d: number, x: symbol, n: node)
+fwoc_def(d, x, n) :- top_level(s, x), fwoc_site_val(s, n), docof(s, d).
+fwoc_def(d, "default", g) :- kind(e, "export_statement"), field(e, "declaration", g), kind(g, "function_declaration"),
+    match("export\\s+default\\b[\\s\\S]*", e), docof(e, d).
+fwoc_def(d, "default", n) :- kind(e, "export_statement"), field(e, "value", v), kind(v, "identifier"),
+    ref_site(v, s), fwoc_site_val(s, n), docof(e, d).
+fwoc_def(d, "default", n) :- kind(e, "export_statement"), field(e, "value", n), kind(n, k),
+    (fwoc_fn_kind(k) ; k = "object"), docof(e, d).
+fwoc_def(d, x, g) :- export_from(e, s, y, x), docof(e, d), fwoc_resolve(d, s, d3), fwoc_def(d3, y, g).
+fwoc_def(d, x, g) :- star_export(e, s), docof(e, d), fwoc_resolve(d, s, d3), fwoc_def(d3, x, g), x != "default".
+
+// The cases, `cases/tanstack-query-practice-fetch-without-ok-check/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-fetch-without-ok-check/package.json"
+    .fixture "src/features/board/board-api.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/board/board-api.ts"
+    .fixture "src/features/board/use-board.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/board/use-board.ts"
+    .fixture "src/features/inbox/inbox.tsx" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/inbox/inbox.tsx"
+    .fixture "src/features/onboarding/reachability.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/onboarding/reachability.ts"
+    .fixture "src/features/todos/save-todo.tsx" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/todos/save-todo.tsx"
+    .fixture "src/features/todos/use-todos.test.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/todos/use-todos.test.ts"
+    .fixture "src/features/todos/use-todos.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/features/todos/use-todos.ts"
+    .fixture "src/lib/api/board.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/board.ts"
+    .fixture "src/lib/api/inbox.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/inbox.ts"
+    .fixture "src/lib/api/index.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/index.ts"
+    .fixture "src/lib/api/service.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/service.ts"
+    .fixture "src/lib/api/todos.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/todos.ts"
+    .fixture "src/lib/api/types.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/api/types.ts"
+    .fixture "src/lib/http.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/lib/http.ts"
+    .fixture "src/store/api.ts" from "../cases/tanstack-query-practice-fetch-without-ok-check/src/store/api.ts"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-fetch-without-ok-check/tsconfig.json"
+    .expect _ at "src/features/board/board-api.ts":2
+    .expect _ at "src/features/onboarding/reachability.ts":32
+    .expect _ at "src/features/board/use-board.ts":20
+    .expect _ at "src/features/todos/save-todo.tsx":13
+    .expect _ at "src/features/todos/use-todos.ts":56
+    .expect _ at "src/lib/api/board.ts":2
+    .expect _ at "src/lib/api/service.ts":3
+    .expect _ at "src/lib/api/todos.ts":5
+    .expect _ at "src/lib/api/todos.ts":10
+    .expect _ at "src/lib/api/todos.ts":43
+    .expect _ at "src/lib/http.ts":8
+.end

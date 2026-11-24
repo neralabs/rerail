@@ -1,0 +1,121 @@
+.policy "tanstack-query-practice-cache-key-matches-no-query" revision 1
+.description "A query key passed to invalidateQueries, setQueryData and the other QueryClient cache methods starts with a string no query in the repository uses, so the call reaches no cached query."
+.language typescript
+.mode log
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/*.min.js"
+// Rerail's own rule, not a port. TanStack Query matches a cache call's key against the cached queries by prefix, so a
+// key whose first element is spelled differently from every query's (`['todo']` for `['todos']`, a key renamed in the
+// query but not at the invalidation) matches nothing: the invalidation silently does nothing and the UI keeps stale
+// data after a successful mutation, and setQueryData writes an entry no component reads. A single-file linter cannot
+// see it: the queries live in other files. The rule reads the key of a QueryClient cache method (invalidateQueries,
+// refetchQueries, resetQueries, removeQueries, cancelQueries, setQueryData, setQueriesData, getQueryData,
+// getQueriesData, getQueryState), positional (v4, setQueryData) or as `{ queryKey }`, and reports its first element
+// when that is a string literal that occurs nowhere else in the repository as a string (other cache calls' key roots
+// do not count).
+//   qc.invalidateQueries({ queryKey: ['todo'] })           reported when only ['todos'] exists
+//   qc.setQueryData(['projects', id], next)                reported when queries use ['project', id]
+//   qc.invalidateQueries(['projcet'])                      reported (v4 positional key)
+//   qc.invalidateQueries({ queryKey: ['todos'] })          not reported: a query or key factory spells 'todos'
+//   qc.invalidateQueries({ queryKey: todoKeys.all })       not reported: not a literal, the factory is the fix
+//   qc.invalidateQueries({ queryKey: [...todoKeys.all] })  not reported: the root is not a string literal
+//   qc.invalidateQueries({ queryKey: [['post', 'list']] }) not reported: tRPC's nested key
+//   qc.invalidateQueries()                                 not reported: no key
+//   qc.invalidateQueries({ queryKey: ['/api/settings'] })  not reported: useApi('/api/settings') spells the string,
+//                                                          for a hook that puts its argument in the key
+//   qc.invalidateQueries({ queryKey: ['/api/invoices'] })  not reported: `/api/${name}` (or '/api/' + name) builds
+//                                                          keys starting with '/api/'
+//   a call in a test, story, mock, fixture or generated file: not reported (those files still count as places the
+//   string occurs, so a generated client's keys are known)
+// Gaps: keys built from strings that never occur whole (`[base + path]` with no literal prefix, a key read from
+// config); queries defined in a dependency (wagmi, a published SDK) or in .vue/.svelte files, which the rule does not
+// read, are not known and their invalidations would be reported; a root string that occurs anywhere else (a label, a
+// type) hides a typo; only the first element is compared, so ['todos', 'lsit'] passes.
+
+.violation CacheKeyMatchesNoQuery(at: node, m: symbol, s: symbol) "`{m}` gets a query key starting with '{s}', and no other code in this repository spells '{s}': no useQuery, queryOptions or key factory builds a key with that root, so this call matches no cached query and does nothing (a typo, or a key renamed in the query but not here). Take the key from the query it means to reach (its `queryOptions(...).queryKey` or key factory), or correct the string. If that query's key is built at run time from other strings, or comes from a library rather than this repository, leave the call as it is."
+
+// ckm_method(m): QueryClient methods whose first argument is a query key or a `{ queryKey }` filter, and which act
+// only on cached queries whose key starts with it.
+.decl ckm_method(m: symbol)
+ckm_method("invalidateQueries"). ckm_method("refetchQueries"). ckm_method("resetQueries").
+ckm_method("removeQueries"). ckm_method("cancelQueries"). ckm_method("setQueryData"). ckm_method("setQueriesData").
+ckm_method("getQueryData"). ckm_method("getQueriesData"). ckm_method("getQueryState").
+
+// ckm_call(c, m): `<anything>.m(...)`: queryClient, qc, useQueryClient(), getQueryClient() alike.
+.decl ckm_call(c: node, m: symbol)
+ckm_call(c, m) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression"),
+    field(f, "property", p), text(p, m), ckm_method(m).
+
+// ckm_key(c, m, v): the key expression of the call: its first argument, or the `queryKey` of a filters object there.
+.decl ckm_key(c: node, m: symbol, v: node)
+ckm_key(c, m, v) :- ckm_call(c, m), field(c, "arguments", as), child(as, v, 0), !kind(v, "object").
+ckm_key(c, m, v) :- ckm_call(c, m), field(c, "arguments", as), child(as, o, 0), kind(o, "object"), child(o, p, _),
+    kind(p, "pair"), field(p, "key", k), text(k, "queryKey"), field(p, "value", v).
+
+// ckm_unwrap(v, w): w is v with `as const`, `satisfies T`, parentheses and `!` taken off.
+.decl ckm_wrapper(k: symbol)
+ckm_wrapper("as_expression"). ckm_wrapper("satisfies_expression"). ckm_wrapper("parenthesized_expression").
+ckm_wrapper("non_null_expression").
+.decl ckm_unwrap(v: node, w: node)
+ckm_unwrap(v, v) :- ckm_key(_, _, v).
+ckm_unwrap(v, w) :- ckm_unwrap(v, u), kind(u, k), ckm_wrapper(k), child(u, w, 0).
+
+// ckm_root(c, m, r, s): the key is an array literal whose first element r is the string s ('todos', or `todos`).
+.decl ckm_root(c: node, m: symbol, r: node, s: symbol)
+ckm_root(c, m, r, s) :- ckm_key(c, m, v), ckm_unwrap(v, a), kind(a, "array"), child(a, r, 0),
+    (kind(r, "string") ; kind(r, "template_string")), str(r, s).
+.decl ckm_root_node(r: node)
+ckm_root_node(r) :- ckm_root(_, _, r, _).
+.decl ckm_root_value(s: symbol)
+ckm_root_value(s) :- ckm_root(_, _, _, s).
+
+// ckm_known(s): some other code in the repository spells s, or builds strings that start with it.
+.decl ckm_known(s: symbol)
+// The string itself, anywhere but a cache call's key root: a queryKey, a key factory, a hook argument, a constant.
+ckm_known(s) :- ckm_root_value(s), str(n, s), !ckm_root_node(n).
+// ckm_prefix(p): a literal that starts strings built at run time: the first piece of `/api/${name}`, or the left
+// operand of '/api/' + name.
+.decl ckm_prefix(p: symbol)
+ckm_prefix(p) :- kind(t, "template_string"), child(t, f, 0), kind(f, "string_fragment"), text(f, p).
+ckm_prefix(p) :- kind(b, "binary_expression"), field(b, "left", l), kind(l, "string"), str(l, p).
+// A string some code builds by appending to such a prefix: '/api/invoices' from `/api/${name}`.
+ckm_known(s) :- ckm_root_value(s), ckm_prefix(p), k = strlen(p), k > 0, k < strlen(s), substr(s, 0, k) = p.
+
+// ckm_quiet_doc(d): tests, stories, mocks, fixtures and generated code: read, but never reported in.
+.decl ckm_quiet_dir(s: symbol)
+ckm_quiet_dir("__tests__"). ckm_quiet_dir("test"). ckm_quiet_dir("tests"). ckm_quiet_dir("e2e").
+ckm_quiet_dir("__mocks__"). ckm_quiet_dir("mocks"). ckm_quiet_dir("__fixtures__"). ckm_quiet_dir("fixtures").
+ckm_quiet_dir("__stories__"). ckm_quiet_dir("generated"). ckm_quiet_dir("__generated__"). ckm_quiet_dir("cypress").
+.decl ckm_quiet_doc(d: number)
+ckm_quiet_doc(d) :- path_part(d, s), ckm_quiet_dir(s).
+ckm_quiet_doc(d) :- file_name(d, s), (glob("*.test.*", s) ; glob("*.spec.*", s) ; glob("*.cy.*", s) ;
+    glob("*.stories.*", s) ; glob("*.story.*", s) ; glob("*.generated.*", s) ; glob("*.gen.*", s) ;
+    glob("*.d.ts", s)).
+
+CacheKeyMatchesNoQuery(r, m, s) :- ckm_root(_, m, r, s), !ckm_known(s), docof(r, d), !ckm_quiet_doc(d).
+
+// The cases, `cases/tanstack-query-practice-cache-key-matches-no-query/`, read as one repository: each line ending in
+// `// caught` is reported, and no other line. src/components/todos/ClearCompleted.tsx is left out: the engine runs .ts
+// and .tsx files as separate lanes, so from that .tsx file the .ts key factory is not seen and the line is reported
+// falsely (see the file's `// cross-lane:` comment). Add it once the engine joins the lanes.
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-cache-key-matches-no-query/package.json"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-cache-key-matches-no-query/tsconfig.json"
+    .fixture "src/__tests__/todos.test.tsx" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/__tests__/todos.test.tsx"
+    .fixture "src/components/notifications/MarkAllRead.tsx" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/components/notifications/MarkAllRead.tsx"
+    .fixture "src/components/notifications/NotificationBell.tsx" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/components/notifications/NotificationBell.tsx"
+    .fixture "src/features/invoices/use-pay-invoice.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/features/invoices/use-pay-invoice.ts"
+    .fixture "src/features/projects/queries.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/features/projects/queries.ts"
+    .fixture "src/features/projects/use-rename-project.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/features/projects/use-rename-project.ts"
+    .fixture "src/features/settings/use-save-settings.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/features/settings/use-save-settings.ts"
+    .fixture "src/features/todos/queries.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/features/todos/queries.ts"
+    .fixture "src/features/todos/use-todo-mutations.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/features/todos/use-todo-mutations.ts"
+    .fixture "src/features/users/use-invite-user.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/features/users/use-invite-user.ts"
+    .fixture "src/generated/api.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/generated/api.ts"
+    .fixture "src/lib/use-api.ts" from "../cases/tanstack-query-practice-cache-key-matches-no-query/src/lib/use-api.ts"
+    .expect _ at "src/components/notifications/MarkAllRead.tsx":9
+    .expect _ at "src/features/invoices/use-pay-invoice.ts":13
+    .expect _ at "src/features/projects/use-rename-project.ts":12
+    .expect _ at "src/features/projects/use-rename-project.ts":19
+    .expect _ at "src/features/todos/use-todo-mutations.ts":10
+.end

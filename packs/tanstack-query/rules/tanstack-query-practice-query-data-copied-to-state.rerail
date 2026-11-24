@@ -1,0 +1,249 @@
+.policy "tanstack-query-practice-query-data-copied-to-state" revision 1
+.description "Read a query's data where it is used instead of copying it into useState, whose copy does not follow refetches and cache updates."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. TanStack Query keeps server data in its cache and re-renders the component when a
+// refetch or a cache update (setQueryData, invalidation) changes it. A useState copy of that data is a second
+// source of truth: `useState(data)` takes the value of the first render only (undefined while the query loads) and
+// never follows it, and an effect that copies data into state renders one frame behind the cache and costs an extra
+// render per change. The query is useQuery, useSuspenseQuery, useInfiniteQuery or useSuspenseInfiniteQuery of
+// @tanstack/react-query (or react-query 3), tRPC's `api.a.b.useQuery()` family, or a custom hook (in this file or
+// another, imported through a path alias or barrel) that returns such a query, or its data.
+// The data is the `data` of the result: `const { data } = …`, `{ data: todos }`, `{ data = [] }`, `q.data`, the
+// value of a hook that returns data, and a member, `??`/`||` fallback or type cast of it, also through a const.
+//   const { data } = useTodos(); const [todos] = useState(data ?? [])     reported at the argument: a frozen copy
+//   const [todos] = useState(() => query.data?.items ?? [])              reported: the same, lazily
+//   const [todos, setTodos] = useState<Todo[]>([])
+//   useEffect(() => { if (data) setTodos(data) }, [data])                reported at the setter call
+//   const count = data?.length ?? 0                                      not reported: derived during render
+//   const [name, setName] = useState(data?.name) with an onChange that calls setName
+//                                                                        not reported: an edited draft seeded once
+//   useEffect(() => { if (data) setRows(data) }, [data]) where a handler also calls setRows
+//                                                                        not reported: the state is edited too
+//   useEffect(() => { identify(data.id).then(() => setReady(data.id)) }, [data])
+//                                                                        not reported: the setter runs in a callback
+//                                                                        (here after a side effect), not in the
+//                                                                        effect's own code
+//   function EditForm({ initial }) { const [draft] = useState(initial) }  not reported: a prop, the advised split
+//   setRows((prev) => [...prev, ...data])                                not reported: an accumulation, not a copy
+//   reset(data), useForm({ defaultValues: data })                       not reported: a form library's own state
+//   useQuery from another library (@apollo/client, convex, urql)        not reported
+// A state that an effect copies query data into is reported at those effect calls, not at its useState. Only a
+// setter called in the effect callback's own code counts: one inside a `.then`, a timer or a nested function records
+// something that happened later (an external call finished, a delay passed), not a copy of the cache.
+// Gaps: a value computed by a call (`data.pages.flatMap(…)`, `data.map(…)`) is not followed; nor is a hook that
+// returns the data inside an object (`return { todos: data }`), a query result passed in as a prop, a setter of a
+// store (Jotai, Zustand) rather than useState, or an alias other than `@/` and `~/`. The engine evaluates .ts and
+// .tsx files apart, so a component in a .tsx file does not see a custom hook declared in a .ts file (the most
+// common layout, `use-todos.ts`) until it joins them.
+
+#include "tsx/react-compiler.rerail"
+
+.violation QueryDataCopiedToState(at: node, msg: symbol) "{msg}"
+QueryDataCopiedToState(a, m) :- qdc_initial(a, s), !qdc_set_elsewhere(s), !qdc_effect_copy(_, s), qdc_says("initial", m).
+QueryDataCopiedToState(k, m) :- qdc_effect_copy(k, s), !qdc_set_elsewhere(s), qdc_says("effect", m).
+
+.decl qdc_says(id: symbol, m: symbol)
+qdc_says("initial", "This useState copies query data once, on the first render: the copy is undefined if the query had no data yet, and it never follows a refetch, an invalidation or setQueryData. Read the query's `data` where you use it, deriving values during render or with the query's `select`. If the state must keep the first value on purpose (a snapshot to compare against, a draft seeded once), move it into a child component that takes the value as a prop (`<Editor initial={data} key={data.id} />`) and render the child once the data is there; that form is not reported.").
+qdc_says("effect", "This effect copies query data into state that nothing else sets: the copy renders one frame behind the cache and adds a render on every refetch. Use the query's `data` in place of this state (derive values during render or with the query's `select`) and drop the effect; if the copy is there to keep the last value while a new key loads, use `placeholderData: keepPreviousData` on the query instead.").
+
+// ---- query calls ----------------------------------------------------------------------------------------------
+// qdc_query_call(h): call h returns a query result ({ data, isLoading, … }).
+.decl qdc_query_call(h: node)
+// useQuery(…) imported from TanStack Query (renamed or not), or RQ.useQuery(…) off `import * as RQ`.
+qdc_query_call(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "identifier"), ref_site(f, sp),
+    import_binding(sp, _, src, x), qdc_pkg(src), qdc_hook(x).
+qdc_query_call(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "member_expression"),
+    field(f, "object", o), kind(o, "identifier"), ref_site(o, sp), import_binding(sp, _, src, "*"), qdc_pkg(src),
+    field(f, "property", p), qdc_hook(x), text(p, x).
+// tRPC's React Query hooks: `api.post.list.useQuery(…)`, a member of a member; RTK Query's
+// `api.endpoints.x.useQuery()` is another cache and is left out.
+qdc_query_call(h) :- kind(h, "call_expression"), field(h, "function", f), kind(f, "member_expression"),
+    field(f, "property", p), qdc_hook(x), text(p, x), field(f, "object", o), kind(o, "member_expression"),
+    !qdc_rtk(o).
+// A custom hook, here or in another file, that returns a query result.
+qdc_query_call(h) :- hook_call(h, n), qdc_callee_fn(n, g), qdc_returns_query(g).
+.decl qdc_rtk(o: node)
+qdc_rtk(o) :- kind(o, "member_expression"), within(n, o), kind(n, "property_identifier"), text(n, "endpoints").
+
+.decl qdc_hook(x: symbol)
+qdc_hook("useQuery"). qdc_hook("useSuspenseQuery"). qdc_hook("useInfiniteQuery"). qdc_hook("useSuspenseInfiniteQuery").
+.decl qdc_pkg(p: symbol)
+qdc_pkg("@tanstack/react-query"). qdc_pkg("react-query").
+
+// ---- custom hooks across files --------------------------------------------------------------------------------
+// qdc_callee_fn(n, g): identifier n, a Hook call's callee, names function g: a top-level function of this file, or
+// one a workspace module exports (the import resolution at the bottom of this file).
+.decl qdc_callee_fn(n: node, g: node)
+qdc_callee_fn(n, g) :- hook_call(_, n), ref_site(n, s), rc_fn_at(s, g).
+qdc_callee_fn(n, g) :- hook_call(_, n), ref_site(n, sp), import_binding(sp, _, src, x), x != "*", docof(n, d),
+    qdc_target(d, src, t), qdc_mod_def(t, x, g).
+
+// qdc_returns_query(g): g returns a query result: `() => useQuery(…)`, `return useQuery(…)`,
+// `const q = useQuery(…); return q`.
+.decl qdc_returns_query(g: node)
+qdc_returns_query(g) :- qdc_returned(g, e), deparen(e, h), qdc_query_call(h).
+qdc_returns_query(g) :- qdc_returned(g, e), kind(e, "identifier"), ref_site(e, d), qdc_holds(d, h),
+    field(d, "name", n), kind(n, "identifier").
+// qdc_returns_data(g): g returns the data of a query: `const { data } = useQuery(…); return data`.
+.decl qdc_returns_data(g: node)
+qdc_returns_data(g) :- qdc_returned(g, e), qdc_val(e, _).
+// qdc_returned(g, e): function g returns expression e: an arrow's expression body, or a return in g's own code.
+.decl qdc_returned(g: node, e: node)
+qdc_returned(g, e) :- qdc_callee_fn(_, g), kind(g, "arrow_function"), field(g, "body", e), !kind(e, "statement_block").
+qdc_returned(g, e) :- qdc_callee_fn(_, g), kind(r, "return_statement"), rc_own(r, g), child(r, e, _).
+
+// qdc_holds(d, h): declarator d is initialised with query call h: `const … = useQuery(…)`.
+.decl qdc_holds(d: node, h: node)
+qdc_holds(d, h) :- kind(d, "variable_declarator"), field(d, "value", v), deparen(v, h), qdc_query_call(h).
+
+// ---- query data -----------------------------------------------------------------------------------------------
+// qdc_data_site(s, h): binding s holds the data of query h.
+//   const { data } = h   const { data = [] } = h   const { data: todos } = h   const { data: todos = [] } = h
+//   const [data] = api.a.useSuspenseQuery()  (tRPC's suspense hooks return [data, query])
+.decl qdc_data_site(s: node, h: node)
+qdc_data_site(s, h) :- qdc_pattern(h, pat), child(pat, s, _), kind(s, "shorthand_property_identifier_pattern"),
+    text(s, "data").
+qdc_data_site(s, h) :- qdc_pattern(h, pat), child(pat, a, _), kind(a, "object_assignment_pattern"),
+    field(a, "left", s), text(s, "data").
+qdc_data_site(s, h) :- qdc_pattern(h, pat), child(pat, pp, _), kind(pp, "pair_pattern"), field(pp, "key", k),
+    text(k, "data"), field(pp, "value", v), (s = v, kind(v, "identifier") ;
+    kind(v, "assignment_pattern"), field(v, "left", s), kind(s, "identifier")).
+qdc_data_site(s, h) :- qdc_holds(d, h), field(d, "name", pat), kind(pat, "array_pattern"), child(pat, s, 0),
+    kind(s, "identifier"), field(h, "function", f), field(f, "property", p), glob("useSuspense*", p).
+.decl qdc_pattern(h: node, pat: node)
+qdc_pattern(h, pat) :- qdc_holds(d, h), field(d, "name", pat), kind(pat, "object_pattern").
+
+// qdc_val(e, h): expression e's value is the data of query h, or part of it.
+.decl qdc_val(e: node, h: node)
+qdc_val(e, h) :- kind(e, "identifier"), ref_site(e, s), qdc_data_site(s, h).
+// q.data, q?.data where `const q = h`; h.data written in place.
+qdc_val(e, h) :- kind(e, "member_expression"), field(e, "property", p), text(p, "data"), field(e, "object", o),
+    kind(o, "identifier"), ref_site(o, d), qdc_holds(d, h), field(d, "name", n), kind(n, "identifier").
+qdc_val(e, h) :- kind(e, "member_expression"), field(e, "property", p), text(p, "data"), field(e, "object", o),
+    deparen(o, h), qdc_query_call(h).
+// A custom hook that returns query data: `const user = useCurrentUser()`.
+qdc_val(e, e) :- hook_call(e, n), qdc_callee_fn(n, g), qdc_returns_data(g).
+// data.items, data?.items, data ?? [], data || [], (data as Todo[]), data!, and a const holding any of them.
+qdc_val(e, h) :- kind(e, "member_expression"), field(e, "property", p), kind(p, "property_identifier"),
+    field(e, "object", o), deparen(o, x), qdc_val(x, h).
+qdc_val(e, h) :- kind(e, "binary_expression"), (op(e, "??") ; op(e, "||")), field(e, "left", l), deparen(l, x),
+    qdc_val(x, h).
+qdc_val(e, h) :- (kind(e, "as_expression") ; kind(e, "non_null_expression") ; kind(e, "satisfies_expression")),
+    child(e, l, 0), deparen(l, x), qdc_val(x, h).
+qdc_val(e, h) :- kind(e, "identifier"), ref_site(e, d), kind(d, "variable_declarator"), field(d, "name", n),
+    kind(n, "identifier"), field(d, "value", v), deparen(v, x), qdc_val(x, h).
+
+// ---- copies into state ----------------------------------------------------------------------------------------
+// qdc_initial(a, s): a, the initial value of the useState whose setter binding is s (or the declarator, when the
+// pattern names no setter), is query data: `useState(data)`, `useState(() => data)`.
+.decl qdc_initial(a: node, s: node)
+qdc_initial(a, s) :- rc_react_call(u, "useState"), call_arg(u, a, 0), qdc_init_val(a), qdc_state(u, s).
+.decl qdc_init_val(a: node)
+qdc_init_val(a) :- deparen(a, x), qdc_val(x, _).
+qdc_init_val(a) :- deparen(a, f), kind(f, "arrow_function"), field(f, "body", b), deparen(b, x), qdc_val(x, _).
+.decl qdc_state(u: node, s: node)  // useState call u's setter binding, else its declarator
+qdc_state(u, s) :- kind(d, "variable_declarator"), field(d, "value", u), field(d, "name", p), kind(p, "array_pattern"),
+    child(p, s, 1), kind(s, "identifier").
+qdc_state(u, d) :- kind(d, "variable_declarator"), field(d, "value", u), field(d, "name", p), kind(p, "array_pattern"),
+    !qdc_has_setter(p).
+.decl qdc_has_setter(p: node)
+qdc_has_setter(p) :- child(p, s, 1), kind(s, "identifier").
+
+// qdc_effect_copy(k, s): k, a call of setter s in the own code of a useEffect or useLayoutEffect callback (not in a
+// function nested in it), passes query data.
+.decl qdc_effect_copy(k: node, s: node)
+qdc_effect_copy(k, s) :- qdc_effect_cb(cb), rc_set_state(k), rc_own(k, cb), call_arg(k, a, 0), deparen(a, x),
+    qdc_val(x, _), field(k, "function", n), ref_site(n, s).
+.decl qdc_effect_cb(cb: node)
+qdc_effect_cb(cb) :- deps_hook(c, x, _, _), effect_hook(x), deps_cb(c, cb).
+
+// qdc_set_elsewhere(s): setter s is read anywhere but in an effect that copies query data into it: an event
+// handler, a child's prop, a custom hook's argument. The state is then a draft the user edits.
+.decl qdc_set_elsewhere(s: node)
+qdc_set_elsewhere(s) :- ref_site(r, s), !qdc_in_copying_effect(r, s).
+.decl qdc_in_copying_effect(r: node, s: node)
+qdc_in_copying_effect(r, s) :- qdc_effect_copy(k, s), qdc_effect_cb(cb), within(k, cb), within(r, cb), ref_site(r, s).
+
+// ---- library candidate: import resolution ---------------------------------------------------------------------
+// tsx/names' sym_of needs the tsconfig facts (tsconfig_for, tsconfig_path), and alias-by-package package_for, which
+// the .rerail runner does not bind; this is the rule's own. A specifier names a workspace module by:
+//   "./hooks", "../x"   the importing file's folder joined with it, then .ts/.tsx/.js/… and index files
+//   "@/x", "~/x"        x, or src/x, under the importing file's folder or any folder above it (where tsconfig
+//                       `paths` most often points: "@/*": ["./src/*"] or ["./*"])
+// Other aliases and workspace packages are not followed. The engine evaluates .ts and .tsx files apart, so a
+// module only resolves to a file of the same kind.
+// qdc_target(d, s, t): specifier s, imported or re-exported in document d, names workspace module t.
+.decl qdc_target(d: number, s: symbol, t: symbol)
+qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), prefix(".", s), doc(d, p, _),
+    resolve_base(@join(@dir(p), s), t).
+qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), qdc_alias(s, rest), qdc_root(d, a),
+    resolve_base(@join(a, rest), t).
+qdc_target(d, s, t) :- docof(i, d), import_spec(i, s), qdc_alias(s, rest), qdc_root(d, a),
+    resolve_base(@join(@join(a, "src"), rest), t).
+.decl qdc_alias(s: symbol, rest: symbol)
+qdc_alias(s, substr(s, 2, strlen(s) - 2)) :- import_spec(_, s), (prefix("@/", s) ; prefix("~/", s)).
+// qdc_root(d, a): a is the folder of document d, which imports an alias, or a folder above it.
+.decl qdc_root(d: number, a: symbol)
+qdc_root(d, @dir(p)) :- docof(i, d), import_spec(i, s), qdc_alias(s, _), doc(d, p, _).
+qdc_root(d, @dir(a)) :- qdc_root(d, a), a != "", a != ".", a != "/".
+
+// qdc_mod_def(t, x, g): module t's name x is the Hook function g: declared there, `export default`, or re-exported
+// through `export { x } from` and `export *` barrels.
+.decl qdc_mod_def(t: symbol, x: symbol, g: node)
+qdc_mod_def(t, x, g) :- top_level(s, x), prefix("use", x), rc_fn_at(s, g), docof(s, d), doc(d, _, t).
+qdc_mod_def(t, "default", g) :- kind(e, "export_statement"), field(e, "declaration", g), rc_fn(g),
+    docof(e, d), doc(d, _, t), child(e, k, _), text(k, "default").
+qdc_mod_def(t, "default", g) :- kind(e, "export_statement"), field(e, "value", v), kind(v, "identifier"),
+    ref_site(v, s), rc_fn_at(s, g), docof(e, d), doc(d, _, t).
+qdc_mod_def(t, x, g) :- kind(e, "export_statement"), docof(e, d), doc(d, _, t), export_from(e, s, y, x),
+    qdc_target(d, s, t2), qdc_mod_def(t2, y, g).
+qdc_mod_def(t, x, g) :- kind(e, "export_statement"), docof(e, d), doc(d, _, t), star_export(e, s),
+    qdc_target(d, s, t2), qdc_mod_def(t2, x, g), x != "default".
+
+// The cases, `cases/tanstack-query-practice-query-data-copied-to-state/`, read as one repository: each line ending
+// in `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "package.json" from "../cases/tanstack-query-practice-query-data-copied-to-state/package.json"
+    .fixture "tsconfig.json" from "../cases/tanstack-query-practice-query-data-copied-to-state/tsconfig.json"
+    .fixture "src/components/apollo-user.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/apollo-user.tsx"
+    .fixture "src/components/draft-list.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/draft-list.tsx"
+    .fixture "src/components/edit-todo.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/edit-todo.tsx"
+    .fixture "src/components/infinite-feed.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/infinite-feed.tsx"
+    .fixture "src/components/post-feed.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/post-feed.tsx"
+    .fixture "src/components/profile-card.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/profile-card.tsx"
+    .fixture "src/components/project-header.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/project-header.tsx"
+    .fixture "src/components/rename-todo.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/rename-todo.tsx"
+    .fixture "src/components/rtk-posts.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/rtk-posts.tsx"
+    .fixture "src/components/sortable-todos.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/sortable-todos.tsx"
+    .fixture "src/components/todo-count.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/todo-count.tsx"
+    .fixture "src/components/todo-form.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/todo-form.tsx"
+    .fixture "src/components/verify-email.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/verify-email.tsx"
+    .fixture "src/components/purchases-ready.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/purchases-ready.tsx"
+    .fixture "src/components/first-seen.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/first-seen.tsx"
+    .fixture "src/features/todos/api.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/api.ts"
+    .fixture "src/features/projects/use-projects.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/projects/use-projects.ts"
+    .fixture "src/components/project-list.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/components/project-list.tsx"
+    .fixture "src/features/todos/hooks.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/hooks.tsx"
+    .fixture "src/features/todos/index.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/index.tsx"
+    .fixture "src/features/todos/todo-detail.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/todo-detail.tsx"
+    .fixture "src/features/todos/todo-list.test.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/todo-list.test.tsx"
+    .fixture "src/features/todos/todo-list.tsx" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/features/todos/todo-list.tsx"
+    .fixture "src/lib/rtk.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/lib/rtk.ts"
+    .fixture "src/lib/trpc.ts" from "../cases/tanstack-query-practice-query-data-copied-to-state/src/lib/trpc.ts"
+    .expect _ at "src/components/post-feed.tsx":12
+    .expect _ at "src/components/post-feed.tsx":20
+    .expect _ at "src/components/profile-card.tsx":11
+    .expect _ at "src/components/project-header.tsx":14
+    .expect _ at "src/features/todos/todo-detail.tsx":7
+    .expect _ at "src/features/todos/todo-list.tsx":10
+    .expect _ at "src/components/verify-email.tsx":17
+    .expect _ at "src/components/verify-email.tsx":18
+    .expect _ at "src/components/first-seen.tsx":8
+.end

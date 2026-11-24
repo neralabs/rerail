@@ -1,0 +1,6 @@
+{
+  "name": "@todo/feed-hooks",
+  "private": true,
+  "main": "src/use-activity-feed.ts",
+  "dependencies": { "@tanstack/react-query": "^5.59.0" }
+}

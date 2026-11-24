@@ -1,0 +1,184 @@
+.policy "tanstack-query-practice-set-query-data-mutates-cache" revision 1
+.description "Return a new value from a setQueryData updater, and never change the value getQueryData returns; changing cached data in place skips re-renders and corrupts rollback snapshots."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**"
+.scope exclude "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**"
+.scope exclude "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**"
+.scope exclude "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**"
+.scope exclude "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+// Rerail's own rule, not a port. TanStack Query hands an updater the cached value itself, and getQueryData returns
+// it too: "Updates via setQueryData must be performed in an immutable way. DO NOT attempt to write directly to the
+// cache by mutating data (that you retrieved from the cache) in place." Changed in place, the value keeps its
+// reference, so structural sharing sees no change and components may not re-render, and the snapshot onMutate took
+// for rollback (`getQueryData` before the update) is the same object, so onError "restores" the changed value.
+// The cached value is the first parameter of an updater passed to `<x>.setQueryData(key, fn)`,
+// `<x>.setQueriesData(filters, fn)` or tRPC's `<utils>.<path>.setData(input, fn)` / `setInfiniteData(input, fn)`
+// (fn written inline, or a const/function of the same file), the first parameter of a query's `select` option
+// (written inline, a const or function of the same file, or `useCallback(fn, deps)`; `select` receives the cached
+// data itself), or a const bound to `<x>.getQueryData(...)` or tRPC's `<utils>.<path>.getData(...)` /
+// `getInfiniteData(...)`. Parts of it are followed through member reads, `!`, `as`, `?? fallback`,
+// `.find()`/`.findLast()`/`.at()`, `const { a } = v`, `for (const x of v)` and the element parameter of
+// `v.forEach/map/filter/find/some/every/flatMap(...)` callbacks. One updater, select or getQueryData value is
+// reported once, at its first change in place, with the number of changes: they are one fix.
+//   qc.setQueryData(["todos"], (old) => { old.push(todo); return old; })                  reported
+//   qc.setQueryData(["todo", id], (old) => { old.done = true; return { ...old }; })        reported
+//   utils.post.list.setData(undefined, (old) => { old?.items.splice(i, 1); return old; })  reported (tRPC)
+//   (old) => { const t = old.find((x) => x.id === id); t.done = true; return [...old]; }  reported (via find)
+//   (old) => old.map((t) => { t.done = true; return t; })                                  reported (callback element)
+//   const prev = qc.getQueryData(["todos"]); prev.sort(byDate)                             reported
+//   useQuery({ queryKey, queryFn, select: (data) => data.sort(byDate) })                   reported (select)
+//   delete old.draft / old.count++ / Object.assign(old, patch)                             reported
+//   (old) => [...(old ?? []), todo]  /  ({ ...old, done: true })  /  old.map((t) => ({ ...t, done: true }))  not reported
+//   (old) => { const next = [...old]; next.push(todo); return next; }                      not reported (a copy)
+//   (old) => { const next = structuredClone(old); next.items.push(x); return next; }       not reported (a deep copy)
+//   (old) => produce(old, (draft) => { draft.push(todo) }), setData(input, produce(...))   not reported (immer)
+//   (old) => { old = structuredClone(old); old.push(todo); return old; }                   not reported (rebound)
+//   old.toSorted(cmp), old.slice().sort(cmp), chart.setData(points), select: (d) => [...d].sort(cmp)  not reported
+// Gaps: a shallow copy whose nested arrays are then changed (`const n = { ...old }; n.items.push(x)` still changes
+// the cached items); an updater defined in another file; data from useQuery's result, fetchQuery or
+// ensureQueryData changed in place; a mutating helper called with the cached value (`addTo(old, x)`).
+
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-functions.rerail"
+
+.violation SetQueryDataMutatesCache(at: node, how: symbol, src: symbol, more: symbol)
+    "{how} changes the cached query data in place ({src}){more}: TanStack Query keeps the same reference, so components may not re-render, and a snapshot taken for rollback with getQueryData changes with it. Build and return a new value instead: `[...old, item]`, `old.filter((t) => t.id !== id)`, `old.map((t) => (t.id === id ? {{ ...t, done: true }} : t))`, `{{ ...old, items: [...old.items, item] }}`, `old.toSorted(cmp)`, or immer's `produce(old, (draft) => {{ ... }})`; for a value read with getQueryData, change a copy (`structuredClone(value)`) and write the copy with setQueryData."
+SetQueryDataMutatesCache(at, how, src, more) :- smc_gmut(_, g), at = min y : { smc_gmut(y, g) },
+    s = min z : { smc_mut(at, z, _), smc_root(z, g, _) }, smc_mut(at, s, how), smc_root(s, g, src),
+    n = count : { smc_gmut(y, g) }, smc_more(n, more).
+// smc_gmut(y, g): y changes in place a value of group g: one updater or select function, or one getQueryData const.
+.decl smc_gmut(y: node, g: node)
+smc_gmut(y, g) :- smc_mut(y, s, _), smc_root(s, g, _).
+.decl smc_more(n: number, more: symbol)
+smc_more(1, "").
+smc_more(n, cat(", and ", to_string(n - 1), " more change(s) of the same cached value follow; fix them together")) :-
+    smc_count(n), n > 1.
+.decl smc_count(n: number)
+smc_count(n) :- smc_gmut(_, g), n = count : { smc_gmut(y, g) }.
+
+// smc_method(c, m, o): call c is `o.m(...)` (also `o?.m(...)`).
+.decl smc_method(c: node, m: symbol, o: node)
+smc_method(c, m, o) :- kind(c, "call_expression"), field(c, "function", e), kind(e, "member_expression"),
+    field(e, "property", p), text(p, m), field(e, "object", o).
+// smc_writer(c, m): c writes the cache through an updater. tRPC's setData/setInfiniteData sit on a procedure path
+// (`utils.post.list.setData`), which a chart's `series.setData(points)` does not.
+.decl smc_writer(c: node, m: symbol)
+smc_writer(c, m) :- smc_method(c, m, _), (m = "setQueryData" ; m = "setQueriesData").
+smc_writer(c, m) :- smc_method(c, m, o), (m = "setData" ; m = "setInfiniteData"), kind(o, "member_expression").
+// smc_reader(c, m): c returns the cached value itself.
+.decl smc_reader(c: node, m: symbol)
+smc_reader(c, m) :- smc_method(c, m, _), m = "getQueryData".
+smc_reader(c, m) :- smc_method(c, m, o), (m = "getData" ; m = "getInfiniteData"), kind(o, "member_expression").
+
+// smc_updater(f, m): function f is the updater of writer m: inline, or a const or function of the same file.
+.decl smc_fn(f: node)
+smc_fn(f) :- kind(f, "arrow_function") ; kind(f, "function_expression") ; kind(f, "function_declaration").
+.decl smc_updater(f: node, m: symbol)
+smc_updater(f, m) :- smc_writer(c, m), call_arg(c, a, 1), deparen(a, f), smc_fn(f).
+smc_updater(f, m) :- smc_writer(c, m), call_arg(c, a, 1), deparen(a, r), kind(r, "identifier"), ref_site(r, d),
+    smc_fn_site(d, f).
+.decl smc_fn_site(d: node, f: node)
+smc_fn_site(d, f) :- kind(d, "variable_declarator"), field(d, "value", v), deparen(v, f), smc_fn(f).
+smc_fn_site(f, f) :- kind(f, "function_declaration").
+
+// smc_select(f): function f is a query's `select` option, in an object that has a queryKey or queryFn too: inline,
+// a const or function of the same file, or `useCallback(f, deps)` / `React.useCallback(f, deps)`.
+.decl smc_select(f: node)
+smc_select(f) :- smc_select_val(v), deparen(v, f), smc_fn(f).
+smc_select(f) :- smc_select_val(v), deparen(v, r), kind(r, "identifier"), ref_site(r, d), smc_fn_site(d, f).
+smc_select(f) :- smc_select_val(v), deparen(v, c), kind(c, "call_expression"), field(c, "function", cf),
+    (text(cf, "useCallback") ; text(cf, "React.useCallback")), call_arg(c, a, 0), deparen(a, f), smc_fn(f).
+.decl smc_select_val(v: node)
+smc_select_val(v) :- kind(p, "pair"), field(p, "key", k), text(k, "select"), field(p, "value", v), child(o, p, _),
+    kind(o, "object"), child(o, q, _), kind(q, "pair"), field(q, "key", qk), (text(qk, "queryKey") ; text(qk, "queryFn")).
+smc_select_val(v) :- kind(p, "pair"), field(p, "key", k), text(k, "select"), field(p, "value", v), child(o, p, _),
+    kind(o, "object"), child(o, q, _), kind(q, "shorthand_property_identifier"), (text(q, "queryKey") ; text(q, "queryFn")).
+
+// smc_root(s, g, src): binding site s holds the cached value; g groups the roots reported together (the updater or
+// select function, or the getQueryData const).
+.decl smc_root(s: node, g: node, src: symbol)
+smc_root(s, f, cat("the ", m, " updater's `", x, "`")) :- smc_updater(f, m), smc_first_param(f, s), text(s, x).
+smc_root(s, f, cat("the query's `select` receives the cached data as `", x, "`")) :- smc_select(f),
+    smc_first_param(f, s), text(s, x).
+smc_root(d, d, cat("`", x, "` is what ", m, " returned")) :- smc_reader(c, m), smc_value_of(v, c),
+    kind(d, "variable_declarator"), field(d, "value", v), field(d, "name", n), kind(n, "identifier"), text(n, x).
+// smc_first_param(f, s): s is a name f's first parameter binds (a destructured name too, not a `...rest` copy).
+.decl smc_first_param(f: node, s: node)
+smc_first_param(f, s) :- fn_param(f, p, 0), decl_site(f, _, s, "param", "value"), (s = p ; within(s, p)),
+    !inside(s, _, "rest_pattern").
+// smc_value_of(v, c): expression v evaluates to the value of c: `(c)`, `c!`, `c as T`, `c ?? fallback`.
+.decl smc_value_of(v: node, c: node)
+smc_value_of(c, c) :- smc_reader(c, _).
+smc_value_of(v, c) :- smc_value_of(e, c), smc_wrap(v, e).
+// smc_wrap(w, e): w passes e's value through unchanged when e is set.
+.decl smc_wrap(w: node, e: node)
+smc_wrap(w, e) :- child(w, e, _), kind(w, k), (k = "parenthesized_expression" ; k = "non_null_expression" ;
+    k = "as_expression" ; k = "satisfies_expression").
+smc_wrap(w, e) :- kind(w, "binary_expression"), (op(w, "??") ; op(w, "||")), field(w, "left", e).
+
+// smc_part(e, s): expression e reads the value bound at s, or a part of it, with no copy in between.
+.decl smc_part(e: node, s: node)
+smc_part(r, s) :- kind(r, "identifier"), ref_site(r, a), smc_alias(a, s).
+smc_part(w, s) :- smc_part(e, s), smc_wrap(w, e).
+smc_part(m, s) :- smc_part(o, s), (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", o).
+smc_part(c, s) :- smc_part(o, s), smc_method(c, x, o), (x = "find" ; x = "findLast" ; x = "at").
+// smc_alias(a, s): binding a holds a part of root s: the root itself, `const t = <part>`, `const { a } = <part>`,
+// `for (const t of <part>)`, the element parameter of a callback over <part>. A binding assigned again anywhere
+// (`old = structuredClone(old)`) is left out: it may hold a copy by then.
+.decl smc_alias(a: node, s: node)
+smc_alias(s, s) :- smc_root(s, _, _), !smc_rebound(s).
+smc_alias(d, s) :- kind(d, "variable_declarator"), field(d, "value", v), smc_part(v, s), field(d, "name", n),
+    kind(n, "identifier"), !smc_rebound(d).
+smc_alias(p, s) :- kind(d, "variable_declarator"), field(d, "value", v), smc_part(v, s), pattern_name(p, _, d),
+    !inside(p, _, "rest_pattern"), !smc_rebound(p).
+smc_alias(n, s) :- kind(l, "for_in_statement"), op(l, "of"), field(l, "right", v), smc_part(v, s),
+    for_binding(l, n, _), !smc_rebound(n).
+smc_alias(a, s) :- smc_method(c, x, o), smc_part(o, s), smc_each(x), call_arg(c, g0, 0), deparen(g0, g), smc_fn(g),
+    smc_first_param(g, a), !smc_rebound(a).
+.decl smc_each(x: symbol)
+smc_each("forEach"). smc_each("map"). smc_each("filter"). smc_each("find"). smc_each("findLast").
+smc_each("some"). smc_each("every"). smc_each("flatMap").
+// smc_rebound(a): `x = …` assigns the binding at a after its declaration.
+.decl smc_rebound(a: node)
+smc_rebound(a) :- kind(e, "assignment_expression"), field(e, "left", l), kind(l, "identifier"), ref_site(l, a).
+
+// smc_mut(at, s, how): at changes a part of root s in place.
+.decl smc_mut(at: node, s: node, how: symbol)
+smc_mut(l, s, cat("`", t, " = …`")) :- (kind(e, "assignment_expression") ; kind(e, "augmented_assignment_expression")),
+    field(e, "left", l), (kind(l, "member_expression") ; kind(l, "subscript_expression")), field(l, "object", o),
+    smc_part(o, s), text(l, t).
+smc_mut(l, s, cat("`", t, "++`")) :- kind(e, "update_expression"), field(e, "argument", l),
+    (kind(l, "member_expression") ; kind(l, "subscript_expression")), field(l, "object", o), smc_part(o, s), text(l, t).
+smc_mut(l, s, cat("`delete ", t, "`")) :- kind(e, "unary_expression"), op(e, "delete"), field(e, "argument", l),
+    (kind(l, "member_expression") ; kind(l, "subscript_expression")), field(l, "object", o), smc_part(o, s), text(l, t).
+smc_mut(f, s, cat("`.", x, "(…)`")) :- smc_method(c, x, o), smc_part(o, s), smc_mutator(x), field(c, "function", f).
+smc_mut(f, s, "`Object.assign(…)`") :- kind(c, "call_expression"), field(c, "function", f), text(f, "Object.assign"),
+    call_arg(c, a, 0), smc_part(a, s).
+.decl smc_mutator(x: symbol)  // Array, Map and Set methods that change their receiver
+smc_mutator("push"). smc_mutator("pop"). smc_mutator("shift"). smc_mutator("unshift"). smc_mutator("splice").
+smc_mutator("sort"). smc_mutator("reverse"). smc_mutator("fill"). smc_mutator("copyWithin").
+smc_mutator("set"). smc_mutator("add"). smc_mutator("delete"). smc_mutator("clear").
+
+// The cases, `cases/tanstack-query-practice-set-query-data-mutates-cache/`, read as one repository: each line ending
+// in `// caught` is reported, and no other line.
+.test cases exactly
+    .fixture "src/components/post-list.tsx" from "../cases/tanstack-query-practice-set-query-data-mutates-cache/src/components/post-list.tsx"
+    .fixture "src/features/review-rank.ts" from "../cases/tanstack-query-practice-set-query-data-mutates-cache/src/features/review-rank.ts"
+    .fixture "src/hooks/use-feed.ts" from "../cases/tanstack-query-practice-set-query-data-mutates-cache/src/hooks/use-feed.ts"
+    .fixture "src/hooks/use-todos.ts" from "../cases/tanstack-query-practice-set-query-data-mutates-cache/src/hooks/use-todos.ts"
+    .expect _ at "src/features/review-rank.ts":17
+    .expect _ at "src/features/review-rank.ts":32
+    .expect _ at "src/features/review-rank.ts":41
+    .expect _ at "src/components/post-list.tsx":16
+    .expect _ at "src/hooks/use-feed.ts":13
+    .expect _ at "src/hooks/use-feed.ts":21
+    .expect _ at "src/hooks/use-feed.ts":27
+    .expect _ at "src/hooks/use-todos.ts":13
+    .expect _ at "src/hooks/use-todos.ts":29
+    .expect _ at "src/hooks/use-todos.ts":47
+    .expect _ at "src/hooks/use-todos.ts":52
+    .expect _ at "src/hooks/use-todos.ts":67
+    .expect _ at "src/hooks/use-todos.ts":76
+.end
