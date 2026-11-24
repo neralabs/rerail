@@ -316,6 +316,14 @@ Now a path under a folder mount is the disk's:
 The fork's `tests/share_folder_disk` checks both under `RELAX_SHARE`. It fails on the earlier
 Relax with "a synthetic stat: ino 0 dev 0 ctime 0". Windows' std keeps a folder mount virtual.
 
+### 19. NEON's narrowing high halves, 48-byte table, `vclzq_s32`/`_u8`, `vdupq_laneq_u32`, 8-lane sums
+
+`rerail-simd` calls `vclzq_s32`, `vclzq_u8`, `vmovn_high_u64` and `vqtbl3q_u8`, and
+`rerail-ukl-rust`'s `join_run.rs` calls `vdupq_laneq_u32`; Relax's std had none of them, so no
+test linking either crate could run. Also added: `vshrn_high_n_u16`, `vpadd_u8` and `vaddv_u8`,
+which generated Rust on another branch calls. The fork's `tests/neon_narrow_count_lane.rs`
+checks each one's lanes against rustc's on an M-series Mac.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every

@@ -937,7 +937,7 @@ index b317b895..9aac94b7 100644
      }
      None
 diff --git a/libs/relax/compiler/std/core/arch/aarch64.rs b/libs/relax/compiler/std/core/arch/aarch64.rs
-index ba9071f3..88d9423b 100644
+index ba9071f3..a93c95ce 100644
 --- a/libs/relax/compiler/std/core/arch/aarch64.rs
 +++ b/libs/relax/compiler/std/core/arch/aarch64.rs
 @@ -4299,6 +4299,37 @@ pub fn vqtbl1q_u8(a: uint8x16_t, b: uint8x16_t) -> uint8x16_t {
@@ -978,7 +978,7 @@ index ba9071f3..88d9423b 100644
  #[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
  pub fn vqtbl4q_u8(a: uint8x16x4_t, b: uint8x16_t) -> uint8x16_t {
      let mut r = [0; 16];
-@@ -7608,3 +7639,36 @@ pub fn vzipq_u16(a: uint16x8_t, b: uint16x8_t) -> uint16x8x2_t {
+@@ -7608,3 +7639,121 @@ pub fn vzipq_u16(a: uint16x8_t, b: uint16x8_t) -> uint16x8x2_t {
  pub fn vzipq_u32(a: uint32x4_t, b: uint32x4_t) -> uint32x4x2_t {
      uint32x4x2_t(uint32x4_t([a.0[0], b.0[0], a.0[1], b.0[1]]), uint32x4_t([a.0[2], b.0[2], a.0[3], b.0[3]]))
  }
@@ -1014,6 +1014,91 @@ index ba9071f3..88d9423b 100644
 +        i += 1;
 +    }
 +    uint32x4_t(r)
++}
++
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vclzq_s32(a: int32x4_t) -> int32x4_t {
++    let mut r = [0; 4];
++    let mut i = 0;
++    while i < 4 {
++        r[i] = a.0[i].leading_zeros() as i32;
++        i += 1;
++    }
++    int32x4_t(r)
++}
++
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vclzq_u8(a: uint8x16_t) -> uint8x16_t {
++    let mut r = [0; 16];
++    let mut i = 0;
++    while i < 16 {
++        r[i] = a.0[i].leading_zeros() as u8;
++        i += 1;
++    }
++    uint8x16_t(r)
++}
++
++/// XTN2: `a` in the low half, each lane of `b` narrowed (its low 32 bits) in the high half.
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vmovn_high_u64(a: uint32x2_t, b: uint64x2_t) -> uint32x4_t {
++    uint32x4_t([a.0[0], a.0[1], b.0[0] as u32, b.0[1] as u32])
++}
++
++/// SHRN2: `a` in the low half, each lane of `b` shifted right by N and narrowed in the high half.
++#[rustc_legacy_const_generics(2)]
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vshrn_high_n_u16<const N: i32>(a: uint8x8_t, b: uint16x8_t) -> uint8x16_t {
++    let mut r = [0; 16];
++    let mut i = 0;
++    while i < 8 {
++        r[i] = a.0[i];
++        r[8 + i] = (b.0[i] >> N) as u8;
++        i += 1;
++    }
++    uint8x16_t(r)
++}
++
++/// TBL with a 48-byte table: an index >= 48 gives 0.
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vqtbl3q_u8(a: uint8x16x3_t, b: uint8x16_t) -> uint8x16_t {
++    let mut r = [0; 16];
++    let mut i = 0;
++    while i < 16 {
++        let k = b.0[i] as usize;
++        r[i] = if k < 16 { a.0 .0[k] } else if k < 32 { a.1 .0[k - 16] } else if k < 48 { a.2 .0[k - 32] } else { 0 };
++        i += 1;
++    }
++    uint8x16_t(r)
++}
++
++#[rustc_legacy_const_generics(1)]
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vdupq_laneq_u32<const N: i32>(a: uint32x4_t) -> uint32x4_t {
++    uint32x4_t([a.0[N as usize]; 4])
++}
++
++/// ADDP on 8 lanes: the pairwise sums of `a`, then of `b` (wrapping).
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vpadd_u8(a: uint8x8_t, b: uint8x8_t) -> uint8x8_t {
++    let mut r = [0; 8];
++    let mut i = 0;
++    while i < 4 {
++        r[i] = a.0[2 * i].wrapping_add(a.0[2 * i + 1]);
++        r[4 + i] = b.0[2 * i].wrapping_add(b.0[2 * i + 1]);
++        i += 1;
++    }
++    uint8x8_t(r)
++}
++
++#[cfg_attr(target_arch = "aarch64", target_feature(enable = "neon"))]
++pub fn vaddv_u8(a: uint8x8_t) -> u8 {
++    let mut r = 0u8;
++    let mut i = 0;
++    while i < 8 {
++        r = r.wrapping_add(a.0[i]);
++        i += 1;
++    }
++    r
 +}
 diff --git a/libs/relax/compiler/std/core/iter/adapters.rs b/libs/relax/compiler/std/core/iter/adapters.rs
 index 445b1449..a99b59bc 100644
@@ -1576,6 +1661,67 @@ index 00000000..48984537
 +
 +#[unsafe(no_mangle)]
 +extern "C" fn link_section_unsafe_exported() -> u32 { 7 }
+diff --git a/libs/relax/compiler/tests/neon_narrow_count_lane.rs b/libs/relax/compiler/tests/neon_narrow_count_lane.rs
+new file mode 100644
+index 00000000..d956bea0
+--- /dev/null
++++ b/libs/relax/compiler/tests/neon_narrow_count_lane.rs
+@@ -0,0 +1,55 @@
++//! NEON intrinsics the engine's SIMD crate and join kernels call: count leading zeros (`vclzq_s32`,
++//! `vclzq_u8`), the narrowing high halves (`vmovn_high_u64`, `vshrn_high_n_u16`), the 48-byte table
++//! lookup (`vqtbl3q_u8`), a lane broadcast (`vdupq_laneq_u32`) and the 8-lane pairwise and across
++//! sums (`vpadd_u8`, `vaddv_u8`). The expected lanes are rustc's on an M-series Mac.
++
++#[cfg(target_arch = "aarch64")]
++#[test]
++fn narrowing_counting_and_lane_intrinsics_match_rustc() {
++    use std::arch::aarch64::*;
++    unsafe {
++        let s: [i32; 4] = [0, 1, -1, 0x0010_0000];
++        let mut clz_s = [0i32; 4];
++        vst1q_s32(clz_s.as_mut_ptr(), vclzq_s32(vld1q_s32(s.as_ptr())));
++        assert_eq!(clz_s, [32, 31, 0, 11]);
++
++        let b: [u8; 16] = [0, 1, 2, 3, 4, 7, 8, 15, 16, 31, 32, 63, 64, 127, 128, 255];
++        let mut clz_b = [0u8; 16];
++        vst1q_u8(clz_b.as_mut_ptr(), vclzq_u8(vld1q_u8(b.as_ptr())));
++        assert_eq!(clz_b, [8, 7, 6, 6, 5, 5, 4, 4, 3, 3, 2, 2, 1, 1, 0, 0]);
++
++        let lo: [u32; 2] = [7, 9];
++        let wide: [u64; 2] = [0x1_0000_0005, 0xffff_ffff_ffff_fffe];
++        let mut movn = [0u32; 4];
++        vst1q_u32(movn.as_mut_ptr(), vmovn_high_u64(vld1_u32(lo.as_ptr()), vld1q_u64(wide.as_ptr())));
++        assert_eq!(movn, [7, 9, 5, 0xffff_fffe]);
++
++        let h: [u16; 8] = [0x0100, 0x1234, 0xffff, 0x00f0, 0x8000, 0x0010, 0x7f7f, 0x0001];
++        let low8: [u8; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
++        let mut shrn = [0u8; 16];
++        vst1q_u8(shrn.as_mut_ptr(), vshrn_high_n_u16::<4>(vld1_u8(low8.as_ptr()), vld1q_u16(h.as_ptr())));
++        assert_eq!(shrn, [1, 2, 3, 4, 5, 6, 7, 8, 0x10, 0x23, 0xff, 0x0f, 0x00, 0x01, 0xf7, 0x00]);
++
++        let t: [u8; 48] = core::array::from_fn(|i| 100 + i as u8);
++        let idx: [u8; 16] = [0, 15, 16, 31, 32, 47, 48, 255, 5, 20, 40, 63, 1, 33, 17, 64];
++        let table = uint8x16x3_t(vld1q_u8(t.as_ptr()), vld1q_u8(t.as_ptr().add(16)), vld1q_u8(t.as_ptr().add(32)));
++        let mut tbl = [0u8; 16];
++        vst1q_u8(tbl.as_mut_ptr(), vqtbl3q_u8(table, vld1q_u8(idx.as_ptr())));
++        assert_eq!(tbl, [100, 115, 116, 131, 132, 147, 0, 0, 105, 120, 140, 0, 101, 133, 117, 0]);
++
++        let v: [u32; 4] = [10, 20, 30, 40];
++        let mut dup = [0u32; 4];
++        vst1q_u32(dup.as_mut_ptr(), vdupq_laneq_u32::<3>(vld1q_u32(v.as_ptr())));
++        assert_eq!(dup, [40; 4]);
++        vst1q_u32(dup.as_mut_ptr(), vdupq_laneq_u32::<1>(vld1q_u32(v.as_ptr())));
++        assert_eq!(dup, [20; 4]);
++
++        let p: [u8; 8] = [1, 2, 250, 10, 128, 128, 0, 7];
++        let q: [u8; 8] = [3, 4, 5, 6, 255, 1, 9, 9];
++        let mut padd = [0u8; 8];
++        vst1_u8(padd.as_mut_ptr(), vpadd_u8(vld1_u8(p.as_ptr()), vld1_u8(q.as_ptr())));
++        assert_eq!(padd, [3, 4, 0, 7, 7, 11, 0, 18]);
++        assert_eq!(vaddv_u8(vld1_u8(p.as_ptr())), 14);
++        assert_eq!(vaddv_u8(vld1_u8(q.as_ptr())), 36);
++    }
++}
 diff --git a/libs/relax/compiler/tests/neon_table_extend.rs b/libs/relax/compiler/tests/neon_table_extend.rs
 new file mode 100644
 index 00000000..4d7901ef
