@@ -5,6 +5,8 @@ intellectual puzzle where you solve a programming task without being able to use
 as it can be, "one nanosecond"). Replaces 0527's level-synchronous rounds for the text's expansion. 0520's pieces, the
 arena (0468 §3) and the tapes read in place stay.
 
+> **Superseded in part by 0653 (2026-11-23):** §6's teams are gone; a batch's units share one queue.
+
 ## Intro
 
 0580 measured where the time goes. A batch of 50 C units is 643 dependent phases. The expansion's rounds are 63% of

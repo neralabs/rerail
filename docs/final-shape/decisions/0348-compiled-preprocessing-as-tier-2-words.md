@@ -1,8 +1,10 @@
 # 0348: Compiled preprocessing (mode (b)) is tier 2 words over a re-entrant token source
 
-Status: partly built (audited 2026-11-23, corrected the same day). Left: header units (with 0327). Stage 5's device
-path went to 0408 (the user's choice, below), which 0482, 0448 (built) and 0573 superseded; 0436 moved the evaluator
-onto preprocessor tapes. Draft (2026-11-17). Step 8 of 0327's plan.
+Status: partly built (audited 2026-11-23, corrected the same day). Left: header units (with 0327). The words on the
+device (stage 5) are part of the generated parsers' campaign, the Bitlex parsers' device code: their code is used
+there or removed (probably removed) before that campaign closes ("Open", below). The preprocessor's device path is
+0448's (built; 0408, the user's choice below, was superseded by 0482, 0448 and 0573); 0436 moved the evaluator onto
+preprocessor tapes. Draft (2026-11-17). Step 8 of 0327's plan.
 
 ## Intro
 
@@ -512,5 +514,14 @@ about 9 µs a token, and a dispatch lasts as long as its longest TU.
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).
+- **The words on the device: the generated parsers' campaign** (the user, 2026-11-23: "we have a whole bunch of work
+  to do in order to make bitlex parsers create good device code. Please make it clear that the work is part of that
+  campaign"). Tier 2 on the device is open for every grammar (doc 20, §6), and this was its one user. The
+  preprocessor's own device path is 0448's, so no product path runs these words on a device. Their code stays for
+  now: `metal_programs`' `pp_on`, `native_cpu_pp::ukl_source`, `clif_ukl` (whose only user they are), `expand`'s
+  `on_device` and `on_device_batch`, and the tests that call them (`the_corpus_on_metal_is_the_interpreters`,
+  `the_corpus_on_metal_timed`, `the_metal_words_are_the_interpreters` and the rest). Before that campaign closes,
+  this code is either used, by a tier 2 on the device that pays, or removed. Removal is the likely end: one serial
+  machine per input does not pay on a GPU (0408, L4).
 - **Hash collisions:** a key match compares bytes, so a collision costs time, never a wrong
   answer.

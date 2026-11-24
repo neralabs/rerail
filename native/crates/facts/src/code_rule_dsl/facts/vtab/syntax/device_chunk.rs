@@ -280,12 +280,23 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
             h += sh;
         }
     }
+    // The documents' order by key, which a lookup by key bisects (`ViewDir::by_key`): the rows are the chunk's batch's,
+    // then each values batch's, each in key order but not all together (t50 step 9, Metal at 512 MB: a value admitted
+    // with a key below the chunk's was never found by its parents' walk, `tp_ident` and `tp_list` 9 rows short).
+    let by_key: *mut u32 = b.alloc_t(n.max(1));
+    {
+        let mut order: Vec<u32> = (0..n as u32).collect();
+        // SAFETY: the rows, all `n` written above.
+        order.sort_by_key(|&i| unsafe { (*rows.add(i as usize)).key });
+        // SAFETY: `n` entries, just allocated in the chunk's block.
+        unsafe { std::ptr::copy_nonoverlapping(order.as_ptr(), by_key, n) };
+    }
     let at = b.offset_of(dir);
     // The chunk's batch's cache is the directory's; each value's rows name their own in their views (`TapeView::side`).
     // SAFETY: the chunk's batch's directory, as above.
     let cache = unsafe { (*batch.docs.dir()).cache };
     // SAFETY: the directory, just allocated in the chunk's block, made whole.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, ends: past, counted: 1, pad: 0 }) };
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: nhomes as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes) as u64, cache, by_key: b.offset_of(by_key) as u64, ends: past, counted: 1, pad: 0 }) };
     // The device's where it reads every batch's: the block's buffer made after the last allocation, so it covers
     // them, and each batch's slabs (a batch's first buffer is its block's, covered by this one).
     let device = crate::code_rule_dsl::tape::placed::device();

@@ -11,7 +11,7 @@
 61	aggregate max bounded by <=	not on the device: refused: an aggregate bounded by its probe (decision 0511)	lib 25, data-layer (engine) 15, data-layer 8, python 4, react 3, typescript 3, django 1, engine 1, javascript 1
 37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
 37	function @to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
-32	aggregate join	not on the device: no string join	lib 11, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1
+32	aggregate join	not on the device: refused: a string join not ordered by one number column has no device form	lib 11, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1
 19	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18, lib 1
 15	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3, django 1, python-main 1
 11	shipped functor @trim/1	not on the device: no computed term	data-layer (engine) 10, lib 1
@@ -20,7 +20,6 @@
 10	shipped functor @instr/2	not on the device: no computed term	data-layer (engine) 9, lib 1
 9	function @rx_extract/3	not on the device: no computed term	data-layer (engine) 8, lib 1
 8	function @count_matches/2	not on the device: no computed term	lib 4, data-layer 2, python 2
-8	function @pkg_up/2	not on the device: no computed term	lib 4, engine 2, django 1, typing 1
 7	arithmetic of floats	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
 7	function @to_float/1	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
 7	shipped functor @length/1	not on the device: no computed term	data-layer (engine) 7

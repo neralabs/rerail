@@ -204,8 +204,7 @@ impl MatcherWave {
         // On the cores, parts of the tapes side by side: a tape's labels and roots read that tape alone, so each part's
         // roots are the whole's at its tapes (a corpus batch's wave over every file ran on one core, 8 s on t50's
         // product run). Each part's limited roots are placed back at their tapes.
-        let cores = crate::code_rule_dsl::logic::profile::on_cores(rayon::current_num_threads);
-        let grain = self.tapes.len().div_ceil(cores * 4).max(WAVE_PART_TAPES);
+        let grain = self.tapes.len().div_ceil(crate::code_rule_dsl::logic::profile::cores_threads() * 4).max(WAVE_PART_TAPES);
         if !matches!(backend, MatcherBackend::Cpu) || self.tapes.len() <= grain {
             let (found, run) = self.wave.roots_batch(backend, &self.tapes, &self.active).map_err(|e| format!("{e:?}"))?;
             return Ok((found, run, started.elapsed().as_secs_f64()));

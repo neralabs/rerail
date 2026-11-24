@@ -782,6 +782,27 @@ strata 99.9 → 117.2 s, cross 24.8 → 36.8 s, the rest 18.1 → 14.4 s. Next b
   steps 1–4. The cross part's cost is spread thin: no stratum over 1.5 s (`rf_named` 1.5, `rf_ref` 1.2, `rf_target`
   0.57).
 
+### Step 7, built: a name's parent is its split at the last "." (2026-11-23)
+
+The prefix walk climbs a dotted name one segment at a time (`rf_walk(q, p2, h) :- rf_walk(q, p, h), !rf_binder(p),
+split_dot(p, p2, _)`) until a prefix is bound (`rf_hit`). It already ran as one wave (decision 0570), so the plan's
+keyed nearest over the name forest was in place but for the step itself. `split_dot(p, m, x)` lowers to
+`p = @cat(m, x), @contains(x, ".") = 0`, and the `Split` step ran the `@cat` backward at every "." of `p`, interning
+both parts of each split, before the test kept the one at the last ".". So a walk up a name of k segments made about
+k² symbols, where the forest's parent edge is one split, a function of the name.
+
+`last_splits` (setfix) finds a split whose second part only a later no-"." test reads, and runs it at the last "."
+alone (`Step::Split::last`). The test is true by construction and is left `Unused`. The part nothing else reads is
+unread, so no atom is made for it. Only the prefix the row carries is interned, which the forest's table would hold.
+The rule needs no annotation: the shape is the step's own. Tests: `a_split_whose_second_part_holds_no_dot_is_the_last_split`
+(the pass, and the three cases it must leave), `a_prefix_walk_splits_at_the_last_dot` (a walk over names with a
+leading, doubled and trailing ".", none, and five levels, against rows written by hand; `split_dot`'s other uses as
+before).
+
+On `all` (M3, CPU), every export's rows are the same. In `rf_walk`'s recursive rule the split now gives 5,024 rows
+for 5,024 in, and the test passes each at 4 ns. The stratum: 0.266 → 0.255 s. That is the size step 7 had left after
+steps 1–5 (3.7 s when t50 was written); the change is the shape the plan named.
+
 ### The strata against 0483's, and a round's tape values admitted together (2026-11-23)
 
 0483's rules run again on m1max (`tmp/refs/three/r0483.sh`: 152.6 s CPU, load 6), their spans' own CPU beside the
@@ -1048,13 +1069,58 @@ Then, step by step (each device run's step counts against a CPU run of the same 
   kept the probe that finds no rows. So the loss came with the device's run-time refusals, which vary between runs.
   `indexed` now gives every step that probes an input its index, its keys in that index's column order, as the parse
   orders them (`in_index_order`); `a_refused_seeds_count_reads_its_inputs_index`. On Metal after the fix: the 100
-  files 247 in five of five runs (four with device failures), the full bench 463, hogql 1629 (d82234cb). Whether
-  the s1000 loss at 512 MB above (`mn_class`, `dbg_rd`) is the same is not yet run: its budget refuses more seeds, so
-  it is worth that run first.
+  files 247 in five of five runs (four with device failures), the full bench 463, hogql 1629 (d82234cb). The s1000
+  loss at 512 MB above (`mn_class`, `dbg_rd`) had this cause among others: decision 0660's fixes (below) take
+  a refused seed's aggregates the same way, and its ten runs give the CPU's rows.
 - **Open: a run ended by the GPU's errors.** A second full bench on the M1 Max stopped about 200 s in, after five
   device failures: macOS refused the process's further submissions ("Ignored (for causing prior/excessive GPU
   errors)"), and the GPU lane's error ended the run. The failures before it (preempted, a GPU hang) appear in runs
   from before the merge too.
+
+### Step 9, done (2026-11-23, decision 0660)
+
+There was no single cause: ten defects, most in the hand-off between batches that share the device. Each was found
+by comparing, stage by stage, what the device made against a CPU run of the same seeds and relations. The fixes,
+from decision 0660:
+
+- An index is found again by each batch that encodes a stage. A rerun read a slot given back as a duplicate.
+- A taker binds the buffer its builder wrote through. A grown block's new wrap is another `MTLBuffer`.
+- An index whose 16z reads found no cache room is not marked built, and its takers fail.
+- A batch that lost a submission fails whole.
+- A view is read in place only with its home.
+- A head's new rows exclude every lot placed for it.
+- A refused seed's aggregates get the CPU's index.
+- The views' directory holds its documents' order by key (`ViewDir::by_key`): a value admitted with a key below
+  the chunk's was never found by `by_parent`, giving `tp_ident`/`tp_list`'s −9 at every budget.
+- A search's walk counts and draws a source's candidates where the source holds them (`Source::lookup_seq`). This
+  was the slow mode: 195 s, 36 s at 18 GB, or 15 s after the run, in the end-of-run drain.
+- A phase counted in a thread's teardown is dropped: the abort at exit.
+
+Measured (M3, `--metal --metal-mb 512`, ten runs of the final head): every run's exports equal the CPU run's,
+`finding` 20,046, `mn_class` 266,996, `dbg_rd` 480,367, `mn_dec_fn` 116,511; 0.7 s after the run; peak about
+3.5 GB; wall about 33 s; exit 0.
+
+### The goal's items, measured at the head (2026-11-23, M3, `all`, the dead-code program)
+
+A CPU run (`RERAIL_GPU=cpu`) at the head showed one regression left: the cross part took 87–90 s of wall at a
+parallelism of 1.3. 77 s of it was the run's thread waiting on the heavy values (decision 0209 §6) of `rf_names`,
+`rf_fn_follows` and `rf_target`. Their rounds passed `gpu_pays`'s row threshold and went to the device's radix
+sorts, and under `RERAIL_GPU=cpu` the device's kernels run on the CPU, at a parallelism of about one. Fixed:
+- `gpu_pays` never sends a round to a device whose kernels run on the CPU (`SolverDevice::kernels_on_cpu`);
+- the CPU's batch counts each relation by morsels of its rows across the pool, the morsels' counts merged as a tree.
+
+The same run after the fix, every export's rows equal to the earlier CPU run's:
+
+| Item | Was | Now |
+|---|---|---|
+| 1. The stats phase | 42 s, mostly serial | 1.12 s |
+| 2. The export's work in local | about 19 s on the run's thread | 3.15 s wall, the run's thread 2.6 s, 14.8 s on the other threads |
+| 3. Cross | 28 → 52 s (and 87.6 s on the CPU backend) | 12.5 s, parallelism 3.1 |
+| 3. Per-file (`wait`) | 89 → 111 s | 8.6 s of wall, 71 s on the workers |
+| 5. Peak | 4.8 GB | 2.40 GB |
+| The run | | 29.9 s wall, 139.5 s CPU, 1,626 G instructions |
+
+Metal at 512 MB, ten runs: 0.7 s after the run, peak about 3.5 GB, wall about 33 s, every export the CPU's (above).
 
 ## Open
 

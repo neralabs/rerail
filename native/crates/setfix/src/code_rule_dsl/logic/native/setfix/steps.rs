@@ -61,7 +61,9 @@ pub enum Step {
         bind: bool,
     },
     /// `whole` split as `@dot` makes it into `a` and `b` (`""` and the whole, or at each "." with a part before it);
-    /// `Some` slots bind, `None` parts (`ka`/`kb`) are tested.
+    /// `Some` slots bind, `None` parts (`ka`/`kb`) are tested. `last`: only the split whose second part holds no "."
+    /// (`last_splits`): at the last "." with a part before it, or `""` and a whole with none. That is a dotted name's
+    /// parent in the forest of names, one split a row (t50 step 7).
     Split {
         whole: Key,
         #[archive(flat)]
@@ -70,6 +72,7 @@ pub enum Step {
         b: Option<usize>,
         ka: Key,
         kb: Key,
+        last: bool,
     },
     Eq {
         a: Key,
@@ -220,6 +223,8 @@ pub enum Edit {
     /// The step (an atom, a count, a min or max, a strjoin) probes its input through this index (`index_then`), its
     /// keys in the index's column order (`in_index_order`, t50 step 9).
     Index(usize, Arc<Csr>),
+    /// The split is at the last "." alone (`last_splits`).
+    Last(usize),
 }
 
 impl Plan {
@@ -237,6 +242,11 @@ impl Plan {
                     if let Step::Atom { src: Src::In(_, at), keys, .. } | Step::Scalar { src: Src::In(_, at), keys, .. } | Step::StrJoin { src: Src::In(_, at), keys, .. } = &mut self.steps[i] {
                         super::in_index_order(&ix, keys);
                         *at = Bound(ix);
+                    }
+                }
+                Edit::Last(i) => {
+                    if let Step::Split { last, .. } = &mut self.steps[i] {
+                        *last = true;
                     }
                 }
             }
@@ -278,7 +288,7 @@ impl Decode for Step {
                 Step::Atom { src: Src::decode(src, n), neg: *neg, keys: keys.to_vec(), binds: binds.to_vec(), tests: tests.to_vec() }
             }
             ArchivedStep::Cat { out, a, b, bind } => Step::Cat { out: *out, a: *a, b: *b, bind: *bind },
-            ArchivedStep::Split { whole, a, b, ka, kb } => Step::Split { whole: *whole, a: *a, b: *b, ka: *ka, kb: *kb },
+            ArchivedStep::Split { whole, a, b, ka, kb, last } => Step::Split { whole: *whole, a: *a, b: *b, ka: *ka, kb: *kb, last: *last },
             ArchivedStep::Eq { a, b } => Step::Eq { a: *a, b: *b },
             ArchivedStep::Lt { a, b, or_eq } => Step::Lt { a: *a, b: *b, or_eq: *or_eq },
             ArchivedStep::Scalar { src, keys, tests, col, kind, out, bind, bag, bound: limit } => Step::Scalar {

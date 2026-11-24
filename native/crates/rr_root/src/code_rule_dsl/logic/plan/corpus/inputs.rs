@@ -971,7 +971,7 @@ grew(e) :- now_entry(e), !was(_, e).
             }
             let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(root).args(args).output().unwrap().status.success(), "git {args:?}");
             git(&["init", "-q"]);
-            git(&["add", "-A"]);
+            git(&["add", "docs", "shared"]);
             git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "files"]);
             work
         };

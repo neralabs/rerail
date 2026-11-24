@@ -41,6 +41,11 @@ mod test_watchdog;
 #[cfg(test)]
 #[path = "../../../src/test_flush.rs"]
 mod test_flush;
+// Its test binary's allocator, the engine's (`rerail_prof::heap::Sampled`, as `rerail-engine`'s `lib.rs` and every test
+// crate declare it): a library declares none for its users, so without it its own tests ran on the system allocator.
+#[cfg(all(test, not(any(windows, target_family = "wasm", feature = "system-allocator"))))]
+#[global_allocator]
+static GLOBAL: rerail_prof::heap::Sampled = rerail_prof::heap::Sampled;
 #[cfg(test)]
 #[path = "../../../src/test_private_folders.rs"]
 mod test_private_folders;

@@ -3243,6 +3243,7 @@ dependencies = [
  "rerail-device",
  "rerail-gpu",
  "rerail-vector",
+ "rustc-hash",
  "serde",
  "windows-sys 0.61.2",
 ]

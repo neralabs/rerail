@@ -29,7 +29,6 @@ pub mod device;
 pub mod os;
 pub mod rows;
 pub mod store;
-pub mod grid;
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
 ///

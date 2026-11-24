@@ -203,5 +203,9 @@ unchanged and CPU noted.
    relation), then per-range bit-packing, then dictionaries for atoms and kinds. Each step's reads are tested through
    every reader (host, JIT, kernels' generated header), and measured by the census.
 
+   Built 2026-11-23 (0622): the frozen encodings with key runs (steps 1–2), and dictionaries (step 4, `DICT`) for a
+   relation's sealed chunks. Sealing chunks as their writers pass them was measured and not kept (0622 step 3). On
+   `all` (M3, CPU) the peak is 2.38 GB, against this note's 4.8 GB.
+
 Steps 1-3 cut the twins' 1.3 GB or more and their CPU. Step 4 cuts 2.3 GB. Step 5-6's target is the per-range
 figures: 4.2 GB as written, 2.15 GB sorted, before fields are split.

@@ -79,7 +79,8 @@ fn the_evaluator_copies_no_tape() {
 }
 
 /// §5 of decision 0468: the evaluator is UKL, launched through the lane: its source has no MSL
-/// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's grid.
+/// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's stages and work
+/// queue: its setup is a program of phases on the queue (decision 0653).
 /// Its expansion is the loop's (decision 0588: no rounds, no pool), its pieces and requests items of one
 /// work queue in the block (decision 0613 §4: UKL's), taken by the SIMD groups.
 #[test]
@@ -89,12 +90,12 @@ fn the_evaluator_is_ukl() {
         let code: Vec<&str> = src.lines().filter(|l| !l.trim_start().starts_with("//") && l.contains(msl)).take(3).collect();
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
-    assert!(src.contains("#include <ukl/grid.h>"), "UKL's grid");
+    assert!(src.contains("#include <ukl/stages.h>") && !src.contains("ukl/grid.h"), "UKL's stages, no grid (decision 0653)");
     assert!(src.contains("#include <ukl/workqueue.h>") && src.contains("ukl_wq_take"), "the requests' queue is UKL's (decision 0613 §4)");
     for rounds in ["px_drain", "PX_DRAIN", "px_item", "ukl_pool_", "<ukl/pool.h>", "PxList"] {
         assert!(!src.contains(rounds), "the rounds' `{rounds}` (decision 0588: the loop alone)");
     }
-    assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && !src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
+    assert!(src.contains("DEFINE_KERNEL2(pp, pp_run") && src.contains("DEFINE_KERNEL2(pp, pp_rebase") && !src.contains("DEFINE_KERNEL2(pp, px_expand"), "the program's kernels are UKL's");
     let arena = include_str!("../../../metal/src/pp_arena.rs");
     assert!(arena.contains("lane::Command") && !arena.contains("new_compute_command_encoder"), "launched through the lane");
 }
@@ -398,7 +399,7 @@ fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::fi
     let cpp = cfg.opts.cpp;
     let r = super::rounds::run_many(cfg, cpp, units, |pairs, sizes| {
         let t0 = std::time::Instant::now();
-        let xs = rerail_metal::pp_expand::expand_teams(pairs, sizes);
+        let xs = rerail_metal::pp_expand::expand_batch(pairs, sizes);
         if let Ok(xs) = &xs {
             // The batch's GPU time is each answer's (`Expanded::run`): counted once.
             let gpu = xs.iter().flatten().map(|x| x.gpu_seconds).next().unwrap_or(0.0);
@@ -874,10 +875,9 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
     (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.gives)
 }
 
-/// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
-/// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
-/// definitions, and one that runs again at a larger rung. A dispatch past the groups the device
-/// holds at once is refused (decision 0568); at them, it gives the default grid's output.
+/// Decisions 0485 §1 and 0653: an evaluation's command is a fixed handful of launches, `pp_run` (the setup's
+/// program, the text inside its P1 iterations) and `pp_rebase` `PP_LAUNCHES` times, whatever the unit's size: an
+/// empty unit, one of thousands of tokens and definitions, and one that runs again at a larger rung.
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
@@ -894,21 +894,6 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
         same(got.map(|g| show(&g)), Ok(show(&want)), what);
         same(launches, LAUNCHES, format!("{what}'s launches (rung {rung})"));
     }
-    // 4,096 groups of 256 threads: past what any GPU holds at once.
-    use rerail_c_pp::files::Search;
-    let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), big.into_bytes())].into_iter().collect();
-    let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
-    let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
-    let (unit, lay) = (&d.unit, &d.lay);
-    // Decision 0568: refused on the host, past the grid kernel's resident groups, before it is encoded.
-    let resident = rerail_metal::pp_arena::residency();
-    assert!(resident.groups < 4096, "{resident:?}");
-    assert!(matches!(rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096), Err(rerail_metal::Error::BackendCapacity)), "a grid past residency is refused");
-    // At its residency, it runs: the same output as the grid it dispatches by default.
-    let full = rerail_metal::pp_expand::expand_at(unit, lay, 0, resident.groups).unwrap();
-    let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
-    same(full.refused, 0, "the resident grid's refusals");
-    same(&full.out, &narrow.out, "the resident grid's output");
 }
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
@@ -1073,7 +1058,7 @@ fn counters_in_directives_are_the_serial_passes() {
 /// names are defined differently, undefined, or left undefined from unit to unit, so a unit that
 /// saw an earlier unit's row would differ; `__FILE__` used after another unit redefined it; one
 /// unit the device refuses (a call past its file's end), and that unit alone is refused: each
-/// unit is a team of its own (decision 0588 §6), and the batch is one run.
+/// unit is a program of its own on the batch's queue (decision 0653), and the batch is one run.
 #[test]
 fn a_batch_is_its_units() {
     use rerail_c_pp::files::Search;
@@ -1335,13 +1320,15 @@ fn a_definition_changed_between_uses_is_expanded_again() {
     let src = "#define G 1\n#define A G\n#define F() A A A A A A A A A A A A A A A A A A A A\nF()\n#undef G\n#define G 2\nF() F()\n";
     let (got, want, (hits, _)) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "G changed");
-    same(hits, 1, "the hits: the last call's");
+    // The last call's hit; and in each of the two expansions of `F`, its 20 `A`s one request (each with `F`
+    // disabled), the other 19 its hits (an object-like macro a request reads is a request, decision 0613 §4).
+    same(hits, 1 + 2 * 19, "the hits: the last call's, and the `A`s in each expansion of `F`");
 }
 
-/// Decision 0613 §4, stage 4: a call's arguments are requests of their own, read by groups that are free (another
-/// unit's team among them, `lp_help`), and taken by the call where they are done. Here each of a call's arguments
-/// is a chain of 8 calls, on 8 lines, and two hold `__COUNTER__`: a reading elsewhere stops at it, and the call
-/// reads that argument itself, in order, so the counts are the serial pass's.
+/// Decision 0613 §4, stage 4: a call's arguments are requests of their own, read by SIMD groups that are free, and
+/// taken by the call where they are done. Here each of a call's arguments is a chain of 8 calls, on 8 lines, and two
+/// hold `__COUNTER__`: a reading elsewhere stops at it, and the call reads that argument itself, in order, so the
+/// counts are the serial pass's.
 #[test]
 fn arguments_read_elsewhere_are_the_serial_passes() {
     let mut t = String::from("#define ID(x) x\n#define F(a, b, c, d) [a|b|c|d]\n#define K() __COUNTER__\n#define C0(x) x\n");
@@ -1398,7 +1385,8 @@ fn expansion_keys(rows: &[(Vec<u8>, u32, u32)]) -> Vec<String> {
 /// Decision 0613 §6, stage 5: provenance. The device's expansions are the serial pass's `Expansion` rows, each
 /// with its macro, its root call's place and its parent: through calls read inline, a top call's request, an
 /// argument's expansion and its request, a memoized result used at several places (its rows each place's), a
-/// name a body makes and one an argument brings, and an empty expansion.
+/// name a body makes and one an argument brings, and an empty expansion; a memo hit's rows in a piece read again,
+/// and calls read in arguments' expansions.
 #[test]
 fn expansions_are_the_serial_passes() {
     let shapes: &[&str] = &[
@@ -1419,7 +1407,12 @@ fn expansions_are_the_serial_passes() {
     for i in 0..8 {
         args += &format!("F(C8({i}), C8(ID(a{i})), C8(ID(a{i}) b), ID(ID({i})))\n");
     }
-    let shapes: Vec<&str> = shapes.iter().copied().chain([args.as_str()]).collect();
+    // A piece read again inline (a pragma in a request), its second line's calls the memo's hits (a hit's rows are
+    // its template's, decision 0613 §6); calls read in arguments' expansions, each a request (§4).
+    let defs = args.lines().filter(|l| l.starts_with("#define")).collect::<Vec<_>>().join("\n");
+    let again = format!("{defs}\nID(C8(0) _Pragma(\"x\"))\nID(C8(1))\n");
+    let in_args = format!("{defs}\nID(C8(0))\nID(C8(1))\nID(C8(2))\nF(ID(C4(0)) ID(1), C2(ID(2)), ID(C1(3)), 4)\n");
+    let shapes: Vec<&str> = shapes.iter().copied().chain([args.as_str(), again.as_str(), in_args.as_str()]).collect();
     for main in &shapes {
         for cpp in [false, true] {
             let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
@@ -1591,7 +1584,7 @@ fn corpus_root() -> std::path::PathBuf {
 }
 
 /// A batch's GPU time by stage and by phase, as `where_an_evaluations_gpu_time_goes` gives a
-/// unit's: each the best of 5, at 32 groups.
+/// unit's: each the best of 5.
 fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand::Layout)]) {
     use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT, TO_VIS, Unit};
     use rerail_metal::pp_expand::{Layout, stage_seconds};
@@ -1601,22 +1594,22 @@ fn batch_stages(units: &[(&rerail_metal::pp_eval::Unit, &rerail_metal::pp_expand
     let best = |f: &dyn Fn() -> f64| (0..5).map(|_| f()).fold(f64::MAX, f64::min) * 1e6;
     let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
         .iter()
-        .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0, 32).unwrap_or(f64::NAN))))
+        .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(&unit, &lay, last, 0).unwrap_or(f64::NAN))))
         .collect();
     eprintln!("a batch of {} units (us, cumulative): {}", units.len(), t.join(", "));
-    let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k, 32).unwrap_or(f64::NAN))).collect();
+    let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(&unit, &lay, TO_ALL + 1, k).unwrap_or(f64::NAN))).collect();
     let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
     eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
     // `RERAIL_PP_STAGES_ALL`: every phase's cost (best of 3), to the run's end; with `RERAIL_PP_TRACE` and
     // `RERAIL_PP_TRACE_ALL`, a traced run first names each phase's line.
     // `RERAIL_PP_STOPS`: the run stopped at each of the given phases (best of 9).
     if let Ok(stops) = std::env::var("RERAIL_PP_STOPS") {
-        let best9 = |stop: u32| (0..9).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop, 32).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
+        let best9 = |stop: u32| (0..9).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
         let t: Vec<String> = stops.split(',').map(|k| format!("{k}:{:.0}", best9(k.parse().unwrap()))).collect();
         eprintln!("STOPS {} whole {:.0}", t.join(" "), best9(u32::MAX));
     }
     if std::env::var_os("RERAIL_PP_STAGES_ALL").is_some() {
-        let best3 = |stop: u32| (0..3).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop, 32).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
+        let best3 = |stop: u32| (0..3).map(|_| stage_seconds(&unit, &lay, TO_ALL + 1, stop).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e6;
         let whole = best3(u32::MAX);
         let (mut prev, mut near) = (best3(1), 0);
         eprintln!("STOPK whole {whole:.1} us");
@@ -1655,8 +1648,8 @@ fn the_corpus_preprocesses_on_the_device() {
     }
     let mut dirs: Vec<(String, DirKind)> = std::env::var("RERAIL_PP_INCLUDE").map(|v| v.split(':').filter(|d| !d.is_empty()).map(|d| (d.to_string(), DirKind::System)).collect()).unwrap_or_default();
     dirs.push(("<stub>".into(), DirKind::After));
-    // `RERAIL_PP_AGAIN`: the batches once before, the units' second evaluation the one checked (their teams
-    // sized by the loop's work the first measured: `Sizes::work`).
+    // `RERAIL_PP_AGAIN`: the batches once before, the units' second evaluation the one checked (from the rooms the
+    // first settled at).
     if std::env::var_os("RERAIL_PP_AGAIN").is_some() {
         eprintln!("the first evaluation:");
         against_serial(langs.clone(), dirs.clone(), true);
@@ -1689,9 +1682,8 @@ fn boost_preprocessor_is_the_serial_passes() {
     assert!(r.same_units > 0 && r.launches == LAUNCHES, "{} units, {} launches a round", r.same_units, r.launches);
 }
 
-/// The launches of an evaluation's command buffer: `pp_setup` and `pp_check` (decisions 0468 §4,
-/// 0485 §1).
-const LAUNCHES: usize = 2;
+/// The launches of an evaluation's command: `pp_run` and `pp_rebase`, `PP_LAUNCHES` times (decision 0653).
+const LAUNCHES: usize = 2 * rerail_metal::pp_arena::PP_LAUNCHES;
 
 /// Decision 0588's Tests: the serial pass over the corpus batch (`the_corpus_preprocesses_on_the_device`'s units,
 /// `RERAIL_PP_FIRST` and `RERAIL_PP_COUNT` alike), a thread a core, each taking the next unit: its wall time, best
@@ -2426,7 +2418,6 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         (X_SPLICE, "# or ## of a token with a line splice"),
         (X_PRAGMA, "a _Pragma that makes a row"),
         (X_COUNTER_SPELLED, "# or ## of __COUNTER__'s value"),
-        (X_BARRIER, "a grid barrier"),
         (X_WORK, "the work bound"),
     ];
     let (mut same_units, mut tokens, mut launches, mut rounds) = (0, 0, 0, 0);
@@ -2485,7 +2476,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
             use rerail_metal::pp_eval::{TO_ALL, TO_DEFS, TO_FRONT};
             use rerail_metal::pp_expand::{expand_sized, stage_seconds_as};
             for (e, (unit, lay)) in entries.iter().zip(&units) {
-                let Ok(x) = expand_sized(unit, lay, &mut Sizes::first(unit, lay), rerail_metal::pp_arena::groups()) else { continue };
+                let Ok(x) = expand_sized(unit, lay, &mut Sizes::first(unit, lay)) else { continue };
                 let at = |last: u32, iters: u32| (0..3).map(|_| stage_seconds_as(unit, lay, last, 0, iters, &x).unwrap_or(f64::NAN)).fold(f64::MAX, f64::min) * 1e3;
                 let best = |last: u32| at(last, 0);
                 let name = e.path.rsplit('/').next().unwrap_or(e.path);
@@ -2834,6 +2825,56 @@ fn the_output_is_pieces_that_refer_to_the_text() {
     assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
 }
 
+/// Decision 0613's calls read in an argument's expansion: each shape the serial pass's, in C and C++. A call in
+/// an argument a hole in the argument's list, passed through the caller's rescan; at an edge the run read again:
+/// a function-like name before the hole whose `(` the result begins, a result ending in a function-like name with
+/// a `(` after the parameter, two holes side by side (the first's tail, the second's `(`). The parameter
+/// stringized and pasted (its raw tokens), read twice, `__COUNTER__` in the call, a live name inside its result
+/// (`DEFER(A)()`'s `A ( )`: the rescan acts on it), inside a call's argument inside a request, and a piece's.
+#[test]
+fn calls_in_an_argument_are_the_serial_passes() {
+    let defs = "#define ID(x) x\n#define G(y) [y]\n#define F(x) <x>\n#define L(y) (y)\n#define H(a) a+1\n#define FH(x) H x\n\
+                #define N(y) H\n#define FN(x) x(7)\n#define T(y) H\n#define P(y) (y)\n#define S(x) #x x\n#define C(x) x ## _end x\n\
+                #define TW(x) x x\n#define K(y) y __COUNTER__\n#define EMPTY()\n#define DEFER(id) id EMPTY()\n#define A() 123\n\
+                #define EX(...) __VA_ARGS__\n";
+    let shapes: &[(&str, &str)] = &[
+        ("passed through", "F(G(1) G(2))\nID(ID(G(3)))\nint v = ID(G(8));\n"),
+        ("a name before it whose ( it begins", "FH(L(5))\nID(FH(L(6)))\n"),
+        ("its tail with a ( after the parameter", "FN(N(0))\nID(FN(N(1)))\n"),
+        ("two holes side by side", "F(T(0) P(9))\nID(F(T(0) P(8)))\n"),
+        ("stringized and pasted", "S(G(4))\nC(G(5))\nID(S(G(6)) C(G(7)))\n"),
+        ("read twice", "TW(G(6))\nID(TW(G(7)))\n"),
+        ("__COUNTER__", "F(K(1) K(2))\nID(F(K(3)))\n__COUNTER__\n"),
+        ("a live name in it", "EX(EX(DEFER(A)()))\nID(EX(DEFER(A)()))\nF(EX(DEFER(A)()) 1)\n"),
+    ];
+    for (what, text) in shapes {
+        let main = format!("{defs}{text}");
+        for cpp in [false, true] {
+            let (got, want, _, launches) = expanded_in(&[("main.c", main.as_str())], rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
+            same(launches, LAUNCHES, format!("{what}: launches"));
+        }
+    }
+}
+
+/// Decision 0613 §4: a call read in an argument's expansion is a request of its own. `ID(G(1) G(2) G(3))`: the
+/// top call and each `G` posted (the CPU backend's one group posts no argument, so only the argument's calls
+/// make them), and the output the serial pass's.
+#[test]
+fn a_call_in_an_argument_is_a_request() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::expand_from;
+    let text = "#define ID(x) x\n#define G(y) [y]\nID(G(1) G(2) G(3))\n";
+    let (got, want, _, _) = expanded(&[("main.c", text)], false);
+    same(got.map(|g| show(&g)), Ok(show(&want)), "the output");
+    let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), text.as_bytes().to_vec())].into_iter().collect();
+    let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+    let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+    let x = expand_from(&d.unit, &d.lay, 0).unwrap();
+    same(x.refused, 0, "refused");
+    assert!(x.posted >= 4, "{} requests posted, not the top call and its argument's 3", x.posted);
+}
+
 /// A run's frames are as deep as its input nests: past the group's `LP_DEPTH` they are the run's region 6
 /// (`lp_fpush`), never refused. Each level keeps a tail to read under the next, as Boost.Preprocessor's
 /// `BOOST_PP_REPEAT_1_n(m, d)` is `BOOST_PP_REPEAT_1_{n-1}(m, d) m(2, n-1, d)` (256 deep): object-like and
@@ -2941,8 +2982,8 @@ fn line_and_file_are_the_serial_passes() {
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
 
-/// A measurement, not a check: each stage's GPU time for a small and a large unit, at 1 and 32
-/// groups, and each phase's of `pp_setup` (an empty dispatch's: `what_a_barrier_costs`).
+/// A measurement, not a check: each stage's GPU time for a small and a large unit, and each phase's of its program
+/// (decision 0653).
 #[test]
 #[ignore = "a measurement"]
 fn where_an_evaluations_gpu_time_goes() {
@@ -2960,17 +3001,15 @@ fn where_an_evaluations_gpu_time_goes() {
         let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
         let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
         let (unit, lay) = (&d.unit, &d.lay);
-        for g in [1u64, 32] {
-            let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
-                .iter()
-                .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(unit, lay, last, 0, g).unwrap_or(f64::NAN))))
-                .collect();
-            eprintln!("{what}, {g} groups (us, cumulative): {}", t.join(", "));
-            // Each phase's cost: the run stopped before phase k+1 less the run stopped before k.
-            let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(unit, lay, TO_ALL + 1, k, g).unwrap_or(f64::NAN))).collect();
-            let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
-            eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
-        }
+        let t: Vec<String> = [("front", TO_FRONT), ("defs", TO_DEFS), ("vis", TO_VIS), ("setup", TO_ALL + 1), ("all", TO_ALL)]
+            .iter()
+            .map(|&(n, last)| format!("{n} {:.0}", best(&|| stage_seconds(unit, lay, last, 0).unwrap_or(f64::NAN))))
+            .collect();
+        eprintln!("{what} (us, cumulative): {}", t.join(", "));
+        // Each phase's cost: the run stopped before phase k+1 less the run stopped before k.
+        let at: Vec<f64> = (1..=60).map(|k| best(&|| stage_seconds(unit, lay, TO_ALL + 1, k).unwrap_or(f64::NAN))).collect();
+        let steps: Vec<String> = at.windows(2).enumerate().map(|(k, w)| format!("{}:{:.0}", k + 1, w[1] - w[0])).collect();
+        eprintln!("  stopped before phase 1: {:.0} us; phase k's cost: {}", at[0], steps.join(" "));
     }
 }
 
@@ -2982,7 +3021,7 @@ fn where_an_evaluations_gpu_time_goes() {
 #[test]
 fn a_round_starts_from_the_last_rounds_tree() {
     use rerail_c_pp::files::Search;
-    use rerail_metal::pp_expand::{Layout, NO_PARENT, expand_teams};
+    use rerail_metal::pp_expand::{Layout, NO_PARENT, expand_batch};
     let files: &[(&str, &str)] = &[
         ("main.c", "#include \"a.h\"\n#ifdef A\n#include \"b.h\"\n#endif\n#if defined(B) && C > 1\nyes C\n#else\nno\n#endif\nend A B\n"),
         ("a.h", "#ifndef A\n#define A 1\n#include \"c.h\"\n#endif\n#ifdef C\nint c = C;\n#endif\n"),
@@ -3023,7 +3062,7 @@ fn a_round_starts_from_the_last_rounds_tree() {
                 })
                 .collect();
             let pairs: Vec<_> = pairs.iter().zip(&lays).map(|((u, _), l)| (*u, l)).collect();
-            let xs = expand_teams(&pairs, sizes);
+            let xs = expand_batch(&pairs, sizes);
             if let Ok(xs) = &xs {
                 iters += xs.iter().flatten().map(|x| x.passes.0).sum::<u32>();
             }

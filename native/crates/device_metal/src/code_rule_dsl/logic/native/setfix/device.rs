@@ -44,6 +44,11 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
 impl Plan {
+    /// The head columns it makes texts into (its arena's).
+    pub(in crate::code_rule_dsl) fn made_columns(&self) -> Vec<usize> {
+        self.arena.iter().enumerate().filter(|(_, a)| **a).map(|(c, _)| c).collect()
+    }
+
     /// The bytes its tables are expected to take and the rows its stages are expected to make (its planned work),
     /// from the planner's estimates (`est`, sized as `table_rows` sizes them): what its stratum reserves before it
     /// encodes (`admit`). A stage without an estimate counts none.
@@ -221,6 +226,8 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         Slice => mj::TEXTFN_SLICE,
         ToString => mj::TEXTFN_TO_STRING,
         ZeroPad => mj::TEXTFN_ZERO_PAD,
+        StrBetween => mj::TEXTFN_STR_BETWEEN,
+        PkgUp => mj::TEXTFN_PKG_UP,
         Replace => mj::TEXTFN_REPLACE,
     };
     Some((f, texts, nums))
@@ -471,9 +478,10 @@ fn witness_stage(j: &JoinRule, i: usize, bound: &[bool]) -> Option<PStage> {
 }
 
 /// `j`'s device plan, or the step the device cannot run. `own_texts`: the component's own columns whose values are
-/// arena texts (decision 0307: a `shortlex_min` relation's value, made by its rules' rounds into one arena), as
-/// (relation, column).
-pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<Plan, String> {
+/// arena texts (decision 0307: a `shortlex_min` relation's value, made by its rules' rounds into one arena; decision
+/// 0659: a recursive set head's column its rules make texts into), as (relation, column); `head`, `j`'s head relation:
+/// a name its head puts in one of those columns is copied into the arena, so every value of the column is a made text.
+pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<Plan, String> {
     let mut bound = vec![false; j.nslots];
     // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
@@ -503,12 +511,16 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
     let mut deferred: HashMap<usize, (Key, Key, u32)> = HashMap::new();
     // The arena texts kept in the rolling cache: by slot, the source symbol's slot and the chain of functions.
     let mut kept_texts: HashMap<usize, (usize, String)> = HashMap::new();
+    // Slots past the rule's own: texts the device makes that no step binds (a compared cat's).
+    let mut extra = j.nslots;
     let mut stages = Vec::new();
     let mut i = 0;
     while i < j.steps.len() {
         let step = &j.steps[i];
         // The rest of the body as one witness per binding, where it takes that shape (decision 0277).
-        if matches!(step, Step::Atom { .. }) && let Some(w) = witness_stage(j, i, &bound) {
+        // Not where an atom is keyed by a made text, which it compares as a text (below), not by value.
+        let made_key = |s: &Step| matches!(s, Step::Atom { keys, .. } if keys.iter().any(|(_, k)| matches!(k, Key::Slot(x) if is_arena(*x) || deferred.contains_key(x))));
+        if matches!(step, Step::Atom { .. }) && !j.steps[i..].iter().any(made_key) && let Some(w) = witness_stage(j, i, &bound) {
             stages.push(w);
             i = j.steps.len();
             continue;
@@ -542,6 +554,38 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         ARENA.with_borrow_mut(|x| x.push(s));
                     }
                 }
+                // A made text as a key (an arena text, a held cat's): no symbol names it yet, so the relation is
+                // probed by its other keys, that column bound into a slot of its own (past the rule's slots), and
+                // compared with the text as texts (`TEXTOP`). Symbols are interned once, so at most one row of a
+                // binding's passes, as the probe by value would have passed it.
+                let by_text: Vec<(usize, usize)> = keys.iter().filter_map(|&(c, k)| match k {
+                    Key::Slot(x) if is_arena(x) || deferred.contains_key(&x) => Some((c, x)),
+                    _ => None,
+                }).collect();
+                let keys: Vec<(usize, Key)> = keys.iter().copied().filter(|&(c, _)| !by_text.iter().any(|&(t, _)| t == c)).collect();
+                let mut atom_binds: Vec<(usize, usize)> = atom_binds.iter().copied().collect();
+                let mut compared = None;
+                match by_text[..] {
+                    [] => {}
+                    [(c, x)] => {
+                        if *neg {
+                            return Err("a made text as a negated atom's key has no device form".into());
+                        }
+                        if keys.is_empty() {
+                            return Err("a made text as an atom's only key has no device form".into());
+                        }
+                        if own.is_some() {
+                            return Err("a made text as a key of the component's own relation has no device form".into());
+                        }
+                        if atom_binds.len() >= mj::MAX_BINDS {
+                            return Err("an atom with more keys, tests or binds than a stage holds".into());
+                        }
+                        extra += 1;
+                        atom_binds.push((c, extra - 1));
+                        compared = Some((extra - 1, x));
+                    }
+                    _ => return Err("an atom keyed by several made texts has no device form".into()),
+                }
                 let mut d = mj::Stage { mode: if *neg { mj::ANTI } else if atom_binds.is_empty() { mj::SEMI } else { mj::JOIN }, ..mj::Stage::default() };
                 for (k, &(c, key)) in keys.iter().enumerate() {
                     d.key_rcol[k] = c as u32;
@@ -559,7 +603,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let mut span = 1;
                 let mut npassed = 0;
                 match j.fused_at(i) {
-                    Some(f) if d.mode == mj::JOIN => {
+                    Some(f) if d.mode == mj::JOIN && compared.is_none() => {
                         program(&mut d, f, mj::RIGHT)?;
                         binds(&mut d, f, false);
                         for &(s, _) in &f.binds { bound[s] = true; }
@@ -571,6 +615,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                             d.bind_slot[k] = s as u32;
                             d.bind_kind[k] = mj::BIND_RIGHT;
                             d.bind_idx[k] = c as u32;
+                            if s >= bound.len() {
+                                bound.resize(s + 1, false);
+                            }
                             bound[s] = true;
                         }
                         d.nbinds = atom_binds.len() as u32;
@@ -590,7 +637,13 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     (None, Src::In(rel, _)) => Kind::Atom { rel: j.bound(rel).clone(), cols },
                     (None, _) => unreachable!("an own source has its relation"),
                 };
-                stages.push(PStage { first: i, span, kind, desc: d, npassed });
+                if let Some((tmp, x)) = compared {
+                    // The step counted once, by its comparison.
+                    stages.push(PStage { first: i, span: 0, kind, desc: d, npassed: 0 });
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(tmp), Key::Slot(x), &deferred, &origin, &known)?);
+                } else {
+                    stages.push(PStage { first: i, span, kind, desc: d, npassed });
+                }
                 i += span;
             }
             // A min or max bounded by its probe (decision 0511): the device has no fold that reads the bound, so the
@@ -643,6 +696,58 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     Src::Delta(r) => Kind::Own { rel: *r, delta: true, cols },
                     Src::Full(r) => Kind::Own { rel: *r, delta: false, cols },
                     Src::FullMulti(..) => return Err("an aggregate over the component's own relation by several indexes".into()),
+                };
+                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                i += 1;
+            }
+            Step::StrJoin { src, keys, tests, x, by, sep, out, bind } => {
+                // A string join (decision 0661): each binding's matching rows of `src`, found as an aggregate's are,
+                // their names joined in the order of one number column into the arena, a SIMD group a binding
+                // (`mj::ROW_STRJOIN`). A name ordered by its text, or past a group's lanes, is the host's at run time.
+                if !*bind {
+                    return Err("a string join's value tested (not bound) has no device form".into());
+                }
+                if !x.1 {
+                    return Err("a string join of numbers has no device form".into());
+                }
+                let [(byc, false)] = by[..] else { return Err("a string join not ordered by one number column has no device form".into()) };
+                if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS {
+                    return Err("a string join with more keys or tests than a stage holds".into());
+                }
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
+                for (k, &(c, key)) in keys.iter().enumerate() {
+                    d.key_rcol[k] = c as u32;
+                    match key {
+                        Key::Slot(s) => { d.key_kind[k] = mj::SLOT; d.key_slot[k] = s as u32; }
+                        Key::Const(v) => { d.key_kind[k] = mj::CONST; d.key_const[k] = v; }
+                    }
+                }
+                d.nkeys = keys.len() as u32;
+                for (k, &(a, b)) in tests.iter().enumerate() {
+                    d.test_a[k] = a as u32;
+                    d.test_b[k] = b as u32;
+                }
+                d.ntests = tests.len() as u32;
+                (d.col_kind[0], d.col_idx[0]) = (mj::RIGHT, x.0 as u32);
+                (d.col_kind[1], d.col_idx[1]) = (mj::RIGHT, byc as u32);
+                d.ncols = 2;
+                d.par_const[0] = *sep;
+                d.agg = [mj::ROW_STRJOIN, 0];
+                d.bind_slot[0] = *out as u32;
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                ARENA.with_borrow_mut(|a| a.push(*out));
+                let cols = keys.iter().map(|&(c, _)| c).collect();
+                let kind = match src {
+                    Src::In(rel, _) => {
+                        readable(j.bound(rel), keys.len())?;
+                        Kind::Atom { rel: j.bound(rel).clone(), cols }
+                    }
+                    Src::Delta(r) => Kind::Own { rel: *r, delta: true, cols },
+                    Src::Full(r) => Kind::Own { rel: *r, delta: false, cols },
+                    Src::FullMulti(..) => return Err("a string join over the component's own relation by several indexes".into()),
                 };
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
@@ -757,15 +862,25 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                         || matches!(s, Step::Func { name, bind: true, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") && arena_reader(s, out))
                         || joined(s).is_some_and(|(o, ..)| o != out)
                 };
-                if made {
+                if made && !bind {
+                    // A cat of a made text compared with a bound slot: made per row into the arena in a slot of its
+                    // own (a stage that counts no step), then compared with it as texts (`TEXTOP`).
+                    let tmp = extra;
+                    extra += 1;
+                    let op = if form == mj::CAT_PLAIN { mj::ROW_CONCAT } else { mj::ROW_CAT };
+                    let mut st = row_stage(i, op, a, b, RowAuto::None, &deferred, &origin, &known)?;
+                    st.desc.bind_slot[0] = tmp as u32;
+                    st.span = 0;
+                    stages.push(st);
+                    if tmp >= bound.len() {
+                        bound.resize(tmp + 1, false);
+                    }
+                    bound[tmp] = true;
+                    ARENA.with_borrow_mut(|x| x.push(tmp));
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(tmp), Key::Slot(out), &deferred, &origin, &known)?);
+                } else if made {
                     // A cat of a made text (an arena text, a held cat's): made per row into the arena, a SIMD group a
-                    // row (`ROWTEXT`).
-                    if !bind {
-                        return Err("a cat of a made text compared with a bound slot has no device form".into());
-                    }
-                    if in_head_cat {
-                        return Err("cat of a made text in the head has no device form".into());
-                    }
+                    // row (`ROWTEXT`). Read by a head's cat, that cat reads it from the arena.
                     if let Some(s) = later.iter().find(|s| !arena_reader(s, out)) {
                         return Err(format!("a cat's text read by {} has no device form", step_name(s)));
                     }
@@ -782,9 +897,6 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     deferred.insert(out, (a, b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
                 } else if bind {
-                    if in_head_cat {
-                        return Err("cat of a made text has no device form".into());
-                    }
                     if let Some(s) = later.iter().find(|s| !arena_reader(s, out)) {
                         return Err(format!("a cat's text read by {} has no device form", step_name(s)));
                     }
@@ -851,9 +963,6 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
                     return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
                 }
-                if j.out.iter().any(|t| matches!(*t, Term::Cat(a, b) if a == *out || b == *out)) {
-                    return Err(format!("cat of the function {name}'s text has no device form"));
-                }
                 let mut st = row_stage(i, mj::ROW_REPLACE, args[0], Key::Const(with), RowAuto::Replace { pattern, with }, &deferred, &origin, &known)?;
                 st.desc.bind_slot[0] = *out as u32;
                 if let Some((id, chain)) = keep_text(&mut st.desc, args[0], Some(rerail_blocks::vector![pattern, with]), name, &origin, &kept_texts) {
@@ -871,21 +980,26 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             Step::Func { name, .. } if matches!(name.as_str(), "replace_all" | "rx_replace") => {
                 return Err(format!("the function {name} of a constant text, or of a regex or replacement not a constant, has no device form"));
             }
-            Step::Func { name, args, out, bind: true, .. } if text_function(name).is_some() => {
+            Step::Func { name, args, out, bind, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
                 // where the text is. Read by text tests, `str_cmp`, `strlen`, other text functions and the head (as a
-                // symbol), as a held cat's text is.
+                // symbol), as a held cat's text is. Compared with a bound slot (not bound), it is made into a slot of
+                // its own (past the rule's slots, a stage that counts no step), then compared with it as texts
+                // (`TEXTOP`), as a cat of a made text is.
                 let (f, ntexts, nnums) = text_function(name).expect("a text function");
                 if args.len() != ntexts + nnums {
                     return Err(format!("the function {name} of {} arguments", args.len()));
                 }
-                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
-                if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
-                    return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
-                }
-                if j.out.iter().any(|t| matches!(*t, Term::Cat(x, y) if x == *out || y == *out)) {
-                    return Err(format!("cat of the function {name}'s text has no device form"));
-                }
+                let target = if *bind {
+                    let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
+                        return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
+                    }
+                    *out
+                } else {
+                    extra += 1;
+                    extra - 1
+                };
                 let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
                 let mut xk = mj::OPND_SYM;
                 let kind = if ntexts > 0 {
@@ -931,7 +1045,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     }
                 }
                 d.agg = [mj::ROW_MAP | f << 16, xk];
-                d.bind_slot[0] = *out as u32;
+                d.bind_slot[0] = target as u32;
                 let konst = |k: &Key| match *k {
                     Key::Const(c) => Some(c),
                     Key::Slot(x) => known.get(&x).copied(),
@@ -940,14 +1054,19 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 if ntexts > 0
                     && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
                         kind = Kind::RowText { auto: RowAuto::None, kept: id };
-                        kept_texts.insert(*out, chain);
+                        kept_texts.insert(target, chain);
                     }
-                if *out >= bound.len() {
-                    bound.resize(*out + 1, false);
+                if target >= bound.len() {
+                    bound.resize(target + 1, false);
                 }
-                bound[*out] = true;
-                ARENA.with_borrow_mut(|a| a.push(*out));
-                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                bound[target] = true;
+                ARENA.with_borrow_mut(|a| a.push(target));
+                if *bind {
+                    stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                } else {
+                    stages.push(PStage { first: i, span: 0, kind, desc: d, npassed: 0 });
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(target), Key::Slot(*out), &deferred, &origin, &known)?);
+                }
                 i += 1;
             }
             Step::Func { name, kinds, args, out, bind, .. } => {
@@ -999,12 +1118,33 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             other => return Err(format!("{} has no device form", step_name(other))),
         }
     }
+    let head_rel = head;
     let mut head = Vec::new();
     let mut head_slots = rerail_blocks::vector::Vector::new();
     let mut arena = Vec::new();
-    let mut nslots = j.nslots;
-    for t in &j.out {
+    let mut nslots = extra;
+    for (c, t) in j.out.iter().enumerate() {
+        // A column of made texts (decision 0659) takes no name: a name is copied into the arena (`TEXTFN_COPY`), so
+        // equal texts are one value however they came.
+        let texts = own_texts.contains(&(head_rel, c));
+        let name = match *t {
+            Term::Slot(s) if texts && !is_arena(s) => Some(Key::Slot(s)),
+            Term::Const(v) if texts => Some(Key::Const(v)),
+            _ => None,
+        };
         match *t {
+            _ if name.is_some() => {
+                let k = name.expect("a name");
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
+                let kind = text_keys(&mut d, &[k, k], &origin, &known, "a name into a column of made texts")?;
+                d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, mj::OPND_SYM];
+                d.bind_slot[0] = nslots as u32;
+                stages.push(PStage { first: j.steps.len(), span: 0, kind, desc: d, npassed: 0 });
+                head.push(None);
+                head_slots.push(nslots);
+                arena.push(true);
+                nslots += 1;
+            }
             Term::Slot(s) => {
                 head.push(None);
                 head_slots.push(s);
@@ -1017,8 +1157,14 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
             }
             Term::Cat(x, y) => {
                 // `cat` in the head: made into the arena, in a slot of its own after the steps (a stage that counts
-                // no step).
-                let mut st = copy_stage(j.steps.len(), nslots, Key::Slot(x), Key::Slot(y), mj::CAT_DOT, &origin, &known)?;
+                // no step); of a made text (an arena text, a held cat's), a SIMD group a row (`ROWTEXT`).
+                let mut st = if [x, y].iter().any(|&s| is_arena(s) || deferred.contains_key(&s)) {
+                    let mut st = row_stage(j.steps.len(), mj::ROW_CAT, Key::Slot(x), Key::Slot(y), RowAuto::None, &deferred, &origin, &known)?;
+                    st.desc.bind_slot[0] = nslots as u32;
+                    st
+                } else {
+                    copy_stage(j.steps.len(), nslots, Key::Slot(x), Key::Slot(y), mj::CAT_DOT, &origin, &known)?
+                };
                 st.span = 0;
                 stages.push(st);
                 head.push(None);
@@ -1108,10 +1254,16 @@ fn arena_reader(step: &Step, x: usize) -> bool {
         Step::Eq { .. } | Step::Ne { .. } | Step::Let { .. } => true,
         Step::Func { name, bind: true, .. } if matches!(caps::device_fn(name), Some(caps::DeviceFn::Names { .. })) => true,
         Step::Test { op, p, matcher, .. } => (literal_test(op).is_some() || matcher.is_some()) && !me(p),
-        Step::Cat { bind: true, .. } => true,
-        Step::Func { name, bind: true, .. } if name.as_str() == "str_concat" => true,
+        // A cat of it, bound or compared with a bound slot (made into the arena, then compared as texts).
+        Step::Cat { .. } => true,
+        Step::Func { name, .. } if name.as_str() == "str_concat" => true,
         Step::Func { name, args, bind: true, .. } if caps::device_fn(name) == Some(caps::DeviceFn::RegexReplace) => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
-        Step::Func { name, args, bind: true, .. } => text_function(name).is_some_and(|(_, nt, _)| nt > 0) && me(&args[0]) && !args[1..].iter().any(me),
+        // An atom keyed by it (one key of several), compared with the column as texts.
+        Step::Atom { neg: false, keys, binds, .. } => keys.iter().any(|(_, k)| me(k)) && keys.len() > 1 && !binds.iter().any(|&(_, s)| s == x),
+        // A text function of it, bound or compared with a bound slot; or compared with it (as texts).
+        Step::Func { name, args, out, bind, .. } => {
+            text_function(name).is_some_and(|(_, nt, _)| nt > 0) && (me(&args[0]) && !args[1..].iter().any(me) || !*bind && *out == x && !args.iter().any(me))
+        }
         _ => false,
     }
 }
@@ -1216,7 +1368,7 @@ fn one_launch(rep: &Report) {
         let one = rep.waved != 0 || rep.programs == 1;
         let launches = rep.programs + rep.relaunches + rep.remaps;
         let ok = one && rep.dispatches == launches && rep.reruns == 0 && rep.relaunches <= rep.rounds + rep.programs;
-        if std::env::var_os("RERAIL_ONE_LAUNCH_CHECK").is_some_and(|v| v == "log") {
+        if crate::code_rule_dsl::logic::profile::var("RERAIL_ONE_LAUNCH_CHECK").is_ok_and(|v| v == "log") {
             eprintln!("ONE_LAUNCH {} programs {} reruns {} arena_reruns {} texts {} rounds {}", if ok { "ok" } else { "breach" }, rep.programs, rep.reruns, rep.arena_reruns, rep.made, rep.rounds);
         } else {
             assert!(ok, "a stratum past one program's stacks (decisions 0603, 0648): {rep:?}");
@@ -1695,7 +1847,14 @@ impl<'p> Run<'p> {
                             }
                             _ => (None, 0),
                         };
-                        batch.row_stage(s.desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), id, i, o, &self.totals, &self.counters, self.counter[k], &out)
+                        // A string join reads its relation by its keys, as a stage does (narrowed to the columns the
+                        // device holds, its view's constants as keys).
+                        let desc = if s.desc.agg[0] & 15 == mj::ROW_STRJOIN {
+                            with_consts(self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at)), &self.consts[k])
+                        } else {
+                            s.desc
+                        };
+                        batch.row_stage(desc, left, auto.as_ref().map(|(b, p)| (&**b, *p)), id, right, None, i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
                         let desc = with_consts(self.places[k].as_deref().map_or(s.desc, |at| narrowed(s.desc, at)), &self.consts[k]);
                         if let Some(probes) = &self.probes[k] {
@@ -2666,7 +2825,30 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
             b.copy_rows(mj::Rows::Table(r.uniq.as_ref().expect("the head's distinct rows")), n, &cols, mj::Rows::Table(&union), at).map_err(|e| format!("{e:?}"))?;
             at += n;
         }
-        let words = mj::Words::zeroed(3).map_err(|e| format!("{e:?}"))?;
+        // Less the rows the head holds, and those the stratum's earlier groups placed for it and the store has not
+        // taken yet (`Fresh::placed`: a stratum whose rules did not fit one submission, `encode_runs_bounded`), each
+        // read where it lies. The store takes every lot as it lies: left out, a lot repeated an earlier one's rows (t50
+        // step 9, Metal at 512 MB: `xd_raw_parameter_annotation`'s two rules in two groups, about twice its rows in
+        // 13 of 36 chunks).
+        // Each as its relation in its block and the rows of it read (`DevRel::in_block_from`).
+        let mut against: Vec<(crate::code_rule_dsl::facts::rows::InBlock, usize, usize)> = Vec::new();
+        if rel.n > 0
+            && let Some(held) = rel.in_block()
+        {
+            let n = held.rows as usize;
+            against.push((held, 0, n));
+        }
+        for lot in fresh[h].lots() {
+            against.push(match lot {
+                super::Placed::Part(p) => (p.in_block(p.len()), 0, p.len() as usize),
+                // The tail's rows to the lot's last: the relation's own there, then the lot's.
+                super::Placed::Tail { lent, n } => (lent.tail().in_block(lent.at + n), 0, (lent.at + n) as usize),
+                // Its slots of the wave's room: other lots' and the CPU's rows of the wave lie around them.
+                super::Placed::Wave { room, r, row, n } => (room.part(*r).in_block(row + n), *row as usize, *n as usize),
+            });
+        }
+        // Its counts: the union's (0), its distinct rows' (1), then each subtraction's.
+        let words = mj::Words::zeroed(2 + against.len().max(1)).map_err(|e| format!("{e:?}"))?;
         words.set(0, cap as u32);
         let all: Vector<usize> = (0..k).collect();
         // Made distinct: one rule's rows are already.
@@ -2678,29 +2860,26 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
         } else {
             (union, None)
         };
-        // Less the rows the head holds, read where they lie.
-        let (rows, slot) = match rel.in_block() {
-            Some(held) if rel.n > 0 => {
-                let dev = mj::DevRel::in_block(&held, k).map_err(|e| format!("{e:?}: a relation in its block"))?;
-                let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?;
-                rep.in_place += 1;
-                if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-                let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
-                for c in 0..k {
-                    d.key_rcol[c] = c as u32;
-                    d.key_kind[c] = mj::SLOT;
-                    d.key_slot[c] = c as u32;
-                }
-                let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
-                let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
-                // A stage reads its bindings' count from its in-slot: the union's is the cap (slot 0).
-                b.stage(d, &rows, Some((&dev, Some(&ix))), None, slot.unwrap_or(0), 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
-                hold.push(rows);
-                hold_rels.push((dev, ix));
-                (fresh_rows, Some(2))
+        let (mut rows, mut slot) = (rows, slot);
+        for (j, (held, from, n)) in against.iter().enumerate() {
+            let dev = mj::DevRel::in_block_from(held, k, *from, *n).map_err(|e| format!("{e:?}: a relation in its block"))?;
+            let ix = b.index(&dev, &all).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?;
+            rep.in_place += 1;
+            if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+            let mut d = mj::Stage { mode: mj::ANTI, nkeys: k as u32, ..mj::Stage::default() };
+            for c in 0..k {
+                d.key_rcol[c] = c as u32;
+                d.key_kind[c] = mj::SLOT;
+                d.key_slot[c] = c as u32;
             }
-            _ => (rows, slot),
-        };
+            let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+            let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
+            // A stage reads its bindings' count from its in-slot: the union's is the cap (slot 0).
+            b.stage(d, &rows, Some((&dev, Some(&ix))), None, slot.unwrap_or(0), 2 + j, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
+            hold.push(std::mem::replace(&mut rows, fresh_rows));
+            hold_rels.push((dev, ix));
+            slot = Some(2 + j);
+        }
         let (room, dst, at) = head_room(rel, &fresh[h], k, cap, cap)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst, at).map_err(|e| format!("{e:?}: a head's rows placed"))?;
@@ -2918,12 +3097,14 @@ fn tally(rep: &mut Report, done: &mj::Done) {
 /// rounds, each round's new rows (made distinct, less the rows the relation has) its next delta, until a round makes
 /// none. Each relation's rows stay on the device between rounds; the host reads one count per relation a round, and
 /// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
-/// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas.
-pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String> {
+/// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas, and whether the
+/// device reached the fixpoint: a round too narrow for the device hands the component back (decision 0657, `narrow`),
+/// its rows so far in `fresh` for the CPU's waves to go on from.
+pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vector<u64>, bool), String> {
     fixpoint_(seeds, deltas, heads, store, names, fresh)
 }
 
-fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String> {
+fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vector<u64>, bool), String> {
     on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 
@@ -2952,7 +3133,7 @@ fn map_at(m: &super::keys::KeyMap) -> mj::LatMap<'_> {
     mj::LatMap { home: m.facts().expect("a map in a block"), at: m.words().offset(), places: m.places(), grows: None }
 }
 
-fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vector<u64>, String> {
+fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vector<u64>, bool), String> {
     let _in = in_device();
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
@@ -2961,18 +3142,37 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // so one text made in two rounds (two arena values) is one value to it. Anywhere else its rounds would join or
     // make distinct texts by their arena values.
     let text_head = |h: usize| matches!(store.rels[h].device_lattice(), Some(Ok((3, ..))));
+    // A set head's columns its rules make texts into (decision 0659): every round's in one arena, each text one value
+    // a content there (`mj::Arena::canonical`), so its dedup, its indexes and its readers compare texts as words.
+    let mut set_texts: HashMap<usize, Vec<usize>> = HashMap::new();
     for &(plan, _, h) in seeds.iter().chain(deltas) {
-        let value = store.rels[h].k - 1;
-        let makes = plan.stages.iter().any(|s| makes_text(s.desc.mode)) || plan.arena.iter().any(|&a| a);
-        if makes && !(text_head(h) && plan.arena.iter().enumerate().all(|(c, &a)| !a || c == value)) {
-            return Err("a made text in a recursive component outside a shortlex_min value (its rounds would join texts not yet symbols)".into());
-        }
-        if text_head(h) && !plan.arena.get(value).copied().unwrap_or(false) && plan.head.get(value).copied().flatten().is_none() {
-            return Err("a shortlex_min value its rule neither makes nor names (decision 0307)".into());
+        if store.rels[h].device_lattice().is_none() {
+            for c in plan.made_columns() {
+                let cols = set_texts.entry(h).or_default();
+                if !cols.contains(&c) {
+                    cols.push(c);
+                }
+            }
         }
     }
-    // The component's text arena, every round's (decision 0307), and the texts its rules name as constants there.
-    let shared: Option<Rc<mj::Arena>> = if heads.iter().any(|&h| text_head(h)) {
+    let text_cols = |h: usize| -> Vec<usize> { if text_head(h) { vec![store.rels[h].k - 1] } else { set_texts.get(&h).cloned().unwrap_or_default() } };
+    for &(plan, _, h) in seeds.iter().chain(deltas) {
+        let cols = text_cols(h);
+        let makes = plan.stages.iter().any(|s| makes_text(s.desc.mode)) || plan.arena.iter().any(|&a| a);
+        if makes && store.rels[h].device_lattice().is_some() && !(text_head(h) && plan.arena.iter().enumerate().all(|(c, &a)| !a || cols.contains(&c))) {
+            return Err("a made text in a recursive component's lattice outside a shortlex_min value (its rounds would fold texts by their arena values)".into());
+        }
+        // Each rule puts a made text or a named one in each such column: a name its rule bound would be another value
+        // of the same text.
+        if let Some(&c) = cols.iter().find(|&&c| !plan.arena.get(c).copied().unwrap_or(false) && plan.head.get(c).copied().flatten().is_none()) {
+            return Err(format!("a column of made texts (column {c}) its rule neither makes nor names (decisions 0307, 0659)"));
+        }
+    }
+    // The component's text arena, every round's (decision 0307), and the texts its rules name as constants there; its
+    // texts one value a content where a set head keeps them (decision 0659).
+    let shared: Option<Rc<mj::Arena>> = if !set_texts.is_empty() {
+        Some(Rc::new(mj::Arena::canonical(arena_max()).map_err(|e| format!("{e:?}: the component's text arena"))?))
+    } else if heads.iter().any(|&h| text_head(h)) {
         Some(Rc::new(mj::Arena::new(arena_max()).map_err(|e| format!("{e:?}: the component's text arena"))?))
     } else {
         None
@@ -2980,10 +3180,11 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     let mut named: HashMap<i64, i64> = HashMap::new();
     if let Some(a) = &shared {
         for &(plan, _, h) in seeds.iter().chain(deltas) {
-            let value = store.rels[h].k - 1;
-            if let (true, Some(Some(v))) = (text_head(h), plan.head.get(value).copied()) && !named.contains_key(&v) {
-                let text = u32::try_from(v).ok().and_then(|atom| names.atoms().with_str(atom, |t| t.as_bytes().to_vec())).ok_or("a shortlex_min constant that is no symbol")?;
-                named.insert(v, a.put(&text).ok_or("the component's text arena too small for its constants")?);
+            for c in text_cols(h) {
+                if let Some(Some(v)) = plan.head.get(c).copied() && !named.contains_key(&v) {
+                    let text = u32::try_from(v).ok().and_then(|atom| names.atoms().with_str(atom, |t| t.as_bytes().to_vec())).ok_or("a made text's constant that is no symbol")?;
+                    named.insert(v, a.put(&text).ok_or("the component's text arena too small for its constants")?);
+                }
             }
         }
     }
@@ -3016,8 +3217,11 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // Every round on the device, the seed round's first: a program of them (`device_rounds`, decision 0603), whose
     // rounds go on across its launches.
     let mut rounds = 0;
+    // A round's work under which the component goes back to the CPU (decision 0657): one whose heads are sets that
+    // keep no levels, whose rows the CPU's waves take as they lie and go on from.
+    let narrow = if heads.iter().all(|&h| !lattices.contains_key(&h) && !leveled(h)) { narrow_work() } else { 0 };
     {
-        let mut lp = Looped { own: &mut own, rep: &mut rep, lattices: &mut lattices, sets: &mut sets, set_levels: &mut set_levels, made: &mut made, rounds: &mut rounds };
+        let mut lp = Looped { own: &mut own, rep: &mut rep, lattices: &mut lattices, sets: &mut sets, set_levels: &mut set_levels, made: &mut made, rounds: &mut rounds, narrow };
         device_rounds(seeds, deltas, heads, store, names, &named, shared.as_ref(), &mut lp)?;
     }
     // A set head's relation as it lies (decision 0325 step 4): every row new (its relation had none before the run),
@@ -3028,6 +3232,11 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         let n = part.len() as usize;
         if n == 0 {
             continue;
+        }
+        // Its columns of made texts stored as their symbols, where the values lie (decision 0659): each text one
+        // value, so each row stays distinct.
+        if let (Some(a), Some(cols)) = (shared.as_ref(), set_texts.get(&h)) {
+            intern_texts(a, &part, n, cols, names)?;
         }
         // Its last round's indexes are of every row, in its block: the store's readers find them (decision 0325).
         let rounds = set_levels.get(&h).filter(|_| leveled(h)).map(|r| (0..n).map(|x| r.get(x).copied().unwrap_or(0)).collect());
@@ -3046,23 +3255,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         let k = store.rels[h].k;
         // A shortlex_min value is an arena text (decision 0307): stored as its symbol, put where the value lies.
         if let Some(a) = shared.as_ref().filter(|_| text_head(h)) {
-            // copy: not block data: the head's distinct texts, interned at once.
-            let mut values: Vector<i64> = (0..had as u32).map(|x| part.get(x, k - 1)).filter(|&v| v & mj::ARENA_TEXT != 0 && v != -1).collect();
-            values.sort_unstable();
-            values.dedup();
-            let strs = values.iter().map(|&v| {
-                let b = a.text(v).ok_or("a shortlex_min value past the arena")?;
-                std::str::from_utf8(b).map_err(|_| "an arena text that is not UTF-8".to_owned())
-            }).collect::<Result<Vec<&str>, String>>()?;
-            let ids = names.atoms().intern_all(&strs).map_err(|e| format!("the component's texts' symbols: {e}"))?;
-            let symbols: HashMap<i64, i64> = values.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect();
-            for x in 0..had as u32 {
-                // The top (no arena text) stays as it is.
-                if let Some(&id) = symbols.get(&part.get(x, k - 1)) {
-                    // SAFETY: the device's work completed; this thread alone holds the relation now.
-                    unsafe { part.put(x, k - 1, id) };
-                }
-            }
+            intern_texts(a, &part, had, &[k - 1], names)?;
         }
         // Each row's round where the head keeps levels: its key's slot's.
         let rounds = leveled(h).then(|| {
@@ -3080,8 +3273,45 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     rep.rounds = rounds as u32;
     rep.encode_cpu = (thread_cpu() - c0 - rep.wait_cpu - rep.decode_cpu).max(0.0);
     one_launch(&rep);
+    let fixed = !rep.handed;
+    if rep.handed {
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "recursive components handed back to the CPU (decision 0657)", 1);
+    }
     LAST.with_borrow_mut(|l| *l = Some(rep));
-    Ok(made)
+    Ok((made, fixed))
+}
+
+/// Columns `cols` of `part`'s first `n` rows, arena texts of `a`, stored as their symbols where they lie: the
+/// distinct texts interned at once. A value that is no arena text (a symbol, a lattice's top) stays as it is.
+fn intern_texts(a: &mj::Arena, part: &Part, n: usize, cols: &[usize], names: &Interner) -> Result<(), String> {
+    // copy: not block data: the columns' distinct texts, interned at once.
+    let mut values: Vector<i64> = cols.iter().flat_map(|&c| (0..n as u32).map(move |x| part.get(x, c))).filter(|&v| v & mj::ARENA_TEXT != 0 && v != -1).collect();
+    values.sort_unstable();
+    values.dedup();
+    let strs = values.iter().map(|&v| {
+        let b = a.text(v).ok_or("a made text past the arena")?;
+        std::str::from_utf8(b).map_err(|_| "an arena text that is not UTF-8".to_owned())
+    }).collect::<Result<Vec<&str>, String>>()?;
+    let ids = names.atoms().intern_all(&strs).map_err(|e| format!("the component's texts' symbols: {e}"))?;
+    let symbols: HashMap<i64, i64> = values.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect();
+    for &c in cols {
+        for x in 0..n as u32 {
+            if let Some(&id) = symbols.get(&part.get(x, c)) {
+                // SAFETY: the device's work completed; this thread alone holds the relation now.
+                unsafe { part.put(x, c, id) };
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The rows a round's stages make under which the CPU does the round's work in less time than a device round costs
+/// (decision 0657, `placement::narrow_round_work`). `RERAIL_DEVICE_NARROW` sets it (0: never hand back), for a test or
+/// a measure. The library's tests run the device's rounds on small inputs to test them, so there it is none unless a
+/// test sets it.
+fn narrow_work() -> u32 {
+    let default = if cfg!(test) { 0 } else { crate::code_rule_dsl::logic::plan::placement::narrow_round_work() as u32 };
+    crate::code_rule_dsl::logic::profile::var("RERAIL_DEVICE_NARROW").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 /// The address space a recursive head's delta reserves in its block (`Part::for_writes_with_room`): room for its rows
@@ -3101,6 +3331,8 @@ struct Looped<'a> {
     set_levels: &'a mut HashMap<usize, Vector<u32>>,
     made: &'a mut [u64],
     rounds: &'a mut usize,
+    /// A round's work under which it hands the component back (`narrow_work`; 0: never).
+    narrow: u32,
 }
 
 /// A head in a program of rounds (decision 0603 step 3): its relation and its two deltas, each grown in place in its
@@ -3432,14 +3664,16 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
             return Err(format!("a recursive component's rounds encoded past {PROGRAMS_MAX} times"));
         }
         // Each head's room for the program: the rows it can reach where they fit `REACH_BYTES`, else its rows now and
-        // twice what a round could add, within its reach; its deltas' its room past its rows now.
+        // twice what a round could add, within its reach; its deltas' its room past its rows now. A head of no reach
+        // (a column of made texts, decision 0659: a text grows round after round) has `REACH_BYTES` of rows at least,
+        // reserved and mapped as its rounds reach them, as a bounded head's are.
         for (&h, l) in live.iter_mut() {
             let len = l.total.len() as usize;
             let grown = 2 * (len + l.room);
             l.bound = match reaches.get(&h) {
                 Some(&r) if r.saturating_mul(8 * store.rels[h].k) <= REACH_BYTES => r,
                 Some(&r) => grown.min(r),
-                None => grown,
+                None => grown.max(REACH_BYTES / (8 * store.rels[h].k)),
             }
             .max(len + 1);
             l.slack = l.bound - len;
@@ -3515,7 +3749,9 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
         if done.past_rounds {
             return Err(format!("a recursive component past {ROUNDS_MAX} rounds"));
         }
-        if done.ended {
+        // Ended, or handed back to the CPU after a narrow round (decision 0657): its rows so far are its heads'.
+        if done.ended || done.narrow {
+            lp.rep.handed = done.narrow && !done.ended;
             // The rules' counts, summed over the rounds, as one run's each (`counted`): the seeds' then the deltas'.
             let mut runs: Vec<Option<Run<'_>>> = templates.into_iter().next().expect("a program's templates");
             let seeds_ran = seed_runs.take().expect("the seed round ran");
@@ -3773,10 +4009,18 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
     }
     for (x, r) in runs.iter().enumerate() {
         let Some(r) = r else { continue };
+        // The round's work: the rows each of its stages made (decision 0657), read before its totals are emptied.
+        if lp.narrow > 0 {
+            for &(i, o) in &r.io {
+                if i != o {
+                    ops.push(mj::RoundOp::Work(mj::At::Word(&r.totals, o)));
+                }
+            }
+        }
         ops.push(mj::RoundOp::Sum(sums[x].as_ref().expect("its sums"), &r.totals));
         ops.push(mj::RoundOp::Zero(&r.totals, 1, r.totals.len - 1));
     }
-    batch.round_end(&ops, round, ROUNDS_MAX as u32, next).map_err(e)?;
+    batch.round_end(&ops, round, ROUNDS_MAX as u32, lp.narrow, next).map_err(e)?;
     drop(ops);
     Ok((runs, ends))
 }
@@ -3909,7 +4153,7 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) -> Vec<(usi
             (Kind::Pass | Kind::Map, _) => rerail_blocks::vector![n_in; s.span],
             // One witness per binding: every step of the rest passes the bindings that have one.
             (Kind::Witness { .. }, _) => rerail_blocks::vector![n_out; s.span],
-            _ if s.desc.mode == mj::AGG => rerail_blocks::vector![n_out],
+            _ if matches!(s.desc.mode, mj::AGG | mj::ROWTEXT) => rerail_blocks::vector![n_out],
             (Kind::Atom { .. } | Kind::Own { .. }, Some(c)) => (0..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
             (Kind::Filter, Some(c)) => (1..=s.npassed).map(|m| u64::from(r.counters.get(c + m))).collect(),
             _ => rerail_blocks::vector![n_out],

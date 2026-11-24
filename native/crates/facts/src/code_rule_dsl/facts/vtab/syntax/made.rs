@@ -56,10 +56,12 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let rows: *mut ViewRow = block.alloc_t(n.max(1));
     let given: *mut Given = block.alloc_t(n.max(1));
     let homes: *mut ViewHome = block.alloc_t(2 * n + 1);
+    // Its documents are in key order (`Docs::new`, `Docs::grown`): their order by key is their rows'.
+    let by_key: *mut u32 = block.alloc_t(n.max(1));
     let dir: *mut ViewDir = block.alloc_t(1);
     let mut k = 0;
     for (key, counts) in docs.take(n) {
-        // SAFETY: row `k` of the rows and the given counts just allocated in `block`, and its two homes.
+        // SAFETY: row `k` of the rows and the given counts just allocated in `block`, and its two homes, and its place in the order by key.
         unsafe {
             rows.add(k).write(ViewRow { key, homes: [2 * k as u32, 2 * k as u32 + 1], ..Default::default() });
             given.add(k).write(counts.map_or([0; COUNTS + 1], |c| {
@@ -68,6 +70,7 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
                 g[..COUNTS].copy_from_slice(&c);
                 g
             }));
+            by_key.add(k).write(k as u32);
             homes.add(2 * k).write(ViewHome::default());
             homes.add(2 * k + 1).write(ViewHome::default());
         }
@@ -79,7 +82,7 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
     let at = block.offset_of(dir);
     // SAFETY: the directory just allocated in `block`.
     unsafe {
-        dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: 2 * n as u32 + 1, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, ..Default::default() })
+        dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: 2 * n as u32 + 1, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, by_key: block.offset_of(by_key) as u64, ..Default::default() })
     };
     (at, block.offset_of(given))
 }

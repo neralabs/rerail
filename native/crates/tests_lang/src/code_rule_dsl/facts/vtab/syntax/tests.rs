@@ -245,6 +245,39 @@ fn a_views_keyed_walk_gives_the_rows_a_per_row_read_finds() {
     assert!(tried >= 8, "{tried} views walked by key");
 }
 
+/// A source's lookup read by position (`Source::lookup_seq`, what a probe's candidates are counted and drawn from with
+/// none listed) is its lookup's rows, in order, and is refused where the lookup is: for every source of a chunk, and the
+/// source as the chunk binds it with a tape value admitted (`Layered`, its rows past the chunk's), at every fifth
+/// row's value of each column. Counted from a list of them, a search at a run's end spent 15 s listing a file's
+/// every node (t50 step 9).
+#[test]
+fn a_lookups_rows_by_position_are_its_rows() {
+    use crate::code_rule_dsl::facts::nearest::Binding;
+    let store = ContentStore::open(&temp("lookup-runs")).unwrap();
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y=[1, 2]):\n    return g(x, *y)\n"));
+    let (sources, mut grower) = Grower::start(&store, vec![file(20), file(23)], &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+    let values = Arc::new(super::values::Values::default());
+    values.add(&[5], &[], grower.admit(&store, file(5), &[], &tests, Binding::Cpu, &projection).unwrap());
+    let layered = sources.iter().map(|(name, s)| (format!("{name} layered"), Arc::new(super::values::Layered::new(name, Arc::clone(s), Arc::clone(&values))) as Arc<dyn Source>));
+    let mut tried = 0;
+    for (name, source) in sources.iter().map(|(n, s)| (n.to_string(), Arc::clone(s))).chain(layered).collect::<Vec<_>>() {
+        for c in 0..source.columns().len() {
+            let probed: BTreeSet<i64> = (0..source.len()).step_by(5).map(|r| source.value(r, c)).collect();
+            for &v in &probed {
+                let seq = source.lookup_seq(c, v);
+                let rows = source.lookup(c, &[v]);
+                assert_eq!(seq.is_some(), rows.is_some(), "{name} column {c} = {v:#x}: refused where its lookup is");
+                let read: Vec<usize> = seq.iter().flat_map(|s| s.iter().collect::<Vec<_>>()).collect();
+                assert_eq!(read, rows.unwrap_or_default(), "{name} column {c} = {v:#x}");
+                tried += usize::from(seq.is_some());
+            }
+        }
+    }
+    assert!(tried > 50, "{tried} lookups");
+}
+
 /// A view's filter scan, document by document, holds the rows a per-row read finds: over several documents, for
 /// filters on each column of `node`, `child`, `field` and `tape`, and on two at once. It is the view's own scan (a
 /// merge had left it outside the `Source` impl, where the trait's per-row scan shadowed it).
@@ -1268,7 +1301,7 @@ fn definition_slots_stay_below_the_span_bit() {
 /// groups of every regex the data-layer pack's `match_all`, `match_group` and `rx_span` name over the source and each
 /// kind of line (an upper bound: one program with every pattern over every span kind).
 #[test]
-#[ignore]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.

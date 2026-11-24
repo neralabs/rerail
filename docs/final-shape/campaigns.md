@@ -223,8 +223,9 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 - Kotlin, in order: 0177 (marks and checks at the token) → 0415 stages 3–4 → 0429 (the marks' context as loop state) → 0430 (dotted, acc, generic, decl_mod at the token) → 0451 (recv and dotted; tier 2's mask words) → 0496 (batches).
 - 0414: a grammar's proofs read from and written to the content store for every grammar a run compiles.
 - 0332: Kotlin's lost block comments (Q198), then Swift and Scala in Bitlex.
+- The Bitlex parsers' device code: good device code from the grammar, tier 2 on the device included (doc 20 §6, open for every grammar). Its one attempt is 0348's preprocessing words on the device, one TU a thread (`pp_on`, `clif_ukl`), which no product path calls (the preprocessor's device path is 0448's) and which 0408 measured far slower than one CPU core. That code stays for now; this campaign uses it or removes it, probably removes it.
 
-**Closes when.** Kotlin's tier 1 is the lean lexer's masks and nothing else, tier 2 takes batches, and Swift and Scala have their ladders.
+**Closes when.** Kotlin's tier 1 is the lean lexer's masks and nothing else, tier 2 takes batches, Swift and Scala have their ladders, and the preprocessing words' device code (`pp_on`, `clif_ukl`, 0348) is used or removed.
 
 **Your words:**
 
@@ -608,7 +609,7 @@ its commits this tree has not taken. Worktrees idle since 2026-11-20, and detach
 
 - Header units: open in both 0327 and 0348, one piece of work.
 - 0327: `c_pp_tape` and `c_pp_text` as stored objects; system headers as roots.
-- 0348's Metal stage went to 0408, which 0482, 0448 (built) and 0573 superseded: the device path is the tape evaluator's (0436). 0613 (macro expansions memoized, in waves, Go-C-and-C-support) and 0653 (the setup as phases on a work queue, cost-classifier) are under way.
+- The device path is the tape evaluator's (0436, 0448, built; 0408 was superseded by 0482, 0448 and 0573). 0348's words on the device (stage 5) belong to the generated parsers' campaign, which uses or removes their code. 0613 (macro expansions memoized, in waves, Go-C-and-C-support) and 0653 (the setup as phases on a work queue, cost-classifier) are under way.
 
 **Closes when.** Header units and the stored objects done.
 

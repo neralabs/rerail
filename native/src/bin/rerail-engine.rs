@@ -23,6 +23,8 @@ fn main() -> ExitCode {
     if let Some(ms) = std::env::var("RERAIL_START_PAUSE_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
+    // A macOS whose allocator is known to abort the engine's work is named first.
+    rerail_engine::os_warning::warn();
     // Before any thread starts: a stop signal or `RERAIL_DEADLINE` dumps the run first (decision 0084).
     rerail_engine::tools::watch();
     // Before any block is made: the one block policy. The command's machine: its pool, of the most threads the
