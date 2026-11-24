@@ -425,3 +425,27 @@ fn the_device_names_its_memory_domain() {
     #[cfg(not(target_os = "macos"))]
     assert!(layer.device.domain() <= 1);
 }
+
+/// Decision 0601: a batch of joins the lane begins (`start`) and reads later (`finish`) is charged to an evaluation of
+/// the launch budget though the thread that runs it has none of its own (the lanes' pool's): a sort past the small
+/// path (the radix sort) and a small one, each half its own evaluation. Before, a radix sort begun there was a launch
+/// outside any evaluation, the hard failure.
+#[test]
+fn a_started_batch_of_joins_is_charged_on_a_thread_with_no_evaluation() {
+    let Some(g) = gpu() else { return };
+    let keys = |v: Vec<i64>| -> crate::kernel::Keys { vec![crate::col::Col::from(v)].into() };
+    let n = super::join::SMALL + 1000;
+    let ks = [
+        Kernel::Join { left: keys((0..n as i64).map(|i| i % 977).collect()), right: keys((0..n as i64).rev().collect()), right_id: None, by: crate::kernel::JoinBy::Probe },
+        Kernel::Join { left: keys(vec![1, 2, 3, 2]), right: keys(vec![2, 3, 4]), right_id: None, by: crate::kernel::JoinBy::Probe },
+    ];
+    let want: Vec<Output> = ks.iter().map(crate::cpu::run).collect();
+    std::thread::scope(|sc| {
+        sc.spawn(|| {
+            assert_eq!(super::launch::available(), 0, "a new thread has no evaluation");
+            let refs: Vec<&Kernel> = ks.iter().collect();
+            let got = g.start(&refs).unwrap().finish().unwrap();
+            assert_eq!(got, want);
+        });
+    });
+}

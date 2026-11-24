@@ -495,11 +495,15 @@ pub struct Run {
     /// How many atoms and string bytes the block has room for (its spans' lengths).
     pub cap: u32,
     pub bytes_cap: u64,
+    /// The block's table from hash to id (`AtomsRoot::table`) and its slots (a power of two): a find by a string's
+    /// hash (`find_in`, the CLIF's `atoms_find`) probes it.
+    pub table: *const u64,
+    pub slots: u64,
 }
 
 impl Raw {
     fn run(&self, first: u32, end: u32) -> Run {
-        Run { first, end, from: self.first, ends: self.ends, strings: self.strings, cap: self.cap, bytes_cap: self.bytes_cap }
+        Run { first, end, from: self.first, ends: self.ends, strings: self.strings, cap: self.cap, bytes_cap: self.bytes_cap, table: self.table.cast(), slots: self.mask + 1 }
     }
 }
 
@@ -536,6 +540,8 @@ structure! {
         pub pad: u32,
         pub ends: Span<u64>,
         pub strings: Span<u8>,
+        /// The block's table from hash to id: a slot is the hash's high half, then the id plus one (`0` empty).
+        pub table: Span<u64>,
     }
 }
 
@@ -594,6 +600,7 @@ impl AtomsDir {
                 e.pad = 0;
                 set(std::ptr::from_ref(&e.ends).cast(), &e.ends.off, &e.ends.len, at(run.ends.cast()), u64::from(run.cap));
                 set(std::ptr::from_ref(&e.strings).cast(), &e.strings.off, &e.strings.len, at(run.strings), run.bytes_cap);
+                set(std::ptr::from_ref(&e.table).cast(), &e.table.off, &e.table.len, at(run.table.cast()), run.slots);
             }
         }
         block.set_root(root);
@@ -647,6 +654,49 @@ pub unsafe fn str_in<'a>(dir: *const u8, id: u32) -> Option<&'a [u8]> {
     }
 }
 
+/// The id of string `s`, whose hash (the store's, `hash_str`) is `h`, in the directory at `dir` (host addresses), as
+/// the CLIF's `atoms_find` finds it with its caller's compare (the kernels'): each run's table probed from `h`, a slot
+/// of `h`'s high half naming an atom of the run's own ids (`first..end`: one its block holds below them is another
+/// run's) whose string is `s`. Id 0 is the empty string; `None` where no run holds `s`.
+///
+/// # Safety
+/// As `str_in`'s.
+pub unsafe fn find_in(dir: *const u8, s: &[u8], h: u64) -> Option<u32> {
+    if s.is_empty() {
+        return Some(0);
+    }
+    // SAFETY: the caller's: a live directory, its spans in this address space, its runs' blocks mapped.
+    unsafe {
+        let root = &*dir.cast::<AtomsDirRoot>();
+        let entries = std::slice::from_raw_parts(root.entries.as_ptr(), root.n as usize);
+        let tag = h & 0xFFFF_FFFF_0000_0000;
+        for e in entries {
+            let (table, slots) = (e.table.as_ptr(), e.table.len.load(Relaxed));
+            if slots == 0 {
+                continue;
+            }
+            let mut i = h & (slots - 1);
+            for _ in 0..slots {
+                let v = *table.add(i as usize);
+                if v == 0 {
+                    break;
+                }
+                let id = (v as u32).wrapping_sub(1);
+                if v & 0xFFFF_FFFF_0000_0000 == tag && id >= e.first && id < e.end {
+                    let k = (id - e.from) as usize;
+                    let ends = e.ends.as_ptr();
+                    let (start, end) = (if k == 0 { 0 } else { *ends.add(k - 1) as usize }, *ends.add(k) as usize);
+                    if std::slice::from_raw_parts(e.strings.as_ptr().add(start), end - start) == s {
+                        return Some(id);
+                    }
+                }
+                i = (i + 1) & (slots - 1);
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// Decision 0478 step 2b: an id's string read through the directory, by the host's read (`str_in`, the CLIF's
@@ -678,6 +728,20 @@ mod tests {
         unsafe {
             assert_eq!(str_in(dir.root(), 0), Some(&b""[..]), "id 0, the empty string");
             assert_eq!(str_in(dir.root(), 21), None, "past every run");
+        }
+        // Found by its hash in its run's table: an id the directory holds; one below the second run's first, in its
+        // block but no run's, is not found there; a string no block holds is not.
+        for (k, w) in words.iter().enumerate() {
+            let id = k as u32 + 1;
+            // SAFETY: as above.
+            let got = unsafe { super::find_in(dir.root(), w.as_bytes(), k_hash(w)) };
+            assert_eq!(got, (!(9..12).contains(&id)).then_some(id), "{w}");
+        }
+        // SAFETY: as above.
+        unsafe {
+            assert_eq!(super::find_in(dir.root(), b"", 0), Some(0), "the empty string");
+            assert_eq!(super::find_in(dir.root(), b"absent", k_hash("absent")), None);
+            assert_eq!(super::find_in(dir.root(), b"w1", k_hash("w2z")), None, "another string's hash");
         }
     }
 

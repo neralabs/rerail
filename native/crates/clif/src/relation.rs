@@ -731,5 +731,35 @@ mod tests {
             let jit = (n != u32::MAX).then(|| unsafe { std::slice::from_raw_parts(at(dir.root(), id) as *const u8, n as usize) });
             assert_eq!(jit, host, "id {id}");
         }
+        // A string by its hash (decision 0666): the JIT's candidates, each compared as the kernels compare them,
+        // find what the host's `find_in` finds. Every word, a word under another's hash (a tag that differs), one of
+        // a length no atom of its tag has, one in no run, and a block of one hash for every atom (each a candidate).
+        type Find = extern "C" fn(*const u8, u64, u32, u32) -> u32;
+        // SAFETY: the read's signature: the directory's address, the hash, the length, the candidate's number.
+        let find: Find = unsafe { std::mem::transmute::<*const u8, Find>(reads.function("atoms_find")) };
+        let by_jit = |dir: &AtomsDir, s: &[u8], h: u64| -> Option<u32> {
+            if s.is_empty() {
+                return Some(0);
+            }
+            (0..).map(|k| find(dir.root(), h, s.len() as u32, k)).take_while(|&id| id != u32::MAX).find(|&id| {
+                // SAFETY: an id the read gives is one a run holds.
+                (unsafe { str_in(dir.root(), id) }) == Some(s)
+            })
+        };
+        let mut asked: Vec<(Vec<u8>, u64)> = words.iter().map(|w| (w.as_bytes().to_vec(), k_hash(w))).collect();
+        asked.extend([(b"w1".to_vec(), k_hash("w2z")), (b"w1zz".to_vec(), k_hash("w1z")), (b"absent".to_vec(), k_hash("absent")), (Vec::new(), 0)]);
+        for (s, h) in &asked {
+            // SAFETY: a host directory over blocks that live here.
+            let host = unsafe { rerail_blocks::atoms::find_in(dir.root(), s, *h) };
+            assert_eq!(by_jit(&dir, s, *h), host, "{}", String::from_utf8_lossy(s));
+        }
+        let mut same = AtomsW::anon(1, 32, 1024);
+        for w in &words {
+            same.append(w, 7 << 32).unwrap();
+        }
+        let one = AtomsDir::host(&[same.run_from(1)]);
+        for (k, w) in words.iter().enumerate() {
+            assert_eq!(by_jit(&one, w.as_bytes(), 7 << 32), Some(k as u32 + 1), "{w}: a candidate of many");
+        }
     }
 }

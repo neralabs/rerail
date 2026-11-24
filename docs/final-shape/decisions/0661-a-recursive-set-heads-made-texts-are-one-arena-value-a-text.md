@@ -125,13 +125,10 @@ by value would pass it. The atom's step is counted by the comparison. The compil
 negated atom's key, as an atom's only key (a probe of every row), as a key of the component's own relation, or as two
 keys of one atom. Such an atom is never taken into a witness stage (0277), which compares keys by value.
 
-An atoms find on the device (the store's table from hash to id, decision 0401) would match the text by value. It
-needs the store's hash on the device, and it misses atoms interned in memory and not yet in blocks. The comparison
-needs neither.
-
-The CPU drops a row at the function whose text is no symbol yet (`PROBE_OUT`: no atom could match it). The device does
-not read the host's interner, so it drops that row at the atom. Their rows agree, and their counts agree from the atom
-on.
+Decision 0666 replaced this where the made text is read only as positive atoms' keys, as `ann_private`'s is. The
+device finds the atom the text is, by the store's hash in the atoms blocks' tables, and the atom is probed by value. A
+text no atom is drops the row at the function, as on the CPU, so every step's count agrees. The comparison above
+still serves a made text that is read otherwise as well.
 
 ## Tests
 
@@ -145,7 +142,7 @@ on.
   bound name, and a head's cat of a text function's value. Then a text function's value compared with another
   relation's symbol, and `literal_key`'s shape: a function of a cat of a made text, compared with that made text.
 - `text_functions_on_the_device_are_the_cpus` has a case of a made text as one of an atom's keys: names already lower
-  case, and a range of a name that is a name. Its rows are compared, and its counts from the atom on.
+  case, and a range of a name that is a name. Its rows are compared, and (since 0666) every step's count.
 - `a_string_join_on_the_device_is_the_cpus`: groups of 0 to 6 parts at places out of order, joined with a separator,
   and copied along alias edges (a recursive set head's text column). Clean, the component runs on the device. With a
   group of 40 parts, two names at one place and a part twice, those go to the host. Both runs' rows are the CPU's,

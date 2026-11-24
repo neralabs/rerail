@@ -1363,6 +1363,11 @@
             let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
             db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![if k == 7 { String::new() } else { name }, k]).unwrap();
         }
+        // Long names, for each of the store hash's paths on the device (past 16, 128 and 256 bytes: decision 0666).
+        for (k, parts_n) in [(2000, 40), (2001, 60), (2002, 90), (2003, 140), (2004, 200)] {
+            let name: String = (0..parts_n).map(|_| parts[next(parts.len() as u64) as usize]).collect();
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k]).unwrap();
+        }
         for k in 0..80 {
             let len = 1 + next(3);
             let name: String = (0..len).map(|_| parts[next(5) as usize]).collect();
@@ -1411,11 +1416,13 @@
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
-        // a range of a name that is a name. The CPU drops a row at the function whose text is no symbol yet, which no
-        // atom could match (`PROBE_OUT`); the device, which does not read the host's interner, drops it at the atom.
-        // So their counts agree from the atom on.
+        // a range of a name that is a name. Its value is the atom the text is, found by the store's hash in the atoms
+        // directory (`ROW_FIND`, decision 0666), and the row is dropped at the function where none is, as the CPU drops
+        // it (`PROBE_OUT`): every step's count agrees.
         let keyed = [
             format!("pos {n} v0 v1\nfunc sql_lower v2 v0\npos {n} v2 v1\nhead v0 v1"),
+            // Every name found (the empty one too), of every length.
+            format!("pos {n} v0 v1\nfunc str_concat v2 v0 {}\npos {n} v2 v1\nhead v0 v1", sym("")),
             format!("pos {n} v0 v1\nlt v1 i:900\nfunc rr_substr v2 v0 i:0 i:4\nfunc str_concat v3 v2 {}\npos {n} v3 v1\nhead v2 v1", sym("")),
         ];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false), ("made keys", &keyed[..], true)] {
@@ -1441,12 +1448,7 @@
                         assert_eq!((r.per_symbol, r.upload_by[super::profile::UPLOAD_NAMES].0), (0, 0), "{case}: symbols read in place: {r:?}");
                     }
                 }
-                let mut counts = super::super::step_counts(&db, "dev_fn").unwrap();
-                if case == "made keys" {
-                    for c in &mut counts {
-                        c.drain(..c.len() - 1);
-                    }
-                }
+                let counts = super::super::step_counts(&db, "dev_fn").unwrap();
                 super::super::close(&db, "dev_fn").unwrap();
                 let mut rows: Vec<(String, i64)> = db
                     .prepare("SELECT sym_text(c0), c1 FROM temp.h0")

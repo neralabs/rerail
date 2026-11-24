@@ -545,12 +545,20 @@ impl Shape {
                 let merge = self.merge[&block].filter(|m| Some(*m) != stop && !loops.iter().any(|(h, x)| m == h || x.contains(m)));
                 let to = merge.or(stop);
                 for (k, &x) in exits.iter().enumerate() {
-                    if Some(x) == to {
+                    // An exit that is the enclosing loop's header or exit is reached by its `continue` or `break`:
+                    // the text after the loop falls through to the enclosing loop's header, never to its exit.
+                    if Some(x) == to && !Self::encloses(loops, x) {
                         continue;
                     }
                     writeln!(out, "{indent}if(e{h}=={k}u){{").unwrap();
-                    if self.emit(f, x, to, loops, out, depth + 1, straight, assign)?.is_none() {
-                        return Ok(None);
+                    match Self::leave(x, loops, out, depth + 1) {
+                        None => return Ok(None),
+                        Some(true) => {}
+                        Some(false) => {
+                            if self.emit(f, x, to, loops, out, depth + 1, straight, assign)?.is_none() {
+                                return Ok(None);
+                            }
+                        }
                     }
                     writeln!(out, "{indent}}}").unwrap();
                 }
@@ -559,6 +567,11 @@ impl Shape {
                     None => Ok(Some(())),
                 };
             };
+            match Self::leave(exit, loops, out, depth) {
+                None => return Ok(None),
+                Some(true) => return Ok(Some(())),
+                Some(false) => {}
+            }
             return if Some(exit) == stop { Ok(Some(())) } else { self.emit(f, exit, stop, loops, out, depth, straight, assign) };
         }
         straight(out, block, &indent)?;
@@ -591,6 +604,31 @@ impl Shape {
             }
             data => Err(format!("the branch {:?}", data.opcode())),
         }
+    }
+
+    /// Whether `x` is a header or an exit of a loop being emitted.
+    fn encloses(loops: &[(ir::Block, Vec<ir::Block>)], x: ir::Block) -> bool {
+        loops.iter().any(|(h, xs)| x == *h || xs.contains(&x))
+    }
+
+    /// Leaves an inner loop that exited to `x` for the innermost loop being emitted: its `continue` where `x` is its
+    /// header, its `break` (its exit's number set) where `x` is its exit, and `false` where `x` is neither. An exit
+    /// to a loop further out has no `break` to take (`None`: the switch form).
+    fn leave(x: ir::Block, loops: &[(ir::Block, Vec<ir::Block>)], out: &mut String, depth: usize) -> Option<bool> {
+        let indent = " ".repeat(depth);
+        let Some((h, xs)) = loops.last() else { return Some(false) };
+        if x == *h {
+            writeln!(out, "{indent}continue;").unwrap();
+            return Some(true);
+        }
+        if let Some(k) = xs.iter().position(|&e| e == x) {
+            if xs.len() > 1 {
+                writeln!(out, "{indent}e{}={k}u;", h.as_u32()).unwrap();
+            }
+            writeln!(out, "{indent}break;").unwrap();
+            return Some(true);
+        }
+        (!Self::encloses(loops, x)).then_some(false)
     }
 
     /// A branch to `call`'s block: its parameters set, then the innermost loop's `continue` or `break`, nothing at

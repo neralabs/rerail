@@ -273,7 +273,12 @@ impl Backend for GpuBackend {
     /// submission meanwhile). Any other batch runs as it begins.
     fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn crate::exec::Pending + 'a>, String> {
         if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Join { .. })) {
-            let started = released(|| space::start(&self.space, ks))?;
+            // An evaluation of the launch budget (`launch`), or the caller's when it is in one, as `run` has: the
+            // lane's worker may begin it on the lanes' pool, a thread with none of its own (decision 0601).
+            let started = released(|| {
+                let _evaluation = launch::LaunchScope::enter();
+                space::start(&self.space, ks)
+            })?;
             return Ok(Box::new(started));
         }
         // A batch of programs: each submits its own command buffers and waits for them, so it runs on the lanes'
@@ -325,8 +330,13 @@ impl Backend for GpuBackend {
 }
 
 impl crate::exec::Pending for space::Started {
+    /// Its second half, which may launch again (the tiles' scatters, the spilled probes): an evaluation of its own,
+    /// or the caller's, as `start`'s.
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
-        released(|| space::Started::finish(*self))
+        released(|| {
+            let _evaluation = launch::LaunchScope::enter();
+            space::Started::finish(*self)
+        })
     }
 }
 

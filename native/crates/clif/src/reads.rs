@@ -166,6 +166,9 @@ pub const READS: &[Read] = &[
     // its batch's block; each takes its caller's memo.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
     Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
+    // A string's atom by its hash in a directory of runs of atoms (decision 0666): the descriptor is an
+    // `AtomsDirRoot`. Last, so no other read's number moves.
+    Read { family: Family::Relation, name: "atoms_find", params: &[I64, I32, I32], ret: I32, hot: false, body: crate::atoms_reads::atoms_find },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by

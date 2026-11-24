@@ -847,6 +847,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 let in_head = j.out.iter().any(|t| matches!(*t, Term::Slot(s) if s == out));
                 let in_head_cat = j.out.iter().any(|t| matches!(*t, Term::Cat(x, y) if x == out || y == out));
                 let made = [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s) || is_arena(*s)));
+                // Bound and read only as positive atoms' keys (`PROBE_OUT`): the atom the text is (`ROW_FIND`), as a
+                // text function's.
+                let finds = bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
                 // Read as its parts: comparisons, and what reads a text a SIMD group a row (`ROWTEXT`: a text test by
                 // automaton, a regex's replacement, a cat).
                 let compares = |s: &&Step| {
@@ -881,12 +884,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     let op = if form == mj::CAT_PLAIN { mj::ROW_CONCAT } else { mj::ROW_CAT };
                     let mut st = row_stage(i, op, a, b, RowAuto::None, &deferred, &origin, &known)?;
                     st.desc.bind_slot[0] = out as u32;
+                    if finds {
+                        st.desc.agg[0] |= mj::ROW_FIND;
+                    }
                     stages.push(st);
                     if out >= bound.len() {
                         bound.resize(out + 1, false);
                     }
                     bound[out] = true;
-                    ARENA.with_borrow_mut(|x| x.push(out));
+                    if !finds {
+                        ARENA.with_borrow_mut(|x| x.push(out));
+                    }
                 } else if bind && !in_head && !in_head_cat && later.iter().all(compares) {
                     deferred.insert(out, (a, b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
@@ -894,12 +902,18 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     if let Some(s) = later.iter().find(|s| !arena_reader(s, out)) {
                         return Err(format!("a cat's text read by {} has no device form", step_name(s)));
                     }
-                    stages.push(copy_stage(i, out, a, b, form, &origin, &known)?);
+                    let mut st = copy_stage(i, out, a, b, form, &origin, &known)?;
+                    if finds {
+                        st.desc.agg[0] |= mj::ROW_FIND;
+                    }
+                    stages.push(st);
                     if out >= bound.len() {
                         bound.resize(out + 1, false);
                     }
                     bound[out] = true;
-                    ARENA.with_borrow_mut(|x| x.push(out));
+                    if !finds {
+                        ARENA.with_borrow_mut(|x| x.push(out));
+                    }
                 } else {
                     let mut held = HashMap::new();
                     held.insert(usize::MAX, (a, b, form));
@@ -1040,12 +1054,20 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 }
                 d.agg = [mj::ROW_MAP | f << 16, xk];
                 d.bind_slot[0] = target as u32;
+                // Bound and read only as positive atoms' keys (the CPU's `PROBE_OUT`: a text no atom is matches no
+                // row): its value is the atom the text is, found in the atoms directory (`ROW_FIND`, decision 0666),
+                // and no row where none is, as the CPU drops it at the function. A symbol: its atoms probe by value.
+                let finds = *bind && j.probes.get(i).is_some_and(|p| p & super::PROBE_OUT != 0);
+                if finds {
+                    d.agg[0] |= mj::ROW_FIND;
+                }
                 let konst = |k: &Key| match *k {
                     Key::Const(c) => Some(c),
                     Key::Slot(x) => known.get(&x).copied(),
                 };
                 let mut kind = kind;
                 if ntexts > 0
+                    && !finds
                     && let Some((id, chain)) = keep_text(&mut d, args[0], args[1..].iter().map(konst).collect(), name, &origin, &kept_texts) {
                         kind = Kind::RowText { auto: RowAuto::None, kept: id };
                         kept_texts.insert(target, chain);
@@ -1054,7 +1076,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     bound.resize(target + 1, false);
                 }
                 bound[target] = true;
-                ARENA.with_borrow_mut(|a| a.push(target));
+                if !finds {
+                    ARENA.with_borrow_mut(|a| a.push(target));
+                }
                 if *bind {
                     stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 } else {
