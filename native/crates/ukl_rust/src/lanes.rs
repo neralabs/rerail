@@ -331,7 +331,9 @@ where
         }
         gather32_ix(base, within, 2).cast::<u64>()
     } else {
-        let chunks = if one { s64(r64(c, 8 + 8 * seg[0] as u64)) } else { gather64(at(c.wrapping_add(8), seg, 8)) };
+        // Each lane's chunk: its word of the directory, by its index from one base (a step's rows' chunks span more
+        // than 8 words of it, so one load of 8 would not hold them).
+        let chunks = if one { s64(r64(c, 8 + 8 * seg[0] as u64)) } else { gather64_ix(c.wrapping_add(8), seg, 3) };
         let a = Simd::splat(c).wrapping_add((scaled(within, width) + chunks).cast::<usize>());
         if width != 4 {
             return gather64(a);
