@@ -106,3 +106,20 @@ fn a_dynamic_swizzle_is_each_lanes_index() {
         check(n);
     }
 }
+
+/// A 64-bit mask's `all` and `any` over 8 lanes: whether every (any) lane is set, the lane that is not set anywhere
+/// among them (a sealed chunk's low bit among raw ones, `rerail_ukl_rust::lanes::col_get_in`).
+#[test]
+fn a_mask_of_eight_64_bit_lanes_is_all_only_where_every_lane_is() {
+    let words = [0x10ec0u64, 0x10ec0, 0x10ec0, 0x10ec0, 0x10ec0, 0x10ec0, 0xffff_ffff_ffff_d240, 0xffff_ffff_ffff_c941];
+    for at in 0..8 {
+        let mut w = [0x10ec0u64; 8];
+        w[at] = 0xffff_ffff_ffff_c941;
+        let raw = (Simd::<u64, 8>::from_array(w) & Simd::splat(1)).simd_eq(Simd::splat(0));
+        assert!(!raw.all(), "lane {at} is not raw: {:#x}", raw.to_bitmask());
+        assert!(raw.any(), "lane {at}: the others are raw");
+        assert_eq!(raw.to_bitmask(), 0xff & !(1 << at), "lane {at}");
+    }
+    let raw = (Simd::<u64, 8>::from_array(words) & Simd::splat(1)).simd_eq(Simd::splat(0));
+    assert_eq!((raw.all(), raw.to_bitmask()), (false, 0x7f));
+}

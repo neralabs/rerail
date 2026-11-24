@@ -2249,7 +2249,7 @@ impl Batch {
                 }
                 if queued {
                     let f = held.iter().find(|f| f.at == at && f.room.index == room.index).expect("a committed build is told to its block");
-                    taken = Some((room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done), f.whole.clone()));
+                    taken = Some((room.index as u32, f.done.clone(), f.whole.clone()));
                     break 'room None;
                 }
                 // Bound by the builder's buffer: its launches, before this batch's probes in the open submission,
@@ -2271,7 +2271,7 @@ impl Batch {
             let at = home.block.offset_of(std::ptr::from_ref(r));
             if let Some(f) = held.iter_mut().find(|f| f.at == at && f.room.key[..f.room.ncols] == *key && f.room.from == rel.from && f.room.rows_n as usize == rel.rows).filter(|_| !rel.live) {
                 f.lent = true;
-                taken = Some((f.room.index as u32, rerail_accel_gpu::gpu::join::Submitted::watching(&f.done), f.whole.clone()));
+                taken = Some((f.room.index as u32, f.done.clone(), f.whole.clone()));
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
                 break 'room None;
             }
@@ -2287,11 +2287,14 @@ impl Batch {
         };
         // Out of the block's lock: its builder's work done before this batch encodes a read of it. A builder the device
         // failed fails this batch too.
-        // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it.
-        if let Some((index, builder, whole)) = taken {
-            if !builder.wait_ok().1 || !whole() {
+        // One whose program stopped before it (`InFlight::whole`) is half written: so is this batch's read of it. Its
+        // program may go on past the work this waits for (a later level, a run again), and stop there before the
+        // build: asked again at this batch's finish (`borrowed`), once all of it is done.
+        if let Some((index, done, whole)) = taken {
+            if !rerail_accel_gpu::gpu::join::Submitted::watching(&done).wait_ok().1 || !whole() {
                 return Err(Error::BackendFailure);
             }
+            self.borrowed.push((rerail_accel_gpu::gpu::join::Submitted::watching(&done), whole));
             return Ok(DevIndex { index, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
         }
         let Some(room) = room else {
@@ -6322,3 +6325,18 @@ fn lat_bytes(p: &LatParams) -> &[u8] {
     unsafe { std::slice::from_raw_parts((p as *const LatParams).cast::<u8>(), std::mem::size_of::<LatParams>()) }
 }
 
+
+#[cfg(test)]
+mod join_rust {
+    /// The join program's Rust (`rerail_ukl_rust::join_program`, decision 0567) was written from this source: each view
+    /// format's program text, as `program_pipes` assembles it off Metal, has a digest it runs for. A change to the
+    /// source is a change to that Rust too.
+    #[test]
+    fn the_join_programs_rust_is_of_this_source() {
+        let digests: Vec<u64> = [0, 16, rerail_clif::view::F16Z_FORMAT]
+            .iter()
+            .map(|&f| rerail_ukl_rust::digest(&format!("#define JOIN_PROGRAM 1\n{}", super::view_source(f)), &[]))
+            .collect();
+        assert_eq!(digests, rerail_ukl_rust::JOIN_PROGRAM, "join_stages.uglykl changed: bring rerail_ukl_rust::join_program to it, then its digests ({digests:#018x?})");
+    }
+}

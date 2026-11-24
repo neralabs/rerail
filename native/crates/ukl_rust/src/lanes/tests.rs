@@ -1,6 +1,7 @@
 //! Each four-lane read is the compiled scalar read (`rerail_clif::jit::Reads`), lane for lane, on every row of a
 //! relation of many chunks: a frozen base, and a frozen delta over it with some of its rows dead, an 8-byte column and
-//! a 4-byte one, each row's key's index group, and a bloom filter's verdicts.
+//! a 4-byte one, each row's key's index group, a frozen relation whose chunks are sealed (decision 0622: each lane's
+//! sealed chunk read through the compiled `col_sealed`), and a bloom filter's verdicts.
 use super::*;
 use rerail_simd::{LaneCount, SupportedLaneCount};
 use rerail_blocks::block::{Block, kind};
@@ -17,6 +18,8 @@ fn the_lane_reads_are_the_compiled_reads() {
     type Mix = extern "C" fn(*const u8, u64, u64) -> u64;
     type Hash = extern "C" fn(*const u8, u64) -> u64;
     type May = extern "C" fn(*const u8, u64) -> u32;
+    // SAFETY: the read's signature: its chunk's address, then the place.
+    let sealed: Sealed = unsafe { std::mem::transmute::<*const u8, Sealed>(reads.function("col_sealed")) };
     // SAFETY: each read's signature: its descriptor's address, then its parameters.
     let (rel_get_1, rel_dead_1, rel_group_1, group_row_1): (Two, One, Group, GroupRow) = unsafe {
         (
@@ -50,7 +53,7 @@ fn the_lane_reads_are_the_compiled_reads() {
     w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5]).collect::<Vec<_>>());
     freeze(&top_block, top, &spec, Some(base));
 
-    let one = Compiled { rel_get: rel_get_1, rel_dead: rel_dead_1, rel_group: rel_group_1, group_row: group_row_1, mix: mix_1 };
+    let one = Compiled { rel_get: rel_get_1, rel_dead: rel_dead_1, rel_group: rel_group_1, group_row: group_row_1, mix: mix_1, sealed };
     // A frozen relation, and a delta's own rows (`base_rows` on): its keys' groups, its dead rows.
     for rel in [base, top] {
         let d = std::ptr::from_ref(rel).cast::<u8>();
@@ -82,6 +85,33 @@ fn the_lane_reads_are_the_compiled_reads() {
     relation_lanes::<4>(d, far, 0, n, link.rows.len(), &one, false);
     relation_lanes::<8>(d, far, 0, n, link.rows.len(), &one, false);
 
+    // A frozen relation in a block with a free list, its chunks sealed in their frozen encodings (decision 0622, as the
+    // engine's frozen relations are): a constant run, runs, a line and packed values, each lane's chunk read through
+    // the compiled read where it is sealed.
+    let sealed_block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+    let frozen = Relation::create(&sealed_block, &spec, None);
+    let col0 = |i: i64| match i {
+        0..2_000 => -3,
+        2_000..6_000 => i / 700 * 11,
+        _ => i * 3 + (i * 7) % 5 - 1_000_000,
+    };
+    RelW { block: &sealed_block, rel: frozen, lock: &lock }.extend(&(0..10_000i64).flat_map(|i| [col0(i), i % 37]).collect::<Vec<_>>());
+    freeze(&sealed_block, frozen, &spec, None);
+    // SAFETY: the relation's rows lie in the block, which keeps a free list; no one writes them after, or holds an
+    // address in them.
+    let (raw, packed) = unsafe { frozen.rows.seal(&sealed_block) };
+    assert!(packed < raw, "its chunks sealed: {packed} bytes of {raw}");
+    let d = std::ptr::from_ref(frozen).cast::<u8>();
+    relation_lanes::<4>(d, std::ptr::null(), 0, frozen.rows.len(), frozen.rows.len(), &one, true);
+    relation_lanes::<8>(d, std::ptr::null(), 0, frozen.rows.len(), frozen.rows.len(), &one, true);
+    relation_lanes::<16>(d, std::ptr::null(), 0, frozen.rows.len(), frozen.rows.len(), &one, true);
+    // Rows written past its sealed ones: their chunks raw, so a step's lanes meet sealed and raw chunks together, each
+    // read its own way.
+    RelW { block: &sealed_block, rel: frozen, lock: &lock }.extend(&(10_000..14_000i64).flat_map(|i| [col0(i), i % 37]).collect::<Vec<_>>());
+    relation_lanes::<4>(d, std::ptr::null(), 0, frozen.rows.len(), frozen.rows.len(), &one, false);
+    relation_lanes::<8>(d, std::ptr::null(), 0, frozen.rows.len(), frozen.rows.len(), &one, false);
+    relation_lanes::<16>(d, std::ptr::null(), 0, frozen.rows.len(), frozen.rows.len(), &one, false);
+
     // A bloom filter's hashes and verdicts, for keys it holds and keys it does not.
     use rerail_blocks::bloom::{self, Bloom};
     let keys: Vec<u64> = (0..3_000u64).map(|i| i.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (i << 7)).chain([1, 2, 3, u64::MAX]).collect();
@@ -105,6 +135,7 @@ struct Compiled {
     rel_group: extern "C" fn(*const u8, u32, u64) -> u64,
     group_row: extern "C" fn(*const u8, u32, u32) -> u32,
     mix: extern "C" fn(*const u8, u64, u64) -> u64,
+    sealed: Sealed,
 }
 
 /// Every id `lo..n` of relation `d` (`own` rows of its own), `N` a step from far apart (a chain's lanes in different
@@ -120,7 +151,7 @@ where
         let rv = Simd::from_array(r);
         unsafe {
             for c in 0..2u32 {
-                let got = rel_get(d, rv, c, far).to_array();
+                let got = rel_get(d, rv, c, far, one.sealed).to_array();
                 for l in 0..N {
                     assert_eq!(got[l], (one.rel_get)(d, r[l], c, far as u64), "rel_get row {} column {c} at {N} lanes", r[l]);
                 }

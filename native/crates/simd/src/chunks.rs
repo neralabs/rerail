@@ -211,7 +211,8 @@ mod neon {
     }
     #[inline(always)]
     unsafe fn all64(a: uint64x2_t) -> bool {
-        unsafe { vminvq_u32(vreinterpretq_u32_u64(vceqzq_u64(a))) == 0 }
+        // No lane zero: `vceqzq_u64` sets the zero lanes all ones, and none is.
+        unsafe { vmaxvq_u32(vreinterpretq_u32_u64(vceqzq_u64(a))) == 0 }
     }
 
     neon!(u32, false, 32, 4, uint32x4_t, vld1q_u32, vst1q_u32, uint32x4_t, |x| x, |x| x,
