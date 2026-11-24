@@ -382,15 +382,46 @@ UKL_INLINE bool row_live(StageP s, Longs R, uint32_t r) {
     return s->r_dead == 0ul || clif_rel_dead((JSPACE const uint8_t*)R, s->r_dead, r) == 0u;
 }
 
+// Whether row r's keys are the binding's.
+UKL_INLINE bool keys_are(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
+    for (uint32_t i = 0; i < s->nkeys && i < 8; i++) if (rget(s, R, r, s->key_rcol[i]) != kv[i]) return false;
+    return true;
+}
+
+// Whether row r is live and passes the relation's column tests.
+UKL_INLINE bool row_passes(StageP s, Longs R, uint32_t r) {
+    if (!row_live(s, R, r)) return false;
+    for (uint32_t i = 0; i < s->ntests && i < 8; i++) if (rget(s, R, r, s->test_a[i]) != rget(s, R, r, s->test_b[i])) return false;
+    return true;
+}
+
 // Whether row r matches the binding's keys and the relation's column tests.
 UKL_SHARED bool matches(StageP s, Longs R, uint32_t r, UKL_PRIVATE const int64_t* kv) {
     // A `has` walk's candidates hold its key by their making (`by_has`); a descendant is a row where it is in the set.
     // Its two columns are never one node (an ancestor is strict), so a test of them holds for no row.
     if (s->v_has != 0u) return s->ntests == 0u && (s->v_has == 1u || has_member(s, r));
-    if (!row_live(s, R, r)) return false;
-    for (uint32_t i = 0; i < s->nkeys && i < 8; i++) if (rget(s, R, r, s->key_rcol[i]) != kv[i]) return false;
-    for (uint32_t i = 0; i < s->ntests && i < 8; i++) if (rget(s, R, r, s->test_a[i]) != rget(s, R, r, s->test_b[i])) return false;
-    return true;
+    return row_live(s, R, r) && keys_are(s, R, r, kv) && row_passes(s, R, r);
+}
+
+// A walk of an index group's marks (decision 0671): its key's tag, and its head's key (the bucket's first place of
+// the tag): not met (0), the binding's (1), another's (2); 3 before its first candidate.
+#define MARK_SAME 1u
+typedef struct Walked { uint32_t tag, head; } Walked;
+
+// `matches` of walk `how`'s candidate `q` (row `r`). An index group's (decision 0671): a place of another tag is not
+// the key, unread; the head's key is compared once; a place with `MARK_SAME` after it is the head's key; another is
+// compared.
+UKL_SHARED bool cand_matches(StageP s, Longs R, uint32_t how, uint32_t q, uint32_t r, UKL_PRIVATE const int64_t* kv,
+                             UKL_PRIVATE Walked* w) {
+    if (how != 1u) return matches(s, R, r, kv);
+    if (w->head == 3u) { w->tag = (uint32_t)(key_hash(kv, s->nkeys) >> 32) & ~MARK_SAME; w->head = 0u; }
+    uint32_t m = clif_rel_group_mark((JSPACE const uint8_t*)R, s->r_at, s->r_index, q);
+    if (((m ^ w->tag) & ~MARK_SAME) != 0u) return false;
+    bool key;
+    if (w->head == 0u) { w->head = keys_are(s, R, r, kv) ? 1u : 2u; key = w->head == 1u; }
+    else if ((m & MARK_SAME) != 0u) key = w->head == 1u;
+    else key = keys_are(s, R, r, kv);
+    return key && row_passes(s, R, r);
 }
 
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
@@ -400,9 +431,10 @@ UKL_LARGE uint32_t aggregate(StageP s, Longs L, uint32_t t, Longs R, uint32_t lo
     uint32_t kind = s->agg[0] & 0xff;
     int64_t cnt = 0, sum = 0, mn = 0, mx = 0;
     bool any = false, over = false;
+    Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
-        if (!matches(s, R, r, kv)) continue;
+        if (!cand_matches(s, R, how, q, r, kv, &wk)) continue;
         cnt++;
         if (s->agg[1] == NONE) continue;
         int64_t x = rget(s, R, r, s->agg[1]);
@@ -604,9 +636,10 @@ UKL_INLINE void stage_count_one(Longs L, Longs R, JSPACE const uint32_t* totals,
     bool found = false;
     bool kept = s->mode == 0 && s->v_has == 0u && s->v_parent == 0u && how <= 1u && hi - lo <= FINDS_MAX;
     uint32_t finds = 0u;
+    Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
-        if (s->mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
+        if (s->mode == 3 ? !row_live(s, R, r) : !cand_matches(s, R, how, q, r, kv, &wk)) continue;
         if (exists) { found = true; break; }
         p0++;
         bool ok = defined(s, L, t, R, r);
@@ -688,9 +721,10 @@ UKL_INLINE void stage_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSP
         return;
     }
     candidates(s, L, t, R, F, kv, &lo, &hi, &how);
+    Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi && at < s->cap_out; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
-        if (s->mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
+        if (s->mode == 3 ? !row_live(s, R, r) : !cand_matches(s, R, how, q, r, kv, &wk)) continue;
         if (!defined(s, L, t, R, r)) continue;
         if (s->last != NONE) {
             uint64_t v = eval(s, L, t, R, r);
@@ -712,9 +746,10 @@ UKL_LARGE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, Sta
     uint32_t lo, hi, how;
     probe(b, R, kv, &lo, &hi, &how);
     bool found = false;
+    Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi; q = cand_next(b, how, q)) {
         uint32_t r = cand_row(b, R, how, q);
-        if (matches(b, R, r, kv)) { found = true; break; }
+        if (cand_matches(b, R, how, q, r, kv, &wk)) { found = true; break; }
     }
     return found != (b->mode == 2);
 }
@@ -732,9 +767,10 @@ UKL_INLINE void witness_count_one(Longs L, Longs R, JSPACE const uint32_t* total
     candidates(s, L, t, R, F, kv, &lo, &hi, &how);
     uint32_t nb = ukl_min(s->agg[0], 3u);
     uint32_t found = 0;
+    Walked wk = {0u, 3u};
     for (uint32_t q = lo; q < hi; q = cand_next(s, how, q)) {
         uint32_t r = cand_row(s, R, how, q);
-        if (!matches(s, R, r, kv)) continue;
+        if (!cand_matches(s, R, how, q, r, kv, &wk)) continue;
         bool all = true;
         if (nb > 0) all = witness_probe(&bs[0], L, t, s->cap_in, s, R, r, R0);
         if (all && nb > 1) all = witness_probe(&bs[1], L, t, s->cap_in, s, R, r, R1);
@@ -1473,16 +1509,25 @@ UKL_INLINE uint32_t ix_rows(JSPACE const uint8_t* B, JSPACE const IxP* p) {
     return len > p->from ? ukl_min(len - p->from, p->n) : 0u;
 }
 
+// Key column `i` of the index's row `t` (from its first, `from`).
+UKL_INLINE int64_t ix_value(JSPACE const uint8_t* B, JSPACE const IxP* p, uint32_t t, uint32_t i, UKL_PRIVATE uint32_t* memo) {
+    return p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i], memo) : (int64_t)clif_rel_get(B, p->at, p->from + t, p->cols[i]);
+}
+
+// The key hash of the index's row `t` (`key_hash`).
+UKL_INLINE uint64_t ix_hash(JSPACE const uint8_t* B, JSPACE const IxP* p, uint32_t t) {
+    uint64_t h = KEY_SEED;
+    uint32_t memo = NONE;
+    for (uint32_t i = 0; i < (p->ncols & ~IX_LIVE) && i < 8; i++) h = key_mix(h, ix_value(B, p, t, i, &memo));
+    return h;
+}
+
 UKL_INLINE void ix_key_one(JSPACE const uint8_t* B, JSPACE uint32_t* out, JSPACE uint32_t* places, JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t t)
 {
     // A live index's keys are its rows as claimed (decision 0603 step 5e): the level's sort holds them only.
     if (t >= ix_rows(B, p)) return;
     places[eb + t] = eb + t;
-    uint64_t h = KEY_SEED;
-    uint32_t memo = NONE;
-    for (uint32_t i = 0; i < (p->ncols & ~IX_LIVE) && i < 8; i++)
-        h = key_mix(h, p->kind != 0ul ? vread((uint32_t)p->kind, p->dir, t, p->cols[i], &memo) : (int64_t)clif_rel_get(B, p->at, p->from + t, p->cols[i]));
-    out[eb + t] = kb + (uint32_t)(h & p->mask);
+    out[eb + t] = kb + (uint32_t)(ix_hash(B, p, t) & p->mask);
 }
 
 // The index's rows and buckets written into its relation's block, from the level's keys sorted (stably) with their
@@ -1504,6 +1549,31 @@ UKL_INLINE void ix_place_one(JSPACE const uint8_t* B, JSPACE const uint32_t* key
     if (t == n - 1u) for (uint32_t x = b + 1u; x <= cap; x++) offs[x] = n;
 }
 
+
+// The index's marks (decision 0671, `rerail_blocks::relation::fill_marks`), once its rows and buckets are placed: its
+// place `t`'s key's tag, and `MARK_SAME` where its bucket's first `MARK_REACH` places hold its head (the first place
+// of its tag) and its key is the head's (a head has it). Its marks lie after its rows' room, `n` of them.
+#define MARK_REACH 8u
+UKL_INLINE uint32_t ix_tag(JSPACE const uint8_t* B, JSPACE const IxP* p, uint32_t t) {
+    return (uint32_t)(ix_hash(B, p, t) >> 32) & ~MARK_SAME;
+}
+UKL_INLINE void ix_mark_one(JSPACE const uint8_t* B, JSPACE const uint32_t* keys, JSPACE const uint32_t* offs, JSPACE uint32_t* rows,
+                            JSPACE const IxP* p, uint32_t kb, uint32_t eb, uint32_t t)
+{
+    if (t >= ix_rows(B, p)) return;
+    uint32_t lo = offs[keys[eb + t] - kb], rt = rows[t] - p->from, tag = ix_tag(B, p, rt);
+    uint32_t same = t < lo + MARK_REACH ? 1u : 0u;
+    for (uint32_t u = lo; u < t && u < lo + MARK_REACH; u++) {
+        uint32_t ru = rows[u] - p->from;
+        if (ix_tag(B, p, ru) != tag) continue;
+        same = 1u;
+        uint32_t mu = NONE, mt = NONE;
+        for (uint32_t i = 0; i < (p->ncols & ~IX_LIVE) && i < 8; i++)
+            if (ix_value(B, p, ru, i, &mu) != ix_value(B, p, rt, i, &mt)) { same = 0u; break; }
+        break;
+    }
+    rows[p->n + t] = tag | same;
+}
 
 // A lattice relation's rounds on the device (decision 0124): a round's rows `U` (a table of `k` slots: the key's
 // `nkeys` columns, then the value) folded by key into the lattice's relation `R` itself (its `k` columns, `had` rows
@@ -1874,6 +1944,7 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_GATE 27u
 #define PK_ROUND 28u
 #define PK_SIZE 29u
+#define PK_IX_MARK 30u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
 // segment and one (`Seg`; 0: none).
@@ -2069,6 +2140,7 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)L, (JSPACE uint8_t*)O, j->totals, (JSPACE const Copy*)j->P, t); break;
         case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)L, H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_IX_PLACE: ix_place_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, (JSPACE const uint32_t*)j->VC, j->A, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
+        case PK_IX_MARK: ix_mark_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, j->A, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_DEDUP_CLEAR: dedup_clear_one(H, j->totals, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;

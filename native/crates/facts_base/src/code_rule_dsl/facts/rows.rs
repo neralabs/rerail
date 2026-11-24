@@ -1064,10 +1064,10 @@ fn capacity_for(rows: usize) -> u64 {
 }
 
 /// The bytes `indexes` indexes of `rows` rows take in their relation's block (`Relation::try_reserve_index`): each
-/// its buckets and its rows, each chunk aligned, and the directory.
+/// its buckets and its rows with their marks (decision 0671), each chunk aligned, and the directory.
 fn index_room(indexes: usize, rows: u64) -> usize {
     let rows = rows.max(1) as usize;
-    let one = 4 * (rows.next_power_of_two() + 1) + 4 * rows + 2 * rerail_blocks::block::PAGE;
+    let one = 4 * (rows.next_power_of_two() + 1) + rerail_blocks::relation::index_rows_bytes(rows) + 2 * rerail_blocks::block::PAGE;
     indexes * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64
 }
 
@@ -1092,7 +1092,8 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;
-    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + 8 * MARGIN), Life::Run));
+    // Its rows twice, and two indexes of them (each its buckets, rows and marks, decision 0671).
+    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + index_room(2, rows as u64) + 8 * MARGIN), Life::Run));
     let rel = Relation::try_create(&facts.block, &spec(k), None).expect("room for the relation");
     assert!(rel.rows.try_reserve(&facts.block, rows as u64));
     // SAFETY: rows `0..rows` are reserved, and this thread alone writes them before any reader looks.
@@ -1525,8 +1526,9 @@ impl Part {
     /// A relation of `k` columns, room for `rows` rows reserved (none claimed) alone in a block of `life`'s, with room
     /// for `indexes` indexes of them.
     fn reserved(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        // Each index its buckets, and its rows with their marks (decision 0671).
         let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let one = 4 * (cap + 1) + rerail_blocks::relation::index_rows_bytes(rows) + 2 * 64;
         let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
         Part::try_new_with(life, k, rows, index, false)
     }

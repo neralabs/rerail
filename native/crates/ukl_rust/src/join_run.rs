@@ -39,6 +39,7 @@ const PK_IX_KEY: u32 = 2;
 const PK_RADIX_HIST: u32 = 3;
 const PK_RADIX_SCATTER: u32 = 4;
 const PK_IX_PLACE: u32 = 5;
+const PK_IX_MARK: u32 = 30;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
 const PK_MAP: u32 = 8;
@@ -399,6 +400,7 @@ impl Reads {
     rel_read!(rel_len, 31, () -> u32);
     rel_read!(rel_group, 32, (index: u32, h: u64) -> u64);
     rel_read!(rel_group_row, 33, (index: u32, q: u32) -> u32);
+    rel_read!(rel_group_mark, 81, (index: u32, q: u32) -> u32);
     rel_read!(rel_key_mix, 34, (h: u64, v: u64) -> u64);
     rel_read!(bloom_hash, 35, (key: u64) -> u64);
     rel_read!(bloom_may, 37, (h: u64) -> u32);
@@ -609,7 +611,8 @@ impl St<'_> {
     }
 
     /// Whether row `r` has the binding's keys and passes the relation's column tests.
-    unsafe fn matches(&self, r: u32, kv: &[i64; 8]) -> bool {
+    /// `key`: its keys are known to be `kv` (its index's marks, decision 0671).
+    unsafe fn matches(&self, r: u32, kv: &[i64; 8], key: bool) -> bool {
         let s = self.s;
         if s.v_has != 0 {
             return s.ntests == 0 && (s.v_has == 1 || self.has_member(r));
@@ -617,8 +620,12 @@ impl St<'_> {
         if !self.row_live(r) {
             return false;
         }
-        (0..s.nkeys.min(8) as usize).all(|i| self.rget(r, s.key_rcol[i]) == kv[i])
-            && (0..s.ntests.min(8) as usize).all(|i| self.rget(r, s.test_a[i]) == self.rget(r, s.test_b[i]))
+        (key || self.keys_are(r, kv)) && (0..s.ntests.min(8) as usize).all(|i| self.rget(r, s.test_a[i]) == self.rget(r, s.test_b[i]))
+    }
+
+    /// Whether row `r`'s keys are `kv`.
+    unsafe fn keys_are(&self, r: u32, kv: &[i64; 8]) -> bool {
+        (0..self.s.nkeys.min(8) as usize).all(|i| self.rget(r, self.s.key_rcol[i]) == kv[i])
     }
 
     /// A parent's children (`by_parent`) or a node's walk of `has` (`by_has`): its document, its numbered node.
@@ -641,9 +648,9 @@ impl St<'_> {
     unsafe fn probe(&self, kv: &[i64; 8]) -> Walk {
         let s = self.s;
         if s.nkeys == 0 {
-            return Walk { lo: s.r_from, hi: s.r_from.wrapping_add(self.rows()), how: 0 };
+            return Walk { lo: s.r_from, hi: s.r_from.wrapping_add(self.rows()), how: 0, tag: 0 };
         }
-        let none = Walk { lo: 0, hi: 0, how: 0 };
+        let none = Walk { lo: 0, hi: 0, how: 0, tag: 0 };
         let d = s.v_dir;
         if s.v_has != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
@@ -653,9 +660,9 @@ impl St<'_> {
                     return none;
                 }
                 let u = self.rd.walk(UP, d, e, l);
-                return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: NONE, how: 3 } };
+                return if u == NONE { none } else { Walk { lo: first.wrapping_add(u), hi: NONE, how: 3, tag: 0 } };
             }
-            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(self.rd.walk(END, d, e, l)), how: 0 };
+            return Walk { lo: first.wrapping_add(l).wrapping_add(1), hi: first.wrapping_add(self.rd.walk(END, d, e, l)), how: 0, tag: 0 };
         }
         if s.v_parent != 0 {
             let Some((e, l)) = self.doc_node(kv[0]) else { return none };
@@ -663,21 +670,22 @@ impl St<'_> {
             if l == 0 {
                 let a = e.offset_from(view_rows(d)) as u32;
                 let hi = if a + 1 < (*d).ndocs { (*view_rows(d).add(a as usize + 1)).rows[1] } else { s.nr };
-                return Walk { lo: first, hi, how: 0 };
+                return Walk { lo: first, hi, how: 0, tag: 0 };
             }
             let c = self.rd.walk(CHILD_FIRST, d, e, l);
-            return if c == NONE { none } else { Walk { lo: first.wrapping_add(c), hi: NONE, how: 2 } };
+            return if c == NONE { none } else { Walk { lo: first.wrapping_add(c), hi: NONE, how: 2, tag: 0 } };
         }
-        let g = self.rd.rel_group(self.r as *const u8, s.r_at, s.r_index, self.rd.key_hash(&kv[..s.nkeys.min(8) as usize]));
+        let h = self.rd.key_hash(&kv[..s.nkeys.min(8) as usize]);
+        let g = self.rd.rel_group(self.r as *const u8, s.r_at, s.r_index, h);
         let lo = (g >> 32) as u32;
-        Walk { lo, hi: lo.wrapping_add(g as u32), how: 1 }
+        Walk { lo, hi: lo.wrapping_add(g as u32), how: 1, tag: mark_tag(h) }
     }
 
     /// A binding's candidates and its keys' values; none where the probed relation's screen refuses the key.
     unsafe fn candidates(&self, t: u32, f: *const u8, kv: &mut [i64; 8]) -> Walk {
         let s = self.s;
         if s.mode == 3 {
-            return Walk { lo: 0, hi: 1, how: 0 };
+            return Walk { lo: 0, hi: 1, how: 0, tag: 0 };
         }
         for i in 0..s.nkeys.min(8) {
             kv[i as usize] = self.key_value(t, i);
@@ -685,7 +693,7 @@ impl St<'_> {
         if s.screen != 0 && s.screen <= s.nkeys && s.screen <= 8 {
             let h = self.rd.bloom_hash(f, 0, kv[s.screen as usize - 1] as u64);
             if self.rd.bloom_may(f, s.screen_at as u64, h) == 0 {
-                return Walk { lo: 0, hi: 0, how: 0 };
+                return Walk { lo: 0, hi: 0, how: 0, tag: 0 };
             }
         }
         self.probe(kv)
@@ -714,11 +722,34 @@ impl St<'_> {
         }
     }
 
-    /// The candidates' rows, in their walk's order.
-    unsafe fn each(&self, w: Walk, mut f: impl FnMut(u32) -> bool) {
+    /// The candidates of keys `kv`, in their walk's order: each one's row, place, and whether its keys are known to
+    /// be `kv`. An index group's (decision 0671): only the places whose mark's tag is the key's; the first of them
+    /// (the bucket's head for the tag) compared, once, and each with `MARK_SAME` after it known by it.
+    unsafe fn each(&self, w: Walk, kv: &[i64; 8], mut f: impl FnMut(u32, u32, bool) -> bool) {
         let mut q = w.lo;
+        // The head: not met (0), its key `kv` (1), another (2).
+        let mut head = 0u32;
         while q < w.hi {
-            if !f(self.cand_row(w.how, q)) {
+            let mut key = false;
+            if w.how == 1 {
+                let m = self.rd.rel_group_mark(self.r as *const u8, self.s.r_at, self.s.r_index, q);
+                let mine = (m ^ w.tag) & !MARK_SAME == 0;
+                // Another key's tag, or the head's key known not to be `kv`: not read.
+                if !mine || (head == 2 && m & MARK_SAME != 0) {
+                    q = q.wrapping_add(1);
+                    continue;
+                }
+                let at_head = head == 0;
+                if at_head {
+                    head = if self.keys_are(self.cand_row(1, q), kv) { 1 } else { 2 };
+                    if head == 2 {
+                        q = q.wrapping_add(1);
+                        continue;
+                    }
+                }
+                key = head == 1 && (at_head || m & MARK_SAME != 0);
+            }
+            if !f(self.cand_row(w.how, q), q, key) {
                 return;
             }
             q = self.cand_next(w.how, q);
@@ -730,8 +761,8 @@ impl St<'_> {
         let s = self.s;
         let kind = s.agg[0] & 0xff;
         let (mut cnt, mut sum, mut mn, mut mx, mut any, mut over) = (0i64, 0i64, 0i64, 0i64, false, false);
-        self.each(w, |r| {
-            if self.matches(r, kv) {
+        self.each(w, kv, |r, _, key| {
+            if self.matches(r, kv, key) {
                 cnt += 1;
                 if s.agg[1] != NONE {
                     let x = self.rget(r, s.agg[1]);
@@ -818,6 +849,16 @@ struct Walk {
     lo: u32,
     hi: u32,
     how: u32,
+    /// An index group's (`how` 1): its key's tag (decision 0671), which its places' marks are read against.
+    tag: u32,
+}
+
+/// A mark's `MARK_SAME` (decision 0671, `rerail_blocks::relation::MARK_SAME`).
+const MARK_SAME: u32 = 1;
+
+/// A key's tag from its hash (`rerail_blocks::relation::mark_tag`).
+fn mark_tag(h: u64) -> u32 {
+    (h >> 32) as u32 & !MARK_SAME
 }
 
 fn lane_of(v: i64, w: u32) -> i64 {
@@ -1383,10 +1424,9 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
     let passed = s.npassed.min(16) as usize;
     // A join's finds (`V`): a bit a candidate of at most `FINDS_MAX` consecutive places, set where it is a row out.
     let kept = s.mode == 0 && s.v_has == 0 && s.v_parent == 0 && w.how <= 1 && w.hi.wrapping_sub(w.lo) <= FINDS_MAX;
-    let (mut finds, mut q) = (0u32, w.lo);
-    st.each(w, |r| {
-        q += 1;
-        if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv) } {
+    let mut finds = 0u32;
+    st.each(w, &kv, |r, q, key| {
+        if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv, key) } {
             return true;
         }
         if exists {
@@ -1401,7 +1441,7 @@ unsafe fn stage_count_one(st: &St, j: &Job, b: &Bufs, t: u32, acc: &mut [u32; 17
         }
         if ok && (s.last == NONE || st.out_bit(v, s.last)) {
             if kept {
-                finds |= 1 << (q - 1 - w.lo);
+                finds |= 1 << (q.wrapping_sub(w.lo) & 31);
             }
             c += 1;
         }
@@ -1479,11 +1519,11 @@ unsafe fn stage_scatter_one(st: &St, j: &Job, b: &Bufs, t: u32) {
         _ => {
             let mut kv = [0i64; 8];
             let w = st.candidates(t, j.f, &mut kv);
-            st.each(w, |r| {
+            st.each(w, &kv, |r, _, key| {
                 if a >= s.cap_out {
                     return false;
                 }
-                if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv) } {
+                if if s.mode == 3 { !st.row_live(r) } else { !st.matches(r, &kv, key) } {
                     return true;
                 }
                 if !st.defined(t, r) || (s.last != NONE && !st.out_bit(st.eval(t, r), s.last)) {
@@ -1510,8 +1550,8 @@ unsafe fn witness_probe(b: &Stage, rd: Reads, l: *const i64, t: u32, cap_in: u32
     let bst = St { s: b, rd, l, r };
     let w = bst.probe(&kv);
     let mut found = false;
-    bst.each(w, |row| {
-        found = bst.matches(row, &kv);
+    bst.each(w, &kv, |row, _, key| {
+        found = bst.matches(row, &kv, key);
         !found
     });
     found != (b.mode == 2)
@@ -1531,8 +1571,8 @@ unsafe fn witness_count_one(st: &St, j: &Job, b: &Bufs, t: u32) {
     let w = st.candidates(t, j.f, &mut kv);
     let nb = s.agg[0].min(3) as usize;
     let mut found = 0;
-    st.each(w, |r| {
-        if !st.matches(r, &kv) {
+    st.each(w, &kv, |r, _, key| {
+        if !st.matches(r, &kv, key) {
             return true;
         }
         let all = (0..nb).all(|k| witness_probe(&*j.bs.add(k), st.rd, st.l, t, s.cap_in, st, r, j.w[k]));
@@ -1588,7 +1628,7 @@ unsafe fn scan_count_one(st: &St, j: &Job, b: &Bufs, r: u32) {
     }
     let id = s.r_from.wrapping_add(r);
     let mut c = 0;
-    if st.matches(id, &kv) {
+    if st.matches(id, &kv, false) {
         let v = if s.nops > 0 { st.eval(0, id) } else { 0 };
         if s.counter != NONE {
             at(j.counters.add(s.counter as usize)).fetch_add(1, SeqCst);
@@ -1624,15 +1664,50 @@ unsafe fn ix_rows(rd: Reads, bb: *const u8, p: &IxP) -> u32 {
     if len > p.from { (len - p.from).min(p.n) } else { 0 }
 }
 
-/// Row `t`'s key hash, masked to the index's places.
-unsafe fn ix_hash(rd: Reads, bb: *const u8, p: &IxP, t: u32) -> u32 {
+/// Key column `i` of the index's row `t` (from its first, `from`).
+unsafe fn ix_value(rd: Reads, bb: *const u8, p: &IxP, t: u32, i: usize, memo: &mut u32) -> i64 {
+    if p.kind != 0 { vread(rd, p.kind as u32, p.dir, t, p.cols[i], memo) } else { rd.rel_get(bb, p.at, p.from.wrapping_add(t), p.cols[i]) as i64 }
+}
+
+/// Row `t`'s key hash (`key_hash`).
+unsafe fn ix_hash64(rd: Reads, bb: *const u8, p: &IxP, t: u32) -> u64 {
     let mut memo = NONE;
     let mut h = KEY_SEED;
     for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
-        let v = if p.kind != 0 { vread(rd, p.kind as u32, p.dir, t, p.cols[i], &mut memo) } else { rd.rel_get(bb, p.at, p.from.wrapping_add(t), p.cols[i]) as i64 };
-        h = rd.key_mix(h, v);
+        h = rd.key_mix(h, ix_value(rd, bb, p, t, i, &mut memo));
     }
-    (h & p.mask) as u32
+    h
+}
+
+/// Row `t`'s key hash, masked to the index's places.
+unsafe fn ix_hash(rd: Reads, bb: *const u8, p: &IxP, t: u32) -> u32 {
+    (ix_hash64(rd, bb, p, t) & p.mask) as u32
+}
+
+/// `MARK_REACH` (decision 0671): the places of a bucket a head is found among.
+const MARK_REACH: u32 = 8;
+
+/// `join_stages`' `ix_mark_one` of places `t0..t1`: each one's key's tag, and `MARK_SAME` where its bucket's first
+/// `MARK_REACH` places hold its head and its key is the head's. Its marks after its rows' room (`n`).
+unsafe fn ix_mark_range(rd: Reads, bb: *const u8, keys: *const u32, offs: *const u32, rows: *mut u32, p: &IxP, kb: u32, eb: u32, t0: u32, t1: u32) {
+    let t1 = t1.min(ix_rows(rd, bb, p));
+    let tag = |t: u32| mark_tag(ix_hash64(rd, bb, p, t));
+    for t in t0..t1 {
+        let lo = *offs.add((*keys.add((eb + t) as usize)).wrapping_sub(kb) as usize);
+        let rt = (*rows.add(t as usize)).wrapping_sub(p.from);
+        let tg = tag(rt);
+        let mut same = t < lo.saturating_add(MARK_REACH);
+        for u in lo..t.min(lo.saturating_add(MARK_REACH)) {
+            let ru = (*rows.add(u as usize)).wrapping_sub(p.from);
+            if tag(ru) != tg {
+                continue;
+            }
+            let (mut mu, mut mt) = (NONE, NONE);
+            same = (0..(p.ncols & !IX_LIVE).min(8) as usize).all(|i| ix_value(rd, bb, p, ru, i, &mut mu) == ix_value(rd, bb, p, rt, i, &mut mt));
+            break;
+        }
+        *rows.add((p.n + t) as usize) = tg | u32::from(same);
+    }
 }
 
 // ---- A lattice relation's rounds (decision 0124). ----
@@ -2912,6 +2987,7 @@ impl Prog {
             PK_COPY => rows_copy_range(rd, b.l as *const u8, b.o as *mut u8, j.totals, &*(j.p as *const Copy), t0, t1),
             PK_IX_KEY => ix_key_range(rd, b.l as *const u8, b.h, j.s_ as *mut u32, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
             PK_IX_PLACE => ix_place_range(rd, b.l as *const u8, b.v as *const u32, j.vc as *const u32, j.a, j.counters, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
+            PK_IX_MARK => ix_mark_range(rd, b.l as *const u8, b.v as *const u32, j.a, j.counters, &*(j.p as *const IxP), b.kb, b.eb, t0, t1),
             // Threads [t0, t1) clear places 4 t0 to 4 t1, within those the rows use (`dedup_mask`).
             PK_DEDUP_CLEAR => {
                 let end = dedup_mask(j.totals, &*j.dd) as u64 + 1;
@@ -3168,6 +3244,7 @@ mod tests {
             ("rel_len", 31),
             ("rel_group", 32),
             ("rel_group_row", 33),
+            ("rel_group_mark", 81),
             ("rel_key_mix", 34),
             ("bloom_hash", 35),
             ("bloom_may", 37),
