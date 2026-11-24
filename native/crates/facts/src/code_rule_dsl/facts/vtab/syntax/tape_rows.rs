@@ -458,19 +458,6 @@ pub(super) fn strings(batch: &Batch, wants: &dyn Fn(&str) -> bool, each: &mut dy
             TreeDigest::hexes(&At { batch, doc: d }, &mut |_, h| each(h));
         }
     }
-    // `op`'s names (the entries' `ViewDoc::names`): each tape code's kind's name, so a text test of `op`'s `s` finds
-    // them, whoever reads the rows (decision 0353 row 7).
-    if batch.shape == Shape::Core && wants("op") {
-        for d in 0..batch.docs.len() {
-            let p = At { batch, doc: d };
-            let p = p.p();
-            let Some(dialect) = batch.dialects.get(p.tag()) else { continue };
-            let f = p.f();
-            for c in 0..f.code_count() {
-                each(dialect.atom_name(f.code_entry(c as u32).0));
-            }
-        }
-    }
 }
 
 /// Atoms made into a projection's block: `texts` interned, in order.

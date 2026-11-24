@@ -4348,6 +4348,31 @@ impl Batch {
         let entry = view_docs::ViewEntry::new(p.block(), p, &self.dialects[p.tag()], self.docs.names());
         entry.names().get(p.f().tape_code(x) as usize).map_or(-1, |&a| i64::from(a))
     }
+    /// The strings `op`'s `s` column holds in this batch's made documents, and their atoms (`op_atom`): each
+    /// anonymous child's kind name (`Item::Op`, as the view reads it), from its document's entry (`ViewDoc::names`).
+    /// They are atoms of the tape's codes, not strings a document's walk interns, so a text test over `op`
+    /// (`op(n, o), o = "=="`, decision 0037) tests them from here: the batch's strings alone held no operator. None
+    /// where the batch reads no `op` (its entries hold no names).
+    pub(super) fn op_vocabulary(&self) -> (Vec<String>, Vec<u32>) {
+        if self.docs.names().is_none() {
+            return (Vec::new(), Vec::new());
+        }
+        let mut ops: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+        for i in (0..self.docs.len()).filter(|&i| self.docs.is_made(i)) {
+            let p = &self.docs[i];
+            // A document of no grammar (held by its path alone) has no tokens.
+            let Some(d) = self.dialects.get(p.tag()) else { continue };
+            let entry = view_docs::ViewEntry::new(p.block(), p, d, self.docs.names());
+            let (f, names) = (p.f(), entry.names());
+            let codes: BTreeSet<u32> = p.ranks().iter(Item::Op).map(|(_, x)| f.tape_code(x)).collect();
+            for c in codes {
+                if let Some(&a) = names.get(c as usize) {
+                    ops.entry(a).or_insert_with(|| d.atom_name(f.code_entry(c).0).to_owned());
+                }
+            }
+        }
+        ops.into_iter().map(|(a, s)| (s, a)).unzip()
+    }
     /// `row`, the node's tape node `x` known (read only by the `field` view: its rows are the fielded nodes).
     fn row_of_node(&self, view: View, doc: usize, local: u32, x: u32) -> Option<usize> {
         let within = match view {
