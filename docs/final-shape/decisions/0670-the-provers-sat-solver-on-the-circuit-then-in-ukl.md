@@ -168,3 +168,21 @@ late cheaper; `PROOFS_VERSION` 5).
   value, and a restart to level 0 after 100 times the Luby sequence's terms of conflicts. Cold Kotlin: 160 million
   steps against 157, proving 5.6 s against 5.2 to 5.5, the late failures as long; the same values. Not kept.
 
+**The hard searches, profiled** (the user: "Profile and speed up the hard searches on the CPU"). A cold Kotlin
+compile's solves over 100 ms, written out (`RERAIL_CSAT_DUMP`, `Gates::dump`) and solved alone
+(`the_dumped_formulas`, ignored, a tool) on an M3: 19 of them, every one unsatisfiable, 16,000 to 32,000 variables
+and 15,000 to 30,000 gates, 550 to 9,160 conflicts, 100 to 580 ms.
+- **Where a solve's time is** (a sample, its thread): the gates' checks 45%, propagation 34%, the decisions' heap 11%.
+- **What a conflict costs** (counted): about 2,240 assignments undone and made again and 7,000 gates checked, though
+  it jumps back only 4 to 5 levels (from about 61 to 57): each decision implies about 550 values, forward through
+  the window. Learned clauses are no cost here (35 literals a conflict, 200 watch visits).
+- **Not the levers**: the gates are narrow (13,365 of 15,524 have two arguments, the widest `One` eight), so a check
+  is not quadratic; restarts and saved phases change nothing (above); structural hashing merges about 5% of the
+  gates and the equations (one-argument `And`s) are 7% of the variables; a build without overflow checks
+  (`profiling`) is no faster.
+- **Kept: a gate is one 16-byte record** (`Gates::rec`: kind and width, output, and two arguments in place, or where
+  a wider gate's begin in `args`): one load a check, about 5% on these solves, and the record step 3's kernel loads.
+- **So a hard search is the size of its proof**: the window's 30,000 gates are distinct and each decision drives a
+  large part of them. A large factor needs fewer conflicts (a different proof: the base case last, smaller windows)
+  rather than a faster check.
+

@@ -1638,7 +1638,15 @@ impl Induction {
             s.add(c);
         }
         let before = s.conflicts;
+        let t_dump = std::time::Instant::now();
         let answer = s.solve(&u.gates, fan, base_gates, self.conflicts.min(u32::try_from(self.work.left()).unwrap_or(u32::MAX)));
+        // With `RERAIL_CSAT_DUMP` (a directory): each solve of over 100 ms, its formula as `Gates::dump` writes
+        // it, to solve or profile it alone (decision 0670).
+        if let Some(dir) = std::env::var_os("RERAIL_CSAT_DUMP") && t_dump.elapsed().as_secs_f64() > 0.1 {
+            let text = u.gates.dump(u.vars as usize, base_gates, &u.clauses);
+            let name = format!("{:016x}.csat", { use std::hash::{BuildHasher as _}; rustc_hash::FxBuildHasher.hash_one(&text) });
+            let _ = std::fs::write(std::path::Path::new(&dir).join(name), text);
+        }
         self.work.spend(s.conflicts - before);
         let answer = match answer {
             // With a hypothesis, its values the contradiction read at the position: the rest may go (`prove`).

@@ -21,34 +21,44 @@ use crate::bitlex_sat::{Answer, Clauses, Lit, Order, normal};
 /// A gate's kind (`Gates`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
-    And,
-    Xor,
-    One,
+    And = 0,
+    Xor = 1,
+    One = 2,
 }
 
 /// Gates end to end: each a kind, an output (none for `One`) and its arguments, to its `ends` entry in `args`.
 #[derive(Clone, Debug, Default)]
 pub struct Gates {
-    kind: Vec<Kind>,
-    out: Vec<Lit>,
-    ends: Vec<u32>,
+    /// A gate a record: its kind and number of arguments (`kind | n << 2`), its output, and its arguments where it
+    /// has at most two, else where they begin in `args` (decision 0670: one load a gate, on the CPU and a device).
+    rec: Vec<[Lit; 4]>,
     args: Vec<Lit>,
 }
 
+/// The kinds in a record's first word.
+const KINDS: [Kind; 3] = [Kind::And, Kind::Xor, Kind::One];
+
 impl Gates {
     pub fn len(&self) -> usize {
-        self.kind.len()
+        self.rec.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.kind.is_empty()
+        self.rec.is_empty()
     }
 
     fn push(&mut self, kind: Kind, out: Lit, args: &[Lit]) {
-        self.kind.push(kind);
-        self.out.push(out);
-        self.args.extend_from_slice(args);
-        self.ends.push(self.args.len() as u32);
+        let head = kind as Lit | (args.len() as Lit) << 2;
+        self.rec.push(match *args {
+            [] => [head, out, 0, 0],
+            [a] => [head, out, a, 0],
+            [a, b] => [head, out, a, b],
+            _ => {
+                let start = self.args.len() as Lit;
+                self.args.extend_from_slice(args);
+                [head, out, start, 0]
+            }
+        });
     }
 
     /// `out` holds exactly when each of `args` does.
@@ -71,23 +81,72 @@ impl Gates {
         if n >= self.len() {
             return;
         }
-        self.kind.truncate(n);
-        self.out.truncate(n);
-        self.ends.truncate(n);
-        self.args.truncate(self.ends.last().map_or(0, |&e| e as usize));
+        self.rec.truncate(n);
+        let end = self.rec.iter().rev().find(|r| r[0] >> 2 > 2).map_or(0, |r| (r[2] + (r[0] >> 2)) as usize);
+        self.args.truncate(end);
     }
 
     pub fn kind(&self, g: usize) -> Kind {
-        self.kind[g]
+        KINDS[(self.rec[g][0] & 3) as usize]
     }
 
     pub fn out(&self, g: usize) -> Lit {
-        self.out[g]
+        self.rec[g][1]
     }
 
     pub fn args(&self, g: usize) -> &[Lit] {
-        let start = if g == 0 { 0 } else { self.ends[g - 1] as usize };
-        &self.args[start..self.ends[g] as usize]
+        let r = &self.rec[g];
+        let n = (r[0] >> 2) as usize;
+        if n <= 2 { &r[2..2 + n] } else { &self.args[r[2] as usize..r[2] as usize + n] }
+    }
+
+    /// The formula as text, to solve or profile it apart from a compile (`RERAIL_CSAT_DUMP`, decision 0670): `v VARS
+    /// BASE`, then a line a gate (`a OUT ARGS…`, `x OUT A B`, `o ARGS…`) and a line a plain clause (`c LITS…`).
+    pub fn dump(&self, vars: usize, base: usize, clauses: &Clauses) -> String {
+        use std::fmt::Write as _;
+        let mut t = format!("v {vars} {base}\n");
+        for g in 0..self.len() {
+            let k = match self.kind(g) {
+                Kind::And => "a",
+                Kind::Xor => "x",
+                Kind::One => "o",
+            };
+            let _ = write!(t, "{k}");
+            if self.kind(g) != Kind::One {
+                let _ = write!(t, " {}", self.out(g));
+            }
+            for a in self.args(g) {
+                let _ = write!(t, " {a}");
+            }
+            t.push('\n');
+        }
+        for c in clauses.iter() {
+            t.push('c');
+            for l in c {
+                let _ = write!(t, " {l}");
+            }
+            t.push('\n');
+        }
+        t
+    }
+
+    /// `dump`'s text read back: the gates, the variables, the window's gates and the plain clauses.
+    pub fn undump(text: &str) -> (Gates, usize, usize, Clauses) {
+        let (mut g, mut c, mut vars, mut base) = (Gates::default(), Clauses::default(), 0, 0);
+        for line in text.lines() {
+            let mut w = line.split(' ');
+            let k = w.next().unwrap_or("");
+            let n: Vec<Lit> = w.map(|x| x.parse().expect("a literal")).collect();
+            match k {
+                "v" => (vars, base) = (n[0] as usize, n[1] as usize),
+                "a" => g.and(n[0], &n[1..]),
+                "x" => g.xor(n[0], n[1], n[2]),
+                "o" => g.one(&n),
+                "c" => c.push(&n),
+                _ => {}
+            }
+        }
+        (g, vars, base, c)
     }
 
     /// Each gate's clauses, whose unit propagation is the gate's own (`bitlex_sat`'s input; 0654's kernel's).
@@ -847,6 +906,33 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 500 && dropped > 500, "{checked} checked, {dropped} units dropped");
+    }
+
+    /// The formulas in `RERAIL_CSAT_DUMPS` (a directory of `Gates::dump`s, `RERAIL_CSAT_DUMP`), each solved
+    /// `RERAIL_CSAT_TIMES` times: its answer, conflicts and time (decision 0670; a tool, so ignored).
+    #[test]
+    #[ignore]
+    fn the_dumped_formulas() {
+        let Some(dir) = std::env::var_os("RERAIL_CSAT_DUMPS") else { return };
+        let times: u32 = std::env::var("RERAIL_CSAT_TIMES").ok().and_then(|t| t.parse().ok()).unwrap_or(1);
+        let mut paths: Vec<_> = std::fs::read_dir(dir).expect("the dumps").map(|e| e.expect("a dump").path()).collect();
+        paths.sort();
+        let mut s = Solver::default();
+        for p in paths {
+            let (gates, vars, base, clauses) = Gates::undump(&std::fs::read_to_string(&p).expect("a dump"));
+            let fan = Fanout::of(&gates, base, vars);
+            let t = std::time::Instant::now();
+            let c0 = s.conflicts;
+            let mut answer = Answer::Unknown;
+            for _ in 0..times {
+                s.reset(vars);
+                for c in clauses.iter() {
+                    s.add(c);
+                }
+                answer = s.solve(&gates, &fan, base, 100_000);
+            }
+            eprintln!("{}: {vars} vars, {} gates, {} clauses: {answer:?}, {} conflicts, {:.1} ms a solve", p.display(), gates.len(), clauses.len(), (s.conflicts - c0) / u64::from(times), t.elapsed().as_secs_f64() * 1e3 / f64::from(times));
+        }
     }
 
     /// Hard formulas need conflicts, and their learned clauses reason through the gates: pigeons in holes, as
