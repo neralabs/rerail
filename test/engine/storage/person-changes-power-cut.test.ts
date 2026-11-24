@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRerailApi, DatabaseApiStores, operations } from "../../../src/api/index.js";
@@ -53,7 +54,8 @@ describe("a person's change through a power cut right after Rerail said it was m
       setRepositoryStarted(database, recordCheckout(database, checkout).repositoryKey, true);
       const syncRecord = join(home, "log-syncs.jsonl");
       const stop = spawnSync(process.execPath, [
-        "--import", "tsx", "--import", join(PACKAGE_ROOT, "test/support/processes/record-log-syncs.ts"),
+        // A URL: on Windows Node takes an absolute path for a drive letter's scheme.
+        "--import", "tsx", "--import", pathToFileURL(join(PACKAGE_ROOT, "test/support/processes/record-log-syncs.ts")).href,
         join(PACKAGE_ROOT, "src/cli/cli.ts"), "--rerail-managed-child", "stop", "--repo", checkout, "--database", databasePath,
       ], { cwd: PACKAGE_ROOT, encoding: "utf8", env: { ...process.env, RERAIL_HOME: home, RERAIL_AUTOSTART: "0", RERAIL_TEST_LOG_SYNCS: syncRecord } });
       expect(stop.stderr).toBe("");
