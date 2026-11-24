@@ -1,9 +1,10 @@
 /**
- * A daemon whose Git answers its two config asks slowly. A session's first events have the daemon learn which config
- * files the engine's in-process reads take, by asking Rerail's Git two things; here a stand-in for Git, first on the
- * daemon's PATH, holds each ask until the case lets them go, and passes every other Git call straight to Git. The
- * session's hooks must not wait on them: each hook has its own time limit, and on a machine where Git starts slowly
- * the two asks alone outlast it. The stand-in is a shell script, so the case runs where Git can be one (not on Windows).
+ * A daemon whose Git is slow on its two config asks. A session's first events have the daemon learn which config files
+ * the engine's in-process reads take, by asking Rerail's Git two things; here each ask is held until the case lets it
+ * go, and every other Git call runs at once. Off Windows a stand-in for Git, first on the daemon's PATH, holds each ask's
+ * answer: Git is slow to answer. A daemon on Windows runs only a Git program, never a script, so there a preload in the
+ * daemon holds each ask's start: Git is slow to start, as every process start is on a busy machine. The session's
+ * hooks must not wait on them: each hook has its own time limit, and where Git is slow the two asks alone outlast it.
  */
 import { execFileSync } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -46,12 +47,27 @@ async function folder(prefix: string): Promise<string> {
 }
 
 /**
- * A stand-in for Git in `tools`: a call that names the null device as its Git folder (the two asks, which run outside
- * any repository) adds a line to `asks`, waits until `release` exists, then runs Git and adds a line to `answered`; every
- * other call runs Git at once.
+ * The two asks held until `release` exists: `asks` gets a line as each reaches Git, `answered` one as each Git has
+ * answered, and `env` is the daemon's environment that holds them.
  */
-function slowGit(tools: string): { asks: string; answered: string; release: string } {
+interface HeldAsks {
+  readonly asks: string;
+  readonly answered: string;
+  readonly release: string;
+  readonly env: NodeJS.ProcessEnv;
+}
+
+function heldAsks(tools: string): HeldAsks {
   const files = { asks: join(tools, "asks"), answered: join(tools, "answered"), release: join(tools, "release") };
+  return { ...files, env: process.platform === "win32" ? heldStarts(tools, files) : slowGit(tools, files) };
+}
+
+/**
+ * A stand-in for Git in `tools`, first on the daemon's PATH: a call that names the null device as its Git folder (the
+ * two asks, which run outside any repository) adds a line to `asks`, waits until `release` exists, then runs Git and adds
+ * a line to `answered`; every other call runs Git at once.
+ */
+function slowGit(tools: string, files: Omit<HeldAsks, "env">): NodeJS.ProcessEnv {
   const git = realGit();
   const script = [
     "#!/bin/sh",
@@ -67,7 +83,7 @@ function slowGit(tools: string): { asks: string; answered: string; release: stri
   ].join("\n");
   writeFileSync(join(tools, "git"), script);
   chmodSync(join(tools, "git"), 0o755);
-  return files;
+  return { ...process.env, PATH: `${tools}${delimiter}${process.env.PATH ?? ""}` };
 }
 
 /** The Git this process's `PATH` names first, which the stand-in runs. */
@@ -81,6 +97,49 @@ function realGit(): string {
     }
   }
   throw new Error("no git on PATH");
+}
+
+/**
+ * A preload in the daemon on Windows: a start of a Git that names the null device as its Git folder, on whichever thread
+ * makes it and whether or not it blocks (`ChildProcess.prototype.spawn`, `spawnSync`), adds a line to `asks` and waits
+ * there until `release` exists, at most 60 s; once that Git has exited it adds a line to `answered`. Every other start
+ * runs at once.
+ */
+function heldStarts(tools: string, files: Omit<HeldAsks, "env">): NodeJS.ProcessEnv {
+  const preload = join(tools, "git-asks-gate.cjs");
+  writeFileSync(preload, `const cp = require("node:child_process");
+const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const [asks, answered, release] = ${JSON.stringify([files.asks, files.answered, files.release])};
+const pause = new Int32Array(new SharedArrayBuffer(4));
+const isAsk = args => Array.isArray(args) && args.some(arg => String(arg).toLowerCase() === "--git-dir=nul");
+const hold = () => {
+  fs.appendFileSync(asks, process.pid + "\\n");
+  const limit = Date.now() + 60_000;
+  while (!fs.existsSync(release) && Date.now() < limit) Atomics.wait(pause, 0, 0, 10);
+};
+const answer = () => fs.appendFileSync(answered, process.pid + "\\n");
+const spawnOf = cp.ChildProcess.prototype.spawn;
+cp.ChildProcess.prototype.spawn = function (options) {
+  if (!isAsk(options && options.args)) return spawnOf.call(this, options);
+  hold();
+  this.once("exit", answer);
+  return spawnOf.call(this, options);
+};
+const spawnSyncOf = cp.spawnSync;
+cp.spawnSync = function (file, args, options) {
+  if (!isAsk(args)) return spawnSyncOf.call(this, file, args, options);
+  hold();
+  try {
+    return spawnSyncOf.call(this, file, args, options);
+  } finally {
+    answer();
+  }
+};
+syncBuiltinESMExports();
+`);
+  const options = [process.env.NODE_OPTIONS, `--require ${JSON.stringify(preload.replaceAll("\\", "/"))}`];
+  return { ...process.env, NODE_OPTIONS: options.filter(Boolean).join(" ") };
 }
 
 const lines = (path: string): string[] => (existsSync(path) ? readFileSync(path, "utf8").split("\n").filter(line => line !== "") : []);
@@ -101,15 +160,15 @@ async function repository(databasePath: string): Promise<string> {
   return main;
 }
 
-describe.skipIf(process.platform === "win32")("a daemon whose Git answers its config asks slowly", () => {
+describe("a daemon whose Git is slow on its config asks", () => {
   it("answers a session's first events while Git holds the asks, and asks no more once Git answers", { timeout: 90_000 }, async () => {
     const home = await folder("rerail-slow-git-home-");
     const tools = await folder("rerail-slow-git-tools-");
-    const { asks, answered, release } = slowGit(tools);
+    const { asks, answered, release, env: held } = heldAsks(tools);
     const databasePath = defaultRerailDatabasePath({ RERAIL_HOME: home });
     const main = await repository(databasePath);
     // Conversation rules are an experiment, off in every test: on for this daemon, whose check is one of them.
-    const env = { ...process.env, PATH: `${tools}${delimiter}${process.env.PATH ?? ""}`, RERAIL_EXPERIMENTAL_CONVERSATION_RULES: "1" };
+    const env = { ...held, RERAIL_EXPERIMENTAL_CONVERSATION_RULES: "1" };
     homes.push(home);
     const { daemon } = await startDaemon({ home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) }, { dev: true, port: 0, env });
     const endpoint = { socketPath: daemon.state.kernelSocketPath, ...(daemon.state.accessToken === undefined ? {} : { accessToken: daemon.state.accessToken }) };
@@ -138,10 +197,11 @@ describe.skipIf(process.platform === "win32")("a daemon whose Git answers its co
     const reader = new SqliteSessionReader(databasePath);
     try {
       // While Git holds the asks the first session's events started: each is checked and answered without them.
-      const held = await session("held", "held.py");
-      expect(held.told).toContain(forcePushRule.id);
-      expect(held.slowestMs).toBeLessThan(HOOK_ANSWER_MS);
-      expect(lines(asks).length).toBeGreaterThan(0);
+      const first = await session("held", "held.py");
+      expect(first.told).toContain(forcePushRule.id);
+      expect(first.slowestMs).toBeLessThan(HOOK_ANSWER_MS);
+      // The first ask reaches Git once the daemon has started it, which on Windows waits for a starter thread to load.
+      await until(() => lines(asks).length > 0, 20_000, "the daemon's first ask reached Git");
       expect(lines(answered)).toEqual([]);
       writeFileSync(release, "");
       await until(() => lines(answered).length === 2, 30_000, "Git answered the two asks");
