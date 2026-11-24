@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describeScan, runHeadlessScan, type HeadlessScanOptions, type ScanReport } from "./headless-scan.js";
 import { RemoteOutbox } from "../runtime/remote-outbox.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
-import { daemonEndpoint, findRunningDaemon, type DaemonEndpoint } from "../runtime/daemon-control.js";
+import { daemonEndpoint, findRunningDaemon, olderDaemonMessage, type DaemonEndpoint } from "../runtime/daemon-control.js";
 import { remoteSinkEnabled, requireExperiment } from "../engine/experimental-features.js";
 
 import {
@@ -107,6 +107,8 @@ function parseCommon(args: readonly string[]): ParsedCommon {
 async function targetDaemon(options: AuditCliOptions): Promise<DaemonEndpoint> {
   const daemon = await findRunningDaemon(options.home);
   if (daemon === undefined) throw new Error("Rerail is not running. Start it with rerail daemon start.");
+  // A daemon of a release before the engine's proof proved nothing, and is sent nothing.
+  if (daemon.status === "older") throw new Error(olderDaemonMessage(daemon.state));
   return daemonEndpoint(daemon.state);
 }
 

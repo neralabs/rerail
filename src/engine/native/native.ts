@@ -600,6 +600,18 @@ export interface NativeBinding {
    */
   detachedExitCode?(pid: number): number | null;
   /**
+   * Windows only: when the process holding `pid` started (its creation time), in epoch milliseconds, or null where
+   * Windows does not say: no process holds `pid`, or this user may not query it. A binary built before it lacks it.
+   */
+  processStartedAt?(pid: number): number | null;
+  /**
+   * Windows only: opens the process holding `pid`, reads its creation time and, when that is no later than `startedAt`
+   * (epoch ms), ends it and waits up to `waitMs` for it to exit, all through the one handle it opened: `ended`,
+   * `running` (ended, still running after the wait), `later` (started after `startedAt`, let alone) or `unread` (not
+   * opened or not read). A binary built before it lacks it.
+   */
+  endProcessStartedBy?(pid: number, startedAt: number, waitMs: number): string;
+  /**
    * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
    * before it lacks it.
    */
@@ -626,6 +638,16 @@ export interface NativeBinding {
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
+  /**
+   * Locks `path` exclusively, creating the file, waiting up to `waitMs` while another handle holds it (0 tries once). A
+   * free lock is taken at once: the promise is already settled when the call returns, with no thread started. A held one
+   * resolves with the lock the moment the OS hands it over at its holder's release or exit, or with null when it is
+   * still held at the bound; that wait runs on a thread of its own, and one given up never ends up holding the lock.
+   * On Unix, where `flock` takes no bound, a wait given up keeps its thread and the file open until the holder lets go
+   * or ends: a process waits only where it, or the holder, ends soon after (a command, a daemon's start), never in a
+   * loop of a process that lives on. Throws at once when the file does not open or the first try fails.
+   */
+  lockExclusive(path: string, waitMs: number): Promise<NativeExclusiveFileLock | null>;
   /** The owner of the engine's in-process Git reads; make it through `nativeGitAccess` (`git-access.ts`), once per process. */
   GitAccess: new (installation: NativeGitInstallation) => NativeGitAccess;
   ConversationEngine: NativeConversationEngineConstructor;

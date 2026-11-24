@@ -581,6 +581,7 @@ async function connect(run: Run, repository: Repository | undefined, again = fal
     })),
     codexTrust: result.codexTrust,
     ompPlugin: result.ompPlugin,
+    nodeHookFallback: result.nodeHookFallback,
     anyFound: found.length > 0,
     worksWith: codingAgents(HARNESSES),
   };
