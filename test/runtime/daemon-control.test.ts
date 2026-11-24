@@ -504,6 +504,36 @@ describe("Rerail daemon control", () => {
     }
   });
 
+  // The second wait is the last: a daemon of another process that the look under the lock finds in its start, once the
+  // first one found exited, fails the start by its exit, with what it wrote to the log from where its own record says its
+  // output starts, a notice before the start found it included, and the start launches no daemon of its own.
+  it("fails with its own log when a second daemon found in its start, after the first exited, exits too, and launches none", async () => {
+    waits.startMs = 1_000;
+    const log = join(home, DAEMON_LOG_FILE);
+    await writeFile(log, "rerail daemon: the first found daemon's failure\n");
+    await holdHomeStarting(DEAD_PID, 0);
+    const second = DEAD_PID - 1;
+    const told: number[] = [];
+    const onWaiting = (pid: number): void => {
+      told.push(pid);
+      if (pid !== DEAD_PID) return;
+      // As the first exits, another process's daemon takes the home in its start and writes a notice past its record's place.
+      writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: second, starting: true, logOffset: statSync(log).size }));
+      appendFileSync(log, "rerail daemon: the second found daemon's notice\n");
+    };
+    // Each daemon runs until the start says it waits for it, and has exited from then on.
+    const kill = (pid: number): true => {
+      if (told.includes(pid)) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      return true;
+    };
+    const launched: number[] = [];
+    const machine = fakeMachine("linux", { kill, homeDaemonLockHeld: () => true, spawn: launchesOf(launched, () => undefined) });
+    await expect(startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting, ensureSqlite: noSqliteRepair }, { dev: true }, machine))
+      .rejects.toThrow(new Error(`Rerail daemon (pid ${second}) exited before it was ready:\nrerail daemon: the second found daemon's notice`));
+    expect(told).toEqual([DEAD_PID, second]);
+    expect(launched).toEqual([]);
+  });
+
   it("stops an unresponsive daemon that holds the home and clears its state file", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     let daemonPid: number | undefined;
