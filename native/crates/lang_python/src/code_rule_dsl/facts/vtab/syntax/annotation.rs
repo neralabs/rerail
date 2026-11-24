@@ -13,6 +13,7 @@
 //! `'A'`) is a node of its outer annotation's value: its row is made once that value is a document of the batch,
 //! found by its range in the value's text.
 
+use rerail_blocks::vector::Vector;
 use super::{Dialect, Document, Projected, Relation};
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::SubTree;
@@ -73,7 +74,7 @@ struct Nested {
 #[derive(Default)]
 pub(super) struct Annotations {
     string_annotation: bool,
-    hosts: Vec<i64>,
+    hosts: Vector<i64>,
     /// The nested string annotations of each string annotation (by its node), for its guest.
     nested: HashMap<i64, Vec<Nested>>,
     /// Each annotation guest of the batch: the node it stands at, and its string nodes by range in its text.
@@ -93,7 +94,7 @@ impl Annotations {
     pub(super) fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, python: bool) -> StoreResult<()> {
         let (true, true, Some(dialect)) = (self.string_annotation, python, dialect) else { return Ok(()) };
         // The string hosts of the projection, by range.
-        let f = &*p.facts;
+        let f = p.f();
         let by_range: ByRange = p
             .node_ids()
             .filter(|&(_, id, _)| HOSTS.contains(&dialect.name(f, id)))

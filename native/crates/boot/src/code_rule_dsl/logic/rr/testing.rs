@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::from_tape::{S, Stmt};
+use super::from_tape::{S, Statements, Stmt};
 use super::syntax::{self, Tok};
 
 /// One test of a file, its fixture sets merged in.
@@ -32,7 +32,7 @@ pub struct Test {
     /// The relations whose rules the test drops (`.given`): their rows are the test's facts.
     pub givens: Vec<(String, usize)>,
     /// The test's own declarations, clauses and facts.
-    pub rules: Vec<Stmt>,
+    pub rules: Statements,
     pub expects: Vec<Expect>,
 }
 
@@ -101,11 +101,11 @@ struct Block {
     fixtures: Vec<(String, Vec<u8>)>,
     calls: Vec<serde_json::Value>,
     givens: Vec<(String, usize)>,
-    rules: Vec<Stmt>,
+    rules: Statements,
     expects: Vec<Expect>,
 }
 
-fn block(path: &Path, items: Vec<Stmt>, test: bool) -> Result<Block, String> {
+fn block(path: &Path, items: Statements, test: bool) -> Result<Block, String> {
     let mut b = Block::default();
     for st in items {
         let at = st.line();
@@ -152,7 +152,7 @@ pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
     let mut out: Vec<Test> = Vec::new();
     for st in statements.iter().filter(|s| s.what() == Some(S::Test)) {
         let line = st.line();
-        let (name, exactly, uses, items) = block_of(path, st)?;
+        let (name, exactly, uses, items) = block_of(path, &st)?;
         if out.iter().any(|t| t.name == name) {
             return bad(path, line, format!("a second test named {name}"));
         }
@@ -162,10 +162,10 @@ pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
 }
 
 /// The file's fixture sets (`.fixtures name` … `.end`), by name.
-fn fixture_sets(path: &Path, statements: &[Stmt]) -> Result<BTreeMap<String, Block>, String> {
+fn fixture_sets(path: &Path, statements: &Statements) -> Result<BTreeMap<String, Block>, String> {
     let mut sets: BTreeMap<String, Block> = BTreeMap::new();
     for st in statements.iter().filter(|s| s.what() == Some(S::Fixtures)) {
-        let (name, _, _, items) = block_of(path, st)?;
+        let (name, _, _, items) = block_of(path, &st)?;
         if sets.insert(name.clone(), block(path, items, false)?).is_some() {
             return bad(path, st.line(), format!("a second fixture set named {name}"));
         }
@@ -174,7 +174,7 @@ fn fixture_sets(path: &Path, statements: &[Stmt]) -> Result<BTreeMap<String, Blo
 }
 
 /// A block's name, `exactly`, `uses` and statements: nodes of the file's tape, as its other statements are.
-fn block_of(path: &Path, st: &Stmt) -> Result<(String, bool, Vec<String>, Vec<Stmt>), String> {
+fn block_of(path: &Path, st: &Stmt) -> Result<(String, bool, Vec<String>, Statements), String> {
     let (t, n) = st.tape();
     t.block(n)
         .map(|(name, exactly, uses, body)| (name, exactly, uses, body.into_iter().map(|c| Stmt::at(st.file(), c)).collect()))
@@ -182,9 +182,9 @@ fn block_of(path: &Path, st: &Stmt) -> Result<(String, bool, Vec<String>, Vec<St
 }
 
 /// The test `name` (`exactly` or not) at `line`: its own block (`items`) after the fixture sets it uses.
-fn test(path: &Path, line: usize, (name, exactly): (String, bool), uses: &[String], items: Vec<Stmt>, sets: &BTreeMap<String, Block>) -> Result<Test, String> {
+fn test(path: &Path, line: usize, (name, exactly): (String, bool), uses: &[String], items: Statements, sets: &BTreeMap<String, Block>) -> Result<Test, String> {
     let own = block(path, items, true)?;
-    let mut test = Test { name, line, exactly, fixtures: Vec::new(), calls: Vec::new(), givens: Vec::new(), rules: Vec::new(), expects: Vec::new() };
+    let mut test = Test { name, line, exactly, fixtures: Vec::new(), calls: Vec::new(), givens: Vec::new(), rules: Statements::default(), expects: Vec::new() };
     for set in uses {
         let Some(b) = sets.get(set) else { return bad(path, line, format!("no fixture set named {set}")) };
         test.take(b.clone());
@@ -458,7 +458,7 @@ fn test_program(path: &Path, test: &Test, id: &str) -> Result<TestProgram, Strin
     let Some((_, statements)) = modules.iter_mut().find(|(p, _)| *p == own) else {
         return Err(format!("{}: not among its program's modules", path.display()));
     };
-    statements.extend(test.rules.iter().cloned());
+    statements.extend(test.rules.iter());
     let read = super::lower_files(path, modules).map_err(|e| format!("{id}: {e}"))?;
     let declared: BTreeSet<String> = read.declared_names().into_iter().collect();
     let mut program = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
@@ -485,7 +485,7 @@ fn check_givens(path: &Path, test: &Test, modules: &super::Files) -> Result<(), 
 fn drop_given_rules(test: &Test, modules: &mut super::Files) {
     let given: BTreeSet<&str> = test.givens.iter().map(|(r, _)| r.as_str()).collect();
     for (_, statements) in modules {
-        statements.retain(|s| !s.heads().iter().any(|h| given.contains(h)));
+        *statements = statements.filtered(|s| !s.heads().iter().any(|h| given.contains(h)));
     }
 }
 

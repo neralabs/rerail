@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::super::{
     CAPTURE, EMIT, ExecutionBackend, Program, SUPERTYPE, execute_with_backend,
     execute_with_backend_packed_result_limits, word,
@@ -8,7 +9,7 @@ use crate::code_rule_dsl::tape::{DERIVED_CLASS_BASE, Grammar, TapeDoc, TapeImage
 use std::sync::Arc;
 
 fn python_tape(source: &str) -> TapeDoc {
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -20,8 +21,8 @@ fn python_tape(source: &str) -> TapeDoc {
 /// of their words, has `captures` captures): every node, and the nodes with the first derived
 /// class.
 fn programs(tag: &str, captures: usize) -> Vec<Program> {
-    let program = |words: Vec<u32>| {
-        Program::new(words, vec![b"match".to_vec(), tag.as_bytes().to_vec()], Vec::new(), vec![0, 1], Vec::new())
+    let program = |words: Vector<u32>| {
+        Program::new(words, vec![b"match".to_vec(), tag.as_bytes().to_vec()], Vec::new(), rerail_blocks::vector![0, 1], rerail_blocks::vector::Vector::new())
             .expect("valid program")
     };
     let capture = std::iter::repeat_n(word(CAPTURE, 0, 0), captures);
@@ -32,12 +33,12 @@ fn programs(tag: &str, captures: usize) -> Vec<Program> {
 }
 
 /// Two tapes, each with one derived class on some of its nodes.
-fn tapes() -> (Vec<TapeDoc>, Vec<Vec<Vec<u32>>>) {
+fn tapes() -> (Vec<TapeDoc>, Vec<Vec<Vector<u32>>>) {
     let tapes = [("x = 1\n", [1_u32, 3]), ("def f(): pass\n", [0, 2])]
         .into_iter()
         .map(|(source, marked)| {
             let tape = python_tape(source);
-            let mut bits = vec![0_u64; tape.transducer_len().div_ceil(64)];
+            let mut bits = rerail_blocks::vector![0_u64; tape.transducer_len().div_ceil(64)];
             marked.iter().for_each(|&node| bits[node as usize / 64] |= 1 << (node % 64));
             tape.with_labels(Arc::new(vec![bits]))
         })

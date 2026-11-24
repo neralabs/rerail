@@ -18,6 +18,7 @@
 //! `calls` seed), nor where the verdict reads state the key does not hold: an unknown verdict
 //! pending, or a `parse`'s host being matched.
 
+use rerail_blocks::vector::Vector;
 use super::gap::ParentGaps;
 use super::nth_child::Siblings;
 use super::relation::WalkFilter;
@@ -42,7 +43,7 @@ use std::sync::Arc;
 #[derive(Clone, Eq, Hash, PartialEq)]
 enum Bound {
     Single(u32),
-    Multi(Box<[u32]>),
+    Multi(Vector<u32>),
     Text(Box<[u8]>),
 }
 
@@ -91,7 +92,7 @@ struct FileMemo {
     /// The file's nodes by kind, in preorder, listed on first use.
     kinds: Option<Arc<crate::code_rule_dsl::tape::KindPostings>>,
     /// The nodes passing each walk filter (by its address), in preorder.
-    postings: rustc_hash::FxHashMap<usize, Arc<[u32]>>,
+    postings: rustc_hash::FxHashMap<usize, Arc<Vector<u32>>>,
     /// `nthChild`'s counted siblings by counting term and parent (`siblings`).
     siblings: rustc_hash::FxHashMap<(usize, usize), Arc<Siblings>>,
     /// A node-local relation's answer to the end (`Related::chains`), by relation, node and
@@ -195,7 +196,7 @@ const POLL_INTERVAL: usize = 256;
 fn kind_index(tape: &TapeDoc) -> Option<Arc<crate::code_rule_dsl::tape::KindPostings>> {
     #[cfg(feature = "code-rule-profile")]
     let _span = crate::code_rule_dsl::profile::trace::Span::start("input-kind-index", "build");
-    let mut kinds = rustc_hash::FxHashMap::<u16, Vec<u32>>::default();
+    let mut kinds = rustc_hash::FxHashMap::<u16, Vector<u32>>::default();
     for ordinal in 0..tape.transducer_len() as u32 {
         if (ordinal as usize).is_multiple_of(POLL_INTERVAL) && budget::matcher_budget_exhausted() {
             return None;
@@ -213,16 +214,16 @@ fn kind_index(tape: &TapeDoc) -> Option<Arc<crate::code_rule_dsl::tape::KindPost
 /// deadline passed first.
 fn postings(
     filter: &WalkFilter,
-    index: &rustc_hash::FxHashMap<u16, Vec<u32>>,
+    index: &rustc_hash::FxHashMap<u16, Vector<u32>>,
     tape: &TapeDoc,
-) -> Option<Vec<u32>> {
+) -> Option<Vector<u32>> {
     let mut nodes = filter
         .kinds
         .iter()
         .filter_map(|kind| index.get(kind))
         .flatten()
         .copied()
-        .collect::<Vec<_>>();
+        .collect::<Vector<_>>();
     nodes.sort_unstable();
     let Some(needle) = &filter.needle else {
         return Some(nodes);
@@ -234,8 +235,8 @@ fn postings(
         .iter()
         .map(|&ordinal| tape.transducer_span(ordinal).len())
         .sum::<usize>();
-    let mut starts = rustc_hash::FxHashMap::<&str, Vec<u32>>::default();
-    let mut kept = Vec::new();
+    let mut starts = rustc_hash::FxHashMap::<&str, Vector<u32>>::default();
+    let mut kept = rerail_blocks::vector::Vector::new();
     for (index, &ordinal) in nodes.iter().enumerate() {
         if index.is_multiple_of(POLL_INTERVAL) && budget::matcher_budget_exhausted() {
             return None;
@@ -262,10 +263,10 @@ fn postings(
 }
 
 /// Where `literal` starts in `source`, overlapping occurrences included, in order.
-fn occurrences(source: &str, literal: &str) -> Vec<u32> {
+fn occurrences(source: &str, literal: &str) -> Vector<u32> {
     let finder = memchr::memmem::Finder::new(literal.as_bytes());
     let bytes = source.as_bytes();
-    let mut starts = Vec::new();
+    let mut starts = rerail_blocks::vector::Vector::new();
     let mut from = 0;
     while let Some(at) = bytes.get(from..).and_then(|rest| finder.find(rest)) {
         starts.push((from + at) as u32);
@@ -280,31 +281,31 @@ fn occurrences(source: &str, literal: &str) -> Vec<u32> {
 pub(super) fn nodes_of_kinds(
     file: &Root<TapeDoc>,
     kinds: &std::collections::BTreeSet<u16>,
-) -> Vec<u32> {
+) -> Vector<u32> {
     let tape = file.root().get_doc();
     // None of the kinds in the tape's presence (decision 0434 §4, step 6): no index is built to find none.
     if !kinds.iter().any(|&kind| tape.may_have_kind(kind)) {
-        return Vec::new();
+        return rerail_blocks::vector::Vector::new();
     }
-    let collect = |index: &rustc_hash::FxHashMap<u16, Vec<u32>>| {
+    let collect = |index: &rustc_hash::FxHashMap<u16, Vector<u32>>| {
         let mut nodes = kinds
             .iter()
             .filter_map(|kind| index.get(kind))
             .flatten()
             .copied()
-            .collect::<Vec<_>>();
+            .collect::<Vector<_>>();
         nodes.sort_unstable();
         nodes
     };
     let address = std::ptr::from_ref(file) as usize;
     MEMO.with_borrow_mut(|memo| {
         if memo.root != address {
-            return kind_index(tape).as_deref().map_or_else(Vec::new, collect);
+            return kind_index(tape).as_deref().map_or_else(Vector::new, collect);
         }
         if memo.kinds.is_none() {
             memo.kinds = kind_index(tape);
         }
-        memo.kinds.as_deref().map_or_else(Vec::new, collect)
+        memo.kinds.as_deref().map_or_else(Vector::new, collect)
     })
 }
 
@@ -338,7 +339,7 @@ pub fn bounded<'t, D: Doc>(
         if memo.kinds.is_none() {
             memo.kinds = kind_index(tape);
         }
-        let postings: Arc<[u32]> = postings(filter, memo.kinds.as_ref()?, tape)?.into();
+        let postings: Arc<Vector<u32>> = Arc::new(postings(filter, memo.kinds.as_ref()?, tape)?);
         memo.postings.insert(key, Arc::clone(&postings));
         Some(postings)
     });
@@ -672,9 +673,9 @@ pub(super) fn remember_answers(term: usize, three: bool, answers: &[(usize, Trut
 /// One parent's children by their class under an `eq` comparison (`EqClass`), each list in
 /// preorder, and whether classifying them spent steps.
 struct SameKeys {
-    children: Vec<u32>,
-    texts: rustc_hash::FxHashMap<Vec<u16>, Vec<u32>>,
-    unknown: Vec<u32>,
+    children: Vector<u32>,
+    texts: rustc_hash::FxHashMap<Vec<u16>, Vector<u32>>,
+    unknown: Vector<u32>,
     spent: bool,
 }
 
@@ -682,9 +683,9 @@ impl SameKeys {
     fn classify(comparison: &Comparison, parent: &Node<'_, TapeDoc>) -> Self {
         let steps = utility_steps_left();
         let mut keys = Self {
-            children: Vec::new(),
+            children: rerail_blocks::vector::Vector::new(),
             texts: rustc_hash::FxHashMap::default(),
-            unknown: Vec::new(),
+            unknown: rerail_blocks::vector::Vector::new(),
             spent: false,
         };
         for child in parent.children() {

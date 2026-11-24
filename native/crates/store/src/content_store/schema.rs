@@ -570,6 +570,9 @@ impl ContentStore {
                         for table in RETIRED_TABLES.iter().filter(|t| present.contains(&("table".to_owned(), (**t).to_owned()))) {
                             transaction.execute_batch(&format!("DROP TABLE {table}"))?;
                         }
+                        for (table, column) in retired_columns(&transaction)? {
+                            transaction.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column}"))?;
+                        }
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                         }
@@ -767,7 +770,7 @@ fn unhook_scope_manifests(t: &Connection) -> StoreResult<()> {
 #[cfg(test)]
 fn holds_retired(connection: &Connection) -> StoreResult<bool> {
     let present: HashSet<(String, String)> = schema_object_names(connection)?.into_iter().collect();
-    Ok(retired_in(&present))
+    Ok(retired_in(&present) || !retired_columns(connection)?.is_empty())
 }
 
 /// Whether the store's objects (`present`) hold a table of `RETIRED_TABLES`.
@@ -808,6 +811,27 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("file_documents", "at_start", "INTEGER"),
     ("file_documents", "at_end", "INTEGER"),
 ];
+
+/// Columns SCHEMA's tables no longer have, dropped from a store that has them when it is opened (`ALTER TABLE …
+/// DROP COLUMN`), as `RETIRED_TABLES` are. Dropping one raises no floor: an older binary adds it again
+/// (`ADDED_COLUMNS`), its rows' values NULL, and this build drops it again at its next open.
+///
+/// - `file_documents.extents`: a guest node's extent is read from its span and its source map where it is asked
+///   (`SegmentMap::extent`), never stored.
+const RETIRED_COLUMNS: &[(&str, &str)] = &[("file_documents", "extents")];
+
+/// The `RETIRED_COLUMNS` a store's tables still have.
+fn retired_columns(connection: &Connection) -> StoreResult<Vec<&'static (&'static str, &'static str)>> {
+    let mut present = Vec::new();
+    for retired in RETIRED_COLUMNS {
+        let (table, column) = retired;
+        let columns: i64 = connection.query_row("SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2", rusqlite::params![table, column], |r| r.get(0))?;
+        if columns > 0 {
+            present.push(retired);
+        }
+    }
+    Ok(present)
+}
 
 /// The `ADDED_COLUMNS` a store's tables lack (of the tables it has). One statement: every column of the tables
 /// they name, read through `pragma_table_info` beside the schema's tables. A statement for each column read the

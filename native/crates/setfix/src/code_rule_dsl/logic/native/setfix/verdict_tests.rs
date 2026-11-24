@@ -1,4 +1,5 @@
 //! The CPU's text tests read and keep their verdicts in the store's rolling cache (decision 0478 step 2d, R3).
+use rerail_blocks::vector::Vector;
 use super::*;
 
 fn hex(s: &str) -> String {
@@ -31,7 +32,7 @@ fn a_cpu_text_test_reads_and_keeps_its_verdicts_in_the_stores_cache() {
     open(&db, &spec).unwrap();
     run(&db, "cpu_text", 0).unwrap();
     close(&db, "cpu_text").unwrap();
-    let mut got: Vec<i64> = db.prepare("SELECT c1 FROM temp.h0").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+    let mut got: Vector<i64> = db.prepare("SELECT c1 FROM temp.h0").unwrap().query_map([], |r| r.get::<_, i64>(0)).unwrap().map(Result::unwrap).collect();
     got.sort_unstable();
     assert_eq!(got, [1, 2, 4], "foo1, foo2, and zzz by the verdict the cache held");
     use crate::content_store::atoms::{FAILS, PASSES};

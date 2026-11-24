@@ -1,7 +1,7 @@
 # 0372: One loop, as the lean lexer's
 
-Status: decided (the user, 2026-11-17: "go to one loop if it's closer to lean"). Replaces 0349.
-Follows 0362 and 0367.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-17: "go to one loop if it's closer to lean"). Replaces
+0349. Follows 0362 and 0367.
 
 ## Intro
 

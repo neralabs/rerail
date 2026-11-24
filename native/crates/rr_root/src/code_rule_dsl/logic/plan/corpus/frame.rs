@@ -53,7 +53,7 @@ pub fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
 #[derive(Clone, Default)]
 pub struct Frame {
     pub reads: Vec<(String, String, String)>,
-    pub plans: Vec<[u8; 32]>,
+    pub plans: rerail_blocks::vector::Vector<[u8; 32]>,
     pub summary: Vec<u8>,
     pub image: Vec<u8>,
     pub then: Option<[u8; 32]>,
@@ -121,7 +121,7 @@ pub fn get(store: &ContentStore, key: &[u8; 32]) -> Option<Frame> {
         return None;
     }
     image.truncate(size);
-    Some(Frame { reads: ordered(reads), plans: ordered(plans), summary: summary?, image, then })
+    Some(Frame { reads: ordered(reads), plans: ordered(plans).into_iter().collect(), summary: summary?, image, then })
 }
 
 /// Rows read with their places, in their relation's order.

@@ -21,7 +21,7 @@
     }
 
     fn python_tape(source: &str) -> TapeDoc {
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
         let image = TapeImage::parse(&grammar, &source, &|| false)
             .expect("parser completed")
@@ -39,8 +39,8 @@
             ],
             vec![python_tape("one\n"), python_tape("two\n")],
             vec![
-                vec![vec![0], vec![0], vec![0]],
-                vec![vec![0], Vec::new(), Vec::new()],
+                vec![rerail_blocks::vector![0], rerail_blocks::vector![0], rerail_blocks::vector![0]],
+                vec![rerail_blocks::vector![0], rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new()],
             ],
             vec![vec![true, true, true], vec![true, true, false]],
             vec![u32::MAX, u32::MAX, u32::MAX],
@@ -73,7 +73,7 @@
 
     #[test]
     fn sparse_task_grid_rejects_roots_for_an_excluded_file_producer_pair() {
-        let source = Arc::new("value\n".to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from("value\n"));
         let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
         let image = TapeImage::parse(&grammar, &source, &|| false)
             .expect("parser completed")
@@ -84,7 +84,7 @@
             ExecutionBackend::CpuJit,
             vec![Program::compile_universe().expect("verified universe")],
             vec![tape],
-            vec![vec![vec![0]]],
+            vec![vec![rerail_blocks::vector![0]]],
             vec![vec![false]],
             vec![u32::MAX],
         );

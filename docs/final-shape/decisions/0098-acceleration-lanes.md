@@ -1,6 +1,8 @@
 # 0098: Accelerating relational work: forms first, then four lanes (CPU, SME, GPU, Neural Engine)
 
-Status: draft (2026-11-09). It extends 0095. The executor, the four lanes and the first engine forms are built ("Built", below).
+Status: partly built (audited 2026-11-23). Left: step 1's data-layer profile at scale and step 6c (library facts held
+once on the Neural Engine) not shown built. Draft (2026-11-09). It extends 0095. The executor, the four lanes and the
+first engine forms are built ("Built", below).
 
 ## Intro
 

@@ -16,6 +16,7 @@
 //! its source rule's literal and its renames, written through the builder (`RuleBuilder::lit_with`), so a rule is
 //! written from several rules with no tree.
 
+use rerail_blocks::vector::Vector;
 use super::super::{ALTERNATIVES, FileLocal, UNFOLD, close_under};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
@@ -86,7 +87,7 @@ impl Rewrite for Renames<'_> {
 /// `Narrower` over the version.
 struct Narrower<'a> {
     v: &'a Version,
-    same: &'a BTreeMap<String, Vec<usize>>,
+    same: &'a BTreeMap<String, Vector<usize>>,
     local: &'a BTreeSet<String>,
     fresh: std::cell::Cell<usize>,
 }
@@ -355,8 +356,8 @@ impl ProgramPass for RequestsFileLocal {
         // each rule written with its head and the input rules it came from, so the request record follows
         // (`front::carried_record`, as the tree's `set_rules_from`).
         let mut seen: HashMap<String, usize> = HashMap::new();
-        let mut written: Vec<(String, Vec<usize>)> = Vec::new();
-        fn first(seen: &mut HashMap<String, usize>, written: &mut Vec<(String, Vec<usize>)>, key: String, head: &str, at: usize) -> bool {
+        let mut written: Vec<(String, Vector<usize>)> = Vec::new();
+        fn first(seen: &mut HashMap<String, usize>, written: &mut Vec<(String, Vector<usize>)>, key: String, head: &str, at: usize) -> bool {
             match seen.get(&key) {
                 Some(&k) => {
                     written[k].1.push(at);
@@ -364,7 +365,7 @@ impl ProgramPass for RequestsFileLocal {
                 }
                 None => {
                     seen.insert(key, written.len());
-                    written.push((head.to_owned(), vec![at]));
+                    written.push((head.to_owned(), rerail_blocks::vector![at]));
                     true
                 }
             }
@@ -375,7 +376,7 @@ impl ProgramPass for RequestsFileLocal {
             match made {
                 Made::Keep => {
                     if !request {
-                        written.push((head.to_owned(), vec![at]));
+                        written.push((head.to_owned(), rerail_blocks::vector![at]));
                         b.keep(&input, rule);
                     } else if first(&mut seen, &mut written, format!("{} :- {}", head_shown(rule), shown(&own(rule))), head, at) {
                         b.keep(&input, rule);

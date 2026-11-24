@@ -1,7 +1,7 @@
 # 0292. Phase 1's fixpoint off one thread: a walk that makes atoms walks in morsels, a load's chunks evaluate at once, and a node read goes with its document's join
 
-Status: decided (2026-11-15). Builds on 0278 §4 and 0279 §7 (morsels), 0254 (chunks at once), 0109 (long-text twins),
-0286 (a node's attribute asked within its document). Measured in notes/t40's follow-up.
+Status: built (audited 2026-11-23). Decided (2026-11-15). Builds on 0278 §4 and 0279 §7 (morsels), 0254 (chunks at
+once), 0109 (long-text twins), 0286 (a node's attribute asked within its document). Measured in notes/t40's follow-up.
 
 ## Intro
 

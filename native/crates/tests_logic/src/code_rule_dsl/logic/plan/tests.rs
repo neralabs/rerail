@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::rr::parse_version;
 use crate::code_rule_dsl::logic::rr::parse_version as parse;
@@ -100,6 +101,46 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[0],outputs[1]);
     assert_eq!(outputs[1]["repeated"],[["1","0"],["2","0"],["3","0"],["4","0"]]);
     assert_eq!(outputs[1]["result"],[["1","99","3","17","3","7"],["2","99","1","-2","-2","-2"],["4","99","3","9223372036854775807","-1","9223372036854775807"]]);
+}
+
+/// t52 step 3: a filter of one relation every row of which passes is that relation (`filter_of`): held as its rows
+/// under its own name, not derived (hiding's narrow twins in a run with no annotation document). Where a row fails,
+/// it is derived as before. Either way its rows are SQL's.
+#[test]
+fn a_filter_every_row_passes_is_read_as_its_relation() {
+    let p = parse_version(".decl x(a:number,b:number)\nx(1,2).\nx(3,4).\n.decl d(a:number,b:number)\nd(a,b) :- x(a,b).\n.decl all_in(a:number,b:number)\nall_in(a,b) :- d(a,b), a < 10.\n.decl some_in(a:number,b:number)\nsome_in(a,b) :- d(a,b), a < 2.\n.output all_in\n.output some_in\n").unwrap();
+    struct Off;
+    impl Drop for Off {
+        fn drop(&mut self) {
+            crate::code_rule_dsl::logic::profile::set(false);
+        }
+    }
+    let _one = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let _off = Off;
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        crate::code_rule_dsl::logic::profile::set(true);
+        crate::code_rule_dsl::logic::profile::reset();
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).unwrap(), BTreeSet::new(), modes).unwrap();
+        let bound: Vec<String> = crate::code_rule_dsl::logic::profile::decisions().into_keys().filter(|(t, _)| t.starts_with("filters every row passes")).map(|(_, x)| x).collect();
+        if modes.is_empty() {
+            assert!(bound.is_empty(), "SQL derives every filter: {bound:?}");
+        } else {
+            assert!(bound.iter().any(|x| x.contains("all_in as d")), "the filter every row passes is d: {bound:?}");
+            assert!(!bound.iter().any(|x| x.contains("some_in")), "a filter a row fails is derived: {bound:?}");
+        }
+        outputs.push(got.shown().clone());
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1]["all_in"], [["1", "2"], ["3", "4"]]);
+    assert_eq!(outputs[1]["some_in"], [["1", "2"]]);
 }
 
 /// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
@@ -418,7 +459,7 @@ fn front_of(v: Arc<Version>) -> Arc<Version> {
 
 /// `p` lowered for `dialect` with `nearest` read from the transducer (`preparation::Nearest`), as the corpus run
 /// reads it: the program, and the relations the run makes, each with its set's kind atoms.
-fn lowered_with_nearest(p: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> (lower::Lowered, Vec<(String, Vec<i64>)>) {
+fn lowered_with_nearest(p: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vector<u32>>) -> (lower::Lowered, Vec<(String, Vector<i64>)>) {
     let (v, mut domains, ops) = lower::lower_version(p, dialect, intern).unwrap();
     let mut pipeline = Pipeline::new("nearest", v);
     let mut nearest = crate::code_rule_dsl::logic::plan::corpus::preparation::Nearest::default();
@@ -704,7 +745,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
             );
             for (rel, rows) in &expected.shown() {
                 if got.get(rel) != Some(rows) {
-                    failures.push(format!("{name} {pass} {rel}: {} rows, run_atoms {}", got.get(rel).map_or(0, Vec::len), rows.len()));
+                    failures.push(format!("{name} {pass} {rel}: {} rows, run_atoms {}", got.get(rel).map_or(0, |v| v.len()), rows.len()));
                 }
             }
             first.get_or_insert(sql);
@@ -970,7 +1011,7 @@ fn typed_corpus_reads_declarations_and_dependency_summaries() {
     let x = rusqlite::Connection::open(dir.join("out-app/cross.sqlite")).unwrap();
     let nodes: i64 = x.query_row("SELECT count(*) FROM node_type", [], |r| r.get(0)).unwrap();
     assert_eq!(nodes as usize, r.typing.typed_nodes);
-    let unions: Vec<i64> = x.prepare("SELECT t.arity FROM node_type n JOIN type_term t USING (tid) WHERE t.ctor = 1").unwrap().query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+    let unions: Vector<i64> = x.prepare("SELECT t.arity FROM node_type n JOIN type_term t USING (tid) WHERE t.ctor = 1").unwrap().query_map([], |r| r.get::<_, i64>(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
     assert_eq!(r.typing.typed_nodes, 6);
     assert_eq!(unions, vec![2, 2]);
 
@@ -1404,7 +1445,7 @@ found(x, i, a, b, c) :- s(x), match_all("(?<c>x+)", x, i, a, b).
         ran.unwrap();
         declined
     };
-    assert!(!declined.keys().any(|k| ["rr_dfs", "rr_mall", "hit", "hm", "found"].iter().any(|r| k.contains(r))), "{declined:?}");
+    assert!(!declined.keys().any(|k| ["rr_dfs", "hit", "hm", "found"].iter().any(|r| k.contains(r)) || crate::code_rule_dsl::logic::rr::lower::holds_helper(k, &["mall"])), "{declined:?}");
     assert_eq!(got["hit"], [["10", "30", "1"], ["20", "30", "5"], ["40", "30", "2"]]);
     assert_eq!(got["hm"], [["10", "30", "1"], ["40", "30", "2"]]);
     let found = |row: [&str; 5]| got["found"].contains(&row.map(str::to_owned).to_vec());
@@ -2150,7 +2191,7 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
     model.stats.nodes = 450_000.0;
     // Live counts, as a wave leaves them: rows, then distinct values by column.
     for (rel, rows, ndv) in [
@@ -2173,6 +2214,56 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// Decision 0658: a relation being solved whose values all come from one column outside it is a sample of that
+/// column's values, and a probe by them hits where that column's do. `runs_at_import`'s shape: its values are
+/// `run_scope`'s first column's (every node with a scope), and its delta rule probes `run_scope` by its second (the
+/// scopes). Priced as every binding hitting, the delta rule was 7.8 M rows for a few hundred, and the device's tables
+/// were sized for them.
+#[test]
+fn a_solved_relations_column_is_priced_by_the_column_its_values_come_from() {
+    let p = parse_version(
+        ".decl rs(n:number, s:number, k:number)\n.decl late(n:number)\n.decl ri(n:number)\n\
+         ri(n) :- rs(n, _, 1), !late(n).\n\
+         ri(n) :- rs(n, s, k), k != 1, ri(s), !late(n).\n.output ri\n",
+    )
+    .unwrap();
+    let vs = body::Versions::of_placed(body::Placed::whole(p.clone()));
+    let keys: Vec<body::RuleKey> = body::Versions::keys(0, p.rules().count()).collect();
+    let comps = crate::code_rule_dsl::logic::front::Components::of_names([["ri"]]);
+    let scc = comps.get(0).expect("the component");
+    let sources = column_sources(&vs, scc, &keys);
+    assert_eq!(sources.get(&("ri".to_owned(), 0)), Some(&("rs".to_owned(), 0)), "ri's values are rs's first column's: {sources:?}");
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
+    model.stats.nodes = 450_000.0;
+    // Every node with a scope, 4,000 scopes of 5 kinds; 2,000 nodes run at import so far.
+    for (rel, rows, ndv) in [("rs", 400_000.0, vec![400_000.0, 4_000.0, 5.0]), ("late", 10.0, vec![10.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    model.stats.card.insert("ri", 2_000.0);
+    model.stats.delta_rows.insert("ri", 2_000.0);
+    let r = 1usize;
+    // The delta rule, led by `ri(s)`: the third literal.
+    let mut plan = |sources: Sources| {
+        model.stats.solve(rerail_section::TextSet::of(scc.iter()));
+        model.stats.sourced(sources);
+        let ((_, work, rows), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(2)).unwrap();
+        (work, rows)
+    };
+    let (work, rows) = plan(Sources::new());
+    let (sourced_work, sourced_rows) = plan(sources);
+    // Each of the 2,000 bindings hits a scope's 100 nodes: 200,000 rows priced. Drawn from all 400,000 nodes, one in a
+    // hundred is a scope: 2,000.
+    assert!(rows > 100_000.0, "unsourced, every binding hits: {rows} rows, {work} work");
+    assert!(sourced_rows < rows / 50.0, "sourced, a binding hits as rs's first column's values do: {sourced_rows} rows against {rows}");
+    assert!(sourced_work < work / 10.0, "{sourced_work} work against {work}");
+}
+
 /// A relation whose rows are measured and its columns' distinct values are not holds no more distinct values than
 /// rows: a probe of it by a binding drawn from many values mostly misses. ep2's import edit: a finding of one row,
 /// `p49_ASYNC100($n, _)`, priced as keeping every binding, was probed after four old versions' reads of 4,672 moved
@@ -2188,7 +2279,7 @@ fn finding_place_model() -> (Arc<Version>, Model) {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
     model.stats.nodes = 427_658.0;
     for (rel, rows, ndv) in [
         ("line", 556_028.0, vec![556_028.0, 7_379.0]),
@@ -2246,7 +2337,7 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     let p = parse_version(".decl delta(k:number,a:number,t:number,f:number)\n.decl expand(o:number,t:number,k:number)\n.decl restrict(c:number,o:number,a:number)\n.input restrict\n.decl result(c:number,f:number)\nresult(c,f) :- restrict(c,o,a), expand(o,1,k), delta(k,a,2,f).\n.output result\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv, fan) in [
         ("delta",526.0,vec![526.0,173.0,1.0,526.0],vec![1.0,5.0,526.0,1.0]),
         ("expand",201_000.0,vec![10000.0,4.0,1878.0],vec![30.0,100000.0,200.0]),
@@ -2279,11 +2370,11 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     // A tiny delta can have fewer names than the input yet no matching names. Distinct counts alone cannot
     // detect this. Changing only the values must invalidate the plan even at fixed counts and fanouts.
     model.ndv.insert(("delta",1),1.0);
-    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(10),526)]));
-    model.stats.dfreq.insert(("restrict",2),HashMap::from([(Constant::Int(10),450)]));
+    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(10),526)]).into_iter().collect()));
+    model.stats.dfreq.insert(("restrict",2),std::sync::Arc::new(HashMap::from([(Constant::Int(10),450)]).into_iter().collect()));
     let ((overlap,_,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(2)).unwrap();
     assert_eq!(overlap.iter().filter_map(|s| rel_at(&p, r, s.at)).collect::<Vec<_>>(),["delta","expand","restrict"]);
-    model.stats.dfreq.insert(("delta",1),HashMap::from([(Constant::Int(11),526)]));
+    model.stats.dfreq.insert(("delta",1),std::sync::Arc::new(HashMap::from([(Constant::Int(11),526)]).into_iter().collect()));
     assert_eq!(model.delta_misses(&body::nth(&p, r),Some(2)),[0]);
     let ((disjoint,work,_),_)=model.plan_rule_live(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),Some(2)).unwrap();
     assert_eq!(disjoint.iter().filter_map(|s| rel_at(&p, r, s.at)).collect::<Vec<_>>(),["delta","restrict","expand"]);
@@ -2293,10 +2384,10 @@ fn a_delta_probe_prices_restrictive_external_inputs_by_the_values_they_can_hit()
     // A partial SQL constant memo does not prove absence. Complete native postings do.
     model.stats.dfreq.remove(&("restrict",2));
     let col=model.col("restrict",2);
-    model.stats.col.insert(("restrict".into(),col.clone()),[450,2,0,0]);
-    model.stats.memo.insert("restrict".into(),HashMap::from([((col.clone(),Constant::Int(10)),225)]));
+    model.stats.col.insert("restrict",&col,[450,2,0,0]);
+    model.stats.memo.extend("restrict",&col,[(Constant::Int(10),225)]);
     assert!(model.delta_misses(&body::nth(&p, r),Some(2)).is_empty());
-    model.stats.memo.get_mut("restrict").unwrap().insert((col,Constant::Int(12)),225);
+    model.stats.memo.extend("restrict",&col,[(Constant::Int(12),225)]);
     assert_eq!(model.delta_misses(&body::nth(&p, r),Some(2)),[0]);
 }
 
@@ -2306,7 +2397,7 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
     let p = parse_version(".decl kind(n:number,k:number)\n.decl scope(n:number,f:number)\n.decl child(p:number,c:number,i:number)\n.input kind\n.input scope\n.input child\n.decl result(f:number,r:number)\nresult(f,r) :- kind(rs,1), child(rs,r,0), scope(rs,f), kind(f,2).\n.output result\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv, fan) in [
         ("kind",300_000.0,vec![300_000.0,100.0],vec![1.0,6000.0]),
         ("scope",160_836.0,vec![160_836.0,2181.0],vec![1.0,100.0]),
@@ -2318,9 +2409,8 @@ fn filtered_binding_domains_do_not_underprice_expansion_from_function_scopes() {
             model.stats.fan.insert((rel,c),fan);
         }
     }
-    Arc::make_mut(&mut model.stats.kfreq).insert("1".into(),2063);
-    Arc::make_mut(&mut model.stats.kfreq).insert("2".into(),2181);
-    model.stats.dfreq.insert(("child",2),HashMap::from([(Constant::Int(0),60_000)]));
+    model.stats.tree = super::tree_stats::TreeStats::of([("1".to_owned(), 2063, None), ("2".to_owned(), 2181, None)], []);
+    model.stats.dfreq.insert(("child",2),std::sync::Arc::new(HashMap::from([(Constant::Int(0),60_000)]).into_iter().collect()));
     // The stated rule (the parse may give others first).
     let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "result").expect("the result rule");
     let b = body::nth(&p, r);
@@ -2350,7 +2440,7 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
     .unwrap();
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
     model.stats.nodes = 450_000.0;
     // Live counts, as the replay's step left them: rows, then by column distinct values and skew-weighted fanout.
     for (rel, rows, cols) in [
@@ -2366,8 +2456,8 @@ fn a_hot_constant_is_priced_by_its_share_of_the_rows() {
         }
     }
     let values = |v: &[(i64, i64)]| v.iter().map(|&(k, n)| (Constant::Int(k), n)).collect::<HashMap<_, _>>();
-    model.stats.dfreq.insert(("pv".to_owned(), 1), values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)]));
-    model.stats.dfreq.insert(("fv".to_owned(), 2), values(&[(193, 570), (1, 100), (2, 25)]));
+    model.stats.dfreq.insert(("pv".to_owned(), 1), std::sync::Arc::new(values(&[(218, 12_373), (202, 9_000), (156, 4_000), (1, 1_000), (2, 1_000), (3, 1_000), (4, 145)]).into_iter().collect()));
+    model.stats.dfreq.insert(("fv".to_owned(), 2), std::sync::Arc::new(values(&[(193, 570), (1, 100), (2, 25)]).into_iter().collect()));
     model.stats.solve(["pv", "fv", "ifn"].into_iter().map(str::to_owned).collect());
     let r = 0usize;
     let ((order, _, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(2)).unwrap();
@@ -2483,7 +2573,7 @@ fn a_gate_is_joined_once_its_key_is_bound() {
     p = b.finish().unwrap().0;
     let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.iter().collect() };
     for (rel, rows) in [("dir", 400.0), ("done_n_b", 1.0), ("n", 10.0), ("k", 10_000.0)] {
         model.stats.card.insert(rel, rows);
     }
@@ -2500,7 +2590,7 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let p = parse_version(".decl walk(n:number,x:number,s:number)\n.decl bound(s:number,x:number)\n.decl changed(s:number,k:number)\n.decl out(n:number,x:number,s:number)\nout(n,x,s) :- walk(n,x,s), !bound(s,x), changed(s,1).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv) in [("walk",71976.0,vec![50000.0,10000.0,1000.0]),("bound",40000.0,vec![1000.0,10000.0]),("changed",7000.0,vec![7000.0,20.0])] {
         model.stats.card.insert(rel,rows);
         for (c,n) in ndv.into_iter().enumerate() {
@@ -2515,7 +2605,7 @@ fn changed_scope_demands_precede_walk_and_seed_caches_notice_constant_frequencie
     let _plans=KeepPlans::start();
     // Unknown delta distribution first, then an exact zero for the constant, at identical row counts.
     let ((_,before,_),_) = model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
-    model.stats.memo.insert("changed".into(),HashMap::from([((super::sql_col("changed",1),Constant::Int(1)),0)]));
+    model.stats.memo.extend("changed",&super::sql_col("changed",1),[(Constant::Int(1),0)]);
     let ((order,work,_),_)=model.plan_rule_reused(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r),None).unwrap();
     assert_eq!(rel_at(&p, r, order[0].at).unwrap(),"changed", "the seed must not retain the old full-walk scan");
     // Zero postings make the plan cheaper than the one made before they were known. (It was under 10 when a
@@ -2536,7 +2626,7 @@ fn a_relation_empty_when_planned_does_not_make_a_cross_product_free() {
     let p = parse_version(".decl e(x:number)\n.decl big(y:number)\n.decl link(x:number,y:number)\n.decl out(x:number,y:number)\nout(x,y) :- e(x), big(y), link(x,y).\n.output out\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     // `rel_base`'s sizes: `rr_ast_1_1` empty (no rows, so no fanout), `pkg` 40 rows, `docof` 90,100 keyed by its node.
     for (rel, rows, ndv) in [("e", 0.0, vec![1.0]), ("big", 40.0, vec![40.0]), ("link", 90_100.0, vec![90_100.0, 40.0])] {
         model.stats.card.insert(rel, rows);
@@ -2566,7 +2656,7 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
     let p = parse_version(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     let size = |model: &mut Model, roles: f64, fragments: i64| {
         for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", roles, vec![roles, 4.0])] {
             model.stats.card.insert(rel, rows);
@@ -2578,7 +2668,7 @@ fn a_constant_counted_none_when_planned_is_growth_when_it_has_rows() {
         // Under the column's name as the model reads it (`Model::col`: `c1`, `doc_role` being no input), so that the
         // count is the one the search prices.
         let role = model.col("doc_role", 1);
-        model.stats.memo.insert("doc_role".into(), HashMap::from([((role, Constant::Int(7)), fragments)]));
+        model.stats.memo.extend("doc_role", &role, [(Constant::Int(7), fragments)]);
     };
     model.stats.nodes = 300_000.0;
     let r = 0usize;
@@ -2606,7 +2696,7 @@ fn a_kept_plan_whose_line_ran_far_over_its_price_is_not_reused_at_it() {
     let p = parse(".decl a(x: number, y: number)\n.decl c(y: number)\n.decl r(x: number)\nr(x) :- a(x, y), c(y).\n.output r\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv) in [("a", 1_000_000.0, vec![1_000_000.0, 100_000.0]), ("c", 1_000.0, vec![1_000.0])] {
         model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
@@ -2639,7 +2729,7 @@ fn a_recheck_is_priced_with_its_head_bound_and_kept_apart() {
     let p = parse(".decl a(x: number, y: number)\n.decl c(y: number)\n.decl r(x: number)\nr(x) :- a(x, y), c(y).\n.output r\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv) in [("a", 1_000_000.0, vec![1_000_000.0, 100_000.0]), ("c", 10.0, vec![10.0])] {
         model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
@@ -2679,7 +2769,7 @@ fn a_cross_product_after_a_relation_empty_when_planned_is_not_free() {
     let p = parse_version(".decl ann_str(s: node)\n.decl doc_role(d: number, r: number)\n.decl frag_str(s: node)\nfrag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, 7).\n.output frag_str\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv) in [("ann_str", 100_000.0, vec![100_000.0]), ("doc_role", 0.0, vec![0.0, 0.0])] {
         model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {
@@ -2702,7 +2792,7 @@ fn a_filter_is_priced_at_the_rows_it_passes_on() {
     let p = parse_version(".decl a(x: number)\n.decl r(x: number)\nr(x) :- a(x), x != 3, x < 6917529027641081856.\n.output r\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     model.stats.card.insert("a", 1_000.0);
     model.ndv.insert(("a", 0), 1_000.0);
     model.stats.fan.insert(("a", 0), 1.0);
@@ -2718,7 +2808,7 @@ fn a_filter_is_priced_at_the_rows_it_passes_on() {
 fn bare_model(p: &Arc<Version>) -> Model {
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()}
+    Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()}
 }
 
 /// `(order shown, work)` of `p`'s first rule.
@@ -2790,8 +2880,7 @@ fn within_read_from_its_container_is_priced_by_subtree_size() {
     let p = parse_version(".decl c(t: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- c(t), within(n, t).\n.output r\n").unwrap();
     let mut model = bare_model(&p);
     // 1,000 leaves and 10 nodes of 50.
-    model.stats.size = std::sync::Arc::new(HashMap::from([("1".to_owned(), 1.0), ("2".to_owned(), 50.0)]));
-    model.stats.kfreq = std::sync::Arc::new([("1".to_owned(), 1_000), ("2".to_owned(), 10)].into_iter().collect());
+    model.stats.tree = super::tree_stats::TreeStats::of([("1".to_owned(), 1_000, Some(1_000)), ("2".to_owned(), 10, Some(500))], []);
     model.stats.nodes = 1_010.0;
     assert_eq!(model.stats.subtree_fan(), Some(50.0));
     model.stats.card.insert("c", 10.0);
@@ -2816,8 +2905,7 @@ fn within_read_from_a_part_is_priced_by_its_parents_size() {
     let p = parse(src).unwrap();
     let mut model = bare_model(&p);
     // 10 functions of 400 nodes, 2,000 nodes of 3: a node with children is about 5 nodes.
-    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("x".to_owned(), 3.0)]));
-    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.tree = super::tree_stats::TreeStats::of([("fdef".to_owned(), 10, Some(4_000)), ("x".to_owned(), 2_000, Some(6_000))], []);
     model.stats.nodes = 6_010.0;
     assert!(model.stats.subtree_fan().is_some_and(|f| f < 6.0));
     let (order, work) = priced_first_rule(&model, &p);
@@ -2837,17 +2925,17 @@ fn within_read_from_a_fields_part_is_priced_by_that_fields_children() {
     };
     let p = parse(&rule("parameters")).unwrap();
     let mut model = bare_model(&p);
-    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("block".to_owned(), 380.0), ("parameters".to_owned(), 4.0), ("x".to_owned(), 3.0)]));
-    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("block".to_owned(), 10), ("parameters".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    // Each kind's nodes and summed subtree sizes: a function 400 nodes, its block 380, its parameters 4, an `x` 3.
+    model.stats.tree = super::tree_stats::TreeStats::of([("fdef".to_owned(), 10, Some(4_000)), ("block".to_owned(), 10, Some(3_800)), ("parameters".to_owned(), 10, Some(40)), ("x".to_owned(), 2_000, Some(6_000))], []);
     model.stats.nodes = 6_030.0;
     model.stats.fielded([
         ("fdef".to_owned(), "block".to_owned(), "body".to_owned(), 10.0),
         ("fdef".to_owned(), "parameters".to_owned(), "parameters".to_owned(), 10.0),
     ]);
     // A function's parameters are their kind's size, its body its block's: not the function's 400 either.
-    assert_eq!(model.stats.fields.part_size("fdef", "parameters", &model.stats.size), Some(4.0));
-    assert_eq!(model.stats.fields.part_size("fdef", "body", &model.stats.size), Some(380.0));
-    assert_eq!(model.stats.fields.part_size("fdef", "name", &model.stats.size), None, "no such edges: the parent's size");
+    assert_eq!(model.stats.fields.part_size("fdef", "parameters", &model.stats.tree), Some(4.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "body", &model.stats.tree), Some(380.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "name", &model.stats.tree), None, "no such edges: the parent's size");
     let (order, work) = priced_first_rule(&model, &p);
     assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
     // Each function's parameters' descendants: 10 × 4, not 10 × 400.
@@ -2878,11 +2966,11 @@ fn a_relation_of_facts_is_sized_when_planned() {
 fn a_kind_bound_by_counted_values_reads_their_nodes() {
     let p = parse_version(".decl ck(k: number)\n.decl kind(n: number, k: number)\n.decl r(c: number)\nr(c) :- ck(k), kind(c, k).\n.output r\n").unwrap();
     let mut model = bare_model(&p);
-    model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 10), ("6".to_owned(), 30), ("7".to_owned(), 10_000)].into_iter().collect());
+    model.stats.tree = super::tree_stats::TreeStats::of([("5".to_owned(), 10, None), ("6".to_owned(), 30, None), ("7".to_owned(), 10_000, None)], []);
     model.stats.card.insert("ck", 2.0);
     model.ndv.insert(("ck", 0), 2.0);
     model.stats.fan.insert(("ck", 0), 1.0);
-    model.stats.dfreq.insert(("ck".to_owned(), 0), HashMap::from([(Constant::Int(5), 1), (Constant::Int(6), 1)]));
+    model.stats.dfreq.insert(("ck".to_owned(), 0), std::sync::Arc::new(HashMap::from([(Constant::Int(5), 1), (Constant::Int(6), 1)]).into_iter().collect()));
     model.stats.card.insert("kind", 10_040.0);
     let (order, work) = priced_first_rule(&model, &p);
     assert_eq!(order, ["ck($k)", "kind($c, $k)"]);
@@ -2898,7 +2986,7 @@ fn a_kind_bound_by_counted_values_reads_their_nodes() {
 fn a_variable_bound_to_a_constant_does_not_connect_a_step() {
     let p = parse(".decl t(s: number)\n.decl kind(n: number, k: number)\n.decl child(p: number, c: number)\n.decl text(n: number, s: number)\n.decl r(m: number)\nr(m) :- t(s), k = 5, kind(m, k), child(m, n), text(n, s).\n.output r\n").unwrap();
     let mut model = bare_model(&p);
-    model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 3), ("6".to_owned(), 9_997)].into_iter().collect());
+    model.stats.tree = super::tree_stats::TreeStats::of([("5".to_owned(), 3, None), ("6".to_owned(), 9_997, None)], []);
     model.stats.nodes = 10_000.0;
     for (rel, rows, cols) in [("t", 2.0, vec![(2.0, 1.0)]), ("kind", 10_000.0, vec![(10_000.0, 1.0), (2.0, 5_000.0)]),
                               ("child", 10_000.0, vec![(5_000.0, 2.0), (10_000.0, 1.0)]), ("text", 4_500.0, vec![(4_500.0, 1.0), (1_125.0, 4.0)])] {
@@ -2923,11 +3011,11 @@ fn a_kind_after_a_field_is_priced_by_the_fields_children() {
     let p = parse_version(".decl field(p: number, f: number, c: number)\n.decl kind(n: number, k: number)\n.decl r(c: number)\nr(c) :- field(p, 7, c), kind(c, 5).\n.output r\n").unwrap();
     let model = |fielded: bool| {
         let mut model = bare_model(&p);
-        model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 100), ("6".to_owned(), 9_900)].into_iter().collect());
+        model.stats.tree = super::tree_stats::TreeStats::of([("5".to_owned(), 100, None), ("6".to_owned(), 9_900, None)], []);
         model.stats.nodes = 10_000.0;
         model.stats.card.insert("kind", 10_000.0);
         model.stats.card.insert("field", 1_000.0);
-        model.stats.dfreq.insert(("field".to_owned(), 1), HashMap::from([(Constant::Int(7), 100), (Constant::Int(8), 900)]));
+        model.stats.dfreq.insert(("field".to_owned(), 1), std::sync::Arc::new(HashMap::from([(Constant::Int(7), 100), (Constant::Int(8), 900)]).into_iter().collect()));
         if fielded {
             model.stats.fielded([("6", "5", "7", 100.0), ("6", "6", "8", 900.0)].map(|(p, c, f, n)| (p.to_owned(), c.to_owned(), f.to_owned(), n)));
         }
@@ -2962,7 +3050,7 @@ fn a_lookup_of_a_relation_being_solved_is_priced_by_the_distinct_prior() {
         model.stats.fan.insert(("d", 0), 1.0);
         model.stats.card.insert("w", 4_000.0);
         if solving {
-            model.stats.solving.insert("w".to_owned());
+            model.stats.solving = model.stats.solving.with(["w"]);
         }
         model
     };
@@ -3061,7 +3149,7 @@ fn a_cross_products_pairs_are_not_priced_a_combinations_rows() {
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse_version(".decl a(x:number,y:number)\n").unwrap();
     let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
-    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))],keys:Vec::new(),counts:Vec::new()};
+    let sample=|key| LiveRel {n:10,delta:2,ndv:rerail_blocks::vector![10,1],sq:rerail_blocks::vector![10,100],freq:vec![(1,std::sync::Arc::new([(Constant::Int(key),10)].into_iter().collect::<table::Freq>()))],keys:Vec::new(),counts:Vec::new()};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
     assert_eq!(live_stats(&mut model,"a",sample(2)),vec![2],"equal counts and fanouts with new keys must invalidate");
@@ -3070,12 +3158,13 @@ fn live_statistics_invalidate_only_changed_distribution_slots() {
 #[test]
 fn projection_statistics_keep_demanded_constants_only_when_rows_are_preserved() {
     let p=parse_version(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl filtered(n:number,k:number)\nfiltered(n,k) :- raw(1,n,k).\n.decl kinds(k:number)\nkinds(k) :- raw(_,_,k).\n").unwrap();
-    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Arc::new(p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect::<HashSet<String>>())};
+    let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: p.rules().map(|r| p.rel_name(r.head().rel())).collect()};
     model.stats.card.insert("raw",7000.0);
     for (c,n) in [10.0,7000.0,20.0].into_iter().enumerate() {
         model.ndv.insert(("raw",c),n); model.stats.fan.insert(("raw",c),7000.0/n);
     }
-    model.stats.memo.insert("raw".into(),HashMap::from([(("c0".into(),Constant::Int(1)),100),(("c2".into(),Constant::Int(9)),12)]));
+    model.stats.memo.extend("raw","c0",[(Constant::Int(1),100)]);
+    model.stats.memo.extend("raw","c2",[(Constant::Int(9),12)]);
     for k in 0..p.rules().count() { let b = body::nth(&p, k); model.view_stats(b.rel(b.head()), &b); }
     assert_eq!(model.stats.const_freq("tags","c1",&Constant::Int(9)),Some(12));
     assert_eq!(model.stats.const_freq("filtered","c1",&Constant::Int(9)),None,"filtered marginal counts are not exact");
@@ -3095,7 +3184,7 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     model.stats.card.insert("a",210.0); watch.record(0,0,&model,"a");
     assert!(watch.take(0),"small changes accumulate against the last published size");
     for key in [1,2] {
-        model.stats.dfreq.insert(("a",0),HashMap::from([(Constant::Int(key),210)]));
+        model.stats.dfreq.insert(("a",0),std::sync::Arc::new(HashMap::from([(Constant::Int(key),210)]).into_iter().collect()));
         watch.record(0,1,&model,"a");
         assert!(watch.take(0),"new key domains publish even at identical row counts");
     }
@@ -3142,7 +3231,7 @@ fn child_ordinal_lookup_is_unique_despite_hot_marginal_statistics() {
     model.ndv.insert(("child",1),10000.0);
     model.ndv.insert(("child",2),100.0);
     model.stats.fan.insert(("child",0),100.0);
-    model.stats.memo.insert("child".into(),HashMap::from([(("idx".into(),Constant::Int(0)),9000)]));
+    model.stats.memo.extend("child","idx",[(Constant::Int(0),9000)]);
     let (order,work,rows) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0),None).unwrap();
     assert_eq!(rel_at(&p, 0, order[0].at).unwrap(),"parents");
     assert!(rows<=100.0 && work<=400.0,"a parent/ordinal lookup has at most one result: {rows} rows, {work} work");
@@ -3231,10 +3320,10 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
     let rule = ".decl pv(a:number,k:number,v:number)\n.decl posarg(c:number,i:number,a:number)\n.decl cfn(c:number,e:number,f:number)\n\
         .decl retparam(f:number,i:number,x:number)\n.input pv, posarg, cfn, retparam\n.decl out(c:number,k:number,v:number)\n.output out\n\
         out(c, k, v) :- pv(a, k, v), posarg(c, i, a), cfn(c, _, f), retparam(f, i, _).\n";
-    let model_for = |p: &Arc<Version>, sized: &[(&str, f64, Vec<f64>)]| {
+    let model_for = |p: &Arc<Version>, sized: &[(&str, f64, Vector<f64>)]| {
         let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
         let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-        let mut model = Model { shapes: shapes_of(&body::Placed::whole(p.clone()).fields().unwrap()), docs_by_shift:false, analysis:Default::default(), stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof:Default::default(), view_src:Default::default(), inputs:inputs.into(), derived:derived.into() };
+        let mut model = Model { shapes: super::ShapeSource::of(&body::Placed::whole(p.clone())), docs_by_shift:false, analysis:Default::default(), stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof:Default::default(), view_src:Default::default(), inputs:inputs.into(), derived:derived.iter().collect() };
         for (rel, rows, ndv) in sized {
             model.stats.card.insert(*rel, *rows);
             for (c, n) in ndv.iter().enumerate() {
@@ -3245,8 +3334,8 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
         model.stats.nodes = 300000.0;
         model
     };
-    let sizes = vec![("pv", 1000.0, vec![1000.0, 50.0, 500.0]), ("posarg", 100000.0, vec![50000.0, 5.0, 100.0]), ("cfn", 50000.0, vec![50000.0, 100.0, 2000.0]), ("retparam", 2.0, vec![2.0, 2.0, 2.0])];
-    let order_of = |text: &str, sized: &[(&str, f64, Vec<f64>)], head: Option<&str>, first: Option<usize>| -> Vec<String> {
+    let sizes = vec![("pv", 1000.0, rerail_blocks::vector![1000.0, 50.0, 500.0]), ("posarg", 100000.0, rerail_blocks::vector![50000.0, 5.0, 100.0]), ("cfn", 50000.0, rerail_blocks::vector![50000.0, 100.0, 2000.0]), ("retparam", 2.0, rerail_blocks::vector![2.0, 2.0, 2.0])];
+    let order_of = |text: &str, sized: &[(&str, f64, Vector<f64>)], head: Option<&str>, first: Option<usize>| -> Vec<String> {
         let mut p = parse_version(text).unwrap();
         if let Some(h) = head {
             // A delta's form of the rule: its head renamed as maintenance names it.
@@ -3304,7 +3393,7 @@ fn a_join_shape_directive_holds_a_join_back_in_its_rule() {
     let err = format!("{:?}", parse_version(".shape retparam bound f\n").unwrap_err());
     assert!(err.contains("follows no rule"), "{err}");
     // No directive, `pv`'s delta driving, and `posarg` unsized: no cross product priced against its default.
-    let no_posarg: Vec<(&str, f64, Vec<f64>)> = sizes.iter().filter(|s| s.0 != "posarg").cloned().collect();
+    let no_posarg: Vec<(&str, f64, Vector<f64>)> = sizes.iter().filter(|s| s.0 != "posarg").cloned().collect();
     let guarded = order_of(rule, &no_posarg, None, Some(0));
     assert!(at(&guarded, "retparam") > at(&guarded, "posarg"), "{guarded:?}");
 }
@@ -3442,7 +3531,7 @@ fn a_demanded_rule_is_driven_by_its_demand() {
 fn the_searchs_own_steps_are_the_records_features() {
     struct NoPrice;
     impl joins::Pricer for NoPrice {
-        fn price(&self, _: &[joins::Choice]) -> Option<Vec<Vec<f64>>> {
+        fn price(&self, _: &[joins::Choice]) -> Option<Vec<Vector<f64>>> {
             None
         }
     }
@@ -3450,7 +3539,7 @@ fn the_searchs_own_steps_are_the_records_features() {
     let p = parse(".decl delta(k:number,a:number,t:number,f:number)\n.decl expand(o:number,t:number,k:number)\n.decl restrict(c:number,o:number,a:number)\n.input restrict\n.decl result(c:number,f:number)\nresult(c,f) :- restrict(c,o,a), expand(o,1,k), delta(k,a,2,f), c != f.\n.output result\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv, fan) in [
         ("delta",526.0,vec![526.0,173.0,1.0,526.0],vec![1.0,5.0,526.0,1.0]),
         ("expand",201_000.0,vec![10000.0,4.0,1878.0],vec![30.0,100000.0,200.0]),
@@ -3533,7 +3622,7 @@ fn a_layout_prices_the_columns_its_facts_answer() {
     use crate::code_rule_dsl::logic::program_image::manager::Analysis as _;
     let rows = s.rows(&v).expect("rows");
     assert_eq!(shapes::Shapes::of_rows(&v, &rows).as_ref(), Some(&*s));
-    assert!(!s.1.is_empty(), "o's facts were inferred from what its rule reads");
+    assert!(!s.inferred().is_empty(), "o's facts were inferred from what its rule reads");
 }
 
 /// A column's values (`values(c, …)`, decision 0361 item 5): the documents and kinds by the run's counts, a share of
@@ -3579,7 +3668,7 @@ fn a_base_relations_answered_columns_are_not_counted() {
     let s = shapes::Shapes::of_version(&v);
     let n = shapes::Counts { docs: Some(5.0), kinds: Some(3.0) };
     let names: Vec<String> = ["d", "n", "kind", "start", "end_"].iter().map(|c| (*c).to_owned()).collect();
-    let values = vec![vec![0, 0, 0, 1, 1, 1], vec![1, 2, 3, 4, 5, 6], vec![7, 8, 9, 7, 8, 9], vec![0, 0, 5, 5, 9, 9], vec![1, 2, 3, 4, 5, 6]];
+    let values = vec![rerail_blocks::vector![0, 0, 0, 1, 1, 1], rerail_blocks::vector![1, 2, 3, 4, 5, 6], rerail_blocks::vector![7, 8, 9, 7, 8, 9], rerail_blocks::vector![0, 0, 5, 5, 9, 9], rerail_blocks::vector![1, 2, 3, 4, 5, 6]];
     // A source that keeps no statistics of its own (a held one counts every column when asked).
     let source = crate::code_rule_dsl::logic::plan::corpus::unmeasured_rows(names, values);
     let got = crate::code_rule_dsl::logic::plan::corpus::sampled_statistics_unanswered("node2", &source, &s, n);
@@ -3707,7 +3796,7 @@ fn a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics() {
     let mut model = make_plan(&placed, &db, inputs).unwrap();
     let k = bodies_by_head(&placed).into_iter().find(|(h, _)| h == "o").unwrap().1;
     let b = placed.body(k);
-    assert!(model.stats.shapes.0.contains_key("child2"));
+    assert!(model.stats.shapes.facts("child2").is_some());
     // `o(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, "x")`, run as kind2(p, "x"), child2 (`p` bound: `few`, at
     // most 16 a probe), kind2(c, k) (`c` bound: its key).
     let order = [Step { at: 2, mode: None }, Step { at: 0, mode: None }, Step { at: 1, mode: None }];
@@ -3718,16 +3807,17 @@ fn a_fan_out_the_rows_break_leaves_its_relation_to_the_statistics() {
     // 10 children a parent: within `few`. 200 a parent, over 40 parents: too few probes to tell.
     assert!(!model.layout_broken(&b, &order, &[(0, 100), (100, 1_000), (1_000, 1_000)]));
     assert!(!model.layout_broken(&b, &order, &[(0, 40), (40, 8_000), (8_000, 8_000)]));
-    assert!(model.stats.shapes.0.contains_key("child2"));
+    assert!(model.stats.shapes.facts("child2").is_some());
     // 200 a parent over 100 parents: past 8 times 16.
     assert!(model.layout_broken(&b, &order, &[(0, 100), (100, 20_000), (20_000, 20_000)]));
     let broken = shapes::run_broken().facts();
     assert_eq!(broken.len(), 1, "{broken:?}");
     assert!(broken["child2"].contains("fanout"), "{broken:?}");
-    assert!(!model.stats.shapes.0.contains_key("child2") && model.stats.shapes.left_out("child2"));
-    assert!(model.stats.shapes.0.contains_key("kind2"), "kind2's facts hold");
-    for (rel, from) in &model.stats.shapes.1 {
-        if from.contains("child2") {
+    assert!(!model.stats.shapes.facts("child2").is_some() && model.stats.shapes.left_out("child2"));
+    assert!(model.stats.shapes.facts("kind2").is_some(), "kind2's facts hold");
+    for i in model.stats.shapes.inferred().iter() {
+        let rel = i.rel.as_str();
+        if i.from.iter().any(|f| f.as_str() == "child2") {
             assert!(model.stats.shapes.left_out(rel), "{rel}'s facts were inferred from child2's");
         }
     }
@@ -3927,7 +4017,7 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
     let p = parse(".decl ctx(a:number,b:number,p:number)\n.decl src(p:number,l:number,s:number)\n.decl at(p:number,l:number)\n.input ctx, src, at\n.decl line(p:number,l:number,s:number)\nline(p,l,s) :- src(p,l,s).\n.decl h(a:number,b:number,p:number)\nh(a,b,p) :- ctx(a,b,p), line(p,l,_), !at(p,l), l > a, l < b.\n.output h\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv) in [
         ("ctx", 25_425.0, vec![212.0, 330.0, 2.0]),
         ("line", 6_027.0, vec![9.0, 3_535.0, 6_027.0]),
@@ -3959,7 +4049,7 @@ fn a_probe_by_two_columns_crossed_in_is_not_a_row_a_pair() {
     let p = parse(".decl tk(t:number)\n.decl un(c:number,m:number)\n.decl ch(p:number,c:number,i:number)\n.decl lit(m:number)\n.input tk, un, ch, lit\n.decl ot(t:number)\not(t) :- tk(t), un(c,m), !lit(m), ch(t,c,_).\n.output ot\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv) in [
         ("tk", 198.0, vec![198.0]),
         ("un", 64_447.0, vec![64_447.0, 64_000.0]),
@@ -4035,7 +4125,7 @@ fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
     let p = parse_version(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl c(z:number,w:number)\n.decl out(x:number,w:number)\nout(x,w) :- a(x,y), b(y,z), c(z,w).\n.output out\n").unwrap();
     let derived: HashSet<String> = ["a", "b", "c", "out"].into_iter().map(str::to_owned).collect();
     let work = |keys: Option<(Keys, Keys)>| {
-        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.iter().collect()};
         for (rel, rows, ndv, fan) in [("a", 10_000.0, [10_000.0, 1_000.0], [1.0, 10.0]), ("b", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0]), ("c", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0])] {
             model.stats.card.insert(rel, rows);
             for (c, (ndv, fan)) in ndv.into_iter().zip(fan).enumerate() {
@@ -4066,11 +4156,11 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
     let p = parse_version(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl out(x:number,z:number)\nout(x,z) :- a(x,y), b(y,z).\n.output out\n").unwrap();
     let derived: HashSet<String> = ["a", "b", "out"].into_iter().map(str::to_owned).collect();
     // `a.y`: 1,000 rows of each of 5 keys and 5,000 of one each; `b.y`: 100 of each of the 5, and 500 others.
-    let ay: Vec<i64> = (0..5_000).map(|i| i % 5).chain(1_000..6_000).collect();
-    let by: Vec<i64> = (0..500).map(|i| i % 5).chain(10_000..10_500).collect();
+    let ay: Vector<i64> = (0..5_000).map(|i| i % 5).chain(1_000..6_000).collect();
+    let by: Vector<i64> = (0..500).map(|i| i % 5).chain(10_000..10_500).collect();
     let joined = 5.0 * 1_000.0 * 100.0;
     let last = |counts: bool| {
-        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.iter().collect()};
         for (rel, ys, y) in [("a", &ay, 1), ("b", &by, 0)] {
             let c = JoinCounts::of(ys.iter().copied());
             model.stats.card.insert(rel, c.rows);
@@ -4095,11 +4185,34 @@ fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
 /// 233 targets through both `unparen` scans unjoined (69,690 rows each a target), priced at 461 work, and ran past
 /// 100 s on 300 files; probed by `child` first, a target reads a few rows.
 #[test]
+fn a_probe_by_a_cross_products_two_sides_is_not_one_combinations_rows() {
+    // `rr_narrow_tp_list($tp)`'s shape on hogql: the head bound after `tp`, a node of one kind (671) and one of another
+    // (2,437) drawn apart. `child` by both is a pair it seldom holds, not a combination's rows: led from `ty`, the
+    // cross product read 1.68 M rows of work where `child` by `$t` reads 52 K.
+    let p = parse_version(".decl tp(t:number)\n.decl ty(y:number)\n.decl child(p:number,c:number,i:number)\n.input tp, ty, child\n.decl h(t:number)\nh(t) :- tp(t), ty(y), child(t,y,_).\n.output h\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
+    for (rel, rows, ndv) in [("tp", 671.0, vec![671.0]), ("ty", 2_437.0, vec![2_437.0]), ("child", 71_876.0, vec![24_000.0, 71_876.0, 100.0])] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "h").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<_> = order.iter().filter_map(|s| b.atom(s.at)).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["tp", "child", "ty"], "work={work}");
+}
+
+#[test]
 fn a_cross_product_past_a_bound_head_is_not_priced_as_one_witness() {
     let p = parse_version(".decl tgt(t:number)\n.decl child(p:number,c:number,i:number)\n.decl unparen(e:number,t:number)\n.input tgt, child, unparen\n.decl h(t:number)\nh(t) :- tgt(t), child(t,k0,i), child(t,v0,j), unparen(k0,k), unparen(v0,v).\n.output h\n").unwrap();
     let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
     let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
-    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.iter().collect()};
     for (rel, rows, ndv) in [("tgt", 233.0, vec![233.0]), ("child", 69_650.0, vec![23_217.0, 69_650.0, 103.0]), ("unparen", 69_690.0, vec![69_690.0, 69_690.0])] {
         model.stats.card.insert(rel, rows);
         for (c, n) in ndv.into_iter().enumerate() {

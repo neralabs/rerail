@@ -23,7 +23,7 @@ fn production_entry_preserves_the_outer_budget_and_fails_past_it() {
     let image =
         TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let doc =
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
     let anchors = vec![vec![(0..doc.transducer_len() as u32).collect()]];
     let program = Program::compile_tree_sitter_query_pattern(
         "(identifier) @name",

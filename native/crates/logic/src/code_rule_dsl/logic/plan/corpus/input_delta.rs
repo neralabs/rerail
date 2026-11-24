@@ -2,6 +2,7 @@
 //! edit is its rows now but the changed documents', then the rows those documents had (`Before`), each read where it
 //! lies; the rows the changed documents own are found through the input's own index (`rows_of_documents`).
 
+use rerail_blocks::vector::Vector;
 use super::memo::Content;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,9 +13,9 @@ pub(in crate::code_rule_dsl) type Docs = HashMap<String, (Content, i64)>;
 /// Rows of `now` that `docs` own, ascending: through `now`'s own index of its first column, a document key (`d`) or a
 /// node id (`key << 32 | …`), where it has one; else (`None`) the caller reads `now` through. Decision 0458: an
 /// edit reads its changed documents' rows, not every row.
-pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Source, docs: &std::collections::BTreeSet<i64>) -> Option<Vec<u32>> {
+pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Source, docs: &std::collections::BTreeSet<i64>) -> Option<Vector<u32>> {
     let first = now.columns().into_iter().next()?;
-    let mut rows: Vec<u32> = Vec::new();
+    let mut rows: Vector<u32> = rerail_blocks::vector::Vector::new();
     if first == "d" {
         if !now.indexed(0) {
             return None;
@@ -38,13 +39,13 @@ pub(super) fn rows_of_documents(now: &dyn crate::code_rule_dsl::facts::vtab::Sou
 /// batch of their old documents). No row is copied.
 pub(super) struct Before {
     now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>,
-    skip: Vec<u32>,
+    skip: Vector<u32>,
     was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>,
     kept: std::sync::OnceLock<usize>,
 }
 
 impl Before {
-    pub(super) fn new(now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, skip: Vec<u32>, was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> Before {
+    pub(super) fn new(now: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, skip: Vector<u32>, was: Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>) -> Before {
         Before { now, skip, was, kept: std::sync::OnceLock::new() }
     }
 
@@ -86,13 +87,16 @@ impl crate::code_rule_dsl::facts::vtab::Source for Before {
     fn lookup_cost(&self, column: usize) -> f64 {
         self.now.lookup_cost(column)
     }
+    fn scan_cost(&self) -> f64 {
+        self.now.scan_cost()
+    }
     fn indexed(&self, column: usize) -> bool {
         self.now.indexed(column)
     }
     /// The corpus batch's lookup, the changed documents' rows dropped, then the old documents' rows: by their own
     /// lookup, else read (they are the changed documents' alone).
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
-        let mut out: Vec<usize> = self.now.lookup(column, values)?.into_iter().filter_map(|id| self.before_row(id)).collect();
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
+        let mut out: rerail_blocks::vector::Vector<usize> = self.now.lookup(column, values)?.into_iter().filter_map(|id| self.before_row(id)).collect();
         if let Some(was) = &self.was {
             match was.lookup(column, values) {
                 Some(ids) => out.extend(ids.into_iter().map(|r| r + self.kept())),
@@ -120,18 +124,18 @@ mod before_tests {
     /// The old version reads the rows now that the changed documents do not own, in order, then their old rows.
     #[test]
     fn before_reads_the_kept_rows_then_the_old_documents_rows() {
-        let col = |v: Vec<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["n".to_owned()], vec![Some(v)]);
-        let now = col(vec![10, 11, 12, 13, 14, 15]);
-        let was = col(vec![99, 98]);
-        let before = Before::new(now, vec![0, 2, 3], Some(was));
-        let rows: Vec<i64> = (0..before.len()).map(|r| before.value(r, 0)).collect();
+        let col = |v: rerail_blocks::vector::Vector<i64>| crate::code_rule_dsl::logic::native::component::columns_source(vec!["n".to_owned()], vec![Some(v)]);
+        let now = col(rerail_blocks::vector![10, 11, 12, 13, 14, 15]);
+        let was = col(rerail_blocks::vector![99, 98]);
+        let before = Before::new(now, rerail_blocks::vector![0, 2, 3], Some(was));
+        let rows: rerail_blocks::vector::Vector<i64> = (0..before.len()).map(|r| before.value(r, 0)).collect();
         assert_eq!(rows, vec![11, 14, 15, 99, 98]);
         // Looked up, the same rows by their place in the old version.
         for v in [10, 11, 14, 99, 7] {
-            let want: Vec<usize> = (0..before.len()).filter(|&r| before.value(r, 0) == v).collect();
+            let want: rerail_blocks::vector::Vector<usize> = (0..before.len()).filter(|&r| before.value(r, 0) == v).collect();
             assert_eq!(before.lookup(0, &[v]).expect("the rows now are looked up"), want, "{v}");
         }
-        let none = Before::new(col(vec![1, 2]), vec![], None);
+        let none = Before::new(col(rerail_blocks::vector![1, 2]), rerail_blocks::vector![], None);
         assert_eq!((0..none.len()).map(|r| none.value(r, 0)).collect::<Vec<_>>(), vec![1, 2]);
         let _ = Arc::new(none);
     }

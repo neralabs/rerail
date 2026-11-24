@@ -1,5 +1,6 @@
 //! The SME lane against the reference (`crate::cpu::run`), exactly, on random shapes.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::exec::{Batch, Executor, Launch, process_cpu};
 
@@ -32,7 +33,7 @@ fn sme() -> Option<Sme> {
 /// Random rows of `width` bits, each bit set with chance `1 / 2^sparsity`, built a word at a time.
 fn rows(rng: &mut Rng, rows: usize, width: usize, sparsity: u32) -> Bits {
     let words = width.div_ceil(64);
-    let mut data = vec![0u64; rows * words];
+    let mut data = rerail_blocks::vector![0u64; rows * words];
     for r in 0..rows {
         for w in 0..words {
             let mut x = !0u64;
@@ -91,7 +92,7 @@ fn thresholds_many_shapes() {
         let (a, b) = (rows(&mut rng, n, width, 1), rows(&mut rng, m, width, sb));
         // Thresholds around the expected count, with some zeros (every pair) and some unreachable.
         let mid = (width / 8).max(1) as u64;
-        let min: Vec<u32> = (0..m)
+        let min: Vector<u32> = (0..m)
             .map(|j| match (t + j) % 9 {
                 0 => 0,
                 1 => u32::MAX,
@@ -103,7 +104,7 @@ fn thresholds_many_shapes() {
     }
     // The semi-join: every threshold 1, on sparse rows.
     let (a, b) = (rows(&mut rng, 37, 200, 4), rows(&mut rng, 23, 200, 4));
-    check(&s, &[Kernel::BitProduct { a, b, min: Some(vec![1; 23].into()) }]);
+    check(&s, &[Kernel::BitProduct { a, b, min: Some(rerail_blocks::vector![1; 23].into()) }]);
 }
 
 #[test]
@@ -113,7 +114,7 @@ fn self_product_writes_both_triangles() {
     for &(n, words) in &[(1, 1), (31, 4), (32, 205), (97, 205), (130, 17)] {
         let a = rows(&mut rng, n, words * 64, 1);
         // The same buffer on both sides: the symmetric path. And with thresholds: the full path.
-        let min: Vec<u32> = (0..n).map(|j| (j % 40) as u32 * words as u32).collect();
+        let min: Vector<u32> = (0..n).map(|j| (j % 40) as u32 * words as u32).collect();
         check(&s, &[Kernel::BitProduct { a: a.clone(), b: a.clone(), min: None }, Kernel::BitProduct { a: a.clone(), b: a, min: Some(min.into()) }]);
     }
 }
@@ -127,7 +128,7 @@ fn a_batch_is_one_submission() {
     for t in 0..9 {
         let n = 1 + rng.below(100) as usize;
         let a = rows(&mut rng, n, 3000, 2);
-        let min = (t % 2 == 0).then(|| (0..70).map(|j| (j % 30) as u32).collect::<Vec<u32>>().into());
+        let min = (t % 2 == 0).then(|| (0..70).map(|j| (j % 30) as u32).collect::<Vector<u32>>().into());
         ks.push(Kernel::BitProduct { a, b: shared.clone(), min });
     }
     check(&s, &ks);
@@ -140,14 +141,14 @@ fn degenerate_shapes() {
     let a = rows(&mut rng, 5, 70, 1);
     let ks = [
         Kernel::BitProduct { a: Bits::zeros(0, 2), b: a.clone(), min: None },
-        Kernel::BitProduct { a: a.clone(), b: Bits::zeros(0, 2), min: Some(Vec::new().into()) },
+        Kernel::BitProduct { a: a.clone(), b: Bits::zeros(0, 2), min: Some(rerail_blocks::vector::Vector::new().into()) },
         Kernel::BitProduct { a: Bits::zeros(3, 0), b: Bits::zeros(4, 0), min: None },
-        Kernel::BitProduct { a: Bits::zeros(3, 0), b: Bits::zeros(4, 0), min: Some(vec![0, 1, 0, 2].into()) },
-        Kernel::BitProduct { a: Bits::zeros(3, 2), b: a, min: Some(vec![0, 1, 0, 2, 0].into()) },
+        Kernel::BitProduct { a: Bits::zeros(3, 0), b: Bits::zeros(4, 0), min: Some(rerail_blocks::vector![0, 1, 0, 2].into()) },
+        Kernel::BitProduct { a: Bits::zeros(3, 2), b: a, min: Some(rerail_blocks::vector![0, 1, 0, 2, 0].into()) },
     ];
     check(&s, &ks);
     assert!(!s.can(&Kernel::BitProduct { a: Bits::zeros(1, 1), b: Bits::zeros(1, 2), min: None }));
-    assert!(!s.can(&Kernel::Histogram { off: vec![0, 0].into(), codes: Vec::new().into(), width: 1 }));
+    assert!(!s.can(&Kernel::Histogram { off: rerail_blocks::vector![0, 0].into(), codes: rerail_blocks::vector::Vector::new().into(), width: 1 }));
 }
 
 #[test]
@@ -175,7 +176,7 @@ fn timing_w5_shape() {
     let Some(s) = sme() else { return };
     let mut rng = Rng(0x55);
     let a = rows(&mut rng, 2048, 205 * 64, 3);
-    let b = Bits::new(2048, 205, a.data.to_vec());
+    let b = Bits::new(2048, 205, rerail_blocks::vector::Vector::from(&a.data[..]));
     let units = Kernel::BitProduct { a: a.clone(), b: a.clone(), min: None }.units();
     let time = |ks: &[Kernel], label: &str| {
         let refs: Vec<&Kernel> = ks.iter().collect();
@@ -203,7 +204,7 @@ fn timing_w5_shape() {
     time(&[Kernel::BitProduct { a: a.clone(), b: b.clone(), min: None }], "W5 full product, counts");
     // Thresholds around the mean count (205 at this density): about half the pairs, then a few.
     for m in [205, 260] {
-        let min: Arc<[u32]> = vec![m; 2048].into();
+        let min: Arc<rerail_blocks::vector::Vector<u32>> = rerail_blocks::vector![m; 2048].into();
         let k = Kernel::BitProduct { a: a.clone(), b: b.clone(), min: Some(min.clone()) };
         let Output::Pairs(p) = &s.run(&[&k]).unwrap().0[0] else { unreachable!() };
         time(&[Kernel::BitProduct { a: a.clone(), b: b.clone(), min: Some(min) }], &format!("W5 full product, pairs (min {m}: {} pairs)", p.len()));

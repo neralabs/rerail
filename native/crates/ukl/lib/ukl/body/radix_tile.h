@@ -3,7 +3,7 @@
 // - `UKL_RADIX_NAME(f)`: the instance's name of each function `f` (`f##_u32`, ...);
 // - `UKL_RADIX_KEY`: the key type;
 // - optionally `UKL_RADIX_SPACE`: the address space of the rows, the histograms and the offsets (`UKL_GLOBAL`;
-//   `UKL_COHERENT` where other threadgroups of the dispatch wrote them, as a persistent grid's passes do, ukl/grid.h).
+//   `UKL_COHERENT` where other threadgroups of the dispatch wrote them, as a program's stages do, ukl/stages.h).
 // They are undefined at the end. Not `#pragma once`.
 
 #if !defined(UKL_RADIX_NAME) || !defined(UKL_RADIX_KEY)

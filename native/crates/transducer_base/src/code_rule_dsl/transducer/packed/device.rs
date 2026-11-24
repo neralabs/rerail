@@ -5,6 +5,7 @@
 //! The backends stay data (`ExecutionBackend`, `Backend::MetalInterpreter`, `RanOn`): a backend with no device to
 //! run it is refused (`Error::UnsupportedBackend`, decision 0382). The product's own choice of backend, where no device
 //! is registered, is the CPU's (`execute_production_corpus`): no device is not an error.
+use rerail_blocks::vector::Vector;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -24,7 +25,7 @@ pub enum Engine {
 #[derive(Clone, Copy)]
 pub enum ClauseRoots<'r> {
     /// Per clause, per tape, the listed nodes (document-local, ascending).
-    Listed(&'r [Vec<Vec<u32>>]),
+    Listed(&'r [Vec<Vector<u32>>]),
     /// Per clause, per tape, whether the clause runs there: its roots are then its domain's nodes, a rule the device
     /// reads at each node's code (decision 0293 §10: the host lists none).
     Rule(&'r [Vec<bool>]),
@@ -58,9 +59,9 @@ pub trait MatcherDevice: Send + Sync {
     }
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
     /// The batch with each task held to `budget` (decision 0334).
-    fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error>;
+    fn execute_packed(&self, engine: Engine, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vector<u32>>], result_limits: Option<&[u32]>, budget: super::Budget) -> Result<PackedExecution, Error>;
     /// The batch's outcomes on `backend` (one of the device's: `MetalInterpreter` or `MetalJit`).
-    fn execute_outcomes(&self, backend: ExecutionBackend, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error>;
+    fn execute_outcomes(&self, backend: ExecutionBackend, programs: &[Program], files: &[TapeDoc], anchors: &[Vec<Vector<u32>>]) -> Result<BatchOutcome, Error>;
     /// The production programs compiled, so the first batch need not wait for them.
     fn warm(&self, programs: &[Program]) -> Result<(), Error>;
     /// Whether the batch's compiled programs are ready.
@@ -82,10 +83,10 @@ pub trait MatcherDevice: Send + Sync {
     /// `Ok(None)`: a program form the device lacks (the cores run them), or the set's kernels still compiling on
     /// threads of their own (the cores run the batch meanwhile: no launch waits on the compiler). Any other failure is
     /// the run's error (decision 0382: no fallback on an error).
-    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error>;
+    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vector<u64>>>, Error>;
     /// A node-set program (the prefilter's sets, `SetStep`s over `slots` slots of a space of `len` nodes in `files`,
     /// each file its first node and count), with `leaves` written in their slots: the words of each of `outputs`.
-    fn set_steps(&self, files: &[(u32, u32)], len: u32, slots: usize, leaves: &[(usize, &[u64])], steps: &[SetStep], outputs: &[usize]) -> Result<Vec<Vec<u64>>, Error>;
+    fn set_steps(&self, files: &[(u32, u32)], len: u32, slots: usize, leaves: &[(usize, &[u64])], steps: &[SetStep], outputs: &[usize]) -> Result<Vec<Vector<u64>>, Error>;
     /// This thread's program invocations and host events since the last reset (tests count them).
     fn execution_metrics(&self) -> (usize, usize);
     /// Resets this thread's `execution_metrics`.
@@ -112,7 +113,7 @@ pub(in crate::code_rule_dsl) fn required() -> Result<&'static dyn MatcherDevice,
 /// Root programs and, per program, per file, their starts (an anchor a task).
 pub struct RootJobs<'a> {
     pub programs: Vec<&'a Program>,
-    pub starts: Vec<Vec<Vec<u32>>>,
+    pub starts: Vec<Vec<Vector<u32>>>,
 }
 
 /// Per root program: per file its (task, record)s in task then walk order, or `None` where the
@@ -123,7 +124,7 @@ pub type RootsFound = Vec<Option<Vec<Vec<(u32, crate::code_rule_dsl::transducer:
 #[derive(Debug, Default)]
 pub struct Outcome {
     /// Every label's words after the passes.
-    pub labels: Vec<u32>,
+    pub labels: Vector<u32>,
     pub words: usize,
     pub command_buffers: usize,
     pub dispatches: usize,

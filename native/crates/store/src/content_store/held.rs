@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 pub(super) mod memo_pack;
-pub use memo_pack::{MemoBlob, MemoPut, MemoRow};
+pub use memo_pack::{MemoBlob, MemoPut, MemoRow, pack_dir};
 pub(super) use memo_pack::drop_memo_space;
 
 /// A relation as a kept entry names it: its name and its identity, the digest of the rules it is derived from, their

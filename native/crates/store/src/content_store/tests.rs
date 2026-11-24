@@ -2650,42 +2650,59 @@ fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
 
 #[cfg(unix)]
 #[test]
-fn opening_an_explicit_store_preserves_existing_parent_permissions() {
+fn opening_an_explicit_store_keeps_a_private_folder_and_refuses_a_shared_one() {
+    // The user's alone (decision 0574): a folder of the user's is kept as it is, a shared one refused, never repaired.
+    let folder = test_support::TemporaryFolder::new("rerail-content-store-private-existing");
+    let path = folder.join(STORE_FILE_NAME);
+    set_mode(&folder, 0o700);
+    drop(ContentStore::open(&path).unwrap());
+    assert_eq!(mode_of(&folder), 0o700);
+    set_mode(&path, 0o644);
+    let _store = ContentStore::open(&path).unwrap();
+    assert_eq!(mode_of(&folder), 0o700);
+    assert_eq!(mode_of(&path), 0o600);
     for mode in [0o755, 0o1777] {
-        let folder = test_support::TemporaryFolder::new("rerail-content-store-private-existing");
-        let path = folder.join(STORE_FILE_NAME);
+        let folder = test_support::TemporaryFolder::new("rerail-content-store-shared-existing");
         set_mode(&folder, mode);
-        drop(ContentStore::open(&path).unwrap());
-        assert_eq!(mode_of(&folder), mode);
-        set_mode(&path, 0o644);
-        let _store = ContentStore::open(&path).unwrap();
-        assert_eq!(mode_of(&folder), mode);
-        assert_eq!(mode_of(&path), 0o600);
+        let refused = ContentStore::open(&folder.join(STORE_FILE_NAME)).err().expect("a shared folder is refused");
+        assert!(format!("{refused:?}").contains("PermissionDenied"), "{refused:?}");
+        assert_eq!(mode_of(&folder), mode, "refused, not repaired");
     }
 }
 
 #[cfg(unix)]
 #[test]
-fn managed_cache_directories_restore_private_permissions_on_reopen() {
+fn a_managed_cache_directory_is_made_private_and_refused_once_shared() {
     let root = test_support::TemporaryFolder::new("rerail-content-store-managed");
     let folder = root.join("cache");
     prepare_cache_directory(&folder).unwrap();
     assert_eq!(mode_of(&folder), 0o700);
+    // Shared since (decision 0574): refused on reopen, never repaired.
     set_mode(&folder, 0o755);
-    prepare_cache_directory(&folder).unwrap();
-    assert_eq!(mode_of(&folder), 0o700);
+    let refused = prepare_cache_directory(&folder).err().expect("a shared cache folder is refused");
+    assert_eq!(refused.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(mode_of(&folder), 0o755);
 }
 
 #[cfg(unix)]
 #[test]
-fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
+fn a_store_folder_that_is_a_symlink_is_checked_where_it_leads_and_left_as_it_is() {
+    // The folder a symlink leads to is the one checked (decision 0574): the user's, it is used and kept; shared, the
+    // store is refused, and it is not changed through the link.
     let root = test_support::TemporaryFolder::new("rerail-content-store-private-symlink");
     let elsewhere = root.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
-    set_mode(&elsewhere, 0o755);
+    set_mode(&elsewhere, 0o700);
     let linked = root.join("linked");
     std::os::unix::fs::symlink(&elsewhere, &linked).unwrap();
     drop(ContentStore::open(&linked.join(STORE_FILE_NAME)).unwrap());
-    assert_eq!(mode_of(&elsewhere), 0o755);
+    assert_eq!(mode_of(&elsewhere), 0o700);
     assert_eq!(mode_of(&elsewhere.join(STORE_FILE_NAME)), 0o600);
+    let shared = root.join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    set_mode(&shared, 0o755);
+    let link = root.join("to-shared");
+    std::os::unix::fs::symlink(&shared, &link).unwrap();
+    assert!(ContentStore::open(&link.join(STORE_FILE_NAME)).is_err(), "a shared folder through a link is refused");
+    assert_eq!(mode_of(&shared), 0o755);
 }

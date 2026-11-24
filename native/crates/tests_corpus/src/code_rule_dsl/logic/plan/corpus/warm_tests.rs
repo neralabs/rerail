@@ -14,8 +14,11 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-/// Cross-file: identifiers of two files joined on their text, so the cross part reads its base relations (`kind`,
-/// `text`, `docof`) off the corpus batch, every file's documents.
+/// Cross-file: identifiers of two files joined on their text. Each side's `kind`, `text` and `docof` go into its
+/// file's chunk (the push's attributes, 7ff884a7aa), so the cross part reads no base relation: every file's document
+/// is in phase 1's corpus batch (`sources.rerail` reads `doc`), which `Ran::corpus` counts with the run's. (A
+/// cross-file `finding` would be decoded off the run's own batch, but its stratum runs again on a warm run by design,
+/// `kept_strata::Part`: the hosted tests below read it.)
 const PROGRAM: &str = r#"
 .decl named(t: symbol)
 named(t) :- kind(a, "identifier"), text(a, t), docof(a, d), kind(b, "identifier"), text(b, t), docof(b, e), d < e, contains("o", t).
@@ -263,9 +266,11 @@ fn a_warm_edits_own_batch_makes_the_changed_document_alone() {
 }
 
 /// A JavaScript run over the scripts HTML files hold (`.embedded on`, decision 0470 step 2): each name a script calls
-/// that `d.js` defines, at its line. The cross-file rule reads `line` of a node another file's rule found, so it reads
-/// the corpus batch's base relations, the host files' documents among them.
-const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol)\ndefined(x) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x).\n.decl named(x: symbol, l: number)\nnamed(x, l) :- called(c, x), defined(x), line(c, l).\n.output named\n";
+/// that `d.js` defines, at its line. `used` is cross-file (a call joined with another file's definition). A node's
+/// `text` and `line` go with it into its file's chunk (the push's attributes, 7ff884a7aa; decision 0353 step 3), so
+/// `named` reads no base relation in the cross part. Its `finding` does, as a pack's does: a finding's node and file
+/// are decoded off the corpus batch (`node`, `doc`), the host files' documents among them.
+const HOSTED: &str = ".language javascript\n.embedded on\n.decl called(c: node, x: symbol)\ncalled(c, x) :- kind(c, \"identifier\"), text(c, x).\n.decl defined(x: symbol)\ndefined(x) :- kind(d, \"function_declaration\"), field(d, \"name\", n), text(n, x).\n.decl used(c: node)\nused(c) :- called(c, x), defined(x).\n.decl named(x: symbol, l: number)\nnamed(x, l) :- used(c), text(c, x), line(c, l).\n.decl finding(category: symbol, q: symbol, n: node)\nfinding(\"used\", x, c) :- used(c), text(c, x).\n.output named, finding\n";
 
 /// The host files, HTML files whose scripts call `foo`, and the script of the run's own grammar that defines it.
 const HOSTS: &[(&str, &str)] = &[

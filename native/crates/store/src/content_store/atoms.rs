@@ -38,7 +38,7 @@ pub(crate) use stored::clone_file;
 mod vtab;
 pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
-pub type Sym = u32;
+pub use rerail_store_base::content_store::Sym;
 
 /// The values `Atoms::intern_all` looks up under one read lock (decision 0315): a writer waits at most this many
 /// lookups for it.
@@ -592,10 +592,14 @@ impl Drop for MemoryArena {
 }
 
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
-/// run's main thread). A path that does not resolve yet is not remembered.
+/// run's main thread). A path that does not resolve yet is not remembered. Where the thread holds no object (`Atoms`'
+/// drop on the pool thread whose job let the store's last holder go, its run gone), resolved here and not remembered.
 pub(super) fn key(path: &Path) -> PathBuf {
     #[derive(Default)]
     struct CanonicalPaths(Mutex<HashMap<PathBuf, PathBuf>>);
+    if rerail_prof::code_rule_dsl::logic::profile::starter_object().is_none() {
+        return dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    }
     let held_ = rerail_prof::code_rule_dsl::logic::profile::shared::<CanonicalPaths>();
     if let Some(key) = held_.0.lock().get(path) {
         return key.clone();
@@ -1052,8 +1056,8 @@ impl Atoms {
     /// hashed once, outside any lock; those held are found under the read lock, and only the rest are looked for
     /// again and given ids under the write lock (`give`), so a batch of mostly known values stops the arena's readers
     /// for its new ones only.
-    pub fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
-        let hashes: Vec<u64> = values.iter().map(|value| hash_str(value)).collect();
+    pub fn intern_all(&self, values: &[&str]) -> StoreResult<rerail_blocks::vector::Vector<Sym>> {
+        let hashes: rerail_blocks::vector::Vector<u64> = values.iter().map(|value| hash_str(value)).collect();
         // Looked up `READ_RUN` at a time, each run under a read lock of its own: a writer waits for every reader
         // (`Sharded::write`), and while it waits every reader of a shard it holds waits too; a parser's batch read
         // under one lock was the arena's longest hold (decision 0315).
@@ -1088,7 +1092,7 @@ impl Atoms {
 
     /// The ids of `values` (hashed: `hashes`), those not `found` looked for again and new ones pending from this
     /// process's end, under the write lock: the only work under it is theirs.
-    fn give(&self, values: &[&str], hashes: &[u64], found: Vec<Option<Sym>>) -> Vec<Sym> {
+    fn give(&self, values: &[&str], hashes: &[u64], found: Vec<Option<Sym>>) -> rerail_blocks::vector::Vector<Sym> {
         let missing: Vec<usize> = found.iter().enumerate().filter(|(_, f)| f.is_none()).map(|(i, _)| i).collect();
         let mut given = Vec::with_capacity(missing.len());
         let mut state = self.state.write();
@@ -1105,7 +1109,7 @@ impl Atoms {
         for (&i, id) in missing.iter().zip(given) {
             ids[i] = Some(id);
         }
-        let ids: Vec<Sym> = ids.into_iter().map(|id| id.expect("every value given an id")).collect();
+        let ids: rerail_blocks::vector::Vector<Sym> = ids.into_iter().map(|id| id.expect("every value given an id")).collect();
         if new > 0 {
             self.test_fork(new as usize);
         }
@@ -1658,7 +1662,7 @@ impl super::ContentStore {
         std::sync::Arc::clone(&self.atoms)
     }
 
-    pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
+    pub fn intern_atoms(&self, values: &[&str]) -> StoreResult<rerail_blocks::vector::Vector<Sym>> {
         let ids = self.atoms.intern_all(values)?;
         // A store with a writer has it append them (decision 0104: only its writers write); one without, now.
         if self.write_back.is_some() {

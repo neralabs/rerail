@@ -41,9 +41,9 @@
         let domains: BTreeMap<String, Vec<Domain>> = [("r".to_owned(), vec![Domain::Int, Domain::Int])].into();
         let program = Program::new([3; 32], &domains);
         let mut entry = Entry { key: 4, nodes: 9, ..Entry::default() };
-        entry.rows.insert("r".into(), (2, vec![1, 2, 3, 4]));
-        entry.rows.insert("unused".into(), (2, vec![1; 2000]));
-        entry.outputs.insert("diagnostic".into(), (vec![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
+        entry.rows.insert("r".into(), (2, rerail_blocks::vector![1, 2, 3, 4]));
+        entry.rows.insert("unused".into(), (2, rerail_blocks::vector![1; 2000]));
+        entry.outputs.insert("diagnostic".into(), (rerail_blocks::vector![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
         let id = store.put_source(b"x = 1\n", &[]).unwrap();
         let found = |store: &ContentStore| Memo::Stored(store).found_all(&program, &[(Content::Stored(id), "a.py")]).unwrap().pop().flatten();
         let waves = crate::content_store::write_back::run_waves();
@@ -72,9 +72,9 @@
         let domains: BTreeMap<String, Vec<Domain>> = [("named".to_owned(), vec![Domain::Int, Domain::Name])].into();
         let syms = Syms::of(&domains);
         let mut entry = Entry { key: 1, ..Entry::default() };
-        entry.rows.insert("named".into(), (2, vec![9_999, 3, 10_000, 4]));
+        entry.rows.insert("named".into(), (2, rerail_blocks::vector![9_999, 3, 10_000, 4]));
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "numbers past the atoms are not symbols");
-        entry.rows.insert("named".into(), (2, vec![1, 3, 2, 5]));
+        entry.rows.insert("named".into(), (2, rerail_blocks::vector![1, 3, 2, 5]));
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("named".to_owned(), 5)));
     }
 
@@ -89,7 +89,7 @@
         assert_eq!(syms.columns("own:postings:field:f", 2), Some(vec![false, false]));
         assert_eq!(syms.columns("named", 2), Some(vec![false, true]), "a kind's neither; a name is");
         let mut entry = Entry { key: 1, ..Entry::default() };
-        entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));
+        entry.rows.insert("own:postings:field:f".into(), (2, rerail_blocks::vector![65_555, 10]));
         assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "not taken for an atom");
     }
 

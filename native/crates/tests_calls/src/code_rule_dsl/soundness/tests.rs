@@ -146,7 +146,7 @@
             crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
                 .unwrap();
         let blade =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         let template = SyntaxErrors::of_doc(&blade);
         let view = SyntaxErrors::of_doc(&blade.guests().unwrap()[0].doc);
         let comment = source.find("{{--").unwrap();

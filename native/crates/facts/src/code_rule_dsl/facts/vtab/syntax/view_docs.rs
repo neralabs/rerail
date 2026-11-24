@@ -1,6 +1,8 @@
 //! A document's entry for its views' reads (decision 0353 step 4c, `rerail_clif::view_reads::ViewDoc`): in the
 //! block its projection's numbering is in, which it refers to, with the derived table of its tape's codes (each
-//! code's kind atom and field atom, a few hundred u32s). No per-node column: a node's row is read off the tape.
+//! code's kind atom and field atom, a few hundred u32s). No per-node column: a node's row is read off the tape. The
+//! tape's rows' derived columns (`tape_rows::Derived`: a gap's or a digest's atom, a child's place, the visit order),
+//! where its program reads them, are runs of it too.
 
 use super::cells::{Block, Cells, Desc};
 use super::{Dialect, Placement, Projected, field_atom};
@@ -8,17 +10,37 @@ use rerail_clif::ids::Run;
 use rerail_clif::view_reads::ViewDoc;
 use std::sync::Arc;
 
-/// A document's entry and its codes' table, in `block`.
+/// A document's entry, in its projection's block (`Projected::entry`): its address.
 pub struct ViewEntry {
-    desc: Desc<ViewDoc>,
+    desc: *const ViewDoc,
+}
+
+// SAFETY: the entry is written once, inside its projection's `OnceLock` (`new`), and only read after.
+unsafe impl Send for ViewEntry {}
+unsafe impl Sync for ViewEntry {}
+
+/// An entry's codes' table: each code's kind atom and field atom.
+pub struct Codes {
     _kinds: Cells<u32>,
     _fields: Cells<u32>,
+    /// A guest's spans as its host places them (`ViewDoc::placed`), where no word of the entry maps them.
+    _placed: Option<Cells<u64>>,
 }
 
 impl ViewEntry {
-    /// `p`'s entry, in `block` (the block its numbering is in), its kinds as `dialect` holds them.
+    /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them:
+    /// written whole on the first ask, the same entry after.
     pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect) -> Self {
-        let f = &*p.facts;
+        assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
+        let (desc, codes) = p.entry();
+        codes.get_or_init(|| Self::fill(block, p, dialect, desc));
+        ViewEntry { desc: desc.as_ptr() }
+    }
+
+    /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns its codes'
+    /// table.
+    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>) -> Codes {
+        let f = p.f();
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
         let kinds = Cells::build(block, n.max(1), |out| {
@@ -30,19 +52,29 @@ impl ViewEntry {
         .expect("a batch's block holds its entries");
         let fields = Cells::build(block, n.max(1), |out| {
             for (c, k) in out.iter_mut().enumerate().take(n) {
-                *k = field_atom(p.tag, f.code_entry(c as u32).1);
+                *k = field_atom(p.tag(), f.code_entry(c as u32).1);
             }
             n
         })
         .expect("a batch's block holds its entries");
-        let desc = Desc::<ViewDoc>::new(block);
+        // A guest whose placement no word maps (an embedder's segments, a string's normalized pieces): each position's
+        // span placed as the host places it (`Locs::place`), the table the `Loc` views read.
+        let placed = Self::locs(p).and_then(|x| x.host.as_ref()).filter(|(_, place)| !matches!(place, Placement::Copied { .. } | Placement::At(_))).map(|(_, place)| {
+            let n = p.locs() as usize;
+            // copy: derived (each position's host span, computed once from the guest's placement; no block holds it)
+            Cells::build(block, n.max(1), |out| {
+                for (l, o) in out.iter_mut().enumerate().take(n) {
+                    let [s, e] = place.host(p.span(l as u32));
+                    *o = u64::from(s) << 32 | u64::from(e);
+                }
+                n
+            })
+            .expect("a batch's block holds its entries")
+        });
         let d = desc.as_ptr();
-        // SAFETY: the entry is this build's alone, and its runs point at cells of the same block (the numbering's
-        // descriptor among them), which live as long as it.
+        // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
+        // of the same block (the numbering's descriptor among them), which live as long as it.
         unsafe {
-            (*d).key = p.key;
-            (*d).file = p.file;
-            (*d).tag = u32::from(p.tag);
             (*d).preorder = u32::from(p.defs.is_none());
             (*d).nodes = p.len();
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
@@ -50,6 +82,17 @@ impl ViewEntry {
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
             let places = p.places_column();
             Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
+            // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
+            let (columns, named) = p.derived.made();
+            let [before, after, visits, digests] = columns;
+            for (run, cells) in [(&raw mut (*d).gaps[0], before), (&raw mut (*d).gaps[1], after), (&raw mut (*d).visits, visits), (&raw mut (*d).digests, digests)] {
+                if let Some(c) = cells {
+                    Run::set(run, c.as_ptr(), c.len());
+                }
+            }
+            if let Some(c) = named {
+                Run::set(&raw mut (*d).named, c.as_ptr(), c.len());
+            }
             // core.rerail's positions (`Locs`), for the `Loc` views: their places are read in the lines the document's
             // row points at (`ViewRow::lines`: the file's `LineTable`, a guest's host's).
             if let Some(x) = Self::locs(p) {
@@ -59,33 +102,37 @@ impl ViewEntry {
                 (*d).source_len = u32::try_from(f.source.len()).expect("a file within 4 GB");
                 // A guest's places are its host's lines, through its placement (decision 0055).
                 if let Some((_, place)) = &x.host {
-                    match *place {
-                        Placement::Copied { delta, within } => {
+                    match (place, &placed) {
+                        (&Placement::Copied { delta, within }, _) => {
                             (*d).placement = rerail_clif::view_reads::PLACED_COPIED;
                             (*d).delta = delta;
                             ((*d).within_lo, (*d).within_hi) = (within[0], within[1]);
                         }
-                        Placement::At(at) => {
+                        (&Placement::At(at), _) => {
                             (*d).placement = rerail_clif::view_reads::PLACED_AT;
                             ((*d).within_lo, (*d).within_hi) = (at[0], at[1]);
                         }
-                        _ => unreachable!("`locs` takes these placements alone"),
+                        (_, Some(table)) => {
+                            (*d).placement = rerail_clif::view_reads::PLACED_TABLE;
+                            Run::set(&raw mut (*d).placed, table.as_ptr(), table.len());
+                        }
+                        (_, None) => unreachable!("a placement no word maps has its table"),
                     }
                 }
             }
         }
-        ViewEntry { desc, _kinds: kinds, _fields: fields }
+        Codes { _kinds: kinds, _fields: fields, _placed: placed }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's
-    /// lines, where its placement is a copied stretch or a point (a string's normalized pieces and an embedder's
-    /// segments are read apart from any block: its places are made).
+    /// lines, by its placement (a copied stretch, a point) or, where no word maps it, by its spans placed
+    /// (`ViewDoc::placed`).
     pub fn locs(p: &Projected) -> Option<&super::Locs> {
-        p.extra.as_deref().filter(|x| matches!(&x.host, None | Some((_, Placement::Copied { .. } | Placement::At(_)))))
+        p.extra.as_deref()
     }
 
     /// The entry's address, for the reads written once.
     pub fn desc(&self) -> *const u8 {
-        self.desc.as_ptr().cast()
+        self.desc.cast()
     }
 }

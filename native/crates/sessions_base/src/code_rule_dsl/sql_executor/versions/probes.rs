@@ -1,19 +1,20 @@
 //! Build only requested secondary access paths. Leading prefixes use the complete-row tree.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 impl Version {
     /// Descend only into existing prefixes; do not enumerate the IN lists' Cartesian product.
-    pub fn primary_batch(&self, values: &[Vec<i64>]) -> Vec<usize> {
+    pub fn primary_batch(&self, values: &[Vector<i64>]) -> Vector<usize> {
         assert_eq!(values.len(), self.schema.keys);
-        if values.iter().any(Vec::is_empty) {
-            return Vec::new();
+        if values.iter().any(|v| v.is_empty()) {
+            return rerail_blocks::vector::Vector::new();
         }
         fn descend(
             version: &Version,
-            values: &[Vec<i64>],
+            values: &[Vector<i64>],
             prefix: &mut Vec<Option<i64>>,
             range: std::ops::Range<usize>,
-            found: &mut Vec<usize>,
+            found: &mut Vector<usize>,
         ) {
             let level = prefix.len();
             if level == values.len()
@@ -47,7 +48,7 @@ impl Version {
                 prefix.pop();
             }
         }
-        let mut found = Vec::new();
+        let mut found = rerail_blocks::vector::Vector::new();
         descend(self, values, &mut Vec::new(), 0..self.len(), &mut found);
         found
     }

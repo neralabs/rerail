@@ -1,6 +1,6 @@
 # 0344. Metal runs hold leases, not a process-wide lock; a GPU program runs beside the one before
 
-Status: accepted (2026-11-17)
+Status: built (audited 2026-11-23). Accepted (2026-11-17)
 
 ## Intro
 

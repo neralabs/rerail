@@ -31,10 +31,11 @@ DEFINE_KERNEL2(join, pair_keys,
 // ---- A device column's span and its keys (`column_stats_of`). ----
 
 // Value `r` of a column: at `at` of `src`, or (`rel_col` its number + 1) column `rel_col - 1` of the relation whose
-// descriptor is `at` bytes into the block `src` binds.
-UKL_INLINE int64_t col_value(UKL_GLOBAL const int64_t* src, uint64_t at, uint32_t rel_col, uint32_t r)
+// descriptor is `at` bytes into the block `src` binds; a base of its chain in another block read in `far`, the block
+// bound beside it (decision 0353 step 6: `src` again when it has none), its offset made from the two bindings.
+UKL_INLINE int64_t col_value(UKL_GLOBAL const int64_t* src, UKL_GLOBAL const uint8_t* far, uint64_t at, uint32_t rel_col, uint32_t r)
 {
-  return rel_col == 0u ? src[at + r] : (int64_t)clif_rel_get((UKL_GLOBAL const uint8_t*)src, at, r, rel_col - 1u);
+  return rel_col == 0u ? src[at + r] : (int64_t)clif_rel_get((UKL_GLOBAL const uint8_t*)src, at, r, rel_col - 1u, (uint64_t)(far - (UKL_GLOBAL const uint8_t*)src));
 }
 
 #define JOIN_LEAST ((int64_t)0x8000000000000000UL)
@@ -55,6 +56,7 @@ UKL_INLINE void join_tg_span(UKL_LOCAL int64_t* L, UKL_LOCAL int64_t* H, uint32_
 DEFINE_KERNEL2(join, col_span,
                ROBUFFER, int64_t,  src,  "[rows]",
                RWBUFFER, int64_t,  part, "[2 * tiles]",
+               ROBUFFER, uint8_t,  far,  "[its far base's block]",
                ARGS,     JoinP,    a,    ,
                SHARED,   int64_t,  L,    256,
                SHARED,   int64_t,  H,    256,
@@ -67,7 +69,7 @@ DEFINE_KERNEL2(join, col_span,
   for (uint32_t i = 0u; i < 4u; i++) {
     uint32_t r = g * 1024u + i * 256u + t;
     if (r >= n) break;
-    int64_t v = col_value(src, at, a.p3, r);
+    int64_t v = col_value(src, far, at, a.p3, r);
     lo = v < lo ? v : lo;
     hi = v > hi ? v : hi;
   }
@@ -99,13 +101,14 @@ DEFINE_KERNEL2(join, col_narrow,
                ROBUFFER, int64_t,  src,  "[rows]",
                ROBUFFER, int64_t,  span, "[2]",
                RWBUFFER, uint8_t,  keys, "[8 * a.p0]",
+               ROBUFFER, uint8_t,  far,  "[its far base's block]",
                ARGS,     JoinP,    a,    ,
                GID0,     uint32_t, r,    )
 {
   uint32_t n = a.p0;
   if (r >= n) return;
   uint64_t at = (uint64_t)a.p1 | ((uint64_t)a.p2 << 32);
-  uint64_t d = (uint64_t)col_value(src, at, a.p4, r) - (uint64_t)span[0];
+  uint64_t d = (uint64_t)col_value(src, far, at, a.p4, r) - (uint64_t)span[0];
   if (a.p3 == 0u) ((UKL_GLOBAL uint32_t*)keys)[r] = (uint32_t)d; else ((UKL_GLOBAL uint64_t*)keys)[r] = d;
 }
 

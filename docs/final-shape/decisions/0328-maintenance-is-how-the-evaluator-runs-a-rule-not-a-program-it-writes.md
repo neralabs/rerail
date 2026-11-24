@@ -1,11 +1,13 @@
 # 0328: A rule is stored once, small; maintenance is metadata and a mode of the evaluator, not more rules
 
-Status: draft (2026-11-16; on blocks and spiked, 2026-11-17), not settled. The user agrees with the direction,
-asked for the details on decision 0266's blocks to be explored before deciding, and then asked whether blocks and
-deltas make counting and DRed's machinery unnecessary. A spike says they do for every stratum but a recursive one
-(below, "Maintenance from the deltas"). How recursion is kept is open for the user. It would retire the maintained forms (decisions 0117 step 3, 0241,
-0298), the support relations (`corpus/supports.rs`, 0090's counting), and the program image as the format of a
-pass's output (0173, as 0266 step 3 also plans). Nothing is built.
+Status: partly built (audited 2026-11-23). Left: the program image as a pass's output format (0173) is not retired;
+record's own status still says nothing built. Draft (2026-11-16; on blocks and spiked, 2026-11-17), not settled. The
+user agrees with the direction, asked for the details on decision 0266's blocks to be explored before deciding, and
+then asked whether blocks and deltas make counting and DRed's machinery unnecessary. A spike says they do for every
+stratum but a recursive one (below, "Maintenance from the deltas"). How recursion is kept is open for the user. It
+would retire the maintained forms (decisions 0117 step 3, 0241, 0298), the support relations (`corpus/supports.rs`,
+0090's counting), and the program image as the format of a pass's output (0173, as 0266 step 3 also plans). Nothing is
+built.
 
 ## Intro
 

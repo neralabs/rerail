@@ -2,6 +2,7 @@
 //! program's version, run in one pipeline after the program's one image, from the last of the tree's passes
 //! backward as they move.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Run, Cx, Pipeline, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::Version;
 use std::collections::{BTreeSet, HashSet};
@@ -21,6 +22,7 @@ pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
+pub mod kept;
 pub use merge::{DropRepeated, MergeIdentical, congruence};
 pub use prune::Prune;
 pub use nearest::Nearest;
@@ -36,14 +38,18 @@ impl<F: FnMut(&Version) -> Result<(), String>> ProgramPass for Check<F> {
     }
 }
 
-/// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one).
+/// An input no rule reads is never bound or measured: it is not an input of what runs (an output stays one). A node read
+/// (`typing::file_local::reads_a_node`) reads the long-text nodes' binding, though no atom names it.
 pub struct InputsRead;
 
 impl ProgramPass for InputsRead {
     const NAME: &'static str = "the inputs the rules read";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let read: HashSet<u32> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| a.rel().0).collect::<Vec<_>>()).collect();
+        let mut read: HashSet<u32> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| a.rel().0).collect::<Vec<_>>()).collect();
+        if let Some(long) = v.rel(crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES).filter(|_| v.rules().any(|r| crate::code_rule_dsl::typing::file_local::reads_a_node(v, r))) {
+            read.insert(long.0);
+        }
         let outputs: HashSet<&str> = v.outputs().map(|a| v.text(a)).collect();
         let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
         let kept: Vec<&str> = inputs.iter().copied().filter(|i| v.rel(i).is_some_and(|r| read.contains(&r.0)) || outputs.contains(i)).collect();
@@ -91,7 +97,7 @@ impl ProgramPass for RuleOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Found {
     /// The relations the run makes for the tree axes and `nearest` (`Nearest::sets`).
-    pub sets: Vec<(String, Vec<i64>)>,
+    pub sets: Vec<(String, Vector<i64>)>,
     /// The relations the file-local joins were pushed into (`file_local::PushLocalJoins`).
     pub pushed: Vec<String>,
     /// What the factorized store handed on as parts (`file_local::FactorizeExports`): a line per relation.
@@ -232,6 +238,11 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
+    // A pass's tape-local facts kept by its tape (decision 0597 rule 8): its kept rows are inputs (`BaseInputs`). A
+    // pack's parts were rewritten whole before they were split (`parts::front`).
+    if whole {
+        p.program(&mut kept::Kept);
+    }
     p.program(&mut simplify::BaseInputs);
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());

@@ -1,17 +1,18 @@
 # 0431. No guest documents: strings the rules parse are tape values; programs the grammar holds are the file's
 
-Status: decided (2026-11-18), by the user: "there are no guest documents. The CPU and GPU run on exactly the same
-data"; "parsed strings are only for annotations and maybe format strings, not all strings; the rules decide them";
-"if the rules say 'here is an embedded string, here is its sha and here is its tape', then why can't that be kept in
-the facts that the program produces and not changed next time it's run?". On a guest's node ids: (a), a node of a
-parsed string is named by its tape ("do a"); and the split below ("okay, I agree with that"). Supersedes 0055's guest
-documents (§4, "What was built" 3–4) and 0391 (guest keys) but for a file's programs (§4). On a program's node ids,
-§4's second choice, a key of its own from 0391's registry (2026-11-19, the user: "okay, let's try b"). On how a
-rule names a program, by its file and place (§4, Q324's first choice; 2026-11-19, the user: "pick a for the decision").
-Step 3 done (2026-11-19). Step 5 done (2026-11-19): guests 32.1 s and 34.4 s to 0.16 s and 0.33 s, instructions
-2,476 to 2,421 G (CPU) and 2,071 to 1,800 G (Metal), findings unchanged. Keeps 0055's model of a tape as content, 0058 (hiding,
-normalized strings, `@parse`), 0104 (no SQL in the waves), 0353 (blocks never copied), 0434 (format 16, unchanged).
-Work queue Q306.
+Status: partly built (audited 2026-11-23). Left: @parse of computed strings checked against packs' use; embed_value
+placement; queued-tape programs record; publication.rs program count. Decided (2026-11-18), by the user: "there are no
+guest documents. The CPU and GPU run on exactly the same data"; "parsed strings are only for annotations and maybe
+format strings, not all strings; the rules decide them"; "if the rules say 'here is an embedded string, here is its
+sha and here is its tape', then why can't that be kept in the facts that the program produces and not changed next
+time it's run?". On a guest's node ids: (a), a node of a parsed string is named by its tape ("do a"); and the split
+below ("okay, I agree with that"). Supersedes 0055's guest documents (§4, "What was built" 3–4) and 0391 (guest keys)
+but for a file's programs (§4). On a program's node ids, §4's second choice, a key of its own from 0391's registry
+(2026-11-19, the user: "okay, let's try b"). On how a rule names a program, by its file and place (§4, Q324's first
+choice; 2026-11-19, the user: "pick a for the decision"). Step 3 done (2026-11-19). Step 5 done (2026-11-19): guests
+32.1 s and 34.4 s to 0.16 s and 0.33 s, instructions 2,476 to 2,421 G (CPU) and 2,071 to 1,800 G (Metal), findings
+unchanged. Keeps 0055's model of a tape as content, 0058 (hiding, normalized strings, `@parse`), 0104 (no SQL in the
+waves), 0353 (blocks never copied), 0434 (format 16, unchanged). Work queue Q306.
 
 ## Intro
 

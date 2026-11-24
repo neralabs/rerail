@@ -43,6 +43,7 @@ pub mod about;
 pub mod build;
 pub mod csr;
 pub mod encoder;
+pub use encoder::{Rows, RowsRef};
 pub mod extents;
 pub mod fields;
 pub mod grouped;
@@ -51,13 +52,13 @@ pub mod show;
 pub mod strings;
 pub mod version;
 
-pub use about::{About, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
+pub use about::{About, AboutData, ArchivedGateRef, ArchivedNativeRef, ArchivedNativeSpec, ArchivedShapeRef, ArchivedShapeWaitRef, GateRef, LatticeRef, NativeKind, NativeRef, NativeSpec, ShapeRef, ShapeWaitRef};
 pub use build::{Builder, Open, PartFields, Rel, Rewrite, RuleBuilder, Site, T, t_of};
 pub use extents::Extents;
 pub use grouped::Grouped;
-pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
+pub use handles::{AggRef, AtomRef, CmpOp, IdMap, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
-pub use version::{DeclRef, FactsRef, Layer, Made, Version, differences, same_program};
+pub use version::{DeclRef, FactsRef, Layer, Made, UnionPart, Version, differences, same_program};
 
 pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x05";
 /// 3: every relation the program names has an id, those its declarations, facts, inputs, outputs and about rows
@@ -76,6 +77,7 @@ macro_rules! id {
         #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
         #[repr(transparent)]
         pub struct $name(pub u32);
+        rerail_section::plain_archive!($name);
         impl $name {
             pub fn index(self) -> usize {
                 self.0 as usize
@@ -234,6 +236,12 @@ pub struct Image {
 // the image is (an owned buffer's heap, or bytes shared at a stable address); `Buf` is `Send` and `Sync`.
 unsafe impl Send for Image {}
 unsafe impl Sync for Image {}
+/// Sixteen bytes of an image, at 16: what its buffer is a vector of, so each region is at its alignment.
+#[repr(C, align(16))]
+#[derive(Clone, Copy)]
+pub struct Line([u64; 2]);
+// SAFETY: `repr(C)`, two integers, no padding.
+unsafe impl rerail_blocks::Pod for Line {}
 
 /// Bytes an image is read in place from, at a stable address for as long as they are held: a store's segment,
 /// mapped (decision 0394).
@@ -253,7 +261,8 @@ enum Depth {
 
 /// Where an image's bytes are: a buffer of its own, or bytes it shares, read where they are.
 enum Buf {
-    Owned(Vec<u128>),
+    /// Written here (`Placing`) or loaded (`open`): in a block, at 16 bytes.
+    Owned(rerail_blocks::vector::Vector<Line>),
     Shared(SharedBytes),
 }
 
@@ -269,7 +278,7 @@ impl Image {
     /// header, every region's width and bounds, every reference, and every rule's node tree. The engine's own reads
     /// never come here: they open an image where it is held (`open_shared`).
     pub fn open(bytes: &[u8]) -> Result<Image, String> {
-        let mut buf = vec![0u128; bytes.len().div_ceil(16)];
+        let mut buf = rerail_blocks::vector![Line([0; 2]); bytes.len().div_ceil(16)];
         // SAFETY: `buf` holds at least `bytes.len()` bytes.
         unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf.as_mut_ptr().cast::<u8>(), bytes.len()) };
         Image::checked(Image::over(Buf::Owned(buf), bytes.len()), Depth::Full)
@@ -726,6 +735,9 @@ pub enum Cell {
     Branded(crate::code_rule_dsl::logic::front::ast::Branded),
 }
 
+// SAFETY: a plain value (an integer, an atom id or a branded atom), with no drop.
+unsafe impl rerail_blocks::Pod for Cell {}
+
 /// A branded atom's class as a node's flags (`kind::BRANDED`) and a cell's kind (2 and up), and back.
 pub fn brand_code(class: crate::code_rule_dsl::logic::front::ast::Class) -> u8 {
     use crate::code_rule_dsl::logic::front::ast::Class;
@@ -892,7 +904,7 @@ impl Layout {
             at += self.counts[r] * WIDTH[r] as usize;
         }
         let len = at;
-        let mut buf = vec![0u128; len.div_ceil(16)];
+        let mut buf = rerail_blocks::vector![Line([0; 2]); len.div_ceil(16)];
         // SAFETY: `buf` holds at least `len` bytes, and is borrowed here alone.
         let head = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), HEADER) };
         head[..8].copy_from_slice(&MAGIC);
@@ -910,7 +922,7 @@ impl Layout {
 
 /// An image's buffer as its writer writes it: each region a slice in place (`Layout::place`).
 pub struct Placing {
-    buf: Vec<u128>,
+    buf: rerail_blocks::vector::Vector<Line>,
     len: usize,
     regions: [(usize, usize); REGIONS],
 }

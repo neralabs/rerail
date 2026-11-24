@@ -7,6 +7,9 @@
 
 #include <ukl/backend.h>
 #include <ukl/simd.h>
+#include <ukl/matrix.h>
+#include <ukl/memory.h>
+#include <ukl/workqueue.h>
 
 // Threads a threadgroup of the 1-D kernels.
 #define REL_TG 256u
@@ -16,15 +19,23 @@
 typedef struct BitProductArgs { uint32_t n; uint32_t m; uint32_t kw; uint32_t mode; uint32_t mw; } BitProductArgs;
 UKL_REFLECT_STRUCT(BitProductArgs, n, m, kw, mode, mw)
 
-// Bit product: C[i][j] = popcount(A_i & B_j) over rows of `kw` u64 words (the spikes' W1/W5 bit gram).
+// Bit product: C[i][j] = popcount(A_i & B_j) over rows of `kw` u64 words (the spikes' W1/W5 bit gram), through
+// ukl/matrix.h's 1-bit fragments (decision 0617): `mma.sync`'s AND and POPC on NVIDIA's units, the threads' popcount
+// elsewhere.
 //
-// One threadgroup per 64x64 output tile, 16 x 16 threads, 4x4 outputs per thread; 8 words of each side staged per
-// step (2 x 4.2 KB of threadgroup memory). The grid is (column tiles, row tiles).
+// One threadgroup per 64x64 output tile (256 threads); each fragment owner (a SIMD group) holds `BP_NF` of its sixteen
+// 16x16 fragments of C, in the tile's column order, so that an owner's fragments share their rows of A where the
+// owners are a multiple of 4. Each step stages 8 u64 words of each side's 64 rows in threadgroup memory, k-major
+// (2 x 4.5 KB; a stride of 72 words puts every lane's half-word of NVIDIA's fragment loads in its own bank), and runs
+// its 512 bits' products (K = 256 on NVIDIA's unit, 64 emulated). The grid is (column tiles, row tiles).
 //
-// mode 0: every count, into C (n x m, row-major).
+// mode 0: every count, into C (n x m, row-major), each where its lane holds it.
 // mode 1: only whether count >= min[j], as bits of `mask` (n rows of `mw` u32 words, bit j of a row in word j / 32).
 //         A tile's 64 columns are exactly two mask words of each of its rows, so the tile gathers them in threadgroup
 //         memory (512 B) and writes them whole: no device atomics, and no zero fill beforehand.
+#define BP_STRIDE 72u
+#define BP_OWNERS (REL_TG / UKL_MMA_LANES)
+#define BP_NF (UKL_MMA_LANES >= 16u ? UKL_MMA_LANES / 16u : 1u)
 DEFINE_KERNEL2(relational, bp_tile,
                ROBUFFER, uint64_t, A,     "[n * kw]",
                ROBUFFER, uint64_t, B,     "[m * kw]",
@@ -32,8 +43,7 @@ DEFINE_KERNEL2(relational, bp_tile,
                RWBUFFER, uint32_t, mask,  "[n * mw]",
                ROBUFFER, uint32_t, minv,  "[m]",
                ARGS,     BitProductArgs, args, ,
-               SHARED,   uint64_t, As,    520,
-               SHARED,   uint64_t, Bs,    520,
+               SHARED,   uint64_t, S,     1152,
                SHARED,   uint32_t, tmask, 128,
                TGID0,    uint32_t, tgx,   ,
                TGID1,    uint32_t, tgy,   ,
@@ -42,35 +52,58 @@ DEFINE_KERNEL2(relational, bp_tile,
 {
   const uint32_t t = tpy * 16u + tpx;
   const uint32_t row0 = tgy * 64u, col0 = tgx * 64u;
+  const UklMmaAt at = ukl_mma_at(t);
+  const uint32_t owner = ukl_mma_owner(t);
+  // The owner's rows of A are the same for each of its fragments where the owners are a multiple of 4.
+  const bool share_a = BP_OWNERS % 4u == 0u;
+  // The staging: A's and B's words.
+  UKL_LOCAL uint64_t* As = S;
+  UKL_LOCAL uint64_t* Bs = S + 8u * BP_STRIDE;
   if (t < 128u) ukl_atomic_store_local(&tmask[t], 0u);
   ukl_tg_barrier();  // zeroed before any thread ORs (kw = 0 has no other barrier)
-  uint32_t acc[4][4];
-  for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) acc[r][c] = 0u;
+  ukl_mma_c_i32 c[BP_NF];
+  for (uint32_t n = 0u; n < BP_NF; n++) ukl_mma_fill_c_i32(&c[n], 0, at);
   const uint32_t lr = t / 4u, lw = (t % 4u) * 2u;
   for (uint32_t k0 = 0u; k0 < args.kw; k0 += 8u) {
     for (uint32_t q = 0u; q < 2u; q++) {
       uint32_t gk = k0 + lw + q;
       uint32_t ga = row0 + lr, gb = col0 + lr;
-      As[(lw + q) * 65u + lr] = (ga < args.n && gk < args.kw) ? A[(uint64_t)ga * args.kw + gk] : (uint64_t)0;
-      Bs[(lw + q) * 65u + lr] = (gb < args.m && gk < args.kw) ? B[(uint64_t)gb * args.kw + gk] : (uint64_t)0;
+      uint64_t a = (ga < args.n && gk < args.kw) ? A[(uint64_t)ga * args.kw + gk] : (uint64_t)0;
+      uint64_t b = (gb < args.m && gk < args.kw) ? B[(uint64_t)gb * args.kw + gk] : (uint64_t)0;
+      As[(lw + q) * BP_STRIDE + lr] = a;
+      Bs[(lw + q) * BP_STRIDE + lr] = b;
     }
     ukl_tg_barrier();
-    for (uint32_t w = 0u; w < 8u; w++) {
-      uint64_t a[4], b[4];
-      for (uint32_t r = 0u; r < 4u; r++) a[r] = As[w * 65u + tpy + 16u * r];
-      for (uint32_t c = 0u; c < 4u; c++) b[c] = Bs[w * 65u + tpx + 16u * c];
-      for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) acc[r][c] += ukl_popcount64(a[r] & b[c]);
+    for (uint32_t h = 0u; h < 8u / UKL_MMA_KW_b1; h++) {
+      // A's 16 rows of a fragment: column-major here (word kw of row r at kw * stride + r); B's 16 columns row-major
+      // in K (word kw of column c at kw * stride + c).
+      UKL_LOCAL const uint64_t* ak = As + h * UKL_MMA_KW_b1 * BP_STRIDE;
+      UKL_LOCAL const uint64_t* bk = Bs + h * UKL_MMA_KW_b1 * BP_STRIDE;
+      ukl_mma_a_b1 af;
+      if (share_a) ukl_mma_load_a_b1_local(&af, ak + (owner % 4u) * 16u, BP_STRIDE, UKL_COL_MAJOR, at);
+      for (uint32_t n = 0u; n < BP_NF; n++) {
+        uint32_t f = owner + n * BP_OWNERS;
+        if (BP_OWNERS * BP_NF > 16u && f >= 16u) break;  // only where the owners outnumber the fragments
+        if (!share_a) ukl_mma_load_a_b1_local(&af, ak + (f % 4u) * 16u, BP_STRIDE, UKL_COL_MAJOR, at);
+        ukl_mma_b_b1 bf;
+        ukl_mma_load_b_b1_local(&bf, bk + (f / 4u) * 16u, BP_STRIDE, UKL_ROW_MAJOR, at);
+        ukl_mma_b1(&c[n], &af, &bf, at __UKL_ARGS);
+      }
     }
     ukl_tg_barrier();
   }
-  for (uint32_t r = 0u; r < 4u; r++) for (uint32_t c = 0u; c < 4u; c++) {
-    uint32_t lrow = tpy + 16u * r, lcol = tpx + 16u * c;
-    uint32_t i = row0 + lrow, j = col0 + lcol;
-    if (i < args.n && j < args.m) {
-      if (args.mode == 0u) {
-        C[(uint64_t)i * args.m + j] = acc[r][c];
-      } else if (acc[r][c] >= minv[j]) {
-        ukl_atomic_add_local(&tmask[lrow * 2u + lcol / 32u], 1u << (lcol % 32u));  // one thread a bit: an add is the OR
+  for (uint32_t n = 0u; n < BP_NF; n++) {
+    uint32_t f = owner + n * BP_OWNERS;
+    if (BP_OWNERS * BP_NF > 16u && f >= 16u) break;  // only where the owners outnumber the fragments
+    UKL_MMA_EACH(c[n], at, row, col, v) {
+      uint32_t lrow = (f % 4u) * 16u + row, lcol = (f / 4u) * 16u + col;
+      uint32_t i = row0 + lrow, j = col0 + lcol;
+      if (i < args.n && j < args.m) {
+        if (args.mode == 0u) {
+          C[(uint64_t)i * args.m + j] = (uint32_t)v;
+        } else if ((uint32_t)v >= minv[j]) {
+          ukl_atomic_add_local(&tmask[lrow * 2u + lcol / 32u], 1u << (lcol % 32u));  // one thread a bit: an add is the OR
+        }
       }
     }
   }
@@ -212,13 +245,18 @@ DEFINE_KERNEL2(relational, ct_scatter,
 typedef struct ClosureArgs { uint32_t n; uint32_t words; } ClosureArgs;
 UKL_REFLECT_STRUCT(ClosureArgs, n, words)
 
-// Closure over the condensed graph (the spikes' W3 (b), level by level). The host finds the components (Tarjan's,
-// as the reference does), their DAG as a CSR of successor components, and each component's level (1 + the
-// highest level of its successors). On the device, R holds one bit row per component, `words` u64 words wide:
+// Closure over the condensed graph (the spikes' W3 (b)), in one launch however deep the graph. The host finds the
+// components (Tarjan's, as the reference does), their DAG as CSRs of successor and of predecessor components, and
+// each component's successors' count. On the device, R holds one bit row per component, `words` u64 words wide:
 //
 // 1. cl_init: each node sets, in its component's row, its own bit when the component is cyclic, and the bit of
 //    every successor in another component (device atomics on u32 halves: the result is the same in any order);
-// 2. cl_level, once per level from 1 up: each component ORs in its successors' rows, which are final (lower levels);
+// 2. cl_dag, a persistent dispatch on a work queue (ukl/workqueue.h, decision 0540): the queue starts with the
+//    components of no successors, whose rows are final. A SIMD group takes components, ORs into each its successors'
+//    rows, final when it is taken, and counts each predecessor's successors down: the one that counts a predecessor's
+//    last pushes it (its continuation). No worker waits for another: a worker with nothing to take ends, and a
+//    pusher is running and takes on. Every component is pushed once (its count reaches 0 once): the queue's room is
+//    the components'. Work left at the end (a bound reached, `control[2]`) is the host's error, not a wrong row;
 // 3. cl_gather: node v's row is its component's.
 DEFINE_KERNEL2(relational, cl_init,
                ROBUFFER, uint32_t, off,    "[n + 1]",
@@ -239,30 +277,51 @@ DEFINE_KERNEL2(relational, cl_init,
   }
 }
 
-typedef struct LevelArgs { uint32_t lo; uint32_t hi; uint32_t words; } LevelArgs;
-UKL_REFLECT_STRUCT(LevelArgs, lo, hi, words)
+typedef struct DagArgs { uint32_t words; uint32_t capacity; } DagArgs;
+UKL_REFLECT_STRUCT(DagArgs, words, capacity)
 
-// One SIMD group per component of the level; lanes stride over the row's words.
-DEFINE_KERNEL2(relational, cl_level,
-               RWBUFFER, uint64_t, R,     "[components * words]",
-               ROBUFFER, uint32_t, order, "[components]",
-               ROBUFFER, uint32_t, soff,  "[components + 1]",
-               ROBUFFER, uint32_t, sdst,  "[soff[components]]",
-               ARGS,     LevelArgs, args, ,
-               TGID0,    uint32_t, tg,    ,
-               LID0,     uint32_t, lid,   ,
-               LSZ0,     uint32_t, lsz,   )
+// A SIMD group's lanes stride over a row's words, and over a component's predecessors.
+DEFINE_KERNEL2(relational, cl_dag,
+               RWBUFFER, uint64_t, R,       "[components * words]",
+               ROBUFFER, uint32_t, soff,    "[components + 1]",
+               ROBUFFER, uint32_t, sdst,    "[soff[components]]",
+               ROBUFFER, uint32_t, poff,    "[components + 1]",
+               ROBUFFER, uint32_t, pdst,    "[poff[components]]",
+               RWBUFFER, uint32_t, pending, "[components]",
+               RWBUFFER, uint32_t, slots,   "[args.capacity]",
+               RWBUFFER, uint32_t, control, "[4]",
+               ARGS,     DagArgs,  args,    ,
+               LID0,     uint32_t, lid,     )
 {
-  const uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, nsg = lsz / UKL_SIMD_WIDTH;
-  const uint32_t idx = args.lo + tg * nsg + sg;
-  if (idx >= args.hi) return;
-  const uint32_t c = order[idx];
-  const uint32_t s0 = soff[c], s1 = soff[c + 1u];
-  UKL_GLOBAL uint64_t* row = R + (uint64_t)c * args.words;
-  for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
-    uint64_t acc = row[w];
-    for (uint32_t k = s0; k < s1; k++) acc |= R[(uint64_t)sdst[k] * args.words + w];
-    row[w] = acc;
+  const uint32_t lane = lid % UKL_SIMD_WIDTH;
+  // Rows another group wrote in this launch: read and written through the coherent loads and stores.
+  UKL_COHERENT uint8_t* rows = (UKL_COHERENT uint8_t*)R;
+  UklWorkQueue q = {slots, control, args.capacity, 0u, 0u};
+  for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
+    uint32_t item = 0u;
+    const bool got = ukl_wq_take_sg(q, lane, &item __UKL_ARGS);
+    // None took any: the group ends (decision 0540 step 7).
+    if (ukl_sg_count(got __UKL_ARGS) == 0u) break;
+    ukl_fence_device();
+    for (uint32_t k = 0u; k < UKL_SIMD_WIDTH; k++) {
+      if (ukl_sg_broadcast((uint32_t)got, k __UKL_ARGS) == 0u) continue;
+      const uint32_t c = ukl_sg_broadcast(item, k __UKL_ARGS);
+      const uint32_t s0 = soff[c], s1 = soff[c + 1u];
+      const uint64_t at = (uint64_t)c * args.words * 8u;
+      for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
+        uint64_t acc = ukl_ldc_u64(rows, at + 8u * w);
+        for (uint32_t e = s0; e < s1; e++) acc |= ukl_ldc_u64(rows, ((uint64_t)sdst[e] * args.words + w) * 8u);
+        ukl_stc_u64(rows, at + 8u * w, acc);
+      }
+      // Its row before the counts that hand its predecessors on.
+      ukl_fence_device();
+      for (uint32_t e = poff[c] + lane; e < poff[c + 1u]; e += UKL_SIMD_WIDTH) {
+        const uint32_t p = pdst[e];
+        if (ukl_atomic_sub(&pending[p], 1u) == 1u) ukl_wq_push(q, p);
+      }
+    }
+    // Each lane's item done, after the pushes of its group's (the convergent loop above).
+    if (got) ukl_wq_done(q);
   }
 }
 

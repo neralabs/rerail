@@ -11,6 +11,7 @@
 //! conservative, as the script is: a step it cannot read (a helper between the two nodes it does not know) fails the
 //! component, with the reason. It is more so in two places: only variables link one step to the next (the script
 //! linked through `_` too), and a tree step with an index step in one component is refused.
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::analyses::Components;
 use crate::code_rule_dsl::logic::program_image::manager::{Analysis, Cx, Reads};
@@ -329,9 +330,9 @@ pub struct Measure {
 }
 
 /// Whether component `comp` of `v` cannot hold a row up by itself, and its measure; or why not.
-pub fn check(v: &Version, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<String>) -> Result<Measure, String> {
+pub fn check(v: &Version, types: &dyn Fn(&str) -> Vec<String>, comp: &crate::code_rule_dsl::logic::front::Comp) -> Result<Measure, String> {
     let rules = rules_of(v);
-    let roots: Vec<&str> = comp.iter().map(String::as_str).collect();
+    let roots: Vec<&str> = comp.iter().collect();
     let helpers = summarize(&rules, types, &roots);
     classify(&rules, &helpers, types, comp)
 }
@@ -342,23 +343,25 @@ pub fn check(v: &Version, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<S
 /// 0051), whose rules the part does not hold.
 #[derive(Debug, PartialEq)]
 pub struct Proofs {
-    /// Each recursive component, its relations sorted, and its verdict.
-    comps: Vec<(BTreeSet<String>, Result<Measure, String>)>,
+    /// The program's components, read in their section.
+    all: std::sync::Arc<Components>,
+    /// Each recursive component, by its place in `all`, and its verdict.
+    comps: Vec<(usize, Result<Measure, String>)>,
 }
 
 impl Proofs {
     /// The verdict on `scc`, which must be a component of the program: else not proved.
-    pub fn of(&self, scc: &BTreeSet<String>) -> Result<Measure, String> {
-        let first = scc.iter().next().ok_or("an empty component")?;
-        match self.comps.iter().find(|(c, _)| c.contains(first)) {
-            Some((c, v)) if c == scc => v.clone(),
+    pub fn of(&self, scc: &crate::code_rule_dsl::logic::front::Comp) -> Result<Measure, String> {
+        let first = scc.first().ok_or("an empty component")?;
+        match self.comps.iter().find(|(c, _)| self.all[*c].contains(first)) {
+            Some((c, v)) if &self.all[*c] == scc => v.clone(),
             Some(_) => Err("not the program's component".into()),
             None => Err("not a recursive component of the program".into()),
         }
     }
     /// Each recursive component and its verdict.
-    pub fn comps(&self) -> impl Iterator<Item = (&BTreeSet<String>, &Result<Measure, String>)> {
-        self.comps.iter().map(|(c, v)| (c, v))
+    pub fn comps(&self) -> impl Iterator<Item = (&crate::code_rule_dsl::logic::front::Comp, &Result<Measure, String>)> {
+        self.comps.iter().map(|(c, v)| (&self.all[*c], v))
     }
     /// Proved and not, counted.
     pub fn counts(&self) -> (usize, usize) {
@@ -380,8 +383,8 @@ impl Analysis for Proofs {
         // A component is recursive when a rule of it reads it: found in one pass over the rules, by each relation's
         // component. A pass over every rule for each component took 0.16 s of the data layer's 6,842 rules (R7
         // against 0458); checking the recursive ones takes under 1 ms.
-        let of: HashMap<&str, usize> = comps.0.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |r| (r.as_str(), i))).collect();
-        let mut recursive = vec![false; comps.0.len()];
+        let of: HashMap<&str, usize> = comps.iter().enumerate().flat_map(|(i, c)| c.iter().map(move |r| (r, i))).collect();
+        let mut recursive = vec![false; comps.len()];
         for r in &rules {
             if let Some(&c) = of.get(r.head.rel.as_str())
                 && r.atoms.iter().any(|a| of.get(a.rel.as_str()) == Some(&c))
@@ -389,10 +392,10 @@ impl Analysis for Proofs {
                 recursive[c] = true;
             }
         }
-        let roots: Vec<&str> = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).flat_map(|(c, _)| c.iter().map(String::as_str)).collect();
+        let roots: Vec<&str> = comps.iter().enumerate().filter(|&(i, _)| recursive[i]).flat_map(|(_, c)| c.iter()).collect();
         let helpers = summarize(&rules, &types, &roots);
-        let comps = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).map(|(c, _)| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
-        Ok(Proofs { comps })
+        let verdicts = comps.iter().enumerate().filter(|&(i, _)| recursive[i]).map(|(i, c)| (i, classify(&rules, &helpers, &types, c))).collect();
+        Ok(Proofs { all: comps, comps: verdicts })
     }
     /// Kept by the version's identity (`plan::kept_analyses`, t33 K4): a component's row is its place, its verdict
     /// (an order's code, or -1 and why not) and its relations; a `col` row a measured relation's column and rank.
@@ -405,7 +408,7 @@ impl Analysis for Proofs {
                 Ok(m) => (ORDERS.iter().position(|o| *o == m.order).expect("an order") as i64, String::new()),
                 Err(e) => (-1, e.clone()),
             };
-            out.push([s("comp"), Value::Int(k as i64), Value::Int(code), s(&why)].into_iter().chain(comp.iter().map(|r| s(r))).collect());
+            out.push([s("comp"), Value::Int(k as i64), Value::Int(code), s(&why)].into_iter().chain(self.all[*comp].iter().map(|r| s(r))).collect());
             if let Ok(m) = verdict {
                 for (rel, col) in &m.col {
                     out.push(vec![s("col"), Value::Int(k as i64), s(rel), Value::Int(*col as i64), Value::Int(m.rank.get(rel).map_or(-1, |r| i64::from(*r)))]);
@@ -427,7 +430,7 @@ impl Analysis for Proofs {
             Value::Int(i) => Some(*i),
             _ => None,
         };
-        let mut comps: Vec<(BTreeSet<String>, Result<Measure, String>)> = Vec::new();
+        let mut comps: Vec<(Vec<String>, Result<Measure, String>)> = Vec::new();
         for r in rows {
             match text(r.first()?)?.as_str() {
                 "comp" => {
@@ -456,19 +459,21 @@ impl Analysis for Proofs {
                 _ => return None,
             }
         }
-        Some(Proofs { comps })
+        // The recursive components alone, each at its place among them: a proof reads only its own (`Proofs::of`).
+        let (members, verdicts): (Vec<Vec<String>>, Vec<_>) = comps.into_iter().unzip();
+        Some(Proofs { all: std::sync::Arc::new(Components::of(members)), comps: verdicts.into_iter().enumerate().collect() })
     }
 }
 
 /// The orders, by their kept code (`Proofs::rows`).
 const ORDERS: [Order; 6] = [Order::Down, Order::Up, Order::Back, Order::Climbs, Order::Falls, Order::Same];
 
-fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<String>) -> Result<Measure, String> {
+fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<String>, comp: &crate::code_rule_dsl::logic::front::Comp) -> Result<Measure, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| format!("a recursive component classified ({} relations)", comp.len()));
     let rs: Vec<&Rule> = rules.iter().filter(|r| comp.contains(&r.head.rel) && r.atoms.iter().any(|a| comp.contains(&a.rel))).collect();
-    let rels: Vec<&String> = comp.iter().collect();
-    let cols: Vec<Vec<usize>> = rels.iter().map(|r| types(r).iter().enumerate().filter(|(_, t)| *t == "node").map(|(i, _)| i).collect()).collect();
-    if cols.iter().any(Vec::is_empty) {
+    let rels: Vec<&str> = comp.iter().collect();
+    let cols: Vec<Vector<usize>> = rels.iter().map(|r| types(r).iter().enumerate().filter(|(_, t)| *t == "node").map(|(i, _)| i).collect()).collect();
+    if cols.iter().any(|v| v.is_empty()) {
         return Err("a relation with no node column".into());
     }
     let mut why: BTreeMap<String, usize> = BTreeMap::new();
@@ -481,7 +486,7 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
     for n in 0..total {
         let (mut rest, mut m) = (n, BTreeMap::new());
         for (r, c) in rels.iter().zip(&cols) {
-            m.insert((*r).clone(), c[rest % c.len()]);
+            m.insert((*r).to_owned(), c[rest % c.len()]);
             rest /= c.len();
         }
         let mut labels: BTreeSet<&'static str> = BTreeSet::new();
@@ -561,8 +566,8 @@ fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<Strin
 
 /// Each relation's rank: after every relation whose rows at the same node it reads (`eq`: read → readers). `None` on
 /// a cycle, a relation reading itself at its own node included.
-fn ranked(comp: &BTreeSet<String>, eq: &BTreeMap<String, BTreeSet<String>>) -> Option<BTreeMap<String, u32>> {
-    let mut indeg: BTreeMap<&str, usize> = comp.iter().map(|r| (r.as_str(), 0)).collect();
+fn ranked(comp: &crate::code_rule_dsl::logic::front::Comp, eq: &BTreeMap<String, BTreeSet<String>>) -> Option<BTreeMap<String, u32>> {
+    let mut indeg: BTreeMap<&str, usize> = comp.iter().map(|r| (r, 0)).collect();
     for (from, to) in eq {
         for t in to {
             if t == from {

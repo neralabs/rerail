@@ -82,10 +82,10 @@ pub fn unescape(body: &str) -> Result<String, String> {
                     chars.by_ref().take(4).collect()
                 };
                 let code = u32::from_str_radix(&hex, 16).map_err(|_| format!("bad \\u escape {hex:?}"))?;
-                // A JSON surrogate pair.
+                // A JSON surrogate pair: a high surrogate, then a low one (another escape is its own character).
                 if (0xD800..0xDC00).contains(&code) && chars.peek() == Some(&'\\') {
                     let rest: String = chars.clone().take(6).collect();
-                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()) {
+                    if let Some(low) = rest.strip_prefix("\\u").and_then(|h| u32::from_str_radix(h, 16).ok()).filter(|low| (0xDC00..0xE000).contains(low)) {
                         chars.by_ref().take(6).for_each(drop);
                         let joined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                         out.push(char::from_u32(joined).ok_or("bad surrogate pair")?);
@@ -1626,5 +1626,29 @@ mod punct_tests {
                 assert_eq!(super::punct(c, d), scan, "{text:?}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod unescape_tests {
+    /// A high surrogate joins only a low one after it: before another escape (a character, or a second high
+    /// surrogate) it is a code point of its own, which a string cannot hold. Found by the edited corpus
+    /// (`lean_tape_is_the_engines_on_edited_files`): `"\uD800A"` took 0xDC00 from 0x41.
+    #[test]
+    fn a_surrogate_pairs_only_with_a_low_one() {
+        assert_eq!(super::unescape("\\uD83D\\uDE00"), Ok("\u{1F600}".to_owned()));
+        assert!(super::unescape("\\uD800\\u0041").is_err());
+        assert!(super::unescape("\\uD800\\uD800").is_err());
+        assert!(super::unescape("\\uD800\\uE000").is_err());
+    }
+
+    /// A `\u` surrogate pair is one character; a high surrogate before any other `\u` escape is no pair, and a
+    /// lone surrogate is refused, not read past (`low - 0xDC00` took a high surrogate's second half as low).
+    #[test]
+    fn a_surrogate_pair_joins_only_a_low_half() {
+        assert_eq!(super::unescape(r"😀").as_deref(), Ok("\u{1F600}"));
+        assert!(super::unescape(r"\uD83DA").is_err());
+        assert!(super::unescape(r"\uD83D\uD83D").is_err());
+        assert!(super::unescape(r"\uD83D").is_err());
     }
 }

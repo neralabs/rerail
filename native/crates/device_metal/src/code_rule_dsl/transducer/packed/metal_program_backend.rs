@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use rerail_metal::lane::{self, HostMapped};
 use super::metal_batch_abi::{
     FORMAT_VERSION, FinalCaptureRecord, LinkRecord as CaptureRecord, MetalGlobalArenas,
@@ -37,7 +38,7 @@ pub mod label_passes;
 #[path = "metal_set_steps.rs"]
 pub mod set_steps;
 // Block programs on Metal: the Metal crate's.
-pub use rerail_metal::block_program;
+pub use rerail_metal_programs::block_program;
 #[path = "metal_work_queue.rs"]
 pub mod work_queue;
 #[path = "metal_lattice.rs"]
@@ -279,18 +280,18 @@ impl Drop for MetalWorkspaceLease {
 const BATCH_ENTRY: &str = include_str!("../../../../../../src/code_rule_dsl/transducer/packed/batch_runtime.uglykl");
 /// The interpreter of resident label batches (tasks from roots, not records: decision 0033), over a batch of tapes in
 /// `format` (0: mixed) as the label kernels read it ([`tape_view`]): the format told once, at the compile (decision
-/// 0576). A run places its tapes in format 15 or 16 (a 16z tape as 16), so its interpreter and sweep hold one
-/// format's reads, and no 16z read.
+/// 0576). A run places its tapes in format 16 (a 16z tape as 16), so its interpreter and sweep hold one format's
+/// reads, and no 16z read.
 fn resident_prefix(format: u32) -> String {
     format!("#define RERAIL_RESIDENT 1\n{}", tape_view(format))
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
 /// document table's entry as generated (`slabs::msl`, decisions 0289 §4 and 0310), the reads written once in CLIF,
-/// then the readers. The reads are format 15's and 16's (`<ukl/reads/tape.h>`), or 16z's too, through the
+/// then the readers. The reads are format 16's (`<ukl/reads/tape.h>`), or 16z's too, through the
 /// batch's cache (`<ukl/reads/tape_z.h>`, decision 0353 step 4b) for a batch of 16z or of mixed formats
-/// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a format
-/// 15 label kernel's compile.
+/// ([`tape_view`]): a pipeline's 16z bodies are compiled though its format makes them dead, and doubled a label
+/// kernel's compile.
 ///
 /// The batch's tape format is the program's specialization constant (`tape_format`, `UKL_CONSTANT_U32`: Metal's
 /// function constant 0, a define elsewhere; 0 for a mixed batch): each view load of the format field reads it, so a
@@ -319,17 +320,17 @@ pub(super) fn tape_view(format: u32) -> &'static str {
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {
     programs: Vec<super::metal_batch_abi::MetalProgram>,
-    words: Vec<u32>,
-    longs: Vec<u64>,
+    words: Vector<u32>,
+    longs: Vector<u64>,
     values: Vec<super::metal_batch_abi::ValueRecord>,
     strings: Vec<super::metal_batch_abi::MetalString>,
     nfa_states: Vec<super::metal_batch_abi::NfaStateRecord>,
-    nfa_data: Vec<u32>,
+    nfa_data: Vector<u32>,
     nfa_ranges: Vec<super::metal_batch_abi::NfaRangeRecord>,
     lua_instructions: Vec<super::metal_batch_abi::LuaInstructionRecord>,
     lua_members: Vec<super::metal_batch_abi::LuaSetMemberRecord>,
     assertions: Vec<super::packed_batch::AssertionRecord>,
-    assertion_data: Vec<u32>,
+    assertion_data: Vector<u32>,
     string_bytes: Vec<u8>,
 }
 
@@ -841,7 +842,7 @@ pub(super) fn execute(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     execute_outcomes(engine, programs, files, anchors)?.into_result()
 }
@@ -850,7 +851,7 @@ pub(in crate::code_rule_dsl) fn execute_outcomes(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<BatchOutcome, Error> {
     execute_packed(engine, programs, files, anchors)?.into_outcome()
 }
@@ -859,7 +860,7 @@ pub(super) fn execute_packed(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<PackedExecution, Error> {
     execute_packed_with_result_limits(engine, programs, files, anchors, None)
 }
@@ -868,7 +869,7 @@ pub fn execute_packed_with_result_limits(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
     execute_packed_budgeted(engine, programs, files, anchors, result_limits, super::Budget::current())
@@ -880,7 +881,7 @@ pub fn execute_packed_budgeted(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: super::Budget,
 ) -> Result<PackedExecution, Error> {
@@ -891,7 +892,7 @@ fn execute_packed_once(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
     result_limits: Option<&[u32]>,
     budget: super::Budget,
     growth: &super::StateGrowth,
@@ -912,7 +913,7 @@ fn pack_batch(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<PackedBatch, Error> {
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);

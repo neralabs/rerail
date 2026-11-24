@@ -28,6 +28,11 @@ pub const TABLE: u64 = 16;
 pub const LAID_AT: u64 = 32;
 /// A side list: up to `Z` u16 offsets, then up to `Z` u64 values, after 16 bytes; an area: 4 counts, 4 lists.
 pub const SIDE_LIST: u64 = 2 * Z as u64 + 8 * Z as u64;
+/// The ERROR node's code: the presence's bit a fault sets (`crate::ERROR_CODE` is this one).
+pub const ERROR_CODE: u16 = 0;
+/// A kind word's bit that says its code is MISSING (`f16::presence::FAULT` is this one), and its kind's bits.
+pub const FAULT: u32 = 1 << 15;
+pub const KIND_MASK: u32 = FAULT - 1;
 pub const SIDE_AREA: u64 = 16 + 4 * SIDE_LIST;
 /// 16z: a piece's entry, its kinds, the smallest piece a repeat names and LZ4 is tried on.
 pub const PIECE: u64 = 32;
@@ -73,7 +78,8 @@ pub mod part {
     pub const SEEN: usize = 13;
     pub const CKPT: usize = 14;
     pub const LZ: usize = 15;
-    pub const COUNT: usize = 16;
+    pub const ERRORS: usize = 16;
+    pub const COUNT: usize = 17;
 }
 
 /// A part: where it lies (an offset from the state's address), its capacity and what it holds, in bytes.
@@ -703,12 +709,27 @@ impl State {
                     number = cut + (byte - cut) * per + r;
                 }
                 let kf = if u64::from(number) < numbers { ld32(kinds + 4 * number as usize) } else { 0 };
-                let (kind, field) = (kf & 0xffff, kf >> 16);
+                let (kind, field) = (kf & KIND_MASK, kf >> 16);
+                // A MISSING code sets the fault bit too (`presence::kind_word`).
+                let fault = kf & FAULT != 0;
                 set_bit(pres, 0, kind);
                 set_bit(pres, kw, field);
+                if fault {
+                    set_bit(pres, 0, u32::from(ERROR_CODE));
+                }
                 if keep {
                     set_bit(mine, 0, kind);
                     set_bit(mine, kw, field);
+                    if fault {
+                        set_bit(mine, 0, u32::from(ERROR_CODE));
+                    }
+                }
+                // An ERROR node or a MISSING one listed in the ERRORS part, beside the fault bit it set.
+                if kind == u32::from(ERROR_CODE) || fault {
+                    let len = self.len(part::ERRORS);
+                    self.room(part::ERRORS, len + 4)?;
+                    st32(self.part(part::ERRORS) + len as usize, b * Z + j);
+                    self.set_len(part::ERRORS, len + 4);
                 }
             }
             for q in 0..4 {

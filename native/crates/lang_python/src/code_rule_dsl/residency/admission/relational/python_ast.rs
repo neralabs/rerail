@@ -1,4 +1,5 @@
 //! Canonical Python facts: one broad preparation pass, then indexed typed SQL reads.
+use rerail_blocks::vector::Vector;
 use super::ast_stage::{AstProducer, PublishedAst};
 use super::{Result, invalid, source, sql_error, syntax, table};
 use crate::code_rule_dsl::{budget, value::python_ast as canonical};
@@ -23,16 +24,16 @@ pub(in crate::code_rule_dsl) const FIELDS: &[&str] = &[
 pub(in crate::code_rule_dsl) struct Output {
     fields: Vec<String>,
     values: Vec<Vec<String>>,
-    files: Vec<u32>,
-    nodes: Vec<u32>,
+    files: Vector<u32>,
+    nodes: Vector<u32>,
 }
 impl Output {
     fn new(fields: Vec<String>) -> Self {
         Self {
             values: fields.iter().map(|_| Vec::new()).collect(),
             fields,
-            files: Vec::new(),
-            nodes: Vec::new(),
+            files: rerail_blocks::vector::Vector::new(),
+            nodes: rerail_blocks::vector::Vector::new(),
         }
     }
 }
@@ -93,7 +94,7 @@ fn execute(
         Err(e) => return fail(&e.0, pending.len()),
     };
     #[cfg(feature="code-rule-profile")]
-    trace.detail(||serde_json::json!({"relations":pending.len(),"roots":mappings.iter().map(Vec::len).sum::<usize>(),"documents":documents.len(),"sourceBytes":documents.iter().map(|d|d.source.len()).sum::<usize>(),"stages":1,"backend":"native-cpython-3.13"}));
+    trace.detail(||serde_json::json!({"relations":pending.len(),"roots":mappings.iter().map(|v| v.len()).sum::<usize>(),"documents":documents.len(),"sourceBytes":documents.iter().map(|d|d.source.len()).sum::<usize>(),"stages":1,"backend":"native-cpython-3.13"}));
     pending
         .into_iter()
         .zip(mappings)
@@ -126,8 +127,8 @@ fn execute(
 struct Published {
     output: Output,
     paths: Vec<String>,
-    by_path: HashMap<String, Vec<usize>>,
-    by_node: BTreeMap<u32, Vec<usize>>,
+    by_path: HashMap<String, Vector<usize>>,
+    by_node: BTreeMap<u32, Vector<usize>>,
     work: Arc<AtomicUsize>,
 }
 impl syntax::Source for Published {
@@ -161,11 +162,11 @@ impl syntax::Source for Published {
     fn indexed(&self, column: usize) -> bool {
         column < 2
     }
-    fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
+    fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<rerail_blocks::vector::Vector<usize>>> {
         if column > 1 {
             return Ok(None);
         }
-        let mut rows = Vec::new();
+        let mut rows = rerail_blocks::vector::Vector::new();
         for value in values {
             self.charge(1)?;
             match (column, value) {
@@ -209,8 +210,8 @@ fn publish(
     name: &str,
     work: Arc<AtomicUsize>,
 ) -> Result<()> {
-    let mut by_path = HashMap::<String, Vec<usize>>::new();
-    let mut by_node = BTreeMap::<u32, Vec<usize>>::new();
+    let mut by_path = HashMap::<String, Vector<usize>>::new();
+    let mut by_node = BTreeMap::<u32, Vector<usize>>::new();
     for (row, (&file, &node)) in output.files.iter().zip(&output.nodes).enumerate() {
         by_path
             .entry(paths[file as usize].clone())

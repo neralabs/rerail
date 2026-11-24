@@ -12,6 +12,7 @@
 //! its files, an old entry the memo dropped) gives the keeper up: that run measures as before, and the next one
 //! counts every file in again (the backfill).
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::memo;
@@ -27,7 +28,7 @@ struct Trace {
     /// Per export traced: the rows counted, signed, by document.
     docs: BTreeMap<String, HashMap<i64, i64>>,
     /// Each counted row of those exports, with the file whose entry gave it and its sign.
-    rows: Vec<(String, String, i64, Vec<i64>)>,
+    rows: Vec<(String, String, i64, Vector<i64>)>,
     /// The file whose entry is being counted.
     counting: String,
 }
@@ -246,6 +247,24 @@ impl Keeper {
         }
         drop(holders);
         let _rels = crate::code_rule_dsl::logic::profile::span(|| "statistics: relations".into());
+        // Each relation's statistics are its rows' alone: counted in parallel, a few relations a task (a file's are
+        // about 150 µs in all, on the run's thread: t50 step 8). Traced, in order.
+        if self.trace.listed.is_empty() {
+            use rayon::prelude::*;
+            let doc_at = &self.doc_at;
+            let mut rels: Vec<(&String, &mut RelStats)> = self.rels.iter_mut().filter(|(key, _)| pick(key) && entry.rows.contains_key(*key)).collect();
+            crate::code_rule_dsl::logic::profile::on_cores(|| {
+                rels.par_iter_mut().with_min_len(16).for_each(|(key, stats)| {
+                    let (width, values) = &entry.rows[*key];
+                    match doc_at.get(*key) {
+                        Some(at) => stats.rows_by(values, *width, sign, *at),
+                        None => stats.documents(values, *width, sign),
+                    }
+                })
+            });
+            if sign > 0 { self.counted.0 += 1 } else { self.counted.1 += 1 }
+            return;
+        }
         for (key, stats) in &mut self.rels {
             if !pick(key) {
                 continue;
@@ -258,7 +277,7 @@ impl Keeper {
                             let by = docs.entry(key.clone()).or_default();
                             for row in values.chunks_exact((*width).max(1)) {
                                 *by.entry(at.map_or(-1, |c| row[c] >> 32)).or_default() += sign;
-                                rows.push((key.clone(), counting.clone(), sign, row.to_vec()));
+                                rows.push((key.clone(), counting.clone(), sign, row.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()));
                             }
                         }
                         stats.rows_by(values, *width, sign, *at)
@@ -591,7 +610,7 @@ impl Keeper {
         let mut have: HashMap<i64, i64> = HashMap::new();
         held.each_row(key, width, |row| *have.entry(at.map_or(-1, |c| row[c] >> 32)).or_default() += 1);
         let counted = self.trace.docs.get(key).cloned().unwrap_or_default();
-        let mut docs: Vec<i64> = have.keys().chain(counted.keys()).copied().collect();
+        let mut docs: Vector<i64> = have.keys().chain(counted.keys()).copied().collect();
         docs.sort_unstable();
         docs.dedup();
         let path = |d: i64| self.docs.iter().find(|(_, (_, k))| *k == d).map_or("(no file kept under it)", |(p, _)| p.as_str());
@@ -878,17 +897,17 @@ pub mod tests {
     #[test]
     fn a_semijoins_held_rows_counted_by_document_are_their_measure() {
         // `node(d, n, kind)`-like rows over three documents, kinds repeating within and across them.
-        let rows: Vec<[i64; 3]> = (0..3i64).flat_map(|d| (0..7i64).map(move |i| [d, d << 32 | i, (i * d + i / 2) % 4])).collect();
+        let rows: rerail_blocks::vector::Vector<[i64; 3]> = (0..3i64).flat_map(|d| (0..7i64).map(move |i| [d, d << 32 | i, (i * d + i / 2) % 4])).collect();
         let names: Vec<String> = ["d", "n", "kind"].iter().map(|s| (*s).to_owned()).collect();
         let mut k = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(names.clone());
         k.documents(&rows.concat(), 3, 1);
-        let columns: Vec<Option<Vec<i64>>> = (0..3).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
+        let columns: Vec<Option<rerail_blocks::vector::Vector<i64>>> = (0..3).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect();
         let source = crate::code_rule_dsl::logic::native::setfix::columns_source(names, columns);
         let measured = crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref());
         assert_eq!(k.statistics(&|_| true), measured);
         // A document's rows counted out are gone from them: an edit patches them so.
         k.documents(&rows[..7].concat(), 3, -1);
-        let rest: Vec<Option<Vec<i64>>> = (0..3).map(|c| Some(rows[7..].iter().map(|r| r[c]).collect())).collect();
+        let rest: Vec<Option<rerail_blocks::vector::Vector<i64>>> = (0..3).map(|c| Some(rows[7..].iter().map(|r| r[c]).collect())).collect();
         let names: Vec<String> = ["d", "n", "kind"].iter().map(|s| (*s).to_owned()).collect();
         let source = crate::code_rule_dsl::logic::native::setfix::columns_source(names, rest);
         assert_eq!(k.statistics(&|_| true), crate::code_rule_dsl::facts::vtab::syntax::measured(source.as_ref()));

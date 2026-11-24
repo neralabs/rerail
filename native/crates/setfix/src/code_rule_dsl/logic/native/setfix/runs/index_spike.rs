@@ -290,7 +290,7 @@ fn index_spike() {
         for t in load(path) {
             let (n, k) = (t.n(), t.k);
             let data: &[i64] = &t.rows;
-            let cols: Vec<usize> = (0..k).collect();
+            let cols: Vector<usize> = (0..k).collect();
             // Builds, each timed.
             let b0 = Instant::now();
             let mut runs = Index::new(cols.clone());

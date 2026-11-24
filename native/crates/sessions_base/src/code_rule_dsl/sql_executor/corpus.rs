@@ -9,6 +9,7 @@
 //! An export's entry holds rows of `i64` values as the run made them. A file-local output's entry
 //! holds rendered lines: tab-separated text, its node and number columns as decimals. Their text
 //! columns are interned as symbols when the document is decoded.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::content_store::atoms::Atoms;
 use plan::corpus::memo;
@@ -21,7 +22,7 @@ const PROBE: usize = 1 << 62;
 /// The run's documents: each frame, its key, and its entry once decoded.
 pub struct Run {
     frames: Vec<memo::Frame>,
-    keys: Vec<i64>,
+    keys: Vector<i64>,
     by_key: HashMap<i64, usize>,
     entries: Vec<OnceLock<Option<Arc<memo::Entry>>>>,
     /// The first frame that did not decode: its path and the store's message.
@@ -30,7 +31,7 @@ pub struct Run {
 
 impl Run {
     pub fn open(frames: Vec<memo::Frame>) -> Result<Self> {
-        let keys = frames.iter().map(|f| memo::frame_key(f).map_err(|e| error(format!("{}: {e}", f.path)))).collect::<Result<Vec<_>>>()?;
+        let keys = frames.iter().map(|f| memo::frame_key(f).map_err(|e| error(format!("{}: {e}", f.path)))).collect::<Result<Vector<_>>>()?;
         let by_key = keys.iter().enumerate().map(|(i, k)| (*k, i)).collect();
         let entries = frames.iter().map(|_| OnceLock::new()).collect();
         Ok(Self { frames, keys, by_key, entries, failed: OnceLock::new() })
@@ -86,9 +87,9 @@ pub struct Corpus {
     nullary: bool,
     atoms: Arc<Atoms>,
     /// The columns whose values name a document (`node`, `loc`).
-    locations: Vec<usize>,
+    locations: Vector<usize>,
     docs: Vec<OnceLock<Arc<[i64]>>>,
-    all: OnceLock<Vec<i64>>,
+    all: OnceLock<Vector<i64>>,
     /// Rows per document, from the first document, for the planner.
     per_doc: usize,
 }
@@ -130,11 +131,11 @@ impl Corpus {
         self.docs[doc]
             .get_or_init(|| {
                 let w = self.width();
-                let mut rows: Vec<Vec<i64>> = match (self.run.entry(doc), self.form) {
-                    (Some(e), Form::Rows) if self.nullary => e.rows.get(&self.name).map_or_else(Vec::new, |_| vec![vec![1]]),
-                    (Some(e), Form::Lines) if self.nullary => e.outputs.get(&self.name).filter(|(_, r)| !r.is_empty()).map_or_else(Vec::new, |_| vec![vec![1]]),
+                let mut rows: Vec<Vector<i64>> = match (self.run.entry(doc), self.form) {
+                    (Some(e), Form::Rows) if self.nullary => e.rows.get(&self.name).map_or_else(Vec::new, |_| vec![rerail_blocks::vector![1]]),
+                    (Some(e), Form::Lines) if self.nullary => e.outputs.get(&self.name).filter(|(_, r)| !r.is_empty()).map_or_else(Vec::new, |_| vec![rerail_blocks::vector![1]]),
                     (Some(e), Form::Rows) => match e.rows.get(&self.name) {
-                        Some((width, values)) if *width == w => values.chunks(w).map(<[i64]>::to_vec).collect(),
+                        Some((width, values)) if *width == w => values.chunks(w).map(Vector::<i64>::from).collect(),
                         _ => vec![],
                     },
                     (Some(e), Form::Lines) => e.outputs.get(&self.name).map_or_else(Vec::new, |(_, rows)| self.values(rows)),
@@ -149,7 +150,7 @@ impl Corpus {
 
     /// A memo entry's typed rows as rows of values: an int, node or location column's integers as they are, a text
     /// column's texts as atoms. A row of another width, or with a text where an integer is declared, is left out.
-    fn values(&self, rows: &rerail_logic::code_rule_dsl::logic::plan::output::Rows) -> Vec<Vec<i64>> {
+    fn values(&self, rows: &rerail_logic::code_rule_dsl::logic::plan::output::Rows) -> Vec<Vector<i64>> {
         use rerail_logic::code_rule_dsl::logic::plan::output::Cell;
         let w = self.width();
         if rows.width() != w {
@@ -212,12 +213,12 @@ impl Source for Corpus {
     fn failure(&self) -> Option<String> {
         self.run.failure()
     }
-    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         if !self.locations.contains(&column) {
             return None;
         }
         let w = self.width();
-        let mut found = vec![];
+        let mut found = rerail_blocks::vector![];
         for &v in values.iter().filter(|v| **v > 0) {
             let key = if v >= 1 << 32 { v >> 32 } else { v };
             let Some(&doc) = self.run.by_key.get(&key) else { continue };

@@ -1,6 +1,7 @@
 # 0408: The pp words on Metal in lockstep: rooms by use, contexts across the batch, rounds as batches
 
-Status: draft (2026-11-18). Follows 0348's stage 5a, the spike. Built: L1–L4; the gate missed (L4).
+Status: superseded by 0482 (preprocessor as parallel passes), then 0448 and 0573 (audited 2026-11-23). Draft
+(2026-11-18). Follows 0348's stage 5a, the spike. Built: L1–L4; the gate missed (L4).
 
 ## Intro
 

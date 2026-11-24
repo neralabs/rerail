@@ -1,5 +1,6 @@
 //! G's positional index, literal and kind anchors and literal materialization (1c040f4a),
 //! test-only (open item O21): W's search index keeps kind presence only.
+use rerail_blocks::vector::Vector;
 use super::*;
 
 pub(super) const POSITIONAL_INDEX_VERSION: i64 = 5;
@@ -65,7 +66,7 @@ pub(super) struct SearchIndexDraft {
     node_count: u32,
     kind_tokens: Arc<String>,
     value_tokens: Arc<String>,
-    source_text: Arc<String>,
+    source_text: Arc<crate::code_rule_dsl::tape::Text>,
 }
 
 impl SearchIndexDraft {
@@ -85,7 +86,7 @@ impl SearchIndexDraft {
     }
 
     pub(super) fn from_observed<'a>(
-        source_text: Arc<String>,
+        source_text: Arc<crate::code_rule_dsl::tape::Text>,
         kind_tokens: String,
         values: impl IntoIterator<Item = (u16, &'a [u8])>,
         node_count: u32,
@@ -214,13 +215,13 @@ pub fn load_literal_anchor_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     programs: &[Program],
-) -> crate::content_store::StoreResult<Vec<Vec<Option<Vec<u32>>>>> {
+) -> crate::content_store::StoreResult<Vec<Vec<Option<Vector<u32>>>>> {
     Ok(load_literal_eligibility_batch(store, tape_ids, programs)?
         .into_iter()
         .map(|file| {
             file.into_iter()
                 .map(|candidate| match candidate {
-                    Some(false) => Some(Vec::new()),
+                    Some(false) => Some(rerail_blocks::vector::Vector::new()),
                     Some(true) | None => None,
                 })
                 .collect()
@@ -229,12 +230,12 @@ pub fn load_literal_anchor_batch(
 }
 
 #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
-pub fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Vec<Vec<u32>> {
+pub fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Vec<Vector<u32>> {
     let words = programs.div_ceil(32);
     eligibility
         .into_iter()
         .map(|file| {
-            let mut bits = vec![0_u32; words];
+            let mut bits = rerail_blocks::vector![0_u32; words];
             for (program, candidate) in file.into_iter().enumerate() {
                 if candidate != Some(false) {
                     bits[program / 32] |= 1_u32 << (program % 32);
@@ -248,8 +249,8 @@ pub fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -
 pub fn widen_anchor_candidates(
     programs: &[Program],
     files: &[TapeDoc],
-    selections: Vec<Vec<Option<Vec<u32>>>>,
-) -> Vec<Vec<Vec<u32>>> {
+    selections: Vec<Vec<Option<Vector<u32>>>>,
+) -> Vec<Vec<Vector<u32>>> {
     selections
         .into_iter()
         .zip(files)
@@ -266,7 +267,7 @@ pub fn widen_anchor_candidates(
                 .collect::<BTreeSet<_>>();
             let mut by_kind = required
                 .iter()
-                .map(|&kind| (kind, Vec::new()))
+                .map(|&kind| (kind, rerail_blocks::vector::Vector::new()))
                 .collect::<BTreeMap<_, _>>();
             if !by_kind.is_empty() {
                 for node in 0..tape.transducer_len() as u32 {
@@ -295,7 +296,7 @@ pub fn load_kind_anchor_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     kinds: &[u16],
-) -> crate::content_store::StoreResult<Vec<Vec<Option<Vec<u32>>>>> {
+) -> crate::content_store::StoreResult<Vec<Vec<Option<Vector<u32>>>>> {
     if kinds.is_empty() {
         return Ok(tape_ids.iter().map(|_| Vec::new()).collect());
     }
@@ -345,7 +346,7 @@ pub fn load_text_candidate_batch(
 pub fn materialize_literal_anchors(
     programs: &[Program],
     files: &[TapeDoc],
-    anchors: &[Vec<Vec<u32>>],
+    anchors: &[Vec<Vector<u32>>],
 ) -> Result<Vec<Vec<Vec<Output>>>, Error> {
     if anchors.len() != files.len() || anchors.iter().any(|file| file.len() != programs.len()) {
         return Err(Error::InvalidAnchor);

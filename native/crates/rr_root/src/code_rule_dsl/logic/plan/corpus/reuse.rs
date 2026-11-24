@@ -16,6 +16,7 @@
 //! The frame is kept and read with `options.reuse`: the command line's runs, and phase 0's. A run that reads something it cannot name does not record. That covers typing inputs,
 //! T facts, a program reading another phase's exports, or a run that consulted no file.
 
+use rerail_blocks::vector::Vector;
 use super::{Report, Result, Typing, observe};
 use super::Error;
 use sha2::{Digest as _, Sha256};
@@ -41,7 +42,7 @@ pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Pat
 const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
-    "RERAIL_PROF", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    "RERAIL_PROF", "RERAIL_PROFILE_EACH", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
     // The width census of the run's relations (`profile::memory::width_census`): what a layout would hold, measured.
     "RERAIL_WIDTH_CENSUS",
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
@@ -351,7 +352,7 @@ fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &
         }
     }
     crate::code_rule_dsl::logic::profile::decision("the run's frame (t33 K4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
-    if captured.is_none() { std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
+    if captured.is_none() { crate::content_store::prepare_cache_directory(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
     let mut report = Report { plans, ..Report::default() };
     let name = crate::code_rule_dsl::logic::plan::output::FILE;
     let bytes = &kept.image;

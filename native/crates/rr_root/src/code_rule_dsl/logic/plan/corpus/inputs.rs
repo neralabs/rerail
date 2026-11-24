@@ -365,7 +365,7 @@ pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Ve
         .collect();
     names.sort();
     names.dedup();
-    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    crate::content_store::prepare_cache_directory(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let mut report = String::new();
     for name in names {
         let globs = declared.get(&name).ok_or_else(|| format!("{name}: no policy declares .artifact {name:?}"))?;

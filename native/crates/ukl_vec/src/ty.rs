@@ -14,8 +14,6 @@ pub enum Ty {
     Struct(u32),
     /// A function, by its index in the program's.
     Func(u32),
-    /// OpenCL's `uint4`, which only `sub_group_ballot` gives (its `.x` read).
-    Uint4,
 }
 
 pub const U32: Ty = Ty::Int { bits: 32, signed: false };
@@ -82,7 +80,6 @@ impl Ty {
                 (s.size, s.align.max(1))
             }
             Ty::Func(_) => (1, 1),
-            Ty::Uint4 => (16, 16),
         }
     }
 
@@ -106,7 +103,7 @@ impl Ty {
             Ty::Float(32) => M::F32,
             Ty::Float(_) => M::F64,
             Ty::Ptr(_) | Ty::Func(_) => M::PTR,
-            Ty::Array(..) | Ty::Struct(_) | Ty::Uint4 => M::agg(self.size(structs) as u32),
+            Ty::Array(..) | Ty::Struct(_) => M::agg(self.size(structs) as u32),
         }
     }
 

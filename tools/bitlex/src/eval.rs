@@ -434,11 +434,13 @@ impl<'a> Ev<'a> {
             }
             // Read at the start (`stream`).
             Stmt::Prefix(_) => {}
+            // A fact of the token loop: no mask of its own (decision 0607).
+            Stmt::Assume { .. } | Stmt::AssumeEnds { .. } => {}
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);
                 self.exec(body)?;
             }
-            Stmt::Node { kind, nested, whole, body } => {
+            Stmt::Node { kind, nested, whole, body, .. } => {
                 let tree = self.tree.get_or_insert_with(TreeDecl::default);
                 if tree.rules.is_empty() {
                     tree.whole = *whole;

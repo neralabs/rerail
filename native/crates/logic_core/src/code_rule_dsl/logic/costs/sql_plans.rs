@@ -1,4 +1,5 @@
 //! SQL plan feedback in the shared costs database. The execution thread only uses memory.
+use rerail_blocks::vector::Vector;
 use parking_lot::{Mutex, RwLock};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
@@ -213,7 +214,7 @@ pub fn estimate(operation: Operation, inputs: &Inputs, strategy: Strategy) -> Es
     let samples = model
         .0
         .get(&Cohort::new(operation, inputs, strategy))
-        .map_or(&[][..], Vec::as_slice);
+        .map_or(&[][..], |v| v.as_slice());
     Estimate {
         samples: samples.len(),
         max_observed_submissions: (samples.len() >= MIN_SAMPLES)
@@ -300,8 +301,8 @@ pub fn insert(
     threads: i64,
     at: f64,
     reports: &VecDeque<Report>,
-) -> rusqlite::Result<Vec<i64>> {
-    let mut ids = Vec::with_capacity(reports.len());
+) -> rusqlite::Result<Vector<i64>> {
+    let mut ids = rerail_blocks::vector::Vector::with_capacity(reports.len());
     let mut stmt = tx.prepare_cached(
         "INSERT INTO sql_plan_observations(at,machine,threads,profile,version,operation,outcome,report)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
@@ -335,7 +336,7 @@ pub fn insert(
     Ok(ids)
 }
 
-pub fn learn(ids: Vec<i64>, reports: &VecDeque<Report>) {
+pub fn learn(ids: Vector<i64>, reports: &VecDeque<Report>) {
     let st_ = plans();
     let mut model = st_.model.write();
     for (id, report) in ids.into_iter().zip(reports) {

@@ -2,6 +2,7 @@
 //! batch's node records they replace (decision 0032): every node of a batch of stored fixtures. The kernel is UKL,
 //! launched through the device layer (decision 0440 step C): it runs on the process's device, and its source
 //! compiles for every backend this machine has.
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
@@ -344,7 +345,7 @@ fn label_kernels_compile_cost() {
         eprintln!("format 16 in parallel: {:.2} s wall, {:.2} s summed over the kernels' threads", clock.elapsed().as_secs_f64(), times.iter().sum::<f64>());
         return;
     }
-    let formats: Vec<u32> = std::env::var("RERAIL_PROBE_FORMATS").ok().map_or(vec![16, 15, 0], |f| f.split(',').map(|f| f.parse().unwrap()).collect());
+    let formats: Vector<u32> = std::env::var("RERAIL_PROBE_FORMATS").ok().map_or(rerail_blocks::vector![16, 15, 0], |f| f.split(',').map(|f| f.parse::<u32>().unwrap()).collect());
     for format in formats {
         let (mut functions, mut pipelines) = (0.0, 0.0);
         for name in kernels {

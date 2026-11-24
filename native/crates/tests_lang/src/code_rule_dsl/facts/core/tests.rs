@@ -2,13 +2,13 @@ use super::*;
 use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label};
 
 /// A file as facts read it, with no request around it.
-struct Text(String, Arc<String>);
+struct Text(String, Arc<crate::code_rule_dsl::tape::Text>);
 
 impl SourceFile for Text {
     fn language(&self) -> &str {
         &self.0
     }
-    fn source(&self) -> &Arc<String> {
+    fn source(&self) -> &Arc<crate::code_rule_dsl::tape::Text> {
         &self.1
     }
     fn as_any(&self) -> &dyn std::any::Any {
@@ -17,7 +17,7 @@ impl SourceFile for Text {
 }
 
 fn facts(path: &str, language: &str, source: &str) -> Facts {
-    let file = Text(language.to_owned(), Arc::new(source.to_owned()));
+    let file = Text(language.to_owned(), Arc::new(crate::code_rule_dsl::tape::Text::from(source)));
     match build(&file).unwrap() {
         Built::Facts(facts) => facts,
         Built::Unparsed => panic!("{path} did not parse"),
@@ -32,6 +32,8 @@ fn atom(language: &str, kind: &str) -> u32 {
 #[test]
 fn columns_are_a_preorder_tree_with_children_and_kind_postings() {
     let f = facts("a.py", "python", "value = left + right\nprint(value)\n");
+    let f_cache = f.own_cache();
+    let f = f.read_in(f_cache.as_ref());
     assert_eq!(f.parent_or_none(0_u32), NONE);
     for id in 1..f.len() as u32 {
         let parent = f.parent(id).unwrap();
@@ -54,6 +56,8 @@ fn columns_are_a_preorder_tree_with_children_and_kind_postings() {
 #[test]
 fn abstract_classes_post_the_nodes_the_tape_records() {
     let f = facts("a.py", "python", "value = left + right\n");
+    let f_cache = f.own_cache();
+    let f = f.read_in(f_cache.as_ref());
     let expressions = f.of_class(atom("python", "expression"));
     let binary = f.of_kind(atom("python", "binary_operator"));
     assert_eq!(binary.len(), 1);
@@ -66,6 +70,8 @@ fn abstract_classes_post_the_nodes_the_tape_records() {
 fn every_dialect_reads_its_own_grammar_and_kinds_never_collide() {
     let python = facts("a.py", "python", "f(x)\n");
     let typescript = facts("a.ts", "typescript", "f(x);\n");
+    let (python_cache, typescript_cache) = (python.own_cache(), typescript.own_cache());
+    let (python, typescript) = (python.read_in(python_cache.as_ref()), typescript.read_in(typescript_cache.as_ref()));
     assert_eq!(typescript.of_kind(atom("typescript", "call_expression")).len(), 1);
     assert_eq!(python.of_kind(atom("python", "call")).len(), 1);
     let (p, t) = (python.kind(0) / KIND_STRIDE, typescript.kind(0) / KIND_STRIDE);
@@ -104,36 +110,41 @@ fn every_format_reads_the_same_facts_off_the_tape() {
         let lang = dialect_by_label(label).unwrap();
         let grammar = Grammar::new(lang).unwrap();
         let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
-        let source = Arc::new(source.to_owned());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
         let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
         let doc = TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &image.primary, &|| false).unwrap();
         let old = from_tape(&doc, Arc::clone(&lines)).unwrap();
+        let old_cache = old.own_cache();
+        let old_in = old.read_in(old_cache.as_ref());
         let same = from_image(Arc::clone(&source), &grammar, image.primary.clone(), Arc::clone(&lines)).unwrap();
         assert_eq!(digest(&old), digest(&same), "{label}");
-        let (kinds, classes) = old.histogram();
+        let (kinds, classes) = old_in.histogram();
         for format in Format::ALL {
             let new = from_image(Arc::clone(&source), &grammar, crate::code_rule_dsl::tape::formats::as_run(format, || TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary), Arc::clone(&lines)).unwrap();
             let at = format!("{label} in {}: {source}", format.name());
+            // A 16z tape read in a batch of its own: its blocks decoded into its cache.
+            let new_cache = new.own_cache();
+            let new = new.read_in(new_cache.as_ref());
             assert_eq!(old.len(), new.len(), "{at}");
             for id in 0..new.len() as u32 {
-                assert_eq!((old.kind(id), old.parent(id), old.span(id), old.subtree_end(id), old.flags(id), old.field(id)),
+                assert_eq!((old_in.kind(id), old_in.parent(id), old_in.span(id), old_in.subtree_end(id), old_in.flags(id), old_in.field(id)),
                     (new.kind(id), new.parent(id), new.span(id), new.subtree_end(id), new.flags(id), new.field(id)), "{at}: node {id}");
-                assert_eq!((old.start(id), old.end(id)), new.span(id), "{at}: node {id}");
-                assert_eq!(old.children(id), new.children(id), "{at}: node {id}");
+                assert_eq!((old_in.start(id), old_in.end(id)), new.span(id), "{at}: node {id}");
+                assert_eq!(old_in.children(id), new.children(id), "{at}: node {id}");
                 assert_eq!(new.start_line(id), lines.line(new.start(id) as usize) as u32 + 1);
             }
             assert_eq!((kinds.clone(), classes.clone()), new.histogram(), "{at}");
             for &(kind, n) in &kinds {
                 let nodes = new.of_kind(kind);
                 assert_eq!(nodes.len() as u32, n, "{at}");
-                assert_eq!(nodes, old.of_kind(kind), "{at}");
+                assert_eq!(nodes, old_in.of_kind(kind), "{at}");
                 assert!(nodes.iter().all(|&id| new.kind(id) == kind));
             }
             for &(class, _) in &classes {
-                assert_eq!(new.of_class(class), old.of_class(class), "{at}");
+                assert_eq!(new.of_class(class), old_in.of_class(class), "{at}");
             }
-            assert_eq!(old.syntax_errors(), new.syntax_errors(), "{at}");
-            assert_eq!(old.depth(), new.depth(), "{at}");
+            assert_eq!(old_in.syntax_errors(), new.syntax_errors(), "{at}");
+            assert_eq!(old_in.depth(), new.depth(), "{at}");
         }
     }
 }
@@ -154,7 +165,7 @@ fn a_stored_tape_holds_the_presence_its_writer_made() {
         let dir = tempfile::tempdir().unwrap();
         let cache = crate::content_store::ContentStore::open(&dir.path().join("p.sqlite")).unwrap();
         // Past two blocks of nodes: the class is in the first alone.
-        let file = Text("python".into(), Arc::new(format!("class A:\n    def f(self):\n        return g(1)\n{}", "x = 1\n".repeat(500))));
+        let file = Text("python".into(), Arc::new(format!("class A:\n    def f(self):\n        return g(1)\n{}", "x = 1\n".repeat(500)).into()));
         let (_, _, parsed) = build_cached_with_tape(&file, &cache, None, true).unwrap();
         let parsed = parsed.expect("the tape");
         assert!(parsed.has_presence(), "{at}: a parse lays its presence in the tape's home");

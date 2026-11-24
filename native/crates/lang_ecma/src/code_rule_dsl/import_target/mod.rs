@@ -331,7 +331,7 @@ impl View {
             let manifest = self.relative(folder).map(|relative| {
                 let file = |name: &str| {
                     self.text(&path::join(folder, name))
-                        .map(|text| (*text).clone())
+                        .map(|text| text.to_string())
                 };
                 let bytes = self
                     .text(&path::join(folder, "package.json"))

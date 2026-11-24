@@ -1,5 +1,8 @@
 # t31. Making a one-file edit cost what it changed: a workplan
 
+Status (2026-11-23): not kept as a plan. Its tables have no state of their own. Streams B and D4 are decision
+0090's steps, and the edit-driven strata are 0101, 0117 and 0120; each says what of it is built.
+
 ## Intro
 
 After an edit to one file, a run should cost about what that file's change reaches: close to nothing. Today it

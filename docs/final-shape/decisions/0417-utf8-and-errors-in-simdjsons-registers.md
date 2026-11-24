@@ -1,8 +1,7 @@
 # 0417: UTF-8 and errors in simdjson's registers
 
-Status: decided (the user, 2026-11-18: "please address these", the two items 0406 left).
-Follows 0405 and 0406. First numbered 0411, which Final-shape-quality's record has (commit
-44efa560b names it so).
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "please address these", the two items 0406 left).
+Follows 0405 and 0406. First numbered 0411, which Final-shape-quality's record has (commit 44efa560b names it so).
 
 ## Intro
 

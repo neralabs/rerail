@@ -1,6 +1,6 @@
 # 0311: The device records each row's level, the round that made it
 
-Status: decided (the user, 2026-11-16); built the same day.
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-16); built the same day.
 
 ## Intro
 

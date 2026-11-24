@@ -18,7 +18,7 @@ use std::sync::{Arc, Condvar, Mutex};
 pub struct Col(Arc<Data>);
 
 enum Data {
-    Host(Arc<[i64]>),
+    Host(crate::kernel::Words<i64>),
     Staged(Staged),
 }
 
@@ -36,7 +36,7 @@ enum Store {
     #[cfg(gpu_lane)]
     /// Held by its lease's ledger (decision 0487 step 3): a kernel that binds it holds it until its work completes.
     Shared(crate::gpu::shared::Pooled),
-    Host(#[allow(dead_code)] Box<[i64]>),
+    Host(#[allow(dead_code)] rerail_blocks::vector::Vector<i64>),
 }
 
 // SAFETY: the pointer is the store's own memory, kept as long as the column; it is written only by the column's one
@@ -90,14 +90,14 @@ impl std::ops::Deref for Col {
     }
 }
 
-impl From<Vec<i64>> for Col {
-    fn from(v: Vec<i64>) -> Col {
-        Col(Arc::new(Data::Host(v.into())))
+impl From<rerail_blocks::vector::Vector<i64>> for Col {
+    fn from(v: rerail_blocks::vector::Vector<i64>) -> Col {
+        Col(Arc::new(Data::Host(Arc::new(v))))
     }
 }
 
-impl From<Arc<[i64]>> for Col {
-    fn from(v: Arc<[i64]>) -> Col {
+impl From<crate::kernel::Words<i64>> for Col {
+    fn from(v: crate::kernel::Words<i64>) -> Col {
         Col(Arc::new(Data::Host(v)))
     }
 }
@@ -239,7 +239,7 @@ impl Store {
             let ptr = p.host().cast::<i64>();
             return Ok((Store::Shared(p), ptr));
         }
-        let mut b = vec![0i64; len.max(1)].into_boxed_slice();
+        let mut b = rerail_blocks::vector![0i64; len.max(1)];
         let ptr = b.as_mut_ptr();
         Ok((Store::Host(b), ptr))
     }

@@ -1,7 +1,7 @@
 # 0134: JSON is read with simdjson
 
-Status: accepted (user, 2026-11-12: "please use the real SIMDJSON parser instead of tree-sitter-json
-or bitlex-json. The tree-sitter one is slow and the bitlex one is not ready")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-12: "please use the real SIMDJSON parser instead of
+tree-sitter-json or bitlex-json. The tree-sitter one is slow and the bitlex one is not ready")
 
 ## Intro
 

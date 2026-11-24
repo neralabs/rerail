@@ -1,3 +1,4 @@
+    use rerail_blocks::vector::Vector;
     use super::*;
     use super::super::super::program_image::{Lit, RuleRef};
     use super::super::super::rr::parse_version;
@@ -169,8 +170,8 @@
         let priced = |model: &mut Model| {
             let f = base.fields().unwrap();
             let strata = super::super::super::program_image::analyses::strata(&base.v, f.about).unwrap();
-            let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r).to_owned()).collect()).collect();
-            let ids = BTreeMap::from([("ctx", vec![0])]);
+            let sccs = crate::code_rule_dsl::logic::front::Components::of_names(strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r))));
+            let ids = BTreeMap::from([("ctx", rerail_blocks::vector![0])]);
             let (e, ins) = estimate(base.fields().unwrap(), model, (&def_v, &ids), &sccs, &BTreeSet::from(["ctx"]), &BTreeSet::from(["ctx"]));
             let got = format!(
                 "cards {:?} ndv {:?}; ctx {:?}; reader {:?}, copy {:?}, build {:?}",
@@ -304,13 +305,37 @@
         .unwrap();
         let placed = Placed::whole(prog);
         let f = Fields::of(&placed).unwrap();
-        let mut rules_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut rules_of: BTreeMap<&str, Vector<usize>> = BTreeMap::new();
         for k in 0..placed.len() {
             rules_of.entry(placed.v.rel_name(placed.rule(k).head().rel())).or_default().push(k);
         }
-        let why = refusals(&f, &placed, placed.len(), &rules_of, &[]);
+        let why = refusals(&f, &placed, placed.len(), &rules_of, &Default::default());
         assert_eq!(why.get("rr_demand_agg_g").copied(), Some("an aggregate's demand"), "{why:?}");
         assert!(!why.contains_key("s"), "{why:?}");
+    }
+
+    /// A relation a filter reads is stored (decision 0611): where every row passes, the filter is read as it, so it
+    /// must have rows. Inlined, the filter is its rules under the bound, derived with nothing beside it. A relation of
+    /// the same shape read by a join stays a candidate.
+    #[test]
+    fn a_filters_source_is_stored() {
+        let prog = super::super::super::rr::parse_version(
+            ".decl b(x: number, y: number)\n.decl c(x: number)\n.input b\n.input c\n\
+             .decl s(x: number, y: number)\ns(x, y) :- b(x, y), c(x).\n\
+             .decl t(x: number, y: number)\nt(x, y) :- s(x, y), x < 10.\n\
+             .decl u(x: number, y: number)\nu(x, y) :- b(x, y), c(y).\n\
+             .decl o(x: number, y: number)\no(x, y) :- t(x, y), u(y, x).\n.output o\n",
+        )
+        .unwrap();
+        let placed = Placed::whole(prog);
+        let f = Fields::of(&placed).unwrap();
+        let mut rules_of: BTreeMap<&str, Vector<usize>> = BTreeMap::new();
+        for k in 0..placed.len() {
+            rules_of.entry(placed.v.rel_name(placed.rule(k).head().rel())).or_default().push(k);
+        }
+        let why = refusals(&f, &placed, placed.len(), &rules_of, &Default::default());
+        assert_eq!(why.get("s").copied(), Some("a filter reads it (decision 0611)"), "{why:?}");
+        assert!(!why.contains_key("u"), "{why:?}");
     }
 
     /// A model of `prog` whose inputs have the rows and distinct values by column given.
@@ -320,7 +345,7 @@
         let given = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
         let derived: HashSet<String> = prog.rules().map(|r| prog.rel_name(r.head().rel()).to_owned()).collect();
         let stats = Stats::empty_of(&Placed::whole(Arc::clone(prog)).fields().unwrap());
-        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats, ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.into() };
+        let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats, ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: given.into(), derived: derived.iter().collect() };
         model.stats.nodes = 1_000_000.0;
         for &(rel, rows, ndv) in inputs {
             model.stats.card.insert(rel, rows);
@@ -352,22 +377,22 @@
         let model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 1_000_000.0, &[10.0, 1_000.0]), ("c", 1_000_000.0, &[1_000.0, 50.0])]);
         let base = Placed::whole(prog);
         let f = Fields::of(&base).unwrap();
-        let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut ids_of: BTreeMap<&str, Vector<usize>> = BTreeMap::new();
         for k in 0..base.len() {
             ids_of.entry(base.v.rel_name(base.rule(k).head().rel())).or_default().push(k);
         }
         let strata = super::super::super::program_image::analyses::strata(&base.v, f.about).unwrap();
-        let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r).to_owned()).collect()).collect();
+        let sccs = crate::code_rule_dsl::logic::front::Components::of_names(strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r))));
         let b = bounds(&f, &base, base.len(), &model, &ids_of, &sccs);
         // r: x at most b's 10 distinct firsts.
-        assert_eq!(b["r"], (10.0, vec![10.0]));
+        assert_eq!(b["r"], (10.0, rerail_blocks::vector![10.0]));
         // s: x in a (5), a constant (1); then r's 10 by a's 5. Columns: 5 + 10, and 1 + 5.
-        assert_eq!(b["s"], (55.0, vec![15.0, 6.0]));
+        assert_eq!(b["s"], (55.0, rerail_blocks::vector![15.0, 6.0]));
         // u: x in b's first column (10) and c's first (1,000): 10.
         assert_eq!(b["u"].0, 10.0);
         assert!(!b.contains_key("p"), "a recursion is unbounded");
         // t: x is one value for each row of a (a comparison binds it): a's 5 rows bound it, its column not.
-        assert_eq!(b["t"], (5.0, vec![5.0]));
+        assert_eq!(b["t"], (5.0, rerail_blocks::vector![5.0]));
         assert!(b["w"].0.is_infinite(), "an `ast` match makes many rows a row of a: {:?}", b["w"]);
         assert_eq!(b["o"].0, 5.0, "p is unbounded, but x is bounded by t (5), r and u (10)");
     }
@@ -410,12 +435,12 @@
         let mut model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 100_000.0, &[1_000.0, 2_000.0])]);
         let base = Placed::whole(prog.clone());
         let f = Fields::of(&base).unwrap();
-        let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut ids_of: BTreeMap<&str, Vector<usize>> = BTreeMap::new();
         for k in 0..base.len() {
             ids_of.entry(base.v.rel_name(base.rule(k).head().rel())).or_default().push(k);
         }
         let strata = super::super::super::program_image::analyses::strata(&base.v, f.about).unwrap();
-        let sccs: Vec<BTreeSet<String>> = strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r).to_owned()).collect()).collect();
+        let sccs = crate::code_rule_dsl::logic::front::Components::of_names(strata.sccs.iter().map(|s| s.iter().map(|&r| base.v.rel_name(r))));
         let need: BTreeSet<&str> = ["n", "p", "o"].into_iter().collect();
         let _ = estimate(f, &mut model, (&base, &ids_of), &sccs, &need, &BTreeSet::new());
         let n_rows = model.stats.card["n"];

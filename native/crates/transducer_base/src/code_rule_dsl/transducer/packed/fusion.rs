@@ -10,6 +10,7 @@
 //! members' tables (strings, text predicates, capture names) are concatenated and their operands
 //! offset.
 
+use rerail_blocks::vector::Vector;
 use super::{
     split, word, Program, TextPredicate, CAPTURE, CHILD, DESCEND, EMIT, FIELD, FLAGS, FOLLOWING, FORK, GOTO, KIND,
     NEXT, PARENT, RESTORE_CURSOR, SAVE_CURSOR, SUPERTYPE,
@@ -25,11 +26,11 @@ pub struct Fused {
     /// By the fused program's emit label: the member and the member's own label.
     pub emits: Vec<(usize, u16)>,
     /// Per member, where its capture labels start among the fused program's.
-    pub captures: Vec<u16>,
+    pub captures: Vector<u16>,
     /// How many leading words the members share (the trie's shared path).
     pub(in crate::code_rule_dsl) prefix: usize,
     /// Per member, where its branch starts in the fused program (the dispatch past the prefix).
-    pub(in crate::code_rule_dsl) starts: Vec<usize>,
+    pub(in crate::code_rule_dsl) starts: Vector<usize>,
 }
 
 impl Fused {
@@ -49,7 +50,7 @@ impl Fused {
             return None;
         }
         let prefix = shared_prefix(members);
-        let (mut words, mut strings, mut predicates, mut labels) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut words, mut strings, mut predicates, mut labels) = (rerail_blocks::vector::Vector::new(), Vec::new(), Vec::new(), rerail_blocks::vector::Vector::new());
         // The emit table first: an emit's operand names a label (a string), so the fused emits'
         // labels are the table's first `emits.len()`, each its member's label's name.
         let mut emits = Vec::<(usize, u16)>::new();
@@ -75,7 +76,7 @@ impl Fused {
             let name = *members[k].labels.get(usize::from(arg))?;
             labels.push(u16::try_from(usize::from(name) + string_bases[k]).ok()?);
         }
-        let (mut captures, mut starts) = (Vec::new(), Vec::new());
+        let (mut captures, mut starts) = (rerail_blocks::vector::Vector::new(), rerail_blocks::vector::Vector::new());
         words.extend_from_slice(&members[0].words[..prefix]);
         let last = members.len() - 1;
         for (k, member) in members.iter().enumerate() {
@@ -128,7 +129,7 @@ impl Fused {
         if words.len() > usize::from(u16::MAX) {
             return None;
         }
-        let mut program = Program::new(words, strings, predicates, labels, Vec::new()).ok()?;
+        let mut program = Program::new(words, strings, predicates, labels, rerail_blocks::vector::Vector::new()).ok()?;
         if members.iter().all(|member| member.set_mode()) {
             program = program.in_set_mode();
         }
@@ -177,14 +178,14 @@ pub mod tests {
     use super::super::Micro;
     use super::*;
 
-    fn program(words: Vec<u32>) -> Program {
-        Program::new(words, vec![b"match".to_vec(), b"matcher".to_vec()], Vec::new(), vec![0, 1], Vec::new()).expect("a program")
+    fn program(words: Vector<u32>) -> Program {
+        Program::new(words, vec![b"match".to_vec(), b"matcher".to_vec()], Vec::new(), rerail_blocks::vector![0, 1], rerail_blocks::vector::Vector::new()).expect("a program")
     }
 
     #[test]
     fn fused_programs_share_their_prefix_and_fork_per_member() {
-        let a = program(vec![word(KIND, 0, 3), word(CHILD, 0, 0), word(KIND, 0, 4), word(EMIT, 0, 1)]);
-        let b = program(vec![word(KIND, 0, 3), word(CHILD, 0, 0), word(KIND, 0, 5), word(EMIT, 0, 1)]);
+        let a = program(rerail_blocks::vector![word(KIND, 0, 3), word(CHILD, 0, 0), word(KIND, 0, 4), word(EMIT, 0, 1)]);
+        let b = program(rerail_blocks::vector![word(KIND, 0, 3), word(CHILD, 0, 0), word(KIND, 0, 5), word(EMIT, 0, 1)]);
         let fused = Fused::of(&[&a, &b]).expect("fused");
         assert_eq!(fused.prefix, 2);
         let ops = fused.program.words.iter().map(|&w| split(w).0).collect::<Vec<_>>();
@@ -198,8 +199,8 @@ pub mod tests {
 
     #[test]
     fn a_jump_into_the_prefix_stops_it_there() {
-        let a = program(vec![word(KIND, 0, 3), word(FORK, 0, 3), word(GOTO, 0, 4), word(KIND, 0, 1), word(EMIT, 0, 1)]);
-        let b = program(vec![word(KIND, 0, 3), word(EMIT, 0, 1)]);
+        let a = program(rerail_blocks::vector![word(KIND, 0, 3), word(FORK, 0, 3), word(GOTO, 0, 4), word(KIND, 0, 1), word(EMIT, 0, 1)]);
+        let b = program(rerail_blocks::vector![word(KIND, 0, 3), word(EMIT, 0, 1)]);
         let fused = Fused::of(&[&a, &b]).expect("fused");
         assert_eq!(fused.prefix, 1);
         // The chain's fork at 1; a's branch from 2, its fork to its pc 3 at 2 + 3 - 1.

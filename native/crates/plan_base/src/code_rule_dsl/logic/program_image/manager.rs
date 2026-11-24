@@ -21,6 +21,7 @@
 //!
 //! The manager writes through `Builder` (0173 §6, 0276 §3): a pass never opens one, never copies the rules it
 //! keeps, and never picks a view, an overlay or a derivation.
+use rerail_blocks::vector::Vector;
 use super::build::{Builder, Rewrite, RuleBuilder};
 use super::handles::RuleRef;
 use super::version::{Made, Version};
@@ -61,7 +62,7 @@ impl Dense for RuleId {
 /// reads the same on an edit of it that numbered more.
 #[derive(Clone, PartialEq, Eq, Default)]
 pub struct IdSet<I> {
-    bits: Vec<u64>,
+    bits: Vector<u64>,
     len: usize,
     of: PhantomData<I>,
 }
@@ -70,7 +71,7 @@ pub type RuleSet = IdSet<RuleId>;
 
 impl<I: Dense> IdSet<I> {
     pub fn new() -> Self {
-        IdSet { bits: Vec::new(), len: 0, of: PhantomData }
+        IdSet { bits: rerail_blocks::vector::Vector::new(), len: 0, of: PhantomData }
     }
     pub fn has(&self, i: I) -> bool {
         let k = i.index();
@@ -211,7 +212,7 @@ impl Delta {
             || match &**output {
                 Version::Overlay { parent, .. } => Arc::ptr_eq(parent, input),
                 Version::View { .. } => same_numbering(input, output),
-                Version::Base { .. } => false,
+                Version::Base { .. } | Version::Union { .. } => false,
             }
     }
 
@@ -1836,7 +1837,10 @@ pub enum StoredVersion<'r> {
     /// An overlay of version `parent`: its delta's image.
     Overlay { parent: usize, delta: &'r Arc<super::Image> },
     /// A view of version `parent`: the parent's rules it leaves out, ascending.
-    View { parent: usize, removed: Vec<u32> },
+    View { parent: usize, removed: Vector<u32> },
+    /// A union (decision 0639 §4): its header, and each part with the ranges of its rules it keeps. Its parts' maps
+    /// are found again from the header's names (`UnionPart::found_in`).
+    Union { header: usize, parts: Vec<(usize, Vec<(u32, u32)>)> },
 }
 
 /// What a store keeps of a run's step: its pass, its input and output (in the run's table), its writer's form, and
@@ -1868,7 +1872,7 @@ pub struct StoredAsked {
 /// analyses it asked for, and its `own_end`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredRule {
-    pub select: (u8, Vec<u32>),
+    pub select: (u8, Vector<u32>),
     pub asked: Vec<String>,
     pub own_end: u32,
 }
@@ -1909,15 +1913,15 @@ impl Form {
 }
 
 impl Select {
-    fn stored(&self) -> (u8, Vec<u32>) {
+    fn stored(&self) -> (u8, Vector<u32>) {
         match self {
-            Select::All => (0, Vec::new()),
+            Select::All => (0, rerail_blocks::vector::Vector::new()),
             Select::Heads(s) => (1, s.iter().map(|r| r.0).collect()),
             Select::Readers(s) => (2, s.iter().map(|r| r.0).collect()),
             Select::Rules(s) => (3, s.iter().map(|r| r.0).collect()),
         }
     }
-    fn of_stored((kind, ids): &(u8, Vec<u32>)) -> Option<Select> {
+    fn of_stored((kind, ids): &(u8, Vector<u32>)) -> Option<Select> {
         Some(match kind {
             0 => Select::All,
             1 => Select::Heads(ids.iter().map(|&k| RelId(k)).collect()),
@@ -1941,6 +1945,10 @@ impl Run {
                 Version::View { parent, .. } => {
                     let removed = parent.rules().map(|r| r.id()).filter(|&id| !v.contains(id)).map(|id| id.0).collect();
                     StoredVersion::View { parent: add(parent, table, out), removed }
+                }
+                Version::Union { header, parts, .. } => {
+                    let header = add(header, table, out);
+                    StoredVersion::Union { header, parts: parts.iter().map(|(p, _)| (add(&p.version, table, out), p.keep.clone())).collect() }
                 }
             };
             table.push(v);

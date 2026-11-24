@@ -29,9 +29,7 @@ use rusqlite::Connection;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeSet, HashMap};
 
-/// The digest an unbound name reads as: a derivation that probed a name nobody bound records it,
-/// and is invalidated when the name is first bound.
-pub const ABSENT: [u8; 32] = [0; 32];
+pub use rerail_store_base::content_store::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
 
 const BINDING: &str = "name_binding";
 const DERIVATION: &str = "derivation";
@@ -188,40 +186,6 @@ fn graph_puts(old: Option<&KeptSpace>, bindings: &[(Sym, [u8; 32])], derivations
     Ok((puts, changed))
 }
 
-/// A name and the digest an observer saw it bound to.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Binding {
-    pub name: String,
-    pub digest: [u8; 32],
-}
-
-/// One input of a derivation: a name and the digest it read, or an immutable digest.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DerivationInput {
-    pub name: Option<String>,
-    pub digest: [u8; 32],
-}
-
-/// A derivation as run: its output name, its producer (plan identity, revision included), what it
-/// read, the digest of what it produced, its status and its cost.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DerivationRecord {
-    pub output: String,
-    pub producer: [u8; 32],
-    pub inputs: Vec<DerivationInput>,
-    pub digest: [u8; 32],
-    pub status: i64,
-    pub cost: i64,
-}
-
-/// A stored derivation, as the frontier names it.
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
-pub struct Derivation {
-    pub output: String,
-    pub producer: [u8; 32],
-    pub status: i64,
-    pub cost: i64,
-}
 
 impl ContentStore {
     /// Binds each name to its digest, in one transaction; returns the names whose digest changed
@@ -481,15 +445,6 @@ impl ContentStore {
             })
             .collect()
     }
-}
-
-/// A derivation by atoms, as the overlay and the writer hold it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoredDerivation {
-    pub producer: [u8; 32],
-    pub status: i64,
-    pub cost: i64,
-    pub inputs: Vec<(Option<Sym>, [u8; 32])>,
 }
 
 #[cfg(test)]

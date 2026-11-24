@@ -1,6 +1,7 @@
 # 0419. `label_formula`'s time is latency, a level per chunk: a chain's reach by blocks, chunks grow until measured
 
-Status: accepted (2026-11-18). Follows 0460 and Q288.
+Status: superseded by 0437 (§1), 0435 §4 (§2); label_formula later removed (audited 2026-11-23). Accepted
+(2026-11-18). Follows 0460 and Q288.
 
 ## Intro
 

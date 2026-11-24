@@ -10,6 +10,7 @@
 //!
 //! Only the spike's measurement builds these (`InRel::index_spike`, `RERAIL_INDEX_SPIKE`): nothing reads them.
 
+use rerail_blocks::vector::Vector;
 use std::cmp::Ordering;
 
 /// Ids a fence covers.
@@ -18,9 +19,9 @@ pub(super) const FENCE: usize = 64;
 /// The row ids of a relation's live rows, sorted by their values in `order` (then by id), with the leading value of
 /// every `FENCE`th id.
 pub(super) struct Ordered {
-    pub(super) order: Vec<usize>,
-    ids: Vec<u32>,
-    fences: Vec<i64>,
+    pub(super) order: Vector<usize>,
+    ids: Vector<u32>,
+    fences: Vector<i64>,
     /// Sorted by the leading value's hash first (`mix`), and searched by interpolation on it: no fences.
     hashed: bool,
 }
@@ -36,8 +37,8 @@ pub(super) fn mix(v: i64) -> u64 {
 
 impl Ordered {
     /// Sorts the live rows of `rows` (`k` values each, `n` rows; `dead` says which are not) by `order`.
-    pub(super) fn build(rows: &[i64], k: usize, n: usize, dead: impl Fn(u32) -> bool, order: Vec<usize>, hashed: bool) -> Ordered {
-        let mut ids: Vec<u32> = (0..n as u32).filter(|&i| !dead(i)).collect();
+    pub(super) fn build(rows: &[i64], k: usize, n: usize, dead: impl Fn(u32) -> bool, order: Vector<usize>, hashed: bool) -> Ordered {
+        let mut ids: Vector<u32> = (0..n as u32).filter(|&i| !dead(i)).collect();
         let row = |id: u32| &rows[id as usize * k..][..k];
         let lead = order[0];
         if hashed {
@@ -53,7 +54,7 @@ impl Ordered {
                 });
                 at = end;
             }
-            return Ordered { order, ids, fences: Vec::new(), hashed };
+            return Ordered { order, ids, fences: rerail_blocks::vector::Vector::new(), hashed };
         }
         ids.sort_unstable_by(|&a, &b| {
             let (ra, rb) = (row(a), row(b));
@@ -159,20 +160,20 @@ pub(super) fn key_hash(vals: impl Iterator<Item = i64>) -> u64 {
 /// home slot and ends before the next empty slot. A slot is 32 bits: the row id + 1, and above it as many bits of the
 /// hash as fit (a fingerprint that skips most rows without reading them).
 pub(super) struct Placed {
-    pub(super) cols: Vec<usize>,
-    slots: Vec<u32>,
+    pub(super) cols: Vector<usize>,
+    slots: Vector<u32>,
     m: usize,
     id_bits: u32,
 }
 
 impl Placed {
-    pub(super) fn build(rows: &[i64], k: usize, n: usize, dead: impl Fn(u32) -> bool, cols: Vec<usize>, load: f64) -> Placed {
+    pub(super) fn build(rows: &[i64], k: usize, n: usize, dead: impl Fn(u32) -> bool, cols: Vector<usize>, load: f64) -> Placed {
         let row = |id: u32| &rows[id as usize * k..][..k];
         let mut hs: Vec<(u64, u32)> = (0..n as u32).filter(|&i| !dead(i)).map(|id| (key_hash(cols.iter().map(|&c| row(id)[c])), id)).collect();
         hs.sort_unstable();
         let m = ((hs.len() as f64 / load).ceil() as usize).max(1);
         let id_bits = 32 - (n as u32 + 1).leading_zeros();
-        let mut slots = vec![0u32; m + 1];
+        let mut slots = rerail_blocks::vector![0u32; m + 1];
         let mut next = 0usize;
         for &(h, id) in &hs {
             let at = (((h as u128) * (m as u128)) >> 64) as usize;
@@ -228,8 +229,8 @@ impl Placed {
 /// prefix of one order, with as few orders as can be (a minimum chain cover of the sets by inclusion: a maximum
 /// matching of each set to a larger one holding it, Dilworth). Each order is its chain's sets' columns in turn, then
 /// the rest.
-pub(super) fn cover(sets: &[Vec<usize>], k: usize) -> Vec<Vec<usize>> {
-    let mut sets: Vec<Vec<usize>> = sets.iter().filter(|s| !s.is_empty()).cloned().collect();
+pub(super) fn cover(sets: &[Vector<usize>], k: usize) -> Vec<Vector<usize>> {
+    let mut sets: Vec<Vector<usize>> = sets.iter().filter(|s| !s.is_empty()).cloned().collect();
     sets.push((0..k).collect());
     sets.sort_by_key(|s| (s.len(), s.clone()));
     sets.dedup();
@@ -257,17 +258,17 @@ pub(super) fn cover(sets: &[Vec<usize>], k: usize) -> Vec<Vec<usize>> {
     (0..n)
         .filter(|&a| prev[a] == usize::MAX)
         .map(|start| {
-            let mut order: Vec<usize> = Vec::new();
+            let mut order: Vector<usize> = rerail_blocks::vector::Vector::new();
             let mut at = start;
             loop {
-                let add: Vec<usize> = sets[at].iter().filter(|c| !order.contains(c)).copied().collect();
+                let add: Vector<usize> = sets[at].iter().filter(|c| !order.contains(c)).copied().collect();
                 order.extend(add);
                 if next[at] == usize::MAX {
                     break;
                 }
                 at = next[at];
             }
-            let rest: Vec<usize> = (0..k).filter(|c| !order.contains(c)).collect();
+            let rest: Vector<usize> = (0..k).filter(|c| !order.contains(c)).collect();
             order.extend(rest);
             order
         })
@@ -280,7 +281,7 @@ pub mod tests {
 
     #[test]
     fn a_cover_puts_prefix_sets_in_one_order_and_ends_each_with_every_column() {
-        let orders = cover(&[vec![0], vec![0, 1], vec![0, 1, 2], vec![1], vec![1, 2]], 3);
+        let orders = cover(&[rerail_blocks::vector![0], rerail_blocks::vector![0, 1], rerail_blocks::vector![0, 1, 2], rerail_blocks::vector![1], rerail_blocks::vector![1, 2]], 3);
         assert_eq!(orders.len(), 2, "{orders:?}");
         assert!(orders.iter().all(|o| o.len() == 3));
         for s in [vec![0], vec![0, 1], vec![1], vec![1, 2], vec![0, 1, 2]] {
@@ -292,9 +293,9 @@ pub mod tests {
     fn a_range_is_the_rows_holding_the_key_prefix() {
         // 3 columns, 1000 rows; column 0 has 10 values, column 1 has 7.
         let k = 3;
-        let rows: Vec<i64> = (0..1000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
+        let rows: Vector<i64> = (0..1000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
         for hashed in [false, true] {
-            let ix = Ordered::build(&rows, k, 1000, |id| id == 5, vec![0, 1, 2], hashed);
+            let ix = Ordered::build(&rows, k, 1000, |id| id == 5, rerail_blocks::vector![0, 1, 2], hashed);
             for (key, want) in [(vec![3i64], 100usize), (vec![3, 4], 14), (vec![5], 99), (vec![11], 0), (vec![-4], 0)] {
                 let got = ix.range(&rows, k, &key);
                 assert_eq!(got.len(), want, "{key:?} hashed {hashed}");
@@ -308,15 +309,15 @@ pub mod tests {
     #[test]
     fn a_placed_index_finds_every_row_of_a_key_and_no_other() {
         let k = 3;
-        let rows: Vec<i64> = (0..1000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
+        let rows: Vector<i64> = (0..1000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
         for load in [0.5, 0.75, 0.95] {
-            let ix = Placed::build(&rows, k, 1000, |id| id == 5, vec![0, 1], load);
+            let ix = Placed::build(&rows, k, 1000, |id| id == 5, rerail_blocks::vector![0, 1], load);
             for (key, want) in [(vec![3i64, 4], 14usize), (vec![5, 5], 14), (vec![11, 0], 0)] {
                 let mut got = 0;
                 ix.each(&rows, k, &key, |id| { assert_eq!(&rows[id as usize * k..][..2], &key[..]); got += 1 });
                 assert_eq!(got, want, "{key:?} load {load}");
             }
-            let full = Placed::build(&rows, k, 1000, |id| id == 5, vec![0, 1, 2], load);
+            let full = Placed::build(&rows, k, 1000, |id| id == 5, rerail_blocks::vector![0, 1, 2], load);
             let mut got = 0;
             full.each(&rows, k, &[5, 5, 5], |_| got += 1);
             assert_eq!(got, 0);
@@ -334,8 +335,8 @@ pub mod tests {
 /// distance) plus its fingerprint's top bit, so no row is read; the fingerprint shifts up and loses a bit. Once fewer
 /// than `MIN_FP` of its bits are known, or for a saturated distance, the doubling reads the row and hashes it again.
 pub(super) struct Growing {
-    pub(super) cols: Vec<usize>,
-    slots: Vec<u32>,
+    pub(super) cols: Vector<usize>,
+    slots: Vector<u32>,
     b: u32,
     len: usize,
     id_bits: u32,
@@ -352,9 +353,9 @@ const MAX_DISP: usize = (1 << DISP) - 1;
 const MIN_FP: u32 = 2;
 
 impl Growing {
-    pub(super) fn new(cols: Vec<usize>, id_bits: u32) -> Growing {
+    pub(super) fn new(cols: Vector<usize>, id_bits: u32) -> Growing {
         let fp_bits = 32u32.saturating_sub(id_bits + DISP);
-        Growing { cols, slots: vec![0; 64], b: 6, len: 0, id_bits, fp_bits, fp_known: fp_bits, grew: 0, rehashed: 0 }
+        Growing { cols, slots: rerail_blocks::vector![0; 64], b: 6, len: 0, id_bits, fp_bits, fp_known: fp_bits, grew: 0, rehashed: 0 }
     }
 
     #[inline]
@@ -389,7 +390,7 @@ impl Growing {
 
     /// Places `s`-like content for row `id` at the first empty slot from `home` in `slots`.
     #[inline]
-    fn place(slots: &mut Vec<u32>, home: usize) -> usize {
+    fn place(slots: &mut Vector<u32>, home: usize) -> usize {
         let mut at = home;
         while at < slots.len() && slots[at] != 0 {
             at += 1;
@@ -410,7 +411,7 @@ impl Growing {
     fn double(&mut self, rows: &[i64], k: usize) {
         let b = self.b + 1;
         let read_all = self.fp_known < MIN_FP;
-        let old = std::mem::replace(&mut self.slots, vec![0; (1usize << b) + 1]);
+        let old = std::mem::replace(&mut self.slots, rerail_blocks::vector![0; (1usize << b) + 1]);
         self.grew += 1;
         for (at, &s) in old.iter().enumerate() {
             if s == 0 {
@@ -498,7 +499,7 @@ impl Growing {
         self.slots.capacity() * 4
     }
 
-    pub(super) fn clone_slots(&self) -> Vec<u32> {
+    pub(super) fn clone_slots(&self) -> Vector<u32> {
         self.slots.clone()
     }
 }
@@ -508,18 +509,18 @@ impl Growing {
 /// oldest of them is no more than `fanout` times the newest: O(log_fanout n) passes over each id, and up to
 /// `fanout` runs of each size for a probe to search.
 pub(super) struct Runs {
-    pub(super) order: Vec<usize>,
-    pub(super) runs: Vec<Vec<u32>>,
+    pub(super) order: Vector<usize>,
+    pub(super) runs: Vec<Vector<u32>>,
     pub(super) merged: usize,
     fanout: usize,
 }
 
 impl Runs {
-    pub(super) fn new(order: Vec<usize>) -> Runs {
+    pub(super) fn new(order: Vector<usize>) -> Runs {
         Runs::with_fanout(order, 2)
     }
 
-    pub(super) fn with_fanout(order: Vec<usize>, fanout: usize) -> Runs {
+    pub(super) fn with_fanout(order: Vector<usize>, fanout: usize) -> Runs {
         Runs { order, runs: Vec::new(), merged: 0, fanout: fanout.max(2) }
     }
 
@@ -530,9 +531,9 @@ impl Runs {
     }
 
     /// Merges `parts` (each sorted) in one pass: each output id is the least of the parts' heads.
-    fn merge(order: &[usize], rows: &[i64], k: usize, parts: Vec<Vec<u32>>) -> Vec<u32> {
-        let total = parts.iter().map(Vec::len).sum();
-        let mut out = Vec::with_capacity(total);
+    fn merge(order: &[usize], rows: &[i64], k: usize, parts: Vec<Vector<u32>>) -> Vector<u32> {
+        let total = parts.iter().map(|v| v.len()).sum();
+        let mut out = rerail_blocks::vector::Vector::with_capacity(total);
         let mut at = vec![0usize; parts.len()];
         if parts.len() == 2 {
             let (a, b) = (&parts[0], &parts[1]);
@@ -558,11 +559,11 @@ impl Runs {
         out
     }
 
-    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, mut ids: Vec<u32>) {
+    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, mut ids: Vector<u32>) {
         let t = self.fanout;
         while self.runs.len() >= t && self.runs[self.runs.len() - t].len() <= t * self.runs[self.runs.len() - 1].len() {
-            let parts: Vec<Vec<u32>> = self.runs.split_off(self.runs.len() - t);
-            self.merged += parts.iter().map(Vec::len).sum::<usize>();
+            let parts: Vec<Vector<u32>> = self.runs.split_off(self.runs.len() - t);
+            self.merged += parts.iter().map(|v| v.len()).sum::<usize>();
             let out = Self::merge(&self.order, rows, k, parts);
             self.runs.push(out);
         }
@@ -640,8 +641,8 @@ fn interp_range(tags: &[u16], t: u16) -> (usize, usize) {
 /// compares tags and reads two rows only when the tags are equal; a probe searches its tag in the tags (in cache),
 /// then reads the rows of that tag only.
 pub(super) struct TaggedRuns {
-    pub(super) order: Vec<usize>,
-    pub(super) runs: Vec<(Vec<u32>, Vec<u16>)>,
+    pub(super) order: Vector<usize>,
+    pub(super) runs: Vec<(Vector<u32>, Vector<u16>)>,
     pub(super) merged: usize,
     /// Rows read by merges' comparisons (the tags tied).
     pub(super) row_compares: usize,
@@ -651,7 +652,7 @@ pub(super) struct TaggedRuns {
 }
 
 impl TaggedRuns {
-    pub(super) fn with_fanout(order: Vec<usize>, fanout: usize) -> TaggedRuns {
+    pub(super) fn with_fanout(order: Vector<usize>, fanout: usize) -> TaggedRuns {
         TaggedRuns { order, runs: Vec::new(), merged: 0, row_compares: 0, collisions: 0, fanout: fanout.max(2) }
     }
 
@@ -660,9 +661,9 @@ impl TaggedRuns {
         Runs::cmp(order, rows, k, a, b)
     }
 
-    fn merge2(&mut self, rows: &[i64], k: usize, a: (Vec<u32>, Vec<u16>), b: (Vec<u32>, Vec<u16>)) -> (Vec<u32>, Vec<u16>) {
+    fn merge2(&mut self, rows: &[i64], k: usize, a: (Vector<u32>, Vector<u16>), b: (Vector<u32>, Vector<u16>)) -> (Vector<u32>, Vector<u16>) {
         let n = a.0.len() + b.0.len();
-        let (mut ids, mut tags) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        let (mut ids, mut tags) = (Vector::with_capacity(n), Vector::with_capacity(n));
         let (mut i, mut j) = (0, 0);
         while i < a.0.len() && j < b.0.len() {
             let le = match a.1[i].cmp(&b.1[j]) {
@@ -684,7 +685,7 @@ impl TaggedRuns {
         (ids, tags)
     }
 
-    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, ids: Vec<u32>) {
+    pub(super) fn add_wave(&mut self, rows: &[i64], k: usize, ids: Vector<u32>) {
         let t = self.fanout;
         while self.runs.len() >= t && self.runs[self.runs.len() - t].0.len() <= t * self.runs[self.runs.len() - 1].0.len() {
             // Merged two at a time, the newest first (fanout 2 is the measured one).
@@ -709,7 +710,7 @@ impl TaggedRuns {
     /// Every run merged into one.
     pub(super) fn merged_all(&self, rows: &[i64], k: usize) -> TaggedRuns {
         let mut one = TaggedRuns { order: self.order.clone(), runs: Vec::new(), merged: 0, row_compares: 0, collisions: 0, fanout: self.fanout };
-        let mut acc: Option<(Vec<u32>, Vec<u16>)> = None;
+        let mut acc: Option<(Vector<u32>, Vector<u16>)> = None;
         for r in &self.runs {
             acc = Some(match acc.take() { None => r.clone(), Some(a) => one.merge2(rows, k, a, r.clone()) });
         }
@@ -762,20 +763,20 @@ pub mod grow_tests {
     fn growing_indexes_dedup_and_find_what_a_whole_build_does() {
         let k = 3;
         // Rows 0..2000, then 500 that repeat earlier rows (the duplicates a wave offers).
-        let mut rows: Vec<i64> = (0..2000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
+        let mut rows: Vector<i64> = (0..2000i64).flat_map(|i| [i % 10, i % 7, i]).collect();
         rows.extend((0..500i64).flat_map(|i| [(i * 3) % 10, (i * 3) % 7, i * 3]));
         // 12 id bits leave 16 fingerprint bits; 26 leave 2, so the doublings read rows again.
         for id_bits in [12, 26] {
-            let mut set = Growing::new(vec![0, 1, 2], id_bits);
-            let mut by01 = Growing::new(vec![0, 1], id_bits);
-            let mut runs = Runs::new(vec![0, 1, 2]);
-            let mut wide = Runs::with_fanout(vec![0, 1, 2], 4);
-            let mut tagged = TaggedRuns::with_fanout(vec![0, 1, 2], 2);
-            let mut lazy = Runs::with_fanout(vec![0, 1, 2], usize::MAX);
+            let mut set = Growing::new(rerail_blocks::vector![0, 1, 2], id_bits);
+            let mut by01 = Growing::new(rerail_blocks::vector![0, 1], id_bits);
+            let mut runs = Runs::new(rerail_blocks::vector![0, 1, 2]);
+            let mut wide = Runs::with_fanout(rerail_blocks::vector![0, 1, 2], 4);
+            let mut tagged = TaggedRuns::with_fanout(rerail_blocks::vector![0, 1, 2], 2);
+            let mut lazy = Runs::with_fanout(rerail_blocks::vector![0, 1, 2], usize::MAX);
             let mut held = 0;
             for wave in (0..2500u32).collect::<Vec<_>>().chunks(97) {
                 set.reserve(&rows, k, wave.len());
-                let mut fresh = Vec::new();
+                let mut fresh = rerail_blocks::vector::Vector::new();
                 for &id in wave {
                     let r = &rows[id as usize * k..][..k];
                     if set.insert(&rows, k, id, key_hash(r.iter().copied()), true) {

@@ -1,6 +1,6 @@
 # 0471. A batch reads its tapes in every slab they lie in, and the device joins' caches share one cap
 
-Status: accepted (2026-11-19). Follows 0465 §3 and 0476 (Q334's third item).
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Follows 0465 §3 and 0476 (Q334's third item).
 
 ## Intro
 

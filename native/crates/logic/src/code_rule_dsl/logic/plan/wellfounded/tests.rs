@@ -11,8 +11,8 @@
         let p = crate::code_rule_dsl::logic::rr::parse_version(&format!("{DECLS}{text}")).expect("parses");
         let placed = super::super::body::Placed::whole(p.clone());
         let f = placed.fields().expect("fields");
-        let comp: BTreeSet<String> = comp.iter().map(|s| (*s).to_owned()).collect();
-        check(&placed.v, &|r: &str| f.types(r).into_iter().map(str::to_owned).collect(), &comp)
+        let comp = Components::of_names([comp.iter().copied()]);
+        check(&placed.v, &|r: &str| f.types(r).into_iter().map(str::to_owned).collect(), &comp[0])
     }
 
     /// A walk down the tree is proved: each row is read from its parent's, ancestors first.
@@ -103,11 +103,11 @@
         .expect("parses");
         let placed = super::super::body::Placed::whole(p.clone());
         let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<Proofs>(&placed.v).expect("proofs");
-        let set = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
+        let set = |r: &[&str]| Components::of_names([r.iter().copied()]);
         assert_eq!(proofs.counts(), (1, 1));
-        assert_eq!(proofs.of(&set(&["below"])).map(|m| m.order), Ok(Order::Down));
-        assert!(proofs.of(&set(&["reach"])).is_err());
-        assert_eq!(proofs.of(&set(&["below", "reach"])), Err("not the program's component".into()));
+        assert_eq!(proofs.of(&set(&["below"])[0]).map(|m| m.order), Ok(Order::Down));
+        assert!(proofs.of(&set(&["reach"])[0]).is_err());
+        assert_eq!(proofs.of(&set(&["below", "reach"])[0]), Err("not the program's component".into()));
         // Kept by the version's identity (t33 K4): its rows read back as it.
         use crate::code_rule_dsl::logic::program_image::manager::Analysis as _;
         let rows = proofs.rows(&placed.v).expect("rows");

@@ -1,12 +1,12 @@
 # 0365. A walk starts within its anchor
 
-Status: decided (2026-11-17); built on the CPU (the wave's root walks, and its label passes' walks in the levels
-past the recursive groups) and on Metal (§8: the same walks, and the root records, from anchors the device
-evaluates, their text tests reading the walks' text rows; and the formula passes of 0036 as device formulas, §9).
-After 0334 §5 ("another anchor or driver"), which it
-takes out of the replanning. The user, 2026-11-17, on that item: "please take a look at the ast-index-spike design
-and journal, where this idea was comprehensively explored, and tell me what we should do with it now"; then, on the
-recommendation below: "yes go ahead, making sure that you record the decision and the evidence it's based on".
+Status: built (audited 2026-11-23). Decided (2026-11-17); built on the CPU (the wave's root walks, and its label
+passes' walks in the levels past the recursive groups) and on Metal (§8: the same walks, and the root records, from
+anchors the device evaluates, their text tests reading the walks' text rows; and the formula passes of 0036 as device
+formulas, §9). After 0334 §5 ("another anchor or driver"), which it takes out of the replanning. The user, 2026-11-17,
+on that item: "please take a look at the ast-index-spike design and journal, where this idea was comprehensively
+explored, and tell me what we should do with it now"; then, on the recommendation below: "yes go ahead, making sure
+that you record the decision and the evidence it's based on".
 
 ## Intro
 

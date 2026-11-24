@@ -1,9 +1,10 @@
 # 0306. A run's small writes are one record, applied at its end
 
-Status: decided (2026-11-16), by the user ("can we use a really simple encoding for small records like JSON and just
-jam them in a single string at the end of the data flow?"; "go ahead. We may want to change JSON for something
-else"). Built: steps 1 to 4 done (2026-11-16). Builds 0259's guard (no queued write is a closure) for the small writes; replaces the typed-rows
-proposal for them (P1–P6, below). Keeps 0295's segments for the bulk writes, and 0104 (no SQL inside the waves).
+Status: built (audited 2026-11-23). Decided (2026-11-16), by the user ("can we use a really simple encoding for small
+records like JSON and just jam them in a single string at the end of the data flow?"; "go ahead. We may want to change
+JSON for something else"). Built: steps 1 to 4 done (2026-11-16). Builds 0259's guard (no queued write is a closure)
+for the small writes; replaces the typed-rows proposal for them (P1–P6, below). Keeps 0295's segments for the bulk
+writes, and 0104 (no SQL inside the waves).
 
 ## Intro
 

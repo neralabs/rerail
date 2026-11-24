@@ -18,11 +18,14 @@ use std::ops::Range;
 pub struct Host<'t> {
     image: &'t TapeImage,
     grammar: &'t Grammar,
+    /// The cache a 16z host's blocks are decoded into: its batch's, which the caller made for the documents it
+    /// reads (`TapeImage::own_cache`).
+    cache: Option<&'t rerail_tape_format::f16::ZCache>,
 }
 
 impl<'t> Host<'t> {
-    pub fn new(image: &'t TapeImage, grammar: &'t Grammar) -> Self {
-        Self { image, grammar }
+    pub fn new(image: &'t TapeImage, grammar: &'t Grammar, cache: Option<&'t rerail_tape_format::f16::ZCache>) -> Self {
+        Self { image, grammar, cache }
     }
 
     /// The tape's root.
@@ -63,15 +66,15 @@ impl<'t> HostNode<'t> {
 
     /// One past its subtree's last node.
     fn after(self) -> u32 {
-        with_tape!(self.host.image.tape(), |t| t.subtree_end(self.i()) as u32)
+        with_tape!(self.host.image.tape_in(self.host.cache), |t| t.subtree_end(self.i()) as u32)
     }
 
     /// Its kind's name, and whether it is named: the contextual alias where it has one.
     fn name(self) -> (&'t str, bool) {
         let image: &'t TapeImage = self.host.image;
-        let entry = image.code_table().entry(with_tape!(image.tape(), |t| t.code(self.i())));
-        if let Some((name, named)) = &entry.alias {
-            return (name.as_str(), *named);
+        let entry = image.code_table().entry(with_tape!(image.tape_in(self.host.cache), |t| t.code(self.i())));
+        if let Some((name, named)) = entry.alias {
+            return (name, named);
         }
         let kind = entry.kind;
         (self.host.grammar.kind_name(kind).unwrap_or("ERROR"), self.host.grammar.kind_is_named(kind))
@@ -86,11 +89,11 @@ impl<'t> HostNode<'t> {
     }
 
     pub fn start_byte(self) -> usize {
-        with_tape!(self.host.image.tape(), |t| t.start(self.i()) as usize)
+        with_tape!(self.host.image.tape_in(self.host.cache), |t| t.start(self.i()) as usize)
     }
 
     pub fn end_byte(self) -> usize {
-        with_tape!(self.host.image.tape(), |t| t.end(self.i()) as usize)
+        with_tape!(self.host.image.tape_in(self.host.cache), |t| t.end(self.i()) as usize)
     }
 
     pub fn byte_range(self) -> Range<usize> {
@@ -147,6 +150,8 @@ impl<'t> HostNode<'t> {
 pub struct Tape {
     image: TapeImage,
     grammar: std::sync::Arc<Grammar>,
+    /// Its batch's cache, where its tape is 16z: it is read in a batch of its own.
+    cache: Option<crate::code_rule_dsl::tape::ZCache>,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -159,10 +164,11 @@ impl Tape {
         parser.set_language(&dialect.get_ts_language()).expect("tree-sitter grammar");
         let tree = parser.parse(source, None).expect("tree");
         let image = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).expect("encodes").primary;
-        Self { image, grammar }
+        let cache = image.own_cache();
+        Self { image, grammar, cache }
     }
 
     pub fn root(&self) -> HostNode<'_> {
-        Host::new(&self.image, &self.grammar).root().expect("a root")
+        Host::new(&self.image, &self.grammar, self.cache.as_ref()).root().expect("a root")
     }
 }

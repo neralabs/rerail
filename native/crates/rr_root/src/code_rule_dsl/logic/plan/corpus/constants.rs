@@ -27,6 +27,7 @@
 //! (`leaves::still`) takes them as they are: an edit to a workspace file derives no constant again. In a revision,
 //! the constants are kept by what their run read there (`revision_record`), among the observer's planned records.
 
+use rerail_blocks::vector::Vector;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -172,7 +173,7 @@ pub fn fold(
     chunk_nodes: usize,
     typing: &Typing,
     options: &serde_json::Value,
-) -> Result<(Vec<(String, String, String)>, Vec<[u8; 32]>, Option<[u8; 32]>)> {
+) -> Result<(Vec<(String, String, String)>, Vector<[u8; 32]>, Option<[u8; 32]>)> {
     if options.get(OWN).is_some() {
         return Ok(Default::default());
     }
@@ -259,7 +260,7 @@ fn derive(
     typing: &Typing,
     options: &serde_json::Value,
     wanted: &BTreeSet<String>,
-) -> Result<(Derived, Vec<[u8; 32]>)> {
+) -> Result<(Derived, Vector<[u8; 32]>)> {
     let mut own = if options.is_object() { options.clone() } else { serde_json::json!({}) };
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
@@ -314,7 +315,7 @@ fn frame_key(key: &str) -> [u8; 32] {
 
 /// The constants kept as the frame `frame`, when every leaf their run read is as it was, with the plans their run
 /// used, for the outer run's manifest.
-fn kept(frame: &[u8; 32], root: &Path, prog: &Version) -> Option<(Derived, Vec<[u8; 32]>)> {
+fn kept(frame: &[u8; 32], root: &Path, prog: &Version) -> Option<(Derived, Vector<[u8; 32]>)> {
     let kept = super::phases::reading_store().and_then(|store| super::frame::get(&store, frame))?;
     let mut leaves = super::leaves::Leaves::new(root, prog);
     kept.reads.iter().all(|c| leaves.still(c)).then(|| ((kept.image, kept.reads), kept.plans))
@@ -323,7 +324,7 @@ fn kept(frame: &[u8; 32], root: &Path, prog: &Version) -> Option<(Derived, Vec<[
 /// Keeps the constants' rows and their run's leaves and plans as the frame `frame`.
 fn keep(frame: &[u8; 32], (image, reads): &Derived, plans: &[[u8; 32]]) {
     if let Some(store) = super::phases::reading_store() {
-        super::frame::put(&store, frame, &super::frame::Frame { reads: reads.clone(), plans: plans.to_vec(), image: image.clone(), ..Default::default() });
+        super::frame::put(&store, frame, &super::frame::Frame { reads: reads.clone(), plans: plans.iter().copied().collect(), image: image.clone(), ..Default::default() });
     }
 }
 
@@ -356,7 +357,7 @@ fn revision_record(base: &str, reads: &[Observation]) -> (String, [u8; 32]) {
     (name, owner)
 }
 
-fn kept_revision(base: &str, root: &Path, program: &Version) -> Option<(Derived, Vec<[u8; 32]>)> {
+fn kept_revision(base: &str, root: &Path, program: &Version) -> Option<(Derived, Vector<[u8; 32]>)> {
     let mut world = super::world::World::new(root, program);
     let samples = super::observe(|o| o.run_record_samples(&record_key(base)));
     'sample: for sample in samples {
@@ -385,7 +386,7 @@ fn kept_revision(base: &str, root: &Path, program: &Version) -> Option<(Derived,
             super::observe(|o| o.store_run_record(&name, &encoded, &image));
         }
         let mut plans = recorded.iter().filter(|(k, _, _)| k == "plan")
-            .map(|(_, _, s)| crate::content_store::observe::unhex(s)).collect::<Option<Vec<_>>>()?;
+            .map(|(_, _, s)| crate::content_store::observe::unhex(s)).collect::<Option<Vector<_>>>()?;
         plans.push(owner);
         return Some(((image, reads), plans));
     }

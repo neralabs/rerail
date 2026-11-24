@@ -4,6 +4,7 @@
 //! rerail-plan-base's `plan`) under its old names.
 
 use super::*;
+use rerail_blocks::vector::Vector;
 
 /// A planning or evaluation failure.
 #[derive(Debug)]
@@ -49,7 +50,8 @@ impl From<super::super::front::Error> for Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// A constant of a rule or of the statistics (`stat_val.val`).
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, rerail_section::Archive)]
+#[archive(derive(Debug, PartialEq), decode)]
 pub enum Constant {
     Int(i64),
     Str(String),
@@ -62,6 +64,8 @@ pub enum Mode {
     Climb,
     Descend,
 }
+
+rerail_section::plain_archive!(Mode);
 
 impl Mode {
     pub fn name(self) -> &'static str {
@@ -119,6 +123,143 @@ impl<'a, 'v> Order<'a, 'v> {
 /// An atom's binding pattern: its relation, and which columns are bound, constants by value (T's `atom_sig`).
 pub type Sig = (String, Vec<(usize, Option<Constant>)>);
 
+/// A signature's key in a block table (`Obs`, the exact statistics): a digest of its relation and its columns.
+pub fn sig_key((rel, cols): &Sig) -> u64 {
+    sig_key_of(rel, cols.iter().map(|(c, k)| (*c, k.as_ref())))
+}
+
+/// `sig_key` of a relation and its columns as given.
+pub fn sig_key_of<'k>(rel: &str, cols: impl Iterator<Item = (usize, Option<&'k Constant>)>) -> u64 {
+    super::super::derived::digest(|d| {
+        d.str(rel);
+        for (c, k) in cols {
+            d.u64(c as u64);
+            match k {
+                None => d.u64(0),
+                Some(Constant::Int(i)) => {
+                    d.u64(1);
+                    d.u64(*i as u64);
+                }
+                Some(Constant::Str(s)) => {
+                    d.u64(2);
+                    d.str(s);
+                }
+            }
+        }
+    }) as u64
+}
+
+/// The fanouts native joins observed (`observe`), by rule: each rule's table of its signatures' [bindings in,
+/// bindings out], by `sig_key`. A rule's table moves between a model and its forks whole (`Model::fork`, `absorb`).
+#[derive(Clone, Default, Debug)]
+pub struct Obs {
+    at: rerail_blocks::maps::BlockHash<u64, u32>,
+    // copy: not block data: the handles of the rules' tables, each in its blocks.
+    of: Vec<rerail_blocks::maps::BlockHash<u64, [i64; 2]>>,
+}
+
+impl Obs {
+    pub fn get(&self, rule: &u64) -> Option<&rerail_blocks::maps::BlockHash<u64, [i64; 2]>> {
+        self.at.get(rule).map(|&i| &self.of[i as usize])
+    }
+    /// `rule`'s table, made if it has none.
+    pub fn rule_mut(&mut self, rule: u64) -> &mut rerail_blocks::maps::BlockHash<u64, [i64; 2]> {
+        let n = self.of.len() as u32;
+        let i = *self.at.get_or_insert_with(rule, || n);
+        if i == n {
+            self.of.push(Default::default());
+        }
+        &mut self.of[i as usize]
+    }
+    pub fn remove(&mut self, rule: &u64) -> Option<rerail_blocks::maps::BlockHash<u64, [i64; 2]>> {
+        let i = self.at.remove(rule)?;
+        Some(std::mem::take(&mut self.of[i as usize]))
+    }
+    pub fn insert(&mut self, rule: u64, t: rerail_blocks::maps::BlockHash<u64, [i64; 2]>) {
+        *self.rule_mut(rule) = t;
+    }
+}
+
+impl FromIterator<(u64, rerail_blocks::maps::BlockHash<u64, [i64; 2]>)> for Obs {
+    fn from_iter<I: IntoIterator<Item = (u64, rerail_blocks::maps::BlockHash<u64, [i64; 2]>)>>(it: I) -> Obs {
+        let mut o = Obs::default();
+        for (r, t) in it {
+            o.insert(r, t);
+        }
+        o
+    }
+}
+
+/// What `Stats` holds of a relation's lazy statistics: the caller's part is not the planner's.
+pub trait Deferred: Send + Sync {
+    fn statistics(&self) -> (Vec<(String, [i64; 4])>, Vec<(String, i64, i64)>);
+    /// A view's statistics counted where its rows lie, as a copy's are (`LiveRel`, `Run::hold_view_in_place`):
+    /// `Model::resolve` applies them as `live_stats` does, exact, and never a layout's answer (decision 0361) in
+    /// their place. `None`: they are `statistics`', as measured.
+    fn live(&self) -> Option<LiveRel> {
+        None
+    }
+    /// Whether they are `live`'s: known without counting them.
+    fn is_live(&self) -> bool {
+        false
+    }
+}
+
+/// A relation's statistics from the native store (`set_fixpoint_stats`, T's `live_stats`): rows, then per column
+/// the distinct count and the sum of squared postings, whose ratio to rows is the skew-weighted fanout ingestion
+/// gives inputs.
+/// A native relation's live statistics (`setfix::live`): rows, per column distinct values and the sum of squared
+/// postings, and each value's postings in a column of few values.
+pub struct LiveRel {
+    pub n: i64,
+    pub delta: i64,
+    pub ndv: Vector<i64>,
+    pub sq: Vector<i64>,
+    /// Each column's values' counts, where they are few enough to count exactly (a block table each).
+    pub freq: Vec<(usize, std::sync::Arc<table::Freq>)>,
+    /// Each column's keys, where the native engine keeps them (decision 0488), else none.
+    pub keys: Vec<super::super::bloom::Keys>,
+    /// Each column's counts for join sizes, where the native engine keeps them (`join_size`), else none.
+    pub counts: Vec<std::sync::Arc<super::super::join_size::JoinCounts>>,
+}
+impl LiveRel {
+    /// The native engine's (`setfix::live`): its values are integers.
+    pub fn of_native(l: super::super::native::component::Live) -> LiveRel {
+        LiveRel { n: l.n, delta: l.delta, ndv: l.ndv, sq: l.sq, freq: l.freq.into_iter().map(|(c, v)| (c, std::sync::Arc::new(v.iter().map(|&[v, m]| (Constant::Int(v), m)).collect::<table::Freq>()))).collect(), keys: l.keys, counts: l.counts }
+    }
+    /// From T's extension's text line (`set_fixpoint_stats`); `text(c)`: column `c` holds symbols as text.
+    pub fn parse(line: &str, text: &dyn Fn(usize) -> bool) -> LiveRel {
+        let mut parts = line.split(" |");
+        let nums: Vector<i64> = parts.next().unwrap_or("").split_whitespace().filter_map(|x| x.parse::<i64>().ok()).collect();
+        let (n, rest) = nums.split_first().map_or((0, &[][..]), |(n, r)| (*n, r));
+        let k = rest.len() / 2;
+        let freq = parts
+            .filter_map(|f| {
+                let (c, vals) = f.trim().split_once(':')?;
+                let c = c.parse::<usize>().ok()?;
+                let freq = vals
+                    .split(',')
+                    .filter(|x| !x.is_empty())
+                    .filter_map(|x| {
+                        let (v, m) = x.split_once('=')?;
+                        let v = unhex(v)?;
+                        let v = if text(c) { Constant::Str(v) } else { Constant::Int(v.parse().ok()?) };
+                        Some((v, m.parse().ok()?))
+                    })
+                    .collect::<table::Freq>();
+                Some((c, std::sync::Arc::new(freq)))
+            })
+            .collect();
+        LiveRel { n, delta: n, ndv: rest[..k].iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), sq: rest[k..].iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), freq, keys: Vec::new(), counts: Vec::new() }
+    }
+}
+
+/// A string from its hex (Python's `bytes.fromhex(v).decode()`).
+pub fn unhex(s: &str) -> Option<String> {
+    let bytes = (0..s.len()).step_by(2).map(|i| u8::from_str_radix(s.get(i..i + 2)?, 16).ok()).collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
 /// A kept plan's key: a digest of the rule, the delta and the component solved (`derived::digest`). Not the rule's
 /// address: each chunk's program is a new value (the demand split makes one per chunk), so no address is kept between
 /// chunks. Not the rule's text either: formatting every rule was a tenth of a session run's planning.
@@ -153,20 +294,20 @@ pub fn stored_types(f: Fields<'_>, rel: &str, engine: Vec<u8>) -> Vec<u8> {
 /// its frames, keyed by its own numbering, could not be written at all: every next run derived them again.
 pub struct Cells<'a> {
     atoms: Option<&'a crate::content_store::atoms::Atoms>,
-    atom: Vec<usize>,
+    atom: Vector<usize>,
     width: usize,
 }
 
 impl<'a> Cells<'a> {
     /// The cells of rows of column `types` (`b's'` an atom), whose atoms are `atoms`'.
     pub fn new(atoms: &'a crate::content_store::atoms::Atoms, types: &[u8]) -> Self {
-        let atom: Vec<usize> = types.iter().enumerate().filter(|(_, t)| **t == b's').map(|(c, _)| c).collect();
+        let atom: Vector<usize> = types.iter().enumerate().filter(|(_, t)| **t == b's').map(|(c, _)| c).collect();
         Cells { atoms: (!atom.is_empty()).then_some(atoms), atom, width: types.len() }
     }
 
     /// The cells of rows of `width` columns that hold no atom.
     pub fn plain(width: usize) -> Self {
-        Cells { atoms: None, atom: Vec::new(), width }
+        Cells { atoms: None, atom: rerail_blocks::vector::Vector::new(), width }
     }
 
     pub fn width(&self) -> usize {
@@ -177,7 +318,7 @@ impl<'a> Cells<'a> {
     pub fn key(&self, rows: &mut [i64]) {
         let Some(atoms) = self.atoms else { return };
         let w = self.width.max(1);
-        let mut cells: Vec<i64> = Vec::with_capacity(rows.len() / w * self.atom.len());
+        let mut cells: Vector<i64> = rerail_blocks::vector::Vector::with_capacity(rows.len() / w * self.atom.len());
         for row in rows.chunks_exact(w) {
             cells.extend(self.atom.iter().map(|&c| row[c]));
         }
@@ -232,7 +373,7 @@ impl<'a> Cells<'a> {
             return rows.chunks_exact(w).fold(0u64, |s, r| s.wrapping_add(row_digest(r)));
         }
         let mut sum = 0u64;
-        let mut buf: Vec<i64> = Vec::new();
+        let mut buf: Vector<i64> = rerail_blocks::vector::Vector::new();
         for chunk in rows.chunks(w * 4096) {
             buf.clear();
             buf.extend_from_slice(&chunk[..chunk.len() / w * w]);
@@ -253,7 +394,7 @@ impl<'a> Cells<'a> {
     }
 
     /// Each of `rows`' digests (`row`), keyed under one read of the atoms.
-    pub fn rows(&self, rows: &[i64]) -> Vec<u64> {
+    pub fn rows(&self, rows: &[i64]) -> Vector<u64> {
         let w = self.width.max(1);
         if self.atoms.is_none() {
             return rows.chunks_exact(w).map(row_digest).collect();

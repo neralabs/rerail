@@ -43,25 +43,7 @@ pub const UNCLEAN: u8 = 2;
 /// The kind's unclean leaves exceed the residue bounds.
 pub const TOO_BIG: u8 = 4;
 
-/// One tape's prefilter rows, built from the tape alone (`code_rule_dsl::prefilter::image`), so
-/// publication holds the write lock only to write.
-#[derive(Clone, Debug)]
-pub struct TapePrefilter {
-    pub tape_id: TapeId,
-    pub lang: u32,
-    /// The tape's node count: candidate SQL enumerates every node of a tape from it.
-    pub nodes: u32,
-    /// (kind atom, count, sum of descendants, delta-varint postings), sorted by atom.
-    pub kinds: Vec<(u32, u32, u64, Vec<u8>)>,
-    /// Clean leaf terms: (kind atom, term) → preorders, ascending.
-    pub postings: BTreeMap<(u32, String), Vec<u32>>,
-    /// Per kind atom: the coverage flags and the number of unclean leaves.
-    pub cover: BTreeMap<u32, (u8, usize)>,
-    /// Per kind atom: the nodes no term covers, ascending.
-    pub missing: BTreeMap<u32, Vec<u32>>,
-    /// Per kind atom: unclean leaves, which become terms unless the store-wide cap refuses them.
-    pub residue: BTreeMap<u32, Vec<(u32, String)>>,
-}
+pub use rerail_store_base::content_store::prefilter::TapePrefilter;
 
 /// Terms whose publication fails in a store (`ContentStore::reject_prefilter_term_for_test`): a failed publication's
 /// rollback, tested.
@@ -238,7 +220,7 @@ impl ContentStore {
                 let (from, to) = (super::object_segments::object_dir(&self.database_path), super::object_segments::object_dir(path));
                 if let Ok(entries) = std::fs::read_dir(&from) {
                     let io = |e: std::io::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
-                    std::fs::create_dir_all(&to).map_err(io)?;
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
                     for e in entries.flatten() {
                         std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
                     }
@@ -267,7 +249,7 @@ impl ContentStore {
             for space in &spaces {
                 let (from, to) = (super::kept_facts::space_dir(&self.database_path, space), super::kept_facts::space_dir(path, space));
                 if let Ok(entries) = std::fs::read_dir(&from) {
-                    std::fs::create_dir_all(&to).map_err(io)?;
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
                     for e in entries.flatten().filter(|e| !e.file_name().to_string_lossy().ends_with(".new")) {
                         std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
                     }

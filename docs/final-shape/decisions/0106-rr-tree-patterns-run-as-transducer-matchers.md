@@ -1,6 +1,6 @@
 # 0106: A `.rr` program's tree patterns run as the transducer's matchers
 
-Status: proposed (2026-11-10)
+Status: built (audited 2026-11-23). Proposed (2026-11-10)
 
 ## Intro
 

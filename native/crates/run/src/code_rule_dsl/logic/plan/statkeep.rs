@@ -22,6 +22,7 @@
 
 use std::collections::BTreeMap;
 use rustc_hash::FxHashMap;
+use rerail_blocks::vector::Vector;
 
 use super::sketch::Sketch;
 
@@ -33,7 +34,7 @@ const EXACT: usize = 256;
 /// back), so a count of 0 is an empty slot. It starts at 16 slots and doubles past half full.
 #[derive(Clone, Default)]
 struct Exact {
-    slots: crate::code_rule_dsl::facts::rows::BlockVec<[i64; 2]>,
+    slots: rerail_blocks::vector::Vector<[i64; 2]>,
     len: usize,
 }
 impl Exact {
@@ -61,7 +62,7 @@ impl Exact {
         if !self.slots.is_empty() && 2 * (self.len + 1) <= self.slots.len() {
             return;
         }
-        let mut grown = Exact { slots: Default::default(), len: 0 };
+        let mut grown = Exact { slots: crate::code_rule_dsl::facts::rows::vector_in(None, 0), len: 0 };
         grown.slots.resize((2 * self.slots.len()).max(16), [0, 0]);
         for e in self.slots.iter().filter(|e| e[1] != 0) {
             let at = grown.slot(e[0]);
@@ -445,6 +446,74 @@ impl RelStats {
     /// base relation counted off the corpus batch, cold (decision 0458).
     pub fn documents_scanned(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64) {
         self.documents_scanned_in(source, from, sign, WINDOW);
+    }
+
+    /// `documents_scanned` of rows `lo..hi` of `source`, which hold whole documents: one chunk's own files' rows of a
+    /// relation its batch holds (decision 0458's statistics, counted where the chunk's rows lie).
+    pub fn documents_scanned_range(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize, hi: usize, from: &[usize], sign: i64) {
+        debug_assert_eq!(from.len(), self.cols().len());
+        let width = source.columns().len();
+        let mut at = lo;
+        while at < hi {
+            let end = window_end(source, at, hi, WINDOW).min(hi);
+            self.count(
+                end - at,
+                width,
+                &mut |c, each| {
+                    source.for_rows_in(at..end, &[c], &mut |r, row| {
+                        each(r - at, row[0]);
+                        true
+                    });
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            at = end;
+        }
+    }
+
+    /// Another set of documents' statistics in (none of them counted here already): each sum adds, each value's count
+    /// adds, and the sketches add. The same as counting both sets' rows here, whole documents at a time. `false`, and
+    /// nothing changed, when their columns differ.
+    pub fn merge(&mut self, other: &RelStats) -> bool {
+        if self.columns != other.columns {
+            return false;
+        }
+        self.rows += other.rows;
+        self.partial |= other.partial;
+        for (a, b) in self.cols_mut().iter_mut().zip(other.cols()) {
+            a.sqd += b.sqd;
+            match &b.zero {
+                Some(z) => {
+                    let pairs: Vec<(i64, i64)> = z.iter().collect();
+                    Self::zeros(a, &pairs, 1);
+                }
+                None => {
+                    a.zero = None;
+                    a.zero_sq += b.zero_sq;
+                }
+            }
+            a.local_ndv += b.local_ndv;
+            a.crossing += b.crossing;
+            match (&mut a.exact, &b.exact) {
+                (Some(x), Some(y)) => {
+                    for (v, n) in y.iter() {
+                        x.add(v, n);
+                    }
+                    if x.len() > EXACT {
+                        a.exact = None;
+                    }
+                }
+                _ => a.exact = None,
+            }
+            a.sketch.merge(&b.sketch, 1);
+            match (&mut a.pairs, &b.pairs) {
+                (Some(x), Some(y)) => x.merge(y, 1),
+                _ => a.pairs = None,
+            }
+        }
+        true
     }
 
     /// `documents_scanned`, `window` rows at a time and on to the end of a window's last document.
@@ -926,13 +995,11 @@ impl RelStats {
         self.cols.decoded.get_or_init(|| {
             let k = self.cols.kept.as_ref().expect("columns made or kept");
             crate::code_rule_dsl::prof::count("statkeep.kept_decoded", 1);
-            // Decoded where they lie: the reader's bytes only as `columns_of` makes the columns of them, a scratch
-            // dropped as they are made.
-            let mut cols = None;
+            // Decoded where they lie: `columns_of` reads the bytes through the source's reader, nothing copied out
+            // first (decision 0353 step 8).
+            let (mut cols, mut at) = (None, k.at);
             k.source.read(&mut |r| {
-                let mut bytes = vec![0u8; r.len().checked_sub(k.at)?];
-                r.read_at(k.at, &mut bytes)?;
-                cols = Self::columns_of(&bytes, &mut 0, k.format, self.columns.len());
+                cols = Self::columns_of(r, &mut at, k.format, self.columns.len());
                 Some(())
             });
             let mut cols = cols.unwrap_or_else(|| vec![Column::default(); self.columns.len()]);
@@ -1047,6 +1114,12 @@ impl RelStats {
 
     /// `encode`'s statistics back from `bytes` at `*at`, which moves past them; `None` if they are not.
     pub fn decode(bytes: &[u8], at: &mut usize) -> Option<RelStats> {
+        RelStats::decode_in(bytes, at)
+    }
+
+    /// `decode` of bytes read where they lie (`ReadAt`): a blob in a kept entry's words is not read into bytes first
+    /// (decision 0353 step 8).
+    pub fn decode_in<R: ReadAt + ?Sized>(bytes: &R, at: &mut usize) -> Option<RelStats> {
         // Format 3: format 2's `sqd` held the document-key rows' part, summed by document (not to be patched).
         // Format 4: format 3 with each column's watched values; a format 3 column watches none.
         let (format, columns, rows, partial) = Self::header(bytes, at)?;
@@ -1172,20 +1245,32 @@ impl RelStats {
         Some((has_exact, has_watched))
     }
 
-    /// `k` columns of format `format` decoded from `bytes` at `*at`, which moves past them.
-    fn columns_of(bytes: &[u8], at: &mut usize, format: u8, k: usize) -> Option<Vec<Column>> {
-        fn take<'a>(bytes: &'a [u8], at: &mut usize, n: usize) -> Option<&'a [u8]> {
-            let b = bytes.get(*at..*at + n)?;
-            *at += n;
-            Some(b)
-        }
-        let int = |at: &mut usize| -> Option<i64> { Some(i64::from_le_bytes(take(bytes, at, 8)?.try_into().ok()?)) };
+    /// `k` columns of format `format` decoded from `bytes` at `*at`, which moves past them: read where they lie, a
+    /// sketch by position (`Sketch::decode_at`).
+    fn columns_of<R: ReadAt + ?Sized>(bytes: &R, at: &mut usize, format: u8, k: usize) -> Option<Vec<Column>> {
+        let n = bytes.len();
+        let take = |at: &mut usize, l: usize| -> Option<usize> {
+            let start = *at;
+            (start.checked_add(l)? <= n).then_some(())?;
+            *at += l;
+            Some(start)
+        };
+        let int = |at: &mut usize| -> Option<i64> {
+            let mut b = [0u8; 8];
+            bytes.read_at(*at, &mut b)?;
+            *at += 8;
+            Some(i64::from_le_bytes(b))
+        };
+        let byte = |i: usize| -> u8 {
+            let mut b = [0u8; 1];
+            bytes.read_at(i, &mut b).map_or(0, |()| b[0])
+        };
         let exact = |at: &mut usize| -> Option<Option<Exact>> {
             let e = int(at)?;
             if e < 0 {
                 return Some(None);
             }
-            let mut m = Exact::with_room(usize::try_from(e).ok()?.min(bytes.len() / 16));
+            let mut m = Exact::with_room(usize::try_from(e).ok()?.min(n / 16));
             for _ in 0..e {
                 let v = int(at)?;
                 m.insert(v, int(at)?);
@@ -1199,10 +1284,13 @@ impl RelStats {
             let (local_ndv, crossing) = (int(at)?, int(at)?);
             let exact = exact(at)?;
             let l = usize::try_from(int(at)?).ok()?;
-            let sketch = Sketch::decode(take(bytes, at, l)?)?;
+            let sketch = Sketch::decode_at(&byte, take(at, l)?, l)?;
             let pairs = match int(at)? {
                 l if l < 0 => None,
-                l => Some(Sketch::decode(take(bytes, at, usize::try_from(l).ok()?)?)?),
+                l => {
+                    let l = usize::try_from(l).ok()?;
+                    Some(Sketch::decode_at(&byte, take(at, l)?, l)?)
+                }
             };
             let mut watched = FxHashMap::default();
             if format == 4 {
@@ -1242,7 +1330,7 @@ mod exact_tests {
             }
             assert_eq!(e.len(), want.len());
         }
-        assert!(e.slots.facts().is_some(), "its slots in a block");
+        assert!(rerail_blocks::maps::Placed::place(&e.slots).is_some(), "its slots in a block");
         let mut got: Vec<(i64, i64)> = e.iter().collect();
         got.sort_unstable();
         assert_eq!(got, want.into_iter().collect::<Vec<_>>());

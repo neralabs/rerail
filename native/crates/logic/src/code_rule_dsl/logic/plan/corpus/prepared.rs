@@ -21,6 +21,7 @@
 //! 0264) has that store's atoms: the strings are interned here and its branded name atoms moved to these
 //! (`lower::relocate`, decision 0270).
 
+use rerail_blocks::vector::Vector;
 pub use super::Prepared;
 use super::lower;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -52,8 +53,8 @@ fn pointer_plan(key: &[u8; 32]) -> FactsPlanSet {
 /// The plans the program `key` names is stored under: the pointer's. The run's manifest names it
 /// (`record_corpus_run_naming`), so collection keeps its rows while it keeps the run, and takes those of an earlier
 /// engine build or grammar once no kept run names them (the program's text, their source, may live on).
-pub(super) fn plans(key: &[u8; 32]) -> Vec<[u8; 32]> {
-    vec![pointer_plan(key).plans[0]]
+pub(super) fn plans(key: &[u8; 32]) -> Vector<[u8; 32]> {
+    rerail_blocks::vector![pointer_plan(key).plans[0]]
 }
 
 /// The relations a prepared program adds to the program schema, and their columns.
@@ -128,11 +129,11 @@ fn cols_text(cols: &[usize]) -> String {
     cols.iter().map(usize::to_string).collect::<Vec<_>>().join(",")
 }
 
-fn cols_of_text(text: &str) -> Option<Vec<usize>> {
+fn cols_of_text(text: &str) -> Option<Vector<usize>> {
     if text.is_empty() {
-        return Some(Vec::new());
+        return Some(Vector::new());
     }
-    text.split(',').map(|c| c.parse().ok()).collect()
+    text.split(',').map(|c| c.parse::<usize>().ok()).collect()
 }
 
 /// What preparing found, as facts: `prepared`'s other than its two programs.
@@ -333,8 +334,8 @@ struct Gathered {
     patterns: BTreeMap<i64, Vec<(i64, String)>>,
     matches: Vec<(i64, String)>,
     split: bool,
-    locations: BTreeMap<String, Vec<usize>>,
-    same_doc: BTreeMap<String, Vec<usize>>,
+    locations: BTreeMap<String, Vector<usize>>,
+    same_doc: BTreeMap<String, Vector<usize>>,
     memo_part: Option<String>,
     memo_reach: BTreeMap<i64, Arc<[String]>>,
     memo_stratum: Vec<(String, [u8; 32], i64)>,
@@ -436,7 +437,7 @@ fn prepared_from(
     };
     let ops: Vec<i64> = in_order(g.ops).into_iter().map(atom).collect::<Result<_, _>>()?;
     let ops: [i64; 3] = ops.try_into().map_err(|_| bad("not three operators"))?;
-    let sets = in_order(g.sets.into_iter().map(|(k, rel)| (k, (rel, in_order(g.set_kinds.remove(&k).unwrap_or_default())))).collect());
+    let sets = in_order(g.sets.into_iter().map(|(k, rel)| (k, (rel, in_order(g.set_kinds.remove(&k).unwrap_or_default()).into_iter().collect()))).collect());
     let mut lists = std::mem::take(&mut g.lists);
     let mut list = |rel: &str| in_order(lists.remove(rel).unwrap_or_default());
     let ok = g.located.ok_or_else(|| bad("no located"))?;
@@ -450,7 +451,7 @@ fn prepared_from(
             return Err(bad(format!("intern call {k} has {} of its {width} strings", call.len())));
         }
         let (strings, ids): (Vec<String>, Vec<i64>) = call.into_iter().map(|(x, a)| (x, i64::from(a))).unzip();
-        interned.push((strings, ids.into_iter().map(|a| atom(a).map(|a| a as u32)).collect::<Result<Vec<u32>, String>>()?));
+        interned.push((strings, ids.into_iter().map(|a| atom(a).map(|a| a as u32)).collect::<Result<Vector<u32>, String>>()?));
     }
     let (mut relations, mut specs) = (Vec::new(), Vec::new());
     for (k, (rel, op)) in in_order(g.tests.into_iter().map(|(k, t)| (k, (k, t))).collect()) {

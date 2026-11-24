@@ -1,4 +1,5 @@
 //! Shared literal facts retain document reference counts and two immutable ordered indexes.
+use rerail_blocks::vector::Vector;
 use super::{
     tree::{Link, Measure, Node, size},
     *,
@@ -13,9 +14,9 @@ struct Summary {
     first: i64,
     last: i64,
 }
-impl Measure<Vec<i64>> for Count {
+impl Measure<Vector<i64>> for Count {
     type Summary = Summary;
-    fn measure(&self, key: &Vec<i64>, left: Option<&Summary>, right: Option<&Summary>) -> Summary {
+    fn measure(&self, key: &Vector<i64>, left: Option<&Summary>, right: Option<&Summary>) -> Summary {
         let v = key[0];
         Summary {
             distinct: 1
@@ -26,14 +27,14 @@ impl Measure<Vec<i64>> for Count {
         }
     }
 }
-type Index = Node<Vec<i64>, Count>;
+type Index = Node<Vector<i64>, Count>;
 #[derive(Clone, Default)]
 pub(super) struct Shared {
-    primary: Link<Vec<i64>, Count>,
-    secondary: Link<Vec<i64>, Count>,
+    primary: Link<Vector<i64>, Count>,
+    secondary: Link<Vector<i64>, Count>,
 }
 impl Shared {
-    pub fn changed(&self, delta: &BTreeMap<Vec<i64>, isize>, work: &mut usize) -> Self {
+    pub fn changed(&self, delta: &BTreeMap<Vector<i64>, isize>, work: &mut usize) -> Self {
         let mut next = self.clone();
         for (row, &delta) in delta {
             if delta == 0 {
@@ -45,29 +46,29 @@ impl Shared {
                 .expect("literal references reflect document membership");
             let count = (refs > 0).then_some(Count(refs));
             next.primary = Index::set(&next.primary, row.clone(), count.clone(), work);
-            next.secondary = Index::set(&next.secondary, vec![row[1], row[0]], count, work);
+            next.secondary = Index::set(&next.secondary, rerail_blocks::vector![row[1], row[0]], count, work);
         }
         next
     }
-    pub fn contains(&self, row: &Vec<i64>) -> bool {
+    pub fn contains(&self, row: &Vector<i64>) -> bool {
         Index::get(&self.primary, row).is_some()
     }
-    fn selected(&self, c: usize, lo: Option<(i64, bool)>, hi: Option<(i64, bool)>) -> Vec<usize> {
+    fn selected(&self, c: usize, lo: Option<(i64, bool)>, hi: Option<(i64, bool)>) -> Vector<usize> {
         let lower = lo.map_or(Bound::Unbounded, |(v, inc)| {
             if inc {
-                Bound::Included(vec![v, i64::MIN])
+                Bound::Included(rerail_blocks::vector![v, i64::MIN])
             } else {
-                Bound::Excluded(vec![v, i64::MAX])
+                Bound::Excluded(rerail_blocks::vector![v, i64::MAX])
             }
         });
         let upper = hi.map_or(Bound::Unbounded, |(v, inc)| {
             if inc {
-                Bound::Included(vec![v, i64::MAX])
+                Bound::Included(rerail_blocks::vector![v, i64::MAX])
             } else {
-                Bound::Excluded(vec![v, i64::MIN])
+                Bound::Excluded(rerail_blocks::vector![v, i64::MIN])
             }
         });
-        let mut rows = vec![];
+        let mut rows = rerail_blocks::vector![];
         let index = if c == 0 {
             &self.primary
         } else {
@@ -77,7 +78,7 @@ impl Shared {
             rows.push(if c == 0 {
                 rank
             } else {
-                Index::rank(&self.primary, &vec![n.key[1], n.key[0]]).unwrap()
+                Index::rank(&self.primary, &rerail_blocks::vector![n.key[1], n.key[0]]).unwrap()
             });
         });
         rows
@@ -108,7 +109,7 @@ impl Source for Shared {
     fn range_indexed(&self, _: usize) -> bool {
         true
     }
-    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         Some(
             values
                 .iter()
@@ -123,7 +124,7 @@ impl Source for Shared {
         c: usize,
         lo: Option<(i64, bool)>,
         hi: Option<(i64, bool)>,
-    ) -> Option<Vec<usize>> {
+    ) -> Option<rerail_blocks::vector::Vector<usize>> {
         Some(self.selected(c, lo, hi))
     }
     fn value(&self, r: usize, c: usize) -> i64 {

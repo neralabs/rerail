@@ -2,6 +2,7 @@
 //! lab's, which turns on the `reference` feature. The engine's writer is the ops in CLIF (`f16::Writer`), which
 //! write its bytes.
 
+use std::collections::HashMap;
 use super::*;
 
 /// An open node: its index, its children so far and its last child (`NONE`: none), its start.
@@ -17,7 +18,7 @@ struct Open {
 /// in the payload, its length and its kind (by piece: `PIECES` a block, in block order, whatever order the blocks
 /// finish in), the checkpoints (raw, in node order), and each block's side-list parts' lengths.
 struct ZOut {
-    out: Vec<u8>,
+    out: crate::Vector<u8>,
     start: Vec<u32>,
     len: Vec<u32>,
     kinds: Vec<u8>,
@@ -30,7 +31,7 @@ struct ZOut {
 
 impl ZOut {
     fn new() -> Self {
-        ZOut { out: vec![0; HEAD16], start: Vec::new(), len: Vec::new(), kinds: Vec::new(), ckpt: Vec::new(), part_len: Default::default(), seen: HashMap::new(), piece: Vec::new() }
+        ZOut { out: crate::Vector::from([0u8; HEAD16]), start: Vec::new(), len: Vec::new(), kinds: Vec::new(), ckpt: Vec::new(), part_len: Default::default(), seen: HashMap::new(), piece: Vec::new() }
     }
 
     /// Block `b`'s four pieces from its columns (codes, slots, gaps, lengths, at its rows) and its side lists'
@@ -147,7 +148,7 @@ pub struct Writer<'l> {
     tag: u8,
     source_len: u64,
     /// The source's newline index (laid in the tail) and its newlines.
-    lines: Vec<u8>,
+    lines: crate::Vector<u8>,
     newlines: u32,
     w: [usize; 3],
     cw: usize,
@@ -158,7 +159,7 @@ pub struct Writer<'l> {
     stride: usize,
     /// 16: the tape (the header's room, then each block at its place, at `Z` rows until `finish`); 16z: the rooms
     /// of the blocks not yet final.
-    buf: Vec<u8>,
+    buf: crate::Vector<u8>,
     /// Each block's start in `buf`.
     pub(super) base: Vec<usize>,
     /// 16z: the rooms of blocks compressed, for the next blocks.
@@ -174,7 +175,7 @@ pub struct Writer<'l> {
     keep_blocks: bool,
     z: Option<ZOut>,
     /// 16z: a block's side-list parts as laid.
-    laid: [Vec<u8>; 4],
+    laid: [crate::Vector<u8>; 4],
     bad: Option<String>,
 }
 
@@ -192,7 +193,7 @@ impl<'l> Writer<'l> {
         let newlines = crate::newlines::count(&lines).unwrap_or(0);
         let count = nodes.div_ceil(Z).max(1);
         let tail = 4 * 8 + nodes / 2 + 64 + 16 * (count + 1) + lines.len() + 16;
-        let buf = if z { Vec::with_capacity(2 * stride) } else { Vec::with_capacity(HEAD16 + count * stride + 8 + tail) };
+        let buf = if z { crate::Vector::with_capacity(2 * stride) } else { crate::Vector::with_capacity(HEAD16 + count * stride + 8 + tail) };
         let mut wr = Writer {
             lang,
             tag,
@@ -214,7 +215,7 @@ impl<'l> Writer<'l> {
             frontier: 0,
             side: Vec::new(),
             done: Vec::new(),
-            presence: Presence { kind_words, field_words, doc: vec![0; kind_words + field_words], blocks: Vec::new() },
+            presence: Presence { kind_words, field_words, doc: vec![0; kind_words + field_words], blocks: Vec::new(), faults: Vec::new() },
             keep_blocks: blocks,
             z: z.then(ZOut::new),
             laid: Default::default(),
@@ -482,9 +483,15 @@ impl<'l> Writer<'l> {
                 let l = low.next().filter(|e| usize::from(e.0) == j).map_or(0, |e| e.1 as u32);
                 lang.cut + (u32::from(byte) - lang.cut) * lang.per + l
             };
-            let (kind, field) = lang.kind_field.get(number as usize).copied().unwrap_or((0, 0));
+            let kf = if (number as usize) < lang.table().len() { let e = lang.table().entry(number); super::presence::kind_word(e.kind, e.field, e.flags) } else { 0 };
+            let (kind, field) = ((kf & super::presence::KIND_MASK) as u16, (kf >> 16) as u16);
             block[usize::from(kind) / 64] |= 1 << (kind % 64);
+            block[0] |= u64::from(kf & super::presence::FAULT != 0) << crate::ERROR_CODE;
             block[kw + usize::from(field) / 64] |= 1 << (field % 64);
+            // An ERROR node or a MISSING one listed (`presence::faults`), beside the fault bit it set.
+            if kind == crate::ERROR_CODE || kf & super::presence::FAULT != 0 {
+                self.presence.faults.push((b * Z + j) as u32);
+            }
         }
         for (d, x) in self.presence.doc.iter_mut().zip(&block) {
             *d |= x;
@@ -532,12 +539,14 @@ impl<'l> Writer<'l> {
                 self.finalize(b, rows);
             }
         }
-        let presence = std::mem::take(&mut self.presence);
+        let mut presence = std::mem::take(&mut self.presence);
+        // In preorder: a block made final after a later one listed its faults after the later one's.
+        presence.faults.sort_unstable();
         let mark = self.lang.revision;
         let p = Placement::of(HEAD16, n, self.cw, self.w, self.vw, [0; 4], lines.len(), newlines, self.source_len);
         if let Some(z) = self.z.take() {
             let tape = z.finish(p, self.tag, mark, self.source_len, &lines)?;
-            let mut out = tape.as_bytes().to_vec();
+            let mut out = crate::Vector::from(tape.as_bytes());
             super::presence::lay(&mut out, &presence);
             return Ok(Finished { tape: Written::F16Z(Tape16Z::from_bytes(out)?) });
         }
@@ -584,7 +593,7 @@ impl<'l> Writer<'l> {
 
 /// A block's side-list part as stored: for each of its `BLOCK`-node blocks a u16 end, then each entry's node offset
 /// in its block, then the values at `vw` bytes. Nothing for a part with no entries.
-fn part_into(out: &mut Vec<u8>, e: &[(u16, u64)], nb: usize, vw: usize) {
+fn part_into(out: &mut crate::Vector<u8>, e: &[(u16, u64)], nb: usize, vw: usize) {
     if e.is_empty() {
         return;
     }
@@ -602,7 +611,7 @@ fn part_into(out: &mut Vec<u8>, e: &[(u16, u64)], nb: usize, vw: usize) {
     }
 }
 
-/// `f16::write_from` by the reference writer.
+/// The tree `t` in format 16 (16z where `z`) by the reference writer, each code mapped to the language's number.
 pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], tag: u8, z: bool) -> Result<Written, String> {
     write_with(Writer::new(lang, source, crate::newlines::Terminators::Lf, tag, z, false, t.len()), t.len(), nodes_of(t, number)).map(|f| f.tape)
 }

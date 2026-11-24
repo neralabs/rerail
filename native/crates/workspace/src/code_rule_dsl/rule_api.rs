@@ -189,7 +189,10 @@ impl CodeRuleDslEditor {
         {
             return Err(invalid("edit byte range is invalid"));
         }
-        Arc::make_mut(&mut file.source).replace_range(start..end, new_text);
+        // The edited document's text, made anew: a source is never written where it lies.
+        let mut text = file.source.as_str().to_owned();
+        text.replace_range(start..end, new_text);
+        file.source = Arc::new(text.into());
         self.derived.edited(&mut self.snapshot, index);
         self.snapshot.revision = revision;
         self.evaluate(mode)

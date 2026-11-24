@@ -24,6 +24,7 @@
 //! when its sequences differ in more than one byte, as large classes do). The result is delayed one byte, so that
 //! a match ending at the end of the file has a bit: output bit `i` is "a match can end after byte `i`".
 
+use rerail_blocks::vector::Vector;
 use super::block::{BlockOp, BlockProgram, ClassTable};
 use regex_syntax::hir::{Class, Hir, HirKind, Look};
 use std::collections::HashMap;
@@ -58,7 +59,7 @@ pub use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 struct SpanEnds {
     filters: Vec<std::sync::Arc<SpanPrefilter>>,
     /// Each document's source, once; `files` are (document, program) pairs.
-    sources: Vec<std::sync::Arc<String>>,
+    sources: Vec<std::sync::Arc<crate::code_rule_dsl::tape::Text>>,
     files: Vec<(usize, usize)>,
     gpu: bool,
 }
@@ -72,14 +73,14 @@ impl SpanEnds {
         self.files.iter().map(|&(d, program)| super::block::BatchFile { bytes: self.sources[d].as_bytes(), program }).collect()
     }
 
-    fn cpu(&self) -> (Vec<Vec<u64>>, RanOn) {
+    fn cpu(&self) -> (Vec<Vector<u64>>, RanOn) {
         let programs: Vec<&BlockProgram> = self.filters.iter().map(|f| &f.program).collect();
         (super::block::run_batch(&programs, &self.batch()).into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Cpu)
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     /// The batch on the device; `Ok(None)` with no device, or a form it lacks (recorded: `span_ends`).
-    fn metal(&self) -> Result<Option<(Vec<Vec<u64>>, RanOn)>, String> {
+    fn metal(&self) -> Result<Option<(Vec<Vector<u64>>, RanOn)>, String> {
         let natives: Vec<&super::native_ir::BlockNative> = self.filters.iter().map(|f| &f.native).collect();
         let Some(device) = super::device::matcher() else { return Ok(None) };
         let ends = device.span_ends(&natives, &self.batch()).map_err(|error| format!("span prefilter on Metal: {error:?}"))?;
@@ -119,12 +120,12 @@ impl rerail_accel::kernel::Program for SpanEnds {
 /// Every (file, program) pair's marks in one batch (decision 0066's shape), as one launch of `ex`: each pattern's
 /// ends over each of `sources` (`files`: (source, the pattern's index in `filters`)), placed by price on the cores or,
 /// when `device` and `ex` has one, the GPU.
-pub(in crate::code_rule_dsl) fn ends_launch(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+pub(in crate::code_rule_dsl) fn ends_launch(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<crate::code_rule_dsl::tape::Text>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vector<u64>>, RanOn), String> {
     ends_on(ex, filters, sources, files, device, None)
 }
 
 /// [`ends_launch`], pinned to `lane` when given.
-pub fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool, lane: Option<rerail_accel::Lane>) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+pub fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<crate::code_rule_dsl::tape::Text>], files: &[(usize, usize)], device: bool, lane: Option<rerail_accel::Lane>) -> Result<(Vec<Vector<u64>>, RanOn), String> {
     if files.is_empty() {
         return Ok((Vec::new(), RanOn::Cpu));
     }
@@ -139,7 +140,7 @@ pub fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefil
     let rerail_accel::kernel::Output::Program(r) = done.remove(0).out else {
         return Err("span prefilter: not a program's result".into());
     };
-    let r = r.0.downcast::<(Vec<Vec<u64>>, RanOn)>().map_err(|_| "span prefilter: a result of another type".to_owned())?;
+    let r = r.0.downcast::<(Vec<Vector<u64>>, RanOn)>().map_err(|_| "span prefilter: a result of another type".to_owned())?;
     Ok(std::sync::Arc::try_unwrap(r).unwrap_or_else(|r| (*r).clone()))
 }
 
@@ -160,15 +161,18 @@ impl SpanPrefilter {
         if b.ops.len() > MAX_OPS {
             return None;
         }
-        let program = BlockProgram { tables: b.tables, ops: b.ops, outputs: vec![end], delay: 1, ..BlockProgram::default() };
+        let program = BlockProgram { tables: b.tables, ops: b.ops, outputs: rerail_blocks::vector![end], delay: 1, ..BlockProgram::default() };
         program.verify().ok()?;
         let native = super::native_ir::BlockNative::lower(&program);
         Some(SpanPrefilter { program, native })
     }
 
     /// Bit `i` of the words: a match can end after byte `i` of `bytes`.
-    pub fn ends(&self, bytes: &[u8]) -> Vec<u64> {
-        self.program.interpret(bytes).swap_remove(0)
+    pub fn ends(&self, bytes: &[u8]) -> rerail_blocks::vector::Vector<u64> {
+        let mut out = rerail_blocks::vector::Vector::new();
+        out.resize(bytes.len().div_ceil(64), 0);
+        self.program.interpret_into(bytes, 0, &mut out);
+        out
     }
 
     /// Whether a match can end in `(a, b]`, a span's exclusive end, given `ends`.
@@ -212,7 +216,7 @@ impl Builder {
         }
         let has = |b: usize| set[b / 64] >> (b % 64) & 1 == 1;
         let within = self.push(BlockOp::Within(0));
-        let members: Vec<usize> = (0..256).filter(|&b| has(b)).collect();
+        let members: Vector<usize> = (0..256).filter(|&b| has(b)).collect();
         let raw = match members.as_slice() {
             [] => self.push(BlockOp::Const(0)),
             [b] => self.push(BlockOp::Eq(*b as u8)),
@@ -249,7 +253,7 @@ impl Builder {
                         None => per_table.push((t as u16, bit)),
                     }
                 }
-                let parts: Vec<u16> = per_table.into_iter().map(|(table, bits)| self.push(BlockOp::Class { table, bits })).collect();
+                let parts: Vector<u16> = per_table.into_iter().map(|(table, bits)| self.push(BlockOp::Class { table, bits })).collect();
                 parts.into_iter().reduce(|a, b| self.push(BlockOp::Or(a, b))).expect("a class bit")
             }
         };
@@ -274,11 +278,11 @@ impl Builder {
     }
 
     /// One byte set per position of each length of a class's UTF-8 sequences.
-    fn class_steps(class: &Class) -> Vec<Vec<[u64; 4]>> {
-        let mut by_len: Vec<Vec<[u64; 4]>> = Vec::new();
+    fn class_steps(class: &Class) -> Vec<Vector<[u64; 4]>> {
+        let mut by_len: Vec<Vector<[u64; 4]>> = Vec::new();
         let mut add = |seq: &[(u8, u8)]| {
             while by_len.len() < seq.len() {
-                by_len.push(Vec::new());
+                by_len.push(rerail_blocks::vector::Vector::new());
             }
             let steps = &mut by_len[seq.len() - 1];
             if steps.is_empty() {
@@ -453,7 +457,7 @@ impl Builder {
 
 
 impl crate::code_rule_dsl::facts::span_prefilter::SpanEnds for SpanPrefilter {
-    fn ends(&self, bytes: &[u8]) -> Vec<u64> {
+    fn ends(&self, bytes: &[u8]) -> rerail_blocks::vector::Vector<u64> {
         SpanPrefilter::ends(self, bytes)
     }
     fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn std::any::Any + Send + Sync> {
@@ -468,7 +472,7 @@ pub fn compile_span(re: &str, lines: bool) -> Option<std::sync::Arc<dyn crate::c
 
 /// The facts' span prefilter launcher (`facts::span_prefilter::Launch`): this module's prefilters, as `compile_span`
 /// made them.
-pub fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+pub fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>], sources: &[std::sync::Arc<crate::code_rule_dsl::tape::Text>], files: &[(usize, usize)], device: bool) -> Result<(Vec<Vector<u64>>, RanOn), String> {
     let filters = filters
         .iter()
         .map(|f| std::sync::Arc::clone(f).into_any().downcast::<SpanPrefilter>().map_err(|_| "span prefilter: not a block program's".to_owned()))

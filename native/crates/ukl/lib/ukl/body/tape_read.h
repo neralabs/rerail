@@ -9,21 +9,19 @@
 
 #ifdef CLIF_READS_TAPE_Z
 #define CLIF_TAPE_Z(type, name, args) \
-    if (clif_format == CLIF_T_F16Z_FORMAT) CLIF_Z_READ(type, t, v, clif_f16z_##name args)
+    if (clif_view(v, CLIF_T_FORMAT) == CLIF_T_F16Z_FORMAT) CLIF_Z_READ(type, t, v, clif_f16z_##name args)
 #else
 #define CLIF_TAPE_Z(type, name, args)
 #endif
 
-// `clif_tape_<name>(t, v, ...)`: format 16's read, 16z's, else format 15's, with `link`: `UKL_INLINE`, or `UKL_COLD`
-// for a large read (decision 0548: three formats' bodies and 16z's check are called, not copied into each caller).
+// `clif_tape_<name>(t, v, ...)`: 16z's read where the view is 16z's, else format 16's, with `link`: `UKL_INLINE`, or
+// `UKL_COLD` for a large read (decision 0548: both formats' bodies and 16z's check are called, not copied into each
+// caller).
 #define CLIF_TAPE_READ(link, type, name, params, args)                   \
     link type clif_tape_##name params                                    \
     {                                                                    \
-        uint32_t clif_format = clif_view(v, CLIF_T_FORMAT);              \
-        if (clif_format == 16u)                                          \
-            return clif_f16_##name args;                                 \
         CLIF_TAPE_Z(type, name, args)                                    \
-        return clif_f15_##name args;                                     \
+        return clif_f16_##name args;                                     \
     }
 
 // The node's subtree's size (itself and its descendants), and its code's number in its table (format 16: its
@@ -54,11 +52,9 @@ CLIF_TAPE_READ(UKL_COLD, uint32_t, line, (CLIF_T_ARGS, uint32_t x), (t, v, x))
 CLIF_TAPE_READ(UKL_COLD, uint32_t, line_start, (CLIF_T_ARGS, uint32_t k), (t, v, k))
 
 // Format 16's slot of the node (16z's too): an inner node's subtree size, shifted up by one; a leaf's step back to its
-// previous sibling or (bit 1) its parent, shifted up by two, with bit 0 set. Format 15 has no slots: its tape is read
-// as format 16's would be, as the reads always have.
+// previous sibling or (bit 1) its parent, shifted up by two, with bit 0 set.
 UKL_INLINE uint64_t clif_tape_slot(CLIF_T_ARGS, uint32_t i)
 {
-    uint32_t clif_format = clif_view(v, CLIF_T_FORMAT);
     CLIF_TAPE_Z(uint64_t, slot, (t, v, i))
     return clif_f16_slot(t, v, i);
 }

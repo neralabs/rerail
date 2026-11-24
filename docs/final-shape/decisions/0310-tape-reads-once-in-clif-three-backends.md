@@ -1,8 +1,9 @@
 # 0310. The tape's reads written once, in CLIF, for three backends
 
-Status: decided (2026-11-16), by the user: the CPU JIT's tape reads split, the common case in the generated code
-and the rare one a call, but "this needs to be some kind of more generic inlining capability, not done by hand";
-then, of where the reads' one definition lives, "Compiler IR, 3 backends". Building. Step 5 of 0293.
+Status: built (audited 2026-11-23). Decided (2026-11-16), by the user: the CPU JIT's tape reads split, the common case
+in the generated code and the rare one a call, but "this needs to be some kind of more generic inlining capability,
+not done by hand"; then, of where the reads' one definition lives, "Compiler IR, 3 backends". Building. Step 5 of
+0293.
 
 ## Intro
 

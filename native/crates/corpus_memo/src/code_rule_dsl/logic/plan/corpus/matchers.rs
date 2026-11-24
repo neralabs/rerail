@@ -19,7 +19,7 @@ pub use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, 
 /// ([`demanded_by_roots`]). A matcher that does not lower fails the run, naming it.
 pub fn compiled(
     matchers: &[(String, String, Vec<String>)],
-    demand: &[Option<Vec<usize>>],
+    demand: &[Option<rerail_blocks::vector::Vector<usize>>],
     policies: &[serde_json::Value],
 ) -> Result<crate::code_rule_dsl::facts::vtab::syntax::Matchers, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers lowered".into());
@@ -34,7 +34,7 @@ pub fn compiled(
 /// the atom is widened to the document where its body is the batch's own relations; this is that rule at node grain,
 /// where its body is the same wave's matchers. `None` where any read is not so joined: negated, in an aggregate, an
 /// output, or joined only with what the batch's rows or the inputs fill.
-pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<Vec<usize>>> {
+pub fn demanded_by_roots(v: &Version, matchers: &[(String, String, Vec<String>)]) -> Vec<Option<rerail_blocks::vector::Vector<usize>>> {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
     let outputs = v.output_names();
     // The relations something besides matchers' roots fills: the inputs, native and lattice relations, and the

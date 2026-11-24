@@ -4,9 +4,10 @@
 //! order alone) and `hash` (the hash table before 0112) for the other two. Every node is probed once a relation,
 //! and the rows found are checked against the lab's count.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 
-fn load(path: &std::path::Path) -> Vec<i64> {
+fn load(path: &std::path::Path) -> Vector<i64> {
     let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     bytes.as_chunks::<8>().0.iter().map(|b| i64::from_le_bytes(*b)).collect()
 }

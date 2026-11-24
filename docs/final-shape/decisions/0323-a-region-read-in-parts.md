@@ -1,11 +1,9 @@
 # 0323: A region read in parts
 
-Status: decided (2026-11-16). The grammar form, its meaning as masks and the
-reference token loop have landed. Both CPU lowerings have landed: A in tier
-1's token loop, and B in tier 2's token fetch. Either is a compile option of
-the same grammar (`Records::split_parts_in`). B took 18% fewer cycles over
-JSON's corpus. Metal keeps the masks (option C) for now. Part of 0177's
-token loop.
+Status: built (audited 2026-11-23). Decided (2026-11-16). The grammar form, its meaning as masks and the reference
+token loop have landed. Both CPU lowerings have landed: A in tier 1's token loop, and B in tier 2's token fetch.
+Either is a compile option of the same grammar (`Records::split_parts_in`). B took 18% fewer cycles over JSON's
+corpus. Metal keeps the masks (option C) for now. Part of 0177's token loop.
 
 ## Intro
 

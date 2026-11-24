@@ -17,7 +17,6 @@ use rusqlite::vtab::array::Array;
 use rusqlite::{Connection, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
-use std::sync::Arc;
 
 /// G's kind, value and text streams and the kind instance vocabulary, as in G's schema (its kind stream named its own:
 /// W's search index is kept facts, `search_index`).
@@ -41,31 +40,7 @@ END;
 "#;
 
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TapeSearchIndex {
-    pub tape_id: TapeId,
-    pub index_version: i64,
-    pub node_count: u32,
-    pub kind_tokens: Arc<String>,
-    pub value_tokens: Arc<String>,
-    pub source_text: Arc<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SearchAnchorLookup {
-    pub tape_id: TapeId,
-    pub index_version: i64,
-    pub kind_token: String,
-    pub value_token: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StoredAnchorSelection {
-    Unknown,
-    Candidate,
-    Roots(Vec<u32>),
-}
-
+pub use rerail_store_base::content_store::positional_search::{SearchAnchorLookup, StoredAnchorSelection, TapeSearchIndex};
 
 impl ContentStore {
     /// G's tables, and the `rarray` module G's statements read (W's store connections load
@@ -329,7 +304,7 @@ impl ContentStore {
                 selections[position] = if exact_value && value_candidate {
                     StoredAnchorSelection::Candidate
                 } else {
-                    StoredAnchorSelection::Roots(Vec::new())
+                    StoredAnchorSelection::Roots(rerail_blocks::vector::Vector::new())
                 };
             }
             if let Some(root) = root {

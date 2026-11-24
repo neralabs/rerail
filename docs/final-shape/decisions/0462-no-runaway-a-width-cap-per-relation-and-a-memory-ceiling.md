@@ -1,6 +1,7 @@
 # 0462. No runaway: a width cap per relation, and a memory ceiling
 
-Status: accepted (2026-11-18; the user: "find a way to make it impossible for runaway memory use to happen").
+Status: built (audited 2026-11-23). Accepted (2026-11-18; the user: "find a way to make it impossible for runaway
+memory use to happen").
 
 ## Intro
 
