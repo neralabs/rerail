@@ -1,6 +1,8 @@
 import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditOwner, AuditScope } from "../audit/audit.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import type { GitReads } from "../git.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
@@ -1634,8 +1636,18 @@ export interface CodeRuleAuditor {
    * when undefined or absent.
    */
   sourceRoot?(path: string): string | undefined;
-  /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
-  worktreeRoots?(): readonly string[];
+  /**
+   * The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent.
+   * `registry`: the list {@link CodeRuleAuditor.learnWorktreeRoots} gave as stored, in the same synchronous run.
+   */
+  worktreeRoots?(registry?: WorktreeRegistry): readonly string[];
+  /**
+   * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
+   * next call finds Git's list kept while the registry's contents stay as they were: what to wait for, or the list
+   * stored for the registry, with nothing started, for a call in the same synchronous run to take. Undefined, with
+   * nothing started, where there is nothing to learn. Never throws, and what it gives to wait on never rejects.
+   */
+  learnWorktreeRoots?(git: GitReads): WorktreeListLearning | undefined;
   /**
    * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
    * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.

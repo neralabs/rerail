@@ -490,7 +490,22 @@ holds it, and the engine on that pipe must answer a random challenge with an HMA
 this user may signal as for one it may not (this user's elevated daemon), so on Windows a reused pid of the person's
 own, with the pipe name and the port held by another user, gets nothing: the state is dropped unprobed. An engine that
 says nothing within the wait is taken for a busy daemon: its state is kept, and it is sent no capability, the shutdown
-request of `rerail daemon stop` included.
+request of `rerail daemon stop` included. An engine of Rerail 0.1.4 or earlier has no proof and answers the challenge
+404, as anyone holding the pipe's name can. A process can outlive its pipe and port: a daemon that shuts down lets go of
+both before it exits, and another user can take them while its pid still runs. So a 404 counts only in a state written
+by a release before the proof (its `version` before 0.1.5); from a later release the state is dropped unprobed. For an
+earlier one, a lookup of the daemon (`rerail status`, `rerail daemon stop`, a hook's start of the daemon, set-up) takes
+the pid for the daemon that wrote the state when its own start, read from Windows, comes no later than the `startedAt`
+the state records, since a process keeps its pid for life. That daemon proved nothing, so nothing that carries the
+capability or the native token goes to its URL or pipe, the health probe included: the lookup hands its callers the
+state without either. `rerail daemon stop`, `rerail daemon start`, a hook's start, set-up and `rerail install --remove`
+end it through its process: one call opens the process, reads its start and ends it through that handle, so the process ended is the one
+whose start was read. A start later by more than 10 s and a pid this user may not signal drop the state unprobed; a
+start not read, or later by 10 s or less, keeps it, and nothing is sent, as does a recorded start more than 10 s past
+the reader's clock, which any process's start would come before: no lookup, stop or end takes the process for the daemon
+on it. Every other reader sends such an engine nothing, but a hook whose `RERAIL_ENGINE_SOCKET` names its pipe: once
+Windows names that daemon as the pipe's holder, the hook sends it the event and the capability it wrote, as for a
+daemon of any release (**Engine socket** above).
 
 **What remains:**
 
@@ -498,6 +513,9 @@ request of `rerail daemon stop` included.
   the probe still hands that user the capability.
 - On Windows the proof travels over the pipe and the capability over the port: if the daemon ends between the two,
   another user who takes its port in that moment gets the probe.
+- On Windows, for an engine without the proof: a wall clock set back, after a daemon stamped `startedAt`, by more than
+  the time until one of the person's own processes took its pid once it ended makes that process read as the daemon,
+  and a stop or a hook's start ends it. No capability goes to it or to whoever holds the pipe's name and the port.
 - A port squatter also serves the origin `http://127.0.0.1:4737`, whose `localStorage` holds the dashboard's token.
 
 **What would close it:** on macOS and Linux, the same challenge on the engine socket before the probe; a challenge the
@@ -892,13 +910,12 @@ should not widen it.
   runs the programs a repository's config names under `lfs.extension`. A Git older than 2.31 runs a repository's
   filter drivers in Rerail's calls, as it runs them for the person.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
-  Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
-  System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
-  (`src/setup/harness-registration.ts`). Set-up writes that path only when `SystemRoot` makes it a full path, from a
-  drive's root folder (`C:\`) or a UNC share, `cmd.exe` is there at set-up and `cmd.exe` reads each path of the entry
-  as one word, and `node` otherwise: Windows completes any other path from a current folder or drive, and a hook's
-  current folder is the repository it runs in. Set-up's look for `node` on `PATH` ends at the first entry that names
-  a server by its UNC path, which it never opens, and writes the `cmd.exe` entry there.
+  Claude Code's hooks on Windows run `cmd.exe /d /c` by its System32 path, which looks for that fallback `node.exe` on
+  `PATH` alone, never in the hook's working folder (`src/setup/harness-registration.ts`). Set-up writes that path only
+  when `SystemRoot` makes it a full path, from a drive's root folder (`C:\`) or a UNC share, `cmd.exe /d /c exit 0`
+  started there at set-up ends with exit 0, and `cmd.exe` reads each path of the entry as one word, and `node`
+  otherwise: Windows completes any other path from a current folder or drive, and a hook's current folder is the
+  repository it runs in. Set-up reads no `PATH` to choose the entry.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
   (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).

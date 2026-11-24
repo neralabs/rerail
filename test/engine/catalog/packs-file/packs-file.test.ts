@@ -32,7 +32,7 @@ describe(".rerail/packs.json", () => {
   it("reads this repository's own .rerail/packs.json, as main commits it, as packs for the whole repository", () => {
     // The file already in use in this and other repositories; a change that refuses it breaks them.
     expect(readPacksFile(repositoryPath())).toEqual([
-      { kind: "published", packageName: "@neralabs/rerail-pack-complexity", id: "complexity", version: "0.1.8" },
+      { kind: "published", packageName: "@neralabs/rerail-pack-complexity", id: "complexity", version: "0.1.9", config: { ceiling: 10 } },
       { kind: "repository", path: "packs/rerail" },
     ]);
   });
