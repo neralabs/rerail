@@ -10,11 +10,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
 import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
-import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, publishRefusal, raiseNext, releaseChannel } from "../../scripts/release/dist-tags.mjs";
+import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, publishRefusal, raiseNext, readDistTagsOrNone, releaseChannel } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
@@ -555,6 +555,38 @@ describe("raiseNext", () => {
   it("leaves a next already at the version, as a re-run finds it, or at a newer preview", async () => {
     expect(await run("0.1.0", "0.1.0")).toEqual({ moved: [], line: "@neralabs/rerail@0.1.0: next is 0.1.0, not older; left there" });
     expect((await run("0.1.1-next.1", "0.1.0")).moved).toEqual([]);
+  });
+});
+
+describe("readDistTagsOrNone", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const answering = (status, body = {}) => {
+    const requests = [];
+    vi.stubGlobal("fetch", async (url) => {
+      requests.push(url);
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    });
+    return requests;
+  };
+
+  it("reads a published package's dist-tags from the dist-tags endpoint, its scope's slash escaped", async () => {
+    const requests = answering(200, { latest: "0.2.0", next: "0.2.0" });
+    expect(await readDistTagsOrNone("@neralabs/rerail-pack-django")).toEqual({ latest: "0.2.0", next: "0.2.0" });
+    expect(requests).toEqual(["https://registry.npmjs.org/-/package/@neralabs%2frerail-pack-django/dist-tags"]);
+  });
+
+  it("takes a 401, npm's answer for a scoped name it never had, and a 404 alike for no package", async () => {
+    answering(401, { error: "unauthorized" });
+    expect(await readDistTagsOrNone("@neralabs/rerail-pack-django")).toEqual({});
+    answering(404, { error: "Not found" });
+    expect(await readDistTagsOrNone("rerail-unscoped")).toEqual({});
+  });
+
+  it("throws on any other answer, so an unreadable registry is never taken for an absent package", async () => {
+    for (const status of [403, 500, 503]) {
+      answering(status);
+      await expect(readDistTagsOrNone("@neralabs/rerail-pack-django")).rejects.toThrow(`@neralabs/rerail-pack-django's dist-tags answer an anonymous request with ${status}`);
+    }
   });
 });
 
