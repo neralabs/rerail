@@ -1359,15 +1359,42 @@ pub fn changed_since(start: &std::sync::Arc<super::program_image::Version>, v: &
     Some(changed)
 }
 
+/// The relations whose rules or declarations a derivation `b` of `a` changed, read off its rules' sources (§9): a
+/// rule whose hash is not its source's (rewritten), one with no source (made), and each of `a`'s rules no rule came
+/// from (dropped), by their heads; and each declaration whose hash differs. A copy kept as it was carries its
+/// source's hash (`Encoder`). `None` where a source is not one of `a`'s rules: `b` is no derivation of `a`.
+pub fn derived_changes(a: &super::program_image::Version, b: &super::program_image::Version) -> Option<std::collections::BTreeSet<String>> {
+    let mut changed = std::collections::BTreeSet::new();
+    let mut reached = std::collections::HashSet::new();
+    for r in b.rules() {
+        match r.source() {
+            Some(s) => {
+                let from = a.rule(s)?;
+                reached.insert(s);
+                if from.hash() != r.hash() {
+                    changed.insert(a.rel_name(from.head().rel()).to_owned());
+                    changed.insert(b.rel_name(r.head().rel()).to_owned());
+                }
+            }
+            None => drop(changed.insert(b.rel_name(r.head().rel()).to_owned())),
+        }
+    }
+    changed.extend(a.rules().filter(|r| !reached.contains(&r.id())).map(|r| a.rel_name(r.head().rel()).to_owned()));
+    let decls = |v: &super::program_image::Version| -> std::collections::HashMap<String, u64> { v.decls().into_iter().map(|x| (v.text(x.name()).to_owned(), x.hash())).collect() };
+    let (da, db) = (decls(a), decls(b));
+    changed.extend(da.keys().chain(db.keys()).filter(|n| da.get(*n) != db.get(*n)).cloned());
+    Some(changed)
+}
+
 /// The tail's `steps` over `start`, in their order (`lowering_tail_on` runs `TAIL`).
 pub fn tail_steps(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>, steps: &[TailStep]) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    tail_steps_in(start, declared, lowered, library, steps, None)
+    tail_steps_in(start, declared, lowered, library, steps, None).map(|(v, _)| v)
 }
 
 /// `tail_steps`; with `own`, of a program linked from tailed modules whose own module's relations are `own`: its
 /// checks are of the components that hold those or what its steps changed (decision 0639 §6a, E14), the tails of its
 /// library's modules having checked the others.
-fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>, steps: &[TailStep], own: Option<&std::collections::BTreeSet<String>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+pub fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, declared: bool, lowered: lower::Lowered, library: Option<&Library>, steps: &[TailStep], own: Option<&std::collections::BTreeSet<String>>) -> Result<(std::sync::Arc<super::program_image::Version>, Option<std::collections::BTreeSet<String>>), Error> {
     use super::program_image::manager::Pipeline;
     use super::plan::corpus::preparation::{DropRepeated, lowering_tail, on_request::SourcesOnRequest};
     let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
@@ -1380,6 +1407,7 @@ fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, declared:
             Some(_) => Some(std::sync::Arc::clone(p.current().map_err(Error::Syntax)?)),
             None => None,
         };
+        let stages = p.stages().len();
         match step {
             TailStep::ContextPasses => {
                 p.program(&mut super::contexts::Passes);
@@ -1474,10 +1502,14 @@ fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, declared:
                 }
             }
         }
-        // A step that made a new base (a derivation, a fold) leaves its changes unread: the program is checked whole.
+        // A step's changes: read off the overlays and views it made, or off the one derivation it made of its input
+        // (`derived_changes`). A fold, or a derivation among several passes, leaves them unread: the program is
+        // checked whole.
         if let Some(before) = before {
+            let one_derivation = p.stages().len() == stages + 1 && p.stages().last().is_some_and(|s| s.form == super::program_image::manager::Form::Derived);
             let now = p.current().map_err(Error::Syntax)?;
-            touched = changed_since(&before, now).and_then(|c| touched.map(|mut t| {
+            let read = changed_since(&before, now).or_else(|| one_derivation.then(|| derived_changes(&before, now)).flatten());
+            touched = read.and_then(|c| touched.map(|mut t| {
                 t.extend(c);
                 t
             }));
@@ -1485,7 +1517,7 @@ fn tail_steps_in(start: std::sync::Arc<super::program_image::Version>, declared:
     }
     let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
     let (v, _) = p.finish().map_err(Error::Syntax)?;
-    Ok(v)
+    Ok((v, touched))
 }
 
 /// Where a tail step runs (decision 0639 §6, §6a), by what it reads.
@@ -1599,8 +1631,27 @@ pub fn tail_module(scope: &[lower::Module], tails: &[lower::Module], m: lower::M
             rows.retain(|row| !there.contains(row));
         }
     }
+    // Settings are a list, each row with its place in it (`setting(k, key, text)`), and the place depends on the
+    // link's order: the tail states the settings its link holds beyond its scope's union, by key and text, each as
+    // often as it is beyond. Compared as rows, a scope's `.cache` was stated again in each module that reads it, and
+    // named twice where they are linked (`the_git_programs_read_their_library_once`).
+    about.remove("setting");
     about.retain(|_, rows| !rows.is_empty());
     b.fields().set_about(&about);
+    let mut there = ProgramFields::settings(&*union);
+    let beyond: Vec<(String, String)> = ProgramFields::settings(&*v)
+        .into_iter()
+        .filter(|s| match there.iter().position(|t| t == s) {
+            Some(i) => {
+                there.remove(i);
+                false
+            }
+            None => true,
+        })
+        .collect();
+    if !beyond.is_empty() {
+        b.fields().set_field(super::program_facts::Field::Settings(&beyond));
+    }
     lower::Module::of_parts(parts, b.base_version().map_err(Error::Syntax)?)
 }
 
@@ -1885,7 +1936,7 @@ fn linked_from_plan(plan: &[PlannedModule], own: Vec<Stmt>) -> Result<std::sync:
     };
     // The program's steps: the downward ones over the union, then those after them (E13, E16).
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: the program's steps".into());
-    tail_steps_in(linked.version, false, linked.lowered, None, &program_steps(), Some(&own_rels))
+    tail_steps_in(linked.version, false, linked.lowered, None, &program_steps(), Some(&own_rels)).map(|(v, _)| v)
 }
 
 /// Each library's union (`lower::LinkedLibrary`) made in this process, by the image store and its modules' plan keys.

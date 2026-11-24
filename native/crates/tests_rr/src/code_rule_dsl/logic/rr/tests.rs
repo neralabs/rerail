@@ -6958,8 +6958,6 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
     // Planned on the test's thread, in its store, as T12's are.
     let _store = crate::code_rule_dsl::logic::plan::corpus::use_store(crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store"));
     let libraries = tail_libraries();
-    // The programs whose every step's changes are read off, whose checks are of their own components.
-    let read_off_programs = std::sync::atomic::AtomicUsize::new(0);
     let failures: Vec<String> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         use rayon::prelude::*;
         libraries.par_iter().flat_map(|(pack, _, texts)| texts.par_iter().take(per).filter_map(|(path, src, files)| {
@@ -7000,10 +6998,10 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
                 }
                 (v, hv) = (next, hn);
             }
-            // The program's checks are of the components its steps changed, read off the versions they made
-            // (`rr::changed_since`, step by step): where a step's are read off, they cover every relation whose rules
-            // (by their contents' hashes) or declaration it changed. A step that made a new base is read as changing
-            // everything: the program is then checked whole.
+            // The program's checks are of the components its own module and its steps changed, read off the versions
+            // the steps made (`rr::changed_since`, `rr::derived_changes`): where they are read, they hold every relation
+            // whose rules (by their contents' hashes) or declaration the steps changed. Where a step's are not read, the
+            // program is checked whole.
             let content = |v: &Version| -> BTreeMap<String, (Vec<u64>, Option<u64>)> {
                 let mut out: BTreeMap<String, (Vec<u64>, Option<u64>)> = BTreeMap::new();
                 for r in v.rules() {
@@ -7015,29 +7013,21 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
                 out.values_mut().for_each(|(h, _)| h.sort_unstable());
                 out
             };
-            let mut whole = false;
-            let mut at = (Arc::clone(&m), content(&m));
-            for step in super::program_steps() {
-                let next = super::tail_steps(Arc::clone(&at.0), true, fresh().lowered, None, &[step]).ok()?;
-                let cn = content(&next);
-                if let Some(read_off) = super::changed_since(&at.0, &next) {
-                    let made: BTreeSet<&String> = at.1.keys().chain(cn.keys()).filter(|r| at.1.get(*r) != cn.get(*r)).collect();
-                    if let Some(r) = made.iter().find(|r| !read_off.contains(**r)) {
-                        return Some(format!("{pack}: {}: {step:?} changes {r}, which the version it made does not show", path.display()));
+            let own_rels: BTreeSet<String> = own.version().rules().map(|r| own.version().rel_name(r.head().rel()).to_owned()).chain(ProgramFields::declared_names(&**own.version())).collect();
+            let (end, touched) = super::tail_steps_in(Arc::clone(&m), true, fresh().lowered, None, &super::program_steps(), Some(&own_rels)).ok()?;
+            match touched {
+                Some(touched) => {
+                    let (was, now) = (content(&m), content(&end));
+                    if let Some(r) = was.keys().chain(now.keys()).find(|r| was.get(*r) != now.get(*r) && !touched.contains(*r)) {
+                        return Some(format!("{pack}: {}: the program's steps change {r}, which the changes read off their versions do not hold", path.display()));
                     }
-                } else {
-                    whole = true;
                 }
-                at = (next, cn);
-            }
-            if !whole {
-                read_off_programs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                None => return Some(format!("{pack}: {}: a step's changes are not read off the version it made: the program is checked whole", path.display())),
             }
             None
         }).collect::<Vec<_>>()).collect()
     });
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    assert!(read_off_programs.into_inner() > 0, "no program's steps were read off: every program's checks are the whole program's");
 }
 
 /// The checks of a program linked from tailed modules are of the components its own module's relations or its steps'
