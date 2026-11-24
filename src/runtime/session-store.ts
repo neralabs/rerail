@@ -19,7 +19,7 @@ import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, checkouts, events, ruleViolationRollup, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents, LostEvent, LostEvents } from "./session-state.js";
-import { keepEventNumbersPastRemotes } from "./remote-cursors.js";
+import { eventNumbersBehindRemotes, keepEventNumbersPastRemotes } from "./remote-cursors.js";
 import { SteerReceiptSchema, type SteerReceipt } from "./event-protocol.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
@@ -441,10 +441,14 @@ export class SqliteSessionStore {
   /**
    * The first session open here moves the store's event numbers past those a remote has taken
    * (`keepEventNumbersPastRemotes`), which a power cut can have taken back, before that session's first event: a writer
-   * that opens no session, as a hook's steer receipt, reads no outbox.
+   * that opens no session, as a hook's steer receipt, reads no outbox. It is a record write, so it never waits for
+   * another process's lock on this thread and commits ahead of the session's row and events, which wait behind it; and
+   * one of no effect, as when the home has no remote, takes no write lock (`writeUnless`).
    */
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
-    if (!this.#opened) keepEventNumbersPastRemotes(this.#database, this.path);
+    if (!this.#opened) {
+      this.#records.writeUnless(() => !eventNumbersBehindRemotes(this.#database, this.path), database => keepEventNumbersPastRemotes(database, this.path));
+    }
     this.#opened = true;
     this.#sessionRepositories.set(session.sessionId, repositoryKey);
     this.#records.write(database => database
@@ -495,13 +499,14 @@ export class SqliteSessionStore {
   /**
    * Where a walk back over the session's ledger for lost events ends (`lostEvents`): the id of the newest event of
    * `kinds` the session's history holds, or, when a record of lost events (`recordLostEvents`) is newer, the last event
-   * of the stretch it counted. One read: the session's rows newest first, to the first of those kinds.
+   * of the stretch it counted. One read: the session's rows newest first, to the first of those kinds, after this
+   * process's waiting record writes are made (`#recorded`), so a row still waiting for the lock never reads as lost.
    */
   lastRecordedEvent(sessionId: string, kinds: ReadonlySet<string>): string | undefined {
     const wanted = [...kinds, LOST_EVENTS_KIND].map(kind => sql`${kind}`);
     // `+kind` keeps SQLite on `events_session_sequence`, newest first, stopping at the first row of those kinds; on
     // `events_session_kind_sequence` it would read every row of each kind and sort them.
-    const row = this.#database.get<{ kind: string; eventId: string } | undefined>(sql`
+    const row = this.#recorded().get<{ kind: string; eventId: string } | undefined>(sql`
       SELECT ${events.kind} AS kind, ${events.eventId} AS eventId FROM ${events}
       WHERE ${events.sessionId} = ${sessionId} AND +${events.kind} IN (${sql.join(wanted, sql`, `)})
       ORDER BY ${events.sequence} DESC LIMIT 1

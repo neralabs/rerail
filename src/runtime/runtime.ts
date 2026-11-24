@@ -303,13 +303,14 @@ function ledgerKinds(ledger: readonly LedgerEntry[]): Set<string> {
 
 /**
  * The events the ledger holds whose rows a power cut or an operating system crash took, oldest first. An event's row is
- * committed before its ledger line is written, one event after another, and such a loss takes only the store's last
- * commits: so the lost events are those after `recorded` (`SqliteSessionStore.lastRecordedEvent`), the newest one
- * whose row is there, or the last of a stretch a record of lost events already counted. A ledger that does not hold
- * `recorded` gives none, whatever lines an older build wrote in it: `rerail reset` deleted the session's history, or
- * the loss took every row of it, which nothing tells apart. Between `recorded` and the ledger's end, a line an older
- * build wrote (no kind or time) ends the walk, since those builds synced every commit. The walk reads only the ledger
- * in memory.
+ * committed before its ledger line is written, one event after another, or, while another process holds the write lock,
+ * waits in the record writer behind the rows before it (`openRecordWriter`); such a loss, like a daemon killed with rows
+ * still waiting, takes only the store's last rows: so the lost events are those after `recorded`
+ * (`SqliteSessionStore.lastRecordedEvent`), the newest one whose row is there, or the last of a stretch a record of lost
+ * events already counted. A ledger that does not hold `recorded` gives none, whatever lines an older build wrote in it:
+ * `rerail reset` deleted the session's history, or the loss took every row of it, which nothing tells apart. Between
+ * `recorded` and the ledger's end, a line an older build wrote (no kind or time) ends the walk, since those builds
+ * synced every commit. The walk reads only the ledger in memory.
  */
 function lostEvents(ledger: readonly LedgerEntry[], recorded: string | undefined): LostEvent[] {
   const from = ledger.findLastIndex(entry => entry.type === "event" && entry.eventId === recorded);
