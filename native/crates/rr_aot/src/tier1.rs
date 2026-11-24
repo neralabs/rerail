@@ -563,7 +563,7 @@ pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.
-pub const ASKED: u32 = 0x2802;
+pub const ASKED: u32 = 0x2006;
 
 /// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its
 /// word), as the lean parser asks whether a token is on a line.
@@ -573,7 +573,7 @@ pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
         // `line`
         1 => src[from..to].contains(&0x0a),
         // `newline`
-        11 => src[from..to].contains(&0x0a) && !matches!(before, 12),
+        2 => src[from..to].contains(&0x0a) && !matches!(before, 12),
         // `json_bad`
         13 => src[from..to].contains(&0x0c),
         _ => false,

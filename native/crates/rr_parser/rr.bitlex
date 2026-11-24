@@ -250,6 +250,11 @@ skip ws
 mark float_at    = empty, at number when count(dot) at least 1
 # The file's end ends a line too: a setting ends there.
 mark line        = lf, end
+# A line break, but not after a `,`: a list goes on over lines. The gap's, from the grammar
+# token before, as lean's parser asks it. The line breaks' marks come before the marks of
+# tokens: a statement takes one where it ends, without taking the token, and no mark of tokens
+# taken there may follow, so each is a peek at the tokens (decision 0673 step 1).
+mark newline     = lf unless after ",", end
 # The marks of tokens (decision 0129): each holds at a token the tokens after it (and the one
 # before, `after`) follow, comments between them skipped. Tier 2 reads them from the records.
 # Before a `.violation`'s continuation word, where the tokens after it are the engine's.
@@ -270,9 +275,6 @@ mark at_on       = tokens "at" string
 # aggregate there, with no value, and refuses it. A mark the grammar takes nowhere, so the
 # file is refused wherever it is.
 mark no_value   = tokens after "min" | "max" | "sum" | "product" | "mean" | "join" "(" ")" ":"
-# A line break, but not after a `,`: a list goes on over lines. The gap's, from the grammar
-# token before, as lean's parser asks it.
-mark newline     = lf unless after ",", end
 # A `.end`'s `.`: a `.` token before the word `end`, past blanks and comments. After the
 # line breaks' marks, which a statement before it takes.
 mark end_on      = tokens "." "end"

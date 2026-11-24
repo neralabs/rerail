@@ -124,8 +124,6 @@ struct G<'a> {
     /// The kinds the code names, by their constant's name; the fields; the words.
     kinds: std::cell::RefCell<std::collections::BTreeMap<String, u16>>,
     fields: std::cell::RefCell<std::collections::BTreeMap<String, u16>>,
-    /// The token kinds the code tests (`at_K`).
-    kind_tests: std::cell::RefCell<std::collections::BTreeSet<String>>,
     /// Each rule's follow (`follow`), once found.
     follows: std::cell::RefCell<Option<HashMap<String, Vec<usize>>>>,
     /// Where `open_mark` can hold (`marks`), for the token takes that need not ask it (`takes`): the words a mark no
@@ -136,6 +134,10 @@ struct G<'a> {
     /// that may refuse a mark or that a rule refusing one calls, and those whose code may set the level's word. None:
     /// every call saves both.
     call_saves: std::cell::RefCell<Option<(HashSet<String>, HashSet<String>)>>,
+    /// The marks the code peeks at as the lean parser does (`peeks`), a bit each by order.
+    peek_marks: std::cell::Cell<Option<u64>>,
+    /// The words a choice of tokens taken where it is used (`anon_choice`) may be, and each one's leaf's kind (`ANON`).
+    anon: std::cell::RefCell<std::collections::BTreeMap<u8, String>>,
 }
 
 /// `s`'s lines at `p`.
@@ -254,7 +256,7 @@ impl<'a> G<'a> {
             }
         }
         let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
-        G { x, rules, order, flags, readings, remember, provisional, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default() }
+        G { x, rules, order, flags, readings, remember, provisional, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -425,11 +427,10 @@ impl<'a> G<'a> {
     /// A test as a condition on the token.
     fn cond(&self, t: &First) -> String {
         let base = match &t.0 {
-            Test::Mark(m) => format!("self.m_{}()", ident(&self.x.marks[*m].name)),
+            Test::Mark(m) => self.mark_test(*m),
             Test::Word(w) => format!("self.word() == w::{}", self.word_const(*w)),
             Test::Kind(k) => {
-                self.kind_tests.borrow_mut().insert(k.clone());
-                format!("self.at_{}()", ident(k))
+                self.kind_test(k, "self.kind()", "self.word()")
             }
         };
         match &t.1 {
@@ -473,6 +474,21 @@ impl<'a> G<'a> {
         // A mark that holds only at one kind's tokens, where the kind goes to the same arm: no test of its own, as the
         // lean parser's one arm for a kind (`NUM | FLOAT`).
         marks.retain(|(m, f, t)| !self.implied_kind(*m).is_some_and(|k| kinds.iter().any(|x| x.0 == k && x.1 == *f && x.2 == *t)));
+        // A peek whose first words all go to its own arm: no test of its own (decision 0673 step 3). Where it holds, its
+        // first word does, and the word's test takes the arm; the lean parser tests the token once.
+        // Another mark that may hold at its words and takes another arm keeps it: the marks' order decides there.
+        let peeks = self.peeks();
+        let firsts = |m: usize| -> Option<Vec<String>> {
+            let defs = self.x.marks.iter().filter(|x| x.name == self.x.marks[m].name);
+            defs.map(|d| d.tokens.and_then(|(_, seq)| self.first_words(seq))).collect::<Option<Vec<Vec<String>>>>().map(|v| v.concat())
+        };
+        let all = marks.clone();
+        marks.retain(|(m, f, t)| {
+            let Some(ws) = firsts(*m).filter(|ws| peeks >> *m & 1 == 1 && !ws.is_empty()) else { return true };
+            let covered = ws.iter().all(|w| words.iter().any(|x| format!("w::{}", self.word_const(x.0)) == *w && x.1 == *f && x.2 == *t));
+            let alone = all.iter().all(|o| o.2 == *t || firsts(o.0).is_some_and(|os| os.iter().all(|w| !ws.contains(w))));
+            !(covered && alone)
+        });
         for &m in &exits {
             if !marks.iter().any(|x| x.0 == m) {
                 marks.push((m, None, n));
@@ -485,7 +501,7 @@ impl<'a> G<'a> {
         };
         let mut mg: Vec<(Vec<String>, usize)> = Vec::new();
         for (m, f, t) in &marks {
-            let c = guard(f, format!("self.m_{}()", ident(&self.x.marks[*m].name)));
+            let c = guard(f, self.mark_test(*m));
             let c = if *t == n && unmarked.contains(m) { format!("!self.marked && {c}") } else { c };
             let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
             match mg.last_mut() {
@@ -509,8 +525,7 @@ impl<'a> G<'a> {
         }
         let mut kg: Vec<(Vec<String>, usize)> = Vec::new();
         for (k, f, t) in &kinds {
-            self.kind_tests.borrow_mut().insert(k.clone());
-            let c = guard(f, format!("self.at_{}()", ident(k)));
+            let c = guard(f, self.kind_test(k, "self.kind()", "self.word()"));
             match kg.last_mut() {
                 Some((cs, tt)) if tt == t => cs.push(c),
                 _ => kg.push((vec![c], *t)),
@@ -536,6 +551,42 @@ impl<'a> G<'a> {
             cs.extend(kg.iter().flat_map(|g| g.0.iter().cloned()));
             let otherwise = if none.trim().is_empty() { "\n".to_owned() } else { format!(" else {{\n{}{pad}}}\n", indent(none, &q)) };
             return format!("{pad}if {} {{\n{}{pad}}}{otherwise}", cs.join(" || "), indent(&body_of(targets[0]), &q));
+        }
+        // Each arm's tests one run in the order they are asked (the marks', then the words', of which no two hold at
+        // once, then the kinds'): an `if` chain of one condition an arm, as the lean parser's (decision 0673 step 3).
+        if numbered && words.iter().all(|w| w.1.is_none()) {
+            let push = |c: String, t: usize, runs: &mut Vec<(Vec<String>, usize)>| match runs.last_mut() {
+                Some((cs, tt)) if *tt == t => cs.push(c),
+                _ => runs.push((vec![c], t)),
+            };
+            let mut runs: Vec<(Vec<String>, usize)> = Vec::new();
+            for (cs, t) in &mg {
+                cs.iter().for_each(|c| push(c.clone(), *t, &mut runs));
+            }
+            // The words in any order: the one the last mark's arm takes first, the first kind's last.
+            let (last, next) = (mg.last().map(|g| g.1), kg.first().map(|g| g.1));
+            let mut ws: Vec<&(String, usize)> = wg.iter().collect();
+            ws.sort_by_key(|g| if Some(g.1) == last { 0 } else if Some(g.1) == next { 2 } else { 1 });
+            for (pat, t) in ws {
+                push(if pat.contains(" | ") { format!("matches!(self.word(), {pat})") } else { format!("self.word() == {pat}") }, *t, &mut runs);
+            }
+            for (cs, t) in &kg {
+                cs.iter().for_each(|c| push(c.clone(), *t, &mut runs));
+            }
+            let mut seen = HashSet::new();
+            if runs.iter().all(|r| seen.insert(r.1)) {
+                let q = format!("{pad}    ");
+                let mut out = String::new();
+                for (i, (cs, t)) in runs.iter().enumerate() {
+                    let _ = write!(out, "{}if {} {{\n{}{pad}}}", if i == 0 { pad.to_owned() } else { " else ".to_owned() }, cs.join(" || "), indent(&body_of(*t), &q));
+                }
+                if none.trim().is_empty() {
+                    out.push('\n');
+                } else {
+                    let _ = write!(out, " else {{\n{}{pad}}}\n", indent(none, &q));
+                }
+                return out;
+            }
         }
         const NONE_ARM: usize = usize::MAX;
         let leaf = |t: usize, p: &str| if numbered { format!("{p}arm = {};\n", if t == NONE_ARM { "usize::MAX".to_owned() } else { t.to_string() }) } else { indent(&if t == NONE_ARM { none.to_owned() } else { body_of(t) }, p) };
@@ -813,8 +864,13 @@ impl<'a> G<'a> {
             }
             Gram::Sym(n) if self.remember.contains(n) => self.token_choice(n, None, rule, pad)?,
             Gram::Sym(n) if self.mark_of(n).is_some() => {
-                let m = &self.x.marks[self.mark_of(n).expect("a mark")];
-                format!("{pad}self.mark_{}()?;\n", ident(&m.name))
+                let o = self.mark_of(n).expect("a mark");
+                if self.peeks() >> o & 1 == 1 {
+                    // A peek where the rule takes it: it must hold (none where the decision before tested it, `no_retests`).
+                    format!("{pad}if !({}) {{\n{pad}    return self.refuse();\n{pad}}}\n", self.peek(o)?)
+                } else {
+                    format!("{pad}self.mark_{}()?;\n", ident(&self.x.marks[o].name))
+                }
             }
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) && self.nested(n) => {
                 // A level's call: the questions it asks where it may end at a mark, those of the
@@ -836,6 +892,18 @@ impl<'a> G<'a> {
                 // The marks the callee refuses (`refuse M in L`), the caller's again where it returns.
                 if self.refusing.is_empty() || !refuses { call } else { format!("{pad}let refusing = self.refusing;\n{pad}self.refusing = {:#x};\n{call}{pad}self.refusing = refusing;\n", self.refusing.get(n.as_str()).copied().unwrap_or(0)) }
             }
+            // A choice of tokens, each its own word's leaf: one take where it is used, as the lean parser's `anon()`.
+            Gram::Sym(n) if let Some(ws) = self.anon_choice(n) => match ws.as_slice() {
+                [(w, t)] => self.take_token(&Test::Word(*w), Some(t), pad)?,
+                _ => {
+                    for (w, t) in &ws {
+                        let k = self.kind_const(t)?;
+                        self.anon.borrow_mut().insert(*w, k);
+                    }
+                    let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
+                    format!("{pad}self.tk(matches!(self.word(), {}), ANON[self.word() as usize], 0)?;\n", words.join(" | "))
+                }
+            },
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) => format!("{pad}self.{}()?;\n", rule_fn(n)),
             Gram::Sym(n) => return Err(format!("rule {rule}: `{n}`, no rule, mark or token")),
             Gram::Seq(gs) => {
@@ -1018,6 +1086,24 @@ impl<'a> G<'a> {
         Ok(self.asking(&arms, &[], pad) + &self.decide(&arms, &[], &[], none, none, pad))
     }
 
+    /// A choice of tokens alone, no level, each a word whose leaf is its own kind (`additive = '+' | '-'`): its words and
+    /// their tokens. Taken where it is used, by one take whose leaf's kind is the word's (`ANON`), as the lean parser's
+    /// `anon()`.
+    fn anon_choice(&self, n: &str) -> Option<Vec<(u8, String)>> {
+        if self.remember.iter().any(|r| r == n) || self.order.first() == Some(&n) {
+            return None;
+        }
+        let Some(Stmt::Choice { body, nested: false, .. }) = self.rules.get(n) else { return None };
+        let mut alts = Vec::new();
+        Self::alts(body, &mut alts);
+        alts.iter()
+            .map(|a| match a {
+                Gram::Lit(t) if (self.x.kind)(t).is_some() => Some((self.word_of(t)?, t.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// A token element: its test and its leaf's kind.
     fn token_of(&self, g: &Gram) -> Option<(Test, String)> {
         match g {
@@ -1071,6 +1157,10 @@ impl<'a> G<'a> {
     }
 
     fn rule(&self, name: &str) -> Result<String, String> {
+        // Taken where it is used (`anon_choice`): no function.
+        if self.anon_choice(name).is_some() {
+            return Ok(String::new());
+        }
         let (body, node, nested, whole, padded) = match self.rules[name] {
             Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
             Stmt::Choice { body, nested, .. } => (body, false, *nested, false, false),
@@ -1233,15 +1323,20 @@ impl<'a> G<'a> {
         let mut and = Vec::new();
         for x in e {
             match x {
-                TokenElem::Kind(k) => {
-                    self.kind_tests.borrow_mut().insert(k.clone());
-                    pos.push(format!("self.at_{}_at({j})", ident(k)));
-                }
+                TokenElem::Kind(k) => pos.push(self.kind_test(k, &format!("self.kind_at({j})"), &format!("self.word_at({j})"))),
                 TokenElem::Word(w) => match self.word_of(&String::from_utf8_lossy(w)) {
                     Some(id) => pos.push(format!("self.word_at({j}) == w::{}", self.word_const(id))),
                     None => pos.push("false".into()),
                 },
-                TokenElem::Not(inner) => pos.push(format!("({j} < self.n && !({}))", self.elem(inner, j)?)),
+                // A token there, not one of these: a word's test negated (`!=`), as the lean parser's `!self.is_p_at(k, P)`.
+                TokenElem::Not(inner) => {
+                    let t = self.elem(inner, j)?;
+                    let not = match t.split_once(" == ") {
+                        Some((a, b)) if !t.contains("||") && !t.contains("&&") => format!("{a} != {b}"),
+                        _ => format!("!({t})"),
+                    };
+                    pos.push(format!("({j} < self.n && {not})"));
+                }
                 TokenElem::End => pos.push(format!("{j} >= self.n")),
                 TokenElem::Without(m) => and.push(format!("!self.bit_at({j}, {})", self.bit_of(m)?)),
                 TokenElem::With(m) => and.push(format!("self.bit_at({j}, {})", self.bit_of(m)?)),
@@ -1249,7 +1344,11 @@ impl<'a> G<'a> {
                 TokenElem::Many(..) => return Err("a run inside an element".into()),
             }
         }
-        let mut c = if pos.is_empty() { "true".to_owned() } else { format!("({})", pos.join(" || ")) };
+        let mut c = match pos.len() {
+            0 => "true".to_owned(),
+            1 => pos.remove(0),
+            _ => format!("({})", pos.join(" || ")),
+        };
         for a in and {
             c = format!("{c} && {a}");
         }
@@ -1330,8 +1429,7 @@ impl<'a> G<'a> {
             match c {
                 TokenElem::Kind(k) if self.x.extras.contains(k) => pos.push(format!("(x && extra_kind(self.xs[{j}].code) == {})", self.kind_const(k)?)),
                 TokenElem::Kind(k) => {
-                    self.kind_tests.borrow_mut().insert(k.clone());
-                    pos.push(format!("(!x && self.at_{}_rec({j}))", ident(k)));
+                    pos.push(format!("(!x && {})", self.kind_test(k, &format!("(self.recs[{j}].code & 0xff)"), &format!("(self.recs[{j}].code >> 8 & 0xff)"))));
                 }
                 TokenElem::Word(w) => match self.word_of(&String::from_utf8_lossy(w)) {
                     Some(id) => pos.push(format!("(!x && self.recs[{j}].code >> 8 & 0xff == w::{})", self.word_const(id))),
@@ -1412,6 +1510,130 @@ impl<'a> G<'a> {
         Ok(format!("self.{name}()"))
     }
 
+    /// A mark's test as a condition on the token: a peek's tokens (`peek`), else its function's (`m_NAME`).
+    fn mark_test(&self, m: usize) -> String {
+        let o = self.mark_of(&self.x.marks[m].name).unwrap_or(m);
+        if self.peeks() >> o & 1 == 1
+            && let Ok(c) = self.peek(o)
+        {
+            return c;
+        }
+        format!("self.m_{}()", ident(&self.x.marks[m].name))
+    }
+
+    /// The marks the code tests by looking at the tokens, as the lean parser's `is_p_at` and `kind_at`, a bit each by
+    /// order: a hidden mark of tokens alone, with no question and nothing its taking does, whose taken bit no test can
+    /// read. A mark taken at a token sets its own bit and the bits before it (and its `passes`), and the bits go when
+    /// the token is taken. Where every mark that may set a peek's bit is taken only right before the token is
+    /// (`takes_first`), no test comes between. So the peek holds wherever the mark did, and needs no bit, no cache
+    /// (`held`) and no take.
+    fn peeks(&self) -> u64 {
+        if let Some(p) = self.peek_marks.get() {
+            return p;
+        }
+        // The marks taken somewhere the token is not taken next.
+        let mut loose = 0u64;
+        for st in self.rules.values() {
+            if let Stmt::Node { body, .. } | Stmt::Choice { body, .. } = st {
+                self.loose_marks(body, None, &mut loose);
+            }
+        }
+        let n = self.x.marks.len();
+        let first = |m: usize| self.mark_of(&self.x.marks[m].name).unwrap_or(m);
+        let mut peeks = 0u64;
+        for o in 0..n {
+            if first(o) != o {
+                continue;
+            }
+            let defs: Vec<&Mark> = self.x.marks.iter().filter(|x| x.name == self.x.marks[o].name).collect();
+            let plain = defs.iter().all(|d| {
+                d.bit.is_none()
+                    && d.next.is_empty()
+                    && d.unless_after.is_empty()
+                    && !d.ends
+                    && !d.settles
+                    && d.drops.is_empty()
+                    && d.loses.is_empty()
+                    && d.refuses.is_empty()
+                    && d.refuses_taken.is_empty()
+                    && d.passes == 0
+                    && d.hidden
+                    && d.tokens.is_some_and(|(_, seq)| !seq.is_empty() && seq.iter().all(|e| e.iter().all(|x| !matches!(x, TokenElem::Many(..) | TokenElem::With(_) | TokenElem::Without(_) | TokenElem::Starting(_)))))
+            });
+            // Every mark that may set its bit taken only right before its token.
+            let setters = (0..n).filter(|&x| first(x) == x && (x >= o || self.x.marks[x].passes >> o & 1 == 1));
+            if plain && setters.into_iter().all(|x| loose >> x & 1 == 0) {
+                peeks |= 1 << o;
+            }
+        }
+        self.peek_marks.set(Some(peeks));
+        peeks
+    }
+
+    /// The marks `g` takes where what follows (`next`, in its sequence) does not take the token first.
+    fn loose_marks(&self, g: &Gram, next: Option<&Gram>, loose: &mut u64) {
+        match g {
+            Gram::Sym(n) if self.mark_of(n).is_some() => {
+                if !next.is_some_and(|x| self.takes_first(x, &mut HashSet::new())) {
+                    *loose |= 1 << self.mark_of(n).expect("a mark");
+                }
+            }
+            Gram::Seq(v) => {
+                for (i, x) in v.iter().enumerate() {
+                    self.loose_marks(x, v.get(i + 1), loose);
+                }
+            }
+            Gram::Alt(v) => v.iter().for_each(|x| self.loose_marks(x, None, loose)),
+            Gram::Opt(a) | Gram::Star(a) | Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) => self.loose_marks(a, None, loose),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } | Gram::Flag { body, .. } | Gram::Unless { body, .. } => self.loose_marks(body, None, loose),
+            _ => {}
+        }
+    }
+
+    /// Whether `g` takes the token before it asks anything of it: a token, or what begins with one through the forms
+    /// that take none (a field, a wrap, a level's call).
+    fn takes_first(&self, g: &Gram, seen: &mut HashSet<String>) -> bool {
+        match g {
+            Gram::Seq(v) => v.first().is_some_and(|x| self.takes_first(x, seen)),
+            Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) => self.takes_first(a, seen),
+            Gram::As(_, a) if self.token_of(a).is_some() => true,
+            Gram::Wrap { body, .. } => self.takes_first(body, seen),
+            // A relabel takes no token, but `decide` decides.
+            Gram::Relabel { field, body, .. } if field.as_deref() != Some(::bitlex::syntax::DECIDED) => self.takes_first(body, seen),
+            Gram::Sym(n) if self.mark_of(n).is_none() && self.rules.contains_key(n.as_str()) => {
+                if !seen.insert(n.clone()) {
+                    return false;
+                }
+                match self.rules[n.as_str()] {
+                    Stmt::Node { body, .. } | Stmt::Choice { body, .. } => self.takes_first(body, seen),
+                    _ => false,
+                }
+            }
+            g => self.token_of(g).is_some(),
+        }
+    }
+
+    /// A peek mark's test of the tokens from the token, as the lean parser's: `self.word() == w::A && self.at_K_at(self.i + 1)`.
+    fn peek(&self, o: usize) -> Result<String, String> {
+        let name = &self.x.marks[o].name;
+        let mut ors = Vec::new();
+        for d in self.x.marks.iter().filter(|x| &x.name == name) {
+            let Some((before, seq)) = d.tokens else { return Err(format!("mark {name}: a peek of no tokens")) };
+            let mut c = Vec::new();
+            if !before.is_empty() {
+                let p = self.elem(before, "self.i - 1")?;
+                c.push(if matches!(before, [TokenElem::Not(_)]) { format!("(self.i == 0 || {p})") } else { format!("self.i > 0 && {p}") });
+            }
+            for (k, e) in seq.iter().enumerate() {
+                let j = if k == 0 { "self.i".to_owned() } else { format!("self.i + {k}") };
+                let t = self.elem(e, &j)?;
+                c.push(if k == 0 { t.replace("self.word_at(self.i)", "self.word()") } else { t });
+            }
+            ors.push(c.join(" && "));
+        }
+        Ok(if ors.len() == 1 { ors.remove(0) } else { ors.iter().map(|x| format!("({x})")).collect::<Vec<_>>().join(" || ") })
+    }
+
     /// Each mark's test, `m_NAME`: it holds at the token and is not taken there.
     fn marks(&self, out: &mut String) -> Result<(), String> {
         if self.x.marks.len() > 64 {
@@ -1423,8 +1645,9 @@ impl<'a> G<'a> {
         let mut guards: std::collections::BTreeMap<String, Option<Vec<String>>> = std::collections::BTreeMap::new();
         // Each mark's bit where its test reads only the tokens (`open_mark` asks it with no cache).
         let mut direct: std::collections::BTreeMap<String, Option<usize>> = std::collections::BTreeMap::new();
+        let peeks = self.peeks();
         for (order, m) in self.x.marks.iter().enumerate() {
-            if !done.insert(m.name.as_str()) {
+            if !done.insert(m.name.as_str()) || peeks >> order & 1 == 1 {
                 continue;
             }
             let n = ident(&m.name);
@@ -1696,17 +1919,20 @@ impl<'a> G<'a> {
         Ok(())
     }
 
-    /// Each token kind's test, `at_K` (the token) and `at_K_at(j)`: one of its records' kinds, and
-    /// none of its row's hard words.
-    fn kind_tests(&self, out: &mut String) {
-        let names: Vec<String> = self.kind_tests.borrow().iter().cloned().collect();
-        for k in names {
-            let bytes: Vec<String> = self.x.tokens.iter().filter(|(_, n)| *n == k || n.strip_suffix("_close") == Some(k.as_str())).map(|(b, _)| format!("{b}")).collect();
-            let hard: Vec<String> = self.x.keywords.iter().filter(|r| r.0 == k).flat_map(|r| r.1.iter().filter_map(|(w, _)| self.word_of(&String::from_utf8_lossy(w)))).map(|w| format!("{w}")).collect();
-            let kinds = if bytes.is_empty() { "false".to_owned() } else { format!("matches!(c & 0xff, {})", bytes.join(" | ")) };
-            let words = if hard.is_empty() { String::new() } else { format!(" && !matches!(c >> 8 & 0xff, {})", hard.join(" | ")) };
-            let n = ident(&k);
-            let _ = writeln!(out, "    fn at_{n}_at(&self, j: usize) -> bool {{\n        if j >= self.n {{\n            return false;\n        }}\n        let c = self.code_at(j);\n        {kinds}{words}\n    }}\n\n    fn at_{n}(&self) -> bool {{\n        self.at_{n}_at(self.i)\n    }}\n\n    /// Record `j` (not the piece at the token) one of the kind's.\n    fn at_{n}_rec(&self, j: usize) -> bool {{\n        let c = self.recs[j].code;\n        {kinds}{words}\n    }}\n");
+    /// A token kind's test, as the lean parser's `self.kind() == STR`: the record's kind (`kind`, of the code's low
+    /// byte) one of its records' kinds (`t`), and its word (`word`) none of its row's hard words.
+    fn kind_test(&self, k: &str, kind: &str, word: &str) -> String {
+        let kinds: Vec<String> = self.x.tokens.iter().filter(|(_, n)| *n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| format!("t::{}", upper(n))).collect();
+        let hard: Vec<String> = self.x.keywords.iter().filter(|r| r.0 == k).flat_map(|r| r.1.iter().filter_map(|(w, _)| self.word_of(&String::from_utf8_lossy(w)))).map(|w| format!("w::{}", self.word_const(w))).collect();
+        let is = match kinds.as_slice() {
+            [] => "false".to_owned(),
+            [one] => format!("{kind} == {one}"),
+            all => format!("matches!({kind}, {})", all.join(" | ")),
+        };
+        match hard.as_slice() {
+            [] => is,
+            [one] => format!("{is} && {word} != {one}"),
+            all => format!("{is} && !matches!({word}, {})", all.join(" | ")),
         }
     }
 
@@ -1769,8 +1995,6 @@ impl<'a> G<'a> {
         self.marks(&mut marks)?;
         let mut readings = String::new();
         self.readings(&mut readings)?;
-        let mut kinds = String::new();
-        self.kind_tests(&mut kinds);
         let mut extras = String::new();
         let mut split = String::new();
         self.splits(&mut split, &mut extras)?;
@@ -1805,6 +2029,12 @@ impl<'a> G<'a> {
             let _ = writeln!(out, "    pub const {}: u32 = {};", self.word_const((i + 1) as u8), i + 1);
         }
         out.push_str("}\n\n");
+        // Each word's leaf's kind where a choice of tokens takes it (`anon_choice`), as the lean parser's `anon()`.
+        if !self.anon.borrow().is_empty() {
+            let anon = self.anon.borrow();
+            let kinds: Vec<String> = (0..=self.x.words.len()).map(|w| anon.get(&(w as u8)).cloned().unwrap_or_else(|| "0".to_owned())).collect();
+            let _ = writeln!(out, "/// A word's leaf's kind where a choice of tokens takes it (the lean parser's `anon()`); 0: none.\nconst ANON: [u16; {}] = [{}];\n", kinds.len(), kinds.join(", "));
+        }
         for (i, f) in self.flags.iter().enumerate() {
             let _ = writeln!(out, "const FLAG_{}: u32 = 1 << {i};", upper(f));
         }
@@ -1813,7 +2043,6 @@ impl<'a> G<'a> {
         out.push_str("\n#[allow(clippy::all, unused_parens, dead_code)]\nimpl<L: Layout> P<'_, L> {\n");
         out.push_str(rules);
         out.push_str(&marks);
-        out.push_str(&kinds);
         out.push_str(&readings);
         out.push_str(&split);
         out.push_str("}\n");
@@ -1926,6 +2155,8 @@ impl<'a> G<'a> {
         }
         // The leaves' fields, then each take's tests (`takes`), before the helpers no code calls are dropped.
         out = one_arm_a_take(&takes(&leaf_fields(&out), self.mark_words.borrow().as_ref()));
+        // A peek a decision tested is not tested again where the arm takes it (decision 0673 step 1).
+        out = no_retests(&out);
         // The calls form in the lean parser's forms (decision 0668 step 1): a decision of one arm an `if`, a loop of one a
         // `while`; and no `marked` where no decision reads it.
         if !stack {
@@ -1965,6 +2196,7 @@ impl<'a> G<'a> {
             // slice's (a token's code is its record's here).
             out = out.replace("        if j >= self.n {\n            return false;\n        }\n        let c = self.code_at(j);\n", "        let Some(c) = self.recs.get(j).map(|r| r.code) else {\n            return false;\n        };\n");
             out = out.replace("        if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }\n", "        self.recs.get(j).map_or(0, |r| r.code >> 8 & 0xff)\n");
+            out = out.replace("        if j < self.n { self.code_at(j) & 0xff } else { NO_KIND }\n", "        self.recs.get(j).map_or(NO_KIND, |r| r.code & 0xff)\n");
             let parts: Vec<String> = RUNTIME.split("\n\n").map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty() && p.matches('{').count() == p.matches('}').count()).collect();
             out = out.replace("if F && self.k == 0 && self.refusing != 0 ", "if F && self.refusing != 0 ");
             out = one_loop::drop_uncalled(out, &parts);
@@ -2011,12 +2243,18 @@ fn takes(code: &str, marks: Option<&(HashSet<String>, HashSet<String>)>) -> Stri
             return true;
         }
         let first = a.split(" && ").next().unwrap_or(a).trim();
+        // A choice of tokens' take (`anon_choice`): its words.
+        if let Some(ws) = first.strip_prefix("matches!(self.word(), ").and_then(|r| r.strip_suffix(')')) {
+            return ws.split(" | ").any(|w| words.contains(w.trim()));
+        }
         let w = first.strip_prefix("self.word() == ").unwrap_or(first);
         if w.starts_with("w::") && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':') {
             return words.contains(w);
         }
-        match first.strip_prefix("self.at_").and_then(|r| r.strip_suffix("()")) {
-            Some(k) if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => !free.contains(k),
+        // A kind's test (`kind_test`): its first record kind's, by its token's name.
+        let k = first.strip_prefix("self.kind() == t::").or_else(|| first.strip_prefix("matches!(self.kind(), t::")).map(|r| r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or(r));
+        match k {
+            Some(k) if !k.is_empty() => !free.contains(&k.to_ascii_lowercase()),
             _ => true,
         }
     };
@@ -2119,6 +2357,33 @@ fn dedented(lines: &[&str], levels: usize) -> String {
 
 /// `code` with each decision of one arm in the lean parser's form (decision 0668 step 1): a `match self.word()` of one
 /// arm and an empty `_` is an `if`, as lean's `if self.is_p(X)`; a `loop` around one whose `_` breaks is a `while`.
+/// A peek's must-hold (`if !(X) { return self.refuse(); }`) right after a decision that tested it (`if X {`,
+/// `} else if X {`, `_ if X => {`, `X` alone or after `&&`s): none, as the lean parser takes the token it peeked at.
+fn no_retests(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::with_capacity(code.len());
+    let implies = |c: &str, x: &str| c == x || c.strip_suffix(x).and_then(|h| h.strip_suffix(" && ")).is_some_and(|h| !h.contains("||"));
+    let mut i = 0;
+    while i < lines.len() {
+        out.push_str(lines[i]);
+        out.push('\n');
+        let t = lines[i].trim_start();
+        let tested = t.strip_prefix("} else if ").or_else(|| t.strip_prefix("if ")).and_then(|c| c.strip_suffix(" {")).or_else(|| t.strip_prefix("_ if ").and_then(|c| c.strip_suffix(" => {")));
+        if let Some(c) = tested
+            && i + 3 < lines.len()
+            && let Some(x) = lines[i + 1].trim_start().strip_prefix("if !(").and_then(|r| r.strip_suffix(") {"))
+            && lines[i + 2].trim() == "return self.refuse();"
+            && lines[i + 3].trim() == "}"
+            && implies(c, x)
+        {
+            i += 4;
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
 fn ifs_and_whiles(code: &str) -> String {
     let lines: Vec<&str> = code.lines().collect();
     let mut out = String::with_capacity(code.len());
@@ -2470,6 +2735,8 @@ fn bit(x: &[u64], i: usize) -> bool {
 
 /// No node made yet at a level.
 const NONE: u32 = u32::MAX;
+/// No record's kind: past the last record (`kind_at`).
+const NO_KIND: u32 = u32::MAX;
 /// The kind of a node open whose kind its rule gives later (`retag`).
 const UNSET: u16 = 0x3ff;
 /// The deepest the calls go.
@@ -2665,6 +2932,17 @@ impl<'a, L: Layout> P<'a, L> {
     #[inline(always)]
     fn word_at(&self, j: usize) -> u32 {
         if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
+    }
+
+    /// The token's record kind (`t`), as the lean parser's `kind()`; none past the last record.
+    #[inline(always)]
+    fn kind(&self) -> u32 {
+        self.kind_at(self.i)
+    }
+
+    #[inline(always)]
+    fn kind_at(&self, j: usize) -> u32 {
+        if j < self.n { self.code_at(j) & 0xff } else { NO_KIND }
     }
 
     /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes;

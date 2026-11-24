@@ -1,0 +1,110 @@
+# 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
+
+Status: in progress, steps 1 to 3 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
+parser's shape? Speed decides nothing.
+
+## Intro
+
+After 0668, tier 2 (`rr_aot/src/tier2.rs`, written by `bitlex_rust` from `rr_parser/rr.bitlex`) reads expressions as
+the lean parser (`rr_syntax/src/lean.rs`) does, but it is still about 3.7 times the lean parser's length. The gaps that
+remain are these:
+
+1. **Marks instead of looking ahead.** Each mark has four functions (`m_`, `h_`, `take_`, `mark_`), pattern functions
+   (`pat_`), a cache and a `taken` bit. The lean parser peeks instead: `self.is_word_at(0, b"at") &&
+   self.kind_at(1) == STR`, `self.on_line(&mut seen)`.
+2. **Statements and directives.**
+   - The lean parser reads `.` and the word after it, opens the directive's kind, and runs one `match`.
+   - Tier 2 opens a `setting`, and each directive's `_tail` retags it.
+   - `setting`'s body is written twice, once under `if self.m_line()`.
+   - The rest of a line is a match over 31 punctuation words.
+3. **JSON.** The lean parser reads `{…}` as balanced braces and checks a policy document with `serde_json`. Tier 2
+   parses JSON's grammar.
+4. **Cover forms instead of going back.** This waits on the user's choice; the page "Tier 2's going back" sets out the
+   options.
+5. **Aggregates.** The lean parser has one `aggregate` and `agg_part`. Tier 2 has ten rules, the remembered level word
+   and a mark.
+6. **A bare term is checked late,** at the statement's end (`settled`), where the lean parser fails at once.
+7. **Tokens as functions.**
+   - Operators are rules of their own.
+   - A token kind has three tests (`at_X`, `at_X_at`, `at_X_rec`), where the lean parser writes `self.kind() == STR`.
+8. **Seven decisions number their arms.**
+9. **Runtime helpers.**
+   - Generic takes whose const parameters gate marks and refusals.
+   - `settle`, `flush` and `pass_comments`.
+   - The `refusing` mask, and `deeper()` in every nested rule.
+10. **The device form, `tier2_loop.rs`, has not been compared with the lean parser.**
+
+## Step 1: a mark of tokens is a peek (done)
+
+A mark taken at a token sets its own `taken` bit and the bits of the marks declared before it. The bits clear when
+the token is taken. A test of a mark at a token reads its bit, so that a mark taken there no longer holds. That order
+is the line breaks' business: a statement that ends at a line break takes `line`, and the next statement at that token
+does not see it.
+
+A mark of tokens alone (`tokens "fix" identifier`) needs none of this where no test can read its bit. The writer
+(`bitlex_rust::peeks`) finds such marks. A mark is a peek when all of these hold:
+
+- It is hidden: no take of a token asks it (`open_mark`).
+- It has no question (`drops`, `loses`, `refuses`), does not settle, and passes nothing.
+- Its definitions are runs of tokens with no repeat.
+- Every mark that may set its bit is taken only right before a token is (`loose_marks`, `takes_first`). These are the
+  marks declared after it, and those that pass it. A token is taken first by a token, a field, a wrap or a relabel, or
+  a level whose first element is one. Between the take of the mark and the take of the token, no test comes, so no
+  test reads the bit.
+
+A peek is one condition, written where a decision tests the mark: `self.word() == w::FIX_40 &&
+self.at_identifier_at(self.i + 1)`. Where a rule takes it, it is `if !(…) { return self.refuse(); }`, except right after
+the decision that tested it (`no_retests`), as the lean parser takes the token it peeked at. A peek has no function, no
+cache, no bit and no pattern function.
+
+`rr.bitlex` declares `newline` beside `line`, before the marks of tokens. A statement takes `newline` where it ends,
+without taking the token, so a mark declared before it could not be a peek. Moved, it no longer passes the marks of
+tokens, and taking one of those passes it only where the token is taken next.
+
+Eleven of rr's marks are peeks. Left as marks:
+
+- `float_at`, `line` and `newline`: tier 1's and the gaps'.
+- `json_bad`: a JSON level refuses it.
+- `end_on`, `no_value` and `io_bare`: not hidden; each refuses the file where no rule takes it.
+
+rr's `tier2.rs` is 3,822 lines after this step, from 4,219; the loop form loses about as much. One of Kotlin's 41
+marks, `dotted`, is a peek; the others do not meet the conditions above.
+
+## Step 2: a token kind is `self.kind() == t::K`; a choice of tokens is one take (done)
+
+Gap 7. The writer (`bitlex_rust`) has no `at_K`, `at_K_at` or `at_K_rec` functions any more.
+
+- **Kind tests.** A token kind's test is written where it is asked, as the lean parser's `self.kind() == STR`:
+  - `self.kind() == t::IDENTIFIER`, or `matches!(self.kind(), …)` where a kind has several record kinds;
+  - a row's hard words excluded with `self.word() != w::…`;
+  - `self.kind_at(self.i + 1)` in a peek;
+  - the record's own kind in a gap's question.
+
+  `kind` and `kind_at` are runtime helpers beside `word` and `word_at`, using the record kinds' constants (`t`).
+- **Choices of tokens.** A choice of tokens alone, no level, each token a word whose leaf is its own kind
+  (`additive = '+' | '-'`), has no function (`anon_choice`). Where it is used it is one take whose leaf's kind is the
+  word's (`ANON`, a table by word), as the lean parser's `anon()`:
+  `self.tk(matches!(self.word(), w::PLUS_28 | w::MINUS_27), ANON[self.word() as usize], f::OPERATOR)`. A choice of
+  one token is that token's take. rr's `additive`, `multiplicative`, `comparison_operator`, `angle_close` and
+  `paren_close` are gone. `punctuation` holds a `#` word taken as an identifier, so it stays a rule.
+
+## Step 3: a token tested once more: no peek its arm's word covers, and no numbered arms (done)
+
+Gap 8.
+
+- **A covered peek.** A peek whose first words all go to its own arm, as word tests, has no test of its own: where it
+  holds, its first word does, and that word takes the arm. One exception keeps it: another mark that may hold at those
+  words and takes another arm, because there the marks' order decides. So `code_part` tests `{` once, and
+  `braced_column` decides between the name and the raw braces.
+- **An `if` chain.** A decision numbered its arms (`let arm`, then `match arm`) wherever one arm was reached by
+  several tests. The tests are asked in this order: the marks, then the words (no two words hold at once), then the
+  kinds. Where each arm's tests are one run in that order, the decision is an `if` / `else if` chain, one condition
+  an arm, as the lean parser writes it. The words can go in any order, so the word an arm before takes is put first and
+  the word an arm after takes is put last.
+
+None of rr's decisions numbers its arms now. `block_body` is `if` the `.end` peek, `break`, `else if` a statement's
+first token, the statement; `agg_value` is `count`, then its other values, then a name.
+
+rr's `tier2.rs` is 3,573 lines. Tests for steps 1 to 3: rr 58, the 8 corpus tests, Kotlin 70, JSON 26,
+parser_tests 95, Bitlex 11, clippy.
