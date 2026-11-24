@@ -22,7 +22,7 @@ pub struct GitInstallation {
     pub config_origins: Option<String>,
 }
 
-/// The process's owner of in-process Git reads; see the module documentation.
+/// The process's owner of the opener's in-process Git reads; see the module documentation.
 #[napi]
 pub struct GitAccess {
     setup: Arc<GitSetup>,
@@ -30,8 +30,8 @@ pub struct GitAccess {
 
 #[napi]
 impl GitAccess {
-    /// Installs `installation` for every in-process Git read in this process, in place of any
-    /// earlier one.
+    /// Installs `installation` for every open through the opener in this process, in place of
+    /// any earlier one.
     #[napi(constructor)]
     pub fn new(installation: GitInstallation) -> Self {
         let setup = Arc::new(GitSetup::from_report(
