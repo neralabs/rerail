@@ -1454,10 +1454,11 @@
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
             // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
             // host's lines and its placement. With the guest and without. None where the device's buffers have no
-            // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C).
+            // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C). So are core.rerail's tokens
+            // (`op`, decision 0353 step 3, row 7: its rows before), each one's parent and name.
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
-                for name in ["line", "end_line", "col", "docof"] {
+                for name in ["line", "end_line", "col", "docof", "op"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
                     let d = src.device_view();
                     assert_eq!(d.is_some(), device.has_addresses(), "{name}: read in place where buffers have addresses");

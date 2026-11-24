@@ -2485,7 +2485,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                 let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
                 let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
                 let block = p.ranks().block();
-                let entry = view_docs::ViewEntry::new(block, &p, &dialect);
+                let entry = view_docs::ViewEntry::new(block, &p, &dialect, None);
                 let n = p.len();
                 let nf = p.ranks().count(Item::Field);
                 let parent = |l: u32| match p.parent(l as usize) {
@@ -2719,12 +2719,12 @@ fn reads_side_by_side_make_each_document_once() {
 }
 
 /// Decision 0494, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows
-/// (`text`'s, its projection alone: its row is read off the tape).
+/// (`text`'s and the `op` view's, its projection alone: their rows are read off the tape).
 #[test]
 fn a_probe_makes_the_document_it_names_alone() {
     let store = ContentStore::open(&temp("probe-one")).unwrap();
-    let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("m{k}.py"), "python", &format!("x{k} = y({k})\n"))).collect();
-    let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned(), "op".to_owned()].into()), ..Projection::core() };
+    let docs: Vec<Document> = (1..=5).map(|k| document(k, &format!("m{k}.py"), "python", &format!("x{k} = y not in z  # c\n"))).collect();
+    let projection = Projection { shape: Shape::Core, reads: Some(["text".to_owned(), "op".to_owned(), "comment".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let sources = made_sources(&batch);
     assert_eq!(batch.docs.made_count(), 0, "nothing is made before a read");
@@ -2736,11 +2736,21 @@ fn a_probe_makes_the_document_it_names_alone() {
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     // `text` by node is read off the tape (decision 0353 step 3): its document projected, no rows made.
     assert_eq!(batch.groups(), 0);
-    let op = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "op").unwrap().2);
-    let _ = op.lookup(0, &[batch.docs[2].global(0)]).unwrap();
+    let comment = Arc::clone(&sources.iter().find(|(n, _, _)| *n == "comment").unwrap().2);
+    let _ = comment.lookup(0, &[batch.docs[2].global(0)]).unwrap();
     assert_eq!(batch.docs.made_count(), 1, "only the probed document is made");
     assert_eq!(batch.groups(), 1, "a probe of another relation makes its document's rows");
     assert!(text.failure().is_none());
+    // `op` is a view of the tokens (decision 0353 step 3): the comparison's `not in` (module, statement, assignment,
+    // `x`, the comparison), read off the tape, no rows made. (Its first rows count every document, as any view's.)
+    let op = views(&batch).into_iter().find(|(n, _)| *n == "op").unwrap().1;
+    let cmp = batch.docs[2].global(4);
+    let ops = op.lookup(0, &[cmp]).unwrap();
+    assert_eq!(ops.iter().map(|&r| (op.value(r, 0), store.atom_value(op.value(r, 1) as u32).unwrap().unwrap())).collect::<Vec<_>>(), vec![(cmp, "not in".to_owned())]);
+    assert_eq!(batch.groups(), 1, "the op view's probe made no rows");
+    // Its names are the batch's vocabulary, as a made relation's strings are: a text test of `op`'s `s` reads it.
+    let (strings, _) = batch.vocabulary();
+    assert!(strings.iter().any(|s| s == "not in"), "the token's name: {strings:?}");
 }
 
 /// Decision 0494, R2 for `doc`'s other keys: a probe of it by a module (a file's import of another) makes that

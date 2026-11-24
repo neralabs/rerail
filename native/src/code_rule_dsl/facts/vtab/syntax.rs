@@ -560,7 +560,6 @@ fn core_rows_for(projection: &Projection) -> core_rr::CoreRows {
     let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
     let mut c = core_rr::CoreRows::default();
     c.skip = core_rr::Skip {
-        ops: !wants_any(&["op"]),
         comment: !projection.wants("comment"),
         spread: !projection.wants("spread"),
         name: !projection.wants("name"),
@@ -1881,6 +1880,10 @@ impl Projected {
         }
         d
     }
+    /// The `op` view's rows: its tokens (`Item::Token`, core.rerail's shape), in tape order.
+    pub fn tokens(&self) -> u32 {
+        self.ranks.count(Item::Token)
+    }
     /// The `field` view's rows: the nodes below the root that hang from their parent under a field, in order.
     pub fn fielded(&self) -> u32 {
         self.ranks.count(Item::Field)
@@ -2003,6 +2006,14 @@ impl Projected {
     /// `children`, each handed to `f`: a parent's probe makes no list of them.
     pub fn each_child(&self, local: u32, mut f: impl FnMut(u32)) {
         self.each_child_node(local, |c, _| f(c));
+    }
+    /// Node `local`'s tokens (the `op` view's rows): each one's rank among the tokens.
+    pub fn each_token(&self, local: u32, mut f: impl FnMut(u32)) {
+        self.facts.each_child(self.node(local), |x| {
+            if self.ranks.is(Item::Token, x) {
+                f(self.ranks.rank(Item::Token, x));
+            }
+        });
     }
     /// `each_child`, with each child's tape node: `f(local id, tape node)`.
     pub fn each_child_node(&self, local: u32, mut f: impl FnMut(u32, u32)) {
@@ -2395,6 +2406,10 @@ pub enum View {
     /// `next_sibling(a, b)`: `b` is the numbered direct child of `a`'s parent after `a`, those left out skipped. A
     /// row a node after a sibling (`Item::Sibling`), as `field`'s are its fielded nodes.
     Sibling,
+    /// `op(n, s)`: node `n` has the anonymous token `s` among its children (its text, an anonymous token's kind), in
+    /// `core.rerail`'s shape: a row a token (`Item::Token`), in tape order (decision 0353 step 3, row 7: it was
+    /// `core_rr`'s rows). Its rows are no node's: none is found by a node's local id (`row`), only by its parent.
+    Op,
     /// `core.rerail`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`LineTable::place`), rows laid out over `Projected::locs`. A batch that makes
     /// one of them as rows (`Extra`, whose spans have places too) binds those rows instead (`Batch::made`).
@@ -3272,6 +3287,7 @@ impl Batch {
             dialects: Arc::clone(&dialects),
             projection: Arc::clone(&projection),
             block: Arc::clone(&block),
+            names: (projection.shape == Shape::Core && projection.wants("op")).then(|| store.atoms_handle()),
             host: grown.host.clone(),
             lines_of: Arc::clone(&grown.lines_of),
             failure: Default::default(),
@@ -3469,10 +3485,12 @@ impl Batch {
         // `core.rerail`'s (decision 0046).
         let mut c = core_rows_for(projection);
         // Node identity/ancestry and line views do not require scalar rows or text interning.
-        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op","op_at","op_t","intval","str_part","str_part_start","str_part_word"]
+        let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op_t","intval","str_part","str_part_start","str_part_word"]
             .into_iter().any(|r|projection.wants(r));
         let wants_any = |rels: &[&str]| rels.iter().any(|r| projection.wants(r));
         let core_nodes = core && (scalar_nodes || !c.skip.structural);
+        // The `op` view's names, which no row holds: interned as a made relation's strings are, into the vocabulary.
+        let op_names = core && projection.wants("op");
         // `rr_value_lit` holds the literals of the documents W reads no values of (`unvalued`, `values_of`): where no
         // other relation reads a literal's value or rows, a document W values makes none, and its walk visits only the
         // nodes whose text a rule reads. Made for every node and dropped, hogql's literals had `node rows` visit all
@@ -3666,6 +3684,19 @@ impl Batch {
                     c.digests(p, dialect, &mut string, wants_trees, wants_units);
                 }
             }
+            // Each token's name (`View::Op`'s `s`), once a kind: a text test of `op` (`glob("{===,!==}", o)`) reads the
+            // batch's vocabulary, which held them while `op` was rows (decision 0353 step 3, row 7).
+            if op_names
+                && !withheld
+                && let Some(dialect) = dialect
+            {
+                let mut kinds: Vec<u32> = p.ranks().iter(Item::Token).map(|(_, x)| p.facts.kind(x)).collect();
+                kinds.sort_unstable();
+                kinds.dedup();
+                for k in kinds {
+                    string(dialect.atom_name(k));
+                }
+            }
             if d.guest.is_none() {
                 // A text document's lines split as W's `lines` regexes split any file's. A withheld document has no
                 // `rx_span` matches.
@@ -3833,6 +3864,7 @@ impl Batch {
         self.offsets.counted.get_or_init(|| {
             let dir = self.docs.dir().cast_mut();
             let (wants_field, wants_sibling) = (self.projection.wants("field"), self.projection.wants("next_sibling"));
+            let wants_op = self.shape == Shape::Core && self.projection.wants("op");
             let mut at = [0u32; ROWS];
             let n = self.docs.len();
             let row32 = |v: usize| u32::try_from(v).expect("a view's rows past u32");
@@ -3847,11 +3879,11 @@ impl Batch {
                     let rows = ViewDir::block_rows(dir);
                     std::ptr::addr_of_mut!((*rows.add(i)).rows).write(at);
                 }
-                let [nodes, fielded, siblings, locs] = self.docs.counts(i).map(|c| c as usize);
-                let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs];
+                let [nodes, fielded, siblings, locs, tokens] = self.docs.counts(i).map(|c| c as usize);
+                let own = [nodes, nodes.saturating_sub(1), if wants_field { fielded } else { 0 }, if wants_sibling { siblings } else { 0 }, locs, if wants_op { tokens } else { 0 }];
                 // `ROWS`' order: node, child, field, core_node, line, the four `Loc` views, tape, ast_depth,
-                // node_order, then siblings.
-                let by: [usize; ROWS] = [own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], own[3]];
+                // node_order, op, then siblings.
+                let by: [usize; ROWS] = [own[0], own[1], own[2], own[0], own[0], own[4], own[4], own[4], own[4], own[0], own[0], own[0], own[5], own[3]];
                 for k in 0..ROWS {
                     at[k] = row32(at[k] as usize + by[k]);
                 }
@@ -3922,6 +3954,7 @@ impl Batch {
             View::Child => (local > 0).then(|| local as usize - 1),
             View::Field => self.docs[doc].ranks().local(Item::Field, x).map(|r| r as usize),
             View::Sibling => self.docs[doc].ranks().local(Item::Sibling, x).map(|r| r as usize),
+            View::Op => None,
         }?;
         Some(self.firsts(view).at(doc) + within)
     }
@@ -3971,6 +4004,7 @@ impl Viewed {
             View::Depth => &["n", "k"],
             View::Order => &["n", "k"],
             View::Sibling => &["a", "b"],
+            View::Op => &["n", "s"],
             View::Loc(Place::Line | Place::EndLine) => &["n", "l"],
             View::Loc(Place::Col) => &["n", "c"],
             View::Loc(Place::Docof) => &["n", "d"],
@@ -3981,6 +4015,9 @@ impl Viewed {
     fn own(&self) -> usize {
         match self.view {
             View::Node | View::Child | View::Sibling => 1,
+            // None: a token's row is no node's, so no column keys one row (`keys_rows`, `key_row`); its node is its
+            // parent column, which several rows share (`lookup_docs`).
+            View::Op => usize::MAX,
             View::Line | View::Depth | View::Order | View::Loc(_) => 0,
             View::Field | View::Core => 2,
             View::Tape => 0,
@@ -3989,7 +4026,7 @@ impl Viewed {
     /// The column holding the row's parent, looked up through the children lists.
     fn parent(&self) -> Option<usize> {
         match self.view {
-            View::Child | View::Field => Some(0),
+            View::Child | View::Field | View::Op => Some(0),
             View::Tape => Some(1),
             View::Node | View::Line | View::Core | View::Depth | View::Order | View::Sibling | View::Loc(_) => None,
         }
@@ -4071,7 +4108,7 @@ impl Source for Viewed {
                 Some(in_place)
             });
         let Some(in_place) = in_place else {
-            crate::code_rule_dsl::prof::count(["views.refused.not_on_device.node", "views.refused.not_on_device.child", "views.refused.not_on_device.field", "views.refused.not_on_device.core", "views.refused.not_on_device.axis", "views.refused.not_on_device.line", "views.refused.not_on_device.end_line", "views.refused.not_on_device.col", "views.refused.not_on_device.docof", "views.refused.not_on_device.tline", "views.refused.not_on_device.tape", "views.refused.not_on_device.depth", "views.refused.not_on_device.order"].get(view as usize).copied().unwrap_or("views.refused.not_on_device.other"), 1);
+            crate::code_rule_dsl::prof::count(["views.refused.not_on_device.node", "views.refused.not_on_device.child", "views.refused.not_on_device.field", "views.refused.not_on_device.core", "views.refused.not_on_device.axis", "views.refused.not_on_device.line", "views.refused.not_on_device.end_line", "views.refused.not_on_device.col", "views.refused.not_on_device.docof", "views.refused.not_on_device.tline", "views.refused.not_on_device.tape", "views.refused.not_on_device.depth", "views.refused.not_on_device.order", "views.refused.not_on_device.op"].get(view as usize).copied().unwrap_or("views.refused.not_on_device.other"), 1);
             return None;
         };
         // Room for an index at every entry of its directory, found again by every later binding (with room for one, each
@@ -4120,6 +4157,7 @@ impl Source for Viewed {
             || matches!(self.view, View::Core) && matches!(column, 0 | 1)
             || matches!(self.view, View::Order) && column == 1
             || matches!(self.view, View::Sibling) && column == 0
+            || matches!(self.view, View::Op) && column == 1
     }
     fn range_indexed(&self, column: usize) -> bool {
         column == self.own()
@@ -4338,7 +4376,8 @@ impl Source for Viewed {
             return;
         }
         let (p, i) = (&self.batch.docs[doc], i);
-        if matches!(self.view, View::Loc(_)) {
+        // A place's row is no node's, nor is a token's (`op_value`).
+        if matches!(self.view, View::Loc(_) | View::Op) {
             for (o, &c) in out.iter_mut().zip(columns) {
                 *o = self.value_at(p, i, c);
             }
@@ -4375,7 +4414,33 @@ impl Viewed {
         let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.file(*doc) == b.docs.key(o));
         let mut rows = Vec::new();
         for &v in values {
-            if column == self.own() {
+            if matches!(self.view, View::Op) {
+                let first = |doc: usize| b.firsts(View::Op).at(doc);
+                if column == 0 {
+                    // A node's tokens: its tape children that are tokens.
+                    if let Some((doc, local)) = b.node(v, &mut memo) {
+                        let first = first(doc);
+                        b.docs[doc].each_token(local, |r| rows.push(first + r as usize));
+                    }
+                    continue;
+                }
+                // The tokens named `v`: in each document, the nodes of the kinds of that name its codes have (the
+                // tape's kind postings, `Facts::of_kind`), those that are tokens.
+                let Some(name) = u32::try_from(v).ok().and_then(|a| b.atoms.value(a).ok().flatten()) else { continue };
+                for (doc, p) in b.docs.iter().enumerate().filter(|(doc, _)| kept(doc)) {
+                    let Some(dialect) = b.dialects.get(p.tag()) else { continue };
+                    let f = &*p.facts;
+                    let mut kinds: Vec<u32> = (0..f.code_count() as u32).map(|c| f.code_entry(c).0).filter(|&k| dialect.atom_name(k) == name).collect();
+                    kinds.sort_unstable();
+                    kinds.dedup();
+                    let (at, from) = (first(doc), rows.len());
+                    for k in kinds {
+                        rows.extend(f.of_kind(k).into_iter().filter(|&x| p.ranks().is(Item::Token, x)).map(|x| at + p.ranks().rank(Item::Token, x) as usize));
+                    }
+                    // In row order, as the tape's: two kinds of one name are two postings.
+                    rows[from..].sort_unstable();
+                }
+            } else if column == self.own() {
                 let found = if matches!(self.view, View::Loc(_)) { b.loc(v, &mut memo) } else { b.node(v, &mut memo) };
                 rows.extend(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
             } else if Some(column) == self.parent() {
@@ -4422,7 +4487,7 @@ impl Viewed {
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
         // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
         let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
-        if columns.len() > 8 || matches!(self.view, View::Field | View::Loc(_)) {
+        if columns.len() > 8 || matches!(self.view, View::Field | View::Op | View::Loc(_)) {
             return false;
         }
         let b = &*self.batch;
@@ -4515,6 +4580,7 @@ impl Viewed {
             View::Depth => d.depth_row(i, c),
             View::Order => d.order_row(i, c),
             View::Sibling => d.sibling(i, c),
+            View::Op => d.op(i, c),
             View::Loc(place) => d.loc(
                 match place {
                     Place::Line => P::Line,
@@ -4613,6 +4679,11 @@ impl Viewed {
             View::Field => visit(&mut row, 1, Some(Item::Field)),
             // The nodes after a sibling.
             View::Sibling => visit(&mut row, 1, Some(Item::Sibling)),
+            View::Op => {
+                for i in 0..n {
+                    row(i, &|c| self.op_value(p, i, c));
+                }
+            }
             View::Loc(place) => {
                 for ((i, (_, span)), (_, g)) in p.spans().enumerate().zip(p.loc_ids()).take(n) {
                     row(i, &|c| Self::loc_value(p, place, g, span, c));
@@ -4635,6 +4706,7 @@ impl Viewed {
                 | (View::Field, 1)
                 | (View::Depth, 1)
                 | (View::Order, 1)
+                | (View::Op, _)
         )
     }
 
@@ -4685,8 +4757,25 @@ impl Viewed {
         }
     }
 
+    /// Column `column` of the `op` view's row `i` of document `p`, off its projection: its token's parent's id, or its
+    /// name atom (the entry's `names`, interned where the batch reads `op`; `Doc::op` reads the same).
+    fn op_value(&self, p: &Projected, i: usize, column: usize) -> i64 {
+        let x = p.ranks().select(Item::Token, i as u32).expect("an op row");
+        let f = &*p.facts;
+        match column {
+            0 => {
+                let q = f.parent(x).expect("a token has a parent");
+                p.global(if p.ranks().is(Item::Node, q) { p.ranks().rank(Item::Node, q) } else { 0 })
+            }
+            _ => i64::from(self.batch.atoms.intern(self.batch.dialects[p.tag()].atom_name(f.kind(x))).unwrap_or(0)),
+        }
+    }
+
     /// Column `column` of row `i` of document `p` in this view.
     fn value_at(&self, p: &Projected, i: usize, column: usize) -> i64 {
+        if matches!(self.view, View::Op) {
+            return self.op_value(p, i, column);
+        }
         if let View::Loc(place) = self.view {
             let local = i as u32;
             return match (column, place) {
@@ -4715,6 +4804,7 @@ impl Viewed {
                 let x = p.ranks().select(Item::Sibling, i as u32).expect("a sibling row");
                 (p.ranks().rank(Item::Node, x), x)
             }
+            View::Op => unreachable!("an op row is a token's (`op_value`)"),
         }
     }
 
@@ -4805,6 +4895,7 @@ fn named_views(shape: Shape) -> Vec<(&'static str, View)> {
             // `core.rerail`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
             ("docof", View::Loc(Place::Docof)),
             ("next_sibling", View::Sibling),
+            ("op", View::Op),
         ]),
     }
     named
@@ -4835,7 +4926,32 @@ pub fn views_read_both_ways(batch: &Arc<Batch>) -> Result<Vec<(&'static str, usi
             let p = &batch.docs[doc];
             let mut whole = vec![0i64; ncols];
             v.row_at(row, &all, &mut whole);
+            // Its indexes find it again by each value: a column that keys one row (`keys_rows`) by `key_row`, an
+            // indexed one among the rows `lookup` finds (`op`, by its node, once keyed none).
+            for c in 0..ncols {
+                let value = whole[c];
+                if v.keys_rows(c) && v.key_row(c, value) != Some(row) {
+                    return Err(format!("{name}: row {row}'s column {c} ({value}) keys {:?}", v.key_row(c, value)));
+                }
+                if v.indexed(c) && !v.lookup(c, &[value]).is_some_and(|rows| rows.contains(&row)) {
+                    return Err(format!("{name}: row {row} is not found by its column {c} ({value})"));
+                }
+            }
             out.push((name, row, [(0..ncols).map(|c| v.value_at(p, i, c)).collect(), (0..ncols).map(|c| v.read_value(&d, i, c)).collect(), (0..ncols).map(|c| v.value(row, c)).collect(), whole]));
+        }
+        // Each row's document by a column (`documents_of`) is its value's: a column of no ids is read, not taken as
+        // its row's document (`op`'s name atom once was, and `op(m, "|")` matched no row a join split by document).
+        for c in 0..ncols {
+            let mut bad = None;
+            v.documents_of(c, &mut |r, doc| {
+                let value = v.value(r, c);
+                if bad.is_none() && doc != if value >= 1 << 32 { value >> 32 } else { value } {
+                    bad = Some((r, value, doc));
+                }
+            });
+            if let Some((r, value, doc)) = bad {
+                return Err(format!("{name}: row {r}'s column {c} ({value}) is given document {doc}"));
+            }
         }
     }
     Ok(out)
@@ -5380,6 +5496,7 @@ fn slot_of(view: View) -> usize {
         View::Field => 2,
         View::Loc(_) => 5,
         View::Sibling => rerail_clif::view_reads::SIBLING,
+        View::Op => 12,
     }
 }
 

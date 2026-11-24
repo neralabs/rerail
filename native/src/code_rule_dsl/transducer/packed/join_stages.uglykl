@@ -121,7 +121,8 @@ UKL_COLD int64_t vread_dir(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t 
         case 8u: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, la, i, col);
         case 9u: return (int64_t)clif_view_tape(c, e->entry, t, v, l, la, i, col);
         case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, la, i, col);
-        default: return (int64_t)clif_view_order(c, e->entry, t, v, l, la, i, col);
+        case 11u: return (int64_t)clif_view_order(c, e->entry, t, v, l, la, i, col);
+        default: return (int64_t)clif_view_op(c, e->entry, t, v, l, la, i, col);
     }
 }
 

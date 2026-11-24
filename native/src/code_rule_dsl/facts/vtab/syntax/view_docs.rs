@@ -17,25 +17,27 @@ pub struct ViewEntry {
 unsafe impl Send for ViewEntry {}
 unsafe impl Sync for ViewEntry {}
 
-/// An entry's codes' table: each code's kind atom and field atom.
+/// An entry's codes' table: each code's kind atom, field atom and (where `op` is read) name atom.
 pub struct Codes {
     _kinds: Cells<u32>,
     _fields: Cells<u32>,
+    _names: Option<Cells<u32>>,
 }
 
 impl ViewEntry {
-    /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them:
-    /// written whole on the first ask, the same entry after.
-    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect) -> Self {
+    /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them, and
+    /// its codes' names interned in `names` where the batch reads `op`: written whole on the first ask, the same entry
+    /// after.
+    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect, names: Option<&crate::content_store::atoms::Atoms>) -> Self {
         assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
         let (desc, codes) = p.entry();
-        codes.get_or_init(|| Self::fill(block, p, dialect, desc));
+        codes.get_or_init(|| Self::fill(block, p, dialect, desc, names));
         ViewEntry { desc: desc.as_ptr() }
     }
 
     /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns its codes'
     /// table.
-    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>) -> Codes {
+    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>, names: Option<&crate::content_store::atoms::Atoms>) -> Codes {
         let f = &*p.facts;
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
@@ -53,6 +55,16 @@ impl ViewEntry {
             n
         })
         .expect("a batch's block holds its entries");
+        // Each code's name atom: an interned text, the `op` view's `s` of a token of that code (decision 0353 step 3).
+        let names = names.map(|atoms| {
+            Cells::build(block, n.max(1), |out| {
+                for (c, a) in out.iter_mut().enumerate().take(n) {
+                    *a = atoms.intern(dialect.atom_name(f.code_entry(c as u32).0)).unwrap_or(0);
+                }
+                n
+            })
+            .expect("a batch's block holds its entries")
+        });
         let d = desc.as_ptr();
         // SAFETY: the entry is written by this alone (inside its projection's `OnceLock`), and its runs point at cells
         // of the same block (the numbering's descriptor among them), which live as long as it.
@@ -62,6 +74,9 @@ impl ViewEntry {
             Run::set(&raw mut (*d).numbering, p.ranks().desc().cast::<rerail_clif::ids::Numbering>(), 1);
             Run::set(&raw mut (*d).kinds, kinds.as_ptr(), kinds.len());
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
+            if let Some(names) = &names {
+                Run::set(&raw mut (*d).names, names.as_ptr(), names.len());
+            }
             let places = p.places_column();
             Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
             // core.rerail's positions (`Locs`), for the `Loc` views: their places are read in the lines the document's
@@ -88,7 +103,7 @@ impl ViewEntry {
                 }
             }
         }
-        Codes { _kinds: kinds, _fields: fields }
+        Codes { _kinds: kinds, _fields: fields, _names: names }
     }
 
     /// `p`'s positions where the views' reads answer its `Loc` rows: core.rerail's; a guest's through its host's

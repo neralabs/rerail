@@ -38,6 +38,9 @@ pub struct ViewDoc {
     /// Each numbered node's place among its parent's children (u32s, by local id): the walk's, derived once
     /// (`Projected::idx`, decision 0353 step 3), as the tape holds no sibling's place.
     pub places: Run,
+    /// By the tape's code, the name atom of its kind's name (u32s): what the `op` view's `s` holds of a token, its text
+    /// (an anonymous token's is its kind). Interned once where a batch reads `op`; empty where it does not.
+    pub names: Run,
     /// core.rerail's positions past the nodes (`Locs`), for the `Loc` views: the tokens, then where the text is the
     /// document's own (1) the whole text and each line, then the end points (`ends`, one a node, or none).
     pub tokens: u32,
@@ -54,7 +57,7 @@ pub struct ViewDoc {
     pub within_lo: u32,
     pub within_hi: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24);
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
@@ -251,8 +254,8 @@ impl ViewDir {
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
 /// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`; then `tape`, `ast_depth` and
-/// `node_order`.
-pub const VIEWS: [&str; 12] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order"];
+/// `node_order`; then `op`.
+pub const VIEWS: [&str; 13] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof", "view_tape", "view_depth", "view_order", "view_op"];
 
 /// A field's byte offset in the entry.
 pub mod at {
@@ -266,6 +269,7 @@ pub mod at {
     pub const KINDS: i32 = offset_of!(ViewDoc, kinds) as i32;
     pub const FIELDS: i32 = offset_of!(ViewDoc, fields) as i32;
     pub const PLACES: i32 = offset_of!(ViewDoc, places) as i32;
+    pub const NAMES: i32 = offset_of!(ViewDoc, names) as i32;
     pub const TOKENS: i32 = offset_of!(ViewDoc, tokens) as i32;
     pub const OWN_TEXT: i32 = offset_of!(ViewDoc, own_text) as i32;
     pub const ENDS: i32 = offset_of!(ViewDoc, ends) as i32;
@@ -292,12 +296,14 @@ pub const LOC_COLUMNS: u32 = 2;
 pub const TAPE_COLUMNS: u32 = 4;
 pub const DEPTH_COLUMNS: u32 = 2;
 pub const ORDER_COLUMNS: u32 = 2;
+/// `op`'s: the token's parent's id, its name atom.
+pub const OP_COLUMNS: u32 = 2;
 
 /// The entry in UKL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 17] = [
+    let fields: [(&str, &str, usize); 18] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -306,6 +312,7 @@ pub fn ukl() -> String {
         ("Run", "kinds", offset_of!(ViewDoc, kinds)),
         ("Run", "fields", offset_of!(ViewDoc, fields)),
         ("Run", "places", offset_of!(ViewDoc, places)),
+        ("Run", "names", offset_of!(ViewDoc, names)),
         ("uint32_t", "tokens", offset_of!(ViewDoc, tokens)),
         ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
         ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
@@ -1037,5 +1044,29 @@ pub fn order(b: &mut B<'_, '_>) -> Value {
         });
         let low = b.f.ins().uextend(I64, low);
         b.f.ins().bor(high, low)
+    })
+}
+
+/// `view_op(i, col)`: column `col` of the `op` view's row `i`, of the document's `i`-th token (`num_select` of the
+/// tokens, core.rerail's shape: an anonymous child with text of a numbered node): its parent's id, its name atom (by
+/// its code, `ViewDoc::names`). Each column's branch finds the token itself, as `field`'s do (G13).
+#[cfg(feature = "ir")]
+pub fn op(b: &mut B<'_, '_>) -> Value {
+    let (i, col) = (b.arg(0), b.arg(1));
+    let token = |b: &mut B<'_, '_>| {
+        let numbering = b.follow(b.tape, at::NUMBERING);
+        let tokens = b.c32(1);
+        b.call_at("num_select", numbering, &[tokens, i])
+    };
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| {
+        let x = token(b);
+        // A token is no root: its parent's id, the root's where its parent is not numbered.
+        let one = b.c32(1);
+        b.parent_id(one, x)
+    }, |b| {
+        let x = token(b);
+        let code = b.call_tape("tape_number", &[x]);
+        b.entry_item(at::NAMES, code)
     })
 }

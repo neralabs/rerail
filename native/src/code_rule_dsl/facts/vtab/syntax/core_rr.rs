@@ -525,7 +525,6 @@ pub(super) struct CoreRows {
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
     pub(super) text_nodes: Option<super::TextNodes>,
-    op: Vec<[i64; 2]>,
     text: Vec<[i64; 2]>,
     name: Vec<[i64; 2]>,
     str: Vec<[i64; 2]>,
@@ -558,7 +557,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.spread.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.first_token.as_slice()) + std::mem::size_of_val(self.last_token.as_slice()) + std::mem::size_of_val(self.token_before.as_slice()) + std::mem::size_of_val(self.token_after.as_slice()) + std::mem::size_of_val(self.end_point.as_slice()) + std::mem::size_of_val(self.structural_before.as_slice()) + std::mem::size_of_val(self.structural_after.as_slice()) + std::mem::size_of_val(self.tree_digest.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -576,8 +575,6 @@ pub(super) enum Visits {
 
 #[derive(Default)]
 pub(super) struct Skip {
-    /// `op`.
-    pub(super) ops: bool,
     pub(super) comment: bool,
     pub(super) spread: bool,
     pub(super) name: bool,
@@ -629,7 +626,7 @@ impl CoreRows {
     /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_text = s.ops && s.structural && s.comment && s.spread && s.name && s.literal_rows
+        let only_text = s.structural && s.comment && s.spread && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
         match (only_text, wants_text, self.text_nodes.is_some()) {
             (false, _, _) | (true, true, false) => Visits::All,
@@ -642,7 +639,6 @@ impl CoreRows {
     pub(super) fn making(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
         let s = &self.skip;
         let named = [
-            (!s.ops, "op"),
             (!s.comment, "comment"),
             (!s.spread, "spread"),
             (!s.name, "name"),
@@ -677,24 +673,7 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child the tape stores (none the grammar implies), and Python's two-word operators
-        // as one ("not in", "is not") where the tape stores their words apart. (`op_at` is `tree::node_operators`'.)
-        if !self.skip.ops {
-            let mut last: Option<&str> = None;
-            for &c in children.iter().filter(|&&c| !f.named(c)) {
-                let t = dialect.name(f, c);
-                self.op.push([n, string(t) as i64]);
-                if is_punct(t) {
-                    continue;
-                }
-                if dialect.family == Family::Python && matches!((last, t), (Some("not"), "in") | (Some("is"), "not")) {
-                    self.op.push([n, string(&format!("{} {t}", last.unwrap_or_default())) as i64]);
-                    last = None;
-                } else {
-                    last = Some(t);
-                }
-            }
-        }
+        // `op` is a view of the tokens (`View::Op`), `op_at` `tree::node_operators`': neither is a row here.
         // `structural_before`, `structural_after`: the source between each stored child and its
         // neighbours (the sibling before or after it, else the parent's edge); a root's, between
         // it and the source's edges.
@@ -1060,7 +1039,6 @@ impl CoreRows {
     /// before `Extra`'s span texts join `text` (`extend_text`): a span's text is derived with its span, no node's row.
     pub(super) fn count_row7(&self) {
         for (name, bytes) in [
-            ("op", std::mem::size_of_val(self.op.as_slice())),
             ("text", std::mem::size_of_val(self.text.as_slice())),
             ("name", std::mem::size_of_val(self.name.as_slice())),
             ("str", std::mem::size_of_val(self.str.as_slice())),
@@ -1099,7 +1077,6 @@ impl CoreRows {
         value_type.sort_unstable();
         let spread: Vec<[i64; 1]> = self.spread.iter().map(|&n| [n]).collect();
         vec![
-            ("op", node_sym(&self.op)),
             ("text", node_sym(&self.text)),
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),

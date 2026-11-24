@@ -19,7 +19,7 @@ pub use reads::RowReads;
 
 /// A document's views' counts (decision 0494): its nodes, fielded nodes, siblings after it and places, as its
 /// projection has them; the documents' table keeps them.
-pub type ViewCounts = [u32; 4];
+pub type ViewCounts = [u32; 5];
 
 /// A document's row of the documents' table's counts (`Batch::kept_counts`, `retain::put_base_counts`): its key, path,
 /// digest, views' counts and facts' size, and whether it is a file's own tree (a guest's path is its host's).
@@ -37,7 +37,7 @@ pub struct Kept {
 
 /// A projection's views' counts.
 pub(super) fn view_counts(p: &Projected) -> ViewCounts {
-    [p.len(), p.fielded(), p.after_siblings(), p.locs()]
+    [p.len(), p.fielded(), p.after_siblings(), p.locs(), p.tokens()]
 }
 
 /// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
@@ -57,7 +57,7 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
         // SAFETY: row `k` of the rows and the given counts just allocated in `block`, and its two homes.
         unsafe {
             rows.add(k).write(ViewRow { key, homes: [2 * k as u32, 2 * k as u32 + 1], ..Default::default() });
-            given.add(k).write(counts.map_or([0; 5], |[a, b, c, d]| [a, b, c, d, 1]));
+            given.add(k).write(counts.map_or([0; 6], |[a, b, c, d, e]| [a, b, c, d, e, 1]));
             homes.add(2 * k).write(ViewHome::default());
             homes.add(2 * k + 1).write(ViewHome::default());
         }
@@ -75,7 +75,7 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
 }
 
 /// A document's views' counts as given (`directory`): the counts, then 1 where given.
-type Given = [u32; 5];
+type Given = [u32; 6];
 
 /// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
 pub struct Docs {
@@ -111,6 +111,9 @@ pub(super) struct Context {
     pub(super) dialects: Arc<Dialects>,
     pub(super) projection: Arc<Projection>,
     pub(super) block: Arc<Block>,
+    /// The store's atoms, where the batch reads the `op` view: each entry's codes' names are interned into its table
+    /// (`view_docs::ViewEntry::new`). None where it does not, so no name is interned for it.
+    pub(super) names: Option<Arc<crate::content_store::atoms::Atoms>>,
     /// Each guest's host.
     pub(super) host: HashMap<u32, u32>,
     /// The files' lines, by key, that their guests are placed by: shared with the batches it grows into and the tape
@@ -175,8 +178,8 @@ impl Docs {
     fn given(&self, i: usize) -> Option<ViewCounts> {
         assert!(i < self.slots.len(), "document {i} of {}", self.slots.len());
         // SAFETY: the given counts `directory` wrote in the batch's block, which the context holds; `i` is one of its.
-        let [a, b, c, d, given] = unsafe { self.context.block.ptr::<Given>(self.given).add(i).read() };
-        (given != 0).then_some([a, b, c, d])
+        let [a, b, c, d, e, given] = unsafe { self.context.block.ptr::<Given>(self.given).add(i).read() };
+        (given != 0).then_some([a, b, c, d, e])
     }
     /// Document `i`'s views' counts: those given, else its projection's (made if it is not).
     pub fn counts(&self, i: usize) -> ViewCounts {
@@ -1022,7 +1025,7 @@ impl Batch {
     }
 
     /// The batch's vocabulary, every document made: its strings and their symbols, each string once.
-    pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
+    pub fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
         if self.rows.complete.get().is_none() {
             profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || "the batch's vocabulary (a text test)".to_owned());
         }
