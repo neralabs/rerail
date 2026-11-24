@@ -18,8 +18,11 @@ pub trait SolverDevice: Device {
     fn join_available(&self) -> bool;
     /// A seed join's plan on the device, or why it takes none (`spec`: the join's text, which keys its history).
     /// `own_texts`: the component's own (relation, column) pairs whose values are texts its rounds make into one arena
-    /// (decision 0307: a `shortlex_min` relation's value).
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String>;
+    /// (decision 0307: a `shortlex_min` relation's value; decision 0659: a recursive set head's column of made texts),
+    /// `head` the join's head relation among them.
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String>;
+    /// The head columns `plan` makes texts into (its arena's), for a component's `own_texts`.
+    fn made_columns(&self, plan: &JoinPlan) -> Vec<usize>;
     /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.
     fn refuse(&self, why: String);
     /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows

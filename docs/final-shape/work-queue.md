@@ -11082,3 +11082,19 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - three parallel loops on the machine's cores (0442): `memo.rs`'s and `keptstats.rs`'s in `on_cores`, `ast_wave.rs`'s grain from `cores_threads`.
 - No conflicts.
 - Checked with Relax: corpus-memo, compiler, metal-programs, boot, 0 errors. Tests: corpus-memo 16.
+
+### Q533. Roll-up 106 (django-bugs 87edba2fde onto Pulling-it-all-together): what the merge chose
+
+- django-bugs af494ec038, c1c349fe8c, 87edba2fde (0661):
+  - a recursive set head's made texts are one arena value a text, a canonical table beside the arena;
+  - a string join on the device (`ROW_STRJOIN`); a text function's value compared with a bound slot;
+  - a made text as an atom's key, compared as a text.
+- Ported to the hub:
+  - a by-text atom's binds are a local list made from the hub's `RelList` (`iter().copied()`);
+  - a string join over an input relation reads `j.bound(rel)`, as the hub's atoms do;
+  - `fused_at(i)` (the hub's), with the branch's `compared.is_none()`;
+  - a cat or `str_concat` of a made text, bound or compared, is the arena's, the hub's `name.as_str()`;
+  - the strjoin's stage binds the relation's block (`rel.wrap()`: an index lies there), as the hub's join stages do; its kernel reads R through `RelB` and `j->RF` (0353 step 6's far base);
+  - `with_consts` stays the hub's: the key bound is checked where a view's constants are taken.
+  - The interned texts and the witness counts are the hub's `Vector`s; the 0661 test's doc named 0659, now 0661.
+- Checked with Relax, RERAIL_GPU=cpu: device-metal, plan-base, planner, run, setfix, 0 errors. Tests: setfix device 44 of 46, the 0661 tests included; red before too: parity_aggregates and parity_random_integers.

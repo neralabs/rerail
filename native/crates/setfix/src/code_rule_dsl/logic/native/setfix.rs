@@ -2611,15 +2611,47 @@ pub fn open_spec(conn: impl Scoped, section: &Spec) -> Result<String> {
         } else {
             None
         };
-        // A shortlex_min relation's value column holds the texts its rules make (decision 0307): read as texts.
-        let own_texts: Vec<(usize, usize)> = rels.iter().enumerate().filter(|(_, r)| matches!(r.device_lattice(), Some(Ok((3, ..))))).map(|(i, r)| (i, r.k - 1)).collect();
-        let plans = match refused {
-            Some(r) => Err(r),
-            None => seed_specs.iter().map(|(pi, js)| (*pi, js.to_text())).chain(delta_specs.iter().cloned()).map(|(pi, text)| match &probes[pi].body {
-                Body::Join(j) => dev.compile_join(j, &text, &own_texts).map(|p| (pi, p)),
-                Body::Sql(_) => Err("a SQL seed".to_owned()),
-                Body::Unplanned => Err("a probe not planned yet".to_owned()),
-            }).collect::<std::result::Result<Vec<_>, String>>(),
+        // A shortlex_min relation's value column holds the texts its rules make (decision 0307): read as texts. In a
+        // recursive component, so does a set head's column any of its rules makes a text into (decision 0659): its
+        // rounds keep each text one value a content in one arena. Such a column found, the rules are compiled again,
+        // so every rule reads it as texts and puts texts in it, until no more are found.
+        let mut own_texts: Vec<(usize, usize)> = rels.iter().enumerate().filter(|(_, r)| matches!(r.device_lattice(), Some(Ok((3, ..))))).map(|(i, r)| (i, r.k - 1)).collect();
+        let specs: Vec<(usize, String)> = seed_specs.iter().map(|(pi, js)| (*pi, js.to_text())).chain(delta_specs.iter().cloned()).collect();
+        // A column a rule's head makes a text into as written: a cat, or a text function's value.
+        if recursive {
+            for (pi, _) in &specs {
+                if let Body::Join(j) = &probes[*pi].body {
+                    for c in made_text_columns(j) {
+                        let at = (probes[*pi].head, c);
+                        if !own_texts.contains(&at) {
+                            own_texts.push(at);
+                        }
+                    }
+                }
+            }
+        }
+        let plans = loop {
+            let plans = match &refused {
+                Some(r) => Err(r.clone()),
+                None => specs.iter().map(|(pi, text)| match &probes[*pi].body {
+                    Body::Join(j) => dev.compile_join(j, text, &own_texts, probes[*pi].head).map(|p| (*pi, p)),
+                    Body::Sql(_) => Err("a SQL seed".to_owned()),
+                    Body::Unplanned => Err("a probe not planned yet".to_owned()),
+                }).collect::<std::result::Result<Vec<_>, String>>(),
+            };
+            let (Ok(ps), true) = (plans.as_ref(), recursive) else { break plans };
+            let before = own_texts.len();
+            for (pi, p) in ps {
+                for c in dev.made_columns(p) {
+                    let at = (probes[*pi].head, c);
+                    if !own_texts.contains(&at) {
+                        own_texts.push(at);
+                    }
+                }
+            }
+            if own_texts.len() == before {
+                break plans;
+            }
         };
         match plans {
             Ok(p) if !p.is_empty() && dev.join_available() => Some(p),
@@ -5117,6 +5149,24 @@ pub fn release(conn: &Connection, tables: &[String]) {
 /// Drops the indexes of native relations `tables` that stay to the run's end (outputs, kept relations) but that no
 /// later stratum reads: their rows are read once more, in order, and their per-column indexes were most of their
 /// size. A relation shared with a reader still open keeps them.
+/// The head columns `j` makes texts into as written (decision 0659): a cat, or a slot a text function, a `cat` or a
+/// `str_concat` binds.
+fn made_text_columns(j: &JoinRule) -> Vec<usize> {
+    use crate::code_rule_dsl::logic::device::caps::{self, DeviceFn};
+    let makes = |s: usize| {
+        j.steps.iter().any(|st| match st {
+            Step::Cat { out, bind: true, .. } | Step::StrJoin { out, bind: true, .. } => *out == s,
+            Step::Func { name, out, bind: true, .. } => *out == s && (*name == "str_concat" || matches!(caps::device_fn(name), Some(DeviceFn::Text { .. } | DeviceFn::RegexReplace))),
+            _ => false,
+        })
+    };
+    j.out.iter().enumerate().filter(|(_, t)| match **t {
+        Term::Cat(..) => true,
+        Term::Slot(s) => makes(s),
+        Term::Const(_) => false,
+    }).map(|(c, _)| c).collect()
+}
+
 pub fn unindex(conn: &Connection, tables: &[String]) {
     forgotten_on_close();
     let on = on(conn);
