@@ -332,11 +332,12 @@ function shellPath(path: string): string {
  * `wrote 141`: a broken pipe's SIGPIPE ended it). Each run of the filter writes `+` to `loops` before it starts its
  * process, which writes `-` there as it ends: the test waits for that, and for b.py's filter to end, so no process
  * outlives it. The process looks for the file every 20 ms, so that wait is short. `before` is what this process held
- * open as the read started, after a first read, so what Node opens once for its first child process is in it.
+ * open as the read started, after a first read, so what Node opens once for its first child process is in it. `git` is
+ * the Git that listed.
  */
 async function heldListing(
   { pastLimit = false } = {},
-): Promise<{ answer: unknown; running: number; wrote: string; before: HeldHandles }> {
+): Promise<{ answer: unknown; running: number; git: ChildProcess | undefined; wrote: string; before: HeldHandles }> {
   const root = await repository({ ".gitattributes": "a.py filter=held\nb.py filter=hang\n", "a.py": "print(1)\n", "b.py": "print(1)\n" });
   const inGit = (name: string): string => join(root, ".git", name);
   const [held, loops, wrote, started, hung] = [inGit("held"), inGit("loops"), inGit("wrote"), inGit("started"), inGit("hung")];
@@ -367,7 +368,7 @@ async function heldListing(
     await vi.waitFor(async () => expect(await loopsRunning(loops)).toBe(0), { timeout: 5_000, interval: 10 });
     await hungGone(hung);
   }
-  return { answer, running, wrote: (await readFile(wrote, "utf8")).trim(), before };
+  return { answer, running, git: lastListingGit(), wrote: (await readFile(wrote, "utf8")).trim(), before };
 }
 
 /**
@@ -437,6 +438,13 @@ function fakeReadTimers({ limitTimer = false } = {}): void {
 /** The last `count` Gits the reads started, oldest first. */
 function lastGits(count: number): ChildProcess[] {
   return vi.mocked(spawn).mock.results.slice(-count).flatMap(result => result.type === "return" ? [result.value] : []);
+}
+
+/** The last Git a read started to list changed files (`ls-files --modified`): on Windows a `taskkill` may start after it. */
+function lastListingGit(): ChildProcess | undefined {
+  const { calls, results } = vi.mocked(spawn).mock;
+  const result = results[calls.findLastIndex(([, args]) => args.includes("--modified"))];
+  return result?.type === "return" ? result.value : undefined;
 }
 
 /**
@@ -559,7 +567,7 @@ describe("Git reads and their time limit", () => {
     vi.mocked(endProcessTree).mockClear();
     const listing = await heldListing({ pastLimit: true });
     expect(listing.answer).toBeUndefined();
-    expect(endProcessTree).toHaveBeenCalledOnce();
+    expect(endProcessTree).toHaveBeenCalledExactlyOnceWith(listing.git);
     expect(listing.running).toBe(1);
     expect(listing.wrote).toBe("wrote 0");
     await handlesBack(listing.before);
