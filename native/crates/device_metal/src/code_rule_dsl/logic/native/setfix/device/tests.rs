@@ -1919,11 +1919,25 @@
                 vec![format!("seed 0 {}", hex(&format!("pos {e} v0 v1\nhead v0 v1"))), format!("join 0 0 {}", hex(&format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2")))],
             ),
         ];
+        // `RERAIL_TIMED_REPEAT=n`: each run n times (a profile's samples), `RERAIL_TIMED_ONLY=device|cpu` one side,
+        // `RERAIL_TIMED_STRATUM=text` the strata whose name has it.
+        let repeat = std::env::var("RERAIL_TIMED_REPEAT").ok().and_then(|v| v.parse().ok()).unwrap_or(4usize).max(2);
+        let only = std::env::var("RERAIL_TIMED_ONLY").ok();
+        let stratum = std::env::var("RERAIL_TIMED_STRATUM").ok();
         for (what, rules) in &strata {
+            if stratum.as_deref().is_some_and(|w| !what.contains(w)) {
+                continue;
+            }
             let mut rows = Vec::new();
             for device in [false, true] {
+                if only.as_deref().is_some_and(|o| o != if device { "device" } else { "cpu" }) {
+                    rows.push(-1);
+                    continue;
+                }
                 let mut best = (f64::MAX, f64::MAX);
-                for k in 0..4 {
+                // The device's: the program's time (its wait on it) and its encoding's, the best of the others.
+                let mut prog = (f64::MAX, f64::MAX);
+                for k in 0..repeat {
                     db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
                     let mut spec = vec!["name timed".to_owned()];
                     if device {
@@ -1936,7 +1950,11 @@
                     super::super::run(&db, "timed", 0).unwrap();
                     let (wall, cpu) = (t.elapsed().as_secs_f64(), cpu_seconds() - c);
                     if device {
-                        assert!(super::take_report().is_some_and(|r| r.refused.is_none()), "{what}: run on the device");
+                        let r = super::take_report().filter(|r| r.refused.is_none());
+                        assert!(r.is_some(), "{what}: run on the device");
+                        if let Some(r) = r.filter(|_| k > 0) {
+                            prog = (prog.0.min(r.wait_wall), prog.1.min(r.encode_cpu));
+                        }
                     }
                     super::super::close(&db, "timed").unwrap();
                     // The first run warms (compiles, sizes); the best of the others.
@@ -1947,7 +1965,12 @@
                 let n: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
                 rows.push(n);
                 eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
+                if device {
+                    eprintln!("{what}: device: its program {:.1} ms (waited on), its encoding {:.1} ms CPU", prog.0 * 1e3, prog.1 * 1e3);
+                }
             }
-            assert_eq!(rows[0], rows[1], "{what}: the same rows");
+            if !rows.contains(&-1) {
+                assert_eq!(rows[0], rows[1], "{what}: the same rows");
+            }
         }
     }

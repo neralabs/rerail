@@ -258,7 +258,9 @@ where
     /// Each enabled lane's pointer is valid for a read of `T`.
     #[inline(always)]
     pub unsafe fn gather_select_ptr(source: Simd<*const T, N>, enable: Mask<isize, N>, or: Self) -> Self {
-        Simd(core::array::from_fn(|i| if enable.0[i].__test() { unsafe { source.0[i].read() } } else { or.0[i] }))
+        // No branch a lane: a lane off reads its own `or`, its address chosen as a value (a `csel`), so no lane's
+        // verdict is a prediction.
+        Simd(core::array::from_fn(|i| unsafe { core::hint::select_unpredictable(enable.0[i].__test(), source.0[i], &raw const or.0[i]).read() }))
     }
     /// Writes lane `i` to `dest[i]` where `enable` is set, in lane order.
     ///
@@ -266,10 +268,10 @@ where
     /// Each enabled lane's pointer is valid for a write of `T`.
     #[inline(always)]
     pub unsafe fn scatter_select_ptr(self, dest: Simd<*mut T, N>, enable: Mask<isize, N>) {
+        // No branch a lane: a lane off writes a place of its own, its address chosen as a value.
+        let mut sink = core::mem::MaybeUninit::<T>::uninit();
         for i in 0..N {
-            if enable.0[i].__test() {
-                unsafe { dest.0[i].write(self.0[i]) };
-            }
+            unsafe { core::hint::select_unpredictable(enable.0[i].__test(), dest.0[i], sink.as_mut_ptr()).write(self.0[i]) };
         }
     }
     /// Writes lane `i` to `dest[i]`, in lane order.

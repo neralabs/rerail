@@ -94,9 +94,10 @@ where
             let Some(f) = go.first_set() else { break };
             // A lane done reads the first walking lane's row: every read is of a row there is.
             let y = go.select(y, sr(y[f]));
+            let row = ln::rel_at(rd, y);
             let mut same = go;
             for c in 0..d.ncols.min(16) as usize {
-                same &= ln::rel_get(rd, y, c as u32).cast::<i64>().simd_eq(self.v[c]).cast::<i32>();
+                same &= row.get(c as u32).cast::<i64>().simd_eq(self.v[c]).cast::<i32>();
             }
             held |= same;
             go &= !same;
@@ -206,9 +207,10 @@ where
         let n = (t1 - t).min(N as u32);
         // Lanes past the rows read the first one's: every read is of a row there is.
         let row = first::<N>(n).select(sr(p.from.wrapping_add(t)) + Simd::from_array(core::array::from_fn(|i| i as u32)), sr(p.from.wrapping_add(t)));
+        let at = ln::rel_at(d, row);
         let mut h = U::splat(KEY_SEED);
         for i in 0..(p.ncols & !IX_LIVE).min(8) as usize {
-            h = ln::key_mix(h, ln::rel_get(d, row, p.cols[i]));
+            h = ln::key_mix(h, at.get(p.cols[i]));
         }
         let k: [u32; N] = ((h & U::splat(p.mask)).cast::<u32>() + sr(kb)).to_array();
         core::ptr::copy_nonoverlapping(k.as_ptr(), out.add((eb + t) as usize), n as usize);

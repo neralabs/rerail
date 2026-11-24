@@ -195,6 +195,15 @@ where
     gather32(at(follow(index_of(d, index), 48), q, 4))
 }
 
+/// `rel_group_row` of `N` consecutive places from `q` of relation `d`'s index `index` (all in its rows): one load.
+#[inline(always)]
+pub unsafe fn rel_group_rows<const N: usize>(d: *const u8, index: u32, q: u32) -> R<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    Simd::from_array((follow(index_of(d, index), 48).wrapping_add(q as usize * 4) as *const [u32; N]).read_unaligned())
+}
+
 /// `clif_rel_len` of relation `d`.
 #[inline(always)]
 pub unsafe fn rel_len(d: *const u8) -> u32 {
@@ -204,7 +213,7 @@ pub unsafe fn rel_len(d: *const u8) -> u32 {
 /// Each lane's place in a column of chunks doubling from `1 << shift` rows: the chunk and the row in it, as
 /// `clif_col_at` finds them.
 #[inline(always)]
-fn chunk<const N: usize>(i: R<N>, shift: R<N>) -> (R<N>, R<N>)
+pub fn chunk<const N: usize>(i: R<N>, shift: R<N>) -> (R<N>, R<N>)
 where
     LaneCount<N>: SupportedLaneCount,
 {
@@ -251,9 +260,29 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     let (seg, within) = chunk(i, s32(shift));
+    col_get_in(c, seg, within, i, seg.simd_eq(s32(seg[0])).all())
+}
+
+/// `within * width` as each lane's byte offset: a shift where the width is a power of two (NEON has no 64-bit
+/// multiply).
+#[inline(always)]
+fn scaled<const N: usize>(within: R<N>, width: u32) -> V<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    if width.is_power_of_two() { within.cast::<u64>() << s64(u64::from(width.trailing_zeros())) } else { within.cast::<u64>() * s64(width as u64) }
+}
+
+/// `col_get` of row `i`, its chunk and its place in it found (`chunk`): one chunk for every column of a relation.
+/// Where every lane's row is in one chunk (`one`), its address is one read.
+#[inline(always)]
+pub unsafe fn col_get_in<const N: usize>(c: *const u8, seg: R<N>, within: R<N>, i: R<N>, one: bool) -> V<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
     let width = r32(c, 0);
-    let chunks = gather64(at(c.wrapping_add(8), seg, 8));
-    let a = Simd::splat(c).wrapping_add((within.cast::<u64>() * s64(width as u64) + chunks).cast::<usize>());
+    let chunks = if one { s64(r64(c, 8 + 8 * seg[0] as u64)) } else { gather64(at(c.wrapping_add(8), seg, 8)) };
+    let a = Simd::splat(c).wrapping_add((scaled(within, width) + chunks).cast::<usize>());
     if width != 4 {
         return gather64(a);
     }
@@ -266,16 +295,21 @@ where
     low | (doc_high(Simd::splat(tab), s32(r32(tab, 0)), i).cast::<u64>() << s64(32))
 }
 
-/// `clif_col_get` of each lane's own column `c`, chunks from `1 << shift` rows.
+/// `clif_col_get` of each lane's own column `c`: row `i`, its chunk and its place in it found (`chunk`).
 #[inline(always)]
-unsafe fn col_get_each<const N: usize>(c: P<N>, shift: R<N>, i: R<N>) -> V<N>
+unsafe fn col_get_each_in<const N: usize>(c: P<N>, seg: R<N>, within: R<N>, i: R<N>) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    let (seg, within) = chunk(i, shift);
     let width = gather32(c);
     let chunks = gather64(c.wrapping_add((seg.cast::<u64>() * s64(8) + s64(8)).cast::<usize>()));
-    let a = c.wrapping_add((within.cast::<u64>() * width.cast::<u64>() + chunks).cast::<usize>());
+    // Each lane's width a power of two: its offset a shift.
+    let off = if (width & (width - s32(1))).simd_eq(s32(0)).all() {
+        within.cast::<u64>() << width.trailing_zeros().cast::<u64>()
+    } else {
+        within.cast::<u64>() * width.cast::<u64>()
+    };
+    let a = c.wrapping_add((off + chunks).cast::<usize>());
     let four = width.simd_eq(s32(4));
     let low = gather32(a);
     // The high words: an 8-byte lane's next word, a 4-byte lane's document's (none: zero).
@@ -295,7 +329,7 @@ where
 
 /// A relation's rows (`rows`, at `d + 40` of its descriptor): column `c`'s directory.
 #[inline(always)]
-unsafe fn rows_col(rows: *const u8, c: u32) -> *const u8 {
+pub unsafe fn rows_col(rows: *const u8, c: u32) -> *const u8 {
     follow(rows, 24).wrapping_add(c as usize * 776)
 }
 
@@ -306,9 +340,55 @@ pub unsafe fn rel_get<const N: usize>(d: *const u8, r: R<N>, c: u32) -> V<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
+    rel_at(d, r).get(c)
+}
+
+/// Each lane's row of a relation, found once for all its columns (`rel_at`): its block's columns and the row's place
+/// in their chunks (every column of a block has the same chunks).
+pub struct RowAt<const N: usize>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    /// Every lane's row in one block: its first column's directory.
+    one: *const u8,
+    /// Else each lane's block's.
+    each: P<N>,
+    seg: R<N>,
+    within: R<N>,
+    /// The row in its block.
+    i: R<N>,
+    /// Every lane's row in one chunk of one block.
+    uniform: bool,
+}
+
+impl<const N: usize> RowAt<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    /// Column `c` of each lane's row: `clif_rel_get`'s.
+    #[inline(always)]
+    pub unsafe fn get(&self, c: u32) -> V<N> {
+        let o = c as usize * 776;
+        if !self.one.is_null() {
+            return col_get_in(self.one.wrapping_add(o), self.seg, self.within, self.i, self.uniform);
+        }
+        col_get_each_in(self.each.wrapping_add(Simd::splat(o)), self.seg, self.within, self.i)
+    }
+}
+
+/// Each lane's row `r` of relation `d` found (a delta's, its base's under it, by the chain of blocks each lane walks
+/// to its row's), for `RowAt::get` of its columns.
+#[inline(always)]
+pub unsafe fn rel_at<const N: usize>(d: *const u8, r: R<N>) -> RowAt<N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
     if r64(d, 192) == 0 {
         let rows = d.wrapping_add(40);
-        return col_get(rows_col(rows, c), r32(rows, 8), r - s32(r32(d, 8)));
+        let i = r - s32(r32(d, 8));
+        let (seg, within) = chunk(i, s32(r32(rows, 8)));
+        let uniform = seg.simd_eq(s32(seg[0])).all();
+        return RowAt { one: rows_col(rows, 0), each: Simd::splat(core::ptr::null()), seg, within, i, uniform };
     }
     // Each lane walks from the newest block to the one its row is in: down while its row is below the block's first.
     let mut b: P<N> = Simd::splat(d);
@@ -324,8 +404,10 @@ where
     }
     let rows = b.wrapping_add(Simd::splat(40));
     let shift = gather32(rows.wrapping_add(Simd::splat(8)));
-    let cols = rows.wrapping_add((gather64(rows.wrapping_add(Simd::splat(24))) + s64(24 + c as u64 * 776)).cast::<usize>());
-    col_get_each(cols, shift, r - first)
+    let cols = rows.wrapping_add((gather64(rows.wrapping_add(Simd::splat(24))) + s64(24)).cast::<usize>());
+    let i = r - first;
+    let (seg, within) = chunk(i, shift);
+    RowAt { one: core::ptr::null(), each: cols, seg, within, i, uniform: false }
 }
 
 #[cfg(test)]
