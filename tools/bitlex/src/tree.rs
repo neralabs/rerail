@@ -477,7 +477,7 @@ impl<'a> Parser<'a> {
                 Some(next)
             }
             Gram::Any(except) => {
-                let t = self.tokens.get(at).filter(|t| !t.mark && !except.contains(&t.kind))?;
+                let t = self.tokens.get(at).filter(|t| !t.mark && !except.contains(&t.kind) && !self.decl.untaken.contains(&t.kind))?;
                 let extra = self.decl.extra.contains(&t.kind);
                 let (kind, start, end) = (t.kind.clone(), t.start, t.end);
                 self.out.push(Node { kind, field: None, supertypes: vec![], extra, start, end, size: 1, leaf: true });
@@ -492,6 +492,10 @@ impl<'a> Parser<'a> {
                 let mut depth = 1usize;
                 loop {
                     let t = self.tokens.get(p)?;
+                    // A token no rule takes (`untaken`): none here either.
+                    if self.decl.untaken.contains(&t.kind) {
+                        return None;
+                    }
                     if !t.mark {
                         if &t.kind == open {
                             depth += 1;

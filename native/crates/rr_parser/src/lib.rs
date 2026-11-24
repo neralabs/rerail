@@ -71,6 +71,11 @@ fn bad_token_cases() -> Vec<String> {
         "a(x) :- b(x), x = ?? 1.\nc(y).\n",
         "a(x). \u{e9}t\u{e9}\nc(y).\n",
         "a(x).\n\u{1}\u{7f}\nc(y).\n",
+        // Lean's `Bad`s a byte each, a character past ASCII one, and none taken where it reads
+        // any token (a raw line): its statement recovers.
+        "a(x).\n$$\u{e9}\u{e9}?\nc(y).\n",
+        ".type t = a $b\nc(y).\n",
+        ".type t = a \u{e9}b\nc(y).\n",
         "r(x) :- a(x) \\\"x\" b(x).\nc(y).\n",
         "r(x) :- a(x) \\\\\"x\" b(x).\nc(y).\n",
         "a(x).\nb(\"open\n",
@@ -655,8 +660,9 @@ pub mod tests {
     }
 
     /// Lean's `Bad` tokens in tier 1 (decision 0650 step 5): each a record of the `bad` kind (a
-    /// region open at the end, to the file's last byte), no word and none of a reader's marks,
-    /// the file not refused; the CPU's records the interpreter's and Metal's the CPU's.
+    /// byte, a character past ASCII, or a region open at the end, to the file's last byte), no
+    /// word and none of a reader's marks, the file not refused; the CPU's records the
+    /// interpreter's and Metal's the CPU's.
     #[test]
     fn tier1_reads_leans_bad_tokens() {
         let c = crate::compiled().expect("compiles");
@@ -674,9 +680,10 @@ pub mod tests {
             assert_eq!(g.positions[usize::from(r.starts)], want.positions[usize::from(r.starts)], "{src:?}: the starts");
             assert_eq!(g.positions[usize::from(r.lasts)], want.positions[usize::from(r.lasts)], "{src:?}: the lasts");
             assert_eq!(unlazy(&g.codes, lazy), unlazy(&want.codes, lazy), "{src:?}: the codes");
-            // A `bad` record: its kind (the punctuation's too, whose switches go by its words) and
-            // no word, so every switch refuses it.
-            let is_bad = |x: u32| (x & 0xff) as u8 == bad && rerail_compiler::records::word_of(x) == 0;
+            // A `bad` record: its kind (the punctuation's too, whose switches go by its words), or
+            // a character's past ASCII (`bad_char`, `#`'s kind), and no word, so every switch
+            // refuses it.
+            let is_bad = |x: u32| ((x & 0xff) as u8 == bad || (x & 0xff) as u8 == r.kinds[0xc3]) && rerail_compiler::records::word_of(x) == 0;
             assert!(want.codes.iter().any(|&x| is_bad(x)), "{src:?}: a `bad` record");
             // The last record, where it is a region's opener: open to the file's last byte.
             let (starts, lasts) = (&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]);
@@ -1766,7 +1773,8 @@ pub mod tests {
             .replace("start id_first run word", "start id_first last ident & ~next(ident)")
             .replace("start int_first run num_run once dot", "start int_first last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
-            .replace("start bad_first run other", "start bad_first last code & other & ~next(code & other)")
+            .replace("start bad_first pair empty", "start bad_first last bad_first")
+            .replace("start char_first run cont", "start char_first last code & high & ~next(cont)")
             // A region `open` at the file's end ends at its last byte.
             .replace("read str", "last (prev(f_str) & ~f_str) | (f_str & last_byte)")
             .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block) | (f_block & last_byte)")

@@ -435,6 +435,8 @@ pub struct Lowering {
     /// The kind, the mark whose refusing levels alone check it (none: everywhere), `A`, `L`.
     pub kind_checks: Vec<(String, Option<usize>, Val, Val)>,
     pub hidden: Vec<String>,
+    /// The tokens no rule takes (`untaken K`), `any` and `balanced` neither: the lexer's errors.
+    pub untaken_kinds: Vec<String>,
     /// Each `check`: a token kind and its grammar over the token's bytes.
     pub checks: Vec<(String, ::bitlex::syntax::Gram)>,
     /// Each `toggle(x)`: its value and `x`'s, the modes tier 2's states are read in
@@ -594,6 +596,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         mark_tests: Vec::new(),
         kind_checks: Vec::new(),
         hidden: Vec::new(),
+        untaken_kinds: Vec::new(),
         checks: Vec::new(),
         toggles: Vec::new(),
         soft: Vec::new(),
@@ -1197,6 +1200,7 @@ impl Lowering {
                     self.hidden.extend(kinds.iter().cloned());
                     self.tree.push(stmt.clone());
                 }
+                Stmt::Untaken(kinds) => self.untaken_kinds.extend(kinds.iter().cloned()),
                 Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next, drops, loses, refuses, refuses_taken, passes } => {
                     if !passes.is_empty() {
                         self.passes.insert(self.marks.len(), passes.clone());
@@ -2262,6 +2266,56 @@ impl Lowering {
             BlockOp::Or(p, q) => self.implied(a, da, p, db, steps) || self.implied(a, da, q, db, steps),
             BlockOp::And(p, q) => self.implied(a, da, p, db, steps) && self.implied(a, da, q, db, steps),
             _ => false,
+        }
+    }
+
+    /// Whether `a` holds at a byte `b`, where the byte alone says (its classes, and what is made of them, at their
+    /// delays); `None` where it reads another byte or a state.
+    pub fn at_byte(&self, a: Val, b: u8) -> Option<bool> {
+        self.op_at_byte(a.v, i32::from(a.d), b, &mut 4096)
+    }
+
+    /// Op `o`'s bit for the byte `d` bytes before it (its delay there), where that byte is `b`.
+    fn op_at_byte(&self, o: u16, d: i32, b: u8, steps: &mut u32) -> Option<bool> {
+        if *steps == 0 {
+            return None;
+        }
+        *steps -= 1;
+        let mut f = |x: u16, d: i32| self.op_at_byte(x, d, b, steps);
+        let and = |x: Option<bool>, y: Option<bool>| match (x, y) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        };
+        match self.program.ops[usize::from(o)] {
+            BlockOp::Eq(c) if d == 0 => Some(b == c),
+            BlockOp::Class { table, bits } if d == 0 => Some(self.program.tables[usize::from(table)].member(b, bits)),
+            BlockOp::Const(0) => Some(false),
+            BlockOp::Const(u64::MAX) => Some(true),
+            BlockOp::Prev(p, k) => f(p, d - i32::from(k)),
+            BlockOp::Early(p, k) => f(p, d + i32::from(k)),
+            BlockOp::Not(p) => f(p, d).map(|v| !v),
+            BlockOp::And(p, q) => {
+                let x = f(p, d);
+                and(x, f(q, d))
+            }
+            BlockOp::AndNot(p, q) => {
+                let x = f(p, d);
+                and(x, f(q, d).map(|v| !v))
+            }
+            BlockOp::Or(p, q) => {
+                let x = f(p, d);
+                match (x, f(q, d)) {
+                    (Some(true), _) | (_, Some(true)) => Some(true),
+                    (Some(false), Some(false)) => Some(false),
+                    _ => None,
+                }
+            }
+            BlockOp::Xor(p, q) => {
+                let x = f(p, d)?;
+                Some(x ^ f(q, d)?)
+            }
+            _ => None,
         }
     }
 
@@ -3707,7 +3761,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         tokens.retain(|t| !low.marks.iter().any(|m| &m.0 == t) && !low.extra.contains(t));
         // A region's `open K` (`Region::open`): `K` is the lexer's error token, which `any` and
         // `balanced` take no more than a rule does, as the lean parser fails at a `Bad` there.
-        tokens.retain(|t| !low.region_kinds.iter().any(|r| r.open.as_ref() == Some(t)));
+        tokens.retain(|t| !low.region_kinds.iter().any(|r| r.open.as_ref() == Some(t)) && !low.untaken_kinds.contains(t));
         let reading = |name: &str| reading_names.iter().position(|r| r == name).map(|r| r as u16).ok_or_else(|| format!("reread {name}: no reading of that name"));
         let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token, tokens: &tokens, reading: &reading, marks: &mark_kinds };
         let machine = grammar::build_shaped(&low.tree, &ids, false)?;
@@ -4921,6 +4975,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // Each rule's token tests (`Records::checks`), by their index in `low.token_escapes`: a rule
     // with tests is its kind's alone.
     let mut rule_tests: Vec<Vec<usize>> = Vec::new();
+    // Each rule's first bytes so far, and whether their kinds' tokens are one byte (`pair empty`).
+    let mut rule_bytes: Vec<Vec<(u8, bool)>> = Vec::new();
     let mut readers: Vec<crate::records::Reader> = Vec::new();
     let mut reader_starts: Vec<(usize, Val)> = Vec::new();
     let mut nexts: Vec<crate::records::PairTable> = Vec::new();
@@ -4943,12 +4999,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         };
         // A byte whose kinds have pairs (`pair P`): the kind's rule, its pairs' table
         // (`EndRule::Next`), one for all its first bytes, as a lexer's table of tokens.
-        let mut next_of = |low: &Lowering, rows: &[usize], _b: usize, nexts: &mut Vec<crate::records::PairTable>| -> Option<crate::records::EndRule> {
+        // A kind of no pairs (`pair empty`) takes a table of pairs whose first bytes its byte is none of, as the lean
+        // lexer's `TOKEN` holds a byte no pair starts (`BAD`) beside the punctuation (decision 0655 step 11).
+        let mut next_of = |low: &Lowering, rows: &[usize], b: usize, nexts: &mut Vec<crate::records::PairTable>| -> Option<crate::records::EndRule> {
             let pairs = low.token_pairs.get(&token_rows[*rows.first()?].0)?;
             if rows.iter().any(|&r| low.token_pairs.get(&token_rows[r].0) != Some(pairs)) {
                 return None;
             }
+            let beside = (0..nexts.len()).find(|&t| pairs.is_empty() && !tabled[t].is_empty() && nexts[t].row[b] == 0 && !nexts[t].thirds.iter().any(|x| usize::from(x[0]) == b));
             let at = match tabled.iter().position(|x| x == pairs) {
+                _ if beside.is_some() => beside?,
                 Some(at) => at,
                 None => {
                     let thirds = pairs.iter().filter(|p| p.len() == 3).map(|p| [p[0], p[1], p[2]]).collect();
@@ -4973,6 +5033,13 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             };
             Some(crate::records::EndRule::Next(at as u16))
         };
+        // The tables of pairs first, in their first bytes' order: a kind of none takes one beside them.
+        for b in 0..256usize {
+            let these: Vec<usize> = (0..rows.len()).filter(|&r| !low.inside.get(r).copied().unwrap_or(false) && rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
+            if these.iter().any(|&r| low.token_pairs.get(&token_rows[r].0).is_some_and(|p| !p.is_empty())) {
+                let _ = next_of(low, &these, b, &mut nexts);
+            }
+        }
         for (b, end) in ends.iter_mut().enumerate() {
             // A row read inside a region (`inside`) its reader starts: no byte's rule.
             let these: Vec<usize> = (0..rows.len()).filter(|&r| !low.inside.get(r).copied().unwrap_or(false) && rows[r].first[b / 64] >> (b % 64) & 1 == 1).collect();
@@ -5144,14 +5211,35 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             if escapes && these.iter().any(|&r| tests.iter().any(|&i| token_rows[r].0 != low.token_escapes[i].0)) {
                 return Err(format!("a token test of `{}`: another kind's tokens start at byte {b:#x} too", low.token_escapes[tests[0]].0));
             }
-            let at = match rules.iter().zip(&rule_tests).position(|(&x, t)| x == rule && *t == tests) {
-                Some(at) => at,
+            // A pair table's rule is one for the kinds of one byte (`pair empty`) beside its pairs' kind, as the lean
+            // lexer's `TOKEN` holds `BAD` beside the punctuation (decision 0655 step 11): where a test one of them
+            // has not cannot hold at the other's tokens, each one byte, by that byte alone. Its tests are both's.
+            let one = these.iter().all(|&r| low.token_pairs.get(&token_rows[r].0).is_some_and(Vec::is_empty));
+            rule_bytes.resize(rules.len(), Vec::new());
+            let none_at = |i: usize, b: u8| low.token_escapes[i].3 >= 1 && low.at_byte(low.token_escapes[i].2, b) == Some(false);
+            let joins = |k: usize| {
+                matches!(rule, crate::records::EndRule::Next(_))
+                    && rules[k] == rule
+                    && rule_tests[k].iter().filter(|i| !tests.contains(i)).all(|&i| one && none_at(i, b as u8))
+                    && tests.iter().filter(|i| !rule_tests[k].contains(i)).all(|&i| rule_bytes[k].iter().all(|&(x, o)| o && none_at(i, x)))
+            };
+            let at = match (0..rules.len()).find(|&k| (rules[k] == rule && rule_tests[k] == tests) || joins(k)) {
+                Some(at) => {
+                    let mut both = rule_tests[at].clone();
+                    both.extend(tests.iter().filter(|i| !rule_tests[at].contains(i)));
+                    both.sort_unstable();
+                    rule_tests[at] = both;
+                    at
+                }
                 None => {
                     rules.push(rule);
                     rule_tests.push(tests);
+                    rule_bytes.push(Vec::new());
                     rules.len() - 1
                 }
             };
+            rule_bytes.resize(rules.len(), Vec::new());
+            rule_bytes[at].push((b as u8, one));
             *end = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
         }
     }

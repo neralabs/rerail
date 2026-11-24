@@ -92,13 +92,13 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
             let (pick, kind1, word1) = TOKEN[usize::from(src[s])];
             let (l, kind, extra, word): (usize, u32, bool, u32) = match pick {
                 // `/`
-                12 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/')))) => {
+                13 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'/')))) => {
                     // `comment`: read line | block
                     let l = micro::find(&src[..n], s + 1, b'\n').unwrap_or(n) - 1;
                     let l = l.max(s);
                     (l, 0, true, 0)
                 },
-                12 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'*')))) => {
+                13 if (((src[s] == b'/') && (s + 1 < n && (src[s + 1] == b'*')))) => {
                     // `comment`: read line | block
                     let mut open_bad = false;
                     let l = match micro::find_pair(&src[..n], s, b'*', b'/').map(|a| a + 1) {
@@ -112,7 +112,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     (l, 0, !open_bad, 0)
                 },
                 // ```
-                15 if (((src[s] == b'`') && !(s + 1 < n && (src[s + 1] == b'`')))) => {
+                16 if (((src[s] == b'`') && !(s + 1 < n && (src[s + 1] == b'`')))) => {
                     // `code_literal`: read t1 | t2 | t3
                     let mut open_bad = false;
                     let l = match micro::find(&src[..n], s + 1, b'`') {
@@ -125,7 +125,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     let l = l.max(s);
                     (l, if open_bad { 0 } else { u32::from(kind1) }, false, 0)
                 },
-                15 if ((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && !(s + 2 < n && (src[s + 2] == b'`')))) => {
+                16 if ((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && !(s + 2 < n && (src[s + 2] == b'`')))) => {
                     // `code_literal`: read t1 | t2 | t3
                     let l = match micro::find_pair(&src[..n], s + 1, b'`', b'`') {
                         Some(c) => c + 1,
@@ -136,7 +136,7 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     let l = l.max(s);
                     (l, u32::from(kind1), false, 0)
                 },
-                15 if (((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && (s + 2 < n && (src[s + 2] == b'`'))) && !(s + 3 < n && (src[s + 3] == b'`')))) => {
+                16 if (((((src[s] == b'`') && (s + 1 < n && (src[s + 1] == b'`'))) && (s + 2 < n && (src[s + 2] == b'`'))) && !(s + 3 < n && (src[s + 3] == b'`')))) => {
                     // `code_literal`: read t1 | t2 | t3
                     let mut open_bad = false;
                     let l = match find_fence(&src[..n], s + 1, &[b'`', b'`', b'`']) {
@@ -186,15 +186,15 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     }
                     (l, u32::from(kind1), false, 0)
                 },
-                6 | 12 => {
+                6 | 13 => {
                     // `punct`: pair
                     let l = s + (k_pair_6 >> (s - base) & 1) as usize;
                     let l = l.max(s);
                     (l, u32::from(kind1), false, u32::from(TOKEN[usize::from(src[s]) | (l - s) << 8 | ((l - s) & usize::from(src[s + 1] == b':')) << 9].2))
                 },
-                7 => {
-                    // `bad`: run other
-                    let l = { let mut l = s; while (l + 1 < n && matches!(src[l + 1], 0x00..=0x08 | 0x0b | 0x0e..=0x1f | b'$' | b'\'' | b'?' | b'\\' | 0x7f..=0xff)) { l += 1; } l };
+                8 => {
+                    // `bad_char`: run cont
+                    let l = { let mut l = s; while (l + 1 < n && matches!(src[l + 1], 0x80..=0xbf)) { l += 1; } l };
                     let l = l.max(s);
                     (l, u32::from(kind1), false, 0)
                 },
@@ -344,20 +344,16 @@ fn u_ok(src: &[u8], n: usize, i: usize) -> bool {
     ((u_four(src, n, i) && (i < n && !(i + 1 < n && (src[i + 1] == b'{')))) || ((i + 1 < n && (src[i + 1] == b'{')) && (((b_short(src, n, i) || b_four(src, n, i)) || b_five(src, n, i)) || b_six(src, n, i))))
 }
 
-/// `ws`: its bits in the classes' nibble tables, pair 0.
+/// `ws`: its bits in the classes' nibble tables.
 const WS: u8 = 0x03;
-/// `word`: its bits in the classes' nibble tables, pair 0.
-const WORD: u8 = 0x3c;
-/// `rare`: its bits in the classes' nibble tables, pair 1.
-const RARE: u8 = 0x7f;
-/// The classes' nibble tables, pair 0 (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s
+/// `rare`: its bits in the classes' nibble tables.
+const RARE: u8 = 0x1c;
+/// `word`: its bits in the classes' nibble tables.
+const WORD: u8 = 0xe8;
+/// The classes' nibble tables (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s
 /// high and low nibbles.
-static LO_A: [u8; 16] = [0x36, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3d, 0x39, 0x08, 0x09, 0x09, 0x08, 0x18];
-static HI_A: [u8; 16] = [0x01, 0x00, 0x02, 0x04, 0x08, 0x34, 0x08, 0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-/// The classes' nibble tables, pair 1 (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s
-/// high and low nibbles.
-static LO_B: [u8; 16] = [0x2b, 0x0b, 0x0f, 0x0f, 0x0f, 0x0b, 0x0b, 0x0f, 0x0b, 0x0a, 0x02, 0x03, 0x12, 0x02, 0x03, 0x4f];
-static HI_B: [u8; 16] = [0x65, 0x7f, 0x44, 0x6c, 0x00, 0x10, 0x20, 0x40, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f, 0x7f];
+static LO: [u8; 16] = [0xda, 0xe8, 0xec, 0xec, 0xe8, 0xe8, 0xe8, 0xe8, 0xe8, 0xe9, 0xe1, 0x20, 0x21, 0x21, 0x20, 0x64];
+static HI: [u8; 16] = [0x01, 0x00, 0x06, 0x18, 0x20, 0xc0, 0x30, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// `pair_6`'s pairs (`:-`, `=>`, `!=`, `<=`, `<:`, `>=`, `->`): a first byte's bits the pairs it starts, a second's those it ends.
 static PAIR_6_0_FIRST: ([u8; 16], [u8; 16]) = ([0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x18, 0x42, 0x20, 0x00], [0x00, 0x00, 0x44, 0x3b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
@@ -376,34 +372,46 @@ unsafe fn block_classes<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, base: u
     unsafe {
         let v = S::load(block);
         let d = S::shift_in(v, src[base + 64]);
-        let c0 = S::classify(v, &LO_A, &HI_A);
-        let c1 = S::classify(v, &LO_B, &HI_B);
-        [S::to_bitmask(S::test(c0, S::splat(WS))) & lv, S::to_bitmask(S::test(c0, S::splat(WORD))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv, S::to_bitmask(S::test(c1, S::splat(RARE))) & lv]
+        let c = S::classify(v, &LO, &HI);
+        [S::to_bitmask(S::test(c, S::splat(WS))) & lv, S::to_bitmask(S::test(c, S::splat(WORD))) & lv, S::to_bitmask(S::test(S::classify(v, &PAIR_6_0_FIRST.0, &PAIR_6_0_FIRST.1), S::classify(d, &PAIR_6_0_SECOND.0, &PAIR_6_0_SECOND.1))) & lv, S::to_bitmask(S::or(S::test(c, S::splat(RARE)), S::ge(v, 0x80))) & lv]
     }
 }
 
 
 /// Each byte's pick as a token's first byte, its record kind, and the code of the word it is alone (the lean lexer's
-/// `TOKEN`): the token's row where the byte picks one, else 8 and its group's index, whose tests pick it; `u8::MAX`,
+/// `TOKEN`): the token's row where the byte picks one, else 9 and its group's index, whose tests pick it; `u8::MAX`,
 /// none. A pair's at `256 + c`, `c` its first byte, its code its word's (`+ 512` where its second byte picks it).
 static TOKEN: [(u8, u8, u8); 1024] = {
-    let mut t = [(7, 0, 0); 1024];
+    let mut t = [(8, 0, 0); 1024];
+    let mut c = 0x00 as usize;
+    while c <= 0x08 as usize {
+        t[c] = (7, 0, 0);
+        c += 1;
+    }
     let mut c = 0x09 as usize;
     while c <= b'\n' as usize {
         t[c] = (255, 0, 0);
         c += 1;
     }
+    t[0x0b as usize] = (7, 0, 0);
     let mut c = 0x0c as usize;
     while c <= 0x0d as usize {
         t[c] = (255, 0, 0);
+        c += 1;
+    }
+    let mut c = 0x0e as usize;
+    while c <= 0x1f as usize {
+        t[c] = (7, 0, 0);
         c += 1;
     }
     t[b' ' as usize] = (255, 0, 0);
     t[b'!' as usize] = (6, 0, 19);
     t[b'"' as usize] = (0, 4, 0);
     t[b'#' as usize] = (3, 1, 0);
+    t[b'$' as usize] = (7, 0, 0);
     t[b'%' as usize] = (6, 0, 30);
     t[b'&' as usize] = (6, 0, 33);
+    t[b'\'' as usize] = (7, 0, 0);
     t[b'(' as usize] = (6, 0, 10);
     t[b')' as usize] = (6, 0, 11);
     t[b'*' as usize] = (6, 0, 24);
@@ -411,7 +419,7 @@ static TOKEN: [(u8, u8, u8); 1024] = {
     t[b',' as usize] = (6, 0, 12);
     t[b'-' as usize] = (6, 0, 27);
     t[b'.' as usize] = (6, 0, 13);
-    t[b'/' as usize] = (12, 0, 29);
+    t[b'/' as usize] = (13, 0, 29);
     let mut c = b'0' as usize;
     while c <= b'9' as usize {
         t[c] = (5, 3, 0);
@@ -422,6 +430,7 @@ static TOKEN: [(u8, u8, u8); 1024] = {
     t[b'<' as usize] = (6, 0, 17);
     t[b'=' as usize] = (6, 0, 16);
     t[b'>' as usize] = (6, 0, 18);
+    t[b'?' as usize] = (7, 0, 0);
     t[b'@' as usize] = (6, 0, 23);
     let mut c = b'A' as usize;
     while c <= b'Z' as usize {
@@ -429,10 +438,11 @@ static TOKEN: [(u8, u8, u8); 1024] = {
         c += 1;
     }
     t[b'[' as usize] = (6, 0, 25);
+    t[b'\\' as usize] = (7, 0, 0);
     t[b']' as usize] = (6, 0, 26);
     t[b'^' as usize] = (6, 0, 32);
     t[b'_' as usize] = (4, 5, 59);
-    t[b'`' as usize] = (15, 2, 0);
+    t[b'`' as usize] = (16, 2, 0);
     let mut c = b'a' as usize;
     while c <= b'z' as usize {
         t[c] = (4, 5, 0);
@@ -442,6 +452,7 @@ static TOKEN: [(u8, u8, u8); 1024] = {
     t[b'|' as usize] = (6, 0, 22);
     t[b'}' as usize] = (6, 0, 21);
     t[b'~' as usize] = (6, 0, 31);
+    t[0x7f as usize] = (7, 0, 0);
     t[256 + b'!' as usize] = (6, 0, 5);
     t[256 + b'-' as usize] = (6, 0, 9);
     t[256 + b':' as usize] = (6, 0, 3);

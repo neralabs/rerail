@@ -37,8 +37,11 @@ class lf        = '\n'
 class slash     = '/'
 class star      = '*'
 class hash      = '#'
-# The bytes no token begins with, outside the regions: the lean lexer's `bad input`, each its own `Bad` token.
-class other     = 0x00..0x08 0x0b 0x0e..0x1f '$' '\'' '?' '\\' 0x7f..0xff
+# The bytes no token begins with, outside the regions: the lean lexer's `bad input`, each its own `Bad` token,
+# a character of more bytes one (its lead byte and the bytes that continue it).
+class junk      = 0x00..0x08 0x0b 0x0e..0x1f '$' '\'' '?' '\\' 0x7f
+class high      = 0x80..0xff
+class cont      = 0x80..0xbf
 class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
 class alpha     = 'a'..'z' 'A'..'Z' '_'
 class digit     = '0'..'9'
@@ -205,10 +208,11 @@ mask p          = code & punct & ~f_dot
 mask p_start    = p & ~second
 mask p_last     = (p_start & ~two_start) | second
 
-# A byte no token begins with: a run of them is one `bad` token, as the lean lexer's `Bad`s (one a
-# character), which no state takes: its statement recovers. No word begins with one: the loop's
-# main run is a word's (`main_run`), not this one.
-mask bad_first  = code & other & ~prev(code & other)
+# A byte no token begins with: each its own `bad` token, as the lean lexer's `Bad`, and a character
+# of more bytes one (`bad_char`): from its lead byte, or a byte that continues none, through the
+# bytes that continue it. No state takes either: its statement recovers.
+mask bad_first  = code & junk
+mask char_first = code & high & ~(cont & prev(code & high))
 
 # A token ended by a rule (`run`, `pair`) ends at its start on the CPU, by its run or its pair
 # bit (decision 0177); the others by their last byte's mask. The rules read no `code`: the token
@@ -227,7 +231,8 @@ assume "a `/*` at a start opens a block comment" at starts o_block = block_open
 assume "a backtick at a start opens a literal of one, two or three" at starts o_tick = tick1 | tick2 | tick3
 assume "a name starts at a letter: a start is never in a word" at starts id_first = alpha
 assume "a number starts at a digit: a start is never in a word or a float's fraction" at starts int_first = digit
-assume "a byte no token begins with starts a bad token: a bad token's run takes the ones after it" at starts bad_first = other
+assume "a byte no token begins with is a bad token of its own" at starts bad_first = junk
+assume "a byte past ASCII at a start begins a character: a character's run takes the bytes that continue it" at starts char_first = high
 assume "an operator starts at its first byte: a start is never a pair's second or a float's `.`" at starts p_start = punct
 
 # --- Tokens ------------------------------------------------------------------------------------
@@ -246,7 +251,8 @@ token number     = start int_first run num_run once dot
 # A number's check, at its token as a lexer reads it: an integer of 19 digits or more.
 escape "a number of 19 digits or more" at number when all(digit) at least 19
 token punct      = start punct & p_start pair two_start
-token bad        = start bad_first run other
+token bad        = start bad_first pair empty
+token bad_char   = start char_first run cont
 # The directives' words are words, keywords only where a statement's `.` comes before them;
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the
 # aggregates' words, `by` and `sep`, only where an aggregate can be; a `.violation`'s words
@@ -571,4 +577,7 @@ tree rr {
   implied keyed_body '}'
   hidden float_at line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens at_on comma_rule bare_functor
   extra comment
+  # The lexer's errors, a byte's and a character's: no rule takes them, nor `any`, as the lean
+  # parser fails at a `Bad` where it reads any token (its raw line's).
+  untaken bad bad_char
 }

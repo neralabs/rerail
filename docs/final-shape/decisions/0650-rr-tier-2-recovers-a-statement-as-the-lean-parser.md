@@ -206,7 +206,8 @@ lean's, byte for byte. The probe stays, as the tally of what still refuses.
 
    **The grammar.** `rr.bitlex` declares lean's `Bad` as a token, `bad`: the bytes no other token begins with,
    outside the regions (`class other`), a run of them one token (`run other`; lean's are one a character, and the
-   ERROR leaf over them is the same). No state takes it. A region kind takes `open K` (bitlex's `Region::open`): an
+   ERROR leaf over them is the same). No state takes it. (Since decision 0655 step 11, lean's: `bad` a byte, a
+   character past ASCII `bad_char`, both `untaken`.) A region kind takes `open K` (bitlex's `Region::open`): an
    opener with no closer after it anywhere in the file is a token of kind `K` to the file's last byte, as lean's
    lexer makes the rest of the file one `Bad`. The string, the block comment and the literals of one and of three
    backticks are `open bad`; the line comment ends at the file's end already, and two backticks with no closer are

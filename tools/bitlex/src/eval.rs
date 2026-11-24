@@ -63,6 +63,8 @@ pub struct TreeDecl {
     /// Each `choice`: name, supertype, alternatives.
     pub choices: Vec<(String, Option<String>, crate::syntax::Gram)>,
     pub extra: Vec<String>,
+    /// The tokens no rule takes (`untaken K`): `any` and `balanced` neither.
+    pub untaken: Vec<String>,
     /// The root spans the whole file (`node K whole`): from byte 0, and it may hold no token.
     pub whole: bool,
     /// The marks (`hidden K`) taken where the grammar can take them, skipped elsewhere.
@@ -461,6 +463,7 @@ impl<'a> Ev<'a> {
             }
             Stmt::Extra(kinds) => self.tree.get_or_insert_with(TreeDecl::default).extra.extend(kinds.iter().cloned()),
             Stmt::Hidden(kinds) => self.tree.get_or_insert_with(TreeDecl::default).hidden.extend(kinds.iter().cloned()),
+            Stmt::Untaken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untaken.extend(kinds.iter().cloned()),
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
             Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
             Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),

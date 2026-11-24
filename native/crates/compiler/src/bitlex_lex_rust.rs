@@ -5188,6 +5188,8 @@ impl Gen<'_> {
                     }
                 }
                 Some(TokenRule::RunOnce(r, d)) => (format!("run {} once {}", show(r), show(d)), format!("run_once_last(&{}, &{}, s)", self.val(r)?, self.val(d)?)),
+                // `pair empty`: no byte pairs, the token its first byte.
+                Some(TokenRule::Pair(Expr::Empty)) => ("one byte".to_owned(), "s".to_owned()),
                 Some(TokenRule::Pair(p)) => (format!("pair {}", show(p)), format!("s + usize::from(bit(&{}, s))", self.val(p)?)),
                 Some(TokenRule::Pairs { pairs, .. }) => {
                     let f = format!("pair_{row}");
@@ -5314,7 +5316,7 @@ impl Gen<'_> {
                 Some(TokenRule::Run(r)) if l == format!("run_last(&{}, s)", self.val(r)?) => Some(format!("run {}", self.val(r)?)),
                 Some(TokenRule::Pairs { .. }) if l == format!("pair_{row}(src, s)") && pair_rows.iter().any(|(f, _)| *f == format!("pair_{row}")) => Some(format!("pairs pair_{row}")),
                 Some(TokenRule::Pair(p)) if l == format!("s + usize::from(bit(&{}, s))", self.val(p)?) => Some(format!("pair {}", self.val(p)?)),
-                None if l == "s" => Some("one".to_owned()),
+                None | Some(TokenRule::Pair(Expr::Empty)) if l == "s" => Some("one".to_owned()),
                 _ => None,
             };
             // Its kind's extra bits; its marks' token tests.
@@ -6086,7 +6088,10 @@ impl Gen<'_> {
             if !asking || [&token_read, &own_code, &gap_tested, &acc_after].iter().any(|c| !c.trim().is_empty()) || !plain_decl_text.is_empty() || !fw_decl.is_empty() || !span_after.is_empty() || !fields.is_empty() {
                 return None;
             }
-            let mut common: Vec<bool> = row_arms.iter().enumerate().map(|(i, a)| row_shapes[i].is_some() && !row_ids[i].1 && a.bits == 0 && a.word && !a.open && a.resume.is_none() && a.starts.is_empty()).collect();
+            // A row of one byte that records no word is common too, where none of its bytes is a word alone: the load's
+            // word is none at them (the lean lexer's `BAD` of one byte, by its `TOKEN`).
+            let wordless = |i: usize| row_shapes[i].as_deref() == Some("one") && (0..256).all(|c| !row_arms[i].first[c] || !x.words.iter().any(|w| w.as_slice() == [c as u8]));
+            let mut common: Vec<bool> = row_arms.iter().enumerate().map(|(i, a)| row_shapes[i].is_some() && !row_ids[i].1 && a.bits == 0 && (a.word || wordless(i)) && !a.open && a.resume.is_none() && a.starts.is_empty()).collect();
             // One run's mask; one pairs' rule, else one-byte rows.
             // A word's run holds its first byte.
             let run = (0..common.len()).find(|&i| common[i] && row_shapes[i].as_deref().is_some_and(|s| s.starts_with("run ")) && (0..256).all(|c| !row_arms[i].first[c] || row_arms[i].tail[c]))?;
@@ -6094,7 +6099,7 @@ impl Gen<'_> {
             let pair = (0..common.len()).find(|&i| common[i] && row_shapes[i].as_deref().is_some_and(|s| s.starts_with("pair")));
             for i in 0..common.len() {
                 let s = row_shapes[i].as_deref().unwrap_or_default();
-                if common[i] && ((s.starts_with("run ") && i != run) || (s.starts_with("pair") && Some(i) != pair) || (s == "one" && pair.is_some())) {
+                if common[i] && ((s.starts_with("run ") && i != run) || (s.starts_with("pair") && Some(i) != pair) || (s == "one" && pair.is_some_and(|p| (0..256).any(|c| row_arms[i].first[c] && row_arms[p].first[c])))) {
                     common[i] = false;
                 }
             }

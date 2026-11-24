@@ -264,3 +264,31 @@ the engine's and lean's (and lean's on edited files), the unpadded program's; JS
   escape, decision 0177). It was said to be a byte no token begins with, which no byte is: `bad` takes them.
 
 Tests: the rr suite, the eight corpus tests; JSON's and Kotlin's suites; clippy.
+
+## Step 11: lean's `Bad`, a byte or a character, and one pair of class tables (done)
+
+- **`bad` a byte, a character past ASCII one token**, as the lean lexer's `Bad`: `token bad = start bad_first pair
+  empty` (a byte no token begins with, `class junk`) and `token bad_char = start char_first run cont` (a lead byte,
+  or a byte that continues none, through the bytes that continue it). They were one token, a run of `other`, which
+  lean's lexer never makes: it writes a `Bad` a byte, and a character's bytes one.
+- **A junk byte is a common token, its kind by the load**, as lean's `TOKEN` gives a byte no token begins with
+  `(BAD, 1)`: a row of one byte that records no word joins the common path (`wordless`), beside the operators,
+  where no pair starts at its bytes. `pair empty` is a one-byte row's shape, `s`. The rare match has no `bad` arm.
+- **One pair table and one end rule for both**: a kind of no pairs takes the pairs' table where its byte starts
+  none (`next_of`), and its rule is the pairs' rule where each test one of them has not cannot hold at the other's
+  tokens, each one byte, by that byte alone (`Lowering::at_byte`, a mask at a byte where the byte alone says, at
+  its delays). `punct`'s `-` test holds at no junk byte. The records' fused pair rule is the lean `TOKEN`'s: the
+  operators and the bad bytes.
+- **`untaken K …`** (Bitlex, `03-bitlex.md`): the lexer's errors, which `any` and `balanced` take no more than a
+  rule, as a region's `open K` already was. `bad_char` is one, so a raw line holding a character past ASCII
+  recovers, as the lean parser's `raw_line` fails at a `Bad`; tier 2 is as it was (`bad_char`'s record kind is
+  `bad`'s, no switch telling them apart).
+- **One pair of class tables**, the lean lexer's `LO`, `HI`: rare is now lean's own, `" # / \``, the digits, and
+  the bytes past ASCII by a compare (`S::or(S::test(c, S::splat(RARE)), S::ge(v, 0x80))`, lean's `ge(x, 0xc0)`:
+  ours takes a byte that continues no character too). A class shares a bit already packed whose bytes are all its
+  own, and its new bits cover only what the shared ones leave; the smaller classes are packed first, so `word`
+  shares rare's digits. `ws` two bits, rare three, `word` three more: eight.
+
+Tests: `tier1_reads_leans_bad_tokens` over the cases, among them a run of junk and characters and both in a raw
+line, each read as lean's tape by the interpreter, the JIT and the one machine; the rr suite, the eight corpus tests;
+JSON's and Kotlin's suites (their Rust unchanged); Bitlex's own; clippy.

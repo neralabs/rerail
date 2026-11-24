@@ -842,6 +842,10 @@ pub enum Stmt {
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
     Hidden(Vec<String>),
+    /// `untaken KIND …` (in a tree): tokens no rule takes, the lexer's errors, as a region's `open K`
+    /// is: `any` and `balanced` take them no more than a rule does, as the lean parser fails at a
+    /// `Bad` where it reads any token.
+    Untaken(Vec<String>),
     /// `refuse MARK in LEVEL …` (in a tree): a hidden mark that refuses the file between a
     /// nested level's first token and its last (`json_bad` in a JSON document's levels).
     Refuse { mark: String, levels: Vec<String> },
@@ -2284,12 +2288,16 @@ impl P {
                 }
                 Stmt::Provisional(fields)
             }
-            "extra" | "hidden" => {
+            "extra" | "hidden" | "untaken" => {
                 let mut kinds = vec![];
                 while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
                     kinds.push(self.kind()?);
                 }
-                if kw == "extra" { Stmt::Extra(kinds) } else { Stmt::Hidden(kinds) }
+                match kw.as_str() {
+                    "extra" => Stmt::Extra(kinds),
+                    "hidden" => Stmt::Hidden(kinds),
+                    _ => Stmt::Untaken(kinds),
+                }
             }
             "mark" => {
                 let kind = self.kind()?;

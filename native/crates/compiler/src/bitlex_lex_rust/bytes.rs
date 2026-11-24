@@ -683,13 +683,23 @@ impl<'a> Bytes<'a> {
             }
             let mut packs: Vec<Vec<(u16, u16)>> = Vec::new();
             let mut named: Vec<(String, usize, u8)> = Vec::new();
+            // A class of every byte past ASCII and some ASCII ones: the ASCII ones its bits, the others a compare, as
+            // lean's `rare` (`S::ge(x, 0xc0)`).
+            let mut high: Vec<String> = Vec::new();
+            // The smaller classes first, by their ASCII bytes: a larger one shares their bits where it holds them.
+            sets.sort_by_key(|(_, set)| set[..0x80].iter().filter(|&&b| b).count());
             for (c, set) in &sets {
                 let bytes: Vec<usize> = (0..256).filter(|&b| set[b]).collect();
                 if let [b] = bytes.as_slice() {
                     self.class_code.insert(c.clone(), format!("S::eq_mask(v, {b:#04x})"));
                     continue;
                 }
-                let (p, bits) = cover(&mut packs, set)?;
+                let mut set = *set;
+                if (0x80..256).all(|b| set[b]) && (0..0x80).any(|b| set[b]) {
+                    (0x80..256).for_each(|b| set[b] = false);
+                    high.push(c.clone());
+                }
+                let (p, bits) = cover(&mut packs, &set)?;
                 named.push((c.clone(), p, bits));
             }
             let one = packs.len() == 1;
@@ -699,7 +709,9 @@ impl<'a> Bytes<'a> {
             for (c, p, bits) in &named {
                 let k = c.to_uppercase();
                 let _ = writeln!(text, "/// `{c}`: its bits in the classes' nibble tables{}.\nconst {k}: u8 = {bits:#04x};", if one { String::new() } else { format!(", pair {p}") });
-                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test({}, S::splat({k})))", c_n(*p).2));
+                let test = format!("S::test({}, S::splat({k}))", c_n(*p).2);
+                let test = if high.contains(c) { format!("S::or({test}, S::ge(v, 0x80))") } else { test };
+                self.class_code.insert(c.clone(), format!("S::to_bitmask({test})"));
             }
             let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
             let mut heads = String::new();
@@ -1556,51 +1568,51 @@ fn class_set(ranges: &[(u32, u32)]) -> [bool; 256] {
 }
 
 /// Class `set`'s bits in the first of `packs` (nibble tables' pairs, eight bits each) with room: the bits already
-/// there whose bytes are all `set`'s, and new ones for the rest, each a set of high nibbles times a set of low ones
-/// widened over `set` (a bit may hold bytes another bit holds). Its pair and bits; none past eight bits.
+/// there whose bytes are all `set`'s, and new ones for the bytes they leave, each a set of high nibbles times a set of
+/// low ones widened over `set` (a bit may hold bytes another bit holds). Its pair and bits; none past eight bits.
 fn cover(packs: &mut Vec<Vec<(u16, u16)>>, set: &[bool; 256]) -> Option<(usize, u8)> {
     let at = |h: usize, l: usize| set[h << 4 | l];
     let inside = |r: &(u16, u16)| (0..16).all(|h| r.0 >> h & 1 == 0 || (0..16).all(|l| r.1 >> l & 1 == 0 || at(h, l)));
     let holds = |r: &(u16, u16), b: usize| r.0 >> (b >> 4) & 1 == 1 && r.1 >> (b & 15) & 1 == 1;
-    // Its bytes a high nibble at a time, the high nibbles with the same low ones one bit, each widened: every high
-    // nibble whose bytes at its low ones are all the class's, then every low one at all of them.
-    let mut rects: Vec<(u16, u16)> = Vec::new();
-    for h in 0..16 {
-        let lows = (0..16).filter(|&l| at(h, l)).fold(0u16, |m, l| m | 1 << l);
-        if lows == 0 {
-            continue;
+    // The new bits for the bytes `left`: a high nibble at a time, the high nibbles with the same low ones one bit, each
+    // widened: every high nibble whose bytes at its low ones are all the class's, then every low one at all of them.
+    let rects_of = |left: &[bool; 256]| {
+        let mut rects: Vec<(u16, u16)> = Vec::new();
+        for h in 0..16 {
+            let lows = (0..16).filter(|&l| left[h << 4 | l]).fold(0u16, |m, l| m | 1 << l);
+            if lows == 0 {
+                continue;
+            }
+            let hs = (0..16).filter(|&g| (0..16).all(|l| lows >> l & 1 == 0 || at(g, l))).fold(0u16, |m, g| m | 1 << g);
+            let ls = (0..16).filter(|&l| (0..16).all(|g| hs >> g & 1 == 0 || at(g, l))).fold(0u16, |m, l| m | 1 << l);
+            if !rects.contains(&(hs, ls)) {
+                rects.push((hs, ls));
+            }
         }
-        let hs = (0..16).filter(|&g| (0..16).all(|l| lows >> l & 1 == 0 || at(g, l))).fold(0u16, |m, g| m | 1 << g);
-        let ls = (0..16).filter(|&l| (0..16).all(|g| hs >> g & 1 == 0 || at(g, l))).fold(0u16, |m, l| m | 1 << l);
-        if !rects.contains(&(hs, ls)) {
-            rects.push((hs, ls));
+        // None whose bytes `left` holds the others hold all of.
+        let mut i = 0;
+        while i < rects.len() {
+            let r = rects[i];
+            if (0..256).all(|b| !holds(&r, b) || !left[b] || rects.iter().enumerate().any(|(j, o)| j != i && holds(o, b))) {
+                rects.remove(i);
+            } else {
+                i += 1;
+            }
         }
-    }
-    // None a byte the others hold all of.
-    let mut i = 0;
-    while i < rects.len() {
-        let r = rects[i];
-        let others: Vec<(u16, u16)> = rects.iter().enumerate().filter(|&(j, _)| j != i).map(|(_, x)| *x).collect();
-        if (0..256).all(|b| !holds(&r, b) || others.iter().any(|o| holds(o, b))) {
-            rects.remove(i);
-        } else {
-            i += 1;
-        }
-    }
-    if rects.len() > 8 {
-        return None;
-    }
+        rects
+    };
     let plan = |p: &Vec<(u16, u16)>| {
         let reuse: Vec<usize> = (0..p.len()).filter(|&k| inside(&p[k])).collect();
-        let new: Vec<(u16, u16)> = rects.iter().filter(|r| (0..256).any(|b| holds(r, b) && !reuse.iter().any(|&k| holds(&p[k], b)))).copied().collect();
-        (reuse, new)
+        let left: [bool; 256] = std::array::from_fn(|b| set[b] && !reuse.iter().any(|&k| holds(&p[k], b)));
+        (reuse, rects_of(&left))
     };
     let p = match packs.iter().position(|p| p.len() + plan(p).1.len() <= 8) {
         Some(p) => p,
-        None => {
+        None if rects_of(set).len() <= 8 => {
             packs.push(Vec::new());
             packs.len() - 1
         }
+        None => return None,
     };
     let (reuse, new) = plan(&packs[p]);
     let mut bits = reuse.iter().fold(0u8, |m, &k| m | 1 << k);
