@@ -196,6 +196,9 @@ farm host, so it is in the slow tier.
   - Python's platform and version (`pt_shadowed`, and leg-083's one finding chain): `py_version` folds.
   No chain roots at `package_for`, `py_platform`, `py_version` or an option any more. Where a root cause is now named one step further along (a
   read-back of a located form, two documents joined), it was "reads R with no location" before.
+- With a symbol built from a file's module placed (below), the report flags 60: `er_last_def` and its aggregate
+  (`rr_agg52`) are per-file. No rule is newly flagged. `tests_corpus` is 236 of 236 and `rerail-logic` 301 of 301
+  with the segments read and the kept settings (below).
 
 - **The data layer's reference graph declares its two crossings.** `rf_own_fn` (a scope's function, defined in any
   file) and `rf_imported` (a module's from-imports, by its name) are cross-file by meaning; since 0652 the split
@@ -253,18 +256,14 @@ farm host, so it is in the slow tier.
 
 ## Left open
 
-- **React's four `p36` chains root at `sym_of`.** `sym_of(f, "react#memo")` resolves an identifier through every
-  file's `exports` (re-exports): cross-file work, keyed by names, with no position. A per-file rule that reads such a
-  relation of names stays per-file only once the cross part's rows of names are an input of the per-file part, a
-  second round of the per-file fixpoint (the two-phase design). The same holds of the docstring rules with
-  `ignore-decorators` set.
-- **Eager-resolve's `er_last_def` stays cross-file.** Its symbols are built as `cat(module, ".", name)` from
-  `er_doc(d, m)`. `cat` is not injective (`a.b` + `c` and `a` + `b.c` are one string), so a symbol does not name one
-  document, and the split cannot treat it as one. Making it per-file is a rule rewrite: key the relation by the
-  document, not the joined text.
+- **React's four `p36` chains root at `sym_of`.** `sym_of(f, "react#memo")` resolves an identifier through `symbol`
+  (`symbol(t, x, q)`: name x of target t is q, followed through every file's re-exports, opaque for a package that no
+  document is), and `target` reads every document's path (`resolve_base`). Both are cross-file and name only
+  symbols. The engine runs such work first already (decision 0083): a `.phase` program, run over the corpus to its
+  fixed point in its own fact space, whose exports (symbols, never nodes) a later program reads as
+  `<phase>__<export>`, bound like a setting (`run_constant`), so a per-file rule reading them stays per-file. The
+  route is a rule change: the tsx library's resolution (`target`, `exports`, `symbol` and what they read) as a phase
+  program exporting `symbol` and `target` (keyed by the importing file's path, not its document number), and
+  `sym_of` reading the exports. This milestone takes no rule rewrite, so it is left for the next.
 - **With `pydocstyle.ignore-decorators` set**, the docstring rules read `sym_of`'s cross-file resolution, and are
   cross-file: that is the cross-file part's own work (the position report's mechanism A), not a setting.
-- **"The settings phase never reruns" holds for its rows, not its reading.** The repository relations are read again
-  each run: the tree walk and each `package.json` (cheap, and 0660 reads a project's configuration once per run). A
-  source file's edit leaves their digest the same and misses no other file. Skipping the walk itself needs the
-  configuration files' digests kept between runs.
