@@ -892,13 +892,12 @@ should not widen it.
   runs the programs a repository's config names under `lfs.extension`. A Git older than 2.31 runs a repository's
   filter drivers in Rerail's calls, as it runs them for the person.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
-  Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
-  System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
-  (`src/setup/harness-registration.ts`). Set-up writes that path only when `SystemRoot` makes it a full path, from a
-  drive's root folder (`C:\`) or a UNC share, `cmd.exe` is there at set-up and `cmd.exe` reads each path of the entry
-  as one word, and `node` otherwise: Windows completes any other path from a current folder or drive, and a hook's
-  current folder is the repository it runs in. Set-up's look for `node` on `PATH` ends at the first entry that names
-  a server by its UNC path, which it never opens, and writes the `cmd.exe` entry there.
+  Claude Code's hooks on Windows run `cmd.exe /d /c` by its System32 path, which looks for that fallback `node.exe` on
+  `PATH` alone, never in the hook's working folder (`src/setup/harness-registration.ts`). Set-up writes that path only
+  when `SystemRoot` makes it a full path, from a drive's root folder (`C:\`) or a UNC share, `cmd.exe /d /c exit 0`
+  started there at set-up ends with exit 0, and `cmd.exe` reads each path of the entry as one word, and `node`
+  otherwise: Windows completes any other path from a current folder or drive, and a hook's current folder is the
+  repository it runs in. Set-up reads no `PATH` to choose the entry.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
   (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
