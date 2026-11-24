@@ -175,7 +175,11 @@ fn closure_is_the_reference() {
     let n = 300u32;
     ks.push(Kernel::Closure { n, off: (0..=n).map(|v| v.min(n - 1)).collect::<Vec<_>>().into(), dst: (1..n).collect::<Vec<_>>().into() });
     ks.push(Kernel::Closure { n: 0, off: vec![0].into(), dst: Vec::<u32>::new().into() });
-    check(&ks);
+    // Every closure, the chain's 300 levels too, is one launch: a work queue over their components together.
+    let s = check(&ks);
+    if gpu().is_some() {
+        assert_eq!(s.dispatches, 1);
+    }
 }
 
 #[test]

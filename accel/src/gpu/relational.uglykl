@@ -1,12 +1,12 @@
 // The gpu lane's relational kernels (decision 0098 §5, 0095 §3), in UKL (decision 0440 step C): the bit product,
-// the count table and the closure. The scans, the histogram and the zero fill are the UKL library's
-// (`rerail_gpu::library`, a queue's fill).
+// the count table and the closure. The scans and the histogram are the UKL library's (`rerail_gpu::library`).
 //
-// Every 1-D kernel runs threadgroups of 256 threads; the host dispatches whole threadgroups and each kernel checks
-// its bounds. Every loop's trip count follows from its inputs.
+// Every 1-D kernel but the closure's walk (64) runs threadgroups of 256 threads; the host dispatches whole threadgroups
+// and each kernel checks its bounds. Every loop's trip count follows from its inputs; the walk's turns are bounded.
 
 #include <ukl/backend.h>
 #include <ukl/simd.h>
+#include <ukl/workqueue.h>
 
 // Threads a threadgroup of the 1-D kernels.
 #define REL_TG 256u
@@ -209,71 +209,90 @@ DEFINE_KERNEL2(relational, ct_scatter,
   }
 }
 
-typedef struct ClosureArgs { uint32_t n; uint32_t words; } ClosureArgs;
-UKL_REFLECT_STRUCT(ClosureArgs, n, words)
+typedef struct WalkArgs { uint32_t comps; uint32_t seeds; uint32_t capacity; } WalkArgs;
+UKL_REFLECT_STRUCT(WalkArgs, comps, seeds, capacity)
 
-// Closure over the condensed graph (the spikes' W3 (b), level by level). The host finds the components (Tarjan's,
-// as the reference does), their DAG as a CSR of successor components, and each component's level (1 + the
-// highest level of its successors). On the device, R holds one bit row per component, `words` u64 words wide:
+// Closure over the condensed graph (the spikes' W3 (b)), every closure of a submission in one launch, as a work
+// queue (<ukl/workqueue.h>, decision 0540 step 6; `label_phase` is the pattern). The host finds each graph's
+// components (Tarjan's, as the reference does) and their DAG; the components of all the submission's graphs are
+// numbered together. On the device, R holds one bit row per component, `rows[2c + 1]` u32 words wide, at word
+// `rows[2c]`. An item is a component, a threadgroup an item:
 //
-// 1. cl_init: each node sets, in its component's row, its own bit when the component is cyclic, and the bit of
-//    every successor in another component (device atomics on u32 halves: the result is the same in any order);
-// 2. cl_level, once per level from 1 up: each component ORs in its successors' rows, which are final (lower levels);
-// 3. cl_gather: node v's row is its component's.
-DEFINE_KERNEL2(relational, cl_init,
-               ROBUFFER, uint32_t, off,    "[n + 1]",
-               ROBUFFER, uint32_t, dst,    "[off[n]]",
-               ROBUFFER, uint32_t, comp,   "[n]",
-               ROBUFFER, uint32_t, cyclic, "[components]",
-               RWBUFFER, uint32_t, R,      "[components * words * 2]",
-               ARGS,     ClosureArgs, args, ,
-               GID0,     uint32_t, v,      )
+// - its own bits: every node its members' edges reach outside it, and its members when it is cyclic (`tdst`);
+// - its successors' rows ORed in: they are final, as an item is pushed only when its last successor is done (read
+//   coherently: other groups wrote them);
+// - its row copied to each of its members' rows of `out` (`mout`, their words there);
+// - then each predecessor's count of successors left is taken down, and the group that takes one to zero pushes that
+//   predecessor: the continuation (its writes fenced first).
+//
+// The seeds are the components with no successor, taken from a counter. A group that finds nothing to take ends; no
+// group waits for another. The queue's capacity is the continuations and a slot a group (a take may give one up).
+//
+// `queue`: 0-3 the queue's control (head, tail, active, overflow), 4 the seeds taken; then the queue's slots.
+DEFINE_KERNEL2(relational, cl_walk,
+               RWBUFFER, uint32_t, R,       "[rows[2 * comps - 2] + rows[2 * comps - 1]]",
+               RWBUFFER, uint32_t, out,     "[out words]",
+               ROBUFFER, uint32_t, rows,    "[2 * comps]",
+               ROBUFFER, uint32_t, soff,    "[comps + 1]",
+               ROBUFFER, uint32_t, sdst,    "[soff[comps]]",
+               ROBUFFER, uint32_t, toff,    "[comps + 1]",
+               ROBUFFER, uint32_t, tdst,    "[toff[comps]]",
+               ROBUFFER, uint32_t, poff,    "[comps + 1]",
+               ROBUFFER, uint32_t, pdst,    "[poff[comps]]",
+               ROBUFFER, uint32_t, moff,    "[comps + 1]",
+               ROBUFFER, uint32_t, mout,    "[moff[comps]]",
+               ROBUFFER, uint32_t, seeds,   "[args.seeds]",
+               RWBUFFER, uint32_t, pending, "[comps]",
+               RWBUFFER, uint32_t, queue,   "[5 + capacity]",
+               ARGS,     WalkArgs, args,    ,
+               SHARED,   uint32_t, took,    2,
+               LID0,     uint32_t, lane,    ,
+               LSZ0,     uint32_t, lsz,     )
 {
-  if (v >= args.n) return;
-  const uint32_t c = comp[v];
-  UKL_GLOBAL uint32_t* row = R + (uint64_t)c * args.words * 2u;
-  if (cyclic[c] != 0u) ukl_atomic_or(&row[v / 32u], 1u << (v % 32u));
-  for (uint32_t e = off[v]; e < off[v + 1u]; e++) {
-    const uint32_t w = dst[e];
-    if (comp[w] != c) ukl_atomic_or(&row[w / 32u], 1u << (w % 32u));
+  UklWorkQueue q;
+  q.control = queue; q.slots = queue + 5u; q.capacity = args.capacity; q.ring = 0u; q.budget = 0u;
+  // Bounded: each turn does an item or ends the group.
+  for (uint32_t turn = 0u; turn < UKL_WQ_TURNS; turn++) {
+    if (lane == 0u) {
+      // A seed while any are left, else a continuation; else none (0).
+      uint32_t got = 0u, item = 0u;
+      if (ukl_atomic_poll(&queue[4]) < args.seeds) {
+        const uint32_t k = ukl_atomic_add(&queue[4], 1u);
+        if (k < args.seeds) { got = 1u; item = seeds[k]; }
+      }
+      if (got == 0u && ukl_wq_take(q, &item)) got = 2u;
+      // What the successors' groups wrote, seen after the take (each pusher's fence before its push).
+      ukl_fence_device();
+      took[0] = got; took[1] = item;
+    }
+    ukl_tg_barrier();
+    const uint32_t got = took[0], c = took[1];
+    ukl_tg_barrier();
+    if (got == 0u) return;
+    UKL_GLOBAL uint32_t* row = R + rows[2u * c];
+    const uint32_t w32 = rows[2u * c + 1u];
+    for (uint32_t e = toff[c] + lane; e < toff[c + 1u]; e += lsz) {
+      const uint32_t b = tdst[e];
+      ukl_atomic_or(&row[b / 32u], 1u << (b % 32u));
+    }
+    const uint32_t s0 = soff[c], sn = (soff[c + 1u] - s0) * w32;
+    for (uint32_t i = lane; i < sn; i += lsz) {
+      UKL_COHERENT const uint32_t* theirs = (UKL_COHERENT const uint32_t*)(R + rows[2u * sdst[s0 + i / w32]]);
+      const uint32_t v = theirs[i % w32];
+      if (v != 0u) ukl_atomic_or(&row[i % w32], v);
+    }
+    ukl_tg_barrier_device();
+    const uint32_t m0 = moff[c], mn = (moff[c + 1u] - m0) * w32;
+    UKL_COHERENT const uint32_t* mine = (UKL_COHERENT const uint32_t*)row;
+    for (uint32_t i = lane; i < mn; i += lsz) out[mout[m0 + i / w32] + i % w32] = mine[i % w32];
+    // The row's writes, then the predecessors' counts.
+    ukl_tg_barrier_device();
+    ukl_fence_device();
+    for (uint32_t e = poff[c] + lane; e < poff[c + 1u]; e += lsz) {
+      const uint32_t p = pdst[e];
+      if (ukl_atomic_sub(&pending[p], 1u) == 1u) ukl_wq_push(q, p);
+    }
+    ukl_tg_barrier_device();
+    if (lane == 0u && got == 2u) ukl_wq_done(q);
   }
-}
-
-typedef struct LevelArgs { uint32_t lo; uint32_t hi; uint32_t words; } LevelArgs;
-UKL_REFLECT_STRUCT(LevelArgs, lo, hi, words)
-
-// One SIMD group per component of the level; lanes stride over the row's words.
-DEFINE_KERNEL2(relational, cl_level,
-               RWBUFFER, uint64_t, R,     "[components * words]",
-               ROBUFFER, uint32_t, order, "[components]",
-               ROBUFFER, uint32_t, soff,  "[components + 1]",
-               ROBUFFER, uint32_t, sdst,  "[soff[components]]",
-               ARGS,     LevelArgs, args, ,
-               TGID0,    uint32_t, tg,    ,
-               LID0,     uint32_t, lid,   ,
-               LSZ0,     uint32_t, lsz,   )
-{
-  const uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, nsg = lsz / UKL_SIMD_WIDTH;
-  const uint32_t idx = args.lo + tg * nsg + sg;
-  if (idx >= args.hi) return;
-  const uint32_t c = order[idx];
-  const uint32_t s0 = soff[c], s1 = soff[c + 1u];
-  UKL_GLOBAL uint64_t* row = R + (uint64_t)c * args.words;
-  for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
-    uint64_t acc = row[w];
-    for (uint32_t k = s0; k < s1; k++) acc |= R[(uint64_t)sdst[k] * args.words + w];
-    row[w] = acc;
-  }
-}
-
-DEFINE_KERNEL2(relational, cl_gather,
-               ROBUFFER, uint64_t, R,    "[components * words]",
-               ROBUFFER, uint32_t, comp, "[n]",
-               RWBUFFER, uint64_t, out,  "[n * words]",
-               ARGS,     ClosureArgs, args, ,
-               GID0,     uint32_t, i,    )
-{
-  if (i >= args.n * args.words) return;
-  const uint32_t v = i / args.words, w = i % args.words;
-  out[i] = R[(uint64_t)comp[v] * args.words + w];
 }
