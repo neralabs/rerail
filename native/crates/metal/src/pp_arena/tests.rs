@@ -233,6 +233,36 @@ fn the_setup_is_a_program_on_a_queue() {
     assert!(2 * PP_LAUNCHES <= crate::launch::KERNEL_LAUNCH_LIMIT, "a command's launches within the limit");
 }
 
+/// A unit's runs (`runs`, `LPRUN`) are laid out as the kernel reads them: a tile's `RUN_SLOTS` slots of `RUN_BYTES`
+/// each (`pp_grid.uglykl`'s `LP_SLOTS`, `LP_RUN_BYTES`), by the loop's phase's tile, and the run fits its slot (the
+/// source's static assertion: it compiles).
+#[test]
+fn a_units_runs_are_the_kernels_slots() {
+    let src = source();
+    assert!(src.contains(&format!("#define LP_RUN_BYTES ({}u)", RUN_BYTES)), "LP_RUN_BYTES is RUN_BYTES");
+    assert!(src.contains(&format!("#define LP_SLOTS ({}u / UKL_SIMD_WIDTH)", TG)), "LP_SLOTS is TG's SIMD groups");
+    assert_eq!(RUN_SLOTS as u64, TG / 32);
+    assert!(src.contains("UKL_STATIC_ASSERT(sizeof(LpRun) <= LP_RUN_BYTES"), "the run's size is checked");
+    assert!(src.contains("lp_run_slot(AT(uint8_t, LPRUN), g.tile, g.lid)"), "a SIMD group's run by its tile");
+}
+
+/// The expansion's loops are bounded by the unit's work (`LP_UNIT_WORK`, `lp_spend`): a run that does not progress
+/// (a write lost, a piece posted again and again) is refused for work, never a launch that holds the GPU. One held
+/// for minutes restarted a Mac (2026-11-24). The two loops with no count in their heads count in their bodies: a
+/// piece's rounds, and the queue's items, each spending work.
+#[test]
+fn the_expansions_loops_are_bounded_by_the_units_work() {
+    let src = source();
+    assert!(src.contains("#define LP_UNIT_WORK ("), "the unit's work bound");
+    let forever = src.matches("for (;;)").count() + src.matches("while (true)").count() + src.matches("while (1)").count();
+    assert_eq!(forever, 2, "two loops with no count in their heads: a piece's rounds and the queue's");
+    let queue = src.split("for (;;)").nth(2).expect("the queue's loop");
+    let body = &queue[..queue.find("\n    }\n").expect("its end")];
+    assert!(body.contains("lp_spend(a, trn, LP_ITEM_WORK)"), "the queue's loop spends work per item");
+    assert!(src.contains("for (uint32_t turn = 0u; ; turn++)") && src.contains("if (turn == LP_WORK)"), "lp_lex's turns are bounded");
+    assert!(src.contains("if (++rounds >= LP_WORK"), "a piece's rounds are bounded");
+}
+
 /// The setup's Metal source splits one unit a barriered phase function (decision 0571), and one a large body called at
 /// several sites (decision 0672): the program's phases (`pp_step`, decision 0653), the stages it calls and
 /// `pp_advance`, which calls it, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and

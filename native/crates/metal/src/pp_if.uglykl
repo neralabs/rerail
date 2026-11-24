@@ -838,14 +838,17 @@ UKL_ONCE void p1_if_line(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLOBA
     uint8_t b[IF_TOKB];
     Ov look = out;
     if (group && ln != 0u) {
-        // Lane `ln` of the group: token `at + ln` of each window lane 0 asks for.
-        for (;;) {
+        // Lane `ln` of the group: token `at + ln` of each window lane 0 asks for. Lane 0 asks for one a step, each
+        // step past one token at least, then tells there are no more: `o1 - o0 + 1` turns at most (the unit's loops
+        // bounded in their heads or their bodies, decision 0613 §4).
+        for (uint32_t turn = 0u; turn <= o1 - o0; turn++) {
             ukl_sg_barrier();
             uint32_t at0 = win->at;
             if (at0 == IF_NOT_PLAIN) return;
             p1_if_slot(u, &look, at0 + ln, o1, g0, count[w], ops, s0, defined_key, true_key, true_is_one, op_keys, op_kinds, n_ops, &win->s[ln]);
             ukl_sg_barrier();
         }
+        return;
     }
     // Where lane 0 stops early (`P1_IF_*`): the group is told there are no more windows first.
     uint32_t quit = 0u;

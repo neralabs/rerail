@@ -11425,3 +11425,40 @@ Checked under Relax (RERAIL_GPU=cpu): check of accel-gpu, device, ukl and
 metal, 0 errors; ukl's target tests; rerail-metal (20 tests);
 c-directives eval::tests (50). The Metal-only tests (the G13 refusal and the
 archive reads) wait for the farm Mac run.
+
+### Q548. Roll-up 120 (Go-C-and-C-support 48de389283 onto Pulling-it-all-together): what the merge chose
+
+Go-C's three commits since roll-up 107 were written on the preprocessor's
+persistent grid (`ukl/grid.h`, teams and helpers). The hub has replaced that
+with 0653 (the setup a program of phases on a work queue). As in roll-up 107,
+their substance is replayed onto 0653's shape:
+
+- 0613 §4, a run in device memory: each SIMD group's `LpRun` is a slot of the
+  unit's runs (`LPRUN`, `pp_arena::runs`), by the loop phase's tile
+  (`lp_run_slot(.., g.tile, ..)`), no longer in the group's memory, where the
+  M3 lost its writes. A unit's runs are sized by its `TMAX` (a phase's tiles at
+  most), laid wherever `TMAX` is. A batch's units have their own, since 0653
+  has no helpers reading another unit. `IfWin` stays in group memory (the
+  hub's 0588 window, untouched by Go-C).
+- The expansion's loops bounded by the unit's work (`LP_UNIT_WORK`,
+  `lp_spend`): a piece's long runs and each queue item spend it, and past it
+  the unit is refused `X_WORK`. Go-C's grid beats and the helpers' idle polls
+  have no counterpart in 0653 and are not carried. The hub's `#if`-window
+  follower loop gets its bound (`o1 - o0 + 1` turns) in its head, as the test
+  asks.
+- 0613 §4, a hole read in a call's arguments taken whole (a27438a2d8): merged
+  as written, the run by device pointer.
+- The 4 GiB arena refusal (48de389283): merged as written.
+
+0672 (the G13) as roll-up 119 settled it: the hub's target-keyed text and AIR,
+the archive aid and `UKL_SHARED` (both the hub's own). Go-C's per-backend
+`UKL_LARGE`/`UKL_RARE` duplicates (its branch lacks 0576's) are left out, and
+`lp_rq_post` keeps the hub's `call` parameter. Tests: Go-C's
+`the_expansions_loops_are_bounded_by_the_units_work`, and its runs test as
+`a_units_runs_are_the_kernels_slots`. Its grid test is dropped, since 0653
+removed the grid.
+
+Checked under Relax (RERAIL_GPU=cpu): check of accel-gpu, device, ukl and
+metal, 0 errors. rerail-metal 22/22, rerail-ukl 16/16, rerail-c-directives
+module by module (eval 50, expand 11, pp 1, tokens 3, root 4; the whole crate
+is past the 12 GB cap). Metal not run (farm Mac, later).
