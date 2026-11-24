@@ -717,12 +717,17 @@ impl<'v> Program<'v> {
             let mut also: Vector<usize> = Vector::new();
             let mut asked = asked;
             let anchoring = Anchoring { candidate: &cover_candidate, memo: Default::default() };
+            let keyed = self.keyed(&local_now, &valueless, &placeless, &locs);
             while let Some(r) = asked.pop() {
                 if !covered_now[r as usize] {
                     continue;
                 }
                 anchoring.memo.borrow_mut().clear();
-                if self.covers(r, &local_now, &covered_now, &valueless, &placeless, &locs, &anchoring).is_err() {
+                let got = match keyed[r as usize] {
+                    Some(root) if root != r => self.covers_keyed(r, root, &keyed, &local_now, &placeless, &locs),
+                    _ => self.covers(r, &local_now, &covered_now, &valueless, &placeless, &locs, &anchoring),
+                };
+                if got.is_err() {
                     covered_now[r as usize] = false;
                     also.extend(rels.rules[r as usize].iter().copied());
                     also.extend(rels.reading(r).iter().copied());
@@ -820,6 +825,17 @@ impl<'v> Program<'v> {
         // with every input naming no document taken as placeless, still does not place one document.
         let placeless_or_input: Vec<bool> = (0..n).map(|r| placeless[r] || (!rels.is_derived(r as u32) && rels.base_locs[r].is_empty())).collect();
         let mut crossings: BTreeMap<String, String> = BTreeMap::new();
+        // Its reads of documents' rows. None: the run's inputs alone, the run's rows. One plain positive read: each row
+        // is one file's, a union (as the cross part reads the chunks' findings back). Neither is a crossing; documents
+        // meet only where a rule joins two reads of them, or aggregates one.
+        let union = |k: usize| {
+            let documents: Vec<&Lit> = forms.get(k).lits.iter().filter(|l| match l {
+                Lit::Read { rel: x, .. } => !placeless_or_input[*x as usize],
+                Lit::Ast | Lit::Nearest(..) => true,
+                Lit::Cmp | Lit::Same(..) => false,
+            }).collect();
+            matches!(documents.as_slice(), [] | [Lit::Read { neg: false, plain: true, .. }])
+        };
         for r in derived() {
             let (ru, rel) = (r as usize, self.name(r));
             if local_now[ru] || moved(rel) {
@@ -838,16 +854,7 @@ impl<'v> Program<'v> {
             for &k in &rels.rules[ru] {
                 let form = forms.get(k);
                 let reads_cross = form.lits.iter().any(|l| matches!(l, Lit::Read { rel: x, .. } if rels.is_derived(*x) && !local_now[*x as usize] && !placeless[*x as usize]));
-                // Its reads of documents' rows. None: the run's inputs alone, the run's rows. One plain positive read:
-                // each row is one file's, a union (as the cross part reads the chunks' findings back). Neither is a
-                // crossing; documents meet only where a rule joins two reads of them, or aggregates one.
-                let documents: Vec<&Lit> = form.lits.iter().filter(|l| match l {
-                    Lit::Read { rel: x, .. } => !placeless_or_input[*x as usize],
-                    Lit::Ast | Lit::Nearest(..) => true,
-                    Lit::Cmp | Lit::Same(..) => false,
-                }).collect();
-                let union = matches!(documents.as_slice(), [] | [Lit::Read { neg: false, plain: true, .. }]);
-                if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &skip, &locs, &nulls) {
+                if reads_cross || union(k) || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &skip, &locs, &nulls) {
                     continue;
                 }
                 let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &placing, &nullable).unwrap_or_else(|| "places more than one document".to_owned());
@@ -877,6 +884,139 @@ impl<'v> Program<'v> {
         let row_documents: BTreeMap<String, Vector<usize>> = derived().filter(|&r| one_row[r as usize] && real[r as usize].len() > 1).map(|r| (self.name(r).to_owned(), real[r as usize].clone())).collect();
         // The same-document columns and the rest: `finish`.
         self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, covered, cover_deps, row_documents, path_keys, ..Default::default() }, self.keys())
+    }
+
+    /// The keyed families of relations of values: by relation, its family's root. A root is a file-local relation of
+    /// one column and values alone (`brace_value(v) :- format_call(_, v)`, `num_source(t)`), its own root. A member is a
+    /// candidate view of values (`valueless`) each rule of which fills its first column with a variable `x` and reads
+    /// only its family at `x` (in its first column; positive, negated or aggregated: `brace_rest(v, r, i)`,
+    /// `!brace_bad(v)`, `count : { brace_arg(v, k, "") }`), placeless relations and comparisons, the family having one
+    /// root. A member's rows at a key follow from its root's row at that key alone, so they are the same in a chunk as
+    /// over every file wherever the chunk holds that root row (`covers_keyed`). The greatest such assignment.
+    fn keyed(&self, local_now: &[bool], valueless: &[bool], placeless: &[bool], locs: &[Vector<usize>]) -> Vec<Option<u32>> {
+        let rels = &self.rels;
+        let n = rels.n;
+        // A relation that may be a root: one that is no member is one, where it is file-local by its own rules.
+        let rootable = |r: usize| rels.is_derived(r as u32) && local_now[r] && locs[r].is_empty() && !placeless[r] && !rels.rules[r].is_empty() && self.f.width(self.name(r as u32)) == 1;
+        // `None`: not in a family; `Some(None)`: in one, its root not yet known; `Some(Some(d))`: of root `d`.
+        let mut at: Vec<Option<Option<u32>>> = (0..n).map(|r| (valueless[r] || rootable(r)).then_some(None)).collect();
+        loop {
+            let mut changed = false;
+            for r in 0..n {
+                if at[r].is_none() || at[r] == Some(Some(r as u32)) {
+                    continue;
+                }
+                // Each rule's family reads at its key, and their roots.
+                let mut roots: BTreeSet<u32> = BTreeSet::new();
+                let mut fits = true;
+                'rules: for &k in &rels.rules[r] {
+                    let rule = self.rules[k];
+                    let classes = value_classes(rule);
+                    let Some(TermRef::Var(x)) = rule.head().args().next() else {
+                        fits = false;
+                        break;
+                    };
+                    let key = classes[x.0 as usize];
+                    for l in rule.body() {
+                        let a = match l.view() {
+                            L::Atom(a) | L::Agg { atom: a, .. } => a,
+                            L::Cmp { .. } => continue,
+                            _ => {
+                                fits = false;
+                                break 'rules;
+                            }
+                        };
+                        let s = a.rel().0 as usize;
+                        if placeless[s] {
+                            continue;
+                        }
+                        let in_family = matches!(at[s], Some(_));
+                        let at_key = matches!(a.args().next(), Some(TermRef::Var(y)) if classes[y.0 as usize] == key);
+                        if !in_family || !at_key {
+                            fits = false;
+                            break 'rules;
+                        }
+                        if let Some(Some(d)) = at[s] {
+                            roots.insert(d);
+                        }
+                    }
+                }
+                // A member of the root now known (a known root is not forgotten: the reads that gave it stay); else a
+                // root of its own, or out of every family.
+                let next = if fits && roots.len() <= 1 {
+                    Some(roots.into_iter().next())
+                } else if fits || !rootable(r) {
+                    None
+                } else {
+                    Some(Some(r as u32))
+                };
+                if next != at[r] && !(next == Some(None) && at[r].is_some()) {
+                    at[r] = next;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        at.into_iter().map(|x| x.flatten()).collect()
+    }
+
+    /// Whether every reader of keyed member `r` (`keyed`, its root `root`) holds its root's row at the key it reads `r`
+    /// at (`key_held`), so the chunk derives the root's row, and `r`'s rows at that key, as over every file.
+    fn covers_keyed(&self, r: u32, root: u32, keyed: &[Option<u32>], local_now: &[bool], placeless: &[bool], locs: &[Vector<usize>]) -> Result<(), String> {
+        let mut seen = BTreeSet::new();
+        self.key_held(r, 0, root, keyed, local_now, placeless, locs, &mut seen)
+    }
+
+    /// Whether every reader of `rel` holds `root`'s row at the value it reads in `rel`'s column `col`. Each is
+    /// file-local; one in the root's family reads `rel` at its own key (`col` 0). Any other reads `rel` (plainly or
+    /// aggregated) with a variable there, and either one of the root's rules maps into it exactly at that variable
+    /// (`maps_at`: its own document holds the root's row), or its head passes the variable on (an aggregate's helper,
+    /// `rr_h_agg_…(c, v, k) :- brace_name(v, k, _, _), …`) and every reader of the head holds the root's row there in
+    /// turn. A relation met again is assumed to (its readers outside the cycle are asked); an output never does.
+    #[allow(clippy::too_many_arguments)]
+    fn key_held(&self, rel: u32, col: usize, root: u32, keyed: &[Option<u32>], local_now: &[bool], placeless: &[bool], locs: &[Vector<usize>], seen: &mut BTreeSet<(u32, usize)>) -> Result<(), String> {
+        let rels = &self.rels;
+        if !seen.insert((rel, col)) {
+            return Ok(());
+        }
+        if rels.output[rel as usize] {
+            return Err(format!("{} is an output: its key is held by no reader", self.name(rel)));
+        }
+        let columns = |x: u32| -> &[usize] { if rels.is_derived(x) { &locs[x as usize] } else { &rels.base_locs[x as usize] } };
+        let readers = rels.reading(rel);
+        if readers.is_empty() {
+            return Err(format!("{} has no readers", self.name(rel)));
+        }
+        for &j in readers {
+            let h = rels.head[j];
+            if !local_now[h as usize] {
+                return Err(format!("reader {} not local", self.name(h)));
+            }
+            // A file-local member of the family reads it at its own key.
+            if col == 0 && keyed[h as usize] == Some(root) {
+                continue;
+            }
+            let reader = self.rules[j];
+            let qc = value_classes(reader);
+            for l in reader.body() {
+                let a = match l.view() {
+                    L::Atom(a) | L::Agg { atom: a, .. } if a.rel().0 == rel => a,
+                    _ => continue,
+                };
+                let Some(TermRef::Var(x)) = a.args().nth(col) else { return Err(format!("reader reads it at no variable: {}", self.v.show_rule(reader))) };
+                let key = [Some(MapT::Var(qc[x.0 as usize]))];
+                if rels.rules[root as usize].iter().any(|&k| maps_at(self.v, self.rules[k], reader, None, &key, &[], &|x| placeless[x as usize], &columns, true)) {
+                    continue;
+                }
+                let passed: Vec<usize> = reader.head().args().enumerate().filter(|(_, t)| matches!(t, TermRef::Var(y) if qc[y.0 as usize] == qc[x.0 as usize])).map(|(c, _)| c).collect();
+                if !passed.iter().any(|&c| self.key_held(h, c, root, keyed, local_now, placeless, locs, seen).is_ok()) {
+                    return Err(format!("reader holds no row of {} at its key: {}", self.name(root), self.v.show_rule(reader)));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Whether every reader of `r` covers it (decision 0652). Each reader is a file-local rule reading `r` in a plain
@@ -963,7 +1103,13 @@ impl<'v> Program<'v> {
                         if cross_reader && !one_place(self.v, reader, r, &|x| placeless[x as usize], &columns, columns(r).iter().filter_map(|&c| args.get(c).and_then(|t| t.var()))) {
                             return Err(format!("cross-file reader places the view in two documents: {}", self.v.show_rule(reader)));
                         }
-                        if let Some(rule) = own.iter().find(|&&rule| !maps(self.v, rule, reader, at, columns(r), &|x| placeless[x as usize], &columns)) {
+                        // A rule found nowhere in the reader is covered by one found there with the same head and the same
+                        // literals beside its located reads (`same_rest`): a disjunction's branches over two reads
+                        // (`negate(a, b) :- (number(_, a, _) ; number(_, _, a)), …`). Their tests are of the head's
+                        // values alone, so where one's row is over every file the other's is in the reader's chunk.
+                        let found: Vec<bool> = own.iter().map(|&rule| maps(self.v, rule, reader, at, columns(r), &|x| placeless[x as usize], &columns)).collect();
+                        let lost = own.iter().zip(&found).find(|(rule, ok)| !**ok && !own.iter().zip(&found).any(|(other, ok)| *ok && same_rest(self.v, **rule, *other, &|x| placeless[x as usize])));
+                        if let Some((rule, _)) = lost {
                             return Err(format!("rule {} not found in reader {}", self.v.show_rule(*rule), self.v.show_rule(reader)));
                         }
                     }
@@ -1157,6 +1303,58 @@ fn value_classes(rule: RuleRef<'_>) -> Vector<u32> {
     (0..rule.var_count() as u32).map(|s| find(&mut root, s)).collect()
 }
 
+/// Whether rules `a` and `b` have the same head and the same literals beside their positive located reads, term by
+/// term with variables by name (`covers`): their tests then hold at the same head values.
+fn same_rest(v: &Version, a: RuleRef<'_>, b: RuleRef<'_>, placeless: &dyn Fn(u32) -> bool) -> bool {
+    fn term(v: &Version, ra: RuleRef<'_>, x: TermRef<'_>, rb: RuleRef<'_>, y: TermRef<'_>) -> bool {
+        match (x, y) {
+            (TermRef::Var(s), TermRef::Var(t)) => v.text(ra.var(s)) == v.text(rb.var(t)),
+            (TermRef::Wild, TermRef::Wild) => true,
+            (TermRef::Int(i), TermRef::Int(j)) => i == j,
+            (TermRef::Str(s), TermRef::Str(t)) => v.text(s) == v.text(t),
+            (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
+                let (xs, ys): (Vec<_>, Vec<_>) = (xs.collect(), ys.collect());
+                v.text(f) == v.text(g) && xs.len() == ys.len() && xs.into_iter().zip(ys).all(|(x, y)| term(v, ra, x, rb, y))
+            }
+            _ => false,
+        }
+    }
+    let rest = |r: RuleRef<'_>| -> Vec<Lit2> {
+        r.body()
+            .filter_map(|l| match l.view() {
+                L::Atom(x) if !x.neg() && !placeless(x.rel().0) => None,
+                L::Atom(x) => Some(Lit2::Atom(x.neg(), x.rel().0, x.args().count())),
+                L::Cmp { op, .. } => Some(Lit2::Cmp(op)),
+                _ => Some(Lit2::Other),
+            })
+            .collect()
+    };
+    #[derive(PartialEq)]
+    enum Lit2 {
+        Atom(bool, u32, usize),
+        Cmp(CmpOp),
+        Other,
+    }
+    fn args(x: crate::code_rule_dsl::logic::program_image::AtomRef<'_>) -> Vec<TermRef<'_>> {
+        x.args().collect()
+    }
+    if a.head().rel() != b.head().rel() || !args(a.head()).into_iter().zip(args(b.head())).all(|(x, y)| term(v, a, x, b, y)) {
+        return false;
+    }
+    let (ra, rb) = (rest(a), rest(b));
+    if ra != rb || ra.contains(&Lit2::Other) {
+        return false;
+    }
+    fn kept<'r>(r: RuleRef<'r>, placeless: &dyn Fn(u32) -> bool) -> Vec<crate::code_rule_dsl::logic::program_image::LitRef<'r>> {
+        r.body().filter(|l| !matches!(l.view(), L::Atom(x) if !x.neg() && !placeless(x.rel().0))).collect()
+    }
+    kept(a, placeless).into_iter().zip(kept(b, placeless)).all(|(x, y)| match (x.view(), y.view()) {
+        (L::Atom(x), L::Atom(y)) => args(x).into_iter().zip(args(y)).all(|(s, t)| term(v, a, s, b, t)),
+        (L::Cmp { l, r, .. }, L::Cmp { l: l2, r: r2, .. }) => term(v, a, l, b, l2) && term(v, a, r, b, r2),
+        _ => false,
+    })
+}
+
 /// Whether `rule`'s rows are found in `reader`'s at its literal `at`, a read of `rule`'s head (decision 0652).
 ///
 /// The head's location columns (`anchors`) are in the reader's document (`covers`), and so is each positive read of a
@@ -1169,34 +1367,81 @@ fn value_classes(rule: RuleRef<'_>) -> Vector<u32> {
 /// read no mapped variable but those the head fixes. A head argument the read leaves `_` fixes nothing. A class of
 /// the rule's variables may stand for several of the reader's terms: its head columns' arguments, equal in any row.
 fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anchors: &[usize], placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize]) -> bool {
-    #[derive(Clone, Copy, PartialEq)]
-    enum T {
-        Var(u32),
-        Int(i64),
-        Str(u32),
+    let qc = value_classes(reader);
+    let Some(L::Atom(read)) = reader.body().nth(at).map(|l| l.view()) else { return false };
+    let head: Vec<Option<MapT>> = read.args().map(|u| MapT::of(&qc, u)).collect();
+    maps_at(v, rule, reader, Some(at), &head, anchors, placeless, columns, false)
+}
+
+/// A term of a reader as `maps` binds a rule's variables to it: a class of its variables, or a constant.
+#[derive(Clone, Copy, PartialEq)]
+enum MapT {
+    Var(u32),
+    Int(i64),
+    Str(u32),
+}
+
+impl MapT {
+    fn of(qc: &[u32], t: TermRef<'_>) -> Option<MapT> {
+        match t {
+            TermRef::Var(s) => Some(MapT::Var(qc[s.0 as usize])),
+            TermRef::Int(i) => Some(MapT::Int(i)),
+            TermRef::Str(a) => Some(MapT::Str(a.0)),
+            _ => None,
+        }
     }
+}
+
+/// `maps` with the head's arguments given (`head`), the reader's literal `at` a read of it where there is one. Where
+/// `exact`, `rule` is a keyed family's root's (`covers_keyed`): each of its literals is found in the reader as it is,
+/// every atom (negated, placeless) a reader's atom of its relation and sign, each comparison one of the reader's, since
+/// the rule's whole body must hold in the reader's rows, not only its reads.
+#[allow(clippy::too_many_arguments)]
+fn maps_at<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: Option<usize>, head: &[Option<MapT>], anchors: &[usize], placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize], exact: bool) -> bool {
+    type T = MapT;
     let n = rule.var_count();
     let (rc, qc) = (value_classes(rule), value_classes(reader));
-    let target = |t: TermRef<'_>| match t {
-        TermRef::Var(s) => Some(T::Var(qc[s.0 as usize])),
-        TermRef::Int(i) => Some(T::Int(i)),
-        TermRef::Str(a) => Some(T::Str(a.0)),
-        _ => None,
-    };
-    let Some(L::Atom(read)) = reader.body().nth(at).map(|l| l.view()) else { return false };
+    let target = |t: TermRef<'_>| MapT::of(&qc, t);
     let mut bind: Vec<Vec<T>> = vec![Vec::new(); n];
     let mut anchor_vars: Vector<u32> = Vector::new();
-    for (c, (h, u)) in rule.head().args().zip(read.args()).enumerate() {
+    // A head column a call fills (`negate(a, @concat("-", a))`): a function of its variables, which, as a
+    // comparison's, the head must fix.
+    let mut head_calls: Vector<u32> = Vector::new();
+    if rule.head().args().count() != head.len() {
+        return false;
+    }
+    for (c, (h, u)) in rule.head().args().zip(head.iter().copied()).enumerate() {
         match h {
             TermRef::Var(s) => {
-                if let Some(t) = target(u) {
+                if let Some(t) = u {
                     bind[rc[s.0 as usize] as usize].push(t);
                 }
                 if anchors.contains(&c) {
                     anchor_vars.push(s.0);
                 }
             }
+            // An exact rule's constant head must be the value asked.
+            TermRef::Int(i) if exact => {
+                if u.is_some_and(|u| u != T::Int(i)) {
+                    return false;
+                }
+            }
+            TermRef::Str(a) if exact => {
+                if u.is_some_and(|u| u != T::Str(a.0)) {
+                    return false;
+                }
+            }
             TermRef::Int(_) | TermRef::Str(_) => {}
+            TermRef::Call(..) if !exact => {
+                fn vars(t: TermRef<'_>, out: &mut Vector<u32>) {
+                    match t {
+                        TermRef::Var(s) => out.push(s.0),
+                        TermRef::Call(_, xs) => xs.for_each(|x| vars(x, out)),
+                        _ => {}
+                    }
+                }
+                vars(h, &mut head_calls);
+            }
             _ => return false,
         }
     }
@@ -1232,10 +1477,30 @@ fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anch
         }
     }
     let mut mapped = Vec::new();
+    // An exact rule's comparisons, each found in the reader once its reads are (`same_term`).
+    let mut cmps: Vec<(TermRef<'_>, CmpOp, TermRef<'_>)> = Vec::new();
     let mut in_mapped = vec![false; n];
     let mut others: Vec<Vector<u32>> = Vec::new();
     for l in rule.body() {
         let mut vs = Vector::new();
+        if exact {
+            match l.view() {
+                L::Atom(a) => {
+                    for t in a.args() {
+                        match t {
+                            TermRef::Var(s) => in_mapped[rc[s.0 as usize] as usize] = true,
+                            TermRef::Wild | TermRef::Int(_) | TermRef::Str(_) => {}
+                            _ => return false,
+                        }
+                    }
+                    mapped.push(a);
+                }
+                L::Cmp { l: TermRef::Var(a), op: CmpOp::Eq, r: TermRef::Var(b) } if rc[a.0 as usize] == rc[b.0 as usize] => {}
+                L::Cmp { l, op, r } => cmps.push((l, op, r)),
+                _ => return false,
+            }
+            continue;
+        }
         match l.view() {
             L::Atom(a) if !a.neg() && !placeless(a.rel().0) => {
                 if anchored(a) {
@@ -1269,6 +1534,9 @@ fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anch
             _ => return false,
         }
     }
+    if !head_calls.iter().all(|&s| given[rc[s as usize] as usize]) {
+        return false;
+    }
     if others.iter().flatten().any(|&s| {
         let c = rc[s as usize] as usize;
         in_mapped[c] && !given[c]
@@ -1279,21 +1547,24 @@ fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anch
         .body()
         .enumerate()
         .filter_map(|(i, l)| match l.view() {
-            L::Atom(a) if !a.neg() && i != at => Some(a),
+            L::Atom(a) if (exact || !a.neg()) && Some(i) != at => Some(a),
             _ => None,
         })
         .collect();
     // Backtracking over the mapped reads, each to a target of its relation; bounded, a failure past the bound.
-    fn go(k: usize, mapped: &[crate::code_rule_dsl::logic::program_image::AtomRef<'_>], targets: &[crate::code_rule_dsl::logic::program_image::AtomRef<'_>], bind: &mut Vec<Vec<T>>, rc: &[u32], target: &dyn Fn(TermRef<'_>) -> Option<T>, steps: &mut usize) -> bool {
-        let Some(a) = mapped.get(k) else { return true };
-        for b in targets.iter().filter(|b| b.rel().0 == a.rel().0) {
+    #[allow(clippy::too_many_arguments)]
+    fn go(k: usize, mapped: &[crate::code_rule_dsl::logic::program_image::AtomRef<'_>], targets: &[crate::code_rule_dsl::logic::program_image::AtomRef<'_>], bind: &mut Vec<Vec<T>>, rc: &[u32], target: &dyn Fn(TermRef<'_>) -> Option<T>, steps: &mut usize, done: &dyn Fn(&mut Vec<Vec<T>>) -> bool) -> bool {
+        let Some(a) = mapped.get(k) else { return done(bind) };
+        // Of its sign: a negated read is found only as that negated read, its `_` as `_` (`!r(e, _)` holds less often
+        // than `!r(e, y)`).
+        for b in targets.iter().filter(|b| b.rel().0 == a.rel().0 && b.neg() == a.neg()) {
             *steps += 1;
             if *steps > 4096 {
                 return false;
             }
             let saved = bind.clone();
             let fits = a.args().zip(b.args()).all(|(x, y)| match x {
-                TermRef::Wild => true,
+                TermRef::Wild => !a.neg() || matches!(y, TermRef::Wild),
                 TermRef::Int(i) => target(y) == Some(T::Int(i)),
                 TermRef::Str(s) => target(y) == Some(T::Str(s.0)),
                 TermRef::Var(s) => {
@@ -1309,15 +1580,66 @@ fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anch
                 }
                 _ => false,
             });
-            if fits && go(k + 1, mapped, targets, bind, rc, target, steps) {
+            if fits && go(k + 1, mapped, targets, bind, rc, target, steps, done) {
                 return true;
             }
             *bind = saved;
         }
         false
     }
+    // A term of the rule as the reader's under the map: a variable bound to it (or, unbound, now), a constant, or a
+    // call of the same function on such terms.
+    fn same_term(v: &Version, x: TermRef<'_>, y: TermRef<'_>, bind: &mut Vec<Vec<T>>, rc: &[u32], target: &dyn Fn(TermRef<'_>) -> Option<T>) -> bool {
+        match (x, y) {
+            (TermRef::Var(s), _) => {
+                let c = rc[s.0 as usize] as usize;
+                match target(y) {
+                    None => false,
+                    Some(u) if bind[c].is_empty() => {
+                        bind[c].push(u);
+                        true
+                    }
+                    Some(u) => bind[c].contains(&u),
+                }
+            }
+            (TermRef::Int(a), TermRef::Int(b)) => a == b,
+            (TermRef::Str(a), TermRef::Str(b)) => v.text(a) == v.text(b),
+            (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
+                let (xs, ys): (Vec<_>, Vec<_>) = (xs.collect(), ys.collect());
+                v.text(f) == v.text(g) && xs.len() == ys.len() && xs.into_iter().zip(ys).all(|(x, y)| same_term(v, x, y, bind, rc, target))
+            }
+            _ => false,
+        }
+    }
+    let theirs: Vec<(TermRef<'_>, CmpOp, TermRef<'_>)> = reader
+        .body()
+        .filter_map(|l| match l.view() {
+            L::Cmp { l, op, r } => Some((l, op, r)),
+            _ => None,
+        })
+        .collect();
+    // Each comparison found as one of the reader's, `=` and `!=` either way round; the first found is kept.
+    let done = |bind: &mut Vec<Vec<T>>| -> bool {
+        cmps.iter().all(|&(l, op, r)| {
+            theirs.iter().any(|&(l2, op2, r2)| {
+                if op != op2 {
+                    return false;
+                }
+                let saved = bind.clone();
+                if same_term(v, l, l2, bind, &rc, &target) && same_term(v, r, r2, bind, &rc, &target) {
+                    return true;
+                }
+                *bind = saved.clone();
+                if matches!(op, CmpOp::Eq | CmpOp::Ne) && same_term(v, l, r2, bind, &rc, &target) && same_term(v, r, l2, bind, &rc, &target) {
+                    return true;
+                }
+                *bind = saved;
+                false
+            })
+        })
+    };
     let mut steps = 0usize;
-    go(0, &mapped, &targets, &mut bind, &rc, &target, &mut steps)
+    go(0, &mapped, &targets, &mut bind, &rc, &target, &mut steps, &done)
 }
 
 /// What passes between a split's parts (`assemble`), read from the version, `local` the file-local relations: the
@@ -1656,6 +1978,11 @@ impl Form {
                     terms(l, &mut named);
                     terms(r, &mut named);
                 }
+                // A node and its nearest ancestor in a set: both tree nodes (`placed_classes_over`).
+                L::Nearest { n: x, a: y, .. } => {
+                    named[x.0 as usize] = true;
+                    named[y.0 as usize] = true;
+                }
                 _ => {}
             }
         }
@@ -1765,6 +2092,13 @@ impl Form {
     fn placed_classes_over(&self, rels: &Rels<'_>, locs: &[Vector<usize>], base: &[Vector<usize>]) -> Bits {
         let mut out = Bits::new(self.ids);
         for l in &self.lits {
+            // `nearest(n, a, set)`: both are tree nodes, `a` an ancestor of `n` in `n`'s document. A head filled by
+            // `a` (`rdefn(s, x, f) :- …, nearest(f, s, scope)`) is a location, as one filled by `n` is.
+            if let Lit::Nearest(n, a) = l {
+                out.set(*n);
+                out.set(*a);
+                continue;
+            }
             if let Lit::Read { neg: false, rel, args, .. } = l {
                 let columns = if rels.is_derived(*rel) { &locs[*rel as usize] } else { &base[*rel as usize] };
                 for &c in columns {

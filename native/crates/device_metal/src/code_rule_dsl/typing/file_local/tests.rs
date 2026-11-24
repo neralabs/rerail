@@ -1391,3 +1391,129 @@ fn a_refused_join_holds_back_all_its_readers_in_one_round() {
     assert!(made.refused(&std::collections::BTreeSet::from(["fl1_violation".to_owned(), "fl2_violation".to_owned()])).is_empty());
     assert_eq!(made.names(), ["fl1_violation", "fl2_violation"], "each helper once, in the order made");
 }
+
+/// `core.rerail` and program text `rules` after it, as a version.
+fn with_core(rules: &str) -> Arc<Version> {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    read(&format!("{prelude}\n{rules}"))
+}
+
+/// A scope `nearest` finds is a location: `nearest(f, s, scope)` places `s` in `f`'s document, so a relation it fills
+/// (`rdefn(s, x, f)`, Python's names) is located there and its readers stay per-file. Before, only the join through
+/// `nearest` counted, not its variables: `rdefn`'s scope column was no location, and every relation of Python's name
+/// resolution read it "with no location" (`ibind`, `bound_in`, `look`, `qn`), so the policies reading a name's node
+/// read `text` as rows in the cross-file part.
+#[test]
+fn a_scope_nearest_finds_is_a_location() {
+    let v = with_core(
+        r#"
+.decl scope(k: symbol)
+scope("module").
+scope("function_definition").
+.decl rd(s: node, x: symbol, f: node)
+rd(s, x, f) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x), nearest(f, s, scope).
+.decl bound(s: node, x: symbol)
+bound(s, x) :- rd(s, x, _).
+.decl resolved(n: node, s: node)
+resolved(n, s) :- kind(n, "identifier"), text(n, x), nearest(n, s, scope), bound(s, x).
+.output resolved
+"#,
+    );
+    let split = split_of(&v);
+    assert_eq!(split.locations["rd"], [0, 2], "{:?}", split.causes);
+    assert_eq!(split.locations["bound"], [0], "{:?}", split.causes);
+    for rel in ["rd", "bound", "resolved"] {
+        assert!(split.local.contains(rel), "{rel}: {:?}", split.causes);
+    }
+    crossings_checked(&programs_of(v).unwrap()).unwrap();
+}
+
+/// A view of values read at values its readers make (`canon_number(t, r) :- num_source(t), …`, `num_source` the
+/// numbers' texts of every file): each reader holds the body of one of `num_source`'s rules, tests and all, at the
+/// value it asks, so `num_source` holds there in the reader's own chunk and the view derived per chunk answers it as
+/// over every file. A reader asking at a value no rule of `num_source` makes in it (a string's text), or one whose
+/// body lacks a rule's test (the `j` suffix), asks of other files' rows: the view and its readers are cross-file.
+#[test]
+fn a_value_view_read_where_its_readers_make_its_values_is_per_file() {
+    let base = r#"
+.decl src(t: symbol)
+src(v) :- kind(e, "float"), text(e, v).
+src(b) :- kind(e, "integer"), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t).
+.decl canon(t: symbol, r: symbol)
+canon(t, r) :- src(t), r = @replace_all(t, "_", "").
+.decl num(e: node, r: symbol)
+num(e, r) :- kind(e, "float"), text(e, v), canon(v, r).
+num(e, r) :- kind(e, "integer"), text(e, t), match("(?<b>[\\s\\S]*)[jJ]", t), canon(b, r).
+.output num
+"#;
+    let v = with_core(base);
+    let split = split_of(&v);
+    assert!(split.covered.contains("canon") && split.local.contains("num"), "{:?} {:?}", split.covered, split.causes);
+    crossings_checked(&programs_of(v).unwrap()).unwrap();
+    for (other, why) in [
+        ("num(e, r) :- kind(e, \"string\"), text(e, v), canon(v, r).", "a value no rule of src makes in the reader"),
+        ("num(e, r) :- kind(e, \"integer\"), text(e, t), canon(t, r).", "a reader without src's test"),
+    ] {
+        let split = split_of(&with_core(&format!("{base}{other}\n")));
+        assert!(!split.covered.contains("canon") && !split.local.contains("num"), "{why}: {:?}", split.causes);
+    }
+}
+
+/// A view whose rules are a disjunction's branches over two reads (`negate(a, b) :- (number(_, a, _) ;
+/// number(_, _, a)), …`): a reader holding one read covers the other branch too, since both test the head's values
+/// alike. Where the branches test differently (`a != "0"` in one only), the other is not covered: cross-file.
+#[test]
+fn a_views_branches_cover_each_other_where_they_test_alike() {
+    let base = r#"
+.decl val(e: node, a: symbol, b: symbol)
+val(e, a, b) :- kind(e, "pair"), field(e, "l", l), text(l, a), field(e, "r", r), text(r, b).
+.decl neg(a: symbol, b: symbol)
+neg(a, b) :- (val(_, a, _) ; val(_, _, a)), b = cat("-", a).
+.decl out(e: node, x: symbol)
+out(e, x) :- val(e, a, _), neg(a, x).
+.output out
+"#;
+    let v = with_core(base);
+    let split = split_of(&v);
+    assert!(split.covered.contains("neg") && split.local.contains("out"), "{:?} {:?}", split.covered, split.causes);
+    crossings_checked(&programs_of(v).unwrap()).unwrap();
+    let apart = base.replace("(val(_, a, _) ; val(_, _, a))", "(val(_, a, _), a != \"0\" ; val(_, _, a))");
+    assert_ne!(apart, base);
+    let split = split_of(&with_core(&apart));
+    assert!(!split.covered.contains("neg") && !split.local.contains("out"), "{:?}", split.causes);
+}
+
+/// A keyed family of values (`brace_value(v)` and the parse of each format string `v`: `brace_rest(v, r, i)`,
+/// `!brace_bad(v)`, `count : { brace_arg(v, …) }`): each member's rows at a key follow from its root's row there, the
+/// root a file-local relation of one column (`fval(v) :- call_fmt(c, v)`). A reader that
+/// holds the root's row at the key it reads (`call_fmt(c, v)`) reads the family per chunk as over every file,
+/// aggregates included. One that reads it at a value no root rule makes in it (a string's text) does not.
+#[test]
+fn a_keyed_family_read_where_its_root_holds_is_per_file() {
+    let base = r#"
+.decl call_fmt(c: node, v: symbol)
+call_fmt(c, v) :- kind(c, "call"), field(c, "function", f), text(f, v).
+.decl fval(v: symbol)
+fval(v) :- call_fmt(c, v).
+.decl rest(v: symbol, r: symbol, i: number)
+rest(v, v, 0) :- fval(v).
+rest(v, x, i + 1) :- rest(v, r, i), match("[^{]*\\{(?<x>[\\s\\S]*)", r).
+.decl bad(v: symbol)
+bad(v) :- rest(v, r, _), contains("}}", r).
+.decl ok(v: symbol)
+ok(v) :- fval(v), !bad(v).
+.decl pieces(c: node, n: number)
+pieces(c, n) :- call_fmt(c, v), ok(v), n = count : { rest(v, _, _) }.
+.output pieces
+"#;
+    let split = split_of(&with_core(base));
+    assert!(split.local.contains("fval"), "{:?}", split.causes);
+    for rel in ["rest", "bad", "ok"] {
+        assert!(split.covered.contains(rel), "{rel}: {:?} {:?}", split.covered, split.causes);
+    }
+    assert!(split.local.contains("pieces"), "{:?}", split.causes);
+    let other = format!("{base}.decl odd(c: node)\nodd(c) :- kind(c, \"string\"), text(c, v), ok(v).\n.output odd\n");
+    let split = split_of(&with_core(&other));
+    assert!(!split.covered.contains("ok") && !split.local.contains("odd"), "{:?}", split.causes);
+}
+
