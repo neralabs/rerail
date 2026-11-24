@@ -246,14 +246,18 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
         .collect()
 }
 
-/// The memo's frames' program part (decision 0225 §2): the phase that runs, and the names of the file-local part's
-/// relations (those an entry holds, those its rules derive, its inputs), not their rules, which each entry's
-/// `COVERED` identities name. Two programs of other relations (a phase's, a nested run's) keep their entries apart;
-/// a rule's edit keeps the space, and misses only the relations it reaches.
-pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::plan::body::Placed, phase: Option<&str>) -> [u8; 32] {
+/// The memo's frames' program part (decision 0225 §2): the phase that runs, the grammar the run parses its files in,
+/// and the names of the file-local part's relations (those an entry holds, those its rules derive, its inputs), not
+/// their rules, which each entry's `COVERED` identities name. Two programs of other relations (a phase's, a nested
+/// run's) keep their entries apart; a rule's edit keeps the space, and misses only the relations it reaches. A file
+/// of another grammar is read as text (`corpus::text_document`), so one file's entry is a tree in one grammar's run
+/// and text in another's (decision 0337): runs of two grammars keep their entries apart too.
+pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::plan::body::Placed, phase: Option<&str>, grammar: &str) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-space/v2\0");
+    hash.update(b"rerail.corpus-local-space/v3\0");
     hash.update(phase.unwrap_or("").as_bytes());
+    hash.update(b"\0");
+    hash.update(grammar.as_bytes());
     // Read from the program's version (t36 item 7).
     let v = &local.v;
     let derived: BTreeSet<&str> = (0..local.len()).map(|k| v.rel_name(local.rule(k).head().rel())).collect();
