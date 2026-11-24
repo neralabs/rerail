@@ -93,6 +93,10 @@ other's functions now take `&dyn AtomTable`, and an unsizing coercion does not d
 
 ## Step 2 (done): traces, their versions, and reads of a column and of a chunk
 
+The design choices below were Claude's, made while building, without the user's review, and they are open: one
+stored form or a trait over many, where liveness lives, forks and roll-up, kept files as snapshots, a fork's kills,
+the reads' shape, and the directory's growth. What is recorded here is what was built.
+
 ### Three grains of read
 
 How a reader reads decides `Read`'s shape. A join step reads the few columns its literal binds, for each row it
