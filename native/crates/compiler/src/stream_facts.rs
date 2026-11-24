@@ -159,7 +159,7 @@ pub fn word_succ(x: &StreamFacts<'_>, pc: usize) -> Vec<usize> {
         Op::Open { .. } | Op::Leaf { .. } if field_after(x, pc).is_some() => vec![pc + 2],
         Op::Goto { target } => vec![usize::from(target)],
         Op::Switch { table } => x.native.switches[usize::from(table)].all_targets().filter(|&t| t != REFUSE).map(usize::from).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } | Op::MadeIs { .. } => vec![pc + 1, pc + 2],
         Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],
         Op::Return { .. } | Op::Accept | Op::Stop => vec![],
         _ => vec![pc + 1],
@@ -427,7 +427,8 @@ impl Fetched {
 /// `rust_source_16`'s). `None` elsewhere.
 pub fn direct_keys(native: &Structure, widths: rerail_tape_format::Widths, tag: u8) -> Option<Vec<(u32, u32)>> {
     let x = facts(native, widths, tag).ok()?;
-    let plain = native.extras.is_empty() && native.readings.provisional.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
+    // A program whose statements recover takes a statement's nodes back (decision 0650): not one written at its words.
+    let plain = native.extras.is_empty() && native.readings.provisional.is_empty() && native.recover.is_empty() && !native.structural.iter().any(|w| matches!(w.operation, Op::Leaf { deferred: true, .. } | Op::Leaf { extra: true, .. }));
     (x.coded && plain).then(|| (0..native.structural.len()).map(|pc| key_after(&x, pc)).collect())
 }
 
@@ -525,7 +526,7 @@ pub fn plain_succ(x: &StreamFacts<'_>, pc: usize) -> Vec<usize> {
     let v = match x.native.structural[pc].operation {
         Op::Goto { target } => vec![usize::from(target)],
         Op::Switch { table } => x.native.switches[usize::from(table)].all_targets().filter(|&t| t != REFUSE).map(usize::from).collect(),
-        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
+        Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } | Op::MadeIs { .. } => vec![pc + 1, pc + 2],
         // In one function (`OneFn`), only the places its rule's returns go back to.
         Op::Push { .. } if x.one.is_some() => x.one.as_ref().and_then(|o| o.after.get(&pc)).cloned().unwrap_or_default(),
         Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],

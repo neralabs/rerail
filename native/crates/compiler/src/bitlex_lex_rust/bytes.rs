@@ -33,11 +33,38 @@ pub(super) struct Bytes<'a> {
     class_code: HashMap<String, String>,
     /// Whether the line read is in a region's row: its reads go from the opener, as the lean lexer's micro-lexers.
     in_region: bool,
+    /// The operators' pairs masks the loop reads (`k_pair_K`): each row's pairs of bytes, a pair's first byte's bit where
+    /// the second is the byte after (lean's `pair`), made of the block's classes too.
+    pub(super) pairs: Vec<(String, Vec<(u8, u8)>)>,
+    /// The window functions that read one window's escapes (`escaped_step` of a mask), by name, and that mask: each has
+    /// a twin (`e_NAME`) given the window's escaped bytes, so tests read in one window loop find them once (`fuse_tests`).
+    pub(super) escapes: HashMap<String, String>,
+    /// The bytes each such mask holds, where it is a class (`escapes`' masks): a row whose first byte none of them may be
+    /// starts no escape, so its region's end and tests read in one loop from its opener (`fuse_read`).
+    pub(super) escape_bytes: HashMap<String, [bool; 256]>,
+    /// The bytes a rare token starts with (the lean lexer's `rare`, decision 0655 step 4): where set, a block word of its
+    /// own (`k_rare`), of its nibble tables.
+    pub(super) rare: Option<[bool; 256]>,
+    /// The lean lexer's reads (decision 0655 step 7): where set, a search, a count or a run of a mask is lean's: a
+    /// micro-lexer (`micro::find`, `find_pair`, `string_end`, a fence) where the mask is one, else a loop of the bytes,
+    /// each tested where it is. No window of the mask.
+    pub(super) lean: bool,
+    /// A fence of three bytes or more searched (`find_fence`, written once).
+    pub(super) fence: bool,
+    /// The named masks a loop of the bytes tests by a function of their own (a long test, `h4`), each written once:
+    /// its name and its code.
+    named: std::cell::RefCell<Vec<(String, String)>>,
+    /// The classes of more than one byte the lean lexer's loop tests of a byte, by their bit in the byte's `CLASS`
+    /// entry (`C_NAME`), in the order first tested, as the lean lexer's `CLASS` table.
+    scalar: std::cell::RefCell<Vec<String>>,
+    /// Each row's first bytes, by its kind (`// `kind`: …`), and the row the line read is in.
+    pub(super) row_firsts: HashMap<String, [bool; 256]>,
+    row: Option<String>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
-const READS: [(&str, usize); 8] =
-    [("run_once_last", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1)];
+const READS: [(&str, usize); 9] =
+    [("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1)];
 
 impl<'a> Bytes<'a> {
     pub(super) fn new(stmts: &'a [Stmt], locals: HashMap<String, Expr>, class_code: HashMap<String, String>) -> Self {
@@ -56,7 +83,128 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false, pairs: Vec::new(), escapes: HashMap::new(), escape_bytes: HashMap::new(), rare: None, lean: false, fence: false, named: Default::default(), scalar: Default::default(), row_firsts: HashMap::new(), row: None }
+    }
+
+    /// Class `n` tested of byte `b` (`src[i]`) by its bit in the byte's `CLASS` entry, as the lean lexer tests a class:
+    /// one load and its bit.
+    fn class_bit(&self, n: &str, b: &str) -> String {
+        if !self.scalar.borrow().iter().any(|x| x == n) {
+            self.scalar.borrow_mut().push(n.to_owned());
+        }
+        format!("CLASS[usize::from({b})] & C_{} != 0", n.to_uppercase())
+    }
+
+    /// The `CLASS` table of the classes tested by their bits (`class_bit`), built at compile time as the lean lexer's.
+    fn class_table(&self) -> String {
+        let scalar = self.scalar.borrow();
+        if scalar.is_empty() {
+            return String::new();
+        }
+        let ty = match scalar.len() {
+            0..=8 => "u8",
+            9..=16 => "u16",
+            _ => "u32",
+        };
+        let mut out = String::new();
+        for (k, n) in scalar.iter().enumerate() {
+            let _ = write!(out, "/// `{n}`: its bit in a byte's `CLASS` entry.\nconst C_{}: {ty} = {:#x};\n", n.to_uppercase(), 1u64 << k);
+        }
+        let _ = write!(out, "\n/// Each byte's classes the token loop tests of one byte, a bit a class, as the lean lexer's `CLASS`.\nstatic CLASS: [{ty}; 256] = {{\n    let mut c = [0{ty}; 256];\n    let mut i = 0;\n    while i < 256 {{\n        let b = i as u8;\n");
+        for n in scalar.iter() {
+            let rs = self.classes.get(n.as_str()).copied().unwrap_or_default();
+            let _ = write!(out, "        if {} {{\n            c[i] |= C_{};\n        }}\n", pattern_test("b", rs), n.to_uppercase());
+        }
+        out.push_str("        i += 1;\n    }\n    c\n};\n\n");
+        out
+    }
+
+    /// The bytes `e` holds at a byte, where it reads that byte alone (its classes, `~`, `&`, `|`).
+    fn byte_set(&self, e: &Expr, depth: usize) -> Option<[bool; 256]> {
+        if depth > 64 {
+            return None;
+        }
+        Some(match e {
+            Expr::Name(n) => match self.classes.get(n.as_str()) {
+                Some(rs) => std::array::from_fn(|c| rs.iter().any(|&(lo, hi)| (lo..=hi).contains(&(c as u32)))),
+                None => self.byte_set(self.defs.get(n)?, depth + 1)?,
+            },
+            Expr::Not(a) => self.byte_set(a, depth + 1)?.map(|x| !x),
+            Expr::And(a, b) => {
+                let (a, b) = (self.byte_set(a, depth + 1)?, self.byte_set(b, depth + 1)?);
+                std::array::from_fn(|c| a[c] && b[c])
+            }
+            Expr::Or(a, b) => {
+                let (a, b) = (self.byte_set(a, depth + 1)?, self.byte_set(b, depth + 1)?);
+                std::array::from_fn(|c| a[c] || b[c])
+            }
+            _ => return None,
+        })
+    }
+
+    /// A run of `R` with one `D` at most (`run R once D`) in the lean lexer's form, where `R` is `A | (D & X)` and no
+    /// byte is both `A` and `D`: the run of `A`, then, where `D` and `X` hold at the byte after it, that byte and the
+    /// run of `A` again, as the lean lexer reads a number's digits and then its `.` and fraction. `X`'s `prev(A)` holds
+    /// after the run where the row's first bytes are `A`, and its `next(A)` is the byte the second run starts after.
+    /// With `hit`, whether it read its `D` too (`(l, once)`).
+    fn two_runs(&self, r: &str, d: &str, s: &str, hit: bool) -> Option<String> {
+        let (r, d) = (self.resolved(&self.expr(r).ok()?, 0)?, self.resolved(&self.expr(d).ok()?, 0)?);
+        fn ors(e: &Expr, out: &mut Vec<Expr>) {
+            match e {
+                Expr::Or(a, b) => {
+                    ors(a, out);
+                    ors(b, out);
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        fn ands(e: &Expr, out: &mut Vec<Expr>) {
+            match e {
+                Expr::And(a, b) => {
+                    ands(a, out);
+                    ands(b, out);
+                }
+                e => out.push(e.clone()),
+            }
+        }
+        let mut alts = Vec::new();
+        ors(&r, &mut alts);
+        let same = |a: &Expr, b: &Expr| format!("{a:?}") == format!("{b:?}");
+        let k = alts.iter().position(|e| {
+            let mut c = Vec::new();
+            ands(e, &mut c);
+            c.iter().any(|x| same(x, &d))
+        })?;
+        let with_d = alts.remove(k);
+        let a = alts.into_iter().reduce(|x, y| Expr::Or(Box::new(x), Box::new(y)))?;
+        let (sa, sd) = (self.byte_set(&a, 0)?, self.byte_set(&d, 0)?);
+        if (0..256).any(|c| sa[c] && sd[c]) {
+            return None;
+        }
+        let mut x = Vec::new();
+        ands(&with_d, &mut x);
+        x.retain(|e| !same(e, &d));
+        let shifted = |e: &Expr, k: i64| matches!(e, Expr::Call(f, args) if Self::shift(f, args).is_some_and(|(b, j)| j == k && same(&b, &a)));
+        let firsts_a = self.row.as_ref().and_then(|r| self.row_firsts.get(r)).is_some_and(|f| (0..256).all(|c| !f[c] || sa[c]));
+        if firsts_a {
+            x.retain(|e| !shifted(e, -1));
+        }
+        let step = if x.iter().any(|e| shifted(e, 1)) { 2 } else { 1 };
+        let mut none = None;
+        let pa = self.pred(&a, "(l + 1)", "(l + 1)", &mut none, 0)?;
+        let mut cond = self.pred(&d, "(l + 1)", "(l + 1)", &mut none, 0)?;
+        for e in &x {
+            cond = format!("{cond} && {}", self.pred(e, "(l + 1)", "(l + 1)", &mut none, 0)?);
+        }
+        if none.is_some() {
+            return None;
+        }
+        let run = format!("while {pa} {{ l += 1; }}");
+        Some(if hit {
+            format!("{{ let mut l = {s}; {run} let once = {cond}; if once {{ l += {step}; {run} }} (l, once) }}")
+        } else {
+            format!("{{ let mut l = {s}; {run} if {cond} {{ l += {step}; {run} }} l }}")
+        })
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -87,7 +235,13 @@ impl<'a> Bytes<'a> {
             Expr::Empty => "false".to_owned(),
             Expr::Name(n) => {
                 if let Some(rs) = self.classes.get(n.as_str()) {
-                    if at == "s" { pattern_test("src[s]", rs) } else { format!("({at} < n && {})", pattern_test(&format!("src[{at}]"), rs)) }
+                    let test = |b: &str| if self.lean && rs.iter().map(|&(lo, hi)| hi + 1 - lo).sum::<u32>() > 1 { self.class_bit(n, b) } else { pattern_test(b, rs) };
+                    if at == "s" {
+                        test("src[s]")
+                    } else {
+                        let i = at.strip_prefix('(').and_then(|x| x.strip_suffix(')')).filter(|x| !x.contains('(')).unwrap_or(at);
+                        format!("({i} < n && {})", test(&format!("src[{i}]")))
+                    }
                 } else if let Some(d) = self.defs.get(n) {
                     self.at(d, at, depth + 1)?
                 } else {
@@ -124,6 +278,9 @@ impl<'a> Bytes<'a> {
             Expr::Name(n) => {
                 if self.classes.contains_key(n.as_str()) {
                     let f = format!("cls_{}", ident(n));
+                    // A class without the space: the padding after the file (spaces, `PADDING`) holds none of it, so its
+                    // bits need no end, as the lean lexer reads its padded bytes.
+                    let held = if self.classes[n.as_str()].iter().any(|&(lo, hi)| lo <= 0x20 && 0x20 <= hi) { "held(b, q, n, p)" } else { "padded(b, q, p)" };
                     if !self.cls.contains(&f)
                         && let Some(code) = self.class_code.get(n.as_str())
                     {
@@ -138,7 +295,7 @@ impl<'a> Bytes<'a> {
                         }
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    held(b, q, n, p)\n}}\n\n"
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    {held}\n}}\n\n"
                         );
                     }
                     if !self.cls.contains(&f) {
@@ -155,11 +312,29 @@ impl<'a> Bytes<'a> {
                             .collect();
                         let _ = write!(
                             self.code,
-                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n    // SAFETY: the caller's.\n    let b = unsafe {{ {} }};\n    held(b, q, n, p)\n}}\n\n",
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n    // SAFETY: the caller's.\n    let b = unsafe {{ {} }};\n    {held}\n}}\n\n",
                             if bits.is_empty() { "0".to_owned() } else { bits.join(" | ") }
                         );
                     }
-                    format!("unsafe {{ {f}::<S>(src, n, {p}) }}")
+                    let here = format!("unsafe {{ {f}::<S>(src, n, p) }}");
+                    // (A neighbour byte is in the padded source: before the file's end, or `PADDING` past it.)
+                    // At a distance: the window's own bits shifted, its neighbours' bytes tested where they are, as the
+                    // lean lexer derives its masks from its window's one classify (`shift_in`), not a window loaded again.
+                    let rs = self.classes[n.as_str()];
+                    let test = |bound: String, q: String| format!("u64::from({bound} && matches!(unsafe {{ *src.get_unchecked({q} as usize) }}, {}))", rs.iter().map(|&(lo, hi)| if lo == hi { format!("{lo:#04x}") } else { format!("{lo:#04x}..={hi:#04x}") }).collect::<Vec<_>>().join(" | "));
+                    match off {
+                        0 => here,
+                        k if k > 0 && k < 64 && !rs.is_empty() => {
+                            let next: Vec<String> = (0..k).map(|j| format!("{} << {}", test(format!("p + {} < n as isize", 64 + j), format!("(p + {})", 64 + j)), 64 - k + j)).collect();
+                            format!("({here} >> {k} | {})", next.join(" | "))
+                        }
+                        k if k < 0 && k > -64 && !rs.is_empty() => {
+                            let k = -k;
+                            let before: Vec<String> = (0..k).map(|j| format!("{}{}", test(format!("p >= {}", k - j), format!("(p - {})", k - j)), if j == 0 { String::new() } else { format!(" << {j}") })).collect();
+                            format!("({here} << {k} | {})", before.join(" | "))
+                        }
+                        _ => format!("unsafe {{ {f}::<S>(src, n, {p}) }}"),
+                    }
                 } else if let Some(d) = self.defs.get(n).cloned() {
                     self.win(&d, off, depth + 1)?
                 } else {
@@ -193,6 +368,198 @@ impl<'a> Bytes<'a> {
         })
     }
 
+    /// `e` with the masks it names in place, its classes kept by name. None where a definition reads itself.
+    fn resolved(&self, e: &Expr, depth: usize) -> Option<Expr> {
+        if depth > 64 {
+            return None;
+        }
+        let r = |x: &Expr| self.resolved(x, depth + 1).map(Box::new);
+        Some(match e {
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) => self.resolved(self.defs.get(n)?, depth + 1)?,
+            Expr::Not(a) => Expr::Not(r(a)?),
+            Expr::And(a, b) => Expr::And(r(a)?, r(b)?),
+            Expr::Or(a, b) => Expr::Or(r(a)?, r(b)?),
+            Expr::Xor(a, b) => Expr::Xor(r(a)?, r(b)?),
+            Expr::Call(f, args) => Expr::Call(f.clone(), args.iter().map(|a| match a { Arg::E(x) => self.resolved(x, depth + 1).map(Arg::E), o => Some(o.clone()) }).collect::<Option<_>>()?),
+            other => other.clone(),
+        })
+    }
+
+    /// The one byte class `e` is.
+    fn byte(&self, e: &Expr) -> Option<u8> {
+        let Expr::Name(n) = e else { return None };
+        match self.classes.get(n.as_str())? {
+            [(lo, hi)] if lo == hi => u8::try_from(*lo).ok(),
+            _ => None,
+        }
+    }
+
+    /// The bytes of `e` where it is a conjunction of one byte each at a distance (`tick & next(tick)`, `slash &
+    /// prev(star)`): each byte and its distance.
+    fn bytes_at(&self, e: &Expr, out: &mut Vec<(u8, i64)>) -> Option<()> {
+        match e {
+            Expr::And(a, b) => {
+                self.bytes_at(a, out)?;
+                self.bytes_at(b, out)
+            }
+            Expr::Call(f, args) => {
+                let (a, k) = Self::shift(f, args)?;
+                out.push((self.byte(&a)?, k));
+                Some(())
+            }
+            e => {
+                out.push((self.byte(e)?, 0));
+                Some(())
+            }
+        }
+    }
+
+    /// Lean's micro-lexer for the first byte from `from` that mask `e` holds, where `e` is one: a byte (`micro::find`),
+    /// two bytes (`find_pair`), more (`find_fence`), a quote no backslash escapes (`string_end`, as the lean lexer reads
+    /// a string's body). A mask's byte after the first of its bytes (`prev`) is found by the first, from as far before.
+    fn micro_first(&mut self, e: &Expr, from: &str) -> Option<String> {
+        let e = self.resolved(e, 0)?;
+        if let Expr::And(a, b) = &e
+            && self.byte(a) == Some(b'"')
+            && let Expr::Not(x) = b.as_ref()
+            && let Expr::Call(f, args) = x.as_ref()
+            && f == "escaped"
+            && matches!(args.as_slice(), [Arg::E(bs)] if self.byte(bs) == Some(b'\\'))
+        {
+            return Some(format!("micro::string_end(&src[..n], {from}).0"));
+        }
+        let mut bs = Vec::new();
+        self.bytes_at(&e, &mut bs)?;
+        bs.sort_by_key(|b| b.1);
+        let lo = bs[0].1;
+        if lo > 0 || bs.iter().enumerate().any(|(i, b)| b.1 != lo + i as i64) {
+            return None;
+        }
+        let back = usize::try_from(-lo).ok()?;
+        let start = match (from.strip_suffix(&format!(" + {back}")), back) {
+            (_, 0) => from.to_owned(),
+            (Some(f), _) => f.to_owned(),
+            (None, k) => format!("{from} - {k}"),
+        };
+        let found = match bs.as_slice() {
+            [(x, _)] => format!("micro::find(&src[..n], {start}, {})", lit(*x)),
+            [(x, _), (y, _)] => format!("micro::find_pair(&src[..n], {start}, {}, {})", lit(*x), lit(*y)),
+            _ => {
+                self.fence = true;
+                format!("find_fence(&src[..n], {start}, &[{}])", bs.iter().map(|b| lit(b.0)).collect::<Vec<_>>().join(", "))
+            }
+        };
+        Some(if back == 0 { found } else { format!("{found}.map(|a| a + {back})") })
+    }
+
+    /// `e` at byte `at`, a test of the bytes there, as `at`; `escaped(B)` at byte `var` the loop's `esc` (the byte
+    /// before ends a run of an odd count of `B`'s), `B` kept in `esc_of`. None where an escape is read elsewhere.
+    fn pred(&self, e: &Expr, at: &str, var: &str, esc_of: &mut Option<Expr>, depth: usize) -> Option<String> {
+        if depth > 64 {
+            return None;
+        }
+        let mut go = |e: &Expr, at: &str| self.pred(e, at, var, esc_of, depth + 1);
+        Some(match e {
+            Expr::Name(n) if !self.classes.contains_key(n.as_str()) => {
+                let d = self.defs.get(n)?;
+                let mut none = None;
+                // A long test that reads no escape: a function of its own, by the mask's name (lean's `unescape`).
+                match self.pred(d, "i", "i", &mut none, depth + 1) {
+                    Some(t) if t.len() > 160 && none.is_none() => {
+                        let f = ident(n);
+                        if !self.named.borrow().iter().any(|x| x.0 == f) {
+                            let code = format!("/// Mask `{n}` at byte `i`, a test of the bytes there.\n#[inline]\nfn {f}(src: &[u8], n: usize, i: usize) -> bool {{\n    {t}\n}}\n\n");
+                            self.named.borrow_mut().push((f.clone(), code));
+                        }
+                        format!("{f}(src, n, {at})")
+                    }
+                    _ => go(d, at)?,
+                }
+            }
+            Expr::Not(a) => format!("({at} < n && !{})", go(a, at)?),
+            Expr::And(a, b) => format!("({} && {})", go(a, at)?, go(b, at)?),
+            Expr::Or(a, b) => format!("({} || {})", go(a, at)?, go(b, at)?),
+            Expr::Xor(a, b) => format!("({} != {})", go(a, at)?, go(b, at)?),
+            Expr::Call(f, args) if f == "escaped" => {
+                let [Arg::E(b)] = args.as_slice() else { return None };
+                if at != var || esc_of.as_ref().is_some_and(|x| format!("{x:?}") != format!("{b:?}")) {
+                    return None;
+                }
+                *esc_of = Some(b.clone());
+                "esc".to_owned()
+            }
+            Expr::Call(f, args) => {
+                let (a, k) = Self::shift(f, args)?;
+                if k < 0 { format!("({at} >= {} && {})", -k, go(&a, &format!("{at} - {}", -k))?) } else { go(&a, &format!("{at} + {k}"))? }
+            }
+            e => self.at(e, at, depth + 1).ok()?,
+        })
+    }
+
+    /// Mask `m` tested at byte `i` of a loop of the bytes, the escape it reads carried along (`esc` for the next byte:
+    /// this one is `B` and not escaped itself). None where it reads an escape elsewhere.
+    fn tested_at(&self, m: &str, i: &str) -> Option<(String, Option<String>)> {
+        let e = self.expr(m).ok()?;
+        let mut esc_of = None;
+        let p = self.pred(&e, i, i, &mut esc_of, 0)?;
+        let carry = match esc_of {
+            Some(b) => Some(format!("esc = !esc && {}", self.at(&b, i, 0).ok()?)),
+            None => None,
+        };
+        Some((p, carry))
+    }
+
+    /// One read of the loop in the lean lexer's form: a micro-lexer, else the bytes in a loop, each tested where it is
+    /// (a run by `while`, a search by `find`, a count by `filter`). None where a mask has no such form.
+    fn lean_read(&mut self, name: &str, args: &[String], m: &str) -> Result<Option<String>, String> {
+        let a = |k: usize| args.get(k).map(|x| x.trim().to_owned()).unwrap_or_default();
+        if name == "first_bit"
+            && let Some(r) = self.micro_first(&self.expr(m)?, &a(1))
+        {
+            return Ok(Some(r));
+        }
+        let Some((p, carry)) = self.tested_at(m, "i") else { return Ok(None) };
+        // A test whose escape is carried: the closure updates it after its byte's test.
+        let test = |p: &str| match &carry {
+            Some(c) => format!("{{ let hit = {p}; {c}; hit }}"),
+            None => p.to_owned(),
+        };
+        let esc = if carry.is_some() { "let mut esc = false; " } else { "" };
+        let next = self.tested_at(m, "(l + 1)").map(|t| t.0).unwrap_or_default();
+        Ok(Some(match (name, args.len()) {
+            ("first_bit", 2) => format!("{{ {esc}({}..n).find(|&i| {}) }}", a(1), test(&p)),
+            ("first_in", 3) => format!("{{ {esc}({}..={}).find(|&i| {}) }}", a(1), a(2), test(&p)),
+            ("any_in", 3) => format!("{{ {esc}({}..={}).any(|i| {}) }}", a(1), a(2), test(&p)),
+            ("count_in", 3) => format!("{{ {esc}({}..={}).filter(|&i| {}).count() as u32 }}", a(1), a(2), test(&p)),
+            ("first_clear", 3) if carry.is_none() => format!("({}..n.min({})).find(|&i| !{p})", a(1), a(2)),
+            ("run_last", 2) if carry.is_none() => format!("{{ let mut l = {}; while {next} {{ l += 1; }} l }}", a(1)),
+            ("run_once_last" | "run_once_hit", 3) if carry.is_none() && args[1].trim().strip_prefix('&').is_some_and(|d| self.two_runs(m, d, &a(2), name == "run_once_hit").is_some()) => {
+                let d = args[1].trim().strip_prefix('&').unwrap_or_default();
+                self.two_runs(m, d, &a(2), name == "run_once_hit").unwrap_or_default()
+            }
+            ("run_once_last", 3) if carry.is_none() => {
+                let Some(d) = args[1].trim().strip_prefix('&') else { return Ok(None) };
+                let Some((pd, None)) = self.tested_at(d, "(l + 1)") else { return Ok(None) };
+                format!("{{ let (mut l, mut once) = ({}, false); while {next} {{ if {pd} {{ if once {{ break; }} once = true; }} l += 1; }} l }}", a(2))
+            }
+            // The same, and whether it read its one `D` (`once_hits`).
+            ("run_once_hit", 3) if carry.is_none() => {
+                let Some(d) = args[1].trim().strip_prefix('&') else { return Ok(None) };
+                let Some((pd, None)) = self.tested_at(d, "(l + 1)") else { return Ok(None) };
+                format!("{{ let (mut l, mut once) = ({}, false); while {next} {{ if {pd} {{ if once {{ break; }} once = true; }} l += 1; }} (l, once) }}", a(2))
+            }
+            _ => return Ok(None),
+        }))
+    }
+
+    /// Mask `m` as a test of byte `i` (`|i: usize| …`), for a run read past its block (the lean lexer's `word_end`).
+    pub(super) fn byte_test(&self, m: &str) -> Result<String, String> {
+        match self.tested_at(m, "i") {
+            Some((p, None)) => Ok(format!("|i: usize| {p}")),
+            _ => Err(format!("`{m}` is no test of a byte")),
+        }
+    }
+
     /// The local's expression.
     fn expr(&self, local: &str) -> Result<Expr, String> {
         self.locals.get(local).cloned().ok_or_else(|| format!("`{local}` is no mask of the bytes"))
@@ -200,7 +567,7 @@ impl<'a> Bytes<'a> {
 
     /// The window function of the local `m` (`w_m`), written once; whether it reads escapes (its windows must then
     /// start where the carry is none: a token's first byte, or the one after).
-    fn window_fn(&mut self, m: &str) -> Result<(String, bool), String> {
+    pub(super) fn window_fn(&mut self, m: &str) -> Result<(String, bool), String> {
         let f = format!("w_{m}");
         let e = self.expr(m)?;
         let bits = self.win(&e, 0, 0)?;
@@ -211,6 +578,27 @@ impl<'a> Bytes<'a> {
                 self.code,
                 "/// `{m}`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {{\n    {bits}\n}}\n\n"
             );
+            // Its twin given the window's escaped bytes, where it reads them of one mask.
+            if bits.matches("escaped_step(").count() == 1
+                && let Some(at) = bits.find("escaped_step(")
+                && let Some(len) = bits[at..].find(", esc)")
+            {
+                let of = bits[at + "escaped_step(".len()..at + len].to_owned();
+                let twin = bits.replacen(&format!("escaped_step({of}, esc)"), "escaped", 1);
+                let _ = write!(
+                    self.code,
+                    "/// `{f}` given its window's escaped bytes (`escaped`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\n#[allow(unused_variables)]\nunsafe fn e_{m}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, escaped: u64) -> u64 {{\n    {twin}\n}}\n\n"
+                );
+                // The class's bytes, where the escapes are of one class.
+                if let Some(c) = of.strip_prefix("unsafe { cls_").and_then(|c| c.strip_suffix("::<S>(src, n, p) }"))
+                    && let Some((name, rs)) = self.classes.iter().find(|(name, _)| ident(name) == c)
+                {
+                    let _ = name;
+                    let held: [bool; 256] = std::array::from_fn(|b| rs.iter().any(|&(lo, hi)| lo as usize <= b && b <= hi as usize));
+                    self.escape_bytes.insert(of.clone(), held);
+                }
+                self.escapes.insert(f.clone(), of);
+            }
         }
         Ok((format!("|p: isize, esc: &mut u64| unsafe {{ {f}::<S>(src, n, p, esc) }}"), esc))
     }
@@ -231,6 +619,14 @@ impl<'a> Bytes<'a> {
             }
             Ok(f)
         };
+        // A token's one-byte test at its start (`first_clear(&M, s, s + 1)`, `bit(&M, s)`): a bit of the block's mask,
+        // as lean's masks of its one `Window`, where the mask reads no escapes.
+        let one = name == "first_clear" && args.len() == 3 && args[1].trim() == "s" && args[2].trim() == "s + 1";
+        if (one || (name == "bit" && args.len() == 2 && args[1].trim() == "s")) && !self.in_region && !self.window_fn(&m)?.1 {
+            let k = self.block_word(&m);
+            let holds = format!("({k} >> (s - base) & 1 == 1)");
+            return Ok(Some(if one { format!("(!{holds}).then_some(s)") } else { holds }));
+        }
         // A read of one byte (`first_clear(&M, a, a + 1)`): a test of the bytes there.
         if name == "first_clear" && args.len() == 3 && args[2].trim() == format!("{} + 1", args[1].trim()) {
             let e = self.expr(&m)?;
@@ -260,6 +656,12 @@ impl<'a> Bytes<'a> {
                 _ => return Err(format!("`{name}` with {} arguments has no form of the bytes", args.len())),
             }));
         }
+        if self.lean
+            && name != "bit"
+            && let Some(r) = self.lean_read(name, args, &m)?
+        {
+            return Ok(Some(r));
+        }
         Ok(Some(match (name, args.len()) {
             ("bit", 2) => {
                 let e = self.expr(&m)?;
@@ -282,6 +684,23 @@ impl<'a> Bytes<'a> {
             }
             _ => return Err(format!("`{name}` with {} arguments has no form of the bytes", args.len())),
         }))
+    }
+
+    /// `code` with each read of a mask in the windows' form, as a region's: tests of a token asked apart from the loop
+    /// (decision 0655 step 6), with no block's words.
+    pub(super) fn rewrite_windows(&mut self, code: &str) -> Result<String, String> {
+        let mut out = String::new();
+        self.in_region = true;
+        for line in code.split_inclusive('\n') {
+            // A row's comment names its kind (`// `kind`: rule`).
+            if let Some((kind, _)) = line.trim_start().strip_prefix("// `").and_then(|r| r.split_once("`: ")) {
+                self.row = Some(kind.to_owned());
+            }
+            out.push_str(&self.rewrite_line(line, line)?);
+        }
+        self.in_region = false;
+        self.row = None;
+        Ok(out)
     }
 
     /// `code` with each read of a mask in the bytes' form.
@@ -326,7 +745,7 @@ impl<'a> Bytes<'a> {
     }
 
     /// The block's word of mask `m` (`k_m`), made once a block.
-    fn block_word(&mut self, m: &str) -> String {
+    pub(super) fn block_word(&mut self, m: &str) -> String {
         if !self.block.iter().any(|b| b == m) {
             self.block.push(m.to_owned());
         }
@@ -344,9 +763,8 @@ impl<'a> Bytes<'a> {
 
     /// The block's words, made once a block where the loop comes to it, as the lean lexer's `Window`: each class the
     /// words read classified once a block (`block_classes`, one load and one classify a pair of nibble tables), a class
-    /// a few bytes on or back its bits shifted, the neighbour block's shifted in. Each block's classes are made once: the
-    /// next block's are its `ahead`, and the last block's its `behind`. With the declarations the loop's head needs
-    /// before it. A word of escapes, or of a class 64 bytes away, reads its windows as a window past the block.
+    /// a few bytes on or back its bits shifted, the neighbour block's bytes tested where they are and shifted in (lean's
+    /// `shift_in`). With the declarations the loop's head needs before it. A word of escapes, or of a class 64 bytes away, reads its windows as a window past the block.
     pub(super) fn block_words(&mut self) -> (String, String) {
         match self.block_from_classes() {
             Some(r) => r,
@@ -354,6 +772,9 @@ impl<'a> Bytes<'a> {
                 let mut out = String::from("        // The block's masks, from its bytes (the lean lexer's `Window`): what its tokens read of it.\n");
                 for m in &self.block {
                     let _ = writeln!(out, "        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};");
+                }
+                for (f, _) in &self.pairs {
+                    let _ = writeln!(out, "        let k_{f} = unsafe {{ w_{f}::<S>(src, base) }};");
                 }
                 (String::new(), out)
             }
@@ -363,23 +784,156 @@ impl<'a> Bytes<'a> {
     /// `block_words` from the block's classes: none where a word reads escapes or a class 64 bytes away.
     fn block_from_classes(&mut self) -> Option<(String, String)> {
         let mut used: Vec<String> = Vec::new();
-        let (mut back, mut on) = (false, false);
         let mut words = Vec::new();
         for m in self.block.clone() {
             let e = self.expr(&m).ok()?;
-            words.push((m, self.blk(&e, 0, 0, &mut used, &mut back, &mut on)?));
+            words.push((m, self.blk(&e, 0, 0, &mut used)?));
+        }
+        // Each pairs mask of the block's one load too, as lean's `pair`: the byte's nibble tables name the pairs it
+        // starts, the next byte's (`shift_in`) the pairs it ends; a pair is a bit of both, packed once. Eight pairs a
+        // pair of tables.
+        let mut statics = String::new();
+        let mut shifted = false;
+        for (f, two) in self.pairs.clone() {
+            let mut groups = Vec::new();
+            for (g, chunk) in two.chunks(8).enumerate() {
+                let (mut flo, mut fhi, mut slo, mut shi) = ([0u8; 16], [0u8; 16], [0u8; 16], [0u8; 16]);
+                for (bit, &(a, b)) in chunk.iter().enumerate() {
+                    flo[usize::from(a & 15)] |= 1 << bit;
+                    fhi[usize::from(a >> 4)] |= 1 << bit;
+                    slo[usize::from(b & 15)] |= 1 << bit;
+                    shi[usize::from(b >> 4)] |= 1 << bit;
+                }
+                let t = format!("{}_{g}", f.to_uppercase());
+                let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
+                let _ = write!(statics, "/// `{f}`'s pairs ({}): a first byte's bits the pairs it starts, a second's those it ends.\nstatic {t}_FIRST: ([u8; 16], [u8; 16]) = ([{}], [{}]);\nstatic {t}_SECOND: ([u8; 16], [u8; 16]) = ([{}], [{}]);\n\n", chunk.iter().map(|(a, b)| format!("`{}{}`", *a as char, *b as char)).collect::<Vec<_>>().join(", "), row(&flo), row(&fhi), row(&slo), row(&shi));
+                let c = format!("{f}_{g}");
+                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test(S::classify(v, &{t}_FIRST.0, &{t}_FIRST.1), S::classify(d, &{t}_SECOND.0, &{t}_SECOND.1)))"));
+                used.push(c);
+                groups.push(format!("cur[{}]", used.len() - 1));
+                shifted = true;
+            }
+            words.push((f, if groups.is_empty() { "0u64".to_owned() } else { groups.join(" | ") }));
+        }
+        // The lean lexer's classes (decision 0655 step 10): the classes the block's words read and the rare tokens'
+        // first bytes, packed in nibble tables of their own, a class the bits it is the union of, each named (lean's
+        // `SPACE`, `WORD`, `RARE`). No bit a class no word reads.
+        let mut lean_tables = None;
+        if self.lean {
+            let mut sets: Vec<(String, [bool; 256])> = used.iter().filter(|c| self.classes.contains_key(c.as_str())).map(|c| (c.clone(), class_set(self.classes[c.as_str()]))).collect();
+            if let Some(set) = self.rare {
+                sets.push(("rare".to_owned(), set));
+            }
+            let mut packs: Vec<Vec<(u16, u16)>> = Vec::new();
+            let mut named: Vec<(String, usize, u8)> = Vec::new();
+            // A class of every byte past ASCII and some ASCII ones: the ASCII ones its bits, the others a compare, as
+            // lean's `rare` (`S::ge(x, 0xc0)`).
+            let mut high: Vec<String> = Vec::new();
+            // The smaller classes first, by their ASCII bytes: a larger one shares their bits where it holds them.
+            sets.sort_by_key(|(_, set)| set[..0x80].iter().filter(|&&b| b).count());
+            for (c, set) in &sets {
+                let bytes: Vec<usize> = (0..256).filter(|&b| set[b]).collect();
+                if let [b] = bytes.as_slice() {
+                    self.class_code.insert(c.clone(), format!("S::eq_mask(v, {b:#04x})"));
+                    continue;
+                }
+                let mut set = *set;
+                if (0x80..256).all(|b| set[b]) && (0..0x80).any(|b| set[b]) {
+                    (0x80..256).for_each(|b| set[b] = false);
+                    high.push(c.clone());
+                }
+                let (p, bits) = cover(&mut packs, &set)?;
+                named.push((c.clone(), p, bits));
+            }
+            let one = packs.len() == 1;
+            // Not the stage-1 tables' names (`LO_0`), which the file holds too until they go unread.
+            let c_n = |p: usize| if one { ("LO".to_owned(), "HI".to_owned(), "c".to_owned()) } else { (format!("LO_{}", (b'A' + p as u8) as char), format!("HI_{}", (b'A' + p as u8) as char), format!("c{p}")) };
+            let mut text = String::new();
+            for (c, p, bits) in &named {
+                let k = c.to_uppercase();
+                let _ = writeln!(text, "/// `{c}`: its bits in the classes' nibble tables{}.\nconst {k}: u8 = {bits:#04x};", if one { String::new() } else { format!(", pair {p}") });
+                let test = format!("S::test({}, S::splat({k}))", c_n(*p).2);
+                let test = if high.contains(c) { format!("S::or({test}, S::ge(v, 0x80))") } else { test };
+                self.class_code.insert(c.clone(), format!("S::to_bitmask({test})"));
+            }
+            let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
+            let mut heads = String::new();
+            for (p, rects) in packs.iter().enumerate() {
+                let (mut lo, mut hi) = ([0u8; 16], [0u8; 16]);
+                for (bit, &(h, l)) in rects.iter().enumerate() {
+                    for i in 0..16 {
+                        if l >> i & 1 == 1 {
+                            lo[i] |= 1 << bit;
+                        }
+                        if h >> i & 1 == 1 {
+                            hi[i] |= 1 << bit;
+                        }
+                    }
+                }
+                let (l, h, c) = c_n(p);
+                let _ = write!(text, "/// The classes' nibble tables{} (the lean lexer's `LO`, `HI`): a byte's bit `b` is set in both where it is of bit `b`'s\n/// high and low nibbles.\nstatic {l}: [u8; 16] = [{}];\nstatic {h}: [u8; 16] = [{}];\n", if one { String::new() } else { format!(", pair {p}") }, row(&lo), row(&hi));
+                let _ = writeln!(heads, "        let {c} = S::classify(v, &{l}, &{h});");
+            }
+            text.push('\n');
+            if self.rare.is_some() {
+                used.push("rare".to_owned());
+                words.push(("rare".to_owned(), format!("cur[{}]", used.len() - 1)));
+            }
+            statics.insert_str(0, &text);
+            lean_tables = Some(heads);
+        }
+        // The rare tokens' first bytes (lean's `rare`): a byte's nibbles' bits, a set of high nibbles times a set of low
+        // ones a bit, eight a pair of tables.
+        if let Some(set) = self.rare.filter(|_| lean_tables.is_none()) {
+            let mut rects: Vec<(u16, u16)> = Vec::new();
+            for h in 0..16usize {
+                let lows = (0..16usize).filter(|&l| set[h << 4 | l]).fold(0u16, |m, l| m | 1 << l);
+                if lows == 0 {
+                    continue;
+                }
+                match rects.iter_mut().find(|r| r.1 == lows) {
+                    Some(r) => r.0 |= 1 << h,
+                    None => rects.push((1 << h, lows)),
+                }
+            }
+            let mut groups = Vec::new();
+            for (g, chunk) in rects.chunks(8).enumerate() {
+                let (mut lo, mut hi) = ([0u8; 16], [0u8; 16]);
+                for (bit, &(h, l)) in chunk.iter().enumerate() {
+                    for i in 0..16 {
+                        if l >> i & 1 == 1 {
+                            lo[i] |= 1 << bit;
+                        }
+                        if h >> i & 1 == 1 {
+                            hi[i] |= 1 << bit;
+                        }
+                    }
+                }
+                let row = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
+                let _ = write!(statics, "/// The bytes a rare token starts with, part {g}: a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.\nstatic RARE_{g}: ([u8; 16], [u8; 16]) = ([{}], [{}]);\n\n", row(&lo), row(&hi));
+                let c = format!("rare_{g}");
+                self.class_code.insert(c.clone(), format!("S::to_bitmask(S::test(S::classify(v, &RARE_{g}.0, &RARE_{g}.1), S::splat(0xff)))"));
+                used.push(c);
+                groups.push(format!("cur[{}]", used.len() - 1));
+            }
+            words.push(("rare".to_owned(), if groups.is_empty() { "0u64".to_owned() } else { groups.join(" | ") }));
         }
         if used.is_empty() {
             return None;
         }
         // The classes' bits of the block at `base` (in the file), each its class's test of its nibble tables' pair.
-        let mut tables = String::new();
-        for k in 0..8 {
+        let mut tables = lean_tables.clone().unwrap_or_default();
+        for k in (0..8).filter(|_| lean_tables.is_none()) {
             if used.iter().any(|c| self.class_code.get(c.as_str()).is_some_and(|code| code.contains(&format!("c{k},")) || code.contains(&format!("c{k})")))) {
                 let _ = writeln!(tables, "        let c{k} = S::classify(v, &LO_{k}, &HI_{k});");
             }
         }
         let bits: Vec<String> = used.iter().map(|c| self.class_bits(c)).collect::<Option<_>>()?;
+        self.code.push_str(&statics);
+        if shifted {
+            // The block a byte on: its last byte the next block's first, in the padded source.
+            tables.insert_str(0, "        let d = S::shift_in(v, src[base + 64]);\n");
+        }
         let k = used.len();
         let _ = write!(
             self.code,
@@ -387,19 +941,9 @@ impl<'a> Bytes<'a> {
             used.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", "),
             bits.iter().map(|b| format!("{b} & lv")).collect::<Vec<_>>().join(", ")
         );
-        let mut decl = String::new();
+        let decl = String::new();
         let mut head = String::from("        // The block's masks, from its classes (the lean lexer's `Window`): what its tokens read of it.\n");
-        if on {
-            let _ = writeln!(decl, "    // The next block's classes, made with the block before it: the block's own, where the loop goes on to it.\n    let (mut ahead_b, mut ahead) = (usize::MAX, [0u64; {k}]);");
-            let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = if ahead_b == b {{ ahead }} else {{ unsafe {{ block_classes::<S>(src, n, base) }} }};");
-            let _ = writeln!(head, "        // SAFETY: `base + 64` is in the file.\n        let next = if base + 64 < n {{ unsafe {{ block_classes::<S>(src, n, base + 64) }} }} else {{ [0u64; {k}] }};\n        (ahead_b, ahead) = (b + 1, next);");
-        } else {
-            let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = unsafe {{ block_classes::<S>(src, n, base) }};");
-        }
-        if back {
-            let _ = writeln!(decl, "    // The last block's classes: the block before's, where the loop came to it from there.\n    let (mut behind_b, mut behind) = (usize::MAX, [0u64; {k}]);");
-            let _ = writeln!(head, "        // SAFETY: `base - 64` is in the file.\n        let prev = if behind_b.wrapping_add(1) == b {{ behind }} else if b > 0 {{ unsafe {{ block_classes::<S>(src, n, base - 64) }} }} else {{ [0u64; {k}] }};\n        (behind_b, behind) = (b, cur);");
-        }
+        let _ = writeln!(head, "        // SAFETY: `base` is in the file.\n        let cur = unsafe {{ block_classes::<S>(src, n, base) }};");
         if words.iter().any(|(_, w)| w.contains("lv")) {
             head.push_str("        let lv = valid(n, base as isize);\n");
         }
@@ -427,10 +971,9 @@ impl<'a> Bytes<'a> {
         Some(if bits.is_empty() { "0".to_owned() } else { format!("({})", bits.join(" | ")) })
     }
 
-    /// `e`'s bits in the block, `off` bytes on (back, negative), from the block's classes (`cur`, and the neighbours'
-    /// `prev` and `next`): none where it reads escapes or a class 64 bytes away.
-    #[allow(clippy::too_many_arguments)]
-    fn blk(&self, e: &Expr, off: i64, depth: usize, used: &mut Vec<String>, back: &mut bool, on: &mut bool) -> Option<String> {
+    /// `e`'s bits in the block, `off` bytes on (back, negative), from the block's classes (`cur`, and the neighbour
+    /// block's bytes tested where they are): none where it reads escapes or a class 64 bytes away.
+    fn blk(&self, e: &Expr, off: i64, depth: usize, used: &mut Vec<String>) -> Option<String> {
         if depth > 64 || off.abs() >= 64 {
             return None;
         }
@@ -444,26 +987,30 @@ impl<'a> Bytes<'a> {
                         used.len() - 1
                     }
                 };
+                let rs = self.classes[n.as_str()];
                 match off {
                     0 => format!("cur[{i}]"),
+                    // Bytes on or back: the neighbour block's bytes, each tested where it is (lean's `shift_in`), not
+                    // the block classified.
                     o if o > 0 => {
-                        *on = true;
-                        format!("(cur[{i}] >> {o} | next[{i}] << {})", 64 - o)
+                        let next: Vec<String> = (0..o).map(|j| format!("u64::from(base + {} < n && {}) << {}", 64 + j, pattern_test(&format!("src[base + {}]", 64 + j), rs), 64 - o + j)).collect();
+                        format!("(cur[{i}] >> {o} | {})", next.join(" | "))
                     }
                     o => {
-                        *back = true;
-                        format!("(cur[{i}] << {} | prev[{i}] >> {})", -o, 64 + o)
+                        let k = -o;
+                        let before: Vec<String> = (0..k).map(|j| format!("u64::from(base >= {} && {}){}", k - j, pattern_test(&format!("src[base - {}]", k - j), rs), if j == 0 { String::new() } else { format!(" << {j}") })).collect();
+                        format!("(cur[{i}] << {k} | {})", before.join(" | "))
                     }
                 }
             }
-            Expr::Name(n) => self.blk(self.defs.get(n)?, off, depth + 1, used, back, on)?,
-            Expr::Not(a) => format!("(!{} & lv)", self.blk(a, off, depth + 1, used, back, on)?),
-            Expr::And(a, b) => format!("({} & {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
-            Expr::Or(a, b) => format!("({} | {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
-            Expr::Xor(a, b) => format!("({} ^ {})", self.blk(a, off, depth + 1, used, back, on)?, self.blk(b, off, depth + 1, used, back, on)?),
+            Expr::Name(n) => self.blk(self.defs.get(n)?, off, depth + 1, used)?,
+            Expr::Not(a) => format!("(!{} & lv)", self.blk(a, off, depth + 1, used)?),
+            Expr::And(a, b) => format!("({} & {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
+            Expr::Or(a, b) => format!("({} | {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
+            Expr::Xor(a, b) => format!("({} ^ {})", self.blk(a, off, depth + 1, used)?, self.blk(b, off, depth + 1, used)?),
             Expr::Call(f, args) => {
                 let (a, k) = Self::shift(f, args)?;
-                self.blk(&a, off + k, depth + 1, used, back, on)?
+                self.blk(&a, off + k, depth + 1, used)?
             }
             Expr::Test { .. } => return None,
         })
@@ -471,7 +1018,8 @@ impl<'a> Bytes<'a> {
 
     /// The window functions and helpers the rewritten reads call.
     pub(super) fn code(&self) -> String {
-        format!("{HELPERS}{}", self.code)
+        let named: String = self.named.borrow().iter().map(|x| x.1.as_str()).collect();
+        format!("{HELPERS}{}{named}{}{}", if self.fence { FENCE } else { "" }, self.class_table(), self.code)
     }
 }
 
@@ -508,13 +1056,54 @@ fn split_args(s: &str) -> Vec<String> {
     out
 }
 
+/// A call `unsafe { f }` as it reads inside an `unsafe` block: `f`.
+fn in_unsafe(call: &str) -> &str {
+    call.strip_prefix("unsafe { ").and_then(|c| c.strip_suffix(" }")).unwrap_or(call)
+}
+
 /// A byte's test of a class's ranges.
 fn pattern_test(b: &str, rs: &[(u32, u32)]) -> String {
     if rs.is_empty() {
         return "false".to_owned();
     }
-    let arms: Vec<String> = rs.iter().map(|&(lo, hi)| if lo == hi { format!("{lo:#04x}") } else { format!("{lo:#04x}..={hi:#04x}") }).collect();
-    format!("matches!({b}, {})", arms.join(" | "))
+    // `src[(s + 1)]` as `src[s + 1]`; a byte by its literal where it has one (`b'/'`), as hand-written Rust.
+    let b = match b.strip_prefix("src[(").and_then(|x| x.strip_suffix(")]")).filter(|x| !x.contains('(')) {
+        Some(i) => format!("src[{i}]"),
+        None => b.to_owned(),
+    };
+    let byte = |x: u32| u8::try_from(x).map_or_else(|_| format!("{x:#04x}"), lit);
+    match rs {
+        [(lo, hi)] if lo == hi => format!("({b} == {})", byte(*lo)),
+        _ => format!("matches!({b}, {})", rs.iter().map(|&(lo, hi)| if lo == hi { byte(lo) } else { format!("{}..={}", byte(lo), byte(hi)) }).collect::<Vec<_>>().join(" | ")),
+    }
+}
+
+/// Bytes `w` as Rust writes them (`b"=>"`).
+fn byte_str(w: &[u8]) -> String {
+    let mut s = String::from("b\"");
+    for &x in w {
+        match x {
+            b'"' => s.push_str("\\\""),
+            b'\\' => s.push_str("\\\\"),
+            0x20..=0x7e => s.push(x as char),
+            _ => {
+                let _ = write!(s, "\\x{x:02x}");
+            }
+        }
+    }
+    s.push('"');
+    s
+}
+
+/// Byte `x` as Rust writes it (`b'*'`, `b'\\n'`).
+pub(super) fn lit(x: u8) -> String {
+    match x {
+        b'\n' => "b'\\n'".to_owned(),
+        b'\\' => "b'\\\\'".to_owned(),
+        b'\'' => "b'\\''".to_owned(),
+        0x20..=0x7e => format!("b'{}'", x as char),
+        _ => format!("{x:#04x}"),
+    }
 }
 
 fn ident(n: &str) -> String {
@@ -524,7 +1113,70 @@ fn ident(n: &str) -> String {
 /// `code` with each run of a token's tests over the same bytes (`if wcount_in(n, s, l, w_A) >= 1 { … }`, one after
 /// another, comments between) read in one window loop (`wany_in`), as the lean lexer reads a string once: the tests'
 /// classes are then loaded once a window, not once a test.
-pub(super) fn fuse_tests(code: &str) -> String {
+/// `code` (the rows' match) with each row's region end and its tests over the region (`wfirst_bit` from the opener's
+/// next byte, then `wany_in` of its tests from the opener) read in one window loop from the opener (`wfirst_any`), as the
+/// lean lexer reads a string once (`string_end`). Where the row's first bytes (`firsts`, by row) start no escape of the
+/// end's mask, so the escapes from the opener are those from the byte after it.
+pub(super) fn fuse_read(code: &str, firsts: &[[bool; 256]], escapes: &HashMap<String, String>, escape_bytes: &HashMap<String, [bool; 256]>) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::new();
+    let mut row: Option<usize> = None;
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        if let Some(k) = l.strip_prefix("                ").and_then(|t| t.strip_suffix(" => {")).and_then(|t| t.parse::<usize>().ok()) {
+            row = Some(k);
+        }
+        let fused = (|| -> Option<(String, usize)> {
+            let first = firsts.get(row?)?;
+            let ind = l.len() - l.trim_start().len();
+            let pad = " ".repeat(ind);
+            let f = l.trim_start().strip_prefix("let l = match wfirst_bit(n, s + 1, |p: isize, esc: &mut u64| unsafe { ")?.strip_suffix("::<S>(src, n, p, esc) }) {")?;
+            (lines.get(i + 1)? == &format!("{pad}    Some(c) => c + 0,")).then_some(())?;
+            // The `None` arm, to the match's end.
+            let close = (i + 2..lines.len()).find(|&j| lines[j] == format!("{pad}}};"))?;
+            let none: Vec<&str> = lines[i + 2..close].to_vec();
+            (lines.get(close + 1)? == &format!("{pad}let l = l.max(s);")).then_some(())?;
+            let mut j = close + 2;
+            while lines.get(j)?.trim_start().starts_with("//") {
+                j += 1;
+            }
+            let rest = lines[j].trim_start().strip_prefix("let hit = wany_in(n, s, l, |p: isize, esc: &mut [u64; ")?;
+            let (_, rest) = rest.split_once("]| unsafe { let escaped = escaped_step(")?;
+            let (b, calls) = rest.split_once(", &mut esc[0]); [")?;
+            let calls = calls.strip_suffix("] });")?;
+            (escapes.get(f)? == b).then_some(())?;
+            let bytes = escape_bytes.get(b)?;
+            (!(0..256).any(|c| first[c] && bytes[c])).then_some(())?;
+            let e = f.strip_prefix("w_")?;
+            let mut t = String::new();
+            let _ = writeln!(t, "{pad}// The region's end and its tests in one window loop from its opener, the escapes found once a window, as the");
+            let _ = writeln!(t, "{pad}// lean lexer reads a string once: no first byte of the row starts an escape.");
+            let _ = writeln!(t, "{pad}let (l, hit) = match wfirst_any(n, s, |p: isize, esc: &mut u64| unsafe {{ let escaped = escaped_step({}, esc); (e_{e}::<S>(src, n, p, escaped), [{calls}]) }}) {{", in_unsafe(b));
+            let _ = writeln!(t, "{pad}    Some((c, hit)) => (c, hit),");
+            for x in &none {
+                let _ = writeln!(t, "{x}");
+            }
+            let _ = writeln!(t, "{pad}}};");
+            let _ = writeln!(t, "{pad}let l = l.max(s);");
+            Some((t, j + 1))
+        })();
+        match fused {
+            Some((t, next)) => {
+                out.push_str(&t);
+                i = next;
+            }
+            None => {
+                out.push_str(l);
+                out.push('\n');
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+pub(super) fn fuse_tests(code: &str, escapes: &HashMap<String, String>) -> String {
     let lines: Vec<&str> = code.lines().collect();
     // A test's head: its indent, its span and its window function.
     let head = |l: &str| -> Option<(usize, String, String)> {
@@ -569,9 +1221,18 @@ pub(super) fn fuse_tests(code: &str) -> String {
             continue;
         }
         let pad = " ".repeat(ind);
-        let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
+        // Tests that read the escapes of one mask find them once a window, with one carry, as the lean lexer's string
+        // reader passes each escape once.
+        let of: Vec<Option<&String>> = tests.iter().map(|(_, f)| escapes.get(f)).collect();
+        let shared = of.iter().all(|o| o.is_some() && *o == of[0]);
         let _ = writeln!(out, "{pad}// The token's tests of its bytes, in one window loop: their classes loaded once a window.");
-        let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
+        if let (true, Some(Some(b))) = (shared, of.first()) {
+            let calls: Vec<String> = tests.iter().map(|(_, f)| format!("e_{}::<S>(src, n, p, escaped)", f.trim_start_matches("w_"))).collect();
+            let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ let escaped = escaped_step({}, &mut esc[0]); [{}] }});", tests.len(), in_unsafe(b), calls.join(", "));
+        } else {
+            let calls: Vec<String> = tests.iter().enumerate().map(|(k, (_, f))| format!("{f}::<S>(src, n, p, &mut esc[{k}])")).collect();
+            let _ = writeln!(out, "{pad}let hit = wany_in(n, {span}, |p: isize, esc: &mut [u64; {}]| unsafe {{ [{}] }});", tests.len(), calls.join(", "));
+        }
         for (k, line) in lines.iter().enumerate().take(last).skip(i) {
             match tests.iter().position(|(h, _)| *h == k) {
                 Some(t) => {
@@ -641,7 +1302,43 @@ pub(super) fn strip_pauses(code: &str) -> String {
 
 /// The helpers every window reads: the 64 bytes loaded where they are, the bits of the file's bytes, the escapes
 /// carried from window to window, and the searches 64 bytes at a time.
-const HELPERS: &str = r#"/// The 64 bytes from `p` as loaded, and the byte they start at: at the file's first byte for a window before it. None
+/// The lean lexer's `find_fence`: where a fence of bytes next starts from `from`, by its first two (`find_pair`), then the
+/// rest compared.
+const FENCE: &str = r#"/// Where `fence` next starts, from `from`: its first two bytes (`micro::find_pair`), then the rest compared, as the lean
+/// lexer's `find_fence`.
+fn find_fence(b: &[u8], from: usize, fence: &[u8]) -> Option<usize> {
+    let mut i = from;
+    loop {
+        let at = micro::find_pair(b, i, fence[0], fence[1])?;
+        if b[at..].starts_with(fence) {
+            return Some(at);
+        }
+        i = at + 1;
+    }
+}
+
+"#;
+
+const HELPERS: &str = r#"/// The last byte of a run after byte `s`: from block `base`'s word `k` where the run's next byte is in the block (the
+/// lean lexer's `micro::run`), then the bytes past it, `w` each one's test (its `word_end`).
+#[inline(always)]
+fn word_last(n: usize, base: usize, k: u64, s: usize, w: impl Fn(usize) -> bool) -> usize {
+    let q = s + 1 - base;
+    let mut l = s;
+    if q < 64 {
+        let ones = (!(k >> q)).trailing_zeros() as usize;
+        if q + ones < 64 {
+            return s + ones;
+        }
+        l = base + 63;
+    }
+    while l + 1 < n && w(l + 1) {
+        l += 1;
+    }
+    l
+}
+
+/// The 64 bytes from `p` as loaded, and the byte they start at: at the file's first byte for a window before it. None
 /// for a window past the file's end.
 ///
 /// # Safety
@@ -652,9 +1349,19 @@ unsafe fn window<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> O
         return None;
     }
     let q = p.max(0);
-    let block: &[u8; 64] = src[q as usize..q as usize + 64].try_into().expect("the padded source");
     // SAFETY: the caller's.
-    Some((unsafe { S::load(block) }, q))
+    Some((
+        match src.get(q as usize..q as usize + 64) {
+            Some(block) => unsafe { S::load(block.try_into().expect("64 bytes")) },
+            // A source with no padding (tier 2's, asking a token's tests): its last bytes, and spaces as the padding's.
+            None => {
+                let mut block = [b' '; 64];
+                block[..src.len() - q as usize].copy_from_slice(&src[q as usize..]);
+                unsafe { S::load(&block) }
+            }
+        },
+        q,
+    ))
 }
 
 /// The bits `b` of the window loaded at `q`, as the window from `p`'s: none past the file or before it.
@@ -662,6 +1369,12 @@ unsafe fn window<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> O
 fn held(b: u64, q: isize, n: usize, p: isize) -> u64 {
     let b = if p < q { b << (q - p) } else { b };
     b & valid(n, p)
+}
+
+/// `held` of a class the padding holds none of: the bits before the file shifted out, those past it none.
+#[inline(always)]
+fn padded(b: u64, q: isize, p: isize) -> u64 {
+    if p < q { b << (q - p) } else { b }
 }
 
 /// The bits of the window from `p` that are the file's bytes.
@@ -686,6 +1399,35 @@ fn escaped_step(bs: u64, carry: &mut u64) -> u64 {
     let escaped = escape_and_terminal ^ (bs | *carry);
     *carry = (escape_and_terminal & bs) >> 63;
     escaped
+}
+
+/// A region's end and its tests in one window loop from its opener `a` (`fuse_read`): the first byte after `a` the end
+/// holds, and whether each test holds in `a..=` that byte. `w` gives a window's end and tests, its escapes found once.
+#[inline(always)]
+fn wfirst_any<const K: usize>(n: usize, a: usize, mut w: impl FnMut(isize, &mut u64) -> (u64, [u64; K])) -> Option<(usize, [bool; K])> {
+    let mut esc = 0u64;
+    let mut any = [0u64; K];
+    let mut p = a as isize;
+    // The opener's byte is no end.
+    let mut opener = 1u64;
+    while p < n as isize {
+        let (end, t) = w(p, &mut esc);
+        let end = end & !opener;
+        opener = 0;
+        if end != 0 {
+            let k = end.trailing_zeros();
+            let keep = u64::MAX >> (63 - k);
+            for i in 0..K {
+                any[i] |= t[i] & keep;
+            }
+            return Some((p as usize + k as usize, any.map(|x| x != 0)));
+        }
+        for i in 0..K {
+            any[i] |= t[i];
+        }
+        p += 64;
+    }
+    None
 }
 
 /// The first byte at or after `from` a mask holds, its windows `w` from `from` on.
@@ -908,10 +1650,18 @@ fn key8(w: &[u8]) -> u64 {
     w.iter().take(8).enumerate().fold(0, |k, (i, &c)| k | u64::from(c) << (8 * i))
 }
 
+/// `word_at`'s load of 8 bytes where the source is not padded: zeros past the file, as the lean Kotlin lexer's `load8`.
+const LOAD_AT_END: &str = "/// The 8 bytes at `i`, little-endian, zeros past the file.\n#[inline(always)]\nfn load8(src: &[u8], i: usize) -> u64 {\n    match src.get(i..i + 8) {\n        Some(b) => u64::from_le_bytes(b.try_into().expect(\"8 bytes\")),\n        None => load8_at_end(src, i),\n    }\n}\n\n/// `load8` within 8 bytes of the file's end.\n#[cold]\n#[inline(never)]\nfn load8_at_end(src: &[u8], i: usize) -> u64 {\n    let rest = src.get(i..).unwrap_or(&[]);\n    let have = rest.len().min(8);\n    let mut w = [0u8; 8];\n    w[..have].copy_from_slice(&rest[..have]);\n    u64::from_le_bytes(w)\n}\n\n";
+
 /// A token's word from one load (decision 0623 step 4, the lean lexer's `word_code`): its first 8 bytes masked to its
 /// length, and the length, hashed by one multiply into a table where each of the grammar's words (`words`, code
-/// `i + 1`) has a slot of its own. `None` where no multiplier the search tries gives each its own slot.
-pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
+/// `i + 1`) has a slot of its own; a word of 9 to 16 bytes compares its rest as a second word of memory in the same
+/// test, as lean's `ninth`. Where the source is not padded (`padded` false), a load near the file's end reads zeros
+/// past it, as the lean Kotlin lexer's `load8`. `None` where a word is longer, or no multiplier the search tries gives each its own slot.
+pub(super) fn word_table(words: &[Vec<u8>], padded: bool) -> Option<String> {
+    if words.is_empty() || words.iter().any(|w| w.len() > 16) {
+        return None;
+    }
     let keys: Vec<u64> = words.iter().map(|w| key8(w) ^ w.len() as u64).collect();
     let least = usize::BITS - words.len().max(1).leading_zeros();
     let mut x = 0x9e37_79b9_7f4a_7c15u64;
@@ -933,22 +1683,85 @@ pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
             if !ok {
                 continue;
             }
+            let list: Vec<String> = words.iter().map(|w| byte_str(w)).collect();
             let mut table = String::new();
-            for slot in &slots {
-                match words.get(*slot) {
-                    Some(w) => {
-                        let tail: Vec<String> = w.iter().skip(8).map(|c| format!("{c:#04x}")).collect();
-                        let _ = writeln!(table, "    ({:#018x}, {}, {}, &[{}]),", key8(w), w.len(), slot + 1, tail.join(", "));
-                    }
-                    None => table.push_str("    (0, 0, 0, &[]),\n"),
-                }
+            for chunk in list.chunks(12) {
+                let _ = writeln!(table, "    {},", chunk.join(", "));
             }
             return Some(format!(
-                "/// Each slot's word (`word_at`): its first 8 bytes, its length, its code, its bytes after the 8th.\nstatic WORDS: [(u64, usize, u32, &[u8]); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none. Its first 8 bytes, masked to its length,\n/// and the length, hashed by one multiply into `WORDS` (the lean lexer's `word_code`); a word of more than 8 compares the rest.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"));\n    let k = raw & (u64::MAX >> (64 - 8 * len.min(8)));\n    let (key, l, code, tail) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    if key == k && l == len && (len <= 8 || src[s + 8..s + len] == *tail) {{ code }} else {{ 0 }}\n}}\n\n",
+                "/// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.\nconst WORD_LIST: [&[u8]; {}] = [\n{table}];\n\n/// Up to 8 bytes as one word of memory: little-endian, zeros past them.\nconst fn word_key(s: &[u8]) -> u64 {{\n    let (mut v, mut i) = (0u64, 0);\n    while i < s.len() {{\n        v |= (s[i] as u64) << (8 * i);\n        i += 1;\n    }}\n    v\n}}\n\n/// A word's slot in `WORDS`: its first 8 bytes and its length, hashed by a multiplier under which the {} words take\n/// {} slots, as the lean lexer's `word_slot`.\nconst fn word_slot(k: u64, len: usize) -> usize {{\n    ((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize\n}}\n\n/// Each slot's word (`word_at`): its first 8 bytes, the next 8, its length, its code (0: none), as the lean lexer's\n/// `WORDS`.\nstatic WORDS: [(u64, u64, u32, u32); {}] = {{\n    let mut t = [(0, 0, 0, 0); {}];\n    let mut i = 0;\n    while i < WORD_LIST.len() {{\n        let w = WORD_LIST[i];\n        let (head, tail) = w.split_at(if w.len() > 8 {{ 8 }} else {{ w.len() }});\n        let slot = word_slot(word_key(head), w.len());\n        assert!(t[slot].3 == 0, \"two words in a slot\");\n        t[slot] = (word_key(head), word_key(tail), w.len() as u32, i as u32 + 1);\n        i += 1;\n    }}\n    t\n}};\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its\n/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`; its bytes 8 to 16 masked\n/// the same, compared with the first and the length in one test (lean's `ninth`), without a branch.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = {l0};\n    let rest = {l8};\n    let k = raw & (u64::MAX >> (64 - 8 * len.clamp(1, 8)));\n    let t = rest & u64::MAX.checked_shr(128 - 8 * len.clamp(8, 16) as u32).unwrap_or(0);\n    let (key, tail, l, code) = WORDS[word_slot(k, len)];\n    code & 0u32.wrapping_sub(u32::from((key == k) & (tail == t) & (l as usize == len)))\n}}\n\n{loads}",
+                words.len(),
+                words.len(),
+                words.len(),
+                64 - bits,
                 1usize << bits,
-                64 - bits
+                1usize << bits,
+                l0 = if padded { "u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"))" } else { "load8(src, s)" },
+                l8 = if padded { "u64::from_le_bytes(src[s + 8..s + 16].try_into().expect(\"the padded source\"))" } else { "load8(src, s + 8)" },
+                loads = if padded { "" } else { LOAD_AT_END },
             ));
         }
     }
     None
+}
+
+/// The bytes of a class of byte ranges.
+fn class_set(ranges: &[(u32, u32)]) -> [bool; 256] {
+    std::array::from_fn(|b| ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&(b as u32))))
+}
+
+/// Class `set`'s bits in the first of `packs` (nibble tables' pairs, eight bits each) with room: the bits already
+/// there whose bytes are all `set`'s, and new ones for the bytes they leave, each a set of high nibbles times a set of
+/// low ones widened over `set` (a bit may hold bytes another bit holds). Its pair and bits; none past eight bits.
+fn cover(packs: &mut Vec<Vec<(u16, u16)>>, set: &[bool; 256]) -> Option<(usize, u8)> {
+    let at = |h: usize, l: usize| set[h << 4 | l];
+    let inside = |r: &(u16, u16)| (0..16).all(|h| r.0 >> h & 1 == 0 || (0..16).all(|l| r.1 >> l & 1 == 0 || at(h, l)));
+    let holds = |r: &(u16, u16), b: usize| r.0 >> (b >> 4) & 1 == 1 && r.1 >> (b & 15) & 1 == 1;
+    // The new bits for the bytes `left`: a high nibble at a time, the high nibbles with the same low ones one bit, each
+    // widened: every high nibble whose bytes at its low ones are all the class's, then every low one at all of them.
+    let rects_of = |left: &[bool; 256]| {
+        let mut rects: Vec<(u16, u16)> = Vec::new();
+        for h in 0..16 {
+            let lows = (0..16).filter(|&l| left[h << 4 | l]).fold(0u16, |m, l| m | 1 << l);
+            if lows == 0 {
+                continue;
+            }
+            let hs = (0..16).filter(|&g| (0..16).all(|l| lows >> l & 1 == 0 || at(g, l))).fold(0u16, |m, g| m | 1 << g);
+            let ls = (0..16).filter(|&l| (0..16).all(|g| hs >> g & 1 == 0 || at(g, l))).fold(0u16, |m, l| m | 1 << l);
+            if !rects.contains(&(hs, ls)) {
+                rects.push((hs, ls));
+            }
+        }
+        // None whose bytes `left` holds the others hold all of.
+        let mut i = 0;
+        while i < rects.len() {
+            let r = rects[i];
+            if (0..256).all(|b| !holds(&r, b) || !left[b] || rects.iter().enumerate().any(|(j, o)| j != i && holds(o, b))) {
+                rects.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+        rects
+    };
+    let plan = |p: &Vec<(u16, u16)>| {
+        let reuse: Vec<usize> = (0..p.len()).filter(|&k| inside(&p[k])).collect();
+        let left: [bool; 256] = std::array::from_fn(|b| set[b] && !reuse.iter().any(|&k| holds(&p[k], b)));
+        (reuse, rects_of(&left))
+    };
+    let p = match packs.iter().position(|p| p.len() + plan(p).1.len() <= 8) {
+        Some(p) => p,
+        None if rects_of(set).len() <= 8 => {
+            packs.push(Vec::new());
+            packs.len() - 1
+        }
+        None => return None,
+    };
+    let (reuse, new) = plan(&packs[p]);
+    let mut bits = reuse.iter().fold(0u8, |m, &k| m | 1 << k);
+    for r in new {
+        bits |= 1 << packs[p].len();
+        packs[p].push(r);
+    }
+    Some((p, bits))
 }

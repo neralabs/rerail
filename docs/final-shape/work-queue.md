@@ -11276,3 +11276,21 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - headless-scan (67 of 161) needs a current native addon. The worktree's is from Nov 22, and Relax builds none.
   - store-base `the_image_is_the_one_the_loader_names` under Relax.
   - The earlier list stands: accel-gpu `concurrent_levels`, the store suite's memory, the tests-corpus template under Relax, napi's constructor registry, kotlin_parser, json_tapes, device-metal parity, and the packs.tsv re-bless.
+
+### Q541. Roll-up 114 (Parser-generators-final-shape a40d598290 onto Pulling-it-all-together): what the merge chose
+
+- Parser-generators-final-shape (a40d598290; decisions 0623, 0650, 0655, 0668): statements that recover (an ERROR leaf), comments kept apart from the tokens (`xs`, `pass_comments`), tier 2 as calls (`rust`) and as one loop (`rust_loop`, the device's form, 0618), and tier 1's rewrite for rr (classes by lean's table, numbers as lean's two digit runs, floats from their records).
+- The branch was on format 15; the hub is on format 16 alone (0626, 0631). The branch's work is carried onto format 16, as the hub's own 0626 port of this parser did:
+  - The ERROR leaf is numbered as the table's ERROR code (`Entry{kind: ERROR_CODE, field 0, flags CODE_ERROR}`). The interpreter's `ERROR_LEAF` maps through the new `stream::entry_of`. The JIT's `ERROR_ROW` slot (now in `stream_ir`, re-exported from `native_cpu_tape`) maps through `numbers_by_key` and `CompiledStream::numbers_by`.
+  - The JIT's recovery ran only on format 15 (it refused format 16 runs). On format 16 the ops take nodes as they are committed, so a recovery that cuts back to its mark would find those nodes passed. `commit` now passes no node past a set mark's node count while the grammar recovers. Grammars without recovery compile as before.
+  - A direct run (each node passed at its own word) is not taken where the grammar recovers (`stream_facts::direct_keys`).
+  - `recover_statement` keeps the commit point and the nodes passed (`Mem::Coded`, `Mem::Codes`) across the cut. Format 15's `cut_to`, `blocks_from`, `commit` and `finish` are not taken.
+  - `bitlex_rust`'s `P::new` takes the finish's target: `Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src)`, then `pass_comments`. rr_aot's `parse_loop` takes a `Finish`, as `parse` does.
+  - `pp_expand`: the hub's code. Its large error is boxed (`Box<Result<Expanded, Error>>`).
+- rr_parser's tests are on format 16: `interp_tape` and the tapes compared are `Tape`s, an ERROR is a tape's fault, and the lean tape is a `Result`. The corpus test prints the first node that differs, where the branch printed a byte.
+- rr_aot's `tier1.rs`, `tier2.rs` and `tier2_loop.rs` are regenerated (`RERAIL_BLESS=1`). `tier1.rs` and `tier2.rs` are byte for byte the branch's. `tier2_loop.rs` differs only in the writer's target and the redo check.
+- kotlin_aot's `tier2.rs` stays the hub's. Its generator test (`kotlin_parser::rust_is_current`) panics under Relax before it writes anything, as it did before this merge (roll-up 111's run): a `str` that Relax's std reads as broken UTF-8 in `Expr`'s `Debug`. bitlex has no `unsafe`, so this is a Relax defect. kotlin_aot builds as it is.
+- Checked with Relax, RERAIL_GPU=cpu:
+  - one check over compiler, rr-aot, rr-parser, kotlin-aot, kotlin-parser, json-aot, cpu-stream, metal, parser-tests, slabs and bitlex: no errors;
+  - rr-parser, whole crate at four threads: 55 pass, the eight recovery tests among them. 3 fail in tier 1's generator at `bitlex_lex_rust.rs:272` ("index 69 is not a char boundary; it is inside '_'"): a Relax defect, seen since roll-up 86. Run alone, all three pass.
+  - Not run: the ignored corpus test `corpus_edited_tapes_are_the_lean_tapes` passed Relax's 580 s cap.

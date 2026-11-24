@@ -262,7 +262,7 @@ const CASES: &[(&str, &str)] = &[
     (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "parses"),
     ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
     (".scope 1.2.3.4.5\n.mode 10.25.5 x\nr(x) :- x = 1.25.", "parses"),
-    // The same, short of what goes to the engine (`TO_THE_ENGINE`).
+    // The same, shorter; a long integer read as written.
     (".scope 1.2\n.mode 1.2\nr(x) :- x = 1.2.", "parses"),
     ("r(x) :- x = 12345678901234567890, y = 1.5.", "parses"),
     ("r(x) :- x = 1.05, y = 007.5, z = 123456789012345678, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
@@ -335,8 +335,10 @@ fn against_the_engine(_: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<IdN
     let nodes = want.as_ref()?;
     // A `.rerail` file is text: the engine reads only UTF-8.
     let src = std::str::from_utf8(bytes).ok()?;
-    let (theirs, error) = engine(src);
     let ours = named(c, nodes);
+    // The engine's of the text as it reads the grammar's strings and numbers (`rr::as_lean_reads`): the grammar reads
+    // each as a checker does (decision 0655 step 13).
+    let (theirs, error) = engine(&rr::as_lean_reads(src, ours.iter().filter(|n| n.4 == 1).map(|n| (n.2, n.3))));
     if error {
         return Some(format!("the grammar parses what the engine does not:\n  engine {theirs:?}\n  grammar {ours:?}"));
     }
@@ -360,34 +362,19 @@ fn rr_parses_as_the_reference_and_the_engine() {
     assert!(differ.is_empty(), "{} documents differ:\n{}", differ.len(), differ.join("\n"));
 }
 
-/// Cases the grammar sends to the engine, and the escape that sends it: an integer of 19 digits or more, its leading
-/// zeros aside (the engine checks its i64). A float's chain of dots (`1.2.3`) and a float's digits, however many, are
-/// read in tier 1, as a lexer reads them (decision 0400, Q40). The engine's tape is the file's either way.
-const TO_THE_ENGINE: &[(&str, &str)] = &[("r(x) :- x = 12345678901234567890, y = 1.5.", "escape: a number of 19 digits or more")];
-
-/// Each case marked `parses` parses, and the engine's tree has no `ERROR`; a case sent to the engine
-/// (`TO_THE_ENGINE`) is refused by its escape alone.
+/// Each case marked `parses` parses. A long integer (19 digits or more) and a float's digits, however many, are read
+/// as written, as a checker reads them (decision 0655 step 13): no case is sent to the engine.
 #[test]
 fn rr_cases_parse() {
     let mut missing = Vec::new();
     for (name, source) in grammar() {
         let c = rerail_cpu_stream::ladder::compile_step(&name, &source);
         for &(doc, mark) in CASES {
-            let engine = TO_THE_ENGINE.iter().find(|e| e.0 == doc);
-            let parsed = rerail_cpu_stream::ladder::reference(&c, doc.as_bytes()).is_some();
-            match engine {
-                Some(&(_, why)) => {
-                    let refusal = rerail_cpu_stream::ladder::refusal(&c, doc.as_bytes());
-                    if parsed || !refusal.starts_with(why) {
-                        missing.push(format!("{name}: {doc:?}: not sent to the engine by {why:?}: {}", if parsed { "parsed" } else { &refusal }));
-                    }
-                }
-                None if mark == "parses" && !parsed => missing.push(format!("{name}: {doc:?}: {}", rerail_cpu_stream::ladder::refusal(&c, doc.as_bytes()))),
-                None => {}
+            if mark == "parses" && rerail_cpu_stream::ladder::reference(&c, doc.as_bytes()).is_none() {
+                missing.push(format!("{name}: {doc:?}: {}", rerail_cpu_stream::ladder::refusal(&c, doc.as_bytes())));
             }
         }
     }
-    assert!(TO_THE_ENGINE.iter().all(|e| CASES.iter().any(|c| c.0 == e.0)), "a case sent to the engine that is no case");
     assert!(missing.is_empty(), "cases the grammar refuses:\n{}", missing.join("\n"));
 }
 
@@ -403,7 +390,7 @@ fn a_refused_mark_is_checked() {
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
         (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
         (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
-        ("hidden float_after line newline policy_on json_bad fix_on", "hidden float_after line newline policy_on fix_on", "no hidden mark"),
+        ("hidden float_at line newline policy_on json_bad fix_on", "hidden float_at line newline policy_on fix_on", "no hidden mark"),
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
