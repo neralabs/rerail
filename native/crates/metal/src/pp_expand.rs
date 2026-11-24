@@ -1372,6 +1372,14 @@ impl Exp {
         out
     }
 
+    /// The continuations (decision 0613 §4, `LPQ` 11 to 14): the runs parked, the runs resumed, the holes read in
+    /// place, and the stops at a hole not done that read their piece or request again.
+    pub fn waits(&self) -> [u32; 4] {
+        // SAFETY: the device finished; `lpq` holds the queue's control words (`LPQ_CTL`, 16).
+        let p = self.lpq.host().cast::<u32>();
+        unsafe { [*p.add(11), *p.add(12), *p.add(13), *p.add(14)] }
+    }
+
     /// The requests posted (`LPQ` 5).
     pub fn posted(&self) -> u32 {
         // SAFETY: the device finished; `lpq` holds the queue's control words.
@@ -1432,7 +1440,12 @@ impl Exp {
             // SAFETY: the device finished; a store holds `bytes()` bytes of `u32` words.
             unsafe { std::slice::from_raw_parts(b.host().cast::<u32>(), b.byte_length() / 4) }
         }
-        let refused = *words(&self.ctl).get(2).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        let mut refused = *words(&self.ctl).get(2).ok_or_else(|| crate::pp_arena::failure(concat!(file!(), ":", line!())))?;
+        // A run parked and never resumed (decision 0613 §4's continuations): its piece never ended.
+        let w = self.waits();
+        if w[0] != w[1] {
+            refused |= X_QUEUE;
+        }
         if refused != 0 {
             return Ok((refused, Vec::new()));
         }
@@ -1554,6 +1567,8 @@ pub struct Expanded {
     pub log_rows: u32,
     /// The requests posted (`LPQ` 5): the calls read in a run of their own (decision 0613 §4).
     pub posted: u32,
+    /// The continuations (`Exp::waits`): runs parked, resumed, holes read in place, hole stops that read again.
+    pub waits: [u32; 4],
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
 }
@@ -1847,7 +1862,7 @@ impl<'u> Runs<'u> {
             // SAFETY: as `w`: the queue's control words (`LPQ`, 16), 5 to 7 the requests posted, the pieces read
             // again and the requests' steps.
             let q = |k: usize| unsafe { *exp.lpq.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; arguments taken {}, read by their caller {}, read twice {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), q(8), q(9), q(10), exp.room()[0], x.rung, p1.top);
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {}); all pieces {} us, {} steps, {groups} groups; memo {} hits, {} kept; requests {}, {} steps, pieces read again {}; parked {}, resumed {}, read in place {}, holes read again {}; arguments taken {}, read by their caller {}, read twice {}; tokens {:?} rung {} top {}", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound, w(24), w(25), w(28), w(29), q(5), q(7), q(6), q(11), q(12), q(13), q(14), q(8), q(9), q(10), exp.room()[0], x.rung, p1.top);
         }
         // The loop's work, where the run reached the text (a round that ends at its requests did not): the
         // unit's, kept for its next run and its next evaluation.
@@ -1860,7 +1875,7 @@ impl<'u> Runs<'u> {
         };
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))), work };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), posted: exp.posted(), run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), posted: exp.posted(), waits: exp.waits(), run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {

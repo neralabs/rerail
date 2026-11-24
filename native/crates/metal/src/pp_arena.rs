@@ -224,7 +224,7 @@ pub fn tg() -> u64 {
     *T.get_or_init(|| if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG })
 }
 
-/// A SIMD group's run's slot in the dispatch's runs (`pp_grid.uglykl`'s `LP_RUN_BYTES`), and a group's slots
+/// A SIMD group's run's slot in the dispatch's runs (`pp_loop.uglykl`'s `LP_RUN_BYTES`), and a group's slots
 /// (`LP_SLOTS`: `TG` threads of 32-wide SIMD groups).
 pub const RUN_BYTES: usize = 4096;
 pub const RUN_SLOTS: usize = (TG / 32) as usize;
@@ -233,8 +233,12 @@ pub const RUN_SLOTS: usize = (TG / 32) as usize;
 /// back end lost its writes in the group's memory: decision 0613 §4's notes). A batch's units share one, its
 /// groups reading any of them (`pp_teams`' helpers).
 pub fn runs(arena: &Arena, groups: u64) -> Result<Buf, Error> {
-    arena.zeroed::<u32>(groups.max(1) as usize * RUN_SLOTS * RUN_BYTES / 4)
+    arena.zeroed::<u32>((1 + PARK_SLOTS + groups.max(1) as usize * RUN_SLOTS) * RUN_BYTES / 4)
 }
+
+/// The parked runs' slots before the groups' (`pp_loop.uglykl`'s `LP_PARKS`), after a slot of their bitmap: a run
+/// that waits for a request's result (decision 0613 §4's continuations).
+pub const PARK_SLOTS: usize = 256;
 
 /// A probe's scalars (`pp_probes.uglykl`'s `PpProbeArgs`).
 #[repr(C)]

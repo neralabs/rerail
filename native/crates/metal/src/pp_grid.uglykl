@@ -164,14 +164,13 @@ typedef struct PpTg {
 
 // Each SIMD group's piece's run (`lp_piece`: its stacks, indexed as it goes) is its own slot of the dispatch's runs
 // (`LPRUN`, the host's `pp_arena::runs`), in device memory: `LP_SLOTS` a group, by the group's place in the dispatch
-// (`PpTg::hw`), each `LP_RUN_BYTES`. Not the group's memory: there the M3's back end (G15) lost the run's writes, a
+// (`PpTg::hw`), each `LP_RUN_BYTES`, past the parked runs' slots (`LP_PARK_AREA`). Not the group's memory: there the M3's back end (G15) lost the run's writes, a
 // thread's store not seen by its own next load (decision 0613 §4's notes, 2026-11-24). A power of two, a slot masked
 // by a constant.
 #define LP_SLOTS (256u / UKL_SIMD_WIDTH)
-#define LP_RUN_BYTES (4096u)
 UKL_STATIC_ASSERT(sizeof(LpRun) <= LP_RUN_BYTES, "a run fits its slot (LP_RUN_BYTES, pp_arena::RUN_BYTES)");
 UKL_INLINE UKL_GLOBAL LpRun* lp_run_slot(PP_GLOBAL uint8_t* runs, uint32_t hw, uint32_t lid) {
-    uint32_t at = (hw * LP_SLOTS + ((lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u))) * LP_RUN_BYTES;
+    uint32_t at = LP_PARK_AREA + (hw * LP_SLOTS + ((lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u))) * LP_RUN_BYTES;
     return (UKL_GLOBAL LpRun*)(runs + (uint64_t)at);
 }
 
@@ -241,7 +240,7 @@ UKL_INLINE UKL_GLOBAL LpRun* lp_run_slot(PP_GLOBAL uint8_t* runs, uint32_t hw, u
     lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),       \
            AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),                                           \
            AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl,         \
-           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), lp_run_slot(AT(uint8_t, LPRUN), tg->hw, g.lid), (idle) __UKL_ARGS)
+           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), lp_run_slot(AT(uint8_t, LPRUN), tg->hw, g.lid), AT(uint8_t, LPRUN), (idle) __UKL_ARGS)
 // A helper's reading of the loop open at `lay` (`PG_LOOP`: the tests' lines' where `is_if`), by a group with no
 // team left (`pp_teams`): the unit's items until its queue has none waiting.
 UKL_ONCE void lp_help(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg, UklGrid g, bool is_if __UKL_PARAMS)

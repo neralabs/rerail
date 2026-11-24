@@ -1404,7 +1404,9 @@ fn expansions_are_the_serial_passes() {
     let defs = args.lines().filter(|l| l.starts_with("#define")).collect::<Vec<_>>().join("\n");
     let again = format!("{defs}\nID(C8(0) _Pragma(\"x\"))\nID(C8(1))\n");
     let in_args = format!("{defs}\nID(C8(0))\nID(C8(1))\nID(C8(2))\nF(ID(C4(0)) ID(1), C2(ID(2)), ID(C1(3)), 4)\n");
-    let shapes: Vec<&str> = shapes.iter().copied().chain([args.as_str(), again.as_str(), in_args.as_str()]).collect();
+    // Holes waited for and read in place (decision 0613 §4's continuations): their rows made once, at the room.
+    let waits = format!("{WAITS_DEFS}{}", WAITS.iter().map(|(_, t)| *t).collect::<String>());
+    let shapes: Vec<&str> = shapes.iter().copied().chain([args.as_str(), again.as_str(), in_args.as_str(), waits.as_str()]).collect();
     for main in &shapes {
         for cpp in [false, true] {
             let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
@@ -2871,6 +2873,61 @@ fn a_call_in_an_argument_is_a_request() {
     let x = expand_from(&d.unit, &d.lay, 0).unwrap();
     same(x.refused, 0, "refused");
     assert!(x.posted >= 4, "{} requests posted, not the top call and its argument's 3", x.posted);
+}
+
+/// Decision 0613 §4's continuations: the definitions and shapes of `a_reading_waits_for_its_holes_result`.
+const WAITS_DEFS: &str = "#define ID(x) x\n#define L(y) (y)\n#define H(a) a+1\n#define FH(x) H x\n#define E(y)\n#define FE(x) H x (3)\n\
+                          #define CAT(a, b) CAT_I(a, b)\n#define CAT_I(a, b) a ## b\n#define F(x) x\n#define S(x) STR(x)\n#define STR(x) #x\n\
+                          #define T2(a, b) (a, b)\n#define E0(t) E0_ t\n#define E0_(a, b) a\n#define E1(t) E1_ t\n#define E1_(a, b) b\n\
+                          #define GET(i, t) CAT(E, i)(t)\n#define DATA(a) E1(a)\n#define SIZE(a) E0(a)\n#define ELEM(i, a) GET(i, DATA(a))\n\
+                          #define INS(a, x) T2(SIZE(a), T2(x, DATA(a)))\n#define A T2(1, T2(7, 8))\n";
+const WAITS: &[(&str, &str)] = &[
+    ("a name before it whose ( it begins", "FH(L(5))\nID(FH(L(6)))\n"),
+    ("a name before an empty one", "FE(E(1))\nID(FE(E(2)))\n"),
+    ("pasted through it", "CAT(F(p), q)\nID(CAT(F(r), s))\n"),
+    ("stringized through it", "S(F(p q))\nID(S(F(r s)))\n"),
+    ("three deep", "CAT(CAT(F(a), F(b)), F(c))\nID(CAT(CAT(F(d), F(e)), CAT(F(f), g)))\n"),
+    ("the same call at another place", "int x;\nCAT(F(p), q)\nint y;\nCAT(F(p), q) CAT(F(p), q)\n"),
+    ("a result's holes read in a caller's arguments", "ELEM(0, INS(A, 9))\nELEM(1, INS(A, 9))\nID(ELEM(1, INS(A, 6)))\nELEM(0, INS(A, 6))\n"),
+    // Last: its definitions would reach the shapes after it.
+    ("a hole's space, stringized (the standard's 6.10.3.5 example, Boost's `cpp_standard.cpp`)",
+     "#define x 2\n#define f(a) f(x * (a))\n#define g f\n#define z z[0]\n#define t(a) a\n\
+      S(f(y+1) + f(f(z)) % t(t(g)(0) + t)(1);)\nID(S(f(y+1) % t(t(g)(0) + t)(1)))\nS(% t(t(g)(0) + t)(1))\n"),
+];
+
+/// Decision 0613 §4's continuations: a reading that needs a hole's result waits for it (its run parks, and resumes
+/// when the request is done), then answers from the result's summary or reads it in place, where before it read its
+/// piece again. A name before a hole whose result begins with `(`, and one whose result is empty; a callee reading
+/// `##` or `#` through a hole (Boost's `CAT_I`); three deep; the same call again at another place (a memo hit read
+/// with its shift); a result's holes read in a caller's arguments (Boost's `ARRAY_ELEM` of an `ARRAY_INSERT`: holes
+/// in a result read in place, found from its room); a hole's space where its result is read in place, stringized (the
+/// C standard's example). Each the serial pass's in C and C++, each park resumed, and none read again; holes waited
+/// for or read in place among them.
+#[test]
+fn a_reading_waits_for_its_holes_result() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::expand_from;
+    let mut handled = 0;
+    for (what, text) in WAITS {
+        let main = format!("{WAITS_DEFS}{text}");
+        for cpp in [false, true] {
+            let (got, want, _, _) = expanded_in(&[("main.c", main.as_str())], rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
+            same(got.map(|g| show(&g)), Ok(show(&want)), format!("{what}, C++ {cpp}"));
+            let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), main.as_bytes().to_vec())].into_iter().collect();
+            let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+            let d = on_device(rerail_c_pp::Config::new(crate::pp::options(cpp)), &mut io, "main.c", cpp).unwrap();
+            let x = expand_from(&d.unit, &d.lay, 0).unwrap();
+            same(x.refused, 0, format!("{what}, C++ {cpp}: refused"));
+            let [parked, resumed, inplace, again] = x.waits;
+            eprintln!("{what}, C++ {cpp}: parked {parked}, resumed {resumed}, read in place {inplace}, read again {again}");
+            // Whether a run parks, or a hole is read at all, is the device's timing (on a GPU a hole is often done
+            // before its reader gets there, and answered whole); every park resumes, and none is read again.
+            assert!(parked == resumed, "{what}, C++ {cpp}: parked {parked}, resumed {resumed}");
+            same(again, 0, format!("{what}, C++ {cpp}: holes not done read again"));
+            handled += parked + inplace;
+        }
+    }
+    assert!(handled >= 1, "no hole waited for or read in place");
 }
 
 /// A run's frames are as deep as its input nests: past the group's `LP_DEPTH` they are the run's region 6
