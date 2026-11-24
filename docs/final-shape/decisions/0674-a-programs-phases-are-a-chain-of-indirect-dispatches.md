@@ -1,0 +1,89 @@
+# 0674: A program's phases are a chain of indirect dispatches, one launch in the ledger
+
+Status: decided (2026-11-24), by the user: "does metal have indirect dispatch? if so, I want an UKL primitive that
+allows us to use it, with a re-dispatcher for GPUs which don't support it", and "a chain is one launch in the ledger".
+
+## What was measured
+
+The join program (decision 0603) runs a stratum's device work as one persistent launch over a work queue: a phase's
+items are pushed by the group that finishes the phase before, and a group that finds the queue empty ends at once
+(decision 0540 step 7). Counted per phase on the M1 Max (32 cores), the keyed join of the timed test (100 K x 100 K,
+249,484 rows), with a counter of the groups that took any item of each phase:
+
+- 94 phases in series: 59 in the program that builds the index and runs the first join, 35 in the next. Each scan is
+  5 phases (7 scans: 35), each size script a phase of one item (9), the index's sort 3 radix passes of 7 phases.
+- No phase ran on more than 32 groups of the 6,250 to 9,746 dispatched. In the first program every phase from the
+  stage scatter on ran on **one** group: `STAGE_SCATTER` 391 items, `DEDUP_CLAIM` and `DEDUP_MARK` 782 each,
+  `COPY` 975, each done by one 256-thread group, item after item. At each phase of one item every other group found
+  the queue empty and ended; the program went on with the groups left.
+- Its GPU time, 11 to 15 ms, against 15 to 16 ms for the same program on one CPU thread.
+
+The queue is right about waits (no group waits on another) and wrong about width: the width of a phase is whatever
+groups happen to be alive when the phase before ends.
+
+## The decision
+
+A program's phases are a **chain**: a sequence of dispatches of one kernel in one submission, in order, each sized
+on the device. Phase `p`'s group count is three words in the program's block, written by phase `p - 1` (its
+finisher: the group that completes its last item), read when phase `p` starts. No group waits for another: the
+order is the dispatches', which the device keeps. Every group dispatched has an item to run, so each phase is as
+wide as its items.
+
+- **The ledger: a chain is one launch** (the user's). Its dispatches are charged once, as one launch of its kernel,
+  however many phases it has. `KERNEL_LAUNCH_LIMIT` bounds chains, not phases.
+- **Its phases are bounded by its encoding**: the host encodes the phases it knows. A recursive component's rounds
+  are encoded as a bounded number of rounds' phases; a round after the fixpoint has no groups (its counts 0, written
+  by the round that found nothing new). A chain whose rounds ran out with work left is launched again: a new chain,
+  a new launch in the ledger.
+
+### The UKL primitive
+
+Device side (`<ukl/chain.h>`):
+- `ukl_chain_phase(ctl)`: the phase this dispatch is (the control's word 0, which the finisher before moved on).
+- `ukl_chain_finish(done, groups)`: true in the one group that finishes its phase last (a counter, then a device
+  fence): the finisher, the only group that writes what the next phase reads.
+- `ukl_chain_next(ctl, phase, groups)`: the finisher's: the next phase's counts (0: the chain ends) and the phase
+  word.
+- A phase's group knows its item from its dispatch: its group index (`GID0 / LSZ0`) from the phase's first.
+
+Host side: `Pass::chain_at(pipe, buffers, bytes, counts, offsets)`: one dispatch a phase, each indirect at its
+counts' offset. No barrier is encoded: a pass's dispatches are on one serial compute encoder (Metal), whose each
+dispatch completes before the next starts, as the pass's launches before decision 0603 relied on; CUDA's stream,
+OpenCL's queue and the CPU's run them in order too. The counts' buffer is bound or resident, as any indirect
+launch's.
+
+### Each backend
+
+- **Metal**: `dispatchThreadgroups(indirectBuffer:indirectBufferOffset:threadsPerThreadgroup:)` a phase, on the
+  pass's one serial compute encoder.
+- **The CPU executor**: the dispatches run in order, each reading its counts when it runs (`launch_indirect` reads
+  them then already); the join program's Rust (`rerail_ukl_rust::join_run`) runs a phase's groups as it does a
+  launch's.
+- **A GPU with no indirect dispatch (CUDA, OpenCL 1.2): the re-dispatcher.** The host launches each phase at a
+  fixed number of groups (`CHAIN_GROUPS`, the same for every phase: not the device's residency, not the phase's
+  bound), and the shim maps the device's count onto them: a launched group runs virtual groups `g`, `g + launched`,
+  `g + 2 launched`, … below the count, its `GID0` and `GSZ0` the virtual group's, as Metal's dispatch gives them. A
+  count of 0 runs nothing; a count above the launched groups runs all of it (the early exit before this ran at most
+  `max_groups` and dropped the rest). A group's barriers are its own, so a virtual group is a group. CUDA's
+  device-side launch (a tail launch from the finisher, dynamic parallelism) is the faster re-dispatch where the
+  device has it; measured before it is made the CUDA path.
+
+## Writing against running
+
+- A phase boundary costs a dispatch's start and a buffer barrier, a few microseconds, against the queue's ticket per
+  item and its collapse to the groups left alive.
+- A phase of one item (a size script, a scan's top) is a dispatch of one group. So the steps of the join program are
+  folded where they are a finisher's work: a size script runs in the finisher of the phase before; a scan is one
+  phase over its tiles' sums, its tiles' downsweep done by the phase that reads the offsets.
+
+## The steps
+
+1. **Done.** The primitive: `<ukl/chain.h>`, `Pass::chain_at`, the ledger's charge (`launch::attempt_chained`),
+   the re-dispatcher in the CUDA and OpenCL shims (the CPU backend, the vec shim's too, launches exactly the counts
+   it reads, so needs none). `a_chains_phases_size_each_other_and_are_one_launch`: 205 phases, sized 3, 1, 2,000
+   (past `CHAIN_GROUPS`), 7, then 0; each phase's groups run once each; one launch in the ledger. Passes on Metal
+   (M1 Max), CUDA (GB10, re-dispatched) and the CPU executor.
+2. The join program on chains: its phases dispatched, not queued; its rounds encoded as bounded rounds of phases.
+   Its CPU Rust to the same source (its digests).
+3. Its phases folded: size scripts into finishers, a scan one phase.
+4. Measured: the keyed join and the closure, per phase and whole, Metal against the CPU executor.

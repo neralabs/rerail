@@ -122,6 +122,11 @@ pub fn say_failure(why: &str) {
 
 /// The threads of a join kernel's group: every launch's (`Pass::run*`) but a SIMD group's (`Pass::run_bytes_simd`).
 pub const GROUP: u64 = 256;
+
+/// The groups a chain's phase is launched at where the GPU has no indirect dispatch (decision 0674): each runs the
+/// phase's virtual groups `g`, `g + CHAIN_GROUPS`, … below its count (the shims' re-dispatcher). The same for every
+/// phase, and no device's residency: enough groups to fill a large GPU, few enough that a phase of none is cheap.
+pub const CHAIN_GROUPS: usize = 1024;
 /// The threads of the process's device's SIMD groups (`UKL_SIMD_WIDTH`, as its kernels are compiled).
 pub fn simd_group() -> usize {
     device().map_or(32, |d| d.simd_width() as usize)
@@ -513,6 +518,22 @@ impl Pass {
 
     /// `launch`, each buffer bound at its offset.
     fn launch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>) {
+        self.dispatch_at(pipe, buffers, bytes, grid, None);
+    }
+
+    /// A chain (decision 0674): `pipe` dispatched once a phase, in order, phase `p`'s threadgroups the three words at
+    /// `offsets[p]` of `counts`, which the phases before write on the device (`<ukl/chain.h>`); each dispatch sees the
+    /// writes of those before it (the pass's one serial encoder; the CPU's, CUDA's and OpenCL's in-order queues).
+    /// One launch in the ledger, however many phases (the user's). Where a GPU has no indirect dispatch, each phase
+    /// is `CHAIN_GROUPS` groups that run its count's groups between them (the shims' re-dispatcher).
+    pub fn chain_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], counts: &Buffer, offsets: &[u64]) {
+        for (p, &offset) in offsets.iter().enumerate() {
+            self.dispatch_at(pipe, buffers, bytes, Grid::Indirect { grid: counts, offset, most: CHAIN_GROUPS }, Some(p == 0));
+        }
+    }
+
+    /// `launch_at`, or a chain's dispatch (`chained`: whether it is its chain's first, the one charged).
+    fn dispatch_at(&self, pipe: &Pipe, buffers: &[(&Buffer, u64)], bytes: &[u8], grid: Grid<'_>, chained: Option<bool>) {
         if self.error.borrow().is_some() {
             return;
         }
@@ -529,7 +550,10 @@ impl Pass {
             Grid::Indirect { .. } => [GROUP, 1, 1],
         };
         let bound = buffers.iter().map(|(b, _)| (b.contents() as usize, b.length())).collect();
-        launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
+        match chained {
+            None => launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound),
+            Some(first) => launch::attempt_chained(self.pointer(), &pipe.name, shape, group, bound, first),
+        }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
@@ -1877,6 +1901,72 @@ mod tests {
         let records = evaluation.snapshot();
         assert_eq!(records.len(), launch::KERNEL_LAUNCH_LIMIT);
         assert!(records.iter().filter(|r| r.command == records[0].command).all(|r| r.completed), "the first pass's launches completed");
+    }
+
+    /// Decision 0674: a chain's phases size each other on the device (`<ukl/chain.h>`). Phase 0 runs the 3 groups the
+    /// host wrote, and each phase's finisher sizes the next: 1 group, 2,000 (past `CHAIN_GROUPS`: a GPU with no
+    /// indirect dispatch re-dispatches them), 7, then 0, which ends the chain. Each phase's groups run once each, with
+    /// the phase and the group the dispatch gives them, and the 205 dispatches are one launch in the ledger (the
+    /// user's), past `KERNEL_LAUNCH_LIMIT` dispatches.
+    #[test]
+    fn a_chains_phases_size_each_other_and_are_one_launch() {
+        if device().is_err() {
+            return;
+        }
+        const SRC: &str = "#include <ukl/backend.h>\n#include <ukl/chain.h>\n\
+DEFINE_KERNEL2(chaintest, chain_test,\n\
+    RWBUFFER, uint32_t, ctl, \"[4 + 4 * 256]\",\n\
+    RWBUFFER, uint32_t, done, \"[256]\",\n\
+    RWBUFFER, uint32_t, seen, \"[5 * 2048]\",\n\
+    ROBUFFER, uint32_t, plan, \"[8]\",\n\
+    SHARED, uint32_t, fin, 2,\n\
+    GID0, uint32_t, gid, ,\n\
+    GSZ0, uint32_t, gsz, ,\n\
+    LID0, uint32_t, l, ,\n\
+    LSZ0, uint32_t, lsz, )\n\
+{\n\
+    uint32_t g = gid / lsz, groups = gsz / lsz;\n\
+    if (l == 0u) fin[0] = ukl_chain_phase(ctl);\n\
+    ukl_tg_barrier();\n\
+    uint32_t p = fin[0];\n\
+    if (l == 0u && p < 5u && g < 2048u) ukl_atomic_add(&seen[p * 2048u + g], g + 1u);\n\
+    ukl_tg_barrier_device();\n\
+    if (l == 0u) fin[1] = ukl_chain_finish(&done[p], groups) ? 1u : 0u;\n\
+    ukl_tg_barrier();\n\
+    if (l == 0u && fin[1] != 0u) ukl_chain_next(ctl, p, p < 5u ? plan[p] : 0u);\n\
+}\n";
+        let pipe = pipeline("chain", "chain_test", || SRC.to_owned()).unwrap();
+        let (ctl, done, seen, plan) = (Held::zeroed(4 * (4 + 4 * 256)).unwrap(), Held::zeroed(4 * 256).unwrap(), Held::zeroed(4 * 5 * 2048).unwrap(), Held::zeroed(4 * 8).unwrap());
+        // SAFETY: the buffers' host views, written before the pass that reads them.
+        unsafe {
+            let c = ctl.buffer.contents().cast::<u32>();
+            *c.add(4) = 3;
+            *c.add(5) = 1;
+            *c.add(6) = 1;
+            let p = plan.buffer.contents().cast::<u32>();
+            for (i, n) in [1u32, 2000, 7, 0].into_iter().enumerate() {
+                *p.add(i) = n;
+            }
+        }
+        let phases = launch::KERNEL_LAUNCH_LIMIT + 5;
+        let offsets: Vec<u64> = (0..phases as u64).map(|p| 4 * (4 + 4 * p)).collect();
+        let evaluation = launch::LaunchScope::enter();
+        let pass = Pass::new().unwrap();
+        let buffers = [(&ctl.buffer, 0), (&done.buffer, 0), (&seen.buffer, 0), (&plan.buffer, 0)];
+        pass.chain_at(&pipe, &buffers, &[], &ctl.buffer, &offsets);
+        assert_eq!(pass.dispatches(), phases, "a dispatch a phase");
+        pass.commit_wait().unwrap();
+        assert_eq!(evaluation.snapshot().len(), phases, "each dispatch recorded");
+        // A second chain in the same evaluation: the first was charged once, so the budget has room.
+        let again = Pass::new().unwrap();
+        again.chain_at(&pipe, &buffers, &[], &ctl.buffer, &offsets[..1]);
+        drop(again);
+        let seen = read(&seen, 5 * 2048);
+        for (p, n) in [3usize, 1, 2000, 7, 0].into_iter().enumerate() {
+            let want: Vec<u32> = (0..2048u32).map(|g| if (g as usize) < n { g + 1 } else { 0 }).collect();
+            assert!(seen[p * 2048..(p + 1) * 2048] == want[..], "phase {p}: its {n} groups, each once");
+        }
+        assert_eq!(read(&ctl, 1)[0], 4, "the chain ended at the phase of no groups");
     }
 
     /// Pairs sorted on the device come out in (first, second) order: keys of 32 bits and of 64.

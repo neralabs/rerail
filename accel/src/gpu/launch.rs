@@ -225,6 +225,16 @@ pub fn mark(pointer: usize, completed: bool) {
 /// Charges one dispatch of the command known by `pointer` to the evaluation's budget and records it, before it is
 /// enqueued. Past the budget, or with no evaluation, the hard failure.
 pub fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], indirect: bool, buffers: Vec<(usize, u64)>) {
+    record(pointer, kernel, grid, group, indirect, buffers, true);
+}
+
+/// A dispatch of a chain (decision 0674, the user's: "a chain is one launch in the ledger"): recorded as every
+/// dispatch is, charged only where it is its chain's first (`charge`).
+pub fn attempt_chained(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], buffers: Vec<(usize, u64)>, charge: bool) {
+    record(pointer, kernel, grid, group, true, buffers, charge);
+}
+
+fn record(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], indirect: bool, buffers: Vec<(usize, u64)>, charge: bool) {
     EVALUATION.with_borrow(|slot| {
         let Some(evaluation) = slot else { over_budget(format!("{kernel}: a launch outside any evaluation"), &[]) };
         let mut evaluation = evaluation.borrow_mut();
@@ -236,7 +246,9 @@ pub fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64; 3], in
             evaluation.commands.insert(pointer, id);
             id
         };
-        evaluation.charge(kernel);
+        if charge {
+            evaluation.charge(kernel);
+        }
         let application_buffer_bytes = super::shared::other_reserved();
         evaluation.peak_application_buffer_bytes = evaluation.peak_application_buffer_bytes.max(application_buffer_bytes);
         let peak_application_buffer_bytes = evaluation.peak_application_buffer_bytes;
