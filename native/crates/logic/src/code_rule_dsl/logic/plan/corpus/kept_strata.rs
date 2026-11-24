@@ -19,6 +19,7 @@
 //! relation's rows are read back only when a stratum that runs reads it, or the run's end keeps it (an output): on
 //! the pack, 68 k rows of 695 relations, against 3.0 M rows derived. A run writes the relations whose rows changed.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::native::component::LIVE_BATCH;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::plan::KeptStrata;
@@ -207,7 +208,7 @@ impl KeptStrata for Kept<'_> {
         self.strata = Some((evaluated, of));
     }
 
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize, Vec<(String, u64)>)>) {
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, crate::code_rule_dsl::logic::plan::RanRows, usize, Vec<(String, u64)>)>) {
         let Some(frame) = self.rels.get(rel).cloned() else { return };
         match got {
             Some((digest, types, rows, n, reads)) => {
@@ -215,9 +216,13 @@ impl KeptStrata for Kept<'_> {
                     return;
                 }
                 let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
-                self.values += n * rows.width();
+                self.values += n * types.len();
                 self.written_rows += n;
-                self.puts.push(flat_put(&frame, digest, reads, types, rows));
+                self.puts.push(match rows {
+                    crate::code_rule_dsl::logic::plan::RanRows::Picked(rows) => flat_put(&frame, digest, reads, types, rows),
+                    // The engine's relation, lent where its rows lie (decision 0353 step 8).
+                    crate::code_rule_dsl::logic::plan::RanRows::Held(held) => super::retain::kept_put(&frame, digest, reads, types, &held),
+                });
                 if self.values >= FLUSH_VALUES {
                     self.flush();
                 }
@@ -265,7 +270,7 @@ pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
 }
 
 /// Each derived relation of `prog` and the inputs (of `inputs`) it is derived from, through the strata it reads.
-fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &[std::collections::BTreeSet<String>], inputs: &std::collections::HashSet<&str>) -> super::Result<HashMap<String, std::collections::BTreeSet<String>>> {
+fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &crate::code_rule_dsl::logic::front::Components, inputs: &std::collections::HashSet<&str>) -> super::Result<HashMap<String, std::collections::BTreeSet<String>>> {
     let mut out: HashMap<String, std::collections::BTreeSet<String>> = HashMap::new();
     // What each stratum reads: its rules' body atoms, its natives' reads, and the tree a `nearest` climbs.
     let reads = super::retain::Reads::of(prog)?;
@@ -282,7 +287,7 @@ fn cones(prog: &crate::code_rule_dsl::logic::plan::body::Placed, sccs: &[std::co
             }
         }
         for rel in scc {
-            out.insert(rel.clone(), cone.clone());
+            out.insert(rel.to_owned(), cone.to_owned());
         }
     }
     Ok(out)
@@ -298,7 +303,7 @@ pub(in crate::code_rule_dsl) fn load(
     binds: [u8; 32],
     prog: &crate::code_rule_dsl::logic::plan::body::Placed,
     domains: &super::lower::Domains,
-    sccs: &[std::collections::BTreeSet<String>],
+    sccs: &crate::code_rule_dsl::logic::front::Components,
     inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {
@@ -414,9 +419,9 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let w = source.columns().len();
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
-        // Its rows read where they lie by the writer (`SourceRows`), never gathered for it.
+        // Its rows read where they lie by the writer as it packs them (`SourceRows`, decision 0353 step 8).
         written += source.len();
-        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows { source: Arc::clone(source) })));
+        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows::new(Arc::clone(source)))));
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };

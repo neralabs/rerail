@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::{
     Error,
     metal_batch_abi::{
@@ -18,7 +19,7 @@ fn checked_u32(value: usize) -> Result<u32, Error> {
 pub struct PackedValueTables {
     pub values: Vec<ValueRecord>,
     pub nfa_states: Vec<NfaStateRecord>,
-    pub nfa_data: Vec<u32>,
+    pub nfa_data: Vector<u32>,
     pub nfa_ranges: Vec<NfaRangeRecord>,
     pub lua_instructions: Vec<LuaInstructionRecord>,
     pub lua_members: Vec<LuaSetMemberRecord>,
@@ -224,7 +225,7 @@ impl PackedValueTables {
     }
 }
 
-pub(super) fn unicode_word_data() -> Vec<u32> {
+pub(super) fn unicode_word_data() -> Vector<u32> {
     let hir = regex_syntax::Parser::new()
         .parse(r"\w")
         .expect("Unicode word tables are enabled");
@@ -232,7 +233,7 @@ pub(super) fn unicode_word_data() -> Vec<u32> {
     else {
         unreachable!("Unicode word syntax must lower to a Unicode class")
     };
-    let mut data = Vec::with_capacity(1 + class.ranges().len() * 2);
+    let mut data = rerail_blocks::vector::Vector::with_capacity(1 + class.ranges().len() * 2);
     data.push(class.ranges().len() as u32);
     for range in class.ranges() {
         data.extend([range.start() as u32, range.end() as u32]);

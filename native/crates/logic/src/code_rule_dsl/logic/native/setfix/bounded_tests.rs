@@ -1,6 +1,7 @@
 //! A min or max bounded by its probe (decision 0511): lowered as one aggregate of the group's values with the bound
 //! on its op, and folded natively with the bound as a filter, nothing made per probe. W's side of each check is the
 //! plain search `ScopeTable::visible` does: the latest of a group's values before the read.
+use rerail_blocks::vector::Vector;
 use super::spec::hex;
 use super::*;
 use crate::code_rule_dsl::logic::front::AggOp;
@@ -8,13 +9,13 @@ use crate::code_rule_dsl::logic::program_image::{AggRef, Lit};
 
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db
 }
 
-fn rel_of(rows: &[Vec<i64>], types: &[u8]) -> InRel {
+fn rel_of(rows: &[Vector<i64>], types: &[u8]) -> InRel {
     let mut r = Rel::new("x", types);
     for row in rows {
         r.push(row);
@@ -74,8 +75,8 @@ fn a_bound_the_body_reads_or_the_wrong_side_lowers_as_before() {
 fn the_bounded_step_finds_the_plain_searchs_value_for_every_probe() {
     let db = connection();
     // Group k holds values when k % 7 != 0, each value twice in some groups (ties).
-    let values: Vec<Vec<i64>> = (0..10_000i64).filter(|i| (i % 100) % 7 != 0).map(|i| vec![i % 100, (i * 7919) % 1000 / (1 + i % 3)]).collect();
-    let probes: Vec<Vec<i64>> = (0..10_000i64).map(|i| vec![i, (i * 31) % 100, (i * 104_729) % 1100 - 50]).collect();
+    let values: Vec<Vector<i64>> = (0..10_000i64).filter(|i| (i % 100) % 7 != 0).map(|i| rerail_blocks::vector![i % 100, (i * 7919) % 1000 / (1 + i % 3)]).collect();
+    let probes: Vec<Vector<i64>> = (0..10_000i64).map(|i| rerail_blocks::vector![i, (i * 31) % 100, (i * 104_729) % 1100 - 50]).collect();
     adopt(&db, "bnd_t", Arc::new(rel_of(&values, b"ii")));
     adopt(&db, "bnd_p", Arc::new(rel_of(&probes, b"iii")));
     let r = |t: &str| format!("r:{}", hex(t));

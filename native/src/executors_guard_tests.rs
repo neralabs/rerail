@@ -47,7 +47,7 @@ pub(crate) fn repo() -> PathBuf {
 
 pub(crate) fn sources() -> Vec<PathBuf> {
     let root = repo();
-    let mut walk: Vec<PathBuf> = vec![root.join("native/src"), root.join("accel/src"), root.join("forest/src")];
+    let mut walk: Vec<PathBuf> = vec![root.join("native/src"), root.join("accel/src"), root.join("accel/gpu/src"), root.join("forest/src")];
     if let Ok(crates) = std::fs::read_dir(root.join("native/crates")) {
         walk.extend(crates.flatten().map(|c| c.path().join("src")));
     }

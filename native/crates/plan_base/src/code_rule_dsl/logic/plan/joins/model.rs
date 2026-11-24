@@ -14,7 +14,7 @@ struct ModelPricer(rerail_accel::join_model::JoinModel);
 impl super::Pricer for ModelPricer {
     /// Every step of every candidate of the round in one prediction (on the device, past a few steps), then each
     /// candidate's price from its steps' targets.
-    fn price(&self, round: &[super::Choice]) -> Option<Vec<Vec<f64>>> {
+    fn price(&self, round: &[super::Choice]) -> Option<Vec<rerail_blocks::vector::Vector<f64>>> {
         let steps: Vec<&StepSample> = round.iter().flat_map(|c| c.candidates.iter().flat_map(|k| &k.steps)).collect();
         if steps.is_empty() {
             return None;

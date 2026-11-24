@@ -449,7 +449,7 @@ fn restore_job(
             .objects
             .get(&source_hash)
             .ok_or_else(|| invalid(format!("{path} is not in the store")))?;
-        file.input.source = Arc::new(documents::stored_source(&storage.store, stored, path)?);
+        file.input.source = Arc::new(documents::stored_source(&storage.store, stored, path)?.into());
     }
     Ok(())
 }

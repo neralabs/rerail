@@ -1,6 +1,6 @@
 # 0036: Rules are Datalog; tree axes are built-ins computed as tapes
 
-Status: accepted (2026-11-04, the user; list step 30)
+Status: built (audited 2026-11-23). Accepted (2026-11-04, the user; list step 30)
 
 ## Intro
 

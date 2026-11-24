@@ -1,6 +1,6 @@
 # 0404: UTF-8 in simdjson's lookup form
 
-Status: decided (the user, 2026-11-18: "go ahead with this", the three gaps of 0402 to
+Status: built (audited 2026-11-23). Decided (the user, 2026-11-18: "go ahead with this", the three gaps of 0402 to
 simdjson's check). Follows 0402 and 0403.
 
 ## Intro

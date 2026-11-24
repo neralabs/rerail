@@ -60,7 +60,7 @@ pub fn beside(store: &Path, suffix: &str) -> PathBuf {
 /// The store's lock file, opened (made, with its folder, where missing).
 pub fn lock_file(store: &Path) -> std::io::Result<File> {
     if let Some(dir) = store.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)?;
+        crate::content_store::prepare_cache_directory(dir)?;
     }
     open_lock(store, true)
 }

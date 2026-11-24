@@ -124,7 +124,7 @@ fn view(source: &str) -> Option<AstGrep<TapeDoc>> {
     let grammar = Grammar::new(GrammarDialect::Blade).expect("grammar");
     let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false)
         .expect("encodes");
-    let host = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+    let host = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false)
         .expect("restores");
     let guests = host.guests().expect("owned");
     guests.first().map(|guest| AstGrep::doc(guest.doc.clone()))

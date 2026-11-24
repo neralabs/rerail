@@ -1,8 +1,8 @@
 # 0329. A projection of `node` that keeps its key is held in place
 
-Status: decided (2026-11-16), working on the user's "wstart (14.8 s) and kind (7.6 s) … Guests: 18 s". Refines
-0104's rule for native runs ("a projection of an input is a stratum like any, run from the input where it is held")
-for one case: 0141's projections of `node`.
+Status: built (audited 2026-11-23). Decided (2026-11-16), working on the user's "wstart (14.8 s) and kind (7.6 s) …
+Guests: 18 s". Refines 0104's rule for native runs ("a projection of an input is a stratum like any, run from the
+input where it is held") for one case: 0141's projections of `node`.
 
 ## Intro
 

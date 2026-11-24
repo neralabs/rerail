@@ -9,7 +9,7 @@ pub struct Python;
 impl Adapter for Python {
     const FAMILY: Family = Family::Python;
     const LABEL: &'static str = "python";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    const TERMINATORS: Terminators = crate::code_rule_dsl::cpython::LINE_ENDS;
     const PACKAGES: bool = true;
     fn path_module(path: &str) -> Option<String> {
         crate::code_rule_dsl::calls::python::path_module(path)

@@ -1,6 +1,6 @@
 # 0446. A fact's findings are written once, in a block, and the device reads them there
 
-Status: accepted (2026-11-19). Closes Q289; removes 0353's copy 16.
+Status: built (audited 2026-11-23). Accepted (2026-11-19). Closes Q289; removes 0353's copy 16.
 
 ## Intro
 

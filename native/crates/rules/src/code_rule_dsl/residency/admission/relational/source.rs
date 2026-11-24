@@ -11,7 +11,7 @@ use std::{
 };
 
 struct Slice {
-    source: Arc<String>,
+    source: Arc<crate::code_rule_dsl::tape::Text>,
     start: usize,
     end: usize,
 }

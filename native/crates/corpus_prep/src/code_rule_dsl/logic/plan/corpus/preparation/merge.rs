@@ -7,10 +7,11 @@
 //! relation is named by its class), a rule compared by its template (`Canon` below), and each class named
 //! and written as `merge` names and writes it.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Cell, Lit as L, RelId, RuleId, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Cell, Lit as L, RelId, Rows, RuleId, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Drops each rule equal to an earlier one: a relation is a set, so a second copy of a rule derives nothing, yet it
@@ -227,23 +228,19 @@ impl ProgramPass for MergeIdentical {
         }
         // The natives' reads (`front::Native::rename_reads`): every relation a native's rows name but its own.
         for (name, columns) in crate::code_rule_dsl::logic::program_image::about::RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
-            let rows = b.about_rows(name);
+            let mut rows = b.about_rows(name);
             let mut changed = false;
-            let rows: Vec<Vec<Cell>> = rows
-                .into_iter()
-                .map(|mut row| {
-                    for &c in columns.iter().filter(|&&c| c != 1) {
-                        if let Some(Cell::Str(a)) = row.get(c).copied()
-                            && let Some(t) = rename.get(b.text(a))
-                        {
-                            let t = b.atom(t);
-                            row[c] = Cell::Str(t);
-                            changed = true;
-                        }
+            for row in rows.iter_mut() {
+                for &c in columns.iter().filter(|&&c| c != 1) {
+                    if let Some(Cell::Str(a)) = row.get(c).copied()
+                        && let Some(t) = rename.get(b.text(a))
+                    {
+                        let t = b.atom(t);
+                        row[c] = Cell::Str(t);
+                        changed = true;
                     }
-                    row
-                })
-                .collect();
+                }
+            }
             if changed {
                 b.fields().set_about_rows(name, rows);
             }
@@ -270,7 +267,7 @@ impl ProgramPass for MergeIdentical {
                 for (t, by) in theirs.iter().zip(copy) {
                     let (Some(j), Some(p)) = (ours.iter().position(|o| o == t), p) else { continue };
                     for reader in by {
-                        rows.push(vec![p, Cell::Str(b.atom(to)), Cell::Int(j as i64), Cell::Str(b.atom(reader))]);
+                        rows.push([p, Cell::Str(b.atom(to)), Cell::Int(j as i64), Cell::Str(b.atom(reader))]);
                     }
                 }
             }
@@ -278,14 +275,17 @@ impl ProgramPass for MergeIdentical {
             let mut seen = HashSet::new();
             let key = |row: &[Cell]| format!("{row:?}");
             let mut changed = false;
-            let mut kept = Vec::with_capacity(n);
-            for mut row in rows {
-                if let Some(Cell::Str(a)) = row.get(1).copied()
+            let mut kept = Rows::new();
+            let mut row: Vector<Cell> = Vector::new();
+            for was in rows.iter() {
+                if let Some(Cell::Str(a)) = was.get(1).copied()
                     && rename.contains_key(b.text(a))
                 {
                     changed = true;
                     continue;
                 }
+                row.clear();
+                row.extend_from_slice(was);
                 if let Some(Cell::Str(a)) = row.get(3).copied()
                     && let Some(t) = rename.get(b.text(a))
                 {
@@ -293,7 +293,7 @@ impl ProgramPass for MergeIdentical {
                     changed = true;
                 }
                 if seen.insert(key(&row)) {
-                    kept.push(row);
+                    kept.push(&row[..]);
                 } else {
                     changed = true;
                 }
@@ -308,9 +308,8 @@ impl ProgramPass for MergeIdentical {
                     Some(&Cell::Int(k)) => k,
                     _ => 0,
                 };
-                let mut keyed: Vec<((String, i64, String), Vec<Cell>)> = kept.into_iter().map(|r| ((text(b, r.get(1)), num(r.get(2)), text(b, r.get(3))), r)).collect();
-                keyed.sort_by(|x, y| x.0.cmp(&y.0));
-                b.fields().set_about_rows("asked", keyed.into_iter().map(|(_, r)| r).collect());
+                kept.sort_by_cached_key(|r| (text(b, r.get(1)), num(r.get(2)), text(b, r.get(3))));
+                b.fields().set_about_rows("asked", kept);
             }
         }
         // The declarations and facts, each class's held by its name: the first member's where the name is new; an
@@ -328,7 +327,7 @@ impl ProgramPass for MergeIdentical {
                 }
             }
             if let Some(facts) = f.facts(from).filter(|r| !r.about()) {
-                let rows: Vec<Vec<Cell>> = facts.rows().map(|r| r.collect()).collect();
+                let rows = Rows::of_cells(facts.rows());
                 b.fields().drop_facts(from);
                 with_facts.remove(from);
                 if with_facts.insert(t.clone()) {
@@ -466,14 +465,14 @@ struct Canon<'v> {
     v: &'v Version,
     /// Every constant the variable `?` (`congruence`'s `abstract_constants`).
     abstract_constants: bool,
-    names: Vec<u32>,
+    names: Vector<u32>,
     out: Vec<Tok<'v>>,
     read: Vec<RelId>,
 }
 
 impl<'v> Canon<'v> {
     fn of(v: &'v Version, r: RuleRef<'v>, abstract_constants: bool) -> (Vec<Tok<'v>>, Vec<RelId>) {
-        let mut c = Canon { v, abstract_constants, names: Vec::new(), out: Vec::new(), read: Vec::new() };
+        let mut c = Canon { v, abstract_constants, names: rerail_blocks::vector::Vector::new(), out: Vec::new(), read: Vec::new() };
         c.out.push(Tok::K(1));
         r.head().args().for_each(|t| c.term(t));
         for l in r.body() {
@@ -627,8 +626,8 @@ pub fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -> Vec<V
 struct Refined<'v> {
     cands: Vec<&'v str>,
     number: Vec<Option<u32>>,
-    class: Vec<usize>,
-    initial: Vec<u64>,
+    class: Vector<usize>,
+    initial: Vector<u64>,
     shapes: Vec<Vec<(u64, Vec<RelId>)>>,
 }
 
@@ -720,7 +719,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct Congruence {
 
 /// Each head's key: the hash of its rules' hashes, sorted.
 fn head_keys(v: &Version) -> BTreeMap<String, u64> {
-    let mut of: HashMap<RelId, Vec<u64>> = HashMap::new();
+    let mut of: HashMap<RelId, Vector<u64>> = HashMap::new();
     for r in v.rules() {
         of.entry(r.head().rel()).or_default().push(r.hash());
     }
@@ -948,8 +947,8 @@ fn refine<'v>(v: &'v Version, f: Fields<'v>, abstract_constants: bool) -> Refine
     let rules = |rel: &str| v.rel(rel).and_then(|r| rules_of.get(&r)).map_or(&[][..], |rs| rs.as_slice());
     // Each relation's signatures are its own; the numbering that follows them is in
     // `cands`' order, as one thread gives it, so the classes are the same whatever the threads.
-    let mut class: Vec<usize> = Vec::with_capacity(cands.len());
-    let mut initial: Vec<u64> = Vec::with_capacity(cands.len());
+    let mut class: Vector<usize> = rerail_blocks::vector::Vector::with_capacity(cands.len());
+    let mut initial: Vector<u64> = rerail_blocks::vector::Vector::with_capacity(cands.len());
     {
         let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::new();
         for &r in &cands {
@@ -983,7 +982,7 @@ fn refine<'v>(v: &'v Version, f: Fields<'v>, abstract_constants: bool) -> Refine
     let mut classes = class.iter().collect::<BTreeSet<_>>().len();
     loop {
         let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::new();
-        let mut next: Vec<usize> = Vec::with_capacity(cands.len());
+        let mut next: Vector<usize> = rerail_blocks::vector::Vector::with_capacity(cands.len());
         for (c, shaped) in class.iter().zip(&shapes) {
             let mut sig: Vec<(usize, Vec<Label>)> = shaped.iter().map(|(t, read)| (*t, read.iter().map(|r| number[r.0 as usize].map_or(Label::Own(r.0), |k| Label::Class(class[k as usize]))).collect())).collect();
             sig.sort();
@@ -1007,7 +1006,7 @@ fn refine<'v>(v: &'v Version, f: Fields<'v>, abstract_constants: bool) -> Refine
 /// groups. A congruence of its own over the whole program, so asked for only when the run is profiled.
 pub fn similar_relations(v: &Version, f: Fields<'_>) -> (usize, usize, Vec<String>) {
     let similar = congruence(v, f, true);
-    (similar.iter().map(Vec::len).sum(), similar.len(), similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect())
+    (similar.iter().map(|v| v.len()).sum(), similar.len(), similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect())
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

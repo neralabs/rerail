@@ -47,10 +47,10 @@ const NOT_CACHES: &[&str] = &[
     "push_pending", "snapshots", "snapshot_files", "workspaces", "store_sessions", "object_archive", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     // Analysis claims, release receipts, and collection work. Their rows reference results held elsewhere.
     "analysis_scope_snapshot", "analysis_scope_workspace_snapshot", "analysis_scope_manifest",
+    // The same table, rebuilt once without its key to the corpus runs' retired manifests table (t33 step 3).
+    "analysis_scope_manifest_new",
     "analysis_history_scope", "analysis_history_ancestor", "analysis_scope_run", "analysis_run_workspace_snapshot",
     "analysis_scope_generation", "analysis_directory_acquisition", "analysis_scope_release", "analysis_scope_collect", "analysis_scope_pending",
-    "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
-    "corpus_decided", "corpus_state",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
@@ -62,15 +62,7 @@ const RELATIONS: &[&str] = &["facts_chain", "memo_entries", "memo_packs"];
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.
 const NOT_YET_MOVED: &[&str] = &[
     // Tapes, documents and their indexes.
-    "tape_objects", "file_documents", "prefilter_sets", "tape_kind_counts", "term_postings", "term_freq", "term_kind_freq",
-    "term_node_freq", "term_coverage", "edge_freq", "text_matcher", "text_pending", "text_term", "vocabulary_literal",
-    "vocabulary_pending", "vocabulary_predicate", "vocabulary_term", "kind_size", "search_index_sets",
-    // The whole run's record.
-    "run_record",
-    // The cross part's statistics.
-    "stat_blob",
-    // The derivation graph: what it records is the keys of §7.
-    "name_bindings", "derivations", "derivation_inputs",
+    "tape_objects", "file_documents",
 ];
 
 #[test]
@@ -103,18 +95,23 @@ fn every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved() {
 
 /// The tests of freshness written outside the form, and the most call sites each may still have.
 const FRESHNESS_CALLS: &[(&str, &str, usize)] = &[
-    ("code_rule_dsl/logic/plan/corpus/base.rs", "inputs::still(", 1),
-    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "unchanged(programs", 1),
+    ("code_rule_dsl/logic/plan/corpus/base.rs", "leaves.still(leaf)", 1),
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "!leaves.still(c)", 2),
     ("code_rule_dsl/logic/plan/corpus/combined.rs", "file.unchanged(", 1),
     ("code_rule_dsl/facts.rs", "derivation_valid(", 1),
-    ("code_rule_dsl/logic/plan/corpus/constants.rs", ".still(", 2),
+    // The same call forwarded where the crate split put the overlay (its recovery's store and a test's assert) and the
+    // content store's `FactStore`: no test of its own.
+    ("code_rule_dsl/facts/overlay/recovery.rs", "derivation_valid(", 2),
+    ("content_store/as_fact_store.rs", "derivation_valid(", 1),
+    ("code_rule_dsl/logic/plan/corpus/constants.rs", ".all(|c| leaves.still(c))", 1),
 ];
 
 #[test]
 fn no_cache_tests_its_own_freshness_but_those_not_yet_moved() {
     let mut files = Vec::new();
     every_source(&mut files);
-    let needles: Vec<&str> = FRESHNESS_CALLS.iter().map(|(_, n, _)| *n).collect();
+    // Each needle once, though several files may still call it.
+    let needles: std::collections::BTreeSet<&str> = FRESHNESS_CALLS.iter().map(|(_, n, _)| *n).collect();
     let mut found: Vec<(String, &str)> = Vec::new();
     for file in &files {
         let rel = relative(file);

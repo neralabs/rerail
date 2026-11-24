@@ -1,5 +1,5 @@
 //! The tape's primitive reads as CLIF functions, written once (decision 0310): the reads
-//! `rerail_tape_format::f16::View` and format 15's columns make, as `device_tape.h` ports them.
+//! `rerail_tape_format::f16::View` makes, as `device_tape.h` ports them.
 //!
 //! A read takes the tape's base (the bytes its view's offsets count from), its view
 //! (`view::TapeView`) and a document-local node, and returns a u32 (`NONE` for no node). Format 16's
@@ -11,7 +11,7 @@
 //! Format 16's arrays have 8 bytes of room past their last value, so a value is one word's load.
 
 use crate::view::cache::{NOT_KEPT, PENDING, TAKEN};
-use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, z};
+use crate::view::{F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, z};
 use cranelift_codegen::ir::{
     self, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, Value,
     condcodes::IntCC,
@@ -92,12 +92,13 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rows_col", params: &[I32], ret: I64, hot: true, body: crate::relation::rows_col },
     Read { family: Family::Relation, name: "col_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_at },
     Read { family: Family::Relation, name: "col_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::col_get },
+    Read { family: Family::Relation, name: "col_sealed", params: &[I32], ret: I64, hot: false, body: crate::relation::col_sealed },
     Read { family: Family::Relation, name: "rows_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_at },
     Read { family: Family::Relation, name: "rows_width", params: &[I32], ret: I32, hot: true, body: crate::relation::rows_width },
     Read { family: Family::Relation, name: "rows_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_get },
     Read { family: Family::Relation, name: "rows_len", params: &[], ret: I32, hot: true, body: crate::relation::rows_len },
     Read { family: Family::Relation, name: "rows_put", params: &[I32, I32, I64], ret: I32, hot: true, body: crate::relation::rows_put },
-    Read { family: Family::Relation, name: "rel_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rel_get },
+    Read { family: Family::Relation, name: "rel_get", params: &[I32, I32, I64], ret: I64, hot: true, body: crate::relation::rel_get },
     Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
     Read { family: Family::Relation, name: "rel_len", params: &[], ret: I32, hot: true, body: crate::relation::rel_len },
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
@@ -156,18 +157,20 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "verdict_entry", params: &[I32, I32], ret: I64, hot: false, body: crate::verdict_reads::verdict_entry },
     Read { family: Family::Relation, name: "cache_open", params: &[I64, I32], ret: I64, hot: false, body: crate::verdict_reads::cache_open },
     // `has` probed off the tape (decision 0353 step 5): a node's numbered ancestors by a climb, its numbered
-    // descendants as a range of numbers. Last, so no other read's number moves.
+    // descendants as a range of numbers.
     Read { family: Family::View, name: "view_up", params: &[I32], ret: I32, hot: false, body: crate::view_reads::up },
     Read { family: Family::View, name: "view_end", params: &[I32], ret: I32, hot: false, body: crate::view_reads::end },
     // `tape`, `ast_depth` and `node_order` read in place (decision 0353 step 6: they were uploaded from the host).
-    // Last, so no other read's number moves.
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
     Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
     Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
     // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
-    // its batch's block; each takes its caller's memo.
+    // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
     Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
+    // A named node's place among its named siblings, in the tape's auxiliary index in its home (decision 0656 step
+    // 4): `child`'s place. Last, so no other read's number moves.
+    Read { family: Family::Tape, name: "tape_place", params: &[I32], ret: I32, hot: false, body: place },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -177,6 +180,20 @@ pub const F16_ONLY: &[&str] = &["tape_f16_side", "tape_slot", "tape_line_select"
 /// The read named `name`.
 pub fn read(name: &str) -> Option<&'static Read> {
     READS.iter().find(|read| read.name == name)
+}
+
+/// How a kernel calls `read` (the UKL backend): the source it includes, made from the same CLIF (`lines_ukl_source`,
+/// `relation_ukl_source`, `ids_ukl_source`), and its function there. The call passes the base its pointer counts from
+/// (`t`, the memory's byte 0) before the read's own parameters, the CLIF's. `None` for the tape's and the views' reads,
+/// whose UKL takes their bases apart (`<ukl/reads/tape.h>`, `<ukl/reads/view.h>`).
+pub fn ukl_call(read: &Read) -> Option<(&'static str, String)> {
+    let source = match read.family {
+        Family::Lines => "ukl/reads/lines.h",
+        Family::Relation if numbering(read) => "ukl/reads/ids.h",
+        Family::Relation => "ukl/reads/relation.h",
+        Family::Tape | Family::View => return None,
+    };
+    Some((source, format!("clif_{}", read.name)))
 }
 
 /// A read's signature: its family's pointers (the tape's base and its view; a relation's descriptor), then its own
@@ -194,14 +211,15 @@ pub trait Callee {
     fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef;
 }
 
-/// The read's body as a function named `name`, its calls of other reads through `callee`: for a tape of
-/// either format, as its view says (the JIT's, which runs one program over documents of both).
+/// The read's body as a function named `name`, its calls of other reads through `callee`: for a tape of format 16
+/// or 16z, as its view says (the JIT's, which runs one program over documents of both).
 pub fn build(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee) -> Function {
     build_formats(read, call_conv, name, callee, None, true)
 }
 
-/// The read's body for tapes of `format` alone (15 or 16; `None` either, as its view says): the other's code
-/// is not built, so a reader of one format (the tape crate's `F16`, `F15`) tests none.
+/// The read's body for tapes of format 16 (16z read through a block's decode is `build_formats`'): no format test
+/// is built, so a reader of format 16 (the tape crate's `F16`) tests none. `format`: 16 or 16z, or `None` for
+/// either.
 pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>) -> Function {
     build_formats(read, call_conv, name, callee, format, false)
 }
@@ -261,7 +279,7 @@ pub fn view_ukl_source() -> Result<(String, String), String> {
     let (header, body) = crate::ukl::translate_view_reads(&funcs, "clif_")?;
     let (head, rest) = header.split_at(crate::ukl::HELPERS.len());
     let made = generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c, 0576)", "the_view_kernels_reads_are_these");
-    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n#include <ukl/reads/lines.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
+    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/aux_index_tape.h>\n#include <ukl/reads/ids.h>\n#include <ukl/reads/lines.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
 }
 
 /// A document's lines' reads as UKL (decision 0612): `<ukl/reads/lines.h>`, its line index read at its base, which the
@@ -460,38 +478,22 @@ impl B<'_, '_> {
     fn column(&mut self, k: i32) -> Value {
         self.view(at::COLUMNS + 4 * k)
     }
-    /// `sixteen`'s value for a format 16 tape, else `fifteen`'s: the view's format tested, unless the body is
-    /// built for one (`build_for`).
-    /// `sixteen` takes the node (its read's first argument): of a 16z tape, its place in its block, the block
+    /// `sixteen`'s value of the node (its read's first argument): of a 16z tape, its place in its block, the block
     /// decoded into the reader's slot and read as format 16 (`in_block`).
-    fn by_format(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self, Value) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
-        let sixteen = &sixteen;
-        self.by_formats(
-            ty,
-            |b| {
-                let i = b.arg(0);
-                sixteen(b, i)
-            },
-            |b| b.in_block(0, sixteen),
-            fifteen,
-        )
+    fn by_format(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self, Value) -> Value) -> Value {
+        self.sixteen_or_z(ty, 0, sixteen)
     }
-    /// `by_format` with a 16z tape's body of its own (`zed`).
-    fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+    /// A format 16 tape's `sixteen`, a 16z tape's `zed`: the view's format tested where the body reads either
+    /// (`z`), unless it is built for one (`build_for`).
+    fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value) -> Value {
         match self.format {
-            Some(16) => sixteen(self),
             Some(F16Z_FORMAT) => zed(self),
-            Some(_) => fifteen(self),
+            Some(_) => sixteen(self),
+            None if !self.z => sixteen(self),
             None => {
                 let format = self.view(at::FORMAT);
-                let f16 = self.f.ins().icmp_imm(IntCC::Equal, format, 16);
-                if !self.z {
-                    return self.either(ty, f16, sixteen, fifteen);
-                }
-                self.either(ty, f16, sixteen, |b| {
-                    let z = b.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
-                    b.either(ty, z, zed, fifteen)
-                })
+                let z = self.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
+                self.either(ty, z, zed, sixteen)
             }
         }
     }
@@ -722,22 +724,6 @@ impl B<'_, '_> {
         let mask = self.mask(cw);
         self.f.ins().band(word, mask)
     }
-    /// Format 15's cell of row `i` of a column of width 2 or 4.
-    fn cell(&mut self, column: Value, width: Value, i: Value) -> Value {
-        let two = self.f.ins().icmp_imm(IntCC::Equal, width, 2);
-        self.either(
-            I32,
-            two,
-            |b| {
-                let at = b.f.ins().imul_imm(i, 2);
-                b.u16(column, at)
-            },
-            |b| {
-                let at = b.f.ins().imul_imm(i, 4);
-                b.u32(column, at)
-            },
-        )
-    }
     /// Format 16's value `i` of array `a` (0 slots, 1 gaps, 2 lengths): one word's load, or (all
     /// ones) its side list's.
     fn get(&mut self, a: u32, i: Value) -> Value {
@@ -803,27 +789,51 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let offsets = b.f.ins().imul_imm(nsub, 2);
     let offsets = b.f.ins().iadd(start, offsets);
     let low = b.f.ins().band_imm(i, i64::from(F16_BLOCK - 1));
-    // The first offset at or past the node's low byte.
+    // The first offset at or past the node's low byte: in the ascending run, the count of its offsets below it, 8 a
+    // word, each byte compared unsigned within the word (its low 7 bits by a subtraction that borrows from no other
+    // byte, its high bit apart), the bytes past the run's end masked off. No load waits on another, as a halving's do.
     let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
-    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    b.f.ins().jump(head, &[lo.into(), lo.into()]);
     b.f.switch_to_block(head);
-    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
-    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
-    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+    let (q, found) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, q, hi);
+    b.f.ins().brif(more, body, &[], done, &[found.into()]);
     b.f.switch_to_block(body);
-    let sum = b.f.ins().iadd(lo, hi);
-    let middle = b.f.ins().ushr_imm(sum, 1);
-    let at = b.f.ins().iadd(offsets, middle);
+    let at = b.f.ins().iadd(offsets, q);
     let at = b.f.ins().umin(at, limit);
-    let byte = b.u8(side, at);
-    let below = b.f.ins().icmp(IntCC::UnsignedLessThan, byte, low);
-    let next = b.f.ins().iadd_imm(middle, 1);
-    let lo = b.f.ins().select(below, next, lo);
-    let hi = b.f.ins().select(below, hi, middle);
-    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    let x = b.word(side, at);
+    let h = b.f.ins().iconst(I64, 0x8080_8080_8080_8080u64 as i64);
+    let low64 = b.f.ins().uextend(I64, low);
+    let l8 = b.f.ins().imul_imm(low64, 0x0101_0101_0101_0101);
+    let xh = b.f.ins().bor(x, h);
+    let l7 = b.f.ins().band_not(l8, h);
+    let d = b.f.ins().isub(xh, l7);
+    let high_below = b.f.ins().band_not(l8, x);
+    let same = b.f.ins().bxor(x, l8);
+    let same_high = b.f.ins().bnot(same);
+    let not_d = b.f.ins().bnot(d);
+    let low_below = b.f.ins().band(same_high, not_d);
+    let below = b.f.ins().bor(high_below, low_below);
+    let below = b.f.ins().band(below, h);
+    // The bytes of the run left: all 8, or the low `left` bytes.
+    let left = b.f.ins().isub(hi, q);
+    let whole = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, left, 8);
+    let bits = b.f.ins().imul_imm(left, 8);
+    let bits = b.f.ins().uextend(I64, bits);
+    let one = b.f.ins().iconst(I64, 1);
+    let mask = b.f.ins().ishl(one, bits);
+    let mask = b.f.ins().iadd_imm(mask, -1);
+    let all = b.f.ins().iconst(I64, -1);
+    let mask = b.f.ins().select(whole, all, mask);
+    let below = b.f.ins().band(below, mask);
+    let n = b.f.ins().popcnt(below);
+    let n = b.f.ins().ireduce(I32, n);
+    let found = b.f.ins().iadd(found, n);
+    let next = b.f.ins().iadd_imm(q, 8);
+    b.f.ins().jump(head, &[next.into(), found.into()]);
     b.f.switch_to_block(done);
     let found = b.f.block_params(done)[0];
     // The list's values follow the part's offsets.
@@ -848,7 +858,6 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
 
 /// The node's subtree's size (itself and its descendants).
 fn size(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
     b.by_format(
         I32,
         |b, i| {
@@ -862,19 +871,11 @@ fn size(b: &mut B<'_, '_>) -> Value {
             let inner = b.f.ins().umax(inner, one);
             b.f.ins().select(leaf, one, inner)
         },
-        |b| {
-            let column = b.column(1);
-            let width = b.width(0);
-            let cell = b.cell(column, width, i);
-            let one = b.c32(1);
-            b.f.ins().umax(cell, one)
-        },
     )
 }
 
 /// The node's code's number in its table (format 16: its language's).
 fn number(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
     b.by_format(
         I32,
         |b, i| {
@@ -898,11 +899,6 @@ fn number(b: &mut B<'_, '_>) -> Value {
                     b.f.ins().iadd(number, low)
                 },
             )
-        },
-        |b| {
-            let codes = b.column(0);
-            let at = b.f.ins().imul_imm(i, 2);
-            b.u16(codes, at)
         },
     )
 }
@@ -931,7 +927,6 @@ fn end(b: &mut B<'_, '_>) -> Value {
 /// The node's start as the tape states it: what a check of the tape reads (`validated::visit`), and the CPU's
 /// scans, whose slices of the source are checked. No kernel reads it: theirs is `tape_start`.
 fn start_stated(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
     b.by_format(
         I32,
         |b, i| {
@@ -1005,23 +1000,12 @@ fn start_stated(b: &mut B<'_, '_>) -> Value {
             let sum = b.f.block_params(done)[0];
             b.f.ins().ireduce(I32, sum)
         },
-        |b| {
-            let base = b.column(2);
-            let c = b.f.ins().ushr_imm(i, i64::from(F15_STRIDE_SHIFT));
-            let c = b.f.ins().imul_imm(c, 4);
-            let checkpoint = b.u32(base, c);
-            let off = b.column(3);
-            let width = b.width(1);
-            let cell = b.cell(off, width, i);
-            b.f.ins().iadd(checkpoint, cell)
-        },
     )
 }
 
 /// The node's end (a document-local byte).
 /// The node's end as the tape states it (`start_stated`'s readers').
 fn end_stated(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
     b.by_format(
         I32,
         |b, i| {
@@ -1030,28 +1014,11 @@ fn end_stated(b: &mut B<'_, '_>) -> Value {
             let length = b.f.ins().ireduce(I32, length);
             b.f.ins().iadd(start, length)
         },
-        |b| {
-            // A tail from the node's own start, or from its last descendant's.
-            let widths = b.view(at::WIDTHS);
-            let own = b.f.ins().band_imm(widths, i64::from(F15_TAIL_FROM_START));
-            let own = b.f.ins().icmp_imm(IntCC::NotEqual, own, 0);
-            let size = b.call("tape_size", &[i]);
-            let last = b.f.ins().iadd(i, size);
-            let last = b.f.ins().iadd_imm(last, -1);
-            let from = b.f.ins().select(own, i, last);
-            let from = b.call("tape_start_stated", &[from]);
-            let tail = b.column(4);
-            let width = b.width(2);
-            let cell = b.cell(tail, width, i);
-            b.f.ins().iadd(from, cell)
-        },
     )
 }
 
-/// The node's parent, or `NONE` at the root. Format 16: the node before is the parent (an inner
-/// node), or a leaf naming the previous sibling or, every K-th sibling, the parent. Format 15: the
-/// nearest node before whose subtree holds the node, back over at most 64 nodes, else a descent
-/// from the root over the siblings' subtrees.
+/// The node's parent, or `NONE` at the root: the node before is the parent (an inner node), or a leaf
+/// naming the previous sibling or, every K-th sibling, the parent.
 fn parent(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     let root = b.f.ins().icmp_imm(IntCC::Equal, i, 0);
@@ -1061,7 +1028,7 @@ fn parent(b: &mut B<'_, '_>) -> Value {
         |b| b.c32(NONE),
         |b| {
             // A 16z tape's walk reads each slot in its block (`tape_slot`), back over blocks' starts.
-            b.by_formats(I32, |b| parent16(b, i, false), |b| parent16(b, i, true), |b| parent15(b, i))
+            b.by_formats(I32, |b| parent16(b, i, false), |b| parent16(b, i, true))
         },
     )
 }
@@ -1099,71 +1066,13 @@ fn parent16(b: &mut B<'_, '_>, i: Value, z: bool) -> Value {
     b.f.block_params(done)[0]
 }
 
-fn parent15(b: &mut B<'_, '_>, i: Value) -> Value {
-    let done = b.f.create_block();
-    b.f.append_block_param(done, I32);
-    // Back over at most 64 nodes.
-    let (head, body, descend) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
-    b.f.append_block_param(head, I32);
-    b.f.append_block_param(head, I32);
-    let zero = b.c32(0);
-    b.f.ins().jump(head, &[i.into(), zero.into()]);
-    b.f.switch_to_block(head);
-    let (j, k) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
-    let some = b.f.ins().icmp_imm(IntCC::NotEqual, j, 0);
-    let near = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, k, 64);
-    let go = b.f.ins().band(some, near);
-    b.f.ins().brif(go, body, &[], descend, &[]);
-    b.f.switch_to_block(body);
-    let before = b.f.ins().iadd_imm(j, -1);
-    let size = b.call("tape_size", &[before]);
-    let end = hop(b, before, size);
-    let holds = b.f.ins().icmp(IntCC::UnsignedGreaterThan, end, i);
-    let next = b.f.create_block();
-    b.f.ins().brif(holds, done, &[before.into()], next, &[]);
-    b.f.switch_to_block(next);
-    let k = b.f.ins().iadd_imm(k, 1);
-    b.f.ins().jump(head, &[before.into(), k.into()]);
-    // A descent from the root: at each level, the child whose subtree holds the node.
-    b.f.switch_to_block(descend);
-    let (level, scan, hop_to, found) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
-    b.f.append_block_param(level, I32);
-    b.f.append_block_param(scan, I32);
-    b.f.append_block_param(scan, I32);
-    let zero = b.c32(0);
-    b.f.ins().jump(level, &[zero.into()]);
-    b.f.switch_to_block(level);
-    let at = b.f.block_params(level)[0];
-    let c = b.f.ins().iadd_imm(at, 1);
-    b.f.ins().jump(scan, &[at.into(), c.into()]);
-    b.f.switch_to_block(scan);
-    let (at, c) = (b.f.block_params(scan)[0], b.f.block_params(scan)[1]);
-    let size = b.call("tape_size", &[c]);
-    let after = hop(b, c, size);
-    let past = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, after, i);
-    b.f.ins().brif(past, hop_to, &[], found, &[]);
-    b.f.switch_to_block(hop_to);
-    b.f.ins().jump(scan, &[at.into(), after.into()]);
-    b.f.switch_to_block(found);
-    let is = b.f.ins().icmp(IntCC::Equal, c, i);
-    b.f.ins().brif(is, done, &[at.into()], level, &[c.into()]);
-    b.f.switch_to_block(done);
-    b.f.block_params(done)[0]
-}
-
 /// The node's length in bytes.
 fn length(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
     b.by_format(
         I32,
         |b, i| {
             let length = b.get(2, i);
             b.f.ins().ireduce(I32, length)
-        },
-        |b| {
-            let end = b.call("tape_end_stated", &[i]);
-            let start = b.call("tape_start_stated", &[i]);
-            b.f.ins().isub(end, start)
         },
     )
 }
@@ -1171,7 +1080,7 @@ fn length(b: &mut B<'_, '_>) -> Value {
 /// The node's start, given the node before's (`prev`; any value for the first node): in a scan, format 16's from
 /// the one before, a gap's add, or its checkpoint.
 fn start_next(b: &mut B<'_, '_>) -> Value {
-    let (i, prev) = (b.arg(0), b.arg(1));
+    let prev = b.arg(1);
     b.by_format(
         I32,
         |b, i| {
@@ -1191,7 +1100,6 @@ fn start_next(b: &mut B<'_, '_>) -> Value {
                 },
             )
         },
-        |b| b.call("tape_start", &[i]),
     )
 }
 
@@ -2488,7 +2396,7 @@ fn line_in(b: &mut B<'_, '_>, x: Value) -> Value {
 
 /// Whether the tape's block `block` (its nodes `F16_PART * block ..`; `NONE`: the whole document) has a node of kind
 /// `kind`, by its presence (the view's `presence`, decision 0434 §4, step 6): 1 where the tape has none to tell by
-/// (format 15, or one stored without it), and the document's answer where its blocks' presences are not held. The
+/// (one stored without it), and the document's answer where its blocks' presences are not held. The
 /// host's planners and the kernels ask this one read.
 fn has_kind(b: &mut B<'_, '_>) -> Value {
     let (block, kind) = (b.arg(0), b.arg(1));
@@ -2531,6 +2439,169 @@ fn has_kind(b: &mut B<'_, '_>) -> Value {
             )
         },
     )
+}
+
+// ---- the tape's auxiliary index (`rerail_tape_format::aux_index`, decision 0656) --------------------------------
+
+/// Where the tape's auxiliary index lies in its home, from the tape's base: after its presence (at the view's
+/// `presence`), the presence's bytes rounded up to 16 (`f16::presence::aux_at`, `ukl_aux_in_home`).
+fn aux_at(b: &mut B<'_, '_>, presence: Value) -> Value {
+    let field = |b: &mut B<'_, '_>, k: i64| {
+        let off = b.c32(k);
+        b.u32(presence, off)
+    };
+    let (kinds, fields, count, tail) = (field(b, 0), field(b, 4), field(b, 8), field(b, 12));
+    let words = b.f.ins().iadd(kinds, fields);
+    let words = b.f.ins().imul(words, count);
+    let len = b.f.ins().ishl_imm(words, 3);
+    let tail = b.f.ins().ishl_imm(tail, 2);
+    let len = b.f.ins().iadd(len, tail);
+    let len = b.f.ins().iadd_imm(len, 16 + 15);
+    let len = b.f.ins().band_imm(len, !15);
+    b.f.ins().iadd(presence, len)
+}
+
+/// Section `kind`'s offset in the auxiliary index at `aux` (from it), or 0 where it has none of `kind`'s version
+/// (`AuxIndex::read`'s directory, `ukl_aux_section`): its directory searched.
+fn aux_section(b: &mut B<'_, '_>, aux: Value, kind: u16, version: u16) -> Value {
+    let four = b.c32(4);
+    let count = b.u32(aux, four);
+    let count = b.f.ins().ushr_imm(count, 16);
+    let want = b.c32(i64::from(u32::from(kind) | u32::from(version) << 16));
+    let (head, body, next, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    let zero = b.c32(0);
+    b.f.ins().jump(head, &[zero.into()]);
+    b.f.switch_to_block(head);
+    let e = b.f.block_params(head)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, e, count);
+    let none = b.c32(0);
+    b.f.ins().brif(more, body, &[], done, &[none.into()]);
+    b.f.switch_to_block(body);
+    let d = b.f.ins().ishl_imm(e, 4);
+    let d = b.f.ins().iadd_imm(d, 32);
+    let entry = b.u32(aux, d);
+    let is = b.f.ins().icmp(IntCC::Equal, entry, want);
+    let at = b.f.ins().iadd_imm(d, 8);
+    let off = b.u32(aux, at);
+    b.f.ins().brif(is, done, &[off.into()], next, &[]);
+    b.f.switch_to_block(next);
+    let e = b.f.ins().iadd_imm(e, 1);
+    b.f.ins().jump(head, &[e.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// The first of `lo..hi` at which `below` is false (`below` true before it, false from it): a binary search.
+fn lower_bound(b: &mut B<'_, '_>, lo: Value, hi: Value, below: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
+    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    b.f.switch_to_block(head);
+    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+    b.f.switch_to_block(body);
+    let width = b.f.ins().isub(hi, lo);
+    let half = b.f.ins().ushr_imm(width, 1);
+    let mid = b.f.ins().iadd(lo, half);
+    let is = below(b, mid);
+    let up = b.f.ins().iadd_imm(mid, 1);
+    let lo = b.f.ins().select(is, up, lo);
+    let hi = b.f.ins().select(is, hi, mid);
+    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// `tape_place(node)`: named node `node`'s place among its parent's named children (0 for the first, and for the
+/// root), from the tape's auxiliary index in its home (decision 0656 step 4): the last every-8th named sibling at or
+/// before it (SIBLINGS), then the tape's siblings stepped to it, each named one counted (NAMED). `aux_index::place`
+/// in Rust, `ukl_aux_place` in UKL (`clif_tape_place`). `NONE` for a tape without presence; its reader knows the
+/// home holds an index (`ViewDoc::places_by_index`).
+fn place(b: &mut B<'_, '_>) -> Value {
+    use crate::view::aux::*;
+    let node = b.arg(0);
+    let presence = b.view(at::PRESENCE);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, presence, 0);
+    b.either(I32, none, |b| b.c32(NONE), |b| {
+        let aux = aux_at(b, presence);
+        let p = b.call("tape_parent", &[node]);
+        let root = b.f.ins().icmp_imm(IntCC::Equal, p, NONE);
+        b.either(I32, root, |b| b.c32(0), |b| {
+            let sib = aux_section(b, aux, SIBLINGS, SIBLINGS_VERSION);
+            let named = aux_section(b, aux, NAMED, NAMED_VERSION);
+            let sibs = b.f.ins().iadd(aux, sib);
+            let zero = b.c32(0);
+            let n = b.u32(sibs, zero);
+            let has = b.f.ins().icmp_imm(IntCC::NotEqual, sib, 0);
+            let n = b.f.ins().select(has, n, zero);
+            // Entry `i`'s parent (`k` 0) or node (`k` 4).
+            let pair = move |b: &mut B<'_, '_>, i: Value, k: i64| {
+                let at = b.f.ins().ishl_imm(i, 3);
+                let at = b.f.ins().iadd_imm(at, 16 + k);
+                b.u32(sibs, at)
+            };
+            let first = lower_bound(b, zero, n, &|b, mid| {
+                let q = pair(b, mid, 0);
+                b.f.ins().icmp(IntCC::UnsignedLessThan, q, p)
+            });
+            let p1 = b.f.ins().iadd_imm(p, 1);
+            let past = lower_bound(b, first, n, &|b, mid| {
+                let q = pair(b, mid, 0);
+                b.f.ins().icmp(IntCC::UnsignedLessThan, q, p1)
+            });
+            let lo = lower_bound(b, first, past, &|b, mid| {
+                let c = pair(b, mid, 4);
+                b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, c, node)
+            });
+            let found = b.f.ins().icmp(IntCC::NotEqual, lo, first);
+            let last = b.f.ins().iadd_imm(lo, -1);
+            let from = b.either(I32, found, |b| pair(b, last, 4), |_| p1);
+            let k = b.f.ins().isub(lo, first);
+            let k = b.f.ins().imul_imm(k, i64::from(K));
+            // The siblings from there to `node`, each named one counted.
+            let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(done, I32);
+            b.f.ins().jump(head, &[from.into(), k.into()]);
+            b.f.switch_to_block(head);
+            let (c, i) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+            let before = b.f.ins().icmp(IntCC::UnsignedLessThan, c, node);
+            b.f.ins().brif(before, body, &[], done, &[i.into()]);
+            b.f.switch_to_block(body);
+            let code = b.call("tape_number", &[c]);
+            let words = {
+                let base = b.f.ins().iadd(aux, named);
+                let zero = b.c32(0);
+                b.u32(base, zero)
+            };
+            let word = b.f.ins().ushr_imm(code, 6);
+            let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, word, words);
+            let has = b.f.ins().icmp_imm(IntCC::NotEqual, named, 0);
+            let inside = b.f.ins().band(inside, has);
+            let is = b.either(I32, inside, |b| {
+                let base = b.f.ins().iadd(aux, named);
+                let at = b.f.ins().ishl_imm(word, 3);
+                let at = b.f.ins().iadd_imm(at, 16);
+                let w = b.word(base, at);
+                let shift = b.f.ins().band_imm(code, 63);
+                let shift = b.f.ins().uextend(I64, shift);
+                let bit = b.f.ins().ushr(w, shift);
+                let bit = b.f.ins().band_imm(bit, 1);
+                b.f.ins().ireduce(I32, bit)
+            }, |b| b.c32(0));
+            let i = b.f.ins().iadd(i, is);
+            let c = b.call("tape_end_of", &[c]);
+            b.f.ins().jump(head, &[c.into(), i.into()]);
+            b.f.switch_to_block(done);
+            b.f.block_params(done)[0]
+        })
+    })
 }
 
 /// `lines_line(at)`: the lines starting at or before byte `at`, the 1-based line holding it (`LineTable::line` + 1):
@@ -2631,7 +2702,7 @@ mod tests {
 /// cache's here.
 #[cfg(test)]
 mod ukl_header {
-    use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, cache as c, z};
+    use crate::view::{F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, at, cache as c, z};
 
     /// `<ukl/reads/tape_common.h>`'s `CLIF_T_*` constants are the view's field offsets, the formats' numbers, the 16z
     /// entry's layout and the rolling cache's (`view::cache`), and it defines no other.
@@ -2670,8 +2741,6 @@ mod ukl_header {
             ("BLOCK", F16_BLOCK.into()),
             ("PART", F16_PART.into()),
             ("SUB", F16_SUB.into()),
-            ("F15_STRIDE_SHIFT", F15_STRIDE_SHIFT.into()),
-            ("F15_TAIL_FROM_START", F15_TAIL_FROM_START.into()),
             ("LINES_HEAD", super::HEAD_LINES as u64),
             ("LINES_SAMPLE_SHIFT", super::LINES_SAMPLE_SHIFT as u64),
             ("Z_BLOCK", F16Z_BLOCK.into()),

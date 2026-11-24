@@ -17,7 +17,7 @@ pub fn register() {
     crate::code_rule_dsl::transducer::packed::device::register(&METAL);
     crate::code_rule_dsl::transducer::packed::compile_matcher::WAVES.register("rerail-device-metal", &METAL);
     // Kind-set axes solved on the device in a batch's chunk block (decision 0289 §2).
-    crate::code_rule_dsl::facts::vtab::syntax::device_chunk::CHUNK_AXIS.register("rerail-device-metal", packed::metal_join::axis_in_chunk);
+    crate::code_rule_dsl::facts::nearest::AXIS_SOLVE.register("rerail-device-metal", packed::metal_join::axis_in_place);
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
@@ -30,8 +30,9 @@ pub fn register() {
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        crate::code_rule_dsl::facts::rows::install_run_room();
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
-        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", rerail_logic::code_rule_dsl::logic::CARRIERS);
         crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
         super::register();
         // The compiled CPU, which the device's tests compare it with, as boot registers it (`install_devices`).
@@ -83,15 +84,19 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
-        joins::compile(join, spec, own_texts).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)], head: usize) -> Result<JoinPlan, String> {
+        joins::compile(join, spec, own_texts, head).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    }
+
+    fn made_columns(&self, plan: &JoinPlan) -> Vec<usize> {
+        plan.0.downcast_ref::<joins::Plan>().map(joins::Plan::made_columns).unwrap_or_default()
     }
 
     fn refuse(&self, why: String) {
         joins::refuse(why);
     }
 
-    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {
         joins::run(&plans(rules)?, store, names, fresh)
     }
 
@@ -99,7 +104,7 @@ impl SolverDevice for Metal {
         joins::submit(&plans(rules)?, store, names)
     }
 
-    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<rerail_blocks::vector::Vector<u64>, String> {
         joins::resume(ticket, &plans(rules)?, store, names, fresh)
     }
 
@@ -115,12 +120,16 @@ impl SolverDevice for Metal {
         store: &Store,
         names: &Interner,
         fresh: &mut [Fresh],
-    ) -> Result<Vec<u64>, String> {
+    ) -> Result<(rerail_blocks::vector::Vector<u64>, bool), String> {
         joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
     }
 
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
         joins::column_stats(cols, k).map_err(Refused::Failed)
+    }
+
+    fn kernels_on_cpu(&self) -> bool {
+        rerail_device::device::cpu_chosen()
     }
 }
 
@@ -154,7 +163,7 @@ pub mod matcher {
     }
 
     impl MatcherDevice for super::Metal {
-        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
+        fn execute_packed(&self, engine: Engine, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>], result_limits: Option<&[u32]>, budget: Budget) -> Result<PackedExecution, Error> {
             match engine {
                 Engine::Interpreter => {
                     let engine = programs::compile_interpreter()?;
@@ -168,7 +177,7 @@ pub mod matcher {
             }
         }
 
-        fn execute_outcomes(&self, backend: ExecutionBackend, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Vec<u32>>]) -> Result<BatchOutcome, Error> {
+        fn execute_outcomes(&self, backend: ExecutionBackend, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<rerail_blocks::vector::Vector<u32>>]) -> Result<BatchOutcome, Error> {
             match backend {
                 ExecutionBackend::MetalInterpreter => {
                     let engine = programs::compile_interpreter()?;
@@ -220,7 +229,7 @@ pub mod matcher {
         fn drop_label_pipelines(&self) {
             programs::label_passes::drop_pipelines();
         }
-        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error> {
+        fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Result<Option<Vec<rerail_blocks::vector::Vector<u64>>>, Error> {
             use programs::block_program::serial::{Segments, compiled, run_serial_split};
             // The forward carry (decision 0540 step 7): no group waits on another. Each set of patterns is a kernel
             // of its own: until its compile (on a thread of its own) is done, the cores run the batch, so no launch
@@ -236,7 +245,7 @@ pub mod matcher {
                 Err(error) => Err(error),
             }
         }
-        fn set_steps(&self, files: &[(u32, u32)], len: u32, slots: usize, leaves: &[(usize, &[u64])], steps: &[crate::code_rule_dsl::transducer::packed::device::SetStep], outputs: &[usize]) -> Result<Vec<Vec<u64>>, Error> {
+        fn set_steps(&self, files: &[(u32, u32)], len: u32, slots: usize, leaves: &[(usize, &[u64])], steps: &[crate::code_rule_dsl::transducer::packed::device::SetStep], outputs: &[usize]) -> Result<Vec<rerail_blocks::vector::Vector<u64>>, Error> {
             programs::set_steps::run(files, len, slots, leaves, steps, outputs)
         }
         fn execution_metrics(&self) -> (usize, usize) {

@@ -1,8 +1,8 @@
 # 0139: Tier 1 on the CPU in the block lexer's form
 
-Status: decided (2026-11-13); step 1 built, step 2 in part and step 3's marks built
-(2026-11-13). Its way on the CPU replaced by 0177 (a token loop); its constructs stay.
-The design: docs/parser-generators/36.
+Status: built (audited 2026-11-23). Decided (2026-11-13); step 1 built, step 2 in part and step 3's marks built
+(2026-11-13). Its way on the CPU replaced by 0177 (a token loop); its constructs stay. The design:
+docs/parser-generators/36.
 
 ## Intro
 

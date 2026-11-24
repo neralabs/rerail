@@ -191,7 +191,7 @@ fn reopen(root: &Path, store: &ContentStore, graph: [u8; 32]) -> Option<ReadProg
 }
 
 pub(super) fn read(root: &Path, path: &Path) -> Result<ReadProgram, Error> {
-    let store = if cfg!(feature = "tape-cache") && !phase0::active() {
+    let store = if crate::code_rule_dsl::logic::plan::corpus::keeps_store() && !phase0::active() {
         phases::reading_store()
     } else {
         None

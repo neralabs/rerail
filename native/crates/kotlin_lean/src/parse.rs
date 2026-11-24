@@ -20,7 +20,7 @@ use crate::lex::{Asi, AsiCtx, Lexer, R, Refusal, T, Tok, w};
 use crate::tw::{Mark, Node, Tw};
 #[allow(unused_imports)]
 use decl::Decl;
-use rerail_tape_format::{Redo, Sink, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths};
 
 mod decl;
 mod expr;
@@ -59,10 +59,10 @@ pub(crate) struct P<'a> {
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<crate::Tape> {
-    parse_into(src, &mut Writer::<Widths>::finish_columns)
+    parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
-/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
 pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     let lx = Lexer::new(src);
     if let Some(at) = lx.blocks.first_nul() {

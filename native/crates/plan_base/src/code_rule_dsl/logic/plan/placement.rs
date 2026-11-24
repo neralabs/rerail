@@ -74,8 +74,9 @@ impl Form {
 /// `device::fixpoint`; one that keeps levels is refused at open, named), and aggregates (count, sum, min, max folded
 /// per binding over the relation's sort by the keys), and text tests with constant patterns of a slot an input
 /// relation's column binds (verdicts per distinct symbol by the test's automaton, `text::table`; any other text test
+/// is refused at open, named), and string joins of names ordered by one number column (decision 0661; any other
 /// is refused at open, named). A stratum that needs any other form stays on the CPU, named in the profile.
-const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest];
+const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest, Form::StringJoin];
 
 /// A join step as the planner estimates it: the bindings it reads, the rows of the relation it reads, the rows it
 /// makes, its key columns, and whether it reads a range inside a document (`Mode::Range`).
@@ -194,6 +195,17 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// with the more memory bandwidth, so the work it takes leaves the CPU's cores to the strata only they run. Before,
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
+
+/// A device round's own cost, in seconds: a recursive component's round's phases, each a few microseconds in one
+/// group, whatever its rows (decision 0647). Measured on the M3 (0647, "A real run's recursive strata"): 1.0 ms a
+/// round for `py_minor`'s 44 rounds of a row or none, 1 to 3 ms for the deep strata's.
+const DEVICE_ROUND: f64 = 1.0e-3;
+
+/// The work (rows its stages make) under which a recursive component's round costs the CPU less than a device round
+/// (decision 0657): the device hands such a component back to the CPU at that round's end.
+pub fn narrow_round_work() -> f64 {
+    DEVICE_ROUND / CPU_PER_WORK
+}
 
 /// How long a stratum placed on the device may wait for the device's memory before it runs on the CPU instead (Q203):
 /// the CPU's price for its `work` units of planned work less the device's, at the prices it was placed by. Never
@@ -375,9 +387,7 @@ impl Shape {
     }
 
     /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
-    /// `texts_kept`: its head is a `shortlex_min` lattice, whose value its recursive rounds make into one device arena
-    /// (decision 0307).
-    pub fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool, texts_kept: bool) {
+    pub fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool) {
         let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
@@ -386,12 +396,9 @@ impl Shape {
             self.note(Form::Recursion, || "recursion".into());
         }
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
-        // not in a recursive stratum, whose rounds would join it before it is one, unless the stratum keeps its texts
-        // in one arena (0307: the device's compile takes them into the lattice's value only).
-        // A text function's text, likewise (the device's arena).
-        let recursive = recursive && !texts_kept;
-        let arena = |t: TermRef<'_>| if recursive { text_fn_in(v, t) } else { None };
-        if let Some(op) = b.head().args().filter(|&t| recursive || !is_cat_of_rows(v, t)).find_map(|t| not_row(v, t).or_else(|| arena(t))) {
+        // a text function's text, likewise (the device's arena). In a recursive stratum its rounds keep each made text
+        // one value a content in one arena (decision 0659), stored as symbols when the stratum ends.
+        if let Some(op) = b.head().args().filter(|&t| !is_cat_of_rows(v, t) && !is_made_cat(v, t)).find_map(|t| not_row(v, t)) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
         let tests = |t: TermRef<'_>| call(v, t).map(|(f, _)| f).filter(|f| crate::code_rule_dsl::logic::strings::TESTS.contains(f));
@@ -432,7 +439,7 @@ impl Shape {
                 {
                     self.note(Form::Comparison, String::new);
                 }
-                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t).or_else(|| arena(t))) {
+                Lit::Cmp { l, r, .. } => match [l, r].into_iter().find_map(|t| not_row(v, t)) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
                     None => self.note(Form::Comparison, String::new),
                 },
@@ -766,7 +773,7 @@ pub mod tests {
         r.finish().expect("a rule");
         let made = b.finish().expect("a version").0;
         let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
-        shape.add(Order::new(&b, &steps), work, recursive, false);
+        shape.add(Order::new(&b, &steps), work, recursive);
     }
 
     #[test]

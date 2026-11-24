@@ -37,7 +37,25 @@ fn tier1(bytes: &[u8], starts: &[u32], lasts: &[u32]) -> crate::block::BlockRun 
     let lasts = if lasts.is_empty() { starts } else { lasts };
     let n = starts.len().min(lasts.len());
     let codes = starts[..n].iter().map(|&s| u32::from(bytes.get(s as usize).copied().unwrap_or(0))).collect();
-    crate::block::BlockRun { outputs: vec![vec![0], vec![0]], positions: vec![starts.to_vec(), lasts.to_vec()], totals: vec![0], codes }
+    crate::block::BlockRun { outputs: vec![rerail_blocks::vector![0], rerail_blocks::vector![0]], positions: vec![rerail_blocks::vector::Vector::from(starts), rerail_blocks::vector::Vector::from(lasts)], totals: rerail_blocks::vector![0], codes }
+}
+
+/// The compiled tier 2's tape of `src` over `t1` and the interpreter's of `p`'s run, in a language of the
+/// interpreter's nodes' codes (`lang_of`); or the word each refused at (`Parser::against`).
+fn tape(c: &crate::native_cpu_stream::CompiledStream, p: &crate::program::Words, src: &[u8], t1: &crate::block::BlockRun) -> (Result<Vec<u8>, usize>, Result<Vec<u8>, usize>) {
+    c.against(src, t1, run(p, src, t1))
+}
+
+/// The compiled tier 2 writes the interpreter's tape of `src`.
+fn assert_same(c: &crate::native_cpu_stream::CompiledStream, p: &crate::program::Words, src: &[u8], t1: &crate::block::BlockRun) {
+    let (got, want) = tape(c, p, src, t1);
+    assert!(want.is_ok() && got == want, "{src:?}: {:?} against {:?}", got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
+}
+
+/// The compiled tier 2 refuses `src` at a word, as the interpreter does.
+fn assert_refused(c: &crate::native_cpu_stream::CompiledStream, p: &crate::program::Words, src: &[u8], t1: &crate::block::BlockRun) {
+    let (got, want) = tape(c, p, src, t1);
+    assert!(want.is_err() && got.as_ref().is_err_and(|&pc| pc != usize::MAX), "{src:?}: {:?}, the interpreter {:?}", got.as_ref().map(Vec::len), want.as_ref().map(Vec::len));
 }
 
 #[test]
@@ -143,7 +161,7 @@ fn a_wrap_goes_before_the_node_it_wraps() {
     assert!(compiled.wraps, "the tape has the wrap's columns");
     // The wrap moves the rows after the node it wraps (`shift_rows`): a pass over the table's tail.
     assert_eq!(compiled.table_passes, 1, "the wrap's shift, a call");
-    assert_eq!(compiled.run(b"a(", &t1).expect("parses"), nodes);
+    assert_same(&compiled, &p, b"a(", &t1);
     // A wrap with no node made before it at its level: refused.
     let first = WRAPPED.replace("  0004 LEAF #2\n", "  0004 RETAG #1\n");
     assert!(run(&crate::rir_asm::assemble(&first).expect("assembles"), b"a(", &t1).is_err());
@@ -195,12 +213,12 @@ fn a_relabel_acts_on_the_node_made_last() {
     let native = crate::native_ir::lower(&p, 0, 0).expect("lowers");
     let compiled = crate::native_cpu_stream::compile(&native).expect("compiles");
     assert!(compiled.wraps, "the tape has the frames");
-    assert_eq!(compiled.run(b"a(", &t1).expect("parses"), nodes);
+    assert_same(&compiled, &p, b"a(", &t1);
     let first = RELABELLED.replace("  0004 LEAF #2\n", "  0004 RETAG #1\n");
     let first = crate::rir_asm::assemble(&first).expect("assembles");
     assert!(run(&first, b"a(", &t1).is_err());
     let compiled = crate::native_cpu_stream::compile(&crate::native_ir::lower(&first, 0, 0).expect("lowers")).expect("compiles");
-    assert!(compiled.run(b"a(", &t1).is_err());
+    assert_refused(&compiled, &first, b"a(", &t1);
 }
 
 /// `ab(`: the root's two leaves, `a` and `b`, become one at `(` (`MERGE m=1`, `fold`).
@@ -253,13 +271,13 @@ fn a_fold_makes_the_open_nodes_two_leaves_one() {
     assert_eq!(got, [(1, 0, 0, 3, 3), (4, 0, 0, 2, 1), (6, 0, 2, 3, 1)]);
     let compiled = crate::native_cpu_stream::compile(&crate::native_ir::lower(&p, 0, 0).expect("lowers")).expect("compiles");
     assert!(!compiled.wraps);
-    assert_eq!(compiled.run(b"ab(", &t1).expect("parses"), nodes);
+    assert_same(&compiled, &p, b"ab(", &t1);
     // Framed (a relabel elsewhere keeps the frames): the same nodes.
     let framed = FOLDED.replace("  0016 STOP 0\n", "  0016 RETAG m=2 #4\n");
     let framed = crate::rir_asm::assemble(&framed).expect("assembles");
     let compiled = crate::native_cpu_stream::compile(&crate::native_ir::lower(&framed, 0, 0).expect("lowers")).expect("compiles");
     assert!(compiled.wraps, "the tape has the frames");
-    assert_eq!(compiled.run(b"ab(", &t1).expect("parses"), nodes);
+    assert_same(&compiled, &framed, b"ab(", &t1);
     for bad in [
         FOLDED.replace("  0004 LEAF #2\n", "  0004 OPEN #2\n"),
         FOLDED.replace("  0008 LEAF #3\n", "  0008 LEAF m=1 #3\n"),
@@ -268,7 +286,7 @@ fn a_fold_makes_the_open_nodes_two_leaves_one() {
         let bad = crate::rir_asm::assemble(&bad).expect("assembles");
         assert!(run(&bad, b"ab(", &t1).is_err());
         let compiled = crate::native_cpu_stream::compile(&crate::native_ir::lower(&bad, 0, 0).expect("lowers")).expect("compiles");
-        assert!(compiled.run(b"ab(", &t1).is_err());
+        assert_refused(&compiled, &bad, b"ab(", &t1);
     }
 }
 
@@ -357,16 +375,10 @@ const ROOT_RETAGGED: &str = "program -
 
 /// A format 16 run (decision 0434 §6, R17) of a program that edits nodes it passed to the ops: `FOLDED_CLOSED`
 /// folds a leaf before the commit point, which the ops take a commit point behind; `ROOT_RETAGGED` retags the
-/// root, which the ops hold open, after they took it. Each tape is the one the writer makes of tier 2's format 15
-/// image, which is the interpreter's nodes' (the folded leaf's code taken back and numbered again), in 16 and 16z.
+/// root, which the ops hold open, after they took it. Each tape is the one the writer makes of the interpreter's
+/// nodes, in 16 and 16z.
 #[test]
 fn edits_of_nodes_passed_reach_the_ops() {
-    use rerail_tape_format::f16::{self, Lang, Written};
-    use rerail_tape_format::tape::{F15, f15_columns};
-    let bytes_of = |w: &Written| match w {
-        Written::F16(t) => t.as_bytes().to_vec(),
-        Written::F16Z(t) => t.as_bytes().to_vec(),
-    };
     // Each program, its source, and its nodes' kinds, fields, starts, ends and sizes.
     type Case<'a> = (&'a str, &'a [u8], &'a [(u16, u16, u32, u32, u32)]);
     let cases: [Case<'_>; 2] = [
@@ -381,26 +393,18 @@ fn edits_of_nodes_passed_reach_the_ops() {
         assert_eq!(got, spans);
         let native = crate::native_ir::lower(&p, 0, 0).expect("lowers");
         let compiled = crate::native_cpu_stream::compile(&native).expect("compiles");
-        let image = compiled.image_on(src, &t1).expect("an image");
-        assert_eq!(image, crate::stream::image(&nodes, &p.readings.extras, native.tag, src), "each code its node's key's");
-        let widths = rerail_tape_format::Widths { size: 4, ..rerail_tape_format::Narrow::WIDTHS };
-        let sixteen = crate::native_cpu_stream::compile_with(&native, &crate::native_cpu_stream::one_cut(&native), widths, native.tag, true).expect("compiles for format 16");
-        let (columns, table) = f15_columns(&image).expect("a format 15 tape");
-        let t = F15::new(&image, columns, &table).expect("reads");
-        // The language: the image's codes, and the program's other kinds (the root's before its retag).
-        let mut entries = table.entries().to_vec();
+        // The language: the nodes' codes, and the program's other kinds (the root's before its retag, the leaves'
+        // before the fold).
+        let mut entries: Vec<rerail_tape_format::tape::Entry> = lang_of(&nodes, &p.readings.extras).table().entries().map(|e| e.to_owned()).collect();
         for kind in 1..8 {
             if !entries.iter().any(|e| e.kind == kind) {
                 entries.push(rerail_tape_format::tape::Entry { kind, field: 0, flags: 0, alias: None, classes: Vec::new() });
             }
         }
-        let lang = Lang::new(rerail_tape_format::tape::CodeTable::new(entries), [1, 1, 1], 1).expect("a language");
-        let number = f16::numbers(&lang, &table).expect("numbers");
-        let numbers = sixteen.numbers(&lang);
+        let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), [1, 1, 1], 1).expect("a language");
         for z in [false, true] {
-            let want = f16::write_from(&lang, &t, &number, src, rerail_tape_format::newlines::Terminators::Newlines, native.tag, z).expect("the writer's tape");
-            let got = sixteen.image16_on(src, rerail_tape_format::newlines::Terminators::Newlines, &t1, &lang, &numbers, z).unwrap_or_else(|e| panic!("{src:?} 16z {z}: {e}"));
-            assert!(bytes_of(&got) == bytes_of(&want), "{src:?} 16z {z}: the writer's tape of the image");
+            let (got, want) = compiled.against_in(src, &t1, Ok(nodes.clone()), &lang, z);
+            assert!(got.is_ok() && got == want, "{src:?} 16z {z}: the writer's tape of the interpreter's nodes: {:?}", got.as_ref().map(Vec::len));
         }
     }
 }
@@ -458,13 +462,13 @@ fn an_inner_relabel_acts_on_the_node_a_wrap_holds_first() {
     // The root; the wrap, now kind 8; `a`, field 7 (was 5); the `(`; the `b`.
     assert_eq!(got, [(1, 0, 0, 3, 5), (8, 0, 0, 2, 3), (2, 7, 0, 1, 1), (6, 0, 1, 2, 1), (9, 0, 2, 3, 1)]);
     let compiled = crate::native_cpu_stream::compile(&crate::native_ir::lower(&p, 0, 0).expect("lowers")).expect("compiles");
-    assert_eq!(compiled.run(b"a(b", &t1).expect("parses"), nodes);
+    assert_same(&compiled, &p, b"a(b", &t1);
     // No wrap: the leaf `a` is the node made last.
     let plain = RELABELLED_INNER.replace("  0008 WRAP #3\n", "  0008 NODE_SUPER #3\n").replace("  0014 CLOSE 0\n", "  0014 LEAF #6\n");
     let plain = crate::rir_asm::assemble(&plain).expect("assembles");
     assert!(run(&plain, b"a(b", &t1).is_err());
     let compiled = crate::native_cpu_stream::compile(&crate::native_ir::lower(&plain, 0, 0).expect("lowers")).expect("compiles");
-    assert!(compiled.run(b"a(b", &t1).is_err());
+    assert_refused(&compiled, &plain, b"a(b", &t1);
 }
 
 /// A root over `a a a`, each `a` after the first a call into a level that ends on the token
@@ -517,13 +521,13 @@ fn returns_chain_but_a_call_is_never_popped_at_once() {
     let native = crate::native_ir::lower(&p, 0, 0).expect("lowers");
     let compiled = crate::native_cpu_stream::compile(&native).expect("compiles: the return's block is a named loop head");
     assert!(compiled.heads.iter().any(|h| h.1 == crate::native_cpu_shape::Step::Return), "the return is a loop's head");
-    assert_eq!(compiled.run(b"a a a", &t1).expect("parses"), nodes);
+    assert_same(&compiled, &p, b"a a a", &t1);
     // A function a rule (`by_rules`): the calls native, the chain a return after a return.
     let cut = crate::native_cpu_clusters::by_rules(&native);
     assert!(cut.calls && cut.count > 1, "{cut:?}");
     let rules = crate::native_cpu_stream::compile_cut(&native, &cut).expect("compiles a function a rule");
-    assert_eq!(rules.run(b"a a a", &t1).expect("parses"), nodes);
-    assert_eq!(rules.run(b"a a", &tier1(b"a a", &[0, 2], &[])).map_err(|r| r.pc), compiled.run(b"a a", &tier1(b"a a", &[0, 2], &[])).map_err(|r| r.pc));
+    assert_same(&rules, &p, b"a a a", &t1);
+    assert_eq!(tape(&rules, &p, b"a a", &tier1(b"a a", &[0, 2], &[])).0, tape(&compiled, &p, b"a a", &tier1(b"a a", &[0, 2], &[])).0);
     let popped = CHAINED.replace("  0014 GOTO @0009\n", "  0014 GOTO @0015\n");
     let e = crate::rir_asm::assemble(&popped).err().expect("a call popped at once");
     assert!(e.contains("NonProgressingCycle"), "{e}");

@@ -9,19 +9,32 @@ pub fn program_text(path: &std::path::Path) -> Result<String, String> {
 /// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rerail`
 /// (`plan::corpus::phase0`), not one run each.
 pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> {
-    use crate::code_rule_dsl::logic::plan::corpus::{observe, phase0};
-    let read = |path: &std::path::Path| -> Result<String, String> {
-        let (bytes, _) = observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
-        String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
-    };
+    program_texts_read(paths, paths.iter().map(|_| None).collect())
+}
+
+/// A rule file's text, read as the run observes its reads (`program_texts` reads each so).
+pub fn read_program_file(path: &std::path::Path) -> Result<String, String> {
+    let (bytes, _) = crate::code_rule_dsl::logic::plan::corpus::observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
+    String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// `program_texts` of `paths`, each one's file text given where its reader read it already (`read_program_file`):
+/// a directory's files are read to find the libraries others include, and each was read a second time here.
+pub fn program_texts_read(paths: &[&std::path::Path], given: Vec<Option<String>>) -> Result<Vec<String>, String> {
+    use crate::code_rule_dsl::logic::plan::corpus::phase0;
+    let read = read_program_file;
     // A JSON policy (decision 0175) is its translation: a text whose `#include`s are library files, read as a text's.
     let json: Vec<bool> = paths.iter().map(|p| crate::code_rule_dsl::logic::json_rules::is_policy_path(p)).collect();
     let translator = json.iter().any(|j| *j).then(crate::code_rule_dsl::logic::json_rules::Translator::new);
     let texts: Vec<String> = paths
         .iter()
         .zip(&json)
-        .map(|(p, j)| {
-            let text = read(p)?;
+        .zip(given)
+        .map(|((p, j), given)| {
+            let text = match given {
+                Some(text) => text,
+                None => read(p)?,
+            };
             if !j {
                 return Ok(text);
             }
@@ -33,12 +46,17 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     // reading the file (O111), which a policy's text does not do itself.
     let policy = |text: &str| text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
     let includes = |text: &str| text.lines().any(|l| l.trim_start().starts_with("#include"));
+    // Each including file's canonical path, found once: its seed's, and the text's below (a walk of the path each).
     let mut seeds = Vec::new();
     for ((path, text), j) in paths.iter().zip(&texts).zip(&json) {
         if includes(text) && !j {
             seeds.push(phase0::Seed::File(dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?));
         }
     }
+    let mut canonicals = seeds.iter().map(|s| match s {
+        phase0::Seed::File(p) => p.clone(),
+        phase0::Seed::Text { .. } => unreachable!("a file's seed"),
+    });
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
     crate::code_rule_dsl::logic::profile::timeline_mark("the program files' graphs");
     let mut graphs = graphs.into_iter();
@@ -46,7 +64,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     // (`source_tree::root`, 1.9 M instructions), 0.6 G of a 317-file pack's texts when asked per text.
     let dirs = phase0::Dirs::here();
     let mut out = Vec::with_capacity(texts.len());
-    for ((path, text), j) in paths.iter().zip(texts).zip(json) {
+    for ((_, text), j) in paths.iter().zip(texts).zip(json) {
         if j || !includes(&text) {
             out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rerail\"\n{text}") } else { text });
             continue;
@@ -54,7 +72,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         let graph = graphs.next().expect("a graph per seed");
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
         // run however many of its programs include them; a file beside it is written in. A policy reads `core.rerail`.
-        let canonical = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let canonical = canonicals.next().expect("a canonical path per seed");
         let library = dirs.as_ref().map(|d| d.lib.as_path()).ok_or_else(|| "the rule library does not canonicalize".to_owned())?;
         let own = module_text(&canonical, &text, &graph, library, &mut Vec::new(), &read)?;
         let own = if policy(&text) && !includes(&own) { format!("#include \"core.rerail\"\n{own}") } else { own };
@@ -71,6 +89,17 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
 /// skipped), then each `--env key=value`, a later value for a key replacing an earlier one.
 pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String, String)>, String> {
     settings_with_file(root, flags, true)
+}
+
+/// `settings`, for what keys a run before it runs (its frame's key, its program's summary): in a Git snapshot whose
+/// `rerail.env` cannot be read (a commit whose tree is not in the repository), the flags alone and why, as the run
+/// itself reads none where its program reads only Git's metadata (`corpus::run_observed`). Elsewhere, `settings`.
+pub fn settings_as_read(root: &std::path::Path, flags: &[String]) -> Result<(Vec<(String, String)>, Option<String>), String> {
+    match settings(root, flags) {
+        Ok(settings) => Ok((settings, None)),
+        Err(why) if crate::git_workspace::snapshot::contains(root) => Ok((settings_with_file(root, flags, false)?, Some(why))),
+        Err(why) => Err(why),
+    }
 }
 
 pub fn settings_with_file(root: &std::path::Path, flags: &[String], read_file: bool) -> Result<Vec<(String, String)>, String> {

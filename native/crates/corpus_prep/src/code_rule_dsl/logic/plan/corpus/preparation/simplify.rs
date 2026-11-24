@@ -48,10 +48,11 @@
 //! through a `Rewrite` where a variable or term changes) and the literals it makes; `Tm` is a term it makes or
 //! compares, by text.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
-use crate::code_rule_dsl::logic::program_image::{AggRef, AtomId, AtomRef, Builder, Cell, CmpOp, Lit, LitRef, RuleBuilder, RuleRef, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AggRef, AtomId, AtomRef, Builder, Cell, CmpOp, Lit, LitRef, Rows, RuleBuilder, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -79,7 +80,7 @@ pub struct Report {
     pub within: usize,
     pub climbs: Vec<String>,
     pub shared: usize,
-    pub projected: Vec<(String, Vec<usize>)>,
+    pub projected: Vec<(String, Vector<usize>)>,
     pub existence: usize,
     pub inverses: usize,
     pub keyed_by: Vec<String>,
@@ -417,7 +418,7 @@ impl Rewrite for Dyn<'_> {
 /// Outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
 /// an attribute's request.
 fn kept(f: &Fields<'_>, rel: &str) -> bool {
-    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel)
+    f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::BY_NAME)
 }
 
 /// An attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
@@ -489,7 +490,7 @@ impl ProgramPass for UnitColumns {
             b.fields().declare(rel, &[("unit", "int")]);
             if let Some(rows) = f.facts(rel) {
                 let n = rows.rows().len();
-                b.fields().set_fact_cells(rel, vec![vec![Cell::Int(1)]; n]);
+                b.fields().set_fact_cells(rel, Rows::from_iter(std::iter::repeat_n([Cell::Int(1)], n)));
             }
         }
         Ok(())
@@ -584,7 +585,7 @@ impl ProgramPass for GroundRules {
             }
         }
         for (rel, rows) in facts {
-            let cells = rows.into_iter().map(|row| row.into_iter().map(|x| x.write(b)).collect()).collect();
+            let cells = Rows::of_cells(rows.into_iter().map(|row| row.into_iter().map(|x| x.write(b)).collect::<Vec<Cell>>()));
             b.fields().set_fact_cells(&rel, cells);
         }
         Ok(())
@@ -696,7 +697,7 @@ impl ProgramPass for DecidedFactTests {
                     self.0 += 1;
                     continue;
                 }
-                let negated: Vec<u32> = r.body().filter(|&l| reads(l, true)).map(|l| l.node()).collect();
+                let negated: Vector<u32> = r.body().filter(|&l| reads(l, true)).map(|l| l.node()).collect();
                 self.0 += negated.len();
                 drops[i].extend(negated);
             }
@@ -2352,7 +2353,7 @@ fn existential<'v>(v: &'v Version, f: &Fields<'_>, r: RuleRef<'v>, body: &mut Ve
     let n = body.len();
     for &d in docs.values() {
         // Parts: literals joined by a shared variable other than `$d`.
-        let mut part: Vec<usize> = (0..n).collect();
+        let mut part: Vector<usize> = (0..n).collect();
         fn root(part: &mut [usize], i: usize) -> usize {
             let mut r = i;
             while part[r] != r {
@@ -2380,7 +2381,7 @@ fn existential<'v>(v: &'v Version, f: &Fields<'_>, r: RuleRef<'v>, body: &mut Ve
         }
         let roots: BTreeSet<usize> = (0..n).map(|i| root(&mut part, i)).collect();
         for rt in roots {
-            let members: Vec<usize> = (0..n).filter(|&i| root(&mut part, i) == rt).collect();
+            let members: Vector<usize> = (0..n).filter(|&i| root(&mut part, i) == rt).collect();
             if members.len() < 2 || members.len() == n {
                 continue;
             }
@@ -2463,7 +2464,7 @@ impl ProgramPass for ClimbsAsAxes {
         #[allow(clippy::type_complexity)]
         let mut done: Vec<(BTreeSet<String>, Vec<(String, RuleRef<'_>, Option<bool>)>)> = Vec::new();
         for scc in sccs.iter() {
-            let members: BTreeSet<String> = scc.iter().cloned().collect();
+            let members: BTreeSet<String> = scc.iter().map(str::to_owned).collect();
             if !members.iter().all(|r| unary_node(r) && !kept(&f, r)) {
                 continue;
             }
@@ -2658,7 +2659,7 @@ impl ProgramPass for SubsumeRequests {
         let body = |i: usize| -> Vec<String> { rules[i].body().map(|l| v.show_lit(rules[i], l)).collect() };
         let mut dropped = vec![false; rules.len()];
         for (req, readers) in asked.iter_mut() {
-            let at: Vec<usize> = (0..rules.len()).filter(|&i| v.rel_name(rules[i].head().rel()) == req.as_str()).collect();
+            let at: Vector<usize> = (0..rules.len()).filter(|&i| v.rel_name(rules[i].head().rel()) == req.as_str()).collect();
             let aligned = at.len() == readers.len();
             let bodies: Vec<Vec<String>> = at.iter().map(|&i| body(i)).collect();
             for (x, &a) in at.iter().enumerate() {
@@ -2830,7 +2831,7 @@ fn columns_read(v: &Version) -> HashMap<String, Option<BTreeSet<usize>>> {
 struct ProjectAll {
     // Per relation: the columns a reader reads; `None` once something reads it whole.
     read: HashMap<String, Option<BTreeSet<usize>>>,
-    kept: BTreeMap<String, Vec<usize>>,
+    kept: BTreeMap<String, Vector<usize>>,
 }
 
 impl ProgramPass for ProjectAll {
@@ -2842,14 +2843,21 @@ impl ProgramPass for ProjectAll {
         for r in v.rules() {
             by_head.entry(v.rel_name(r.head().rel())).or_default().push(r);
         }
-        let mut keep_of: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut keep_of: HashMap<String, Vector<usize>> = HashMap::new();
         for (&rel, rules) in &by_head {
             if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
                 continue;
             }
+            // A filter of one relation keeps its columns: where every row passes, the run reads it as that relation
+            // (`plan::filter_of`, t52 step 3), which a projection would make a relation of its own.
+            if let [r] = rules.as_slice()
+                && crate::code_rule_dsl::logic::plan::plain_filter(&f, rel, v, *r).is_some()
+            {
+                continue;
+            }
             let Some(Some(cols)) = self.read.get(rel) else { continue };
             let Some(n) = f.arity(rel) else { continue };
-            let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
+            let mut keep: Vector<usize> = (0..n).filter(|c| cols.contains(c)).collect();
             // A location stays though no reader reads it: the split partitions a file-local relation's rows by one,
             // and a load hands on a document's rows by it (`py_docmod(d, p, q)`, read as `py_docmod(_, p, q)`). One
             // is enough: the first, when no column read is one.
@@ -2872,7 +2880,7 @@ impl ProgramPass for ProjectAll {
         }
         struct Project<'a> {
             v: &'a Version,
-            keep: &'a HashMap<String, Vec<usize>>,
+            keep: &'a HashMap<String, Vector<usize>>,
         }
         impl Rewrite for Project<'_> {
             fn begin(&mut self, r: RuleRef<'_>) -> bool {
@@ -3001,7 +3009,7 @@ pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipel
     report.unread = unread.0;
     if !std::env::var("RERAIL_PROJECT_COLUMNS").is_ok_and(|x| x == "off") {
         // Columns as each relation first had them, the ones it lost.
-        let mut lost: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut lost: BTreeMap<String, Vector<usize>> = BTreeMap::new();
         loop {
             let v = p.current()?.clone();
             let mut round = ProjectAll { read: columns_read(&v), kept: BTreeMap::new() };
@@ -3009,9 +3017,9 @@ pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipel
             let changed = !round.kept.is_empty();
             for (rel, keep) in round.kept {
                 let n = v.decl_of(&rel).map_or(0, |d| d.arity());
-                let gone: Vec<usize> = (0..n).filter(|c| !keep.contains(c)).collect();
+                let gone: Vector<usize> = (0..n).filter(|c| !keep.contains(c)).collect();
                 let orig = lost.entry(rel).or_default();
-                let mut at: Vec<usize> = (0..n + orig.len()).filter(|c| !orig.contains(c)).collect();
+                let mut at: Vector<usize> = (0..n + orig.len()).filter(|c| !orig.contains(c)).collect();
                 for g in gone.iter().rev() {
                     orig.push(at.remove(*g));
                 }

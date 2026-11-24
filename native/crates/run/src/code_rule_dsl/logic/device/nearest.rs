@@ -1,11 +1,12 @@
 //! Nearest ancestors on the device (`SolverDevice::nearest`).
 
+use rerail_blocks::vector::Vector;
 /// The solved targets per cell (set-major), the most steps any cell took (`rounds`), the dispatches
 /// (`launches`, one), the command buffer's GPU seconds, the
 /// host's wall seconds from the first buffer made to the last completion, and where those went
 /// (`profile::PHASES`), with the buffer bytes made and reused.
 pub struct Solved {
-    pub targets: Vec<u32>,
+    pub targets: Vector<u32>,
     pub rounds: u32,
     pub launches: usize,
     pub gpu: f64,

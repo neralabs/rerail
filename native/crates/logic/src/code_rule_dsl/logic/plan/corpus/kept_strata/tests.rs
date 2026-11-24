@@ -1,12 +1,13 @@
+use rerail_blocks::vector::Vector;
     use super::*;
     use crate::code_rule_dsl::logic::{native, plan, rr};
     use crate::code_rule_dsl::logic::plan::lower;
     /// A program's version, as a run reads it (t36 item 7).
     type V = std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>;
     fn pl(p: &V) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()) }
-    fn st(p: &V) -> Vec<std::collections::BTreeSet<String>> {
+    fn st(p: &V) -> crate::code_rule_dsl::logic::front::Components {
         let s = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(p).unwrap();
-        s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
+        crate::code_rule_dsl::logic::front::Components::of_names(s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r))))
     }
     /// An entry of one integer row.
     fn one(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, v: i64) -> KeptPut { flat_put(rel, digest, reads, vec![b'i'], Box::new(crate::content_store::kept_facts::BlockFlat::of_row(&[v]))) }
@@ -23,7 +24,7 @@
         let mut inputs = Vec::new();
         for i in 0..257 {
             text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n.output result{i}\n");
-            inputs.push((format!("input{i}"), native::component::columns_source(vec!["c0".into()], vec![Some(vec![i])])));
+            inputs.push((format!("input{i}"), native::component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![i])])));
         }
         let prog = rr::parse_version(&text).unwrap();
         let now: HashMap<_, _> = inputs.iter().map(|(r, s)| (r.clone(), super::super::retain::digest(s.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(s.columns().len())))).collect();
@@ -69,7 +70,7 @@
                 let dir = tempfile::tempdir().unwrap();
                 let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
                 let prog = rr::parse_version(".decl input(x:number)\n.input input\n.decl result(x:number)\nresult(x) :- input(x).\n.output result\n").unwrap();
-                let inputs = vec![("input".to_owned(), native::component::columns_source(vec!["c0".into()], vec![Some(vec![42])]))];
+                let inputs = vec![("input".to_owned(), native::component::columns_source(vec!["c0".into()], vec![Some(rerail_blocks::vector![42])]))];
                 let now = HashMap::from([("input".to_owned(), super::super::retain::digest(inputs[0].1.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(inputs[0].1.columns().len())))]);
                 let (_, part) = load(&store, dir.path(), [7; 32], [7; 32], &pl(&prog), &Default::default(), &st(&prog), &inputs, &now).unwrap();
                 let puts: Vec<_> = part.frames.iter().map(|(name, (rel, _))| one(rel, now["input"], if name == "result" { vec![("input".into(), now["input"])] } else { vec![] }, 42)).collect();
@@ -86,7 +87,7 @@
                 assert_eq!((entry.digest(), rows), (now["input"], vec![42]), "{changed}, deleted={deleted}: the bound commit's rows");
                 // The next run reads the new commit: the result read only when its reads are the input's digest now.
                 let (kept, _) = load(&store, dir.path(), [7; 32], [7; 32], &pl(&prog), &Default::default(), &st(&prog), &inputs, &now).unwrap();
-                let rels: Vec<i64> = kept.iter().flat_map(|k| k.parts().1).flat_map(|(_, _, held)| held.live_rows().unwrap()).collect();
+                let rels: Vector<i64> = kept.iter().flat_map(|k| k.parts().1).flat_map(|(_, _, held)| held.live_rows().unwrap()).collect();
                 assert!(!rels.contains(&999), "{changed}, deleted={deleted}: a replaced entry of other reads is not read");
                 let result_kept = !(changed == "result" || (changed == "input" && !deleted));
                 assert_eq!(rels == [42], result_kept, "{changed}, deleted={deleted}: {rels:?}");
@@ -139,7 +140,7 @@
         assert!(kept.has_rows("r"));
         store.queue_kept([42; 32], vec![one(&rel, 2, vec![], 2)]);
         let (_, held) = kept.rows("r", b"i").expect("bound from the commit the run read");
-        assert_eq!((kept.was("r"), held.live_rows().unwrap()), (Some(1), vec![1]));
+        assert_eq!((kept.was("r"), held.live_rows().unwrap()), (Some(1), rerail_blocks::vector![1]));
     }
 
     /// A kept relation's frame keeps its kind and field columns as no atoms (`Kept::typed`), as `load` reads it back:
@@ -158,6 +159,6 @@
         let domains = lower::domains_of(&p).unwrap();
         let mut kept = Kept::new(&store, [42; 32], &[], HashMap::new()).typed(&crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()), &domains);
         kept.program(&HashMap::from([("kinded".into(), [1; 32])]));
-        kept.ran("kinded", Some((7, vec![b's', b's', b's'], Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&[1, 1132, 5], 3, false)), 1, vec![])));
+        kept.ran("kinded", Some((7, vec![b's', b's', b's'], crate::code_rule_dsl::logic::plan::RanRows::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&[1, 1132, 5], 3, false))), 1, vec![])));
         assert_eq!(kept.puts[0].types, b"iis", "the node and the kind are no atoms, the text is");
     }

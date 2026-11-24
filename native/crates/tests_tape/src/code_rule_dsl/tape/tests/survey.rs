@@ -168,7 +168,8 @@ impl Survey {
     /// A Markdown file's inline texts (as the engine cuts them: less their block continuations),
     /// and a Vue file's program.
     fn inner_texts(&mut self, dialect: GrammarDialect, image: &TapeImage, grammar: &Grammar, place: &str, source: &str) {
-        let Some(root) = crate::code_rule_dsl::embed::host::Host::new(image, grammar).root() else { return };
+        let cache = image.own_cache();
+        let Some(root) = crate::code_rule_dsl::embed::host::Host::new(image, grammar, cache.as_ref()).root() else { return };
         match dialect {
             GrammarDialect::Markdown => {
                 let mut texts = Vec::new();

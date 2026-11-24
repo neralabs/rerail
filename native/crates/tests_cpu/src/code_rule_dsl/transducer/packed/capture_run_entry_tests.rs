@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::capture_run::Limits;
 use super::*;
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
@@ -19,10 +20,10 @@ pub(super) fn tape(source: &str) -> TapeDoc {
     let grammar = Grammar::new(SupportLang::Python).unwrap();
     let native = StrDoc::new(source, SupportLang::Python);
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
+    TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap()
 }
 
-fn calls(doc: &TapeDoc) -> Vec<u32> {
+fn calls(doc: &TapeDoc) -> Vector<u32> {
     let kind = SupportLang::Python
         .get_ts_language()
         .id_for_node_kind("call", true);
@@ -171,7 +172,7 @@ fn outer_capture_runs_preserve_all_results_and_exact_work_boundaries_across_pref
 fn outer_prefix_cursor_truncation_rejects_reconvergence_and_unbound_restores() {
     let language = SupportLang::Python.get_ts_language();
     let p = Program::new(
-        vec![
+        rerail_blocks::vector![
             word(CAPTURE, 0, 0),
             word(SAVE_CURSOR, 0, 0),
             word(CHILD, NAMED, 0),
@@ -197,8 +198,8 @@ fn outer_prefix_cursor_truncation_rejects_reconvergence_and_unbound_restores() {
         ],
         vec![b"prefix".to_vec(), b"body".to_vec()],
         vec![],
-        vec![0, 1],
-        vec![],
+        rerail_blocks::vector![0, 1],
+        rerail_blocks::vector![],
     )
     .unwrap()
     .with_tree_sitter_query_semantics()
@@ -350,7 +351,7 @@ fn metal_outer_capture_runs_bound_generations_and_preserve_complete_values() {
     );
     let scope = MetalTestScope::enter();
     let started = std::time::Instant::now();
-    let actual = execute_with_backend(ExecutionBackend::MetalJit, &[p], &[doc], &[vec![vec![root]]]);
+    let actual = execute_with_backend(ExecutionBackend::MetalJit, &[p], &[doc], &[vec![rerail_blocks::vector![root]]]);
     let trace = scope.snapshot();
     eprintln!(
         "OUTER_METAL_RUN parts={parts} dispatches={} seconds={} peakMetalBytes={:?}",

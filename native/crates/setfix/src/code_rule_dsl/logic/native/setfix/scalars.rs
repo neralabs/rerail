@@ -1,4 +1,5 @@
 //! Native scalar summaries over one input version. Compatibility belongs to logical analysis.
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::analysis::{
     bags,
@@ -7,7 +8,7 @@ use crate::code_rule_dsl::logic::analysis::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Bag {
-    columns: Vec<usize>,
+    columns: Vector<usize>,
     tests: Vec<(usize, usize)>,
     pub value: Option<usize>,
 }
@@ -44,7 +45,7 @@ impl Summary {
 #[derive(Default)]
 struct Groups {
     width: usize,
-    words: super::rows::BlockVec<i64>,
+    words: rerail_blocks::vector::Vector<i64>,
     len: usize,
 }
 impl Groups {
@@ -89,11 +90,11 @@ impl Groups {
     }
     fn insert(&mut self, key: &[i64], s: Summary) {
         if self.len == 0 && self.words.is_empty() || self.width != key.len() {
-            *self = Groups { width: key.len(), words: super::rows::BlockVec::new(), len: 0 };
+            *self = Groups { width: key.len(), words: crate::code_rule_dsl::facts::rows::vector_in(None, 0), len: 0 };
             self.words.resize(16 * self.stride(), 0);
         }
         if 2 * (self.len + 1) > self.slots() {
-            let mut grown = Groups { width: self.width, words: super::rows::BlockVec::new(), len: 0 };
+            let mut grown = Groups { width: self.width, words: crate::code_rule_dsl::facts::rows::vector_in(None, 0), len: 0 };
             grown.words.resize(2 * self.words.len(), 0);
             let st = self.stride();
             for at in 0..self.slots() {
@@ -282,27 +283,21 @@ impl Pool {
     }
 }
 
-pub(super) fn explain(steps: &[Step], store: &Store) {
+pub(super) fn explain(p: &Section<steps::Plan>, store: &Store) {
     use crate::code_rule_dsl::logic::profile;
     if !profile::on() {
         return;
     }
     let mut consumers = vec![];
-    for (step, s) in steps.iter().enumerate() {
+    for (step, s) in p.steps.iter().enumerate() {
         if let Step::Unused { proof } = s {
-            consumers.push(serde_json::json!({"step":step,"evaluation_elided":proof}));
+            consumers.push(serde_json::json!({"step":step,"evaluation_elided":{"proven":proof.proven,"reason":proof.reason.as_str()}}));
             continue;
         }
-        let Step::Scalar {
-            src,
-            bag: Some(bag),
-            ..
-        } = s
-        else {
-            continue;
-        };
+        let Step::Scalar { src, bag, .. } = s else { continue };
+        let Some(bag) = bag.as_ref().map(|h| p.bound(h)) else { continue };
         let pool = match src {
-            Src::In(r, _) => &r.summaries,
+            Src::In(r, _) => &p.bound(r).summaries,
             Src::Full(r) | Src::FullMulti(r, _) | Src::Delta(r) => &store.rels[*r].summaries,
         };
         let selected = pool.selected(bag);
@@ -315,16 +310,13 @@ pub(super) fn explain(steps: &[Step], store: &Store) {
     });
 }
 
-pub(super) fn register(steps: &[Step], store: Option<&Store>) {
-    for step in steps {
-        if let Step::Scalar {
-            src,
-            bag: Some(bag),
-            ..
-        } = step
+pub(super) fn register(p: &Section<steps::Plan>, store: Option<&Store>) {
+    for step in p.steps.iter() {
+        if let Step::Scalar { src, bag, .. } = step
+            && let Some(bag) = bag.as_ref().map(|h| p.bound(h))
         {
             match src {
-                Src::In(rel, _) => rel.summaries.register(bag),
+                Src::In(rel, _) => p.bound(rel).summaries.register(bag),
                 Src::Full(r) | Src::FullMulti(r, _) | Src::Delta(r) => {
                     if let Some(store) = store {
                         store.rels[*r].summaries.register(bag)
@@ -336,7 +328,9 @@ pub(super) fn register(steps: &[Step], store: Option<&Store>) {
 }
 
 /// Adapt physical steps to the same bag proof used by SQL. Lookup slots stay local to the consumer.
-pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
+/// Each scalar step's bag, by the same proof SQL's uses (`Edit::Bag`).
+pub(super) fn plan(p: &Section<steps::Plan>) -> Vec<Edit> {
+    let steps = &p.steps;
     let mut previous = std::collections::BTreeSet::new();
     let mut positions = Vec::new();
     let mut inputs = Vec::new();
@@ -374,7 +368,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
             continue;
         };
         let source = match src {
-            Src::In(rel, _) => format!("input:{:p}", Arc::as_ptr(rel)),
+            Src::In(rel, _) => format!("input:{:p}", Arc::as_ptr(p.bound(rel))),
             Src::Full(r) | Src::FullMulti(r, _) => format!("full:{r}"),
             Src::Delta(r) => format!("delta:{r}"),
         };
@@ -411,6 +405,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
         ));
     }
     let analysis = bags::analyze(inputs);
+    let mut edits = Vec::new();
     for family in &analysis.bags.families {
         if !analysis.bags.inputs[family.witness]
             .same_bag(&analysis.bags.inputs[family.witness])
@@ -423,19 +418,15 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
             _ => None,
         };
         for &member in &family.members {
-            if let Step::Scalar {
-                keys, tests, bag, ..
-            } = &mut steps[positions[member]]
-            {
-                *bag = Some(Arc::new(Bag {
+            if let Step::Scalar { keys, tests, .. } = &steps[positions[member]] {
+                edits.push(Edit::Bag(positions[member], Arc::new(Bag {
                     columns: keys.iter().map(|(c, _)| *c).collect(),
-                    tests: tests.clone(),
+                    tests: tests.to_vec(),
                     value,
-                }));
+                })));
             }
         }
     }
-    register(steps, None);
     crate::code_rule_dsl::logic::profile::decision("native scalar summaries", || {
         serde_json::json!({
         "analysis":analysis,
@@ -444,7 +435,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
         "sum_range_check":"At each scalar use, after exact accumulation",
     }).to_string()
     });
-    analysis
+    edits
 }
 
 #[cfg(test)]
@@ -503,7 +494,7 @@ pub mod tests {
             run_join(&rule, 2, &store, &mut syms, &mut fresh).unwrap(),
             1
         );
-        assert_eq!(syms.name(fresh[2].data[0]), "7");
+        assert_eq!(syms.name(fresh[2].data()[0]), "7");
     }
     #[test]
     fn native_sum_range_checks_follow_observation_after_aliases_and_filters() {
@@ -553,13 +544,13 @@ pub mod tests {
             run_join(&observed, 1, &store, &mut syms, &mut fresh).unwrap(),
             1
         );
-        assert_eq!(fresh[1].data, vec![i64::MAX]);
+        assert_eq!(fresh[1].data(), vec![i64::MAX]);
     }
     #[test]
     fn shared_native_fold_preserves_duplicates_empty_results_and_range_checks() {
         let pool = Pool::default();
         let bag = Arc::new(Bag {
-            columns: vec![0],
+            columns: rerail_blocks::vector![0],
             tests: vec![],
             value: Some(1),
         });
@@ -643,11 +634,11 @@ pub mod tests {
         };
         let mut counted = vec![Fresh::default(); 2];
         run_join(&counts, 1, &store, &mut syms, &mut counted).unwrap();
-        assert_eq!(counted[1].data, vec![1, 3, 2, 1, 3, 0]);
+        assert_eq!(counted[1].data(), vec![1, 3, 2, 1, 3, 0]);
         for j in [&j, &j2] {
             let mut fresh = vec![Fresh::default()];
             assert_eq!(run_join(j, 0, &store, &mut syms, &mut fresh).unwrap(), 2);
-            assert_eq!(fresh[0].data, vec![1, 3, 17, 3, 7, 2, 1, -2, -2, -2]);
+            assert_eq!(fresh[0].data(), vec![1, 3, 17, 3, 7, 2, 1, -2, -2, -2]);
         }
         let Step::Scalar {
             src: Src::In(rel, _),
@@ -656,7 +647,7 @@ pub mod tests {
         else {
             panic!("native scalar")
         };
-        let active = rel.summaries.memos().into_iter().filter(|m| m.groups > 0).collect::<Vec<_>>();
+        let active = j.bound(rel).summaries.memos().into_iter().filter(|m| m.groups > 0).collect::<Vec<_>>();
         assert_eq!(active.len(), 1);
         let memo = &active[0];
         assert_eq!(
@@ -669,7 +660,7 @@ pub mod tests {
         let next = parse_join(&db, &spec, &mut syms).unwrap();
         let mut fresh = vec![Fresh::default()];
         run_join(&next, 0, &store, &mut syms, &mut fresh).unwrap();
-        assert_eq!(fresh[0].data, vec![1, 3, 3, 1, 1, 2, 1, 1, 1, 1]);
+        assert_eq!(fresh[0].data(), vec![1, 3, 3, 1, 1, 2, 1, 1, 1, 1]);
     }
 
     #[test]
@@ -700,7 +691,7 @@ pub mod tests {
         let mut run = |store: &Store, j: &JoinRule| {
             let mut fresh = vec![Fresh::default(); 2];
             run_join(j, 1, store, &mut syms, &mut fresh).unwrap();
-            fresh[1].data.clone()
+            fresh[1].data()
         };
         assert_eq!(run(&store, &full), vec![2, 10, 7]);
         assert_eq!(run(&store, &delta), vec![2, 10, 7]);
@@ -738,7 +729,7 @@ pub mod tests {
         let mut run = |store: &Store, j: &JoinRule| {
             let mut fresh = vec![Fresh::default(); 2];
             run_join(j, 1, store, &mut syms, &mut fresh).unwrap();
-            fresh[1].data.clone()
+            fresh[1].data()
         };
         assert_eq!(run(&store, &full), vec![3, 22, 12]);
         assert!(super::kill(&mut store.rels[0].dead, 2));
@@ -770,7 +761,7 @@ pub mod tests {
         );
         assert!(
             fresh[0]
-                .data
+                .data()
                 .as_chunks::<5>().0.iter()
                 .all(|row| row[1..] == [3, 17, 3, 7])
         );
@@ -781,7 +772,7 @@ pub mod tests {
         else {
             panic!("native input")
         };
-        let memos = rel.summaries.memos();
+        let memos = j.bound(rel).summaries.memos();
         assert_eq!(
             memos.iter().map(|m| m.builds).sum::<usize>(),
             1000,
@@ -793,7 +784,7 @@ pub mod tests {
     #[test]
     fn mutable_input_views_pin_their_version_before_any_scalar_fold() {
         use crate::code_rule_dsl::facts::vtab::{Modules, Source};
-        struct Cells(Arc<Mutex<Vec<[i64; 2]>>>);
+        struct Cells(Arc<Mutex<Vector<[i64; 2]>>>);
         impl Source for Cells {
             fn columns(&self) -> Vec<String> {
                 vec!["g".into(), "v".into()]
@@ -807,7 +798,7 @@ pub mod tests {
             fn indexed(&self, _: usize) -> bool {
                 false
             }
-            fn lookup(&self, _: usize, _: &[i64]) -> Option<Vec<usize>> {
+            fn lookup(&self, _: usize, _: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
                 None
             }
             fn value(&self, r: usize, c: usize) -> i64 {
@@ -820,7 +811,7 @@ pub mod tests {
             }
         }
         let db = connection();
-        let values = Arc::new(Mutex::new(vec![[1, 7], [1, 3]]));
+        let values = Arc::new(Mutex::new(rerail_blocks::vector![[1, 7], [1, 3]]));
         Modules::default()
             .bind(&db, "versioned", Arc::new(Cells(values.clone())))
             .unwrap();
@@ -837,7 +828,7 @@ pub mod tests {
         let mut run = |j: &JoinRule| {
             let mut fresh = vec![Fresh::default()];
             run_join(j, 0, &store, &mut syms, &mut fresh).unwrap();
-            fresh[0].data.clone()
+            fresh[0].data()
         };
         assert_eq!(run(&first), vec![2, 10]);
         forget_inputs(&db);

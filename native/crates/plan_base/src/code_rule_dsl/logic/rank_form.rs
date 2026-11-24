@@ -23,6 +23,7 @@
 //!
 //! Nothing here names a relation: any rule of the form is made so. `RERAIL_RANK_FORM=off` finds none (a measurement
 //! aid); `.decl H(…) no_rank` keeps `H` as rows.
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::native::rank::Op;
 use crate::code_rule_dsl::logic::plan::body::{VarSet, lit_vars};
@@ -44,8 +45,8 @@ struct Shape {
     kx: Slot,
     ky: Slot,
     op: Op,
-    x: Vec<usize>,
-    y: Vec<usize>,
+    x: Vector<usize>,
+    y: Vector<usize>,
 }
 
 /// A rank the form makes of a counted relation's rule `h` (`Shape`): its four relations' names (the asked rows, their
@@ -55,7 +56,7 @@ struct Rank {
     h: RuleId,
     shape: Shape,
     names: [String; 4],
-    at: Vec<usize>,
+    at: Vector<usize>,
 }
 
 /// What the form reads of a program besides its rules: the version's (`corpus::preparation::rank`).
@@ -76,7 +77,7 @@ pub struct Plan {
 impl Plan {
     /// How many readers' counts it rewrites.
     pub fn found(&self) -> usize {
-        self.readers.values().map(Vec::len).sum()
+        self.readers.values().map(|v| v.len()).sum()
     }
 }
 
@@ -164,7 +165,7 @@ fn shape(h: RuleRef<'_>, grouped: &[bool]) -> Option<Shape> {
             if gv.contains(ky) {
                 continue;
             }
-            let rest: Vec<usize> = (0..body.len()).filter(|k| *k != ci).collect();
+            let rest: Vector<usize> = (0..body.len()).filter(|k| *k != ci).collect();
             let own: Vec<VarSet> = rest.iter().map(|&k| lit_vars(body[k]).minus(&gv)).collect();
             // The counted part: the literals reached from the counted variables and ky through their own variables.
             let mut reach = VarSet::of(cv.iter().copied().chain([ky]));
@@ -183,8 +184,8 @@ fn shape(h: RuleRef<'_>, grouped: &[bool]) -> Option<Shape> {
             if reach.contains(kx) && !gv.contains(kx) {
                 continue;
             }
-            let y: Vec<usize> = rest.iter().zip(&in_y).filter(|(_, y)| **y).map(|(k, _)| *k).collect();
-            let x: Vec<usize> = rest.iter().zip(&in_y).filter(|(_, y)| !**y).map(|(k, _)| *k).collect();
+            let y: Vector<usize> = rest.iter().zip(&in_y).filter(|(_, y)| **y).map(|(k, _)| *k).collect();
+            let x: Vector<usize> = rest.iter().zip(&in_y).filter(|(_, y)| !**y).map(|(k, _)| *k).collect();
             if y.is_empty() {
                 continue;
             }
@@ -278,8 +279,11 @@ pub fn write(v: &Version, of: &dyn Of, plan: &Plan, b: &mut Builder<'_>) -> Resu
             rb = rb.lit(v, h, body[k]);
         }
         rb.finish()?;
-        // rr_rankg(G…) :- rr_rankq(G…, _…, _).
+        // rr_rankg(G…) :- rr_rankq(G…, _…, _). Stored: its rows are the distinct groups, which `rr_rankb` is seeded
+        // from. Inlined, `rr_rankb` read the asked rows in their place, each group's counted rows once an asked row:
+        // `rr_rankb0` walked a body's every statement for each statement asked of it (63 K asked, 1.5 M rows).
         b.rule().head(g.as_str(), &g_args).atom(q.as_str(), &q_args).finish()?;
+        b.fields().add_qualifiers(&[(g.as_str(), "no_inline")]);
         // rr_rankb(G…, C…, ky) :- rr_rankg(G…), Y.
         let b_args: Vec<T<'_>> = s.group.iter().chain(&s.counted).map(var).chain([var(&s.ky)]).collect();
         let mut rb = b.rule().head(bn.as_str(), &b_args).atom(g.as_str(), &g_args);

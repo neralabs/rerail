@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 pub trait HeldForResolution: Send + Sync {
     /// Holds the file at `path` with `source`; whether that changes what a resolution reads (disk below `root`
     /// standing for a path not held before).
-    fn hold(&mut self, path: &str, source: &Arc<String>, root: Option<&Path>) -> bool;
+    fn hold(&mut self, path: &str, source: &Arc<crate::code_rule_dsl::tape::Text>, root: Option<&Path>) -> bool;
     /// Stops holding `path`; whether that changes what a resolution reads.
     fn release(&mut self, path: &str, root: Option<&Path>) -> bool;
     /// What one apply's resolutions read: the held files now, over disk below `root` as the apply finds it.
@@ -46,7 +46,7 @@ pub fn install(resolutions: Resolutions) {
 struct Nothing;
 
 impl HeldForResolution for Nothing {
-    fn hold(&mut self, _: &str, _: &Arc<String>, _: Option<&Path>) -> bool {
+    fn hold(&mut self, _: &str, _: &Arc<crate::code_rule_dsl::tape::Text>, _: Option<&Path>) -> bool {
         false
     }
     fn release(&mut self, _: &str, _: Option<&Path>) -> bool {

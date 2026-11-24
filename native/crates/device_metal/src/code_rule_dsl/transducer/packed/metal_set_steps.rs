@@ -4,6 +4,7 @@
 //! per file runs every step over the file's words in order. On the device each file starts at a
 //! word boundary, so no two threadgroups share a word; leaves and outputs are moved between that
 //! layout and the space's. The CPU's `space::NodeSet` operations are the reference.
+use rerail_blocks::vector::Vector;
 use super::*;
 use rerail_metal::lane;
 
@@ -73,7 +74,7 @@ pub fn run(
     leaves: &[(usize, &[u64])],
     steps: &[SetStep],
     outputs: &[usize],
-) -> Result<Vec<Vec<u64>>, Error> {
+) -> Result<Vec<Vector<u64>>, Error> {
     let device = lane::device()?;
     crate::code_rule_dsl::prof::peak("2a1a.device");
     // The steps' submission within the caller's launch budget, or one of their own.
@@ -120,7 +121,7 @@ pub fn run(
         .iter()
         .map(|&slot| {
             let slot = unsafe { std::slice::from_raw_parts(base.add(slot * words), words) };
-            let mut out = vec![0_u64; space_words];
+            let mut out = rerail_blocks::vector![0_u64; space_words];
             for (&(first, _), &[at, file_words, ..]) in files.iter().zip(&layout) {
                 insert(&slot[at as usize..(at + file_words) as usize], first as usize, &mut out);
             }

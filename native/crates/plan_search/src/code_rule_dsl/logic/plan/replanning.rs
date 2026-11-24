@@ -1,5 +1,6 @@
 //! Dependency-directed invalidation of live join plans. Slot zero is a relation's row count;
 //! slot c + 1 is column c's distribution (NDV, fanout and complete value frequencies).
+use rerail_blocks::vector::Vector;
 use super::body::Body;
 use super::{Constant, Model, Step, near};
 use crate::code_rule_dsl::logic::program_image::TermRef;
@@ -8,21 +9,21 @@ use std::collections::{BTreeMap, HashMap};
 #[derive(Default)]
 pub struct Version {
     pub value: u64,
-    readers: Vec<usize>,
-    priced: Option<(Vec<f64>, Option<HashMap<Constant, i64>>)>,
+    readers: Vector<usize>,
+    priced: Option<(Vector<f64>, Option<std::sync::Arc<super::table::Freq>>)>,
 }
 
 pub struct Watch {
     pub versions: Vec<Vec<Version>>,
     delta_of: Vec<Option<usize>>,
-    delta_readers: Vec<Vec<usize>>,
+    delta_readers: Vec<Vector<usize>>,
     delta_priced: Vec<Option<f64>>,
-    deltas: Vec<i64>,
+    deltas: Vector<i64>,
     dirty: Vec<bool>,
     /// Per probe, its steps' observed fanouts as last published (`observed`).
     fans: Vec<Vec<Option<f64>>>,
     whole_pending: Vec<bool>,
-    required: Vec<Vec<usize>>,
+    required: Vec<Vector<usize>>,
     rows: Vec<Option<i64>>,
 }
 
@@ -31,8 +32,8 @@ impl Watch {
         let mut watch = Self {
             versions: (0..rels.len()).map(|_| Vec::new()).collect(),
             delta_of: Vec::new(),
-            delta_readers: vec![Vec::new(); rels.len()], delta_priced: vec![None; rels.len()],
-            deltas: vec![0; rels.len()], dirty: vec![true; probes.len()],
+            delta_readers: vec![rerail_blocks::vector::Vector::new(); rels.len()], delta_priced: vec![None; rels.len()],
+            deltas: rerail_blocks::vector![0; rels.len()], dirty: vec![true; probes.len()],
             fans: vec![Vec::new(); probes.len()],
             whole_pending: vec![true; probes.len()],
             required: Vec::new(), rows: vec![None; rels.len()],
@@ -79,13 +80,13 @@ impl Watch {
         if version.readers.is_empty() { return; }
         let key = (name.to_owned(), slot.saturating_sub(1));
         let (sizes, freq) = if slot == 0 {
-            (vec![model.card(name)], None)
+            (rerail_blocks::vector![model.card(name)], None)
         } else {
-            (vec![model.ndv.get(&key).copied().unwrap_or(1.0), model.stats.fan.get(&key).copied().unwrap_or(1.0)], model.stats.dfreq.get(&key))
+            (rerail_blocks::vector![model.ndv.get(&key).copied().unwrap_or(1.0), model.stats.fan.get(&key).copied().unwrap_or(1.0)], model.stats.dfreq.get(&key))
         };
         let same = version.priced.as_ref().is_some_and(|(old, before)| near(old, &sizes) && match (before.as_ref(), freq) {
             (None, None) => true,
-            (Some(a), Some(b)) => a.len() == b.len() && a.iter().all(|(k, n)| b.get(k).is_some_and(|m| (*n == 0) == (*m == 0) && near(&[*n as f64], &[*m as f64]))),
+            (Some(a), Some(b)) => a.len() == b.len() && a.iter().all(|(k, n)| b.get(&k).is_some_and(|m| (n == 0) == (*m == 0) && near(&[n as f64], &[*m as f64]))),
             _ => false,
         });
         if !same {

@@ -22,6 +22,9 @@ pub enum Kind {
     Number,
 }
 
+// A kind is its own record in a section (a native join's plan, decision 0628 §4).
+rerail_section::plain_archive!(Kind);
+
 use Kind::{Number, Text};
 
 /// Each function: its name, its arguments and its result.

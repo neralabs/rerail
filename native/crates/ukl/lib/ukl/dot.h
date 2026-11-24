@@ -17,6 +17,8 @@
 // A backend with a faster form defines it in ukl/backend.h as `ukl_..._native` with its flag: `UKL_NATIVE_DOT4`
 // (both byte forms), `UKL_NATIVE_DOT2_F16`, `UKL_NATIVE_DOT2_BF16`, `UKL_NATIVE_F16` (the f16 conversion). The
 // library's tests (`library_tests.rs`, `dot_products_equal_their_references`) check each against its reference.
+// `UKL_DOT_REFERENCE` (a measurement's define) takes the references where a native form exists, so that a kernel's
+// time with each can be compared (decision 0617 step 6: where the dot products help the matrix emulation).
 
 #pragma once
 
@@ -72,7 +74,7 @@ UKL_INLINE float ukl_dot2_bf16_ref(uint32_t a, uint32_t b, float acc)
     return fma(ukl_bf16_to_f32(a >> 16), ukl_bf16_to_f32(b >> 16), acc);
 }
 
-#if defined(UKL_NATIVE_DOT4)
+#if defined(UKL_NATIVE_DOT4) && !defined(UKL_DOT_REFERENCE)
 UKL_INLINE int32_t ukl_dot4_i8(uint32_t a, uint32_t b, int32_t acc) { return ukl_dot4_i8_native(a, b, acc); }
 UKL_INLINE uint32_t ukl_dot4_u8(uint32_t a, uint32_t b, uint32_t acc) { return ukl_dot4_u8_native(a, b, acc); }
 #else
@@ -80,7 +82,7 @@ UKL_INLINE int32_t ukl_dot4_i8(uint32_t a, uint32_t b, int32_t acc) { return ukl
 UKL_INLINE uint32_t ukl_dot4_u8(uint32_t a, uint32_t b, uint32_t acc) { return ukl_dot4_u8_ref(a, b, acc); }
 #endif
 
-#if defined(UKL_NATIVE_DOT2_F16)
+#if defined(UKL_NATIVE_DOT2_F16) && !defined(UKL_DOT_REFERENCE)
 UKL_INLINE float ukl_dot2_f16(uint32_t a, uint32_t b, float acc) { return ukl_dot2_f16_native(a, b, acc); }
 #else
 // The reference's arithmetic, through the backend's conversion where it has one.
@@ -91,7 +93,7 @@ UKL_INLINE float ukl_dot2_f16(uint32_t a, uint32_t b, float acc)
 }
 #endif
 
-#if defined(UKL_NATIVE_DOT2_BF16)
+#if defined(UKL_NATIVE_DOT2_BF16) && !defined(UKL_DOT_REFERENCE)
 UKL_INLINE float ukl_dot2_bf16(uint32_t a, uint32_t b, float acc) { return ukl_dot2_bf16_native(a, b, acc); }
 #else
 UKL_INLINE float ukl_dot2_bf16(uint32_t a, uint32_t b, float acc) { return ukl_dot2_bf16_ref(a, b, acc); }

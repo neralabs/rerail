@@ -18,7 +18,7 @@ use std::sync::{Arc, Condvar, Mutex};
 pub struct Col(Arc<Data>);
 
 enum Data {
-    Host(Arc<[i64]>),
+    Host(crate::kernel::Words<i64>),
     Staged(Staged),
 }
 
@@ -36,7 +36,7 @@ enum Store {
     #[cfg(gpu_lane)]
     /// Held by its lease's ledger (decision 0487 step 3): a kernel that binds it holds it until its work completes.
     Shared(crate::gpu::shared::Pooled),
-    Host(#[allow(dead_code)] Box<[i64]>),
+    Host(#[allow(dead_code)] rerail_blocks::vector::Vector<i64>),
 }
 
 // SAFETY: the pointer is the store's own memory, kept as long as the column; it is written only by the column's one
@@ -67,7 +67,7 @@ impl Col {
 
     /// A staged column's shared buffer, which the device reads in place.
     #[cfg(gpu_lane)]
-    pub(crate) fn shared(&self) -> Option<&crate::gpu::shared::Pooled> {
+    pub fn shared(&self) -> Option<&crate::gpu::shared::Pooled> {
         match &*self.0 {
             Data::Staged(Staged { store: Store::Shared(p), .. }) => Some(p),
             _ => None,
@@ -90,14 +90,14 @@ impl std::ops::Deref for Col {
     }
 }
 
-impl From<Vec<i64>> for Col {
-    fn from(v: Vec<i64>) -> Col {
-        Col(Arc::new(Data::Host(v.into())))
+impl From<rerail_blocks::vector::Vector<i64>> for Col {
+    fn from(v: rerail_blocks::vector::Vector<i64>) -> Col {
+        Col(Arc::new(Data::Host(Arc::new(v))))
     }
 }
 
-impl From<Arc<[i64]>> for Col {
-    fn from(v: Arc<[i64]>) -> Col {
+impl From<crate::kernel::Words<i64>> for Col {
+    fn from(v: crate::kernel::Words<i64>) -> Col {
         Col(Arc::new(Data::Host(v)))
     }
 }
@@ -167,13 +167,13 @@ impl Gate {
     /// Makes `pass` wait at its head until the gate opens, unless it is open already: whether it waits. Under the
     /// gate's lock, so an opening cannot fall between the check and the wait.
     #[cfg(gpu_lane)]
-    pub(crate) fn hold(&self, pass: &crate::gpu::join::Pass, device: &rerail_device::device::Device) -> bool {
+    pub fn hold(&self, device: &rerail_device::device::Device, wait: impl FnOnce(&rerail_device::device::SharedEvent)) -> bool {
         let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
         if s.open {
             return false;
         }
         let e = s.event.get_or_insert_with(|| device.new_shared_event());
-        pass.wait_for_event(e, 1);
+        wait(e);
         true
     }
 
@@ -239,7 +239,7 @@ impl Store {
             let ptr = p.host().cast::<i64>();
             return Ok((Store::Shared(p), ptr));
         }
-        let mut b = vec![0i64; len.max(1)].into_boxed_slice();
+        let mut b = rerail_blocks::vector![0i64; len.max(1)];
         let ptr = b.as_mut_ptr();
         Ok((Store::Host(b), ptr))
     }

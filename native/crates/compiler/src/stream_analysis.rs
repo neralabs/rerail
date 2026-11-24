@@ -415,12 +415,10 @@ pub enum Mem {
     Live,
     /// The count of tokens (`COUNT`).
     Depth,
-    /// The tape: the last block's base; the nodes committed (their codes written) and the
-    /// codes; the flags of values that did not fit their widths (`native_cpu_tape::WIDE_OFF`).
-    BlockBase,
+    /// The tape: the commit point (the nodes before it final) and the nodes passed to the writer's ops
+    /// (`native_cpu_tape::pass`).
     Coded,
     Codes,
-    Wide,
     /// A region tier 2 splits (`Split::Tier2`, decision 0323): the byte its next part starts at
     /// (0: none), and its closer's last byte.
     PartAt,
@@ -431,10 +429,14 @@ pub enum Mem {
     /// An extra a mark lost (`SETTLE m=2`): its kind and field, plus one (0: none), made again
     /// by the next `TOKEN` that takes a token, of no width at the token taken.
     Lost,
+    /// The strings whose template's code is being read (decision 0600): their records left open
+    /// at a template's `$`, their parts going on at the next opener of a reader that resumes
+    /// (`SplitParts::resumers`).
+    Strings,
 }
 
 impl Mem {
-    pub const COUNT: u32 = 31;
+    pub const COUNT: u32 = 30;
 }
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
@@ -447,12 +449,11 @@ pub const HELD_IN_RULES: [u32; 0] = [];
 
 /// The fields tier 2 holds as SSA values where it is one function (`Cut::one`): those every
 /// token reads and writes (the next token's index, its start, limit and code, the end of the
-/// token before, the nodes made and open, the tape block's base every leaf's start is coded
-/// from, a split region's cursor), as simdjson's stage 2
+/// token before, the nodes made and open, a split region's cursor), as simdjson's stage 2
 /// keeps `next_structural` and `src` in registers. The loop's cold calls keep the caller's
 /// general registers (`preserve_most`), and the values from far away are made again where used
 /// (`remat_far`), so these stay in registers. The rest stays in the frame, read where used.
-pub const HELD_IN_ONE: [u32; 9] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::BlockBase as u32, Mem::PartAt as u32];
+pub const HELD_IN_ONE: [u32; 8] = [Mem::Next as u32, Mem::Start as u32, Mem::Limit as u32, Mem::Taken as u32, Mem::LastEnd as u32, Mem::Nodes as u32, Mem::Open as u32, Mem::PartAt as u32];
 
 /// The token's last bytes at which a token's check can hold (decision 0428), where its test is
 /// at its last byte (`token_ops_past`: `Last` read `delay` back from the test, in a conjunct).
@@ -500,6 +501,16 @@ pub struct SplitReader {
     pub closers: Vec<(u8, u8)>,
     /// Its opener's token has the reader's tag (`Reader::retag`): the record's code, no word.
     pub tagged: bool,
+    /// Its closer at a template (`ReadArm::template`, decision 0600), and its closer's last
+    /// (`ReadArm::last`, else its offset), where it has one: its closer piece ends there, not at
+    /// the record's last, which is the string's.
+    pub template: Option<u16>,
+    pub last: Option<u16>,
+    pub off: i8,
+    /// Its regions resume a string's (`Reader::resumes`): entered at the template's `}`, with
+    /// no record, its opener's code its tag's (`code`).
+    pub resumes: bool,
+    pub code: Option<u32>,
 }
 
 /// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
@@ -535,7 +546,8 @@ pub fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error>
             let a = &rd.arms[0];
             let mut parts: Vec<(u16, u8, Option<u16>, Option<u8>)> = rd.parts.iter().map(|p| (p.start, p.bytes, p.last, p.kind)).collect();
             parts.sort_by_key(|&(o, n, _, _)| (n, o));
-            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some() }
+            let code = a.retag.or(rd.retag).map(|(kind, marks)| u32::from(kind) | marks << crate::records::MARK_SHIFT);
+            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some(), template: a.template, last: a.last, off: a.off, resumes: rd.resumes, code }
         })
         .collect();
     // simdjson's `parse_string`: one reader, its parts of bytes, no kinds of their own.
@@ -672,7 +684,7 @@ pub fn one_byte(ft: &Fetch, rule: &crate::records::EndRule) -> bool {
 }
 
 /// The supertypes a program's nodes are put in (`NODE_SUPER`'s kinds), ascending: each a bit of
-/// a code's key (`native_cpu_tape::commit`). Past `MAX_CLASSES`, refused.
+/// a key's slot (`id_slots`). Past `MAX_CLASSES`, refused.
 pub fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
     let mut c: Vec<u16> = native.structural.iter().filter_map(|b| if let Op::NodeSuper { kind } = b.operation { Some(kind) } else { None }).collect();
     c.sort_unstable();
@@ -861,9 +873,10 @@ pub fn shared_runs(native: &Structure, pushes: &[u16], alone_to: Option<&[bool]>
 /// (no alias, a kind and field within a key's bits, its flags the extra's where its kind is one of `extras`, its
 /// classes among `classes`, the program's supertype classes), at the key (`kind | field << KIND_BITS | class bits <<
 /// 16`). The JIT's run reads them at run time (`Ctx::numbers`).
-pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> Vec<u32> {
+pub fn numbers_by_key(lang: &rerail_tape_format::f16::Lang, classes: &[u16], extras: &[u16]) -> rerail_tape_format::Vector<u32> {
     use rerail_tape_format::{CODE_EXTRA, KIND_BITS};
-    let mut by = vec![u32::MAX; id_slots(classes.len())];
+    let mut by = rerail_tape_format::Vector::new();
+    by.resize(id_slots(classes.len()), u32::MAX);
     for e in lang.table().entries() {
         let Some(n) = lang.number(e) else { continue };
         let extra = if extras.contains(&e.kind) { CODE_EXTRA } else { 0 };
@@ -886,10 +899,3 @@ pub const fn id_slots(classes: usize) -> usize {
 /// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
 pub const MAX_CLASSES: usize = 4;
 
-/// No code for a key yet (`id_of`).
-pub const NO_CODE: i64 = 0xffff;
-
-/// The flags of a value that did not fit its width (`Mem::Wide`): an offset, a tail (or an end
-/// before the last descendant's start, from the last descendant).
-pub const WIDE_OFF: i64 = 1;
-pub const WIDE_TAIL: i64 = 2;

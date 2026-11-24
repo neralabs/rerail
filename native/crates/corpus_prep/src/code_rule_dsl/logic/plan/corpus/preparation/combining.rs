@@ -4,13 +4,14 @@
 //! - `FactSpaces`: the canonical relations and each narrower policy's guards (decision 0091).
 //! - `same_relations`: the relations that are one made one after combining.
 
+use rerail_blocks::vector::Vector;
 use super::simplify::{Made, Out, Tm, write_rule};
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::plan::corpus::scoping::{Policy, Report};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
-use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Cell, CmpOp, Lit, RuleRef, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Cell, CmpOp, Lit, Rows, RuleRef, TermRef, Version};
 use crate::code_rule_dsl::typing::file_local::FileLocal;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -91,15 +92,15 @@ impl<'a> FactSpaces<'a> {
 
 /// A relation's places for its guards: its document, node and span columns (`derived`: by the file-local split's
 /// locations; an input's by its declared types).
-fn place_of(f: Fields<'_>, locations: &BTreeMap<String, Vec<usize>>, derived: bool, rel: &str) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+fn place_of(f: Fields<'_>, locations: &BTreeMap<String, Vector<usize>>, derived: bool, rel: &str) -> (Vector<usize>, Vector<usize>, Vector<usize>) {
     let typed = |c: usize, ty: &[&str]| f.column_type(rel, c).is_some_and(|t| ty.contains(&t));
     let width = f.columns(rel).map_or(0, |c| c.len());
     if derived {
         let cols = locations.get(rel).cloned().unwrap_or_default();
-        let of = |ty: &[&str]| cols.iter().copied().filter(|&c| typed(c, ty)).collect::<Vec<_>>();
+        let of = |ty: &[&str]| cols.iter().copied().filter(|&c| typed(c, ty)).collect::<Vector<_>>();
         (of(&["int", "number"]), of(&["node"]), of(&["loc", "span"]))
     } else {
-        let of = |ty: &[&str]| (0..width).filter(|&c| typed(c, ty)).collect::<Vec<_>>();
+        let of = |ty: &[&str]| (0..width).filter(|&c| typed(c, ty)).collect::<rerail_blocks::vector::Vector<_>>();
         (crate::code_rule_dsl::typing::file_local::document_column(rel).into_iter().collect(), of(&["node"]), of(&["loc", "span"]))
     }
 }
@@ -150,7 +151,7 @@ impl ProgramPass for FactSpaces<'_> {
         let place = |rel: &str| place_of(f, locations, derived.contains(rel), rel);
         // Each relation's places, asked once.
         let s_places = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the places".into());
-        let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
+        let mut places: BTreeMap<String, (Vector<usize>, Vector<usize>, Vector<usize>)> = BTreeMap::new();
         // `docof` too: a span's guard reads it, and a later group's guards read the guards an earlier one made.
         places.insert("docof".to_owned(), place("docof"));
         for r in v.rules() {
@@ -162,14 +163,14 @@ impl ProgramPass for FactSpaces<'_> {
             }
         }
         // Each rule's groups, in order: one pass over the rules, not one per group.
-        let mut groups_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut groups_of: BTreeMap<String, Vector<usize>> = BTreeMap::new();
         for (k, (heads, _)) in groups.iter().enumerate() {
             for h in heads {
                 groups_of.entry(h.clone()).or_default().push(k);
             }
         }
         drop(s_places);
-        let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: vec![0; groups.len()] };
+        let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: rerail_blocks::vector![0; groups.len()] };
         w.derive()?;
         w.apply(cx, &mut &mut guards, &Select::All)?;
         for ((_, outside), n) in groups.iter().zip(&guards.added) {
@@ -266,14 +267,14 @@ impl ProgramPass for FactSpaces<'_> {
             return Ok(false);
         }
         let groups = Self::groups(policies, &shared);
-        let mut groups_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        let mut groups_of: BTreeMap<String, Vector<usize>> = BTreeMap::new();
         for (k, (heads, _)) in groups.iter().enumerate() {
             for h in heads {
                 groups_of.entry(h.clone()).or_default().push(k);
             }
         }
         let is_derived = |rel: &str| (derived_in(v, rel) || natives.contains(rel)) && !f.is_input(rel);
-        let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
+        let mut places: BTreeMap<String, (Vector<usize>, Vector<usize>, Vector<usize>)> = BTreeMap::new();
         let mut derived: BTreeSet<String> = BTreeSet::new();
         let mut note = |rel: &str| {
             if !places.contains_key(rel) {
@@ -294,7 +295,7 @@ impl ProgramPass for FactSpaces<'_> {
         // The guards each removed rule had, taken off the last run's counts.
         let outside: Vec<&str> = groups.iter().map(|(_, o)| o.as_str()).collect();
         let guards_in = |of: &Version, r: RuleRef<'_>, o: &str| r.body().filter_map(|l| l.atom()).filter(|a| a.neg() && of.rel_name(a.rel()) == o).count();
-        let mut counts: Vec<usize> = was.guarded.iter().map(|(_, k)| *k).collect();
+        let mut counts: Vector<usize> = was.guarded.iter().map(|(_, k)| *k).collect();
         if counts.len() != groups.len() || was.guarded.iter().zip(&outside).any(|((o, _), g)| o != g) {
             return Ok(false);
         }
@@ -304,7 +305,7 @@ impl ProgramPass for FactSpaces<'_> {
                 counts[k] = counts[k].saturating_sub(guards_in(last.output, made, o).saturating_sub(guards_in(last.input, src, o)));
             }
         }
-        let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: vec![0; groups.len()] };
+        let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: rerail_blocks::vector![0; groups.len()] };
         crate::code_rule_dsl::logic::program_image::manager::rules_again(&mut &mut guards, cx, last, w)?;
         report.guarded = outside.iter().zip(counts.iter().zip(&guards.added)).map(|(o, (k, a))| ((*o).to_owned(), k + a)).collect();
         self.report = report;
@@ -323,10 +324,10 @@ fn machinery(policies: &[Policy], rel: &str) -> bool {
 struct Guards<'a> {
     policies: &'a [Policy],
     groups: &'a [(BTreeSet<String>, String)],
-    groups_of: BTreeMap<String, Vec<usize>>,
-    places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)>,
+    groups_of: BTreeMap<String, Vector<usize>>,
+    places: BTreeMap<String, (Vector<usize>, Vector<usize>, Vector<usize>)>,
     derived: BTreeSet<String>,
-    added: Vec<usize>,
+    added: Vector<usize>,
 }
 
 impl RulePass for &mut Guards<'_> {
@@ -357,7 +358,7 @@ impl Guards<'_> {
     /// already. `added`: the guards added.
     fn guard<'v>(&self, cx: &Cx<'v>, r: RuleRef<'v>, body: Vec<Out<'v>>, covers: &BTreeSet<String>, outside: &str, added: &mut usize) -> Vec<Out<'v>> {
         let v = cx.v();
-        let empty = (Vec::new(), Vec::new(), Vec::new());
+        let empty = (Vector::new(), Vector::new(), Vector::new());
         let place = |rel: &str| self.places.get(rel).unwrap_or(&empty);
         let var = |t: Option<Tm>| if let Some(Tm::Var(x)) = t { Some(x) } else { None };
         // The body's literals, by text, for what the guards read: (relation, negated, arguments) of a plain atom.

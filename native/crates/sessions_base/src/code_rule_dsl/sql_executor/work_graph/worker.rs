@@ -1,4 +1,5 @@
 //! Each worker owns SQLite and binds immutable native roots without schema SQL.
+use rerail_blocks::vector::Vector;
 use super::super::super::facts::vtab::Modules;
 use super::*;
 use rusqlite::hooks::{AuthAction, Authorization};
@@ -7,7 +8,7 @@ use rusqlite::hooks::{AuthAction, Authorization};
 pub struct Rows {
     pub width: usize,
     pub rows: Vec<Vec<Option<i64>>>,
-    indexes: Vec<std::sync::OnceLock<(Vec<usize>, usize)>>,
+    indexes: Vec<std::sync::OnceLock<(Vector<usize>, usize)>>,
 }
 impl Rows {
     pub fn new(width: usize, rows: Vec<Vec<Option<i64>>>) -> Self {
@@ -17,12 +18,12 @@ impl Rows {
             indexes: (0..width).map(|_| std::sync::OnceLock::new()).collect(),
         }
     }
-    fn index(&self, c: usize) -> &(Vec<usize>, usize) {
+    fn index(&self, c: usize) -> &(Vector<usize>, usize) {
         self.indexes[c].get_or_init(|| {
             let _profile = super::super::super::sql_profile::index_build(self.rows.len());
             let mut ids = (0..self.rows.len())
                 .filter(|&r| self.rows[r][c].is_some())
-                .collect::<Vec<_>>();
+                .collect::<Vector<_>>();
             ids.sort_unstable_by_key(|&r| self.rows[r][c]);
             let distinct = usize::from(!ids.is_empty())
                 + ids
@@ -49,7 +50,7 @@ impl Source for Rows {
             .div_ceil((*distinct).max(1))
             .saturating_mul(if batch { 8 } else { 1 })
     }
-    fn lookup(&self, c: usize, values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, c: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         let (ids, _) = self.index(c);
         Some(
             values

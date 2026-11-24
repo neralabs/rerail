@@ -8,6 +8,7 @@
 //! when it is refused; the others (shapes the device refuses by design) need only the same rows. The summary prints
 //! each family's cases, those the device ran, and the refusals' reasons.
 
+use rerail_blocks::vector::Vector;
 use rusqlite::Connection;
 use std::collections::BTreeMap;
 
@@ -46,8 +47,10 @@ const PARTS: [&str; 18] = ["foo", "Bar", "SRC", "src/lib", "a.b", "_", ".ts", "Î
 
 fn fixture() -> Fixture {
     let store = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&store));
+    drop(crate::content_store::ContentStore::open(&store).unwrap());
     let db = Connection::open(&store).unwrap();
+    // The store's atoms and the kept facts beside them, as the store's opener registers them.
+    crate::content_store::attach_atoms(&db).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
     let mut r = Rng(0x5eed);
@@ -263,7 +266,7 @@ fn check_on(fx: &Fixture, cases: &[Case], first: usize) -> (Vec<String>, BTreeMa
         if drows != crows {
             let only_d: Vec<_> = drows.iter().filter(|r| !crows.contains(r)).take(3).collect();
             let only_c: Vec<_> = crows.iter().filter(|r| !drows.contains(r)).take(3).collect();
-            failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}", what(), drows.len(), crows.len()));
+            failures.push(format!("{}: rows differ: device {} rows, CPU {}; device alone {only_d:?}, CPU alone {only_c:?}; report {report:?}", what(), drows.len(), crows.len()));
         } else if let (Err(e), true) = (super::tests::counts_agree(&ccounts.0, &dcounts.0, &ccounts.1), c.joins.is_empty()) {
             // A recursive stratum's counts are its strategy's (the CPU walks a closure without counting rounds): its
             // rows are compared alone.
@@ -740,7 +743,7 @@ fn random_mixed(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
         .map(|_| {
             // Start from the names, or from names and numbers joined by a number.
             let mut steps = vec![format!("pos {} v0 v1", r.sn)];
-            let (mut texts, mut nums, mut next) = (vec![0usize], vec![1usize], 2usize);
+            let (mut texts, mut nums, mut next) = (rerail_blocks::vector![0usize], rerail_blocks::vector![1usize], 2usize);
             if g.chance(30) {
                 steps.push(format!("pos {} v1 v2", g.pick(&ints)));
                 nums.push(2);
@@ -750,7 +753,7 @@ fn random_mixed(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                 let t = *g.pick(&texts);
                 let k = *g.pick(&nums);
                 let p = *g.pick(&pats);
-                let mut fresh = |pool: &mut Vec<usize>| {
+                let mut fresh = |pool: &mut Vector<usize>| {
                     pool.push(next);
                     next += 1;
                     next - 1

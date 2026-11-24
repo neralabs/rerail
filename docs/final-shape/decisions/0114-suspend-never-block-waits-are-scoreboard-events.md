@@ -1,9 +1,10 @@
 # 0114: Suspend, never block: every wait is a scoreboard event, and answers are loaded as batches on workers
 
-Status: draft (2026-11-11). §1 and §5 are built (`plan::issue`, `content_store::atoms`), and §3's posting and
-resuming (see **Built so far** at the end); the rest is proposed.
-It builds on 0113 (strata issued from a scoreboard) and 0100 (one executor, claims, one pool), and takes up
-the requests answered inside the fixpoint of 0065 §2a and the load order of 0145.
+Status: partly built (audited 2026-11-23). Left: §3's second half (answers loaded and evaluated on workers, written
+back in order), §4 launches and loop waits as events. Draft (2026-11-11). §1 and §5 are built (`plan::issue`,
+`content_store::atoms`), and §3's posting and resuming (see **Built so far** at the end); the rest is proposed. It
+builds on 0113 (strata issued from a scoreboard) and 0100 (one executor, claims, one pool), and takes up the requests
+answered inside the fixpoint of 0065 §2a and the load order of 0145.
 
 ## Intro
 

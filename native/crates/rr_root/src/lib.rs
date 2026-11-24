@@ -74,11 +74,13 @@ pub mod code_rule_dsl {
                 pub mod analysis_history;
                 pub mod combined;
                 pub mod constants;
+                pub mod frame;
                 pub mod git;
                 pub mod git_content;
                 pub mod import_closure;
                 pub mod inputs;
                 pub mod kept_link;
+                pub mod leaves;
                 pub mod kept_texts;
                 pub mod link;
                 pub mod phase0;
@@ -185,3 +187,9 @@ mod test_load {
     #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
     static LOAD: extern "C" fn() = load;
 }
+
+// The crate's own tests make their folders the user's alone, as the engine's test binaries do (decision 0574): a
+// host's umask of `022` made a fixture's folder `755`, which the mapped files' rules refuse.
+#[cfg(test)]
+#[path = "../../../src/test_private_folders.rs"]
+mod test_private_folders;

@@ -44,14 +44,14 @@ fn tables() -> Program {
     let asserts = vec![
         CapturePredicate::Equal { left: 0, right: 1, negated: true, any: false },
         CapturePredicate::Text { capture: 0, predicate: 2, negated: false, any: true },
-        CapturePredicate::AnyOf { capture: 1, strings: vec![1, 5], negated: false, any: false },
+        CapturePredicate::AnyOf { capture: 1, strings: rerail_blocks::vector![1, 5], negated: false, any: false },
         CapturePredicate::Kind { capture: 0, kind: 7, negated: true, any: true },
-        CapturePredicate::Kinds { capture: 1, kinds: vec![3, 9], negated: false },
-        CapturePredicate::Contains { capture: 0, strings: vec![], negated: false, any: false },
-        CapturePredicate::Relation { capture: 1, kinds: vec![4], ancestor: true, negated: false },
+        CapturePredicate::Kinds { capture: 1, kinds: rerail_blocks::vector![3, 9], negated: false },
+        CapturePredicate::Contains { capture: 0, strings: rerail_blocks::vector![], negated: false, any: false },
+        CapturePredicate::Relation { capture: 1, kinds: rerail_blocks::vector![4], ancestor: true, negated: false },
         CapturePredicate::SameLine { left: 0, right: 1, negated: true },
     ];
-    let words = vec![
+    let words = rerail_blocks::vector![
         word(KIND, 0, 12),
         word(FORK, 0, 6),
         word(TEXT, 0, 2),
@@ -62,7 +62,7 @@ fn tables() -> Program {
         word(CAPTURE, 0, 0),
         word(EMIT, 0, 0),
     ];
-    Program::new_with_capture_predicates(words, strings, predicates, asserts, vec![0, 1], vec![100_000, u64::MAX])
+    Program::new_with_capture_predicates(words, strings, predicates, asserts, rerail_blocks::vector![0, 1], rerail_blocks::vector![100_000, u64::MAX])
         .unwrap()
         .with_directives(vec![
             Directive::Set { key: 4, value: Some(6) },
@@ -102,12 +102,12 @@ fn kinds_and_fields_print_by_name() {
     let (call, identifier, name) = (catalog.kind_id("call"), catalog.kind_id("identifier"), catalog.field_id("name").unwrap());
     let open = (0..catalog.kind_count() as u16).find(|&id| catalog.kind_name(id) == Some("(") && !catalog.kind_is_named(id)).unwrap();
     let program = Program::new_with_capture_predicates(
-        vec![word(KIND, 0, call), word(FIELD, 0, name), word(ABSENT_FIELD, 0, name), word(CHILD, 0, 0), word(KIND, 0, open), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
+        rerail_blocks::vector![word(KIND, 0, call), word(FIELD, 0, name), word(ABSENT_FIELD, 0, name), word(CHILD, 0, 0), word(KIND, 0, open), word(CAPTURE, 0, 0), word(EMIT, 0, 0)],
         vec![b"match".to_vec()],
         Vec::new(),
-        vec![CapturePredicate::Kinds { capture: 0, kinds: vec![identifier, open], negated: false }],
-        vec![0],
-        Vec::new(),
+        vec![CapturePredicate::Kinds { capture: 0, kinds: rerail_blocks::vector![identifier, open], negated: false }],
+        rerail_blocks::vector![0],
+        rerail_blocks::vector::Vector::new(),
     )
     .unwrap();
     let text = round_trip(&program, Some(&names));
@@ -191,7 +191,7 @@ fn generated(random: &mut Random, kinds: usize) -> Option<Program> {
             strings.push(format!("label{at}").into_bytes());
             (strings.len() - 1) as u16
         })
-        .collect::<Vec<_>>();
+        .collect::<rerail_blocks::vector::Vector<_>>();
     let mut predicates = Vec::new();
     for _ in 0..random.below(4) {
         predicates.push(match random.below(4) {
@@ -217,15 +217,15 @@ fn generated(random: &mut Random, kinds: usize) -> Option<Program> {
         asserts.push(match random.below(8) {
             0 => CapturePredicate::Equal { left: label(random), right: label(random), negated, any },
             1 if !predicates.is_empty() => CapturePredicate::Text { capture: label(random), predicate: random.below(predicates.len()) as u16, negated, any },
-            2 => CapturePredicate::AnyOf { capture: label(random), strings: vec![random.below(strings.len()) as u16], negated, any },
+            2 => CapturePredicate::AnyOf { capture: label(random), strings: rerail_blocks::vector![random.below(strings.len()) as u16], negated, any },
             3 => CapturePredicate::Kind { capture: label(random), kind: kind(random), negated, any },
-            4 => CapturePredicate::Kinds { capture: label(random), kinds: vec![kind(random), kind(random)], negated },
-            5 => CapturePredicate::Contains { capture: label(random), strings: vec![], negated, any },
-            6 => CapturePredicate::Relation { capture: label(random), kinds: vec![kind(random)], ancestor: random.flip(), negated },
+            4 => CapturePredicate::Kinds { capture: label(random), kinds: rerail_blocks::vector![kind(random), kind(random)], negated },
+            5 => CapturePredicate::Contains { capture: label(random), strings: rerail_blocks::vector![], negated, any },
+            6 => CapturePredicate::Relation { capture: label(random), kinds: rerail_blocks::vector![kind(random)], ancestor: random.flip(), negated },
             _ => CapturePredicate::SameLine { left: label(random), right: label(random), negated },
         });
     }
-    let longs = (0..random.below(3)).map(|_| random.next()).collect::<Vec<_>>();
+    let longs = (0..random.below(3)).map(|_| random.next()).collect::<rerail_blocks::vector::Vector<_>>();
     let count = 1 + random.below(12);
     let words = (0..count)
         .map(|_| {
@@ -248,7 +248,7 @@ fn generated(random: &mut Random, kinds: usize) -> Option<Program> {
             word(opcode, mode, operand)
         })
         .chain([word(EMIT, 0, 0)])
-        .collect::<Vec<_>>();
+        .collect::<rerail_blocks::vector::Vector<_>>();
     let program = Program::new_with_capture_predicates(words, strings, predicates, asserts, labels, longs).ok()?;
     let program = if random.flip() {
         program.with_directives(vec![Directive::Set { key: 0, value: None }, Directive::Downcase { capture: 0 }]).ok()?

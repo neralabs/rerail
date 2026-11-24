@@ -35,10 +35,10 @@ const MAX_DEPTH: u32 = 160;
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
-    parse_into(src, &mut Writer::<Widths>::finish_columns)
+    parse_into(src, &mut crate::sink()).map(crate::written)
 }
 
-/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+/// [`parse`], the writer finished by `finish`: format 16 or 16z (decisions 0293, 0434).
 pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     // Stage 1 once, for every width tried.
     let mut blocks = Blocks::of(src);
@@ -58,7 +58,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
             at: start,
             last_end: start,
             look: None,
-            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
+            w: Writer::new(widths, src.len() / 3 + 16).to(finish.target(), src).omitting(finish.omissions()),
             frames: Vec::with_capacity(64),
             held: Vec::with_capacity(64),
             extras: Vec::with_capacity(16),

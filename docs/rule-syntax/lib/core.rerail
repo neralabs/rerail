@@ -355,6 +355,12 @@
 .decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
 .layout visit_index key(n) local values(i, within document)
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
+// def_unit(n, u): u is the definition unit holding n: the innermost function or class (any definition: a method, an
+// interface, a Rust impl, a SQL CREATE) of which n is a strict descendant, a decorator's nodes counting as its
+// definition's (a decorator itself, and the definition, are the unit around them). n's document root where no
+// definition holds it; the root has none. Cost: read off the definition ids' granule table, per node; a unit's nodes
+// are a walk of its subtree, nested units skipped. No row is stored.
+.decl def_unit(n: node, u: node)
 // ---- ordered first match (data-layer/DESIGN.md, addition 7) ----
 // dfs_first(r, hit, first, edge, target): hit is the first node of `target` that a depth-first search from r
 // reaches. edge(src, dst, ord) is any relation of three columns; a node's edges are tried in increasing ord
@@ -381,7 +387,7 @@
 // Cost: linear in the edges (one Tarjan pass; keys bottom up).
 .decl components(d: number, c: number, k: symbol, edge: relation, own: relation)
 .input within, inside, has, within_stop, nearest, precedes, next_sibling, precedes_stop, parsed, spread, split_dot
-.input earlier, visit_index, ast_depth, dfs_first, dfs_first_memo, def_digest
+.input earlier, visit_index, ast_depth, dfs_first, dfs_first_memo, def_digest, def_unit
 
 // ---- matcher atoms ---------------------------------------------------------------------------------------------
 // Body forms that hand a node to the pattern matcher. Not Soufflé: addition 1.

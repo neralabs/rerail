@@ -1,5 +1,7 @@
 # 0445. Row blocks reserve address space and grow in place
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-19. Status: decided (user, 2026-11-18: t49 §6 item 2, "then implement t49's second item"); built.
 
 ## Intro

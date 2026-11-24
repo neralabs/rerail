@@ -1,6 +1,6 @@
 # 0157: A corpus run names Python modules from their package roots
 
-Status: accepted (2026-11-13; bug 3 of the Django practice rules report, fixed with bug 4)
+Status: built (audited 2026-11-23). Accepted (2026-11-13; bug 3 of the Django practice rules report, fixed with bug 4)
 
 ## Intro
 

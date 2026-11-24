@@ -59,6 +59,9 @@ pub struct Statement {
     pub schedule: lifetime::Schedule,
     pub parameters: Vec<Value>,
     pub ownership: ownership::Layout,
+    /// The regexes whose vocabulary terms (`vocabulary_term`) its relations read, brought up to date before it runs
+    /// (`execute::candidates`, `ContentStore::regex_terms`).
+    pub regexes: Vec<String>,
 }
 
 /// A plan's output arm: a set's rows, or (`whole`) every node of the file scope's (`node`) tapes
@@ -66,18 +69,12 @@ pub struct Statement {
 struct Root {
     node: usize,
     qid: usize,
-    whole: Option<Vec<usize>>,
+    whole: Option<rerail_blocks::vector::Vector<usize>>,
 }
 impl Statement {
     pub fn preparations(&self) -> usize {
         self.schedule.actions.iter().filter(|a| matches!(a, lifetime::Action::Prepare(_))).count()
     }
-    /// Whether running the statement writes the store: it registers regex predicates and fills
-    /// their vocabulary (`vocabulary.sql`). Everything else it creates is temporary.
-    pub fn writes(&self) -> bool {
-        self.stages.iter().any(|stage| stage.name.starts_with("vocabulary_"))
-    }
-
     pub fn own(&mut self) {
         let compiled = ownership::compile(
             &self
@@ -762,18 +759,6 @@ pub fn fallback(plans: &[&AnchorPlan], lang: u32, files: &[i64], statistics: &St
     batch_scope(plans, lang, files, statistics, true)
 }
 
-/// The vocabulary's stages after the regex predicates are registered (`vocabulary_predicate`,
-/// ready 0): their literal sets, their terms, and the predicates marked ready.
-pub const VOCABULARY: [(&str, &str); 4] = [
-    (
-        "vocabulary_literals",
-        "INSERT OR IGNORE INTO vocabulary_literal SELECT p.lang,p.expression,j.value FROM vocabulary_predicate p CROSS JOIN json_each(nera_literal_set(p.expression)) j WHERE p.ready=0",
-    ),
-    ("vocabulary_fill", include_str!("vocabulary-fill.sql")),
-    ("vocabulary_complete", "UPDATE vocabulary_predicate SET ready=1 WHERE ready=0"),
-    ("vocabulary_release", "DELETE FROM vocabulary_pending"),
-];
-
 fn scope(lang: u32, statistics: &Statistics, tree: bool) -> Lower {
     let mut lower = Lower::new(lang);
     lower.tree = tree;
@@ -937,40 +922,18 @@ fn batch_scope(plans: &[&AnchorPlan], lang: u32, fids: &[i64], statistics: &Stat
         .into_iter()
         .map(|node| layout.names[&node].clone())
         .collect();
-    let values: BTreeSet<_> = predicates
-        .values()
-        .map(|(language, expression)| {
-            format!(
-                "({},{},0)",
-                layout.bound(language),
-                layout.bound(expression)
-            )
-        })
-        .collect();
     let mut statement = prepare(layout.ctes, queries, layout.parameters, indexed);
     statement.admissions = admissions;
     statement.exact = exact;
-    if !values.is_empty() {
-        let stages = [
-            (
-                "vocabulary_register",
-                format!(
-                    "INSERT OR IGNORE INTO vocabulary_predicate(lang,expression,ready) VALUES {}",
-                    values.into_iter().collect::<Vec<_>>().join(",")
-                ),
-            ),
-        ]
-        .into_iter()
-        .chain(VOCABULARY.iter().map(|&(name, sql)| (name, sql.to_owned())))
-        .map(|(name, sql)| Stage {
-            name: name.into(),
-            sql,
-            index: None,
-            temporary: false,
+    statement.regexes = predicates
+        .into_values()
+        .filter_map(|(_, expression)| match expression {
+            Value::Text(expression) => Some(expression),
+            _ => None,
         })
-        .collect::<Vec<_>>();
-        statement.stages.splice(0..0, stages);
-    }
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     statement.language = lang;
     statement.files = fids.to_vec();
     statement.own();
@@ -1094,6 +1057,7 @@ fn prepare(
         schedule,
         parameters,
         ownership: ownership::Layout::default(),
+        regexes: Vec::new(),
     }
 }
 

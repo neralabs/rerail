@@ -52,7 +52,7 @@ impl RulesProgram {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "a rules pass's program lowered".into());
                 let v = (self.lower)(self.text.as_ref()?)?;
                 let mut constants: HashMap<String, i64> = HashMap::new();
-                let mut intern = |names: &[&str]| -> plan::Result<Vec<u32>> {
+                let mut intern = |names: &[&str]| -> plan::Result<rerail_blocks::vector::Vector<u32>> {
                     Ok(names
                         .iter()
                         .map(|n| {

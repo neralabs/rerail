@@ -24,7 +24,7 @@ pub fn html(source: &str) -> AstGrep<TapeDoc> {
         .round_trip(&grammar)
         .expect("persists and reads back");
     AstGrep::doc(
-        TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
+        TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false)
             .expect("restores"),
     )
 }
@@ -98,7 +98,7 @@ impl Embedder for TestScript {
         if segments.is_empty() {
             return None;
         }
-        let parse = super::Parse::read(dialect, &text, budget)?;
+        let parse = super::Parse::read_program(dialect, &text, &segments, budget)?;
         segments.index();
         Some(Program {
             dialect,

@@ -1,221 +1,769 @@
-# Tape format 16's choices for tape tag 9 (rust), decisions 0293 §3 and 0626. Written by the lab from the grammar:
-#   tape16 table <tags…> (native/lab/tape16/src/table.rs)
-# 1821 codes.
-revision	2
+# Tape format 16's choices for tape tag 9 (rust), decisions 0293 §3, 0626 and 0631. Written by the lab from the grammar:
+#   tape16 table <tags…> [--counts <code-counts.tsv>…] (native/lab/tape16/src/table.rs)
+# 1821 codes; numbered by how often each is a node's over 15768 files, 33521766 nodes (`rerail-engine code-counts`).
+revision	4
 widths	1	1	1
 code	1	0	0	-	-
-code	1	0	0	-	238
-code	1	0	0	-	294
-code	1	1	0	-	-
-code	1	3	0	-	-
-code	1	5	0	-	-
-code	1	5	0	-	238
-code	1	7	0	-	-
-code	1	7	0	-	238
-code	1	13	0	-	-
-code	1	15	0	-	-
-code	1	15	0	-	238
-code	1	16	0	-	-
-code	1	16	0	-	238
-code	1	18	0	-	-
+code	257	4	0	-	-
+code	351	12	0	-	-
 code	1	19	0	-	-
-code	1	23	0	-	-
-code	1	24	0	-	-
-code	1	24	0	-	294
-code	1	26	0	-	-
-code	1	26	0	-	238
-code	1	28	0	-	-
-code	1	31	0	-	-
-code	1	31	0	-	238
-code	2	0	0	-	-
-code	3	0	0	-	-
+code	83	0	0	-	-
+code	288	13	0	-	-
 code	4	0	0	-	-
+code	314	0	1	-	-
+code	168	0	0	-	-
+code	146	0	0	-	-
+code	1	23	0	-	-
+code	1	31	0	-	238
+code	256	0	0	-	238
+code	1	24	0	-	294
+code	256	31	0	-	238
+code	160	0	0	-	-
+code	1	0	0	-	238
+code	155	10	0	-	-
+code	50	0	0	-	-
+code	152	21	0	-	-
+code	311	0	0	-	308
+code	203	0	0	-	-
+code	172	0	0	-	-
+code	170	0	0	-	-
+code	1	13	0	-	-
+code	213	0	0	-	-
+code	54	0	0	-	-
+code	230	29	0	-	-
+code	243	13	0	-	-
 code	5	0	0	-	-
-code	6	0	0	-	-
-code	7	0	0	-	-
-code	8	0	0	-	-
+code	354	19	0	-	-
+code	354	28	0	-	216
+code	293	5	0	-	-
+code	127	0	0	-	238,308
+code	210	22	0	-	-
+code	1	18	0	-	-
+code	354	28	0	-	-
+code	188	0	0	-	-
+code	70	0	0	-	-
+code	288	31	0	-	238
+code	1	0	0	-	294
+code	105	0	0	-	-
+code	215	0	0	-	-
+code	79	0	0	-	-
+code	142	31	0	-	238
+code	239	0	0	-	238
+code	243	23	0	-	-
+code	127	0	0	-	308
+code	168	4	0	-	-
+code	354	0	0	-	216
+code	122	0	0	-	-
+code	274	0	0	-	-
+code	276	24	0	-	-
+code	311	0	0	-	238,308
+code	32	28	0	-	216
+code	84	0	0	-	-
+code	265	0	0	-	-
+code	249	0	0	-	238
+code	142	0	0	-	-
+code	226	28	0	-	216
+code	204	0	0	-	-
+code	232	28	0	-	216
 code	9	0	0	-	-
-code	10	0	0	-	-
+code	293	8	0	-	-
+code	211	0	0	-	-
+code	53	0	0	-	-
+code	351	19	0	-	-
+code	267	0	0	-	-
+code	219	0	0	-	-
+code	182	0	0	-	-
+code	298	0	0	-	294
+code	311	31	0	-	238,308
+code	6	0	0	-	-
+code	243	0	0	-	238
 code	11	0	0	-	-
-code	12	0	0	-	-
-code	14	0	0	-	-
-code	14	20	0	-	-
+code	282	22	0	-	-
+code	1	15	0	-	238
+code	226	25	0	-	216
+code	293	0	0	-	-
+code	281	0	0	-	238
+code	354	25	0	-	216
+code	243	3	0	-	-
+code	243	28	0	-	-
+code	1	28	0	-	-
+code	8	0	0	-	-
+code	288	0	0	-	238
+code	151	0	0	-	238,308
+code	263	5	0	-	-
+code	175	5	0	-	-
 code	15	0	0	-	-
-code	15	20	0	-	-
-code	16	0	0	-	-
-code	17	0	0	-	-
-code	18	0	0	-	-
-code	19	0	0	-	-
-code	20	0	0	-	-
-code	21	0	0	-	-
-code	22	0	0	-	-
-code	23	0	0	-	-
-code	24	0	0	-	-
-code	25	0	0	-	-
-code	26	0	0	-	-
-code	27	0	0	-	-
-code	28	0	0	-	-
-code	29	0	0	-	-
-code	30	0	0	-	-
-code	31	0	0	-	-
-code	32	0	0	-	-
+code	226	0	0	-	216
+code	243	0	0	-	294
+code	100	0	0	-	-
+code	130	0	0	-	-
+code	245	28	0	-	-
+code	193	0	0	-	-
+code	127	31	0	-	238,308
+code	127	26	0	-	238,308
+code	199	30	0	-	-
+code	144	23	0	-	-
+code	80	0	0	-	-
+code	153	14	0	-	-
+code	207	17	0	-	-
+code	273	5	0	-	-
+code	250	0	0	-	238
+code	251	0	0	-	238
+code	262	0	0	-	238
+code	264	0	0	-	-
+code	248	31	0	-	238
+code	239	31	0	-	238
+code	298	24	0	-	294
+code	190	0	0	-	-
+code	2	0	0	-	-
+code	247	0	0	-	238
+code	293	31	0	-	-
+code	180	0	0	-	-
+code	300	0	0	-	-
+code	185	0	0	-	-
+code	256	26	0	-	238
+code	250	7	0	-	238
+code	206	3	0	-	-
+code	288	15	0	-	238
+code	271	2	0	-	-
+code	1	26	0	-	238
+code	78	0	0	-	294
+code	201	0	0	-	-
+code	254	0	0	-	238
+code	260	0	0	-	238
+code	245	28	0	-	216
+code	132	0	0	-	-
+code	248	0	0	-	238
+code	49	0	0	-	-
+code	354	27	0	-	-
 code	32	0	0	-	216
+code	196	6	0	-	-
+code	129	0	0	-	238,308
+code	353	19	0	-	-
+code	268	7	0	-	-
+code	307	0	0	-	294
+code	145	0	0	-	-
+code	32	0	0	-	-
+code	181	5	0	-	-
+code	32	25	0	-	216
+code	176	0	0	-	-
+code	313	0	0	-	238,308
+code	243	31	0	-	238
+code	131	0	0	-	-
+code	272	0	0	-	-
+code	225	13	0	-	-
+code	279	0	0	-	-
+code	256	5	0	-	238
+code	71	20	0	-	-
+code	74	0	0	-	-
+code	258	31	0	-	238
+code	249	31	0	-	238
+code	293	5	0	-	238
+code	243	0	0	-	-
+code	299	0	0	-	294
+code	55	0	0	-	-
+code	112	0	0	-	-
+code	245	0	0	-	216
+code	7	0	0	-	-
+code	256	7	0	-	238
+code	144	0	0	-	-
+code	289	0	0	-	-
+code	256	15	0	-	238
+code	296	24	0	-	294
+code	202	0	0	-	-
+code	219	19	0	-	-
+code	73	0	0	-	-
+code	253	0	0	-	238
+code	311	0	0	-	294,309
+code	250	15	0	-	238
+code	296	0	0	-	294
+code	220	28	0	-	216
+code	286	31	0	-	238
+code	189	0	0	-	-
+code	287	31	0	-	238
+code	293	31	0	-	238
+code	89	0	0	-	-
+code	232	0	0	-	216
+code	233	28	0	-	216
+code	262	31	0	-	238
+code	301	0	0	-	-
+code	92	0	0	-	-
+code	173	0	0	-	-
+code	246	0	0	-	238
+code	86	0	0	-	-
+code	245	19	0	-	-
+code	127	12	0	-	-
+code	14	20	0	-	-
+code	258	0	0	-	238
+code	224	0	0	-	216
+code	157	0	0	-	-
+code	183	5	0	-	-
+code	226	27	0	-	-
+code	261	0	0	-	238
+code	287	0	0	-	238
+code	250	26	0	-	238
+code	313	31	0	-	238,308
+code	250	31	0	-	238
+code	56	20	0	-	-
+code	142	0	0	-	238
+code	10	0	0	-	-
+code	243	18	0	-	-
+code	192	0	0	-	-
+code	272	31	0	-	238
+code	259	31	0	-	238
+code	187	0	0	-	-
+code	143	0	0	-	-
+code	145	19	0	-	-
+code	165	0	0	-	-
+code	167	28	0	-	-
+code	313	0	0	-	308
+code	247	31	0	-	238
+code	354	15	0	-	-
+code	15	20	0	-	-
+code	247	7	0	-	238
+code	127	15	0	-	238,308
+code	243	26	0	-	238
+code	32	11	0	-	216
+code	49	20	0	-	-
+code	151	0	0	-	308
+code	12	0	0	-	-
+code	245	25	0	-	216
+code	247	15	0	-	238
+code	252	0	0	-	238
+code	267	31	0	-	238
+code	232	25	0	-	216
+code	191	0	0	-	-
+code	85	0	0	-	-
+code	72	20	0	-	-
+code	288	26	0	-	238
+code	88	0	0	-	-
+code	209	3	0	-	-
+code	96	0	0	-	-
+code	58	20	0	-	-
+code	78	0	0	-	-
+code	57	20	0	-	-
+code	178	0	0	-	-
+code	179	5	0	-	-
+code	354	11	0	-	216
+code	312	0	0	-	308
+code	56	0	0	-	-
+code	101	0	0	-	-
+code	143	23	0	-	-
+code	260	31	0	-	238
+code	253	31	0	-	238
+code	127	16	0	-	238,308
+code	223	0	0	-	216
+code	82	0	0	-	-
+code	318	0	1	-	-
+code	1	7	0	-	238
+code	289	31	0	-	238
+code	293	2	0	-	-
+code	245	27	0	-	-
+code	239	0	0	-	-
+code	16	0	0	-	-
+code	268	0	0	-	-
+code	0	0	3	-	-
+code	311	0	0	-	-
+code	236	0	0	-	216
+code	214	0	0	-	-
+code	74	20	0	-	-
+code	301	0	0	-	294
+code	60	20	0	-	-
+code	206	0	0	-	-
+code	77	0	0	-	-
+code	286	0	0	-	238
+code	200	0	0	-	-
+code	71	0	0	-	-
+code	14	0	0	-	-
+code	55	20	0	-	-
+code	231	0	0	-	-
+code	73	20	0	-	-
+code	266	0	0	-	-
+code	235	28	0	-	216
+code	247	26	0	-	238
+code	246	31	0	-	238
+code	169	0	0	-	-
+code	125	0	0	-	-
+code	171	0	0	-	-
+code	259	26	0	-	238
+code	159	0	0	-	-
+code	306	0	0	-	294
+code	250	5	0	-	238
+code	162	0	0	-	-
+code	164	15	0	-	-
+code	168	26	0	-	-
+code	313	26	0	-	238,308
+code	127	0	0	-	294,309
+code	259	15	0	-	238
+code	94	0	0	-	-
+code	1	1	0	-	-
+code	302	0	0	-	294
+code	286	15	0	-	238
+code	285	0	0	-	238
+code	312	0	0	-	238,308
+code	20	0	0	-	-
+code	99	0	0	-	-
+code	299	24	0	-	294
+code	174	0	0	-	-
+code	107	0	0	-	-
+code	166	0	0	-	-
+code	352	7	0	-	-
+code	253	26	0	-	238
+code	50	20	0	-	-
+code	129	0	0	-	308
+code	129	0	0	-	294,309
+code	254	31	0	-	238
+code	281	31	0	-	238
+code	75	20	0	-	-
+code	222	0	0	-	216
+code	220	0	0	-	216
+code	226	23	0	-	-
+code	311	26	0	-	238,308
+code	239	5	0	-	238
+code	277	0	0	-	-
+code	87	0	0	-	-
+code	288	7	0	-	238
+code	109	0	0	-	-
+code	97	0	0	-	-
+code	161	0	0	-	-
+code	18	0	0	-	-
+code	54	20	0	-	-
+code	194	0	0	-	-
+code	59	0	0	-	-
+code	217	23	0	-	-
+code	304	0	0	-	294
+code	186	0	0	-	-
+code	228	0	0	-	216
+code	223	25	0	-	216
+code	198	0	0	-	216
+code	236	28	0	-	216
+code	284	0	0	-	238
+code	312	31	0	-	238,308
+code	29	0	0	-	-
+code	313	0	0	-	294,309
+code	208	3	0	-	-
+code	253	15	0	-	238
+code	151	26	0	-	238,308
+code	164	0	0	-	-
+code	222	27	0	-	-
+code	223	28	0	-	216
+code	151	31	0	-	238,308
+code	76	20	0	-	-
+code	226	11	0	-	216
+code	142	23	0	-	-
+code	218	0	0	-	-
+code	239	7	0	-	238
+code	288	5	0	-	238
+code	51	0	0	-	-
+code	208	0	0	-	-
+code	57	0	0	-	-
+code	90	0	0	-	-
+code	239	26	0	-	238
+code	260	5	0	-	238
+code	259	0	0	-	238
+code	224	28	0	-	216
+code	289	0	0	-	238
+code	235	0	0	-	216
+code	278	0	0	-	-
+code	76	0	0	-	-
+code	67	20	0	-	-
+code	262	5	0	-	238
+code	243	15	0	-	238
+code	232	11	0	-	216
+code	247	5	0	-	238
+code	108	0	0	-	-
+code	272	5	0	-	238
+code	290	0	0	-	238
+code	1	16	0	-	238
+code	239	15	0	-	238
+code	58	0	0	-	-
+code	306	24	0	-	294
+code	103	0	0	-	-
+code	30	0	0	-	-
+code	272	0	0	-	238
+code	59	20	0	-	-
+code	51	20	0	-	-
+code	75	0	0	-	-
+code	222	28	0	-	216
+code	235	25	0	-	216
+code	151	15	0	-	238,308
+code	261	31	0	-	238
+code	249	26	0	-	238
+code	1	5	0	-	238
+code	233	25	0	-	216
+code	297	0	0	-	294
+code	129	26	0	-	238,308
+code	147	0	0	-	-
+code	286	26	0	-	238
+code	354	1	0	-	216
+code	267	0	0	-	238
+code	113	0	0	-	-
+code	233	0	0	-	216
+code	251	31	0	-	238
+code	195	0	0	-	-
+code	248	26	0	-	238
+code	61	20	0	-	-
+code	239	0	0	-	294
+code	245	15	0	-	-
+code	106	0	0	-	-
+code	110	0	0	-	-
+code	143	19	0	-	-
+code	297	24	0	-	294
+code	142	24	0	-	-
+code	223	11	0	-	216
+code	209	0	0	-	-
+code	253	5	0	-	238
+code	245	11	0	-	216
+code	117	0	0	-	-
+code	104	0	0	-	-
+code	243	24	0	-	294
+code	228	25	0	-	216
+code	72	0	0	-	-
+code	305	0	0	-	294
+code	259	13	0	-	-
+code	184	0	0	-	-
+code	293	0	0	-	238
+code	23	0	0	-	-
+code	114	0	0	-	-
+code	129	31	0	-	238,308
+code	226	1	0	-	216
+code	262	26	0	-	238
+code	0	0	2	-	-
+code	303	0	0	-	294
+code	127	0	0	-	-
+code	243	5	0	-	238
+code	284	31	0	-	238
+code	245	1	0	-	216
+code	249	5	0	-	238
+code	290	31	0	-	238
+code	95	0	0	-	-
+code	272	26	0	-	238
+code	283	0	0	-	-
+code	307	24	0	-	294
+code	285	31	0	-	238
+code	313	24	0	-	294,309
+code	142	15	0	-	238
+code	228	28	0	-	216
+code	290	5	0	-	238
+code	123	0	0	-	-
+code	52	20	0	-	-
+code	145	0	0	-	238
+code	225	0	0	-	238
+code	66	20	0	-	-
+code	226	0	0	-	-
+code	1	3	0	-	-
+code	220	25	0	-	216
+code	290	0	0	-	-
+code	267	26	0	-	238
+code	24	0	0	-	-
+code	239	0	0	-	216
+code	297	0	0	-	-
+code	234	25	0	-	216
+code	249	15	0	-	238
+code	220	0	0	-	-
+code	354	9	0	-	216
+code	62	20	0	-	-
+code	248	7	0	-	238
+code	289	5	0	-	238
+code	91	0	0	-	-
+code	252	31	0	-	238
+code	256	13	0	-	-
+code	261	5	0	-	238
+code	289	26	0	-	238
+code	197	0	0	-	-
+code	260	26	0	-	238
+code	60	0	0	-	-
+code	127	15	0	-	309
+code	129	15	0	-	309
+code	129	26	0	-	309
+code	222	11	0	-	216
+code	239	28	0	-	216
+code	250	16	0	-	238
+code	127	26	0	-	309
+code	225	31	0	-	238
+code	119	0	0	-	-
+code	311	5	0	-	238,308
+code	196	0	0	-	-
+code	302	24	0	-	294
+code	2	0	4	-	-
+code	313	5	0	-	238,308
+code	226	15	0	-	-
+code	267	5	0	-	238
+code	280	0	0	-	-
+code	217	0	0	-	-
+code	177	0	0	-	-
+code	246	15	0	-	238
+code	220	11	0	-	216
+code	260	15	0	-	238
+code	258	26	0	-	238
+code	293	26	0	-	238
+code	115	0	0	-	-
+code	304	24	0	-	294
+code	65	20	0	-	-
+code	280	0	0	-	238
+code	289	7	0	-	238
+code	248	15	0	-	238
+code	234	0	0	-	216
+code	251	5	0	-	238
+code	145	23	0	-	-
+code	243	7	0	-	238
+code	7	0	4	-	-
+code	93	0	0	-	-
+code	255	0	0	-	238
+code	197	15	0	-	-
+code	63	20	0	-	-
+code	111	0	0	-	-
+code	289	15	0	-	238
+code	224	25	0	-	216
+code	278	31	0	-	238
+code	31	0	0	-	-
+code	243	16	0	-	238
+code	286	5	0	-	238
+code	234	28	0	-	216
+code	52	0	0	-	-
+code	68	20	0	-	-
+code	199	0	0	-	-
+code	81	0	0	-	-
+code	259	7	0	-	238
+code	127	24	0	-	294,309
+code	252	5	0	-	238
+code	67	0	0	-	-
+code	145	0	0	-	216
+code	229	0	0	-	-
+code	298	0	0	-	-
+code	69	20	0	-	-
+code	256	16	0	-	238
+code	27	0	0	-	-
+code	80	0	4	-	-
+code	258	5	0	-	238
+code	32	15	0	-	-
+code	227	19	0	-	-
+code	280	31	0	-	238
+code	305	24	0	-	294
+code	17	0	0	-	-
+code	127	5	0	-	238,308
+code	219	15	0	-	-
+code	239	24	0	-	294
+code	129	15	0	-	238,308
+code	21	0	0	-	-
+code	142	15	0	-	-
+code	102	0	0	-	-
+code	98	0	0	-	-
+code	253	16	0	-	238
+code	292	31	0	-	238
+code	61	0	0	-	-
+code	142	26	0	-	238
+code	212	0	0	-	-
+code	354	0	0	-	-
+code	259	0	0	-	-
+code	287	26	0	-	238
+code	292	0	0	-	-
+code	145	31	0	-	238
+code	207	3	0	-	-
+code	281	26	0	-	238
+code	25	0	0	-	-
+code	233	11	0	-	216
+code	228	27	0	-	-
+code	287	7	0	-	238
+code	310	0	0	-	294,309
+code	22	0	0	-	-
+code	197	27	0	-	-
+code	224	9	0	-	216
+code	287	5	0	-	238
+code	63	0	0	-	-
+code	9	0	4	-	-
+code	66	0	0	-	-
+code	210	0	0	-	-
+code	145	13	0	-	-
+code	224	11	0	-	216
+code	313	7	0	-	238,308
+code	286	13	0	-	-
+code	284	13	0	-	-
+code	145	28	0	-	216
+code	286	7	0	-	238
+code	230	0	0	-	-
+code	245	0	0	-	-
+code	246	5	0	-	238
+code	69	0	0	-	-
+code	245	9	0	-	216
+code	250	0	0	-	-
+code	118	0	0	-	-
+code	145	26	0	-	238
+code	248	13	0	-	-
+code	258	15	0	-	238
+code	311	15	0	-	238,308
+code	5	0	4	-	-
+code	1	26	0	-	-
+code	62	0	0	-	-
+code	64	20	0	-	-
+code	65	0	0	-	-
+code	235	11	0	-	216
+code	258	0	0	-	-
+code	293	7	0	-	238
+code	126	0	0	-	-
+code	221	0	0	-	-
+code	232	15	0	-	-
+code	286	0	0	-	-
+code	239	25	0	-	216
+code	272	7	0	-	238
+code	280	26	0	-	238
+code	292	0	0	-	238
+code	261	26	0	-	238
+code	228	11	0	-	216
+code	220	15	0	-	-
+code	239	13	0	-	-
+code	258	13	0	-	-
+code	68	0	0	-	-
+code	127	31	0	-	308
+code	142	13	0	-	-
+code	226	9	0	-	216
+code	281	13	0	-	-
+code	232	9	0	-	216
+code	248	0	0	-	-
+code	223	27	0	-	-
+code	296	0	0	-	-
+code	19	0	0	-	-
+code	32	9	0	-	216
+code	64	0	0	-	-
+code	145	15	0	-	-
+code	151	0	0	-	-
+code	151	5	0	-	238,308
+code	223	0	0	-	-
+code	246	26	0	-	238
+code	267	15	0	-	238
+code	303	24	0	-	294
+code	306	0	0	-	-
+code	3	0	0	-	-
+code	142	5	0	-	238
+code	222	0	0	-	-
+code	223	15	0	-	-
+code	226	28	0	-	-
+code	243	15	0	-	-
+code	243	26	0	-	-
+code	262	13	0	-	-
+code	291	0	0	-	-
+code	311	24	0	-	294,309
+code	207	0	0	-	-
+code	280	7	0	-	238
+code	1	15	0	-	-
+code	28	0	0	-	-
+code	227	0	0	-	-
+code	251	15	0	-	238
+code	272	15	0	-	238
+code	292	5	0	-	238
+code	299	0	0	-	-
+code	310	15	0	-	309
+code	142	7	0	-	238
+code	222	25	0	-	216
+code	262	15	0	-	238
+code	278	5	0	-	238
+code	281	5	0	-	238
+code	293	15	0	-	238
+code	1	26	4	-	238
+code	26	0	0	-	-
+code	78	24	0	-	294
+code	121	0	0	-	-
+code	129	5	0	-	238,308
+code	145	16	0	-	238
+code	145	25	0	-	216
+code	239	16	0	-	238
+code	251	16	0	-	238
+code	262	0	0	-	-
+code	293	13	0	-	-
+code	116	0	0	-	-
+code	141	0	0	-	-
+code	151	0	0	-	294,309
+code	225	5	0	-	238
+code	234	9	0	-	216
+code	260	13	0	-	-
+code	261	15	0	-	238
+code	267	31	0	-	-
+code	272	31	0	-	-
+code	280	0	0	-	294
+code	287	15	0	-	238
+code	293	16	0	-	238
+code	312	26	0	-	238,308
+code	1	0	4	-	238
+code	145	15	0	-	238
+code	222	9	0	-	216
+code	247	0	0	-	-
+code	247	13	0	-	-
+code	250	13	0	-	-
+code	251	13	0	-	-
+code	259	16	0	-	238
+code	277	0	0	-	238
+code	277	5	0	-	238
+code	277	31	0	-	238
+code	282	0	0	-	-
+code	284	15	0	-	238
+code	289	16	0	-	238
+code	313	31	0	-	308
+code	83	0	4	-	-
+code	1	31	0	-	-
+code	129	24	0	-	294,309
+code	142	3	0	-	-
+code	145	11	0	-	216
+code	225	26	0	-	238
+code	228	0	0	-	-
+code	236	9	0	-	216
+code	239	11	0	-	216
+code	251	0	0	-	-
+code	255	31	0	-	238
+code	256	0	0	-	-
+code	262	16	0	-	238
+code	267	13	0	-	-
+code	277	15	0	-	238
+code	278	0	0	-	238
+code	278	7	0	-	238
+code	278	26	0	-	238
+code	279	5	0	-	238
+code	279	15	0	-	238
+code	279	26	0	-	238
+code	280	15	0	-	238
+code	288	0	0	-	-
+code	289	31	0	-	-
+code	292	15	0	-	238
+code	307	0	0	-	-
+code	311	0	0	-	309
+code	313	15	0	-	238,308
+code	1	15	4	-	238
+code	73	0	4	-	-
+code	354	0	4	-	216
+code	354	19	4	-	-
+code	354	27	4	-	-
+code	1	5	0	-	-
+code	1	7	0	-	-
+code	1	16	0	-	-
+code	1	24	0	-	-
 code	32	1	0	-	-
 code	32	1	0	-	216
 code	32	9	0	-	-
-code	32	9	0	-	216
 code	32	11	0	-	-
-code	32	11	0	-	216
-code	32	15	0	-	-
 code	32	25	0	-	-
-code	32	25	0	-	216
 code	32	28	0	-	-
-code	32	28	0	-	216
-code	49	0	0	-	-
-code	49	20	0	-	-
-code	50	0	0	-	-
-code	50	20	0	-	-
-code	51	0	0	-	-
-code	51	20	0	-	-
-code	52	0	0	-	-
-code	52	20	0	-	-
-code	53	0	0	-	-
-code	54	0	0	-	-
-code	54	20	0	-	-
-code	55	0	0	-	-
-code	55	20	0	-	-
-code	56	0	0	-	-
-code	56	20	0	-	-
-code	57	0	0	-	-
-code	57	20	0	-	-
-code	58	0	0	-	-
-code	58	20	0	-	-
-code	59	0	0	-	-
-code	59	20	0	-	-
-code	60	0	0	-	-
-code	60	20	0	-	-
-code	61	0	0	-	-
-code	61	20	0	-	-
-code	62	0	0	-	-
-code	62	20	0	-	-
-code	63	0	0	-	-
-code	63	20	0	-	-
-code	64	0	0	-	-
-code	64	20	0	-	-
-code	65	0	0	-	-
-code	65	20	0	-	-
-code	66	0	0	-	-
-code	66	20	0	-	-
-code	67	0	0	-	-
-code	67	20	0	-	-
-code	68	0	0	-	-
-code	68	20	0	-	-
-code	69	0	0	-	-
-code	69	20	0	-	-
-code	70	0	0	-	-
-code	71	0	0	-	-
-code	71	20	0	-	-
-code	72	0	0	-	-
-code	72	20	0	-	-
-code	73	0	0	-	-
-code	73	20	0	-	-
-code	74	0	0	-	-
-code	74	20	0	-	-
-code	75	0	0	-	-
-code	75	20	0	-	-
-code	76	0	0	-	-
-code	76	20	0	-	-
-code	77	0	0	-	-
-code	78	0	0	-	-
-code	78	0	0	-	294
 code	78	5	0	-	-
 code	78	24	0	-	-
-code	78	24	0	-	294
-code	79	0	0	-	-
-code	80	0	0	-	-
-code	81	0	0	-	-
-code	82	0	0	-	-
-code	83	0	0	-	-
-code	84	0	0	-	-
-code	85	0	0	-	-
-code	86	0	0	-	-
-code	87	0	0	-	-
-code	88	0	0	-	-
-code	89	0	0	-	-
-code	90	0	0	-	-
-code	91	0	0	-	-
-code	92	0	0	-	-
-code	93	0	0	-	-
-code	94	0	0	-	-
-code	95	0	0	-	-
-code	96	0	0	-	-
-code	97	0	0	-	-
-code	98	0	0	-	-
-code	99	0	0	-	-
-code	100	0	0	-	-
-code	101	0	0	-	-
-code	102	0	0	-	-
-code	103	0	0	-	-
-code	104	0	0	-	-
-code	105	0	0	-	-
-code	106	0	0	-	-
-code	107	0	0	-	-
-code	108	0	0	-	-
-code	109	0	0	-	-
-code	110	0	0	-	-
-code	111	0	0	-	-
-code	112	0	0	-	-
-code	113	0	0	-	-
-code	114	0	0	-	-
-code	115	0	0	-	-
-code	116	0	0	-	-
-code	117	0	0	-	-
-code	118	0	0	-	-
-code	119	0	0	-	-
-code	121	0	0	-	-
-code	122	0	0	-	-
-code	123	0	0	-	-
 code	124	0	0	-	-
-code	125	0	0	-	-
-code	126	0	0	-	-
-code	127	0	0	-	-
-code	127	0	0	-	238,308
-code	127	0	0	-	294,309
-code	127	0	0	-	308
 code	127	0	0	-	309
 code	127	5	0	-	-
-code	127	5	0	-	238,308
 code	127	5	0	-	308
 code	127	7	0	-	-
 code	127	7	0	-	238,308
 code	127	7	0	-	308
-code	127	12	0	-	-
 code	127	13	0	-	-
 code	127	13	0	-	308
 code	127	15	0	-	-
-code	127	15	0	-	238,308
 code	127	15	0	-	308
-code	127	15	0	-	309
 code	127	16	0	-	-
-code	127	16	0	-	238,308
 code	127	16	0	-	308
 code	127	24	0	-	-
-code	127	24	0	-	294,309
 code	127	24	0	-	309
 code	127	26	0	-	-
-code	127	26	0	-	238,308
 code	127	26	0	-	308
-code	127	26	0	-	309
 code	127	31	0	-	-
-code	127	31	0	-	238,308
-code	127	31	0	-	308
 code	129	0	0	-	-
-code	129	0	0	-	238,308
-code	129	0	0	-	294,309
-code	129	0	0	-	308
 code	129	0	0	-	309
 code	129	5	0	-	-
-code	129	5	0	-	238,308
 code	129	5	0	-	308
 code	129	7	0	-	-
 code	129	7	0	-	238,308
@@ -223,61 +771,31 @@ code	129	7	0	-	308
 code	129	13	0	-	-
 code	129	13	0	-	308
 code	129	15	0	-	-
-code	129	15	0	-	238,308
 code	129	15	0	-	308
-code	129	15	0	-	309
 code	129	16	0	-	-
 code	129	16	0	-	238,308
 code	129	16	0	-	308
 code	129	24	0	-	-
-code	129	24	0	-	294,309
 code	129	24	0	-	309
 code	129	26	0	-	-
-code	129	26	0	-	238,308
 code	129	26	0	-	308
-code	129	26	0	-	309
 code	129	31	0	-	-
-code	129	31	0	-	238,308
 code	129	31	0	-	308
-code	130	0	0	-	-
-code	131	0	0	-	-
-code	132	0	0	-	-
 code	133	0	0	-	-
 code	139	0	0	-	-
 code	140	0	0	-	-
-code	141	0	0	-	-
-code	142	0	0	-	-
-code	142	0	0	-	238
-code	142	3	0	-	-
 code	142	5	0	-	-
-code	142	5	0	-	238
 code	142	7	0	-	-
-code	142	7	0	-	238
-code	142	13	0	-	-
-code	142	15	0	-	-
-code	142	15	0	-	238
 code	142	16	0	-	-
 code	142	16	0	-	238
-code	142	23	0	-	-
-code	142	24	0	-	-
 code	142	26	0	-	-
-code	142	26	0	-	238
 code	142	31	0	-	-
-code	142	31	0	-	238
-code	143	0	0	-	-
 code	143	3	0	-	-
 code	143	15	0	-	-
-code	143	19	0	-	-
-code	143	23	0	-	-
 code	143	26	0	-	-
-code	144	0	0	-	-
 code	144	3	0	-	-
 code	144	15	0	-	-
-code	144	23	0	-	-
 code	144	26	0	-	-
-code	145	0	0	-	-
-code	145	0	0	-	216
-code	145	0	0	-	238
 code	145	1	0	-	-
 code	145	1	0	-	216
 code	145	3	0	-	-
@@ -288,31 +806,13 @@ code	145	7	0	-	238
 code	145	9	0	-	-
 code	145	9	0	-	216
 code	145	11	0	-	-
-code	145	11	0	-	216
-code	145	13	0	-	-
-code	145	15	0	-	-
-code	145	15	0	-	238
 code	145	16	0	-	-
-code	145	16	0	-	238
-code	145	19	0	-	-
-code	145	23	0	-	-
 code	145	25	0	-	-
-code	145	25	0	-	216
 code	145	26	0	-	-
-code	145	26	0	-	238
 code	145	28	0	-	-
-code	145	28	0	-	216
 code	145	31	0	-	-
-code	145	31	0	-	238
-code	146	0	0	-	-
-code	147	0	0	-	-
-code	151	0	0	-	-
-code	151	0	0	-	238,308
-code	151	0	0	-	294,309
-code	151	0	0	-	308
 code	151	0	0	-	309
 code	151	5	0	-	-
-code	151	5	0	-	238,308
 code	151	5	0	-	308
 code	151	7	0	-	-
 code	151	7	0	-	238,308
@@ -320,7 +820,6 @@ code	151	7	0	-	308
 code	151	13	0	-	-
 code	151	13	0	-	308
 code	151	15	0	-	-
-code	151	15	0	-	238,308
 code	151	15	0	-	308
 code	151	15	0	-	309
 code	151	16	0	-	-
@@ -330,70 +829,19 @@ code	151	24	0	-	-
 code	151	24	0	-	294,309
 code	151	24	0	-	309
 code	151	26	0	-	-
-code	151	26	0	-	238,308
 code	151	26	0	-	308
 code	151	26	0	-	309
 code	151	31	0	-	-
-code	151	31	0	-	238,308
 code	151	31	0	-	308
 code	152	0	0	-	-
-code	152	21	0	-	-
 code	153	0	0	-	-
-code	153	14	0	-	-
 code	155	0	0	-	-
-code	155	10	0	-	-
-code	157	0	0	-	-
-code	159	0	0	-	-
-code	160	0	0	-	-
-code	161	0	0	-	-
-code	162	0	0	-	-
-code	164	0	0	-	-
-code	164	15	0	-	-
-code	165	0	0	-	-
-code	166	0	0	-	-
 code	167	0	0	-	-
-code	167	28	0	-	-
-code	168	0	0	-	-
-code	168	4	0	-	-
-code	168	26	0	-	-
-code	169	0	0	-	-
-code	170	0	0	-	-
-code	171	0	0	-	-
-code	172	0	0	-	-
-code	173	0	0	-	-
-code	174	0	0	-	-
 code	175	0	0	-	-
-code	175	5	0	-	-
-code	176	0	0	-	-
-code	177	0	0	-	-
-code	178	0	0	-	-
 code	179	0	0	-	-
-code	179	5	0	-	-
-code	180	0	0	-	-
 code	181	0	0	-	-
-code	181	5	0	-	-
-code	182	0	0	-	-
 code	183	0	0	-	-
-code	183	5	0	-	-
-code	184	0	0	-	-
-code	185	0	0	-	-
-code	186	0	0	-	-
-code	187	0	0	-	-
-code	188	0	0	-	-
-code	189	0	0	-	-
-code	190	0	0	-	-
-code	191	0	0	-	-
-code	192	0	0	-	-
-code	193	0	0	-	-
-code	194	0	0	-	-
-code	195	0	0	-	-
-code	196	0	0	-	-
-code	196	6	0	-	-
-code	197	0	0	-	-
-code	197	15	0	-	-
-code	197	27	0	-	-
 code	198	0	0	-	-
-code	198	0	0	-	216
 code	198	1	0	-	-
 code	198	1	0	-	216
 code	198	9	0	-	-
@@ -405,358 +853,168 @@ code	198	25	0	-	216
 code	198	27	0	-	-
 code	198	28	0	-	-
 code	198	28	0	-	216
-code	199	0	0	-	-
-code	199	30	0	-	-
-code	200	0	0	-	-
-code	201	0	0	-	-
-code	202	0	0	-	-
-code	203	0	0	-	-
-code	204	0	0	-	-
-code	206	0	0	-	-
-code	206	3	0	-	-
-code	207	0	0	-	-
-code	207	3	0	-	-
-code	207	17	0	-	-
-code	208	0	0	-	-
-code	208	3	0	-	-
-code	209	0	0	-	-
-code	209	3	0	-	-
-code	210	0	0	-	-
-code	210	22	0	-	-
-code	211	0	0	-	-
-code	212	0	0	-	-
-code	213	0	0	-	-
-code	214	0	0	-	-
-code	215	0	0	-	-
-code	217	0	0	-	-
-code	217	23	0	-	-
-code	218	0	0	-	-
-code	219	0	0	-	-
-code	219	15	0	-	-
-code	219	19	0	-	-
-code	220	0	0	-	-
-code	220	0	0	-	216
 code	220	1	0	-	-
 code	220	1	0	-	216
 code	220	9	0	-	-
 code	220	9	0	-	216
 code	220	11	0	-	-
-code	220	11	0	-	216
-code	220	15	0	-	-
 code	220	25	0	-	-
-code	220	25	0	-	216
 code	220	28	0	-	-
-code	220	28	0	-	216
-code	221	0	0	-	-
-code	222	0	0	-	-
-code	222	0	0	-	216
 code	222	1	0	-	-
 code	222	1	0	-	216
 code	222	9	0	-	-
-code	222	9	0	-	216
 code	222	11	0	-	-
-code	222	11	0	-	216
 code	222	25	0	-	-
-code	222	25	0	-	216
-code	222	27	0	-	-
 code	222	28	0	-	-
-code	222	28	0	-	216
-code	223	0	0	-	-
-code	223	0	0	-	216
 code	223	1	0	-	-
 code	223	1	0	-	216
 code	223	9	0	-	-
 code	223	9	0	-	216
 code	223	11	0	-	-
-code	223	11	0	-	216
-code	223	15	0	-	-
 code	223	25	0	-	-
-code	223	25	0	-	216
-code	223	27	0	-	-
 code	223	28	0	-	-
-code	223	28	0	-	216
 code	224	0	0	-	-
-code	224	0	0	-	216
 code	224	1	0	-	-
 code	224	1	0	-	216
 code	224	9	0	-	-
-code	224	9	0	-	216
 code	224	11	0	-	-
-code	224	11	0	-	216
 code	224	25	0	-	-
-code	224	25	0	-	216
 code	224	28	0	-	-
-code	224	28	0	-	216
 code	225	0	0	-	-
-code	225	0	0	-	238
 code	225	5	0	-	-
-code	225	5	0	-	238
 code	225	7	0	-	-
 code	225	7	0	-	238
-code	225	13	0	-	-
 code	225	15	0	-	-
 code	225	15	0	-	238
 code	225	16	0	-	-
 code	225	16	0	-	238
 code	225	26	0	-	-
-code	225	26	0	-	238
 code	225	31	0	-	-
-code	225	31	0	-	238
-code	226	0	0	-	-
-code	226	0	0	-	216
 code	226	1	0	-	-
-code	226	1	0	-	216
 code	226	9	0	-	-
-code	226	9	0	-	216
 code	226	11	0	-	-
-code	226	11	0	-	216
-code	226	15	0	-	-
-code	226	23	0	-	-
 code	226	25	0	-	-
-code	226	25	0	-	216
-code	226	27	0	-	-
-code	226	28	0	-	-
-code	226	28	0	-	216
-code	227	0	0	-	-
-code	227	19	0	-	-
-code	228	0	0	-	-
-code	228	0	0	-	216
 code	228	1	0	-	-
 code	228	1	0	-	216
 code	228	9	0	-	-
 code	228	9	0	-	216
 code	228	11	0	-	-
-code	228	11	0	-	216
 code	228	25	0	-	-
-code	228	25	0	-	216
-code	228	27	0	-	-
 code	228	28	0	-	-
-code	228	28	0	-	216
-code	229	0	0	-	-
-code	230	0	0	-	-
-code	230	29	0	-	-
-code	231	0	0	-	-
 code	232	0	0	-	-
-code	232	0	0	-	216
 code	232	1	0	-	-
 code	232	1	0	-	216
 code	232	9	0	-	-
-code	232	9	0	-	216
 code	232	11	0	-	-
-code	232	11	0	-	216
-code	232	15	0	-	-
 code	232	25	0	-	-
-code	232	25	0	-	216
 code	232	28	0	-	-
-code	232	28	0	-	216
 code	233	0	0	-	-
-code	233	0	0	-	216
 code	233	1	0	-	-
 code	233	1	0	-	216
 code	233	9	0	-	-
 code	233	9	0	-	216
 code	233	11	0	-	-
-code	233	11	0	-	216
 code	233	15	0	-	-
 code	233	25	0	-	-
-code	233	25	0	-	216
 code	233	28	0	-	-
-code	233	28	0	-	216
 code	234	0	0	-	-
-code	234	0	0	-	216
 code	234	1	0	-	-
 code	234	1	0	-	216
 code	234	9	0	-	-
-code	234	9	0	-	216
 code	234	11	0	-	-
 code	234	11	0	-	216
 code	234	25	0	-	-
-code	234	25	0	-	216
 code	234	28	0	-	-
-code	234	28	0	-	216
 code	235	0	0	-	-
-code	235	0	0	-	216
 code	235	1	0	-	-
 code	235	1	0	-	216
 code	235	9	0	-	-
 code	235	9	0	-	216
 code	235	11	0	-	-
-code	235	11	0	-	216
 code	235	25	0	-	-
-code	235	25	0	-	216
 code	235	28	0	-	-
-code	235	28	0	-	216
 code	236	0	0	-	-
-code	236	0	0	-	216
 code	236	1	0	-	-
 code	236	1	0	-	216
 code	236	9	0	-	-
-code	236	9	0	-	216
 code	236	11	0	-	-
 code	236	11	0	-	216
 code	236	25	0	-	-
 code	236	25	0	-	216
 code	236	28	0	-	-
-code	236	28	0	-	216
-code	239	0	0	-	-
-code	239	0	0	-	216
-code	239	0	0	-	238
-code	239	0	0	-	294
 code	239	1	0	-	-
 code	239	1	0	-	216
 code	239	5	0	-	-
-code	239	5	0	-	238
 code	239	7	0	-	-
-code	239	7	0	-	238
 code	239	9	0	-	-
 code	239	9	0	-	216
 code	239	11	0	-	-
-code	239	11	0	-	216
-code	239	13	0	-	-
 code	239	15	0	-	-
-code	239	15	0	-	238
 code	239	16	0	-	-
-code	239	16	0	-	238
 code	239	24	0	-	-
-code	239	24	0	-	294
 code	239	25	0	-	-
-code	239	25	0	-	216
 code	239	26	0	-	-
-code	239	26	0	-	238
 code	239	28	0	-	-
-code	239	28	0	-	216
 code	239	31	0	-	-
-code	239	31	0	-	238
-code	243	0	0	-	-
-code	243	0	0	-	238
-code	243	0	0	-	294
-code	243	3	0	-	-
 code	243	5	0	-	-
-code	243	5	0	-	238
 code	243	7	0	-	-
-code	243	7	0	-	238
-code	243	13	0	-	-
-code	243	15	0	-	-
-code	243	15	0	-	238
 code	243	16	0	-	-
-code	243	16	0	-	238
-code	243	18	0	-	-
-code	243	23	0	-	-
 code	243	24	0	-	-
-code	243	24	0	-	294
-code	243	26	0	-	-
-code	243	26	0	-	238
-code	243	28	0	-	-
 code	243	31	0	-	-
-code	243	31	0	-	238
-code	245	0	0	-	-
-code	245	0	0	-	216
 code	245	1	0	-	-
-code	245	1	0	-	216
 code	245	9	0	-	-
-code	245	9	0	-	216
 code	245	11	0	-	-
-code	245	11	0	-	216
-code	245	15	0	-	-
-code	245	19	0	-	-
 code	245	25	0	-	-
-code	245	25	0	-	216
-code	245	27	0	-	-
-code	245	28	0	-	-
-code	245	28	0	-	216
 code	246	0	0	-	-
-code	246	0	0	-	238
 code	246	5	0	-	-
-code	246	5	0	-	238
 code	246	7	0	-	-
 code	246	7	0	-	238
 code	246	15	0	-	-
-code	246	15	0	-	238
 code	246	16	0	-	-
 code	246	16	0	-	238
 code	246	26	0	-	-
-code	246	26	0	-	238
 code	246	31	0	-	-
-code	246	31	0	-	238
-code	247	0	0	-	-
-code	247	0	0	-	238
 code	247	5	0	-	-
-code	247	5	0	-	238
 code	247	7	0	-	-
-code	247	7	0	-	238
-code	247	13	0	-	-
 code	247	15	0	-	-
-code	247	15	0	-	238
 code	247	16	0	-	-
 code	247	16	0	-	238
 code	247	26	0	-	-
-code	247	26	0	-	238
 code	247	31	0	-	-
-code	247	31	0	-	238
-code	248	0	0	-	-
-code	248	0	0	-	238
 code	248	5	0	-	-
 code	248	5	0	-	238
 code	248	7	0	-	-
-code	248	7	0	-	238
-code	248	13	0	-	-
 code	248	15	0	-	-
-code	248	15	0	-	238
 code	248	16	0	-	-
 code	248	16	0	-	238
 code	248	26	0	-	-
-code	248	26	0	-	238
 code	248	31	0	-	-
-code	248	31	0	-	238
 code	249	0	0	-	-
-code	249	0	0	-	238
 code	249	5	0	-	-
-code	249	5	0	-	238
 code	249	7	0	-	-
 code	249	7	0	-	238
 code	249	13	0	-	-
 code	249	15	0	-	-
-code	249	15	0	-	238
 code	249	16	0	-	-
 code	249	16	0	-	238
 code	249	26	0	-	-
-code	249	26	0	-	238
 code	249	31	0	-	-
-code	249	31	0	-	238
-code	250	0	0	-	-
-code	250	0	0	-	238
 code	250	5	0	-	-
-code	250	5	0	-	238
 code	250	7	0	-	-
-code	250	7	0	-	238
-code	250	13	0	-	-
 code	250	15	0	-	-
-code	250	15	0	-	238
 code	250	16	0	-	-
-code	250	16	0	-	238
 code	250	26	0	-	-
-code	250	26	0	-	238
 code	250	31	0	-	-
-code	250	31	0	-	238
-code	251	0	0	-	-
-code	251	0	0	-	238
 code	251	5	0	-	-
-code	251	5	0	-	238
 code	251	7	0	-	-
 code	251	7	0	-	238
-code	251	13	0	-	-
 code	251	15	0	-	-
-code	251	15	0	-	238
 code	251	16	0	-	-
-code	251	16	0	-	238
 code	251	26	0	-	-
 code	251	26	0	-	238
 code	251	31	0	-	-
-code	251	31	0	-	238
 code	252	0	0	-	-
-code	252	0	0	-	238
 code	252	5	0	-	-
-code	252	5	0	-	238
 code	252	7	0	-	-
 code	252	7	0	-	238
 code	252	13	0	-	-
@@ -767,24 +1025,16 @@ code	252	16	0	-	238
 code	252	26	0	-	-
 code	252	26	0	-	238
 code	252	31	0	-	-
-code	252	31	0	-	238
 code	253	0	0	-	-
-code	253	0	0	-	238
 code	253	5	0	-	-
-code	253	5	0	-	238
 code	253	7	0	-	-
 code	253	7	0	-	238
 code	253	13	0	-	-
 code	253	15	0	-	-
-code	253	15	0	-	238
 code	253	16	0	-	-
-code	253	16	0	-	238
 code	253	26	0	-	-
-code	253	26	0	-	238
 code	253	31	0	-	-
-code	253	31	0	-	238
 code	254	0	0	-	-
-code	254	0	0	-	238
 code	254	5	0	-	-
 code	254	5	0	-	238
 code	254	7	0	-	-
@@ -797,9 +1047,7 @@ code	254	16	0	-	238
 code	254	26	0	-	-
 code	254	26	0	-	238
 code	254	31	0	-	-
-code	254	31	0	-	238
 code	255	0	0	-	-
-code	255	0	0	-	238
 code	255	5	0	-	-
 code	255	5	0	-	238
 code	255	7	0	-	-
@@ -812,241 +1060,135 @@ code	255	16	0	-	238
 code	255	26	0	-	-
 code	255	26	0	-	238
 code	255	31	0	-	-
-code	255	31	0	-	238
-code	256	0	0	-	-
-code	256	0	0	-	238
 code	256	5	0	-	-
-code	256	5	0	-	238
 code	256	7	0	-	-
-code	256	7	0	-	238
-code	256	13	0	-	-
 code	256	15	0	-	-
-code	256	15	0	-	238
 code	256	16	0	-	-
-code	256	16	0	-	238
 code	256	26	0	-	-
-code	256	26	0	-	238
 code	256	31	0	-	-
-code	256	31	0	-	238
 code	257	0	0	-	-
-code	257	4	0	-	-
-code	258	0	0	-	-
-code	258	0	0	-	238
 code	258	5	0	-	-
-code	258	5	0	-	238
 code	258	7	0	-	-
 code	258	7	0	-	238
-code	258	13	0	-	-
 code	258	15	0	-	-
-code	258	15	0	-	238
 code	258	16	0	-	-
 code	258	16	0	-	238
 code	258	26	0	-	-
-code	258	26	0	-	238
 code	258	31	0	-	-
-code	258	31	0	-	238
-code	259	0	0	-	-
-code	259	0	0	-	238
 code	259	5	0	-	-
 code	259	5	0	-	238
 code	259	7	0	-	-
-code	259	7	0	-	238
-code	259	13	0	-	-
 code	259	15	0	-	-
-code	259	15	0	-	238
 code	259	16	0	-	-
-code	259	16	0	-	238
 code	259	26	0	-	-
-code	259	26	0	-	238
 code	259	31	0	-	-
-code	259	31	0	-	238
 code	260	0	0	-	-
-code	260	0	0	-	238
 code	260	5	0	-	-
-code	260	5	0	-	238
 code	260	7	0	-	-
 code	260	7	0	-	238
-code	260	13	0	-	-
 code	260	15	0	-	-
-code	260	15	0	-	238
 code	260	16	0	-	-
 code	260	16	0	-	238
 code	260	26	0	-	-
-code	260	26	0	-	238
 code	260	31	0	-	-
-code	260	31	0	-	238
 code	261	0	0	-	-
-code	261	0	0	-	238
 code	261	5	0	-	-
-code	261	5	0	-	238
 code	261	7	0	-	-
 code	261	7	0	-	238
 code	261	13	0	-	-
 code	261	15	0	-	-
-code	261	15	0	-	238
 code	261	16	0	-	-
 code	261	16	0	-	238
 code	261	26	0	-	-
-code	261	26	0	-	238
 code	261	31	0	-	-
-code	261	31	0	-	238
-code	262	0	0	-	-
-code	262	0	0	-	238
 code	262	5	0	-	-
-code	262	5	0	-	238
 code	262	7	0	-	-
 code	262	7	0	-	238
-code	262	13	0	-	-
 code	262	15	0	-	-
-code	262	15	0	-	238
 code	262	16	0	-	-
-code	262	16	0	-	238
 code	262	26	0	-	-
-code	262	26	0	-	238
 code	262	31	0	-	-
-code	262	31	0	-	238
 code	263	0	0	-	-
-code	263	5	0	-	-
-code	264	0	0	-	-
-code	265	0	0	-	-
-code	266	0	0	-	-
-code	267	0	0	-	-
-code	267	0	0	-	238
 code	267	5	0	-	-
-code	267	5	0	-	238
 code	267	7	0	-	-
 code	267	7	0	-	238
-code	267	13	0	-	-
 code	267	15	0	-	-
-code	267	15	0	-	238
 code	267	16	0	-	-
 code	267	16	0	-	238
 code	267	26	0	-	-
-code	267	26	0	-	238
-code	267	31	0	-	-
-code	267	31	0	-	238
-code	268	0	0	-	-
-code	268	7	0	-	-
 code	271	0	0	-	-
-code	271	2	0	-	-
-code	272	0	0	-	-
-code	272	0	0	-	238
 code	272	5	0	-	-
-code	272	5	0	-	238
 code	272	7	0	-	-
-code	272	7	0	-	238
 code	272	13	0	-	-
 code	272	15	0	-	-
-code	272	15	0	-	238
 code	272	16	0	-	-
 code	272	16	0	-	238
 code	272	26	0	-	-
-code	272	26	0	-	238
-code	272	31	0	-	-
-code	272	31	0	-	238
 code	273	0	0	-	-
-code	273	5	0	-	-
-code	274	0	0	-	-
 code	276	0	0	-	-
-code	276	24	0	-	-
-code	277	0	0	-	-
-code	277	0	0	-	238
 code	277	5	0	-	-
-code	277	5	0	-	238
 code	277	7	0	-	-
 code	277	7	0	-	238
 code	277	13	0	-	-
 code	277	15	0	-	-
-code	277	15	0	-	238
 code	277	16	0	-	-
 code	277	16	0	-	238
 code	277	26	0	-	-
 code	277	26	0	-	238
 code	277	31	0	-	-
-code	277	31	0	-	238
-code	278	0	0	-	-
-code	278	0	0	-	238
 code	278	5	0	-	-
-code	278	5	0	-	238
 code	278	7	0	-	-
-code	278	7	0	-	238
 code	278	13	0	-	-
 code	278	15	0	-	-
 code	278	15	0	-	238
 code	278	16	0	-	-
 code	278	16	0	-	238
 code	278	26	0	-	-
-code	278	26	0	-	238
 code	278	31	0	-	-
-code	278	31	0	-	238
-code	279	0	0	-	-
 code	279	0	0	-	238
 code	279	5	0	-	-
-code	279	5	0	-	238
 code	279	7	0	-	-
 code	279	7	0	-	238
 code	279	13	0	-	-
 code	279	15	0	-	-
-code	279	15	0	-	238
 code	279	16	0	-	-
 code	279	16	0	-	238
 code	279	26	0	-	-
-code	279	26	0	-	238
 code	279	31	0	-	-
 code	279	31	0	-	238
-code	280	0	0	-	-
-code	280	0	0	-	238
-code	280	0	0	-	294
 code	280	5	0	-	-
 code	280	5	0	-	238
 code	280	7	0	-	-
-code	280	7	0	-	238
 code	280	13	0	-	-
 code	280	15	0	-	-
-code	280	15	0	-	238
 code	280	16	0	-	-
 code	280	16	0	-	238
 code	280	24	0	-	-
 code	280	24	0	-	294
 code	280	26	0	-	-
-code	280	26	0	-	238
 code	280	31	0	-	-
-code	280	31	0	-	238
 code	281	0	0	-	-
-code	281	0	0	-	238
 code	281	5	0	-	-
-code	281	5	0	-	238
 code	281	7	0	-	-
 code	281	7	0	-	238
-code	281	13	0	-	-
 code	281	15	0	-	-
 code	281	15	0	-	238
 code	281	16	0	-	-
 code	281	16	0	-	238
 code	281	26	0	-	-
-code	281	26	0	-	238
 code	281	31	0	-	-
-code	281	31	0	-	238
-code	282	0	0	-	-
-code	282	22	0	-	-
-code	283	0	0	-	-
 code	284	0	0	-	-
-code	284	0	0	-	238
 code	284	5	0	-	-
 code	284	5	0	-	238
 code	284	7	0	-	-
 code	284	7	0	-	238
-code	284	13	0	-	-
 code	284	15	0	-	-
-code	284	15	0	-	238
 code	284	16	0	-	-
 code	284	16	0	-	238
 code	284	26	0	-	-
 code	284	26	0	-	238
 code	284	31	0	-	-
-code	284	31	0	-	238
 code	285	0	0	-	-
-code	285	0	0	-	238
 code	285	5	0	-	-
 code	285	5	0	-	238
 code	285	7	0	-	-
@@ -1059,71 +1201,36 @@ code	285	16	0	-	238
 code	285	26	0	-	-
 code	285	26	0	-	238
 code	285	31	0	-	-
-code	285	31	0	-	238
-code	286	0	0	-	-
-code	286	0	0	-	238
 code	286	5	0	-	-
-code	286	5	0	-	238
 code	286	7	0	-	-
-code	286	7	0	-	238
-code	286	13	0	-	-
 code	286	15	0	-	-
-code	286	15	0	-	238
 code	286	16	0	-	-
 code	286	16	0	-	238
 code	286	26	0	-	-
-code	286	26	0	-	238
 code	286	31	0	-	-
-code	286	31	0	-	238
 code	287	0	0	-	-
-code	287	0	0	-	238
 code	287	5	0	-	-
-code	287	5	0	-	238
 code	287	7	0	-	-
-code	287	7	0	-	238
 code	287	13	0	-	-
 code	287	15	0	-	-
-code	287	15	0	-	238
 code	287	16	0	-	-
 code	287	16	0	-	238
 code	287	26	0	-	-
-code	287	26	0	-	238
 code	287	31	0	-	-
-code	287	31	0	-	238
-code	288	0	0	-	-
-code	288	0	0	-	238
 code	288	5	0	-	-
-code	288	5	0	-	238
 code	288	7	0	-	-
-code	288	7	0	-	238
-code	288	13	0	-	-
 code	288	15	0	-	-
-code	288	15	0	-	238
 code	288	16	0	-	-
 code	288	16	0	-	238
 code	288	26	0	-	-
-code	288	26	0	-	238
 code	288	31	0	-	-
-code	288	31	0	-	238
-code	289	0	0	-	-
-code	289	0	0	-	238
 code	289	5	0	-	-
-code	289	5	0	-	238
 code	289	7	0	-	-
-code	289	7	0	-	238
 code	289	13	0	-	-
 code	289	15	0	-	-
-code	289	15	0	-	238
 code	289	16	0	-	-
-code	289	16	0	-	238
 code	289	26	0	-	-
-code	289	26	0	-	238
-code	289	31	0	-	-
-code	289	31	0	-	238
-code	290	0	0	-	-
-code	290	0	0	-	238
 code	290	5	0	-	-
-code	290	5	0	-	238
 code	290	7	0	-	-
 code	290	7	0	-	238
 code	290	13	0	-	-
@@ -1134,8 +1241,6 @@ code	290	16	0	-	238
 code	290	26	0	-	-
 code	290	26	0	-	238
 code	290	31	0	-	-
-code	290	31	0	-	238
-code	291	0	0	-	-
 code	291	0	0	-	238
 code	291	5	0	-	-
 code	291	5	0	-	238
@@ -1150,105 +1255,50 @@ code	291	26	0	-	-
 code	291	26	0	-	238
 code	291	31	0	-	-
 code	291	31	0	-	238
-code	292	0	0	-	-
-code	292	0	0	-	238
 code	292	5	0	-	-
-code	292	5	0	-	238
 code	292	7	0	-	-
 code	292	7	0	-	238
 code	292	13	0	-	-
 code	292	15	0	-	-
-code	292	15	0	-	238
 code	292	16	0	-	-
 code	292	16	0	-	238
 code	292	26	0	-	-
 code	292	26	0	-	238
 code	292	31	0	-	-
-code	292	31	0	-	238
-code	293	0	0	-	-
-code	293	0	0	-	238
-code	293	2	0	-	-
-code	293	5	0	-	-
-code	293	5	0	-	238
 code	293	7	0	-	-
-code	293	7	0	-	238
-code	293	8	0	-	-
-code	293	13	0	-	-
 code	293	15	0	-	-
-code	293	15	0	-	238
 code	293	16	0	-	-
-code	293	16	0	-	238
 code	293	26	0	-	-
-code	293	26	0	-	238
-code	293	31	0	-	-
-code	293	31	0	-	238
 code	295	0	0	-	-
 code	295	0	0	-	294
 code	295	24	0	-	-
 code	295	24	0	-	294
-code	296	0	0	-	-
-code	296	0	0	-	294
 code	296	24	0	-	-
-code	296	24	0	-	294
-code	297	0	0	-	-
-code	297	0	0	-	294
 code	297	24	0	-	-
-code	297	24	0	-	294
-code	298	0	0	-	-
-code	298	0	0	-	294
 code	298	24	0	-	-
-code	298	24	0	-	294
-code	299	0	0	-	-
-code	299	0	0	-	294
 code	299	24	0	-	-
-code	299	24	0	-	294
-code	300	0	0	-	-
-code	301	0	0	-	-
-code	301	0	0	-	294
 code	301	24	0	-	-
 code	301	24	0	-	294
 code	302	0	0	-	-
-code	302	0	0	-	294
 code	302	24	0	-	-
-code	302	24	0	-	294
 code	303	0	0	-	-
-code	303	0	0	-	294
 code	303	24	0	-	-
-code	303	24	0	-	294
 code	304	0	0	-	-
-code	304	0	0	-	294
 code	304	24	0	-	-
-code	304	24	0	-	294
 code	305	0	0	-	-
-code	305	0	0	-	294
 code	305	24	0	-	-
-code	305	24	0	-	294
-code	306	0	0	-	-
-code	306	0	0	-	294
 code	306	24	0	-	-
-code	306	24	0	-	294
-code	307	0	0	-	-
-code	307	0	0	-	294
 code	307	24	0	-	-
-code	307	24	0	-	294
 code	310	0	0	-	-
-code	310	0	0	-	294,309
 code	310	0	0	-	309
 code	310	15	0	-	-
-code	310	15	0	-	309
 code	310	24	0	-	-
 code	310	24	0	-	294,309
 code	310	24	0	-	309
 code	310	26	0	-	-
 code	310	26	0	-	309
 code	310	31	0	-	-
-code	311	0	0	-	-
-code	311	0	0	-	238,308
-code	311	0	0	-	294,309
-code	311	0	0	-	308
-code	311	0	0	-	309
 code	311	5	0	-	-
-code	311	5	0	-	238,308
 code	311	5	0	-	308
 code	311	7	0	-	-
 code	311	7	0	-	238,308
@@ -1256,26 +1306,20 @@ code	311	7	0	-	308
 code	311	13	0	-	-
 code	311	13	0	-	308
 code	311	15	0	-	-
-code	311	15	0	-	238,308
 code	311	15	0	-	308
 code	311	15	0	-	309
 code	311	16	0	-	-
 code	311	16	0	-	238,308
 code	311	16	0	-	308
 code	311	24	0	-	-
-code	311	24	0	-	294,309
 code	311	24	0	-	309
 code	311	26	0	-	-
-code	311	26	0	-	238,308
 code	311	26	0	-	308
 code	311	26	0	-	309
 code	311	31	0	-	-
-code	311	31	0	-	238,308
 code	311	31	0	-	308
 code	312	0	0	-	-
-code	312	0	0	-	238,308
 code	312	0	0	-	294,309
-code	312	0	0	-	308
 code	312	0	0	-	309
 code	312	5	0	-	-
 code	312	5	0	-	238,308
@@ -1296,67 +1340,37 @@ code	312	24	0	-	-
 code	312	24	0	-	294,309
 code	312	24	0	-	309
 code	312	26	0	-	-
-code	312	26	0	-	238,308
 code	312	26	0	-	308
 code	312	26	0	-	309
 code	312	31	0	-	-
-code	312	31	0	-	238,308
 code	312	31	0	-	308
 code	313	0	0	-	-
-code	313	0	0	-	238,308
-code	313	0	0	-	294,309
-code	313	0	0	-	308
 code	313	0	0	-	309
 code	313	5	0	-	-
-code	313	5	0	-	238,308
 code	313	5	0	-	308
 code	313	7	0	-	-
-code	313	7	0	-	238,308
 code	313	7	0	-	308
 code	313	13	0	-	-
 code	313	13	0	-	308
 code	313	15	0	-	-
-code	313	15	0	-	238,308
 code	313	15	0	-	308
 code	313	15	0	-	309
 code	313	16	0	-	-
 code	313	16	0	-	238,308
 code	313	16	0	-	308
 code	313	24	0	-	-
-code	313	24	0	-	294,309
 code	313	24	0	-	309
 code	313	26	0	-	-
-code	313	26	0	-	238,308
 code	313	26	0	-	308
 code	313	26	0	-	309
 code	313	31	0	-	-
-code	313	31	0	-	238,308
-code	313	31	0	-	308
 code	351	0	0	-	-
-code	351	12	0	-	-
-code	351	19	0	-	-
 code	352	0	0	-	-
-code	352	7	0	-	-
 code	353	0	0	-	-
-code	353	19	0	-	-
-code	354	0	0	-	-
-code	354	0	0	-	216
 code	354	1	0	-	-
-code	354	1	0	-	216
 code	354	9	0	-	-
-code	354	9	0	-	216
 code	354	11	0	-	-
-code	354	11	0	-	216
-code	354	15	0	-	-
-code	354	19	0	-	-
 code	354	25	0	-	-
-code	354	25	0	-	216
-code	354	27	0	-	-
-code	354	28	0	-	-
-code	354	28	0	-	216
-code	314	0	1	-	-
-code	318	0	1	-	-
-code	0	0	2	-	-
 code	0	1	2	-	-
 code	0	2	2	-	-
 code	0	3	2	-	-
@@ -1388,9 +1402,7 @@ code	0	28	2	-	-
 code	0	29	2	-	-
 code	0	30	2	-	-
 code	0	31	2	-	-
-code	0	0	3	-	-
 code	1	0	4	-	-
-code	1	0	4	-	238
 code	1	0	4	-	294
 code	1	1	4	-	-
 code	1	3	4	-	-
@@ -1400,7 +1412,6 @@ code	1	7	4	-	-
 code	1	7	4	-	238
 code	1	13	4	-	-
 code	1	15	4	-	-
-code	1	15	4	-	238
 code	1	16	4	-	-
 code	1	16	4	-	238
 code	1	18	4	-	-
@@ -1409,18 +1420,13 @@ code	1	23	4	-	-
 code	1	24	4	-	-
 code	1	24	4	-	294
 code	1	26	4	-	-
-code	1	26	4	-	238
 code	1	28	4	-	-
 code	1	31	4	-	-
 code	1	31	4	-	238
-code	2	0	4	-	-
 code	3	0	4	-	-
 code	4	0	4	-	-
-code	5	0	4	-	-
 code	6	0	4	-	-
-code	7	0	4	-	-
 code	8	0	4	-	-
-code	9	0	4	-	-
 code	10	0	4	-	-
 code	11	0	4	-	-
 code	12	0	4	-	-
@@ -1503,7 +1509,6 @@ code	71	0	4	-	-
 code	71	20	4	-	-
 code	72	0	4	-	-
 code	72	20	4	-	-
-code	73	0	4	-	-
 code	73	20	4	-	-
 code	74	0	4	-	-
 code	74	20	4	-	-
@@ -1518,10 +1523,8 @@ code	78	5	4	-	-
 code	78	24	4	-	-
 code	78	24	4	-	294
 code	79	0	4	-	-
-code	80	0	4	-	-
 code	81	0	4	-	-
 code	82	0	4	-	-
-code	83	0	4	-	-
 code	84	0	4	-	-
 code	85	0	4	-	-
 code	86	0	4	-	-
@@ -1810,7 +1813,6 @@ code	351	19	4	-	-
 code	353	0	4	-	-
 code	353	19	4	-	-
 code	354	0	4	-	-
-code	354	0	4	-	216
 code	354	1	4	-	-
 code	354	1	4	-	216
 code	354	9	4	-	-
@@ -1818,9 +1820,596 @@ code	354	9	4	-	216
 code	354	11	4	-	-
 code	354	11	4	-	216
 code	354	15	4	-	-
-code	354	19	4	-	-
 code	354	25	4	-	-
 code	354	25	4	-	216
-code	354	27	4	-	-
 code	354	28	4	-	-
 code	354	28	4	-	216
+kind	1	1	identifier
+kind	2	0	;
+kind	3	0	macro_rules!
+kind	4	0	(
+kind	5	0	)
+kind	6	0	[
+kind	7	0	]
+kind	8	0	{
+kind	9	0	}
+kind	10	0	=>
+kind	11	0	:
+kind	12	0	$
+kind	14	0	+
+kind	15	0	*
+kind	16	0	?
+kind	17	0	block
+kind	18	0	expr
+kind	19	0	expr_2021
+kind	20	0	ident
+kind	21	0	item
+kind	22	0	lifetime
+kind	23	0	literal
+kind	24	0	meta
+kind	25	0	pat
+kind	26	0	pat_param
+kind	27	0	path
+kind	28	0	stmt
+kind	29	0	tt
+kind	30	0	ty
+kind	31	0	vis
+kind	32	1	primitive_type
+kind	49	0	-
+kind	50	0	/
+kind	51	0	%
+kind	52	0	^
+kind	53	0	!
+kind	54	0	&
+kind	55	0	|
+kind	56	0	&&
+kind	57	0	||
+kind	58	0	<<
+kind	59	0	>>
+kind	60	0	+=
+kind	61	0	-=
+kind	62	0	*=
+kind	63	0	/=
+kind	64	0	%=
+kind	65	0	^=
+kind	66	0	&=
+kind	67	0	|=
+kind	68	0	<<=
+kind	69	0	>>=
+kind	70	0	=
+kind	71	0	==
+kind	72	0	!=
+kind	73	0	>
+kind	74	0	<
+kind	75	0	>=
+kind	76	0	<=
+kind	77	0	@
+kind	78	0	_
+kind	79	0	.
+kind	80	0	..
+kind	81	0	...
+kind	82	0	..=
+kind	83	0	,
+kind	84	0	::
+kind	85	0	->
+kind	86	0	#
+kind	87	0	'
+kind	88	0	as
+kind	89	0	async
+kind	90	0	await
+kind	91	0	break
+kind	92	0	const
+kind	93	0	continue
+kind	94	0	default
+kind	95	0	enum
+kind	96	0	fn
+kind	97	0	for
+kind	98	0	gen
+kind	99	0	if
+kind	100	0	impl
+kind	101	0	let
+kind	102	0	loop
+kind	103	0	match
+kind	104	0	mod
+kind	105	0	pub
+kind	106	0	return
+kind	107	0	static
+kind	108	0	struct
+kind	109	0	trait
+kind	110	0	type
+kind	111	0	union
+kind	112	0	unsafe
+kind	113	0	use
+kind	114	0	where
+kind	115	0	while
+kind	116	0	extern
+kind	117	0	ref
+kind	118	0	else
+kind	119	0	in
+kind	121	0	dyn
+kind	122	1	mutable_specifier
+kind	123	0	raw
+kind	124	0	yield
+kind	125	0	move
+kind	126	0	try
+kind	127	1	integer_literal
+kind	129	1	char_literal
+kind	130	1	escape_sequence
+kind	131	0	true
+kind	132	0	false
+kind	133	0	//
+kind	139	0	/*
+kind	140	0	*/
+kind	141	1	shebang
+kind	142	1	self
+kind	143	1	super
+kind	144	1	crate
+kind	145	1	metavariable
+kind	146	1	string_content
+kind	147	0	"
+kind	151	1	float_literal
+kind	152	1	outer_doc_comment_marker
+kind	153	1	inner_doc_comment_marker
+kind	155	1	doc_comment
+kind	157	1	source_file
+kind	159	1	empty_statement
+kind	160	1	expression_statement
+kind	161	1	macro_definition
+kind	162	1	macro_rule
+kind	164	1	token_tree_pattern
+kind	165	1	token_binding_pattern
+kind	166	1	token_repetition_pattern
+kind	167	1	fragment_specifier
+kind	168	1	token_tree
+kind	169	1	token_repetition
+kind	170	1	attribute_item
+kind	171	1	inner_attribute_item
+kind	172	1	attribute
+kind	173	1	mod_item
+kind	174	1	foreign_mod_item
+kind	175	1	declaration_list
+kind	176	1	struct_item
+kind	177	1	union_item
+kind	178	1	enum_item
+kind	179	1	enum_variant_list
+kind	180	1	enum_variant
+kind	181	1	field_declaration_list
+kind	182	1	field_declaration
+kind	183	1	ordered_field_declaration_list
+kind	184	1	extern_crate_declaration
+kind	185	1	const_item
+kind	186	1	static_item
+kind	187	1	type_item
+kind	188	1	function_item
+kind	189	1	function_signature_item
+kind	190	1	function_modifiers
+kind	191	1	where_clause
+kind	192	1	where_predicate
+kind	193	1	impl_item
+kind	194	1	trait_item
+kind	195	1	associated_type
+kind	196	1	trait_bounds
+kind	197	1	higher_ranked_trait_bound
+kind	198	1	removed_trait_bound
+kind	199	1	type_parameters
+kind	200	1	const_parameter
+kind	201	1	type_parameter
+kind	202	1	lifetime_parameter
+kind	203	1	let_declaration
+kind	204	1	use_declaration
+kind	206	1	scoped_use_list
+kind	207	1	use_list
+kind	208	1	use_as_clause
+kind	209	1	use_wildcard
+kind	210	1	parameters
+kind	211	1	self_parameter
+kind	212	1	variadic_parameter
+kind	213	1	parameter
+kind	214	1	extern_modifier
+kind	215	1	visibility_modifier
+kind	217	1	bracketed_type
+kind	218	1	qualified_type
+kind	219	1	lifetime
+kind	220	1	array_type
+kind	221	1	for_lifetimes
+kind	222	1	function_type
+kind	223	1	tuple_type
+kind	224	1	unit_type
+kind	225	1	generic_function
+kind	226	1	generic_type
+kind	227	1	generic_type_with_turbofish
+kind	228	1	bounded_type
+kind	229	1	use_bounds
+kind	230	1	type_arguments
+kind	231	1	type_binding
+kind	232	1	reference_type
+kind	233	1	pointer_type
+kind	234	1	never_type
+kind	235	1	abstract_type
+kind	236	1	dynamic_type
+kind	239	1	macro_invocation
+kind	243	1	scoped_identifier
+kind	245	1	scoped_type_identifier
+kind	246	1	range_expression
+kind	247	1	unary_expression
+kind	248	1	try_expression
+kind	249	1	reference_expression
+kind	250	1	binary_expression
+kind	251	1	assignment_expression
+kind	252	1	compound_assignment_expr
+kind	253	1	type_cast_expression
+kind	254	1	return_expression
+kind	255	1	yield_expression
+kind	256	1	call_expression
+kind	257	1	arguments
+kind	258	1	array_expression
+kind	259	1	parenthesized_expression
+kind	260	1	tuple_expression
+kind	261	1	unit_expression
+kind	262	1	struct_expression
+kind	263	1	field_initializer_list
+kind	264	1	shorthand_field_initializer
+kind	265	1	field_initializer
+kind	266	1	base_field_initializer
+kind	267	1	if_expression
+kind	268	1	let_condition
+kind	271	1	else_clause
+kind	272	1	match_expression
+kind	273	1	match_block
+kind	274	1	match_arm
+kind	276	1	match_pattern
+kind	277	1	while_expression
+kind	278	1	loop_expression
+kind	279	1	for_expression
+kind	280	1	const_block
+kind	281	1	closure_expression
+kind	282	1	closure_parameters
+kind	283	1	label
+kind	284	1	break_expression
+kind	285	1	continue_expression
+kind	286	1	index_expression
+kind	287	1	await_expression
+kind	288	1	field_expression
+kind	289	1	unsafe_block
+kind	290	1	async_block
+kind	291	1	gen_block
+kind	292	1	try_block
+kind	293	1	block
+kind	295	1	generic_pattern
+kind	296	1	tuple_pattern
+kind	297	1	slice_pattern
+kind	298	1	tuple_struct_pattern
+kind	299	1	struct_pattern
+kind	300	1	field_pattern
+kind	301	1	remaining_field_pattern
+kind	302	1	mut_pattern
+kind	303	1	range_pattern
+kind	304	1	ref_pattern
+kind	305	1	captured_pattern
+kind	306	1	reference_pattern
+kind	307	1	or_pattern
+kind	310	1	negative_literal
+kind	311	1	string_literal
+kind	312	1	raw_string_literal
+kind	313	1	boolean_literal
+kind	314	1	line_comment
+kind	318	1	block_comment
+kind	351	1	field_identifier
+kind	352	1	let_chain
+kind	353	1	shorthand_field_identifier
+kind	354	1	type_identifier
+lookup	1	identifier	1
+lookup	0	;	2
+lookup	0	macro_rules!	3
+lookup	0	(	4
+lookup	0	)	5
+lookup	0	[	6
+lookup	0	]	7
+lookup	0	{	8
+lookup	0	}	9
+lookup	0	=>	10
+lookup	0	:	11
+lookup	0	$	12
+lookup	0	+	14
+lookup	0	*	15
+lookup	0	?	16
+lookup	0	block	17
+lookup	0	expr	18
+lookup	0	expr_2021	19
+lookup	0	ident	20
+lookup	0	item	21
+lookup	0	lifetime	22
+lookup	0	literal	23
+lookup	0	meta	24
+lookup	0	pat	25
+lookup	0	pat_param	26
+lookup	0	path	27
+lookup	0	stmt	28
+lookup	0	tt	29
+lookup	0	ty	30
+lookup	0	vis	31
+lookup	1	primitive_type	32
+lookup	0	-	49
+lookup	0	/	50
+lookup	0	%	51
+lookup	0	^	52
+lookup	0	!	53
+lookup	0	&	54
+lookup	0	|	55
+lookup	0	&&	56
+lookup	0	||	57
+lookup	0	<<	58
+lookup	0	>>	59
+lookup	0	+=	60
+lookup	0	-=	61
+lookup	0	*=	62
+lookup	0	/=	63
+lookup	0	%=	64
+lookup	0	^=	65
+lookup	0	&=	66
+lookup	0	|=	67
+lookup	0	<<=	68
+lookup	0	>>=	69
+lookup	0	=	70
+lookup	0	==	71
+lookup	0	!=	72
+lookup	0	>	73
+lookup	0	<	74
+lookup	0	>=	75
+lookup	0	<=	76
+lookup	0	@	77
+lookup	0	_	78
+lookup	0	.	79
+lookup	0	..	80
+lookup	0	...	81
+lookup	0	..=	82
+lookup	0	,	83
+lookup	0	::	84
+lookup	0	->	85
+lookup	0	#	86
+lookup	0	'	87
+lookup	0	as	88
+lookup	0	async	89
+lookup	0	await	90
+lookup	0	break	91
+lookup	0	const	92
+lookup	0	continue	93
+lookup	0	default	94
+lookup	0	enum	95
+lookup	0	fn	96
+lookup	0	for	97
+lookup	0	gen	98
+lookup	0	if	99
+lookup	0	impl	100
+lookup	0	let	101
+lookup	0	loop	102
+lookup	0	match	103
+lookup	0	mod	104
+lookup	0	pub	105
+lookup	0	return	106
+lookup	0	static	107
+lookup	0	struct	108
+lookup	0	trait	109
+lookup	0	type	110
+lookup	0	union	111
+lookup	0	unsafe	112
+lookup	0	use	113
+lookup	0	where	114
+lookup	0	while	115
+lookup	0	extern	116
+lookup	0	ref	117
+lookup	0	else	118
+lookup	0	in	119
+lookup	0	dyn	121
+lookup	1	mutable_specifier	122
+lookup	0	raw	123
+lookup	0	yield	124
+lookup	0	move	125
+lookup	0	try	126
+lookup	1	integer_literal	127
+lookup	0	"	147
+lookup	1	char_literal	129
+lookup	1	escape_sequence	130
+lookup	0	true	131
+lookup	0	false	132
+lookup	0	//	133
+lookup	0	/*	139
+lookup	0	*/	140
+lookup	1	shebang	141
+lookup	1	self	142
+lookup	1	super	143
+lookup	1	crate	144
+lookup	1	metavariable	145
+lookup	1	string_content	146
+lookup	1	float_literal	151
+lookup	1	outer_doc_comment_marker	152
+lookup	1	inner_doc_comment_marker	153
+lookup	1	doc_comment	155
+lookup	1	source_file	157
+lookup	1	empty_statement	159
+lookup	1	expression_statement	160
+lookup	1	macro_definition	161
+lookup	1	macro_rule	162
+lookup	1	token_tree_pattern	164
+lookup	1	token_binding_pattern	165
+lookup	1	token_repetition_pattern	166
+lookup	1	fragment_specifier	167
+lookup	1	token_tree	168
+lookup	1	token_repetition	169
+lookup	1	attribute_item	170
+lookup	1	inner_attribute_item	171
+lookup	1	attribute	172
+lookup	1	mod_item	173
+lookup	1	foreign_mod_item	174
+lookup	1	declaration_list	175
+lookup	1	struct_item	176
+lookup	1	union_item	177
+lookup	1	enum_item	178
+lookup	1	enum_variant_list	179
+lookup	1	enum_variant	180
+lookup	1	field_declaration_list	181
+lookup	1	field_declaration	182
+lookup	1	ordered_field_declaration_list	183
+lookup	1	extern_crate_declaration	184
+lookup	1	const_item	185
+lookup	1	static_item	186
+lookup	1	type_item	187
+lookup	1	function_item	188
+lookup	1	function_signature_item	189
+lookup	1	function_modifiers	190
+lookup	1	where_clause	191
+lookup	1	where_predicate	192
+lookup	1	impl_item	193
+lookup	1	trait_item	194
+lookup	1	associated_type	195
+lookup	1	trait_bounds	196
+lookup	1	higher_ranked_trait_bound	197
+lookup	1	removed_trait_bound	198
+lookup	1	type_parameters	199
+lookup	1	const_parameter	200
+lookup	1	type_parameter	201
+lookup	1	lifetime_parameter	202
+lookup	1	let_declaration	203
+lookup	1	use_declaration	204
+lookup	1	scoped_use_list	206
+lookup	1	use_list	207
+lookup	1	use_as_clause	208
+lookup	1	use_wildcard	209
+lookup	1	parameters	210
+lookup	1	self_parameter	211
+lookup	1	variadic_parameter	212
+lookup	1	parameter	213
+lookup	1	extern_modifier	214
+lookup	1	visibility_modifier	215
+lookup	1	bracketed_type	217
+lookup	1	qualified_type	218
+lookup	1	lifetime	219
+lookup	1	array_type	220
+lookup	1	for_lifetimes	221
+lookup	1	function_type	222
+lookup	1	tuple_type	223
+lookup	1	unit_type	224
+lookup	1	generic_function	225
+lookup	1	generic_type	226
+lookup	1	generic_type_with_turbofish	227
+lookup	1	bounded_type	228
+lookup	1	use_bounds	229
+lookup	1	type_arguments	230
+lookup	1	type_binding	231
+lookup	1	reference_type	232
+lookup	1	pointer_type	233
+lookup	1	never_type	234
+lookup	1	abstract_type	235
+lookup	1	dynamic_type	236
+lookup	1	macro_invocation	239
+lookup	1	scoped_identifier	243
+lookup	1	scoped_type_identifier	245
+lookup	1	range_expression	246
+lookup	1	unary_expression	247
+lookup	1	try_expression	248
+lookup	1	reference_expression	249
+lookup	1	binary_expression	250
+lookup	1	assignment_expression	251
+lookup	1	compound_assignment_expr	252
+lookup	1	type_cast_expression	253
+lookup	1	return_expression	254
+lookup	1	yield_expression	255
+lookup	1	call_expression	256
+lookup	1	arguments	257
+lookup	1	array_expression	258
+lookup	1	parenthesized_expression	259
+lookup	1	tuple_expression	260
+lookup	1	unit_expression	261
+lookup	1	struct_expression	262
+lookup	1	field_initializer_list	263
+lookup	1	shorthand_field_initializer	264
+lookup	1	field_initializer	265
+lookup	1	base_field_initializer	266
+lookup	1	if_expression	267
+lookup	1	let_condition	268
+lookup	1	else_clause	271
+lookup	1	match_expression	272
+lookup	1	match_block	273
+lookup	1	match_arm	274
+lookup	1	match_pattern	276
+lookup	1	while_expression	277
+lookup	1	loop_expression	278
+lookup	1	for_expression	279
+lookup	1	const_block	280
+lookup	1	closure_expression	281
+lookup	1	closure_parameters	282
+lookup	1	label	283
+lookup	1	break_expression	284
+lookup	1	continue_expression	285
+lookup	1	index_expression	286
+lookup	1	await_expression	287
+lookup	1	field_expression	288
+lookup	1	unsafe_block	289
+lookup	1	async_block	290
+lookup	1	gen_block	291
+lookup	1	try_block	292
+lookup	1	block	293
+lookup	1	generic_pattern	295
+lookup	1	tuple_pattern	296
+lookup	1	slice_pattern	297
+lookup	1	tuple_struct_pattern	298
+lookup	1	struct_pattern	299
+lookup	1	field_pattern	300
+lookup	1	remaining_field_pattern	301
+lookup	1	mut_pattern	302
+lookup	1	range_pattern	303
+lookup	1	ref_pattern	304
+lookup	1	captured_pattern	305
+lookup	1	reference_pattern	306
+lookup	1	or_pattern	307
+lookup	1	negative_literal	310
+lookup	1	string_literal	311
+lookup	1	raw_string_literal	312
+lookup	1	boolean_literal	313
+lookup	1	line_comment	314
+lookup	1	block_comment	318
+lookup	1	field_identifier	351
+lookup	1	let_chain	352
+lookup	1	shorthand_field_identifier	353
+lookup	1	type_identifier	354
+field	1	alias
+field	2	alternative
+field	3	argument
+field	4	arguments
+field	5	body
+field	6	bounds
+field	7	condition
+field	8	consequence
+field	9	default_type
+field	10	doc
+field	11	element
+field	12	field
+field	13	function
+field	14	inner
+field	15	left
+field	16	length
+field	17	list
+field	18	macro
+field	19	name
+field	20	operator
+field	21	outer
+field	22	parameters
+field	23	path
+field	24	pattern
+field	25	return_type
+field	26	right
+field	27	trait
+field	28	type
+field	29	type_arguments
+field	30	type_parameters
+field	31	value
+class	216	_type
+class	238	_expression
+class	294	_pattern
+class	308	_literal
+class	309	_literal_pattern
+supertype	_type	216
+supertype	_expression	238
+supertype	_pattern	294
+supertype	_literal	308
+supertype	_literal_pattern	309

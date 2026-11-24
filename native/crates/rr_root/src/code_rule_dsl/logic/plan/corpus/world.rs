@@ -458,21 +458,6 @@ impl World {
         out
     }
 
-    /// Whether each of `consulted` (`consulted`) is as it was: the requests would be answered alike. Phase 0's
-    /// observer answers each by a `stat`, reading only what changed.
-    pub(super) fn still(&mut self, consulted: &[(String, String, String)]) -> bool {
-        self.changed(consulted).is_none()
-    }
-
-    /// The first of `consulted` that would be answered otherwise now, with its answer now (`None` for a kind of
-    /// request no longer asked).
-    pub(super) fn changed<'c>(&mut self, consulted: &'c [(String, String, String)]) -> Option<(&'c (String, String, String), Option<String>)> {
-        consulted.iter().find_map(|c| {
-            let now = self.observation(&c.0, &c.1);
-            (now.as_ref() != Some(&c.2)).then_some((c, now))
-        })
-    }
-
     pub(super) fn observation(&mut self, what: &str, path: &str) -> Option<String> {
         Some(match what {
             "dir" => listing_digest(&self.dir(path)),
@@ -578,27 +563,30 @@ pub fn bytes_digests_held(paths: &[PathBuf], hold: Option<&super::texts::Sources
             .zip(paths.par_iter())
             .enumerate()
             .map(|(i, (s, path))| match s {
-                DigestStep::Read(r) if representatives[i] == i => {
-                    let bytes = r.read()?;
+                // Read into the home the builders read it in (a slab's room where a device reads sources, decision
+                // 0353 step 7) when it is kept for them; else a vector, hashed and dropped.
+                DigestStep::Read(r) if representatives[i] == i && hold.is_some() => {
+                    let bytes = r.read_placed(&crate::code_rule_dsl::tape::placed::placer)?;
                     let hashed = DigestRead::hashed(&bytes);
                     let mut git_text = None;
                     if let Some(hold) = hold {
                         if let Some(s) = r.stat() {
                             hold.keep(path, crate::content_store::FileStat { size: s.size, mtime_ns: s.mtime_ns, inode: s.ino }, bytes);
                         } else {
-                            git_text = Some(bytes);
+                            git_text = crate::code_rule_dsl::tape::Text::new(bytes).ok().map(std::sync::Arc::new);
                         }
                     }
                     Some((hashed, git_text))
                 }
+                DigestStep::Read(r) if representatives[i] == i => Some((DigestRead::hashed(&r.read()?), None)),
                 _ => None,
             })
             .collect()
     });
     if let Some(hold) = hold {
         for (path, &first) in paths.iter().zip(&representatives) {
-            if let Some((_, Some(bytes))) = &hashed[first] {
-                hold.keep_git(path, bytes);
+            if let Some((_, Some(text))) = &hashed[first] {
+                hold.keep_git(path, text);
             }
         }
     }

@@ -1,7 +1,6 @@
 # 0016: Work that outgrows a workspace is split along an axis it is independent on; S7's gate lists known differences by name
 
-Status: accepted
-Date: 2026-10-31
+Status: built (audited 2026-11-23). Accepted Date: 2026-10-31
 
 ## Question
 06 S7 ran the slice on real files: the pack's fixtures plus 100 files of CPython's standard

@@ -11,7 +11,7 @@ default = ["rerail-matcher/default", "rerail-adapters/default", "rerail-facts/de
 headless = ["napi-derive/noop", "rerail-matcher/headless", "rerail-adapters/headless", "rerail-facts/headless", "rerail-lang/headless"]
 code-rule-profile = ["rerail-matcher/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus"]
-test-hooks = ["rerail-matcher/test-hooks", "rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-blocks/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-matcher/test-hooks", "rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-blocks/test-hooks", "dep:tempfile"]
 
 [dependencies]
 ast-grep-core = "=0.51.0"
@@ -43,7 +43,6 @@ rerail-matcher = { path = "../matcher", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-registry = { path = "../registry" }
 rerail-rr-syntax = { path = "../rr_syntax" }
-rerail-store = { path = "../store" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.189"

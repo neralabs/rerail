@@ -21,7 +21,7 @@ use ::bitlex::syntax::{Gram, Stmt, TokenElem};
 // Mounted by `rerail-bitlex` from the compiler's folder (`#[path]`): its submodule is found beside it.
 #[path = "bitlex_rust/one_loop.rs"]
 mod one_loop;
-pub use one_loop::tier2_loop;
+pub use one_loop::{tier2_loop, tier2_loop_reads};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -106,6 +106,9 @@ struct G<'a> {
     /// `refuse M in L …`: each level's refused marks, their bits in a record's code: a token the level takes with one
     /// refuses the file (`P::refusing`).
     refusing: HashMap<String, u32>,
+    /// The mark bits the code written so far reads of a record's code (`16 + bit`): tier 1 writes only these where its
+    /// loop reads the bytes (decision 0623).
+    reads: std::cell::Cell<u32>,
     /// The field ids past a key's 6 bits, each given the slot `63 - its place` (`field_id`).
     own_fields: std::cell::RefCell<Vec<u16>>,
     /// The largest field id under 64 named: the slots must be above it.
@@ -119,6 +122,10 @@ struct G<'a> {
     kind_tests: std::cell::RefCell<std::collections::BTreeSet<String>>,
     /// Each rule's follow (`follow`), once found.
     follows: std::cell::RefCell<Option<HashMap<String, Vec<usize>>>>,
+    /// Where `open_mark` can hold (`marks`), for the token takes that need not ask it (`takes`): the words a mark no
+    /// rule takes may hold at, and the token kinds whose test (`at_K`) passes at none of them. None: a mark may hold at
+    /// any token.
+    mark_words: std::cell::RefCell<Option<(HashSet<String>, HashSet<String>)>>,
 }
 
 /// `s`'s lines at `p`.
@@ -233,7 +240,8 @@ impl<'a> G<'a> {
                 _ => {}
             }
         }
-        G { x, rules, order, flags, readings, remember, provisional, refusing, own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default() }
+        let reads = refusing.values().filter(|&&b| b != u32::MAX).fold(0, |a, &b| a | b) | x.extra_bits.iter().fold(0, |a, (b, _)| a | 1 << b);
+        G { x, rules, order, flags, readings, remember, provisional, refusing, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), kind_tests: Default::default(), follows: Default::default(), mark_words: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -407,10 +415,16 @@ impl<'a> G<'a> {
     /// The code of a decision among `arms` (each its tests and its code, unindented), as the lean
     /// parser decides at a token: the marks first, in their order (a mark is a token of no width
     /// before its token, tier 2's machine sees it first), consecutive ones that go to one arm one
-    /// test; then a `match` on the word, a kind's test a guard of its arm. `exits`: marks that
-    /// leave the decision (`exit`, the code after it takes them, or the level ends there). None
-    /// passes: `none`. An arm reached by two tests apart is numbered, its code written once.
-    fn decide(&self, arms: &[(Vec<First>, String)], exits: &[usize], unmarked: &[usize], exit: &str, none: &str, pad: &str) -> String {
+    /// test; then a `match` on the word, a kind's test a guard of its arm. `ex`: marks that
+    /// leave the decision (`exit`, the code after it takes them, or the level ends there,
+    /// `exits_ending`). None passes: `none`. An arm reached by two tests apart is numbered, its
+    /// code written once. Exits where the level ends at a hidden mark that ends levels and has
+    /// questions (`gated`) are tested only where the caller's level is the mark's (`asks`):
+    /// elsewhere (inside parentheses) the mark is passed, as the lean parser asks `asi` only where
+    /// `stmt` is set.
+    fn decide(&self, arms: &[(Vec<First>, String)], ex: &[(usize, bool)], unmarked: &[usize], exit: &str, none: &str, pad: &str) -> String {
+        let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
+        let gated = self.gated(ex);
         let n = arms.len();
         let mut marks: Vec<(usize, Option<String>, usize)> = Vec::new();
         let mut words: Vec<(u8, Option<String>, usize)> = Vec::new();
@@ -425,7 +439,7 @@ impl<'a> G<'a> {
                 }
             }
         }
-        for &m in exits {
+        for &m in &exits {
             if !marks.iter().any(|x| x.0 == m) {
                 marks.push((m, None, n));
             }
@@ -439,6 +453,7 @@ impl<'a> G<'a> {
         for (m, f, t) in &marks {
             let c = guard(f, format!("self.m_{}()", ident(&self.x.marks[*m].name)));
             let c = if *t == n && unmarked.contains(m) { format!("!self.marked && {c}") } else { c };
+            let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
             match mg.last_mut() {
                 Some((cs, tt)) if tt == t => cs.push(c),
                 _ => mg.push((vec![c], *t)),
@@ -514,10 +529,8 @@ impl<'a> G<'a> {
         }
         let mut out = format!("{pad}let arm: usize;\n{sel}{pad}match arm {{\n");
         let (q, r) = (format!("{pad}    "), format!("{pad}        "));
-        for (t, &u) in uses.iter().enumerate().take(n + 1) {
-            if u > 0 {
-                let _ = write!(out, "{q}{t} => {{\n{}{q}}}\n", indent(&body_of(t), &r));
-            }
+        for (t, _) in uses.iter().enumerate().filter(|&(_, &u)| u > 0) {
+            let _ = write!(out, "{q}{t} => {{\n{}{q}}}\n", indent(&body_of(t), &r));
         }
         let _ = write!(out, "{q}_ => {{\n{}{q}}}\n{pad}}}\n", indent(none, &r));
         out
@@ -576,6 +589,13 @@ impl<'a> G<'a> {
         let first: Vec<usize> = fr.iter().filter_map(|t| if let Test::Mark(m) = t.0 { Some(m) } else { None }).collect();
         let ending = self.ending();
         Ok(self.follow(rule)?.into_iter().filter(|m| !first.contains(m) && ending.contains(m) && self.x.marks[*m].hidden).collect())
+    }
+
+    /// The exits of `ex` where the level ends at a hidden mark that ends levels and has
+    /// questions: those `decide` tests only where `asks` has the mark (`gated`).
+    fn gated(&self, ex: &[(usize, bool)]) -> Vec<usize> {
+        let ending = self.ending();
+        ex.iter().filter(|e| e.1 && ending.contains(&e.0) && self.x.marks[e.0].hidden && self.asks(e.0)).map(|e| e.0).collect()
     }
 
     /// Whether mark `m`'s name has questions a decision asks (`refuses`, `loses`).
@@ -727,20 +747,7 @@ impl<'a> G<'a> {
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) && self.nested(n) => {
                 // A level's call: the questions it asks where it may end at a mark, those of the
                 // level it returns to (set where that takes the mark, kept where it ends there too).
-                let ex = self.exits_ending(rest, rule)?;
-                let (mut set, mut keep) = (0u64, 0u64);
-                for (m, mark) in self.x.marks.iter().enumerate() {
-                    if !self.asks(m) {
-                        continue;
-                    }
-                    let first = self.mark_of(&mark.name).unwrap_or(m);
-                    match ex.iter().find(|e| e.0 == first) {
-                        Some((_, false)) => set |= 1 << first,
-                        Some((_, true)) => keep |= 1 << first,
-                        None => {}
-                    }
-                }
-                let all: u64 = (0..self.x.marks.len()).filter(|&m| self.asks(m)).fold(0, |a, m| a | 1 << self.mark_of(&self.x.marks[m].name).unwrap_or(m));
+                let (set, keep, all) = self.call_asks(rest, rule)?;
                 let call = if all == 0 {
                     format!("{pad}self.{}()?;\n", rule_fn(n))
                 } else {
@@ -765,10 +772,9 @@ impl<'a> G<'a> {
             Gram::Opt(a) => {
                 let arms = self.arms(a, rest, rule)?;
                 let ex = self.exits_ending(rest, rule)?;
-                let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, "", "", pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &ex, &unmarked, "", "", pad)
             }
             Gram::Star(a) | Gram::Plus(a) => {
                 let mut out = String::new();
@@ -779,10 +785,9 @@ impl<'a> G<'a> {
                 let r: Vec<&Gram> = std::iter::once(g).chain(rest.iter().copied()).collect();
                 let arms = self.arms(a, &r, rule)?;
                 let ex = self.exits_ending(rest, rule)?;
-                let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &exits, &unmarked, "break;\n", "break;\n", &deeper);
+                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &ex, &unmarked, "break;\n", "break;\n", &deeper);
                 let _ = write!(out, "{pad}loop {{\n{d}{pad}}}\n");
                 out
             }
@@ -794,10 +799,9 @@ impl<'a> G<'a> {
                     None => "return self.refuse();\n".to_owned(),
                 };
                 let ex = if empty.is_some() { self.exits_ending(rest, rule)? } else { Vec::new() };
-                let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = if empty.is_some() { self.after_mark(rest, rule)? } else { Vec::new() };
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &none, &none, pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &ex, &unmarked, &none, &none, pad)
             }
             Gram::Field(f, a) => {
                 let mut out = self.code(a, rest, rule, pad)?;
@@ -861,6 +865,27 @@ impl<'a> G<'a> {
         })
     }
 
+    /// A level's call before `rest` in `rule`: the questions it asks where it may end at a mark, set where its caller
+    /// takes the mark and kept where the caller ends there too; and every mark's that has questions (none: no call
+    /// saves them).
+    fn call_asks(&self, rest: &[&Gram], rule: &str) -> Result<(u64, u64, u64), String> {
+        let ex = self.exits_ending(rest, rule)?;
+        let (mut set, mut keep) = (0u64, 0u64);
+        for (m, mark) in self.x.marks.iter().enumerate() {
+            if !self.asks(m) {
+                continue;
+            }
+            let first = self.mark_of(&mark.name).unwrap_or(m);
+            match ex.iter().find(|e| e.0 == first) {
+                Some((_, false)) => set |= 1 << first,
+                Some((_, true)) => keep |= 1 << first,
+                None => {}
+            }
+        }
+        let all: u64 = (0..self.x.marks.len()).filter(|&m| self.asks(m)).fold(0, |a, m| a | 1 << self.mark_of(&self.x.marks[m].name).unwrap_or(m));
+        Ok((set, keep, all))
+    }
+
     /// A kind a wrap or relabel gives its node: a `remember` choice's name is its level's word.
     fn moved_kind(&self, name: &str) -> Result<String, String> {
         if self.remember.iter().any(|r| r == name) { Ok("self.word".to_owned()) } else { self.kind_const(name) }
@@ -916,9 +941,9 @@ impl<'a> G<'a> {
     }
 
     fn rule(&self, name: &str) -> Result<String, String> {
-        let (body, node, nested, whole) = match self.rules[name] {
-            Stmt::Node { body, nested, whole, .. } => (body, true, *nested, *whole),
-            Stmt::Choice { body, nested, .. } => (body, false, *nested, false),
+        let (body, node, nested, whole, padded) = match self.rules[name] {
+            Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
+            Stmt::Choice { body, nested, .. } => (body, false, *nested, false, false),
             _ => unreachable!(),
         };
         let root = self.order.first() == Some(&name);
@@ -929,7 +954,7 @@ impl<'a> G<'a> {
         if root {
             let _ = writeln!(out, "        self.open_root({});", self.kind_const(name)?);
             out.push_str(&self.code(body, &[], name, "        ")?);
-            let _ = writeln!(out, "        self.close_root({whole})");
+            let _ = writeln!(out, "        self.close_root({whole}, {padded})");
         } else {
             if node {
                 // A kind of the grammar's own (no tape kind, always retagged inside): a placeholder until its retag.
@@ -971,7 +996,7 @@ impl<'a> G<'a> {
                 TokenElem::End => pos.push(format!("{j} >= self.n")),
                 TokenElem::Without(m) => and.push(format!("!self.bit_at({j}, {})", self.bit_of(m)?)),
                 TokenElem::With(m) => and.push(format!("self.bit_at({j}, {})", self.bit_of(m)?)),
-                TokenElem::Starting(bytes) => and.push(format!("({j} < self.n && matches!(self.src[self.starts[{j}] as usize], {}))", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
+                TokenElem::Starting(bytes) => and.push(format!("({j} < self.n && matches!(self.src[self.recs[{j}].start as usize], {}))", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
                 TokenElem::Many(..) => return Err("a run inside an element".into()),
             }
         }
@@ -983,8 +1008,35 @@ impl<'a> G<'a> {
     }
 
     fn bit_of(&self, m: &str) -> Result<String, String> {
-        let k = self.x.marks.iter().find(|x| x.name == m && x.bit.is_some()).ok_or_else(|| format!("mark {m}: no bit in the code"))?;
-        Ok(format!("{}", k.bit.expect("a bit")))
+        Ok(self.bit_num(m)?.to_string())
+    }
+
+    /// Mark bit `b` read of a record's code (`reads`).
+    fn read_bit(&self, b: u32) {
+        self.reads.set(self.reads.get() | 1 << b);
+    }
+
+    /// The words a run's first token must be, where its first element tests only words (`.` or `@`): else none.
+    fn first_words(&self, seq: &[Vec<TokenElem>]) -> Option<Vec<String>> {
+        let mut ws = Vec::new();
+        for x in seq.first()? {
+            match x {
+                TokenElem::Word(w) => ws.push(format!("w::{}", self.word_const(self.word_of(&String::from_utf8_lossy(w))?))),
+                // A further test of the token only narrows the words.
+                TokenElem::Without(_) | TokenElem::With(_) | TokenElem::Starting(_) => {}
+                _ => return None,
+            }
+        }
+        (!ws.is_empty()).then_some(ws)
+    }
+
+    /// The token before the token a run starts at, as its first function's `prev`: found (a scan back over the extras)
+    /// only where the run's first element reads it, a `(C)*` with an ending; else none (`self.n`), as no element reads it.
+    fn run_prev(seq: &[Vec<TokenElem>]) -> &'static str {
+        match seq.first().map(Vec::as_slice) {
+            Some([TokenElem::Many(_, _, ending)]) if !ending.is_empty() => "self.prev_tok(self.i)",
+            _ => "self.n",
+        }
     }
 
     /// A run of token elements from `j` (the token before: `prev`), as a function's body: whether
@@ -1027,18 +1079,18 @@ impl<'a> G<'a> {
         let mut and = Vec::new();
         for c in choices {
             match c {
-                TokenElem::Kind(k) if self.x.extras.contains(k) => pos.push(format!("(is_extra(self.codes[{j}]) && extra_kind(self.codes[{j}]) == {})", self.kind_const(k)?)),
+                TokenElem::Kind(k) if self.x.extras.contains(k) => pos.push(format!("(is_extra(self.recs[{j}].code) && extra_kind(self.recs[{j}].code) == {})", self.kind_const(k)?)),
                 TokenElem::Kind(k) => {
                     self.kind_tests.borrow_mut().insert(k.clone());
-                    pos.push(format!("(!is_extra(self.codes[{j}]) && self.at_{}_rec({j}))", ident(k)));
+                    pos.push(format!("(!is_extra(self.recs[{j}].code) && self.at_{}_rec({j}))", ident(k)));
                 }
                 TokenElem::Word(w) => match self.word_of(&String::from_utf8_lossy(w)) {
-                    Some(id) => pos.push(format!("(!is_extra(self.codes[{j}]) && self.codes[{j}] >> 8 & 0xff == w::{})", self.word_const(id))),
+                    Some(id) => pos.push(format!("(!is_extra(self.recs[{j}].code) && self.recs[{j}].code >> 8 & 0xff == w::{})", self.word_const(id))),
                     None => pos.push("false".into()),
                 },
-                TokenElem::With(m) => and.push(format!("self.codes[{j}] >> {} & 1 == 1", 16 + self.bit_num(m)?)),
-                TokenElem::Without(m) => and.push(format!("self.codes[{j}] >> {} & 1 == 0", 16 + self.bit_num(m)?)),
-                TokenElem::Starting(bytes) => and.push(format!("matches!(self.src[self.starts[{j}] as usize], {})", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
+                TokenElem::With(m) => and.push(format!("self.marks_hold({j}, 1 << {})", self.bit_num(m)?)),
+                TokenElem::Without(m) => and.push(format!("!self.marks_hold({j}, 1 << {})", self.bit_num(m)?)),
+                TokenElem::Starting(bytes) => and.push(format!("matches!(self.src[self.recs[{j}].start as usize], {})", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
                 TokenElem::End | TokenElem::Not(_) | TokenElem::Many(..) => return Err(format!("a gap question's element {c:?}")),
             }
         }
@@ -1052,7 +1104,9 @@ impl<'a> G<'a> {
     }
 
     fn bit_num(&self, m: &str) -> Result<u32, String> {
-        Ok(u32::from(self.x.marks.iter().find(|x| x.name == m && x.bit.is_some()).and_then(|x| x.bit).ok_or_else(|| format!("mark {m}: no bit in the code"))?))
+        let b = u32::from(self.x.marks.iter().find(|x| x.name == m && x.bit.is_some()).and_then(|x| x.bit).ok_or_else(|| format!("mark {m}: no bit in the code"))?);
+        self.read_bit(b);
+        Ok(b)
     }
 
     /// A gap question as a function of the token's record (`gap_pattern_holds`): `after`'s
@@ -1114,6 +1168,10 @@ impl<'a> G<'a> {
         }
         let mut done: HashSet<&str> = HashSet::new();
         let mut fns = String::new();
+        // Each mark's guard words (`first_words`), by its name: none where a definition starts otherwise.
+        let mut guards: std::collections::BTreeMap<String, Option<Vec<String>>> = std::collections::BTreeMap::new();
+        // Each mark's bit where its test reads only the tokens (`open_mark` asks it with no cache).
+        let mut direct: std::collections::BTreeMap<String, Option<usize>> = std::collections::BTreeMap::new();
         for (order, m) in self.x.marks.iter().enumerate() {
             if !done.insert(m.name.as_str()) {
                 continue;
@@ -1121,18 +1179,25 @@ impl<'a> G<'a> {
             let n = ident(&m.name);
             let defs: Vec<(usize, &Mark)> = self.x.marks.iter().enumerate().filter(|(_, x)| x.name == m.name).collect();
             let mut holds = Vec::new();
+            // The words the token must be for any definition to hold: a guard before the mark's cache (`held`).
+            let mut firsts: Option<Vec<String>> = Some(Vec::new());
             for (d, (_, def)) in defs.iter().enumerate() {
                 let mut c = Vec::new();
+                match (def.tokens.and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
+                    (Some(ws), Some(all)) => all.extend(ws),
+                    _ => firsts = None,
+                }
                 if let Some((before, seq)) = def.tokens {
                     let pat = format!("pat_{n}_{d}");
                     self.run(seq, &pat, &mut fns)?;
-                    c.push(format!("self.{pat}_0(self.i, self.prev_tok(self.i))"));
+                    c.push(format!("self.{pat}_0(self.i, {})", Self::run_prev(seq)));
                     if !before.is_empty() {
                         let p = self.elem(before, "p")?;
                         let negated = matches!(before, [TokenElem::Not(_)]);
                         c.push(if negated { format!("{{ let p = self.prev_tok(self.i); p >= self.n || {p} }}") } else { format!("{{ let p = self.prev_tok(self.i); p < self.n && {p} }}") });
                     }
                 } else if let Some(b) = def.bit {
+                    self.read_bit(u32::from(b));
                     if def.word != 0 {
                         c.push(format!("self.word() == {}", def.word));
                     }
@@ -1151,7 +1216,7 @@ impl<'a> G<'a> {
                 for (e, (unless, seq)) in def.next.iter().enumerate() {
                     let pat = format!("next_{n}_{d}_{e}");
                     self.run(seq, &pat, &mut fns)?;
-                    let call = format!("self.{pat}_0(self.i, self.prev_tok(self.i))");
+                    let call = format!("self.{pat}_0(self.i, {})", Self::run_prev(seq));
                     if *unless { no.push(call) } else { yes.push(call) }
                 }
                 for x in no {
@@ -1162,7 +1227,20 @@ impl<'a> G<'a> {
                 }
                 holds.push(format!("({})", c.join(" && ")));
             }
-            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    fn m_{n}(&mut self) -> bool {{\n        self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
+            guards.insert(n.clone(), firsts.clone());
+            // A test of the tokens alone (no state the rules set): `open_mark` asks it afresh, not through the cache.
+            let body = holds.join(" || ");
+            let pure = ["self.flags", "self.asks", "self.word ", "self.word)", "self.refusing", "self.taken", "self.marked"].iter().all(|s| !body.contains(s));
+            direct.insert(n.clone(), pure.then_some(order));
+            let guard = match firsts {
+                Some(mut ws) if !ws.is_empty() => {
+                    ws.sort();
+                    ws.dedup();
+                    format!("matches!(self.word(), {}) && ", ws.join(" | "))
+                }
+                _ => String::new(),
+            };
+            let _ = writeln!(out, "    /// Mark `{}` holds at the token, not taken there; once a token (`held`).\n    #[inline]\n    fn m_{n}(&mut self) -> bool {{\n        {guard}self.taken >> {order} & 1 == 0 && self.held({order}, Self::h_{n})\n    }}\n\n    #[inline]\n    fn h_{n}(&self) -> bool {{\n        {}\n    }}\n", m.name, holds.join(" || "));
             // Taken: `refuses taken` asked; the extras before its bit settled; `drops` asked.
             let qs = |f: fn(&Mark<'a>) -> &'a [::bitlex::syntax::GapPattern]| -> Vec<::bitlex::syntax::GapPattern> { defs.iter().flat_map(|(_, d)| f(d).iter().cloned()).collect() };
             let mut take = String::new();
@@ -1174,6 +1252,7 @@ impl<'a> G<'a> {
             if m.settles
                 && let Some(b) = m.bit
             {
+                self.read_bit(u32::from(b));
                 let _ = writeln!(take, "        self.settle({b});");
             }
             let drops = qs(|d| d.drops);
@@ -1186,8 +1265,10 @@ impl<'a> G<'a> {
             // Asked wherever a decision tests it (`refuses`, then `loses`): at a level that takes
             // it, always; where the level may end at it (`end`), where the caller's level is the
             // mark's (`asks`, the lean parser's `stmt`).
-            let (refuses, loses) = (qs(|d| d.refuses), qs(|d| d.loses));
-            if !refuses.is_empty() || !loses.is_empty() {
+            // `loses since`: the first extra pending moved (`move_first`), apart from the others.
+            let (refuses, all) = (qs(|d| d.refuses), qs(|d| d.loses));
+            let (moves, loses): (Vec<_>, Vec<_>) = all.into_iter().partition(|q| q.since);
+            if !refuses.is_empty() || !loses.is_empty() || !moves.is_empty() {
                 let mut ask = String::new();
                 if !refuses.is_empty() {
                     let t = self.gap_test(&refuses, &format!("refuses_{n}"), true, &mut fns)?;
@@ -1197,15 +1278,56 @@ impl<'a> G<'a> {
                     let t = self.gap_test(&loses, &format!("loses_{n}"), false, &mut fns)?;
                     let _ = write!(ask, "        if {t} {{\n            self.lose_pending();\n        }}\n");
                 }
+                if !moves.is_empty() {
+                    let t = self.gap_test(&moves, &format!("moves_{n}"), false, &mut fns)?;
+                    let _ = write!(ask, "        if {t} {{\n            self.move_first();\n        }}\n");
+                }
                 let _ = writeln!(out, "    /// Mark `{}`'s questions, where a decision tests it (`end`: where the level may end at it).\n    fn ask_{n}(&mut self, end: bool) -> R {{\n        if end && self.asks >> {order} & 1 == 0 {{\n            return Ok(());\n        }}\n{ask}        Ok(())\n    }}\n", m.name);
             }
         }
         out.push_str(&fns);
         // The marks no rule may pass: where one holds at a token taken, the file is refused.
-        let open: Vec<String> = self.x.marks.iter().filter(|m| !m.hidden).map(|m| format!("self.m_{}()", ident(&m.name))).collect::<HashSet<_>>().into_iter().collect();
-        let mut open = open;
+        // Asked by the token's word, as the lean parser's: a mark whose runs start with words only at those words; the
+        // others at every token.
+        let mut open: Vec<String> = self.x.marks.iter().filter(|m| !m.hidden).map(|m| ident(&m.name)).collect::<HashSet<_>>().into_iter().collect();
         open.sort();
-        let _ = writeln!(out, "    /// A mark no rule takes holds at the token (a mark not hidden).\n    fn open_mark(&mut self) -> bool {{\n        {}\n    }}\n", if open.is_empty() { "false".to_owned() } else { open.join(" || ") });
+        // A mark whose test reads only the tokens, asked once a token taken: its test, as its cache would give it.
+        let call = |n: &String| match direct.get(n) {
+            Some(Some(o)) => format!("(self.taken >> {o} & 1 == 0 && self.h_{n}())"),
+            _ => format!("self.m_{n}()"),
+        };
+        let always: Vec<String> = open.iter().filter(|n| !matches!(guards.get(*n), Some(Some(_)))).map(call).collect();
+        let mut by_word: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+        for n in &open {
+            if let Some(Some(ws)) = guards.get(n) {
+                for w in ws {
+                    by_word.entry(w.clone()).or_default().push(call(n));
+                }
+            }
+        }
+        // Where it can hold: at its marks' words alone, where every one has words; then the token kinds no such word
+        // is a word of (`word_in`'s, the lean lexer's).
+        if always.is_empty() {
+            let words: HashSet<String> = by_word.keys().cloned().collect();
+            let kinds_of = |w: &str| -> Vec<u8> {
+                self.x.tokens.iter().filter(|(_, name)| {
+                    let mut ws = self.x.keywords.iter().filter(|r| r.0 == *name).flat_map(|r| r.1.iter().map(|(t, _)| t)).chain(self.x.soft.iter().filter(|r| r.0 == *name).flat_map(|r| r.1.iter()));
+                    ws.any(|t| self.word_of(&String::from_utf8_lossy(t)).is_some_and(|id| format!("w::{}", self.word_const(id)) == w))
+                }).map(|(b, _)| *b).collect()
+            };
+            let marked: HashSet<u8> = words.iter().flat_map(|w| kinds_of(w)).collect();
+            let free: HashSet<String> = self.x.tokens.iter().map(|(_, n)| n.strip_suffix("_close").unwrap_or(n)).filter(|k| self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(*k)).all(|(b, _)| !marked.contains(b))).map(ident).collect();
+            *self.mark_words.borrow_mut() = Some((words, free));
+        }
+        let any = |cs: Vec<String>| if cs.is_empty() { "false".to_owned() } else { cs.join(" || ") };
+        let body = if by_word.is_empty() {
+            any(always.clone())
+        } else {
+            let mut arms: String = by_word.into_iter().map(|(w, cs)| format!("            {w} => {},\n", any(cs.into_iter().chain(always.iter().cloned()).collect()))).collect();
+            let _ = write!(arms, "            _ => {},\n", any(always.clone()));
+            format!("match self.word() {{\n{arms}        }}")
+        };
+        let _ = writeln!(out, "    /// A mark no rule takes holds at the token (a mark not hidden).\n    fn open_mark(&mut self) -> bool {{\n        {body}\n    }}\n");
         Ok(())
     }
 
@@ -1214,13 +1336,21 @@ impl<'a> G<'a> {
     /// `split_R` a reader; `word_in`, a piece's word; `KINDS`, a byte's record kind.
     fn splits(&self, out: &mut String, free: &mut String) -> Result<(), String> {
         let mut at = String::new();
+        // A string's region a template's `}` resumes (decision 0600): the reader that resumes
+        // it, entered at its opener where that comes before the next record.
+        let mut resume = String::new();
+        let readers = crate::bitlex_lex_rust::readers(self.x.lexer);
+        let lexer_regions: Vec<&::bitlex::syntax::Region> = readers.iter().flat_map(|rd| &rd.regions).collect();
         let kind_or = |k: Option<u8>, at: &str| match k {
             Some(k) => format!("{k}"),
             None => format!("u32::from(KINDS[usize::from(self.src[{at}])])"),
         };
-        for (r, rd) in crate::bitlex_lex_rust::readers(self.x.lexer).iter().enumerate() {
+        for (r, rd) in readers.iter().enumerate() {
             let piece = |name: &str, closes: bool| crate::bitlex_lex_rust::piece_kind(self.x.lexer, self.x.row_kinds, &rd.kind, name, closes);
-            let _ = write!(at, "        if bit(&self.m.{}, s) {{\n            return self.split_{r}(j);\n        }}\n", rd.open);
+            // A reader that resumes has no record of its own to split (`advance` enters it).
+            if !rd.regions.iter().all(|g| g.resumes) {
+                let _ = write!(at, "        if bit(&self.m.{}, s) {{\n            return self.split_{r}(j);\n        }}\n", rd.open);
+            }
             let content = kind_or(piece(&rd.content, false), "at");
             let mut parts = String::new();
             let mut lasts = String::new();
@@ -1258,15 +1388,41 @@ impl<'a> G<'a> {
                 }
             }
             let regions: Vec<&str> = rd.regions.iter().map(|g| g.kind.as_str()).collect();
+            // Its closer at a template (decision 0600): a string open over the template's code;
+            // a read that resumes one and closes at its quote, that string's end.
+            let resumes = rd.regions.iter().all(|g| g.resumes);
+            let resumed = |g: &::bitlex::syntax::Region| g.resumes || lexer_regions.iter().any(|q| q.resumes && q.after.contains(&g.kind));
+            let mut templates: Vec<&String> = rd.regions.iter().zip(&rd.region_or).filter(|(g, _)| resumed(g)).filter_map(|(_, f)| f.as_ref()).collect();
+            templates.dedup();
+            let strings = if templates.is_empty() {
+                String::new()
+            } else {
+                let t = templates.iter().map(|f| format!("bit(&m.{f}, c)")).collect::<Vec<_>>().join(" || ");
+                if resumes {
+                    format!("                    if !({t}) {{\n                        self.strings = self.strings.saturating_sub(1);\n                    }}\n")
+                } else {
+                    format!("                    if {t} {{\n                        self.strings += 1;\n                    }}\n")
+                }
+            };
+            let (name, doc, head) = if resumes {
+                // Its opener's kind: its own row's.
+                let rows = self.x.lexer.iter().filter(|s| matches!(s, ::bitlex::syntax::Stmt::Token { .. }));
+                let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.recs[self.i + 1].start as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
+                (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
+            } else {
+                (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
+            };
             let _ = write!(
                 out,
-                "    /// `{kind}`'s region (`read {regions} parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.\n    fn split_{r}(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.codes[j]));\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
+                "    /// `{kind}`'s region (`read {regions} parts`), {doc}: its opener's byte, each part, each run of the bytes between, its closer.\n    fn {name}(&mut self, {head}\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n{strings}                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
                 kind = rd.kind,
                 regions = regions.join(" | "),
                 close = rd.close
             );
         }
-        let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
+        let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        // The record after the token: the next token, but for comments; with none between, nothing is pending.\n        let j = self.i + 1;\n        self.i = if j < self.n && is_extra(self.recs[j].code) {{\n            self.next_tok(j + 1)\n        }} else {{\n            if self.pend + 1 == j {{\n                self.pend = j;\n            }}\n            j\n        }};\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
+        let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.recs[j].start as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
         // A piece's word: its kind's keywords', as the lean lexer finds a word.
         let mut arms = String::new();
         for (b, name) in self.x.tokens {
@@ -1299,7 +1455,7 @@ impl<'a> G<'a> {
             let kinds = if bytes.is_empty() { "false".to_owned() } else { format!("matches!(c & 0xff, {})", bytes.join(" | ")) };
             let words = if hard.is_empty() { String::new() } else { format!(" && !matches!(c >> 8 & 0xff, {})", hard.join(" | ")) };
             let n = ident(&k);
-            let _ = writeln!(out, "    fn at_{n}_at(&self, j: usize) -> bool {{\n        if j >= self.n {{\n            return false;\n        }}\n        let c = self.code_at(j);\n        {kinds}{words}\n    }}\n\n    fn at_{n}(&self) -> bool {{\n        self.at_{n}_at(self.i)\n    }}\n\n    /// Record `j` (not the piece at the token) one of the kind's.\n    fn at_{n}_rec(&self, j: usize) -> bool {{\n        let c = self.codes[j];\n        {kinds}{words}\n    }}\n");
+            let _ = writeln!(out, "    fn at_{n}_at(&self, j: usize) -> bool {{\n        if j >= self.n {{\n            return false;\n        }}\n        let c = self.code_at(j);\n        {kinds}{words}\n    }}\n\n    fn at_{n}(&self) -> bool {{\n        self.at_{n}_at(self.i)\n    }}\n\n    /// Record `j` (not the piece at the token) one of the kind's.\n    fn at_{n}_rec(&self, j: usize) -> bool {{\n        let c = self.recs[j].code;\n        {kinds}{words}\n    }}\n");
         }
     }
 
@@ -1350,6 +1506,14 @@ impl<'a> G<'a> {
         for name in &self.order {
             rules.push_str(&self.rule(name)?);
         }
+        let entry = rule_fn(self.order.first().ok_or("no rule")?);
+        self.assemble(&rules, &entry, "// Generated by native/crates/compiler/src/bitlex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's tree rules.\n\n", false)
+    }
+
+    /// The parser around `rules` (its rules' code, `impl P`'s), entered at `entry` (a method of `P`): the runtime, the
+    /// marks, the kinds' tests, the readings, the regions' reads, and `parse`, each part written where the rules use
+    /// it. `stack`: `P` holds the one loop's stack (`one_loop`'s records form: a level's caller's place and state).
+    fn assemble(&self, rules: &str, entry: &str, header: &str, stack: bool) -> Result<String, String> {
         let mut marks = String::new();
         self.marks(&mut marks)?;
         let mut readings = String::new();
@@ -1375,8 +1539,8 @@ impl<'a> G<'a> {
         };
         let _ = writeln!(extras, "/// An extra's node kind: a later extra kind's by its bit, else the first's.\nfn extra_kind(code: u32) -> u16 {{\n{kind}    {first}\n}}\n");
         let mut out = String::new();
-        out.push_str("// Generated by native/crates/compiler/src/bitlex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's tree rules.\n\n");
-        out.push_str("use rerail_tape_format::{Widths, Writer};\n\n");
+        out.push_str(header);
+        out.push_str("use rerail_tape_format::{Layout, Narrow, Widths, Writer};\n\n");
         out.push_str("/// The tape's kinds, by the grammar's names.\n#[allow(dead_code)]\npub mod k {\n");
         for (c, id) in self.kinds.borrow().iter() {
             let _ = writeln!(out, "    pub const {c}: u16 = {id};");
@@ -1399,13 +1563,25 @@ impl<'a> G<'a> {
         }
         out.push_str(&extras);
         out.push_str(RUNTIME);
-        out.push_str("\n#[allow(clippy::all, unused_parens, dead_code)]\nimpl P<'_> {\n");
-        out.push_str(&rules);
+        out.push_str("\n#[allow(clippy::all, unused_parens, dead_code)]\nimpl<L: Layout> P<'_, L> {\n");
+        out.push_str(rules);
         out.push_str(&marks);
         out.push_str(&kinds);
         out.push_str(&readings);
         out.push_str(&split);
         out.push_str("}\n");
+        // The one loop's stack: by each level open, the place its call returns to and the caller's state it saved.
+        if stack {
+            for (a, b) in [
+                ("    strings: usize,\n}\n", "    strings: usize,\n    /// The one loop's stack (`run`): by each level open, its caller's state it saved, then the place it returns to; a\n    /// flag's value before its rule set it.\n    stack: Vec<u64>,\n}\n"),
+                ("moved: None, strings: 0 };", "moved: None, strings: 0, stack: Vec::with_capacity(64) };"),
+            ] {
+                if out.matches(a).count() != 1 {
+                    return Err(format!("tier 2 as one loop: the stack's place in the runtime: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+        }
         // A field's slot past the grammar's ids (`field_id`) must be no field's id the tape names.
         let own = self.own_fields.borrow().len() as u16;
         if own > 0 && self.most_field.get() >= 64 - own {
@@ -1433,7 +1609,7 @@ impl<'a> G<'a> {
             for (a, b) in [
                 ("    asks: u64,\n", "    asks: u64,\n    /// The marks the level open refuses (`refuse M in L`), their bits in a record's code: a token it takes with one\n    /// refuses the file. A call's are its own, the caller's again where it returns.\n    refusing: u32,\n"),
                 ("marked: false, asks: 0,", "marked: false, asks: 0, refusing: 0,"),
-                ("        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n", "        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if self.k == 0 && self.codes[self.i] >> 16 & self.refusing != 0 {\n            return self.refuse();\n        }\n"),
+                ("        if M && (self.i >= self.n || self.open_mark()) {\n            return self.refuse();\n        }\n", "        if M && (self.i >= self.n || self.open_mark()) {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if F && self.k == 0 && self.refusing != 0 && self.marks_hold(self.i, self.refusing) {\n            return self.refuse();\n        }\n"),
             ] {
                 if out.matches(a).count() != 1 {
                     return Err(format!("tier 2 as Rust: `refuse`'s place in the runtime: {a:?}"));
@@ -1450,16 +1626,217 @@ impl<'a> G<'a> {
             }
             out = out.replace(a, &format!("        // A field that a later token decides (`provisional`), held still at the file's end: refused.\n        if (0..self.w.len()).any(|i| matches!((self.w.key(i) >> 10 & 0x3f) as u16, {})) {{\n            return self.refuse();\n        }}\n{a}", fields.join(" | ")));
         }
+        // A grammar's `drop`: the nodes it took out, held as dead where a reading may reach them (`drop_made`).
+        if rules.contains("self.drop_made(") {
+            for (a, b) in [
+                ("    gone: Vec<usize>,\n", "    gone: Vec<usize>,\n    /// The nodes a `drop` took out, each by the node it was in: a reading that reaches one refuses (`read_dead`).\n    dead: Vec<u32>,\n"),
+                ("gone: Vec::new(), lost: None,", "gone: Vec::new(), dead: Vec::new(), lost: None,"),
+                ("    /// The node a wrap moved (the wrap's first child) a `kind` now.\n", "    /// The nodes a `drop` took out past a wrap's place `at`, one later: the wrap went in before them.\n    #[cold]\n    #[inline(never)]\n    fn shift_dead(&mut self, at: usize) {\n        for o in &mut self.dead {\n            if *o != NONE && *o as usize >= at {\n                *o += 1;\n            }\n        }\n    }\n\n    /// The node a wrap moved (the wrap's first child) a `kind` now.\n"),
+                ("        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n", "        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));\n        if !self.dead.is_empty() {\n            self.shift_dead(at);\n        }\n"),
+                ("        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n", "        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n        if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {\n            self.read_dead(&nodes, at, root, way)?;\n        }\n"),
+            ] {
+                if out.matches(a).count() != 1 {
+                    return Err(format!("tier 2 as Rust: `drop`'s place in the runtime: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+        }
         // The helpers only some grammars' rules call, each written where it is called.
         let used: Vec<&str> = MORE.iter().filter(|(name, _)| rules.contains(&format!("self.{name}("))).map(|(_, code)| *code).collect();
         if !used.is_empty() {
-            out.push_str("\n#[allow(clippy::all, dead_code)]\nimpl P<'_> {\n");
+            out.push_str("\n#[allow(clippy::all, dead_code)]\nimpl<L: Layout> P<'_, L> {\n");
             out.push_str(&used.join("\n"));
             out.push_str("}\n");
         }
-        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, lx, widths)?;\n        p.{}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}", rule_fn(self.order.first().ok_or("no rule")?));
-        Ok(out)
+        // No mark drops or loses an extra (`drops`, `loses`, decision 0623 step 7): tier 2 keeps no extra gone or
+        // lost, and a taken token checks none.
+        if ["self.drop_pending()", "self.lose_pending()", "self.move_first()"].iter().all(|c| !out.contains(c)) {
+            for (a, b) in [
+                ("    /// The extras a mark's question dropped or lost (`drops`, `loses`), by record; the one lost,\n    /// its kind and, once its token is taken, that token's start: a pending extra of no width.\n    gone: Vec<usize>,\n", ""),
+                ("    lost: Option<(u16, Option<u32>)>,\n    /// The extra a mark's `loses since` moved, by record, and where: of no width there.\n    moved: Option<(usize, u32)>,\n", ""),
+                ("gone: Vec::new(), ", ""),
+                ("lost: None, moved: None, ", ""),
+                ("        if let Some((kind, Some(s))) = self.lost {\n            self.lost = None;\n            let at = self.w.push(u32::from(kind) | 1 << 16, s);\n            self.w.close(at, s);\n        }\n", ""),
+                ("        if let Some((kind, None)) = self.lost {\n            self.lost = Some((kind, Some(self.start())));\n        }\n", ""),
+                ("        // An extra a `loses since` moved and the one after it go with those before: the lean\n        // lexer's semicolon is past that one.\n        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);\n        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.recs[k].code) && !self.gone.contains(&k)));\n", ""),
+                (" && Some(j) != moved && Some(j) != through {", " {"),
+                ("            if is_extra(c) && !self.gone.contains(&j) {\n                let (s, e) = self.extra_span(j);\n", "            if is_extra(c) {\n                let (s, e) = (self.recs[j].start, self.recs[j].last + 1);\n"),
+                ("    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.\n    fn extra_span(&self, j: usize) -> (u32, u32) {\n        match self.moved {\n            Some((m, s)) if m == j => (s, s),\n            _ => (self.recs[j].start, self.recs[j].last + 1),\n        }\n    }\n\n", ""),
+                ("    /// `loses since`: the first extra pending of no width at the next one's start (the lean\n    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).\n    fn move_first(&mut self) {\n        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j));\n        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {\n            self.moved = Some((a, self.recs[b].start));\n        }\n    }\n\n", ""),
+                ("    /// The extra pending last before the token (not yet written, not dropped or lost).\n    fn pending_last(&self) -> Option<usize> {\n        (self.pend..self.i).rev().find(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j))\n    }\n\n    /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end\n    /// at the token, where the semicolon of no width is (the lean lexer's `Asi::Swallow`).\n    fn drop_pending(&mut self) {\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            if self.pending_last().is_none() {\n                self.last_end = self.start();\n            }\n        }\n    }\n\n    /// `loses`: the extra pending last made again after the token is taken, of no width at its\n    /// start (the lean lexer's `asi` loses it); once a token.\n    fn lose_pending(&mut self) {\n        if self.lost.is_some() {\n            return;\n        }\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            self.lost = Some((extra_kind(self.recs[j].code), None));\n        }\n    }\n\n", ""),
+            ] {
+                if !out.contains(a) {
+                    return Err(format!("tier 2: the runtime's lost extras, not where they were: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+        }
+        // The leaves' fields, then each take's tests (`takes`), before the helpers no code calls are dropped.
+        out = takes(&leaf_fields(&out), self.mark_words.borrow().as_ref());
+        // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
+        // record, and writes only the helpers its code calls.
+        if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
+            for (a, b) in [
+                ("    /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as\n    /// the lean parser's string arm reads its pieces: each one's first and last byte and code;\n    /// the token is piece `k`.\n    sub: Vec<(u32, u32, u32)>,\n    k: usize,\n", ""),
+                ("sub: Vec::new(), k: 0, ", ""),
+                ("    /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.\n    fn piece(&mut self, s: usize, l: usize, kind: u32) {\n        let word = word_in(kind, &self.src[s..=l]);\n        self.sub.push((s as u32, l as u32, kind | word << 8));\n    }\n\n", ""),
+                ("    /// Record `j`'s code, its first and its last byte: the piece's at the token.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }\n    }\n", "    /// Record `j`'s code.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        self.recs[j].code\n    }\n"),
+                ("        } else if self.k < self.sub.len() {\n            self.sub[self.k].0\n", ""),
+                ("        if self.k < self.sub.len() {\n            let (s, l, _) = self.sub[self.k];\n            self.k += 1;\n            if self.k < self.sub.len() {\n                self.known = 0;\n                self.last_end = l + 1;\n                return Ok((s, l + 1));\n            }\n            self.sub.clear();\n            self.k = 0;\n            self.advance(l as usize + 1)?;\n            self.last_end = l + 1;\n            return Ok((s, l + 1));\n        }\n", ""),
+                ("    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).\n    m: &'a crate::tier1::Masks,\n", ""),
+                ("let (recs, m) = (&lx.recs[..], &lx.masks);", "let recs = &lx.recs[..];"),
+                ("P { src, recs, m, n,", "P { src, recs, n,"),
+                ("    /// At record `i`: split it where tier 2 reads its region in parts.\n", "    /// At record `i`: its code read, no mark known there yet.\n"),
+                ("        if self.i < self.n {\n            self.split(self.i)?;\n        }\n", "        self.cur = if self.i < self.n { self.recs[self.i].code } else { 0 };\n"),
+                // The token's code held as the token is reached (a token is its record), as the lean parser holds its
+                // token: its word read of it.
+                ("    known: u64,\n    holds: u64,\n", "    known: u64,\n    holds: u64,\n    /// The token's code (none past the last record), read as the token is reached.\n    cur: u32,\n"),
+                ("known: 0, holds: 0, ", "known: 0, holds: 0, cur: 0, "),
+                ("    fn word(&self) -> u32 {\n        self.word_at(self.i)\n    }\n", "    fn word(&self) -> u32 {\n        self.cur >> 8 & 0xff\n    }\n"),
+                ("    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        let _ = s;\n        Ok(())\n    }\n\n", ""),
+            ] {
+                if !out.contains(a) {
+                    return Err(format!("tier 2: the runtime's masks, not where they were: {a:?}"));
+                }
+                out = out.replacen(a, b, 1);
+            }
+            // A record's code where it is in the file: one test of the records' own length, not `n`'s and then the
+            // slice's (a token's code is its record's here).
+            out = out.replace("        if j >= self.n {\n            return false;\n        }\n        let c = self.code_at(j);\n", "        let Some(c) = self.recs.get(j).map(|r| r.code) else {\n            return false;\n        };\n");
+            out = out.replace("        if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }\n", "        self.recs.get(j).map_or(0, |r| r.code >> 8 & 0xff)\n");
+            let parts: Vec<String> = RUNTIME.split("\n\n").map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty() && p.matches('{').count() == p.matches('}').count()).collect();
+            out = out.replace("if F && self.k == 0 && self.refusing != 0 ", "if F && self.refusing != 0 ");
+            out = one_loop::drop_uncalled(out, &parts);
+        }
+        let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };
+        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, written to `finish`'s target and finished\n/// by it (decision 0434: format 16 as the parse goes), or the byte it was refused at.\npub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        // Nearly every file is parsed at the narrow widths, fixed in the parser's code, as the lean parser's.\n        let at = if widths == Narrow::WIDTHS {{ parse_at(src, lx, Narrow, finish)? }} else {{ parse_at(src, lx, widths, finish)? }};\n        match at {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths && !finish.again() {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}\n\n/// `parse` at `layout`'s widths: the tape `finish` makes of the writer, or the widths to parse at again; or the byte\n/// it was refused at.\nfn parse_at<L: Layout, F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, layout: L, finish: &mut F) -> R<Result<F::Out, rerail_tape_format::Redo>> {{\n    let mut p = P::new(src, lx, layout, finish.target())?;\n    p.{entry}()?;\n    Ok(finish.finish(p.w))\n}}");
+        Ok(plain_writer(&out))
     }
+}
+
+/// `code` with its writer's calls the plain ones (`Writer::plain_key` and the rest): tier 2 opens no chain and commits
+/// nothing before its finish, so no call need check for a chain held or a node passed on (the writer asserts both in
+/// a test build).
+fn plain_writer(code: &str) -> String {
+    [
+        ("self.w.key(", "self.w.plain_key("),
+        ("self.w.start(", "self.w.plain_start("),
+        ("self.w.set_key(", "self.w.plain_set_key("),
+        ("self.w.set_start(", "self.w.plain_set_start("),
+        ("self.w.close(", "self.w.plain_close("),
+        ("self.w.push_leaf(", "self.w.plain_leaf("),
+        ("self.w.set_field(", "self.w.plain_field("),
+        ("self.w.close_from(", "self.w.plain_close_from("),
+        ("self.w.wrap(", "self.w.plain_wrap("),
+        ("self.w.size(", "self.w.plain_size("),
+        ("self.w.end(", "self.w.plain_end("),
+        ("self.w.truncate(", "self.w.plain_truncate("),
+    ]
+    .iter()
+    .fold(code.to_owned(), |c, (a, b)| c.replace(a, b))
+}
+
+/// `code`'s token takes (`tk`, `word_leaf`, `word_skip`, `skip`, `merge`) each with the tests its token needs, as the
+/// lean parser asks at a token only what can hold there (`take`'s `M` and `F`): the marks no rule takes (`open_mark`)
+/// only where its token may be one of their words (`marks`: `w` none of them, or a kind no such word is of), and the
+/// marks the level refuses only in a rule a refusing level reaches (a take that is not `_nf`, `records::no_refusing`).
+fn takes(code: &str, marks: Option<&(HashSet<String>, HashSet<String>)>) -> String {
+    const NAMES: [&str; 5] = ["tk", "word_leaf", "word_skip", "skip", "merge"];
+    // Whether a mark no rule takes may hold at the token a take's first argument `a` says it is.
+    let may = |a: &str| -> bool {
+        let Some((words, free)) = marks else { return true };
+        // The test the token passes, if `a` implies it: `a`'s first conjunct, none of its alternatives.
+        if a.contains("||") {
+            return true;
+        }
+        let first = a.split(" && ").next().unwrap_or(a).trim();
+        let w = first.strip_prefix("self.word() == ").unwrap_or(first);
+        if w.starts_with("w::") && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':') {
+            return words.contains(w);
+        }
+        match first.strip_prefix("self.at_").and_then(|r| r.strip_suffix("()")) {
+            Some(k) if k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => !free.contains(k),
+            _ => true,
+        }
+    };
+    let mut out = String::with_capacity(code.len() + code.len() / 8);
+    let mut rest = code;
+    while let Some(at) = rest.find("self.") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 5..];
+        let id_len = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(after.len());
+        let (id, tail) = after.split_at(id_len);
+        let (name, nf) = match id.strip_suffix("_nf") {
+            Some(n) => (n, true),
+            None => (id, false),
+        };
+        if !NAMES.contains(&name) || !tail.starts_with('(') {
+            out.push_str("self.");
+            rest = after;
+            continue;
+        }
+        // The first argument: to the comma or the parenthesis that ends it.
+        let args = &tail[1..];
+        let (mut depth, mut end) = (0i32, args.len());
+        for (i, c) in args.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' if depth == 0 => {
+                    end = i;
+                    break;
+                }
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    end = i;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let _ = write!(out, "self.{name}_as::<{}, {}>(", may(&args[..end]), !nf);
+        rest = args;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `code` with each leaf given its field as it is written: a leaf (`tk`, `word_leaf`) of no field, then the field set
+/// on the node made last (`field_made`), which is that leaf, is one `tk` of the field, as the lean parser writes a
+/// token's field with it.
+fn leaf_fields(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::with_capacity(code.len());
+    let mut i = 0;
+    while i < lines.len() {
+        let l = lines[i];
+        let pad = &l[..l.len() - l.trim_start().len()];
+        let field = lines.get(i + 1).and_then(|n| n.strip_prefix(pad)).and_then(|n| n.strip_prefix("self.field_made(")).and_then(|n| n.strip_suffix(");"));
+        // A rule's take with no mark refused is `tk_nf` (`records::no_refusing`), and stays one.
+        let leaf = ["", "_nf"].iter().find_map(|x| Some((*x, l.trim_start().strip_suffix(", 0)?;")?.strip_prefix(&format!("self.tk{x}("))?.to_owned())));
+        // `word_leaf(w, k)` is `tk(self.word() == w, k, 0)`.
+        let leaf = leaf.or_else(|| {
+            ["", "_nf"].iter().find_map(|x| {
+                let a = l.trim_start().strip_prefix(&format!("self.word_leaf{x}("))?.strip_suffix(")?;")?;
+                let (w, k) = a.split_once(", ")?;
+                Some((*x, format!("self.word() == {w}, {k}")))
+            })
+        });
+        match (leaf, field) {
+            (Some((x, a)), Some(f)) if f.starts_with("f::") && !f.contains(' ') => {
+                let _ = writeln!(out, "{pad}self.tk{x}({a}, {f})?;");
+                i += 2;
+            }
+            _ => {
+                out.push_str(l);
+                out.push('\n');
+                i += 1;
+            }
+        }
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
 }
 
 /// The parser's helpers that only some grammars' rules call (`relabel`, `drop`), by name: each written into a parser
@@ -1469,7 +1846,7 @@ const MORE: &[(&str, &str)] = &[
         "relabel_inner",
         r#"    /// `relabel … inner G`: the node the node made last at this level, a wrap, holds first takes field `G`.
     fn relabel_inner(&mut self, field: u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.top.1;
         if at == NONE || self.w.size(at as usize) < 2 {
             return self.refuse();
         }
@@ -1484,7 +1861,7 @@ const MORE: &[(&str, &str)] = &[
         "relabel_field",
         r#"    /// `relabel F`: the node made last at this level takes field `F`.
     fn relabel_field(&mut self, field: u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.top.1;
         if at == NONE {
             return self.refuse();
         }
@@ -1498,7 +1875,7 @@ const MORE: &[(&str, &str)] = &[
         "relabel_kind",
         r#"    /// `relabel … as M`: the node made last at this level a `kind` now.
     fn relabel_kind(&mut self, kind: u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.top.1;
         if at == NONE {
             return self.refuse();
         }
@@ -1512,9 +1889,59 @@ const MORE: &[(&str, &str)] = &[
         "drop_made",
         r#"    /// `drop`: the node made last at this level goes, the nodes inside it in its place; none is made last at this
     /// level until the next.
+    ///
+    /// As the machine's `drop` leaves its record of kind `DEAD` in the table (left out at `ACCEPT`), the node is held
+    /// as dead in the node open (`dead`), so that a reading that reaches it refuses. A dead node in it goes to that
+    /// node too.
     fn drop_made(&mut self) -> R {
+        let at = self.top.1;
+        let open = self.top.0;
+        for o in &mut self.dead {
+            if *o == at {
+                *o = open;
+            }
+        }
         self.reread(Some(None), |_| None, |f| f)?;
+        self.dead.push(open);
         self.set_made(NONE);
+        Ok(())
+    }
+
+    /// The dead nodes (`drop`) in the node read again from `at` (`nodes`, as `reread` has them): one in a node the
+    /// reading reaches, not one it keeps whole, refuses, as the machine's reading refuses the `DEAD` record it
+    /// reaches (it names no such kind). Each other one is then in its node where the reading writes it.
+    fn read_dead(&mut self, nodes: &[(u32, u32, u32, usize)], at: usize, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>) -> R {
+        let (mut to, mut reached) = (vec![NONE; nodes.len()], vec![false; nodes.len()]);
+        let (mut next, mut kept) = (at as u32, 0);
+        for (i, &(key, _, _, size)) in nodes.iter().enumerate() {
+            let way = if i < kept || key >> 16 & 1 == 1 {
+                None
+            } else if i == 0 {
+                match root {
+                    Some(Some(u16::MAX)) => way((key & 0x3ff) as u16),
+                    r => r,
+                }
+            } else {
+                way((key & 0x3ff) as u16)
+            };
+            match way {
+                None => kept = kept.max(i + size),
+                Some(_) => reached[i] = true,
+            }
+            if way != Some(None) {
+                to[i] = next;
+                next += 1;
+            }
+        }
+        for o in &mut self.dead {
+            let j = (*o as usize).wrapping_sub(at);
+            if j < nodes.len() {
+                if reached[j] {
+                    return self.refuse();
+                }
+                *o = to[j];
+            }
+        }
         Ok(())
     }
 "#,
@@ -1549,11 +1976,10 @@ const UNSET: u16 = 0x3ff;
 const DEPTH: u32 = 400;
 
 /// The parser: tier 1's records (the tokens and the comments), the token read next, the tree.
-pub struct P<'a> {
+pub struct P<'a, L: Layout> {
     src: &'a [u8],
-    starts: &'a [u32],
-    lasts: &'a [u32],
-    codes: &'a [u32],
+    /// Tier 1's records, one a token: its first and last byte and its code (the lean parser's `Tok`).
+    recs: &'a [crate::tier1::Rec],
     /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
     m: &'a crate::tier1::Masks,
     n: usize,
@@ -1565,10 +1991,11 @@ pub struct P<'a> {
     sub: Vec<(u32, u32, u32)>,
     k: usize,
     pend: usize,
-    w: Writer<Widths>,
-    /// The nodes open, and the node made last at each.
-    open: Vec<u32>,
-    made: Vec<u32>,
+    w: Writer<L>,
+    /// The level open: its node, and the node made last in it, held as the lean parser holds its `top`; the levels
+    /// around it on `levels` (one push and one pop a level).
+    top: (u32, u32),
+    levels: Vec<(u32, u32)>,
     /// The last token's end.
     last_end: u32,
     /// The marks taken or passed at this token, by their order.
@@ -1587,14 +2014,19 @@ pub struct P<'a> {
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
     lost: Option<(u16, Option<u32>)>,
+    /// The extra a mark's `loses since` moved, by record, and where: of no width there.
+    moved: Option<(usize, u32)>,
+    /// The strings open over a template's code (decision 0600): their parts go on at the next
+    /// opener of a reader that resumes them (`advance`).
+    strings: usize,
 }
 
 #[allow(dead_code)]
-impl<'a> P<'a> {
-    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
-        let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
-        let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None };
+impl<'a, L: Layout> P<'a, L> {
+    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L, target: rerail_tape_format::Target) -> R<Self> {
+        let (recs, m) = (&lx.recs[..], &lx.masks);
+        let n = recs.len();
+        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(widths, src.len() / 3 + 16).to(target, src), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -1619,7 +2051,7 @@ impl<'a> P<'a> {
     /// Record `j`'s code, its first and its last byte: the piece's at the token.
     #[inline(always)]
     fn code_at(&self, j: usize) -> u32 {
-        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.codes[j] }
+        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }
     }
 
     /// Whether mark `order` holds at the token (`h`), found once a token, as the lean parser
@@ -1636,7 +2068,7 @@ impl<'a> P<'a> {
 
     #[inline(always)]
     fn next_tok(&self, mut j: usize) -> usize {
-        while j < self.n && is_extra(self.codes[j]) {
+        while j < self.n && is_extra(self.recs[j].code) {
             j += 1;
         }
         j.min(self.n)
@@ -1648,7 +2080,7 @@ impl<'a> P<'a> {
         let mut k = j;
         while k > 0 {
             k -= 1;
-            if !is_extra(self.codes[k]) {
+            if !is_extra(self.recs[k].code) {
                 return k;
             }
         }
@@ -1665,9 +2097,37 @@ impl<'a> P<'a> {
         if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
     }
 
+    /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && self.code_at(j) >> (16 + b) & 1 == 1
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
+    }
+
+    /// Gap mark `b` at record `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
+    /// gap and the lean parser asks whether a token is on a line.
+    /// An extra keeps none of them.
+    fn gap(&self, j: usize, b: u32) -> bool {
+        if is_extra(self.recs[j].code) {
+            return false;
+        }
+        let p = self.prev_tok(j);
+        let (from, before) = if p < self.n { (self.recs[p].start as usize + 1, self.word_at(p)) } else { (0, 0) };
+        crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
+    }
+
+    /// Whether one of the marks `bits` holds at record `j`: its code's, and the gap marks tier 2 asks of the bytes.
+    fn marks_hold(&self, j: usize, bits: u32) -> bool {
+        if self.recs[j].code >> 16 & bits != 0 {
+            return true;
+        }
+        let mut ask = crate::tier1::ASKED & bits;
+        while ask != 0 {
+            if self.gap(j, ask.trailing_zeros()) {
+                return true;
+            }
+            ask &= ask - 1;
+        }
+        false
     }
 
     #[inline(always)]
@@ -1677,7 +2137,7 @@ impl<'a> P<'a> {
         } else if self.k < self.sub.len() {
             self.sub[self.k].0
         } else {
-            self.starts[self.i]
+            self.recs[self.i].start
         }
     }
 
@@ -1715,35 +2175,56 @@ impl<'a> P<'a> {
         while self.pend < self.i {
             let j = self.pend;
             self.pend += 1;
-            let c = self.codes[j];
+            let c = self.recs[j].code;
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
             }
+        }
+    }
+
+    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.
+    fn extra_span(&self, j: usize) -> (u32, u32) {
+        match self.moved {
+            Some((m, s)) if m == j => (s, s),
+            _ => (self.recs[j].start, self.recs[j].last + 1),
+        }
+    }
+
+    /// `loses since`: the first extra pending of no width at the next one's start (the lean
+    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
+    fn move_first(&mut self) {
+        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j));
+        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
+            self.moved = Some((a, self.recs[b].start));
         }
     }
 
     /// The comments pending before the line break of settling mark `bit` (an extra's code holds
     /// the bits of its own gap): written now, into the node open, the node's end past them.
     fn settle(&mut self, bit: u32) {
+        // An extra a `loses since` moved and the one after it go with those before: the lean
+        // lexer's semicolon is past that one.
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
+        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.recs[k].code) && !self.gone.contains(&k)));
         while self.pend < self.i {
             let j = self.pend;
-            let c = self.codes[j];
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 {
+            let c = self.recs[j].code;
+            if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
-                self.last_end = self.last_end.max(self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                self.w.push_leaf(u32::from(extra_kind(c)) | 1 << 16, s, e);
+                self.last_end = self.last_end.max(e);
             }
         }
     }
 
     /// The extra pending last before the token (not yet written, not dropped or lost).
     fn pending_last(&self) -> Option<usize> {
-        (self.pend..self.i).rev().find(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j))
+        (self.pend..self.i).rev().find(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j))
     }
 
     /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end
@@ -1765,14 +2246,23 @@ impl<'a> P<'a> {
         }
         if let Some(j) = self.pending_last() {
             self.gone.push(j);
-            self.lost = Some((extra_kind(self.codes[j]), None));
+            self.lost = Some((extra_kind(self.recs[j].code), None));
         }
     }
 
     /// The token taken: its span; the next token's marks not yet taken.
     #[inline(always)]
     fn bump(&mut self) -> R<(u32, u32)> {
-        if self.i >= self.n || self.open_mark() {
+        self.take::<true, true>()
+    }
+
+    /// `bump`, its tests those the take needs (`takes`): `M`, whether a mark no rule takes may hold at the token
+    /// (its word may be one of theirs); `F`, whether the level open may refuse a mark there (a rule a refusing level
+    /// reaches). The lean parser asks neither at a token it knows.
+    #[inline(always)]
+    fn take<const M: bool, const F: bool>(&mut self) -> R<(u32, u32)> {
+        // Not past the last record: a take of `M` false passed a word's or a kind's test, which fails there.
+        if M && (self.i >= self.n || self.open_mark()) {
             return self.refuse();
         }
         if let Some((kind, None)) = self.lost {
@@ -1790,94 +2280,93 @@ impl<'a> P<'a> {
             }
             self.sub.clear();
             self.k = 0;
-            self.i = self.next_tok(self.i + 1);
-            self.arrive()?;
+            self.advance(l as usize + 1)?;
             self.last_end = l + 1;
             return Ok((s, l + 1));
         }
-        let (s, e) = (self.starts[self.i], self.lasts[self.i] + 1);
-        self.i = self.next_tok(self.i + 1);
-        self.arrive()?;
+        let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
+        self.advance(e as usize)?;
         self.last_end = e;
         Ok((s, e))
     }
 
     #[inline(always)]
     fn set_made(&mut self, at: u32) {
-        if let Some(m) = self.made.last_mut() {
-            *m = at;
-        }
+        self.top.1 = at;
     }
 
-    /// The token, which must pass `ok`, a leaf of `kind` given `field`.
+    /// The token, which must pass `ok`, a leaf of `kind` given `field` (`take`'s `M` and `F`).
     #[inline(always)]
-    fn tk(&mut self, ok: bool, kind: u16, field: u16) -> R {
+    fn tk_as<const M: bool, const F: bool>(&mut self, ok: bool, kind: u16, field: u16) -> R {
         if !ok {
             return self.refuse();
         }
         self.flush();
-        let (s, e) = self.bump()?;
-        let at = self.w.push(u32::from(kind) | u32::from(field) << 10, s);
-        self.w.close(at, e);
+        let (s, e) = self.take::<M, F>()?;
+        let at = self.w.push_leaf(u32::from(kind) | u32::from(field) << 10, s, e);
         self.set_made(at as u32);
         Ok(())
     }
 
     /// The token, which must be word `w`, a leaf of `kind`.
     #[inline(always)]
-    fn word_leaf(&mut self, w: u32, kind: u16) -> R {
-        self.tk(self.word() == w, kind, 0)
+    fn word_leaf_as<const M: bool, const F: bool>(&mut self, w: u32, kind: u16) -> R {
+        self.tk_as::<M, F>(self.word() == w, kind, 0)
     }
 
     /// The token, which must be word `w`: one the grammar implies, no leaf.
     #[inline(always)]
-    fn word_skip(&mut self, w: u32) -> R {
-        self.skip(self.word() == w)
+    fn word_skip_as<const M: bool, const F: bool>(&mut self, w: u32) -> R {
+        self.skip_as::<M, F>(self.word() == w)
     }
 
     /// The token, which must pass `ok`: one the grammar implies, no leaf.
     #[inline(always)]
-    fn skip(&mut self, ok: bool) -> R {
+    fn skip_as<const M: bool, const F: bool>(&mut self, ok: bool) -> R {
         if !ok {
             return self.refuse();
         }
         self.flush();
-        self.bump()?;
+        self.take::<M, F>()?;
         Ok(())
     }
 
     /// The token, which must pass `ok`, joined to the leaf made last: one leaf of `kind`.
-    fn merge(&mut self, ok: bool, kind: u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+    fn merge_as<const M: bool, const F: bool>(&mut self, ok: bool, kind: u16) -> R {
+        let at = self.top.1;
         if !ok || at == NONE || at as usize + 1 != self.w.len() {
             return self.refuse();
         }
         let (s, key) = (self.w.start(at as usize), self.w.key(at as usize));
         // The comments between are its text.
         self.pend = self.i;
-        let (_, e) = self.bump()?;
+        let (_, e) = self.take::<M, F>()?;
         self.w.truncate(at as usize);
-        let at = self.w.push(key & !0x3ff | u32::from(kind), s);
-        self.w.close(at, e);
+        let at = self.w.push_leaf(key & !0x3ff | u32::from(kind), s, e);
         self.set_made(at as u32);
         Ok(())
     }
 
     fn open_root(&mut self, kind: u16) {
         let at = self.w.push(u32::from(kind), 0);
-        self.open.push(at as u32);
-        self.made.push(NONE);
+        self.levels.push(std::mem::replace(&mut self.top, (at as u32, NONE)));
     }
 
-    /// The root closed at the end of the file: the whole file (`whole`, from byte 0, as the machine opens it), or
-    /// from its first token or comment to its last token's end.
-    fn close_root(&mut self, whole: bool) -> R {
+    /// The root closed at the end of the file: from the file's start (`whole`), else (or `whole padded`) from its
+    /// first token or comment, as tree-sitter's root starts past the file's leading blanks.
+    fn close_root(&mut self, whole: bool, padded: bool) -> R {
         if self.i < self.n {
             return self.refuse();
         }
         self.flush();
-        // From byte 0 (`whole`), else its first token or comment (none: the file's end).
-        let first = if whole { 0 } else if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
+        // From its first token or comment (none: the file's end), to the file's end (`whole`) or its last token's.
+        let first = if whole && !padded {
+            0
+        } else if self.w.len() > 1 {
+            self.w.start(1)
+        } else {
+            self.src.len() as u32
+        };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
         self.w.set_start(0, first);
         self.w.close(0, end);
@@ -1889,40 +2378,34 @@ impl<'a> P<'a> {
     fn open(&mut self, kind: u16) {
         self.flush();
         let at = self.w.push(u32::from(kind), self.start());
-        self.open.push(at as u32);
-        self.made.push(NONE);
+        self.levels.push(std::mem::replace(&mut self.top, (at as u32, NONE)));
     }
 
     /// The node open closed at the last token's end; the node made last at its parent's level.
     /// One still of no kind (`UNSET`, never retagged) refuses the file.
     #[inline(always)]
     fn close(&mut self) -> R {
-        let at = self.open.pop().expect("a node open") as usize;
-        if self.w.key(at) & 0x3ff == u32::from(UNSET) {
+        let at = std::mem::replace(&mut self.top, self.levels.pop().unwrap_or((NONE, NONE))).0 as usize;
+        // Closed before the refusal: a refused file's tape is not read.
+        if self.w.close_from(at, self.last_end) & 0x3ff == u32::from(UNSET) {
             return self.refuse();
         }
-        self.made.pop();
-        let e = self.last_end.max(self.w.start(at));
-        self.w.close(at, e);
         self.set_made(at as u32);
         Ok(())
     }
 
     /// The node made last at this level given `field`, where it has none.
     fn field_made(&mut self, field: u16) {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.top.1;
         if at == NONE {
             return;
         }
-        let k = self.w.key(at as usize);
-        if k >> 10 & 0x3f == 0 {
-            self.w.set_key(at as usize, k | u32::from(field) << 10);
-        }
+        self.w.set_field(at as usize, 0x3f << 10, u32::from(field) << 10);
     }
 
     /// The node open, a `kind` now.
     fn retag(&mut self, kind: u16) {
-        let at = *self.open.last().expect("a node open") as usize;
+        let at = self.top.0 as usize;
         let k = self.w.key(at);
         self.w.set_key(at, k & !0x3ff | u32::from(kind));
     }
@@ -1930,23 +2413,19 @@ impl<'a> P<'a> {
     /// A node of `kind` put over the node made last at this level, open: it takes that node's
     /// field, and that node takes `field`.
     fn wrap(&mut self, kind: u16, field: u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.top.1;
         if at == NONE {
             return self.refuse();
         }
         let at = at as usize;
-        let k = self.w.key(at);
-        self.w.set_key(at, k & !(0x3f << 10) | u32::from(field) << 10);
-        let start = self.w.start(at);
-        self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);
-        self.open.push(at as u32);
-        self.made.push(at as u32 + 1);
+        self.w.wrap(at, 0x3f << 10, u32::from(field) << 10, u32::from(kind));
+        self.levels.push(std::mem::replace(&mut self.top, (at as u32, at as u32 + 1)));
         Ok(())
     }
 
     /// The node a wrap moved (the wrap's first child) a `kind` now.
     fn retype_moved(&mut self, kind: u16) {
-        let at = *self.open.last().expect("a wrap open") as usize + 1;
+        let at = self.top.0 as usize + 1;
         let k = self.w.key(at);
         self.w.set_key(at, k & !0x3ff | u32::from(kind));
     }
@@ -1956,7 +2435,7 @@ impl<'a> P<'a> {
     /// `None` kept as it is with every node inside it; `u16::MAX - 1` refuses), `field` each
     /// field's new one, and `root` the node's own way (`u16::MAX`: its kind's).
     fn reread(&mut self, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>, field: fn(u16) -> u16) -> R {
-        let at = *self.made.last().unwrap_or(&NONE);
+        let at = self.top.1;
         if at == NONE {
             return self.refuse();
         }

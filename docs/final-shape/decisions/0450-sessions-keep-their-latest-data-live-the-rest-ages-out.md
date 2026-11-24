@@ -1,9 +1,10 @@
 # 0450: Sessions keep their latest data live in segments; the rest ages out, and may be kept compressed
 
-Status: decided by the user (2026-11-19): items 1–4 of §1, §2 (two sessions, how a store session ends, and its
-shape: "go ahead with 0450"). Step 2 built (floor 8); steps 3 and 4 built. §3 (the cross-file memo): its history traced; its removal
-decided by the user (2026-11-19, "go ahead with that split") and done. Follows 0295 (segments and the archive), 0053 (collection),
-0353 (blocks are never copied) and the store's floor 7 (0295 step 5: no source or tape in a row).
+Status: built (audited 2026-11-23). Decided by the user (2026-11-19): items 1–4 of §1, §2 (two sessions, how a store
+session ends, and its shape: "go ahead with 0450"). Step 2 built (floor 8); steps 3 and 4 built. §3 (the cross-file
+memo): its history traced; its removal decided by the user (2026-11-19, "go ahead with that split") and done. Follows
+0295 (segments and the archive), 0053 (collection), 0353 (blocks are never copied) and the store's floor 7 (0295 step
+5: no source or tape in a row).
 
 ## Intro
 

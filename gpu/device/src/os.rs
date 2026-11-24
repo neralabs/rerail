@@ -8,6 +8,12 @@
 
 use std::ffi::c_void;
 
+/// The file this code was loaded from: the program, or the library loaded into one (the Node addon,
+/// `rerail_engine.<target>.node`), where what ships with the engine lies beside it (`store::shipped_dir`).
+pub fn own_image() -> Option<std::path::PathBuf> {
+    sys::loaded_from(own_image as *const c_void)
+}
+
 /// A library this process has open. It stays open for the process's life: the backends keep its functions.
 #[derive(Clone, Copy)]
 pub struct Lib(*mut c_void);
@@ -153,6 +159,19 @@ mod sys {
     use super::Scope;
     use std::ffi::{c_void, CStr, CString};
 
+    /// The image (program or library) holding `address`, by the loader (`dladdr`).
+    pub fn loaded_from(address: *const c_void) -> Option<std::path::PathBuf> {
+        use std::os::unix::ffi::OsStrExt;
+        // SAFETY: `dladdr` reads only the address, and fills `info` with pointers into the loader's own tables.
+        let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+        if unsafe { libc::dladdr(address, &mut info) } == 0 || info.dli_fname.is_null() {
+            return None;
+        }
+        // SAFETY: a non-null `dli_fname` is a NUL-terminated path the loader keeps for the image's lifetime.
+        let name = unsafe { CStr::from_ptr(info.dli_fname) };
+        Some(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(name.to_bytes())))
+    }
+
     pub fn open(name: &str, scope: Scope) -> Option<*mut c_void> {
         let c = CString::new(name).ok()?;
         let seen = if scope == Scope::Global { libc::RTLD_GLOBAL } else { libc::RTLD_LOCAL };
@@ -251,6 +270,8 @@ mod sys {
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
+        fn GetModuleHandleExW(flags: u32, address: *const u16, module: *mut *mut c_void) -> i32;
+        fn GetModuleFileNameW(module: *mut c_void, name: *mut u16, size: u32) -> u32;
         fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
         fn GetLastError() -> u32;
         fn GetSystemInfo(info: *mut SystemInfo);
@@ -263,6 +284,25 @@ mod sys {
         fn GetThreadTimes(thread: *mut c_void, created: *mut u64, exited: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
         fn QueryPerformanceCounter(count: *mut i64) -> i32;
         fn QueryPerformanceFrequency(frequency: *mut i64) -> i32;
+    }
+
+    /// The module (program or DLL) holding `address`, by the loader.
+    pub fn loaded_from(address: *const c_void) -> Option<std::path::PathBuf> {
+        use std::os::windows::ffi::OsStringExt;
+        // GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
+        let mut module = std::ptr::null_mut();
+        // SAFETY: the flags name `address` as an address in the module, and take no reference.
+        if unsafe { GetModuleHandleExW(0x4 | 0x2, address.cast(), &mut module) } == 0 {
+            return None;
+        }
+        let mut name = vec![0u16; 32768];
+        // SAFETY: a buffer of `name.len()` units.
+        let n = unsafe { GetModuleFileNameW(module, name.as_mut_ptr(), name.len() as u32) } as usize;
+        (n > 0 && n < name.len()).then(|| std::ffi::OsString::from_wide(&name[..n]).into())
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
     }
 
     pub fn monotonic() -> f64 {
@@ -359,5 +399,16 @@ mod sys {
     /// The whole of a mapping `map` made, no longer used.
     pub unsafe fn unmap(at: *mut u8, _len: usize) {
         unsafe { VirtualFree(at.cast(), 0, MEM_RELEASE) };
+    }
+}
+
+#[cfg(test)]
+mod own_image_tests {
+    /// The file the engine's code was loaded from (decision 0645: what ships lies beside it): here, the test program.
+    #[test]
+    fn the_engine_finds_the_file_it_was_loaded_from() {
+        let image = super::own_image().expect("the loader names the image");
+        assert!(image.is_file(), "{}", image.display());
+        assert_eq!(image.canonicalize().unwrap(), std::env::current_exe().unwrap().canonicalize().unwrap());
     }
 }

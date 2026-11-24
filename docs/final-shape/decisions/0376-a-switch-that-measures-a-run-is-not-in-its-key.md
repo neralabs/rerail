@@ -1,5 +1,7 @@
 # 0376. A switch that measures a run is not in its key
 
+Status: built (audited 2026-11-23).
+
 Date: 2026-11-17. Status: decided; built.
 
 ## Intro

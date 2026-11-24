@@ -457,7 +457,7 @@ fn rr_look() {
             eprintln!("  {:>4}..{:<4} {}{} {:?}", t.start, t.end, if t.mark { "mark " } else { "" }, t.kind, &doc[t.start..t.end]);
         }
         eprintln!("  reference: {:?}", rerail_cpu_stream::ladder::refusal(&c, doc.as_bytes()));
-        let compiled = c.parser.parse(doc.as_bytes());
+        let compiled = rerail_cpu_stream::ladder::compiled_nodes(&c, doc.as_bytes());
         eprintln!("  compiled: {:?}", compiled.as_ref().map(|n| n.len()));
         // Where the compiled tree leaves the reference's: the nodes around it.
         if let (Ok(nodes), Some(want)) = (&compiled, rerail_cpu_stream::ladder::reference(&c, doc.as_bytes())) {
@@ -516,7 +516,7 @@ fn rr_corpus() {
     for f in &files {
         let bytes = std::fs::read(f).expect("reads");
         let Ok(src) = std::str::from_utf8(&bytes) else { continue };
-        match c.parser.parse(&bytes) {
+        match rerail_cpu_stream::ladder::compiled_nodes(&c, &bytes) {
             Ok(nodes) => {
                 let ours = named(&c, &rerail_cpu_stream::ladder::as_ids(nodes));
                 let (theirs, error) = engine(src);

@@ -1,6 +1,7 @@
 //! Projected reader demand around a product. An optional restriction is installed only when every read supplies
 //! the selected columns independently and the new demand sits outside the relation's dependency component.
 
+use rerail_blocks::vector::Vector;
 use super::{Context, PREFIX as PRODUCT, Part, Program, connect, plain, rewritten, same, value, write_demand};
 use crate::code_rule_dsl::logic::front::name::List;
 use crate::code_rule_dsl::logic::front::Value;
@@ -392,7 +393,7 @@ pub fn install_requests(
     Ok(installed)
 }
 
-fn node_columns(program: &Program<'_>, rel: &str) -> Vec<usize> {
+fn node_columns(program: &Program<'_>, rel: &str) -> Vector<usize> {
     program
         .columns(rel)
         .unwrap_or_default()
@@ -417,7 +418,7 @@ pub fn restrict(program: &mut Program<'_>, rel: &str, products: &BTreeSet<String
         }
     }
     // A symbol can also bound a read, for example a requested qualified name.
-    let symbols: Vec<usize> = program
+    let symbols: Vector<usize> = program
         .columns(rel)
         .unwrap_or_default()
         .iter()

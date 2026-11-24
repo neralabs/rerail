@@ -1,0 +1,31 @@
+[package]
+name = "rerail-slabs"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The slab residency: stored tapes and their sources in slabs of the GPU pool, read in place (decision 0032); a loaded tape's home."
+
+[features]
+# The test hooks of the crates below.
+test-hooks = ["rerail-accel/test-hooks", "rerail-blocks/test-hooks", "rerail-clif/test-hooks", "rerail-context/test-hooks", "rerail-prof/test-hooks"]
+
+[dependencies]
+rerail-context = { path = "../context" }
+# The documents' views (`DocView`) and the 16z caches they read.
+rerail-clif = { path = "../clif", default-features = false }
+# The pool the slabs are leased from, and the Metal budget they take a share of.
+rerail-accel = { path = "../../../accel" }
+# A slab is a chunk block (decision 0289 §4).
+rerail-blocks = { path = "../blocks" }
+rerail-error = { path = "../error" }
+rerail-prof = { path = "../prof" }
+sha2 = "0.10"
+
+# The device layer's targets (macOS, Linux and Windows), where this crate is (`lib.rs`).
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+# A slab's buffer: the device layer's (decision 0440 step C).
+rerail-device = { path = "../../../gpu/device" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-slabs = { path = ".", features = ["test-hooks"] }

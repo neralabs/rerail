@@ -8,7 +8,7 @@
             fn len(&self) -> usize { 1_000_000 }
             fn estimated_matches(&self, _:usize, _:bool)->usize { 1 }
             fn indexed(&self,_:usize)->bool { false }
-            fn lookup(&self,_:usize,_:&[i64])->Option<Vec<usize>> { None }
+            fn lookup(&self,_:usize,_:&[i64])->Option<rerail_blocks::vector::Vector<usize>> { None }
             fn value(&self,r:usize,c:usize)->i64 { self.reads.fetch_add(1,Ordering::Relaxed); if c==0 {r as i64} else {7} }
             fn statistics(&self)->Option<Vec<(String,i64,i64,i64,i64)>> {
                 self.known.then(||vec![("kind".into(),1_000_000,1,1_000_000_000_000,1_000_000_000_000)])

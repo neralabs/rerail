@@ -1,4 +1,5 @@
 //! Test-only index traversal alternatives. Production lookup remains unchanged.
+use rerail_blocks::vector::Vector;
 use super::*;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Mode { Point, Merge, Gallop, Adaptive }
@@ -11,7 +12,7 @@ fn mode() -> Option<Mode> {
         "point" => Mode::Point, "merge" => Mode::Merge, "gallop" => Mode::Gallop, "adaptive" => Mode::Adaptive, _ => panic!("invalid lookup mode")
     }))
 }
-pub(super) fn selected(r: &Relation, column: usize, keys: &[i64]) -> Option<Vec<usize>> {
+pub(super) fn selected(r: &Relation, column: usize, keys: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
     let mode = mode()?;
     if keys.len() < 2 { return None; }
     let trace = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_LOOKUP_TRACE").is_some());
@@ -19,11 +20,11 @@ pub(super) fn selected(r: &Relation, column: usize, keys: &[i64]) -> Option<Vec<
     if trace { WORK.with(|total| { let mut t=total.borrow_mut(); t.requests+=w.requests; t.reads+=w.reads; t.output+=w.output; t.point+=w.point; t.merge+=w.merge; t.gallop+=w.gallop; }); }
     Some(rows)
 }
-fn run<const TRACE: bool>(r: &Relation, column: usize, keys: &[i64], mut mode: Mode) -> (Vec<usize>,Work) {
+fn run<const TRACE: bool>(r: &Relation, column: usize, keys: &[i64], mut mode: Mode) -> (rerail_blocks::vector::Vector<usize>,Work) {
     let index=&r.index(column).rows;
     let mut reads=0;
     let mut value=|i:usize| { if TRACE { reads+=1; } r.value(index[i] as usize,column) };
-    let mut out=Vec::new();
+    let mut out=rerail_blocks::vector::Vector::new();
     let mut work=Work { requests:keys.len(), ..Work::default() };
     if keys.is_empty() { return (out,work); }
     if keys.len()==1 {mode=Mode::Point;}
@@ -74,11 +75,11 @@ fn lookup_shape_matrix() {
     for i in 0..100_000 {relation.push(&[(i/2)*3,i]);}
     let cpu=||{let (u,s)=crate::code_rule_dsl::prof::thread_usage();u+s};
     let build=cpu();relation.index(0);let index_cpu=cpu()-build;
-    let cases:Vec<(&str,Vec<i64>)>=vec![
-        ("empty",vec![]),("one",vec![321]),("sparse",(0..32).map(|i|i*4500).collect()),
+    let cases:Vec<(&str,Vector<i64>)>=vec![
+        ("empty",rerail_blocks::vector![]),("one",rerail_blocks::vector![321]),("sparse",(0..32).map(|i|i*4500).collect()),
         ("clustered",(20_000..24_000).collect()),("dense",(0..150_000).step_by(3).collect()),
         ("absent",(0..150_000).step_by(3).map(|i|i+1).collect()),
-        ("duplicate_unsorted",vec![300,3,300,-1,150_001]),
+        ("duplicate_unsorted",rerail_blocks::vector![300,3,300,-1,150_001]),
     ];
     let mut reports=Vec::new();
     for (name,keys) in cases {

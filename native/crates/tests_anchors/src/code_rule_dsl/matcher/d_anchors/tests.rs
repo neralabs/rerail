@@ -83,7 +83,7 @@ fn actual<D: Doc>(root: &AstGrep<D>, matcher: &AstMatcher) -> Vec<Found> {
         .collect()
 }
 
-fn selected<D: Doc<Source = String, Lang = GrammarDialect>>(
+fn selected<D: Doc<Lang = GrammarDialect, Source: std::ops::Deref<Target = str>>>(
     root: &AstGrep<D>,
     matcher: &AstMatcher,
     plan: &AnchorPlan,
@@ -140,7 +140,7 @@ fn tape_doc(source: &str, language: GrammarDialect) -> AstGrep<TapeDoc> {
     let parsed = StrDoc::new(source, language);
     let grammar = Grammar::new(language).unwrap();
     let image = TapeImage::encode(parsed.tree.root_node(), &grammar, source, &|| false).unwrap();
-    AstGrep::doc(TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap())
+    AstGrep::doc(TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap())
 }
 
 
@@ -161,7 +161,7 @@ fn compare_matchers(
     );
     let grammar = Grammar::new(language).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
     let tree_nodes = tape.transducer_len();
     let tape = AstGrep::doc(tape);
     assert_eq!(tape.root().dfs().count(), tree_nodes);
@@ -604,7 +604,7 @@ fn incomplete_index_is_not_a_clean_absence() {
     let native = StrDoc::new(source, GrammarDialect::TypeScript);
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
     // The tree\'s nodes: a stored image is named-only (RER-131).
     let tree_nodes = tape.transducer_len();
     let matcher = compile_rule(
@@ -643,7 +643,7 @@ fn traversal_polls_closing_nodes_before_another_preorder_batch() {
     let native = StrDoc::new(&source, GrammarDialect::TypeScript);
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    let tape = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    let tape = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     let matcher = compile_rule(
         &json!({"kind": "call_expression"}),
         GrammarDialect::TypeScript,
@@ -689,7 +689,7 @@ fn deep_assignment_chain_has_exact_bounded_visits_and_incomplete_fallback() {
     assert!(!native.tree.root_node().has_error());
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    let tape = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    let tape = TapeDoc::restore(Arc::new(source.into()), grammar, &image, &|| false).unwrap();
     let tree_nodes = tape.transducer_len();
     let rule = json!({"kind": "class_declaration"});
     let matcher = compile_rule(
@@ -735,7 +735,7 @@ const ZERO_WIDTH_SOURCES: [&str; 8] = [
     "x = (1 + \n",
 ];
 
-fn exact_sibling_projection<D: Doc<Source = String, Lang = GrammarDialect>>(
+fn exact_sibling_projection<D: Doc<Lang = GrammarDialect, Source: std::ops::Deref<Target = str>>>(
     root: &AstGrep<D>,
     source: &str,
     rules: &[Value],
@@ -791,7 +791,7 @@ fn sibling_projections_are_exact_around_zero_width_nodes_and_the_root() {
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
         let tape =
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
         exact_sibling_projection(&AstGrep::doc(tape), source, &rules);
     }
 }
@@ -821,7 +821,7 @@ fn sibling_projections_are_exact_among_blade_overlapping_siblings() {
         let grammar = Grammar::new(GrammarDialect::Blade).unwrap();
         let image = crate::code_rule_dsl::blade::tape::encode_template(&grammar, source, &|| false).unwrap();
         let tape = AstGrep::doc(
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap(),
         );
         let root = tape.root();
         let program = root.children().last().expect("the embedded program");
@@ -895,7 +895,7 @@ fn tape_sibling_walks_match_native_around_zero_width_nodes() {
         let image =
             TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
         let tape = AstGrep::doc(
-            TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap(),
+            TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap(),
         );
         let stored = tape.root().dfs().map(|node| (node.kind().to_string(), node.range().start, node.range().end)).collect();
         assert_eq!(stored_walks(&AstGrep::doc(native), &stored), tape_walks(&tape), "{source:?}");
@@ -916,7 +916,7 @@ fn zero_width_end_sibling_selection_is_linear_in_the_run() {
     let parsed = StrDoc::new(&source, GrammarDialect::TypeScript);
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(parsed.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    let native = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap());
+    let native = AstGrep::doc(TapeDoc::restore(Arc::new(source.clone().into()), grammar, &image, &|| false).unwrap());
     let mut rules = Vec::new();
     for relation in ["precedes", "follows"] {
         for target in ["^\\{$", "^$"] {
@@ -948,7 +948,7 @@ fn zero_width_end_sibling_selection_is_linear_in_the_run() {
     );
 }
 
-fn assert_stop_rule_supersets<D: Doc<Source = String, Lang = GrammarDialect>>(
+fn assert_stop_rule_supersets<D: Doc<Lang = GrammarDialect, Source: std::ops::Deref<Target = str>>>(
     root: &AstGrep<D>,
     rules: &[Value],
 ) where
@@ -992,7 +992,7 @@ fn stop_rule_relations_plan_as_unbounded_supersets() {
     let native = StrDoc::new(source, GrammarDialect::TypeScript);
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
-    let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
+    let tape = TapeDoc::restore(Arc::new(source.to_owned().into()), grammar, &image, &|| false).unwrap();
     assert_stop_rule_supersets(&AstGrep::doc(native), &rules);
     assert_stop_rule_supersets(&AstGrep::doc(tape), &rules);
 }

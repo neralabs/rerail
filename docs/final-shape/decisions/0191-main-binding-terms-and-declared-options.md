@@ -1,7 +1,7 @@
 # 0191: Main's binding terms read through `bind_name` and `main_form`; a rule's declared options are its defaults
 
-Status: decided (2026-11-13, in the work to run main's rules directly: "please take it", on the binding-site gap
-decision 0182 recorded).
+Status: built (audited 2026-11-23). Decided (2026-11-13, in the work to run main's rules directly: "please take it",
+on the binding-site gap decision 0182 recorded).
 
 ## Intro
 

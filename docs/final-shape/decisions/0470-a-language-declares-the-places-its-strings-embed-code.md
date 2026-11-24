@@ -1,8 +1,8 @@
 # 0470. A language declares the places its strings embed code
 
-Status: decided (2026-11-19), by the user: choice 2 of three for "a string we know is HTML": a language declares
-the strings at known places that hold code. Comes after 0466 (a fragment starts at a node kind). Continues 0431 §4
-(the grammar decides what a file holds as programs).
+Status: built (audited 2026-11-23). Decided (2026-11-19), by the user: choice 2 of three for "a string we know is
+HTML": a language declares the strings at known places that hold code. Comes after 0466 (a fragment starts at a node
+kind). Continues 0431 §4 (the grammar decides what a file holds as programs).
 
 ## Intro
 

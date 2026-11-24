@@ -2,35 +2,33 @@
 //! adapted from PIAT's anchor store (`matcher/anchors/sql/{store.rs, values.rs,
 //! store/kinds.rs}`), which followed the SQL index prototype's `tape_store.py`.
 //!
-//! P kept a private database with its own `file` table holding a second copy of each tape. Here
-//! the rows are keyed by the content store's `tape_objects.tape_id` and cascade from it, so a
-//! collected tape takes its rows with it and two workspaces holding the same content share them.
-//! Kinds are atoms (`tape tag · 1024 + kind code`). A set row (`prefilter_sets`) carries the
-//! version the rows were built under; publishing again replaces them.
+//! A tape's rows are kept facts of the store (t33 steps 6 and 7, `kept`): one partition a tape, its `tape_id`,
+//! gone in the transaction that deletes the tape's row. Kinds are atoms (`tape tag · 1024 + kind code`). A tape's
+//! set row carries the version the rows were built under; publishing again replaces them. The SQL route reads them
+//! through virtual tables of the names the store's tables had (`vtab`).
 //!
-//! - `tape_kind_counts`: per (tape, kind), the count and the preorders as a container segment: the
-//!   access path for "which nodes of this tape have kind k", without decoding the tape.
-//! - `term_postings`: case-exact leaf text per (lang, term, tape, kind), and `term_freq` the number
-//!   of (tape, kind) rows carrying each term. A term is its text's atom (`atoms`), interned in the
+//! - kinds: per (tape, kind), the count and the preorders as a container segment: the access path for "which nodes
+//!   of this tape have kind k", without decoding the tape.
+//! - terms: case-exact leaf text per (tape, term, kind). A term is its text's atom (`atoms`), interned in the
 //!   publication's transaction, so its text is stored once.
-//! - `term_coverage`: per (tape, kind), whether every node of the kind is covered by a term
-//!   (`bad` = 0), and the nodes that are not (`missing`). Unclean leaves (whitespace, control
-//!   characters, too long) are kept as terms only while the store-wide residue of their kind stays
-//!   under `RESIDUE_CAP`.
+//! - coverage: per (tape, kind), whether every node of the kind is covered by a term (`bad` = 0), and the nodes that
+//!   are not (`missing`). Unclean leaves (whitespace, control characters, too long) are kept as terms only while the
+//!   store-wide residue of their kind stays under `RESIDUE_CAP`.
+//! - the store-wide counts (`kind_size`, `term_kind_freq`, `term_node_freq`, `term_freq`): runs of deltas (`kept`).
+
+pub mod kept;
+pub mod vocabulary;
+pub(in crate::content_store) mod vtab;
 
 #[allow(unused_imports)]
 use crate::content_store::Cached as _;
 use super::bounded_insert::insert;
-use super::postings::{append_delta, pack_edges};
+use super::kept_facts::{ChainRows, KeptSpace, chain_rows};
+use super::postings::append_delta;
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
-use rusqlite::{Connection, params, types::Value};
-use std::collections::{BTreeMap, BTreeSet};
+use rusqlite::{Connection, types::Value};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-/// The image a tape's rows were built by. 2: ERROR nodes are kind code 0 in both postings.
-/// 3: term postings carry their node count, which the planner statistics sum. 4: kind sizes and
-/// edges (`kind_size`, `edge_freq`). 5: terms are atoms. 6: kind postings are container segments
-/// (`postings::segment_positions`, decision 0045).
-pub const PREFILTER_VERSION: i64 = 8;
 /// Unclean leaves per kind, store-wide, kept as terms.
 pub const RESIDUE_CAP: usize = 4096;
 /// A node of the kind has a named descendant: its text is not a leaf term.
@@ -40,43 +38,64 @@ pub const UNCLEAN: u8 = 2;
 /// The kind's unclean leaves exceed the residue bounds.
 pub const TOO_BIG: u8 = 4;
 
-/// One tape's prefilter rows, built from the tape alone (`code_rule_dsl::prefilter::image`), so
-/// publication holds the write lock only to write.
-#[derive(Clone, Debug)]
-pub struct TapePrefilter {
-    pub tape_id: TapeId,
-    pub lang: u32,
-    /// The tape's node count: candidate SQL enumerates every node of a tape from it.
-    pub nodes: u32,
-    /// (kind atom, count, sum of descendants, delta-varint postings), sorted by atom.
-    pub kinds: Vec<(u32, u32, u64, Vec<u8>)>,
-    /// Direct edges: (parent kind atom, child kind atom, field, count), sorted.
-    pub edges: Vec<(u32, u32, u16, u32)>,
-    /// Clean leaf terms: (kind atom, term) → preorders, ascending.
-    pub postings: BTreeMap<(u32, String), Vec<u32>>,
-    /// Per kind atom: the coverage flags and the number of unclean leaves.
-    pub cover: BTreeMap<u32, (u8, usize)>,
-    /// Per kind atom: the nodes no term covers, ascending.
-    pub missing: BTreeMap<u32, Vec<u32>>,
-    /// Per kind atom: unclean leaves, which become terms unless the store-wide cap refuses them.
-    pub residue: BTreeMap<u32, Vec<(u32, String)>>,
-}
+pub use rerail_store_base::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
+
+/// Terms whose publication fails in a store (`ContentStore::reject_prefilter_term_for_test`): a failed publication's
+/// rollback, tested.
+#[cfg(any(test, feature = "test-hooks"))]
+static REJECT_TERM: std::sync::Mutex<Vec<(std::path::PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
 
 impl ContentStore {
-    /// Publishes each tape's prefilter rows, replacing any it has.
+    /// Makes every later publication of prefilter rows with term `term` into this store fail, inside its transaction.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn reject_prefilter_term_for_test(&self, term: &str) {
+        REJECT_TERM.lock().expect("reject hook").push((self.database_path.clone(), term.to_owned()));
+    }
+
+    /// Publishes each tape's prefilter rows, replacing any it has (a tape given twice: its last), and counts
+    /// them into the store-wide counts, in one transaction.
     pub fn put_prefilters_bulk(&self, sets: &[TapePrefilter]) -> StoreResult<()> {
         if sets.len() > MAX_PUBLICATION_BATCH {
             return Err(StoreError::Invalid("prefilter publication exceeds 64 tapes".to_owned()));
         }
         self.require_write_capacity()?;
-        // Its terms are the store's ids (`Counts::flush`): written after a fork too (decision 0170).
-        super::atoms::mapped(|| self.immediate_transaction(|transaction| {
-            let mut counts = Counts::default();
-            for set in sets {
-                put(transaction, set, &mut counts, &self.atoms)?;
+        let mut last: BTreeMap<i64, &TapePrefilter> = BTreeMap::new();
+        for set in sets {
+            last.insert(set.tape_id.row(), set);
+        }
+        let path = self.database_path.clone();
+        // Its terms are the store's ids: written after a fork too (decision 0170).
+        let written = super::atoms::mapped(|| self.immediate_transaction(|t| {
+            let space = kept::space();
+            let old = open(&path, t, &space)?;
+            let view = old.as_ref().map(KeptSpace::view);
+            let sums = view.as_ref().map(|v| kept::sums(v));
+            // Each term's atom, from the store's arena (decision 0049), as the store numbers it: new ones are
+            // pending, and the transaction's commit appends them before these rows (`ContentStore::commit`).
+            let texts: BTreeSet<&str> = last
+                .values()
+                .flat_map(|s| s.postings.keys().map(|(_, t)| t.as_str()).chain(s.residue.values().flatten().map(|(_, t)| t.as_str())))
+                .collect();
+            let texts: Vec<&str> = texts.into_iter().collect();
+            let mut ids: Vec<i64> = self.atoms.intern_all(&texts)?.into_iter().map(i64::from).collect();
+            self.atoms.to_store(t, super::ProcessIds::of_process(&mut ids))?;
+            let atoms: HashMap<&str, i64> = texts.iter().copied().zip(ids).collect();
+            #[cfg(any(test, feature = "test-hooks"))]
+            if REJECT_TERM.lock().expect("reject hook").iter().any(|(store, term)| *store == path && atoms.contains_key(term.as_str())) {
+                return Err(StoreError::Invalid("publication failed: a rejected term (test hook)".to_owned()));
             }
-            counts.flush(transaction, &self.atoms)
+            let mut change = kept::Change::new();
+            for (&tape, set) in &last {
+                change.replace(view.as_ref(), tape);
+                let prior = |kind: i64| sums.as_ref().map_or(0, |s| s.kind(kind).residue) + change.delta.residue(kind);
+                let rows = tape_rows(set, &atoms, prior)?;
+                change.put(tape, &rows)?;
+            }
+            drop(sums);
+            drop(view);
+            change.write(&path, t, old.as_ref())
         }))?;
+        self.note_kept(&kept::space(), written);
         self.hold_prefilters(sets);
         Ok(())
     }
@@ -96,36 +115,28 @@ impl ContentStore {
         }
     }
 
-    /// Removes a tape's prefilter rows (they also go when the tape is collected).
+    /// Removes a tape's prefilter rows, counted out (they also go when the tape is collected).
     pub fn remove_prefilter(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().forget_kinds(tape.row());
-        self.immediate_transaction(|transaction| {
-            transaction.execute_cached("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape.row()])?;
-            Ok(())
-        })
+        let path = self.database_path.clone();
+        let written = self.immediate_transaction(|t| forget_tapes(&path, t, &[tape.row()]))?;
+        self.note_kept(&kept::space(), written);
+        Ok(())
     }
 
     /// The version of a tape's prefilter rows, if it has them.
     pub fn prefilter_version(&self, tape: TapeId) -> StoreResult<Option<i64>> {
-        use rusqlite::OptionalExtension;
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        Ok(connection
-            .prepare_cached("SELECT version FROM prefilter_sets WHERE tape_id=?1")?
-            .query_row([tape.row()], |row| row.get(0))
-            .optional()?)
+        let Some(space) = self.kept_space(&kept::space())? else { return Ok(None) };
+        Ok(kept::tape(&space.view(), tape.row()).map(|t| t.version))
     }
 
-    /// The preorders of `tape`'s nodes of kind atom `kind`, decoded in SQL (`nera_segment`).
+    /// The preorders of `tape`'s nodes of kind atom `kind`, decoded from their container segment.
     pub fn kind_positions(&self, tape: TapeId, kind: u32) -> StoreResult<Vec<u32>> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut statement = connection.prepare_cached(
-            "SELECT p.pre FROM tape_kind_counts c, nera_segment(c.postings) p \
-             WHERE c.tape_id=?1 AND c.kind=?2",
-        )?;
-        let rows = statement
-            .query_map(params![tape.row(), kind], |row| row.get(0))?
-            .collect::<Result<Vec<u32>, _>>()?;
-        Ok(rows)
+        let Some(space) = self.kept_space(&kept::space())? else { return Ok(Vec::new()) };
+        let view = space.view();
+        let Some(t) = kept::tape(&view, tape.row()) else { return Ok(Vec::new()) };
+        let Some(k) = t.kind(i64::from(kind)) else { return Ok(Vec::new()) };
+        super::postings::segment_positions(&t.bytes(k.at, k.len)).map_err(|e| StoreError::Corrupt(format!("a kind's postings: {e}")))
     }
 
     /// Runs the prefilter's candidate SQL (`code_rule_dsl::prefilter::execute`) on the store's
@@ -193,7 +204,6 @@ impl ContentStore {
                 "BEGIN; CREATE TEMP TABLE capture_tapes(tape_id INTEGER PRIMARY KEY);",
             )?;
             insert(&connection, "INSERT OR IGNORE INTO temp.capture_tapes(tape_id)", "", tapes.iter().map(|&tape| [Value::Integer(tape)]))?;
-            // `term_freq` before the vocabulary, so its insert trigger finds no predicate to mark.
             // `RERAIL_CAPTURE_TAPES=1` keeps the tapes' frames, for the SQL fallback's lab
             // (`RERAIL_LAB_FALLBACK`), whose relations read them through `nera_tree`.
             if std::env::var_os("RERAIL_CAPTURE_TAPES").is_some() {
@@ -205,7 +215,7 @@ impl ContentStore {
                 let (from, to) = (super::object_segments::object_dir(&self.database_path), super::object_segments::object_dir(path));
                 if let Ok(entries) = std::fs::read_dir(&from) {
                     let io = |e: std::io::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
-                    std::fs::create_dir_all(&to).map_err(io)?;
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
                     for e in entries.flatten() {
                         std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
                     }
@@ -219,26 +229,27 @@ impl ContentStore {
                        FROM temp.capture_tapes c JOIN main.tape_objects t USING(tape_id);",
                 )?;
             }
+            // The prefilter's and the vocabulary's kept facts whole (every tape's rows, the counts, the keys' terms):
+            // their chains' rows, and their files beside the capture as beside the store.
+            let spaces = [kept::space(), vocabulary::space()];
+            for space in &spaces {
+                connection.execute("INSERT INTO capture.facts_chain SELECT * FROM main.facts_chain WHERE space=?1", [&space[..]])?;
+            }
             connection.execute_batch(
-                "
-                 INSERT INTO capture.prefilter_sets SELECT s.* FROM temp.capture_tapes c JOIN main.prefilter_sets s USING(tape_id);
-                 INSERT INTO capture.tape_kind_counts SELECT k.* FROM temp.capture_tapes c JOIN main.tape_kind_counts k USING(tape_id);
-                 INSERT INTO capture.term_postings SELECT p.* FROM temp.capture_tapes c JOIN main.term_postings p USING(tape_id);
-                 INSERT INTO capture.term_coverage SELECT v.* FROM temp.capture_tapes c JOIN main.term_coverage v USING(tape_id);
-                 INSERT INTO capture.atom_blocks SELECT * FROM main.atom_blocks;
-                 INSERT INTO capture.kind_size SELECT * FROM main.kind_size;
-                 INSERT INTO capture.edge_freq SELECT * FROM main.edge_freq;
-                 INSERT INTO capture.term_freq SELECT * FROM main.term_freq;
-                 INSERT INTO capture.term_node_freq SELECT * FROM main.term_node_freq;
-                 INSERT INTO capture.term_kind_freq SELECT * FROM main.term_kind_freq;
-                 DELETE FROM capture.vocabulary_pending;
-                 INSERT INTO capture.vocabulary_predicate SELECT * FROM main.vocabulary_predicate;
-                 INSERT INTO capture.vocabulary_term SELECT * FROM main.vocabulary_term;
-                 INSERT INTO capture.vocabulary_literal SELECT * FROM main.vocabulary_literal;
-                 INSERT INTO capture.vocabulary_pending SELECT * FROM main.vocabulary_pending;
+                "INSERT INTO capture.atom_blocks SELECT * FROM main.atom_blocks;
                  DROP TABLE temp.capture_tapes;
                  COMMIT;",
             )?;
+            let io = |e: std::io::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e));
+            for space in &spaces {
+                let (from, to) = (super::kept_facts::space_dir(&self.database_path, space), super::kept_facts::space_dir(path, space));
+                if let Ok(entries) = std::fs::read_dir(&from) {
+                    crate::content_store::prepare_cache_directory(&to).map_err(io)?;
+                    for e in entries.flatten().filter(|e| !e.file_name().to_string_lossy().ends_with(".new")) {
+                        std::fs::copy(e.path(), to.join(e.file_name())).map_err(io)?;
+                    }
+                }
+            }
             // The atoms' blocks (decision 0401), beside the capture as beside the store: what the rows copied name.
             super::atoms::copy_blocks(&self.database_path, path).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
             Ok(())
@@ -251,14 +262,19 @@ impl ContentStore {
         Ok(copied?)
     }
 
-    /// Deletes a tape, as collection does, for tests of the cascade.
+    /// Deletes a tape, as collection does (its prefilter rows counted out and gone with it, and its search index), for tests of the
+    /// collection.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn delete_tape_for_test(&self, tape: TapeId) -> StoreResult<()> {
         self.working_set().clear();
-        self.immediate_transaction(|transaction| {
-            transaction.execute_cached("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
-            Ok(())
-        })
+        let path = self.database_path.clone();
+        let (written, search) = self.immediate_transaction(|transaction| {
+            transaction.execute("DELETE FROM tape_objects WHERE tape_id=?1", [tape.row()])?;
+            Ok((forget_tapes(&path, transaction, &[tape.row()])?, super::search_index::forget_tapes(&path, transaction, &[tape.row()])?))
+        })?;
+        self.note_kept(&kept::space(), written);
+        self.note_kept(&super::search_index::space(), search);
+        Ok(())
     }
 
     /// Rows of a read-only query over the store, for tests of the prefilter's SQL.
@@ -276,172 +292,75 @@ impl ContentStore {
     }
 }
 
-/// A publication's store-wide counts and postings, summed over its tapes and written once a key
-/// (06 S7: one upsert per key per tape was ~150 of the push's ~300 ms of publication).
-#[derive(Default)]
-struct Counts {
-    kind_size: BTreeMap<u32, (i64, i64)>,
-    edge_freq: BTreeMap<(i64, i64, i64), i64>,
-    postings: Vec<(i64, String, i64, i64, i64, Vec<u8>)>,
-    term_node_freq: BTreeMap<(i64, String, i64), i64>,
-    term_kind_freq: BTreeMap<u32, i64>,
-    term_freq: BTreeMap<(i64, String), i64>,
+/// The prefilter's space as transaction `t` of the store at `store` finds it.
+fn open(store: &std::path::Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
+    // Outside a write's transaction, a writer may commit and sweep the files the rows name before they are mapped:
+    // the rows are then read again (`KeptSpace::open_current`).
+    let rows = chain_rows(t, space)?;
+    Ok(KeptSpace::open_current(store, space, rows, || chain_rows(t, space))?.map(|(_, kept)| kept))
 }
 
-impl Counts {
-    fn is_empty(&self) -> bool {
-        self.kind_size.is_empty() && self.edge_freq.is_empty() && self.postings.is_empty()
+/// Tapes `tapes`' prefilter rows counted out and gone, in transaction `t` of the store at `store`, which deletes
+/// their rows (their ids may be given again). The chain's rows once written, for `ContentStore::note_kept` after
+/// the commit.
+pub(in crate::content_store) fn forget_tapes(store: &std::path::Path, t: &Connection, tapes: &[i64]) -> StoreResult<Option<ChainRows>> {
+    if tapes.is_empty() {
+        return Ok(None);
     }
-
-    /// Writes and clears the sums; postings in key order, so consecutive rows share leaves.
-    fn flush(&mut self, transaction: &Connection, store: &super::atoms::Atoms) -> StoreResult<()> {
-        let counts = std::mem::take(self);
-        // Each term's atom, from the store's arena (decision 0049): new ones are pending, and the
-        // transaction's commit appends them before these rows (`ContentStore::commit`). The term columns
-        // hold the store's ids: a process whose atoms are mapped (decision 0170) maps them here, in one batch.
-        let texts = counts.term_freq.keys().map(|(_, term)| term.as_str()).collect::<Vec<_>>();
-        let mut ids: Vec<i64> = store.intern_all(&texts)?.into_iter().map(i64::from).collect();
-        store.to_store(transaction, super::ProcessIds::of_process(&mut ids))?;
-        let atoms: BTreeMap<&str, i64> = texts.iter().copied().zip(ids).collect();
-        let atom = |term: &str| atoms.get(term).copied().ok_or_else(|| StoreError::Invalid("a posting's term has no atom".to_owned()));
-        insert(
-            transaction,
-            "INSERT INTO kind_size(kind,n,size)",
-            "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n,size=size+excluded.size",
-            counts.kind_size.into_iter().map(|(kind, (n, size))| [i64::from(kind).into(), n.into(), size.into()]),
-        )?;
-        insert(
-            transaction,
-            "INSERT INTO edge_freq(pkind,ckind,field,n)",
-            "ON CONFLICT(pkind,ckind,field) DO UPDATE SET n=n+excluded.n",
-            counts.edge_freq.into_iter().map(|((parent, child, field), n)| [parent.into(), child.into(), field.into(), n.into()]),
-        )?;
-        let mut postings = counts.postings;
-        postings.sort_unstable_by(|a, b| (a.0, &a.1, a.2, a.3).cmp(&(b.0, &b.1, b.2, b.3)));
-        insert(
-            transaction,
-            "INSERT INTO term_postings(lang,term,tape_id,kind,n,postings)",
-            "",
-            postings
-                .into_iter()
-                .map(|(lang, term, tape, kind, n, packed)| Ok([lang.into(), atom(&term)?.into(), tape.into(), kind.into(), n.into(), Value::Blob(packed)]))
-                .collect::<StoreResult<Vec<_>>>()?,
-        )?;
-        insert(
-            transaction,
-            "INSERT INTO term_node_freq(lang,term,kind,n)",
-            "ON CONFLICT(lang,term,kind) DO UPDATE SET n=n+excluded.n",
-            counts
-                .term_node_freq
-                .into_iter()
-                .map(|((lang, term, kind), n)| Ok([lang.into(), atom(&term)?.into(), kind.into(), n.into()]))
-                .collect::<StoreResult<Vec<_>>>()?,
-        )?;
-        insert(
-            transaction,
-            "INSERT INTO term_kind_freq(kind,n)",
-            "ON CONFLICT(kind) DO UPDATE SET n=n+excluded.n",
-            counts.term_kind_freq.into_iter().map(|(kind, n)| [i64::from(kind).into(), n.into()]),
-        )?;
-        insert(
-            transaction,
-            "INSERT INTO term_freq(lang,term,n)",
-            "ON CONFLICT(lang,term) DO UPDATE SET n=n+excluded.n",
-            counts
-                .term_freq
-                .iter()
-                .map(|((lang, term), n)| Ok([(*lang).into(), atom(term)?.into(), (*n).into()]))
-                .collect::<StoreResult<Vec<_>>>()?,
-        )?;
-        Ok(())
+    let space = kept::space();
+    let Some(old) = open(store, t, &space)? else { return Ok(None) };
+    let view = old.view();
+    let mut change = kept::Change::new();
+    for &tape in tapes {
+        change.remove(Some(&view), tape);
     }
+    change.write(store, t, Some(&old))
 }
 
-fn put(transaction: &Connection, set: &TapePrefilter, counts: &mut Counts, atoms: &super::atoms::Atoms) -> StoreResult<()> {
-    let tape = set.tape_id.row();
-    // Publishing again replaces: the cascade and triggers count the old rows down, so the sums
-    // so far are written first, as they would have been one tape at a time.
-    if !counts.is_empty() {
-        let published: bool = transaction
-            .prepare_cached("SELECT EXISTS(SELECT 1 FROM prefilter_sets WHERE tape_id=?1)")?
-            .query_row([tape], |row| row.get(0))?;
-        if published {
-            counts.flush(transaction, atoms)?;
-        }
-    }
-    transaction.execute_cached("DELETE FROM prefilter_sets WHERE tape_id=?1", [tape])?;
-    transaction.execute_cached(
-        "INSERT INTO prefilter_sets(tape_id,version,nodes,edges) VALUES(?1,?2,?3,?4)",
-        params![tape, PREFILTER_VERSION, set.nodes, pack_edges(&set.edges)],
-    )?;
-    // The residue cap applies to the store, not the tape: a kind whose unclean leaves, with the
-    // ones already published, exceed it keeps them on the coverage path instead.
+/// `set`'s rows as kept: its terms the store's atoms (`atoms`), and a kind's unclean leaves terms only while
+/// `prior(kind)`, the store-wide residue the counts and the publication so far hold, and the tape's stay under
+/// `RESIDUE_CAP` (a kind past it keeps them on the coverage path instead).
+fn tape_rows(set: &TapePrefilter, atoms: &HashMap<&str, i64>, prior: impl Fn(i64) -> i64) -> StoreResult<kept::TapeRows> {
+    let atom = |term: &str| atoms.get(term).copied().ok_or_else(|| StoreError::Invalid("a posting's term has no atom".to_owned()));
     let mut cover = set.cover.clone();
     let mut accepted = BTreeSet::new();
-    {
-        let mut prior = transaction.prepare_cached(
-            "SELECT coalesce(sum(residue),0) FROM term_coverage WHERE kind=?1 AND residue>0",
-        )?;
-        for &kind in set.residue.keys() {
-            let coverage = cover.get_mut(&kind).ok_or_else(|| StoreError::Invalid("residue without coverage".to_owned()))?;
-            let before: i64 = prior.query_row([kind], |row| row.get(0))?;
-            if usize::try_from(before).unwrap_or(usize::MAX).saturating_add(coverage.1) > RESIDUE_CAP {
-                coverage.0 |= TOO_BIG;
-            }
-            if coverage.0 & (INTERIOR | TOO_BIG) == 0 {
-                accepted.insert(kind);
-            }
+    for &kind in set.residue.keys() {
+        let coverage = cover.get_mut(&kind).ok_or_else(|| StoreError::Invalid("residue without coverage".to_owned()))?;
+        let before = prior(i64::from(kind));
+        if usize::try_from(before).unwrap_or(usize::MAX).saturating_add(coverage.1) > RESIDUE_CAP {
+            coverage.0 |= TOO_BIG;
+        }
+        if coverage.0 & (INTERIOR | TOO_BIG) == 0 {
+            accepted.insert(kind);
         }
     }
-    let mut postings = set.postings.iter().map(|((kind, term), pres)| ((*kind, term.as_str()), pres.clone())).collect::<BTreeMap<_, _>>();
+    let mut postings: BTreeMap<(u32, &str), Vec<u32>> = set.postings.iter().map(|((kind, term), pres)| ((*kind, term.as_str()), pres.clone())).collect();
     for kind in &accepted {
         for (pre, term) in &set.residue[kind] {
             postings.entry((*kind, term.as_str())).or_default().push(*pre);
         }
     }
-    let lang = i64::from(set.lang);
-    insert(
-        transaction,
-        "INSERT INTO tape_kind_counts(tape_id,kind,n,size,postings)",
-        "",
-        set.kinds.iter().map(|(kind, n, size, positions)| {
-            [tape.into(), i64::from(*kind).into(), i64::from(*n).into(), (*size as i64).into(), Value::Blob(positions.clone())]
-        }),
-    )?;
-    for (kind, n, size, _) in &set.kinds {
-        let entry = counts.kind_size.entry(*kind).or_default();
-        entry.0 += i64::from(*n);
-        entry.1 += *size as i64;
-    }
-    for &(parent, child, field, n) in &set.edges {
-        *counts.edge_freq.entry((i64::from(parent), i64::from(child), i64::from(field))).or_default() += i64::from(n);
-    }
-    for ((kind, term), pres) in &mut postings {
+    let mut terms = Vec::with_capacity(postings.len());
+    for ((kind, term), mut pres) in postings {
         pres.sort_unstable();
-        counts.postings.push((lang, (*term).to_owned(), tape, i64::from(*kind), pres.len() as i64, pack(pres)));
-        *counts.term_node_freq.entry((lang, (*term).to_owned(), i64::from(*kind))).or_default() += pres.len() as i64;
-        *counts.term_kind_freq.entry(*kind).or_default() += pres.len() as i64;
+        terms.push((atom(term)?, i64::from(kind), pres.len() as i64, pack(&pres)));
     }
-    // One row per term, counting the tape's kinds that carry it, in place of a per-row trigger.
-    for (_, term) in postings.keys() {
-        *counts.term_freq.entry((lang, (*term).to_owned())).or_default() += 1;
-    }
-    insert(
-        transaction,
-        "INSERT INTO term_coverage(tape_id,kind,bad,residue,missing)",
-        "",
-        cover.iter().map(|(&kind, &(bad, residue))| {
+    terms.sort_unstable_by_key(|t| (t.0, t.1));
+    let covers = cover
+        .iter()
+        .map(|(&kind, &(bad, residue))| {
             let missing = if accepted.contains(&kind) { &[][..] } else { set.missing.get(&kind).map_or(&[][..], Vec::as_slice) };
-            [
-                tape.into(),
-                i64::from(kind).into(),
-                i64::from(bad).into(),
-                (residue as i64).into(),
-                Value::Blob(pack(missing)),
-            ]
-        }),
-    )?;
-    Ok(())
+            (i64::from(kind), i64::from(bad), residue as i64, pack(missing))
+        })
+        .collect();
+    Ok(kept::TapeRows {
+        version: PREFILTER_VERSION,
+        nodes: i64::from(set.nodes),
+        lang: i64::from(set.lang),
+        kinds: set.kinds.iter().map(|(kind, n, size, positions)| (i64::from(*kind), i64::from(*n), *size as i64, positions.clone())).collect(),
+        terms,
+        covers,
+    })
 }
 
 /// Ascending preorders as a delta-varint segment.

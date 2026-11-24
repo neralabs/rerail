@@ -4,6 +4,7 @@
 //! each reader's connected positive context. When that context would itself form a product, require keys from
 //! the reader's callers first. Reject a product with a reader that cannot supply a connected demand.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::front::{LatticeDecl, Native, Value};
 use crate::code_rule_dsl::logic::front::name::List;
 use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
@@ -161,7 +162,7 @@ impl<'i> Program<'i> {
     }
 
     /// The components, dependencies first, of version `v`'s rules (`front::graph::components_by_name`).
-    fn components(v: &Version) -> Result<Vec<BTreeSet<String>>, crate::code_rule_dsl::logic::front::Error> {
+    fn components(v: &Version) -> Result<crate::code_rule_dsl::logic::front::Components, crate::code_rule_dsl::logic::front::Error> {
         crate::code_rule_dsl::logic::front::graph::components_by_name(v, &crate::code_rule_dsl::logic::program_image::about::About::of(v))
     }
 }
@@ -297,7 +298,7 @@ fn publish(version: &Version, made: &Version, w: &mut ProgramW<'_>) -> Result<()
         }
     }
     for was in version.rules() {
-        match from.get(&was.id()).map(Vec::as_slice) {
+        match from.get(&was.id()).map(|v| v.as_slice()) {
             Some([r]) if r.hash() == was.hash() => {}
             Some(rules) => {
                 builder.remove(was.id());
@@ -436,7 +437,7 @@ fn fixed_vars(rule: RuleRef<'_>, program: &Program<'_>) -> BTreeSet<Slot> {
                 Some(TermRef::Wild) | None => false,
                 Some(t) => plain(*t),
             };
-            let mut reached: Vec<usize> = Vec::new();
+            let mut reached: Vector<usize> = rerail_blocks::vector::Vector::new();
             for fact in facts {
                 match fact {
                     LayoutFact::Key(cols) if cols.iter().all(bound) => reached.extend(0..args.len()),

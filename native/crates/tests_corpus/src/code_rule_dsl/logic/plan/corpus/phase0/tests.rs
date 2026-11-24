@@ -352,10 +352,18 @@
         let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
         let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
         let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
-        // The plan's modules this process lowered, by key: tests beside this one lower their own.
+        // The plan's modules this process lowered since `before`, by key: tests beside this one lower their own, and
+        // the template, made in this process when the build is new, lowers every module (made first, here).
+        let _ = crate::code_rule_dsl::logic::plan::corpus::test_store::template();
+        let before = crate::code_rule_dsl::logic::rr::planned_modules_made();
         macro_rules! made {
             ($graph:expr) => {
-                $graph.plan.values().map(|m| m.key.clone()).filter(|k| crate::code_rule_dsl::logic::rr::planned_module_made(k)).collect::<Vec<String>>()
+                $graph
+                    .plan
+                    .values()
+                    .map(|m| m.key.clone())
+                    .filter(|k| crate::code_rule_dsl::logic::rr::planned_module_made(k) && crate::code_rule_dsl::logic::rr::planned_key(k).is_some_and(|h| !before.contains(&h)))
+                    .collect::<Vec<String>>()
             };
         }
         let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);

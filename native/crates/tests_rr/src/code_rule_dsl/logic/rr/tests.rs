@@ -1,6 +1,7 @@
 //! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
+use rerail_blocks::vector::Vector;
 use rerail_store::Canonical as _;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
@@ -53,7 +54,7 @@ fn body_of(v: &Version, r: RuleRef<'_>) -> Vec<String> {
 
 /// `v`'s components in T's order, or the first that a negation or an aggregate closes.
 fn strata(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
-    analyses::components_by_name(v, &About::of(v))
+    analyses::components_by_name(v, &About::of(v)).map(|c| c.to_sets())
 }
 
 #[test]
@@ -304,7 +305,7 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    let programs: Vec<(PathBuf, Vec<(PathBuf, Vec<from_tape::Stmt>)>)> = rr_files().into_iter().map(|f| {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, from_tape::Statements)>)> = rr_files().into_iter().map(|f| {
         let program = program(&f).unwrap().0;
         (f, program)
     }).collect();
@@ -332,9 +333,9 @@ fn rule_syntax_files_pass_check_rr() {
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
         }
-        let named: Vec<(String, Vec<from_tape::Stmt>)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
+        let named: Vec<(String, from_tape::Statements)> = program.iter().map(|(p, s)| (short(p), s.clone())).collect();
         problems.extend(check::declarations(&named).into_iter().map(|p| format!("{}: {p}", short(&f))));
-        let all: Vec<&from_tape::Stmt> = program.iter().flat_map(|(_, s)| s).collect();
+        let all: from_tape::Statements = program.iter().flat_map(|(_, s)| s).collect();
         problems.extend(check::strata(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
         // A relation read and declared nowhere in the file's program, as check-rr and a run refuse it.
         problems.extend(check::undeclared(&all).into_iter().map(|p| format!("{}: {p}", short(&f))));
@@ -356,15 +357,15 @@ fn check_rr_finds_problems() {
     let cat = statements(".decl a(m: symbol)\n.decl b(q: symbol)\nb(q) :- a(m), m = @cat(q, x).\nb(q) :- a(q), m = @cat(q, x).\n");
     assert_eq!(check::grounded(&cat, &BTreeSet::new()), vec![(4, vec!["m".to_owned()])]);
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
-    let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
+    let refs: from_tape::Statements = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
     // A negation in a component that reads a world answer is the engine's gated negation (decision 0065 §2a, as
     // `c/includes.rerail`'s `#include_next`); an aggregate there is still refused.
     let world = ".decl dir_entry(d: symbol, n: symbol, k: number)\n.input dir_entry\n.decl a(x: symbol)\n.decl b(x: symbol)\n";
     let gated = statements(&format!("{world}a(x) :- b(x), dir_entry(x, _, 0), !a(x).\nb(x) :- a(x).\n"));
-    assert!(check::strata(&gated.iter().collect::<Vec<_>>()).is_empty());
+    assert!(check::strata(&gated).is_empty());
     let counted = statements(&format!("{world}.decl c(x: symbol, n: number)\nc(x, n) :- b(x), dir_entry(x, _, 0), n = count : {{ c(x, _) }}.\nb(x) :- c(x, _).\n"));
-    assert_eq!(check::strata(&counted.iter().collect::<Vec<_>>()).len(), 1);
+    assert_eq!(check::strata(&counted).len(), 1);
     let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }
@@ -1591,6 +1592,38 @@ call_at(p, l) :- doc(d, p, _), node(d, n, k, _, _), (k = "call" ; k = "call_expr
     }
 }
 
+/// A file with a string annotation keeps its own findings: its annotation's value is a tape value whose parts are keyed
+/// by the file's key too, so a node of the file is read through the first source that holds its document
+/// (`Layered::node_read`, decision 0431 §8). Read through its guest's batch instead, every one of the file's texts was
+/// none, its names never resolved, and the file lost every finding (43 of hogql's 189 files after the hub merge).
+#[test]
+fn a_file_with_a_string_annotation_keeps_its_findings() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrstrann");
+    let corpus = dir.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(corpus.join("a_plain.py"), "def f(a):\n    return len(a)\n").unwrap();
+    std::fs::write(corpus.join("e_strann.py"), "# comment\ndef f(a: \"T | int | None\"):\n    return len(a)\n").unwrap();
+    let policy = dir.join("rule.rerail");
+    std::fs::write(&policy, r#"
+.policy "probe-len" revision 1
+.language python
+.scope include "**/*.py"
+#include "python/names.rerail"
+.violation P(at: node) "len"
+P(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.len").
+"#).unwrap();
+    let result = crate::code_rule_dsl::tools::run_rr(&policy, &corpus, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let mut files: Vec<String> = result["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["file"].as_str().or(d["path"].as_str()).unwrap_or("").rsplit('/').next().unwrap_or("").to_owned())
+        .collect();
+    files.sort();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(files, ["a_plain.py", "e_strann.py"], "each file's `len` call, the one with a string annotation too: {result:#}");
+}
+
 /// Empty scopes still run global absence checks; they must not become a planning error or an early return.
 #[test]
 fn empty_corpora_run_global_absence_findings() {
@@ -1675,7 +1708,7 @@ fn a_handed_program_run_again_finds_the_same() {
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |out: &str| crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).map(|r| r["diagnostics"].clone());
     let first = run("first").unwrap();
-    assert_eq!(first.as_array().map(Vec::len), Some(1), "{first}");
+    assert_eq!(first.as_array().map(|v| v.len()), Some(1), "{first}");
     let again = run("again");
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2796,7 +2829,7 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     let names = ["sqlkinds", "objects", "unscoped", "qualified", "counted"];
     let (shown, docs) = guests_run_with("sqlguest", &[("a.py", py)], rule, |o| {
         let shown: Vec<Vec<Vec<String>>> = names.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect();
-        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vec<i64>>())
+        (shown, o.rows("docs").iter().map(|r| r.get(0).int().expect("a document number")).collect::<Vector<i64>>())
     });
     let [sqlkinds, objects, unscoped, qualified, counted] = <[Vec<Vec<String>>; 5]>::try_from(shown).unwrap();
     assert!(sqlkinds.contains(&shown_row(&["object_reference"])), "{sqlkinds:?}");
@@ -3791,6 +3824,7 @@ Call(c) :- kind(c, "call").
     let roots = || -> std::collections::BTreeSet<String> {
         let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store");
         let c = rusqlite::Connection::open_with_flags(&store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        crate::content_store::install_kept_tables(&c).unwrap();
         let mut st = c.prepare("SELECT path FROM corpus_roots").unwrap();
         st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
     };
@@ -4303,8 +4337,11 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             let place_variant = |shown: &str| shown.starts_with("violation(") && shown.split(":-").next().is_some_and(|h| h.contains("place_path("));
             // A helper's rules (`rr_agg7`, its columns its fresh variables in the order of their names, which the
             // numbers change) are compared by their stem; every other rule exactly, its helpers' numbers masked. A
-            // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules.
-            let numbered = |rel: &str| helper.is_match(rel) && !rel.starts_with("rr_wide_");
+            // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules. A helper named by its module
+            // (`rr_m_up_<digest>`) is one of those helpers named again, and compared so: two of one module that differ
+            // in a variable's name alone (a climb from `a` and one from `b`) are united, and which is kept is the
+            // order of their digests, which the dropped clauses change.
+            let numbered = |rel: &str| (helper.is_match(rel) || by_module.is_match(rel)) && !rel.starts_with("rr_wide_");
             let mut rules: Vec<String> = p
                 .rules()
                 .map(|r| (head(r), p.show_rule(r)))
@@ -4518,11 +4555,11 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         if paths.is_empty() {
             continue;
         }
-        // Lowered together in the link's order: phase 0's plan, its modules by rank, then by key (a key names its scope's
-        // interfaces, so two modules of one rank may come in another order than the include order).
-        let (modules, planned_files, _) = super::library_modules_planned(&paths).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-        let files: Files = planned_files.iter().flatten().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect())).collect();
-        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        // The library lowered together in its modules' link order (phase 0's plan: by rank, then name, decision 0639
+        // §1), each module's files in its own order: the order its linked rules come in.
+        let (modules, members, _) = super::library_modules_planned(&paths).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
+        let files: Files = members.iter().flatten().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect())).collect();
+        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter()).collect()).unwrap();
         // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(std::sync::Arc::new(module_image::encode(m).unwrap())).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
         let on_versions = super::link_library_versions(images).unwrap_or_else(|e| panic!("{}: linked on versions from its images: {e}", dir.display()));
@@ -4541,15 +4578,49 @@ fn library_modules_link_to_the_lowering_of_them_together() {
             let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(30).cloned().collect::<Vec<_>>().join("\n    ");
             panic!("{}: {} files; {what} differs at line {first} ({} lines and {}):\n  {:?}\n  {:?}\n  only the first:\n    {}\n  only the second:\n    {}", dir.display(), paths.len(), la.len(), lb.len(), la.get(first), lb.get(first), only(&sa, &sb), only(&sb, &sa));
         };
-        // Line by line, the numbers of what a walk makes aside: a module's walk counts from its own start (decision
-        // 0639 step 3), the library lowered as one walk from the library's; and a module-named helper's module digest
-        // (`rr_m_up_<digest>`), the library's there.
-        let numbered = |l: &str| l.split(|c: char| !(c.is_alphanumeric() || c == '_')).map(|w| match w.strip_prefix("rr_m_") {
-            Some(rest) => format!("rr_m_{}", rest.rsplit_once('_').map_or(rest, |(stem, _)| stem)),
-            None if w.starts_with("rr_") => w.trim_end_matches(|c: char| c.is_ascii_digit()).to_owned(),
-            None => w.to_owned(),
-        }).collect::<Vec<_>>().join(" ");
-        if a.lines().map(numbered).ne(b.lines().map(numbered)) {
+        // Each line with the walk's own names (`rr_text6`: a stem and the walk's count) numbered by their first place in
+        // it: a module's walk counts from its start again once its helpers are named (decision 0639 §4), so the library
+        // lowered together numbers them on. A helper named by its module (`rr_m_up_<digest>`) has its module's digest in
+        // its name, the library's whole where it is lowered together, and one named by its content (`rr_h_…`) the names
+        // of the helpers it reads: each is read by its stem, and the lines compared as a sorted list, as a declaration's
+        // place is its name's.
+        let renumbered = |text: &str| -> Vec<String> {
+            let mut lines: Vec<String> = text.lines()
+                .map(|l| {
+                    let mut seen: Vec<String> = Vec::new();
+                    let mut out = String::new();
+                    let mut word = String::new();
+                    let mut put = |word: &mut String, out: &mut String| {
+                        let stem = word.trim_end_matches(|c: char| c.is_ascii_digit());
+                        if let Some((kind, rest)) = word.strip_prefix("rr_m_").map(|r| ("m", r)).or_else(|| word.strip_prefix("rr_h_").map(|r| ("h", r))) {
+                            out.push_str(&format!("rr_{kind}_{}", rest.rsplit_once('_').map_or(rest, |(s, _)| s)));
+                        } else if word.starts_with("rr_") && stem.len() < word.len() {
+                            let k = seen.iter().position(|s| s == word).unwrap_or_else(|| {
+                                seen.push(word.clone());
+                                seen.len() - 1
+                            });
+                            out.push_str(&format!("{stem}#{k}"));
+                        } else {
+                            out.push_str(word);
+                        }
+                        word.clear();
+                    };
+                    for c in l.chars() {
+                        if c.is_alphanumeric() || c == '_' {
+                            word.push(c);
+                        } else {
+                            put(&mut word, &mut out);
+                            out.push(c);
+                        }
+                    }
+                    put(&mut word, &mut out);
+                    out
+                })
+                .collect();
+            lines.sort();
+            lines
+        };
+        if renumbered(&a) != renumbered(&b) {
             differ("the library linked from its modules, from the one lowered together,", &a, &b);
         }
         if b != from_images {
@@ -5227,15 +5298,15 @@ fn a_layout_line_states_a_relations_facts_by_its_columns() {
                 .decl o(x: number)\n.output o\no(x) :- e(x, _, _).\n";
     let p = parse(text).unwrap();
     let want = vec![
-        F::Key(vec![1]),
-        F::Key(vec![0, 2]),
-        F::Fanout { from: vec![0], to: vec![1], fan: Fan::Few },
+        F::Key(rerail_blocks::vector![1]),
+        F::Key(rerail_blocks::vector![0, 2]),
+        F::Fanout { from: rerail_blocks::vector![0], to: rerail_blocks::vector![1], fan: Fan::Few },
         F::Local,
-        F::Order { col: 2, within: vec![0], dense: true },
+        F::Order { col: 2, within: rerail_blocks::vector![0], dense: true },
         F::Tree { from: 0, to: 1 },
         F::Size(LayoutSize::Per { most: 2, col: 0 }),
-        F::Fanout { from: vec![1], to: vec![0], fan: Fan::About(3) },
-        F::By(Algo::Running { col: 2, within: vec![0] }),
+        F::Fanout { from: rerail_blocks::vector![1], to: rerail_blocks::vector![0], fan: Fan::About(3) },
+        F::By(Algo::Running { col: 2, within: rerail_blocks::vector![0] }),
     ];
     let layouts = ProgramFields::layouts(&*p);
     assert_eq!(layouts.get("e"), Some(&want), "{layouts:?}");
@@ -5272,14 +5343,14 @@ fn layouts_are_carried_with_the_program() {
     let p = parse(&policy("a")).unwrap();
     let layouts = ProgramFields::layouts(&*p);
     let child = layouts.get("child").expect("core.rerail declares child's layout");
-    assert!(child.contains(&F::Key(vec![1])) && child.contains(&F::Order { col: 2, within: vec![0], dense: true }), "{child:?}");
-    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(vec![1]))), "{:?}", layouts.get("node"));
+    assert!(child.contains(&F::Key(rerail_blocks::vector![1])) && child.contains(&F::Order { col: 2, within: rerail_blocks::vector![0], dense: true }), "{child:?}");
+    assert!(layouts.get("node").is_some_and(|f| f.contains(&F::Key(rerail_blocks::vector![1]))), "{:?}", layouts.get("node"));
     // The image's facts, read back from its bytes.
     let v = Version::open(p.fold().unwrap().base_bytes().unwrap()).unwrap();
     assert_eq!(ProgramFields::layouts(&*v), layouts);
     let about = About::of(&v);
     let rel = v.rel("child").unwrap();
-    assert_eq!(about.layouts.iter().find(|(r, _)| *r == rel).map(|(_, f)| f), Some(child));
+    assert_eq!(about.layouts.iter().find(|e| e.0 == rel).map(|e| e.1.iter().map(|f| <crate::code_rule_dsl::logic::front::ast::LayoutFact as rerail_section::Decode>::decode(f, &rerail_section::Names::NONE)).collect::<Vec<_>>()).as_ref(), Some(child));
     // Combined: each relation keeps its facts under the name it has there.
     let combined = crate::code_rule_dsl::logic::plan::corpus::combine(&[&policy("a"), &policy("b")]).unwrap();
     let layouts = combined.layouts();
@@ -5745,7 +5816,7 @@ fn spike_0639_programs_linked_from_modules() {
     }
     let srcs: Vec<String> = programs.iter().map(|(_, p)| std::fs::read_to_string(p).unwrap()).collect();
     let found = super::modules_of(&srcs.iter().map(String::as_str).collect::<Vec<_>>());
-    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
     let printed = |v: &Arc<Version>| print_version(v).unwrap();
     // Lines one side has and the other not, helper numbers aside.
     let plain = |l: &str| l.split(|c: char| !(c.is_alphanumeric() || c == '_')).map(|w| if w.starts_with("rr_") { w.trim_end_matches(|c: char| c.is_ascii_digit()) } else { w }).collect::<Vec<_>>().join(" ");
@@ -5912,7 +5983,7 @@ fn spike_0639_programs_linked_from_modules() {
     packs.sort();
     for (pack, dfs) in packs {
         let core = lib.join("core.rerail").canonical().ok();
-        let read_all: Vec<(Vec<from_tape::Stmt>, [u8; 32])> = dfs.iter().map(|p| {
+        let read_all: Vec<(from_tape::Statements, [u8; 32])> = dfs.iter().map(|p| {
             let (s, f) = read(p).unwrap();
             (s, f.sha256.unwrap_or_default())
         }).collect();
@@ -5947,7 +6018,7 @@ fn spike_0639_programs_linked_from_modules() {
         order.sort_by_key(|&i| (reach[i].len() + usize::from(!reach[i].contains(&i)), hex(&read_all[i].1)));
         let topological = order.iter().enumerate().all(|(k, &i)| reach[i].iter().all(|&j| order.iter().position(|&o| o == j).unwrap() < k || reach[j].contains(&i)));
         let files = |ix: &[usize]| -> Files { ix.iter().map(|&i| (dfs[i].clone(), no_includes(read_all[i].0.clone()))).collect() };
-        let whole = |f: &Files| printed(&super::lower_statements_version(f.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap());
+        let whole = |f: &Files| printed(&super::lower_statements_version(f.iter().flat_map(|(_, s)| s.iter()).collect()).unwrap());
         let (in_dfs, canonical) = (files(&(0..n).collect::<Vec<_>>()), files(&order));
         let (w_dfs, w_canon) = (whole(&in_dfs), whole(&canonical));
         println!("E2 {pack}: {n} files, {cycles} in include cycles, the canonical order topological: {topological}; whole in include order against canonical: {}", if w_dfs == w_canon { "identical".to_owned() } else { differs(&w_dfs, &w_canon) });
@@ -6072,7 +6143,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             let scope_ix: Vec<usize> = (0..u).filter(|&v| members.iter().any(|&i| reach[i].contains(&units[v][0]))).collect();
             let fwd: Vec<&lower::Module> = scope_ix.iter().map(|&v| &built[v]).collect();
             let rev: Vec<&lower::Module> = scope_ix.iter().rev().map(|&v| &built[v]).collect();
-            let st: Vec<from_tape::Stmt> = members.iter().flat_map(|&i| no_includes(read_all[i].0.clone())).collect();
+            let st: from_tape::Statements = members.iter().flat_map(|&i| no_includes(read_all[i].0.clone())).collect();
             let name = dfs[members[0]].display().to_string();
             let a = lower::lower_module_in_written(st.clone(), &fwd).unwrap_or_else(|e| panic!("{name}: {e}"));
             let b = lower::lower_module_in_written(st, &rev).unwrap_or_else(|e| panic!("{name}: reversed: {e}"));
@@ -6170,7 +6241,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
         // modules' rules as a set (a link that only unites), against the whole lowering of the same list, and against
         // the link (which unites by name).
         let named = |m: &lower::Module, _: &str| -> (Arc<Version>, Vec<Vec<String>>) { (Arc::clone(m.version()), Vec::new()) };
-        let whole_m = lower::lower_module_in_written(canonical.iter().flat_map(|(_, s)| s.iter().cloned()).collect(), &[]).unwrap();
+        let whole_m = lower::lower_module_in_written(canonical.iter().flat_map(|(_, s)| s.iter()).collect(), &[]).unwrap();
         let (w, w_cycles) = named(&whole_m, "whole");
         let mut union: BTreeSet<(String, [u8; 32])> = BTreeSet::new();
         let mut m_cycles = 0;
@@ -6288,8 +6359,8 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
             for (u, members) in units.iter().enumerate() {
                 let scope_ix: Vec<usize> = (0..u).filter(|&v| members.iter().any(|&i| reach[i].contains(&units[v][0]))).collect();
                 let headers: Vec<&lower::Module> = scope_ix.iter().map(|&v| &header_only[v]).collect();
-                let st: Vec<from_tape::Stmt> = members.iter().flat_map(|&i| no_includes(read_all[i].0.clone())).collect();
-                let bare: Vec<from_tape::Stmt> = st.iter().filter(|s| !s.has_body()).cloned().collect();
+                let st: from_tape::Statements = members.iter().flat_map(|&i| no_includes(read_all[i].0.clone())).collect();
+                let bare: from_tape::Statements = st.iter().filter(|s| !s.has_body()).collect();
                 let name = dfs[members[0]].display().to_string();
                 let h = lower::lower_module_in_written(bare, &headers).unwrap_or_else(|e| panic!("{name}: its header alone: {e}"));
                 if !scope_ix.is_empty() {
@@ -6377,7 +6448,7 @@ p0_module_key(m, @sha256(cat(b, "|", m, "|", ds, "|", es))) :- p0_build(b), p0_c
 #[test]
 fn modules_named_by_content_link_to_the_whole_lowering() {
     let lib = crate::code_rule_dsl::logic::rr::library();
-    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
     // A rule's line, each module-named helper by its stem and each variable the walk numbered by its stem (a rule's
     // variables are by slot in its template: their names name nothing).
     let plain = |l: &str| -> String {
@@ -6404,7 +6475,7 @@ fn modules_named_by_content_link_to_the_whole_lowering() {
         let m = super::modules_of(&srcs.iter().map(String::as_str).collect::<Vec<_>>()).into_iter().find_map(|m| m.ok().flatten()).unwrap_or_else(|| panic!("{pack}: no program includes the library"));
         let paths: Vec<PathBuf> = m.files.iter().map(|(p, _, _)| p.clone()).collect();
         let (modules, members, _) = super::library_modules_planned(&paths).unwrap();
-        let whole: Vec<from_tape::Stmt> = members.iter().flatten().flat_map(|p| no_includes(read(p).unwrap().0)).collect();
+        let whole: from_tape::Statements = members.iter().flatten().flat_map(|p| no_includes(read(p).unwrap().0)).collect();
         for (u, files) in members.iter().enumerate() {
             let image = module_image::encode(&modules[u]).unwrap();
             for path in files {
@@ -6458,7 +6529,7 @@ fn rule_lines_names_aside(printed: &str) -> BTreeSet<String> {
 fn a_program_linked_from_its_modules_is_its_whole_lowering() {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let per: usize = std::env::var("RERAIL_T1_N").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
-    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
     dirs.push(crate::source_tree::native().join("src/code_rule_dsl/typing/programs"));
@@ -6474,7 +6545,7 @@ fn a_program_linked_from_its_modules_is_its_whole_lowering() {
             let Ok(src) = std::fs::read_to_string(&path) else { continue };
             let Ok(Some(m)) = super::modules(&src) else { continue };
             // A program the whole lowering refuses is not compared (the spike's seven, open items).
-            let mut all: Vec<from_tape::Stmt> = m.files.iter().flat_map(|(p, _, _)| no_includes(read(p).unwrap().0)).collect();
+            let mut all: from_tape::Statements = m.files.iter().flat_map(|(p, _, _)| no_includes(read(p).unwrap().0)).collect();
             all.extend(no_includes(from_tape::RrFile::read(src.as_str()).unwrap().statements()));
             let Ok(whole) = super::lower_statements_version(all).and_then(|v| crate::code_rule_dsl::logic::contexts::passes(&v)) else { continue };
             let linked = parse_version(&src).unwrap_or_else(|e| panic!("{}: the module path: {e}", path.display()));
@@ -6527,7 +6598,7 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(lib.join("../packs")).unwrap().flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
     dirs.sort();
     dirs.push(crate::source_tree::native().join("src/code_rule_dsl/typing/programs"));
-    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
     // The library files every pack's programs include, planned once: a module shared by packs is lowered once.
     let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
     for dir in dirs {
@@ -6543,8 +6614,8 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
     let (mut compared, mut differ) = (0, Vec::new());
     let mut headers: Vec<lower::Module> = Vec::with_capacity(plan.len());
     for m in &plan {
-        let statements: Vec<from_tape::Stmt> = m.files.lines().filter(|f| !f.is_empty()).flat_map(|f| no_includes(read(Path::new(f)).unwrap().0)).collect();
-        let bare: Vec<from_tape::Stmt> = statements.iter().filter(|s| !s.has_body()).cloned().collect();
+        let statements: from_tape::Statements = m.files.lines().filter(|f| !f.is_empty()).flat_map(|f| no_includes(read(Path::new(f)).unwrap().0)).collect();
+        let bare: from_tape::Statements = statements.iter().filter(|s| !s.has_body()).collect();
         let scope: Vec<&lower::Module> = m.scope.split(',').filter(|k| !k.is_empty()).map(|k| &headers[at[k]]).collect();
         let name = m.files.lines().next().unwrap_or_default().to_owned();
         let header = lower::lower_module_in_written(bare, &scope).unwrap_or_else(|e| panic!("{name}: its header alone: {e}"));
@@ -7052,7 +7123,7 @@ fn the_steps_after_the_downward_ones_change_only_what_those_and_the_own_module_c
                 Ok((ms, _, _)) => ms,
                 Err(e) => return Some(format!("{pack}: {}: its library's plan: {e}", path.display())),
             };
-            let own: Vec<from_tape::Stmt> = from_tape::RrFile::read(src.as_str()).unwrap().statements().into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect();
+            let own: from_tape::Statements = from_tape::RrFile::read(src.as_str()).unwrap().statements().into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect();
             let scope: Vec<&lower::Module> = ms.iter().collect();
             let own = lower::lower_module_in_written(own, &scope).ok()?;
             let own_heads: BTreeSet<String> = own.version().rules().map(|r| own.version().rel_name(r.head().rel()).to_owned()).collect();
@@ -7178,7 +7249,7 @@ fn spike_0639_tail_by_module() {
     packs.push(("phases".into(), crate::source_tree::native().join("src/code_rule_dsl/typing/programs")));
     packs.sort();
     packs.retain(|(n, _)| asked == "all" || asked.split(',').any(|a| a == n));
-    let no_includes = |s: Vec<from_tape::Stmt>| -> Vec<from_tape::Stmt> { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
+    let no_includes = |s: from_tape::Statements| -> from_tape::Statements { s.into_iter().filter(|s| !matches!(s.what(), Some(from_tape::S::Include(_)))).collect() };
     let module_steps: Vec<TailStep> = TAIL.iter().copied().filter(|s| !down.contains(s)).collect();
     let first_down = TAIL.iter().position(|s| down.contains(s)).unwrap();
     let after: Vec<TailStep> = TAIL[first_down..].iter().copied().filter(|s| !down.contains(s)).collect();
@@ -7349,7 +7420,7 @@ fn spike_0639_tail_by_module() {
         let mut timed = 0;
         for (path, src, files) in texts.iter().take(per) {
             let Ok((ms, _, _)) = super::library_modules_planned(files) else { failed += 1; continue };
-            let own: Vec<from_tape::Stmt> = no_includes(from_tape::RrFile::read(src.as_str()).unwrap().statements());
+            let own: from_tape::Statements = no_includes(from_tape::RrFile::read(src.as_str()).unwrap().statements());
             let scope: Vec<&lower::Module> = ms.iter().collect();
             let Ok(own) = lower::lower_module_in_written(own, &scope) else { failed += 1; continue };
             let t0 = Instant::now();
@@ -7413,7 +7484,7 @@ fn spike_0639_tail_by_module() {
         let (mut local_after, mut wider_after, mut sampled) = (0, 0, 0);
         for (_, src, files) in texts.iter().take(per) {
             let Ok((ms, _, _)) = super::library_modules_planned(files) else { continue };
-            let own_st: Vec<from_tape::Stmt> = no_includes(from_tape::RrFile::read(src.as_str()).unwrap().statements());
+            let own_st: from_tape::Statements = no_includes(from_tape::RrFile::read(src.as_str()).unwrap().statements());
             let scope: Vec<&lower::Module> = ms.iter().collect();
             let Ok(own) = lower::lower_module_in_written(own_st, &scope) else { continue };
             let own_heads: BTreeSet<String> = own.version().rules().map(|r| own.version().rel_name(r.head().rel()).to_owned()).collect();

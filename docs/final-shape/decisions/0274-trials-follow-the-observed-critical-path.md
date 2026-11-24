@@ -1,10 +1,10 @@
 # 0274. Trials follow the observed critical path
 
-Status: decided (2026-11-15), by the user: "trialing should focus on what has been observed to be on the critical
-path of a run ... if we continually improve the critical path, and discover the new critical paths once we've
-optimized each one, we will eventually end up very, very fast". Amends decision 0207 §2 (when a line is
-trialled). Builds on 0203 §4 and 0208 (the critical path, measured) and 0271 (a slow line is bounded on every
-path).
+Status: built (audited 2026-11-23). Decided (2026-11-15), by the user: "trialing should focus on what has been
+observed to be on the critical path of a run ... if we continually improve the critical path, and discover the new
+critical paths once we've optimized each one, we will eventually end up very, very fast". Amends decision 0207 §2
+(when a line is trialled). Builds on 0203 §4 and 0208 (the critical path, measured) and 0271 (a slow line is bounded
+on every path).
 
 ## Intro
 

@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::rr;
 use std::collections::BTreeSet;
@@ -44,7 +45,7 @@ fn finite_instances_verify_join_witness_uniqueness() {
     let input = |name: &str| keys::Input {
         relation: name.into(),
         columns: vec![format!("{name}.k"), format!("{name}.v")],
-        keys: vec![vec![0]],
+        keys: vec![rerail_blocks::vector![0]],
     };
     for equality in [false, true] {
         let model = keys::Projection {
@@ -58,7 +59,7 @@ fn finite_instances_verify_join_witness_uniqueness() {
             ..Default::default()
         };
         for columns in 0u32..16 {
-            let projection: Vec<usize> = (0..4).filter(|i| columns & (1 << i) != 0).collect();
+            let projection: Vector<usize> = (0..4).filter(|i| columns & (1 << i) != 0).collect();
             if !model.prove(&projection).decision.proven {
                 continue;
             }

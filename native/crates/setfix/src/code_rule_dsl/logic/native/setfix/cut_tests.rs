@@ -1,10 +1,11 @@
 //! Decision 0206: a probe's work budget, its cut at a delta row, and the wave going on from there.
+use rerail_blocks::vector::Vector;
 use super::spec::hex;
 use super::*;
 
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     db
@@ -62,18 +63,18 @@ fn a_probe_cut_at_its_budget_hands_its_rows_left_to_another_order() {
     assert!(take_cut(&db, "cut").unwrap().is_some_and(|c| c.left > 0));
     // Decision 0207: trials over a sample of the rows the cut left. Both orders make the same rows from it, at their
     // own work; a budget under that work cuts the trial. Nothing is added, and the probe's counts are as they were.
-    let other_spec = JoinSpec::parse(&edge_first).unwrap();
+    let other_spec = JoinSpec::parse(&edge_first).unwrap().encode();
     // Read (and so reset) the counts first: trials leave them at nothing.
     step_counts(&db, "cut").unwrap();
     let own = trial(&db, "cut", 0, None, None, 64, u64::MAX / 2).unwrap().expect("a trial of its own body");
-    let swapped = trial(&db, "cut", 0, Some(&other_spec), None, 64, u64::MAX / 2).unwrap().expect("the delta is placed in the other order");
+    let swapped = trial(&db, "cut", 0, Some(other_spec.get()), None, 64, u64::MAX / 2).unwrap().expect("the delta is placed in the other order");
     assert!(!own.cut && !swapped.cut && own.rows == swapped.rows && own.rows <= 64 && own.rows > 0, "{own:?} {swapped:?}");
     assert_eq!(own.made, swapped.made, "the same rows from the same sample: {own:?} {swapped:?}");
     assert_ne!(own.work, swapped.work);
-    let short = trial(&db, "cut", 0, Some(&other_spec), None, 64, swapped.work / 2).unwrap().unwrap();
+    let short = trial(&db, "cut", 0, Some(other_spec.get()), None, 64, swapped.work / 2).unwrap().unwrap();
     assert!(short.cut && short.work <= swapped.work / 2 + 1, "{short:?}");
     assert!(step_counts(&db, "cut").unwrap()[0].iter().all(|&(a, b)| a == 0 && b == 0), "the probe's counts are as they were");
-    let other = Reprobe::Join(std::sync::Arc::new(JoinSpec::parse(&edge_first).unwrap()));
+    let other = Reprobe::Join(JoinSpec::parse(&edge_first).unwrap().encode());
     reprobe_spec(&db, "cut", 0, &other).unwrap();
     assert_eq!(run(&db, "cut", 0).unwrap().split_whitespace().last(), Some("1"));
     close(&db, "cut").unwrap();
@@ -114,14 +115,14 @@ fn a_whole_plan_is_cut_and_a_finished_trial_keeps_its_rows() {
     assert_eq!(run(&db, "wcut", 1).unwrap().split_whitespace().last(), Some("5"));
     let cut = take_cut(&db, "wcut").unwrap().expect("a cut");
     assert!(cut.whole && cut.led && cut.left > 64, "{cut:?}");
-    let other_spec = JoinSpec::parse(&other).unwrap();
+    let other_spec = JoinSpec::parse(&other).unwrap().encode();
     let own = trial(&db, "wcut", 0, None, None, 32, u64::MAX / 2).unwrap().expect("its whole body");
-    let swapped = trial(&db, "wcut", 0, Some(&other_spec), None, 32, u64::MAX / 2).unwrap().expect("placed");
+    let swapped = trial(&db, "wcut", 0, Some(other_spec.get()), None, 32, u64::MAX / 2).unwrap().expect("placed");
     assert_eq!(own.made, swapped.made, "{own:?} {swapped:?}");
     let kept = keep_trial_rows(&db, "wcut").unwrap();
     assert_eq!(kept, own.made, "the first finished trial's rows");
     assert_eq!(keep_trial_rows(&db, "wcut").unwrap(), 0, "kept once");
-    reprobe_spec(&db, "wcut", 0, &Reprobe::Whole(std::sync::Arc::new(other_spec))).unwrap();
+    reprobe_spec(&db, "wcut", 0, &Reprobe::Whole(other_spec.clone())).unwrap();
     assert_eq!(run(&db, "wcut", 0).unwrap().split_whitespace().last(), Some("1"));
     close(&db, "wcut").unwrap();
     assert_eq!(rows(&db), unlimited, "the fixpoint is the unlimited run's");
@@ -141,11 +142,11 @@ fn a_whole_plans_step_histograms_are_read_in_its_whole_join() {
     let whole = format!("pos {node} v2\npos {input} v1 v2\npos c0 v0 v1\nhead v0 v2");
     open(&db, &format!("name whist\nrel path ii\njoin 0 0 {} {}", hex(&delta), hex(&whole))).unwrap();
     // Step 0 by column 0: the whole plan's is `node` (one column, 2 rows); the delta join's is `path` (3 rows).
-    let of = |whole: bool, wanted: &[(usize, Vec<usize>)]| step_histograms(&db, "whist", 0, whole, wanted, 1 << 20).unwrap();
-    assert_eq!(of(true, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(2));
-    assert_eq!(of(false, &[(0, vec![0])])[0].as_ref().map(|h| h.0), Some(3));
+    let of = |whole: bool, wanted: &[(usize, Vector<usize>)]| step_histograms(&db, "whist", 0, whole, wanted, 1 << 20).unwrap();
+    assert_eq!(of(true, &[(0, rerail_blocks::vector![0])])[0].as_ref().map(|h| h.0), Some(2));
+    assert_eq!(of(false, &[(0, rerail_blocks::vector![0])])[0].as_ref().map(|h| h.0), Some(3));
     // The whole plan's step 2 is `path`, by its second column: in the delta join that step is `node`, of one column.
-    assert_eq!(of(true, &[(2, vec![1])])[0].as_ref().map(|h| (h.0, h.1.len())), Some((3, 2)));
+    assert_eq!(of(true, &[(2, rerail_blocks::vector![1])])[0].as_ref().map(|h| (h.0, h.1.len())), Some((3, 2)));
     close(&db, "whist").unwrap();
 }
 
@@ -421,7 +422,7 @@ fn counts_and_cpu_are_reported_by_the_plan_step_that_made_the_steps() {
     let cpu = [1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
     assert_eq!(plan_cpu(&from, 4, &cpu), vec![1.0, 6.0, 0.0, 8.0, 48.0]);
     // A spec read from text: each step its own plan step.
-    let from: Vec<usize> = (0..3).collect();
+    let from: Vector<usize> = (0..3).collect();
     assert_eq!(plan_counts(&from, 3, &counts[..3]), counts[..3].to_vec());
 }
 
@@ -443,7 +444,7 @@ fn a_fused_step_past_the_bound_head_stops_at_its_first_witness() {
     let db = connection();
     setup(&db);
     open(&db, &format!("name wit\nrel r i empty\nseed 0 {}", hex(&join))).unwrap();
-    assert!(matches!(&component(&db, "wit").unwrap().lock().unwrap().probes[0].body, Body::Join(j) if j.fused.iter().any(Option::is_some)), "a step is fused");
+    assert!(matches!(&component(&db, "wit").unwrap().lock().unwrap().probes[0].body, Body::Join(j) if j.fused.iter().any(|f| f.is_some())), "a step is fused");
     walks_whole(|| run(&db, "wit", 0).unwrap());
     let counts = step_counts(&db, "wit").unwrap();
     close(&db, "wit").unwrap();

@@ -49,7 +49,7 @@ pub fn run(
         plan: plan.clone(),
         states: vec![State {
             roots,
-            changed: vec![],
+            changed: rerail_blocks::vector![],
             initialized,
             empty_body: vec![false; trace.steps.len()],
             pending,

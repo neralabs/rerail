@@ -457,7 +457,7 @@ impl ContentStore {
     }
 
     /// Called with the exclusive collection lease held.
-    pub(super) fn discard_abandoned_analysis(tx: &rusqlite::Connection) -> rusqlite::Result<()> {
+    pub(super) fn discard_abandoned_analysis(tx: &rusqlite::Connection) -> StoreResult<()> {
         release_memberships(tx, "scope GLOB ?1", ["pending:*"])?;
         tx.execute_cached("DELETE FROM analysis_scope_pending", [])?;
         Ok(())
@@ -606,7 +606,7 @@ fn existing_analysis_store(file: &Path, expected: &[i64]) -> StoreResult<(rusqli
             }
         } else {
             let known: bool = db.query_row_cached("SELECT count(*)=3 FROM sqlite_schema
-                WHERE type='table' AND name IN ('source_objects','corpus_state','corpus_manifests')", [], |row| row.get(0))?;
+                WHERE type='table' AND name IN ('source_objects','store_identity','analysis_scope_manifest')", [], |row| row.get(0))?;
             if !known { return Err(super::StoreError::Invalid("expected an existing analysis store".into())); }
         }
         ContentStore::initialize(&mut db, flush)
@@ -709,7 +709,7 @@ fn release_analysis_scopes(tx: &rusqlite::Connection, scope: &str, subtree: Opti
     }
 }
 
-fn release_memberships(tx: &rusqlite::Connection, predicate: &str, args: impl rusqlite::Params + Copy) -> rusqlite::Result<usize> {
+fn release_memberships(tx: &rusqlite::Connection, predicate: &str, args: impl rusqlite::Params + Copy) -> StoreResult<usize> {
             for table in ["analysis_scope_snapshot", "analysis_scope_workspace_snapshot"] {
                 tx.execute_cached(&format!("INSERT OR IGNORE INTO analysis_scope_collect SELECT snapshot_id FROM {table} WHERE {predicate}"), args)?;
             }
@@ -720,12 +720,22 @@ fn release_memberships(tx: &rusqlite::Connection, predicate: &str, args: impl ru
                 "SELECT manifest_id FROM analysis_scope_manifest WHERE ({predicate})
                  EXCEPT SELECT manifest_id FROM analysis_scope_manifest WHERE NOT ({predicate})"
             );
-            tx.execute_cached(&format!("DELETE FROM corpus_manifest_plans WHERE manifest_id IN ({unowned})"), args)?;
-            let manifests = tx.execute_cached(&format!("DELETE FROM corpus_manifests WHERE manifest_id IN ({unowned})"), args)?;
+            let gone: Vec<i64> = tx.prepare_cached(&unowned)?.query_map(args, |r| r.get(0))?.collect::<rusqlite::Result<_>>()?;
+            // The manifests their last owners leave go (the corpus runs' kept form, `corpus_runs::kept`), with every
+            // membership of them.
+            let manifests = super::corpus_runs::kept::write_at(tx, |c, w| {
+                let gone: Vec<i64> = gone.iter().copied().filter(|&id| c.manifest(id).is_some()).collect();
+                for &id in &gone {
+                    w.manifest(id, None);
+                }
+                if snapshots + workspaces + gone.len() > 0 {
+                    let mut state = c.state();
+                    (state.due, state.decided_time) = (1, 0);
+                    w.state(state);
+                }
+                Ok(gone.len())
+            })?;
+            tx.execute_cached(&format!("DELETE FROM analysis_scope_manifest WHERE manifest_id IN ({unowned})"), args)?;
             let memberships = tx.execute_cached(&format!("DELETE FROM analysis_scope_manifest WHERE {predicate}"), args)?;
-            if snapshots + workspaces + manifests > 0 {
-                tx.execute_cached("UPDATE corpus_state SET due=1 WHERE singleton=1", [])?;
-                tx.execute_cached("UPDATE corpus_decided SET time=0 WHERE singleton=1", [])?;
-            }
             Ok(snapshots + workspaces + manifests + memberships)
 }

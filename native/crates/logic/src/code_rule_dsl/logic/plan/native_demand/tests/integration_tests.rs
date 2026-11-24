@@ -57,7 +57,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
         )
         .unwrap();
         for (modes,composed) in [("program",false), ("",false), ("program",true)] {
-            let _plans=composed.then(||plan::KeepPlans::start(None));
+            let _plans=composed.then(||plan::KeepPlans::start());
             for (source, expected_gets) in [
                 ("import requests as r\nr.get('x')\nr.post('x')\n", 1),
                 ("import requests as r\nr.post('x')\n", 0),
@@ -149,7 +149,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
         native::component::retain(
             &db,
             "facts",
-            vec![vec![7, 9], vec![7, 9], vec![8, 10]],
+            vec![rerail_blocks::vector![7, 9], rerail_blocks::vector![7, 9], rerail_blocks::vector![8, 10]],
             vec![b'i'; 2],
         )
         .unwrap();

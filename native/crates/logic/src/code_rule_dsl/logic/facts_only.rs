@@ -52,6 +52,8 @@ const FACT_STORE: &[&str] = &[
     "object_archive",
     "workspace_overlay",
     "analysis_scope_manifest",
+    // The same table, rebuilt once without its key to the corpus runs' retired manifests table (t33 step 3).
+    "analysis_scope_manifest_new",
     "analysis_scope_snapshot",
     "analysis_scope_generation",
     "analysis_directory_acquisition",
@@ -129,40 +131,7 @@ const SCRATCH: &[&str] = &[
     "facts",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
-const NOT_YET_TABLES: &[(&str, &str)] = &[
-    // The cost model fitted from `samples`, per machine (planning's placement).
-    ("models", "6"),
-    ("run_record", "1"),
-    ("derivations", "1"),
-    ("derivation_inputs", "1"),
-    ("name_bindings", "1"),
-    ("corpus_plans", "3"),
-    ("corpus_plan_relations", "3"),
-    ("corpus_manifests", "3"),
-    ("corpus_manifest_plans", "3"),
-    ("corpus_roots", "3"),
-    ("corpus_live", "3"),
-    ("corpus_state", "3"),
-    ("corpus_decided", "3"),
-    ("stat_blob", "6"),
-    ("kind_size", "6"),
-    ("edge_freq", "6"),
-    ("tape_kind_counts", "6"),
-    ("term_freq", "6"),
-    ("term_kind_freq", "6"),
-    ("term_node_freq", "6"),
-    ("term_coverage", "6"),
-    ("text_matcher", "7"),
-    ("text_term", "7"),
-    ("text_pending", "7"),
-    ("prefilter_sets", "7"),
-    ("term_postings", "7"),
-    ("vocabulary_predicate", "7"),
-    ("vocabulary_term", "7"),
-    ("vocabulary_literal", "7"),
-    ("vocabulary_pending", "7"),
-    ("search_index_sets", "7"),
-];
+const NOT_YET_TABLES: &[(&str, &str)] = &[];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
 /// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2); 56 when
@@ -175,8 +144,17 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// predecessor's tree result segments, which nothing called outside their tests (t33 step 3); 33 when the workspace's
 /// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8); 31
 /// when the fact relations' column statistics went, which nothing wrote but the demand's terminal estimate, now a kept
-/// fact (t33 step 6).
-const NOT_YET_TABLES_PIN: usize = 31;
+/// fact (t33 step 6); 30 when the corpus path's statistics (`stat_blob`) became kept relations, one partition a memo
+/// plan (t33 step 6); 14 when the prefilter's per-tape access paths, its store-wide counts and both vocabularies became
+/// kept facts of the store, read through virtual tables of their names (t33 steps 6 and 7); 13 when the search index
+/// did (t33 step 7); 12 when the observer's run records (the Git files' listing, the cone's rounds, the Git functors'
+/// answers, the constants, the whole-run cutoff) became kept facts of the observer's space (t33 step 1); 9 when the
+/// derivation graph (names' bindings, derivations and their inputs) became kept facts of the store, read through virtual
+/// tables of their names (t33 step 1); 8 when the cost model saved per machine became a kept fact of the statistics' store
+/// (`costs::models`, t33 step 6); 0 when the corpus runs' eight tables (roots, manifests and their plans, live
+/// tapes, plans and their relations, the state and the last decision) became kept facts of the store, read through
+/// virtual tables of their names (t33 step 3).
+const NOT_YET_TABLES_PIN: usize = 0;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -227,10 +205,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/lanes.rs", "OPEN"),
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
-    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
-    // pending atoms no committed row may hold yet, not a result kept.
-    ("content_store/atoms.rs", "RESERVING"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
@@ -248,6 +222,8 @@ const STATE: &[(&str, &str)] = &[
     // the tests' stores are, not results.
     // The caller's options for its runs' inputs (`--facts`, `--require-facts`, `--base`; decision 0442).
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "Options"),
+    // The harness folders already made private this process (decision 0574): which folders, not results.
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "DONE"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "Handed"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
@@ -283,6 +259,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/rr/lower.rs", "ALL"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
+    // `core.rerail`'s columns declared `node` (`core_node_columns`): read off its text once, as `CORE`, the same for every run.
+    ("code_rule_dsl/logic/rr.rs", "NODES"),
     // `core_names` less 0174's on-request relations: a set of the engine's own, as `CORE`, the same for every run.
     ("code_rule_dsl/logic/rr.rs", "SHAPE"),
     // The kind set rules (0662 §5.1): a program of the engine's own files, lowered once, as `CORE`, the same for
@@ -291,6 +269,12 @@ const STATE: &[(&str, &str)] = &[
     // A thread's connection for rules passes (0662 §5.1): scratch, its inputs bound and its relations forgotten
     // within each run, nothing kept from one run for another.
     ("code_rule_dsl/logic/plan/corpus/preparation/rules_pass.rs", "ENGINE"),
+    // The frame keys of the run under way (`reuse::Naming`), bound to the run's context for its manifest to name: the
+    // run's own, gone with it, nothing kept for another.
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
+    // The profiler's labels of the system's dispatch queues by thread port (macOS), noted as it samples: a measurement's,
+    // never a result.
+    ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
     // The library images shipped beside the executable (0264), read once: an input, as `CORE`'s core.rerail, no result.
     ("code_rule_dsl/logic/rr/images.rs", "SHIPPED"),
     // The rule files' entries a thread read before its run (0275), taken by the run's manifest: a queue.
@@ -324,9 +308,11 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/search.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
+    ("content_store/prefilter.rs", "REJECT_TERM"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
-    // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.
+    // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it. A
+    // session is its store and connections, open things (t33 step 3): its runs keep their results as kept facts.
     ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession"),
     // The record kinds' applies, registered at load.
     ("content_store/record.rs", "KINDS"),
@@ -336,23 +322,23 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/base.rs", "SelectedStore"),
     // The engine's own answers (`rr::lower::World`), listed once from its constants.
     ("code_rule_dsl/logic/rr/lower.rs", "ENGINE"),
+    // A run's plans, its derived values and its observed keeps, in the run's context (decisions 0038, 0113, 0301),
+    // each made empty at the run's start and gone at its end: across runs, plans and their feedback are the store's
+    // kept facts (`compiled_plans`, `plan_feedback`, t33 step 6), a session's runs' as a new process's (t33 step 3).
+    ("code_rule_dsl/logic/plan/base.rs", "KeptPlans"),
+    ("code_rule_dsl/logic/derived.rs", "Memoized"),
+    ("code_rule_dsl/logic/plan/keeps.rs", "ObservedAt"),
 ];
 /// Maps (file, static) that are caches not yet facts, with the 0104 step that moves each.
-const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
-    // The session a thread's runs use (decision 0204: the caller's `Handle`, bound for its runs; was `SESSION`, the
-    // process's): what it keeps between runs is still a cache to move.
-    ("code_rule_dsl/logic/plan/corpus/session.rs", "InSession", "3"),
-    ("code_rule_dsl/logic/plan/base.rs", "KeptPlans", "6"),
-    ("code_rule_dsl/logic/plan.rs", "SESSION_PLANS", "6"),
-    ("code_rule_dsl/logic/derived.rs", "Memoized", "6"),
-    ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
-    // The observed keeps, a handle a strand enters (decision 0113 §4).
-    ("code_rule_dsl/logic/plan/keeps.rs", "ObservedAt", "6"),
-];
+const NOT_YET_MAPS: &[(&str, &str, &str)] = &[];
 /// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. 7 when a rule pattern's compiled form and a
 /// production's counter name were found to be state, no cache (t33 step 7, 2026-11-21); 6 when the prepared
-/// programs' pointers became kept facts, the map their in-memory copy (t33 step 2).
-const NOT_YET_MAPS_PIN: usize = 6;
+/// programs' pointers became kept facts, the map their in-memory copy (t33 step 2); 5 when a session's runs became
+/// its store's, a session its store and connections (t33 step 3); 3 when a session's plans and derived values between
+/// its runs went with it (t33 step 3: its runs read the store's plans, and derive their own values, as a new
+/// process's do); 0 when a run's plans, derived values and observed keeps were found to be the run's alone (no
+/// session's copy of them is kept between runs: t33 steps 3 and 6).
+const NOT_YET_MAPS_PIN: usize = 0;
 
 /// The crate's source files, tests left out: a test may make what it likes.
 fn files(under: &Path, out: &mut Vec<PathBuf>) {
@@ -488,8 +474,7 @@ fn every_table_is_facts_or_listed() {
     for t in FACT_STORE.iter().chain(SCRATCH).chain(NOT_YET_TABLES.iter().map(|t| &t.0)) {
         assert!(seen.insert(*t), "{t} is in two lists");
     }
-    assert!(NOT_YET_TABLES.len() <= NOT_YET_TABLES_PIN, "a cache table added to the list (it may only shrink): {} > {NOT_YET_TABLES_PIN}", NOT_YET_TABLES.len());
-    assert_eq!(NOT_YET_TABLES.len(), NOT_YET_TABLES_PIN, "a cache table moved: lower NOT_YET_TABLES_PIN to {}", NOT_YET_TABLES.len());
+    assert_eq!(NOT_YET_TABLES.len(), NOT_YET_TABLES_PIN, "a cache table moved or added (the list may only shrink): its pin is {NOT_YET_TABLES_PIN}, the list {}", NOT_YET_TABLES.len());
 }
 
 #[test]
@@ -501,6 +486,5 @@ fn every_kept_map_is_state_or_listed() {
     assert!(new.is_empty(), "maps in no list of decision 0104 (a result kept for later use is facts, not a map of its own):\n{}", new.join("\n"));
     let gone: Vec<String> = listed.difference(&found).map(|(f, s)| format!("{f}\t{s}")).collect();
     assert!(gone.is_empty(), "listed maps no longer there (cut them from the list, and lower the pin if moved):\n{}", gone.join("\n"));
-    assert!(NOT_YET_MAPS.len() <= NOT_YET_MAPS_PIN, "a cache map added to the list (it may only shrink): {} > {NOT_YET_MAPS_PIN}", NOT_YET_MAPS.len());
-    assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved: lower NOT_YET_MAPS_PIN to {}", NOT_YET_MAPS.len());
+    assert_eq!(NOT_YET_MAPS.len(), NOT_YET_MAPS_PIN, "a cache map moved or added (the list may only shrink): its pin is {NOT_YET_MAPS_PIN}, the list {}", NOT_YET_MAPS.len());
 }

@@ -27,7 +27,8 @@
 //! stratum whose spec the lab does not take yet (SQL probes, gates, requests, a relation kept from an earlier run) is
 //! skipped, with its reason on stderr. Captures stop at 2 GB in all.
 
-use super::spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Source, Start};
+use rerail_blocks::vector::Vector;
+use super::spec::{ComponentSpec, InputKey, Join, JoinItem, JoinSpec, Line, Source, Start};
 use super::{InRel, Interner, input_of, is_dead, on, symbols};
 use rusqlite::{Connection, params_from_iter};
 use std::path::{Path, PathBuf};
@@ -78,7 +79,7 @@ pub fn wanted(name: &str, work: f64) -> Option<PathBuf> {
 }
 
 /// Writes `rows` (each `types.len()` values, symbols as the run's atoms) as table `table` of `out`.
-fn write_rows(out: &Connection, table: &str, types: &[u8], rows: impl Iterator<Item = Vec<i64>>) -> rusqlite::Result<u64> {
+fn write_rows(out: &Connection, table: &str, types: &[u8], rows: impl Iterator<Item = Vector<i64>>) -> rusqlite::Result<u64> {
     let cols: Vec<String> = (0..types.len()).map(|c| format!("c{c} INTEGER")).collect();
     out.execute_batch(&format!("CREATE TABLE {table} ({})", if cols.is_empty() { "c_ INTEGER".to_owned() } else { cols.join(", ") }))?;
     if types.is_empty() {
@@ -98,7 +99,7 @@ fn write_rows(out: &Connection, table: &str, types: &[u8], rows: impl Iterator<I
 }
 
 /// A relation's live rows.
-fn rows_of(rel: &InRel) -> impl Iterator<Item = Vec<i64>> + '_ {
+fn rows_of(rel: &InRel) -> impl Iterator<Item = Vector<i64>> + '_ {
     (0..rel.len()).filter(|&id| !is_dead(&rel.dead, id as u32)).map(|id| {
         let r = rel.at(id);
         (0..rel.k).map(|c| r.at(c)).collect()
@@ -106,7 +107,7 @@ fn rows_of(rel: &InRel) -> impl Iterator<Item = Vec<i64>> + '_ {
 }
 
 /// The rows of the run's table `table` (columns `c0…`, `types`), from the engine where it holds them, else SQL.
-fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> super::Result<Vec<Vec<i64>>> {
+fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> super::Result<Vec<Vector<i64>>> {
     if let Some(rel) = on(conn).derived.lock().get(table).cloned() {
         return Ok(rows_of(&rel).collect());
     }
@@ -116,8 +117,16 @@ fn table_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner)
 }
 
 /// Captures stratum `name`'s sources and seeds before it opens with `spec`, or says why it is not taken.
-pub fn capture_inputs(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Option<Capture> {
-    match capture_(conn, name, spec, path) {
+pub fn capture_inputs(conn: &Connection, name: &str, spec: &super::spec::Spec, path: &Path) -> Option<Capture> {
+    // The lab rewrites the spec's sources: it reads the spec back from its text, as a replay does.
+    let spec = match ComponentSpec::parse(&super::spec::spec_text(spec)) {
+        Ok(s) => s,
+        Err(why) => {
+            eprintln!("relational lab: {name} not captured: {why}");
+            return None;
+        }
+    };
+    match capture_(conn, name, &spec, path) {
         Ok(c) => Some(c),
         Err(why) => {
             eprintln!("relational lab: {name} not captured: {why}");
@@ -128,7 +137,10 @@ pub fn capture_inputs(conn: &Connection, name: &str, spec: &ComponentSpec, path:
 }
 
 /// `join` with each of its sources that is not the component's (a native relation's, an input's) given by `f`.
-fn with_sources(join: &JoinSpec, f: &mut dyn FnMut(&Source) -> Source) -> JoinSpec {
+fn with_sources(join: &Join, f: &mut dyn FnMut(&Source) -> Source) -> JoinSpec {
+    // Its plan steps and estimates are not in its text: from its section.
+    let (from, plan_steps) = (join.from.iter().copied().collect(), join.plan_steps);
+    let join = JoinSpec::parse(&join.to_text()).expect("a join's text reads back");
     let items = join
         .items
         .iter()
@@ -142,7 +154,7 @@ fn with_sources(join: &JoinSpec, f: &mut dyn FnMut(&Source) -> Source) -> JoinSp
             item
         })
         .collect();
-    JoinSpec { items, from: join.from.clone(), plan_steps: join.plan_steps, est: join.est.clone() }
+    JoinSpec { items, from, plan_steps }
 }
 
 fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Result<Capture, String> {
@@ -174,7 +186,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
             Line::Edge(_) => return Err("a `rule` line".to_owned()),
             Line::Remove { .. } | Line::AddChecked { .. } | Line::Recheck { .. } => return Err("a maintain mode's line".to_owned()),
         }
-        let joins: Vec<&Arc<JoinSpec>> = match line {
+        let joins: Vec<&Join> = match line {
             Line::Seed { join, .. } => vec![join],
             Line::Join { join, whole, .. } => std::iter::once(join).chain(whole).collect(),
             _ => Vec::new(),
@@ -214,7 +226,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
         write_rows(&out, lab, types, rows.into_iter()).map_err(|e| e.to_string())?;
     }
     // The spec over the capture's tables: its relations by their capture names, each join's sources replaced.
-    let to_capture = |join: &JoinSpec| Arc::new(with_sources(join, &mut |src| tables[sources.iter().position(|s| s == src).expect("a source seen")].clone()));
+    let to_capture = |join: &Join| JoinSpec::encode(&with_sources(join, &mut |src| tables[sources.iter().position(|s| s == src).expect("a source seen")].clone()));
     let mut r = 0;
     let lines: Vec<Line> = spec
         .lines
@@ -225,8 +237,8 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
                 r += 1;
                 Some(Line::Rel { name: format!("r{}", r - 1), types: types.clone(), start: start.clone() })
             }
-            Line::Seed { head, join } => Some(Line::Seed { head: *head, join: to_capture(join) }),
-            Line::Join { head, delta, join, whole } => Some(Line::Join { head: *head, delta: *delta, join: to_capture(join), whole: whole.as_deref().map(to_capture) }),
+            Line::Seed { head, join, est } => Some(Line::Seed { head: *head, join: to_capture(join), est: est.clone() }),
+            Line::Join { head, delta, join, whole, est } => Some(Line::Join { head: *head, delta: *delta, join: to_capture(join), whole: whole.as_ref().map(to_capture), est: est.clone() }),
             _ => None,
         })
         .collect();
@@ -278,6 +290,4 @@ pub fn capture_outputs(conn: &Connection, cap: Capture) {
     }
 }
 
-// O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
-#[cfg(all(test, any()))]
-mod tests;
+// Its test (`lab/tests.rs`) runs strata on the device, which only the crates above see: rerail-tests-logic mounts it.

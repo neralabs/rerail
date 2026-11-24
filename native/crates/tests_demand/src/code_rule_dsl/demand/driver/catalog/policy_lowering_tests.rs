@@ -1508,14 +1508,14 @@ fn packed_repeated_capture_pattern_and_sql_equality_execute_together() {
     let compiled = code_rule(json!({ "pattern": "$A + $A" }));
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("a repeated capture pattern lowers into SQL");
-    let source = Arc::new("x + x\ny + z\n".to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from("x + x\ny + z\n"));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
         .expect("tape image");
     let tape =
         TapeDoc::restore(Arc::clone(&source), grammar, &image, &|| false).expect("restored tape");
-    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
     let demand = PackedDemand::new(
         ExecutionBackend::CpuJit,
         plan.terminals()
@@ -1833,15 +1833,15 @@ pub(super) fn sql_workspace_ranges_for_statement(
         SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)]).expect("workspace SQL lowering");
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let mut tapes = Vec::new();
-    let mut anchors: Vec<Vec<Vec<u32>>> = Vec::new();
+    let mut anchors: Vec<Vec<rerail_blocks::vector::Vector<u32>>> = Vec::new();
     for (_, source) in files {
-        let source = Arc::new(source.clone());
+        let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source.clone()));
         let image = TapeImage::parse(&grammar, &source, &|| false)
             .expect("parser completed")
             .expect("tape image");
         let tape = TapeDoc::restore(Arc::clone(&source), grammar.clone(), &image, &|| false)
             .expect("restored tape");
-        let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+        let roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
         anchors.push(
             plan.terminals()
                 .iter()
@@ -1850,9 +1850,9 @@ pub(super) fn sql_workspace_ranges_for_statement(
                         terminal.kind(),
                         TerminalKind::File | TerminalKind::Transform
                     ) {
-                        Vec::new()
+                        rerail_blocks::vector::Vector::new()
                     } else if terminal.kind() == TerminalKind::Navigation {
-                        vec![0]
+                        rerail_blocks::vector![0]
                     } else {
                         roots.clone()
                     }
@@ -2042,7 +2042,7 @@ pub(super) fn sql_violation_values_for_statement(
     dialect: GrammarDialect,
     statement: Option<&str>,
 ) -> Vec<serde_json::Value> {
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(dialect).expect("contract grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -2204,7 +2204,7 @@ fn sql_outcome_with_failure(
         .expect("policy has complete structural SQL lowering");
     let execution_sql = use_execution_sql.then(|| plan.execution_sql());
     let statement = execution_sql.or(statement);
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(dialect).expect("contract grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -2214,7 +2214,7 @@ fn sql_outcome_with_failure(
     let spans = (0..tape.transducer_len() as u32)
         .map(|node| tape.transducer_span(node))
         .collect::<Vec<_>>();
-    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
     // Every producer runs and completes, but a terminal of another dialect than the file's visits
     // no node: the tape's kind ids are another grammar's, which the catalog driver never gives it.
     let anchors = plan
@@ -2227,9 +2227,9 @@ fn sql_outcome_with_failure(
                     TerminalKind::File | TerminalKind::Transform
                 )
             {
-                Vec::new()
+                rerail_blocks::vector::Vector::new()
             } else if terminal.kind() == TerminalKind::Navigation {
-                vec![0]
+                rerail_blocks::vector![0]
             } else {
                 roots.clone()
             }
@@ -2622,7 +2622,7 @@ fn sql_single_bindings(
 ) -> Vec<((usize, usize), BTreeMap<String, String>)> {
     let plan = SqlCatalogPlan::compile(&[Arc::clone(&compiled.inner)])
         .expect("policy has complete structural SQL lowering");
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(crate::code_rule_dsl::tape::Text::from(source));
     let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
     let image = TapeImage::parse(&grammar, &source, &|| false)
         .expect("parser completed")
@@ -2632,7 +2632,7 @@ fn sql_single_bindings(
     let spans = (0..tape.transducer_len() as u32)
         .map(|node| tape.transducer_span(node))
         .collect::<Vec<_>>();
-    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let roots = (0..tape.transducer_len() as u32).collect::<rerail_blocks::vector::Vector<_>>();
     let anchors = plan
         .terminals()
         .iter()
@@ -2641,9 +2641,9 @@ fn sql_single_bindings(
                 terminal.kind(),
                 TerminalKind::File | TerminalKind::Transform
             ) {
-                Vec::new()
+                rerail_blocks::vector::Vector::new()
             } else if terminal.kind() == TerminalKind::Navigation {
-                vec![0]
+                rerail_blocks::vector![0]
             } else {
                 roots.clone()
             }

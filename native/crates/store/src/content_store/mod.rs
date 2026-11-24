@@ -8,7 +8,10 @@
 // the hazards, the scope leases and the private files, and the observer (`observe`), re-exported here.
 pub use rerail_observe::content_store::*;
 pub mod analysis_scope;
-pub mod atoms;
+/// The atoms (rerail-atoms), at their old path.
+pub use rerail_atoms as atoms;
+mod atoms_store;
+pub use atoms_store::{attach_atoms, install_atoms, install_kept_tables};
 pub use atoms::{ProcessIds, StoreIds, Sym};
 #[cfg(target_os = "macos")]
 mod accel_models;
@@ -20,12 +23,13 @@ mod connection;
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::process_gone;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, stat_blob_key};
+pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
 pub use rerail_blocks::block::Flush;
 mod derivation;
+mod as_fact_store;
 mod document_places;
 pub use document_places::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
 mod held;
@@ -45,6 +49,9 @@ pub mod positional_search;
 #[allow(dead_code)]
 pub mod prefilter;
 pub use prefilter::TapePrefilter;
+pub use private_files::check_mapped_folder;
+pub use held::pack_dir;
+pub use atoms::atoms_dir;
 mod publication;
 mod archive;
 pub use archive::{ARCHIVED, place_archived_tape_at};
@@ -337,21 +344,6 @@ pub struct UnindexedTape {
     /// The source and the tape, read in place in their segments.
     pub source: ObjectBytes,
     pub image: ObjectBytes,
-}
-
-/// A program recorded with a file's tape (decision 0431 step 6, `TapeFrame::programs`): its row, its text, and its
-/// tape's frame.
-#[derive(Clone)]
-pub struct StoredProgram {
-    pub document: StoredDocument,
-    pub text: std::sync::Arc<CachedBytes>,
-    pub tape: TapeFrame,
-}
-
-impl std::fmt::Debug for StoredProgram {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("StoredProgram").field("document", &self.document).field("text", &self.text.len()).finish()
-    }
 }
 
 #[derive(Clone, Debug)]

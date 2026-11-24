@@ -7,6 +7,7 @@
 //! program it derives (`DerivedImage`), with a tape of its own over the program's text and the
 //! segments that map that text back to the document it was derived from. The store keeps each
 //! derived tape as a row of its own (`file_documents`); no tape holds another.
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::embed::segments::SegmentMap;
 use crate::code_rule_dsl::embed::Program;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, Via};
@@ -19,13 +20,15 @@ use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::{Arc, Weak};
-use rerail_tape_format::tape::{Entry, Tape};
+use rerail_tape_format::tape::{CodeSet, EntryRef, Tape};
 use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
 /// (decision 0140), and an image is one byte string however it was made.
-pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
+pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, ERROR_CODE, FIELD_LIMIT, KIND_LIMIT, SENTINEL};
 pub use rerail_tape_format::CODE_EXTRA;
+/// A document's source, read where it lies (decision 0353 step 7, row 13).
+pub use rerail_tape_format::home::{Home, Text};
 /// Format 16's writer and tables, for the parsers the engine's crates compile (JSON's kernels: `encode_16`).
 pub use rerail_tape_format::f16;
 pub const NONE: u32 = u32::MAX;
@@ -48,40 +51,9 @@ pub mod validated;
 pub mod formats;
 pub mod placed;
 pub mod token_census;
-/// Python's tape from the lean parser (`rerail_python_lean`).
-pub mod python_lean;
-/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
-pub mod ecma_lean;
-/// Rust's tape from the lean parser (`rerail_rust_lean`).
-pub mod rust_lean;
-/// Java's tape from the lean parser (`rerail_java_lean`).
-pub mod java_lean;
-/// Go's tape from the lean parser (`rerail_go_lean`).
-pub mod go_lean;
-/// C's and C++'s tapes from the lean parser (`rerail_c_lean`).
-pub mod c_lean;
-/// C#'s tape from the lean parser (`rerail_csharp_lean`).
-pub mod csharp_lean;
-/// Kotlin's tape from the lean parser (`rerail_kotlin_lean`).
-pub mod kotlin_lean;
-/// Swift's tape from the lean parser (`rerail_swift_lean`).
-pub mod swift_lean;
-/// Scala's tape from the lean parser (`rerail_scala_lean`).
-pub mod scala_lean;
-/// PHP's tape from the lean parser (`rerail_php_lean`).
-pub mod php_lean;
-/// HTML's tape from the lean parser (`rerail_html_lean`).
-pub mod html_lean;
-/// CSS's tape from the lean parser (`rerail_css_lean`).
-pub mod css_lean;
-/// Markdown's tape from the lean parser (`rerail_markdown_lean`).
-pub mod markdown_lean;
-/// Markdown's inline texts' tapes from the lean parser (`rerail_markdown_inline_lean`).
-pub mod markdown_inline_lean;
-/// SQL's tape from the lean parser (`rerail_sql_lean`).
-pub mod sql_lean;
-/// Vue's tape from the lean parser (`rerail_vue_lean`).
-pub mod vue_lean;
+// The lean parsers' adapters (`tape::<language>_lean`) are rerail-lean-tapes', above this crate: the engine reads a
+// dialect through the parser it registers in the router (`install_parsers`), a file (`TreeParser::parse`), a fragment
+// (`parse_from`) or an embedded program (`program`).
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -290,6 +262,14 @@ pub trait TreeParser: Send + Sync {
         None
     }
 
+    /// A program's text as an embedder hands it (`embed::Parse::read`): its tape, as tree-sitter's tree of it encodes
+    /// to (decision 0198), without the placeholders `omit` spans (`embed::Parse::read_program`): the parse leaves them
+    /// out as it writes the tape (`Writer::omitting`). `None` where the parser refuses the text or reads no program
+    /// (tree-sitter reads it then), `Some(Err)` where the tape cannot be made.
+    fn program(&self, _grammar: &Grammar, _text: &str, _omit: rerail_blocks::vector::Vector<[u32; 2]>, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        None
+    }
+
     /// Its own kinds, where its trees are not a tree-sitter grammar's.
     fn kinds(&self) -> Option<OwnTable> {
         None
@@ -395,7 +375,7 @@ pub const DERIVED_CLASS_BASE: u16 = 0x4000;
 const _: () = assert!(DERIVED_CLASS_BASE as usize >= KIND_LIMIT);
 
 /// A document's tape: format 16 (or 16z) as its parser wrote it or the store kept it, read where it lies (decisions
-/// 0156, 0293, 0434). Each node's code is a number in its language's table (made from its grammar, decision 0626).
+/// 0156, 0293, 0434). Each node's code is a number in its language's table (made from its grammar, decision 0631).
 #[derive(Clone)]
 pub struct TapeImage {
     /// The tape in the format the run stores (decision 0293 §4).
@@ -556,7 +536,7 @@ pub struct DerivedImage {
     /// The document it was derived from: 0 the primary, `i` the `i`-th derived one. Embedders run
     /// on the primary only; the field makes nesting representable.
     pub parent: u32,
-    pub text: Arc<String>,
+    pub text: Arc<Text>,
     /// Where its text stands in its parent's (`embed::segments`).
     pub(super) source_map: Arc<SegmentMap>,
     /// The parent's bytes it cannot be read through (`embed::Program::host_errors`).
@@ -596,7 +576,7 @@ impl DerivedImage {
             );
         }
         let grammar = Grammar::embedded(program.dialect)?;
-        let tape = match &program.parse {
+        let tape = match program.parse {
             crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(
                 tree.root_node(),
                 &grammar,
@@ -604,7 +584,8 @@ impl DerivedImage {
                 Some(&program.segments),
                 budget,
             )?,
-            crate::code_rule_dsl::embed::Parse::Tape(tape) => tape.omitting(&program.segments, &grammar, &program.text, budget)?,
+            // The parse left the placeholders out as it wrote the tape (`Parse::read_program`).
+            crate::code_rule_dsl::embed::Parse::Tape(tape) => tape,
         };
         Ok(Self {
             role: DocumentRole::derived(&program.text, &program.segments),
@@ -618,7 +599,7 @@ impl DerivedImage {
                     .collect(),
             ),
             at: program.at.map(|at| (at.start as u32, at.end as u32)),
-            text: Arc::new(program.text),
+            text: Arc::new(program.text.into()),
             source_map: Arc::new(program.segments),
             tape,
         })
@@ -668,7 +649,7 @@ impl DerivedImage {
             role,
             via,
             parent,
-            text: Arc::new(text),
+            text: Arc::new(text.into()),
             source_map: Arc::new(source_map),
             host_errors: Arc::new(host_errors),
             tape,
@@ -738,7 +719,7 @@ impl DerivedImage {
     }
 
     fn estimated_bytes(&self) -> usize {
-        self.text.capacity()
+        self.text.len()
             + self.source_map.estimated_bytes()
             + self.host_errors.capacity() * std::mem::size_of::<(u32, u32)>()
             + self.tape.estimated_bytes()
@@ -773,6 +754,13 @@ pub struct StoredDerived<'a> {
 }
 
 impl FileImage {
+    /// A cache for its documents' 16z tapes' blocks, one batch's (decision 0628 §6): a reader outside every batch reads
+    /// the file's documents in it. None where no tape is 16z.
+    pub fn z_cache(&self) -> Option<Arc<rerail_tape_format::f16::ZCache>> {
+        let tapes: Vec<&rerail_tape_format::f16::Tape16Z> = std::iter::once(&self.primary).chain(self.derived.iter().map(|d| &d.tape)).filter_map(TapeImage::z_tape).collect();
+        (!tapes.is_empty()).then(|| Arc::new(rerail_tape_format::f16::ZCache::of(tapes)))
+    }
+
     /// The documents of a file that derives none.
     /// The documents of the host tape `primary` of `source`: itself, and the programs its
     /// embedders build from it, one per `via` its dialect embeds. The tape is read in place
@@ -781,7 +769,9 @@ impl FileImage {
         let mut image = FileImage { primary, derived: Vec::new() };
         let embeds = grammar.lang.embeds();
         let mut programs = Vec::new();
-        if let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, grammar).root() {
+        // The host read in a batch of its own: its 16z blocks decoded into a cache made for it.
+        let cache = image.primary.own_cache();
+        if let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, grammar, cache.as_ref()).root() {
             for (index, &(via, _)) in embeds.iter().enumerate() {
                 if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                     continue;
@@ -1233,6 +1223,14 @@ impl TapeImage {
         }
     }
 
+    /// The tape's auxiliary index in its home, after its presence (decision 0656 step 3), read where it lies.
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        match &self.held {
+            Held::F16(t) => t.aux_bytes(),
+            Held::F16Z(t) => t.aux_bytes(),
+        }
+    }
+
     /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 16 (or 16z) as stored.
     /// Nothing is copied.
     pub fn from_home(home: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
@@ -1241,11 +1239,10 @@ impl TapeImage {
 
     /// A stored tape, in the format it was stored in (its magic): format 16 (or 16z) held as stored.
     pub fn from_bytes(bytes: &[u8], grammar: &Arc<Grammar>) -> Result<Self, String> {
-        Self::sixteen(bytes.to_vec().into(), grammar)
+        Self::sixteen(rerail_tape_format::Vector::from(bytes).into(), grammar)
     }
 
-    /// A format 16 or 16z tape held as stored, in `bytes`: any other bytes (a format 15 image's included) are
-    /// refused.
+    /// A format 16 or 16z tape held as stored, in `bytes`: any other bytes are refused.
     fn sixteen(bytes: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
         use rerail_tape_format::f16::{MAGIC16, MAGIC16Z, Tape16, Tape16Z};
         let magic = bytes.get(..8).ok_or("a short tape")?;
@@ -1266,7 +1263,8 @@ impl TapeImage {
             if t.tag() != tag {
                 return Err("tape image grammar mismatch".into());
             }
-            t.reader(lang)?;
+            // Its language's choices checked: no read yet (a read is its batch's, through its cache).
+            t.reader(lang, None)?;
             Held::F16Z(Arc::new(t))
         };
         let source_len = match &held {
@@ -1285,9 +1283,58 @@ impl TapeImage {
         &self.held
     }
 
+    /// A cache for its 16z tape's blocks, a batch of its own (a reader outside every batch makes it for the tape it
+    /// reads), where it is held so.
+    pub fn own_cache(&self) -> Option<rerail_tape_format::f16::ZCache> {
+        self.z_tape().map(|t| rerail_tape_format::f16::ZCache::of([t]))
+    }
+
+    /// Its ERROR and MISSING nodes, in preorder, as its writer listed them in its home (`f16::presence::faults`):
+    /// format 16's and 16z's, where the home holds a presence.
+    pub fn faults(&self) -> Option<&[u32]> {
+        match &self.held {
+            Held::F16(t) => t.faults(),
+            Held::F16Z(t) => t.faults(),
+        }
+    }
+
+    /// Its 16z tape, where it is held so.
+    pub fn z_tape(&self) -> Option<&rerail_tape_format::f16::Tape16Z> {
+        match &self.held {
+            Held::F16Z(t) => Some(t),
+            _ => None,
+        }
+    }
+
     /// Whether its bytes are placed in a room (a slab's, decision 0353 step 4a), not its own.
     pub fn placed(&self) -> bool {
         self.room().is_some()
+    }
+
+    /// The tape as stored, where it lies in its room (`placed`): format 16's and 16z's extent, read there (`emit`
+    /// writes the same bytes). `None` for a tape held apart.
+    pub fn stored_in_room(&self) -> Option<(&std::sync::Arc<dyn rerail_tape_format::home::Room>, &[u8])> {
+        let room = self.room()?;
+        match &self.held {
+            Held::F16(t) => Some((room, t.extent())),
+            Held::F16Z(t) => Some((room, t.extent())),
+        }
+    }
+
+    /// The image in a room where a device reads tapes (`placed::device`), as a parse's is (`place_stored`): itself
+    /// where it is placed already or there is no device.
+    pub fn housed(&self, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        if !self.placed() && placed::device().is_some() {
+            let home = self.place_stored()?;
+            if home.placed() {
+                let mut placed = Self::from_home(home, grammar)?;
+                placed.source_digest = self.source_digest;
+                return Ok(placed);
+            }
+        }
+        let _ = grammar;
+        Ok(self.clone())
     }
 
     /// The room the tape is placed in (`placed`), which says where the device reads it.
@@ -1397,6 +1444,18 @@ impl TapeImage {
         omitted: Option<&SegmentMap>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
+        Self::encode_tree_as(root, grammar, source, omitted, budget, true)
+    }
+
+    /// `encode_tree_image`, its blocks packed only where `packed` (`formats::TreeOps::of_run_as`).
+    fn encode_tree_as(
+        root: TsNode<'_>,
+        grammar: &Grammar,
+        source: &str,
+        omitted: Option<&SegmentMap>,
+        budget: &impl Fn() -> bool,
+        packed: bool,
+    ) -> Result<Self, String> {
         checked(budget)?;
         let Some(language) = grammar.kinds.grammar() else {
             return Err("a Blade template is encoded from its Forte tree".into());
@@ -1413,7 +1472,7 @@ impl TapeImage {
             return Err("source exceeds tape range or does not match parsed root".into());
         }
         let filter = if ALL_TOKENS.get() { None } else { tokens::TokenGrammar::of(grammar.lang, language) };
-        Self::walked(grammar, source, root.descendant_count(), budget, |out| encode_tree(out, root, language, filter.as_deref(), omitted, budget))
+        Self::walked_as(grammar, source, root.descendant_count(), budget, packed, |out| encode_tree(out, root, language, filter.as_deref(), omitted, budget))
     }
 
     /// The tape of a `.rerail` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
@@ -1432,21 +1491,6 @@ impl TapeImage {
         Self::written_16(formats::rr_tape(source)?, grammar.lang, source, None, budget)
     }
 
-    /// The image without the nodes, and their subtrees, whose spans `segments` omits (an embedded
-    /// program's placeholders): the image of the tree `encode_tree_image` walks with the same
-    /// `omitted`. The image itself where nothing is omitted.
-    pub fn omitting(&self, segments: &SegmentMap, grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
-        // Read through the tape API, in the format the parser wrote (a lean parser's may be format 16, 0293 §7).
-        let omitted = rerail_tape_format::with_tape!(self.tape(), |t| {
-            (0..t.len()).any(|i| segments.omitted(t.start(i) as usize..t.end(i) as usize))
-        });
-        if !omitted {
-            return Ok(self.clone());
-        }
-        let count = rerail_tape_format::with_tape!(self.tape(), |t| t.len());
-        Self::walked(grammar, source, count, budget, |out| rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, out, budget)))
-    }
-
     /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops. `nodes` is about
     /// the nodes `walk` writes. A code the language's table lacks, or nodes past format 16's bounds, are an error.
     pub fn walked(
@@ -1456,51 +1500,21 @@ impl TapeImage {
         budget: &impl Fn() -> bool,
         walk: impl FnOnce(&mut dyn TreeOut) -> Result<(), String>,
     ) -> Result<Self, String> {
-        let mut ops = formats::TreeOps::of_run(grammar.lang, source.as_bytes(), nodes)?;
-        walk(&mut ops)?;
-        Self::written_16(ops.finish()?, grammar.lang, source, None, budget)
+        Self::walked_as(grammar, source, nodes, budget, true, walk)
     }
 
-    /// The nodes of `t` that `segments` does not omit, nor any of their ancestors, written to `out` in preorder.
-    fn kept<T: Tape>(t: &T, segments: &SegmentMap, out: &mut (impl TreeOut + ?Sized), budget: &impl Fn() -> bool) -> Result<(), String> {
-        let count = t.len();
-        // Per open ancestor: its index in `out`, and where its subtree ends in `t`.
-        let mut open: Vec<(u32, usize)> = Vec::new();
-        let mut i = 0;
-        while i < count {
-            if i % 256 == 0 {
-                checked(budget)?;
-            }
-            while open.last().is_some_and(|&(_, last)| last <= i) {
-                open.pop();
-                out.close();
-            }
-            let (start, end, until) = (t.start(i), t.end(i), t.subtree_end(i));
-            if segments.omitted(start as usize..end as usize) {
-                i = until;
-                continue;
-            }
-            let code = t.table().entry(t.code(i));
-            if code.alias.is_some() {
-                return Err("a written tape's contextual alias".into());
-            }
-            let visit = Visit {
-                kf: code.kind | code.field << rerail_tape_format::KIND_BITS,
-                start: u32::try_from(start).map_err(|_| "span outside source")?,
-                end: u32::try_from(end).map_err(|_| "span outside source")?,
-                extra: code.flags & CODE_EXTRA != 0,
-                error: code.flags & CODE_ERROR != 0,
-                missing: code.flags & CODE_MISSING != 0,
-                kind_alias: None,
-            };
-            let index = out.open(visit, open.last().map(|&(at, _)| at), &code.classes)?;
-            open.push((index, until));
-            i += 1;
-        }
-        for _ in open {
-            out.close();
-        }
-        Ok(())
+    /// `walked`, its blocks packed only where `packed` (`formats::TreeOps::of_run_as`).
+    fn walked_as(
+        grammar: &Grammar,
+        source: &str,
+        nodes: usize,
+        budget: &impl Fn() -> bool,
+        packed: bool,
+        walk: impl FnOnce(&mut dyn TreeOut) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let mut ops = formats::TreeOps::of_run_as(grammar.lang, source.as_bytes(), nodes, packed)?;
+        walk(&mut ops)?;
+        Self::written_16(ops.finish()?, grammar.lang, source, None, budget)
     }
 
     /// `source`'s lines as `terminators` end them (decision 0612): the tape's line index, read where it lies, where
@@ -1524,13 +1538,19 @@ impl TapeImage {
         }
     }
 
-    /// The tape, read in place in the format it is held in (decision 0293).
+    /// The tape, read in place in the format it is held in (decision 0293). A 16z tape's reads need its batch's
+    /// cache (`tape_in`): this one's reach none.
     pub fn tape(&self) -> rerail_tape_format::tape::AnyTape<'_> {
+        self.tape_in(None)
+    }
+
+    /// The tape, a 16z tape's blocks decoded into `cache`, its batch's (`rerail_tape_format::f16::ZCache`).
+    pub fn tape_in<'a>(&'a self, cache: Option<&'a rerail_tape_format::f16::ZCache>) -> rerail_tape_format::tape::AnyTape<'a> {
         use rerail_tape_format::tape::AnyTape;
         let lang = |tag: u8| rerail_tape_format::f16::lang(tag).expect("a format 16 tape is held with its language's table");
         match &self.held {
             Held::F16(t) => AnyTape::F16(t.reader(lang(t.tag())).expect("checked when held")),
-            Held::F16Z(t) => AnyTape::F16Z(t.reader(lang(t.tag())).expect("checked when held")),
+            Held::F16Z(t) => AnyTape::F16Z(t.reader(lang(t.tag()), cache).expect("checked when held")),
         }
     }
 
@@ -1541,23 +1561,23 @@ impl TapeImage {
 
     /// The preorders of nodes whose code carries `flag`.
     #[cfg(any(test, feature = "test-hooks"))]
-    fn flagged(&self, flag: u8) -> Vec<u32> {
+    fn flagged(&self, flag: u8) -> Vector<u32> {
         use rerail_tape_format::tape::Tape;
         rerail_tape_format::with_tape!(self.tape(), |t| (0..t.len()).filter(|&i| t.table().entry(t.code(i)).flags & flag != 0).map(|i| i as u32).collect())
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn error_nodes(&self) -> Vec<u32> {
+    pub fn error_nodes(&self) -> Vector<u32> {
         self.flagged(CODE_ERROR)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn missing_nodes(&self) -> Vec<u32> {
+    pub fn missing_nodes(&self) -> Vector<u32> {
         self.flagged(CODE_MISSING)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn extra_nodes(&self) -> Vec<u32> {
+    pub fn extra_nodes(&self) -> Vector<u32> {
         self.flagged(CODE_EXTRA)
     }
 
@@ -1771,14 +1791,14 @@ macro_rules! read {
 
 /// A node's kind as the matchers name it: the code's, or `ERROR_SYMBOL` for an ERROR node.
 #[inline]
-fn kind_of(e: &Entry) -> u16 {
+fn kind_of(e: EntryRef<'_>) -> u16 {
     if e.flags & CODE_ERROR != 0 { ERROR_SYMBOL } else { e.kind }
 }
 
 /// Whether a node of code `e` is named: its alias's flag, else its kind's.
 #[inline]
-fn named_of(grammar: &Grammar, e: &Entry) -> bool {
-    e.alias.as_ref().map_or_else(|| grammar.kind_is_named(kind_of(e)), |alias| alias.1)
+fn named_of(grammar: &Grammar, e: EntryRef<'_>) -> bool {
+    e.alias.map_or_else(|| grammar.kind_is_named(kind_of(e)), |alias| alias.1)
 }
 
 /// A node whose parent the step that reached it did not know (`TapeNode::up`).
@@ -1789,16 +1809,16 @@ pub struct TapeDoc {
     // P's: the source's digest, read by P's anchor corpus (`matcher::p_anchors`, test-only).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     source_digest: [u8; 32],
-    pub source: Arc<String>,
+    pub source: Arc<Text>,
     grammar: Arc<Grammar>,
     lines: Arc<LineTable>,
     points: Arc<Points>,
     /// Derived classes (`with_labels`): a bitset over the nodes per class from
     /// `DERIVED_CLASS_BASE`.
-    labels: Arc<Vec<Vec<u64>>>,
+    labels: Arc<Vec<Vector<u64>>>,
     /// Text tests read from the term index (`with_texts`, `prefilter::terms`, `R[tid]`): per
     /// slot key (`Micro::slot_key`), a bit per node.
-    texts: Arc<std::collections::BTreeMap<String, Arc<Vec<u64>>>>,
+    texts: Arc<std::collections::BTreeMap<String, Arc<Vector<u64>>>>,
     /// A host's guests (`embed`); the host a guest reads links to them weakly, as they hold it.
     guests: Guests,
     /// A guest's link to the file it is embedded in.
@@ -1834,119 +1854,23 @@ pub struct HostLink {
     pub segments: Arc<SegmentMap>,
     pub(in crate::code_rule_dsl) host_errors: Arc<Vec<(u32, u32)>>,
     pub host: TapeDoc,
-    /// Each node's extent in the program (`node_extents`), by preorder index.
-    pub extents: Vec<(u32, u32)>,
 }
 
-/// The program bytes each node of a guest's records stands for: from the first of its leaves that
-/// stands for file bytes to the last (`SegmentMap::stands_for`); a node none of whose leaves does,
-/// from its first leaf to its last. A node's span may run past those leaves: a root's holds the
-/// white space after its last statement, and a statement ending in a `;` its embedder wrote over
-/// no bytes holds the white space before it, which stands for nothing of the node's.
-///
-/// The tape stores no implied token (RER-131, `tokens`): `echo` and `;` a Blade echo is written as,
-/// the `;` marker Vue's script and template programs start with. Their text is in the gaps a node's
-/// stored children leave in its span, the source `structural_before` and `structural_after` hold
-/// (core.rerail): comments are nodes, so a gap is implied tokens and white space only, and each run of
-/// it that is not white space (`implied`) is read as a leaf. Which tokens a run holds does not
-/// matter here (`TokenGrammar::gaps` would say): only whether its bytes stand for the file's.
-fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
-    rerail_tape_format::with_tape!(doc.tape(), |t| extents_of(&t, doc.source.as_bytes(), segments))
+pub use rerail_tape_format::f16::ZCache;
+
+/// A cache for `tapes`' 16z blocks: a batch of the documents a caller reads (`TapeDoc::in_batch`).
+pub fn cache_of<'a>(tapes: impl IntoIterator<Item = &'a rerail_tape_format::f16::Tape16Z>) -> rerail_tape_format::f16::ZCache {
+    rerail_tape_format::f16::ZCache::of(tapes)
 }
 
-/// `node_extents` over the tape, read in place: one pass in preorder, each node's extent joined into its parent's
-/// as its subtree closes (the subtrees open around a node are its ancestors).
-fn extents_of<T: rerail_tape_format::tape::Tape>(t: &T, text: &[u8], segments: &SegmentMap) -> Vec<(u32, u32)> {
-    const NONE_YET: (u32, u32) = (u32::MAX, 0);
-    let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
-        *into = (into.0.min(start), into.1.max(end));
-    };
-    // The implied tokens of `start..end`, a gap between a node's stored children (a
-    // `structural_before`/`structural_after` source): its runs of text that are not white space.
-    let implied = |start: u32, end: u32, leaf: &mut dyn FnMut(u32, u32)| {
-        let gap = text.get(start as usize..end as usize).unwrap_or_default();
-        let mut at = 0;
-        while at < gap.len() {
-            let Some(from) = gap[at..].iter().position(|b| !b.is_ascii_whitespace()) else { break };
-            let from = at + from;
-            let to = gap[from..].iter().position(|b| b.is_ascii_whitespace()).map_or(gap.len(), |n| from + n);
-            leaf(start + from as u32, start + to as u32);
-            at = to;
-        }
-    };
-    let n = t.len();
-    // Per node: the extent of its leaves standing for bytes, and of all its leaves.
-    let mut standing = vec![NONE_YET; n];
-    let mut all = vec![NONE_YET; n];
-    // A closed subtree's extents, joined into its parent's (the subtree open around it).
-    let close = |node: usize, open: &[(usize, usize)], standing: &mut [(u32, u32)], all: &mut [(u32, u32)]| {
-        if let Some(&(parent, _)) = open.last() {
-            let (leaves, standing_leaves) = (all[node], standing[node]);
-            join(&mut all[parent], leaves);
-            if standing_leaves != NONE_YET {
-                join(&mut standing[parent], standing_leaves);
-            }
-        }
-    };
-    let mut open: Vec<(usize, usize)> = Vec::new();
-    for index in 0..n {
-        while let Some(&(node, end)) = open.last() {
-            if end > index {
-                break;
-            }
-            open.pop();
-            close(node, &open, &mut standing, &mut all);
-        }
-        let (start, end) = (t.start(index) as u32, t.end(index) as u32);
-        let subtree_end = t.subtree_end(index);
-        if subtree_end == index + 1 {
-            all[index] = (start, end);
-            if segments.stands_for(start as usize..end as usize) {
-                standing[index] = (start, end);
-            }
-        } else {
-            // The gaps its stored children leave in its span.
-            let mut at = start;
-            let mut gaps = Vec::new();
-            for child in rerail_tape_format::tape::children(t, index) {
-                let (c_start, c_end) = (t.start(child) as u32, t.end(child) as u32);
-                if c_start > at {
-                    gaps.push((at, c_start));
-                }
-                at = at.max(c_end);
-            }
-            if end > at {
-                gaps.push((at, end));
-            }
-            for (from, to) in gaps {
-                implied(from, to, &mut |from, to| {
-                    join(&mut all[index], (from, to));
-                    if segments.stands_for(from as usize..to as usize) {
-                        join(&mut standing[index], (from, to));
-                    }
-                });
-            }
-        }
-        open.push((index, subtree_end));
-    }
-    while let Some((node, _)) = open.pop() {
-        close(node, &open, &mut standing, &mut all);
-    }
-    standing
-        .into_iter()
-        .zip(all)
-        .map(|(standing, all)| if standing == NONE_YET { all } else { standing })
-        .collect()
-}
-
-pub type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
+pub type KindPostings = rustc_hash::FxHashMap<u16, Vector<u32>>;
 
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
 /// evaluator's line table follows the linter a port mirrors (a lone `\r` ends a Ruff line), so
 /// positions keep their own table, built on first use: violations place spans with the line table,
 /// and nothing but parity with the native tree reads a tape node's position.
 struct Points {
-    source: Arc<String>,
+    source: Arc<Text>,
     rows: std::sync::OnceLock<LineTable>,
 }
 
@@ -1965,7 +1889,7 @@ impl Points {
 /// this file is packed or its result page is normalized.
 #[derive(Clone)]
 pub struct TapeSource {
-    pub source: Arc<String>,
+    pub source: Arc<Text>,
     pub grammar: Arc<Grammar>,
     pub image: Arc<FileImage>,
     pub lines: Arc<LineTable>,
@@ -2011,20 +1935,23 @@ impl TapeDoc {
     /// test-only). W's tape keeps no digest, so it is computed.
     /// G's: the shared source (G's literal anchors, test-only).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn transducer_source_arc(&self) -> Arc<String> {
+    pub fn transducer_source_arc(&self) -> Arc<Text> {
         Arc::clone(&self.source)
     }
 
     /// The documents `image` encodes over `source`: the file's own, with the guests derived from
     /// it.
     pub fn restore_with_lines(
-        source: Arc<String>,
+        source: Arc<Text>,
         grammar: Arc<Grammar>,
         image: &FileImage,
         lines: Arc<LineTable>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
-        let mut host = Self::restore_tree(source, grammar, &image.primary, lines, budget)?;
+        // The file's documents are read outside every batch until one takes them (`TapeDoc::in_batch`): a batch of
+        // their own, one cache for their 16z tapes' blocks (decision 0628 §6).
+        let cache = image.z_cache();
+        let mut host = Self::restore_tree(source, grammar, &image.primary, lines, cache.clone(), budget)?;
         if image.derived.is_empty() {
             return Ok(host);
         }
@@ -2041,7 +1968,7 @@ impl TapeDoc {
             };
             let mut restored = Vec::with_capacity(image.derived.len());
             for guest in &image.derived {
-                match Self::restore_guest(&linked, guest, budget) {
+                match Self::restore_guest(&linked, guest, cache.clone(), budget) {
                     Ok(doc) => restored.push(Guest {
                         via: guest.via,
                         doc,
@@ -2065,6 +1992,7 @@ impl TapeDoc {
     fn restore_guest(
         host: &Self,
         guest: &DerivedImage,
+        cache: Option<Arc<rerail_tape_format::f16::ZCache>>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         let grammar = Grammar::embedded(guest.tape.language)?;
@@ -2073,24 +2001,24 @@ impl TapeDoc {
         guest.source_map.check(&guest.text, &host.source)?;
         let lines = Arc::new(guest.tape.lines(&guest.text, crate::code_rule_dsl::lines::terminators(grammar.lang), false));
         let mut doc =
-            Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, budget)?;
+            Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, cache, budget)?;
         checked(budget)?;
         doc.host = Some(Arc::new(HostLink {
             via: guest.via,
             segments: Arc::clone(&guest.source_map),
             host_errors: Arc::clone(&guest.host_errors),
             host: host.clone(),
-            extents: node_extents(&doc, &guest.source_map),
         }));
         Ok(doc)
     }
 
-    /// The document of `image`'s own tree over `source`.
+    /// The document of `image`'s own tree over `source`, a 16z tape's blocks decoded into `cache`: its file's batch's.
     fn restore_tree(
-        source: Arc<String>,
+        source: Arc<Text>,
         grammar: Arc<Grammar>,
         image: &TapeImage,
         lines: Arc<LineTable>,
+        cache: Option<Arc<rerail_tape_format::f16::ZCache>>,
         budget: &impl Fn() -> bool,
     ) -> Result<Self, String> {
         read!("docs restored");
@@ -2099,8 +2027,11 @@ impl TapeDoc {
         // 0293), so nothing is copied out of it.
         let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
         checked(budget)?;
-        let image = Arc::new(image.clone());
-        let held = Arc::new(formats::DocTape::new(Arc::clone(&image), Arc::clone(&source)));
+        // Held where a device reads it, the source and the tape alike: the residency takes both as they lie (decision
+        // 0353 step 7, row 13). A placed image is shared, not copied.
+        let source = placed::housed(source);
+        let image = Arc::new(image.housed(&grammar)?);
+        let held = Arc::new(formats::DocTape::in_batch(Arc::clone(&image), Arc::clone(&source), cache));
         Ok(Self {
             held,
             source_digest: digest,
@@ -2128,18 +2059,59 @@ impl TapeDoc {
         self.syntax_error_nodes().map(|(_, range)| range).collect()
     }
 
-    /// The nodes `syntax_error_ranges` reads, each with its preorder index.
+    /// Whether the document has an ERROR node or a MISSING token: whether its writer listed a fault in its home
+    /// (`TapeImage::faults`: no node read, no block decoded); else its presence's fault bit (`presence::kind_word`);
+    /// for a tape with no presence (format 15's), its nodes read.
+    pub fn has_syntax_error(&self) -> bool {
+        use rerail_tape_format::tape::Tape;
+        if let Some(faults) = self.doc_tape().image().faults() {
+            return !faults.is_empty();
+        }
+        if self.has_presence() {
+            self.tape().has_kind(u32::MAX, ERROR_CODE)
+        } else {
+            self.syntax_error_nodes().next().is_some()
+        }
+    }
+
+    /// The nodes `syntax_error_ranges` reads, each with its preorder index: the outermost of the faults its writer
+    /// listed in its home (`TapeImage::faults`), each read in its block alone (in 16z, the only blocks decoded); a
+    /// format 15 tape's in the blocks whose presence has the fault bit (`presence::kind_word`).
     pub fn syntax_error_nodes(&self) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
         use rerail_tape_format::tape::Tape;
         let mut found = Vec::new();
+        let listed = self.doc_tape().image().faults();
         rerail_tape_format::with_tape!(self.tape(), |t| {
-            let mut i = 0;
-            while i < t.len() {
-                if t.table().entry(t.code(i)).flags & (CODE_ERROR | CODE_MISSING) != 0 {
+            let n = t.len();
+            if let Some(faults) = listed {
+                // A fault inside one found is not one: `skip` passes its subtree.
+                let mut skip = 0;
+                for &i in faults {
+                    let i = i as usize;
+                    if i < skip || i >= n {
+                        continue;
+                    }
                     found.push((i, t.start(i) as usize..t.end(i) as usize));
-                    i = t.subtree_end(i);
-                } else {
-                    i += 1;
+                    skip = t.subtree_end(i);
+                }
+            }
+            // Format 15: none where the document's presence has no fault bit. A node inside a fault found is not one:
+            // `i` passes its subtree, into the blocks after it too.
+            let blocks = if listed.is_none() && t.has_kind(u32::MAX, ERROR_CODE) { n.div_ceil(PRESENCE_BLOCK) } else { 0 };
+            let mut i = 0;
+            for b in 0..blocks {
+                let end = ((b + 1) * PRESENCE_BLOCK).min(n);
+                if i >= end || !t.has_kind(u32::try_from(b).unwrap_or(u32::MAX - 1), ERROR_CODE) {
+                    continue;
+                }
+                i = i.max(b * PRESENCE_BLOCK);
+                while i < end {
+                    if t.table().entry(t.code(i)).flags & (CODE_ERROR | CODE_MISSING) != 0 {
+                        found.push((i, t.start(i) as usize..t.end(i) as usize));
+                        i = t.subtree_end(i);
+                    } else {
+                        i += 1;
+                    }
                 }
             }
         });
@@ -2182,12 +2154,12 @@ impl TapeDoc {
     }
 
     /// This document's own text, which its spans index.
-    pub fn document_source(&self) -> &Arc<String> {
+    pub fn document_source(&self) -> &Arc<Text> {
         &self.source
     }
 
     /// The file's source: a guest's host's, else this document's own.
-    pub fn file_source(&self) -> &Arc<String> {
+    pub fn file_source(&self) -> &Arc<Text> {
         self.host
             .as_ref()
             .map_or(&self.source, |link| &link.host.source)
@@ -2220,7 +2192,7 @@ impl TapeDoc {
     /// or a lone tape (a file that derives none).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn restore(
-        source: Arc<String>,
+        source: Arc<Text>,
         grammar: Arc<Grammar>,
         image: &impl Documents,
         budget: &impl Fn() -> bool,
@@ -2239,8 +2211,8 @@ impl TapeDoc {
         self.points.point(byte as u32).line()
     }
 
-    /// The source's line table, shared with the evaluator that restored this document: the one line index every
-    /// reader reads in place (decision 0612), the batch's resident and copied lines among them (`packed_batch`).
+    /// The source's line table, shared with the evaluator that restored this document: its language's line index
+    /// (decision 0612), which the transducer's batch counts and its JIT reads where it lies.
     pub fn line_table(&self) -> &LineTable {
         &self.lines
     }
@@ -2257,7 +2229,7 @@ impl TapeDoc {
 
     /// Node `node`'s code.
     #[inline]
-    fn entry(&self, node: u32) -> &Entry {
+    fn entry(&self, node: u32) -> EntryRef<'_> {
         let t = self.t();
         t.table().entry(t.code(node as usize))
     }
@@ -2277,6 +2249,11 @@ impl TapeDoc {
     pub fn tape_digest_and_image(&self) -> Result<([u8; 32], Option<Vec<u8>>), String> {
         if let Some(digest) = self.digest.get() {
             return Ok((*digest, None));
+        }
+        // A tape in its room is hashed there: the residency takes it as it lies (`in_place`), nothing serialized.
+        if let Some((_, stored)) = self.image.stored_in_room() {
+            let digest = tape_identity(&self.source_digest, stored);
+            return Ok((*self.digest.get_or_init(|| digest), None));
         }
         let image = self.image.to_bytes()?;
         let digest = tape_identity(&self.source_digest, &image);
@@ -2298,6 +2275,13 @@ impl TapeDoc {
     /// The SHA-256 of this document's stored bytes, the residency's key (decision 0032).
     pub fn resident_key(&self) -> Result<[u8; 32], String> {
         self.tape_digest()
+    }
+
+    /// This document's tape as stored where it lies in its room, and its source, where both are in rooms (`housed`):
+    /// what the residency takes as they lie (decision 0353 step 7, row 13).
+    pub fn in_place(&self) -> Option<(&Arc<dyn rerail_tape_format::home::Room>, &[u8], &Arc<Text>)> {
+        let (room, stored) = self.image.stored_in_room()?;
+        self.source.home().placed().then_some((room, stored, &self.source))
     }
 
     /// This document's image as stored (`image`, when the caller has it already), its source and
@@ -2332,9 +2316,12 @@ impl TapeDoc {
 
     /// `transducer_nodes_where` in the blocks `block` admits alone (`block_may_have_kind` tells them): a block left
     /// out has none of its codes read (the kernels' `rule_may_in`, the same read).
-    pub fn transducer_nodes_where_in(&self, admits: impl Fn(u16, &[u16]) -> bool, block: &dyn Fn(u32) -> bool, out: &mut Vec<u32>) {
+    pub fn transducer_nodes_where_in(&self, admits: impl Fn(u16, &[u16]) -> bool, block: &dyn Fn(u32) -> bool, out: &mut Vector<u32>) {
         let t = self.t();
-        let set = t.table().set(|e| admits(kind_of(e), &e.classes));
+        // The codes' set, a bit a code, in a block.
+        let mut bits = rerail_blocks::vector![0u32; t.table().set_words()];
+        t.table().set_into(|e| admits(kind_of(e), e.classes), &mut bits);
+        let set = CodeSet::Dense(&bits, t.table().len() as u32);
         t.match_groups_in(&set, block, |base, mut m| {
             while m != 0 {
                 out.push((base + m.trailing_zeros() as usize) as u32);
@@ -2375,8 +2362,8 @@ impl TapeDoc {
     }
 
     /// The grammar's named kinds, ERROR included, ascending: what a rule ranges over.
-    pub(in crate::code_rule_dsl) fn named_kinds(&self) -> Vec<u16> {
-        let mut kinds: Vec<u16> = (0..self.grammar.named.len() as u16).filter(|&kind| self.grammar.kind_is_named(kind)).collect();
+    pub(in crate::code_rule_dsl) fn named_kinds(&self) -> Vector<u16> {
+        let mut kinds: Vector<u16> = (0..self.grammar.named.len() as u16).filter(|&kind| self.grammar.kind_is_named(kind)).collect();
         kinds.push(ERROR_SYMBOL);
         kinds
     }
@@ -2393,7 +2380,7 @@ impl TapeDoc {
     }
 
     /// Each node's parent, in preorder, from the subtrees open around it: a pass that reads no parent, where
-    /// `transducer_parent` reads one (format 15 searches for it, decision 0293).
+    /// `transducer_parent` reads one (a search back over the sizes, decision 0293).
     pub fn transducer_parents(&self) -> impl Iterator<Item = Option<u32>> + '_ {
         let t = self.t();
         let mut open: Vec<(u32, usize)> = Vec::new();
@@ -2442,11 +2429,11 @@ impl TapeDoc {
         None
     }
 
-    /// The whole source, for the Metal backend's concatenated buffer.
-    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    /// The whole source, where the document holds it.
     pub fn transducer_source(&self) -> &[u8] {
         self.source.as_bytes()
     }
+
 
     /// A node's source slice. Restoring the tape validates every span as a UTF-8 boundary.
     pub fn transducer_text_str(&self, node: u32) -> &str {
@@ -2470,7 +2457,7 @@ impl TapeDoc {
     pub fn transducer_structural_key(&self, node: u32) -> String {
         fn encode(tape: &TapeDoc, node: u32, bytes: &mut Vec<u8>) {
             bytes.extend_from_slice(&tape.transducer_kind(node).to_le_bytes());
-            let children: Vec<u32> = tape.transducer_children(node).collect();
+            let children: Vector<u32> = tape.transducer_children(node).collect();
             bytes.extend_from_slice(&(children.len() as u32).to_le_bytes());
             for child in children {
                 encode(tape, child, bytes);
@@ -2490,9 +2477,12 @@ impl TapeDoc {
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
     /// The nodes whose code passes `admits` (its kind, as `transducer_kind`, and its classes), in order, onto `out`:
     /// the codes tested once each, the nodes found from the tape's code bytes 64 at a time (`Tape::match_groups`).
-    pub fn transducer_nodes_where(&self, admits: impl Fn(u16, &[u16]) -> bool, out: &mut Vec<u32>) {
+    pub fn transducer_nodes_where(&self, admits: impl Fn(u16, &[u16]) -> bool, out: &mut Vector<u32>) {
         let t = self.t();
-        let set = t.table().set(|e| admits(kind_of(e), &e.classes));
+        // The codes' set, a bit a code, in a block.
+        let mut bits = rerail_blocks::vector![0u32; t.table().set_words()];
+        t.table().set_into(|e| admits(kind_of(e), e.classes), &mut bits);
+        let set = CodeSet::Dense(&bits, t.table().len() as u32);
         t.match_groups(&set, |base, mut m| {
             while m != 0 {
                 out.push((base + m.trailing_zeros() as usize) as u32);
@@ -2511,12 +2501,12 @@ impl TapeDoc {
     /// The derived classes (`with_labels`): per class from `DERIVED_CLASS_BASE`, a bitset over the
     /// nodes. The packed batch carries them as bitsets over its nodes, which every backend tests
     /// directly (`PackedBatch::derived`).
-    pub fn transducer_labels(&self) -> &[Vec<u64>] {
+    pub fn transducer_labels(&self) -> &[Vector<u64>] {
         &self.labels
     }
 
     /// The labels, shared (`transducer_labels`).
-    pub fn transducer_labels_shared(&self) -> Arc<Vec<Vec<u64>>> {
+    pub fn transducer_labels_shared(&self) -> Arc<Vec<Vector<u64>>> {
         Arc::clone(&self.labels)
     }
 
@@ -2538,7 +2528,7 @@ impl TapeDoc {
     /// one bitset over the nodes per class from `DERIVED_CLASS_BASE`, which `SUPERTYPE` tests as it
     /// tests a grammar class.
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-    pub fn with_labels(&self, labels: Arc<Vec<Vec<u64>>>) -> Self {
+    pub fn with_labels(&self, labels: Arc<Vec<Vector<u64>>>) -> Self {
         Self {
             labels,
             ..self.clone()
@@ -2556,7 +2546,7 @@ impl TapeDoc {
     }
 
     /// This tape with its text tests' rows from the term index (`prefilter::terms`).
-    pub fn with_texts(&self, texts: std::collections::BTreeMap<String, Arc<Vec<u64>>>) -> Self {
+    pub fn with_texts(&self, texts: std::collections::BTreeMap<String, Arc<Vector<u64>>>) -> Self {
         Self {
             texts: Arc::new(texts),
             ..self.clone()
@@ -2564,7 +2554,7 @@ impl TapeDoc {
     }
 
     /// A text test's row from the term index, by its slot key (`with_texts`).
-    pub fn transducer_text_row(&self, key: &str) -> Option<&Arc<Vec<u64>>> {
+    pub fn transducer_text_row(&self, key: &str) -> Option<&Arc<Vector<u64>>> {
         self.texts.get(key)
     }
 
@@ -2609,7 +2599,7 @@ impl<'a> TapeNode<'a> {
     }
 
     #[inline]
-    fn entry(&self) -> &'a Entry {
+    fn entry(&self) -> EntryRef<'a> {
         self.tape.table().entry(self.tape.code(self.index as usize))
     }
     #[inline]
@@ -2790,7 +2780,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn kind(&self) -> Cow<'_, str> {
         read!("kind");
         let e = self.entry();
-        Cow::Borrowed(e.alias.as_ref().map_or_else(|| self.grammar.kind_name(kind_of(e)).expect("validated grammar symbol"), |alias| alias.0.as_str()))
+        Cow::Borrowed(e.alias.map_or_else(|| self.grammar.kind_name(kind_of(e)).expect("validated grammar symbol"), |alias| alias.0))
     }
     fn kind_id(&self) -> u16 {
         read!("kind");
@@ -2865,16 +2855,16 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
 }
 
 impl Doc for TapeDoc {
-    type Source = String;
+    type Source = Text;
     type Lang = GrammarDialect;
     type Node<'a> = TapeNode<'a>;
     fn get_lang(&self) -> &GrammarDialect {
         &self.grammar.lang
     }
-    fn get_source(&self) -> &String {
+    fn get_source(&self) -> &Text {
         &self.source
     }
-    fn do_edit(&mut self, _edit: &Edit<String>) -> Result<(), String> {
+    fn do_edit(&mut self, _edit: &Edit<Text>) -> Result<(), String> {
         Err("replace the source-bound tape after editing".into())
     }
     fn root_node(&self) -> Self::Node<'_> {
@@ -2930,7 +2920,8 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
     let grammar = Grammar::new(lang)?;
     let tree = ast_grep_core::tree_sitter::StrDoc::try_new(source, lang)?;
     let root = tree.tree.root_node();
-    let image = TapeImage::encode_tree_image(root, &grammar, source, None, &|| false)?;
+    // Read here, where it is written, and never stored: format 16, its blocks not packed whatever the run stores.
+    let image = TapeImage::encode_tree_as(root, &grammar, source, None, &|| false, false)?;
     let filter = grammar.kinds.grammar().and_then(|language| tokens::TokenGrammar::of(lang, language));
     // In the encoder's preorder: a record per stored node.
     let mut ends: Vec<Option<Vec<String>>> = Vec::new();
@@ -2969,9 +2960,10 @@ pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, Patte
         }
         stack.extend(kept.into_iter().rev());
     }
-    let source = Arc::new(source.to_owned());
+    let source = Arc::new(Text::from(source));
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
-    let doc = TapeDoc::restore_tree(source, grammar, &image, lines, &|| false)?;
+    let cache = image.own_cache().map(Arc::new);
+    let doc = TapeDoc::restore_tree(source, grammar, &image, lines, cache, &|| false)?;
     if ends.len() != doc.transducer_len() {
         return Err("a pattern's records disagree with its tree".into());
     }
@@ -2998,3 +2990,4 @@ pub fn tape_doc<'t, D: Doc>(node: &ast_grep_core::Node<'t, D>) -> Option<&'t Tap
 // cratify: `tests` is rerail-engine's (it mounts it)
 
 // cratify: `corpus_parity` is rerail-lang-php's (it mounts it)
+

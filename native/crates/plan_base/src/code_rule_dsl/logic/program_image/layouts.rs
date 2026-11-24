@@ -19,6 +19,7 @@
 //! branches apart, and a recursion's other facts a proof (0361: "recursion keeps a fact only when it is declared, or
 //! proved by the base case and the step"). An aggregate's, a native's, a request's answer or the program's facts take
 //! their declared facts alone.
+use rerail_blocks::vector::Vector;
 use super::RelId;
 use super::about::About;
 use super::analyses::Strata;
@@ -54,7 +55,7 @@ impl Layouts {
     /// The facts of `v`'s relations: each relation's declared ones, and, in dependency order, what its one rule gives
     /// from the facts of the relations it reads.
     pub fn infer(v: &Version, about: &About, strata: &Strata) -> Layouts {
-        let mut out: BTreeMap<RelId, Vec<(LayoutFact, Origin)>> = about.layouts.iter().map(|(rel, facts)| (*rel, facts.iter().map(|f| (f.clone(), Origin::Declared)).collect())).collect();
+        let mut out: BTreeMap<RelId, Vec<(LayoutFact, Origin)>> = about.layouts.iter().map(|e| (e.0, e.1.iter().map(|f| (<LayoutFact as rerail_section::Decode>::decode(f, &rerail_section::Names::NONE), Origin::Declared)).collect())).collect();
         // An input the transducer makes from a kind set (an axis's, `nearest`'s) has the engine's facts, where none
         // are declared (decision 0361 step 5): the planner sizes the rules over it with the program.
         for rel in v.inputs().filter_map(|a| v.rel_of(a)) {
@@ -238,7 +239,7 @@ fn infer_rule(v: &Version, r: RuleRef<'_>, known: &BTreeMap<RelId, Vec<(LayoutFa
     };
     // Whether `vs`, all in the head, fix the head's row; and their places there.
     let fixes = |vs: &BTreeSet<Var>| vs.is_subset(&head_vars) && head_vars.is_subset(&closure(vs));
-    let places = |vs: &[Var]| -> Option<Vec<usize>> { vs.iter().map(|s| place.get(s).copied()).collect() };
+    let places = |vs: &[Var]| -> Option<rerail_blocks::vector::Vector<usize>> { vs.iter().map(|s| place.get(s).copied()).collect() };
     let one = |args: &[TermRef<'_>], c: usize| args.get(c).and_then(|t| t.var());
     let many = |args: &[TermRef<'_>], cols: &[usize]| -> Option<Vec<Var>> { cols.iter().map(|&c| one(args, c)).collect() };
     let mut out: Vec<LayoutFact> = Vec::new();
@@ -330,7 +331,7 @@ fn local(v: &Version, head_rel: RelId, atoms: &[(RelId, Vec<TermRef<'_>>)], near
         return false;
     }
     // One group: grow from the first atom with nodes through shared node variables and `nearest`.
-    let with: Vec<usize> = (0..atoms.len()).filter(|&k| !nodes[k].is_empty()).collect();
+    let with: Vector<usize> = (0..atoms.len()).filter(|&k| !nodes[k].is_empty()).collect();
     let Some(&first) = with.first() else { return true };
     let mut reached: BTreeSet<Var> = nodes[first].clone();
     let mut joined: BTreeSet<usize> = BTreeSet::from([first]);

@@ -33,7 +33,7 @@ impl<R: Send + Sync> Source for ViewRel<R> {
     fn indexed(&self, _column: usize) -> bool {
         false
     }
-    fn lookup(&self, _column: usize, _values: &[i64]) -> Option<Vec<usize>> {
+    fn lookup(&self, _column: usize, _values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         None
     }
     fn value(&self, row: usize, column: usize) -> i64 {

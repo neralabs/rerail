@@ -3,6 +3,7 @@
 //! its rules' heads and reads; what it edits is the header and which rules are kept (`Part::drop_heads`). The link
 //! copies each part's rules with their relations renamed (`Names`): a version's from its image, with no tree.
 
+use rerail_blocks::vector::Vector;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::program_image::build::Rewrite;
 use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
@@ -64,7 +65,7 @@ pub(super) trait Part: Sized + Send {
     fn link(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked>;
     /// `link`, and how many of the linked rules are each part's (in the parts' order), where a link of this form is
     /// kept (decision 0373: `Versioned`'s).
-    fn link_counted(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
+    fn link_counted(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<rerail_blocks::vector::Vector<usize>>)> {
         Ok((Self::link(fields, rules, core)?, None))
     }
     /// The linked program as the version a kept link holds, where it is one.
@@ -74,17 +75,17 @@ pub(super) trait Part: Sized + Send {
     /// The last link `last`, whose parts' rules are `counts` of its rules in order, with each of `changed` (a part's
     /// index and its rules) in its part's place, and the parts' counts after: what `link_counted` gives where the
     /// changed parts' interfaces are their last ones. `None` where the form keeps no link or `counts` are not `last`'s.
-    fn spliced(_last: &Arc<Version>, _counts: &[usize], _changed: Vec<(usize, Self::Rules)>, _core: &BTreeSet<String>) -> Result<Option<(Self::Linked, Vec<usize>)>> {
+    fn spliced(_last: &Arc<Version>, _counts: &[usize], _changed: Vec<(usize, Self::Rules)>, _core: &BTreeSet<String>) -> Result<Option<(Self::Linked, Vector<usize>)>> {
         Ok(None)
     }
 }
 
 /// `linked` without the repeats of a rule `core.rerail` gives after its first (`Part::link`), and each part's count of
 /// rules after (`counts`, the parts' rules in order, before).
-fn without_core_repeats(linked: Arc<Version>, counts: &[usize], core: &BTreeSet<String>) -> Result<(Arc<Version>, Vec<usize>)> {
+fn without_core_repeats(linked: Arc<Version>, counts: &[usize], core: &BTreeSet<String>) -> Result<(Arc<Version>, Vector<usize>)> {
     let mut seen = BTreeSet::new();
     let mut repeats = BTreeSet::new();
-    let mut counts = counts.to_vec();
+    let mut counts = Vector::from(counts);
     let (mut part, mut left) = (0usize, counts.first().copied().unwrap_or(0));
     for r in linked.rules() {
         while left == 0 && part + 1 < counts.len() {
@@ -459,7 +460,7 @@ impl Part for Versioned {
     fn link(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<Self::Linked> {
         Ok(Self::link_counted(fields, rules, core)?.0)
     }
-    fn link_counted(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<Vec<usize>>)> {
+    fn link_counted(fields: Builder<'static>, rules: Vec<Self::Rules>, core: &BTreeSet<String>) -> Result<(Self::Linked, Option<rerail_blocks::vector::Vector<usize>>)> {
         let mut b = fields;
         // The fields hold no rules: the first count (the header's own rules, in the kept link's record) is none.
         let mut counts = vec![0];
@@ -479,7 +480,7 @@ impl Part for Versioned {
     fn linked_version(linked: &Self::Linked) -> Option<&Arc<Version>> {
         Some(linked)
     }
-    fn spliced(last: &Arc<Version>, counts: &[usize], changed: Vec<(usize, Self::Rules)>, core: &BTreeSet<String>) -> Result<Option<(Self::Linked, Vec<usize>)>> {
+    fn spliced(last: &Arc<Version>, counts: &[usize], changed: Vec<(usize, Self::Rules)>, core: &BTreeSet<String>) -> Result<Option<(Self::Linked, Vector<usize>)>> {
         let last_rules: Vec<_> = last.rules().collect();
         if counts.iter().sum::<usize>() != last_rules.len() {
             return Ok(None);

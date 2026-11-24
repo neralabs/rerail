@@ -85,7 +85,7 @@ pub struct Document<'a> {
 pub struct Writer {
     state: Box<State>,
     /// The parts' buffers, by `part::*`, each its capacity long.
-    parts: [Vec<u8>; part::COUNT],
+    parts: [crate::Vector<u8>; part::COUNT],
     presence_words: (usize, usize),
     keep_blocks: bool,
     z: bool,
@@ -126,7 +126,7 @@ impl Writer {
 
     /// `begin`, the newline index written into its part by `lines` (`newlines::index_of`), in the part's own buffer: a
     /// producer that has the source's newlines (tier 1's bits) makes it with no scan of the source.
-    pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut Vec<u8>)) {
+    pub fn begin_with(&mut self, doc: &Document<'_>, lines: impl FnOnce(&mut crate::Vector<u8>)) {
         let &Document { lang, source, tag, z, blocks, nodes } = doc;
         let source_len = source.len() as u64;
         let wd = lang.widths;
@@ -157,7 +157,7 @@ impl Writer {
             ..State::default()
         });
         debug_assert_eq!(state.stride, w::stride_of(w3, cw as u32));
-        let kinds: Vec<u8> = lang.kind_field.iter().flat_map(|&(k, f)| (u32::from(k) | u32::from(f) << 16).to_le_bytes()).collect();
+        let kinds: crate::Vector<u8> = lang.table().entries().flat_map(|e| super::presence::kind_word(e.kind, e.field, e.flags).to_le_bytes()).collect();
         let words = 8 * (kind_words + field_words);
         let count = nodes.div_ceil(Z).max(1);
         let buckets = (4 * count).next_power_of_two().max(64);
@@ -191,6 +191,8 @@ impl Writer {
             if z { 4 * buckets + 8 } else { 8 },
             if z { count * (Z / K) * cw + 8 } else { 8 },
             if z { w::LZ_TABLES as usize + 8 } else { 8 },
+            // The faults: a few a document, grown as blocks are made final (`reserve_final`).
+            64,
         ];
         // The kinds' table and the newline index are their parts, made where they are computed.
         self.parts[part::KINDS as usize] = kinds;
@@ -257,7 +259,8 @@ impl Writer {
             part::PIECES => &mut state.pieces,
             part::SEEN => &mut state.seen,
             part::CKPT => &mut state.ckpt,
-            _ => &mut state.lz,
+            part::LZ => &mut state.lz,
+            _ => &mut state.errors,
         }
     }
 
@@ -297,7 +300,8 @@ impl Writer {
             part::PIECES => &s.pieces,
             part::SEEN => &s.seen,
             part::CKPT => &s.ckpt,
-            _ => &s.lz,
+            part::LZ => &s.lz,
+            _ => &s.errors,
         };
         p.len as usize
     }
@@ -325,6 +329,9 @@ impl Writer {
         let (laid, free) = (self.len_of(part::LAID), self.len_of(part::FREE));
         self.reserve(part::LAID, laid + blocks * LAID_MAX);
         self.reserve(part::FREE, free + 4 * blocks);
+        // Each of a block's nodes may be a fault (`w_finalize` lists them).
+        let errors = self.len_of(part::ERRORS);
+        self.reserve(part::ERRORS, errors + 4 * Z * blocks);
         // Each block's entry by its number: the blocks made, and the `blocks` more a run (`reserve_run`) may make
         // before it lays them.
         let count = self.state.blocks as usize + blocks;
@@ -501,10 +508,12 @@ impl Writer {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
+        let faults = self.len_of(part::ERRORS);
         let mut out = std::mem::take(&mut self.parts[part::OUT as usize]);
         self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
-        finished(out, &self.parts[part::PRESENCE as usize], self.presence_words, self.keep_blocks.then_some(count), self.z)
+        let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
+        finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)
     }
 
     /// `finish`'s ops, each with the room it can need reserved first.
@@ -548,14 +557,37 @@ impl Writer {
 
 /// A finished writer's tape (`out`, its OUT part at its length), with its presence laid after it in its home
 /// (`presence::lay_words`), from its PRESENCE part: the document's, and a presence a block where `blocks` counts them.
-fn finished(mut out: Vec<u8>, presence: &[u8], words: (usize, usize), blocks: Option<usize>, z: bool) -> Result<Finished, String> {
+/// Its faults (`faults`, its ERRORS part: each block's in preorder, the blocks in the order they were made final) laid
+/// after it in preorder.
+fn finished(mut out: crate::Vector<u8>, presence: &[u8], faults: &mut [u8], words: (usize, usize), blocks: Option<usize>, z: bool) -> Result<Finished, String> {
     let word = |k: usize| u64::from_le_bytes(presence[8 * k..8 * k + 8].try_into().expect("8 bytes"));
     let count = 1 + blocks.unwrap_or(0);
-    super::presence::lay_words(&mut out, words, count, &mut (0..(words.0 + words.1) * count).map(word));
+    in_preorder(faults);
+    super::presence::lay_words(&mut out, words, count, &mut (0..(words.0 + words.1) * count).map(word), faults);
     let tape = if z { Written::F16Z(Tape16Z::from_bytes(out)?) } else { Written::F16(Tape16::from_bytes(out)?) };
     Ok(Finished { tape })
 }
 
+
+/// The ERRORS part's u32s sorted where they lie: a block made final after a later one (a node of it open past the
+/// later one's end) listed its faults after the later one's.
+fn in_preorder(faults: &mut [u8]) {
+    let n = faults.len() / 4;
+    let at = |f: &[u8], k: usize| u32::from_le_bytes(f[4 * k..4 * k + 4].try_into().expect("4 bytes"));
+    if (1..n).all(|k| at(faults, k - 1) <= at(faults, k)) {
+        return;
+    }
+    // Insertion by block runs: each run ascends, so a run moves down past the later blocks' ids before it.
+    for k in 1..n {
+        let x = at(faults, k);
+        let mut j = k;
+        while j > 0 && at(faults, j - 1) > x {
+            faults.copy_within(4 * (j - 1)..4 * j, 4 * j);
+            j -= 1;
+        }
+        faults[4 * j..4 * j + 4].copy_from_slice(&x.to_le_bytes());
+    }
+}
 
 /// The CLIF LZ4 compressor alone (a test's): its state, its tables, a piece's room.
 #[cfg(test)]
@@ -781,7 +813,9 @@ pub(super) mod device {
                     let (at, len) = (state.out.at as usize, state.out.len as usize);
                     let count = (state.n as usize).div_ceil(Z);
                     let presence = &bytes[state.presence.at as usize..][..w.host.parts[part::PRESENCE as usize].len()];
-                    finished(bytes[at..at + len].to_vec(), presence, w.made.presence_words, w.made.keep_blocks.then_some(count), w.made.z)
+                    // copy: not block data: a test's faults read back from the device's region, sorted where they lie.
+                    let mut faults = bytes[state.errors.at as usize..][..state.errors.len as usize].to_vec();
+                    finished(crate::Vector::from(&bytes[at..at + len]), presence, &mut faults, w.made.presence_words, w.made.keep_blocks.then_some(count), w.made.z)
                 })
                 .collect()
         }

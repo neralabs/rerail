@@ -1,3 +1,4 @@
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::manager::{self, Pipeline};
@@ -109,15 +110,15 @@ fn a_rule_joining_a_phase_export_is_cross_file_and_one_joining_an_option_is_not(
 /// │   └ 3 function
 /// └ 4 other
 /// ```
-fn chunk() -> (Vec<u32>, Vec<i64>) {
-    (vec![NONE, 0, 1, 2, 0, NONE, 5, 6], vec![1, 2, 3, 2, 3, 1, 3, 2])
+fn chunk() -> (Vector<u32>, Vector<i64>) {
+    (rerail_blocks::vector![NONE, 0, 1, 2, 0, NONE, 5, 6], rerail_blocks::vector![1, 2, 3, 2, 3, 1, 3, 2])
 }
 
 #[test]
 fn nearest_is_each_nodes_closest_ancestor_in_the_set() {
     let (parent, kind) = chunk();
     let trees = Trees { parent: &parent, kind: &kind };
-    let sets = [vec![1], vec![2], vec![1, 2]];
+    let sets = [rerail_blocks::vector![1], rerail_blocks::vector![2], rerail_blocks::vector![1, 2]];
     let got = nearest(&trees, &sets, Binding::Cpu).unwrap();
     assert_eq!(got[0], [NONE, 0, 0, 0, 0, NONE, 5, 5]);
     assert_eq!(got[1], [NONE, NONE, 1, 1, NONE, NONE, NONE, NONE]);
@@ -135,7 +136,7 @@ fn the_device_finds_the_cpus_nearest() {
         kind.push(i64::from(i % 5));
     }
     let trees = Trees { parent: &parent, kind: &kind };
-    let sets = [vec![1], vec![2, 3], vec![4]];
+    let sets = [rerail_blocks::vector![1], rerail_blocks::vector![2, 3], rerail_blocks::vector![4]];
     let cpu = nearest(&trees, &sets, Binding::Cpu).unwrap();
     let metal = nearest(&trees, &sets, Binding::Metal).unwrap();
     assert_eq!(cpu, metal);
@@ -166,9 +167,9 @@ fn nearest_costs_by_solver() {
 fn nearest_costs(cap: usize) {
     let n = 172_000usize;
     // Preorder forest: 80 documents; a node's parent is the open node on top of a stack that grows and shrinks.
-    let mut parent = Vec::with_capacity(n);
+    let mut parent = rerail_blocks::vector::Vector::with_capacity(n);
     let mut kind = Vec::with_capacity(n);
-    let mut stack: Vec<u32> = Vec::new();
+    let mut stack: Vector<u32> = rerail_blocks::vector::Vector::new();
     let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut rand = || {
         x ^= x << 13;
@@ -189,7 +190,7 @@ fn nearest_costs(cap: usize) {
         stack.push(i as u32);
     }
     let depth = (0..n).map(|mut v| { let mut d = 0; while parent[v] != NONE { v = parent[v] as usize; d += 1; } d }).max().unwrap();
-    let sets = vec![vec![7]];
+    let sets = vec![rerail_blocks::vector![7]];
     let trees = Trees { parent: &parent, kind: &kind };
     let sys = system(&trees, &sets).unwrap();
     let t = std::time::Instant::now();
@@ -214,7 +215,7 @@ fn nearest_costs(cap: usize) {
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
-        let target: Vec<u32> = parent.clone();
+        let target: Vector<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
         for round in 0..4 {
             // `RERAIL_NEAREST_IDLE_MS`: the GPU left idle before each call, as between a run's chunks.
@@ -321,8 +322,15 @@ finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), 
     let join = rules_of(&v, &made[0])[0];
     assert_eq!(join.body().count(), 5, "{}", v.show_rule(join));
     assert_eq!(join.head().args().count(), 2);
-    // Its rows are attributable to their file: the node column is a location.
-    assert_eq!(split.locations[&made[0]], [0], "{:?}", split.locations);
+    // Its rows are attributable to their file: the node column is a location. The interface's order is the join's
+    // canonical one (its literals by their text, decision 0575), so the node's column is found by its variable.
+    let shown = v.show_rule(join);
+    let (head, body) = shown.split_once(" :- ").expect("a rule");
+    let head_vars: Vec<&str> = head[head.find('(').unwrap() + 1..head.rfind(')').unwrap()].split(", ").collect();
+    let node_at = body.find("node(").expect("the join reads node");
+    let node_var = body[node_at + 5..].split(", ").nth(1).expect("node's node column");
+    let column = head_vars.iter().position(|x| *x == node_var).expect("the node is in the interface");
+    assert_eq!(split.locations[&made[0]], [column], "{shown}: {:?}", split.locations);
 }
 
 /// A cross-file join by a value (two files' identifiers of one text, `text(a, t), text(b, t)`) is each file's part,

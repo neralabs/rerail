@@ -2,6 +2,7 @@
 //! the engine's reader takes (base: the policy id). Each pass is the Python one of the same name, in its order.
 //! Offsets are byte offsets; every delimiter the passes look for is ASCII.
 
+use rerail_blocks::vector::Vector;
 use super::lower::R;
 use super::patterns::Patterns;
 use super::pyre::{captures, find, findall, g, has, is_full, re, search, split1, sub};
@@ -201,7 +202,7 @@ fn message_braces(px: &Patterns, text: String) -> String {
 
 const DEFAULT: [i64; 2] = [3, 10];
 
-fn ver(v: &Value) -> Vec<i64> {
+fn ver(v: &Value) -> Vector<i64> {
     let s = match v {
         Value::Str(s) => s.clone(),
         other => super::value::py_str(other),
@@ -225,7 +226,7 @@ fn lower_options(px: &Patterns, mut text: String) -> String {
         text = text.replacen(&format!("    options {raw_opts}\n"), "", 1);
         let empty = Value::Obj(super::value::Obj(Vec::new()));
         let v = get(Some(&opts), "when").and_then(|w| get(Some(w), "pythonVersion")).filter(|x| x.truthy()).unwrap_or(&empty);
-        let off = v.get("min").is_some_and(|m| ver(m) > DEFAULT.to_vec()) || v.get("max").is_some_and(|m| ver(m) < DEFAULT.to_vec());
+        let off = v.get("min").is_some_and(|m| ver(m) > DEFAULT.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()) || v.get("max").is_some_and(|m| ver(m) < DEFAULT.iter().copied().collect::<rerail_blocks::vector::Vector<_>>());
         let fp = get(Some(&opts), "file").and_then(|f| f.get("path")).filter(|x| x.truthy()).unwrap_or(&empty);
         if !off && !fp.truthy() {
             continue;

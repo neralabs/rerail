@@ -1,9 +1,10 @@
 # 0276: Programs are written through a writer and read as versions, from the tape on; `lower::Tree` and `front::Program` go
 
-Status: draft (2026-11-15), a design. Drafted as 0274; renumbered (0274 and 0275 are taken in other worktrees). Builds on 0173 (the program image), 0241 (a maintained form is a
-derivation), 0244 (a split part is a view with its fields overlaid) and t36 item 7 (the run reads versions). Aimed
-at 0266's `Program` block (§1, path step 3), whose writer, views and base + delta it takes its API from, so that
-step 3 changes what is under the API and not its callers.
+Status: built (audited 2026-11-23). Draft (2026-11-15), a design. Drafted as 0274; renumbered (0274 and 0275 are taken
+in other worktrees). Builds on 0173 (the program image), 0241 (a maintained form is a derivation), 0244 (a split part
+is a view with its fields overlaid) and t36 item 7 (the run reads versions). Aimed at 0266's `Program` block (§1, path
+step 3), whose writer, views and base + delta it takes its API from, so that step 3 changes what is under the API and
+not its callers.
 
 ## Intro
 

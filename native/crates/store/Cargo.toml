@@ -12,10 +12,12 @@ description = "The engine's content store (SQLite): sources, tapes, memos, run r
 # The store's test hooks (busy-wait overrides, write counters, test-only writers), for the engine's tests. The
 # engine turns it on always, not only for its tests: a feature that differed between its test and bin builds
 # would rebuild the engine at each switch. The hooks do nothing unless a test sets them.
-test-hooks = ["rerail-store-base/test-hooks", "rerail-observe/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-clif/test-hooks"]
+test-hooks = ["rerail-store-base/test-hooks", "rerail-observe/test-hooks", "rerail-blocks/test-hooks", "rerail-prof/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "rerail-atoms/test-hooks"]
 
 [dependencies]
 rerail-store-base = { path = "../store_base" }
+# The atoms (`content_store::atoms`).
+rerail-atoms = { path = "../atoms" }
 rerail-observe = { path = "../observe" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
@@ -23,8 +25,11 @@ rerail-prof = { path = "../prof" }
 rerail-accel = { path = "../../../accel" }
 # The memo's segments are journal blocks of deferrable leases (decision 0295 §4).
 rerail-blocks = { path = "../blocks" }
+rerail-section = { path = "../section" }
 # The rolling cache's shape (`view::cache`) for the text tests' verdicts (decision 0478 step 2d); the view alone.
 rerail-clif = { path = "../clif", default-features = false }
+# A document's source where it lies (`home::Text`, decision 0353 step 7, row 13): the store queues and loads it.
+rerail-tape-format = { path = "../tape_format" }
 clru = "=0.6.3"
 foldhash = "=0.2.0"
 gix = { version = "=0.90.0", default-features = false, features = ["status", "parallel", "sha1", "sha256", "revision"] }

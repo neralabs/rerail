@@ -370,7 +370,7 @@ pub struct PlacedTotal {
     /// how many were estimated over it.
     pub joins: [(u64, f64, f64, u64); 3],
     /// Its runs on the device (decision 0095, step 4), summed: rules, stages, submissions, dispatches, the GPU's
-    /// time, this thread's CPU encoding, waiting and reading back, uploads, residency hits; and why the device
+    /// time, this thread's CPU encoding, waiting and reading back, residency hits; and why the device
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
     pub refused: Option<String>,
@@ -389,19 +389,13 @@ pub struct GpuTotal {
     pub reruns: u64,
     pub gpu: f64,
     pub encode: f64,
-    pub upload: f64,
     pub wait: f64,
     pub wait_wall: f64,
     pub decode: f64,
-    pub uploads: u64,
-    pub upload_bytes: u64,
-    /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
-    pub upload_by: [(u64, f64); 4],
-    /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
+    /// Relations read where they lie, in their block (decision 0325): nothing is uploaded (decision 0353 step 6).
     pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
-    pub moved: u64,
     pub rows: u64,
     pub distinct: u64,
     /// Head rows written in place into their head's block (decision 0325 step 4).
@@ -417,6 +411,10 @@ pub struct GpuTotal {
     pub levels: u64,
     /// Stages screened by their relation's kept filter (decision 0488).
     pub screened: u64,
+    /// Rounds the recursive components ran on the device (`fixpoint`).
+    pub rounds: u64,
+    /// Recursive components handed back to the CPU after a narrow round (decision 0657).
+    pub handed: u64,
 }
 
 impl GpuTotal {
@@ -429,20 +427,12 @@ impl GpuTotal {
         self.reruns += o.reruns;
         self.gpu += o.gpu;
         self.encode += o.encode;
-        self.upload += o.upload;
         self.wait += o.wait;
         self.wait_wall += o.wait_wall;
         self.decode += o.decode;
-        self.uploads += o.uploads;
-        self.upload_bytes += o.upload_bytes;
-        for (a, b) in self.upload_by.iter_mut().zip(&o.upload_by) {
-            a.0 += b.0;
-            a.1 += b.1;
-        }
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
-        self.moved += o.moved;
         self.rows += o.rows;
         self.distinct += o.distinct;
         self.placed += o.placed;
@@ -451,12 +441,14 @@ impl GpuTotal {
         self.waved += o.waved;
         self.arena_reruns += o.arena_reruns;
         self.levels += o.levels;
+        self.rounds += o.rounds;
+        self.handed += o.handed;
         self.screened += o.screened;
     }
 
-    /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
+    /// The host's CPU on the device's work: encoding, waiting, reading back.
     fn host(&self) -> f64 {
-        self.encode + self.upload + self.wait + self.decode
+        self.encode + self.wait + self.decode
     }
 }
 
@@ -1135,6 +1127,86 @@ pub fn process_cpu() -> f64 {
     }
 }
 
+/// Each nameless system thread's dispatch queue, by its port, as it was last seen serving one (`note_dispatch_labels`):
+/// a worker's CPU is spent while it serves a queue, and at the report it may serve none.
+#[cfg(target_os = "macos")]
+static QUEUE_LABELS: LazyLock<Mutex<HashMap<u32, String>>> = LazyLock::new(Default::default);
+
+/// Notes the queue each nameless thread serves now (macOS; the memory sampler calls it as it samples), so the CPU by
+/// thread names it by that queue.
+pub(super) fn note_dispatch_labels() {
+    #[cfg(target_os = "macos")]
+    {
+        let seen: Vec<(u32, String)> = live_threads().into_iter().filter_map(|(port, name)| Some((port, name.strip_prefix("dispatch: ")?.to_owned()))).collect();
+        let mut labels = QUEUE_LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        labels.extend(seen);
+    }
+}
+
+/// The label of the dispatch queue thread `port` serves now, if it serves one with a label (macOS).
+#[cfg(target_os = "macos")]
+fn dispatch_label(port: libc::mach_port_t) -> Option<String> {
+    unsafe extern "C" {
+        fn dispatch_queue_get_label(queue: *const libc::c_void) -> *const libc::c_char;
+    }
+    let mut info: libc::thread_identifier_info = unsafe { std::mem::zeroed() };
+    let mut count = libc::THREAD_IDENTIFIER_INFO_COUNT;
+    // SAFETY: a thread of this task, its identifier info into a struct of the size given.
+    if unsafe { libc::thread_info(port, libc::THREAD_IDENTIFIER_INFO as libc::thread_flavor_t, (&raw mut info).cast(), &mut count) } != 0 || info.dispatch_qaddr == 0 {
+        return None;
+    }
+    // Another thread's memory is read by the kernel, which gives an error where a load would fault: the thread's slot
+    // of its current queue is unmapped with it when it ends (a port's right keeps the port, not the thread's memory),
+    // and a queue it served may be released and its memory reused by the time it is read. So the slot, the queue's
+    // head and the label are each copied, and the label is read from the queue's copy.
+    let mut slot = [0u64; 1];
+    if !read_own(info.dispatch_qaddr, &mut slot) || slot[0] == 0 {
+        return None;
+    }
+    // The queue's head, which holds its label's pointer (`dispatch_queue_get_label` reads that field alone).
+    let mut head = [0u64; 32];
+    if !read_own(slot[0], &mut head) {
+        return None;
+    }
+    // SAFETY: a copy of a queue's head, of which the call reads the label's field.
+    let label = unsafe { dispatch_queue_get_label(head.as_ptr().cast()) } as u64;
+    if label == 0 {
+        return None;
+    }
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut at = label;
+    while bytes.len() < 256 {
+        // Up to the end of the page, which a read never crosses: the next page may be unmapped.
+        let mut chunk = [0u8; 64];
+        let n = (chunk.len() as u64).min(4096 - at % 4096) as usize;
+        if !read_own(at, &mut chunk[..n]) {
+            return None;
+        }
+        match chunk[..n].iter().position(|&b| b == 0) {
+            Some(end) => {
+                bytes.extend_from_slice(&chunk[..end]);
+                return (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned());
+            }
+            None => bytes.extend_from_slice(&chunk[..n]),
+        }
+        at += n as u64;
+    }
+    None
+}
+
+/// Copies this task's memory at `at` into `out`, by the kernel: false where it is not mapped (macOS).
+#[cfg(target_os = "macos")]
+fn read_own<T: Copy>(at: u64, out: &mut [T]) -> bool {
+    unsafe extern "C" {
+        static mach_task_self_: libc::mach_port_t;
+        fn mach_vm_read_overwrite(task: libc::mach_port_t, address: u64, size: u64, data: u64, out_size: *mut u64) -> libc::kern_return_t;
+    }
+    let size = std::mem::size_of_val(out) as u64;
+    let mut got = 0u64;
+    // SAFETY: the kernel writes at most `size` bytes into `out`, which holds them; plain values of any bytes.
+    unsafe { mach_vm_read_overwrite(mach_task_self_, at, size, out.as_mut_ptr() as u64, &mut got) == 0 && got == size }
+}
+
 /// The live threads' Mach ports (macOS) or thread ids (Linux, Windows), and names; none elsewhere.
 fn live_threads() -> Vec<(u32, String)> {
     #[cfg(target_os = "macos")]
@@ -1162,6 +1234,14 @@ fn live_threads() -> Vec<(u32, String)> {
                     String::new()
                 } else {
                     unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned()
+                };
+                // A thread the system made with no name (a libdispatch worker: Metal's completion handlers, the
+                // driver's) is named by the queue it serves (2 threads, 0.54 s "unnamed" in the M3's 300-file run).
+                // A worker serving no queue now is named by the one it was seen serving (`note_dispatch_labels`).
+                let name = if name.is_empty() {
+                    dispatch_label(port).or_else(|| QUEUE_LABELS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&port).cloned()).map(|l| format!("dispatch: {l}")).unwrap_or_default()
+                } else {
+                    name
                 };
                 (port, if name.is_empty() { "unnamed".to_owned() } else { name })
             })
@@ -2233,12 +2313,10 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ran.len(), sum.runs, sum.rules, sum.stages, cpu, all_runs - sum.runs, elsewhere);
     let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} levels, each kernel launched once for their jobs; {} stages screened by their relation's kept filter",
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.levels, sum.screened);
-    let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
-        ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}, copied for a key past their blocks' room {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.in_place, sum.sorts, sum.sort_hits, sum.moved, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
-    let by: Vec<String> = UPLOAD_KINDS.iter().zip(&sum.upload_by).map(|(k, (b, c))| format!("{k} {:.1} MB in {:.1} ms", *b as f64 / 1e6, ms(*c))).collect();
-    let _ = writeln!(r, "  uploads by what they read: {}", by.join(", "));
+    let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
+        ms(sum.host()), ms(sum.encode), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
+    let _ = writeln!(r, "  relations read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.in_place, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     // A stratum runs once per chunk and may run some on each side: its GPU runs' CPU and work beside its CPU runs'.
@@ -2831,6 +2909,31 @@ pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<Str
 pub mod tests {
     use super::*;
 
+    /// A thread serving a dispatch queue is named by the queue's label (`dispatch_label`): the system's threads that
+    /// have no name of their own (Metal's completion handlers) were "unnamed" in the CPU by thread.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_thread_serving_a_dispatch_queue_is_named_by_its_label() {
+        unsafe extern "C" {
+            fn dispatch_queue_create(label: *const libc::c_char, attr: *const libc::c_void) -> *mut libc::c_void;
+            fn dispatch_sync_f(queue: *mut libc::c_void, context: *mut libc::c_void, work: extern "C" fn(*mut libc::c_void));
+            fn dispatch_release(object: *mut libc::c_void);
+            fn mach_thread_self() -> libc::mach_port_t;
+        }
+        extern "C" fn work(out: *mut libc::c_void) {
+            // SAFETY: the `Option<String>` the caller passed, which outlives the synchronous call.
+            let out = unsafe { &mut *out.cast::<Option<String>>() };
+            *out = dispatch_label(unsafe { mach_thread_self() });
+        }
+        let queue = unsafe { dispatch_queue_create(c"rerail.test.profile-label".as_ptr(), std::ptr::null()) };
+        let mut seen: Option<String> = None;
+        // A synchronous call on a serial queue runs on this thread, the queue its current one.
+        unsafe { dispatch_sync_f(queue, (&raw mut seen).cast(), work) };
+        unsafe { dispatch_release(queue) };
+        assert_eq!(seen.as_deref(), Some("rerail.test.profile-label"));
+        assert_eq!(dispatch_label(unsafe { mach_thread_self() }), None, "a thread serving no queue has no label");
+    }
+
     /// Each stratum's CPU in the executors' report is its spans' (`stratum <key>`, alone or the last part of a path),
     /// a key of several relations (`a/b`) among them, and no other span's.
     #[test]
@@ -3096,15 +3199,6 @@ pub mod tests {
 
 }
 
-/// What a device's uploads read (`Report::upload_by`): a flat relation's rows (the store's), a view's rows (a
-/// source's, a tape view's read row by row), and the names of symbols (text tests, `str_cmp`).
-pub const UPLOAD_KINDS: [&str; 4] = ["flat relations", "views", "names", "views made on the device"];
-pub const UPLOAD_FLAT: usize = 0;
-pub const UPLOAD_VIEW: usize = 1;
-pub const UPLOAD_NAMES: usize = 2;
-/// A view its batch's chunk block made on the device (decision 0289 §2): its bytes, and the host's CPU encoding it.
-pub const UPLOAD_MADE: usize = 3;
-
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
@@ -3124,15 +3218,14 @@ pub struct Report {
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,
-    /// Of the dispatches, programs launched again (decision 0603 point 5): a budget's, where a launch spent its
-    /// budget with items left, and an arena's, where a size script parked and the arena's pages were mapped for it;
-    /// the programs' items taken over all their launches; and a launch's budget of items, the least of theirs.
+    /// Of the launches, programs launched again (decision 0648): a stack's next, where a program's walk went on past
+    /// its stack, and an arena's, where a size script parked and the arena's pages were mapped for it.
     pub relaunches: u32,
     pub remaps: u32,
     /// Of the remaps, a gate's rooms' (a recursive component's rows mapped as its rounds reach them).
     pub room_remaps: u32,
-    pub taken: u64,
-    pub launch_items: u64,
+    /// Of those, the ones that grew a lattice head's key map.
+    pub maps_grown: u32,
     /// Its programs: one a stratum (a wave's first stratum's report, its wave's).
     pub programs: u32,
     /// Runs again from an overflowing stage.
@@ -3141,7 +3234,7 @@ pub struct Report {
     pub admit_waits: u32,
     pub admit_seconds: f64,
     pub gpu_seconds: f64,
-    /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
+    /// This thread's CPU: encoding (sorts' encoding included), waiting, and reading the rows back into
     /// the store.
     pub encode_cpu: f64,
     pub wait_cpu: f64,
@@ -3152,18 +3245,10 @@ pub struct Report {
     /// Of those, rows the device wrote in place into their head's block, which the store takes as they lie
     /// (decision 0325 step 4): none read back.
     pub placed: u64,
-    pub upload_cpu: f64,
-    /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
-    pub uploads: u32,
-    pub upload_bytes: u64,
-    /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
-    pub upload_by: [(u64, f64); 4],
     /// Relations read where they lie, in their block (decision 0325).
     pub in_place: u32,
     pub sorts: u32,
     pub sort_hits: u32,
-    /// Indexes that copied their relation, its block having no room for them (`DevIndex::moved`, 0353 step 6).
-    pub moved: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.
     pub rows: u64,
     pub bindings: u64,
@@ -3171,6 +3256,9 @@ pub struct Report {
     pub made: u64,
     /// The rounds a recursive component ran on the device (`fixpoint`; 0 for seeds alone).
     pub rounds: u32,
+    /// Whether its component was handed back to the CPU after its last round (decision 0657): a round too narrow
+    /// for the device, the CPU's waves going on from its rows.
+    pub handed: bool,
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
     /// CPU; `None` when it ran here.
     pub refused: Option<String>,

@@ -1,6 +1,7 @@
 //! The `py.*` families (`facts::producers::python::families`) as a batch's lazy families (`syntax::Families`):
 //! made on the first read of any of them, so a program that reads none does no work.
 
+use rerail_blocks::vector::Vector;
 use super::*;
 use crate::code_rule_dsl::facts::producers::python::families as py;
 
@@ -47,7 +48,7 @@ impl super::Families for Families {
     fn rows_digest(&self, facts: &Facts) -> [u8; 32] {
         use crate::code_rule_dsl::language::GrammarDialect;
         match crate::code_rule_dsl::language::tape_tag(GrammarDialect::Python) {
-            Some(tag) => py::digest(&py::rows(&py::Grammar::new(tag, &GrammarDialect::Python.kinds()), facts)),
+            Some(tag) => py::digest(&facts.alone(|f| py::rows(&py::Grammar::new(tag, &GrammarDialect::Python.kinds()), f))),
             None => crate::content_store::ABSENT,
         }
     }
@@ -81,13 +82,13 @@ pub struct Py {
 impl Py {
     /// `p`'s place in `batch` (documents are in key order).
     pub(crate) fn at(batch: &Batch, p: &Projected) -> usize {
-        batch.docs.position(p.key).expect("a document of the batch")
+        batch.docs.position(p.key()).expect("a document of the batch")
     }
 
     /// Document `p`'s imports' screen, made on its first read.
     pub(crate) fn imports(&self, batch: &Batch, p: &Projected) -> &crate::code_rule_dsl::facts::producers::python::import_screen::Imports {
         self.imports[Self::at(batch, p)].get_or_init(|| {
-            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(&p.facts, &batch.dialects[p.tag].catalog, p.module.as_ref())
+            crate::code_rule_dsl::facts::producers::python::import_screen::Imports::from_core(p.f(), &batch.dialects[p.tag()].catalog, p.module.as_ref())
         })
     }
 }
@@ -116,9 +117,9 @@ impl Py {
             let started = std::time::Instant::now();
             let mut out: Vec<Relation> = PY_COLUMNS.iter().map(|columns| Relation::new(columns)).collect();
             let mut skipped = 0;
-            for p in batch.docs.iter().filter(|p| p.tag == py.grammar.tag()) {
-                let rows = py::structure(&py.grammar, &p.facts);
-                let d = i64::from(p.key);
+            for p in batch.docs.iter().filter(|p| p.tag() == py.grammar.tag()) {
+                let rows = py::structure(&py.grammar, p.f());
+                let d = i64::from(p.key());
                 // A node id, `-1` for none; `None` for a node the projection leaves out.
                 let id = |core: u32| -> Option<i64> {
                     if core == NONE {
@@ -127,24 +128,24 @@ impl Py {
                     let local = p.local_of_node(core);
                     (local != NONE).then(|| p.global(local))
                 };
-                let mut push = |family: usize, row: Option<Vec<i64>>| match row {
+                let mut push = |family: usize, row: Option<Vector<i64>>| match row {
                     Some(row) => out[family].push(&row),
                     None => skipped += 1,
                 };
                 for &[call, callee] in &rows.call {
-                    push(0, (|| Some(vec![d, id(call)?, id(callee)?]))());
+                    push(0, (|| Some(rerail_blocks::vector![d, id(call)?, id(callee)?]))());
                 }
                 for &[report, call, reference] in &rows.site {
-                    push(1, (|| Some(vec![d, id(report)?, id(call)?, id(reference)?]))());
+                    push(1, (|| Some(rerail_blocks::vector![d, id(report)?, id(call)?, id(reference)?]))());
                 }
                 for &[call, owner, kind] in &rows.context {
-                    push(2, (|| Some(vec![d, id(call)?, id(owner)?, py.contexts[kind as usize]]))());
+                    push(2, (|| Some(rerail_blocks::vector![d, id(call)?, id(owner)?, py.contexts[kind as usize]]))());
                 }
                 for &[call, arg, ordinal, keyword, spread, value] in &rows.arg {
-                    push(3, (|| Some(vec![d, id(call)?, id(arg)?, i64::from(ordinal), id(keyword)?, py.spreads[spread as usize], id(value)?]))());
+                    push(3, (|| Some(rerail_blocks::vector![d, id(call)?, id(arg)?, i64::from(ordinal), id(keyword)?, py.spreads[spread as usize], id(value)?]))());
                 }
                 for &[node, object, name] in &rows.attribute {
-                    push(4, (|| Some(vec![d, id(node)?, id(object)?, id(name)?]))());
+                    push(4, (|| Some(rerail_blocks::vector![d, id(node)?, id(object)?, id(name)?]))());
                 }
             }
             crate::code_rule_dsl::prof::count("py.rows", out.iter().map(|r| r.len()).sum());
@@ -159,11 +160,11 @@ impl Py {
         let py = self;
         py.argument_rows.get_or_init(|| {
             let mut out=Relation::new(PY_COLUMNS[3]);
-            for p in batch.docs.iter().filter(|p|p.tag==py.grammar.tag()) {
-                let rows=py::rows(&py.grammar,&p.facts);
+            for p in batch.docs.iter().filter(|p|p.tag()==py.grammar.tag()) {
+                let rows=py::rows(&py.grammar,p.f());
                 let id=|n:u32| if n==NONE {Some(-1)}else{Some(p.local_of_node(n)).filter(|&l|l!=NONE).map(|l|p.global(l))};
                 for [c,a,i,k,s,v] in rows.arg {
-                    if let (Some(c),Some(a),Some(k),Some(v))=(id(c),id(a),id(k),id(v)) {out.push(&[p.key as i64,c,a,i as i64,k,py.spreads[s as usize],v]);}
+                    if let (Some(c),Some(a),Some(k),Some(v))=(id(c),id(a),id(k),id(v)) {out.push(&[p.key() as i64,c,a,i as i64,k,py.spreads[s as usize],v]);}
                 }
             }
             out

@@ -8,6 +8,7 @@
 //! `<` and `<=`, its least for `>` and `>=`. Each group's keys are sorted once and each bound is a binary search:
 //! O((Q + C) log C) work, where the pairs were O(Q × C) in each group.
 
+use rerail_blocks::vector::Vector;
 /// The comparison `ky OP kx`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {
@@ -51,9 +52,9 @@ impl Op {
 
 /// The output rows: each distinct `query` tuple but its last column (the bound), then its count. `query` and
 /// `counted` are rows of their relations, each led by the `group` columns, its key last.
-pub fn rank(query: &[Vec<i64>], counted: &[Vec<i64>], group: usize, op: Op) -> Vec<Vec<i64>> {
+pub fn rank(query: &[Vector<i64>], counted: &[Vector<i64>], group: usize, op: Op) -> Vec<Vector<i64>> {
     // Each counted tuple by its extreme key, then by group and key.
-    let mut keys: Vec<&[i64]> = counted.iter().map(Vec::as_slice).collect();
+    let mut keys: Vec<&[i64]> = counted.iter().map(|v| v.as_slice()).collect();
     keys.sort_unstable();
     let mut by_group: Vec<(&[i64], i64)> = Vec::with_capacity(keys.len());
     let mut at = 0;
@@ -68,7 +69,7 @@ pub fn rank(query: &[Vec<i64>], counted: &[Vec<i64>], group: usize, op: Op) -> V
     }
     by_group.sort_unstable();
     // Each asked tuple by its extreme bound.
-    let mut asked: Vec<&[i64]> = query.iter().map(Vec::as_slice).collect();
+    let mut asked: Vec<&[i64]> = query.iter().map(|v| v.as_slice()).collect();
     asked.sort_unstable();
     let mut out = Vec::new();
     let mut at = 0;
@@ -87,7 +88,7 @@ pub fn rank(query: &[Vec<i64>], counted: &[Vec<i64>], group: usize, op: Op) -> V
             Op::Gt => ks.len() - ks.partition_point(|&(_, k)| k <= bound),
             Op::Ge => ks.len() - ks.partition_point(|&(_, k)| k < bound),
         };
-        let mut row = tuple.to_vec();
+        let mut row: Vector<i64> = tuple.iter().copied().collect();
         row.push(n as i64);
         out.push(row);
         at = end;
@@ -104,20 +105,20 @@ mod tests {
     #[test]
     fn rank_counts_what_the_pairs_would() {
         // counted(g, c, ky); query(g, q, kx).
-        let counted = vec![vec![1, 10, 5], vec![1, 11, 7], vec![1, 11, 2], vec![1, 12, 9], vec![2, 20, 1]];
-        let query = vec![vec![1, 100, 7], vec![1, 101, 3], vec![1, 101, 8], vec![2, 200, 0], vec![3, 300, 5]];
+        let counted = vec![rerail_blocks::vector![1, 10, 5], rerail_blocks::vector![1, 11, 7], rerail_blocks::vector![1, 11, 2], rerail_blocks::vector![1, 12, 9], rerail_blocks::vector![2, 20, 1]];
+        let query = vec![rerail_blocks::vector![1, 100, 7], rerail_blocks::vector![1, 101, 3], rerail_blocks::vector![1, 101, 8], rerail_blocks::vector![2, 200, 0], rerail_blocks::vector![3, 300, 5]];
         for op in [Op::Lt, Op::Le, Op::Gt, Op::Ge] {
-            let mut want: Vec<Vec<i64>> = Vec::new();
+            let mut want: Vec<Vector<i64>> = Vec::new();
             let mut tuples: Vec<(i64, i64)> = query.iter().map(|r| (r[0], r[1])).collect();
             tuples.sort();
             tuples.dedup();
             for (g, q) in tuples {
-                let bounds: Vec<i64> = query.iter().filter(|r| r[0] == g && r[1] == q).map(|r| r[2]).collect();
+                let bounds: Vector<i64> = query.iter().filter(|r| r[0] == g && r[1] == q).map(|r| r[2]).collect();
                 let pass = |ky: i64| bounds.iter().any(|&kx| match op { Op::Lt => ky < kx, Op::Le => ky <= kx, Op::Gt => ky > kx, Op::Ge => ky >= kx });
-                let mut cs: Vec<i64> = counted.iter().filter(|r| r[0] == g && pass(r[2])).map(|r| r[1]).collect();
+                let mut cs: Vector<i64> = counted.iter().filter(|r| r[0] == g && pass(r[2])).map(|r| r[1]).collect();
                 cs.sort();
                 cs.dedup();
-                want.push(vec![g, q, cs.len() as i64]);
+                want.push(rerail_blocks::vector![g, q, cs.len() as i64]);
             }
             assert_eq!(rank(&query, &counted, 1, op), want, "{op:?}");
         }

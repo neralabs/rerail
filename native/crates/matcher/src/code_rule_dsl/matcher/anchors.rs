@@ -102,7 +102,7 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
 }
 
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
-use rerail_store::probes::TextProbe;
+use rerail_observe::probes::TextProbe;
 
 // cratify: `tests` is rerail-engine's (it mounts it)
 
@@ -760,7 +760,7 @@ pub struct FileAnchorIndex<'tree, D: Doc> {
 
 impl<'tree, D> FileAnchorIndex<'tree, D>
 where
-    D: Doc<Source = String, Lang = GrammarDialect>,
+    D: Doc<Lang = GrammarDialect, Source: std::ops::Deref<Target = str>>,
     D::Node<'tree>: AnchorNode<'tree>,
 {
     pub fn build(

@@ -1,6 +1,7 @@
 # 0459. Labels start at their seeds; a matcher's captures are bound only where its readers join
 
-Status: accepted (2026-11-18). Numbered 0396 where it was written, then 0401 on q178 (renumbered in the roll-up).
+Status: built (audited 2026-11-23). Accepted (2026-11-18). Numbered 0396 where it was written, then 0401 on q178
+(renumbered in the roll-up).
 
 ## Intro
 

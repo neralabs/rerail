@@ -33,12 +33,13 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
+use rerail_blocks::vector::Vector;
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, VTab, VTabConnection, VTabCursor, VTabKind};
 use rusqlite::{Connection, Error, Result};
 use std::borrow::Cow;
-use hashbrown::HashTable;
+use rerail_blocks::maps::IdTable as HashTable;
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
 use std::ffi::{CStr, CString};
 use std::hash::Hasher;
@@ -75,11 +76,14 @@ const NIL: u32 = u32::MAX;
 /// A key's postings in an `Index`: its newest row, its row count, and its count among the rows added in wave `wave`
 /// (the relation's current delta when `wave` is the relation's).
 #[derive(Clone, Copy)]
+#[repr(C)]
 struct Post { head: u32, len: u32, dlen: u32, wave: u32 }
+// SAFETY: `repr(C)`, four `u32`s.
+unsafe impl rerail_blocks::Pod for Post {}
 /// A hash index of a relation on a key-column set. A key's rows are chained newest first through `next` (one slot
 /// per row), so a posting costs no allocation, and since a wave's new rows are the newest, a key's delta rows are a
 /// prefix of its chain.
-struct Index { cols: Vec<usize>, table: HashTable<Post>, next: Vec<u32> }
+struct Index { cols: Vector<usize>, table: HashTable<Post>, next: Vector<u32> }
 impl Index {
     fn add(&mut self, data: &[i64], k: usize, id: u32, wave: u32) {
         let row = &data[id as usize * k..][..k];
@@ -110,13 +114,13 @@ impl Index {
 /// added in wave `wave`. `set` deduplicates by row id. `idx`: a hash index per column (the first `k`), then composite
 /// indexes, one per key-column set a join probe reads the relation with, so a probe bound on several columns reads
 /// exactly its matches rather than the shortest single-column list.
-struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i64>, set: HashTable<u32>, stored: usize, lo: usize, hi: usize,
+struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vector<i64>, set: HashTable<u32>, stored: usize, lo: usize, hi: usize,
              wave: u32, idx: Vec<Index> }
 impl Rel {
     fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
-        let idx = (0..k).map(|c| Index { cols: vec![c], table: HashTable::new(), next: Vec::new() }).collect();
-        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx }
+        let idx = (0..k).map(|c| Index { cols: rerail_blocks::vector![c], table: HashTable::new(), next: rerail_blocks::vector::Vector::new() }).collect();
+        Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: rerail_blocks::vector::Vector::new(), set: HashTable::new(), stored: 0, lo: 0, hi: 0, wave: 0, idx }
     }
     fn row(&self, id: usize) -> &[i64] { &self.data[id * self.k..][..self.k] }
     fn contains(&self, row: &[i64]) -> bool {
@@ -125,7 +129,7 @@ impl Rel {
     }
     fn add_multi(&mut self, cols: &[usize]) {
         if self.idx.iter().any(|ix| ix.cols == cols) { return; }
-        let mut ix = Index { cols: cols.to_vec(), table: HashTable::new(), next: Vec::with_capacity(self.n) };
+        let mut ix = Index { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), table: HashTable::new(), next: rerail_blocks::vector::Vector::with_capacity(self.n) };
         for id in 0..self.n { ix.add(&self.data, self.k, id as u32, if id >= self.lo { self.wave } else { 0 }); }
         self.idx.push(ix);
     }
@@ -182,12 +186,12 @@ impl Cands<'_> {
 
 /// New tuples of one relation found in a wave, flat; duplicates are dropped when they are pushed.
 #[derive(Clone, Default)]
-struct Fresh { data: Vec<i64>, n: usize }
+struct Fresh { data: Vector<i64>, n: usize }
 impl Fresh {
     fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; }
 }
-struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, pat: Vec<Pat>, out: Vec<Term>,
-                  edges: HashMap<Vec<i64>, Vec<Vec<i64>>>, has_edge: bool, nslots: usize }
+struct EdgeRule { head: usize, src: usize, key: Vector<usize>, ecols: Vector<usize>, pat: Vec<Pat>, out: Vec<Term>,
+                  edges: HashMap<Vector<i64>, Vec<Vector<i64>>>, has_edge: bool, nslots: usize }
 /// A probe's body: SQL over the `set_rel` vtabs, or a native join pipeline (`join.rs` spec).
 enum Body { Sql(String), Join(JoinRule) }
 /// `whole`: a join probe's plan for the wave whose delta is its whole relation (the relation was empty before it), in
@@ -199,7 +203,7 @@ pub struct Store { rels: Vec<Rel> }
 /// relations' tables (else they stay native, in `DERIVED`, until `set_fixpoint_materialize`).
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool }
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
-struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
+struct Gate { done: usize, src: Option<usize>, quiet: Vector<usize>, after: Vector<usize>, passed: usize }
 
 /// The set engine's state of one connection (decision 0442): `extension::init` makes it, and the functions and
 /// the `set_rel` module it registers hold it.
@@ -234,13 +238,13 @@ fn read_value(v: ValueRef<'_>, ty: u8, syms: &mut Interner) -> Result<i64> {
     }
 }
 
-fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vec<i64>>> {
+fn read_rows(conn: &Connection, table: &str, types: &[u8], syms: &mut Interner) -> Result<Vec<Vector<i64>>> {
     let cols: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
     let mut st = conn.prepare(&format!("SELECT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::table(table)))?;
     let mut rows = st.query([])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
-        let mut row = Vec::with_capacity(types.len());
+        let mut row = Vector::with_capacity(types.len());
         for (i, &t) in types.iter().enumerate() { row.push(read_value(r.get_ref(i)?, t, syms)?); }
         out.push(row);
     }
@@ -268,7 +272,7 @@ pub fn open(st: &State, conn: &Connection, spec: &str) -> Result<String> {
             "seed" => probes.push(ProbeRule { head: num(toks[1])?, delta: SEED, body: Body::Join(parse_join(st, conn, &unhex(toks[2])?, &mut syms)?), whole: None }),
             "nowrite" => write = false,
             "gate" => {
-                let list = |t: &str| -> Result<Vec<usize>> { if t == "-" { Ok(Vec::new()) } else { t.split(',').map(num).collect() } };
+                let list = |t: &str| -> Result<Vector<usize>> { if t == "-" { Ok(rerail_blocks::vector::Vector::new()) } else { t.split(',').map(num::<usize>).collect() } };
                 let src = if toks[2] == "-" { None } else { Some(num(toks[2])?) };
                 gates.push(Gate { done: num(toks[1])?, src, quiet: list(toks[3])?, after: list(toks[4])?, passed: 0 });
             }
@@ -283,8 +287,8 @@ pub fn open(st: &State, conn: &Connection, spec: &str) -> Result<String> {
                 let section = |name: &str| -> Result<&[&str]> {
                     sections.iter().find(|s| s.first() == Some(&name)).map(|s| &s[1..]).ok_or_else(|| err(format!("no {name}")))
                 };
-                let key: Vec<usize> = section("key")?.iter().map(|t| slot(t)).collect::<Result<_>>()?;
-                let ecols: Vec<usize> = section("ecols")?.iter().map(|t| slot(t)).collect::<Result<_>>()?;
+                let key: Vector<usize> = section("key")?.iter().map(|t| slot(t)).collect::<Result<_>>()?;
+                let ecols: Vector<usize> = section("ecols")?.iter().map(|t| slot(t)).collect::<Result<_>>()?;
                 let mut pat = Vec::new();
                 for t in section("pat")? {
                     pat.push(if *t == "_" { Pat::Any } else if let Some(i) = t.strip_prefix("i:") { Pat::Int(num(i)?) }
@@ -301,12 +305,12 @@ pub fn open(st: &State, conn: &Connection, spec: &str) -> Result<String> {
                 }
                 let nslots = key.iter().chain(&ecols).copied().chain(pat.iter().filter_map(|p| if let Pat::Slot(s) = p { Some(*s) } else { None }))
                     .max().map_or(0, |m| m + 1);
-                let mut map: HashMap<Vec<i64>, Vec<Vec<i64>>> = HashMap::default();
+                let mut map: HashMap<Vector<i64>, Vec<Vector<i64>>> = HashMap::default();
                 let has_edge = toks[3] != "-";
                 if has_edge {
                     for row in read_rows(conn, toks[3], toks[4].as_bytes(), &mut syms)? {
                         let (k, e) = row.split_at(key.len());
-                        map.entry(k.to_vec()).or_default().push(e.to_vec());
+                        map.entry(k.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()).or_default().push(e.iter().copied().collect::<rerail_blocks::vector::Vector<_>>());
                     }
                 }
                 edges.push(EdgeRule { head, src, key, ecols, pat, out, edges: map, has_edge, nslots });
@@ -347,10 +351,10 @@ pub fn run(st: &State, conn: &Connection, name: &str, max_waves: u32) -> Result<
     let mut seeded = comp.seeded;
     // Per probe: seconds spent in its statement and rows it returned.
     let mut per: Vec<(f64, u64)> = vec![(0.0, 0); comp.probes.len()];
-    let mut row: Vec<i64> = Vec::new();
+    let mut row: Vector<i64> = rerail_blocks::vector::Vector::new();
     let wave_trace = std::env::var_os("RDL_WAVE_TRACE").is_some();
     let mut gates = std::mem::take(&mut comp.gates);
-    let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
+    let gates_done: Vector<usize> = gates.iter().map(|g| g.done).collect();
     loop {
         let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
         // Probe rules: SQL over the vtabs, while no lock is held (the vtab cursors take read locks).
@@ -407,7 +411,7 @@ pub fn run(st: &State, conn: &Connection, name: &str, max_waves: u32) -> Result<
             }
         }
         // Edge rules, natively.
-        let (mut slots, mut bound, mut key): (Vec<i64>, Vec<bool>, Vec<i64>) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut slots, mut bound, mut key): (Vector<i64>, Vec<bool>, Vector<i64>) = (rerail_blocks::vector::Vector::new(), Vec::new(), rerail_blocks::vector::Vector::new());
         for rule in &comp.edges {
             slots.clear();
             slots.resize(rule.nslots, 0);
@@ -467,7 +471,7 @@ pub fn run(st: &State, conn: &Connection, name: &str, max_waves: u32) -> Result<
             busy[gi] = n > g.passed;
             if !quiet || n <= g.passed { continue; }
             for id in g.passed..n {
-                let row: Vec<i64> = match g.src { Some(s) => store.rels[s].row(id).to_vec(), None => vec![0] };
+                let row: Vector<i64> = match g.src { Some(s) => store.rels[s].row(id).iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), None => rerail_blocks::vector![0] };
                 any |= store.rels[g.done].push(&row);
             }
             gates[gi].passed = n;
@@ -623,13 +627,13 @@ unsafe impl<'vtab> VTab<'vtab> for RelTab {
         Ok(true)
     }
     fn open(&mut self) -> Result<RelCursor> {
-        Ok(RelCursor { base: ffi::sqlite3_vtab_cursor::default(), st: self.st.clone(), store: self.store.clone(), rel: self.rel, delta: self.delta, ids: Vec::new(), pos: 0 })
+        Ok(RelCursor { base: ffi::sqlite3_vtab_cursor::default(), st: self.st.clone(), store: self.store.clone(), rel: self.rel, delta: self.delta, ids: rerail_blocks::vector::Vector::new(), pos: 0 })
     }
 }
 impl CreateVTab<'_> for RelTab { const KIND: VTabKind = VTabKind::Default; }
 
 #[repr(C)]
-pub struct RelCursor { base: ffi::sqlite3_vtab_cursor, st: Arc<State>, store: Arc<RwLock<Store>>, rel: usize, delta: bool, ids: Vec<u32>, pos: usize }
+pub struct RelCursor { base: ffi::sqlite3_vtab_cursor, st: Arc<State>, store: Arc<RwLock<Store>>, rel: usize, delta: bool, ids: Vector<u32>, pos: usize }
 unsafe impl VTabCursor for RelCursor {
     fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         let s = self.store.read().unwrap();
@@ -733,36 +737,36 @@ pub fn loads() -> String {
 
 /// An input relation: `n` rows flat (`k` columns each), and hash indexes by key-column bitmask. `base`: read from
 /// the facts (or a view of them), not from a derived relation.
-pub struct InRel { k: usize, n: usize, rows: Vec<i64>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>> }
+pub struct InRel { k: usize, n: usize, rows: Vector<i64>, base: bool, types: Vec<u8>, stored: usize, idx: Mutex<HashMap<u64, Arc<Csr>>> }
 /// A hash index of an immutable relation on `cols`: each key's row ids are one run of `ids`, found from the key's
 /// first row (`rep`) and its run (`start`, `len`). Two passes over the rows, no allocation per key.
-pub struct Csr { cols: Vec<usize>, table: HashTable<(u32, u32, u32)>, ids: Vec<u32> }
+pub struct Csr { cols: Vector<usize>, table: HashTable<[u32; 3]>, ids: Vector<u32> }
 impl Csr {
     fn build(rel: &InRel, cols: &[usize]) -> Csr {
         let key = |id: usize| cols.iter().map(move |&c| rel.rows[id * rel.k + c]);
         let same = |a: usize, b: usize| cols.iter().all(|&c| rel.rows[a * rel.k + c] == rel.rows[b * rel.k + c]);
-        let hashes: Vec<u64> = (0..rel.n).map(|id| hash_vals(key(id))).collect();
-        let mut table: HashTable<(u32, u32, u32)> = HashTable::new();
+        let hashes: Vector<u64> = (0..rel.n).map(|id| hash_vals(key(id))).collect();
+        let mut table: HashTable<[u32; 3]> = HashTable::new();
         for id in 0..rel.n {
-            match table.find_mut(hashes[id], |&(rep, _, _)| same(rep as usize, id)) {
-                Some(e) => e.2 += 1,
-                None => { table.insert_unique(hashes[id], (id as u32, 0, 1), |&(rep, _, _)| hashes[rep as usize]); }
+            match table.find_mut(hashes[id], |&[rep, _, _]| same(rep as usize, id)) {
+                Some(e) => e[2] += 1,
+                None => { table.insert_unique(hashes[id], [id as u32, 0, 1], |&[rep, _, _]| hashes[rep as usize]); }
             }
         }
         let mut at = 0;
-        for e in table.iter_mut() { e.1 = at; at += e.2; e.2 = 0; }
-        let mut ids = vec![0u32; rel.n];
+        for e in table.iter_mut() { e[1] = at; at += e[2]; e[2] = 0; }
+        let mut ids = rerail_blocks::vector![0u32; rel.n];
         for (id, &hash) in hashes.iter().enumerate() {
-            let e = table.find_mut(hash, |&(rep, _, _)| same(rep as usize, id)).expect("a key seen in the first pass");
-            ids[(e.1 + e.2) as usize] = id as u32;
-            e.2 += 1;
+            let e = table.find_mut(hash, |&[rep, _, _]| same(rep as usize, id)).expect("a key seen in the first pass");
+            ids[(e[1] + e[2]) as usize] = id as u32;
+            e[2] += 1;
         }
-        Csr { cols: cols.to_vec(), table, ids }
+        Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), table, ids }
     }
     /// `key` holds the values of `cols`, in order.
     fn get<'a>(&'a self, rel: &InRel, key: &[i64]) -> &'a [u32] {
-        self.table.find(hash_vals(key.iter().copied()), |&(rep, _, _)| self.cols.iter().zip(key).all(|(&c, &v)| rel.rows[rep as usize * rel.k + c] == v))
-            .map_or(&[], |&(_, start, len)| &self.ids[start as usize..][..len as usize])
+        self.table.find(hash_vals(key.iter().copied()), |&[rep, _, _]| self.cols.iter().zip(key).all(|(&c, &v)| rel.rows[rep as usize * rel.k + c] == v))
+            .map_or(&[], |&[_, start, len]| &self.ids[start as usize..][..len as usize])
     }
 }
 const SEED: usize = usize::MAX;
@@ -793,7 +797,7 @@ impl InRel {
         idx.entry(mask).or_insert_with(|| {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
-            let m = if cols.is_empty() { Csr { cols: Vec::new(), table: HashTable::new(), ids: Vec::new() } } else { Csr::build(self, cols) };
+            let m = if cols.is_empty() { Csr { cols: rerail_blocks::vector::Vector::new(), table: HashTable::new(), ids: rerail_blocks::vector::Vector::new() } } else { Csr::build(self, cols) };
             loaded(usize::from(!self.base), thread_cpu() - c0, 0);
             if std::env::var_os("RDL_PROFILE").is_some() {
                 eprintln!("      index on {cols:?} of {} rows in {:.1} ms", self.len(), t0.elapsed().as_secs_f64() * 1e3);
@@ -812,7 +816,7 @@ fn input(es: &State, conn: &Connection, spec: &str, syms: &mut Interner) -> Resu
     let (t0, c0) = (Instant::now(), thread_cpu());
     let mut st = conn.prepare(&format!("SELECT {cols} FROM {}", crate::code_rule_dsl::logic::sql::table(&table)))?;
     let mut q = st.query([])?;
-    let (mut rows, mut n) = (Vec::new(), 0);
+    let (mut rows, mut n) = (Vector::new(), 0);
     while let Some(r) = q.next()? {
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms)?); }
         n += 1;
@@ -828,7 +832,7 @@ fn input(es: &State, conn: &Connection, spec: &str, syms: &mut Interner) -> Resu
 
 #[derive(Clone, Copy)]
 enum Key { Slot(usize), Const(i64) }
-enum Src { Delta(usize), Full(usize), FullMulti(usize, Vec<usize>), In(Arc<InRel>, Arc<Csr>) }
+enum Src { Delta(usize), Full(usize), FullMulti(usize, Vector<usize>), In(Arc<InRel>, Arc<Csr>) }
 enum Step {
     /// Key columns (bound), columns that bind a slot, and column pairs that must be equal (a variable repeated in
     /// the atom, first seen here).
@@ -849,7 +853,7 @@ enum Step {
 /// `multi`: the composite indexes (relation, key columns) its steps read, which the component maintains. `counts`:
 /// per step, the bindings that entered it and those it passed on, since `set_fixpoint_steps` last read them: the
 /// observed fanout of each step, which replanning uses in place of the estimate.
-pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vec<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]> }
+pub struct JoinRule { steps: Vec<Step>, out: Vec<Term>, nslots: usize, multi: Vec<(usize, Vector<usize>)>, counts: Vec<[std::cell::Cell<u64>; 2]> }
 
 fn parse_join(st: &State, conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     let mut bound: Vec<bool> = Vec::new();
@@ -885,7 +889,7 @@ fn parse_join(st: &State, conn: &Connection, spec: &str, syms: &mut Interner) ->
                 let src = match toks[1] {
                     t if t.starts_with("d") => Src::Delta(num(&t[1..])?),
                     t if t.starts_with("c") && keys.len() >= 2 => {
-                        let (r, cols): (usize, Vec<usize>) = (num(&t[1..])?, keys.iter().map(|&(c, _)| c).collect());
+                        let (r, cols): (usize, Vector<usize>) = (num(&t[1..])?, keys.iter().map(|&(c, _)| c).collect());
                         multi.push((r, cols.clone()));
                         Src::FullMulti(r, cols)
                     }
@@ -893,13 +897,13 @@ fn parse_join(st: &State, conn: &Connection, spec: &str, syms: &mut Interner) ->
                     t if t.starts_with("r:") => {
                         let table = unhex(&t[2..])?;
                         let rel = st.derived.lock().unwrap().get(&table).cloned().ok_or_else(|| err(format!("no native relation {table}")))?;
-                        let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
+                        let cols: Vector<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)
                     }
                     t if t.starts_with("t:") => {
                         let rel = input(st, conn, &t[2..], syms)?;
-                        let cols: Vec<usize> = keys.iter().map(|&(c, _)| c).collect();
+                        let cols: Vector<usize> = keys.iter().map(|&(c, _)| c).collect();
                         let ix = rel.index(&cols);
                         Src::In(rel, ix)
                     }
@@ -985,7 +989,7 @@ fn parse_join(st: &State, conn: &Connection, spec: &str, syms: &mut Interner) ->
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
 fn run_join(st: &State, j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh]) -> u64 {
     struct Ctx<'a> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
-                     tape: Option<&'a super::Tape>, key: Vec<i64>, row: Vec<i64> }
+                     tape: Option<&'a super::Tape>, key: Vector<i64>, row: Vector<i64> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -1109,7 +1113,7 @@ fn run_join(st: &State, j: &JoinRule, head: usize, store: &Store, syms: &mut Int
         }
     }
     let tape = st.tape.read().unwrap().clone();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, tape: tape.as_deref(), key: Vec::new(), row: Vec::new() };
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, tape: tape.as_deref(), key: rerail_blocks::vector::Vector::new(), row: rerail_blocks::vector::Vector::new() };
     let mut slots = vec![0i64; j.nslots];
     go(&mut cx, 0, &mut slots);
     cx.n

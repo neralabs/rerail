@@ -146,15 +146,15 @@ pub fn translate_view_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -
         let outer = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(head, "{outer};").unwrap();
         let args: String = (family.pointers()..f.signature.params.len()).map(|k| format!(",a{k}")).collect();
-        let pass = format!("t,a0,tt,v,ll{args}");
+        let pass = format!("t,a0,tt,v,ll,la{args}");
         writeln!(
             each,
-            "{outer}{{\n uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);\n if(clif_format==16u) return {prefix}f16_{n}({pass});\n if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ({ret},tt,v,{prefix}f16z_{n}({pass}))\n return {prefix}f15_{n}({pass});\n}}"
+            "{outer}{{\n if(clif_view(v,CLIF_T_FORMAT)==CLIF_T_F16Z_FORMAT) CLIF_Z_READ({ret},tt,v,{prefix}f16z_{n}({pass}))\n return {prefix}f16_{n}({pass});\n}}"
         )
         .unwrap();
     }
     head.push_str(&once);
-    for format in ["f15", "f16", "f16z"] {
+    for format in ["f16", "f16z"] {
         writeln!(head, "#define CLIF_F(name) {prefix}{format}_##name\n#define CLIF_V(name) {prefix}{format}_##name\n#include <ukl/body/view_reads.h>").unwrap();
     }
     head.push_str(&each);
@@ -251,10 +251,12 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
         Family::Tape => ("UKL_GLOBAL const uint8_t* t,CLIF_VIEW_SPACE const uint32_t* v", "t,v"),
         // A relation's block's base in the space its kernel reads blocks in (`CLIF_BLOCK_SPACE`, decision 0603); a
         // view's tape and directory, which no dispatch writes, as they are, and so a document's line index (decision
-        // 0612: in its tape, or in a slab's room beside it), whose words are the tape's and read as the tape's.
+        // 0612: in its tape, or in a slab's room beside it), whose words are the tape's and read as the tape's: by its
+        // home's base (`ll`, a buffer's start, 8-aligned as `ukl_ld_*`'s bases are) and its offset there (`la`, 4-aligned
+        // in a tape: CUDA faults on a load from a base that is not 8-aligned).
         Family::Relation => ("CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0", "t"),
         Family::Lines => ("UKL_GLOBAL const uint8_t* t,uint64_t a0", "t"),
-        Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll", "t"),
+        Family::View => ("UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la", "t"),
     }
 }
 
@@ -892,9 +894,9 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let more: Vec<&String> = args.iter().skip(to.pointers()).collect();
             let pointers = match (family, to) {
                 (Family::View, Family::Tape) => "tt,v".to_owned(),
-                (Family::View, Family::Lines) => "ll,0".to_owned(),
+                (Family::View, Family::Lines) => "ll,la".to_owned(),
                 (Family::Lines, Family::Lines) => "t,a0".to_owned(),
-                (Family::View, Family::View) => format!("t,{},tt,v,ll", args[0]),
+                (Family::View, Family::View) => format!("t,{},tt,v,ll,la", args[0]),
                 (_, Family::Relation) => format!("t,{}", args[0]),
                 (Family::Tape, _) => pointers(family).1.to_owned(),
                 (from, to) => return Err(format!("a {from:?} read's call of a {to:?} read")),

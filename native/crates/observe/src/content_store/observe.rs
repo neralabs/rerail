@@ -35,7 +35,6 @@
 
 #[allow(unused_imports)]
 use crate::git_workspace::snapshot as source;
-use crate::content_store::Cached as _;
 use crate::content_store::racy_ns;
 #[cfg(test)]
 use crate::content_store::RACY_NS;
@@ -417,13 +416,13 @@ fn decode_listing(bytes: &[u8]) -> Option<Vec<(String, bool)>> {
     text.split('\n').map(|l| Some((l.get(1..)?.to_owned(), l.starts_with('d')))).collect()
 }
 
-/// The observer's own file. Its answers and settings are kept facts of the content store (`facts`, t33 K2): the
-/// tables that held them go.
+/// The observer's own file. Its answers, settings and run records are kept facts of the content store (`facts`, t33
+/// K2 and step 1): the tables that held them go.
 const SCHEMA: &str = "
 DROP TABLE IF EXISTS observed;
 DROP TABLE IF EXISTS observer_meta;
+DROP TABLE IF EXISTS run_record;
 CREATE TABLE IF NOT EXISTS git_alias(blob BLOB PRIMARY KEY, digest BLOB NOT NULL) WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS run_record(key TEXT PRIMARY KEY, consulted TEXT NOT NULL, outputs BLOB NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS observed_changes(path TEXT PRIMARY KEY, gen INTEGER NOT NULL) WITHOUT ROWID;";
 
 impl Observer {
@@ -1425,14 +1424,9 @@ impl Observer {
         let Some(mut lists) = decode_lists(&consulted).filter(|l| !l.is_empty()) else { return };
         lists[0] = cursors.to_vec();
         let consulted = encode_lists(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>());
-        k.records.insert(record.to_owned(), (consulted.clone(), outputs.clone()));
-        let key = record.to_owned();
-        k.writer.send(move |db| {
-            // A write a warm run may make (`profile::WARM_WRITES_ALLOWED`).
-            let _scope = super::hazards::warm_scope();
-            super::hazards::warm_job("the journal's aged cursor");
-            let _ = db.execute("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
-        });
+        k.records.insert(record.to_owned(), (consulted, outputs.clone()));
+        // A write a warm run may make (`profile::WARM_WRITES_ALLOWED`): a job of its own under that name.
+        k.apply(facts::Change { records: vec![(record.to_owned(), Some((lists, outputs)))], ..Default::default() }, "the journal's aged cursor");
     }
 
     /// Watches the root above `path` when no root this run watches holds it: the stored root above it (one the
@@ -1714,8 +1708,7 @@ impl Observer {
             return None;
         }
         k.asked.insert(key.to_owned());
-        // A run's record holds bytes (`encode_lists`); a canonical form's, a text, is not asked here.
-        let found: Option<(Vec<u8>, Vec<u8>)> = k.reader.as_ref()?.prepare_cached("SELECT consulted, outputs FROM run_record WHERE key = ?1").ok()?.query_row([key], |r| Ok((bytes_of(r.get(0)?), r.get(1)?))).ok().and_then(|(c, o)| Some((c?, o)));
+        let found = k.facts.as_ref()?.record(key).map(|(lists, outputs)| (encode_lists(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>()), outputs));
         if let Some(r) = &found {
             k.records.insert(key.to_owned(), r.clone());
         }
@@ -1726,25 +1719,26 @@ impl Observer {
     /// `family:<shape hash>:<result key>`. Each seek skips the other values of that shape.
     pub fn run_record_samples(&self, family: &str) -> Vec<Vec<u8>> {
         if !super::hazards::may_read_store() { return Vec::new(); }
-        let Some(db) = self.db.as_ref().and_then(|k| k.reader.as_ref()) else { return Vec::new() };
-        let Ok(mut seek) = db.prepare_cached("SELECT key,consulted FROM run_record WHERE key >= ?1 AND key < ?2 ORDER BY key LIMIT 1")
-            else { return Vec::new() };
-        let mut lower = format!("{family}:");
-        let upper = format!("{family};");
-        let mut lists = Vec::new();
-        while let Ok((key, list)) = seek.query_row((&lower, &upper), |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))) {
-            let Some((group, _)) = key.rsplit_once(':') else { break };
-            lower = format!("{group};");
-            lists.push(list);
+        let Some(facts) = self.db.as_ref().and_then(|k| k.facts.as_ref()) else { return Vec::new() };
+        // The records in key order: the first of each shape (`family:<shape>:…`).
+        let mut last: Option<String> = None;
+        let mut out = Vec::new();
+        for (key, lists) in facts.records(&format!("{family}:")) {
+            let Some((group, _)) = key.rsplit_once(':') else { continue };
+            if last.as_deref() == Some(group) {
+                continue;
+            }
+            last = Some(group.to_owned());
+            out.push(encode_lists(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>()));
         }
-        lists
+        out
     }
 
     /// Read an immutable result even if another process published it after an earlier miss.
     pub fn stored_run_record(&self, key: &str) -> Option<(Vec<u8>, Vec<u8>)> {
         if !super::hazards::may_read_store() { return None; }
-        self.db.as_ref()?.reader.as_ref()?.prepare_cached("SELECT consulted,outputs FROM run_record WHERE key=?1").ok()?
-            .query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).ok()
+        let (lists, outputs) = self.db.as_ref()?.facts.as_ref()?.record(key)?;
+        Some((encode_lists(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>()), outputs))
     }
 
     /// Keeps a run's record under `key`, replacing the last: in memory now, in the store behind the run.
@@ -1756,12 +1750,12 @@ impl Observer {
     }
 
     /// Queue a durable result. The store controls the lifetime of versioned results.
+    /// A record's consulted part is lists of texts (`encode_lists`); one that is not is not kept.
     pub fn store_run_record(&self, key: &str, consulted: &[u8], outputs: &[u8]) {
-        if let Some(k) = self.db.as_ref() {
-            let (key, consulted, outputs) = (key.to_owned(), consulted.to_owned(), outputs.to_owned());
-            k.writer.send(move |db| {
-                let _ = db.execute_cached("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
-            });
+        if let Some(k) = self.db.as_ref()
+            && let Some(lists) = decode_lists(consulted)
+        {
+            k.apply(facts::Change { records: vec![(key.to_owned(), Some((lists, outputs.to_owned())))], ..Default::default() }, "kept facts");
         }
     }
 
@@ -2044,10 +2038,6 @@ impl Drop for Writer {
     }
 }
 
-/// The prefix of a path's canonical form's record in `run_record`, from before the forms were kept facts (`facts`):
-/// collection drops it.
-const CANONICAL: &str = "canonical:";
-
 /// The prefix of a directory runs wrote their outputs into, as its settings keep it (`own_output`, `facts`).
 const OWN_OUTPUT: &str = "own:";
 
@@ -2198,7 +2188,8 @@ type KeptRoot = (String, PathBuf, PathBuf, Option<(u8, u64)>);
 /// - an answer, a canonical form or a Git file list under no root kept: every path the observer reads is under a
 ///   root (`watch_above`), so one under none is of a name no run uses;
 /// - a revision constant after the last manifest that owns its derivation goes away;
-/// - other planned records (including constants, cone rounds and cutoffs) once none of their plans is live.
+/// - other planned records (including constants, cone rounds and runs' frames) once none of their plans is live;
+///   a run's record under the whole-run cutoff's old prefix (`cutoff:`, before t33 K4's frame) always.
 /// - a row of the observer's own journal (decision 0400) under no root kept, or `LIST_KEEP` generations old: the
 ///   floor moves up with it, and a record from before it is not answered (`changed_since`).
 ///
@@ -2256,22 +2247,21 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     let answers: Vec<String> = all_answers.into_iter().filter(|r| !held(Path::new(&r.0)) && !young(r.5)).map(|r| r.0).collect();
     let forms: Vec<String> = all_forms.into_iter().filter(|r| !held(Path::new(&r.0)) && !young(r.2)).map(|r| r.0).collect();
     let records: Vec<String> = {
-        let mut st = db.prepare("SELECT key, consulted FROM run_record")?;
-        st.query_map([], |r| Ok((r.get::<_, String>(0)?, bytes_of(r.get(1)?).unwrap_or_default())))?
-            .flatten()
+        facts.as_ref().map(|f| f.records("")).unwrap_or_default().into_iter()
+            .map(|(key, lists)| (key, encode_lists(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>())))
             .filter(|(key, consulted)| {
-                // A canonical form's record, from before they were kept facts (`facts`): read no more.
-                if key.starts_with(CANONICAL) {
-                    return true;
-                }
                 if let Some(path) = key.strip_prefix("git-files:") {
                     return !held(Path::new(path));
                 }
-                // A record of what a run kept goes with its plans (decision 0252): a whole-run cutoff's consulted list
+                // The whole-run cutoff's records, before the run's frame took their place (t33 K4): no run reads them.
+                if key.starts_with("cutoff:") {
+                    return true;
+                }
+                // A record of what a run kept goes with its plans (decision 0252): a run's frame's consulted list
                 // (`reuse::encode_consulted`), the constants' too, and the cone's rounds' third list: kind, path and
                 // digest by turns, a plan's path empty and its digest the plan's in hex. One that names none is from
                 // before they did.
-                if key.starts_with(CUTOFF) || PLANNED.iter().any(|p| key.starts_with(p)) {
+                if key.starts_with(FRAME) || PLANNED.iter().any(|p| key.starts_with(p)) {
                     let lists = decode_lists(consulted).unwrap_or_default();
                     // A revision's constants are kept by their owner's plan (`constants::keep_revision`).
                     if key.starts_with("constants:") && let Some(owner) = lists.iter().flat_map(|l| l.as_chunks::<3>().0).find(|c| c[0] == "constants-owner") {
@@ -2279,7 +2269,7 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                     }
                     return !lists.iter().flat_map(|l| l.as_chunks::<3>().0).filter(|c| c[0] == "plan" && c[1].is_empty()).filter_map(|c| unhex(&c[2])).any(|plan| live(&plan));
                 }
-                // A cutoff's record from before they were prefixed: its key alone, a digest.
+                // A run's record from before they were prefixed: its key alone, a digest.
                 key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
             })
             .map(|(key, _)| key)
@@ -2312,17 +2302,20 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     for path in &changes {
         swept.changes += tx.execute("DELETE FROM observed_changes WHERE path = ?1", [path])?;
     }
-    for key in &records {
-        swept.records += tx.execute("DELETE FROM run_record WHERE key = ?1", [key])?;
-    }
     tx.commit()?;
+    if let Some(f) = &facts
+        && !records.is_empty()
+    {
+        swept.records = records.len();
+        f.apply(facts::Change { records: records.iter().map(|k| (k.clone(), None)).collect(), ..Default::default() }, "kept facts");
+    }
     if let Some(f) = &facts {
         swept.cursors = dropped.len();
         swept.outputs = outputs.len();
         swept.answers = answers.len() + forms.len();
         let moved = floor > 0 && meta.get(LISTING_FLOOR) != Some(&rusqlite::types::Value::Integer(floor));
         let meta_put = if moved { vec![(LISTING_FLOOR.to_owned(), rusqlite::types::Value::Integer(floor))] } else { Vec::new() };
-        f.apply(facts::Change { answers: facts::Edit { delete: answers, ..Default::default() }, canon: facts::Edit { delete: forms, ..Default::default() }, meta_put, meta_delete: dropped.into_iter().chain(outputs).collect() }, "kept facts");
+        f.apply(facts::Change { answers: facts::Edit { delete: answers, ..Default::default() }, canon: facts::Edit { delete: forms, ..Default::default() }, meta_put, meta_delete: dropped.into_iter().chain(outputs).collect(), records: Vec::new() }, "kept facts");
         f.written();
     }
     // The WAL folded in and emptied: a process that opens the store reads the database, not its history.
@@ -2370,19 +2363,10 @@ pub fn decode_lists(bytes: &[u8]) -> Option<Vec<Vec<String>>> {
     (at == bytes.len()).then_some(lists)
 }
 
-/// A record's consulted column as its bytes: a run's are bytes (`encode_lists`), a canonical form's a text.
-fn bytes_of(v: rusqlite::types::Value) -> Option<Vec<u8>> {
-    match v {
-        rusqlite::types::Value::Text(t) => Some(t.into_bytes()),
-        rusqlite::types::Value::Blob(b) => Some(b),
-        _ => None,
-    }
-}
+/// The prefix of a run's frame (`reuse::FRAME`, in the engine).
+const FRAME: &str = "frame:";
 
-/// The prefix of a whole-run cutoff's record (`reuse::CUTOFF`, in the engine).
-const CUTOFF: &str = "cutoff:";
-
-/// The prefixes of the other records that name the plans they are kept for (`plan` entries, as a cutoff's): the run's
+/// The prefixes of the other records that name the plans they are kept for (`plan` entries, as a run's frame's): the run's
 /// constants (`corpus::constants`) and the cone's rounds (`corpus`, decision 0145).
 const PLANNED: &[&str] = &["constants:", "cone-rounds:"];
 
@@ -2438,6 +2422,11 @@ impl DigestRead {
     /// The file's bytes, for a caller that keeps them (a run's one read of its sources, decision 0300).
     pub fn read(&self) -> Option<Vec<u8>> {
         source::read(&self.path).ok()
+    }
+
+    /// `read`, into the home `place` makes (`snapshot::read_placed`).
+    pub fn read_placed(&self, place: source::Placer<'_>) -> Option<rerail_tape_format::home::Home> {
+        source::read_placed(&self.path, place).ok()
     }
 
     /// `bytes`' length and digest, as `hash` gives a file's.
@@ -2563,6 +2552,19 @@ mod tests {
         let f = facts::Facts::open(store).expect("the observer's facts");
         f.apply(facts::Change { meta_put: vec![(key, value)], ..Default::default() }, "kept facts");
         f.written();
+    }
+
+    /// Keeps a run's record under `key`, as another process would.
+    fn put_record(store: &Path, key: &str, lists: &[&[&str]], outputs: &[u8]) {
+        let f = facts::Facts::open(store).expect("the observer's facts");
+        let lists = lists.iter().map(|l| l.iter().map(|t| (*t).to_owned()).collect()).collect();
+        f.apply(facts::Change { records: vec![(key.to_owned(), Some((lists, outputs.to_vec())))], ..Default::default() }, "kept facts");
+        f.written();
+    }
+
+    /// The keys of the run records kept for the observer at `store`, sorted.
+    fn kept_records(store: &Path) -> Vec<String> {
+        facts::Facts::open(store).map(|f| f.records("").into_iter().map(|(k, _)| k).collect()).unwrap_or_default()
     }
 
     /// The paths of the answers kept for the observer at `store`, sorted.
@@ -3521,21 +3523,20 @@ mod tests {
         put_answer(&store, &fresh.join("d.py"), now_ns());
         put_form(&store, &fresh, &fresh, now_ns());
         let (live, dead) = ([1u8; 32], [2u8; 32]);
-        let record = |key: &str, consulted: &str| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, consulted]).unwrap();
-        // A cutoff's consulted list as the engine keeps it (`reuse::encode_consulted`): kind, path, digest by turns.
-        let cutoff = |key: &str, flat: &[&str]| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, encode_lists(&[flat])]).unwrap();
+        // A run's frame's consulted list as the engine keeps it (`reuse::encode_consulted`): kind, path, digest by turns.
+        let cutoff = |key: &str, flat: &[&str]| put_record(&store, key, &[flat], b"");
         put_form(&store, &root.join("a.py"), &root.join("a.py"), 0);
         put_form(&store, &real.join("elsewhere"), &real.join("elsewhere"), 0);
-        // A canonical form's record from before they were kept facts.
-        record(&format!("{CANONICAL}{}", s(&root.join("old.py"))), "");
-        cutoff("cutoff:kept", &["rule", "x.rerail", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
-        cutoff("cutoff:dead", &["plan", "", &hex(&dead)]);
+        cutoff("frame:kept", &["rule", "x.rerail", "ab", "plan", "", &hex(&dead), "plan", "", &hex(&live)]);
+        cutoff("frame:dead", &["plan", "", &hex(&dead)]);
+        // One under the whole-run cutoff's old prefix: nothing reads it, so it goes whatever its plans.
+        cutoff("cutoff:kept", &["plan", "", &hex(&live)]);
         cutoff(&"ab".repeat(32), &["rule", "x.rerail", "ab"]);
         // The constants' and the cone's rounds' records go with their plans too; one naming none is from before.
         cutoff("constants:k", &[]);
         cutoff("constants:live", &["doc", "a.py", "ab", "plan", "", &hex(&live)]);
         cutoff("constants:dead", &["doc", "a.py", "ab", "plan", "", &hex(&dead)]);
-        let rounds = |key: &str, plan: &[u8; 32]| db.execute("INSERT INTO run_record VALUES (?1, ?2, ?3)", params![key, encode_lists(&[&["1", "2"][..], &["/r", "/s"], &["plan", "", &hex(plan)]]), 7u64.to_le_bytes().to_vec()]).unwrap();
+        let rounds = |key: &str, plan: &[u8; 32]| put_record(&store, key, &[&["1", "2"][..], &["/r", "/s"], &["plan", "", &hex(plan)]], &7u64.to_le_bytes());
         rounds("cone-rounds:live", &live);
         rounds("cone-rounds:dead", &dead);
         // An output directory still there is kept; one removed goes (decision 0284).
@@ -3544,7 +3545,6 @@ mod tests {
         drop(db);
         let swept = collect(&store, |plan| *plan == live).unwrap();
         let db = Connection::open(&store).unwrap();
-        let keys = |sql: &str| -> Vec<String> { db.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect() };
         let roots = meta_keys(&store, "journal:");
         let mut want = vec![cursor_key_text("aa", &real.join("listed")), cursor_key_text("aa", &root)];
         // `same` is the listed directory's second name where a link made it (Unix); elsewhere it names nothing, and
@@ -3556,9 +3556,7 @@ mod tests {
         assert_eq!(roots, want, "root: inner is under it, gone is gone, dotted and the alias are other names with older cursors; listed and same: one directory's two names of one run");
         let answers = kept_answers(&store);
         assert_eq!(answers, [s(&fresh.join("d.py")), s(&root.join("a.py"))]);
-        let mut records = keys("SELECT key FROM run_record");
-        records.sort();
-        assert_eq!(records, ["cone-rounds:live", "constants:live", "cutoff:kept"]);
+        assert_eq!(kept_records(&store), ["cone-rounds:live", "constants:live", "frame:kept"]);
         assert_eq!(kept_forms(&store), [s(&fresh), s(&root.join("a.py"))]);
         let n = usize::from(alias.is_some());
         assert_eq!(meta_keys(&store, OWN_OUTPUT), [format!("{OWN_OUTPUT}{}", s(&inner))]);

@@ -1286,6 +1286,52 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
+/// match-frames' `mf_def` (the innermost def around a node, read off the tree per node) has the rows of the climb it
+/// replaced: `mf_up`, the innermost def, class or decorator, a decorator standing for its definition, climbed through
+/// the classes. Over nested defs and classes, decorated defs and classes, decorators with lambdas and calls, and a
+/// decorated class inside a decorated class.
+#[test]
+fn mf_def_is_the_climb_through_classes() {
+    let program = ".language python\n#include \"data-layer/match-frames.rerail\"\n\
+        .decl om(k: symbol)\nom(\"function_definition\"). om(\"class_definition\"). om(\"decorator\").\n\
+        .decl oup(n: node, o: node)\n\
+        oup(n, o) :- nearest(n, o, om), !kind(o, \"decorator\").\n\
+        oup(n, o) :- nearest(n, dc, om), kind(dc, \"decorator\"), child(dd, dc, _), field(dd, \"definition\", o).\n\
+        .decl odef(n: node, f: node)\n\
+        odef(n, f) :- oup(n, f), kind(f, \"function_definition\").\n\
+        odef(n, f) :- oup(n, k), kind(k, \"class_definition\"), odef(k, f).\n\
+        .decl gap(side: symbol, k: symbol, l: number, lf: number)\n\
+        gap(\"new\", k, l, lf) :- mf_def(n, f), !odef(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), line(n, l), line(f, lf).\n\
+        gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
+        .decl rows(k: number)\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
+        .decl decorated(l: number, lf: number)\n\
+        decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), line(n, l), line(f, lf).\n.output decorated\n";
+    let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mf-def");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), py).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let out = dir.join("out");
+    super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    let (gap, rows, decorated) = (read("gap"), read("rows"), read("decorated"));
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(gap.is_empty(), "mf_def against the climb: {gap:?}");
+    let n: usize = rows.first().and_then(|r| r.first()).and_then(|k| k.parse().ok()).unwrap_or(0);
+    assert!(n > 40, "mf_def's rows: {rows:?}");
+    // `q` (top's lambda, f's decorator) is f's (line 2); `arg` (Inner's decorator) is f's, through B and Inner;
+    // `w` (D's decorator) is n's (line 16); `v` (E's, a class decorating inside a decorated class) is n's too. In a
+    // function's body, `p` (inner's decorator, line 25) is inner's (26); `if p` (28) is outer's (24); `c` (k's
+    // second decorator, 30) is k's (31).
+    let mut got: Vec<(String, String)> = decorated.iter().map(|r| (r[0].clone(), r[1].clone())).collect();
+    got.sort();
+    let want: Vec<(String, String)> = [("1", "2"), ("10", "2"), ("17", "16"), ("19", "16"), ("25", "26"), ("28", "24"), ("30", "31")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+    assert_eq!(got, want);
+}
+
 /// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rerail's
 /// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
 /// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
@@ -1578,7 +1624,6 @@ fn a_python_file_no_package_holds_is_unpackaged() {
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
 /// asked for every one: 297k parses, past 25 minutes and 33 GB.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("request-context");
     let _ = std::fs::remove_dir_all(&base);
@@ -1722,6 +1767,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1857,6 +1903,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1905,7 +1952,6 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
@@ -1930,6 +1976,7 @@ fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
 /// the undo then dropped the inputs they read (`rr_token_anon`, `rr_token_named`), and the combined run failed on an
 /// undeclared relation (Q67: these three of the data-layer pack, on any file).
 #[test]
+#[ignore = "data-layer packs disabled (packs/data-layer/DISABLED.md)"]
 fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
@@ -3000,7 +3047,8 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
     let none = ran("x = 1\ndef f(y: int): ...\n");
     assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
     let some = ran("x: \"List[int]\" = []\n");
-    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_pass_quoted_ann_ident")), "with a root they run: {some:?}");
+    // The pass's relation, kept by its tape (rule 8), is derived as `rr_pass_quoted_ann_ident_rr_kd`.
+    assert!(some.iter().any(|h| h.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_pass_quoted_ann_ident"))), "with a root they run: {some:?}");
 }
 
 #[test]
@@ -3008,6 +3056,112 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
 fn context_root_child() {
     let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
     printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
+
+/// 0597 rung 7.1 (rule 7 on the memo path): an edit that changes no root and nothing the context reads runs none of
+/// its strata. A comment added to a file whose annotation is unchanged leaves the context's roots (its values, keyed
+/// by their text) and its reads as they were: no stratum of the context runs. An edit of the annotation's text makes
+/// a new root, and they run. Each run is a child process (`context_edit_child`) into one store, its heads read from
+/// its profile's `heads.tsv`, as rung 2.10's are.
+#[test]
+fn a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context() {
+    let directory = tempfile::tempdir().unwrap();
+    let step = |k: &str, source: &str| -> (Vec<String>, Vec<Vec<String>>) {
+        let profile = directory.path().join(format!("profile-{k}"));
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_edit_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_EDIT_DIR", directory.path())
+            .env("CONTEXT_EDIT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{k}");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let ran = heads.lines().skip(1).filter_map(|l| l.split('\t').nth(1)).filter(|h| h.contains("rr_pass_quoted_")).map(str::to_owned).collect();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (ran, rows)
+    };
+    let (cold, rows) = step("cold", "x: \"List[int]\" = []\n");
+    assert!(!cold.is_empty() && rows.contains(&vec!["List".to_owned()]), "a cold run runs the context: {cold:?} {rows:?}");
+    let (comment, rows) = step("comment", "# a comment\nx: \"List[int]\" = []\n");
+    assert!(comment.is_empty(), "a comment changes no root: no stratum of the context runs: {comment:?}");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the context's rows stand: {rows:?}");
+    let (text, rows) = step("text", "# a comment\nx: \"List[str]\" = []\n");
+    assert!(!text.is_empty(), "a new annotation text is a new root: the context runs");
+    assert!(rows.contains(&vec!["str".to_owned()]) && !rows.contains(&vec!["int".to_owned()]), "the new text's rows: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_memo_edit_that_changes_no_root_runs_no_stratum_of_the_context"]
+fn context_edit_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_EDIT_DIR").unwrap());
+    std::fs::write(dir.join("a.py"), std::env::var("CONTEXT_EDIT_SOURCE").unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::copy(dir.join("a.py"), src.join("a.py")).unwrap();
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// 0597 rung 7.2 (rule 8 across chunks): a text a later chunk places is given the pass's rows the first chunk kept
+/// under its value, and runs none of the pass's strata. Two files holding one annotation text, each a chunk of its
+/// own (`RERAIL_PROBE_NODES`, `RERAIL_CHUNK_NODES`), do the pass's work of one file; both files' rows stand. Each run
+/// is a child process (`context_chunks_child`), its heads read from its profile's `heads.tsv` (part, head, cpu_s,
+/// work, plans), as rung 2.10's are.
+#[test]
+fn a_text_a_later_chunk_places_runs_no_stratum_of_the_context() {
+    let run = |files: usize| -> (std::collections::BTreeMap<String, u64>, String, Vec<Vec<String>>) {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_chunks_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("RERAIL_PROBE_NODES", "1")
+            .env("RERAIL_CHUNK_NODES", "1")
+            .env("RERAIL_CHUNKS_AT_ONCE", "1")
+            .env("CONTEXT_CHUNKS_DIR", directory.path())
+            .env("CONTEXT_CHUNKS_FILES", files.to_string());
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success(), "{files} files");
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap_or_default();
+        let mut work: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for l in heads.lines().skip(1) {
+            let cols: Vec<&str> = l.split('\t').collect();
+            if let (Some(h), Some(w)) = (cols.get(1).filter(|h| h.contains("rr_pass_quoted_")), cols.get(3).and_then(|w| w.parse::<u64>().ok())) {
+                *work.entry((*h).to_owned()).or_default() += w;
+            }
+        }
+        let report = std::fs::read_to_string(profile.join("profile.txt")).unwrap_or_default();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&directory.path().join("out"), "quoted_names").unwrap_or_default();
+        (work, report, rows)
+    };
+    let (one, _, rows) = run(1);
+    assert!(!one.is_empty() && rows.contains(&vec!["List".to_owned()]), "one file runs the context: {one:?} {rows:?}");
+    let (two, report, rows) = run(2);
+    assert!(report.contains("2 made in chunks"), "each file a chunk of its own: the text is a value of each");
+    assert_eq!(two, one, "the second chunk is given the first's rows: the pass's work is one file's");
+    assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "the rows stand: {rows:?}");
+}
+
+#[test]
+#[ignore = "child process of a_text_a_later_chunk_places_runs_no_stratum_of_the_context"]
+fn context_chunks_child() {
+    let dir = std::path::PathBuf::from(std::env::var("CONTEXT_CHUNKS_DIR").unwrap());
+    let files: usize = std::env::var("CONTEXT_CHUNKS_FILES").unwrap().parse().unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, ANNOTATION_PASS).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let src = dir.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    for i in 0..files {
+        std::fs::write(src.join(format!("f{i}.py")), format!("v{i}: \"List[int]\" = []\n")).unwrap();
+    }
+    super::run(&printed, &src, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
 }
 
 /// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's
@@ -3351,4 +3505,34 @@ fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
     assert_eq!(shown(super::kept_texts::known(&store, &programs)), [kept[0].clone(), None, kept[2].clone()], "b.rerail changed: its includer is read again");
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A matcher whose captures are its root's field children (as `Absorb` writes them, decision 0106 §4) has its rows
+/// read from the tape at the transducer's roots (`ast_wave::field_captures`, t50 step 6): the same rows as W's matcher
+/// at each root (`RERAIL_AST_DIRECT_CAPTURES=off`), a capture in a field holding two kinds and a root with none.
+#[test]
+fn field_captures_read_from_the_tape_are_ws() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("field-captures");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "a.b.c\nx.y\nf(1).z\ng(h)\nk.m(n)\n").unwrap();
+    let program = ".language python\n.decl attr(t: symbol)\n.decl callee(t: symbol)\n.output attr, callee\n\
+                   attr(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"attribute\"},{\"has\":{\"field\":\"attribute\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n\
+                   callee(t) :- ast(d, r, {\"language\":\"python\",\"rule\":{\"all\":[{\"kind\":\"call\"},{\"has\":{\"field\":\"function\",\"kind\":\"identifier\",\"pattern\":\"$C1\",\"stopBy\":\"neighbor\"}}]}}, C1: x), text(x, t).\n";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| {
+        let out = dir.join(out);
+        super::run_all(&[program], &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        (read("attr"), read("callee"))
+    };
+    let direct = run("direct");
+    let by_w = {
+        let _off = super::switches::set(&[("RERAIL_AST_DIRECT_CAPTURES", "off")]);
+        run("by-w")
+    };
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(direct.0, [["b"], ["c"], ["m"], ["y"], ["z"]]);
+    assert_eq!(direct.1, [["f"], ["g"]]);
+    assert_eq!(direct, by_w, "the tape's field children are W's captures");
 }

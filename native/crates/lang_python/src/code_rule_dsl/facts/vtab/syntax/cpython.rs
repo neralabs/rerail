@@ -26,6 +26,7 @@
 //! a def, a class or an assignment that tree-sitter ends later than CPython by its start). Rows hold string indexes,
 //! as `Batch::build`'s do.
 
+use rerail_blocks::vector::Vector;
 use super::{Dialect, Projected};
 use crate::code_rule_dsl::cpython::printed::{Printed, Want, by_start, of_kind, printed};
 use std::collections::{BTreeSet, HashMap};
@@ -39,10 +40,10 @@ pub(super) struct CPython {
     syntax_error: bool,
     literal_json: bool,
     want: Want,
-    syntax_errors: Vec<[i64; 3]>,
-    literals: Vec<[i64; 2]>,
+    syntax_errors: Vector<[i64; 3]>,
+    literals: Vector<[i64; 2]>,
     /// Rows of `UNPARSE`, `AST_DUMP`, `DUMP_SHA256`, `BODY_SHA256`, `SIGNATURE_SHA256`.
-    printed: [Vec<[i64; 2]>; 5],
+    printed: [Vector<[i64; 2]>; 5],
 }
 
 /// The printed relations, in `CPython::printed`'s order.
@@ -81,14 +82,14 @@ impl CPython {
         if self.syntax_error
             && let Some((line, msg)) = error
         {
-            self.syntax_errors.push([i64::from(p.key), i64::from(*line), string(msg) as i64]);
+            self.syntax_errors.push([i64::from(p.key()), i64::from(*line), string(msg) as i64]);
         }
         if self.literal_json {
             let literals = crate::code_rule_dsl::cpython::literal::literals(source);
             if !literals.is_empty() {
                 // The document's nodes by span.
-                let f = &*p.facts;
-                let mut by_span: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
+                let f = p.f();
+                let mut by_span: HashMap<(u32, u32), Vector<u32>> = HashMap::new();
                 for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
                     by_span.entry((f.start(id), f.end(id))).or_default().push(local as u32);
                 }
@@ -115,7 +116,7 @@ impl CPython {
             by_span.entry((n.start, n.end)).or_default().push(n);
             starting.entry(n.start).or_default().push(n);
         }
-        let f = &*p.facts;
+        let f = p.f();
         for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
             let (start, end) = (f.start(id), f.end(id));
             let exact = by_span.get(&(start, end));

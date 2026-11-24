@@ -1,8 +1,8 @@
 # 0148: Parsers are routed by what the host runs; the native code is one crate
 
-Status: accepted (user, 2026-11-13: "yes, we do have x86 hosts / please ensure that the
-platform-specific parts are in a separate crate and that we have a parser router that allows the
-different implementations to be registered per format and the most optimized one selected")
+Status: built (audited 2026-11-23). Accepted (user, 2026-11-13: "yes, we do have x86 hosts / please ensure that the
+platform-specific parts are in a separate crate and that we have a parser router that allows the different
+implementations to be registered per format and the most optimized one selected")
 
 ## Intro
 
