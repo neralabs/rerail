@@ -129,8 +129,8 @@ describe("a session's .rerail runs after its edits", () => {
 
   it("names a pack's .rerail rule in the steer by the title its pack lists", async ({ onTestFinished }) => {
     // The steer reads the installed packs, which this file's home has not read yet, so the engine reads each of the
-    // pack's `.rerail` rules here, with a test run's empty image store: a pack of three small rules keeps that to well
-    // under the case's limit, where one the size of Django's (27 rules) takes longer than the limit.
+    // pack's `.rerail` rules here, with a test run's empty image store. A pack of three small rules keeps that well
+    // within the case's limit; one the size of Django's (27 rules) takes more than 5 s on a 16-core Linux machine.
     installPackDirectory(SAMPLE_PACK, "rr-sample", defaultRerailHome(), versionOf(SAMPLE_PACK));
     onTestFinished(() => uninstallPack("rr-sample"));
     const manifest = rulePackFileSchema.parse(JSON.parse(readFileSync(join(SAMPLE_PACK, "pack.json"), "utf8")));
