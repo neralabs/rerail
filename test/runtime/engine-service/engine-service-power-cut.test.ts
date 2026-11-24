@@ -108,11 +108,30 @@ async function daemonProcess(root: string, databasePath: string) {
   let stderr = "";
   child.stderr!.on("data", chunk => { stderr += String(chunk); });
   const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+  // Heard from the process's start on: a session's evaluator can open before its start event is answered.
+  const opened = new Map<string, PromiseWithResolvers<void>>();
+  const openedFor = (sessionId: string): PromiseWithResolvers<void> => {
+    const known = opened.get(sessionId) ?? Promise.withResolvers<void>();
+    opened.set(sessionId, known);
+    return known;
+  };
+  child.on("message", (message: Record<string, unknown>) => {
+    if (typeof message.opened === "string") openedFor(message.opened).resolve();
+  });
   const ready = await answer(child, message => message.ready === true).catch((error: unknown) => {
     throw new Error(`${String(error)}; its stderr: ${stderr.slice(0, 2_000)}`);
   });
+  const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath: String(ready.socketPath) }, event);
   return {
-    send: (event: AdapterEvent) => ingestEngineEvent({ socketPath: String(ready.socketPath) }, event),
+    send,
+    /**
+     * Starts the session and waits until its evaluator has opened, so each edit it is sent next is checked by its own
+     * result's answer: at a session's first start an edit that comes sooner is answered with no check.
+     */
+    startChecked: async (event: Extract<AdapterEvent, { kind: "session-start" }>) => {
+      await send(event);
+      await openedFor(event.session.sessionId).promise;
+    },
     stop: async () => {
       child.kill("SIGKILL");
       await exited;
@@ -123,7 +142,7 @@ async function daemonProcess(root: string, databasePath: string) {
 function events(cwd: string) {
   const session = (sessionId: string) => ({ host: "claude-code" as const, sessionId, cwd });
   return {
-    start: (sessionId: string): AdapterEvent => ({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId) }),
+    start: (sessionId: string): Extract<AdapterEvent, { kind: "session-start" }> => ({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId) }),
     prompt: (sessionId: string, text: string): AdapterEvent => ({ kind: "user-prompt", eventId: `${sessionId}:${text}`, sessionId, session: session(sessionId), text }),
     /** The agent of `sessionId` writes `text` to `path` with its Write tool, as tool call `toolCallId`. */
     writes: async (send: (event: AdapterEvent) => Promise<unknown>, sessionId: string, toolCallId: string, path: string, text: string) => {
@@ -149,11 +168,15 @@ async function dashboard(databasePath: string, path: string): Promise<Record<str
   }
 }
 
-/** Sets the checks of `sessionId` back to running, through a connection of its own. */
+/**
+ * Sets the checks of `sessionId` back to running, through a connection of its own; fails when the session has none, as
+ * when its edit came before its evaluator opened (`startChecked`): a case on a check never recorded proves nothing.
+ */
 function stillRunning(databasePath: string, sessionId: string): void {
   const database = new Database(databasePath);
   try {
-    database.prepare("UPDATE audits SET status = 'running', finished_at = NULL WHERE session_id = ?").run(sessionId);
+    const { changes } = database.prepare("UPDATE audits SET status = 'running', finished_at = NULL WHERE session_id = ?").run(sessionId);
+    expect(changes, `the checks of session ${sessionId}`).toBeGreaterThan(0);
   } finally {
     database.close();
   }
@@ -282,7 +305,7 @@ describe("the records a power cut leaves, once the next daemon has started", () 
     const { root, databasePath, checkout } = await records();
     const { start, writes } = events(checkout);
     const daemon = await daemonProcess(root, databasePath);
-    await daemon.send(start("s"));
+    await daemon.startChecked(start("s"));
     await writes(daemon.send, "s", "t1", join(checkout, "a.ts"), "export const a = 1;\n");
     await writes(daemon.send, "s", "t2", join(checkout, "a.ts"), "export const a = 2;\n");
     await daemon.stop();
@@ -301,7 +324,7 @@ describe("the records a power cut leaves, once the next daemon has started", () 
     const { root, databasePath, checkout } = await records();
     const { start, writes } = events(checkout);
     const gone = await daemonProcess(root, databasePath);
-    await gone.send(start("s"));
+    await gone.startChecked(start("s"));
     await writes(gone.send, "s", "t1", join(checkout, "a.ts"), "export const a = 1;\n");
     await gone.stop();
     stillRunning(databasePath, "s");
@@ -319,11 +342,11 @@ describe("the records a power cut leaves, once the next daemon has started", () 
     const { start, writes } = events(checkout);
     const alive = await daemonProcess(root, databasePath);
     const gone = await daemonProcess(root, databasePath);
-    await gone.send(start("s"));
+    await gone.startChecked(start("s"));
     await writes(gone.send, "s", "t1", join(checkout, "a.ts"), "export const a = 1;\n");
     stillRunning(databasePath, "s");
     await gone.stop();
-    await alive.send(start("o"));
+    await alive.startChecked(start("o"));
     await writes(alive.send, "o", "t1", join(checkout, "b.ts"), "export const b = 1;\n");
     stillRunning(databasePath, "o");
     await nextDaemon(root, databasePath);

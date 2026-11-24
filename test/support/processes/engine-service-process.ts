@@ -1,7 +1,8 @@
 // One engine service in a process of its own, as a daemon runs it, so a test can kill it or keep it running beside the
 // test's own: node --import tsx engine-service-process.ts <socket> <storage root> <database> <idle ms> [audits]
 // With `audits`, each batch of a session's edits is recorded as a check, started and finished through the runtime's own
-// audit store, as the real evaluator records its checks; without it, nothing is.
+// audit store, as the real evaluator records its checks, and it says { opened: <session id> } once that session's
+// evaluator has opened; without it, nothing is recorded.
 // Its clock is the wall clock plus an offset a message sets; a message can also run its idle close. It answers each
 // message with { done: true, now }, and says { ready: true, pid, socketPath } once it listens.
 import type { AuditRecorder, CodeRuleAuditor, SemanticEmbedder } from "../../../src/engine/index.js";
@@ -21,6 +22,12 @@ const quietAuditor = (): CodeRuleAuditor => ({
 });
 const recordingAuditor = ({ workspaceRoot, audits }: { workspaceRoot: string; audits: AuditRecorder }): CodeRuleAuditor => ({
   ...quietAuditor(),
+  // A session's first start does not wait for its evaluator: an edit that comes while it opens is answered unchecked
+  // (runtime.ts `#codeRuleWorkspaceNow`), so a test that needs the edit's check waits for this message first. The rest
+  // of the evaluator's open runs in this turn once this returns, before this process reads the test's next request.
+  openWorkspace: async sessionId => {
+    process.send?.({ opened: sessionId });
+  },
   auditGeneratedEdits: async (sessionId, batch) => {
     const auditId = audits.start({
       sessionId, workspaceRoot, scope: "touched-files", mode: "steer", revision: batch.revision, catalogRevision: null, ruleRevisions: [], paths: [],
