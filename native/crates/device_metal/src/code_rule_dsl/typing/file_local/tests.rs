@@ -765,6 +765,40 @@ fn exports_are_cut_on_a_version() {
     }
 }
 
+/// The cut renames its readers' atoms alone on a version of two images: the reader in an overlay, the rest in its
+/// base, where a literal of another rule has the reader's literal's node (its place in its own image). Keyed by node
+/// alone, that literal was renamed too (`flag_col`'s `kind` read as `xd_called`, once a program stayed an edit of its
+/// library's union).
+#[test]
+fn exports_are_cut_by_their_readers_alone_on_an_overlay() {
+    use crate::code_rule_dsl::logic::program_image::build::T;
+    let base = read(
+        ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+         .decl within(c: node, n: node)\n.input node, text, within\n\
+         .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+         .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+         .decl demand(n: node, m: node)\ndemand(n, m) :- named(n, s), named(m, s), node(_, n, \"function\", _, _), n != m.\n\
+         .decl later(n: node, c: node)\n.output later\n",
+    );
+    let mut b = Builder::on(&base);
+    b.rule().head("later", &[T::Var("n"), T::Var("c")]).atom("demand", &[T::Var("n"), T::Wild]).atom("fl_later", &[T::Var("n"), T::Var("c")]).atom("text", &[T::Var("c"), T::Wild]).finish().unwrap();
+    let v = b.finish_overlay().unwrap();
+    let reader = rules_of(&v, "later")[0];
+    let at = reader.body().find(|l| l.atom().is_some_and(|a| v.rel_name(a.rel()) == "fl_later")).unwrap().node();
+    let others: Vec<String> = v.rules().filter(|r| r.id() != reader.id()).map(|r| v.show_rule(r)).collect();
+    assert!(v.rules().any(|r| r.id() != reader.id() && r.body().any(|l| l.node() == at)), "a rule of the base has a literal at the reader's node {at}:\n{}", v.show());
+    let mut pass = DemandExports::default();
+    let mut p = Pipeline::new("test", Arc::clone(&v));
+    p.program(&mut pass);
+    let (out, _) = p.finish().unwrap();
+    assert!(pass.lines[0].starts_with("1 exports cut"), "{:?}", pass.lines);
+    let shown = out.show();
+    assert!(rules_of(&out, "later").iter().all(|r| reads(&out, *r).contains(&"xd_fl_later".to_owned())), "the reader reads the cut:\n{shown}");
+    for rule in &others {
+        assert!(shown.contains(rule.as_str()), "{rule} as it was, in\n{shown}");
+    }
+}
+
 /// A demand whose location only a `top` superset cuts is `top` itself when what is left of its chain names every node
 /// (`unwrap(n, n) :- kind(n, k), k != "paren"`, as `unparen` is): no superset of it is made and stored. The export is
 /// still cut by its reader's own key (`xk_text_0`). Left with an atom that names some nodes only (`called`), the
