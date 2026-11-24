@@ -24,7 +24,6 @@ default-filter = """not (
   | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
   | test(=code_rule_dsl::transducer::packed::metal_program_backend::tape_tests::the_label_kernels_compile_for_every_format)
   | test(=code_rule_dsl::logic::json_rules::tests::json_rules_pack_is_current)
-  | test(/^code_rule_dsl::tools::pack_split_tests::the_(python_main|python|javascript)_pack_is_split_with_its_crossings_declared$/)
   | test(=code_rule_dsl::slice::tests::an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off)
   | test(=code_rule_dsl::slice::napi_tests::the_napi_slice_audits_and_applies_as_the_slice_does)
   | test(/^code_rule_dsl::transducer::packed::compile_matcher_tests::(spilled_walks_find_the_cpus_roots|micro_walks_are_the_interpreters_label_outputs|lowered_python_clauses_match_where_ws_matcher_does|the_gate_catches_a_widened_walk|a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots|on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not|replan_finds_the_full_budgets_roots_on_the_pack|on_metal_replan_finds_the_full_budgets_roots_on_the_pack|lowered_clauses_find_the_same_roots_on_metal|root_walks_with_text_are_the_interpreters_roots|anchor_rows_per_answer|formula_rows_are_the_sets_members|anchored_walks_find_the_unanchored_roots|on_metal_anchored_walks_find_the_unanchored_roots)$/)

@@ -410,10 +410,12 @@ const AGAIN_THEN_MAINTAINED: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl edge(a: symbol, b: symbol)
 edge(a, b) :- kind(n, "import_statement"), field(n, "name", t), text(t, b), docof(n, d), doc(d, _, a).
-// `a` is the cross part's stratum the test is about (decision 0652: by its rules it is one file's).
+// `a`, the cross part's stratum the test is about: each imported module's `f0`, a definition joined with any file's
+// import (cross-file, decision 0652).
 .decl a(n: node, q: symbol) cross_file
-a(n, q) :- def(n, q), q = "m0.f0".
-.decl b(q: symbol, m: symbol)
+a(n, q) :- def(n, q), edge(_, b), q = @dot(b, "f0").
+// `b`, its maintained reader: each of `a`'s names with every importing module, any file's (cross-file).
+.decl b(q: symbol, m: symbol) cross_file
 b(q, m) :- a(_, q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).

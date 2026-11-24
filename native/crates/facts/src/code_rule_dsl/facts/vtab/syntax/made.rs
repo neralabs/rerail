@@ -1271,8 +1271,23 @@ impl Batch {
         at.into_iter().map(|g| Arc::clone(&s.groups[g as usize])).collect()
     }
 
-    /// The batch's vocabulary, every document made: its strings and their symbols, each string once.
+    /// The batch's vocabulary, every document made: its strings and their symbols, each string once, and the strings
+    /// `op` reads as its tags' atoms (`op_vocabulary`).
     pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
+        let (mut strings, mut symbols) = self.made_vocabulary();
+        let have: HashSet<u32> = symbols.iter().copied().collect();
+        let (ops, atoms) = self.op_vocabulary();
+        for (s, a) in ops.into_iter().zip(atoms) {
+            if !have.contains(&a) {
+                strings.push(s);
+                symbols.push(a);
+            }
+        }
+        (strings, symbols)
+    }
+
+    /// The strings the batch's documents interned, every document made, and their symbols.
+    fn made_vocabulary(&self) -> (Vec<String>, Vec<u32>) {
         if self.rows.complete.get().is_none() {
             profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || {
                 let unmade = self.rows.state.lock().of.iter().filter(|g| g.is_none()).count();
@@ -2089,7 +2104,8 @@ impl TextTest {
     fn sampled(&self) -> Option<usize> {
         *self.sampled.get_or_init(|| {
             let (_, covered) = self.batch.sample_groups()?;
-            let symbols: Vec<i64> = self.batch.shared.lock().atoms.iter().map(|&a| i64::from(a)).collect();
+            let mut symbols: Vec<i64> = self.batch.shared.lock().atoms.iter().map(|&a| i64::from(a)).collect();
+            symbols.extend(self.batch.op_vocabulary().1.into_iter().map(i64::from));
             let passed = self.probe(&symbols).len();
             profile::decision("a text test measured on a sample of its batch's documents (decision 0494)", || format!("{}: {covered} of {} documents, {passed} of {} strings", self.tested.tests.tests[self.k].0, self.batch.docs.len(), symbols.len()));
             // At least one, as a lazy batch's estimate is: a sample that passes none says it passes few, not none.

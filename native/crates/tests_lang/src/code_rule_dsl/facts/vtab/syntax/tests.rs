@@ -590,6 +590,33 @@ fn op_is_every_anonymous_child_and_op_ats_two_word_operators() {
     }
 }
 
+/// A text test over `op`'s strings (`op(n, o), o = "=="`, decision 0037) passes the operators of the batch's
+/// documents: `op` is a view whose strings are its tags' kind-name atoms (`Batch::op_atom`), which no document's walk
+/// interns, so the batch's vocabulary gives them too. Before, `@equals("==")` scanned the walk's strings alone and
+/// passed none (the rerail pack's NATIVE_MESSAGE_EQUALS).
+#[test]
+fn a_text_test_over_op_passes_the_batchs_operators() {
+    let store = ContentStore::open(&temp("op-test")).unwrap();
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "op"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let specs = vec![("equals".to_owned(), vec!["==".to_owned()]), ("equals".to_owned(), vec!["!=".to_owned()])];
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::from_specs(&["strtest_0".to_owned(), "strtest_1".to_owned()], specs).unwrap());
+    let docs = vec![document(1, "m.py", "python", "x = a == b
+")];
+    let sources = with_nearest(&store, docs, &[], &tests, crate::code_rule_dsl::facts::nearest::Binding::Cpu, &projection).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let sym = |v: i64| store.atom_value(v as u32).unwrap().unwrap();
+    let rows = |name: &str| -> BTreeSet<String> {
+        let s = source(name);
+        (0..s.len()).map(|r| sym(s.value(r, 0))).collect()
+    };
+    assert_eq!(rows("strtest_0"), ["==".to_owned()].into(), "the operator passes");
+    assert!(rows("strtest_1").is_empty(), "no `!=` in the document");
+    // And the op rows join it: the comparison's operator is one of the test's strings.
+    let op = source("op");
+    let passing: BTreeSet<i64> = { let t = source("strtest_0"); (0..t.len()).map(|r| t.value(r, 0)).collect() };
+    assert!((0..op.len()).any(|r| passing.contains(&op.value(r, 1))), "op's `==` is the test's symbol");
+}
+
 /// `core.rerail`'s relations of `docs` for a program that includes `core.rerail` and reads them (`text_demand::projection_of`'s shape
 /// and reads), each row as text: a node as `kind'text'`, a span as `'text'`, a symbol as itself. The relations made
 /// for what a program reads are the batch's (`Extra`'s W's values, source lines and places, `tree`'s `op_at` and

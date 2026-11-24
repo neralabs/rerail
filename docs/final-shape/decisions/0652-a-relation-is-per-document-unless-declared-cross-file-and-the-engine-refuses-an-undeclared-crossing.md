@@ -115,31 +115,91 @@ The pack test went red on 59 crossings, and the engine's own tests on about 40 m
   to every node (SIM109, PIE810). A test ties nothing; it is kept where the other literals reach all its variables.
 - *The JSON translator's gap to a capture* compared two nodes' offsets with no same-document join. It adds
   `@doc(v) = @doc(c)`, and the generated RUF018 and ISC003 have it.
+- *A view its readers cover* (below) is file-local though a rule of it joins documents.
+- *A demand that drops a read keeps its tie.* A deferred join's request (0488, `rr_deferred_pairs_x`) is a reader's
+  body less its read of `x`. Where `x`'s rows each hold one document's nodes, the request was free to pair any two
+  files' (UP008: `super_first(a, f)` asked for by `a` alone, with `f`'s class path: every name met every class path of
+  the corpus). The request keeps `@doc(a) = @doc(f)` between the read's location variables its body binds: still a
+  superset of what the reader joins, and on one document. The split lists the relations whose rows are each one
+  document's (`row_documents`), file-local or not: `super_first` is cross-file while `sym_at` is, yet each row is one
+  call's.
+- *A context's copy of a relation* (`rr_pass_<context>_<rel>`, 0597) shares its source's declaration, as a guest's
+  copy does.
+
+**Views covered by their readers.** A view computed over every file's rows, read only through a join with one
+file's row, is evaluated per file. Most of the crossings of the first sweep were this shape, and their rule text was
+right:
+
+```text
+modattr(m, o) :- node(_, o, "identifier", _, _), text(o, x), imp(m, x).       // joins any two files by a name
+bare(e) :- node(d, e, "attribute", _, _), child(e, o, _), node(d, m, "module", _, _), !modattr(m, o).
+```
+
+`bare` holds `m` and `o` in its own document, so the only rows of `modattr` it reads are its document's. The split
+calls a view *covered* (`covers`) when each reader places the view's location columns from its own rows (or, for a
+view of values alone, reads it as a test), and each rule of the view finds its atoms among the reader's (`maps`, a
+homomorphism onto the reader's positive atoms, the head onto the read). Per chunk every atom of a rule's instance is
+then the chunk's, so the view derived per chunk holds at the reader's values exactly where it holds over every file.
+A reader's own head can place the columns where the head is a located view covered in turn
+(`fast003_param_eq(n, k) :- fast003_alt_2(n, k)`, placed by its readers). A covered view is in `FileLocal::covered`,
+with what placed it (`cover_deps`): a reader's rules are not in the view's digests, so a maintained split asks a
+covered view again when one of those relations changed or went (the `retain` pass dropping `param_eq`'s last reader
+uncovered `alt_2`).
+A covered view of values is read as a test, and listed in `filters`, but it is no string filter: a maintained split
+takes an earlier split's string filters only, and reads every covered view of values as a test, in its cone and out
+of it, as the whole split does (React's `jsx-no-target-blank`, whose `noreferrer` a maintained split read as a string
+filter and the whole split did not).
+
+**Printed qualifiers showed a linked library's loss.** `print_version` now prints qualifiers, and the python library
+linked from its modules lacked `no_inline` on covers the library lowered together has. A module is seeded with its
+includes' fields and keeps its own by name; its includes' helpers are numbered by their own walks, so an include's
+`rr_cover4` named another helper than the module's. Declarations and inputs left helpers out already; qualifiers
+now do too.
 
 **Rules the engine accepted with a head variable unbound.** A rule whose head variable no body literal binds made
 rows of every value, and the split read it as a join of everything. Preparation now refuses such a rule
 (`head_bound`, beside `bound`): a variable is bound by a positive atom, a pattern, a nearest, an aggregate's
 result, or a comparison that defines it from bound terms, either way round (`$n = $r`).
 
-**Text that joined documents by accident**, written per document (each one's findings unchanged on its examples):
-`purity-calls` (`pc_modattr`, `pc_shadowed` through `docof`), `post-op-side-effects` (`pos_runtime_sig`),
-`django-practice-bulk-not-loop` (`bnl_model_is` within its call; the numeric field names apart, declared),
-`eslint-no-useless-constructor` (`passes_on`, `same_arg` within their method), `ruff-try301` (`caught_here` within its
-`try`), `eslint-plugin-vue-valid-v-for` (`child_for_uses` within its element), `ruff-fast003` (`@doc` joins),
-`ruff-ruf016` (its fallback span is the node's own), `phpcs-…-size-functions-in-loops` (`this_changes` within its
-loop: every loop of the corpus with every `$this->x` before), `eslint-plugin-vue-require-valid-default-prop` (`prop`'s
-"no call" is `unset`, a nullable location, not `0`), React's `jsx-no-constructed-context-values` (a `createContext`
-at any file's program root) and `no-deprecated` (`replaced` by the file's own pragma), TypeScript's
-`no-useless-constructor` (as JavaScript's), `no-misused-new` (`returns_own` within its type), `array-type`
-(`simple_arg`, `shown_arg` keyed by the form, and "no argument" is `unset`, not 0), `explicit-module-boundary-types`
-(`followed` in the module's own file), `parameter-properties` (`same_type` within one class), and Python's F402 (a
-`__future__` import of the loop's module).
+**Rule text kept as written.** The policies whose crossings were the split's gaps (covered views, a request's tie)
+run as they were: `purity-calls`, `ruff-try301`, `ruff-up008`, JavaScript's and TypeScript's `no-useless-constructor`,
+TypeScript's `no-misused-new` and `parameter-properties`, Vue's `no-duplicate-attributes` and `valid-v-for`, and the
+libraries (`python/references`, `python/modules`, `bootstrap`).
+
+**Text that joined documents by accident**, written per document. Each was run against its original with the crossing
+declared (where it is derived, never its rows) over one file and over two: the same findings on one file, and on two
+the original's finding in a file it does not concern.
+
+| Policy | The original | On two files |
+|---|---|---|
+| Python's F402 | a `__future__` import before the loop by node order, in any file | flags `b.py`'s loop for `a.py`'s import |
+| React's `jsx-no-constructed-context-values` | a `createContext` at any file's program root | flags `d.jsx`'s `Ctx`, a plain `1` |
+| TypeScript's `explicit-module-boundary-types` | `followed(x, d)` by the name alone | flags `b.ts`'s private `g` for `a.ts`'s export `g` |
+| React's `no-deprecated` | `replaced` by any file's pragma | the same on these files (no pragma) |
+| `phpcs-…-size-functions-in-loops` | every loop with every `$this->x` (`this_changes`, unbounded) | refused before the split: does not run |
+| `post-op-side-effects` | `pos_runtime_sig` gated by the allowlist read in any file | one allowlist file: the same |
+
+Two used `0` for "no node", which 0649 writes `unset`: TypeScript's `array-type` (`long_form`'s argument; `simple_arg`,
+`shown_arg` keyed by the form) and Vue's `require-valid-default-prop` (`prop`'s call). The same findings either way.
+
+**Generated text is the translator's.** The python-main pack is the JSON translator's output byte for byte
+(`json_rules_pack_is_current`). The translator now declares what it makes cross-file: a helper whose rule reads a guest
+capture by text and binds it to nothing else (`fast003_alt_2`: any file's node of the capture's text). A pattern's
+`$$$X` binds nothing, as the lowering reads it, so a capture only a `$$$X` names is unset, and a negated read of it
+asks for no row at all (RUF016's fallback: no span of the index, `!ruf016_tuple_span(n, _)`, found at the subscript).
 
 **Crossings that are meant, declared** with a comment saying why: the data layer's `cpl_msg`, `cpl_missing`,
 `er_facade_site`, `stale_entry`, `la_eager_delegate`, `annotations`, `static_tests`, `pos_bypass`,
-`pos_allow_broken`, `ma_branch_aware`, `csa_owners` (CONN301's count across the surface); `python/references`'
-`rf_imported` and `rf_own_fn`; the typing programs' `wantx` (Python), `modchild` and `res` (Rust), `fn_ref` and
-`type_of` (the workload: a call no file defines), in their `.rdl` sources, which now carry `cross_file` to `.rerail`; and the engine tests' programs whose subject is a cross-file relation (`uses`, `dep`, `pair`, `shared`, …).
+`pos_allow_broken`, `ma_branch_aware`, `csa_owner_key` (CONN301 counts a name's owners over every file of the
+surface); Django's `bnl_number` (a model's number fields, in any file); the generated FAST003's `fast003_alt_2` and
+`fast003_pyd_field`; the typing programs' `wantx` (Python), `modchild` and `res` (Rust), `fn_ref` and `type_of` (the
+workload: a call no file defines), in their `.rdl` sources, which now carry `cross_file` to `.rerail`; and the engine
+tests' programs whose subject is a cross-file relation (`uses`, `dep`, `pair`, `shared`, …). R4's stratum `a` is one
+by its rules now (each imported module's `f0`), not by a declaration on a relation of one file.
+
+A crossing inside a pack can hide behind another: run with its pack, CONN301's `csa_owners` followed a cross-file read
+of another policy's and was not its own cause; run alone it was refused. The pack test shards python-main, which
+groups its policies differently, but a crossing that only one grouping hides is still found only by running alone.
 
 The data layer's `data-layer-internal-dead-code` (pulled pack data) still reads `tape_line`, which 0612 removed; its
 fixed text waits in the tool-pack's `publish/`, which CI lays over the pulled archive.
@@ -149,9 +209,8 @@ fixed text waits in the tool-pack's `publish/`, which CI lays over the pulled ar
 - TypeScript's `triple-slash-reference` bound a regex capture over a node as a symbol; the captures are spans,
   read as text.
 - The node and react packs read `tsconfig_for`, which core declares and nothing made (O80). The repository reader
-  makes `tsconfig`, `tsconfig_for` and `tsconfig_path` now (JSONC, `extends` chains). A library's own `.input` that
-  core does not make and no fact gives (`npm_ignored`, "until core has it") is bound empty, under its declared
-  columns, where a cross-file rule reads it.
+  makes them now: decision 0660. A library's own `.input` that core does not make and no fact gives (`npm_ignored`,
+  "until core has it") is bound empty, under its declared columns, where a cross-file rule reads it.
 - Next's `default_component` ran `match_all` over a field's node, which the span binder did not know: a field's node
   binds spans as a child's does.
 - JavaScript's messages with a literal brace (`{{`, as clippy's).
@@ -173,5 +232,22 @@ fixed text waits in the tool-pack's `publish/`, which CI lays over the pulled ar
 - A relation joining two documents by a value is refused, naming it and its variables; declared `cross_file`, it
   is accepted and its readers follow it.
 - A lowering helper's error names its source relation.
-- The pack-wide test of 4, one test per pack. Python-main's (537 policies), Python's and JavaScript's take 20 s or more
-  and are in the slow tier (`.config/nextest.toml`); the gate runs them.
+- `a_text_test_over_op_passes_the_batchs_operators`: a text test over `op`'s strings passes the documents' operators.
+  `op` is a view (its strings its tags' kind-name atoms, interned by no document's walk), so the batch's vocabulary
+  gives them too; `@equals("==")` had passed none, and the rerail pack's NATIVE_MESSAGE_EQUALS was missed. A kept
+  count of a numbered relation (`strtest_<k>`, `matchall_<k>`, an `ast` matcher's) is keyed by its definition as
+  well as its name: two programs' `strtest_0` are two tests.
+- The pack-wide test of 4, one test per pack, in the default tier. Python-main's 537 policies, 142 of which ask for
+  guests of their own and run alone, take 84 s of CPU: its test is twelve shards by policy, Python's two and
+  JavaScript's (121) three, each under 20 s with the pack tests run together on one host.
+- `a_view_its_readers_cover_is_file_local`: a view of values read as a test, and a located view whose reader places
+  both columns, are covered; a reader leaving a column open is refused.
+- `a_covered_view_is_asked_again_when_a_reader_that_placed_it_goes`: the maintained split is the whole split's.
+- `a_covered_view_of_values_outside_the_cone_is_read_as_the_whole_split_reads_it`: an edit outside a covered view
+  of values and its reader; the maintained split is the whole split's.
+- `library_modules_link_to_the_lowering_of_them_together`: the linked library's qualifiers are those lowered
+  together.
+- `a_relation_whose_rows_are_each_one_documents_is_listed_cross_file_or_not` (`row_documents`), and
+  `a_request_keeps_the_document_its_dropped_read_ties`: the request carries `@doc(a) = @doc(f)`, is file-local, and
+  derives the same rows.
+- The translator's (`json_rules_pack_is_current`): the generated pack is its output.

@@ -115,10 +115,10 @@ RUF016(B, n, "Use an integer (or None) for each bound and step of this slice; an
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation RUF016_invalid_tuple_index_span(at: loc, i: node) code "RUF016" "Index this literal with a single integer or a slice, not a tuple; a tuple index raises a TypeError."
     suppress noqa "RUF016"
-// The fallback, where no span of the index is found: the subscript itself. (`$$$I` captures nothing, so `I` was bound by
-// no positive literal here: the finding had no place, and the split found it read across files, decision 0652.)
-RUF016_invalid_tuple_index_span(n, n) :- ruf016_tuple_hit(n), n ~ `$V[$$$I]`,
-    !ruf016_tuple_span(n, _).
+// I: not bound by this rule, so empty (unset) here, as in ast-grep.
+RUF016_invalid_tuple_index_span(rr_at, I) :- ruf016_tuple_hit(n), n ~ `$V[$$$I]`,
+    !ruf016_tuple_span(n, _), unset(I),
+    (unset(I), rr_at = n ; !unset(I), rr_at = I).
 RUF016_invalid_tuple_index_span(I, n) :- ruf016_tuple_span_hit(n, I).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children

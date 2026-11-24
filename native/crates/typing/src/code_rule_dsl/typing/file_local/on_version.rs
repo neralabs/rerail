@@ -51,6 +51,16 @@ pub struct FileLocal {
     /// the rule. Not one: a relation whose rules read a cross-file relation (it follows it), or are on one document
     /// but for an input naming no document (the run's settings, a phase's export, the files beyond the corpus).
     pub crossings: BTreeMap<String, String>,
+    /// The views its readers cover (decision 0652, `covers`): file-local though a rule of each joins documents, because
+    /// each reader holds what makes the rows it reads. A covered view of values alone is a filter too.
+    pub covered: BTreeSet<String>,
+    /// What placed each covered view (`covers`): its readers, and theirs through each located reader whose head anchors
+    /// it. Not in its rules' digests, so `maintain` asks a covered view again when one of these changed or went.
+    cover_deps: BTreeMap<String, BTreeSet<String>>,
+    /// Each derived relation one document's in every row, file-local or not, with its location columns (two or more):
+    /// its rules place them in one document through reads of such relations alone (`one_document`, a cross-file read
+    /// taken where its own rows are each one document's). A demand that drops a read of one keeps its tie (0652).
+    pub row_documents: BTreeMap<String, Vec<usize>>,
     pub no_document: bool,
     keys: Keys,
 }
@@ -69,6 +79,9 @@ impl PartialEq for FileLocal {
             && self.same_doc == o.same_doc
             && self.nullable == o.nullable
             && self.crossings == o.crossings
+            && self.covered == o.covered
+            && self.cover_deps == o.cover_deps
+            && self.row_documents == o.row_documents
             && self.no_document == o.no_document
             && self.keys == o.keys
     }
@@ -100,7 +113,8 @@ impl Analysis for FileLocal {
     }
     /// Its fields as rows, each tagged by its field (decision 0333 §4): `(0, rel)` file-local, `(1, rel)` constant,
     /// `(2, rel, columns)` locations, `(3, rel)` filters, `(4, rel, cause)`, `(5, rel, columns)` same-document,
-    /// `(6, no document)`, its keys, `(7, global)` and `(8, head, key)`, and `(9, rel, columns)` nullable locations.
+    /// `(6, no document)`, its keys, `(7, global)` and `(8, head, key)`, and `(9, rel, columns)` nullable locations, `(10, rel, cause)` crossings
+    /// and `(11, rel)` covered views, `(12, rel, dep)` what placed each, `(13, rel, columns)` one document's rows.
     fn rows(&self, _v: &Version) -> Option<Vec<crate::code_rule_dsl::logic::program_image::manager::Row>> {
         use crate::code_rule_dsl::logic::front::Value;
         let str = |s: &str| Value::Str(s.to_owned().into());
@@ -118,6 +132,9 @@ impl Analysis for FileLocal {
         out.extend(self.keys.heads.iter().map(|(h, k)| vec![tag(8), str(h), Value::Int(*k as i64)]));
         out.extend(self.nullable.iter().map(|(r, c)| vec![tag(9), str(r), cols(c)]));
         out.extend(self.crossings.iter().map(|(r, c)| vec![tag(10), str(r), str(c)]));
+        out.extend(self.covered.iter().map(|r| vec![tag(11), str(r)]));
+        out.extend(self.cover_deps.iter().flat_map(|(r, d)| d.iter().map(move |x| (r, x))).map(|(r, x)| vec![tag(12), str(r), str(x)]));
+        out.extend(self.row_documents.iter().map(|(r, c)| vec![tag(13), str(r), cols(c)]));
         Some(out)
     }
     fn of_rows(_v: &Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<FileLocal> {
@@ -137,6 +154,9 @@ impl Analysis for FileLocal {
                 [Value::Int(8), Value::Str(h), Value::Int(k)] => drop(f.keys.heads.insert(h.to_string(), *k as u64)),
                 [Value::Int(9), Value::Str(n), Value::Str(c)] => drop(f.nullable.insert(n.to_string(), cols(c)?)),
                 [Value::Int(10), Value::Str(n), Value::Str(c)] => drop(f.crossings.insert(n.to_string(), c.to_string())),
+                [Value::Int(11), Value::Str(n)] => drop(f.covered.insert(n.to_string())),
+                [Value::Int(12), Value::Str(n), Value::Str(x)] => drop(f.cover_deps.entry(n.to_string()).or_default().insert(x.to_string())),
+                [Value::Int(13), Value::Str(n), Value::Str(c)] => drop(f.row_documents.insert(n.to_string(), cols(c)?)),
                 _ => return None,
             }
         }
@@ -174,12 +194,28 @@ impl Analysis for FileLocal {
         }
         let mut cone: BTreeSet<u32> = BTreeSet::new();
         let mut work: Vec<u32> = changed.iter().filter_map(|r| p.v.rel(r)).map(|r| r.0).collect();
+        // A covered view whose readers changed, or one of the readers that placed it went (`cover_deps`), is asked again.
+        work.extend(self.cover_deps.iter().filter(|(_, d)| changed.iter().any(|c| d.contains(*c))).filter_map(|(v, _)| p.v.rel(v)).map(|r| r.0));
         cone.extend(work.iter().copied().filter(|&r| p.rels.is_derived(r)));
+        // A view its readers may cover (decision 0652) is placed by its readers as well: one read by a rule of the cone,
+        // covered before or not file-local, is in it, with its readers.
+        let valueless = |r: u32| {
+            let rel = p.name(r);
+            p.rels.is_derived(r) && !self.nullable.contains_key(rel) && (self.covered.contains(rel) || !self.local.contains(rel) || self.locations.get(rel).is_none_or(|c| c.is_empty()))
+        };
         while let Some(r) = work.pop() {
             for &k in p.rels.reading(r) {
                 let h = p.rels.head[k];
                 if cone.insert(h) {
                     work.push(h);
+                }
+            }
+            for &k in &p.rels.rules[r as usize] {
+                for a in p.rules[k].reads() {
+                    let x = a.rel().0;
+                    if valueless(x) && cone.insert(x) {
+                        work.push(x);
+                    }
                 }
             }
         }
@@ -510,7 +546,14 @@ impl<'v> Program<'v> {
         let locations: BTreeMap<String, Vec<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
         let nullable: BTreeMap<String, Vec<usize>> = derived().filter(|&r| !nulls[r as usize].is_empty()).map(|r| (self.name(r).to_owned(), nulls[r as usize].clone())).collect();
         // String filters (decision 0037).
-        let mut filtering: Vec<bool> = (0..n).map(|r| rels.is_derived(r as u32) && was(r).is_none_or(|p| p.filters.contains(self.name(r as u32)))).collect();
+        // A covered view of values is in `filters` too (read as a test, below), but it is no string filter: outside the
+        // scope a relation is one where it was before that.
+        let mut filtering: Vec<bool> = (0..n)
+            .map(|r| {
+                let rel = self.name(r as u32);
+                rels.is_derived(r as u32) && was(r).is_none_or(|p| p.filters.contains(rel) && !p.covered.contains(rel))
+            })
+            .collect();
         let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
         while !round.is_empty() {
             let leaving: Vec<u32> = round.iter().copied().filter(|&r| !rels.rules[r as usize].iter().all(|&k| forms.get(k).filters(self.rules[k], rels, &filtering))).collect();
@@ -560,11 +603,83 @@ impl<'v> Program<'v> {
                 }
             })
             .collect();
+        // The views its readers cover (decision 0652): a relation of values alone (no location column), read only by
+        // file-local rules, each of whose rules finds its rows in every reader's own rows (`covers`). Derived in each
+        // chunk, it answers each reader as it would over every file, and its readers read it as a test. Assumed of
+        // each candidate, as file-local is, and given up where `covers` fails.
+        let cover_candidate: Vec<bool> = (0..n)
+            .map(|r| {
+                let rel = self.name(r as u32);
+                in_scope[r]
+                    && rels.candidate[r]
+                    && !rels.output[r]
+                    && !rels.functional[r]
+                    && !rels.rules[r].is_empty()
+                    && nulls[r].is_empty()
+                    && !placeless[r]
+                    && !filtering[r]
+                    && !moved(rel)
+                    && !self.f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::PART_CROSS_READ)
+            })
+            .collect();
+        // A located candidate is asked when a rule of it places more than one document; one whose rules are each on one
+        // document is file-local as any relation, and asked only as a reader whose head places a view's location
+        // columns (`covers`, `Anchoring`). A candidate of values alone is asked always: its readers read it as a test.
+        let valueless: Vec<bool> = (0..n).map(|r| cover_candidate[r] && locs[r].is_empty()).collect();
+        // Outside the scope a view keeps its place, covered or not.
+        let mut covered_now: Vec<bool> = (0..n)
+            .map(|r| {
+                if let Some(p) = was(r) {
+                    return p.covered.contains(self.name(r as u32));
+                }
+                cover_candidate[r]
+                    && (valueless[r] || rels.rules[r].iter().any(|&k| !forms.get(k).one_document(r as u32, rels, &placeless, &local_now, &filtering, &valueless, &locs, &nulls)))
+            })
+            .collect();
         let mut dirty: Option<Vec<usize>> = None;
         loop {
-            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &filters, &locations, &nullable);
+            // A covered view whose readers changed is asked again; one no longer covered is read as any relation, by
+            // its own rules and its readers.
+            let asked: Vec<u32> = match &dirty {
+                None => (0..n as u32).filter(|&r| in_scope[r as usize] && covered_now[r as usize]).collect(),
+                Some(rules) => {
+                    let mut heads: Vec<u32> = rules.iter().map(|&k| rels.head[k]).filter(|&h| in_scope[h as usize] && covered_now[h as usize]).collect();
+                    heads.sort_unstable();
+                    heads.dedup();
+                    heads
+                }
+            };
+            let mut also: Vec<usize> = Vec::new();
+            let mut asked = asked;
+            let anchoring = Anchoring { candidate: &cover_candidate, memo: Default::default() };
+            while let Some(r) = asked.pop() {
+                if !covered_now[r as usize] {
+                    continue;
+                }
+                anchoring.memo.borrow_mut().clear();
+                if self.covers(r, &local_now, &covered_now, &valueless, &placeless, &locs, &anchoring).is_err() {
+                    covered_now[r as usize] = false;
+                    also.extend(rels.rules[r as usize].iter().copied());
+                    also.extend(rels.reading(r).iter().copied());
+                    // The views its rules read are covered through its head no more: asked again.
+                    for &k in &rels.rules[r as usize] {
+                        for a in self.rules[k].reads() {
+                            if covered_now[a.rel().0 as usize] && in_scope[a.rel().0 as usize] {
+                                asked.push(a.rel().0);
+                            }
+                        }
+                    }
+                }
+            }
+            // The covered views of values, in the scope and out of it (where `valueless`, a candidate's, is not asked).
+            let skip: Vec<bool> = (0..n).map(|r| covered_now[r] && local_now[r] && locs[r].is_empty()).collect();
+            let read_as_tests: BTreeSet<String> = filters.iter().cloned().chain((0..n as u32).filter(|&r| skip[r as usize]).map(|r| self.name(r).to_owned())).collect();
+            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &read_as_tests, &locations, &nullable);
             let check = |k: usize| -> Option<(u32, String)> {
                 let head = rels.head[k];
+                if covered_now[head as usize] && local_now[head as usize] {
+                    return None;
+                }
                 // A function of strings is where its input is: its rows are its input strings' values.
                 if rels.functional[head as usize] {
                     let crossed = forms.get(k).lits.iter().find_map(|l| match l {
@@ -573,7 +688,7 @@ impl<'v> Program<'v> {
                     });
                     return crossed.map(|x| (head, format!("reads cross-file {}", self.name(x))));
                 }
-                if forms.get(k).one_document(head, rels, &placeless, &local_now, &filtering, &locs, &nulls) {
+                if forms.get(k).one_document(head, rels, &placeless, &local_now, &filtering, &skip, &locs, &nulls) {
                     debug_assert!(explain(k, &local_now).is_none(), "the numbered check and the text's agree on {}", self.name(head));
                     return None;
                 }
@@ -583,13 +698,26 @@ impl<'v> Program<'v> {
             };
             let failing: Vec<(u32, String)> = match &dirty {
                 None => (0..self.rules.len()).filter(|&k| in_scope[rels.head[k] as usize] && local_now[rels.head[k] as usize]).filter_map(check).collect(),
-                Some(rules) => rules.iter().copied().filter(|&k| local_now[rels.head[k] as usize]).filter_map(check).collect(),
+                Some(rules) => {
+                    let mut rules: Vec<usize> = rules.iter().copied().chain(also).collect();
+                    rules.sort_unstable();
+                    rules.dedup();
+                    rules.into_iter().filter(|&k| local_now[rels.head[k] as usize]).filter_map(check).collect()
+                }
             };
             let mut next: Vec<usize> = Vec::new();
             let mut left = false;
             for (r, why) in failing {
                 if std::mem::replace(&mut local_now[r as usize], false) {
                     next.extend(rels.reading(r));
+                    // The covered views it read lose a reader: asked again.
+                    for &k in &rels.rules[r as usize] {
+                        for a in self.rules[k].reads() {
+                            if covered_now[a.rel().0 as usize] {
+                                next.extend(rels.rules[a.rel().0 as usize].iter().copied());
+                            }
+                        }
+                    }
                     left = true;
                 }
                 causes.entry(self.name(r).to_owned()).or_insert(why);
@@ -602,6 +730,27 @@ impl<'v> Program<'v> {
             }
         }
         let local: BTreeSet<String> = derived().filter(|&r| local_now[r as usize]).map(|r| self.name(r).to_owned()).collect();
+        let covered: BTreeSet<String> = derived().filter(|&r| covered_now[r as usize] && local_now[r as usize]).map(|r| self.name(r).to_owned()).collect();
+        // What placed each: its readers, and theirs through every located reader (one may anchor it, `Anchoring`).
+        let cover_deps: BTreeMap<String, BTreeSet<String>> = derived()
+            .filter(|&r| covered_now[r as usize] && local_now[r as usize])
+            .map(|r| {
+                let (mut deps, mut seen, mut work) = (BTreeSet::new(), BTreeSet::from([r]), vec![r]);
+                while let Some(x) = work.pop() {
+                    for &k in rels.reading(x) {
+                        let h = rels.head[k];
+                        deps.insert(self.name(h).to_owned());
+                        if !locs[h as usize].is_empty() && seen.insert(h) {
+                            work.push(h);
+                        }
+                    }
+                }
+                (self.name(r).to_owned(), deps)
+            })
+            .collect();
+        let skip: Vec<bool> = (0..n).map(|r| covered_now[r] && local_now[r] && locs[r].is_empty()).collect();
+        // A covered view of values is read as a filter is: a part given it reads it so (`part:filter`).
+        let filters: BTreeSet<String> = filters.into_iter().chain(derived().filter(|&r| skip[r as usize]).map(|r| self.name(r).to_owned())).collect();
         // The undeclared crossings (decision 0652): a cross-file relation's rule that reads no cross-file relation and,
         // with every input naming no document taken as placeless, still does not place one document.
         let placeless_or_input: Vec<bool> = (0..n).map(|r| placeless[r] || (!rels.is_derived(r as u32) && rels.base_locs[r].is_empty())).collect();
@@ -633,7 +782,7 @@ impl<'v> Program<'v> {
                     Lit::Cmp | Lit::Same(..) => false,
                 }).collect();
                 let union = matches!(documents.as_slice(), [] | [Lit::Read { neg: false, plain: true, .. }]);
-                if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &locs, &nulls) {
+                if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &skip, &locs, &nulls) {
                     continue;
                 }
                 let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &locations, &nullable).unwrap_or_else(|| "places more than one document".to_owned());
@@ -641,8 +790,123 @@ impl<'v> Program<'v> {
                 break;
             }
         }
+        // The relations one document's in every row (`row_documents`): assumed of each, and given up where a rule does not
+        // place one document through reads of such relations, as `local_now` is but for where a relation is derived. One
+        // with a single location column (a native's too, `sym_at(n, q)`) is so whatever makes it. A covered view of values
+        // is read as a test, as the crossings read it (`skip`).
+        let single = |r: u32| locs[r as usize].len() <= 1;
+        let mut one_row: Vec<bool> = (0..n).map(|r| rels.is_derived(r as u32) && (single(r as u32) || !cross_native(self.name(r as u32)))).collect();
+        let mut round: Vec<u32> = derived().collect();
+        while !round.is_empty() {
+            let leaving: Vec<u32> = round
+                .iter()
+                .copied()
+                .filter(|&r| one_row[r as usize] && !single(r) && !rels.rules[r as usize].iter().all(|&k| forms.get(k).one_document(r, rels, &placeless_or_input, &one_row, &filtering, &skip, &locs, &nulls)))
+                .collect();
+            for &r in &leaving {
+                one_row[r as usize] = false;
+            }
+            round = rels.heads_reading(leaving.into_iter(), |h| one_row[h as usize]);
+        }
+        let row_documents: BTreeMap<String, Vec<usize>> = derived().filter(|&r| one_row[r as usize] && locs[r as usize].len() > 1).map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
         // The same-document columns and the rest: `finish`.
-        self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, ..Default::default() }, self.keys())
+        self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, covered, cover_deps, row_documents, ..Default::default() }, self.keys())
+    }
+
+    /// Whether every reader of `r` covers it (decision 0652). Each reader is a file-local rule reading `r` in a plain
+    /// literal (positive or negated, not aggregated); each of `r`'s location columns it reads is a variable another of
+    /// its positive reads places, or a location column of its head when its head is a located view covered in turn
+    /// (whose readers place it). Each rule of `r` then finds its rows in the reader's (`maps`). Per chunk every atom
+    /// of a rule's instance is the chunk's, so `r` derived per chunk holds at the reader's values exactly where it
+    /// holds over every file: a rule's rows per chunk are among its rows over every file, and a row over every file,
+    /// at the reader's values, has its body in the reader's own document's rows, so the chunk derives it too.
+    fn covers(&self, r: u32, local_now: &[bool], covered: &[bool], valueless: &[bool], placeless: &[bool], locs: &[Vec<usize>], anchoring: &Anchoring<'_>) -> Result<(), String> {
+        let rels = &self.rels;
+        let columns = |x: u32| -> &[usize] { if rels.is_derived(x) { &locs[x as usize] } else { &rels.base_locs[x as usize] } };
+        let own: Vec<RuleRef<'v>> = rels.rules[r as usize].iter().map(|&k| self.rules[k]).collect();
+        for rule in &own {
+            for l in rule.body() {
+                match l.view() {
+                    L::Atom(a) => {
+                        let x = a.rel().0;
+                        if x == r || (rels.is_derived(x) && !local_now[x as usize] && !placeless[x as usize]) {
+                            return Err(format!("own rule reads {}", self.name(x)));
+                        }
+                    }
+                    L::Cmp { .. } | L::Nearest { .. } => {}
+                    _ => return Err("own rule has an aggregate or pattern".into()),
+                }
+            }
+        }
+        let readers = rels.reading(r);
+        if readers.is_empty() {
+            return Err("no readers".into());
+        }
+        for &j in readers {
+            let h = rels.head[j];
+            // A cross-file reader covers a located view too, where its own reads place the view's location columns in
+            // one document: the rows it joins are that document's, which the view per chunk derives. A view of values
+            // maps into its reader's rows, which are one document's only in a file-local rule.
+            let cross_reader = !local_now[h as usize];
+            if h == r || (cross_reader && valueless[r as usize]) {
+                return Err(format!("reader {} not local", self.name(h)));
+            }
+            let reader = self.rules[j];
+            let qc = value_classes(reader);
+            // The classes the reader's other positive reads place, and its head's location columns where its readers
+            // place them.
+            let mut placed: BTreeSet<u32> = BTreeSet::new();
+            // A file-local located view whose rules are each on one document is asked here, once a round: its readers
+            // place its head (a cycle back to a view being asked does not).
+            let anchors = |h: u32| -> bool {
+                if covered[h as usize] {
+                    return true;
+                }
+                if !anchoring.candidate[h as usize] || !local_now[h as usize] || locs[h as usize].is_empty() {
+                    return false;
+                }
+                if let Some(&known) = anchoring.memo.borrow().get(&h) {
+                    return known;
+                }
+                anchoring.memo.borrow_mut().insert(h, false);
+                let got = self.covers(h, local_now, covered, valueless, placeless, locs, anchoring).is_ok();
+                anchoring.memo.borrow_mut().insert(h, got);
+                got
+            };
+            if !cross_reader && !valueless[h as usize] && anchors(h) {
+                let args: Vec<TermRef<'_>> = reader.head().args().collect();
+                placed.extend(locs[h as usize].iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(|s| qc[s.0 as usize]));
+            }
+            for l in reader.body() {
+                if let L::Atom(a) = l.view()
+                    && !a.neg()
+                    && a.rel().0 != r
+                    && !placeless[a.rel().0 as usize]
+                {
+                    let args: Vec<TermRef<'_>> = a.args().collect();
+                    placed.extend(columns(a.rel().0).iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(|s| qc[s.0 as usize]));
+                }
+            }
+            for (at, l) in reader.body().enumerate() {
+                match l.view() {
+                    L::Atom(a) if a.rel().0 == r => {
+                        let args: Vec<TermRef<'_>> = a.args().collect();
+                        if !columns(r).iter().all(|&c| args.get(c).and_then(|t| t.var()).is_some_and(|s| placed.contains(&qc[s.0 as usize]))) {
+                            return Err(format!("reader leaves a location open: {}", self.v.show_rule(reader)));
+                        }
+                        if cross_reader && !one_place(self.v, reader, r, &|x| placeless[x as usize], &columns, columns(r).iter().filter_map(|&c| args.get(c).and_then(|t| t.var()))) {
+                            return Err(format!("cross-file reader places the view in two documents: {}", self.v.show_rule(reader)));
+                        }
+                        if let Some(rule) = own.iter().find(|&&rule| !maps(self.v, rule, reader, at, columns(r), &|x| placeless[x as usize], &columns)) {
+                            return Err(format!("rule {} not found in reader {}", self.v.show_rule(*rule), self.v.show_rule(reader)));
+                        }
+                    }
+                    L::Agg { atom, .. } if atom.rel().0 == r => return Err("aggregated by a reader".into()),
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Why `rule` places more than one document, from its text: `None` where it does
@@ -778,6 +1042,213 @@ impl<'v> Program<'v> {
     }
 }
 
+/// The candidates a split may cover (decision 0652), and the file-local located views `covers` asked as anchoring
+/// readers this round: true where its readers place its head.
+struct Anchoring<'a> {
+    candidate: &'a [bool],
+    memo: std::cell::RefCell<BTreeMap<u32, bool>>,
+}
+
+/// Whether `reader`'s positive located reads, other than of `r`, place `vars` in one document: joined through their
+/// location columns, `a = b`, `@doc` and `nearest` (decision 0652, a cross-file reader of a covered view).
+fn one_place<'c>(v: &Version, reader: RuleRef<'_>, r: u32, placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize], vars: impl Iterator<Item = Slot>) -> bool {
+    let mut doc: Vec<u32> = (0..reader.var_count() as u32).collect();
+    for (a, b) in super::var_equalities_in(v, reader) {
+        join(&mut doc, a.0, b.0);
+    }
+    for l in reader.body() {
+        match l.view() {
+            L::Atom(a) if !a.neg() && a.rel().0 != r && !placeless(a.rel().0) => {
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                let vs: Vec<u32> = columns(a.rel().0).iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(|s| s.0).collect();
+                for w in vs.windows(2) {
+                    join(&mut doc, w[0], w[1]);
+                }
+            }
+            L::Nearest { n, a, .. } => join(&mut doc, n.0, a.0),
+            _ => {}
+        }
+    }
+    let mut roots: Vec<u32> = vars.map(|s| find(&mut doc, s.0)).collect();
+    roots.sort_unstable();
+    roots.dedup();
+    roots.len() <= 1
+}
+
+/// A rule's variables by value: each slot's class under the body's `a = b` between two variables.
+fn value_classes(rule: RuleRef<'_>) -> Vec<u32> {
+    let mut root: Vec<u32> = (0..rule.var_count() as u32).collect();
+    for l in rule.body() {
+        if let L::Cmp { l: TermRef::Var(a), op: CmpOp::Eq, r: TermRef::Var(b) } = l.view() {
+            join(&mut root, a.0, b.0);
+        }
+    }
+    (0..rule.var_count() as u32).map(|s| find(&mut root, s)).collect()
+}
+
+/// Whether `rule`'s rows are found in `reader`'s at its literal `at`, a read of `rule`'s head (decision 0652).
+///
+/// The head's location columns (`anchors`) are in the reader's document (`covers`), and so is each positive read of a
+/// located relation that a location of the rule ties to one of them (through the reads' location columns, `a = b` and
+/// `@doc`): anchored. Every other positive located read maps to one of the reader's positive reads of the same
+/// relation, argument by argument, under a map of the rule's variables to the reader's terms that takes the head to
+/// the read's arguments. A row over every file is then derived from the reader's document alone: its anchored reads
+/// are there already, and the others are the reader's own rows, at the variables they share with the rest of the body
+/// the head fixes. The rule's other literals (comparisons, placeless reads, negated reads, which must be anchored)
+/// read no mapped variable but those the head fixes. A head argument the read leaves `_` fixes nothing. A class of
+/// the rule's variables may stand for several of the reader's terms: its head columns' arguments, equal in any row.
+fn maps<'c>(v: &Version, rule: RuleRef<'_>, reader: RuleRef<'_>, at: usize, anchors: &[usize], placeless: &dyn Fn(u32) -> bool, columns: &dyn Fn(u32) -> &'c [usize]) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum T {
+        Var(u32),
+        Int(i64),
+        Str(u32),
+    }
+    let n = rule.var_count();
+    let (rc, qc) = (value_classes(rule), value_classes(reader));
+    let target = |t: TermRef<'_>| match t {
+        TermRef::Var(s) => Some(T::Var(qc[s.0 as usize])),
+        TermRef::Int(i) => Some(T::Int(i)),
+        TermRef::Str(a) => Some(T::Str(a.0)),
+        _ => None,
+    };
+    let Some(L::Atom(read)) = reader.body().nth(at).map(|l| l.view()) else { return false };
+    let mut bind: Vec<Vec<T>> = vec![Vec::new(); n];
+    let mut anchor_vars: Vec<u32> = Vec::new();
+    for (c, (h, u)) in rule.head().args().zip(read.args()).enumerate() {
+        match h {
+            TermRef::Var(s) => {
+                if let Some(t) = target(u) {
+                    bind[rc[s.0 as usize] as usize].push(t);
+                }
+                if anchors.contains(&c) {
+                    anchor_vars.push(s.0);
+                }
+            }
+            TermRef::Int(_) | TermRef::Str(_) => {}
+            _ => return false,
+        }
+    }
+    let given: Vec<bool> = bind.iter().map(|b| !b.is_empty()).collect();
+    // The rule's documents: its positive located reads' location columns, joined by `a = b`, `@doc` and `nearest`.
+    let mut doc: Vec<u32> = (0..n as u32).collect();
+    for (a, b) in super::var_equalities_in(v, rule) {
+        join(&mut doc, a.0, b.0);
+    }
+    let located_vars = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| -> Vec<u32> {
+        let args: Vec<TermRef<'_>> = a.args().collect();
+        columns(a.rel().0).iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(|s| s.0).collect()
+    };
+    for l in rule.body() {
+        match l.view() {
+            L::Atom(a) if !a.neg() && !placeless(a.rel().0) => {
+                let vs = located_vars(a);
+                for w in vs.windows(2) {
+                    join(&mut doc, w[0], w[1]);
+                }
+            }
+            L::Nearest { n: x, a: y, .. } => join(&mut doc, x.0, y.0),
+            _ => {}
+        }
+    }
+    let anchored_roots: BTreeSet<u32> = anchor_vars.iter().map(|&v| find(&mut doc, v)).collect();
+    let mut anchored = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| located_vars(a).into_iter().any(|v| anchored_roots.contains(&find(&mut doc, v)));
+    fn vars(t: TermRef<'_>, out: &mut Vec<u32>) {
+        match t {
+            TermRef::Var(s) => out.push(s.0),
+            TermRef::Call(_, xs) => xs.for_each(|x| vars(x, out)),
+            _ => {}
+        }
+    }
+    let mut mapped = Vec::new();
+    let mut in_mapped = vec![false; n];
+    let mut others: Vec<Vec<u32>> = Vec::new();
+    for l in rule.body() {
+        let mut vs = Vec::new();
+        match l.view() {
+            L::Atom(a) if !a.neg() && !placeless(a.rel().0) => {
+                if anchored(a) {
+                    a.args().for_each(|t| vars(t, &mut vs));
+                    others.push(vs);
+                    continue;
+                }
+                for t in a.args() {
+                    match t {
+                        TermRef::Var(s) => in_mapped[rc[s.0 as usize] as usize] = true,
+                        TermRef::Wild | TermRef::Int(_) | TermRef::Str(_) => {}
+                        _ => return false,
+                    }
+                }
+                mapped.push(a);
+            }
+            L::Atom(a) => {
+                if a.neg() && !placeless(a.rel().0) && !anchored(a) {
+                    return false;
+                }
+                a.args().for_each(|t| vars(t, &mut vs));
+                others.push(vs);
+            }
+            L::Cmp { l: TermRef::Var(a), op: CmpOp::Eq, r: TermRef::Var(b) } if rc[a.0 as usize] == rc[b.0 as usize] => {}
+            L::Cmp { l, r, .. } => {
+                vars(l, &mut vs);
+                vars(r, &mut vs);
+                others.push(vs);
+            }
+            L::Nearest { .. } => {}
+            _ => return false,
+        }
+    }
+    if others.iter().flatten().any(|&s| {
+        let c = rc[s as usize] as usize;
+        in_mapped[c] && !given[c]
+    }) {
+        return false;
+    }
+    let targets: Vec<_> = reader
+        .body()
+        .enumerate()
+        .filter_map(|(i, l)| match l.view() {
+            L::Atom(a) if !a.neg() && i != at => Some(a),
+            _ => None,
+        })
+        .collect();
+    // Backtracking over the mapped reads, each to a target of its relation; bounded, a failure past the bound.
+    fn go(k: usize, mapped: &[crate::code_rule_dsl::logic::program_image::AtomRef<'_>], targets: &[crate::code_rule_dsl::logic::program_image::AtomRef<'_>], bind: &mut Vec<Vec<T>>, rc: &[u32], target: &dyn Fn(TermRef<'_>) -> Option<T>, steps: &mut usize) -> bool {
+        let Some(a) = mapped.get(k) else { return true };
+        for b in targets.iter().filter(|b| b.rel().0 == a.rel().0) {
+            *steps += 1;
+            if *steps > 4096 {
+                return false;
+            }
+            let saved = bind.clone();
+            let fits = a.args().zip(b.args()).all(|(x, y)| match x {
+                TermRef::Wild => true,
+                TermRef::Int(i) => target(y) == Some(T::Int(i)),
+                TermRef::Str(s) => target(y) == Some(T::Str(s.0)),
+                TermRef::Var(s) => {
+                    let c = rc[s.0 as usize] as usize;
+                    match target(y) {
+                        None => false,
+                        Some(u) if bind[c].is_empty() => {
+                            bind[c].push(u);
+                            true
+                        }
+                        Some(u) => bind[c].contains(&u),
+                    }
+                }
+                _ => false,
+            });
+            if fits && go(k + 1, mapped, targets, bind, rc, target, steps) {
+                return true;
+            }
+            *bind = saved;
+        }
+        false
+    }
+    let mut steps = 0usize;
+    go(0, &mapped, &targets, &mut bind, &rc, &target, &mut steps)
+}
+
 /// What passes between a split's parts (`assemble`), read from the version, `local` the file-local relations: the
 /// exports, the base relations the cross-file part reads (and those it decodes), and the file-local relations it
 /// derives itself from a stored input (`projected`). Names alone: no part is made.
@@ -841,6 +1312,7 @@ struct Rels<'v> {
     text: Vec<Option<&'static [usize]>>,
     base_locs: Vec<Vec<usize>>,
     candidate: Vec<bool>,
+    output: Vec<bool>,
     /// A derived relation's rules, by index in the program's order.
     rules: Vec<Vec<usize>>,
     /// The rules reading each relation, by index, each once, in order.
@@ -892,6 +1364,7 @@ impl<'v> Rels<'v> {
             text: (0..n).map(|r| if derived[r] || read[r] { crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| *t == name(r)).map(|(_, c)| *c) } else { None }).collect(),
             base_locs: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { Vec::new() }).collect(),
             candidate: (0..n).map(|r| derived[r] && f.native(name(r)).is_none() && !f.lattice(name(r)) && !f.is_input(name(r))).collect(),
+            output: (0..n).map(|r| derived[r] && f.is_output(name(r))).collect(),
             rules: by_head,
             reading,
             head,
@@ -901,7 +1374,7 @@ impl<'v> Rels<'v> {
     }
 
     fn empty() -> Rels<'v> {
-        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), functional: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
+        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), placeless_input: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), functional: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), output: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
     }
 
     fn is_derived(&self, r: u32) -> bool {
@@ -1189,7 +1662,7 @@ impl Form {
         reads_only_text && rule.head().args().all(|t| self.var(t).is_some_and(|v| strings.has(v)))
     }
 
-    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], locs: &[Vec<usize>], nulls: &[Vec<usize>]) -> bool {
+    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], covered: &[bool], locs: &[Vec<usize>], nulls: &[Vec<usize>]) -> bool {
         let head_filter = filters[head as usize];
         // A nullable column joins its row's group only where a location column of this rule places its variable
         // (decision 0649): then it is no -1.
@@ -1225,7 +1698,7 @@ impl Form {
                     let r = *rel;
                     let derived = rels.is_derived(r);
                     // A function of strings where it is per-file is read as a test is.
-                    if placeless[r as usize] || (derived && filters[r as usize]) || head_filter || (rels.functional[r as usize] && local[r as usize]) {
+                    if placeless[r as usize] || (derived && filters[r as usize]) || covered[r as usize] || head_filter || (rels.functional[r as usize] && local[r as usize]) {
                         continue;
                     }
                     if derived && !local[r as usize] {

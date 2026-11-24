@@ -546,7 +546,7 @@ fn args_at<'v>(r: RuleRef<'v>, a: AtomRef<'v>, cols: Option<&[usize]>) -> Vec<T<
 
 /// A demand's rule, of a read in rule `r` of `v`: head `rel(head)`, its body `parts` of `r` (`Part::Guard` written
 /// as `guard`), in order.
-pub fn write_demand(v: &Version, r: RuleRef<'_>, b: &mut Builder<'_>, rel: &str, head: &[T<'_>], guard: (&str, &[T<'_>]), parts: &[Part]) -> Result<(), String> {
+pub fn write_demand(v: &Version, r: RuleRef<'_>, b: &mut Builder<'_>, rel: &str, head: &[T<'_>], guard: (&str, &[T<'_>]), parts: &[Part], ties: &[(T<'_>, T<'_>)]) -> Result<(), String> {
     let body: Vec<_> = r.body().collect();
     let mut rb = b.rule().head(rel, head);
     for part in parts {
@@ -554,6 +554,10 @@ pub fn write_demand(v: &Version, r: RuleRef<'_>, b: &mut Builder<'_>, rel: &str,
             Part::Guard => rb.atom(guard.0, guard.1),
             Part::Lit(i) => rb.lit(v, r, body[i]),
         };
+    }
+    // `@doc(x) = @doc(y)`: the two are of one document (`upstream::same_document_ties`).
+    for (x, y) in ties {
+        rb = rb.cmp(T::Call("doc", vec![x.clone()]), CmpOp::Eq, T::Call("doc", vec![y.clone()]));
     }
     rb.finish().map(drop)
 }
@@ -702,7 +706,7 @@ fn rewrite_products(program: &mut Program<'_>, mut demanded: BTreeSet<String>) -
                     let rel = format!("{PREFIX}{}", v.rel_name(a.rel()));
                     let guard_rel = format!("{PREFIX}{}", v.rel_name(r.head().rel()));
                     let (head, guard) = (args_at(r, a, None), args_at(r, r.head(), None));
-                    write_demand(v, r, b, &rel, &head, (&guard_rel, &guard), parts)?;
+                    write_demand(v, r, b, &rel, &head, (&guard_rel, &guard), parts, &[])?;
                 }
                 for (rel, rows) in &facts {
                     b.fields().set_facts(rel, rows);

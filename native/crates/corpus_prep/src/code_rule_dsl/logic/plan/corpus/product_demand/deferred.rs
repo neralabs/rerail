@@ -173,6 +173,8 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     let mut plans = Plans::default();
     // The join relations by the readers they could be driven by, read off the program before any rewrite (a guard
     // inserted moves the places).
+    // Each relation one document's in every row, with its location columns: a request keeps their tie.
+    let mut same_doc: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let (pairs, mut guarded, mut broad, mut open_readers, recursive) = {
         let v = p.v();
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
@@ -279,6 +281,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
         if !pairs.is_empty() {
             let current = p.made.clone().unwrap_or_else(|| Arc::clone(input));
             let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&current)?;
+            same_doc = split.row_documents.clone();
             pairs.retain(|(rel, _, _)| {
                 let cross = split.local.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.local.contains(p.head_rel(rules[i])));
                 if cross {
@@ -291,7 +294,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     };
     // The requests installed, once every read is classified: in rounds, each one derivation of the program.
     let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
-    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
     let mut no_inline = Vec::new();
     for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
         if !installed {

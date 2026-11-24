@@ -590,7 +590,35 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         out.extend(prog.uses.iter().map(|u| format!("#include \"{u}.rerail\"")));
         out.push(String::new());
     }
-    let mut em = Emit { px, prog: &prog, inputs: &shared.inputs, declared: Set::new(), out };
+    // A relation of the rule's own (a lowercase helper) whose rule reads a guest capture by text (`host_reads`) and
+    // binds it by nothing else (`node(_, K, …)`: any node) joins any file's node of that text with its own: cross-file
+    // by what it says, declared so (decision 0652). A capture the rule binds in its own document (`K = c`) is not.
+    let cross: Set = if prog.host_reads.is_empty() {
+        Set::new()
+    } else {
+        let free = |lits: &[String]| {
+            let body = lits.join(", ");
+            prog.host_reads.iter().any(|k| {
+                let k = fancy_regex::escape(k).into_owned();
+                let by_text = re(&format!(r"(?<![\w$@])(?:text|value)\({k}\b"));
+                let any = re(&format!(r"(?<![\w$@])(?<!node\(_, )(?<!text\()(?<!value\(){k}\b"));
+                search(&by_text, &body) && !search(&any, &body)
+            })
+        };
+        let mut heads: Vec<(&str, &[String])> = Vec::new();
+        for item in &body {
+            if let Item::Rule(e) = item {
+                heads.push((&prog.arena[*e].head, &prog.arena[*e].lits));
+            }
+        }
+        for r in &helper_rules {
+            if let HR::Rule(h, lits) = r {
+                heads.push((h, lits));
+            }
+        }
+        heads.into_iter().filter(|(h, lits)| name_of(h).starts_with(char::is_lowercase) && free(lits)).map(|(h, _)| name_of(h).to_owned()).collect()
+    };
+    let mut em = Emit { px, prog: &prog, inputs: &shared.inputs, declared: Set::new(), out, cross };
     for item in &body {
         match item {
             Item::Rule(e) => {
@@ -672,6 +700,8 @@ struct Emit<'a> {
     inputs: &'a BTreeMap<String, Set>,
     declared: Set,
     out: Vec<String>,
+    /// The relations declared `cross_file`: a rule of each reads a guest capture by text.
+    cross: Set,
 }
 
 /// The metavariables the utils `lits` call outside a negation or an aggregate bind, through the utils they call so
@@ -709,7 +739,14 @@ impl Emit<'_> {
                 self.out.push(String::new());
             }
             self.out.extend(self.prog.notes.get(name).cloned().unwrap_or_default());
-            self.out.push(self.prog.decls[name].clone());
+            let mut decl = self.prog.decls[name].clone();
+            if self.cross.contains(name)
+                && let Some(end) = decl.find(')')
+            {
+                self.out.push("// Cross-file: it reads a guest capture by text, any file's (decision 0652).".to_owned());
+                decl.insert_str(end + 1, " cross_file");
+            }
+            self.out.push(decl);
             self.declared.insert(name.to_owned());
         }
     }
@@ -814,6 +851,14 @@ impl Emit<'_> {
                 if !done {
                     rest.push(x.clone());
                 }
+            }
+            // A capture no literal binds (a pattern's `$$$X`) asks nothing of a negated read: `!util(n, X)` is "no
+            // util row at n", whatever it would bind X to, not "none with X empty" (RUF016's fallback, where no
+            // span of the index is found).
+            for x in &rest {
+                let negated = re(&format!(r"![a-z_]\w*\([^()]*(?<![\w$]){x}\b[^()]*\)"));
+                let arg = re(&format!(r"(?<![\w$]){x}\b"));
+                lits = lits.iter().map(|l| sub(&negated, l, |m| sub(&arg, g(m, 0), |_| "_".to_owned()))).collect();
             }
             lits.extend(rest.iter().map(|x| format!("unset({x})")));
             text = wrap(h, &lits, edits);

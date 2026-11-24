@@ -7209,8 +7209,26 @@ fn run_observed_within(
         corpus_batch = sources.iter().find_map(|(_, s)| s.python_batch());
         sources.into_iter().filter(|(r, _)| stored.iter().any(|(s, _)| s == r)).collect()
     };
-    // A base relation's digest: its documents', under its name (decision 0458).
-    let base_digest = |rel: &str| corpus_digest ^ super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+    // A base relation's digest: its documents', under its name (decision 0458), and for a relation a program numbers
+    // (`strtest_<k>`, `matchall_<k>`, `matchgroup_<k>`, an `ast` matcher's), under what it is: two programs' `strtest_0`
+    // are two tests, and one's kept count is not the other's (a phase's `@rx(".+__.+")` counted none, and the policy's
+    // `@equals("==")` would be counted as none).
+    let numbered = |rel: &str| -> Option<String> {
+        let k = |p: &str| rel.strip_prefix(p).and_then(|k| k.parse::<usize>().ok());
+        if let Some(k) = k(crate::code_rule_dsl::logic::strings::RELATION) {
+            return Some(vocabulary.specs.get(k).map_or_else(String::new, |s| format!("{s:?}")));
+        }
+        if let Some(k) = k(crate::code_rule_dsl::logic::strings::MATCHES).or_else(|| k(crate::code_rule_dsl::logic::strings::GROUPS)) {
+            return Some(vocabulary.matches.get(k).map_or_else(String::new, |r| r.as_str().to_owned()));
+        }
+        rel.starts_with(matchers::PREFIX).then(|| matchers.iter().find(|(m, _, _)| m == rel).map_or_else(String::new, |m| format!("{m:?}")))
+    };
+    // Its name's part (and its definition's), which a table's digest is keyed by too (`table_digest ^ rel_key`).
+    let rel_key = |rel: &str| {
+        let named = super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+        named ^ numbered(rel).map_or(0, |d| super::row_digest(&d.bytes().map(i64::from).collect::<Vec<_>>()).rotate_left(17))
+    };
+    let base_digest = |rel: &str| corpus_digest ^ rel_key(rel);
     // Decision 0458 step 3: a base relation's change is the changed files' documents, compared one document at a
     // time: its `Minus` the rows of their old documents (made from the old sources and tapes read before the first
     // wave, `old_base`) that their new ones do not hold, its `Plus` the reverse, each picked where it lies in its version
@@ -7327,7 +7345,7 @@ fn run_observed_within(
     // and fails a relation whose made rows are not them.
     if let Some(batch) = &corpus_batch {
         let (table_digest, kept) = &base_stats_kept;
-        let tag = |rel: &str| super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+        let tag = &rel_key;
         let totals: HashMap<String, usize> = stored
             .iter()
             .filter_map(|(rel, _)| {
@@ -7716,7 +7734,7 @@ fn run_observed_within(
         // off the corpus batch, read where its rows lie. Counted at the columns its rules read (`held`).
         let (table_digest, kept_stats) = &mut base_stats_kept;
         let table_digest = *table_digest;
-        let tag = |rel: &str| super::row_digest(&rel.bytes().map(i64::from).collect::<Vec<_>>());
+        let tag = &rel_key;
         type Stat = (String, i64, i64, i64, i64);
         // One relation's statistics, of its kept ones (`kept`, taken from the table's) or counted: what they are, how
         // they were had, and the counts to keep beside the table when counted or patched. Reads only what it is given

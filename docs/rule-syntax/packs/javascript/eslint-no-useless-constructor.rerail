@@ -40,17 +40,16 @@ derived(m) :- child(b, m, _), kind(b, "class_body"), field(c, "body", b), child(
 stmts(b, k) :- kind(b, "statement_block"), k = count : { child(b, s, _), !not_stmt(s) }.
 .decl odd_param(m: node)  // a parameter that is not a name or a rest: `a = 1`, `{ a }`, `[a]`
 odd_param(m) :- fn_param(m, p, _), !kind(p, "identifier"), !kind(p, "rest_pattern").
-// passes_on(m, c): super's arguments are m's parameters in order (`...xs` for `...xs`), or `...arguments`. c is a call
-// in m, as its reader's is: without it each rule paired every constructor with every call of the corpus (decision 0652).
+// passes_on(m, c): super's arguments are m's parameters in order (`...xs` for `...xs`), or `...arguments`.
 .decl passes_on(m: node, c: node)
-passes_on(m, c) :- ctor(m), within(c, m), call_arg(c, a, 0), !call_arg(c, _, 1), kind(a, "spread_element"), child(a, x, 0),
+passes_on(m, c) :- ctor(m), call_arg(c, a, 0), !call_arg(c, _, 1), kind(a, "spread_element"), child(a, x, 0),
     kind(x, "identifier"), text(x, "arguments").
-passes_on(m, c) :- ctor(m), within(c, m), kind(c, "call_expression"), field(c, "function", f), kind(f, "super"),
+passes_on(m, c) :- ctor(m), kind(c, "call_expression"), field(c, "function", f), kind(f, "super"),
     k = count : { fn_param(m, _, _) }, k = count : { call_arg(c, _, _) },
     count : { fn_param(m, p, i), !same_arg(p, c, i) } = 0.
 .decl same_arg(p: node, c: node, i: number)
-same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), within(c, m), call_arg(c, a, i), kind(p, "identifier"), kind(a, "identifier"),
+same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), call_arg(c, a, i), kind(p, "identifier"), kind(a, "identifier"),
     text(p, x), text(a, x).
-same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), within(c, m), call_arg(c, a, i), kind(p, "rest_pattern"),
+same_arg(p, c, i) :- fn_param(m, p, i), ctor(m), call_arg(c, a, i), kind(p, "rest_pattern"),
     kind(a, "spread_element"), child(p, x, 0), kind(x, "identifier"), text(x, n), child(a, y, 0),
     kind(y, "identifier"), text(y, n).

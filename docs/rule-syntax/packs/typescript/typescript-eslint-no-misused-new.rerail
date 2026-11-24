@@ -25,11 +25,9 @@ no_misused_new(m, "Remove this constructor method from the interface; declare a 
 
 .decl member_name(m: node, x: symbol)  // m's key is the plain identifier x (not a string or computed key)
 member_name(m, x) :- field(m, "name", k), kind(k, "property_identifier"), text(k, x).
-// returns_own(c, t, x): annotation t, in c, is `: x` or `: x<…>`, where x is the name of class or interface c (decision
-// 0652: without `within`, every annotation of the corpus met every type of its name).
+// returns_own(c, t, x): annotation t is `: x` or `: x<…>`, where x is the name of class or interface c.
 .decl returns_own(c: node, t: node, x: symbol)
-returns_own(c, t, x) :- kind(t, "type_annotation"), within(t, c), child(t, r, 0), own_name(r, x), field(c, "name", n),
-    text(n, x).
+returns_own(c, t, x) :- kind(t, "type_annotation"), child(t, r, 0), own_name(r, x), field(c, "name", n), text(n, x).
 .decl own_name(r: node, x: symbol)
 own_name(r, x) :- kind(r, "type_identifier"), text(r, x).
 own_name(r, x) :- kind(r, "generic_type"), field(r, "name", n), kind(n, "type_identifier"), text(n, x).

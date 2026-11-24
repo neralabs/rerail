@@ -693,7 +693,11 @@ impl Given {
             })
             .collect();
         let inputs = F::input_names(p).into_iter().filter(|r| !helpers.contains(r)).collect();
-        Given { decls, inputs, natives: F::natives(p), kindsets: F::kindsets(p), lattice: F::lattice(p), tapes: F::tapes(p), qualifiers: F::qualifiers(p) }
+        // A helper is the module's own, numbered by its walk: an includer's helper of the same name is another, whose
+        // qualifiers `unseed` would take for the include's (`misc-seen`'s `rr_cover4` lost its `no_inline` to
+        // `version`'s).
+        let qualifiers = F::qualifiers(p).into_iter().filter(|(r, _)| !helpers.contains(r)).collect();
+        Given { decls, inputs, natives: F::natives(p), kindsets: F::kindsets(p), lattice: F::lattice(p), tapes: F::tapes(p), qualifiers }
     }
 }
 

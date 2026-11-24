@@ -4035,6 +4035,27 @@ impl Batch {
             None => self.atoms.intern_all(&[d.code_name(code)]).ok().and_then(|v| v.first().copied()).map_or(-1, i64::from),
         }
     }
+    /// The strings `op`'s `s` column holds in this batch's made documents, and their atoms (`op_atom`): each
+    /// anonymous child's kind name (`Item::Op`, as the view reads it). They are atoms of the tag, not strings a
+    /// document's walk interns, so a text test over `op` (`op(n, o), o = "=="`, decision 0037) tests them from here:
+    /// the batch's strings alone held no operator.
+    pub(super) fn op_vocabulary(&self) -> (Vec<String>, Vec<u32>) {
+        let mut codes: BTreeSet<(u8, u16)> = BTreeSet::new();
+        for i in (0..self.docs.len()).filter(|&i| self.docs.is_made(i)) {
+            let p = &self.docs[i];
+            // A document of no grammar (held by its path alone) has no tokens.
+            let Some(d) = self.dialects.get(p.tag) else { continue };
+            codes.extend(p.ranks().iter(Item::Op).map(|(_, x)| (p.tag, d.code(&p.facts, x))));
+        }
+        let (mut strings, mut atoms) = (Vec::new(), Vec::new());
+        for (tag, code) in codes {
+            if let (Ok(atom), Some(d)) = (u32::try_from(self.op_atom(tag, code)), self.dialects.get(tag)) {
+                strings.push(d.code_name(code).to_owned());
+                atoms.push(atom);
+            }
+        }
+        (strings, atoms)
+    }
     /// `row`, the node's tape node `x` known (read only by the `field` view: its rows are the fielded nodes).
     fn row_of_node(&self, view: View, doc: usize, local: u32, x: u32) -> Option<usize> {
         let within = match view {

@@ -256,6 +256,44 @@ a(c) :- marked(c), exc_call(c, _).
         }
     }
 
+    /// A request keeps the document its dropped read ties (decision 0652): `pair(a, f)` holds one call's two nodes in
+    /// every row, and its reader joins `f`'s path with `a`'s text, a value. Asked for by `a` alone, the request drops
+    /// `pair`, and with it the tie: every name met every path of the corpus (UP008's `super_first`). Given `pair`'s
+    /// columns as one document's, the request says `@doc(a) = @doc(f)`, and the split places it in the chunks.
+    #[test]
+    fn a_request_keeps_the_document_its_dropped_read_ties() {
+        let v = parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .decl child(p: node, c: node, i: number)
+            .decl text(n: node, s: symbol)
+            .input node, child, text
+            .decl pair(a: node, f: node)
+            pair(a, f) :- node(_, c, "call", _, _), child(c, a, 0), child(c, f, 1).
+            .decl path(f: node, p: symbol)
+            path(f, p) :- node(_, f, "class", _, _), text(f, p).
+            .decl named(a: node, f: node)
+            named(a, f) :- pair(a, f), path(f, p), text(a, p).
+            .output named
+        "#,
+        );
+        let first: &[usize] = &[0];
+        let requests = vec![("pair".to_owned(), first)];
+        let every = |_: &str, _: &[usize], _: &Version, _: &[upstream::Proof]| true;
+        let request = format!("{DEFERRED_PAIRS}pair");
+        let split = |p: &Program<'_>| crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(p.made.as_ref().unwrap()).unwrap();
+        let mut tied = Program::of(&v);
+        let same_doc = BTreeMap::from([("pair".to_owned(), vec![0, 1])]);
+        assert_eq!(upstream::install_requests(&mut tied, &requests, DEFERRED_PAIRS, &same_doc, &every).unwrap(), [true]);
+        let rules = tied.shown(Some(&request));
+        assert!(!rules.is_empty() && rules.iter().all(|r| r.contains("@doc($a) = @doc($f)")), "{rules:#?}");
+        assert!(split(&tied).local.contains(&request), "{:?}", split(&tied).causes.get(&request));
+        let mut open = Program::of(&v);
+        assert_eq!(upstream::install_requests(&mut open, &requests, DEFERRED_PAIRS, &Default::default(), &every).unwrap(), [true]);
+        assert!(!split(&open).local.contains(&request), "without the tie the request meets every file's paths");
+        assert_eq!(execute(tied.made.as_ref().unwrap(), "deferred-tied"), execute(&v, "deferred-tied-control"));
+    }
+
     #[test]
     fn requests_installed_in_rounds_are_those_installed_one_at_a_time() {
         // `wide`'s one reader is `awide`'s producer, which names `wide`'s key only once `awide`'s install guards it: so
@@ -278,10 +316,10 @@ a(c) :- marked(c), exc_call(c, _).
         let requests: Vec<(String, &[usize])> = ["awide", "wide", "wide2"].iter().map(|r| (r.to_string(), both)).collect();
         let every = |_: &str, _: &[usize], _: &Version, _: &[upstream::Proof]| true;
         let mut rounds = Program::of(&v);
-        let installed = upstream::install_requests(&mut rounds, &requests, DEFERRED_PAIRS, &every).unwrap();
+        let installed = upstream::install_requests(&mut rounds, &requests, DEFERRED_PAIRS, &Default::default(), &every).unwrap();
         let mut alone = Program::of(&v);
         let one_at_a_time: Vec<bool> =
-            requests.iter().flat_map(|r| upstream::install_requests(&mut alone, std::slice::from_ref(r), DEFERRED_PAIRS, &every).unwrap()).collect();
+            requests.iter().flat_map(|r| upstream::install_requests(&mut alone, std::slice::from_ref(r), DEFERRED_PAIRS, &Default::default(), &every).unwrap()).collect();
         assert_eq!(installed, one_at_a_time, "{:#?}", alone.shown(None));
         assert_eq!(installed, [true, true, true]);
         assert_eq!(rounds.shown(None), alone.shown(None));

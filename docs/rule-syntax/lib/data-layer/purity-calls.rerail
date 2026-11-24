@@ -109,9 +109,7 @@ pc_imod(f, x, q) :- pc_rec(f), docof(f, d), modnode(d, m), pc_imp(m, x, q, "mod"
 pc_ref(f, c, e) :- pc_rec(f), field(f, "body", b), within_stop(c, b, pc_fnk), kind(c, "call"), field(c, "function", e0),
     unparen(e0, e), !pc_shadowed(f, e).
 .decl pc_shadowed(f: node, e: node)
-// e of f's own file: its reader asks of the calls in f's body (decision 0652).
-pc_shadowed(f, e) :- pc_rec(f), docof(f, d), pc_root(e, x), docof(e, d), (pc_local(f, x) ; pc_param(f, x)), x != "self",
-    x != "cls".
+pc_shadowed(f, e) :- pc_rec(f), pc_root(e, x), (pc_local(f, x) ; pc_param(f, x)), x != "self", x != "cls".
 // _resolve_fqname: the record whose "module.qualname" is the longest dotted prefix of s (s itself included).
 .decl pc_want(s: symbol)
 .decl pc_pre(s: symbol, p: symbol)
@@ -140,8 +138,7 @@ pc_base_s(m, cq, i, cat(q, ".", a)) :- pc_base_e(m, cq, d, i, e), attr_of(e, o, 
     modnode(d, mn), pc_imp(mn, x, q, "mod").
 pc_base_s(m, cq, i, s) :- pc_base_e(m, cq, d, i, e), attr_of(e, o, _), modnode(d, mn), text(e, s), !pc_modattr(mn, o).
 .decl pc_modattr(mn: node, o: node)
-// o and mn of one module: its reader asks of its own module's identifiers (decision 0652).
-pc_modattr(mn, o) :- kind(o, "identifier"), text(o, x), docof(o, d), modnode(d, mn), pc_imp(mn, x, _, "mod").
+pc_modattr(mn, o) :- kind(o, "identifier"), text(o, x), pc_imp(mn, x, _, "mod").
 .decl pc_base(m: symbol, cq: symbol, i: number, bm: symbol, bq: symbol)
 pc_base(m, cq, i, bm, bq) :- pc_base_s(m, cq, i, s), split_dot(s, bm, bq).
 .decl pc_mq(m: symbol, cq: symbol, x: symbol)

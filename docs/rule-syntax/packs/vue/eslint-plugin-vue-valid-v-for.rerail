@@ -53,8 +53,7 @@ checked(a, e) :- vfor_dir(e, a).
 checked(a, c) :- checked(a, e), vel_name(e, "template"), !vhas_dir(e, "bind", "key"), vel_parent(c, e),
     !child_for_uses(a, c).
 .decl child_for_uses(a: node, c: node)
-// c is in e, as its reader's child is: without it, every v-for of the corpus naming x (decision 0652).
-child_for_uses(a, c) :- vfor_dir(e, a), vfor_dir(c, b), within(c, e), tref(_, x, b), tvar(e, x, _, "v-for").
+child_for_uses(a, c) :- vfor_dir(e, a), vfor_dir(c, b), tref(_, x, b), tvar(e, x, _, "v-for").
 .decl key_uses(k: node, a: node)
 key_uses(k, a) :- checked(a, e), vdir(e, k, "bind", "key"), tref(_, x, k), vfor_dir(f, a), tvar(f, x, _, "v-for").
 

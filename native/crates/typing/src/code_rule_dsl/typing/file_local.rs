@@ -651,9 +651,9 @@ fn lowering_source(v: &crate::code_rule_dsl::logic::program_image::Version, rel:
             || hashed(r)
             || r.split_once('_').is_some_and(|(p, rest)| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit()) && (rest.starts_with("rr_") || hashed(rest)))
     };
-    // A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), copies of copies too: that relation, its
-    // rows over the guest's documents.
-    if made(rel) && let Some(rest) = rel.split_once("rr_in_").map(|(_, r)| r) {
+    // A guest's copy of a relation (`rr_in_<label>_<rel>`, `hide.rs`), or a context's (`rr_pass_<context>_<rel>`,
+    // decision 0597), copies of copies too: that relation, its rows over the guest's or the context's documents.
+    if made(rel) && let Some(rest) = rel.split_once("rr_in_").or_else(|| rel.split_once("rr_pass_")).map(|(_, r)| r) {
         let copied = rest.match_indices('_').map(|(i, _)| &rest[i + 1..]).find(|r| v.rel(r).is_some() && !made(r));
         if let Some(r) = copied {
             return Some(r.to_owned());

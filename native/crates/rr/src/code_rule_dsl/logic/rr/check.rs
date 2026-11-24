@@ -435,8 +435,20 @@ pub fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
 pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
     let mut declared = BTreeSet::new();
     for s in statements {
-        if let Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) = s.what() {
-            declared.insert(name.to_owned());
+        match s.what() {
+            Some(S::Decl(name) | S::Edit(name) | S::Violation(name)) => {
+                declared.insert(name.to_owned());
+            }
+            // `.from PASS rel [as NAME], … [for PASS]` (decision 0597): each name is declared by the pass it reads.
+            Some(S::Setting { key: "from", text }) => {
+                let words: Vec<&str> = text.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).collect();
+                let mut names = words.iter().skip(1).take_while(|w| **w != "for").peekable();
+                while let Some(rel) = names.next() {
+                    let local = if names.peek() == Some(&&"as") { names.nth(1).unwrap_or(rel) } else { rel };
+                    declared.insert((*local).to_owned());
+                }
+            }
+            _ => {}
         }
     }
     // The import closure's relations (`rr_cx_*`) are the engine's: a run adds `components.rerail` to a program that reads
