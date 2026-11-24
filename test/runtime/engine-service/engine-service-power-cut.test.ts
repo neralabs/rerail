@@ -77,7 +77,7 @@ async function records(): Promise<{ root: string; databasePath: string; checkout
 async function nextDaemon(root: string, databasePath: string, now: () => number = Date.now): Promise<EngineService> {
   const started = await startEngineService({
     socketPath: socketIn(root), storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: IDLE_MS,
-    idleRuntimeMs: 0, createAuditor: quietAuditor, now,
+    needsRoom: () => true, createAuditor: quietAuditor, now,
   });
   services.push(started);
   return started;

@@ -1,1 +1,0 @@
-Rerail's engine now comes in a package of its own for each system and processor, six in all, named `@neralabs/rerail-engine-*`: optional dependencies of `@neralabs/rerail`. From the update after this one, `rerail update` downloads only your computer's engine: about 50 MB instead of 240 MB. A registry mirror or allowlist must carry the six engine packages too.

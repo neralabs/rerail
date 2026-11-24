@@ -39,7 +39,7 @@ const recordingAuditor = ({ workspaceRoot, audits }: { workspaceRoot: string; au
 });
 let offset = 0;
 const service = await startEngineService({
-  socketPath, storageRoot, databasePath, embedder: testEmbedder, idleSessionMs: Number(idleMs), idleRuntimeMs: 0,
+  socketPath, storageRoot, databasePath, embedder: testEmbedder, idleSessionMs: Number(idleMs), needsRoom: () => true,
   now: () => Date.now() + offset, createAuditor: recorded === "audits" ? recordingAuditor : quietAuditor,
 });
 process.on("message", (message: { offset?: number; sweep?: boolean }) => {

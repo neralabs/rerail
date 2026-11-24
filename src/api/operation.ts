@@ -14,6 +14,7 @@ import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 import type { MergeAssistService } from "../runtime/merge-assist/service.js";
+import type { ChangeFeed } from "./change-feed.js";
 import { InvalidCursorError } from "../engine/storage/page-cursor.js";
 import { experimentEnabled, experimentOffMessage, experimentVariable, type ExperimentalFeature } from "../engine/experimental-features.js";
 
@@ -38,13 +39,18 @@ export interface RerailApiStores {
   dataVersion(): string;
   /** {@link dataVersion} once the database exists; undefined before, without creating it. */
   historyVersion(): string | undefined;
-  /** Count a write made through these stores, for {@link dataVersion}. */
+  /** Count a write made through these stores, for {@link dataVersion}; it is a `data` notice of {@link changes} too. */
   markChanged(): void;
   /**
    * Puts every commit made so far on the disk (`syncHistoryLog`), off the caller's thread: the store's commits do not
    * wait for the disk, and a change an operation made must be there before its caller hears it succeeded.
    */
   syncToDisk(): Promise<void>;
+  /**
+   * When what the stores answer may have changed, for the dashboard's change stream; stores without one serve no
+   * stream, and the dashboard then reads every 5 s, as it did before the stream.
+   */
+  changes?(): ChangeFeed;
   /**
    * Whether Rerail is on in the checkout a workspace is in, over one held connection with cached identities; with
    * `spelling`, the folder as a Windows host spelt it, also what Rerail 0.1.4 saved under it.

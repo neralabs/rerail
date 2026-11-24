@@ -1,1 +1,0 @@
-Rule packs can ship rules written in `.rerail` (`rules/<id>.rerail` in `pack.json`): Rerail reads each one's mode, description, scope and codes from the file, shows its text in `rerail rules show` and the API, and leaves out a pack whose `.rerail` rule the engine refuses. Such a rule takes no options, and cannot be on Block (internal testing) yet.

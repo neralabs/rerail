@@ -98,7 +98,7 @@ In a terminal: rerail status · rerail version · rerail update · rerail daemon
 
 - **Not started:** says so and points at `/rerail-start`.
 - **No daemon:** says `✕ Rerail is not running.` and how to start it.
-- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it. `rerail session` still asks the daemon once more for the dashboard link, so `--open` opens the page if the daemon answers then; in OMP and Pi, `/rerail` does not wait on it a second time.
+- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it. It is not asked a second time, so this comes after those 2 seconds; only `rerail session --open` asks it once more for the dashboard link, and opens the page if the daemon answers then.
 - **Cursor:** shows the repository's rule count and a link to its rules.
 
 ## Steer
@@ -190,7 +190,7 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 <details>
 <summary>Wait times</summary>
 
-- **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds.
+- **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds. At turn end they wait for all of the turn's checks while the hook waits, up to 30 seconds; once the hook gives up, the session's next prompt or tool call no longer waits behind the turn end, and the first prompt, tool call or turn end after the checks finish carries their steers.
 - **OMP and Pi** wait up to 10 seconds at a tool result and at turn end, so a shell command that wrote thousands of files does not stall the agent for minutes.
 
 Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule. A hook stops waiting for a Rerail too busy to answer it within 30 seconds; a steer its answer would have carried goes to the session's next hook.
@@ -220,6 +220,7 @@ Rerail checks shell-written files when the command finishes. Edits made while a 
 <summary>Shell edits and indexing</summary>
 
 - A shell result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote. Later finds are steered at a later step, and the dashboard timeline says rules had not yet seen shell edits there.
+- A shell result reads the files Rerail's engine watch reported changed since the last look; a turn end reads every file. On Linux and Windows, three kinds of write get no change report: a write through a hard link whose other name is outside the folder, made after Rerail last read every file; a write through a memory map the program still holds (Linux); and a write that keeps the file's size by a program that still holds it open (Windows). Rerail finds them at the first shell result 10 minutes after it last read every file, or at the turn end if that comes first. Where the folder can't be watched, every shell result reads every file.
 - A turn end whose walks of the session's folder and the repository's other worktrees could not check part of them (a folder or file Rerail cannot read; a file over 1,000,000 bytes that a rule would read; a source or text file holding binary data, such as UTF-16 text; a walk that fails) goes on the session's record: each place once (`source-discovery-gap`), with its path and the reason, however many turn ends meet it, in whatever order, after the session reopens and after a daemon restart. A place is its path and its error's code, so one that heals and breaks again for the same reason is not recorded again; another reason is. Shell writes in a place Rerail could not read are not checked. A file or folder removed before the walk reached it, or being removed as it looks, is no gap. On Windows a path refuses the walk with EPERM both while its delete is pending (a delete that is not POSIX, as on FAT, exFAT and network volumes, while another program holds the file open) and when the user is denied it; after the walk, Rerail looks once more at its attributes and its lstat, reading none of it, and only a path still there whose attributes Windows gives, as it gives a denied one's, is a gap. A walk looks at most at 100 such paths, the first in path order with those an earlier walk found being deleted last, and not at one the record already holds; in another worktree, whose walk serves every session watching it, not at one every such session's record holds. A turn end records at most 100 new places, in path order on every system, and later turn ends record the next, the places an earlier turn end could not record among them. Past 1,000 places in one session, one more record says the walks met more, and no other is recorded. `sessions_get` counts the places recorded in `gaps.discoveryGaps`, says in `gaps.discoveryGapsMore` whether the walks met more, and lists the first 20 in `gaps.discoveryGapPlaces`. The dashboard's session timeline says rules could not fully check part of the repository, with the count (past the bound: more than 1,000 places, 1,000 recorded), and lists those places, each path with its reason. The coding agent is not told of them and reads no place: `session_events` withholds the events' payload, and `sessions_get` gives it the count and whether the walks met more, never a place.
 - A file the shell deleted is reported only if Rerail had seen it.
 
@@ -233,9 +234,12 @@ The daemon frees what a session that sends nothing for 30 minutes holds in memor
 minutes after no session there holds them. The session stays open, since its agent may be too: the dashboard shows it
 live, a scan asked for it runs, and its next event opens it again. Its rules may then compile again (about 12 s of CPU
 for a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's
-tool calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result
-as every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
-are not waited for further: that edit is checked by the first pass once they open.
+edits, shell commands and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its
+own result as every later one is; a tool call that writes nothing Rerail checks at its result, such as a read or a
+search, does not wait. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
+are not waited for further by that tool call or any later one, so the agent is held once, not at every call; those edits
+are checked by the first pass once they open, and the dashboard timeline counts each step that went without them. Each
+turn's end still waits for them, so the turn's steers reach the agent before the turn is over.
 
 - A command that rewrites a file the agent edited before the quiet is measured from the text the agent left there, so
   a rule that judges only the agent's lines judges only those.
