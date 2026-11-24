@@ -7021,6 +7021,52 @@ fn spike_0662_a_rules_pass_run_profiled() {
     }
 }
 
+/// Spike for decision 0662 §5.1 (E16's `KindSets` a program against P1's run): the whole step through the Pipeline,
+/// over each pack's library tailed to just before it (`RERAIL_SPIKE_PACKS`, `RERAIL_SPIKE_N` runs), each run over a
+/// twin of the input (a version whose analyses are not made yet, as a program's link is), profiled as P1 is.
+#[test]
+#[ignore = "spike for decision 0662 §5.1: RERAIL_SPIKE_PACKS=sql[,python] RERAIL_SPIKE_N=<runs>"]
+fn spike_0662_b_kind_sets_step_profiled() {
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::KindSets;
+    use crate::code_rule_dsl::logic::profile;
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+    let asked = std::env::var("RERAIL_SPIKE_PACKS").unwrap_or_else(|_| "sql".into());
+    let runs: u32 = std::env::var("RERAIL_SPIKE_N").ok().and_then(|v| v.parse().ok()).unwrap_or(50);
+    let step = |input: &Arc<Version>, sets: &BTreeSet<String>| {
+        let mut p = Pipeline::new("P2: kind sets", input.twin());
+        p.program(&mut KindSets { sets: sets.clone(), library: None, rules: super::kind_set_rules });
+        Arc::clone(p.current().unwrap())
+    };
+    for (pack, input, sets) in libraries_before_kind_sets().into_iter().filter(|(p, _, _)| asked.split(',').any(|a| a == p)) {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        // Warm: the pass's program lowered, the thread's engine opened.
+        let out = step(&input, &sets);
+        // The literals that read a kind set: `img_reads_set`'s join's rows.
+        let kindsets: BTreeSet<String> = out.kindset_map().unwrap().into_keys().collect();
+        let reading: usize = input.rules().map(|r| r.reads().filter(|a| kindsets.contains(input.rel_name(a.rel()))).count()).sum();
+        println!("P2 {pack}: {} kind sets, read by {reading} literals", kindsets.len());
+        let t = std::time::Instant::now();
+        for _ in 0..runs {
+            step(&input, &sets);
+        }
+        let bare = t.elapsed().as_secs_f64() * 1e6 / f64::from(runs);
+        profile::set(true);
+        profile::reset();
+        for _ in 0..runs {
+            let _s = profile::span(|| "P2: the step".into());
+            step(&input, &sets);
+        }
+        let mut spans: Vec<(String, profile::SpanTotal)> = profile::spans().into_iter().collect();
+        profile::set(false);
+        spans.sort_by(|a, b| b.1.own.total_cmp(&a.1.own));
+        let own: f64 = spans.iter().map(|(_, t)| t.own).sum::<f64>() * 1e6 / f64::from(runs);
+        println!("P2 {pack}: {} rules, {} sets; µs a step: bare {bare:.1}, the spans' own CPU {own:.1}", input.rules().count(), sets.len());
+        for (path, t) in spans.iter().take(40) {
+            println!("P2 {pack}:   {:>8.1} µs own {:>8.1} µs in all {:>7.2} calls a run  {path}", t.own * 1e6 / f64::from(runs), t.total * 1e6 / f64::from(runs), t.calls as f64 / f64::from(runs));
+        }
+    }
+}
+
 /// Each module of `plan` tailed in plan order (`rr::tail_module`), each over its scope's tails.
 fn tailed_modules(plan: &[super::PlannedModule]) -> Vec<lower::Module> {
     let at: std::collections::HashMap<&str, usize> = plan.iter().enumerate().map(|(i, m)| (m.key.as_str(), i)).collect();

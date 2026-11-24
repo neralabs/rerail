@@ -100,7 +100,15 @@ impl RulesProgram {
                 {
                     let _s = span(|| "statistics: an input's measured".into());
                     let measured = crate::code_rule_dsl::facts::vtab::syntax::statistics(source.as_ref());
+                    let width = measured.len();
                     stats.measured(name, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                    // A column its source counts by value: a probe by it is priced by the rows it joins (the planner's
+                    // join counts, as a corpus run's input statistics give them), not by the column's average.
+                    for c in 0..width {
+                        if let Some(counts) = source.column_counts(c) {
+                            stats.counts.insert((name.to_owned(), c), Arc::new(crate::code_rule_dsl::logic::join_size::JoinCounts::of_counts(counts)));
+                        }
+                    }
                 }
                 let _s = span(|| "an input bound".into());
                 modules.bind(db, name, source).map_err(|e| e.to_string())?;

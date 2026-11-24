@@ -15,6 +15,13 @@ use std::sync::Arc;
 /// The view's relations of the image, in `ImageView::tables`' order: name, columns, the columns a probe reads by.
 const RELATIONS: [(&str, usize, &[usize]); 4] = [("img_rule", 2, &[0, 1]), ("img_lit", 5, &[0, 3]), ("img_decl", 2, &[0]), ("img_facts", 1, &[0])];
 
+/// The columns that name a relation, in `RELATIONS`' order: each states its rows a value (`Source::column_counts`), so
+/// a probe by it from a few names (a pass's kind sets) is priced by the rows those names hold, not by the column's
+/// average. A name's rows are skewed (`node` is read by thousands of literals, a kind set by a few): priced by its
+/// posting-weighted fan, 30 kind sets probing python's `img_lit` were 16,700 rows, so the run read all 8,625
+/// literals and probed the kind sets with each, for 9 rows (1.5 ms of the step's 4.7).
+const NAMES: [&[usize]; 4] = [&[1], &[3], &[0], &[0]];
+
 /// `img_lit`'s column that says whether a literal is an aggregate's atom (1) or an atom (0): the source reads it as
 /// the pass's own constant (`"agg"` or `"atom"`).
 const WHAT: usize = 2;
@@ -34,6 +41,8 @@ struct Table {
     /// By column: rows, distinct values, and the sum of each value's rows squared (`syntax::statistics`' `sq`; one
     /// document, so `sqd` is the same).
     stats: Vec<[i64; 3]>,
+    /// By column: each value's rows, for a column that names a relation (`NAMES`).
+    counts: Vec<Option<Vec<(i64, u64)>>>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -43,7 +52,7 @@ struct Sorted {
 }
 
 impl Table {
-    fn of(columns: Vec<Vector<i64>>, indexed: &[usize]) -> Table {
+    fn of(columns: Vec<Vector<i64>>, indexed: &[usize], names: &[usize]) -> Table {
         let n = columns.first().map_or(0, Vector::len);
         let sorted = (0..columns.len())
             .map(|c| {
@@ -54,17 +63,19 @@ impl Table {
                 })
             })
             .collect();
-        let stats = columns
+        let (stats, counts) = columns
             .iter()
-            .map(|col| {
+            .enumerate()
+            .map(|(c, col)| {
                 let mut counts: rustc_hash::FxHashMap<i64, i64> = Default::default();
                 for &x in col.iter() {
                     *counts.entry(x).or_default() += 1;
                 }
-                [n as i64, counts.len() as i64, counts.values().map(|k| k * k).sum()]
+                let stats = [n as i64, counts.len() as i64, counts.values().map(|k| k * k).sum()];
+                (stats, names.contains(&c).then(|| counts.into_iter().map(|(v, k)| (v, k as u64)).collect()))
             })
-            .collect();
-        Table { columns, sorted, stats }
+            .unzip();
+        Table { columns, sorted, stats, counts }
     }
 }
 
@@ -102,7 +113,7 @@ impl ImageView {
         ImageView {
             tables: made.map(|columns| {
                 at += 1;
-                Table::of(columns, RELATIONS[at - 1].2)
+                Table::of(columns, RELATIONS[at - 1].2, NAMES[at - 1])
             }),
         }
     }
@@ -163,6 +174,9 @@ impl Source for ViewRel {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         Some(self.columns().into_iter().zip(&self.table().stats).map(|(name, &[rows, ndv, sq])| (name, rows, ndv, sq, sq)).collect())
     }
+    fn column_counts(&self, c: usize) -> Option<Vec<(i64, u64)>> {
+        self.table().counts.get(c)?.clone()
+    }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.read(row, column)
     }
@@ -197,6 +211,9 @@ impl Source for Given {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let n = self.sets.len() as i64;
         Some(vec![(self.columns().remove(0), n, n, n, n)])
+    }
+    fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> {
+        Some(self.sets.iter().map(|&s| (s, 1)).collect())
     }
     fn value(&self, row: usize, _column: usize) -> i64 {
         self.sets[row]

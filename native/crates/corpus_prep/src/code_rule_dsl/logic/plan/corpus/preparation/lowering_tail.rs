@@ -1258,17 +1258,20 @@ impl ProgramPass for KindSets {
         if gone.is_empty() && axes.is_empty() && made.is_empty() && head.b.is_empty() {
             return Ok(());
         }
-        let b = w.derive()?;
+        // An edit of the input, of what changed alone: the sets' rules taken out, each rule with an axis over a derived
+        // set written again in its place's stead, and the helpers' rules added. (A derivation copied every rule,
+        // declaration and fact of the program to take a few sets out: on python's library, 4.2 of the step's 10.2 ms.)
+        let b = w.on()?;
         b.fields().state_fields_of(&head.b);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
-        for r in input.rules() {
-            if gone.contains(input.rel_name(r.head().rel())) {
-                continue;
+        for set in &gone {
+            for r in input.rel(set).into_iter().flat_map(|rel| input.heads(rel)) {
+                b.remove(r.id());
             }
-            let Some(lits) = axes.get(&r.id()) else {
-                b.keep(&input, r);
-                continue;
-            };
+        }
+        for (&id, lits) in &axes {
+            let Some(r) = input.rule(id) else { return Err(format!("kind sets: rule {} of an axis is not the input's", id.0)) };
+            b.remove(id);
             let mut rb = b.rule().source(r.id()).head_from(&input, r, r.head());
             for l in r.body() {
                 rb = match lits.iter().find(|x| x.node == l.node()) {
