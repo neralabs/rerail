@@ -1,0 +1,91 @@
+// The prover's solves on the GPU (decision 0654, step 5): unit propagation over a batch of formulas, one threadgroup a
+// formula. A formula is its clauses (`starts[c]` to `starts[c + 1]` in `lits`, DIMACS literals: `v` or `-v`); its
+// values are two bit sets of its variables, true and false (`vals`, zeroed by the host), set only by atomic ORs, so a
+// sweep's threads race only towards more known values. Each sweep, each thread takes every `lsz`-th clause: true,
+// skipped; every literal false, a conflict; one literal left, set. A variable both true and false is a conflict too.
+// The group's sweep ends with the OR of its threads' news. A conflict at this level (no decision) is the formula's
+// unsatisfiability as any complete solver finds it, so the prover's answers do not change; a fixed point or the sweeps'
+// bound leave the formula to the CPU's solver.
+//
+// Memory: `info` 4 words a formula (its first clause, clauses, first word of `vals`, words a set); `out` a word a
+// formula: 1 a conflict, 0 a fixed point, 2 the sweeps' bound reached. Launch: one threadgroup a formula; each
+// launch at most `sweeps` sweeps of each formula.
+
+#include <ukl/group.h>
+
+typedef struct UpArgs {
+    uint32_t n;
+    uint32_t sweeps;
+} UpArgs;
+UKL_REFLECT_STRUCT(UpArgs, n, sweeps)
+
+DEFINE_KERNEL2(prover, unit_propagate,
+               ARGS,     UpArgs,   args,    ,
+               ROBUFFER, uint32_t, info,    "[n * 4]",
+               ROBUFFER, uint32_t, starts,  "[clauses + 1]",
+               ROBUFFER, int32_t,  lits,    "[literals]",
+               RWBUFFER, uint32_t, vals,    "[words]",
+               RWBUFFER, uint32_t, out,     "[n]",
+               SHARED,   uint32_t, scratch, UKL_TG_SCRATCH,
+               TGID0,    uint32_t, f,       ,
+               LID0,     uint32_t, lid,     ,
+               LSZ0,     uint32_t, lsz,     )
+{
+    if (f >= args.n)
+        return;
+    uint32_t c0 = info[f * 4u], nc = info[f * 4u + 1u], vb = info[f * 4u + 2u], vw = info[f * 4u + 3u];
+    UKL_GLOBAL uint32_t* tv = vals + vb;
+    UKL_GLOBAL uint32_t* fv = vals + vb + vw;
+    for (uint32_t s = 0u; s < args.sweeps; s++) {
+        uint32_t news = 0u;
+        for (uint32_t c = c0 + lid; c < c0 + nc; c += lsz) {
+            uint32_t a = starts[c], b = starts[c + 1u];
+            int32_t unit = 0;
+            uint32_t free = 0u;
+            bool sat = false;
+            for (uint32_t k = a; k < b; k++) {
+                int32_t l = lits[k];
+                uint32_t v = (uint32_t)(l < 0 ? -l : l);
+                uint32_t w = v >> 5u, bit = 1u << (v & 31u);
+                bool pos = (ukl_atomic_load(tv + w) & bit) != 0u;
+                bool neg = (ukl_atomic_load(fv + w) & bit) != 0u;
+                if (pos && neg) {
+                    news |= 2u;
+                    sat = true;
+                    break;
+                }
+                if (l > 0 ? pos : neg) {
+                    sat = true;
+                    break;
+                }
+                if (!(l > 0 ? neg : pos)) {
+                    free++;
+                    unit = l;
+                }
+            }
+            if (sat)
+                continue;
+            if (free == 0u) {
+                news |= 2u;
+            } else if (free == 1u) {
+                uint32_t v = (uint32_t)(unit < 0 ? -unit : unit);
+                ukl_atomic_or((unit > 0 ? tv : fv) + (v >> 5u), 1u << (v & 31u));
+                news |= 1u;
+            }
+        }
+        ukl_tg_barrier_device();
+        uint32_t any = ukl_tg_or(news, lid, lsz, scratch __UKL_ARGS);
+        if ((any & 2u) != 0u) {
+            if (lid == 0u)
+                out[f] = 1u;
+            return;
+        }
+        if (any == 0u) {
+            if (lid == 0u)
+                out[f] = 0u;
+            return;
+        }
+    }
+    if (lid == 0u)
+        out[f] = 2u;
+}

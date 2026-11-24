@@ -105,8 +105,8 @@ takes a bounded number of rounds, and the host launches again while nodes are le
 1. `speculate gap ends`: the statement, the escape, the compile's time (done: see Results).
 2. The warm compile's uncached questions through the answers (done).
 3. Batches on the CPU: rounds, with the CDCL solver; the same answers (done).
-4. Refuting on the GPU (the mini first, one test).
-5. Propagating on the GPU.
+4. Refuting on the GPU (the mini first, one test): its ceiling measured on the CPU first (see Results).
+5. Propagating on the GPU (done, opt-in: slower than the CPU's threads; see Results).
 6. Speculating gap marks; row modes after.
 
 ## Results
@@ -150,3 +150,52 @@ mode is an escape of a few operations: the candidate next step.
 - **The cold compile**: row modes 33 s to 5.6 s, gap marks 33 s to 2.4 s; proving 83 s to 24 s, and 226M
   steps to 191M; the compile 136 s to 78 s. The answers file grows from 131 KB to 154 KB: a round answers a
   row's start where its scope's answer already settled it.
+
+**Step 3, the rest of the serial callers.** The assumptions (all their questions, one batch), the rows' first
+bytes (`Lowering::first_bytes_many`) and the token pairs (their scopes, then their starts) are asked in batches
+too. Everything before row modes went from 10.4 s to 1.9 s. The answers are the same bytes. Proving now ends at
+15.3 s. Most of what is left is the 6 s between row modes and gap ends: `token_row`, `last_row` and
+`token_ops_back` search per check with short-circuits. Then 53 s of the compile is not the prover's (after the
+tree section).
+
+**Step 5: propagating on the GPU** (`bitlex_prove_gpu.rs` and `.uglykl`, `RERAIL_PROVER_GPU=1`).
+- **Rounds.** A batch's questions are asked in rounds. Each question (`Induction::never_round`) replays the
+  outcomes of its earlier solves and stops at its next new solve, handing out the formula. The round's formulas
+  are propagated together on the GPU, and each question goes on. A conflict there is the CPU solver's
+  unsatisfiability with no conflict spent, so it is that solve's outcome. Anything else is the CPU's to solve when
+  the question reaches it again. After 8 rounds the rest go on on the CPU.
+- **The kernel.** One threadgroup of 256 threads a formula, each thread taking every 256th clause per sweep. The
+  values are two bit sets per formula in device memory, set by atomic ORs only. The group ORs its threads' news
+  each sweep. A launch holds at most 16M literals and 512 sweeps.
+- **Tested.** On spark1's GPU (CUDA): 300 random formulas, whose conflicts equal the CPU's propagation's and which
+  the solver finds unsatisfiable at level 0. Kotlin's cold compile with it blesses the same answers, byte for byte.
+  Checked against the CPU solver, no formula the GPU left at a fixed point was unsatisfiable at level 0: the GPU
+  misses no conflict.
+- **Slower.** Proving took 32 s against 15 s on 20 CPU threads. Row modes' first round sent 3,031 formulas,
+  209M literals, in 2.9 s, and 635 of them conflicted. Over the compile, 2,202 of 5,432 formulas conflicted; the
+  rest the CPU then loaded and solved anyway. Each round also waits for its slowest question.
+- **The ceiling.** The CPU still builds every window and its clauses. The GPU can take only the solver's loading
+  and its level-0 solves: about 23 s of CPU in the serial compile, under 1.5 s on 20 threads. To do more, the
+  GPU must build the windows itself, from the block program unrolled over lags (the circuit of §3), not take
+  clauses the CPU made.
+
+**Step 4: refuting, its ceiling measured on the CPU first.**
+- **A bug found.** The prover's streams (`Witnesses`, decision 0414) had never refuted a question of Kotlin's.
+  A `rounds` statement whose delays do not settle at the first try makes its carries again; the first try's
+  carries (24 for Kotlin) stay in the operations, named by no rounds group, and `block::groups` refused every
+  program the prover evaluated. Such a carry is now evaluated as zero and its readers tainted, refuting nothing.
+  The values the program reads are the last try's.
+- **Streams shared.** A batch's forks start with no streams of their own, so a stream one question's solve
+  found never refuted another's. `Lowering::streams` (`bitlex_prove::Streams`, at most 4,096) keeps the
+  streams the forks found and refutes each question of a later batch before any fork. Proving went from 15.3 s
+  to 14.0 s, and 191.5M steps to 181.5M. The answers are the same bytes.
+- **The ceiling.** The Kotlin tests' 1,155 snippets, each suffix a stream (39k streams), refute 1,540 of the
+  1,903 questions the prover does not prove (row modes: 1,496 of 1,832), and none it proves. Given as streams
+  to a compile, they took the steps from 181.5M to 174M, 4%: the questions that fail are cheap, and the steps
+  are the proved questions'. Evaluating the 39k streams on the CPU cost more than that saved; on the GPU (the
+  block program over many short streams, as tier 1 runs on Metal) it would cost nearly nothing, so 4% is what
+  refuting on the GPU can win for Kotlin.
+
+**Where the prover's time is now.** The proved questions' solves, which the GPU can speed up only by building
+their windows itself; the per-check searches between row modes and gap ends (6 s); and outside the prover, the
+53 s of compile work after the tree section, the largest part of a cold compile (67 s).

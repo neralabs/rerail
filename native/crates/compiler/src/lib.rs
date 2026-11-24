@@ -20,6 +20,8 @@ pub mod bitlex_lex_rust;
 pub mod answers;
 pub mod bitlex_masks;
 pub mod bitlex_prove;
+#[cfg(not(target_family = "wasm"))]
+pub mod bitlex_prove_gpu;
 pub mod bitlex_rust;
 pub mod bitlex_sat;
 pub mod bitlex_tier2;

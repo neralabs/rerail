@@ -58,6 +58,16 @@ impl Clauses {
     pub fn iter(&self) -> impl Iterator<Item = &[Lit]> {
         (0..self.len()).map(|i| self.get(i))
     }
+
+    /// Every clause's literals, end to end.
+    pub fn lits(&self) -> &[Lit] {
+        &self.lits
+    }
+
+    /// Where each clause ends in `lits`.
+    pub fn ends(&self) -> &[u32] {
+        &self.ends
+    }
 }
 
 /// Not in the heap (`Solver::at`).

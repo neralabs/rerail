@@ -376,6 +376,8 @@ pub struct Lowering {
     /// once the provers are done, so no proof reads them (a claim that need hold only up to a
     /// refusal holds up to an escape's).
     pub speculated: Vec<Val>,
+    /// The streams the solves found, refuting the questions of later batches (decision 0654).
+    pub streams: bitlex_prove::Streams,
     pub keywords: Vec<(String, Vec<(Vec<u8>, Option<String>)>, bool)>,
     /// Each row's soft keywords: a word's kind where the grammar takes it, the row's elsewhere.
     pub soft: Vec<(String, Vec<Vec<u8>>)>,
@@ -584,6 +586,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         scope_of: Vec::new(),
         apart: Vec::new(),
         speculated: Vec::new(),
+        streams: bitlex_prove::Streams::default(),
         speculate_gap_ends: stmts.iter().any(|s| matches!(s, Stmt::Speculate { fact: ::bitlex::syntax::Speculation::GapEnds, .. })),
         keywords: Vec::new(),
         skip: None,
@@ -1825,6 +1828,25 @@ impl Lowering {
         self.proofs.bytes(key, || bitlex_prove::first_bytes_in(&work, &ops, tables, x.v, x.d))
     }
 
+    /// `first_bytes` of each of `xs`, those not answered before found together on the machine's
+    /// threads, each within its share of the budget fixed when the batch begins (decision 0654).
+    pub fn first_bytes_many(&mut self, xs: &[Val]) -> Vec<ByteSet> {
+        use rayon::prelude::*;
+        let ops = proof_ops(&self.program, &self.prefix);
+        let tables = &self.program.tables;
+        let texts: Vec<Vec<u8>> = xs.iter().map(|x| bitlex_prove::question(&ops, tables, &self.program.rounds, x.v, x.d, "plain first")).collect();
+        let budgets: Vec<Option<bitlex_prove::Budget>> = texts.iter().map(|t| (!self.proofs.known.contains_key(&bitlex_prove::key_of(t))).then(|| self.proofs.work.child())).collect();
+        let found: Vec<Option<ByteSet>> = xs.par_iter().zip(&budgets).map(|(x, work)| work.as_ref().map(|w| if w.left() == 0 { [!0; 4] } else { bitlex_prove::first_bytes_in(w, &ops, tables, x.v, x.d) })).collect();
+        let mut out = Vec::with_capacity(xs.len());
+        for ((text, found), work) in texts.into_iter().zip(found).zip(&budgets) {
+            if let Some(w) = work {
+                self.proofs.work.spend(w.spent());
+            }
+            out.push(self.proofs.bytes(text, || found.unwrap_or([!0; 4])));
+        }
+        out
+    }
+
     /// Whether `x` is zero everywhere, by `prover` (with the fixed points' equations).
     pub fn settled_never(&mut self, prover: &mut bitlex_prove::Induction, x: Val) -> bool {
         let ops = proof_ops(&self.program, &self.prefix);
@@ -1886,15 +1908,40 @@ impl Lowering {
                 }
             }
         }
+        // Refuted by a stream found before: not proved, with no prover.
+        let mut refuted = Vec::new();
+        asked.retain(|(text, x, places)| {
+            let r = self.streams.refutes(&ops, tables, &self.program.rounds, x.v, x.d);
+            if r {
+                refuted.push((text.clone(), places.clone()));
+            }
+            !r
+        });
+        for (text, places) in refuted {
+            let a = self.proofs.never(text, || false);
+            for i in places {
+                out[i] = Some(a);
+            }
+        }
         let budgets: Vec<bitlex_prove::Budget> = asked.iter().map(|_| self.proofs.work.child()).collect();
-        let answers: Vec<bool> = asked
-            .par_iter()
-            .zip(&budgets)
-            .map(|((_, x, _), work)| {
-                let mut p = prover.fork(work);
-                work.left() > 0 && !p.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in(work, &ops, tables, x.v, x.d) || p.never(&ops, tables, x.v, x.d))
-            })
-            .collect();
+        let xs: Vec<Val> = asked.iter().map(|a| a.1).collect();
+        #[cfg(not(target_family = "wasm"))]
+        let on_gpu = crate::bitlex_prove_gpu::enabled();
+        #[cfg(target_family = "wasm")]
+        let on_gpu = false;
+        let (answers, found): (Vec<bool>, Vec<Vec<Vec<u8>>>) = if on_gpu {
+            never_in_rounds(prover, &ops, tables, &xs, &budgets)
+        } else {
+            xs.par_iter()
+                .zip(&budgets)
+                .map(|(x, work)| {
+                    let mut p = prover.fork(work);
+                    let a = work.left() > 0 && !p.refutes(&ops, tables, x.v, x.d) && (bitlex_prove::never_in(work, &ops, tables, x.v, x.d) || p.never(&ops, tables, x.v, x.d));
+                    (a, p.found().to_vec())
+                })
+                .unzip()
+        };
+        self.streams.add(found.into_iter().flatten());
         for (((text, _, places), a), work) in asked.into_iter().zip(answers).zip(&budgets) {
             self.proofs.work.spend(work.spent());
             let a = self.proofs.never(text, || a);
@@ -3268,17 +3315,20 @@ fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, V
         Ok(Some(at))
     };
     let verbose = std::env::var_os("RERAIL_ASSUMPTIONS").is_some();
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000).within(&low.proofs.work);
+    let settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000).within(&low.proofs.work);
     // In a kind's tokens: what tier 1 reads, the run rule with the kind's assumptions (`substitute`),
     // proved equal to the rule over each of its tokens' runs and the byte each ends at.
-    let mut in_kind: HashMap<String, bool> = HashMap::default();
+    // Every question first, then one batch (decision 0654): per kind, its rules' questions; per
+    // name, its own (`None`: nothing to prove); per `at ends`, its own.
+    let mut questions: Vec<Val> = Vec::new();
+    let mut kind_qs: Vec<(String, Vec<usize>, bool)> = Vec::new();
     for &(_, scope, _, _) in &asked {
         let Some(kind) = scope else { continue };
-        if in_kind.contains_key(kind) {
+        if kind_qs.iter().any(|k| &k.0 == kind) {
             continue;
         }
         let these: Vec<(&str, &Expr)> = asked.iter().filter(|a| a.1.as_ref() == Some(kind)).map(|a| (a.2.as_str(), a.3)).collect();
-        let mut proved = true;
+        let mut qs = Vec::new();
         let mut any = false;
         for s in stmts {
             let Stmt::Token { kind: k, start, rule: Some(::bitlex::syntax::TokenRule::Run(r)), .. } = s else { continue };
@@ -3300,37 +3350,30 @@ fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, V
             let scope = low.or(run, end)?;
             let differs = low.xor(rv, ev)?;
             let at = low.and(differs, scope)?;
-            proved &= low.either_never(&mut settled, at);
+            questions.push(at);
+            qs.push(questions.len() - 1);
         }
-        let proved = proved && any;
-        if verbose {
-            eprintln!("assume in {kind}: {}", if proved { "proved" } else { "not proved: a test build checks it" });
-        }
-        in_kind.insert(kind.clone(), proved);
+        kind_qs.push((kind.clone(), qs, any));
     }
-    for (why, scope, name, expr) in asked {
-        let proved = match scope {
-            Some(kind) => in_kind[kind],
-            None => {
-                let a = low.expr(&Expr::Name(name.clone()))?;
-                let b = low.expr(expr)?;
-                let differs = low.xor(a, b)?;
-                // No row's start reads it: nothing to prove, and tier 1 reads none.
-                let proved = match reached(low, name)? {
-                    Some(starts) => {
-                        let at = low.and(differs, starts)?;
-                        low.either_never(&mut settled, at)
-                    }
-                    None => true,
-                };
-                if verbose {
-                    eprintln!("assume {name}: {} ({why})", if proved { "proved" } else { "not proved: a test build checks it" });
-                }
-                proved
+    let mut name_qs: Vec<Option<usize>> = Vec::new();
+    for &(_, scope, name, expr) in &asked {
+        if scope.is_some() {
+            name_qs.push(None);
+            continue;
+        }
+        let a = low.expr(&Expr::Name(name.clone()))?;
+        let b = low.expr(expr)?;
+        let differs = low.xor(a, b)?;
+        // No row's start reads it: nothing to prove, and tier 1 reads none.
+        name_qs.push(match reached(low, name)? {
+            Some(starts) => {
+                questions.push(low.and(differs, starts)?);
+                Some(questions.len() - 1)
             }
-        };
-        low.assumed.push((scope.clone(), name.clone(), expr.clone(), proved));
+            None => None,
+        });
     }
+    let mut end_qs: Vec<usize> = Vec::new();
     // At ends: the mask holds at no byte but a region token's last, of the rows the loop reads
     // that read a region.
     if !ends.is_empty() {
@@ -3351,10 +3394,37 @@ fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, V
         }
         let Some(lasts) = lasts else { return Err("`assume … at ends`: no row reads a region".into()) };
         let off = low.not(lasts)?;
-        for (why, name) in ends {
+        for &(_, name) in &ends {
             let a = low.expr(&Expr::Name(name.clone()))?;
-            let at = low.and(a, off)?;
-            let proved = low.either_never(&mut settled, at);
+            questions.push(low.and(a, off)?);
+            end_qs.push(questions.len() - 1);
+        }
+    }
+    let answered = low.either_never_many(&settled, &questions);
+    let mut in_kind: HashMap<String, bool> = HashMap::default();
+    for (kind, qs, any) in kind_qs {
+        let proved = any && qs.iter().all(|&q| answered[q]);
+        if verbose {
+            eprintln!("assume in {kind}: {}", if proved { "proved" } else { "not proved: a test build checks it" });
+        }
+        in_kind.insert(kind, proved);
+    }
+    for ((why, scope, name, expr), q) in asked.into_iter().zip(name_qs) {
+        let proved = match scope {
+            Some(kind) => in_kind[kind],
+            None => {
+                let proved = q.is_none_or(|q| answered[q]);
+                if verbose {
+                    eprintln!("assume {name}: {} ({why})", if proved { "proved" } else { "not proved: a test build checks it" });
+                }
+                proved
+            }
+        };
+        low.assumed.push((scope.clone(), name.clone(), expr.clone(), proved));
+    }
+    if !ends.is_empty() {
+        for ((why, name), q) in ends.into_iter().zip(end_qs) {
+            let proved = answered[q];
             if verbose {
                 eprintln!("assume {name} at ends: {} ({why})", if proved { "proved" } else { "not proved: a test build checks it" });
             }
@@ -3404,6 +3474,71 @@ fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows:
         }
     }
     Ok(None)
+}
+
+/// The rounds a batch's solves are propagated on the GPU before the rest are the CPU's.
+#[cfg(not(target_family = "wasm"))]
+const GPU_ROUNDS: usize = 8;
+
+/// `either_never_many`'s answers with the solves in rounds (decision 0654, step 5): each
+/// question, on its thread, asked to its next new solve (`Induction::never_round`); the
+/// round's formulas propagated on the GPU together (`bitlex_prove_gpu::conflicts`), a conflict
+/// deciding its solve as the CPU's solver would; the questions asked again. The answers are
+/// those of `either_never_many` on the CPU.
+#[cfg(not(target_family = "wasm"))]
+fn never_in_rounds(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[crate::block::ClassTable], xs: &[Val], budgets: &[bitlex_prove::Budget]) -> (Vec<bool>, Vec<Vec<Vec<u8>>>) {
+    use bitlex_prove::Round;
+    use rayon::prelude::*;
+    struct Q {
+        p: bitlex_prove::Induction,
+        x: Val,
+        answer: Option<bool>,
+        formula: Option<(u32, crate::bitlex_sat::Clauses)>,
+    }
+    let take = |q: &mut Q, r: Round| match r {
+        Round::Answered(a) => q.answer = Some(a),
+        Round::Formula(v, c) => q.formula = Some((v, c)),
+    };
+    let trace = std::env::var_os("RERAIL_PROVING_TRACE").is_some();
+    let mut qs: Vec<Q> = xs
+        .par_iter()
+        .zip(budgets)
+        .map(|(&x, work)| {
+            let mut q = Q { p: prover.fork(work), x, answer: None, formula: None };
+            if work.left() == 0 || q.p.refutes(ops, tables, x.v, x.d) {
+                q.answer = Some(false);
+            } else if bitlex_prove::never_in(work, ops, tables, x.v, x.d) {
+                q.answer = Some(true);
+            } else {
+                let r = q.p.never_round(ops, tables, x.v, x.d, true);
+                take(&mut q, r);
+            }
+            q
+        })
+        .collect();
+    for round in 0..GPU_ROUNDS {
+        let waiting: Vec<usize> = (0..qs.len()).filter(|&i| qs[i].formula.is_some()).collect();
+        if waiting.is_empty() {
+            break;
+        }
+        let t = std::time::Instant::now();
+        let formulas: Vec<(u32, &crate::bitlex_sat::Clauses)> = waiting.iter().map(|&i| qs[i].formula.as_ref().map(|f| (f.0, &f.1)).unwrap()).collect();
+        let lits: usize = formulas.iter().map(|f| f.1.lits().len()).sum();
+        let conflicts = crate::bitlex_prove_gpu::conflicts(&formulas).unwrap_or_else(|e| panic!("the prover's GPU ({}): {e}", rerail_gpu::device::backend()));
+        if trace {
+            eprintln!("gpu round {round}: {} formulas, {lits} literals, {} conflicts, {:.1} ms", waiting.len(), conflicts.iter().filter(|&&c| c).count(), t.elapsed().as_secs_f64() * 1e3);
+        }
+        for (&i, c) in waiting.iter().zip(conflicts) {
+            qs[i].p.decided(c);
+            qs[i].formula = None;
+        }
+        let last = round + 1 == GPU_ROUNDS;
+        qs.par_iter_mut().filter(|q| q.answer.is_none()).for_each(|q| {
+            let r = q.p.never_round(ops, tables, q.x.v, q.x.d, !last);
+            take(q, r);
+        });
+    }
+    qs.into_iter().map(|q| (q.answer.unwrap_or(false), q.p.found().to_vec())).unzip()
 }
 
 /// `op` with its operands `base` later: an op of a list appended to another.
@@ -3904,6 +4039,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         check_of.insert(token, first);
     }
     let mut rows = Vec::new();
+    // Each row's first bytes, in one batch (decision 0654).
+    let starts: Vec<Val> = token_rows.iter().map(|t| t.1).collect();
+    let firsts = low.first_bytes_many(&starts);
     for (r, (kind, start, last)) in token_rows.iter().enumerate() {
         let mut keywords = Vec::new();
         for (k, words, _) in low.keywords.iter().filter(|k| &k.0 == kind) {
@@ -3923,7 +4061,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             kind: if required.contains(kind) { 0 } else { id(kind)? },
             soft,
             one_byte: start.v == last.v && start.d == last.d,
-            first: low.first_bytes(*start),
+            first: firsts[r],
             keywords,
             check: check_of.get(&r).copied(),
             mask: None,
@@ -3978,25 +4116,36 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         regions_apart(low, &mut settled)?;
     }
     phase_mark(low, "regions apart (pairs)");
+    // The rows that share a first byte, asked in two batches (decision 0654): their scopes apart
+    // first (`TokenRule::Inside`: one question for many pairs), then their starts, for the pairs
+    // whose scopes are not.
+    let mut sharing: Vec<(usize, usize, Option<Val>)> = Vec::new();
     for a in 0..rows.len() {
         for b in a + 1..rows.len() {
             if shares(a, b) {
-                // Their scopes apart first (`TokenRule::Inside`): one question for many pairs.
                 let scope = |r: usize| low.scope_of.get(r).copied().flatten();
                 let scoped = match (scope(a), scope(b)) {
-                    (None, None) => false,
-                    (sa, sb) => {
-                        let both = low.and(sa.unwrap_or(token_rows[a].1), sb.unwrap_or(token_rows[b].1))?;
-                        low.either_never(&mut settled, both)
-                    }
+                    (None, None) => None,
+                    (sa, sb) => Some(low.and(sa.unwrap_or(token_rows[a].1), sb.unwrap_or(token_rows[b].1))?),
                 };
-                let both = low.and(token_rows[a].1, token_rows[b].1)?;
-                let apart = scoped || low.either_never(&mut settled, both);
-                if !apart {
-                    low.fallbacks.push(both);
-                    pairs.push((a, b));
-                }
+                sharing.push((a, b, scoped));
             }
+        }
+    }
+    let scoped: Vec<Val> = sharing.iter().filter_map(|p| p.2).collect();
+    let mut scoped_apart = low.either_never_many(&settled, &scoped).into_iter();
+    let mut left = Vec::new();
+    for (a, b, scope) in sharing {
+        if scope.is_none() || !scoped_apart.next().unwrap_or(false) {
+            left.push((a, b, low.and(token_rows[a].1, token_rows[b].1)?));
+        }
+    }
+    let boths: Vec<Val> = left.iter().map(|p| p.2).collect();
+    let apart = low.either_never_many(&settled, &boths);
+    for ((a, b, both), apart) in left.into_iter().zip(apart) {
+        if !apart {
+            low.fallbacks.push(both);
+            pairs.push((a, b));
         }
     }
     phase_mark(low, "token pairs");

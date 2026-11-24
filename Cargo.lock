@@ -3267,6 +3267,7 @@ dependencies = [
  "rerail-clif",
  "rerail-compiler",
  "rerail-context",
+ "rerail-gpu",
  "rerail-tape-format",
  "rustc-hash",
  "sha2 0.11.1",

@@ -639,6 +639,30 @@ pub struct Induction {
     whole_hypothesis: bool,
     /// The compile's work left (`Budget`).
     work: Budget,
+    /// A question asked in rounds (`never_round`, decision 0654): each solve's outcome so far, by
+    /// its place in the question's solves, replayed as the question is asked again.
+    replay: Vec<Replayed>,
+    /// The place of the next solve in the question being asked.
+    at: usize,
+    /// Asked in rounds: the first solve past `replay` stops the question with its formula.
+    capture: bool,
+    captured: Option<(u32, Clauses)>,
+}
+
+/// A solve's outcome in a question asked in rounds (decision 0654).
+#[derive(Clone)]
+enum Replayed {
+    Known(Outcome),
+    /// Its formula met no conflict on the GPU: solved on the CPU when the question reaches it
+    /// again (its variables already spent).
+    Cpu,
+}
+
+/// A round of a question (`Induction::never_round`).
+pub enum Round {
+    Answered(bool),
+    /// Stopped at a solve: its formula's variables and clauses.
+    Formula(u32, Clauses),
 }
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
@@ -842,6 +866,40 @@ pub fn question_given(ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16
     out.into_bytes()
 }
 
+/// The streams a compile's solves found, shared by its questions (decision 0654): a question one
+/// of them refutes is answered with no prover. A batch's questions are asked by forks, each with
+/// streams of its own (`Induction::found`); the batch's caller keeps them here for the next. At
+/// most `STREAMS`.
+#[derive(Default)]
+pub struct Streams(Witnesses);
+
+/// The most streams a compile keeps (`Streams`).
+const STREAMS: usize = 4096;
+
+impl Streams {
+    pub fn add(&mut self, files: impl IntoIterator<Item = Vec<u8>>) {
+        for f in files {
+            if self.0.files.len() < STREAMS && !self.0.files.contains(&f) {
+                self.0.files.push(f);
+                self.0.stale = true;
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.files.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.files.is_empty()
+    }
+
+    /// Whether `v` at delay `d` holds inside one of the streams.
+    pub fn refutes(&mut self, ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8) -> bool {
+        self.0.refutes(ops, tables, rounds, v, d)
+    }
+}
+
 /// The most witnesses kept (`Witnesses`): each is evaluated for every question asked.
 const WITNESSES: usize = 256;
 
@@ -865,6 +923,8 @@ struct Witnesses {
     first: Vec<bool>,
     /// A file added since the values were made.
     stale: bool,
+    /// The values that read a carry no rounds group names (`remake`): refuting nothing.
+    tainted: Vec<bool>,
 }
 
 impl Witnesses {
@@ -879,6 +939,9 @@ impl Witnesses {
     /// byte `p - d`'s, `d <= p < len + d`.
     fn refutes(&mut self, ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>], v: u16, d: u8) -> bool {
         if self.files.is_empty() || !self.sync(ops, tables, rounds) {
+            return false;
+        }
+        if self.tainted.get(usize::from(v)).copied().unwrap_or(true) {
             return false;
         }
         let words = &self.values[usize::from(v)];
@@ -905,6 +968,7 @@ impl Witnesses {
                 };
                 debug_assert_eq!(self.values.len(), i);
                 self.values.push(words);
+                self.tainted.push(op.operands().into_iter().any(|o| self.tainted[usize::from(o)]));
                 self.ops.push(*op);
             }
             return true;
@@ -932,11 +996,27 @@ impl Witnesses {
         })
     }
 
+    /// A carry no rounds group names is an earlier try's of a `rounds` statement, whose delays
+    /// did not settle (`Lowering`'s rounds: each try makes its carries anew, and the program
+    /// keeps the operations): made zero here, and the values that read it tainted, refuting
+    /// nothing. The values the program reads are the last try's.
     fn remake(&mut self, ops: &[BlockOp], tables: &[ClassTable], rounds: &[Vec<(u16, u16)>]) -> bool {
-        let program = crate::block::BlockProgram { tables: tables.to_vec(), ops: ops.to_vec(), rounds: rounds.to_vec(), delay: 63, ..Default::default() };
-        if crate::block::groups(ops, rounds).is_err() {
+        let named: HashSet<u16> = rounds.iter().flatten().map(|p| p.0).collect();
+        let mut tainted = vec![false; ops.len()];
+        let mut made = ops.to_vec();
+        for (i, op) in ops.iter().enumerate() {
+            if matches!(op, BlockOp::Carry(_)) && !named.contains(&(i as u16)) {
+                tainted[i] = true;
+                made[i] = BlockOp::Const(0);
+            } else {
+                tainted[i] = op.operands().into_iter().any(|o| tainted[usize::from(o)]);
+            }
+        }
+        let program = crate::block::BlockProgram { tables: tables.to_vec(), ops: made.clone(), rounds: rounds.to_vec(), delay: 63, ..Default::default() };
+        if crate::block::groups(&made, rounds).is_err() {
             return false;
         }
+        self.tainted = tainted;
         let files: Vec<&[u8]> = self.files.iter().map(|f| f.as_slice()).collect();
         let (values, spans) = program.rounds_values(&files);
         self.first = vec![false; values.first().map_or(0, |v| v.len())];
@@ -957,6 +1037,7 @@ const SOLVES: u32 = 64;
 const LEVELS: u32 = 3;
 const ROUNDS: u32 = 24;
 
+#[derive(Clone)]
 enum Outcome {
     Proved,
     /// A way: its edge (the values past the horizon, in the stream), and the group of the
@@ -967,7 +1048,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited() }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), question: 0, solver: Solver::new(0), given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), replay: Vec::new(), at: 0, capture: false, captured: None }
     }
 
     /// This prover within the compile's budget `work`.
@@ -984,6 +1065,38 @@ impl Induction {
         let mut p = Induction::new(&self.rounds, self.horizon, self.conflicts).within(work);
         p.given = self.given.clone();
         p
+    }
+
+    /// `never` in rounds (decision 0654): the question asked again from its start, each solve
+    /// reached before answered from `replay`, until it is answered or reaches a new solve, whose
+    /// formula it returns; `decided` says how that solve came out. The solves happen in the
+    /// order `never`'s do, with the same outcomes, so the answer is `never`'s. Not `stop`: the
+    /// new solves are made on the CPU, to the answer.
+    pub fn never_round(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, stop: bool) -> Round {
+        if self.replay.is_empty() && self.refutes(ops, tables, v, d) {
+            return Round::Answered(false);
+        }
+        let mut ops = ops.to_vec();
+        self.ask(&ops);
+        self.solves = SOLVES;
+        (self.at, self.capture, self.captured) = (0, stop, None);
+        let proved = self.prove(&mut ops, tables, v, d, LEVELS, None, &[0; 4]);
+        self.capture = false;
+        match self.captured.take() {
+            Some((vars, clauses)) => Round::Formula(vars, clauses),
+            None => Round::Answered(proved),
+        }
+    }
+
+    /// The outcome of the solve the last round stopped at: unsatisfiable by propagation alone
+    /// (`conflict`, as the CPU's solver finds it with no conflict spent), else the CPU's to solve.
+    pub fn decided(&mut self, conflict: bool) {
+        self.replay.push(if conflict { Replayed::Known(Outcome::Proved) } else { Replayed::Cpu });
+    }
+
+    /// The streams this prover's solves found (`Streams`).
+    pub fn found(&self) -> &[Vec<u8>] {
+        &self.witnesses.files
     }
 
     /// This prover and its settings, asking `what`: a part of each question's key (`question`).
@@ -1136,13 +1249,35 @@ impl Induction {
     fn ask(&mut self, ops: &[BlockOp]) {
         // A question's lemmas are its own: its answer depends on it alone (decision 0414).
         self.lemmas.clear();
-        self.windows.clear();
+        // Asked again in rounds (`never_round`): its windows are the same.
+        if self.replay.is_empty() {
+            self.windows.clear();
+        }
         self.question = ops.len();
     }
 
     /// `bounded`: the stream begins within the window (before it past the horizon).
+    /// In rounds (`never_round`): a solve made before is its outcome; past a stopped one, none
+    /// is made.
     #[allow(clippy::too_many_arguments)]
     fn solve(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, hypothesis: Option<&Lemma>, bounded: bool, exclude: &ByteSet) -> Outcome {
+        if self.captured.is_some() {
+            return Outcome::Unknown;
+        }
+        let i = self.at;
+        self.at += 1;
+        if let Some(Replayed::Known(o)) = self.replay.get(i) {
+            return o.clone();
+        }
+        let o = self.solve_now(ops, tables, v, d, hypothesis, bounded, exclude, i);
+        if self.capture && i < self.replay.len() {
+            self.replay[i] = Replayed::Known(o.clone());
+        }
+        o
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn solve_now(&mut self, ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, hypothesis: Option<&Lemma>, bounded: bool, exclude: &ByteSet, i: usize) -> Outcome {
         let nexts = &self.nexts;
         // The window as the operations make it, before the solve's own clauses (the bounded
         // start, the bytes left out, the lemmas): the same for every solve of a question's value
@@ -1266,7 +1401,13 @@ impl Induction {
         }
         // Past the compile's budget: not proved. A window's variables and the solve's conflicts
         // are its steps.
-        if !self.work.spend(u.vars.unsigned_abs().into()) {
+        let spent = matches!(self.replay.get(i), Some(Replayed::Cpu));
+        if !spent && !self.work.spend(u.vars.unsigned_abs().into()) {
+            return Outcome::Unknown;
+        }
+        // In rounds, a new solve: its formula, for the batch (`never_round`).
+        if self.capture && i == self.replay.len() {
+            self.captured = Some((u.vars.unsigned_abs(), u.clauses.clone()));
             return Outcome::Unknown;
         }
         let s = &mut self.solver;
