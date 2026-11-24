@@ -10098,8 +10098,11 @@ pub mod posted_tests {
         let plus = new.version_view(Ver::Plus).expect("a version");
         assert_eq!(rows_of(&plus), vec![vec![5, 2], vec![100, 1]]);
         assert_eq!(new.version_ids(Ver::Plus), Some(rerail_blocks::vector![40, 41]));
-        // The version is a bistate (decision 0678): [5, 2] killed and pushed again is gone and added.
-        rerail_blocks::bistate::check(&new.version().expect("a version"));
+        // The version is a bistate (decision 0678): [5, 2] killed and pushed again is gone and added, so its change
+        // is not the least one.
+        let version = new.version().expect("a version");
+        rerail_blocks::bistate::check(&version);
+        assert!(!rerail_blocks::bistate::is_least(&version));
         // The delta is the versions' rows.
         let (mut added, mut removed) = new.delta_since(&kept).expect("started as kept");
         let flat = |f: &mut Vector<i64>| { let mut r: Vec<Vector<i64>> = f.as_chunks::<2>().0.iter().map(|r| rerail_blocks::vector::Vector::from(&r[..])).collect(); r.sort(); r };

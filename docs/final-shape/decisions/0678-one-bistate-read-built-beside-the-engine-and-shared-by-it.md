@@ -27,8 +27,9 @@ made step by step.
 3. **An existing type is shared, not copied.** It implements the new trait, or its method's body becomes a call into
    the new code. Then the old and new paths are one code path, and the old tests test the new code.
 4. **Every step comes with the law it must keep, as a test.** `bistate::check` is law L1 at the level of one
-   relation: the rows before, less those gone, plus those added, are the rows after. `bistate::reference` is the
-   least change by definition ("run on both, diff").
+   relation: the rows before, less those gone, plus those added, are the rows after. The tests' checks read the
+   states where they lie too, and copy no row (the user, 2026-11-24: "remember that all state needs to live in
+   blocks").
 5. **The tests stay green at each step,** and the old tests are kept.
 
 ## Step 1 (done): `blocks::bistate`, shared by `View` and `InRel`'s versions
@@ -45,7 +46,20 @@ made step by step.
   needs two types, and step 2 makes a bistate two frontiers of one trace (`Bistate<'t>`, no type parameter). It
   reads `added`, `gone`, `counts` and `is_identity` from the two states' liveness words. It is `cold(after)` when
   there is no before.
-- **`check`** and **`reference`**: the law, and the oracle.
+- **`check`** and **`is_least`** (tests only): the law, and whether the change is the least one by value. Both
+  read the states in place, id by id: a row gone or added exactly when its liveness differs, and a row live in
+  both the same values in both.
+
+**What a row is.** A row has no type and no value of its own. It is a `RowId` into its relation's storage in a
+block, and its cells are read there, one `i64` each (`Read::get(RowId, ColumnIndex)`). The storage is a column per
+layer: `rows::Rows` (an open layer's columns, in chunks that double) or `packed::Packed` (a kept layer's bit-packed
+columns). Its liveness is the dead-bit words in the same block. A `Bistate`, a `View` and a `Marked` are handles on
+the stack: references into blocks, an end, and for `Marked` the function that reads a cell. They hold no state.
+
+**State that is not yet in a block.** A frontier is state. `View`'s two frontiers come from the facts block's root
+(its relations' pointers), but `InRel`'s start is a Rust value: `Origin::Based { n, dead }`, its row count in the
+struct and its dead bits a `Vector` in the run's room. Step 2 stores a trace's frontiers in its block (its header's layer count and each layer's ends), so a
+`Bistate` is made from what the block holds.
 
 Today's types that are states already:
 
@@ -94,7 +108,9 @@ Each adds to `blocks`, makes an existing type share it, and keeps the old path.
    `Delta::Marks` are made from an input's `Bistate`, so the planner holds one value where it holds four sources.
    The old type stays as the form the setfix spec reads.
 6. **`DeltaOp` and its harness.** The trait (a delta form and the plain `run`) and a test harness that checks L1
-   (the square) and L3 (a chain of deltas equals a cold run). The first operator is a stratum's maintain mode,
+   (the square) and L3 (a chain of deltas equals a cold run). Two runs' outputs have different ids, so the harness
+   compares them by value: each run's ids, ordered by their rows' values, in a block, and the two orders walked
+   together, reading every cell in place. The first operator is a stratum's maintain mode,
    wrapped, not rewritten.
 7. **`Cache` with its header** (the state it was made from, and an open mark), shared first by the plan caches
    that are keyed by version identity today.

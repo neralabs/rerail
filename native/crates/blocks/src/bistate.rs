@@ -14,9 +14,9 @@
 //! Both states are one type: they read the same rows, so they are read the same way. (Step 2 makes them two
 //! frontiers of one trace.)
 //!
-//! `Read` is what a state gives. `Bistate` reads the change. `reference` is the plain definition (the rows after,
-//! less the rows before, compared by value): the oracle every bistate is tested against, built for tests
-//! (`test-hooks`) only.
+//! `Read` is what a state gives. `Bistate` reads the change. A row is no value of its own: it is a `RowId` into
+//! its relation's block, and its cells are read where they lie (`Read::get`). `check` is the law a bistate keeps,
+//! read in place too, built for tests (`test-hooks`) only.
 //!
 //! Cost: `added`, `gone`, `counts` and `is_identity` read the two states' liveness words, so they cost
 //! `after.end() / 64` word reads, not the change's size. A state whose layer records its own kills (a delta's
@@ -24,8 +24,6 @@
 
 pub use crate::ids::{ColumnIndex, RowId, WordIndex};
 use crate::relation::View;
-#[cfg(any(test, feature = "test-hooks"))]
-use std::collections::BTreeMap;
 
 /// A relation at one state, read where it lies.
 pub trait Read {
@@ -158,73 +156,43 @@ impl<S: Read> Bistate<S> {
     }
 }
 
-/// A row's values, for the oracle's comparisons.
-#[cfg(any(test, feature = "test-hooks"))]
-fn values<R: Read + ?Sized>(r: &R, id: RowId) -> Vec<i64> {
-    ColumnIndex::all(r.arity()).map(|c| r.get(id, c)).collect()
-}
-
-/// A state's live rows as a multiset of values: what `reference` compares.
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn rows_of<R: Read + ?Sized>(r: &R) -> BTreeMap<Vec<i64>, usize> {
-    let mut out = BTreeMap::new();
-    for id in Bits::new(r.end(), |w| r.live_word(w)) {
-        *out.entry(values(r, id)).or_insert(0) += 1;
-    }
-    out
-}
-
-/// The least change, by definition: the rows before less the rows after (`gone`), and the rows after less the rows
-/// before (`added`), compared by value, each with its count: the reference a delta operator's output is compared
-/// with ("run on both, diff").
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn reference(before: Option<&dyn Read>, after: &dyn Read) -> (BTreeMap<Vec<i64>, usize>, BTreeMap<Vec<i64>, usize>) {
-    let b = before.map(rows_of).unwrap_or_default();
-    let a = rows_of(after);
-    let minus = |x: &BTreeMap<Vec<i64>, usize>, y: &BTreeMap<Vec<i64>, usize>| {
-        x.iter().filter_map(|(k, &n)| n.checked_sub(y.get(k).copied().unwrap_or(0)).filter(|&d| d > 0).map(|d| (k.clone(), d))).collect()
-    };
-    (minus(&b, &a), minus(&a, &b))
-}
-
-/// Asserts law L1 at the level of one relation (decision 0678): the rows before, less the rows `gone` names, plus
-/// the rows `added` names, are the rows after, as values with their counts; each gone id was live before and is not
-/// after, each added id is live after and was not before. The change need not be the least one (`reference`'s): a
-/// row killed and derived again is gone and added (a level reset, 0364 R4).
+/// Asserts law L1 for one relation (decision 0678), reading both states where they lie: nothing is copied. Every id
+/// below the after state's end is gone exactly when it is live before only, and added exactly when it is live after
+/// only; a row live in both has the same values in both (the two states are the same rows). So the rows before, less
+/// those gone, plus those added, are the rows after. The change need not be the least one (`is_least`): a row killed
+/// and derived again is gone and added (a level reset, 0364 R4).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn check<S: Read>(s: &Bistate<S>) {
-    let collect = |ids: &mut dyn Iterator<Item = RowId>, r: &S| {
-        let mut out = BTreeMap::new();
-        for id in ids {
-            *out.entry(values(r, id)).or_insert(0usize) += 1;
-        }
-        out
-    };
-    for id in s.added() {
-        assert!(s.after.live(id) && !s.before.as_ref().is_some_and(|b| b.live(id)), "added id {id} is live after only");
-    }
-    let mut rows = BTreeMap::new();
-    if let Some(b) = &s.before {
-        for id in s.gone() {
-            assert!(b.live(id) && !s.after.live(id), "gone id {id} is live before only");
-        }
-        rows = rows_of(b);
-        for (row, n) in collect(&mut s.gone(), b) {
-            let have = rows.get_mut(&row).expect("a gone row is a row before");
-            *have -= n;
-            if *have == 0 {
-                rows.remove(&row);
+    let after = &s.after;
+    let (mut gone, mut added) = (s.gone().peekable(), s.added().peekable());
+    let (mut gone_n, mut added_n) = (0usize, 0usize);
+    for id in (0..after.end().get()).map(RowId::new) {
+        let b = s.before.as_ref().is_some_and(|b| b.live(id));
+        let a = after.live(id);
+        let is_gone = gone.next_if_eq(&id).is_some();
+        let is_added = added.next_if_eq(&id).is_some();
+        assert_eq!(is_gone, b && !a, "row {id}: gone exactly when live before only");
+        assert_eq!(is_added, a && !b, "row {id}: added exactly when live after only");
+        if let Some(before) = s.before.as_ref().filter(|_| b && a) {
+            for c in ColumnIndex::all(after.arity()) {
+                assert_eq!(before.get(id, c), after.get(id, c), "row {id} is the same row in both states");
             }
         }
+        gone_n += usize::from(is_gone);
+        added_n += usize::from(is_added);
     }
-    let added = collect(&mut s.added(), &s.after);
-    for (row, n) in &added {
-        *rows.entry(row.clone()).or_insert(0) += n;
-    }
-    assert_eq!(rows, rows_of(&s.after), "before, less the rows gone, plus the rows added, is after");
-    let gone_n = s.before.as_ref().map_or(0, |_| s.gone().count());
-    assert_eq!(s.counts(), (gone_n, added.values().sum()), "its counts are its ids'");
-    assert_eq!(s.is_identity(), gone_n == 0 && added.is_empty(), "identity when no id changed");
+    assert!(gone.next().is_none() && added.next().is_none(), "no id past the after state's end");
+    assert_eq!(s.counts(), (gone_n, added_n), "its counts are its ids'");
+    assert_eq!(s.is_identity(), gone_n == 0 && added_n == 0, "identity when no id changed");
+}
+
+/// Whether the change is the least one, by value: no row gone has the values of a row added. Read in place, every
+/// pair compared: for tests' small relations only.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn is_least<S: Read>(s: &Bistate<S>) -> bool {
+    let Some(before) = &s.before else { return true };
+    let cols = before.arity();
+    s.gone().all(|g| s.added().all(|a| ColumnIndex::all(cols).any(|c| before.get(g, c) != s.after.get(a, c))))
 }
 
 /// A relation read alone: its own rows, less its dead bits.
@@ -350,7 +318,7 @@ mod tests {
     }
 
     /// A base and its delta are a bistate: what the delta kills is gone, what it adds (less what the base holds
-    /// already) is added, and the two are the reference's.
+    /// already) is added, and the change is the least one.
     #[test]
     fn a_base_and_its_delta_are_a_bistate() {
         let base = [[1, 10], [2, 20], [3, 30], [4, 40]];
@@ -363,8 +331,7 @@ mod tests {
             assert_eq!(s.counts(), (2, 2));
             assert!(!s.is_identity());
             // Freeze drops a delta's rows its base holds live, so its change is the least one.
-            let (gone, added) = reference(s.before().map(|b| b as &dyn Read), s.after());
-            assert_eq!((gone.len(), added.len()), (2, 2));
+            assert!(is_least(&s));
         });
     }
 
