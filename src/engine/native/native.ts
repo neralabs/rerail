@@ -600,6 +600,18 @@ export interface NativeBinding {
    */
   detachedExitCode?(pid: number): number | null;
   /**
+   * Windows only: when the process holding `pid` started (its creation time), in epoch milliseconds, or null where
+   * Windows does not say: no process holds `pid`, or this user may not query it. A binary built before it lacks it.
+   */
+  processStartedAt?(pid: number): number | null;
+  /**
+   * Windows only: opens the process holding `pid`, reads its creation time and, when that is no later than `startedAt`
+   * (epoch ms), ends it and waits up to `waitMs` for it to exit, all through the one handle it opened: `ended`,
+   * `running` (ended, still running after the wait), `later` (started after `startedAt`, let alone) or `unread` (not
+   * opened or not read). A binary built before it lacks it.
+   */
+  endProcessStartedBy?(pid: number, startedAt: number, waitMs: number): string;
+  /**
    * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
    * before it lacks it.
    */
