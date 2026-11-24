@@ -3260,31 +3260,73 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
   }, 30_000);
 
+  /**
+   * Stops the busy daemon `LIVE_PID` names, which the home's lock does not prove, on Windows, where each read of its
+   * start is the real one through Windows PowerShell, of this process, which started before the record, with
+   * PowerShell's own setting that loads only the modules a command names. The case's clock takes `answerMs` for each
+   * answer, so how fast this machine starts PowerShell decides nothing: a read answered within the bound the stop gave
+   * it is PowerShell's own, run to its end; one past that bound comes back, unrun, as Node's `spawnSync` gives a
+   * PowerShell it ended there. Each read's program and bound go to `reads`.
+   */
+  async function stopReadingStartsFor(answerMs: number, signals: Array<string | number | undefined>, reads: Array<{ program: string; boundMs: number }>): Promise<StopDaemonResult> {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    const answering = ((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      const boundMs = Number(options.timeout);
+      reads.push({ program, boundMs });
+      if (answerMs >= boundMs) {
+        vi.setSystemTime(Date.now() + boundMs);
+        const ended = Object.assign(new Error("spawnSync powershell.exe ETIMEDOUT"), { code: "ETIMEDOUT" });
+        return { pid: 0, output: [null, "", ""], stdout: "", stderr: "", status: null, signal: "SIGTERM", error: ended };
+      }
+      const { timeout: _bound, ...unbounded } = options;
+      const result = runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), unbounded);
+      vi.setSystemTime(Date.now() + answerMs);
+      return result;
+    }) as unknown as typeof childProcess.spawnSync;
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(answering).mockImplementationOnce(answering);
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify({ ...state("win32"), startedAt: Date.now() }));
+      const machine: DaemonMachine = {
+        ...machineWith("win32", signals, () => undefined),
+        processStartedAt: (pid, timeoutMs) => (pid === LIVE_PID ? processStartedAt(process.pid, timeoutMs, "win32") : undefined),
+      };
+      return await stopDaemon(home, machine);
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
   // A busy daemon the home's lock does not prove, on a machine where Windows PowerShell finds a cmdlet named alone only
   // after it has read every installed module it has not read yet: 46 s with 40 large ones, past the stop's 10 s.
-  // PowerShell's own setting that loads only the modules a command names stands in for that machine. Each read is the
-  // real one, of this process, which started before the record.
+  // PowerShell's own setting that loads only the modules a command names stands in for that machine, and each read
+  // answers in a second of the case's clock.
   it.runIf(process.platform === "win32")("stops a busy daemon the home's lock does not prove while PowerShell loads only the modules a command names", { timeout: 60_000 }, async () => {
-    const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
-    const programs: string[] = [];
-    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
-    const qualifiedOnly = ((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
-      programs.push(program);
-      return runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options);
-    }) as unknown as typeof childProcess.spawnSync;
-    vi.mocked(childProcess.spawnSync).mockImplementationOnce(qualifiedOnly).mockImplementationOnce(qualifiedOnly);
-    await writeFile(stateFile, JSON.stringify({ ...state("win32"), startedAt: Date.now() }));
-    const machine: DaemonMachine = {
-      ...machineWith("win32", signals, () => undefined),
-      processStartedAt: (pid, timeoutMs) => (pid === LIVE_PID ? processStartedAt(process.pid, timeoutMs, "win32") : undefined),
-    };
-    expect(await stopDaemon(home, machine)).toBe("stopped");
+    const reads: Array<{ program: string; boundMs: number }> = [];
+    expect(await stopReadingStartsFor(1_000, signals, reads)).toBe("stopped");
     expect(signals).toEqual(["SIGTERM"]);
-    expect(existsSync(stateFile)).toBe(false);
-    // The stop's lookup and its check just before the SIGTERM each read the start, both under that setting.
-    expect(programs).toHaveLength(2);
-    for (const program of programs) expect(program).toMatch(/\\powershell\.exe$/iu);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
+    // The stop's lookup and its check just before the SIGTERM each read the start, both under that setting, each within
+    // the stop's 10 s.
+    expect(reads).toHaveLength(2);
+    for (const { program, boundMs } of reads) {
+      expect(program).toMatch(/\\powershell\.exe$/iu);
+      expect(boundMs).toBeGreaterThan(0);
+      expect(boundMs).toBeLessThanOrEqual(10_000);
+    }
+  });
+
+  // The stop's 10 s is all that ends a PowerShell that never answers: the read is ended there and reads nothing, and the
+  // stop ends nothing and keeps the record, saying it could not prove the daemon.
+  it.runIf(process.platform === "win32")("ends nothing and keeps the record of a busy daemon the home's lock does not prove when PowerShell never answers the read of its start", { timeout: 60_000 }, async () => {
+    const signals: Array<string | number | undefined> = [];
+    const reads: Array<{ program: string; boundMs: number }> = [];
+    await expect(stopReadingStartsFor(Number.POSITIVE_INFINITY, signals, reads)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
+    expect(signals).toEqual([]);
+    expect(JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8"))).toMatchObject({ pid: LIVE_PID });
+    expect(reads).toHaveLength(2);
+    for (const { boundMs } of reads) expect(boundMs).toBeLessThanOrEqual(10_000);
   });
 
   // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM. With no start read,
