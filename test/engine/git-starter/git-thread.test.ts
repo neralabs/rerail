@@ -32,7 +32,7 @@ vi.mock("node:worker_threads", async importOriginal => {
 vi.mock("../../../src/engine/child-process.js", { spy: true });
 vi.mock("../../../src/engine/git-start.js", { spy: true });
 
-import { endProcessTree, execFile, spawn } from "../../../src/engine/child-process.js";
+import { endProcessTree, spawn } from "../../../src/engine/child-process.js";
 import { execFileInThread } from "../../../src/engine/git-starter/exec-in-thread.js";
 import { runGitAsync } from "../../../src/engine/git.js";
 import { startGit, startGitThroughNode, type GitProcess } from "../../../src/engine/git-start.js";
@@ -71,7 +71,7 @@ afterEach(() => {
   threads.failNext = 0;
   vi.mocked(spawn).mockClear();
   vi.mocked(endProcessTree).mockClear();
-  vi.mocked(execFile).mockClear();
+  vi.unstubAllEnvs();
 });
 
 afterAll(async () => {
@@ -396,10 +396,12 @@ describe("a program run to its end in a starter thread", () => {
     const node = async (file: string, args: string[], timeoutMs?: number) => await byNode(file, args, { encoding: "utf8", ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }) });
     const asNodeRuns = await Promise.all(scripts.map(async ([script, timeoutMs]) => await ranAs(node, script, timeoutMs)));
     expect(startGitInThread("win32")).toBe(true);
+    // A starter thread's preload writes this file as it makes a start whose environment names it; this thread has none.
+    const mark = join(await folder("exec"), "started");
+    vi.stubEnv("RERAIL_TEST_START_MARK", mark);
     const inThread = await Promise.all(scripts.map(async ([script, timeoutMs]) => await ranAs(execFileInThread, script, timeoutMs)));
-    expect(inThread).toEqual(asNodeRuns);
+    vi.unstubAllEnvs();
+    expect({ inThread, inAThread: existsSync(mark) }).toEqual({ inThread: asNodeRuns, inAThread: true });
     expect(inThread[2]).toMatchObject({ killed: true, code: null, stdout: "waits" });
-    // Node's start on this thread, for a run or for a child, is where the run would have started without the thread.
-    expect(vi.mocked(spawn).mock.calls.length + vi.mocked(execFile).mock.calls.length).toBe(0);
   }, 60_000);
 });
