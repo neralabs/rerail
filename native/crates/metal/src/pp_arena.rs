@@ -74,6 +74,11 @@ impl Arena {
     pub fn zeroed<T>(&self, count: usize) -> Result<Buf, Error> {
         assert!(self.0.leased.get().is_none(), "a store declared after its arena was leased");
         let len = count.max(1).checked_mul(size_of::<T>()).ok_or(Error::BackendCapacity)?;
+        // The kernels read a store by its 32-bit offset (`Lay`): an arena past 4 GiB is refused, and the caller runs
+        // a smaller batch.
+        if self.0.end.get().saturating_add(len) > u32::MAX as usize {
+            return Err(capacity(concat!(file!(), ":", line!())));
+        }
         Ok(self.place(len))
     }
 
