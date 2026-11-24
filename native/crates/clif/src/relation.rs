@@ -221,7 +221,7 @@ fn mask_of(b: &mut B<'_, '_>, w: Value) -> Value {
 
 /// `col_sealed(col, i)`: value `i` of a sealed chunk's frozen column (`col::IntCol::get`, decision 0622): `CONST`'s
 /// base; `PACK`'s base and packed value; `RUNS`' run found by a search of its starts; `LINE`'s line, residuals'
-/// minimum and residual; `GROUPS`' group minimum and residual at the group's width.
+/// minimum and residual; `GROUPS`' group minimum and residual at the group's width; `DICT`'s code, then its value.
 pub fn col_sealed(b: &mut B<'_, '_>) -> Value {
     let ic = b.tape;
     let i = b.arg(0);
@@ -252,7 +252,10 @@ pub fn col_sealed(b: &mut B<'_, '_>) -> Value {
                     let line = is(b, rerail_blocks::col::LINE);
                     b.either(I64, line, |b| sealed_line(b, ic, data, i, bits, mask, base), |b| {
                         let runs = is(b, rerail_blocks::col::RUNS);
-                        b.either(I64, runs, |b| sealed_runs(b, ic, data, i, bits, mask, base), |b| sealed_groups(b, ic, data, i, bits, mask, base))
+                        b.either(I64, runs, |b| sealed_runs(b, ic, data, i, bits, mask, base), |b| {
+                            let dict = is(b, rerail_blocks::col::DICT);
+                            b.either(I64, dict, |b| sealed_dict(b, ic, data, i, bits, mask, base), |b| sealed_groups(b, ic, data, i, bits, mask, base))
+                        })
                     })
                 },
             )
@@ -312,6 +315,20 @@ fn sealed_runs(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Value,
     let k = b.f.block_params(done)[0];
     let bit = b.f.ins().imul(k, bits);
     let v = rd_bit(b, data, bit, mask);
+    b.f.ins().iadd(base, v)
+}
+
+/// `DICT` (decision 0622 step 4): `i`'s code (`rbits` bits), then the dictionary's value at that code (`bits` bits,
+/// in `runs`).
+fn sealed_dict(b: &mut B<'_, '_>, ic: Value, data: Value, i: Value, bits: Value, mask: Value, base: Value) -> Value {
+    let rbits = b.word_at(I32, ic, IC_RBITS);
+    let rbits = b.f.ins().uextend(I64, rbits);
+    let rmask = mask_of(b, rbits);
+    let cbit = b.f.ins().imul(i, rbits);
+    let k = rd_bit(b, data, cbit, rmask);
+    let values = b.follow(ic, IC_RUNS);
+    let vbit = b.f.ins().imul(k, bits);
+    let v = rd_bit(b, values, vbit, mask);
     b.f.ins().iadd(base, v)
 }
 
@@ -722,7 +739,7 @@ mod tests {
     /// `runs`) reads in the JIT as on the host: each row's value through its rows, a column resolved once and the
     /// relation, beside an uncoded 4-byte column and an 8-byte one, with the run table before the relation and after.
     /// Decision 0622: a sealed chunk's values through the JIT's `rows_get` are the host's, for each of the frozen
-    /// encodings (`CONST`, `PACK`, `RUNS`, `LINE`, `GROUPS`), and a raw chunk beside them reads as before.
+    /// encodings (`CONST`, `PACK`, `RUNS`, `LINE`, `GROUPS`, `DICT`), and a raw chunk beside them reads as before.
     #[test]
     fn the_jits_sealed_chunk_reads_are_the_hosts() {
         let reads = crate::jit::Reads::new();
@@ -732,8 +749,8 @@ mod tests {
         let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
         let lock = Mutex::new(());
         let rows: &rerail_blocks::rows::Rows = unsafe { &*block.alloc_t::<rerail_blocks::rows::Rows>(1) };
-        let cols = 6;
-        unsafe { rerail_blocks::rows::Rows::init(rows as *const rerail_blocks::rows::Rows as *mut rerail_blocks::rows::Rows, &block, &[8; 6], 4) };
+        let cols = 7;
+        unsafe { rerail_blocks::rows::Rows::init(rows as *const rerail_blocks::rows::Rows as *mut rerail_blocks::rows::Rows, &block, &[8; 7], 4) };
         let n = 30_000u32;
         let col = |c: usize, i: i64| match c {
             0 => -3,                                    // CONST
@@ -741,7 +758,8 @@ mod tests {
             2 => i / 700 * 11,                          // RUNS
             3 => i * 3 + (i * 7) % 5 - 1_000_000,       // LINE
             4 => (i << 20) + (i * 2_654_435_761) % 64,  // GROUPS or LINE
-            _ => (i * 2_654_435_761) ^ (i << 45),       // wide
+            5 => (i * 2_654_435_761) ^ (i << 45),       // wide
+            _ => [-1 << 40, 7, 1 << 50, 3][(i * 2_654_435_761 % 4) as usize], // DICT: four values spread wide
         };
         let s = rows.claim(&block, &lock, n);
         for i in 0..n {
@@ -765,7 +783,7 @@ mod tests {
                 assert_eq!(rows_get(std::ptr::from_ref(rows).cast(), i, c as u32) as i64, host, "the JIT's row {i} of column {c}");
             }
         }
-        for t in ["const", "pack", "runs", "line"] {
+        for t in ["const", "pack", "runs", "line", "dict"] {
             assert!(tags.contains(t), "an encoding {t} among the sealed chunks: {tags:?}");
         }
     }

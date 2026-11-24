@@ -1,6 +1,6 @@
 # 0622. A relation's sealed chunks take the frozen columns' encodings
 
-Status: steps 1 and 2 built (2026-11-22); steps 3 and 4 measured and not kept (below). t52 step 5: written before it was built, as t52's plan
+Status: steps 1 and 2 built (2026-11-22); step 3 measured and not kept; step 4 built (2026-11-23, below). t52 step 5: written before it was built, as t52's plan
 asks. t52 named it 0605; it is numbered past the highest record in any worktree (0621).
 
 ## Intro
@@ -127,6 +127,21 @@ they lie.**
   `RERAIL_SEAL_CHUNKS=off`, instructions 1,644 G → 1,561 G (−5%), CPU 169 s → 165 s, the peak 2,433 → 2,586 MB
   (+153 MB), the rows the same. `IntCol::get` is the second busiest function in a sample of s1000's joins. So sealing
   buys 153 MB at the peak for 5% of the run's instructions; a dictionary would add a dependent load to the same reads.
+
+- **Step 4, built (2026-11-23).** `DICT` is the sixth encoding: a chunk's distinct values sorted, each less `base`
+  in `bits` bits (`runs`, `nruns` of them), and each row's index among them in `rbits` bits (`data`). A read is two
+  packed reads: `IntCol::get` and `Dec` on the host, CLIF's `col_sealed` (the JIT, and the kernels' `relation.h`
+  generated from it). Only `choose_for_reads` (a relation's sealed chunks) takes it, and only where it is smaller
+  than every other encoding. The packed store's `choose` keeps its five, so no file's format changes. The distinct
+  values are counted only up to the most a dictionary could hold and still be smaller (`dict_limit`), so a column of
+  many values stops early. Tests: `a_column_of_few_values_spread_wide_is_a_dictionary` (reads by position, in order
+  and by search; across parallel pieces; not taken for many values or a narrow range), the JIT's
+  `the_jits_sealed_chunk_reads_are_the_hosts` with a `DICT` column, and the device's
+  `the_device_reads_a_relation_as_the_host_does` with a `DICT` relation (a Linux host's device, and Metal on an M3).
+  On `all` (M3, CPU, the binary before and after), every export's rows are the same. Sealing saves 725 MB over the
+  run, against 586 MB (1,108 MB of raw chunks into 383 MB, against 910 MB into 324 MB): chunks that saved too little
+  to seal before now seal as dictionaries. The peak is 2,396 → 2,380 MB, the few tens of MB the census gave, and
+  instructions 1,639 → 1,662 G (+1.4%).
 
 ## Test
 

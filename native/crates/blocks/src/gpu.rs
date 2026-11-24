@@ -169,6 +169,18 @@ mod tests {
         // SAFETY: the relation is frozen: no one writes it, and no reader holds an address in its rows.
         let (raw, packed) = unsafe { sealed.rows.seal(&sealed_block) };
         assert!(packed < raw && sealed.rows.is_sealed(0), "the relation's chunks sealed: {packed} bytes for {raw}");
+        // A column of a few values spread wide is sealed as a dictionary (0622 step 4): the kernels decode it too.
+        let dict_block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+        let dict = Relation::create(&dict_block, &spec, None);
+        // Within the spec's 4-byte column (its high bits one word, here 0), spread over 31 bits: two bits a code.
+        let spread = [1i64 << 30, 7, (1 << 29) + 5, 3];
+        let rows: Vec<i64> = (0..20_000i64).flat_map(|i| [i / 3 * 5 - 7, spread[((i * 2_654_435_761) % 4) as usize]]).collect();
+        RelW { block: &dict_block, rel: dict, lock: &lock }.extend(&rows);
+        freeze(&dict_block, dict, &spec, None);
+        // SAFETY: as above.
+        unsafe { dict.rows.seal(&dict_block) };
+        let tags: Vec<&str> = (0..crate::rows::DIRS).filter_map(|k| dict.rows.col(1).sealed(k)).map(|c| c.tag_name()).collect();
+        assert!(tags.contains(&"dict"), "a dictionary column sealed: {tags:?}");
 
         /// The probe's parameters: the relation's offset in its block, its rows.
         #[repr(C)]
@@ -197,7 +209,7 @@ DEFINE_KERNEL2(blocks_tests, reads_probe, ROBUFFER, uint8_t, b, "[block]", ARGS,
 "#;
         let program = rerail_gpu::kernels::program("reads_probe.uglykl", Box::leak((source() + KERNEL).into_boxed_str())).unwrap_or_else(|e| panic!("the kernels compile: {e}"));
         let probe = program.function("reads_probe").unwrap();
-        for (block, rel) in [(&base_block, base), (&top_block, top), (&sealed_block, sealed)] {
+        for (block, rel) in [(&base_block, base), (&top_block, top), (&sealed_block, sealed), (&dict_block, dict)] {
             let n = rel.rows.len();
             let at = block.offset_of(std::ptr::from_ref(rel)) as u64;
             let out = alloc::<u64>(n as usize * 4).unwrap();
