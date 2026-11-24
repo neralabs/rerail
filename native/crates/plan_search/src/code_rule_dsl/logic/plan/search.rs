@@ -3065,10 +3065,17 @@ impl Model {
     /// docof(s, e9), rr_cx_reach(d9, e9)` led by `rr_cx_reach`'s 156 changed rows read all of `pann` for each (9.96 M
     /// rows of work a line, two such lines 20 M of the move's 42 M); led by `pann`'s 37, it walked each reached
     /// document's nodes for `docof(s, e9)` before `uinst` and `anc` bound `s` (1.32 M a line, eight such 8.3 M).
-    pub fn reads_whole_past_lead(&self, b: &Body<'_>, order: &[Step]) -> bool {
-        let Some(lead) = order.first() else { return false };
-        let mut bound = b.vars(lead.at).clone();
-        for s in &order[1..] {
+    /// With `given`, the variables a lead outside `order` binds (a negated driver's, `Body::with_bound`), every step
+    /// of `order` is past the lead.
+    pub fn reads_whole_past_lead(&self, b: &Body<'_>, given: Option<&VarSet>, order: &[Step]) -> bool {
+        let (mut bound, rest) = match given {
+            Some(g) => (g.clone(), order),
+            None => {
+                let Some(lead) = order.first() else { return false };
+                (b.vars(lead.at).clone(), &order[1..])
+            }
+        };
+        for s in rest {
             if let Lit::Atom(a) = b.view(s.at)
                 && !a.neg()
             {
@@ -3097,9 +3104,11 @@ impl Model {
     /// the two taken: the plan, priced now, and whether it is the free one (its key then `reused_key`'s with
     /// `lead_free` on). Led by `pann`'s 37 changed rows on corpus0's move, eight `bv` lines walked each reached
     /// document's nodes (`docof(s, e9)` from its document, a tape view read by node alone) before `uinst` and `anc`
-    /// bound `s`: 1.32 M rows of work a line, 8.3 M of the move's 17.4 M.
-    pub fn under_floor_line(&mut self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, led: Plan) -> (Plan, bool) {
-        let price = if self.reads_whole_past_lead(b, &led.0) { f64::INFINITY } else { self.plan_inner(pf, b, first, Some(&led.0), false).map_or(led.1, |p| p.0.1) };
+    /// bound `s`: 1.32 M rows of work a line, 8.3 M of the move's 17.4 M. A line a negated driver leads is planned
+    /// so too, its body with the driver's variables bound (`given`, `first` none): led by `!method`'s 18 changed rows,
+    /// `pv(a, k, v)` was read whole for each (177,625 rows of work a line) before `cfn` and `posarg` bound `a`.
+    pub fn under_floor_line(&mut self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>, given: Option<&VarSet>, led: Plan) -> (Plan, bool) {
+        let price = if self.reads_whole_past_lead(b, given, &led.0) { f64::INFINITY } else { self.plan_inner(pf, b, first, Some(&led.0), false).map_or(led.1, |p| p.0.1) };
         let led = if price.is_finite() { (led.0, price, led.2) } else { led };
         if price <= REPLAN_ROWS {
             return (led, false);

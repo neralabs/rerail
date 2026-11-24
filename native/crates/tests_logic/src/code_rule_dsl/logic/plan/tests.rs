@@ -2417,24 +2417,28 @@ fn a_delta_led_line_that_reads_a_relation_whole_a_row_is_planned_free() {
     let ((led, led_work, _), _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
     let led_names: Vec<String> = led.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
     assert_eq!(led_names[..2], ["reach", "pann"], "led by the delta, `pann` read whole for each of its rows: {led_names:?}");
-    assert!(model.reads_whole_past_lead(&b, &led), "{led_names:?}");
+    assert!(model.reads_whole_past_lead(&b, None, &led), "{led_names:?}");
     model.stats.lead_free = true;
     let ((free, work, _), _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
     let names: Vec<String> = free.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
-    assert!(!model.reads_whole_past_lead(&b, &free), "free to start, no relation read whole a row: {names:?}");
+    assert!(!model.reads_whole_past_lead(&b, None, &free), "free to start, no relation read whole a row: {names:?}");
     assert!(work * 5.0 < led_work, "{names:?} at {work} against {led_work} led by the delta");
     // As the maintain mode takes it under the floor: the delta-led order, priced now, freed and the cheaper taken.
     model.stats.lead_free = false;
     let (led_plan, _) = model.plan_rule_explained(fields, &b, Some(3)).unwrap();
-    let ((_, taken, _), freed) = model.under_floor_line(fields, &b, Some(3), led_plan);
+    let ((_, taken, _), freed) = model.under_floor_line(fields, &b, Some(3), None, led_plan);
     assert!(freed && taken * 5.0 < led_work, "freed {freed} at {taken} against {led_work}");
     // Led by `pann`, `docof` read from its document (its one index is by node, as the tape view's) walks the
     // document's every node for each row: `docof(s, e)` after `reach` binds `e`, where `uinst` and `anc` bind `s`
     // from `t` first.
     model.stats.indexes = model.stats.indexes.with([("docof".to_owned(), vec![vec!["n".to_owned()]])]);
     let order = |ats: [usize; 6]| ats.map(|at| Step { at, mode: None }).to_vec();
-    assert!(model.reads_whole_past_lead(&b, &order([0, 1, 3, 2, 4, 5])), "`docof(s, e)` with `e` bound alone");
-    assert!(!model.reads_whole_past_lead(&b, &order([0, 5, 4, 2, 1, 3])), "`docof(s, e)` with `s` bound");
+    assert!(model.reads_whole_past_lead(&b, None, &order([0, 1, 3, 2, 4, 5])), "`docof(s, e)` with `e` bound alone");
+    assert!(!model.reads_whole_past_lead(&b, None, &order([0, 5, 4, 2, 1, 3])), "`docof(s, e)` with `s` bound");
+    // Led from outside the order (a negated driver's variables bound, here `s` and `e`): its every step is past it.
+    let five = |ats: [usize; 5]| ats.map(|at| Step { at, mode: None }).to_vec();
+    assert!(model.reads_whole_past_lead(&b, Some(b.vars(2)), &five([0, 1, 3, 4, 5])), "`pann` with none of its variables bound");
+    assert!(!model.reads_whole_past_lead(&b, Some(b.vars(2)), &five([4, 5, 0, 1, 3])), "`anc` by `s`, then `uinst` and `pann` by what it binds");
 }
 
 /// A restrictive relation outside the fixpoint has the same containment property as one inside it.

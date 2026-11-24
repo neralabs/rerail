@@ -2738,7 +2738,7 @@ impl<'a> Run<'a, '_> {
                 let mut priced = self.model.plan_rule_reused(pf, b, first).map(|p| p.0);
                 // Under the floor as the mode plans it (`Model::under_floor_line`): priced now, freed where it pays.
                 if first.is_some() && !self.model.stats.lead_free && let Ok(p) = priced {
-                    let (p, free) = self.model.under_floor_line(pf, b, first, p);
+                    let (p, free) = self.model.under_floor_line(pf, b, first, None, p);
                     self.model.stats.lead_free = free;
                     priced = Ok(p);
                 }
@@ -2778,6 +2778,18 @@ impl<'a> Run<'a, '_> {
         let mut wanted = BTreeSet::new();
         self.model.wants(bodies.iter().map(|b| (b, None)), &mut wanted);
         self.model.make_statistics(pf, &wanted)?;
+        // The stratum's own relations sized as kept (`olds`) before its lines are planned: unsized, a line that reads
+        // one whole was priced as nearly free. On corpus0's move, `pv(c, k, v) :- !method(f, _), pv(a, k, v),
+        // posarg(c, i, a), rpvar(f, i), cfn(c, _, f)` led by `!method`'s 18 changed rows was priced 2,852 reading
+        // `pv` whole for each, and did 177,625 rows of work; `pv` and `cfn` had no size.
+        // Their columns' statistics too (`kept_card`): sized alone, a probe of `cfn` by `f` was priced as a read of
+        // it whole, and the line still read `pv` first.
+        for (r, o) in &olds {
+            if self.model.stats.card.get(r.as_str()).is_none() {
+                let (card, _) = kept_card(&mut self.model, pf, r, o);
+                self.model.stats.card.insert(r.clone(), card);
+            }
+        }
         let held = |rel: &str| super::native::component::held(self.db, rel);
         let mut lines = Vec::new();
         // Each joined line's kept-plan key, by the engine's list it runs in (`ModeLine`), in spec order: its work goes
@@ -2909,8 +2921,15 @@ impl<'a> Run<'a, '_> {
                     // A negated driver leads its line too: the body planned with its variables bound by the delta's rows
                     // (`Body::with_bound`), kept apart as a recheck's is; its item goes first (below).
                     let led_body = a.neg().then(|| b.with_bound(b.vars(k).clone()));
+                    // Priced now and planned free where its order as the program planned it costs more
+                    // (`Model::under_floor_line`).
+                    let mut led_free = false;
                     let led = match &led_body {
-                        Some(lb) => self.model.plan_rule_reused(pf, lb, None).ok().map(|((o, _, _), _)| o),
+                        Some(lb) => self.model.plan_rule_reused(pf, lb, None).ok().map(|(p, _)| {
+                            let (p, free) = self.model.under_floor_line(pf, lb, None, Some(b.vars(k)), p);
+                            led_free = free;
+                            p.0
+                        }),
                         None => None,
                     };
                     // The line's order: the driver first, then the rest as planned from its variables bound.
@@ -2926,7 +2945,12 @@ impl<'a> Run<'a, '_> {
                     // 156-row delta that bound only documents, corpus0's `bv` lines read `pann` whole a row (20 M of a
                     // move's 42 M rows of work).
                     let (order, key) = match (&led, &led_body) {
-                        (Some(o), Some(lb)) => (o.clone(), self.model.reused_key(lb, None)),
+                        (Some(o), Some(lb)) => {
+                            self.model.stats.lead_free = led_free;
+                            let key = self.model.reused_key(lb, None);
+                            self.model.stats.lead_free = false;
+                            (o.clone(), key)
+                        }
                         _ => {
                             // The relation's change, both sides, as the clause's price reads it (`mode_costs`).
                             self.model.stats.lead_free = crate::code_rule_dsl::logic::plan::again::past_floor(gone + added);
@@ -2936,7 +2960,7 @@ impl<'a> Run<'a, '_> {
                             // Under the floor, led by its delta as the program planned it, unless priced now it is
                             // over what a search could save (`Model::under_floor_line`).
                             let (plan, free) = match planned {
-                                Ok(p) if !past => self.model.under_floor_line(pf, b, first, p),
+                                Ok(p) if !past => self.model.under_floor_line(pf, b, first, None, p),
                                 p => (p?, past),
                             };
                             self.model.stats.lead_free = free;
@@ -5564,9 +5588,20 @@ fn hold_quiet(run: &mut Run, f: Fields<'_>, db: &Connection, rel: &str, o: Arc<s
 /// value, and every probe of it as all its rows: `aknown__sup4__del` scanned `aleaf` (12,779 rows) before its 3-row
 /// delta (t39). Only where every column's were kept: the planner reads a relation's columns all or none.
 fn quiet_card(model: &mut Model, tally: &QuietTally, f: Fields<'_>, rel: &str, o: &Arc<super::native::component::InRel>) -> f64 {
+    let (card, stated) = kept_card(model, f, rel, o);
+    if !stated {
+        tally.unmeasured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    card
+}
+
+/// A kept relation's size as the planner reads it, and its columns' statistics where it first asks for them: the
+/// prior run's (`prior_stats`), else kept with its rows, else measured over its rows where they lie. With whether its
+/// statistics have a source.
+fn kept_card(model: &mut Model, f: Fields<'_>, rel: &str, o: &Arc<super::native::component::InRel>) -> (f64, bool) {
     let seeded = (o.rows() as f64).max(1.0);
     if let Some(n) = prior_stats(model, f, rel) {
-        return n.max(seeded);
+        return (n.max(seeded), true);
     }
     if !model.stats.lazy.0.contains_key(rel)
         && let Some(width) = f.arity(rel)
@@ -5590,10 +5625,7 @@ fn quiet_card(model: &mut Model, tally: &QuietTally, f: Fields<'_>, rel: &str, o
             (cols, Vec::new(), ())
         }));
     }
-    if !model.stats.lazy.0.contains_key(rel) {
-        tally.unmeasured.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-    seeded
+    (seeded, model.stats.lazy.0.contains_key(rel))
 }
 /// A stratum of a maintained run, as its level's start placed it (decision 0117 step 3).
 enum Slot {
