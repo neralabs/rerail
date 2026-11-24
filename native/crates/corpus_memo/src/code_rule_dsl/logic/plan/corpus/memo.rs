@@ -909,14 +909,17 @@ pub(super) fn remember_all_but(store: &ContentStore, program: &Program, entries:
     let encoded: Vec<StoreResult<(Content, String, i64, [u8; 32], bool, crate::code_rule_dsl::logic::plan::output::Finished)>> = {
         use rayon::prelude::*;
         let items: Vec<((Content, String, Entry), [u8; 32])> = held.into_iter().zip(digests).filter_map(|(h, d)| Some((h, d?))).collect();
-        items
-            .into_par_iter()
-            .map(|((content, path, e), digest)| {
-                let over = standing.contains(&(path.clone(), e.key));
-                let image = if over { image::encode_parts(&identities_of(&e), &program.syms, &made_under)? } else { image::encode_parts(&e, &program.syms, &made_under)? };
-                Ok((content, path, e.key, digest, over, image))
-            })
-            .collect()
+        // On the machine's cores, as every parallel loop of the engine (`check_machine_pool.py`).
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            items
+                .into_par_iter()
+                .map(|((content, path, e), digest)| {
+                    let over = standing.contains(&(path.clone(), e.key));
+                    let image = if over { image::encode_parts(&identities_of(&e), &program.syms, &made_under)? } else { image::encode_parts(&e, &program.syms, &made_under)? };
+                    Ok((content, path, e.key, digest, over, image))
+                })
+                .collect()
+        })
     };
     for done in encoded {
         let (content, path, key, digest, over, image) = done?;

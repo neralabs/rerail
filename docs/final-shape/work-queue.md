@@ -11074,3 +11074,11 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - c-directives eval 48 in 4.7 s;
   - gpu stages 3; ukl 15; tests-lang syntax 85; lang-sql 8.
 - Red at the hub's 92a5c8ce55 too, for the green pass: device `the_engine_finds_the_file_it_was_loaded_from` under Relax (its code is in no image).
+
+### Q532. Roll-up 105 (sync-integration-hub-tape 4978082141 onto Pulling-it-all-together): what the merge chose
+
+- sync-integration-hub-tape 4978082141:
+  - 0348's device words (`pp_on`, `clif_ukl`, `expand`'s device paths) belong to the generated parsers' campaign, to be used or removed before it closes, as the user asked;
+  - three parallel loops on the machine's cores (0442): `memo.rs`'s and `keptstats.rs`'s in `on_cores`, `ast_wave.rs`'s grain from `cores_threads`.
+- No conflicts.
+- Checked with Relax: corpus-memo, compiler, metal-programs, boot, 0 errors. Tests: corpus-memo 16.

@@ -253,12 +253,14 @@ impl Keeper {
             use rayon::prelude::*;
             let doc_at = &self.doc_at;
             let mut rels: Vec<(&String, &mut RelStats)> = self.rels.iter_mut().filter(|(key, _)| pick(key) && entry.rows.contains_key(*key)).collect();
-            rels.par_iter_mut().with_min_len(16).for_each(|(key, stats)| {
-                let (width, values) = &entry.rows[*key];
-                match doc_at.get(*key) {
-                    Some(at) => stats.rows_by(values, *width, sign, *at),
-                    None => stats.documents(values, *width, sign),
-                }
+            crate::code_rule_dsl::logic::profile::on_cores(|| {
+                rels.par_iter_mut().with_min_len(16).for_each(|(key, stats)| {
+                    let (width, values) = &entry.rows[*key];
+                    match doc_at.get(*key) {
+                        Some(at) => stats.rows_by(values, *width, sign, *at),
+                        None => stats.documents(values, *width, sign),
+                    }
+                })
             });
             if sign > 0 { self.counted.0 += 1 } else { self.counted.1 += 1 }
             return;

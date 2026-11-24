@@ -12,6 +12,11 @@
 //!   the smallest of `Bounds::rung`'s rungs. A run refused past a room's bound runs again at the
 //!   next, in the next batch, up to the job's own bounds (the last rung, the CPU's).
 //! - **A batch past the device's budget** is split in halves, down to one TU.
+//!
+//! **To be used or removed** (decision 0348, "Open"). No product path calls this: the preprocessor's device path is
+//! 0448's passes, and a TU a thread was measured far slower than one CPU core (0408, L4). It is part of the generated
+//! parsers' campaign, the Bitlex parsers' device code (tier 2 on the device): before that campaign closes, this file,
+//! `native_cpu_pp::ukl_source`, `clif_ukl` and their tests are either used there or removed (probably removed).
 
 use crate::Error;
 use crate::lane::{self, Kernel};
