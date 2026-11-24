@@ -405,6 +405,24 @@ Phase 0 is being designed in its own session; note t23 records the constraints t
       e9), rr_cx_reach(d9, e9)`: 9.96 M each). 0090 §4's priced clause let it through: it priced the mode at
       1.9e12 against a derive at 2.0e12, both far from the work done. So the reach index's delta is right, and its
       readers' lines and their price are now the cost: 0364 R4 at scale and the clause's price, edit-cost's next.
+    - **The mode's lines priced under the floor (2026-11-24).** Under θ's floor (1,024 changed rows) a mode's line was
+      led by its delta and taken as the program planned it, unpriced: cheap whatever its order where the delta binds
+      the rest. The `bv` lines above bound only documents from `rr_cx_reach`'s 156 rows and read `pann` whole for
+      each; led by `pann`'s 37, others walked every reached document's nodes (`docof` from its document). Now a
+      line's delta-led order is priced with the run's sizes, and planned free to start, as past the floor, where
+      it is over `REPLAN_ROWS` or reads a relation whole a delta row; the cheaper is taken, and θ's price of the
+      mode prices it alike (`Model::under_floor_line`). And a stratum's own relations are sized and measured as
+      kept before its lines are planned (`kept_card`): unsized, `pv` read whole was priced nearly free (2,852 for
+      177,625 rows of work done), and the name walks' rechecks descended each scope (453,672 each).
+      - corpus0, M1 Max, loads 9 to 24, answers as before: the move's joins' work 42.0 M → 17.4 M → 7.7 M → 4.2 M,
+        against a cold run's 9.9 M; the big recursive component's mode 35.3 M → 0.28 M. CPU: cold 9.4 to 10.1 s,
+        the move 8.7 to 9.0 s; its cross part 3.1 to 3.4 s against cold's 2.1 s, of which the joins 1.2 s over
+        127 maintained strata, their opening 0.4 s, and the 62 strata derived again 0.7 s (3.3 M rows of work,
+        `attr_open` and its companions 0.75 M of them). Outside the cross part, the base relations' versions
+        (0458) take 1.35 s, against the whole of a cold run's statistics' 0.26 s: now the largest single piece.
+      - The test: cold 61,261, the edit in place 6,821, the move 24,658. The move is under half a cold run, and 3.6
+        times the edit in place, past the test's 3: its heaviest lines are led by `rr_cx_reach`'s 15 changed rows and
+        read the documents those pairs join, which an edit in place, changing no import, does not pay.
 - O125's replay (`spike_o125_replay`): a session's answers equal a full run's on real commits.
 
 ### 9. One register for numbers

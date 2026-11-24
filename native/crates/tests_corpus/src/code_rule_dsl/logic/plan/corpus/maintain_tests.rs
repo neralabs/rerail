@@ -636,14 +636,14 @@ named(x, d) :- kind(n, "call"), field(n, "function", f), text(f, x), def(m, x), 
 /// clause), and the reach indexes over the import graph are made again whenever it changes (decision 0119 §3), their
 /// readers maintained from their delta.
 ///
-/// It fails today (2026-11-24): joins' work cold 61,264, the edit in place 17,738, the move 93,291. The move derives
-/// nothing again but the two reach indexes (their readers maintained from their delta), and maintains 145 strata;
-/// four lines of the big recursive component cost 58,623 of it. Each is led by its delta, `docof`'s changed nodes,
-/// then reads `rr_cx_reach` and `docof` by document: every node of every file that imports the changed one, before
-/// `qv` binds it to nothing (`bv(s, x, k, v) :- ibind(s, x, q), qv(m9, q, k, v), docof(s, d9), docof(m9, e9),
-/// rr_cx_reach(d9, e9)`, and `pv`'s like it). The edit in place pays the same lines, 10,142 of its 17,738.
+/// It fails today (2026-11-24), at its first bar only: joins' work cold 61,261, the edit in place 6,821, the move
+/// 24,658 (3.6 times the edit, 0.40 of a cold run). It was 93,291 before the maintain mode priced its lines under
+/// the floor (`Model::under_floor_line`) and sized a stratum's relations as kept (`kept_card`). The move derives
+/// nothing again but the two reach indexes, and maintains 145 strata; its heaviest lines are led by `rr_cx_reach`'s
+/// 15 changed rows and read the documents those pairs join (`pv`, `tsub`, `bv`: 500 to 560 rows each), which the
+/// edit in place, changing no import, does not pay.
 #[test]
-#[ignore = "0094 §8: a mode line led by a delta walks whole documents (docof through rr_cx_reach), so the move costs more than a cold run (edit-cost, 0364 R4 at scale)"]
+#[ignore = "0094 §8: the move costs 3.6 times the edit in place (24,658 against 6,821 rows of joins' work), past 3 (edit-cost, 0364 R4 at scale)"]
 fn a_moved_definition_costs_about_itself() {
     let program = std::fs::read_to_string(crate::source_tree::native().join("src/code_rule_dsl/typing/programs/calls_cx.rerail")).unwrap();
     let helpers = "class Reader:\n    def read(self, s):\n        return s.strip()\n\n\ndef parse(s):\n    n = int(s)\n    return n\n\n\ndef keep(x):\n    return x\n";
