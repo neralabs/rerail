@@ -375,10 +375,13 @@ impl Rl<'_, '_> {
         if counts {
             end.push_str("self.depth -= 1;\n");
         }
-        end.push_str("self.marked = false;\n// The place the call returns to, then what a level's saved of its caller's.\n");
+        end.push_str("self.marked = false;\n");
+        // The place the call returns to, then what a level's saved of its caller's: one pop where it saved only the place,
+        // as the lean parser's `return`.
+        let restores = nested && ((self.refusing && self.saves.contains(n)) || self.asks);
         if nested && self.word && self.words.contains(n) {
             end.push_str("let top = self.stack.pop().unwrap_or(0);\nlet ret = top as u32 as usize;\nself.word = (top >> 32) as u16;\n");
-        } else {
+        } else if restores {
             end.push_str("let ret = self.stack.pop().unwrap_or(0) as usize;\n");
         }
         // A level's call saved its caller's state too, a rule's that is no level only the place.
@@ -388,7 +391,11 @@ impl Rl<'_, '_> {
         if nested && self.asks {
             end.push_str("self.asks = self.stack.pop().unwrap_or(0);\n");
         }
-        end.push_str("st = ret;\ncontinue 'run;\n");
+        if nested && self.word && self.words.contains(n) || restores {
+            end.push_str("st = ret;\ncontinue 'run;\n");
+        } else {
+            end.push_str("st = self.stack.pop().unwrap_or(0) as usize;\ncontinue 'run;\n");
+        }
         code.push_str(&self.walk(body, &[], n, end)?);
         self.places.borrow_mut()[first] = code;
         Ok(first)

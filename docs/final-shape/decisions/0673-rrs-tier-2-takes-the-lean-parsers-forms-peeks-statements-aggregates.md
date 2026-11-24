@@ -1,6 +1,6 @@
 # 0673: `.rerail`'s tier 2 takes the lean parser's forms: peeks, statements, aggregates
 
-Status: in progress, steps 1 to 7 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
+Status: in progress, steps 1 to 8 done (the user, 2026-11-24: "address all of these", ten gaps between tier 2 and the lean
 parser). Follows 0668. As in 0668, a step is judged by one question only: is the generated code closer to the lean
 parser's shape? Speed decides nothing.
 
@@ -255,3 +255,40 @@ read it, has no depth count, and has no helper it does not call. Tier 2 now does
 
 rr's `tier2.rs` is 3,237 lines, from 3,308, and `tier2_loop.rs` is 3,968, from 4,036. Kotlin's `tier2.rs` is 8,394,
 from 8,478. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.
+
+## Step 8: the loop form's places in the calls form's shapes; an exit no arm can hold at is not tested (done)
+
+Gap 10: `tier2_loop.rs`, the device's form, had not been compared with the lean parser. It has to be one loop: a place
+is a part of a level, a call pushes the place it returns to and jumps, and a level's end pops that place. Within that,
+each place's code can be the lean parser's, as a rule's is in the calls form. It was not, for three reasons.
+
+- **The shaping passes ran on the calls form only.** `ifs_and_whiles`, `no_marked` and `no_empty_elses` now run on both
+  forms. So do the new passes below. The loop form has 53 fewer `self.marked = false` lines, `if` and `while` for
+  one-arm matches, and no empty `_ => {}` arms.
+- **Nothing after a `return`.** A place's arm that refuses (`return self.refuse();`) was followed by its jump.
+  `no_code_after_return` drops what follows a `return` in its block.
+- **A level's end is one pop.** It was a comment, `let ret = …`, then `st = ret;`, 26 times. Where the call saved only
+  the place, it is now `st = stack.pop().unwrap_or(0) as usize;`, as a rule's `return`.
+
+The comparison also found two gaps in the decisions, which both forms share:
+
+- **An exit no arm can hold at is not tested.** `test_block` tested the twelve statement starts (`.end`, `.test`, …)
+  before `exactly` and `uses`, and leaving did what passing every arm did. An exit gets no test where three things hold:
+  leaving does what no arm does (`exit` is `none`); the mark has no questions and no `marked` or `asks` gate; and no
+  arm's test can hold at its first words. That means no arm word among them, no arm kind whose tokens may be one of
+  them, and no arm mark tested after it that may start with one. `test_block` is now lean's: `if exactly { … } if
+  uses { …; while , { … } }`.
+- **A kind joins its arm's earlier run.** In `functor_declaration`'s and `declaration`'s rest of line, `punctuation`
+  is reached by its words, and again by `hash_word` after another arm's kinds. The loop form's arm (a call, then a
+  jump) was too long to write twice, so the decision numbered its arms. A kind now joins its arm's earlier run where
+  no test between can hold at its tokens: no mark, no word that is one of its tokens' words, and no test of a kind
+  with the same tokens (a token has one kind). The arm is then one condition, `matches!(self.word(), …) ||
+  self.kind() == t::HASH_WORD && …`, as the lean parser tests an arm's tokens together. No decision of rr's numbers its
+  arms in either form. Kotlin has 12, from 14. Its `statement` is decided by marks that are not peeks, in an order
+  its grammar sets, which is outside rr's ten gaps.
+
+One place jumps to another and does nothing else (`6 => { st = 8; … }`). It is the start of `block_body`'s loop, and
+it stays.
+
+rr's `tier2.rs` is 3,210 lines, from 3,237, and `tier2_loop.rs` is 3,716, from 3,968. Kotlin's `tier2.rs` is 8,317,
+from 8,394. Tests: rr 58, the 8 corpus tests, Kotlin 70, JSON 26, parser_tests 95, Bitlex 11, clippy.

@@ -388,8 +388,6 @@ pub struct P<'a, L: Layout> {
     depth: u32,
     /// A limit refused the file (the depth), not its syntax: no statement recovers (`recover`).
     limited: bool,
-    /// A mark taken last, no token or rule's end since (`G::after_mark`).
-    marked: bool,
     /// The marks whose questions a level that may end at them asks (`ask_M`), by order: those
     /// of the caller's level, as the lean parser's `stmt`.
     asks: u64,
@@ -409,7 +407,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs) = (&lx.recs[..], &lx.extras[..]);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, depth: 0, limited: false, marked: false, asks: 0, dead: Vec::new(), strings: 0, stack: Vec::with_capacity(64) };
+        let mut p = P { src, recs, xs, n, i: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, cur: 0, flags: 0, depth: 0, limited: false, asks: 0, dead: Vec::new(), strings: 0, stack: Vec::with_capacity(64) };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -553,7 +551,6 @@ impl<'a, L: Layout> P<'a, L> {
     #[inline(always)]
     fn take(&mut self) -> R<(u32, u32)> {
         self.taken = 0;
-        self.marked = false;
         let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
         self.advance(e as usize)?;
         self.last_end = e;
@@ -808,7 +805,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as(w::HASH_INCLUDE_34)?;
         self.tk_as(self.kind() == t::STRING, k::STRING, f::PATH)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -821,7 +817,6 @@ impl<L: Layout> P<'_, L> {
         self.column_list()?;
         self.field_made(f::COLUMNS);
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -841,7 +836,6 @@ impl<L: Layout> P<'_, L> {
             return self.refuse();
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -851,16 +845,13 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as(w::DOT_13)?;
         self.word_skip_as(w::PRAGMA_1)?;
         loop {
-            if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                break;
-            } else if self.kind() == t::STRING {
+            if self.kind() == t::STRING {
                 self.tk_as(self.kind() == t::STRING, k::STRING, f::ARGUMENT)?;
             } else {
                 break;
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -907,7 +898,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.mark_line()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -918,7 +908,6 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as(w::AT_23)?;
         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::FUNCTION)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -949,7 +938,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -960,23 +948,14 @@ impl<L: Layout> P<'_, L> {
         if self.kind() == t::IDENTIFIER {
             self.column()?;
             self.field_made(f::COLUMN);
-            loop {
-                match self.word() {
-                    w::COMMA_12 => {
-                        self.skip_as(true)?;
-                        self.column()?;
-                        self.field_made(f::COLUMN);
-                    }
-                    _ => {
-                        break;
-                    }
-                }
+            while self.word() == w::COMMA_12 {
+                self.skip_as(true)?;
+                self.column()?;
+                self.field_made(f::COLUMN);
             }
-        } else {
         }
         self.word_skip_as(w::RPAREN_11)?;
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -988,7 +967,6 @@ impl<L: Layout> P<'_, L> {
         self.r_type()?;
         self.field_made(f::TYPE);
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -996,29 +974,23 @@ impl<L: Layout> P<'_, L> {
     fn r_type(&mut self) -> R {
         self.open(k::TYPE);
         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
-        match self.word() {
-            w::LT_17 => {
-                self.tk_as(true, k::LT, 0)?;
-                match self.word() {
-                    w::GT_18 => {
-                        self.tk_as(true, k::GT, 0)?;
-                    }
-                    _ if self.kind() == t::IDENTIFIER => {
-                        self.drop_made()?;
-                        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
-                        self.word_skip_as(w::GT_18)?;
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
+        if self.word() == w::LT_17 {
+            self.tk_as(true, k::LT, 0)?;
+            match self.word() {
+                w::GT_18 => {
+                    self.tk_as(true, k::GT, 0)?;
                 }
-            }
-            _ => {
-
+                _ if self.kind() == t::IDENTIFIER => {
+                    self.drop_made()?;
+                    self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+                    self.word_skip_as(w::GT_18)?;
+                }
+                _ => {
+                    return self.refuse();
+                }
             }
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1030,10 +1002,8 @@ impl<L: Layout> P<'_, L> {
         if self.word() == w::AT_64 && self.kind_at(self.i + 1) == t::STRING {
             self.word_skip_as(w::AT_64)?;
             self.tk_as(self.kind() == t::STRING, k::STRING, f::SELECTOR)?;
-        } else {
         }
         self.close()?;
-        self.marked = false;
         Ok(())
     }
 
@@ -1062,7 +1032,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1169,7 +1138,6 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        self.marked = false;
         Ok(())
     }
 
@@ -1204,8 +1172,6 @@ impl<L: Layout> P<'_, L> {
                         continue 'run;
                     } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 {
                         return self.refuse();
-                        st = 1;
-                        continue 'run;
                     } else if self.word() == w::DOT_13 {
                         stack.push(1);
                         st = 2;
@@ -1240,10 +1206,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 3 => {
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 4 => {
@@ -1251,42 +1214,15 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip_as(w::DOT_13)?;
                     self.word_skip_as(w::TEST_53)?;
                     self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
-                    if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                    } else {
-                        match self.word() {
-                            w::EXACTLY_54 => {
-                                self.tk_as(true, k::IDENTIFIER, f::MODIFIER)?;
-                            }
-                            _ => {
-
-                            }
-                        }
+                    if self.word() == w::EXACTLY_54 {
+                        self.tk_as(true, k::IDENTIFIER, f::MODIFIER)?;
                     }
-                    if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                    } else {
-                        match self.word() {
-                            w::USES_55 => {
-                                self.skip_as(true)?;
-                                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
-                                loop {
-                                    if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                                        break;
-                                    } else {
-                                        match self.word() {
-                                            w::COMMA_12 => {
-                                                self.skip_as(true)?;
-                                                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
-                                            }
-                                            _ => {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            _ => {
-
-                            }
+                    if self.word() == w::USES_55 {
+                        self.skip_as(true)?;
+                        self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+                        while self.word() == w::COMMA_12 {
+                            self.skip_as(true)?;
+                            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
                         }
                     }
                     stack.push(5);
@@ -1295,10 +1231,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 5 => {
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 6 => {
@@ -1311,10 +1244,7 @@ impl<L: Layout> P<'_, L> {
                     }
                     self.word_skip_as(w::DOT_13)?;
                     self.word_skip_as(w::END_56)?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 8 => {
@@ -1338,8 +1268,6 @@ impl<L: Layout> P<'_, L> {
                 10 => {
                     if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 {
                         return self.refuse();
-                        st = 3;
-                        continue 'run;
                     } else if self.word() == w::HASH_INCLUDE_34 {
                         self.include()?;
                         st = 3;
@@ -1350,8 +1278,6 @@ impl<L: Layout> P<'_, L> {
                         continue 'run;
                     } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 {
                         return self.refuse();
-                        st = 3;
-                        continue 'run;
                     } else if self.word() == w::DOT_13 {
                         stack.push(3);
                         st = 11;
@@ -1423,10 +1349,7 @@ impl<L: Layout> P<'_, L> {
                     self.leaf_close(k::JSON_OBJECT)?;
                     self.field_made(f::DOCUMENT);
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 14 => {
@@ -1444,10 +1367,7 @@ impl<L: Layout> P<'_, L> {
                 15 => {
                     self.word_pass_as(w::RBRACE_21)?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 16 => {
@@ -1519,10 +1439,7 @@ impl<L: Layout> P<'_, L> {
                 20 => {
                     self.word_pass_as(w::RBRACK_26)?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 21 => {
@@ -1552,59 +1469,28 @@ impl<L: Layout> P<'_, L> {
                 23 => {
                     self.mark_line()?;
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 24 => {
-                    let arm: usize;
                     if self.m_line() {
-                        arm = 3;
+                        st = 23;
+                        continue 'run;
+                    } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+                        self.punctuation()?;
+                        st = 24;
+                        continue 'run;
+                    } else if self.word() == w::LBRACE_20 {
+                        self.word_leaf_as(w::LBRACE_20, k::LBRACE)?;
+                        st = 24;
+                        continue 'run;
+                    } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
+                        stack.push(25);
+                        st = 26;
+                        continue 'run;
                     } else {
-                        match self.word() {
-                            w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                                arm = 1;
-                            }
-                            w::LBRACE_20 => {
-                                arm = 2;
-                            }
-                            _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL => {
-                                arm = 0;
-                            }
-                            _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                                arm = 1;
-                            }
-                            _ => {
-                                arm = usize::MAX;
-                            }
-                        }
-                    }
-                    match arm {
-                        0 => {
-                            stack.push(25);
-                            st = 26;
-                            continue 'run;
-                        }
-                        1 => {
-                            self.punctuation()?;
-                            st = 24;
-                            continue 'run;
-                        }
-                        2 => {
-                            self.word_leaf_as(w::LBRACE_20, k::LBRACE)?;
-                            st = 24;
-                            continue 'run;
-                        }
-                        3 => {
-                            st = 23;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 23;
-                            continue 'run;
-                        }
+                        st = 23;
+                        continue 'run;
                     }
                 }
                 25 => {
@@ -1651,10 +1537,7 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         return self.refuse();
                     }
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 29 => {
@@ -1682,9 +1565,6 @@ impl<L: Layout> P<'_, L> {
                         stack.push(38);
                         st = 39;
                         continue 'run;
-                    } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                        st = 5;
-                        continue 'run;
                     } else {
                         st = 5;
                         continue 'run;
@@ -1701,60 +1581,36 @@ impl<L: Layout> P<'_, L> {
                     self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::TOOL)?;
                     self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
                     loop {
-                        if self.word() == w::FIX_40 && self.kind_at(self.i + 1) == t::IDENTIFIER || self.word() == w::SUPPRESS_42 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.kind_at(self.i + 2) == t::STRING || self.word() == w::OPTIONS_44 && self.word_at(self.i + 1) == w::LBRACE_20 || self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 {
-                            break;
-                        } else if self.word() == w::COMMA_12 && self.kind_at(self.i + 1) == t::STRING {
+                        if self.word() == w::COMMA_12 && self.kind_at(self.i + 1) == t::STRING {
                             self.word_skip_as(w::COMMA_12)?;
                             self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
-                        } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                            break;
                         } else {
                             break;
                         }
                     }
-                    let arm: usize;
-                    if self.word() == w::FIX_40 && self.kind_at(self.i + 1) == t::IDENTIFIER || self.word() == w::SUPPRESS_42 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.kind_at(self.i + 2) == t::STRING || self.word() == w::OPTIONS_44 && self.word_at(self.i + 1) == w::LBRACE_20 {
-                        arm = 1;
-                    } else if self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20 {
-                        arm = 0;
-                    } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                        arm = 1;
-                    } else {
-                        arm = usize::MAX;
-                    }
-                    match arm {
-                        0 => {
-                            if !(self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20) {
-                                return self.refuse();
-                            }
-                            self.word_skip_as(w::OVER_43)?;
-                            if self.word() == w::LBRACE_20 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.word_at(self.i + 2) == w::RBRACE_21 {
-                                self.word_skip_as(w::LBRACE_20)?;
-                                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::OVER)?;
-                                self.word_skip_as(w::RBRACE_21)?;
-                                st = 5;
-                                continue 'run;
-                            } else {
-                                match self.word() {
-                                    w::LBRACE_20 => {
-                                        stack.push(33);
-                                        st = 34;
-                                        continue 'run;
-                                    }
-                                    _ => {
-                                        return self.refuse();
-                                    }
+                    if self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20 {
+                        self.word_skip_as(w::OVER_43)?;
+                        if self.word() == w::LBRACE_20 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.word_at(self.i + 2) == w::RBRACE_21 {
+                            self.word_skip_as(w::LBRACE_20)?;
+                            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::OVER)?;
+                            self.word_skip_as(w::RBRACE_21)?;
+                            st = 5;
+                            continue 'run;
+                        } else {
+                            match self.word() {
+                                w::LBRACE_20 => {
+                                    stack.push(33);
+                                    st = 34;
+                                    continue 'run;
+                                }
+                                _ => {
+                                    return self.refuse();
                                 }
                             }
                         }
-                        1 => {
-                            st = 5;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 5;
-                            continue 'run;
-                        }
+                    } else {
+                        st = 5;
+                        continue 'run;
                     }
                 }
                 33 => {
@@ -1776,10 +1632,7 @@ impl<L: Layout> P<'_, L> {
                 36 => {
                     self.merge_as(self.word() == w::RBRACE_21, k::RAW_TEXT)?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 37 => {
@@ -1835,10 +1688,7 @@ impl<L: Layout> P<'_, L> {
                 41 => {
                     self.merge_as(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 42 => {
@@ -1921,14 +1771,9 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 46 => {
-                    match self.word() {
-                        w::IN_38 => {
-                            self.skip_as(true)?;
-                            self.tk_as(self.kind() == t::STRING, k::STRING, f::CODES)?;
-                        }
-                        _ => {
-
-                        }
+                    if self.word() == w::IN_38 {
+                        self.skip_as(true)?;
+                        self.tk_as(self.kind() == t::STRING, k::STRING, f::CODES)?;
                     }
                     self.close()?;
                     st = 3;
@@ -1981,52 +1826,24 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 51 => {
-                    let arm: usize;
                     if self.m_line() {
-                        arm = 3;
+                        st = 23;
+                        continue 'run;
+                    } else if matches!(self.word(), w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34) || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+                        self.punctuation()?;
+                        st = 51;
+                        continue 'run;
+                    } else if self.word() == w::LBRACE_20 {
+                        self.word_leaf_as(w::LBRACE_20, k::LBRACE)?;
+                        st = 51;
+                        continue 'run;
+                    } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
+                        stack.push(52);
+                        st = 26;
+                        continue 'run;
                     } else {
-                        match self.word() {
-                            w::LPAREN_10 | w::RPAREN_11 | w::COMMA_12 | w::DOT_13 | w::SEMI_14 | w::COLON_15 | w::EQ_16 | w::LT_17 | w::GT_18 | w::BANG_19 | w::BAR_22 | w::AT_23 | w::STAR_24 | w::LBRACK_25 | w::RBRACK_26 | w::MINUS_27 | w::PLUS_28 | w::SLASH_29 | w::PERCENT_30 | w::TILDE_31 | w::CARET_32 | w::AMP_33 | w::RBRACE_21 | w::COLON_MINUS_3 | w::EQ_GT_4 | w::BANG_EQ_5 | w::LT_EQ_6 | w::GT_EQ_7 | w::LT_COLON_8 | w::MINUS_GT_9 | w::HASH_INCLUDE_34 => {
-                                arm = 1;
-                            }
-                            w::LBRACE_20 => {
-                                arm = 2;
-                            }
-                            _ if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL => {
-                                arm = 0;
-                            }
-                            _ if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 => {
-                                arm = 1;
-                            }
-                            _ => {
-                                arm = usize::MAX;
-                            }
-                        }
-                    }
-                    match arm {
-                        0 => {
-                            stack.push(52);
-                            st = 26;
-                            continue 'run;
-                        }
-                        1 => {
-                            self.punctuation()?;
-                            st = 51;
-                            continue 'run;
-                        }
-                        2 => {
-                            self.word_leaf_as(w::LBRACE_20, k::LBRACE)?;
-                            st = 51;
-                            continue 'run;
-                        }
-                        3 => {
-                            st = 23;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 23;
-                            continue 'run;
-                        }
+                        st = 23;
+                        continue 'run;
                     }
                 }
                 52 => {
@@ -2043,32 +1860,24 @@ impl<L: Layout> P<'_, L> {
                     self.open(UNSET);
                     self.retag(k::TYPE);
                     self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
-                    match self.word() {
-                        w::LT_17 => {
-                            self.tk_as(true, k::LT, 0)?;
-                            match self.word() {
-                                w::GT_18 => {
-                                    self.tk_as(true, k::GT, 0)?;
-                                }
-                                _ if self.kind() == t::IDENTIFIER => {
-                                    self.drop_made()?;
-                                    self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
-                                    self.word_skip_as(w::GT_18)?;
-                                }
-                                _ => {
-                                    return self.refuse();
-                                }
+                    if self.word() == w::LT_17 {
+                        self.tk_as(true, k::LT, 0)?;
+                        match self.word() {
+                            w::GT_18 => {
+                                self.tk_as(true, k::GT, 0)?;
                             }
-                        }
-                        _ => {
-
+                            _ if self.kind() == t::IDENTIFIER => {
+                                self.drop_made()?;
+                                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+                                self.word_skip_as(w::GT_18)?;
+                            }
+                            _ => {
+                                return self.refuse();
+                            }
                         }
                     }
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 55 => {
@@ -2222,10 +2031,7 @@ impl<L: Layout> P<'_, L> {
                 63 => {
                     self.merge_as(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 64 => {
@@ -2270,7 +2076,6 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip_as(w::LT_17)?;
                     if self.kind() == t::IDENTIFIER {
                         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::BASE)?;
-                    } else {
                     }
                     self.word_skip_as(w::GT_18)?;
                     self.word_skip_as(w::LBRACE_20)?;
@@ -2286,10 +2091,7 @@ impl<L: Layout> P<'_, L> {
                 66 => {
                     self.word_skip_as(w::RBRACE_21)?;
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 67 => {
@@ -2341,10 +2143,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 72 => {
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 73 => {
@@ -2543,10 +2342,7 @@ impl<L: Layout> P<'_, L> {
                 83 => {
                     self.field_made(f::ARGUMENTS);
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 84 => {
@@ -2566,10 +2362,7 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip_as(w::RPAREN_11)?;
                     self.close()?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 86 => {
@@ -2624,10 +2417,7 @@ impl<L: Layout> P<'_, L> {
                 90 => {
                     self.field_made(f::BODY);
                     self.word_skip_as(w::RBRACE_21)?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 91 => {
@@ -2669,10 +2459,7 @@ impl<L: Layout> P<'_, L> {
                 96 => {
                     self.close()?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 97 => {
@@ -2732,10 +2519,7 @@ impl<L: Layout> P<'_, L> {
                         self.relabel_kind(k::ATOM)?;
                     }
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 101 => {
@@ -2751,10 +2535,7 @@ impl<L: Layout> P<'_, L> {
                         return self.refuse();
                     }
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 103 => {
@@ -2785,10 +2566,7 @@ impl<L: Layout> P<'_, L> {
                 105 => {
                     self.field_made(f::RIGHT);
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 106 => {
@@ -2823,10 +2601,7 @@ impl<L: Layout> P<'_, L> {
                     self.word_skip_as(w::RPAREN_11)?;
                     self.close()?;
                     self.depth -= 1;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 110 => {
@@ -2847,10 +2622,7 @@ impl<L: Layout> P<'_, L> {
                     if self.made_is(k::CALL) {
                         return self.refuse();
                     }
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 112 => {
@@ -2864,10 +2636,7 @@ impl<L: Layout> P<'_, L> {
                     self.field_made(f::BODY);
                     self.word_skip_as(w::RPAREN_11)?;
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 114 => {
@@ -2938,14 +2707,9 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 120 => {
-                    match self.word() {
-                        w::SEP_46 => {
-                            self.tk_as(true, k::SEP, 0)?;
-                            self.tk_as(self.kind() == t::STRING, k::STRING, f::SEPARATOR)?;
-                        }
-                        _ => {
-
-                        }
+                    if self.word() == w::SEP_46 {
+                        self.tk_as(true, k::SEP, 0)?;
+                        self.tk_as(self.kind() == t::STRING, k::STRING, f::SEPARATOR)?;
                     }
                     stack.push(3);
                     st = 89;
@@ -3012,10 +2776,7 @@ impl<L: Layout> P<'_, L> {
                     self.field_made(f::EXPRESSION);
                     self.word_skip_as(w::RPAREN_11)?;
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 127 => {
@@ -3093,10 +2854,7 @@ impl<L: Layout> P<'_, L> {
                 133 => {
                     self.word_skip_as(w::DOT_13)?;
                     self.close()?;
-                    self.marked = false;
-                    // The place the call returns to, then what a level's saved of its caller's.
-                    let ret = stack.pop().unwrap_or(0) as usize;
-                    st = ret;
+                    st = stack.pop().unwrap_or(0) as usize;
                     continue 'run;
                 }
                 134 => {
@@ -3257,7 +3015,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_float_at() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_float_at()
     }
 
@@ -3283,7 +3040,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_line() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_line()
     }
 
@@ -3309,7 +3065,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_newline() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_newline()
     }
 
@@ -3343,7 +3098,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_json_flat() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_json_flat()
     }
 
@@ -3369,7 +3123,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_paren_term() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_paren_term()
     }
 
@@ -3395,7 +3148,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_paren_tilde() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_paren_tilde()
     }
 
@@ -3421,7 +3173,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_paren_closes() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_paren_closes()
     }
 
@@ -3447,7 +3198,6 @@ impl<L: Layout> P<'_, L> {
         if !self.m_agg_call() {
             return self.refuse();
         }
-        self.marked = true;
         self.take_agg_call()
     }
 
@@ -3687,7 +3437,6 @@ struct Mark {
     last_end: u32,
     flags: u32,
     depth: u32,
-    marked: bool,
     asks: u64,
     strings: usize,
 }
@@ -3699,7 +3448,7 @@ const TERMINATORS: &[u8] = &[0x0a, 0x0d];
 impl<L: Layout> P<'_, L> {
     /// The statement's mark (the lean parser's `mark`).
     fn mark(&self) -> Mark {
-        Mark { i: self.i, pend: self.pend, xi: self.xi, next_x: self.next_x, w: self.w.len(), levels: self.levels.len(), top: self.top, last_end: self.last_end, flags: self.flags, depth: self.depth, marked: self.marked, asks: self.asks, strings: self.strings }
+        Mark { i: self.i, pend: self.pend, xi: self.xi, next_x: self.next_x, w: self.w.len(), levels: self.levels.len(), top: self.top, last_end: self.last_end, flags: self.flags, depth: self.depth, asks: self.asks, strings: self.strings }
     }
 
     /// Back at mark `m` (the lean parser's `reset`): its token and comments, the tape and the levels as they were.
@@ -3714,7 +3463,6 @@ impl<L: Layout> P<'_, L> {
         self.last_end = m.last_end;
         self.flags = m.flags;
         self.depth = m.depth;
-        self.marked = m.marked;
         self.asks = m.asks;
         self.strings = m.strings;
         self.dead.retain(|&o| o != NONE && (o as usize) < m.w);

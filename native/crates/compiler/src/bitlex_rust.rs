@@ -541,6 +541,22 @@ impl<'a> G<'a> {
             let alone = all.iter().all(|o| o.0 < *m || o.2 == *t || firsts(o.0).is_some_and(|os| os.iter().all(|w| !ws.contains(w))));
             !(covered && alone)
         });
+        // An exit where leaving does what passing every arm does, at whose first words no arm's test can hold: no test
+        // (decision 0673 step 8). Where it holds, no arm is taken either way, as the lean parser's `if exactly { … }`
+        // asks nothing of the statement that may follow. A mark tested before it takes its arm either way.
+        let arm_words: Vec<String> = words.iter().map(|x| format!("w::{}", self.word_const(x.0))).collect();
+        let exits: Vec<usize> = exits
+            .into_iter()
+            .filter(|&m| {
+                if exit != none || gated.contains(&m) || unmarked.contains(&m) || self.asks(m) || marks.iter().any(|x| x.0 == m) {
+                    return true;
+                }
+                let Some(ws) = firsts(m).filter(|ws| !ws.is_empty()) else { return true };
+                ws.iter().any(|w| arm_words.contains(w))
+                    || kinds.iter().any(|k| self.kind_words(&k.0).iter().any(|w| ws.contains(w)))
+                    || marks.iter().any(|o| o.0 > m && firsts(o.0).is_none_or(|os| os.iter().any(|w| ws.contains(w))))
+            })
+            .collect();
         for &m in &exits {
             if !marks.iter().any(|x| x.0 == m) {
                 marks.push((m, None, n));
@@ -656,8 +672,33 @@ impl<'a> G<'a> {
             for (pat, t) in ws {
                 push(word_test(pat), *t, &mut runs);
             }
-            for (cs, t) in &kg {
-                cs.iter().filter(|c| !early_kinds.iter().any(|e| e.0 == **c)).for_each(|c| push(c.clone(), *t, &mut runs));
+            // A kind whose arm has a run before it joins that run where no test between can hold at its tokens: no mark,
+            // a word none of its tokens is, another kind's (a token is of one kind). The lean parser tests an arm's
+            // tokens together (decision 0673 step 8).
+            let tokens_of = |k: &str| -> Vec<&str> { self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| n.as_str()).collect() };
+            for (k, f, t) in &kinds {
+                let c = guard(f, self.kind_test(k, "self.kind()", "self.word()"));
+                if early_kinds.iter().any(|e| e.0 == c) {
+                    continue;
+                }
+                let (own, words_of) = (tokens_of(k), self.kind_words(k));
+                let clear = |r: &(Vec<String>, usize)| {
+                    r.0.iter().all(|c| {
+                        if let Some(p) = c.strip_prefix("matches!(self.word(), ").and_then(|r| r.strip_suffix(')')) {
+                            p.split(" | ").all(|w| !words_of.iter().any(|x| x == w))
+                        } else if let Some(w) = c.strip_prefix("self.word() == ") {
+                            !words_of.iter().any(|x| x == w)
+                        } else if let Some(o) = kinds.iter().find(|o| guard(&o.1, self.kind_test(&o.0, "self.kind()", "self.word()")) == *c) {
+                            o.0 != *k && tokens_of(&o.0).iter().all(|x| !own.contains(x))
+                        } else {
+                            false
+                        }
+                    })
+                };
+                match runs.iter().rposition(|r| r.1 == *t) {
+                    Some(at) if f.is_none() && runs[at + 1..].iter().all(clear) => runs[at].0.push(c),
+                    _ => push(c, *t, &mut runs),
+                }
             }
             let mut seen = HashSet::new();
             if runs.iter().all(|r| seen.insert(r.1)) {
@@ -2391,13 +2432,14 @@ impl<'a> G<'a> {
         out = no_retests(&out);
         // The calls form in the lean parser's forms (decision 0668 step 1): a decision of one arm an `if`, a loop of one a
         // `while`; and no `marked` where no decision reads it.
-        if !stack {
-            out = ifs_and_whiles(&out);
-            if !out.contains("!self.marked") {
-                out = no_marked(&out);
-            }
-            out = no_empty_elses(&out);
+        // The loop form's places too (decision 0673 step 8): a place's code is a rule's, in the same forms.
+        let _ = stack;
+        out = ifs_and_whiles(&out);
+        if !out.contains("!self.marked") {
+            out = no_marked(&out);
         }
+        out = no_empty_elses(&out);
+        out = no_code_after_return(&out);
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
         // record, and writes only the helpers its code calls.
         if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
@@ -2751,6 +2793,33 @@ fn ifs_and_whiles(code: &str) -> String {
         out.push_str(l);
         out.push('\n');
         i += 1;
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
+/// `code` with nothing after a `return` in its block, as the lean parser writes none: a refusal a place's arm ends with
+/// leaves no jump after it (the loop form's `return self.refuse();` then `st = …;`).
+fn no_code_after_return(code: &str) -> String {
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let mut out = String::with_capacity(code.len());
+    let mut lines = code.lines().peekable();
+    while let Some(l) = lines.next() {
+        out.push_str(l);
+        out.push('\n');
+        let t = l.trim();
+        if t.starts_with("return ") && t.ends_with(';') {
+            let p = indent(l);
+            while let Some(n) = lines.peek() {
+                if n.trim().is_empty() || indent(n) > p || (indent(n) == p && !n.trim_start().starts_with('}')) {
+                    lines.next();
+                } else {
+                    break;
+                }
+            }
+        }
     }
     if !code.ends_with('\n') {
         out.pop();

@@ -955,32 +955,15 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as(w::DOT_13)?;
         self.word_skip_as(w::TEST_53)?;
         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::NAME)?;
-        if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-        } else {
-            if self.word() == w::EXACTLY_54 {
-                self.tk_as(true, k::IDENTIFIER, f::MODIFIER)?;
-            }
+        if self.word() == w::EXACTLY_54 {
+            self.tk_as(true, k::IDENTIFIER, f::MODIFIER)?;
         }
-        if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-        } else {
-            if self.word() == w::USES_55 {
+        if self.word() == w::USES_55 {
+            self.skip_as(true)?;
+            self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
+            while self.word() == w::COMMA_12 {
                 self.skip_as(true)?;
                 self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
-                loop {
-                    if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                        break;
-                    } else {
-                        match self.word() {
-                            w::COMMA_12 => {
-                                self.skip_as(true)?;
-                                self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::ARGUMENT)?;
-                            }
-                            _ => {
-                                break;
-                            }
-                        }
-                    }
-                }
             }
         }
         self.block_body()?;
@@ -1204,9 +1187,7 @@ impl<L: Layout> P<'_, L> {
         self.word_skip_as(w::DOT_13)?;
         self.word_skip_as(w::PRAGMA_1)?;
         loop {
-            if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                break;
-            } else if self.kind() == t::STRING {
+            if self.kind() == t::STRING {
                 self.tk_as(self.kind() == t::STRING, k::STRING, f::ARGUMENT)?;
             } else {
                 break;
@@ -1288,8 +1269,6 @@ impl<L: Layout> P<'_, L> {
                 self.word_skip_as(w::OPTIONS_44)?;
                 self.json()?;
                 self.field_made(f::OPTIONS);
-            } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                break;
             } else {
                 break;
             }
@@ -1663,19 +1642,14 @@ impl<L: Layout> P<'_, L> {
         self.tk_as(self.kind() == t::IDENTIFIER, k::IDENTIFIER, f::TOOL)?;
         self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
         loop {
-            if self.word() == w::FIX_40 && self.kind_at(self.i + 1) == t::IDENTIFIER || self.word() == w::SUPPRESS_42 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.kind_at(self.i + 2) == t::STRING || self.word() == w::OPTIONS_44 && self.word_at(self.i + 1) == w::LBRACE_20 || self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 {
-                break;
-            } else if self.word() == w::COMMA_12 && self.kind_at(self.i + 1) == t::STRING {
+            if self.word() == w::COMMA_12 && self.kind_at(self.i + 1) == t::STRING {
                 self.word_skip_as(w::COMMA_12)?;
                 self.tk_as(self.kind() == t::STRING, k::STRING, f::RULE)?;
-            } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
-                break;
             } else {
                 break;
             }
         }
-        if self.word() == w::FIX_40 && self.kind_at(self.i + 1) == t::IDENTIFIER || self.word() == w::SUPPRESS_42 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.kind_at(self.i + 2) == t::STRING || self.word() == w::OPTIONS_44 && self.word_at(self.i + 1) == w::LBRACE_20 {
-        } else if self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20 {
+        if self.word() == w::OVER_43 && self.word_at(self.i + 1) == w::LBRACE_20 {
             self.word_skip_as(w::OVER_43)?;
             if self.word() == w::LBRACE_20 && self.kind_at(self.i + 1) == t::IDENTIFIER && self.word_at(self.i + 2) == w::RBRACE_21 {
                 self.word_skip_as(w::LBRACE_20)?;
@@ -1692,7 +1666,6 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
             }
-        } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::END_56 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::POLICY_66 && self.word_at(self.i + 2) == w::LBRACE_20 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::DECL_67 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::VIOLATION_68 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::EDIT_69 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FUNCTOR_70 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TYPE_2 || self.word() == w::DOT_13 && (self.word_at(self.i + 1) == w::INPUT_58 || self.word_at(self.i + 1) == w::OUTPUT_59) || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::LATTICE_71 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::PRAGMA_1 {
         }
         self.close()?;
         Ok(())
