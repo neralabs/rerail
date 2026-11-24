@@ -175,6 +175,25 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
     assert!(!split.local.contains("last_tail"), "a symbol the module does not lead: {:?}", split.local);
 }
 
+/// Module resolution handed on by a phase (decision 0665, tsx/names.rerail over the phase `tsx_names`): the phase's
+/// export, symbols alone and every file's rows, is read as a setting is, and a file's own targets are its rows by
+/// its path, so a rule resolving a file's imports through it stays per-file. The same resolution made in the run
+/// (every file's paths joined) is cross-file.
+#[test]
+fn a_rule_resolving_through_a_phases_names_stays_per_file() {
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl docof(n: node, d: number)\n.input docof\n\
+                .decl import_ref(n: node, s: symbol)\n.input import_ref\n\
+                .decl tsx_names__target_at(p: symbol, spec: symbol, t: symbol)\n.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)\n\
+                .decl target(d: number, spec: symbol, t: symbol)\ntarget(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).\n\
+                .decl sym(n: node, q: symbol)\nsym(n, q) :- import_ref(n, s), docof(n, d), target(d, s, t), tsx_names__exports(t, \"default\", q).\n.output sym\n\
+                .decl near(d: number, s: symbol, t: symbol)\nnear(d, s, m) :- docof(n, d), import_ref(n, s), doc(_, s, m).\n.output near\n";
+    let split = split_of(&read(text));
+    for rel in ["target", "sym"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    assert!(!split.local.contains("near"), "another file's path, joined in the run: {:?}", split.local);
+}
+
 /// The project's settings (decision 0665: a package's `package.json` fields, its tsconfig, the run's environment) are
 /// read like the run's options: a per-file rule that joins them stays per-file, and a relation derived from them alone
 /// is a constant, derived in both parts. A rule that reads another file's rows, or the tree's list of files (no
