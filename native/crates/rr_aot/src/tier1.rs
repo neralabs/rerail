@@ -184,9 +184,10 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                 },
                 5 => {
                     // `number`: run num_run once dot
-                    let l = { let (mut l, mut once) = (s, false); while ((l + 1 < n && matches!(src[l + 1], b'0'..=b'9')) || (((l + 1 < n && (src[l + 1] == b'.')) && ((l < n && matches!(src[l], b'0'..=b'9')))) && (l + 2 < n && matches!(src[l + 2], b'0'..=b'9')))) { if (l + 1 < n && (src[l + 1] == b'.')) { if once { break; } once = true; } l += 1; } l };
+                    let (l, once) = { let (mut l, mut once) = (s, false); while ((l + 1 < n && matches!(src[l + 1], b'0'..=b'9')) || (((l + 1 < n && (src[l + 1] == b'.')) && ((l < n && matches!(src[l], b'0'..=b'9')))) && (l + 2 < n && matches!(src[l + 2], b'0'..=b'9')))) { if (l + 1 < n && (src[l + 1] == b'.')) { if once { break; } once = true; } l += 1; } (l, once) };
                     let l = l.max(s);
-                    (l, u32::from(kind1), false, 0)
+                    // `float_at`: the run's one byte read (`once`), its record's bit, as the lean lexer writes its kind.
+                    (l, u32::from(kind1) | u32::from(once) << 16, false, 0)
                 },
                 6 | 13 => {
                     // `punct`: pair
@@ -486,19 +487,17 @@ fn word_at(src: &[u8], s: usize, len: usize) -> u32 {
 
 /// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose
 /// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).
-pub const UNRECORDED: u32 = 0x7fff;
+pub const UNRECORDED: u32 = 0x7ffe;
 
 /// The marks whose token tests tier 2 asks where a rule reads the mark (decision 0655 step 6), as the lean parser asks
 /// what it reads of a token where it reads it: no record holds them.
-pub const TESTED: u32 = 0x2001;
+pub const TESTED: u32 = 0x2000;
 
 /// Whether token `r` (an extra, where `extra`) holds a token test of mark `b`: one of the token after it (`after`), else
 /// one of its own. Its row by its first byte, its kind and whether it is an extra.
 fn token_test(src: &[u8], n: usize, r: &Rec, extra: bool, b: u32, after: bool) -> bool {
     let (s, l, kind) = (r.start as usize, r.last as usize, r.code & 0xff);
     match b {
-        // `float_at`
-        0 => (!after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && matches!(src[s], b'0'..=b'9') && { (s..=l).any(|i| (i < n && (src[i] == b'.'))) }),
         // `json_bad`
         13 => (after && !extra && kind == u32::from(TOKEN[usize::from(src[s])].1) && (src[s] == b'"') && ({ let mut esc = false; (s..=l).any(|i| { let hit = ((i < n && matches!(src[i], 0x00..=0x1f)) || (esc && (i < n && !(i < n && matches!(src[i], b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' | b'u'))))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) } || { let mut esc = false; (s..=l).any(|i| { let hit = ((esc && (i < n && (src[i] == b'u'))) && (i < n && !h4(src, n, i))); esc = !esc && (i < n && (src[i] == b'\\')); hit }) }))
             || (after && extra && (src[s] == b'/') && { (s..=l).any(|i| (((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'/'))) || ((i < n && (src[i] == b'/')) && (i + 1 < n && (src[i + 1] == b'*'))))) })

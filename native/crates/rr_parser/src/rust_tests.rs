@@ -21,6 +21,23 @@ fn rust_is_current() {
     }
 }
 
+/// A float is its record's (decision 0655 step 14), as the lean lexer's number arm writes `FLOAT` where it read a `.`:
+/// tier 1 as Rust's number arm writes `float_at`'s bit from its run's one `.` (`once`), and tier 2 reads the bit from
+/// the record, no test of the token's bytes asked again (`TESTED`).
+#[test]
+fn a_float_is_its_records() {
+    let c = compiled().expect("the grammar compiles");
+    let tier1 = c.lexer_rust.clone().expect("tier 1 as Rust");
+    assert!(tier1.contains("let (pick, kind1, word1) = TOKEN["), "the lean lexer's loop");
+    assert!(tier1.contains("(l, u32::from(kind1) | u32::from(once) << 16, false, 0)"), "the number arm writes the float's bit");
+    assert!(!tier1.contains("// `float_at`\n"), "a token test of `float_at` asked of the bytes");
+    assert!(tier1.contains("pub const TESTED: u32 = 0x2000;"), "`TESTED` holds `json_bad` alone");
+    let text = "a(1.5, 2, 3.25).\n";
+    let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
+    let floats: Vec<&str> = lx.recs.iter().filter(|r| r.code >> 16 & 1 == 1).map(|r| &text[r.start as usize..=r.last as usize]).collect();
+    assert_eq!(floats, ["1.5", "3.25"]);
+}
+
 /// A tape's nodes, in order: each one's key (its kind, field, flags and supertype classes), start, end and size.
 type Nodes = Vec<(u32, u32, u32, usize)>;
 

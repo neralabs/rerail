@@ -330,6 +330,29 @@ Tests: the rr suite (`rr_takes_a_strings_unicode_escapes_as_written`, `long_numb
 `a_numbers_token_takes_its_digits`; the marks test refuses four backticks at a token now), the eight corpus tests;
 JSON's and Kotlin's suites; Bitlex's own; clippy.
 
+## Step 14: a float is its record's, from the number arm's read (done)
+
+The user asked whether a float should be its own record kind (2026-11-23). It should be told by its record, written
+where the number is read, as the lean lexer's number arm writes `FLOAT` where it read a `.`. Until now tier 1 as Rust
+wrote the number's record without it, and tier 2 asked `float_at`'s token test (`TESTED`, `token_test`), which read the
+token's bytes again for a `.`.
+
+- **How.** A token test its row's own read decides is the record's bit (`once_hits`, in the lean lexer's shape): a test
+  `count(D) at least 1` at a token of `run R once D` holds where the run read its one `D`. The number arm reads the run
+  with that flag (`run_once_hit`, `let (l, once) = …`), and writes it into the record as `float_at`'s bit (`kind1 |
+  once << 16`). `TESTED` loses the bit, `token_test` its arm, and tier 2 reads the bit from the record (`code_at`).
+- **The bit, not a kind byte of its own.** The interpreter, the JIT's record pass and Metal already write `float_at`'s
+  hit into the number's code at that bit (`CheckThen::At`). Tier 1 as Rust's records are now theirs at it, and
+  `tier1_differs` compares it. A kind byte of its own would make every switch of tier 2's that takes a number take a
+  float too (lean's `NUM | FLOAT` arms), and the masks' record passes would need the kind at the number's first byte
+  from the bytes after it (`back_fill`, decision 0416). The bit is what lean's two kinds mean: a number, and whether it
+  is a float, told where it was read.
+- `no_record_marks` takes an arm's record only as a line of its own, not a binding's pattern (`let (l, once)`).
+
+Tests: `a_float_is_its_records` (the arm writes the bit, `TESTED` holds `json_bad` alone, the records of `1.5` and
+`3.25` hold it, `2`'s not); the rr suite; the eight corpus tests; JSON's and Kotlin's suites (their Rust unchanged);
+Bitlex's own; clippy.
+
 ## The six gaps, where they stand
 
 Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers and names):
@@ -342,10 +365,9 @@ Read off the tier 1 Rust as it is now (`rr_aot/src/tier1.rs`, its line numbers a
    and a character past ASCII are `bad` tokens, their statement recovering (decision 0650, step 11). A string's `\u`
    and a long number are read as written (step 13). One refusal stays, four backticks or more, which is syntax, not an
    error.
-4. **Marks**: no marks in a record and no extra's bit (step 9), no `float_after` and no check after the loop.
-   `token_test`, `tested` and `gap` stay for what tier 2 asks where it reads it: `float_at` (a float's kind at its
-   number's first byte would need `back_fill`, decision 0416), `json_bad` (the grammar's JSON checks, lean's
-   parser's), and `gap` is lean's `on_line`.
+4. **Marks**: no marks in a record and no extra's bit (step 9), no `float_after` and no check after the loop. A
+   float is its record's bit, from the number arm's read (step 14). `token_test`, `tested` and `gap` stay for what tier
+   2 asks where it reads it: `json_bad` (the grammar's JSON checks, the lean parser's), and `gap` is lean's `on_line`.
 5. **No dead code**: no `block`, `prev`, `next`, `fill`, `escaped`, `any`, `bit`, `set`, `toggle`, `held`,
    `padded`; `drop_uncalled_fns` drops a function or a table nothing calls (step 7).
 6. **Tables**: `TOKEN` gives a pair's kind and code by one load (`+ 256`, `+ 512` for `<:`), `WORDS` is built at

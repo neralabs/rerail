@@ -51,14 +51,14 @@ pub(super) struct Bytes<'a> {
     pub(super) lean: bool,
     /// A fence of three bytes or more searched (`find_fence`, written once).
     pub(super) fence: bool,
-    /// The named masks a loop of the bytes tests by a function of their own (a long test, `u_ok`), each written once:
+    /// The named masks a loop of the bytes tests by a function of their own (a long test, `h4`), each written once:
     /// its name and its code.
     named: std::cell::RefCell<Vec<(String, String)>>,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
-const READS: [(&str, usize); 8] =
-    [("run_once_last", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1)];
+const READS: [(&str, usize); 9] =
+    [("run_once_last", 2), ("run_once_hit", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1)];
 
 impl<'a> Bytes<'a> {
     pub(super) fn new(stmts: &'a [Stmt], locals: HashMap<String, Expr>, class_code: HashMap<String, String>) -> Self {
@@ -409,6 +409,12 @@ impl<'a> Bytes<'a> {
                 let Some(d) = args[1].trim().strip_prefix('&') else { return Ok(None) };
                 let Some((pd, None)) = self.tested_at(d, "(l + 1)") else { return Ok(None) };
                 format!("{{ let (mut l, mut once) = ({}, false); while {next} {{ if {pd} {{ if once {{ break; }} once = true; }} l += 1; }} l }}", a(2))
+            }
+            // The same, and whether it read its one `D` (`once_hits`).
+            ("run_once_hit", 3) if carry.is_none() => {
+                let Some(d) = args[1].trim().strip_prefix('&') else { return Ok(None) };
+                let Some((pd, None)) = self.tested_at(d, "(l + 1)") else { return Ok(None) };
+                format!("{{ let (mut l, mut once) = ({}, false); while {next} {{ if {pd} {{ if once {{ break; }} once = true; }} l += 1; }} (l, once) }}", a(2))
             }
             _ => return Ok(None),
         }))

@@ -5141,6 +5141,10 @@ impl Gen<'_> {
         // The marks' token tests, for tier 2 to ask where it reads a mark (decision 0655 step 6): each one's bit, `after`,
         // its row's kind and its test; and each row's kind, whether an extra, its extra bits, its first bytes, its kind.
         let mut test_asks: Vec<(u8, bool, String, String)> = Vec::new();
+        // The token tests a row's own read decides (`run R once D`, its test a count of `D` of one at least, at the
+        // token): the run read its one `D` (`once`), as the lean lexer's number arm knows it read a `.`. Each its row's
+        // kind and the test's bit.
+        let mut once_asks: Vec<(String, u8)> = Vec::new();
         let mut row_ids: Vec<(String, bool, u32, [bool; 256], String)> = Vec::new();
         // Each row's rule where a common token's (decision 0655 step 4): a run of one mask (`run M`), a pair (`pairs F`:
         // the pairs mask `k_F`; `pair M`), one byte (`one`).
@@ -5345,6 +5349,14 @@ impl Gen<'_> {
                 };
                 let at = if *after { 16 + u32::from(*bit) } else { u32::from(*bit) };
                 let _ = write!(hits, "            if {holds} {{\n                hits |= 1 << {at};\n            }}\n");
+                if let Some(TokenRule::RunOnce(_, d)) = rule
+                    && !*after
+                    && matches!(test, TokenTest::Count)
+                    && *least == 1
+                    && v == self.val(d)?
+                {
+                    once_asks.push((kind.clone(), *bit));
+                }
                 test_asks.push((*bit, *after, kind.clone(), holds));
             }
             // The gap masks the loop keeps, over a token of code's bytes after its start.
@@ -6117,6 +6129,13 @@ impl Gen<'_> {
             let rare: [bool; 256] = std::array::from_fn(|c| !self.skipped[c] && !(usize::from(by[c]) < common.len() && common[usize::from(by[c])]));
             Some((common, rare, w, pair))
         })();
+        // In the lean lexer's shape, a test its row's read decides is its record's bit, not tier 2's to ask (`once_hits`),
+        // where tier 2 asks others still.
+        if lean_rows.is_some() && test_asks.iter().any(|a| !once_asks.iter().any(|(k, b)| a.2 == *k && a.0 == *b && !a.1)) {
+            test_asks.retain(|a| !once_asks.iter().any(|(k, b)| a.2 == *k && a.0 == *b && !a.1));
+        } else {
+            once_asks.clear();
+        }
         let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
             // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
@@ -6147,7 +6166,7 @@ impl Gen<'_> {
                 let branches_t = &match &lean_rows {
                     Some((common, ..)) => {
                         let picked = group_rows(branches_t);
-                        without_rows(branches_t, &(0..common.len()).filter(|&i| common[i] && !picked.contains(&i)).collect::<Vec<_>>())
+                        once_hits(&without_rows(branches_t, &(0..common.len()).filter(|&i| common[i] && !picked.contains(&i)).collect::<Vec<_>>()), &once_asks, &mark_names)?
                     }
                     None => branches_t.clone(),
                 };
@@ -7847,6 +7866,10 @@ fn no_record_marks(out: &str) -> String {
     let from = h + HEAD.len();
     for (at, _) in out[from..e].match_indices("(l, ") {
         let at = from + at;
+        // An arm's record, a line of its own; not a binding's pattern (`let (l, once) =`).
+        if !out[..at].rsplit('\n').next().is_some_and(|p| p.chars().all(char::is_whitespace)) {
+            continue;
+        }
         let Some(close) = closing_paren(out, at) else { return out.to_owned() };
         // Its five parts, split at its own commas.
         let inner = &out[at + 1..close];
@@ -8044,6 +8067,40 @@ fn token_tests_fn(asks: &[(u8, bool, String, String)], rows: &[(String, bool, u3
 
 /// `code` (the rows' `match`) with no hits of the marks' token tests (`if T { hits |= 1 << B; }`), which tier 2 asks
 /// (decision 0655 step 6), nor a test of an open region left with nothing in it.
+/// The rows' arms with each test its row's read decides (`once_asks`: its row's kind, its mark's bit) its record's bit:
+/// the run read with its one `D` (`run_once_hit`, `once`), and the bit in the record's kind, as the lean lexer's number
+/// arm writes `FLOAT` where it read a `.`. Tier 2 reads the bit from the record (`TESTED` holds it not).
+fn once_hits(code: &str, once_asks: &[(String, u8)], names: &HashMap<u8, String>) -> Result<String, String> {
+    let mut out = code.to_owned();
+    for (kind, bit) in once_asks {
+        let head = format!("// `{kind}`: run ");
+        let at = out.find(&head).ok_or_else(|| format!("`{kind}`'s arm is not its run's"))?;
+        let read = out[at..].find("let l = run_once_last(&").map(|r| r + at).ok_or_else(|| format!("`{kind}`'s arm reads no run once"))?;
+        out.replace_range(read..read + "let l = run_once_last(&".len(), "let (l, once) = run_once_hit(&");
+        let past = read + "let (l, once) = run_once_hit(&".len();
+        let tuple = out[past..].find("(l, ").map(|t| t + past).ok_or_else(|| format!("`{kind}`'s arm has no record"))?;
+        let line = out[..tuple].rfind('\n').map_or(0, |i| i + 1);
+        let pad = out[line..tuple].to_owned();
+        if !pad.chars().all(char::is_whitespace) {
+            return Err(format!("`{kind}`'s record is not a line of its own"));
+        }
+        let k_from = tuple + "(l, ".len();
+        let mut depth = 0i32;
+        let k_len = out[k_from..]
+            .char_indices()
+            .find(|&(_, c)| {
+                depth += i32::from(matches!(c, '(' | '{' | '[')) - i32::from(matches!(c, ')' | '}' | ']'));
+                c == ',' && depth == 0
+            })
+            .map(|(i, _)| i)
+            .ok_or_else(|| format!("`{kind}`'s record has no kind"))?;
+        let k = out[k_from..k_from + k_len].trim().to_owned();
+        let name = names.get(bit).map_or_else(|| format!("mark {bit}"), |n| format!("`{n}`"));
+        out.replace_range(line..k_from + k_len, &format!("{pad}// {name}: the run's one byte read (`once`), its record's bit, as the lean lexer writes its kind.\n{pad}(l, {k} | u32::from(once) << {}", 16 + u32::from(*bit)));
+    }
+    Ok(out)
+}
+
 fn no_hits(code: &str) -> String {
     let lines: Vec<&str> = code.split_inclusive('\n').collect();
     let mut keep: Vec<&str> = Vec::new();
