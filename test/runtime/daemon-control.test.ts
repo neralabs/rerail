@@ -3482,15 +3482,27 @@ describe("a record whose live pid is not the home's daemon", () => {
   });
 
   // An install whose engine is missing or does not load must still be removable: the child then exits without an answer,
-  // and the read goes through Windows PowerShell as before, within what is left of the stop's 10 s.
+  // and the read goes through Windows PowerShell as before, within what is left of the stop's 10 s. Each child takes
+  // 4 s of the case's clock before it exits, so each PowerShell read gets the 6 s left.
   it("reads the start through Windows PowerShell on the uninstall's machine when the child gives no answer, as when the engine does not load", async () => {
     const signals: Array<string | number | undefined> = [];
     const starts: Start[] = [];
     const filetime = String((BigInt(STARTED_AT - 500) + 11_644_473_600_000n) * 10_000n);
-    expect(await stopOnUninstallMachine(program => (isPowerShell(program) ? exited(`${filetime}\r\n`) : exited("", 3)), signals, starts)).toBe("stopped");
+    const childMs = 4_000;
+    const answer = (program: string): childProcess.SpawnSyncReturns<string> => {
+      if (isPowerShell(program)) return exited(`${filetime}\r\n`);
+      vi.setSystemTime(Date.now() + childMs);
+      return exited("", 3);
+    };
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      expect(await stopOnUninstallMachine(answer, signals, starts)).toBe("stopped");
+    } finally {
+      vi.useRealTimers();
+    }
     expect(signals).toEqual(["SIGTERM"]);
     expect(starts.map(({ program }) => (isPowerShell(program) ? "powershell" : "reader"))).toEqual(["reader", "powershell", "reader", "powershell"]);
-    for (const { timeout } of starts.filter(({ program }) => isPowerShell(program))) expect(timeout).toBeLessThanOrEqual(10_000);
+    expect(starts.filter(({ program }) => isPowerShell(program)).map(({ timeout }) => timeout)).toEqual([10_000 - childMs, 10_000 - childMs]);
   });
 
   // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM. With no start read,
