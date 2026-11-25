@@ -40,7 +40,13 @@ pub fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Vec<u8>>
 
 /// The entry's image, made and not yet written (`Finished::write`: into its segment): its symbols' strings read from
 /// `atoms`, the table its rows were made under.
+///
+/// One operation (decision 0687): each relation's rows are made in its frame, and the builder keeps them as columns.
 pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Finished> {
+    rerail_blocks::frame::op(|fr| encode_in(fr, entry, syms, atoms))
+}
+
+fn encode_in(fr: &rerail_blocks::frame::Frame, entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Finished> {
     let mut b = Builder::new(0, false);
     // The symbols' strings first, so they are the image's strings `0..SYMS`: holding the entry's atoms reads them
     // there, not every row (`hold`).
@@ -62,18 +68,18 @@ pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreRe
         }
     }
     let end = shown.keys().copied().max().map_or(0, |m| m + 1);
-    b.rows_as_is(SYMS, &[col::INT], rerail_blocks::vector![shown.len() as i64, end]);
-    b.rows_as_is(NODES, &[col::INT], rerail_blocks::vector![entry.nodes as i64]);
+    b.rows_as_is(SYMS, &[col::INT], &[shown.len() as i64, end]);
+    b.rows_as_is(NODES, &[col::INT], &[entry.nodes as i64]);
     for (key, (w, values)) in &entry.rows {
         let w = *w;
         let name = format!("r:{key}");
         if w == 0 {
-            b.rows_as_is(&name, &[], rerail_blocks::vector::Vector::new());
+            b.rows_as_is(&name, &[], &[]);
             continue;
         }
         let cols = syms.columns(key, w).filter(|c| c.len() == w).unwrap_or_else(|| vec![false; w]);
-        let types: Vec<u8> = cols.iter().map(|&s| if s { col::TEXT } else { col::INT }).collect();
-        let mut rows = rerail_blocks::vector::Vector::with_capacity(values.len());
+        let types: rerail_blocks::frame::InlineVec<u8, 16> = cols.iter().map(|&s| if s { col::TEXT } else { col::INT }).collect();
+        let mut rows = fr.vec_with::<i64>(values.len());
         for row in values.chunks_exact(w) {
             for (c, &v) in row.iter().enumerate() {
                 if !cols[c] {
@@ -92,21 +98,21 @@ pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreRe
                 rows.push(at);
             }
         }
-        b.rows_as_is(&name, &types, rows);
+        b.rows_as_is(&name, &types, &rows);
     }
     for (name, (nodes, rows)) in &entry.outputs {
-        b.rows_as_is(&format!("c:{name}"), &[col::INT], nodes.iter().map(|&c| c as i64).collect());
+        b.rows_as_is(&format!("c:{name}"), &[col::INT], &fr.collect(nodes.iter().map(|&c| c as i64)));
         if rows.width() == 0 {
-            b.rows_as_is(&format!("n:{name}"), &[col::INT], rerail_blocks::vector![rows.len() as i64]);
+            b.rows_as_is(&format!("n:{name}"), &[col::INT], &[rows.len() as i64]);
         }
         let types = rows.types();
-        let mut values = rerail_blocks::vector::Vector::with_capacity(rows.len() * types.len());
+        let mut values = fr.vec_with::<i64>(rows.len() * types.len());
         for i in 0..rows.len() {
             for (c, &v) in rows.row(i).iter().enumerate() {
                 values.push(if types[c] == col::TEXT { i64::from(b.text(rows.text(v))) } else { v });
             }
         }
-        b.rows_as_is(&format!("o:{name}"), types, values);
+        b.rows_as_is(&format!("o:{name}"), types, &values);
     }
     Ok(b.finish_parts())
 }
