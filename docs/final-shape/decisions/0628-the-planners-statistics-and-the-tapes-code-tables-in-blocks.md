@@ -45,9 +45,10 @@ buffers; simdjson's columns) were `Vec`s, and `finish` handed the engine a `Vec<
 - `rerail-vector`, a crate below `tape_format`, holds `Pod`, `Region`, `Room` (a region of a size and alignment,
   `Room::region`) and `Vector`, the growable array over a room's regions. `rerail_blocks` re-exports them
   unchanged, so there is one `Vector` and one `Pod` in the workspace.
-- The engine installs the run's room at load (`rows::install_run_room`, which calls
+- The engine installs the run's room at load (`rerail_blocks::maps::install`, which calls
   `rerail_vector::install_default_room`; §8). A `Vector` or map made with no room takes its regions from it: the
-  run's open relation block. A crate's own tests, run without the engine, take theirs from the heap (`HeapRoom`).
+  calling thread's stack since roll-up 124 (decision 0342, amended; below). A crate's own tests, run without the
+  engine, take theirs from the heap (`HeapRoom`).
 - Every writer column is a `Vector`. `Writer::finish` returns the image as a `Vector<u8>`, `finish_columns`
   its columns as `Vector`s, and a tape's own home (`home::Home::Own`) holds that `Vector`: the bytes the writer
   wrote are the bytes every reader reads, in the block they were written in. The code column of

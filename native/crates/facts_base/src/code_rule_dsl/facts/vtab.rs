@@ -263,6 +263,12 @@ impl<'a> Seq<'a> {
     }
 }
 
+/// A node read (`Source::node_read_ref`): a text the source lends, or a value made.
+pub enum NodeRead<'a> {
+    Text(&'a str),
+    Value(rusqlite::types::Value),
+}
+
 pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
@@ -270,6 +276,9 @@ pub trait Source: Send + Sync {
     /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), for a binding of
     /// `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
     fn node_read(&self, _name: &str, _n: i64) -> Option<rusqlite::types::Value> { None }
+    /// `node_read`, a text lent where the source holds it, with none made: what a join's walk reads
+    /// (`NodeRead::Text`).
+    fn node_read_ref(&self, name: &str, n: i64) -> Option<NodeRead<'_>> { self.node_read(name, n).map(NodeRead::Value) }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }

@@ -33,8 +33,31 @@ pub fn json_doc(lang: &Lang, name: &str, src: &[u8]) -> Doc {
     let mut w = Writer::new(lang, src, rerail_tape_format::newlines::Terminators::Eslint, 0, false, false, src.len() / 2 + 16);
     rerail_json_aot::parse(&rerail_json_aot::padded(src), src.len(), &mut w).unwrap_or_else(|b| panic!("{name}: JSON's parser refused it at byte {b}"));
     let Written::F16(t) = w.finish().unwrap_or_else(|e| panic!("{name}: {e}")).tape else { panic!("{name}: not format 16") };
-    let view = t.placement().view(lang, 0).unwrap_or_else(|e| panic!("{name}: {e}"));
-    Doc { name: name.to_owned(), bytes: t.as_bytes().to_vec(), view }
+    let mut view = t.placement().view(lang, 0).unwrap_or_else(|e| panic!("{name}: {e}"));
+    // Its language's codes after it, as a slab places a document and its table (`DeviceCode`s, 24 bytes each, that
+    // its view's `codes` is the offset of): its kind, field and classes the table's, its flags a pattern of the
+    // device's bits (named, extra, missing, error) by number, since JSON's table states none.
+    let mut bytes = t.as_bytes().to_vec();
+    bytes.resize(bytes.len().next_multiple_of(16), 0);
+    view.codes = u32::try_from(bytes.len()).expect("a small document");
+    for (n, &(kind, field, classes)) in rerail_json_aot::ENTRIES.iter().enumerate() {
+        let mut c = [0u8; 24];
+        c[0..2].copy_from_slice(&kind.to_le_bytes());
+        c[2..4].copy_from_slice(&field.to_le_bytes());
+        c[4] = (n as u8).wrapping_mul(5) & 15;
+        c[5] = classes.len().min(8) as u8;
+        for (k, class) in classes.iter().take(8).enumerate() {
+            c[8 + 2 * k..10 + 2 * k].copy_from_slice(&class.to_le_bytes());
+        }
+        bytes.extend_from_slice(&c);
+    }
+    // Its source after them, apart from the tape as the residency places it (decision 0353 step 7): the view's source
+    // offset from the document's first byte, and room past it for a window's read (`ukl_ld_window`, 8 bytes).
+    bytes.resize(bytes.len().next_multiple_of(16), 0);
+    view.set_source_offset(i64::try_from(bytes.len()).expect("a small document"));
+    bytes.extend_from_slice(src);
+    bytes.resize(bytes.len().next_multiple_of(16) + 16, 0);
+    Doc { name: name.to_owned(), bytes, view }
 }
 
 /// Each node's parent by the host's read: the reference.

@@ -146,6 +146,9 @@ pub struct Grammar {
     /// The field names and their codes, sorted by name, read once: Tree-sitter answers a field's code by comparing
     /// the name with each field's in turn, and the summaries ask it at every `field` (Q51).
     fields: Vec<(&'static str, u16)>,
+    /// The code sets its documents' auxiliary indexes are built with (`formats::code_sets`), of its tape tag's format
+    /// 16 table, with that tag: made once a dialect, not once a document (a quarter of the index's building, 0656).
+    aux_codes: Option<(u8, rerail_tape_format::aux_index::CodeSets)>,
 }
 
 impl Grammar {
@@ -184,7 +187,13 @@ impl Grammar {
         fields.sort_unstable();
         // A name of two codes keeps its first, as the grammar's own lookup answers.
         fields.dedup_by_key(|(name, _)| *name);
-        Ok(Arc::new(Self { lang, kinds, named, fields }))
+        let aux_codes = crate::code_rule_dsl::language::tape_tag(lang).and_then(|tag| Some((tag, formats::code_sets(rerail_tape_format::f16::lang(tag)?.table(), lang))));
+        Ok(Arc::new(Self { lang, kinds, named, fields, aux_codes }))
+    }
+
+    /// The code sets an auxiliary index of a tape of tag `tag` is built with, where `tag` is this dialect's.
+    pub fn aux_codes(&self, tag: u8) -> Option<&rerail_tape_format::aux_index::CodeSets> {
+        self.aux_codes.as_ref().filter(|(t, _)| *t == tag).map(|(_, c)| c)
     }
 
     /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
@@ -385,6 +394,8 @@ pub struct TapeImage {
     /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
+    /// Where its auxiliary index's sections lie in its home, read once when it is made (`doc_index`).
+    index_at: rerail_tape_format::doc_index::IndexAt,
 }
 
 /// A parsed image as the store's writer takes its bytes (`TapeBytes`) where no device reads tapes: the image's own
@@ -1253,7 +1264,18 @@ impl TapeImage {
     /// The document's index (decision 0656 step 4), read in its home: every image holds one, its writer's
     /// (`written_16`), and one read in without it is refused (`sixteen`).
     pub fn doc_index(&self) -> rerail_tape_format::doc_index::DocIndex<'_> {
-        rerail_tape_format::doc_index::DocIndex::read(self.aux_bytes().expect("an image holds its index")).expect("an image's index reads")
+        rerail_tape_format::doc_index::DocIndex::of(self.aux_bytes().expect("an image holds its index"), self.index_at)
+    }
+
+    /// Where `held`'s auxiliary index's sections lie: a home without one, or without a section the reads need, was
+    /// written by no writer of this layout.
+    fn index_at(held: &Held) -> Result<rerail_tape_format::doc_index::IndexAt, String> {
+        let b = match held {
+            Held::F16(t) => t.aux_bytes(),
+            Held::F16Z(t) => t.aux_bytes(),
+        };
+        let b = b.ok_or("a stored tape without its auxiliary index")?;
+        Ok(rerail_tape_format::doc_index::DocIndex::read(b).map_err(|e| format!("a stored tape's auxiliary index: {e}"))?.at())
     }
 
     /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 16 (or 16z) as stored.
@@ -1296,15 +1318,11 @@ impl TapeImage {
             Held::F16(t) => t.source_len(),
             Held::F16Z(t) => t.source_len(),
         };
-        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None };
+        // Its index, which every reader reads (`doc_index`).
+        let index_at = Self::index_at(&held)?;
+        let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None, index_at };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
-        }
-        // Its index, which every reader reads (`doc_index`): a home without one, or without a section its reads need,
-        // was written by no writer of this layout.
-        match image.aux_bytes() {
-            Some(b) => rerail_tape_format::doc_index::DocIndex::read(b).map(drop).map_err(|e| format!("a stored tape's auxiliary index: {e}"))?,
-            None => return Err("a stored tape without its auxiliary index".into()),
         }
         Ok(image)
     }

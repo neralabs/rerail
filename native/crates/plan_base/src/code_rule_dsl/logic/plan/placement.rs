@@ -809,8 +809,9 @@ pub mod tests {
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `sha256(x)` is not, nor `lower(x)` in a recursive stratum; a cat in one is (its rounds keep their texts one
-        // value a content, decision 0661); `lower(x)` is (a text the device makes into its arena).
+        // `sha256(x)` is not; a cat in a recursive stratum is (its rounds keep their texts one value a content,
+        // decision 0661), and so is `lower(x)`, there or not (a text the device makes into the component's arena,
+        // decision 0659: `setfix::device` refuses a made text only in a lattice).
         let cmp = |l: T<'static>, r: T<'static>| Literal::Eq(l, r);
         let doc = |v: &'static str| T::Call("doc", vec![T::Var(v)]);
         let mut docs = Shape::default();
@@ -832,7 +833,7 @@ pub mod tests {
         assert!(!low.forms.contains(&Form::Computed), "{:?}", low.forms);
         let mut low_rec = Shape::default();
         adds(&mut low_rec, &[atom("kind", false), lower()], &[], 1.0, true);
-        assert!(low_rec.forms.contains(&Form::Computed));
+        assert!(!low_rec.forms.contains(&Form::Computed), "{:?}", low_rec.forms);
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         adds(&mut small, &[atom("kind", false)], &[], 10.0, false);

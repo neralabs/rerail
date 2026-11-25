@@ -67,6 +67,7 @@ fn dialect_facts(family: Family) -> Option<&'static dyn DialectFacts> {
     DIALECT_FACTS[family as usize].get().copied()
 }
 use std::collections::{BTreeSet, HashSet};
+use std::sync::Arc;
 
 /// A document's text may be long: `text` holds a node's when it is at most this many bytes, or the node is
 /// token-like (a leaf, a comment, a string literal). Longer texts have no symbol: interning them all is
@@ -201,7 +202,7 @@ pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Li
     }
     let mut out = Literal::default();
     match (family, kind) {
-        (_, "string" | "string_literal" | "raw_string_literal" | "encapsed_string" | "interpreted_string_literal") => {
+        (_, k) if STRING_KINDS.contains(&k) => {
             let Some((prefix, body)) = string_contents(family, text) else { return out };
             let ty = if family == Family::Python { "str" } else { "string" };
             if !interpolated {
@@ -244,30 +245,53 @@ pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Li
     out
 }
 
+/// The kinds of string literals `literal` decodes (a family's own literals aside, `DialectFacts::literal`).
+pub const STRING_KINDS: [&str; 5] = ["string", "string_literal", "raw_string_literal", "encapsed_string", "interpreted_string_literal"];
+
+/// A string literal's text split, with nothing decoded: its prefix letters (as written), whether it is raw (an `r`
+/// among them), and its body between its quotes, where it has quotes at both ends.
+fn string_split(family: Family, text: &str) -> (&str, bool, Option<&str>) {
+    let p = text.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let (prefix, rest) = text.split_at(p);
+    let raw = prefix.bytes().any(|b| b.eq_ignore_ascii_case(&b'r'));
+    let rest = if family == Family::Rust && raw { rest.trim_matches('#') } else { rest };
+    let body = ["\"\"\"", "'''", "\"", "'", "`"]
+        .iter()
+        .find(|q| rest.len() >= 2 * q.len() && rest.starts_with(**q) && rest.ends_with(**q))
+        .map(|q| &rest[q.len()..rest.len() - q.len()]);
+    (prefix, raw, body)
+}
+
 /// A string literal's prefix letters, lowercased, and its decoded contents.
 pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, String)> {
-    let p: String = text.chars().take_while(char::is_ascii_alphabetic).collect();
-    let rest = &text[p.len()..];
+    let (p, raw, body) = string_split(family, text);
     let prefix = p.to_lowercase();
-    let raw = prefix.contains('r');
     if let Some(v) = dialect_facts(family).and_then(|facts| facts.string_body(&prefix, text)) {
         return Some((prefix, v));
     }
-    let rest = if family == Family::Rust && raw { rest.trim_matches('#') } else { rest };
-    for q in ["\"\"\"", "'''", "\"", "'", "`"] {
-        if rest.len() >= 2 * q.len() && rest.starts_with(q) && rest.ends_with(q) {
-            let body = &rest[q.len()..rest.len() - q.len()];
-            let v = if raw {
-                body.to_owned()
-            } else if family == Family::Python {
-                py_unescape(body)
-            } else {
-                unescape(body)
-            };
-            return Some((prefix, v));
-        }
+    let body = body?;
+    let v = if raw {
+        body.to_owned()
+    } else if family == Family::Python {
+        py_unescape(body)
+    } else {
+        unescape(body)
+    };
+    Some((prefix, v))
+}
+
+/// Whether `literal(family, kind, text, _)` gives a prefix, with nothing decoded where the family has no literals of
+/// its own: a string kind's text in quotes (`string_split`).
+pub fn string_prefixed(family: Family, kind: &str, text: &str) -> bool {
+    let facts = dialect_facts(family);
+    if let Some(own) = facts.and_then(|facts| facts.literal(kind, text)) {
+        return own.prefix.is_some();
     }
-    None
+    if !STRING_KINDS.contains(&kind) {
+        return false;
+    }
+    let (p, _, body) = string_split(family, text);
+    body.is_some() || facts.is_some_and(|facts| facts.string_body(&p.to_lowercase(), text).is_some())
 }
 
 /// A Python literal's escapes, as the language reference gives them: unknown escapes keep their backslash, octal up
@@ -555,31 +579,64 @@ pub(super) const RX_MEMO_TEXT: usize = 4096;
 /// its parent's; every node where that is `None`), within the inline bound (`TEXT_INLINE`), or past it where it is
 /// token-like (no child, a comment, a literal with a prefix) or of a kind a rule reads at any length
 /// (`Projection::long_text`, `long_text_any`).
-pub(super) struct TextRows<'a> {
-    nodes: Option<(&'a super::TextNodes, super::NodesOf)>,
-    long: &'a BTreeSet<String>,
-    long_any: bool,
+pub(super) struct TextRows {
+    projection: Arc<super::Projection>,
+    /// The rules' text demand (`Projection::text_nodes`) as the dialect's codes.
+    codes: Option<super::NodesOf>,
+    /// By kind code: a node of it has text at any length (a kind read at any length, a comment).
+    always: Vec<bool>,
+    /// By kind code: a node of it longer than the inline bound may have text as a literal (`string_prefixed`).
+    string: Vec<bool>,
 }
 
-impl<'a> TextRows<'a> {
-    /// What `projection` reads of the text of `dialect`'s nodes.
-    pub(super) fn new(projection: &'a super::Projection, dialect: &Dialect) -> Self {
-        TextRows { nodes: projection.text_nodes.as_ref().map(|n| (n, n.of_dialect(dialect))), long: &projection.long_text, long_any: projection.long_text_any }
+impl TextRows {
+    /// What `projection` reads of the text of `dialect`'s nodes, as tables by kind code: made once a batch and
+    /// dialect (`made::Context::text_rows`), not once a document.
+    pub(super) fn new(projection: &Arc<super::Projection>, dialect: &Dialect) -> Self {
+        let p = projection.as_ref();
+        let kinds = 0..dialect.catalog.kind_count() as u16;
+        let own = dialect_facts(dialect.family).is_some();
+        TextRows {
+            codes: p.text_nodes.as_ref().map(|n| n.of_dialect(dialect)),
+            always: kinds.clone().map(|k| Self::always_of(p, dialect.code_name(k))).collect(),
+            string: kinds.map(|k| own || STRING_KINDS.contains(&dialect.code_name(k))).collect(),
+            projection: Arc::clone(projection),
+        }
     }
-    /// Whether tape node `id` of `f` has text.
-    pub(super) fn has(&self, f: FactsIn<'_>, dialect: &Dialect, id: u32) -> bool {
-        if let Some((nodes, codes)) = &self.nodes
-            && !codes.reads(nodes, f, id, dialect)
+    fn always_of(p: &super::Projection, kind: &str) -> bool {
+        p.long_text_any || p.long_text.contains(kind) || is_comment(kind)
+    }
+    /// Whether tape node `id` of `f`, of kind code `code` (`Dialect::code`, read once by the walk), has text: one
+    /// whose text a rule reads, a leaf or within the inline bound or a string literal (`string_prefixed`), or of a kind
+    /// read at any length. Read by its kind's code, whether it has children, and only then its positions (its length);
+    /// a long string literal's quotes alone, nothing decoded.
+    /// `field` is its field, and `parent` its parent's kind's code and field, which the walk holds.
+    pub(super) fn has(&self, f: FactsIn<'_>, dialect: &Dialect, id: u32, code: u16, field: u16, parent: impl FnOnce() -> Option<(u16, u16)>) -> bool {
+        // Its text, read once where an answer needs it.
+        let text = std::cell::OnceCell::new();
+        let text = || *text.get_or_init(|| f.text(id));
+        if let (Some(nodes), Some(codes)) = (&self.projection.text_nodes, &self.codes)
+            && !codes.reads_known(nodes, dialect, code, field, parent, text)
         {
             return false;
         }
-        let kind = dialect.name(f, id);
-        let text = f.text(id);
-        if text.len() <= TEXT_INLINE || self.long_any || self.long.contains(kind) || is_comment(kind) {
+        let at = usize::from(code);
+        // A code past the tables (ERROR's): by its name.
+        let (always, string) = match (self.always.get(at), self.string.get(at)) {
+            (Some(&a), Some(&s)) => (a, s),
+            _ => {
+                let kind = dialect.code_name(code);
+                (Self::always_of(&self.projection, kind), dialect_facts(dialect.family).is_some() || STRING_KINDS.contains(&kind))
+            }
+        };
+        if always {
             return true;
         }
-        let children = f.children(id);
-        children.is_empty() || literal(dialect.family, kind, text, interpolated(f, dialect, kind, &children)).prefix.is_some()
+        if f.subtree_end(id) == id + 1 {
+            return true;
+        }
+        let text = text();
+        text.len() <= TEXT_INLINE || string && string_prefixed(dialect.family, dialect.code_name(code), text)
     }
 }
 

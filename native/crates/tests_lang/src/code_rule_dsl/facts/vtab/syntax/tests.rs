@@ -3311,6 +3311,12 @@ fn text_is_a_view_of_the_nodes_and_positions_with_text() {
             assert!(n >> 32 == 1, "the document's id");
         }
         assert_eq!(by_value, 3, "the three leaves `x`, one term's atom");
+        // A document's texts interned together (a text test's scan) are the atoms each row's read gives.
+        let rows: Vec<(u32, u32)> = (0..p.text_rows()).map(|i| p.text_local(i)).collect();
+        let atoms = store.atoms_handle();
+        let together = p.text_atoms(atoms.as_ref(), &rows);
+        let alone: Vec<i64> = rows.iter().map(|&(local, x)| p.text_atom(atoms.as_ref(), local, x)).collect();
+        assert_eq!((together.len(), together), (t.len(), alone), "text_atoms is text_atom of each row");
         let positions = t.len() - p.node_ids().filter(|&(_, _, n)| !t.lookup(0, &[n]).unwrap().is_empty()).count();
         assert_eq!(positions as u32, p.extra.as_ref().map_or(0, |x| x.tokens), "a row a token (`token_text`)");
         assert_eq!(batch.groups(), 0, "no rows made");
@@ -3542,7 +3548,7 @@ fn a_renewed_batch_takes_its_unchanged_groups_and_makes_the_changed_document_alo
     let docs = |changed: bool| -> Vec<Document> { (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &src(k, if changed && k == 3 { 99 } else { k }))).collect() };
     let reads = ["node", "child", "docof", "src_line", "doc", "text"];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
-    let make = |docs: Vec<Document>, renew: Option<Arc<Batch>>| -> Arc<Batch> { Batch::renewed(&store, docs, &projection, renew).unwrap() };
+    let make = |docs: Vec<Document>, renew: Option<Arc<Batch>>| -> Arc<Batch> { Batch::after(&store, docs, &projection, Earlier { held: renew, session: true, ..Earlier::default() }).unwrap() };
     let of = |b: &Arc<Batch>, name: &str| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == name).expect("made as rows").2);
     // The last run made each document's rows in a group of its own, as an edit's probes do.
     let held = make(docs(false), None);
@@ -3570,6 +3576,46 @@ fn a_renewed_batch_takes_its_unchanged_groups_and_makes_the_changed_document_alo
     assert_eq!(renewed.vocabulary_strings(), fresh.vocabulary_strings(), "a fresh batch's vocabulary");
 }
 
+/// A run's corpus batch shares the projections its chunks' batches made (decision 0683): a chunk's projection that
+/// reads fewer relations makes each document alike, so none is projected again, and every relation's rows are a
+/// fresh batch's. A chunk's batch whose projection makes a document otherwise (`end_point` read: its nodes' ends among
+/// its positions) shares none.
+#[test]
+fn a_corpus_batch_shares_the_chunks_projections_where_they_are_made_alike() {
+    let store = ContentStore::open(&temp("shared-chunks")).unwrap();
+    let src = |k: u32| format!("def f{k}(x, y={k}):\n    return g(x, 'w{k}')\n\nclass C{k}:\n    pass\n");
+    let docs = |keys: std::ops::RangeInclusive<u32>| -> Vec<Document> { keys.map(|k| document(k, &format!("m{k}.py"), "python", &src(k))).collect() };
+    let projection_of = |more: &[&str]| {
+        let reads = ["node", "child", "docof", "doc", "text"].iter().chain(more);
+        Projection { shape: Shape::Core, reads: Some(reads.map(|r| (*r).to_owned()).collect()), ..Projection::core() }
+    };
+    let (chunk, corpus) = (projection_of(&[]), projection_of(&["line", "col"]));
+    let whole = |b: &Arc<Batch>| -> Vec<(String, Vec<Vec<i64>>)> {
+        made_sources(b)
+            .into_iter()
+            .map(|(name, _, s)| {
+                let mut v: Vec<Vec<i64>> = (0..s.len()).map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
+                v.sort();
+                (name.to_owned(), v)
+            })
+            .collect()
+    };
+    let made_ahead = |d: Vec<Document>, p: &Projection| {
+        let b = Batch::after(&store, d, p, Earlier::default()).unwrap();
+        b.make_every();
+        b
+    };
+    let chunks = [made_ahead(docs(1..=2), &chunk), made_ahead(docs(3..=4), &chunk)];
+    let shared = Batch::after(&store, docs(1..=4), &corpus, Earlier { chunks: chunks.iter().map(|b| b.projections()).collect(), ..Earlier::default() }).unwrap();
+    let fresh = Batch::new(&store, docs(1..=4), &corpus, &[], &[], false, None, &HashMap::new()).unwrap();
+    assert_eq!(whole(&shared), whole(&fresh), "every relation's rows are a fresh batch's");
+    assert_eq!(shared.docs.made_count(), 0, "no document is projected again");
+    let otherwise = made_ahead(docs(1..=2), &projection_of(&["end_point"]));
+    let refused = Batch::after(&store, docs(1..=4), &corpus, Earlier { chunks: vec![otherwise.projections()], ..Earlier::default() }).unwrap();
+    assert_eq!(whole(&refused), whole(&fresh), "a fresh batch's rows");
+    assert_eq!(refused.docs.made_count(), 4, "a batch made otherwise shares none");
+}
+
 /// A session's batch read whole makes its documents in groups of `RERAIL_SESSION_GROUP` (decision 0616): the next
 /// run, one document changed, takes every group but that document's, and makes that group's documents' rows alone
 /// (the others' projections shared). Read whole as one group, the first run's batch left the next nothing to take.
@@ -3582,7 +3628,7 @@ fn a_sessions_whole_read_makes_groups_the_next_run_takes_but_the_changed_ones() 
     let docs = |changed: bool| -> Vec<Document> { (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &src(k, if changed && k == 3 { 99 } else { k }))).collect() };
     let reads = ["node", "child", "docof", "src_line", "doc", "text"];
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
-    let held = Batch::renewed(&store, docs(false), &projection, None).unwrap();
+    let held = Batch::after(&store, docs(false), &projection, Earlier { held: None, session: true, ..Earlier::default() }).unwrap();
     let whole = |b: &Arc<Batch>| -> Vec<(String, Vec<Vec<i64>>)> {
         made_sources(b)
             .into_iter()
@@ -3595,7 +3641,7 @@ fn a_sessions_whole_read_makes_groups_the_next_run_takes_but_the_changed_ones() 
     };
     whole(&held);
     assert_eq!(held.groups(), 2, "read whole in groups of two documents");
-    let renewed = Batch::renewed(&store, docs(true), &projection, Some(Arc::clone(&held))).unwrap();
+    let renewed = Batch::after(&store, docs(true), &projection, Earlier { held: Some(Arc::clone(&held)), session: true, ..Earlier::default() }).unwrap();
     let fresh = Batch::new(&store, docs(true), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     assert_eq!(whole(&renewed), whole(&fresh), "every relation's rows are a fresh batch's");
     assert_eq!(renewed.makes(), 1, "the changed document's group alone is made");
@@ -3616,10 +3662,10 @@ fn a_sessions_probe_of_many_documents_makes_groups_the_next_run_takes_but_the_ch
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let of = |b: &Arc<Batch>, name: &str| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == name).expect("made as rows").2);
     let keys = |b: &Arc<Batch>| (0..4).map(|k| i64::from(b.docs.key(k))).collect::<Vec<i64>>();
-    let held = Batch::renewed(&store, docs(false), &projection, None).unwrap();
+    let held = Batch::after(&store, docs(false), &projection, Earlier { held: None, session: true, ..Earlier::default() }).unwrap();
     of(&held, "docof").lookup(1, &keys(&held)).unwrap();
     assert_eq!(held.groups(), 2, "one probe of four documents, in groups of two");
-    let renewed = Batch::renewed(&store, docs(true), &projection, Some(Arc::clone(&held))).unwrap();
+    let renewed = Batch::after(&store, docs(true), &projection, Earlier { held: Some(Arc::clone(&held)), session: true, ..Earlier::default() }).unwrap();
     let fresh = Batch::new(&store, docs(true), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
     let rows = |s: &Arc<dyn Source>, found: Vector<usize>| -> Vec<Vec<i64>> {
         let mut v: Vec<Vec<i64>> = found.into_iter().map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
@@ -3960,6 +4006,66 @@ DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, D
         assert_eq!(g, w, "ask {:?}", asks[i]);
     }
     assert!(m > 100);
+}
+
+/// The cost of projecting a corpus's documents with `text` read and without (decision 0656 step 4): the identity maps'
+/// walk marks the nodes with text. `RERAIL_BENCH_DIR`: a directory of Python files (the first `RERAIL_BENCH_FILES`,
+/// default 300). Prints each projection's time, best of five.
+#[test]
+#[ignore = "a measurement: RERAIL_BENCH_DIR"]
+fn bench_projections_with_and_without_text() {
+    let Some(dir) = std::env::var_os("RERAIL_BENCH_DIR") else { return };
+    let n: usize = std::env::var("RERAIL_BENCH_FILES").ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut stack = vec![PathBuf::from(dir)];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let mut es: Vec<PathBuf> = rd.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        es.sort();
+        for p in es {
+            if p.is_dir() && !p.ends_with(".git") {
+                stack.push(p);
+            } else if p.extension().is_some_and(|e| e == "py") {
+                paths.push(p);
+            }
+        }
+    }
+    paths.truncate(n);
+    let sources: Vec<(String, String)> = paths.iter().filter_map(|p| Some((p.display().to_string(), std::fs::read_to_string(p).ok()?))).collect();
+    let build = || -> Vec<Document> { sources.iter().enumerate().map(|(k, (p, s))| document(k as u32 + 1, p, "python", s)).collect() };
+    // `RERAIL_BENCH_BUILD=1`: the documents built alone (parse, tape and its auxiliary index), `rounds` times.
+    if std::env::var_os("RERAIL_BENCH_BUILD").is_some() {
+        let rounds: usize = std::env::var("RERAIL_BENCH_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+        let mut best = f64::MAX;
+        for _ in 0..rounds {
+            let t = std::time::Instant::now();
+            assert_eq!(build().len(), sources.len());
+            best = best.min(t.elapsed().as_secs_f64());
+        }
+        eprintln!("bench: {} documents built in {:.1} ms (best of {rounds})", sources.len(), best * 1e3);
+        return;
+    }
+    let docs = build();
+    let store = ContentStore::open(&temp("bench-text")).unwrap();
+    // `RERAIL_BENCH_READS` (a comma list) and `RERAIL_BENCH_ROUNDS`: one projection, many rounds (to sample).
+    let only: Option<Vec<String>> = std::env::var("RERAIL_BENCH_READS").ok().map(|v| v.split(',').map(str::to_owned).collect());
+    let rounds: usize = std::env::var("RERAIL_BENCH_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let all: Vec<Vec<String>> = match only {
+        Some(r) => vec![r],
+        None => [&["op"][..], &["text"][..], &["text", "op"][..]].iter().map(|r| r.iter().map(|s| (*s).to_owned()).collect()).collect(),
+    };
+    for reads in &all {
+        let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().cloned().collect()), ..Projection::core() };
+        let mut best = f64::MAX;
+        for _ in 0..rounds {
+            let batch = Batch::new(&store, docs.clone(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+            let t = std::time::Instant::now();
+            let counts = batch.view_counts();
+            best = best.min(t.elapsed().as_secs_f64());
+            assert_eq!(counts.len(), docs.len());
+        }
+        eprintln!("bench: reads {reads:?}: {} documents projected in {:.1} ms (best of 5)", docs.len(), best * 1e3);
+    }
 }
 
 /// The tape's answers `tape_rows` serves are the rows `core_rr` and `tree` made (their making kept here as the

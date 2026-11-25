@@ -3120,27 +3120,6 @@ fn union_of(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], h: us
     Ok(Some((union, words, cap)))
 }
 
-/// Each set head's sort by all its columns (the anti-join's: a round's new rows less its relation's), built in
-/// `batch` before the round's gate, so nothing after the gate builds an index.
-#[allow(clippy::too_many_arguments)]
-fn round_index(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, own: &mut Own, rep: &mut Report, batch: &mut mj::Batch, lattices: &HashMap<usize, LatHead>,
-               sets: &HashMap<usize, SetHead>) -> Result<(), String> {
-    for &h in heads {
-        if lattices.contains_key(&h) || !runs.iter().enumerate().any(|(x, r)| r.is_some() && rules[x].2 == h) {
-            continue;
-        }
-        // Its relation's room for the round's rows first, then its index: the index's room is reserved past it.
-        let cap: usize = runs.iter().enumerate().filter_map(|(x, r)| r.as_ref().filter(|_| rules[x].2 == h)).map(|r| r.uniq.as_ref().map_or(0, mj::Table::room)).sum();
-        let had = own.total.get(&h).map_or(0, |t| t.rows);
-        if let Some(part) = sets.get(&h).and_then(|s| s.part.as_ref()) && !part.reserve((had + cap) as u64) {
-            return Err(format!("a recursive head of {} rows past its block's room", had + cap));
-        }
-        let all: Vec<usize> = (0..store.rels[h].k).collect();
-        own.get(h, false, &all, batch, rep)?;
-    }
-    Ok(())
-}
-
 /// The gate after a round's joins (`mj::Batch::gate`): every stage's table of every run, by its room.
 fn round_gate(runs: &[Option<Run<'_>>], batch: &mut mj::Batch) -> Result<(), String> {
     // A placed table's room is its rows: not checked.
@@ -3196,9 +3175,15 @@ const HEAD_ROOM: usize = LAT_ROOM;
 /// A recursive component's set head on the device: its one relation, in a block of the run's life, its rows so far
 /// claimed and each round's new rows written past them (never moved; its indexes forgotten as it grows, so a round's
 /// probes build them of its rows then). The store takes it as it lies (`Fresh::place`).
+///
+/// Its map (`map`, decision 0567): its rows by key, as a lattice head's key map is laid out, in its block. Each program
+/// places its rows in it first (`mj::Batch::set_map`), at twice the program's bound; a round's new rows are its union
+/// made distinct less the rows the map holds, each placed in it as the row it becomes (`mj::Batch::dedup_less`), so a
+/// round's work is its own rows', not the head's.
 #[derive(Default)]
 struct SetHead {
     part: Option<Part>,
+    map: Option<super::keys::KeyMap>,
 }
 
 /// A key map where it lies, for the device to bind.
@@ -3301,7 +3286,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // grown in its block round after round, each row with its round where the head keeps levels. Nothing copied.
     drop(own);
     for &h in heads {
-        let Some(SetHead { part: Some(part) }) = sets.remove(&h) else { continue };
+        let Some(SetHead { part: Some(part), .. }) = sets.remove(&h) else { continue };
         let n = part.len() as usize;
         if n == 0 {
             continue;
@@ -3650,13 +3635,12 @@ struct Kept {
     words: Vec<mj::Words>,
 }
 
-/// A head's round (`encode_live_tail`): the words of its rows' counts (`[union, distinct, new]`), a lattice head's
-/// counters (`[changed, new]`) or a set head's anti-join's, and the delta it writes.
+/// A head's round (`encode_live_tail`): the words of its rows' counts (`[union, distinct, new]`; a set head's distinct
+/// rows are its new ones, `dedup_less`), a lattice head's counters (`[changed, new]`), and the delta it writes.
 struct HeadEnd {
     head: usize,
     words: mj::Words,
     lat: Option<mj::Words>,
-    anti: Option<mj::Words>,
     delta: Rc<mj::DevRel>,
     /// Its union's room (`union_of`'s): past it, its gate stopped the round.
     cap: usize,
@@ -3942,6 +3926,21 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
             g.now.set((m.at as u64, m.places));
         }
     }
+    // A set head's map with room for its bound's rows at half full, its rows placed in it again: a round its gate
+    // stopped in the last program may have placed rows it never wrote.
+    for (&h, l) in live {
+        if lp.lattices.contains_key(&h) {
+            continue;
+        }
+        let need = (2 * l.bound).next_power_of_two().max(16);
+        let set = lp.sets.entry(h).or_default();
+        if set.map.as_ref().is_none_or(|m| m.places() < need) {
+            // SAFETY: `lat_hclear_one` (`set_map`'s first phase) writes every slot before any read.
+            let words = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in(Some(&l.total.home()), need * super::keys::SLOT) };
+            kept.maps.extend(set.map.replace(super::keys::KeyMap::of(words, 0)));
+        }
+        batch.set_map(&lp.own.total[&h], l.len, map_at(set.map.as_ref().expect("its map"))).map_err(e)?;
+    }
     // The seed round: its rules read no delta, and its rows are the first round's delta, which template 0 reads.
     let seeded = match seeding {
         Some((seeds, ssizes, ssums)) => Some(encode_round(seeds, None, side, None, heads, store, names, named, shared, lp, live, ssizes, ssums, logs, round, batch, kept)?),
@@ -4052,8 +4051,6 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
             }
         }
     }
-    // Its relations' rooms were reserved before they were bound (`device_rounds`): none reserved here.
-    round_index(&runs, rules, heads, store, lp.own, lp.rep, batch, lp.lattices, &HashMap::new())?;
     // The gate: every stage's table by its room.
     round_gate(&runs, batch)?;
     let ends = encode_live_tail(&runs, rules, heads, store, lp, live, writes, round, named, shared, batch, kept)?;
@@ -4076,7 +4073,7 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
             ops.push(mj::RoundOp::Log(log, added));
         }
         ops.push(mj::RoundOp::Zero(&end.words, 0, 3));
-        if let Some(c) = end.lat.as_ref().or(end.anti.as_ref()) {
+        if let Some(c) = end.lat.as_ref() {
             ops.push(mj::RoundOp::Zero(c, 0, c.len));
         }
     }
@@ -4099,8 +4096,8 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
 }
 
 /// A round's heads in a program of rounds (`encode_program`), after its joins: each head's rows from every rule that
-/// makes it (`union_of`), a set head's made distinct and less its relation's as the device claimed them (the
-/// anti-join); a gate on each head's room (its delta's for a round's rows, its relation's bound for them past its
+/// makes it (`union_of`), a set head's made distinct less the rows its map holds (`SetHead::map`, its relation's as
+/// the device claimed them); a gate on each head's room (its delta's for a round's rows, its relation's bound for them past its
 /// rows); then a set head's new rows past its rows (`append_live`) and into its delta of side `writes`, a lattice
 /// head's folded into its relation through its key map, its changed rows into that delta. Their counts the device's,
 /// claimed by the round's end.
@@ -4110,7 +4107,7 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
     fn e(e: impl std::fmt::Debug) -> String {
         format!("{e:?}")
     }
-    // A head's rows of the round, before its gate: its union (and a set head's new rows, of the anti-join).
+    // A head's rows of the round, before its gate: its union (and a set head's new rows).
     struct Made {
         end: HeadEnd,
         union: mj::Table,
@@ -4128,26 +4125,16 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
         let Some((union, words, cap)) = union_of(runs, rules, h, store, named, batch)? else { continue };
         let delta = Rc::new(into(h)?);
         if lp.lattices.contains_key(&h) {
-            made.push(Made { end: HeadEnd { head: h, words, lat: Some(mj::Words::zeroed(2).map_err(e)?), anti: None, delta, cap }, union, cap, fresh: None });
+            made.push(Made { end: HeadEnd { head: h, words, lat: Some(mj::Words::zeroed(2).map_err(e)?), delta, cap }, union, cap, fresh: None });
             continue;
         }
-        let distinct = batch.table(k, cap).map_err(e)?;
+        // Made distinct, less the rows its relation holds (its map's, `SetHead::map`): its new rows, their count the
+        // words' third, which the head gate reads.
         let all: Vec<usize> = (0..k).collect();
-        batch.dedup(&union, &all, 0, 1, &words, &distinct).map_err(e)?;
-        // Its relation's sort, built before the joins' gate (`round_index`) of its rows as the round reads them.
-        let (total, ix) = lp.own.get(h, false, &all, batch, lp.rep)?.ok_or("a recursive head's relation")?;
-        let mut d = mj::Stage { mode: mj::ANTI, ..mj::Stage::default() };
-        for c in 0..k {
-            d.key_rcol[c] = c as u32;
-            d.key_kind[c] = mj::SLOT;
-            d.key_slot[c] = c as u32;
-        }
-        d.nkeys = k as u32;
         let fresh = batch.table(k, cap).map_err(e)?;
-        let counters = mj::Words::zeroed(1).map_err(e)?;
-        batch.stage(d, &distinct, Some((&total, ix.as_deref())), None, 1, 2, &words, &counters, None, &fresh).map_err(e)?;
-        kept.tables.push(distinct);
-        made.push(Made { end: HeadEnd { head: h, words, lat: None, anti: Some(counters), delta, cap }, union, cap, fresh: Some(fresh) });
+        let map = lp.sets.get(&h).and_then(|s| s.map.as_ref()).ok_or("a set head's map")?;
+        batch.dedup_less(&union, &all, 0, 2, &words, &fresh, Some((&lp.own.total[&h], map_at(map)))).map_err(e)?;
+        made.push(Made { end: HeadEnd { head: h, words, lat: None, delta, cap }, union, cap, fresh: Some(fresh) });
     }
     // The head gate: a round's rows past its relation's rows within its bound (a lattice head's union's rows: its new
     // keys and its changed rows at most). Its delta's room is its relation's past its rows when the program started

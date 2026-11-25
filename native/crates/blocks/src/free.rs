@@ -123,24 +123,6 @@ mod tests {
         assert_eq!(b.try_alloc_chunk(PAGE, 64), Some(page), "the merged page taken again");
     }
 
-    /// A block keeping pages below a size (`keeping_pages_below`, a thread's large room): a chunk freed under it keeps
-    /// its pages for the next; one at or past it gives them back, as every block's does.
-    #[cfg(target_vendor = "apple")]
-    #[test]
-    fn a_chunk_under_the_resident_size_keeps_its_pages() {
-        let b = block().keeping_pages_below(4 * PAGE);
-        let small = b.try_alloc_chunk(PAGE, 64).unwrap();
-        let big = b.try_alloc_chunk(8 * PAGE, 64).unwrap();
-        drain(&b);
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(small), 0xab, PAGE) };
-        unsafe { std::ptr::write_bytes(b.ptr::<u8>(big), 0xab, 8 * PAGE) };
-        assert_eq!(b.free_chunk(small, PAGE), 0, "nothing given to the OS");
-        assert!(crate::mem::tests::modified(b.ptr::<u8>(small)), "its page kept");
-        assert!(b.free_chunk(big, 8 * PAGE) > 0, "a chunk past the size gives its pages back");
-        assert!(!crate::mem::tests::modified(b.ptr::<u8>(big)));
-        assert_eq!(b.try_alloc_chunk(PAGE, 64), Some(small), "the kept page taken again");
-    }
-
     /// A block made for a chunk (`facts::rows`' `2 * need` and its 1 MB margin) holds it: a large chunk lies aligned
     /// to `ALIGN_MAX`, not to its size, so it has no buddy, and its pieces go back by their own sizes.
     #[test]

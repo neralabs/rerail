@@ -681,6 +681,15 @@ impl Source for Layered {
         let p = parts.get(&self.name)?;
         p.by_key.parts((n >> 32) as u32).find_map(|i| p.list[i].src.node_read(name, n))
     }
+    /// `node_read`, the base's text lent; a part's is made (the parts are read under their list's guard).
+    fn node_read_ref(&self, name: &str, n: i64) -> Option<super::super::NodeRead<'_>> {
+        if let Some(v) = self.base.node_read_ref(name, n) {
+            return Some(v);
+        }
+        let parts = self.values.parts.load();
+        let p = parts.get(&self.name)?;
+        p.by_key.parts((n >> 32) as u32).find_map(|i| p.list[i].src.node_read(name, n)).map(super::super::NodeRead::Value)
+    }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
     }

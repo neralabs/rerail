@@ -671,12 +671,12 @@ pub fn composed_here(seed: &Seed) -> std::result::Result<Option<Graph>, Error> {
     composed(seed, &Dirs::here().expect("the library and the phase programs' directory"))
 }
 
-/// Graph `g` read back from each form a graph is kept in: the store's kept facts (`Images::facts`) and the shipped
-/// bundle's image (`Images::encode`), for the engine's tests of phase 0 (`phase0::tests`).
+/// Graph `g` read back from each form a graph is kept in: the store's kept facts (`Graph::kept_and_read`) and the
+/// shipped bundle's image (`Images::encode`), for the engine's tests of phase 0 (`phase0::tests`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn through_kept_forms(g: &Graph) -> Option<(Graph, Graph)> {
+    let facts = g.kept_and_read()?;
     let images = Images::here()?;
-    let facts = images.graph_of(&images.facts(g), &mut Read::default())?;
     let image = images.decode(&images.encode(g))?;
     Some((facts, image))
 }

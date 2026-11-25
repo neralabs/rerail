@@ -26,6 +26,11 @@ pub struct DocIndex<'a> {
     aux: AuxIndex<'a>,
 }
 
+/// Where a checked index's sections lie (`DocIndex::at`): kept by the holder of its bytes, which then reads the
+/// index with nothing checked or found again (`DocIndex::of`). Made by a `read` alone.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexAt([u32; 9]);
+
 impl<'a> DocIndex<'a> {
     /// The index whose bytes are `b` (a tape home's auxiliary index), with every section its reads need.
     pub fn read(b: &'a [u8]) -> Result<Self, String> {
@@ -34,6 +39,15 @@ impl<'a> DocIndex<'a> {
             Some(k) => Err(format!("an index without section {}", *k as u16)),
             None => Ok(DocIndex { aux }),
         }
+    }
+    /// Where its sections lie, for `of`.
+    pub fn at(&self) -> IndexAt {
+        IndexAt(self.aux.sections_at())
+    }
+    /// The index in `b` whose sections lie at `at`, the `at` of a `read` of these very bytes: its header and
+    /// directory not read again (a reader of the index at every row read them each time).
+    pub fn of(b: &'a [u8], at: IndexAt) -> Self {
+        DocIndex { aux: AuxIndex::at(b, at.0) }
     }
 
     /// The nodes the document has.

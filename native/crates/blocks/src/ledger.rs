@@ -253,7 +253,7 @@ impl Ledger {
 
     /// A chunk of `size` bytes (a class's, aligned to it), never live (the rest of a fitted chunk, or the bytes
     /// skipped to align one), onto its list; the pages it leaves with no live byte go to the OS.
-    pub(crate) fn push_never_live(&self, at: usize, size: usize, pages: bool) {
+    pub(crate) fn push_never_live(&self, at: usize, size: usize) {
         let mut s = self.lock();
         if !s.listed {
             return;
@@ -261,8 +261,7 @@ impl Ledger {
         let (class, size) = crate::free::class_of(size);
         let (merged, merged_size) = Self::put(&mut s, at, class);
         self.ext.free.fetch_add(size, Relaxed);
-        // Ours: the caller's say (`Block::keeping_pages_below`); the hub's: a merged chunk of `GIVE_MIN` or more.
-        if pages && self.pages && merged_size >= GIVE_MIN {
+        if self.pages && merged_size >= GIVE_MIN {
             self.give_free_pages(&mut s, merged, merged_size);
         }
     }

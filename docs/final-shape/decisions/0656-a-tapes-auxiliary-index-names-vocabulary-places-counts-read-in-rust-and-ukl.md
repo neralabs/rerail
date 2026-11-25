@@ -190,3 +190,47 @@ prototype's rule, "never key postings to known rules".
   and relation.h are regenerated from clif.
 - **Its tests' tapes.** f16's test writers (`write_from`, `numbers`, with presence `write_from_present` over the hub's
   `write_present`) are the crate's test helpers, which the auxiliary index's tests use too.
+
+## Follow-up: steps 3 and 4 on PostHog, profiled (2026-11-24)
+
+A cold profiled PostHog run (the M3, base b8e270700a against 827049b60e) gave the same findings (29,965) at about
+the same CPU. Under that total, four costs had moved or grown. Each was profiled (the engine's spans and macOS
+`sample`) and cut where the cost was work done twice; base and head were then run in turns on the same host, since
+its load swung from 49 to 9 within a pair.
+
+| Own CPU (s), in turns | base | 827049b60e | f31f7cae0e |
+|---|---|---|---|
+| The projections' identity maps | 9.7 | 16.3 | 10.8 |
+| `literal_str`'s joins, own | 1.4 | 7.1 | 8.0 (fedd76a1a8 below) |
+| The tape's parse, own, and the index's build | 19.5 | 25.2 | 19.9 + 2.5 |
+| The node rows (`text`'s rows no longer made) | 17.8 | 2.5 | 2.9 |
+
+f31f7cae0e retired 3,645–3,651 G instructions against base's 3,876 G (−6%), with the same findings.
+
+- **The index's build at the parse** (`aux_index::build`). Each code was read three times, the leaves listed
+  twice, counts kept in a tree, the names' map hashed with SipHash, and the grammar's code sets
+  (`formats::code_sets`) made at every document's parse. Now each code is read once, the leaves listed once, counts
+  are a vector by code, names an FxHashMap, and a grammar's code sets are made with the grammar
+  (`Grammar::aux_codes`). The bytes are the same (the tape digest pin and the GPU builder's test). What remains,
+  2.5 s, is the index itself: a term's lookup, the leaf scan and the position reads.
+- **The index read at every atom.** `TapeImage::doc_index` parsed the index's header and directory at each call, and
+  `text_atom` called it for every atom. An image now reads them once when it is made (`IndexAt`, `DocIndex::of`).
+- **The identity maps.** `text`'s mark in the projection's walk (`TextRows::has`) spent 2,472 of its 2,709 samples in
+  its gate (`NodesOf::reads_coded`), which read again the node's field, its parent, the parent's kind and field, and
+  its text (twice). The walk's path now carries each open node's code and field, and the gate takes them from it
+  (`NodesOf::reads_known`), with the text read once. What remains (+1.1 s) is the length and string tests of the
+  nodes the gate passes, which the made rows did too.
+- **The statistics pass** did not build projections twice, as first reported. The planner's counts of the `node`
+  view (`doc_codes`) were read off the projection of a document already made, every node's kind each time; they are
+  now read off the index, made or not.
+- **`literal_str`.** The cost moved there from the made rows was not interning by the rows' reads but a text test's
+  scan of the view (`Tested::scan`): it interned every text of the batch one at a time (`Atoms::intern`: a read lock,
+  and at a miss two vectors and the write lock: 1,523 of its 6,456 samples waited on the lock), and copied each. It now
+  interns a document's texts together (`Projected::text_atoms`, `Atoms::intern_all`) and tests them where they lie
+  (fedd76a1a8). A first change that interned only the texts passing a test was slower (the lookups then interned the
+  rest, and the scan tested a common text again in every document) and was not kept.
+- **fedd76a1a8 on PostHog** (the M3 rebooted after its GPU stalled under no farm program; base, head, head, base):
+  findings the same; instructions 3,870 and 3,860 G for base, 3,649 and 3,652 G for head (−5.6%); CPU 300.2 and
+  316.5 s for base, 340.4 and 308.6 s for head, at loads that fell from 62 to 7 across the four. `literal_str` as a
+  whole costs what it did (26.7–26.9 s base, 26.4–29.6 s head): its join's own time grew by what its node rows no
+  longer cost. The identity maps are +0.9–1.6 s, the index's build +2.2 s, the parse the same.

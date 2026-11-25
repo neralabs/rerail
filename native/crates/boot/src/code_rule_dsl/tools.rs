@@ -2671,10 +2671,11 @@ mod settings_tests {
 /// fails the test, every one shown.
 #[cfg(test)]
 mod pack_split_tests {
+    /// Every policy of `dir` (from the repository's root) run over one file of each language, its scope's paths dropped.
     fn pack_runs(dir: &str) {
         // SAFETY: nextest runs each test in a process of its own.
         unsafe { std::env::set_var("RERAIL_BATCH_PACK", "strict") };
-        let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
+        let from = crate::source_tree::native().join("..").join(dir);
         let tmp = tempfile::tempdir().unwrap();
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = Vec::new();
@@ -2739,23 +2740,23 @@ mod pack_split_tests {
     }
 
     packs! {
-        the_data_layer_is_split_with_its_crossings_declared: "data-layer",
-        the_blade_pack_is_split_with_its_crossings_declared: "packs/blade",
-        the_complexity_pack_is_split_with_its_crossings_declared: "packs/complexity",
-        the_django_pack_is_split_with_its_crossings_declared: "packs/django",
-        the_javascript_pack_is_split_with_its_crossings_declared: "packs/javascript",
-        the_next_pack_is_split_with_its_crossings_declared: "packs/next",
-        the_node_pack_is_split_with_its_crossings_declared: "packs/node",
-        the_php_pack_is_split_with_its_crossings_declared: "packs/php",
-        the_python_pack_is_split_with_its_crossings_declared: "packs/python",
-        the_python_main_pack_is_split_with_its_crossings_declared: "packs/python-main",
-        the_react_pack_is_split_with_its_crossings_declared: "packs/react",
-        the_rerail_pack_is_split_with_its_crossings_declared: "packs/rerail",
-        the_rr_pack_is_split_with_its_crossings_declared: "packs/rr",
-        the_rust_pack_is_split_with_its_crossings_declared: "packs/rust",
-        the_sql_pack_is_split_with_its_crossings_declared: "packs/sql",
-        the_typescript_pack_is_split_with_its_crossings_declared: "packs/typescript",
-        the_vue_pack_is_split_with_its_crossings_declared: "packs/vue",
+        the_data_layer_is_split_with_its_crossings_declared: "docs/rule-syntax/data-layer",
+        the_blade_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/blade",
+        the_complexity_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/complexity",
+        the_django_pack_is_split_with_its_crossings_declared: "packs/django/rules",
+        the_javascript_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/javascript",
+        the_next_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/next",
+        the_node_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/node",
+        the_php_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/php",
+        the_python_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/python",
+        the_python_main_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/python-main",
+        the_react_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/react",
+        the_rerail_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rerail",
+        the_rr_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rr",
+        the_rust_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rust",
+        the_sql_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/sql",
+        the_typescript_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/typescript",
+        the_vue_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/vue",
     }
 }
 
