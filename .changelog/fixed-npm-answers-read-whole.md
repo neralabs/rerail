@@ -1,0 +1,1 @@
+`rerail update` and the rule pack commands read npm's answers to their end. On Linux, under load, an answer could come back empty, so a pack's newer versions went unchecked with "could not check every rule pack for a newer version: Unexpected end of JSON input".

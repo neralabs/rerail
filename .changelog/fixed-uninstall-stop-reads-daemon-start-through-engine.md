@@ -1,0 +1,1 @@
+On Windows, `rerail install --remove` stops a daemon too busy to answer on a machine slow to start Windows PowerShell, or one whose policy blocks it: the uninstall reads when the daemon started through Rerail's engine in a short-lived child process, and says so when that read does not answer within 30 s.
