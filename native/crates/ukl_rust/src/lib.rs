@@ -8,7 +8,6 @@
 pub mod label_parents_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod label_leaves_w8;
-#[cfg(target_arch = "aarch64")]
 pub mod join_run;
 pub mod lanes;
 mod sources;
@@ -103,7 +102,6 @@ pub fn kernels(text: &str, defines: &[(&str, &str)]) -> Vec<(&'static str, Kerne
     if d == LABEL_PASSES_16 {
         out.push(("label_parents", label_parents_w8::label_parents_w8));
     }
-    #[cfg(target_arch = "aarch64")]
     if JOIN_PROGRAM.contains(&d) {
         out.push(("join_run", join_run::join_run));
     }

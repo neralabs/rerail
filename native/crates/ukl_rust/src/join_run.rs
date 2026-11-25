@@ -16,7 +16,8 @@
 #![allow(unsafe_op_in_unsafe_fn, clippy::too_many_arguments, clippy::missing_safety_doc)]
 
 use crate::Launch;
-use core::arch::aarch64::*;
+use rerail_simd::prelude::*;
+use rerail_simd::{LaneCount, SimdElement, SupportedLaneCount};
 use core::sync::atomic::{AtomicU32, Ordering, Ordering::SeqCst};
 
 const NONE: u32 = u32::MAX;
@@ -872,22 +873,34 @@ fn lane_of(v: i64, w: u32) -> i64 {
     }
 }
 
-// ---- Texts: their bytes 16 a step (NEON). ----
+// ---- Texts: their bytes 16 a step. ----
 
-/// A compare's lanes as bits, four a byte: NEON's movemask (`shrn` narrows each byte's 16 bits to a nibble).
+/// `N` lanes at `p`.
 #[inline(always)]
-unsafe fn nibbles(m: uint8x16_t) -> u64 {
-    vget_lane_u64::<0>(vreinterpret_u64_u8(vshrn_n_u16::<4>(vreinterpretq_u16_u8(m))))
+unsafe fn ld<T: SimdElement, const N: usize>(p: *const T) -> Simd<T, N>
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    Simd::from_slice(core::slice::from_raw_parts(p, N))
+}
+
+/// `v`'s `N` lanes to `p`.
+#[inline(always)]
+unsafe fn st<T: SimdElement, const N: usize>(p: *mut T, v: Simd<T, N>)
+where
+    LaneCount<N>: SupportedLaneCount,
+{
+    v.copy_to_slice(core::slice::from_raw_parts_mut(p, N))
 }
 
 /// The first of `n` bytes at `p` that is `c`.
 unsafe fn find_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
-    let needle = vdupq_n_u8(c);
+    let needle = u8x16::splat(c);
     let mut i = 0;
     while i + 16 <= n {
-        let m = nibbles(vceqq_u8(vld1q_u8(p.add(i as usize)), needle));
+        let m = ld::<u8, 16>(p.add(i as usize)).simd_eq(needle).to_bitmask();
         if m != 0 {
-            return Some(i + m.trailing_zeros() / 4);
+            return Some(i + m.trailing_zeros());
         }
         i += 16;
     }
@@ -896,12 +909,12 @@ unsafe fn find_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
 
 /// The last of `n` bytes at `p` that is `c`.
 unsafe fn rfind_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
-    let needle = vdupq_n_u8(c);
+    let needle = u8x16::splat(c);
     let mut end = n;
     while end >= 16 {
-        let m = nibbles(vceqq_u8(vld1q_u8(p.add(end as usize - 16)), needle));
+        let m = ld::<u8, 16>(p.add(end as usize - 16)).simd_eq(needle).to_bitmask();
         if m != 0 {
-            return Some(end - 1 - m.leading_zeros() / 4);
+            return Some(end - 16 + 63 - m.leading_zeros());
         }
         end -= 16;
     }
@@ -910,11 +923,10 @@ unsafe fn rfind_byte(p: *const u8, n: u32, c: u8) -> Option<u32> {
 
 /// How many of `n` bytes at `p` begin a character: no UTF-8 continuation byte (0x80-0xbf, below -64 as an i8).
 unsafe fn count_chars(p: *const u8, n: u32) -> u32 {
-    let floor = vdupq_n_s8(-64);
+    let floor = i8x16::splat(-64);
     let (mut c, mut i) = (0u32, 0u32);
     while i + 16 <= n {
-        let starts = vcgeq_s8(vld1q_s8(p.add(i as usize) as *const i8), floor);
-        c += vaddvq_u8(vshrq_n_u8::<7>(starts)) as u32;
+        c += ld::<i8, 16>(p.add(i as usize).cast()).simd_ge(floor).to_bitmask().count_ones();
         i += 16;
     }
     c + (i..n).filter(|&k| *p.add(k as usize) & 0xc0 != 0x80).count() as u32
@@ -924,7 +936,7 @@ unsafe fn count_chars(p: *const u8, n: u32) -> u32 {
 unsafe fn any_high(p: *const u8, n: u32) -> bool {
     let mut i = 0;
     while i + 16 <= n {
-        if vmaxvq_u8(vld1q_u8(p.add(i as usize))) >= 0x80 {
+        if ld::<u8, 16>(p.add(i as usize)).simd_ge(u8x16::splat(0x80)).any() {
             return true;
         }
         i += 16;
@@ -936,9 +948,9 @@ unsafe fn any_high(p: *const u8, n: u32) -> bool {
 unsafe fn first_diff(p: *const u8, q: *const u8, n: u32) -> Option<u32> {
     let mut i = 0;
     while i + 16 <= n {
-        let m = nibbles(vmvnq_u8(vceqq_u8(vld1q_u8(p.add(i as usize)), vld1q_u8(q.add(i as usize)))));
+        let m = ld::<u8, 16>(p.add(i as usize)).simd_ne(ld(q.add(i as usize))).to_bitmask();
         if m != 0 {
-            return Some(i + m.trailing_zeros() / 4);
+            return Some(i + m.trailing_zeros());
         }
         i += 16;
     }
@@ -947,13 +959,13 @@ unsafe fn first_diff(p: *const u8, q: *const u8, n: u32) -> Option<u32> {
 
 /// `n` bytes from `p` to `o`, their ASCII letters lowered, or raised (`upper`): a letter's case is its bit 0x20.
 unsafe fn case_bytes(p: *const u8, n: u32, o: *mut u8, upper: bool) {
-    let first = vdupq_n_u8(if upper { b'a' } else { b'A' });
-    let (span, bit) = (vdupq_n_u8(26), vdupq_n_u8(0x20));
+    let first = u8x16::splat(if upper { b'a' } else { b'A' });
+    let (span, bit) = (u8x16::splat(26), u8x16::splat(0x20));
     let mut i = 0;
     while i + 16 <= n {
-        let v = vld1q_u8(p.add(i as usize));
-        let letter = vcltq_u8(vsubq_u8(v, first), span);
-        vst1q_u8(o.add(i as usize), veorq_u8(v, vandq_u8(letter, bit)));
+        let v = ld::<u8, 16>(p.add(i as usize));
+        let letter = (v - first).simd_lt(span);
+        st(o.add(i as usize), letter.select(v ^ bit, v));
         i += 16;
     }
     for k in i as usize..n as usize {
@@ -1161,10 +1173,10 @@ unsafe fn strcmp_value(st: &St, t: u32, d: *const u8, a: *const u32, unheld: &mu
 }
 
 /// An automaton's table (`text::table::Table`): its 256 byte classes, then its transitions, `s` states of `c` classes,
-/// then its states after the end and their verdicts. Its classes of 16 bytes are four `tbl` lookups of 64 bytes each.
+/// then its states after the end and their verdicts. Its classes of 64 bytes are four lookups of 64 bytes each.
 struct Automaton {
     tab: *const u8,
-    classes: [uint8x16x4_t; 4],
+    classes: [u8x64; 4],
     s: u32,
     c: u32,
     start: u32,
@@ -1172,19 +1184,19 @@ struct Automaton {
 
 impl Automaton {
     unsafe fn new(tab: *const u8, s: u32, c: u32, start: u32) -> Self {
-        let classes = core::array::from_fn(|k| vld1q_u8_x4(tab.add(64 * k)));
+        let classes = core::array::from_fn(|k| ld(tab.add(64 * k)));
         Automaton { tab, classes, s, c, start }
     }
 
     /// Bytes `v`'s classes: an index past a table's 64 gives 0 there, so the four lookups' or is the class.
     #[inline(always)]
-    unsafe fn classes_of(&self, v: uint8x16_t) -> uint8x16_t {
-        let sixty_four = vdupq_n_u8(64);
-        let mut r = vqtbl4q_u8(self.classes[0], v);
+    fn classes_of(&self, v: u8x64) -> u8x64 {
+        let sixty_four = u8x64::splat(64);
+        let mut r = self.classes[0].swizzle_dyn(v);
         let mut i = v;
         for k in 1..4 {
-            i = vsubq_u8(i, sixty_four);
-            r = vorrq_u8(r, vqtbl4q_u8(self.classes[k], i));
+            i -= sixty_four;
+            r |= self.classes[k].swizzle_dyn(i);
         }
         r
     }
@@ -1194,16 +1206,14 @@ impl Automaton {
         *self.tab.add(256 + (q * self.c + class as u32) as usize) as u32
     }
 
-    /// The state after `n` bytes at `p` from `q`: 16 bytes' classes at once, then the walk through them.
+    /// The state after `n` bytes at `p` from `q`: 64 bytes' classes at once, then the walk through them.
     unsafe fn walk(&self, mut q: u32, p: *const u8, n: u32) -> u32 {
-        let mut classes = [0u8; 16];
         let mut i = 0;
-        while i + 16 <= n {
-            vst1q_u8(classes.as_mut_ptr(), self.classes_of(vld1q_u8(p.add(i as usize))));
-            for &k in &classes {
+        while i + 64 <= n {
+            for k in self.classes_of(ld(p.add(i as usize))).to_array() {
                 q = self.step(q, k);
             }
-            i += 16;
+            i += 64;
         }
         for k in i..n {
             q = self.step(q, *self.tab.add(*p.add(k as usize) as usize));
@@ -1989,14 +1999,14 @@ unsafe fn lat_merge_one(rd: Reads, u: *const i64, pl: *const u32, best: *const u
     col_put(d, p.nkeys, p.n, k, v);
 }
 
-// ---- A group's threads as a range [t0, t1): what each thread does alike, a vector of them at a time (NEON). ----
+// ---- A group's threads as a range [t0, t1): what each thread does alike, a vector of them at a time. ----
 
 /// Words [from, to) of `p` set to `v`, 16 a store.
 unsafe fn fill_u32(p: *mut u32, from: u32, to: u32, v: u32) {
     let (mut i, to) = (from as usize, to as usize);
-    let x = vdupq_n_u32(v);
+    let x = u32x16::splat(v);
     while i + 16 <= to {
-        vst1q_u32_x4(p.add(i), uint32x4x4_t(x, x, x, x));
+        st(p.add(i), x);
         i += 16;
     }
     while i < to {
@@ -2005,31 +2015,31 @@ unsafe fn fill_u32(p: *mut u32, from: u32, to: u32, v: u32) {
     }
 }
 
-/// `n` values set to `v`, 2 a store.
+/// `n` values set to `v`, 4 a store.
 unsafe fn fill_i64(dst: *mut i64, n: u32, v: i64) {
-    let x = vdupq_n_s64(v);
+    let x = i64x4::splat(v);
     let mut i = 0;
-    while i + 2 <= n as usize {
-        vst1q_s64(dst.add(i), x);
-        i += 2;
+    while i + 4 <= n as usize {
+        st(dst.add(i), x);
+        i += 4;
     }
-    if i < n as usize {
+    for i in i..n as usize {
         *dst.add(i) = v;
     }
 }
 
-/// `n` values from `src` to `dst`: one copy, or each shifted to its document (`doc`: its high word), 2 a step.
+/// `n` values from `src` to `dst`: one copy, or each shifted to its document (`doc`: its high word), 4 a step.
 unsafe fn copy_col(src: *const i64, dst: *mut i64, n: u32, doc: bool) {
     if !doc {
         core::ptr::copy(src, dst, n as usize);
         return;
     }
     let mut i = 0;
-    while i + 2 <= n as usize {
-        vst1q_s64(dst.add(i), vshrq_n_s64::<32>(vld1q_s64(src.add(i))));
-        i += 2;
+    while i + 4 <= n as usize {
+        st(dst.add(i), ld::<i64, 4>(src.add(i)) >> i64x4::splat(32));
+        i += 4;
     }
-    if i < n as usize {
+    for i in i..n as usize {
         *dst.add(i) = *src.add(i) >> 32;
     }
 }
@@ -2053,9 +2063,9 @@ unsafe fn kept_runs(offsets: *const u32, o0: u32, t0: u32, t1: u32, mut f: impl 
     let mut t = t0;
     while t < t1 {
         if t + 4 <= t1 {
-            let lo = vld1q_u32(offsets.add(t as usize));
-            let d = vsubq_u32(vld1q_u32(offsets.add(t as usize + 1)), lo);
-            let (mx, mn) = (vmaxvq_u32(d), vminvq_u32(d));
+            let lo = ld::<u32, 4>(offsets.add(t as usize));
+            let d = ld::<u32, 4>(offsets.add(t as usize + 1)) - lo;
+            let (mx, mn) = (d.reduce_max(), d.reduce_min());
             if mx == 0 {
                 if len > 0 {
                     f(start, first, len);
@@ -2065,7 +2075,7 @@ unsafe fn kept_runs(offsets: *const u32, o0: u32, t0: u32, t1: u32, mut f: impl 
                 continue;
             }
             if mx == 1 && mn == 1 {
-                let a = vgetq_lane_u32::<0>(lo).wrapping_sub(o0);
+                let a = lo[0].wrapping_sub(o0);
                 if len == 0 || a != first.wrapping_add(len) {
                     if len > 0 {
                         f(start, first, len);
@@ -2453,11 +2463,11 @@ unsafe fn ix_key_range(rd: Reads, bb: *const u8, out: *mut u32, places: *mut u32
         return;
     }
     // Each row its own place: eb + t, 4 a store.
-    let mut v = vaddq_u32(vdupq_n_u32(eb.wrapping_add(t0)), vld1q_u32([0u32, 1, 2, 3].as_ptr()));
+    let mut v = u32x4::splat(eb.wrapping_add(t0)) + u32x4::from_array([0, 1, 2, 3]);
     let mut t = t0;
     while t + 4 <= t1 {
-        vst1q_u32(places.add((eb + t) as usize), v);
-        v = vaddq_u32(v, vdupq_n_u32(4));
+        st(places.add((eb + t) as usize), v);
+        v += u32x4::splat(4);
         t += 4;
     }
     for t in t..t1 {
@@ -2483,10 +2493,10 @@ unsafe fn ix_place_range(rd: Reads, bb: *const u8, keys: *const u32, places: *co
         return;
     }
     // A row's relation row: its place, from `from`, 4 a step.
-    let d = vdupq_n_u32(p.from.wrapping_sub(eb));
+    let d = u32x4::splat(p.from.wrapping_sub(eb));
     let mut t = t0;
     while t + 4 <= t1 {
-        vst1q_u32(rows.add(t as usize), vaddq_u32(vld1q_u32(places.add((eb + t) as usize)), d));
+        st(rows.add(t as usize), ld::<u32, 4>(places.add((eb + t) as usize)) + d);
         t += 4;
     }
     for t in t..t1 {
@@ -2510,8 +2520,8 @@ unsafe fn lat_clear_range(pl: *mut u32, best: *mut u32, flags: *mut u32, p: &Lat
     fill_u32(flags, i0, i1, 0);
 }
 
-/// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries a `st3`. Code 6: a held
-/// bitmap's words, 0.
+/// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries three stores. Code 6: a
+/// held bitmap's words, 0.
 unsafe fn lat_hclear_range(hb: *mut u8, p: &LatP, i0: u32, i1: u32) {
     let i1 = i1.min(p.hmask.saturating_add(1));
     let h = hb.add(p.h_at as usize) as *mut u32;
@@ -2519,10 +2529,13 @@ unsafe fn lat_hclear_range(hb: *mut u8, p: &LatP, i0: u32, i1: u32) {
         fill_u32(h, i0, i1, 0);
         return;
     }
-    let entry = uint32x4x3_t(vdupq_n_u32(NONE), vdupq_n_u32(0), vdupq_n_u32(0));
+    let entry = [u32x4::from_array([NONE, 0, 0, NONE]), u32x4::from_array([0, 0, NONE, 0]), u32x4::from_array([0, NONE, 0, 0])];
     let mut i = i0;
     while i + 4 <= i1 {
-        vst3q_u32(h.add(3 * i as usize), entry);
+        let e = h.add(3 * i as usize);
+        st(e, entry[0]);
+        st(e.add(4), entry[1]);
+        st(e.add(8), entry[2]);
         i += 4;
     }
     for i in i..i1 {
@@ -2644,36 +2657,34 @@ unsafe fn size_one(ops: *const SizeOp, n: u32) -> bool {
     !full
 }
 
-// ---- Scans and sorts: a tile at a time, its values 4 a register (NEON). ----
+// ---- Scans and sorts: a tile at a time, its values 4 a register. ----
 
-/// The sum of `n` words at `p`, 16 a step into four registers.
+/// The sum of `n` words at `p`, 16 a step.
 unsafe fn sum_u32(p: *const u32, n: u32) -> u32 {
-    let mut acc = [vdupq_n_u32(0); 4];
+    let mut acc = u32x16::splat(0);
     let mut i = 0;
     while i + 16 <= n {
-        let v = vld1q_u32_x4(p.add(i as usize));
-        acc = [vaddq_u32(acc[0], v.0), vaddq_u32(acc[1], v.1), vaddq_u32(acc[2], v.2), vaddq_u32(acc[3], v.3)];
+        acc += ld(p.add(i as usize));
         i += 16;
     }
-    let total = vaddvq_u32(vaddq_u32(vaddq_u32(acc[0], acc[1]), vaddq_u32(acc[2], acc[3])));
+    let total = acc.reduce_sum();
     (i..n).fold(total, |s, k| s.wrapping_add(*p.add(k as usize)))
 }
 
 /// `n` words at `p` replaced by their running sum before each, from `base`; the sum after them. A register's four
 /// sums by two shifted adds, its last carried into the next register.
 unsafe fn scan_u32(p: *mut u32, n: u32, base: u32) -> u32 {
-    let zero = vdupq_n_u32(0);
-    let mut carry = vdupq_n_u32(base);
+    let mut carry = u32x4::splat(base);
     let mut i = 0;
     while i + 4 <= n {
-        let v = vld1q_u32(p.add(i as usize));
-        let one = vaddq_u32(v, vextq_u32::<3>(zero, v));
-        let all = vaddq_u32(one, vextq_u32::<2>(zero, one));
-        vst1q_u32(p.add(i as usize), vaddq_u32(carry, vsubq_u32(all, v)));
-        carry = vdupq_laneq_u32::<3>(vaddq_u32(carry, all));
+        let v = ld::<u32, 4>(p.add(i as usize));
+        let one = v + v.shift_elements_right::<1>(0);
+        let all = one + one.shift_elements_right::<2>(0);
+        st(p.add(i as usize), carry + (all - v));
+        carry = u32x4::splat((carry + all)[3]);
         i += 4;
     }
-    let mut run = vgetq_lane_u32::<0>(carry);
+    let mut run = carry[0];
     for k in i..n {
         let v = *p.add(k as usize);
         *p.add(k as usize) = run;
@@ -2707,11 +2718,10 @@ fn scan_tile_range(n: u32, tile: u32) -> (u32, u32) {
 
 /// A tile's rows [first, end) and each one's digit, four keys a shift and a mask.
 unsafe fn digits(keys: *const u32, first: u32, end: u32, shift: u32, mut f: impl FnMut(u32, usize)) {
-    let (sh, mask) = (vdupq_n_s32(-(shift as i32)), vdupq_n_u32(255));
-    let mut d = [0u32; 4];
+    let (sh, mask) = (u32x4::splat(shift), u32x4::splat(255));
     let mut r = first;
     while r + 4 <= end {
-        vst1q_u32(d.as_mut_ptr(), vandq_u32(vshlq_u32(vld1q_u32(keys.add(r as usize)), sh), mask));
+        let d = ((ld::<u32, 4>(keys.add(r as usize)) >> sh) & mask).to_array();
         for (k, &x) in d.iter().enumerate() {
             f(r + k as u32, x as usize);
         }
@@ -2728,10 +2738,9 @@ unsafe fn radix_hist_tile(keys: *const u32, hist: *mut u32, n: u32, shift: u32, 
     let mut h = [[0u32; RADIX_DIGITS]; 4];
     let first = tile.saturating_mul(RADIX_TILE);
     digits(keys, first, first.saturating_add(RADIX_TILE).min(n), shift, |r, d| h[(r & 3) as usize][d] += 1);
-    let mut sum = [0u32; 4];
     for d in (0..RADIX_DIGITS).step_by(4) {
-        let s = vaddq_u32(vaddq_u32(vld1q_u32(h[0][d..].as_ptr()), vld1q_u32(h[1][d..].as_ptr())), vaddq_u32(vld1q_u32(h[2][d..].as_ptr()), vld1q_u32(h[3][d..].as_ptr())));
-        vst1q_u32(sum.as_mut_ptr(), s);
+        let at = |k: usize| u32x4::from_slice(&h[k][d..d + 4]);
+        let sum = ((at(0) + at(1)) + (at(2) + at(3))).to_array();
         for (k, &c) in sum.iter().enumerate() {
             *hist.add((d + k) * tiles as usize + tile as usize) = c;
         }
