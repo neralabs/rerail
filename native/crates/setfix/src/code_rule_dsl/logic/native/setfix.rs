@@ -5391,6 +5391,27 @@ pub fn retain(conn: impl Scoped, table: &str, mut rows: Vec<Vector<i64>>, types:
     Ok(())
 }
 
+/// SPIKE (`spike_strata`): `retain` of rows held flat, `types.len()` values a row: sorted and deduplicated by their
+/// places, then copied once into the relation's rows, with no vector a row.
+pub fn retain_flat(conn: impl Scoped, table: &str, flat: &[i64], types: Vec<u8>) -> Result<()> {
+    let conn = conn.db();
+    let k = types.len();
+    if k == 0 || !flat.len().is_multiple_of(k) {
+        return Err(err(format!("{table}: native result width differs from its declaration")));
+    }
+    let row = |i: u32| &flat[i as usize * k..(i as usize + 1) * k];
+    let mut order: Vec<u32> = (0..(flat.len() / k) as u32).collect();
+    order.sort_unstable_by(|&a, &b| row(a).cmp(row(b)));
+    order.dedup_by(|a, b| row(*a) == row(*b));
+    let n = order.len();
+    let rows: Vector<i64> = order.iter().flat_map(|&i| row(i).iter().copied()).collect();
+    let rel = InRel::from_flat(rows, n, types);
+    forgotten_on_close();
+    crate::code_rule_dsl::logic::profile::author_joins::observe(table, || rel.rows());
+    on(conn).derived.lock().insert(table.to_owned(), rel);
+    Ok(())
+}
+
 /// Holds `table` in `conn`'s run as a view of `src`'s columns `cols`, read in place (decisions 0329, 0353): a rule that
 /// copies a bound input's columns (`kind(n, k) :- node(_, n, k, _, _)`, Q37), no stratum, no row read or copied. Its
 /// probes are the source's: by a column the source keys (`Keyed`), its own index or order (a batch's `node`:

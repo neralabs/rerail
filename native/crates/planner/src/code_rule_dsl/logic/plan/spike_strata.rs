@@ -2,20 +2,24 @@
 //!
 //! `RERAIL_SPIKE_STRATA=1`: a stratum whose relations are one of the sets below is run here, not by the generic
 //! joins: its rows are computed by W's algorithm (a parent walk to the nearest scope or function, the scope chain
-//! walked per name with hash sets, as W's `ScopeTable` and `resolve_python_index` do) from the stratum's own inputs
-//! (its lower strata's relations, and the chunk's `child` and `kind`), and retained as the stratum's relations, so
-//! the execution shape (one engine run per stratum per chunk, relations materialized between them) stays as it is.
-//! Detected by relation name (a spike's shortcut).
+//! walked per name, as W's `ScopeTable` and `resolve_python_index` do) from the stratum's own inputs (its lower
+//! strata's relations) and the chunk's tree, and retained as the stratum's relations, so the execution shape (one
+//! engine run per stratum per chunk, relations materialized between them) stays as it is. Detected by relation name
+//! (a spike's shortcut).
+//!
+//! The chunk's tree (`Tree`) is read once off the batch's projections (`Batch::tree_arrays`: what the `kind`,
+//! `child`, `field` and `text` views give, with no view read) and held in the batch's own slot (`Batch::spike`), so it
+//! lives and dies with the batch. Rows are flat (`Flat`: `k` values a row), in and out: no vector a row.
 //!
 //! `RERAIL_SPIKE_CHECK=1` as well: the stratum is computed both ways and the rows compared (`SPIKE CHECK` lines).
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::cell::Cell;
+use std::sync::{Arc, Mutex};
 
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
-use rerail_blocks::vector::Vector;
-
 use crate::code_rule_dsl::facts::vtab::Source;
+use crate::code_rule_dsl::facts::vtab::syntax::Batch;
 
 pub fn enabled() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SPIKE_STRATA").is_some())
@@ -28,12 +32,6 @@ pub fn check() -> bool {
 /// The strata run here, by their relations (sorted).
 const STRATA: [&[&str]; 8] = [&["look", "walk"], &["wstart"], &["rf_in"], &["rf_fn_in"], &["nameref"], &["bind_only"], &["rf_site"], &["rf_selfish"]];
 
-/// Relations of the spiked strata no stratum outside them reads in this program (`walk`: `look` alone, in its own
-/// stratum; `miss` and `annotated_on_chain` are not run): kept for the chunk, never retained.
-pub fn kept_only(rel: &str) -> bool {
-    rel == "walk" && std::env::var_os("RERAIL_SPIKE_RETAIN_ALL").is_none()
-}
-
 /// Whether the stratum of `rels` is run here.
 pub fn handles(rels: &[&str]) -> bool {
     let mut sorted = rels.to_vec();
@@ -41,40 +39,165 @@ pub fn handles(rels: &[&str]) -> bool {
     STRATA.contains(&sorted.as_slice())
 }
 
-/// No row: a root's parent, a node with no ancestor in a set.
+/// No row: a root's parent, a node with no ancestor in a set, an id not of the batch.
 const NONE: u32 = u32::MAX;
+/// No value: a row with no field, no text.
+const NIL: i64 = i64::MIN;
 
-/// A chunk's named tree as dense arrays by row (W's tape cursor, flattened): made once for the chunk, shared by its
-/// strata; and the spiked strata's own rows, kept for the chunk's later spiked strata (the derived-data cache).
+/// Rows held flat: `k` values a row.
+#[derive(Default)]
+pub struct Flat {
+    pub k: usize,
+    pub v: Vec<i64>,
+}
+
+impl Flat {
+    fn new(k: usize) -> Self {
+        Flat { k, v: Vec::new() }
+    }
+
+    pub fn rows(&self) -> std::slice::ChunksExact<'_, i64> {
+        self.v.chunks_exact(self.k.max(1))
+    }
+
+    fn push(&mut self, row: &[i64]) {
+        self.v.extend_from_slice(row);
+    }
+
+    /// Its rows as sorted tuples of their first `N` values, for binary search.
+    fn sorted<const N: usize>(&self) -> Vec<[i64; N]> {
+        let mut out: Vec<[i64; N]> = self.rows().map(|r| std::array::from_fn(|i| r[i])).collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+}
+
+/// A batch's named tree as dense arrays by its node rows (W's tape cursor, flattened): made once for the batch, at
+/// its first spiked stratum, held in its slot (`Batch::spike`).
 pub struct Tree {
-    /// Each row's node id, ascending, and each id's row.
     ids: Vec<i64>,
-    row: HashMap<i64, u32>,
     parent: Vec<u32>,
+    /// Each row's place among its siblings (`child(p, c, idx)`).
+    idx: Vec<u32>,
     kind: Vec<i64>,
+    /// The field each row is in (`NIL` for none).
+    field: Vec<i64>,
+    /// Each identifier row's text atom (`NIL` for another row).
+    text: Vec<i64>,
     depth: Vec<u32>,
     /// Each row's children, in order: `kids[child_at[r]..child_at[r + 1]]`.
     child_at: Vec<u32>,
     kids: Vec<u32>,
-    /// The fields each row is in (at most two; `i64::MIN` for none).
-    field: Vec<[i64; 2]>,
     atoms: HashMap<String, i64>,
     fields: HashMap<String, i64>,
-    /// Each identifier row's text atom (`i64::MIN` for another row), read once for the chunk.
-    text: Vec<i64>,
-    /// Each row's nearest strict ancestor in a set of kinds, by the set's name: computed once for the chunk.
+    /// Each row's nearest strict ancestor in a set of kinds, by the set's name: computed once for the batch.
     nearest: Mutex<HashMap<&'static str, Arc<Vec<u32>>>>,
-    /// The spiked strata's rows, by relation, for the chunk's later spiked strata.
-    made: Mutex<HashMap<String, Arc<Vec<Vector<i64>>>>>,
+}
+
+/// The tree of a batch's stratum, and its batch, which finds a node id's row (`Batch::row_of`).
+pub struct Chunk<'a> {
+    pub t: &'a Tree,
+    pub b: &'a Batch,
+    memo: Cell<u32>,
+}
+
+impl<'a> Chunk<'a> {
+    pub fn new(t: &'a Tree, b: &'a Batch) -> Self {
+        Chunk { t, b, memo: Cell::new(crate::code_rule_dsl::facts::vtab::NO_MEMO) }
+    }
+
+    fn row_of(&self, n: i64) -> u32 {
+        let mut memo = self.memo.get();
+        let r = self.b.row_of(n, &mut memo).unwrap_or(NONE);
+        self.memo.set(memo);
+        r
+    }
+
+    /// The rows of `rel`'s rows' column `col`, as a mark by row.
+    fn mark(&self, rows: &Flat, col: usize) -> Vec<bool> {
+        let mut m = vec![false; self.t.ids.len()];
+        for r in rows.rows() {
+            let at = self.row_of(r[col]);
+            if at != NONE {
+                m[at as usize] = true;
+            }
+        }
+        m
+    }
 }
 
 impl Tree {
+    /// The batch's tree, read off its projections.
+    pub fn of(b: &Batch) -> Tree {
+        let _span = super::super::profile::span(|| "spike: the batch's tree".into());
+        // The identifier's kind atom in each dialect the batch has documents of: their texts are read with the tree.
+        let mut tags: Vec<u8> = b.docs.iter().map(|p| p.tag()).collect();
+        tags.sort_unstable();
+        tags.dedup();
+        let idents: Vec<i64> = tags
+            .iter()
+            .filter_map(|&tag| {
+                let code = crate::code_rule_dsl::language::from_tape_tag(tag)?.kinds().kind_id("identifier");
+                Some(i64::from(crate::code_rule_dsl::facts::core::kind_atom(tag, code)))
+            })
+            .collect();
+        let a = b.tree_arrays(&idents);
+        let n = a.ids.len();
+        let mut child_at = vec![0u32; n + 1];
+        for &p in &a.parent {
+            if p != NONE {
+                child_at[p as usize + 1] += 1;
+            }
+        }
+        for r in 0..n {
+            child_at[r + 1] += child_at[r];
+        }
+        let mut at = child_at.clone();
+        let mut kids = vec![0u32; child_at[n] as usize];
+        // Rows are each document's nodes in preorder: a parent's children placed in row order are in their order.
+        for (c, &p) in a.parent.iter().enumerate() {
+            if p != NONE {
+                kids[at[p as usize] as usize] = c as u32;
+                at[p as usize] += 1;
+            }
+        }
+        let mut depth = vec![u32::MAX; n];
+        let mut chain = Vec::new();
+        for r in 0..n {
+            let mut up = r as u32;
+            while up != NONE && depth[up as usize] == u32::MAX {
+                chain.push(up);
+                up = a.parent[up as usize];
+            }
+            let base = if up == NONE { 0 } else { depth[up as usize] + 1 };
+            for (d, c) in (base..).zip(chain.drain(..).rev()) {
+                depth[c as usize] = d;
+            }
+        }
+        // A field atom is `tag << 16 | code` (`syntax::field_atom`): named by its dialect's catalog.
+        let field_name = |f: i64| {
+            let (tag, code) = (u8::try_from(f >> 16).ok()?, (f & 0xffff) as u16);
+            crate::code_rule_dsl::language::from_tape_tag(tag)?.kinds().field_name(code).map(str::to_owned)
+        };
+        let fields = by_name(a.field.iter().copied().filter(|&f| f != NIL), field_name);
+        // A kind atom is `tag * 1024 + code` (`core::kind_atom`), its name's canonical code's, as the `kind` view
+        // gives it: the same atom a rule's constant of the name is.
+        let kind_name = |k: i64| {
+            let k = u32::try_from(k).ok()?;
+            let tag = crate::code_rule_dsl::facts::core::kind_tag(k);
+            crate::code_rule_dsl::language::from_tape_tag(tag)?.kinds().kind_name(crate::code_rule_dsl::facts::core::kind_code(k)).map(str::to_owned)
+        };
+        let atoms = by_name(a.kind.iter().copied(), kind_name);
+        Tree { ids: a.ids, parent: a.parent, idx: a.idx, kind: a.kind, field: a.field, text: a.text, depth, child_at, kids, atoms, fields, nearest: Mutex::default() }
+    }
+
     fn atom(&self, kind: &str) -> i64 {
-        self.atoms.get(kind).copied().unwrap_or(i64::MIN)
+        self.atoms.get(kind).copied().unwrap_or(NIL)
     }
 
     fn field_atom(&self, field: &str) -> i64 {
-        self.fields.get(field).copied().unwrap_or(i64::MIN)
+        self.fields.get(field).copied().unwrap_or(NIL)
     }
 
     fn set(&self, kinds: &[&str]) -> HashSet<i64> {
@@ -85,16 +208,12 @@ impl Tree {
         0..self.ids.len() as u32
     }
 
-    fn row_of(&self, n: i64) -> u32 {
-        self.row.get(&n).copied().unwrap_or(NONE)
-    }
-
     fn id(&self, r: u32) -> i64 {
         self.ids[r as usize]
     }
 
     fn kind(&self, r: u32) -> i64 {
-        if r == NONE { i64::MIN } else { self.kind[r as usize] }
+        if r == NONE { NIL } else { self.kind[r as usize] }
     }
 
     fn kids(&self, r: u32) -> &[u32] {
@@ -103,7 +222,12 @@ impl Tree {
 
     /// `field(_, f, r)`.
     fn in_field(&self, r: u32, field: i64) -> bool {
-        self.field[r as usize].contains(&field)
+        self.field[r as usize] == field
+    }
+
+    /// `child(r, c, 0)`.
+    fn first_child(&self, r: u32) -> Option<u32> {
+        self.kids(r).iter().copied().find(|&c| self.idx[c as usize] == 0)
     }
 
     /// `r`'s child in `field`.
@@ -132,20 +256,27 @@ impl Tree {
         false
     }
 
-    /// Each row's nearest strict ancestor of a kind in `kinds` (the set named `name`), computed once for the chunk
+    /// Each row's nearest strict ancestor of a kind in `kinds` (the set named `name`), computed once for the batch
     /// in one pass, parents before children (W's enclosing scope, kept as it walks).
     fn nearest(&self, name: &'static str, kinds: &[&str]) -> Arc<Vec<u32>> {
         if let Some(n) = self.nearest.lock().unwrap().get(name) {
             return Arc::clone(n);
         }
-        let set: HashSet<i64> = kinds.iter().map(|k| self.atom(k)).collect();
-        let mut order: Vec<u32> = self.rows().collect();
-        order.sort_unstable_by_key(|&r| self.depth[r as usize]);
-        let mut near = vec![NONE; self.ids.len()];
-        for r in order {
-            let p = self.parent[r as usize];
-            if p != NONE {
-                near[r as usize] = if set.contains(&self.kind[p as usize]) { p } else { near[p as usize] };
+        let set = self.set(kinds);
+        let n = self.ids.len();
+        let mut near = vec![NONE; n];
+        let mut done = vec![false; n];
+        let mut chain = Vec::new();
+        for r in 0..n as u32 {
+            let mut at = r;
+            while at != NONE && !done[at as usize] {
+                chain.push(at);
+                at = self.parent[at as usize];
+            }
+            for c in chain.drain(..).rev() {
+                let p = self.parent[c as usize];
+                near[c as usize] = if p == NONE { NONE } else if set.contains(&self.kind[p as usize]) { p } else { near[p as usize] };
+                done[c as usize] = true;
             }
         }
         let near = Arc::new(near);
@@ -153,301 +284,174 @@ impl Tree {
         near
     }
 
-    /// `n`'s kind and each ancestor's, with the fields it is in (check mode's account of a row).
-    pub fn describe(&self, n: i64) -> String {
+    /// `n`'s kind and each ancestor's, with the field it is in (check mode's account of a row).
+    pub fn describe(&self, c: &Chunk<'_>, n: i64) -> String {
         let name = |k: i64| self.atoms.iter().find(|&(_, &a)| a == k).map_or("?".to_owned(), |(s, _)| s.clone());
-        let fname = |f: i64| self.fields.iter().find(|&(_, &a)| a == f).map_or("?".to_owned(), |(s, _)| s.clone());
+        let fname = |f: i64| self.fields.iter().find(|&(_, &a)| a == f).map_or("-".to_owned(), |(s, _)| s.clone());
         let mut out = Vec::new();
-        let mut at = self.row_of(n);
+        let mut at = c.row_of(n);
         while at != NONE && out.len() < 5 {
-            let fs: Vec<String> = self.field[at as usize].iter().filter(|&&f| f != i64::MIN).map(|&f| fname(f)).collect();
-            out.push(format!("{}{fs:?}", name(self.kind[at as usize])));
+            out.push(format!("{}[{}]", name(self.kind[at as usize]), fname(self.field[at as usize])));
             at = self.parent[at as usize];
         }
         out.join(" < ")
     }
-
-    /// Keeps a spiked stratum's rows for the chunk's later spiked strata.
-    pub fn keep(&self, rel: &str, rows: Arc<Vec<Vector<i64>>>) {
-        self.made.lock().unwrap().insert(rel.to_owned(), rows);
-    }
 }
 
-/// The trees of the chunks whose strata run now, by their `child` source (held, so its address names that chunk
-/// alone), each made once by whichever stratum asks first.
-type Trees = Vec<(Arc<dyn Source>, Arc<OnceLock<Option<Arc<Tree>>>>)>;
-static TREES: Mutex<Trees> = Mutex::new(Vec::new());
-
-/// Every row of `source`.
-pub fn rows(source: &dyn Source) -> Vec<Vector<i64>> {
-    let width = source.columns().len();
-    let all: Vec<usize> = (0..width).collect();
-    let mut out = Vec::with_capacity(source.len());
-    source.for_rows(&all, &mut |_, row| out.push(Vector::from(row)));
+/// Each name of `values`' atoms, to the first atom of it.
+fn by_name(values: impl Iterator<Item = i64>, name: impl Fn(i64) -> Option<String>) -> HashMap<String, i64> {
+    let mut distinct: Vec<i64> = values.collect::<HashSet<i64>>().into_iter().collect();
+    distinct.sort_unstable();
+    let mut out = HashMap::default();
+    for a in distinct {
+        if let Some(n) = name(a) {
+            out.entry(n).or_insert(a);
+        }
+    }
     out
 }
 
-/// The chunk's tree, made from its `child` and `kind` (or `node`) sources.
-pub fn tree(child: &Arc<dyn Source>, kind: Option<&Arc<dyn Source>>, node: Option<&Arc<dyn Source>>, field: Option<&Arc<dyn Source>>, text: Option<&Arc<dyn Source>>) -> Option<Arc<Tree>> {
-    let cell = {
-        let mut trees = TREES.lock().unwrap();
-        match trees.iter().find(|(c, _)| Arc::ptr_eq(c, child)) {
-            Some((_, cell)) => Arc::clone(cell),
-            None => {
-                if trees.len() >= 8 {
-                    trees.remove(0);
-                }
-                let cell = Arc::new(OnceLock::new());
-                trees.push((Arc::clone(child), Arc::clone(&cell)));
-                cell
-            }
-        }
-    };
-    cell.get_or_init(|| make_tree(child, kind, node, field, text)).clone()
-}
-
-fn make_tree(child: &Arc<dyn Source>, kind: Option<&Arc<dyn Source>>, node: Option<&Arc<dyn Source>>, field: Option<&Arc<dyn Source>>, text: Option<&Arc<dyn Source>>) -> Option<Arc<Tree>> {
-    let _span = super::super::profile::span(|| "spike: the chunk's tree".into());
-    let mut pairs: Vec<(i64, i64)> = Vec::new();
-    match (kind, node) {
-        (Some(k), _) => k.for_rows(&[0, 1], &mut |_, r| pairs.push((r[0], r[1]))),
-        (None, Some(n)) => n.for_rows(&[1, 2], &mut |_, r| pairs.push((r[0], r[1]))),
-        (None, None) => return None,
-    }
-    pairs.sort_unstable();
-    pairs.dedup_by_key(|p| p.0);
-    let ids: Vec<i64> = pairs.iter().map(|p| p.0).collect();
-    let kinds: Vec<i64> = pairs.iter().map(|p| p.1).collect();
-    let row: HashMap<i64, u32> = ids.iter().enumerate().map(|(r, &n)| (n, r as u32)).collect();
-    let at = |n: i64| row.get(&n).copied().unwrap_or(NONE);
-    let n = ids.len();
-    let mut parent = vec![NONE; n];
-    let mut edges: Vec<(u32, i64, u32)> = Vec::with_capacity(n);
-    child.for_rows(&[0, 1, 2], &mut |_, r| {
-        let (p, c) = (at(r[0]), at(r[1]));
-        if p != NONE && c != NONE {
-            parent[c as usize] = p;
-            edges.push((p, r[2], c));
-        }
-    });
-    edges.sort_unstable();
-    let mut child_at = vec![0u32; n + 1];
-    for &(p, _, _) in &edges {
-        child_at[p as usize + 1] += 1;
-    }
-    for r in 0..n {
-        child_at[r + 1] += child_at[r];
-    }
-    let kids: Vec<u32> = edges.iter().map(|e| e.2).collect();
-    let mut fieldv = vec![[i64::MIN; 2]; n];
-    if let Some(f) = field {
-        f.for_rows(&[1, 2], &mut |_, r| {
-            let c = at(r[1]);
-            if c != NONE {
-                let slot = &mut fieldv[c as usize];
-                if slot[0] == i64::MIN { slot[0] = r[0] } else if slot[1] == i64::MIN { slot[1] = r[0] }
-            }
-        });
-    }
-    let mut depth = vec![u32::MAX; n];
-    for r in 0..n {
-        let mut chain = Vec::new();
-        let mut at = r as u32;
-        while at != NONE && depth[at as usize] == u32::MAX {
-            chain.push(at);
-            at = parent[at as usize];
-        }
-        let base = if at == NONE { 0 } else { depth[at as usize] + 1 };
-        for (d, &c) in (base..).zip(chain.iter().rev()) {
-            depth[c as usize] = d;
-        }
-    }
-    // A field atom is `tag << 16 | code` (`syntax::field_atom`): named by its dialect's catalog, one atom a name.
-    let field_name = |a: i64| {
-        let (tag, code) = (u8::try_from(a >> 16).ok()?, (a & 0xffff) as u16);
-        crate::code_rule_dsl::language::from_tape_tag(tag)?.kinds().field_name(code).map(str::to_owned)
-    };
-    // A rule's field constant is the catalog's id of its name (`field_id`).
-    let field_own = |a: i64, name: &str| {
-        let tag = u8::try_from(a >> 16).ok()?;
-        let code = crate::code_rule_dsl::language::from_tape_tag(tag)?.kinds().field_id(name)?;
-        Some(i64::from(tag) << 16 | i64::from(code))
-    };
-    let fields = by_name(fieldv.iter().flatten().copied().filter(|&f| f != i64::MIN), field_name, field_own);
-    // A kind atom is `tag * 1024 + code` (`core::kind_atom`): named by its dialect's catalog, one atom a name.
-    let kind_name = |a: i64| {
-        let a = u32::try_from(a).ok()?;
-        let tag = crate::code_rule_dsl::facts::core::kind_tag(a);
-        crate::code_rule_dsl::language::from_tape_tag(tag)?.kinds().kind_name(crate::code_rule_dsl::facts::core::kind_code(a)).map(str::to_owned)
-    };
-    // A rule's kind constant is the catalog's id of its name (`kind_id`): a node of an alias's code of the same name
-    // is not of it, as the joins read it.
-    let kind_own = |a: i64, name: &str| {
-        let tag = crate::code_rule_dsl::facts::core::kind_tag(u32::try_from(a).ok()?);
-        let code = crate::code_rule_dsl::language::from_tape_tag(tag)?.kinds().kind_id(name);
-        Some(i64::from(crate::code_rule_dsl::facts::core::kind_atom(tag, code)))
-    };
-    let atoms = by_name(kinds.iter().copied(), kind_name, kind_own);
-    // The identifiers' texts, probed once for the chunk (`text(n, x)` of a name).
-    let mut textv = vec![i64::MIN; n];
-    if let (Some(t), Some(&id)) = (text, atoms.get("identifier")) {
-        for r in (0..n).filter(|&r| kinds[r] == id) {
-            t.lookup_read(0, ids[r], &[1], &mut |_, v| textv[r] = v[0]);
-        }
-    }
-    Some(Arc::new(Tree { ids, row, parent, kind: kinds, depth, child_at, kids, field: fieldv, atoms, fields, text: textv, nearest: Mutex::default(), made: Mutex::default() }))
-}
-
-/// Each name of `values`' atoms (`name`), to the atom a rule's constant of it is (`own`).
-fn by_name(values: impl Iterator<Item = i64>, name: impl Fn(i64) -> Option<String>, own: impl Fn(i64, &str) -> Option<i64>) -> HashMap<String, i64> {
-    let distinct: HashSet<i64> = values.collect();
-    let mut out = HashMap::default();
-    for a in distinct {
-        if let Some(n) = name(a)
-            && !out.contains_key(&n)
-            && let Some(o) = own(a, &n)
-        {
-            out.insert(n, o);
-        }
-    }
+/// Every row of `source`, flat.
+pub fn rows(source: &dyn Source) -> Flat {
+    let k = source.columns().len();
+    let all: Vec<usize> = (0..k).collect();
+    let mut out = Flat { k, v: Vec::with_capacity(source.len() * k) };
+    source.for_rows(&all, &mut |_, row| out.v.extend_from_slice(row));
     out
 }
 
 /// A stratum's inputs, read by name: its rows, or none where the relation is not held (no rows).
 pub trait Inputs {
-    fn read(&self, rel: &str) -> Vec<Vector<i64>>;
-    /// The rows of `rel` whose `column` is one of `values`.
-    fn lookup(&self, rel: &str, column: usize, values: &[i64]) -> Vec<Vector<i64>>;
+    fn read(&self, rel: &str) -> Flat;
     /// The texts of symbol atoms.
     fn texts(&self, atoms: &[i64]) -> Vec<String>;
-}
-
-/// A stratum's input: a spiked stratum's rows kept for the chunk where there are, else the relation's.
-fn input(t: &Tree, inp: &dyn Inputs, rel: &str) -> Arc<Vec<Vector<i64>>> {
-    if let Some(rows) = t.made.lock().unwrap().get(rel) {
-        return Arc::clone(rows);
-    }
-    Arc::new(inp.read(rel))
-}
-
-/// The rows of `rel` (an input, `input`) whose first column is a node, as a row mark.
-fn mark(t: &Tree, inp: &dyn Inputs, rel: &str, col: usize) -> Vec<bool> {
-    let mut m = vec![false; t.ids.len()];
-    for r in input(t, inp, rel).iter() {
-        let at = t.row_of(r[col]);
-        if at != NONE {
-            m[at as usize] = true;
-        }
-    }
-    m
 }
 
 const SCOPE: [&str; 4] = ["module", "function_definition", "class_definition", "lambda"];
 const COMP: [&str; 4] = ["list_comprehension", "set_comprehension", "dictionary_comprehension", "generator_expression"];
 
-fn multi(rows: &[Vector<i64>], k: usize, v: usize) -> HashMap<i64, Vec<i64>> {
-    let mut m: HashMap<i64, Vec<i64>> = HashMap::default();
-    for r in rows {
-        m.entry(r[k]).or_default().push(r[v]);
-    }
-    m
+/// The values paired with `k` in sorted pairs.
+fn paired(pairs: &[[i64; 2]], k: i64) -> impl Iterator<Item = i64> + '_ {
+    let from = pairs.partition_point(|p| p[0] < k);
+    pairs[from..].iter().take_while(move |p| p[0] == k).map(|p| p[1])
 }
 
 /// `nameref`: identifiers that are not an attribute's or a definition's name, a keyword pattern's key, nor a dotted
 /// pattern's tail; with their text.
-fn nameref(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
+fn nameref(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
+    let t = c.t;
     let id = t.atom("identifier");
-    let (kw, tail) = (mark(t, inp, "kwpat_key", 0), mark(t, inp, "pat_tail", 0));
+    let (kw, tail) = (c.mark(&inp.read("kwpat_key"), 0), c.mark(&inp.read("pat_tail"), 0));
     let (attribute, name) = (t.field_atom("attribute"), t.field_atom("name"));
-    t.rows()
-        .filter(|&r| t.kind[r as usize] == id && t.text[r as usize] != i64::MIN && !kw[r as usize] && !tail[r as usize] && !t.in_field(r, attribute) && !t.in_field(r, name))
-        .map(|r| rerail_blocks::vector![t.id(r), t.text[r as usize]])
-        .collect()
+    let mut out = Flat::new(2);
+    for r in t.rows() {
+        let u = r as usize;
+        if t.kind[u] == id && t.text[u] != NIL && !kw[u] && !tail[u] && !t.in_field(r, attribute) && !t.in_field(r, name) {
+            out.push(&[t.id(r), t.text[u]]);
+        }
+    }
+    out
 }
 
 /// `wstart`: where a name's lookup starts (the five rules of `names.rerail`).
-fn wstart(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
+fn wstart(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
+    let t = c.t;
     let lscope_kinds: Vec<&str> = SCOPE.iter().chain(COMP.iter()).copied().collect();
     let near = t.nearest("lscope", &lscope_kinds);
     let (scope, comp) = (t.set(&SCOPE), t.set(&COMP));
-    let outside = mark(t, inp, "def_outside", 0);
-    let in_first_iter = input(t, inp, "in_first_iter");
-    let def_outside = input(t, inp, "def_outside");
-    let first: HashSet<(i64, i64)> = in_first_iter.iter().map(|r| (r[0], r[1])).collect();
-    let host = multi(&input(t, inp, "host_node"), 0, 1);
-    let ann = multi(&input(t, inp, "ann_start"), 0, 1);
-    let mut out: HashSet<(i64, i64)> = HashSet::default();
-    let mut names: Vec<i64> = input(t, inp, "nameref").iter().map(|r| r[0]).collect();
-    names.sort_unstable();
-    names.dedup();
-    for n in names {
-        let r = t.row_of(n);
-        if r != NONE && near[r as usize] != NONE {
-            let s = near[r as usize];
+    let def_outside = inp.read("def_outside");
+    let in_first_iter = inp.read("in_first_iter");
+    let outside = c.mark(&def_outside, 0);
+    let first: Vec<[i64; 2]> = in_first_iter.sorted();
+    let host: Vec<[i64; 2]> = inp.read("host_node").sorted();
+    let ann: Vec<[i64; 2]> = inp.read("ann_start").sorted();
+    let nameref = inp.read("nameref");
+    let mut out = Flat::new(2);
+    for r in nameref.rows() {
+        let n = r[0];
+        let at = c.row_of(n);
+        if at != NONE && near[at as usize] != NONE {
+            let s = near[at as usize];
             let k = t.kind(s);
-            if scope.contains(&k) && !outside[r as usize] {
-                out.insert((n, t.id(s)));
+            if scope.contains(&k) && !outside[at as usize] {
+                out.push(&[n, t.id(s)]);
             }
-            if comp.contains(&k) && !first.contains(&(n, t.id(s))) {
-                out.insert((n, t.id(s)));
+            if comp.contains(&k) && first.binary_search(&[n, t.id(s)]).is_err() {
+                out.push(&[n, t.id(s)]);
             }
         }
-        for h in host.get(&n).into_iter().flatten() {
-            for &s in ann.get(h).into_iter().flatten() {
-                out.insert((n, s));
+        for h in paired(&host, n) {
+            for s in paired(&ann, h) {
+                out.push(&[n, s]);
             }
         }
     }
-    for r in def_outside.iter().chain(in_first_iter.iter()) {
-        let f = t.row_of(r[1]);
+    for r in def_outside.rows().chain(in_first_iter.rows()) {
+        let f = c.row_of(r[1]);
         if f != NONE && near[f as usize] != NONE {
-            out.insert((r[0], t.id(near[f as usize])));
+            out.push(&[r[0], t.id(near[f as usize])]);
         }
     }
-    out.into_iter().map(|(n, s)| rerail_blocks::vector![n, s]).collect()
+    out
 }
 
-/// `walk` and `look`: each name's scope chain walked from its start until a scope binds it (W's resolve).
-fn look_walk(t: &Tree, inp: &dyn Inputs) -> Vec<(String, Vec<Vector<i64>>)> {
+/// `look` (and `walk`, which only `look` reads, in this stratum: not made): each name's scope chain walked from its
+/// starts until a scope binds it (W's resolve). Per name, the scopes walked are a few: kept in a list for the name.
+fn look_walk(c: &Chunk<'_>, inp: &dyn Inputs) -> Vec<(String, Flat)> {
+    let t = c.t;
     let lscope = t.set(&SCOPE.iter().chain(COMP.iter()).copied().collect::<Vec<_>>());
     let lf_kinds: Vec<&str> = ["module", "function_definition", "lambda"].iter().chain(COMP.iter()).copied().collect();
     let lf = t.nearest("lfscope", &lf_kinds);
     // `scope_up(s, p) :- kind(s, k), lscope(k), nearest(s, p, lfscope)` (folded into its reader: no relation of its own).
     let scope_up = |s: i64| {
-        let r = t.row_of(s);
+        let r = c.row_of(s);
         (r != NONE && lscope.contains(&t.kind(r)) && lf[r as usize] != NONE).then(|| t.id(lf[r as usize]))
     };
-    let nameref = multi(&input(t, inp, "nameref"), 0, 1);
-    let tp_ref: HashSet<(i64, i64)> = input(t, inp, "tp_ref").iter().map(|r| (r[0], r[1])).collect();
-    let bound: HashSet<(i64, i64)> = input(t, inp, "bound_in").iter().map(|r| (r[0], r[1])).collect();
-    let gbefore: HashSet<(i64, i64, i64)> = input(t, inp, "gbefore").iter().map(|r| (r[0], r[1], r[2])).collect();
-    let late: HashSet<(i64, i64, i64)> = input(t, inp, "cls_late").iter().map(|r| (r[0], r[1], r[2])).collect();
-    let mut walk: HashSet<(i64, i64, i64)> = HashSet::default();
-    let mut look: Vec<Vector<i64>> = Vec::new();
-    let mut work: Vec<(i64, i64, i64)> = Vec::new();
-    for r in input(t, inp, "wstart").iter() {
-        let (n, s) = (r[0], r[1]);
-        for &x in nameref.get(&n).into_iter().flatten() {
-            if !tp_ref.contains(&(n, x)) && walk.insert((n, x, s)) {
-                work.push((n, x, s));
+    let nameref: Vec<[i64; 2]> = inp.read("nameref").sorted();
+    let tp_ref: Vec<[i64; 2]> = inp.read("tp_ref").sorted();
+    // `bound_in(s, x)`, `gbefore(n, x, s)`, `cls_late(n, x, s)`: sorted, searched.
+    let bound: Vec<[i64; 2]> = inp.read("bound_in").sorted();
+    let gbefore: Vec<[i64; 3]> = inp.read("gbefore").sorted();
+    let late: Vec<[i64; 3]> = inp.read("cls_late").sorted();
+    let mut starts: Vec<[i64; 2]> = inp.read("wstart").sorted();
+    starts.dedup();
+    let mut look = Flat::new(3);
+    let mut walked: Vec<(i64, i64)> = Vec::new();
+    let mut work: Vec<(i64, i64)> = Vec::new();
+    let mut i = 0;
+    while i < starts.len() {
+        let n = starts[i][0];
+        let j = i + starts[i..].partition_point(|s| s[0] == n);
+        walked.clear();
+        for x in paired(&nameref, n) {
+            if tp_ref.binary_search(&[n, x]).is_ok() {
+                continue;
+            }
+            for s in &starts[i..j] {
+                if !walked.contains(&(x, s[1])) {
+                    walked.push((x, s[1]));
+                    work.push((x, s[1]));
+                }
             }
         }
-    }
-    while let Some((n, x, s)) = work.pop() {
-        let b = bound.contains(&(s, x));
-        let l = late.contains(&(n, x, s));
-        let g = gbefore.contains(&(n, x, s));
-        if (b && !l) || (!b && g) {
-            look.push(rerail_blocks::vector![n, x, s]);
+        while let Some((x, s)) = work.pop() {
+            let b = bound.binary_search(&[s, x]).is_ok();
+            let l = late.binary_search(&[n, x, s]).is_ok();
+            let g = gbefore.binary_search(&[n, x, s]).is_ok();
+            if (b && !l) || (!b && g) {
+                look.push(&[n, x, s]);
+            }
+            if ((!b && !g) || l)
+                && let Some(p) = scope_up(s)
+                && !walked.contains(&(x, p))
+            {
+                walked.push((x, p));
+                work.push((x, p));
+            }
         }
-        if ((!b && !g) || l)
-            && let Some(p) = scope_up(s)
-            && walk.insert((n, x, p))
-        {
-            work.push((n, x, p));
-        }
+        i = j;
     }
-    vec![("look".into(), look), ("walk".into(), walk.into_iter().map(|(n, x, s)| rerail_blocks::vector![n, x, s]).collect())]
+    vec![("look".into(), look)]
 }
 
 /// The function whose body holds row `n`, through the functions of `fn_in` where `n` is in a definition's head.
@@ -467,9 +471,10 @@ fn enclosing(t: &Tree, n: u32, near: &[u32], body: i64, fn_in: &HashMap<u32, Vec
 }
 
 /// `rf_fn_in` by row: each function's enclosing functions, outermost first (so a nested one finds its parent's).
-fn fn_in_rows(t: &Tree, inp: &dyn Inputs, near: &[u32], body: i64) -> HashMap<u32, Vec<u32>> {
+fn fn_in_rows(c: &Chunk<'_>, inp: &dyn Inputs, near: &[u32], body: i64) -> HashMap<u32, Vec<u32>> {
+    let t = c.t;
     let fdef = t.atom("function_definition");
-    let mut fns: Vec<u32> = input(t, inp, "rf_def").iter().map(|r| t.row_of(r[0])).filter(|&g| g != NONE && t.kind(g) == fdef).collect();
+    let mut fns: Vec<u32> = inp.read("rf_def").rows().map(|r| c.row_of(r[0])).filter(|&g| g != NONE && t.kind(g) == fdef).collect();
     fns.sort_unstable_by_key(|&g| (t.depth[g as usize], g));
     fns.dedup();
     let mut fn_in: HashMap<u32, Vec<u32>> = HashMap::default();
@@ -487,84 +492,95 @@ fn fn_in_rows(t: &Tree, inp: &dyn Inputs, near: &[u32], body: i64) -> HashMap<u3
 }
 
 /// `rf_fn_in`: each function's enclosing function.
-fn rf_fn_in(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
+fn rf_fn_in(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
+    let t = c.t;
     let near = t.nearest("fdef", &["function_definition"]);
-    let fn_in = fn_in_rows(t, inp, &near, t.field_atom("body"));
-    fn_in.into_iter().flat_map(|(g, hs)| hs.into_iter().map(move |h| rerail_blocks::vector![t.id(g), t.id(h)])).collect()
+    let fn_in = fn_in_rows(c, inp, &near, t.field_atom("body"));
+    let mut out = Flat::new(2);
+    for (g, hs) in fn_in {
+        for h in hs {
+            out.push(&[t.id(g), t.id(h)]);
+        }
+    }
+    out
 }
 
 /// `rf_in`: each site's enclosing function.
-fn rf_in(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
+fn rf_in(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
+    let t = c.t;
     let near = t.nearest("fdef", &["function_definition"]);
     let body = t.field_atom("body");
     let mut fn_in: HashMap<u32, Vec<u32>> = HashMap::default();
-    for r in input(t, inp, "rf_fn_in").iter() {
-        let (g, h) = (t.row_of(r[0]), t.row_of(r[1]));
+    for r in inp.read("rf_fn_in").rows() {
+        let (g, h) = (c.row_of(r[0]), c.row_of(r[1]));
         if g != NONE && h != NONE {
             fn_in.entry(g).or_default().push(h);
         }
     }
-    let sites = mark(t, inp, "rf_site", 0);
-    let mut out = Vec::new();
+    let sites = c.mark(&inp.read("rf_site"), 0);
+    let mut out = Flat::new(2);
     let mut found = Vec::new();
     for n in t.rows().filter(|&r| sites[r as usize]) {
         found.clear();
         enclosing(t, n, &near, body, &fn_in, &mut found);
         found.sort_unstable();
         found.dedup();
-        out.extend(found.iter().map(|&g| rerail_blocks::vector![t.id(n), t.id(g)]));
+        for &g in &found {
+            out.push(&[t.id(n), t.id(g)]);
+        }
     }
     out
 }
 
 /// `bind_only`: names a statement binds without reading them (the eight rules of `names.rerail`).
-fn bind_only(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
+fn bind_only(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
+    let t = c.t;
     let id = t.atom("identifier");
     let is_id = |r: u32| t.kind(r) == id;
     let mut out = vec![false; t.ids.len()];
-    let aug = mark(t, inp, "aug_target", 0);
-    for r in input(t, inp, "tgt").iter() {
-        let at = t.row_of(r[0]);
+    let aug = c.mark(&inp.read("aug_target"), 0);
+    for r in inp.read("tgt").rows() {
+        let at = c.row_of(r[0]);
         if at != NONE && is_id(at) && !aug[at as usize] {
             out[at as usize] = true;
         }
     }
-    for r in input(t, inp, "tp_site").iter() {
-        let at = t.row_of(r[1]);
+    for r in inp.read("tp_site").rows() {
+        let at = c.row_of(r[1]);
         if at != NONE {
             out[at as usize] = true;
         }
     }
-    let alias_read = mark(t, inp, "tp_alias_read", 0);
+    let alias_read = c.mark(&inp.read("tp_alias_read"), 0);
     let (assignment, alias, typed) = (t.atom("assignment"), t.atom("type_alias_statement"), t.atom("typed_parameter"));
     let (left, parameters) = (t.field_atom("left"), t.field_atom("parameters"));
     let imports = t.set(&["import_statement", "import_from_statement", "future_import_statement"]);
     let globals = t.set(&["global_statement", "nonlocal_statement"]);
-    for c in t.rows() {
-        let p = t.parent[c as usize];
-        if p != NONE && t.in_field(c, left) {
-            if t.kind(p) == assignment && is_id(c) {
-                out[c as usize] = true;
+    for r in t.rows() {
+        let p = t.parent[r as usize];
+        if p != NONE && t.in_field(r, left) {
+            if t.kind(p) == assignment && is_id(r) {
+                out[r as usize] = true;
             }
             if t.kind(p) == alias {
-                t.each_below(c, &mut |i| {
+                t.each_below(r, &mut |i| {
                     if is_id(i) && !alias_read[i as usize] {
                         out[i as usize] = true;
                     }
                 });
             }
         }
-        if p != NONE && t.in_field(c, parameters) {
-            for &q in t.kids(c) {
+        if p != NONE && t.in_field(r, parameters) {
+            for &q in t.kids(r) {
                 if is_id(q) {
                     out[q as usize] = true;
                 }
-                if let Some(&first) = t.kids(q).first() {
+                if let Some(first) = t.first_child(q) {
                     if is_id(first) {
                         out[first as usize] = true;
                     }
                     if t.kind(q) == typed
-                        && let Some(&id0) = t.kids(first).first()
+                        && let Some(id0) = t.first_child(first)
                         && is_id(id0)
                     {
                         out[id0 as usize] = true;
@@ -572,33 +588,39 @@ fn bind_only(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
                 }
             }
         }
-        let k = t.kind(c);
+        let k = t.kind(r);
         if imports.contains(&k) {
-            t.each_below(c, &mut |i| {
+            t.each_below(r, &mut |i| {
                 if is_id(i) {
                     out[i as usize] = true;
                 }
             });
         }
         if globals.contains(&k) {
-            for &g in t.kids(c) {
+            for &g in t.kids(r) {
                 if is_id(g) {
                     out[g as usize] = true;
                 }
             }
         }
     }
-    t.rows().filter(|&r| out[r as usize]).map(|r| rerail_blocks::vector![t.id(r)]).collect()
+    Flat { k: 1, v: t.rows().filter(|&r| out[r as usize]).map(|r| t.id(r)).collect() }
 }
 
 /// `rf_site`: calls, attributes of a name, and read names, where none is a call's function.
-fn rf_site(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
+fn rf_site(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
+    let t = c.t;
     let (id, call, attribute) = (t.atom("identifier"), t.atom("call"), t.atom("attribute"));
     let (function, object) = (t.field_atom("function"), t.field_atom("object"));
     // `rf_read(i) :- nameref(i, _), !bind_only(i), !rf_deleted(i), !guest_of(i, _)` (no relation of its own).
-    let (names, bound, deleted, guest) = (mark(t, inp, "nameref", 0), mark(t, inp, "bind_only", 0), mark(t, inp, "rf_deleted", 0), mark(t, inp, "guest_of", 0));
-    let objects = mark(t, inp, "rf_object", 0);
-    t.rows()
+    let names = c.mark(&inp.read("nameref"), 0);
+    let bound = c.mark(&inp.read("bind_only"), 0);
+    // `rf_deleted(n) :- del_unbinds(_, n)` (one rule: folded into its readers, not stored).
+    let deleted = c.mark(&inp.read("del_unbinds"), 1);
+    let guest = c.mark(&inp.read("guest_of"), 0);
+    let objects = c.mark(&inp.read("rf_object"), 0);
+    let v = t
+        .rows()
         .filter(|&n| {
             let (k, u) = (t.kind(n), n as usize);
             if k == call {
@@ -611,46 +633,49 @@ fn rf_site(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
                 false
             }
         })
-        .map(|n| rerail_blocks::vector![t.id(n)])
-        .collect()
+        .map(|n| t.id(n))
+        .collect();
+    Flat { k: 1, v }
 }
 
 /// `rf_selfish`: the names `self` and `cls`.
-fn rf_selfish(t: &Tree, inp: &dyn Inputs) -> Vec<Vector<i64>> {
+fn rf_selfish(c: &Chunk<'_>, inp: &dyn Inputs) -> Flat {
+    let t = c.t;
     let id = t.atom("identifier");
-    let atoms: Vec<i64> = t.rows().filter(|&r| t.kind(r) == id && t.text[r as usize] != i64::MIN).map(|r| t.text[r as usize]).collect::<HashSet<_>>().into_iter().collect();
+    let atoms: Vec<i64> = t.rows().filter(|&r| t.kind(r) == id && t.text[r as usize] != NIL).map(|r| t.text[r as usize]).collect::<HashSet<_>>().into_iter().collect();
     let strings = inp.texts(&atoms);
     let selfish: HashSet<i64> = atoms.iter().zip(&strings).filter(|(_, s)| *s == "self" || *s == "cls").map(|(a, _)| *a).collect();
-    t.rows().filter(|&r| t.kind(r) == id && selfish.contains(&t.text[r as usize])).map(|r| rerail_blocks::vector![t.id(r)]).collect()
+    Flat { k: 1, v: t.rows().filter(|&r| t.kind(r) == id && selfish.contains(&t.text[r as usize])).map(|r| t.id(r)).collect() }
 }
 
 /// The stratum's rows by relation, by W's algorithm.
-pub fn run(rels: &[&str], t: &Tree, inp: &dyn Inputs) -> Vec<(String, Vec<Vector<i64>>)> {
+pub fn run(rels: &[&str], c: &Chunk<'_>, inp: &dyn Inputs) -> Vec<(String, Flat)> {
     let mut sorted = rels.to_vec();
     sorted.sort_unstable();
+    let one = |rel: &str, rows: Flat| vec![(rel.to_owned(), rows)];
     match sorted.as_slice() {
-        ["look", "walk"] => look_walk(t, inp),
-        ["wstart"] => vec![("wstart".into(), wstart(t, inp))],
-        ["rf_in"] => vec![("rf_in".into(), rf_in(t, inp))],
-        ["rf_fn_in"] => vec![("rf_fn_in".into(), rf_fn_in(t, inp))],
-        ["nameref"] => vec![("nameref".into(), nameref(t, inp))],
-        ["bind_only"] => vec![("bind_only".into(), bind_only(t, inp))],
-        ["rf_site"] => vec![("rf_site".into(), rf_site(t, inp))],
-        ["rf_selfish"] => vec![("rf_selfish".into(), rf_selfish(t, inp))],
+        ["look", "walk"] => look_walk(c, inp),
+        ["wstart"] => one("wstart", wstart(c, inp)),
+        ["rf_in"] => one("rf_in", rf_in(c, inp)),
+        ["rf_fn_in"] => one("rf_fn_in", rf_fn_in(c, inp)),
+        ["nameref"] => one("nameref", nameref(c, inp)),
+        ["bind_only"] => one("bind_only", bind_only(c, inp)),
+        ["rf_site"] => one("rf_site", rf_site(c, inp)),
+        ["rf_selfish"] => one("rf_selfish", rf_selfish(c, inp)),
         _ => Vec::new(),
     }
 }
 
 /// `SPIKE CHECK` lines: the spike's rows against the generic joins'.
-pub fn compare(rel: &str, spike: &[Vector<i64>], generic: &[Vector<i64>], tree: Option<&Tree>) {
-    let a: HashSet<&[i64]> = spike.iter().map(|r| &r[..]).collect();
-    let b: HashSet<&[i64]> = generic.iter().map(|r| &r[..]).collect();
+pub fn compare(rel: &str, spike: &Flat, generic: &Flat, chunk: Option<&Chunk<'_>>) {
+    let a: HashSet<&[i64]> = spike.rows().collect();
+    let b: HashSet<&[i64]> = generic.rows().collect();
     let only_spike: Vec<_> = a.difference(&b).take(3).collect();
     let only_generic: Vec<_> = b.difference(&a).take(3).collect();
     let (ns, ng) = (a.difference(&b).count(), b.difference(&a).count());
-    if let Some(t) = tree {
+    if let Some(c) = chunk {
         for r in only_spike.iter().chain(&only_generic) {
-            eprintln!("SPIKE WHY {rel} {r:?}: {}", t.describe(r[0]));
+            eprintln!("SPIKE WHY {rel} {r:?}: {}", c.t.describe(c, r[0]));
         }
     }
     eprintln!("SPIKE CHECK {rel}: spike {} generic {} only-spike {ns} {only_spike:?} only-generic {ng} {only_generic:?}", a.len(), b.len());

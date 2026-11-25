@@ -2410,6 +2410,9 @@ pub struct Batch {
     renewed: bool,
     /// Each tape tag's kinds' names' atoms, by kind code (`op_atom`): interned on the first read of a token of the tag.
     op_atoms: Vec<OnceLock<Vector<u32>>>,
+    /// SPIKE (`spike_strata`, the planner's): the batch's tree by node row and its strata's lookups, made at the first
+    /// spiked stratum and dropped with the batch.
+    pub spike: OnceLock<Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 /// What a batch's groups share, and the batches it grows into (decision 0431 §6): its vocabulary, and the producers of
@@ -3757,6 +3760,7 @@ impl Batch {
             guests_of: OnceLock::new(),
             by_file_key: OnceLock::new(),
             op_atoms: (0..256).map(|_| OnceLock::new()).collect(),
+            spike: OnceLock::new(),
             by_module: OnceLock::new(),
             shared: Arc::clone(&grown.shared),
             outer: if alone { last.clone() } else { None },
@@ -5873,6 +5877,48 @@ impl Batch {
         let (p, local) = self.locate(View::Node, row, memo);
         p.global(local as u32)
     }
+
+    /// Node `n`'s row (the `node` view's: its document's first row and its local id), if it is one of the batch's.
+    pub fn row_of(&self, n: i64, memo: &mut u32) -> Option<u32> {
+        self.node(n, memo).map(|(doc, local)| (self.nodes().at(doc) + local as usize) as u32)
+    }
+
+    /// SPIKE (`spike_strata`): the batch's named tree by node row, read once off the projections, each value as its view
+    /// gives it: the node's id, parent row (`NONE` for a root), place among its siblings, kind (`kind`), field (`field`, `i64::MIN` for none), and
+    /// for a node of a kind in `texts` its text's atom (`text`; `i64::MIN` for another).
+    pub fn tree_arrays(&self, texts: &[i64]) -> TreeArrays {
+        let n = self.nodes().total();
+        let mut t = TreeArrays { ids: Vec::with_capacity(n), parent: Vec::with_capacity(n), idx: Vec::with_capacity(n), kind: Vec::with_capacity(n), field: Vec::with_capacity(n), text: Vec::with_capacity(n) };
+        for (doc, p) in self.docs.iter().enumerate() {
+            let base = self.nodes().at(doc) as u32;
+            let d = &self.dialects[p.tag()];
+            for l in 0..p.len() {
+                let x = p.node(l);
+                t.ids.push(p.global(l));
+                t.parent.push(match p.parent(l as usize) {
+                    NONE => NONE,
+                    up => base + up,
+                });
+                t.idx.push(p.idx(l as usize));
+                let k = d.kind(p.f(), x);
+                t.kind.push(k);
+                t.field.push(if l > 0 && p.ranks().is(Item::Field, x) { i64::from(field_atom(p.tag(), p.f().field(x))) } else { i64::MIN });
+                t.text.push(if texts.contains(&k) { p.text_atom(&*self.atoms, l, x) } else { i64::MIN });
+            }
+        }
+        t
+    }
+}
+
+/// SPIKE: `Batch::tree_arrays`' arrays, one value a node row.
+pub struct TreeArrays {
+    pub ids: Vec<i64>,
+    pub parent: Vec<u32>,
+    /// Its place among its siblings (the `child` view's `idx`).
+    pub idx: Vec<u32>,
+    pub kind: Vec<i64>,
+    pub field: Vec<i64>,
+    pub text: Vec<i64>,
 }
 
 /// T's base relations over `documents` (`sources`) in `projection`'s shape and those of core.rerail's the program reads
