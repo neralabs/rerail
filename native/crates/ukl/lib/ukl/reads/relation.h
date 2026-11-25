@@ -15,6 +15,7 @@ UKL_INLINE uint32_t clif_rows_put(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,
 UKL_INLINE uint64_t clif_rel_get(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2,uint64_t a3);
 UKL_INLINE uint32_t clif_rel_dead(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint32_t clif_rel_len(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0);
+UKL_COLD uint32_t clif_rel_lower_bound(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint64_t a2,uint32_t a3,uint32_t a4,uint64_t a5);
 UKL_INLINE uint64_t clif_rel_group(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint64_t a2);
 UKL_INLINE uint32_t clif_rel_group_row(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_INLINE uint64_t clif_rel_key_mix(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint64_t a1,uint64_t a2);
@@ -644,6 +645,43 @@ UKL_INLINE uint32_t clif_rel_len(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0){
  uint64_t v1=v0+((uint64_t)(40ul));
  uint32_t v2=clif_rows_len(t,v1);
  return v2;
+}
+UKL_COLD uint32_t clif_rel_lower_bound(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint64_t a2,uint32_t a3,uint32_t a4,uint64_t a5){
+ uint64_t v0=0;
+ uint32_t v1=0;
+ uint64_t v2=0;
+ uint32_t v3=0;
+ uint32_t v4=0;
+ uint64_t v5=0;
+ uint32_t v6=0;
+ uint32_t v7=0;
+ uint32_t v8=0;
+ v0=a0;
+ v1=a1;
+ v2=a2;
+ v3=a3;
+ v4=a4;
+ v5=a5;
+ {uint32_t t0=v3;uint32_t t1=v4;v6=t0;v7=t1;}
+ while(true){
+  uint8_t v9=((uint8_t)((uint32_t)(v6)<(uint32_t)(v7)));
+  if(v9!=0){
+   uint32_t v10=v7-v6;
+   uint32_t v11=((uint32_t)((uint32_t)(v10)>>(((uint32_t)(1))&31u)));
+   uint32_t v12=v6+v11;
+   uint64_t v13=clif_rel_get(t,v0,v12,v1,v5);
+   uint8_t v14=((uint8_t)((int64_t)(v13)<(int64_t)(v2)));
+   uint32_t v15=v12+((uint32_t)(1ul));
+   uint32_t v16=v14!=0?v15:v6;
+   uint32_t v17=v14!=0?v7:v12;
+   {uint32_t t0=v16;uint32_t t1=v17;v6=t0;v7=t1;}
+   continue;
+  }else{
+   {uint32_t t0=v6;v8=t0;}
+   break;
+  }
+ }
+ return v8;
 }
 UKL_INLINE uint64_t clif_rel_group(CLIF_BLOCK_SPACE const uint8_t* t,uint64_t a0,uint32_t a1,uint64_t a2){
  uint64_t v0=0;

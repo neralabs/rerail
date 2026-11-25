@@ -36,7 +36,7 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
-use rerail_blocks::bistate::{Bistate, ColumnIndex, Marked, RowId, Since};
+use rerail_blocks::bistate::{Bistate, ColumnIndex, RowId, Since};
 use rerail_blocks::vector::Vector;
 use rerail_section::{Handle, Section};
 pub mod scalars;
@@ -658,6 +658,84 @@ enum Origin {
     /// it added; `removed`, the old rows it left out, row-major.
     Compacted { at: usize, old_n: usize, kept: usize, removed: Vector<i64>, killed: Vector<u32> },
 }
+/// An input relation at one state (decision 0678 step 6): its rows up to `end`, those not in `dead` live, read where
+/// they lie. Its version's two states (`InRel::version`) are two of these over the same rows. A table of one run,
+/// on no sort column, answered by the relation's own indexes, each candidate checked in this state.
+pub struct InState<'r> {
+    pub rel: &'r InRel,
+    pub end: RowId,
+    pub dead: &'r [u64],
+    pub since: Option<Since<'r>>,
+}
+
+impl rerail_blocks::bistate::Read for InState<'_> {
+    type Column<'s>
+        = rerail_blocks::bistate::Cells<'s, Self>
+    where
+        Self: 's;
+
+    fn arity(&self) -> usize {
+        self.rel.k
+    }
+
+    fn end(&self) -> RowId {
+        self.end
+    }
+
+    #[inline]
+    fn live_word(&self, w: rerail_blocks::ids::WordIndex) -> u64 {
+        rerail_blocks::bistate::below(self.end, w) & !self.dead.get(w.get()).copied().unwrap_or(0)
+    }
+
+    fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
+        self.rel.value(id.get() as usize, c.get())
+    }
+
+    fn since(&self) -> Option<Since<'_>> {
+        self.since
+    }
+
+    fn column(&self, c: ColumnIndex) -> Self::Column<'_> {
+        rerail_blocks::bistate::Cells::new(self, c)
+    }
+}
+
+impl rerail_blocks::table::Table for InState<'_> {
+    fn sort(&self) -> Option<ColumnIndex> {
+        None
+    }
+
+    fn runs(&self) -> rerail_blocks::table::Runs {
+        rerail_blocks::table::Runs::one(rerail_blocks::table::Run { from: RowId::new(0), to: self.end })
+    }
+
+    fn access(&self, cols: &[ColumnIndex]) -> rerail_blocks::table::Access {
+        if self.rel.view.is_none() && !cols.is_empty() { rerail_blocks::table::Access::Indexed } else { rerail_blocks::table::Access::Scan }
+    }
+
+    /// The relation's index on `cols` (`InRel::probe_ids`), each candidate below `end`, live here and equal on
+    /// `cols`; a view's rows by scan.
+    fn probe(&self, cols: &[ColumnIndex], key: &[i64], each: &mut dyn FnMut(RowId) -> bool) -> bool {
+        use rerail_blocks::bistate::Read;
+        let mut cs = [0usize; MAX_KEY];
+        for (j, c) in cols.iter().enumerate() {
+            cs[j] = c.get();
+        }
+        let end = self.end.get();
+        let answered = self.rel.probe_ids(&cs[..cols.len()], key, &mut |id| {
+            let at = RowId::new(id);
+            if id >= end || !self.live(at) || !cols.iter().zip(key).all(|(&c, &v)| self.get(at, c) == v) {
+                return true;
+            }
+            each(at)
+        });
+        match answered {
+            Some(go) => go,
+            None => rerail_blocks::table::probe_by_runs(self, cols, key, each),
+        }
+    }
+}
+
 impl Origin {
     /// The rows it marked dead since it started: its version's change, read in the change's size (decision 0678
     /// step 4). Each kill is pushed as it is made; `InRel::moved` sorts them and drops repeats, so an input's are
@@ -6520,6 +6598,38 @@ impl InRel {
         }
     }
 
+    /// The ids of a relation of its own rows (no view) whose `cols` may equal `key`, dead or not, from the index
+    /// `probe_each` reads: given to `f` until it returns false; false when it did. A reader checks each id's key and
+    /// its liveness in the state it reads (`InState`). `None` for a view.
+    pub fn probe_ids(&self, cols: &[usize], key: &[i64], f: &mut dyn FnMut(u32) -> bool) -> Option<bool> {
+        if self.view.is_some() {
+            return None;
+        }
+        let ix = self.index(cols);
+        let mut buf = [0i64; MAX_KEY];
+        for (j, c) in ix.cols.iter().enumerate() { buf[j] = key[cols.iter().position(|x| x == c).expect("a key column")]; }
+        let key = &buf[..ix.cols.len()];
+        if ix.cols.is_empty() {
+            return Some((0..self.len() as u32).all(f));
+        }
+        if let Some(index) = ix.runs(self) {
+            let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
+            let mut kb = [0i64; MAX_KEY];
+            let at = |c: usize| key[ix.cols.iter().position(|&x| x == c).expect("a key column")];
+            let mut hints = [0u32; runs::HINTS];
+            let mut go = true;
+            Cands::Runs(index.find_at(&self.rows, self.k, permuted(&index.cols[..m], at, &mut kb), None, &mut hints)).any(|id| {
+                go = f(id);
+                !go
+            });
+            return Some(go);
+        }
+        if ix.keyed {
+            return Some(self.keyed_rows(key[ix.lead]).into_iter().all(f));
+        }
+        Some(ix.get(self, key).iter().all(|&id| f(id)))
+    }
+
     /// Decision 0236: `probe_each`, sampled where the index gives more than `limit` candidates: `limit` of them are
     /// drawn by position (with replacement, from `draw`), and `f` sees those that match. The matches, estimated as the
     /// candidates times the share drawn that match; exact, with `f` on every match, where there are `limit` or fewer
@@ -6909,6 +7019,10 @@ impl InRel {
             _ => None,
         }
     }
+    /// Its rows now, as a table (`InState`): every row it holds, those its dead bits mark not live.
+    pub fn state(&self) -> InState<'_> {
+        InState { rel: self, end: RowId::new(u32::try_from(self.n).expect("a relation's rows fit a row id")), dead: &self.dead, since: None }
+    }
     /// The rows it killed since its start, ascending and each once (`Origin::killed`): `None` where `start` is.
     fn start_kills(&self) -> Option<&[u32]> {
         self.start()?;
@@ -6931,19 +7045,18 @@ impl InRel {
     /// Its version as a bistate (decision 0678): before, its first rows less the dead bits they had at the start
     /// (`start`); after, all its rows less its dead bits now. Both read its rows where they lie. `None` without a
     /// version.
-    pub fn version(&self) -> Option<Bistate<Marked<'_, impl Fn(RowId, ColumnIndex) -> i64 + '_>>> {
+    pub fn version(&self) -> Option<Bistate<InState<'_>>> {
         let (n0, dead0) = self.start()?;
         let end = |n: usize| RowId::new(u32::try_from(n).expect("a relation's rows fit a row id"));
-        let get = move |id: RowId, c: ColumnIndex| self.value(id.get() as usize, c.get());
         // Its change, read from the kills it recorded since it started (`Origin::killed`): its size, not its rows'.
         let since = self.start_kills().map(|flips| Since { end: end(n0), flips });
-        let before = Marked { arity: self.k, end: end(n0), dead: dead0, get, since: None };
-        let v = Bistate::new(before, Marked { arity: self.k, end: end(self.n), dead: &self.dead, get, since });
+        let before = InState { rel: self, end: end(n0), dead: dead0, since: None };
+        let v = Bistate::new(before, InState { rel: self, end: end(self.n), dead: &self.dead, since });
         // Every kill since the start goes through `Rel::kill_row`: a debug build checks the record against the
         // liveness words.
         #[cfg(debug_assertions)]
         {
-            let by_words = Bistate::new(Marked { arity: self.k, end: end(n0), dead: dead0, get, since: None }, Marked { arity: self.k, end: end(self.n), dead: &self.dead, get, since: None });
+            let by_words = Bistate::new(InState { rel: self, end: end(n0), dead: dead0, since: None }, InState { rel: self, end: end(self.n), dead: &self.dead, since: None });
             debug_assert_eq!(v.counts(), by_words.counts(), "{}: its recorded kills are its change", self.name.get().map_or("", String::as_str));
         }
         Some(v)
@@ -10152,6 +10265,82 @@ pub mod posted_tests {
         let flat = |f: &mut Vector<i64>| { let mut r: Vec<Vector<i64>> = f.as_chunks::<2>().0.iter().map(|r| rerail_blocks::vector::Vector::from(&r[..])).collect(); r.sort(); r };
         assert_eq!(flat(&mut added), rows_of(&plus));
         assert_eq!(flat(&mut removed), rows_of(&minus));
+    }
+
+    /// The change operations run on two maintained relations' versions (decision 0678 step 6): each state is a
+    /// table answered by the relation's own indexes, and each change keeps L1 against the cold operation on the
+    /// states.
+    #[test]
+    fn a_maintained_relations_versions_join_in_their_change_form() {
+        use rerail_blocks::bistate::Read;
+        use rerail_blocks::change::{self, Sign};
+        use rerail_blocks::table::{self, Access, Agg, Table};
+        let c = |i: u16| ColumnIndex::new(i);
+        let rel_of = |name: &str, rows: &[[i64; 2]]| {
+            let mut r = Rel::new(name, b"ii");
+            for row in rows {
+                r.push(row);
+            }
+            InRel::moved(r)
+        };
+        let maintained = |name: &str, first: &[[i64; 2]], gone: &[[i64; 2]], add: &[[i64; 2]]| {
+            let mut r = Rel::new(name, b"ii");
+            for row in first {
+                r.push(row);
+            }
+            let kept = Arc::new(InRel::moved(r));
+            let mut new = Rel::based(name, b"ii", &kept, Some(&rel_of("g", gone))).expect("few dead");
+            for row in add {
+                new.push(row);
+            }
+            InRel::moved(new)
+        };
+        let first: Vec<[i64; 2]> = (0..40).map(|i| [i % 7, i]).collect();
+        let a = maintained("a", &first, &[[1, 1], [3, 3], [3, 10], [5, 26]], &[[1, 100], [6, 101], [9, 102]]);
+        // `b`'s other rows (keys 20 and up) match none of `a`'s and never change.
+        let bs: Vec<[i64; 2]> = [[1, 0], [3, 0], [4, 0], [6, 0]].into_iter().chain((20..40).map(|k| [k, 0])).collect();
+        let b = maintained("b", &bs, &[[3, 0], [4, 0]], &[[5, 0], [9, 0], [3, 1]]);
+        let (va, vb) = (a.version().expect("a version"), b.version().expect("a version"));
+        assert_eq!(va.after().access(&[c(0)]), Access::Indexed, "a state is probed by the relation's index");
+        let on = [(c(0), c(0))];
+        let pair = |ta: &InState, x: RowId, tb: &InState, y: RowId| vec![ta.get(x, c(0)), ta.get(x, c(1)), tb.get(y, c(0)), tb.get(y, c(1))];
+        let cold_join = |ta: &InState, tb: &InState| {
+            let mut out = Vec::new();
+            table::join(ta, tb, &on, &mut |x, y| {
+                out.push(pair(ta, x, tb, y));
+                true
+            });
+            out
+        };
+        let mut ch = Vec::new();
+        change::join(&va, &vb, &on, &mut |s, x, y| {
+            let (ta, tb) = if s == Sign::Gone { (va.before().unwrap(), vb.before().unwrap()) } else { (va.after(), vb.after()) };
+            ch.push((s, pair(ta, x, tb, y)));
+        });
+        assert!(ch.iter().any(|(s, _)| *s == Sign::Gone) && ch.iter().any(|(s, _)| *s == Sign::Added));
+        change::check(Some(cold_join(va.before().unwrap(), vb.before().unwrap())), cold_join(va.after(), vb.after()), ch);
+        for neg in [false, true] {
+            let cold = |ta: &InState, tb: &InState| {
+                let mut out = Vec::new();
+                table::semi(ta, tb, &on, neg, &mut |x| {
+                    out.push(vec![ta.get(x, c(0)), ta.get(x, c(1))]);
+                    true
+                });
+                out
+            };
+            let mut ch = Vec::new();
+            change::semi(&va, &vb, &on, neg, &mut |s, x| {
+                let t = if s == Sign::Gone { va.before().unwrap() } else { va.after() };
+                ch.push((s, vec![t.get(x, c(0)), t.get(x, c(1))]));
+            });
+            change::check(Some(cold(va.before().unwrap(), vb.before().unwrap())), cold(va.after(), vb.after()), ch);
+        }
+        for agg in [Agg::Count, Agg::Sum(c(1)), Agg::Max(c(1))] {
+            let cold = |t: &InState| -> Vec<Vec<i64>> { (0..40).filter(|&k| table::count(t, &[c(0)], &[k]) > 0).map(|k| vec![k, table::fold(t, &[c(0)], &[k], agg).unwrap()]).collect() };
+            let mut ch = Vec::new();
+            change::group(&va, &[c(0)], agg, &mut |s, k, v| ch.push((s, vec![k[0], v])));
+            change::check(Some(cold(va.before().unwrap())), cold(va.after()), ch);
+        }
     }
 
     /// A relation the maintain mode starts from a kept one read in place (decision 0456 step 6, a view of its

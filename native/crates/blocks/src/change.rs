@@ -274,7 +274,10 @@ mod tests {
     }
 
     /// State `k` of a chain: its version's rows (the last state's live rows), and its change.
-    fn states(seed: u64, steps: usize, keys: i64) -> Vec<(Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>)> {
+    /// A state of a chain: its version's rows, the rows its delta adds, and those it kills.
+    type State = (Vec<[i64; 2]>, Vec<[i64; 2]>, Vec<[i64; 2]>);
+
+    fn states(seed: u64, steps: usize, keys: i64) -> Vec<State> {
         let mut r = Rng(seed);
         let mut rows: Vec<[i64; 2]> = (0..30).map(|_| [r.next(keys), r.next(9)]).collect();
         rows.sort();

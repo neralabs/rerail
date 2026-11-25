@@ -531,6 +531,37 @@ pub fn rel_get(b: &mut B<'_, '_>) -> Value {
     )
 }
 
+/// `rel_lower_bound(rel, c, key, from, to, far)`: the first id of `from..to` whose column `c` is not below `key`
+/// (signed), `to` when none is: a binary search of a run sorted on `c` (decision 0678 step 6; `table::Table::
+/// lower_bound`, the host's). Each id is read by `rel_get` (`far` as it takes it): the relation's own rows, or, for a
+/// continuation, down its chain. A view's two runs are each searched in the relation that holds them: its version's
+/// in the base's descriptor, its delta's in the delta's (ids from its `base_rows`). An equal range is two of these (the second from the first's answer, at `key + 1`). O(log(to - from))
+/// reads; nothing is copied or collected.
+pub fn rel_lower_bound(b: &mut B<'_, '_>) -> Value {
+    let (c, key, from, to, far) = (b.arg(0), b.arg(1), b.arg(2), b.arg(3), b.arg(4));
+    let (head, step, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    b.f.ins().jump(head, &[from.into(), to.into()]);
+    b.f.switch_to_block(head);
+    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+    b.f.ins().brif(more, step, &[], done, &[lo.into()]);
+    b.f.switch_to_block(step);
+    let half = b.f.ins().isub(hi, lo);
+    let half = b.f.ins().ushr_imm(half, 1);
+    let mid = b.f.ins().iadd(lo, half);
+    let v = b.call("rel_get", &[mid, c, far]);
+    let below = b.f.ins().icmp(IntCC::SignedLessThan, v, key);
+    let past = b.f.ins().iadd_imm(mid, 1);
+    let lo = b.f.ins().select(below, past, lo);
+    let hi = b.f.ins().select(below, hi, mid);
+    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
 /// `rows_len(rows)`: the rows a relation's rows descriptor has claimed (`Rows::len`), read while the device claims
 /// them (decision 0603 step 3).
 pub fn rows_len(b: &mut B<'_, '_>) -> Value {
@@ -767,6 +798,50 @@ mod tests {
                 assert_eq!(g, ((start as u64) << 32) | group.len() as u64, "rel_group of row {id}'s key");
             }
         }
+    }
+
+    /// The JIT's `rel_lower_bound` finds what the host's table finds (`Table::lower_bound`, `equal_range`): in a
+    /// frozen version's run and in its delta's, for keys below, at, between and past the rows' values, the delta's
+    /// ids read down its chain into the base's block.
+    #[test]
+    fn the_jits_lower_bound_is_the_tables() {
+        use rerail_blocks::bistate::Read;
+        use rerail_blocks::ids::{ColumnIndex, RowId};
+        use rerail_blocks::table::{Run, Table};
+        let reads = crate::jit::Reads::new();
+        type Bound = extern "C" fn(*const u8, u32, u64, u32, u32, u64) -> u32;
+        // SAFETY: the read's signature: its descriptor's address, then its parameters.
+        let bound: Bound = unsafe { std::mem::transmute::<*const u8, Bound>(reads.function("rel_lower_bound")) };
+        let spec = Spec { widths: vec![8, 8], order: vec![0], indexes: Vec::new(), min_log: 4 };
+        let lock = Mutex::new(());
+        let base_block = Block::anon(kind::FACTS, 16 << 20);
+        let base = Relation::create(&base_block, &spec, None);
+        // Keys 0, 3, 6, ... each three times, unsorted as pushed: freeze sorts them.
+        let rows: Vec<i64> = (0..3_000i64).flat_map(|i| [(i * 7) % 1000 * 3 - 600, i]).collect();
+        RelW { block: &base_block, rel: base, lock: &lock }.extend(&rows);
+        freeze(&base_block, base, &spec, None);
+        let top_block = Block::anon(kind::FACTS, 16 << 20);
+        let top = Relation::create(&top_block, &spec, Some(base));
+        RelW { block: &top_block, rel: top, lock: &lock }.extend(&(0..500i64).flat_map(|i| [i * 5 - 700, -i]).collect::<Vec<_>>());
+        freeze(&top_block, top, &spec, Some(base));
+        let view = rerail_blocks::relation::View { base: Some(base), top };
+        assert_eq!(view.sort(), Some(ColumnIndex::new(0)));
+        let (b, end) = (top.base_rows, view.end().get());
+        let mut checked = 0;
+        for run in [Run::new(0, b), Run::new(b, end), Run::new(5, b - 2), Run::new(b + 7, end - 3)] {
+            let held = if run.from.get() < b { base } else { top };
+            let desc = std::ptr::from_ref(held).cast::<u8>();
+            for key in (-800i64..1900).step_by(7).chain([i64::MIN, i64::MAX, -600, 1797]) {
+                let want = view.lower_bound(run, key);
+                let got = bound(desc, 0, key as u64, run.from.get(), run.to.get(), 0);
+                assert_eq!(got, want.get(), "lower bound of {key} in {run:?}");
+                let eq = view.equal_range(run, key);
+                let hi = if key == i64::MAX { run.to.get() } else { bound(desc, 0, (key + 1) as u64, got, run.to.get(), 0) };
+                assert_eq!((RowId::new(got), RowId::new(hi)), (eq.from, eq.to), "equal range of {key} in {run:?}");
+                checked += usize::from(eq.from < eq.to);
+            }
+        }
+        assert!(checked > 100, "many keys are found: {checked}");
     }
 
     /// A chain of 500 forks of forks (decision 0353 step 6: never compacted) reads every id in the JIT as on the host,

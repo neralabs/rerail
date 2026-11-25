@@ -1,6 +1,6 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Steps 1, 3, 4 and 5 done. Step 2 cut down by the user's constraints (below) to the reads of a column
+Status: in progress. Steps 1, 3, 4, 5 and 6 done. Step 2 cut down by the user's constraints (below) to the reads of a column
 and of a chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
@@ -285,6 +285,33 @@ changes applied in turn from the first cold output equal each state's cold outpu
 - semi- and anti-joins on the sort column and off it, with kept rows going and coming as their matches do;
 - every aggregate, bounded ones included;
 - a cold run's change: its whole output added.
+
+## Step 6: the engine's relations read through the table
+
+Step 3 of the user's list, in part.
+
+- **setfix's input relation as a table** (`InState`): an `InRel` at one state, its rows up to `end`, those not in
+  `dead` live, read where they lie. `InRel::version` is now a bistate of two of these, and `InRel::state` gives the
+  state now. It is a table of one run on no sort column. Its probes are answered by the relation's own index
+  (`InRel::probe_ids`, the index its rules' probes read), each candidate checked against this state's liveness and
+  key. A view's rows are scanned. The change operations of step 5 run on it unchanged.
+- **The CLIF read** `rel_lower_bound(rel, c, key, from, to, far)` (decision 0310): a binary search of a run sorted on
+  `c`, each id read by `rel_get`. The JIT and the kernels share it, and `<ukl/reads/relation.h>` is written again
+  with it. A view's two runs are each searched in the relation that holds them: its version's in the base's
+  descriptor, its delta's in the delta's.
+
+Tests:
+
+- `a_maintained_relations_versions_join_in_their_change_form`: two maintained relations' versions are joined,
+  semi- and anti-joined and grouped in their change form, each change against the cold operation (L1), the probes
+  answered by the relations' indexes.
+- `the_jits_lower_bound_is_the_tables`: the JIT's bound and equal range against the host table's, in a version's
+  run, a delta's, and parts of each.
+- The quick tiers of blocks, setfix and clif: 260 pass.
+
+Not done, held back by Claude: SQL's `Derived::lookup` through `InState`. It was written and tested, then taken
+out when the user asked what SQL had to do with this work. The saved change is in the worktree's
+`tmp/planner-stats/sql-derived-lookup-through-table.txt`.
 
 ## Next steps, proposed (Claude's, not agreed)
 
