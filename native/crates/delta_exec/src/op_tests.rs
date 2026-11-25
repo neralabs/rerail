@@ -362,3 +362,51 @@ fn params_give_ukl_their_layout() {
     assert_eq!(Mode::Read.ukl(), "ROBUFFER");
     assert_eq!(Mode::Scratch.ukl(), "RWBUFFER");
 }
+
+/// A running sum: item `i` is the sum of items `0..=i`, read from item `i - 1`'s: not independent.
+const RUNNING: &[TwinPhase] = &[TwinPhase { name: "map", items: SQUARE[0].items, run: running_tile, again: None }];
+
+fn running_tile(c: &mut rerail_delta_twins::Ctx<'_, '_, '_>, t: rerail_delta_twins::Tile) {
+    let ([input], [out]) = c.views([0], [1]);
+    let src = samples::vals(input);
+    let dst = samples::vals_mut(out, src.len());
+    for i in t.items() {
+        dst[i] = if i == 0 { 0 } else { dst[i - 1] } + src[i];
+    }
+}
+
+/// Operations §4's independence axis: an operation that says its items are not independent runs whole and in order at
+/// any tiling asked; one that claims they are when they are not is caught by the check, at tiles in shuffled order.
+#[test]
+fn the_independence_axis_is_kept_and_checked() {
+    let shape: &'static [Phase] = Box::leak(vec![lanes("map", Found::Fixed, Across::Ordered, Output::ByIndex, &[])].into_boxed_slice());
+    let slots: &'static [SlotSpec] = Box::leak(vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)].into_boxed_slice());
+    let not = Box::leak(Box::new(Signature::new("running", slots, NONE_P, shape, Independence::Not("item i reads item i - 1"), values)));
+    let along = Box::leak(Box::new(Signature::new("running, claimed independent", slots, NONE_P, shape, Independence::Along("items"), values)));
+    let make = |dir: &mut Directory| {
+        let v: Vec<i64> = (1..=600).collect();
+        let (i, o) = (values_block(dir, &v), dir.make(kind::FACTS, samples::vals_bytes(v.len())));
+        Case { slots: vec![i, o], params: vec![] }
+    };
+    let want: Vec<Vec<i64>> = (1..=600i64).map(|i| vec![i - 1, i * (i + 1) / 2]).collect();
+    let tilings = [Tiling::WHOLE, Tiling { tile: 7, seed: 3 }, Tiling { tile: 1, seed: 11 }];
+
+    let mut reg = Registry::default();
+    let op = reg.declare(not).unwrap();
+    reg.register_reference(Version::twin(op, "twin", RUNNING, shape)).unwrap();
+    for t in tilings {
+        let mut dir = Directory::default();
+        let c = make(&mut dir);
+        run_cpu(&reg, &dir, op, &c.slots, &[], t).unwrap();
+        assert_eq!(written_facts(not, &dir, &c.slots).unwrap()[0], want, "not independent: run whole at {t:?}");
+    }
+    let again = Version { status: Status::Default, ..Version::twin(op, "running again", RUNNING, shape) };
+    reg.check(&again, &make, &tilings).expect("whole at every tiling");
+
+    let mut reg = Registry::default();
+    let op = reg.declare(along).unwrap();
+    reg.register_reference(Version::twin(op, "twin", RUNNING, shape)).unwrap();
+    let again = Version { status: Status::Default, ..Version::twin(op, "running again", RUNNING, shape) };
+    let e = reg.check(&again, &make, &tilings).err().expect("a false claim of independence is caught");
+    assert!(e.contains("wrote other facts"), "{e}");
+}

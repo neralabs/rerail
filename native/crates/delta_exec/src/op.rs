@@ -188,7 +188,9 @@ impl Phase {
 }
 
 /// The axis an operation's items are independent along, so the executor may batch, cut into morsels, hand off and
-/// split it (Operations §4, family G), or why they are not.
+/// split it (Operations §4, family G), or why they are not: an operation that is `Not` runs each phase whole and in
+/// order. A claim of independence is checked: `Registry::check` runs a version at tilings in shuffled order against
+/// the reference run whole, so items that are not independent write other facts there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Independence {
     Along(&'static str),
@@ -549,6 +551,12 @@ fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], par
             return Err(format!("{} could not start: slot {i} ({}) takes a block of kind {}, given one of kind {kind}", sig.name, spec.name, spec.kind));
         }
     }
+    // Items that are not independent run whole and in order, whatever tiling is asked: only an operation that says
+    // the axis its items are independent along is cut into tiles and run in any order.
+    let tiling = match sig.independent {
+        Independence::Along(_) => tiling,
+        Independence::Not(_) => Tiling::WHOLE,
+    };
     let modes: Vec<(BlockId, bool)> = slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes())).collect();
     let mut launch = dir.launch(sig.name, &modes)?;
     let (pins, table) = launch.parts();

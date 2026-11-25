@@ -471,6 +471,13 @@ the filter holds each key of its layer and rules out most absent ones; the index
 layers scans, changes and gives its changed partitions as its sets do, and rolls 12 layers into one
 (`a_deep_chain_reads_as_its_set`).
 
+The independence axis is kept and checked: an operation whose items are `Not` independent runs each phase whole and in
+order at any tiling asked; a version is checked at tiles in shuffled order against the reference run whole, so a false
+claim of independence writes other facts and is refused (`op::tests::the_independence_axis_is_kept_and_checked`, a
+running sum declared both ways). merge is checked as consolidate is: the same rolled-up layer, with all four index
+kinds, at three tilings (`trace::tests::merge_writes_the_same_layer_at_every_tiling`). `rerail-delta-exec --lib`: 24
+of 24.
+
 What a run block's trace refuses, each saying where the plan puts it (`a_shape_the_plan_puts_elsewhere_is_refused_…`):
 
 - `levels`: a recursive stratum's level column (0364), run by Δfix, after L1.

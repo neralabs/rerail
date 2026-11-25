@@ -294,6 +294,39 @@ pub fn consolidate_case<'r>(shape: &'r Shape, rows: &'r [(Vec<i64>, i32)]) -> im
     }
 }
 
+/// A launch's case for the version check of `merge`: a trace of `runs` committed in turn (by the reference
+/// consolidate, whole), then its newest `count` layers merged over the layer below them.
+pub fn merge_case<'r>(shape: &'r Shape, runs: &'r [Vec<(Vec<i64>, i32)>], count: u32) -> impl Fn(&mut Directory) -> Case + 'r {
+    move |dir: &mut Directory| {
+        let mut reg = Registry::default();
+        let ops = TraceOps::declare(&mut reg).expect("the trace's operations");
+        let mut t = Trace::new(shape).expect("a storable shape");
+        let mut heads = Vec::new();
+        for rows in runs {
+            let id = t.open(dir, rows.len().max(1));
+            {
+                let b = dir.block(id).expect("made");
+                let pin = rerail_blocks::region::pin_block(&b, "case", true).expect("unused");
+                let w = rerail_blocks::layer::RunsW::new(&pin);
+                for (r, d) in rows {
+                    w.push(r, *d).expect("room");
+                }
+            }
+            heads.push(t.commit(&reg, &ops, dir, id, Tiling::WHOLE).expect("a set change"));
+        }
+        let head = *heads.last().expect("a layer");
+        let below = heads.len().checked_sub(count as usize + 1).map(|i| heads[i]);
+        let total: usize = runs[runs.len() - count as usize..].iter().map(Vec::len).sum();
+        let out = dir.make(kind::FACTS, out_bytes(t.shape(), total));
+        if let Some(b) = below {
+            dir.refer(out, b).expect("frozen");
+        }
+        let mut params = vec![0u8; MergeP::SIZE];
+        MergeP { count, below: below.map_or(NONE, |b| b.0) }.write(&mut params);
+        Case { slots: vec![head, out], params }
+    }
+}
+
 #[cfg(test)]
 #[path = "trace_tests.rs"]
 mod tests;

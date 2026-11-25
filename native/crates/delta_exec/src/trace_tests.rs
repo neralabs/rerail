@@ -424,3 +424,25 @@ fn a_deep_chain_reads_as_its_set() {
     let l = t.read(&dir, &[t.head()]).unwrap();
     assert_eq!(rows_of(&t.state(&l.table(), t.head()).unwrap()), sets[14]);
 }
+
+/// O§13 for merge: the same rolled-up layer at every tiling and with its tiles in shuffled order, by the registry's
+/// check, over layers with all four index kinds.
+#[test]
+fn merge_writes_the_same_layer_at_every_tiling() {
+    use rerail_blocks::layer::IndexSpec;
+    let mut s = shape();
+    s.indexes = vec![IndexSpec::Order { key: vec![1], fences: true, prints: true }, IndexSpec::Hash(vec![2]), IndexSpec::Bloom(vec![1, 2])];
+    let mut r = rng(31);
+    let (mut set, mut runs) = (Rows::new(), Vec::new());
+    for _ in 0..4 {
+        let (pairs, next) = random_run(&mut r, &set);
+        runs.push(pairs);
+        set = next;
+    }
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let tiled = Version { status: Status::Default, ..Version::twin(ops.merge, "merge, tiled", rerail_delta_twins::trace::MERGE, &PIPELINE) };
+    let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 4 }, Tiling { tile: 3, seed: 17 }];
+    let checked = reg.check(&tiled, &merge_case(&s, &runs, 3), &tilings).unwrap();
+    reg.register(tiled, checked).unwrap();
+}
