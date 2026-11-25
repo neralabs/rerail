@@ -301,8 +301,10 @@ without hooks or network.
   repository Git refused stays refused until the process's owner of Git reads changes: where Rerail's Git did not
   answer its asks, the process asks again after a minute, and only an answer that differs makes a new owner, under
   which lanes open their rules again. The store's walk and status after the open, and an ignore question, run on the
-  caller's thread with no limit of their own: a walk asks one or two ignore questions per file, and a question's disk
-  reads are a stat of the index and the `.gitignore` of a folder the walk has just listed. The repository index walk
+  caller's thread with no limit of their own: a question's disk reads are a stat of the index and the `.gitignore` of a
+  folder the walk has just listed. A walk asks the engine about a path only where no answer is kept for its checkout
+  (`GitIgnoreAnswers`), and reads on the same thread, once per walk, the end of each checkout's index (all of it where
+  Git writes no checksum there) and the `.gitignore` of each folder it asks about. The repository index walk
   opens its rules under the same 10 s limit.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
