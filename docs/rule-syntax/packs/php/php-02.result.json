@@ -1,0 +1,43 @@
+[
+  {
+    "id": "phpstan-array-duplicate-key",
+    "status": "different",
+    "reason": "The 11 fixtures keys only the translation reports (bug-15244.php:49, bug-15247-php81.php:14 and 19, bug-15247.php:19 and 34, duplicate-keys.php:32, 63, 67, 69, 76 and 105) are all in PHPStan 2.2.16's recording of array.duplicateKey. The original compares written keys as text; the translation numbers implicit keys, unpacks literal spreads and follows constants and one-write variables as PHP does (php/arrays), e.g. ['x', 0 => 'y'] repeats key 0.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 11 },
+      "samples-php": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  {
+    "id": "phpstan-if-always-false",
+    "status": "same"
+  },
+  {
+    "id": "phpstan-missing-function-return-type",
+    "status": "same"
+  },
+  {
+    "id": "phpstan-random-int-parameters",
+    "status": "different",
+    "reason": "The 7 fixtures keys only the translation reports (random-int.php:11, 12, 15, 16, 19, 20 and 31) are all in PHPStan 2.2.16's recording of argument.type. The original compares the two arguments' values only; the translation also reads a nested random_int(a, b) as the range int<a, b>, as PHPStan does: random_int(0, random_int(-10, 10)) is reported because $max may be -10.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 7 },
+      "samples-php": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  {
+    "id": "psalm-forbidden-code",
+    "status": "different",
+    "reason": "samples-php, 15 translation-only keys: each call is under a @psalm-suppress ForbiddenCode docblock (on its statement, or its function or method) that Psalm and the original honour; the translation declares suppress psalm \"ForbiddenCode\" as the JSON does, but rerail-engine run-policies returns diagnostics with no suppression applied (an engine gap; original right). fixtures, 1 translation-only key: phpcs/Generic/PHP/LowerCaseConstantUnitTest.1.inc.php:79 var_dump(...) in a file with syntax errors, which the product skips; Psalm reports ParseError and still analyses the statements PHP-Parser recovers (StatementsProvider::parseStatements), so it reports the var_dump (translation right).",
+    "right": "neither",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 1 },
+      "samples-php": { "originalOnly": 0, "translationOnly": 15 }
+    }
+  }
+]
