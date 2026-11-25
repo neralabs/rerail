@@ -1,0 +1,28 @@
+[
+  {
+    "id": "typescript-eslint-max-params",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-no-confusing-non-null-assertion",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-no-invalid-void-type",
+    "status": "different",
+    "reason": "The original misses void as a call's type argument (functionGeneric<void>(undefined), Promise.withResolvers<void>()); typescript-eslint 8.74 reports it with the default allowInGenericTypeArguments: a call's typeArguments are no type reference. The translation reports it, and matches ESLint's 114 findings on rerail-typescript line for line.",
+    "right": "translation",
+    "counts": {
+      "fixtures": { "originalOnly": 0, "translationOnly": 1 },
+      "rerail-typescript": { "originalOnly": 0, "translationOnly": 113 }
+    }
+  },
+  {
+    "id": "typescript-eslint-no-magic-numbers",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-no-shadow",
+    "status": "same"
+  }
+]
