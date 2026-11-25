@@ -153,6 +153,38 @@ describe("the violation history with an audit whose stored violations do not rea
   });
 });
 
+describe("the violation history's cost", () => {
+  it("tests each audit's text once a page, and reads each row with one JSON call", async () => {
+    const path = await temporaryDatabase();
+    fourAudits(path);
+    const store = new SqliteAuditStore(path);
+    const probe = new Database(path, { readonly: true });
+    const reads = vi.spyOn(Object.getPrototypeOf(probe.prepare("SELECT 1")) as Database.Statement, "all");
+    let statements: Array<{ source: string; params: unknown[] }> = [];
+    try {
+      expect(walk(store, 5).flatMap(page => page.ids)).toHaveLength(12);
+      statements = reads.mock.contexts.map((statement, index) => ({ source: (statement as Database.Statement).source, params: reads.mock.calls[index]! }))
+        .filter(statement => statement.source.includes("audit_violations") && statement.source.includes("json_valid"));
+    } finally {
+      reads.mockRestore();
+      store.close();
+    }
+    try {
+      expect(statements).toHaveLength(3);
+      const { source, params } = statements[0]!;
+      // Each JSON call on a row is one more pass over the audit's whole text: one test of the text, made once for each
+      // audit on the page in a row SQLite makes once, and one read of each row's place.
+      const calls = (probe.prepare(`EXPLAIN ${source}`).all(...params) as Array<{ p4: unknown }>)
+        .map(step => String(step.p4)).filter(p4 => /^(json\w*|->>?)\(/u.test(p4));
+      expect(calls.sort()).toEqual(["->(2)", "json_valid(1)"]);
+      const plan = probe.prepare(`EXPLAIN QUERY PLAN ${source}`).all(...params) as Array<{ detail: string }>;
+      expect(plan.map(step => step.detail)).toContain("MATERIALIZE held");
+    } finally {
+      probe.close();
+    }
+  });
+});
+
 /** The failure an audit's record lists before its own for a stored list it reads as none, as #989 made it. */
 const unreadable = (clauseId: string, name: string) => ({
   clauseId, code: "adapter-error", stage: "persistence",
