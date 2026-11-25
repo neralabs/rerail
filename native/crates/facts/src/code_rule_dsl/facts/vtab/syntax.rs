@@ -6173,6 +6173,23 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.
+    // SPIKE (throw-away, t61): `RERAIL_SPIKE_TREE=kind,child,field`: those views' rows read once for the chunk into
+    // indexed relations, bound in their place, so every stratum's joins probe one shared index, not the views.
+    if let Some(names) = std::env::var_os("RERAIL_SPIKE_TREE") {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "spike: the tree's relations, made once".into());
+        let names = names.to_string_lossy().into_owned();
+        for (name, source) in out.iter_mut() {
+            if !names.split(',').any(|n| n == name) {
+                continue;
+            }
+            let columns = source.columns();
+            let all: Vec<usize> = (0..columns.len()).collect();
+            let mut rows: Vec<Vector<i64>> = Vec::with_capacity(source.len());
+            source.for_rows(&all, &mut |_, row| rows.push(Vector::from(row)));
+            let names: Vec<&str> = columns.iter().map(String::as_str).collect();
+            *source = Arc::new(Relation::from_rows(&names, &mut rows.into_iter()));
+        }
+    }
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     use crate::code_rule_dsl::logic::front::ast::{AXIS, DESCENDANTS};
     // The axes over one set of kinds share their solves (`within::Solves`, decision 0494 step 7): each mode's is made
