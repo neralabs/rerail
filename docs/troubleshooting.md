@@ -8,6 +8,17 @@ Each entry: what you see, why, what to do. Supported systems are under
 
 Set-up checks Node, the computer and Git first. A failed check changes nothing: fix it, then rerun the same command.
 
+### `npx: command not found`
+
+```text
+zsh: command not found: npx
+```
+
+Node.js is not installed (`npx` comes with it), so set-up never starts. Bash says `npx: command not found`;
+PowerShell says `The term 'npx' is not recognized`. Install Node 24 or newer from [nodejs.org](https://nodejs.org) or
+with Homebrew (`brew install node`), nvm, fnm or Volta, open a new terminal, check that `node --version` prints `v24`
+or later, and rerun.
+
 ### Node is too old
 
 ```text

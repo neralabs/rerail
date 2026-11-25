@@ -237,6 +237,8 @@ In the repository you want Rerail in, run:
 npx @neralabs/rerail setup
 ```
 
+That needs Node.js 24 or newer; `npx` comes with Node. Check with `node --version`: `command not found` means Node is not installed, so set-up cannot start to say so. Install it from [nodejs.org](https://nodejs.org) or with Homebrew (`brew install node`), nvm, fnm or Volta, then run the command in a new terminal.
+
 From a Rerail checkout, `just rerail` does the same. For another repository, answer "Scan a different repo…" or pass `--repo ~/code/your-repo`.
 
 - **What it does.** Installs into `~/.rerail` without admin rights, proposes rule packs, and on your yes starts Rerail and connects your coding agents. Rerail starts in your next new session.
@@ -260,7 +262,7 @@ With `--relay`, set-up prints each question for the coding agent to ask you verb
 
 </details>
 
-Prerequisites (set-up checks them before changing anything, and says what to do):
+Prerequisites (set-up checks them before changing anything, and says what to do, except a missing Node, which stops `npx` before set-up starts):
 
 - Node.js 24 or newer.
 - Git on your `PATH`.
