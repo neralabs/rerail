@@ -1006,11 +1006,14 @@ These are maintainer risks, not user risks. Actions are pinned by commit SHA, an
   model's: it approves only with nothing blocking, CI passed, and no high-risk path from REVIEW.md touched, which keeps
   `.github/`, packaging, migrations and release scripts in front of a person. Only contributors push branches here, so
   a prompt injection in a pull request's text needs a contributor to open it.
-- **The reviewer's Rerail is a moving tag.** The reviewer's modules job runs in `ghcr.io/neralabs/rerail:next`, which
-  only `rerail-image.yml` pushes, with this repository's `GITHUB_TOKEN`, from a version `release.yml` already published
-  to npm with provenance, and only after it scans main's packs. That job holds no model key and no app key, and its
-  token reads contents only, so the image can change only the findings the rules pass reads. It is a tag, not a digest:
-  whoever can push packages for the repository can change what the job runs.
+- **The reviewer's Rerail is a moving tag.** The reviewer's modules job runs in `ghcr.io/neralabs/rerail:next`.
+  `rerail-image.yml` is meant to be its only publisher: it pushes, with this repository's `GITHUB_TOKEN`, a version
+  `release.yml` already published to npm with provenance, only after it scans main's packs, and writes each digest to
+  its run summary. Nothing enforces that: the tag is not a digest, so whoever can push packages for the repository can
+  push another image. The job holds no model key and no app key, and its token reads contents only. What an image
+  controls is the module's findings, and that is not small: a new violation of a steer rule can be a blocker, so added
+  or hidden findings change whether the bot blocks or approves, and the findings are what `send_results` sends to the
+  Rerail remote.
 - **No branch code beside the write token.** `dependabot-pins.yml` runs branch code in a read-only job that uploads a
   patch; a second job applies only pin-file changes, then mints the write token and pushes.
 
