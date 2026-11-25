@@ -41,16 +41,7 @@ wrapper_node(p) :- kind(p, "expression_statement"), child(p, a, 0),
 ast_parent(n, p) :- child(p, n, _), !wrapper_node(p), !kind(p, "decorator"), !kind(n, "comment").
 ast_parent(e, f) :- decorator(f, e).
 ast_parent(n, q) :- child(p, n, _), wrapper_node(p), !kind(n, "decorator"), !kind(n, "comment"), ast_parent(p, q).
-// unparen(e, m): m is e with any parentheses taken off: `((x))` gives x. Every other node gives itself. A comment
-// inside the parentheses is a child of them too, so the expression is the one child that is not a comment:
-//   assert (
-//       # why
-//       a and b
-//   )                    unparen(<( … )>, <a and b>)
-.decl unparen(e: node, m: node)
-.pragma "magic-transform" "unparen"
-unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
-unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
+// unparen(e, m) (python/scopes): m is e with any parentheses taken off.
 // py_frame(n, f): f is the innermost def or lambda that holds n, as `ast` nests them: n in a decorator of g, a
 // default of g or an annotation of g is in g. (nearest(n, f, fdef) puts decorators outside g.)
 // def_frame(n, f): the same with lambdas transparent: the innermost def.

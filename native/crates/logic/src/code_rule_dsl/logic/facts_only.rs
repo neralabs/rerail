@@ -288,6 +288,9 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
+    // The spaces the open write transaction has written once (decision 0677 fix 3: one sweep a space a transaction),
+    // cleared when its scope closes: state of an open thing, kept for no later use.
+    ("content_store/connection.rs", "WRITTEN_SPACES"),
     // A switch: testing mode's store (decision 0130).
     ("code_rule_dsl/logic/plan/corpus/base.rs", "UseStore"),
     // Phase 1's runs within one batch of policies over one tree, dropped with it: nothing kept past the batch.

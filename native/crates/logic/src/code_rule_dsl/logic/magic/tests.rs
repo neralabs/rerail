@@ -116,10 +116,19 @@ fn t_programs_transform_like_t() {
             // `calls_rust.gate`); the version declares the gates of the program it made. A declaration no rule or
             // gate names is not compared, for a gate.
             let named = |rel: &str| expected.lines().filter(|l| !l.starts_with("decl ")).any(|l| l.contains(&format!("{rel}(")) || l.contains(&format!("\"{rel}\"")));
+            // Demand is a set, stored sorted (program_facts); T printed it in the order its pragmas stated it.
+            let sorted_demand = |l: &str| match l.strip_prefix("demand [").and_then(|d| d.strip_suffix(']')) {
+                Some(items) => {
+                    let mut items: Vec<&str> = items.split(", ").collect();
+                    items.sort();
+                    format!("demand [{}]", items.join(", "))
+                }
+                None => l.to_owned(),
+            };
             let expected: String = expected
                 .lines()
                 .filter(|l| l.strip_prefix("decl done_").and_then(|d| d.split_once('(')).is_none_or(|(rel, _)| named(&format!("done_{rel}"))))
-                .map(|l| format!("{l}\n"))
+                .map(|l| format!("{}\n", sorted_demand(l)))
                 .collect();
             if got != expected {
                 let line = got.lines().zip(expected.lines()).position(|(a, b)| a != b);

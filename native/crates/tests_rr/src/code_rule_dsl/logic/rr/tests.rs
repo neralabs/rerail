@@ -430,7 +430,8 @@ best(n, @dot("a", x)) :- name(n, x).
     let best = &lattice["best"];
     assert_eq!((best.keys, best.ty.as_str(), best.merge.as_deref(), best.widen), (1, "sym", Some("shortlex_min"), Some(8)));
     assert_eq!((lattice["cv"].ty.as_str(), lattice["cv"].merge.as_deref()), ("flat", None));
-    assert_eq!(ProgramFields::demand(&*p), vec!["private".to_owned(), "cv".to_owned()]);
+    // Demand is a set, stored sorted (program_facts): a lowering and a link meet its pragmas in different orders.
+    assert_eq!(ProgramFields::demand(&*p), vec!["cv".to_owned(), "private".to_owned()]);
     let rules: Vec<Vec<String>> = rules_of(&p, |h| h == "private").into_iter().map(|r| body_of(&p, r)).collect();
     let one = || "1".to_owned();
     assert_eq!(rules[0][1..], [cmp(call("prefix", vec![v("x"), s("_")]), "=", one()), cmp(call("glob", vec![v("x"), set(&["*_test", "test_*"])]), "=", "0".to_owned())]);

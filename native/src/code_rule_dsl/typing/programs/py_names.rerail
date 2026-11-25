@@ -21,6 +21,18 @@
 //   anc_method(m, q, x)       such an ancestor defines method x (a def whose nearest scope is the class)
 //   member_call(m, q, x, f), member_kw(m, q, x, k, v), member_method(m, q, x)
 //                             the same of class q's own body: a file naming q (read through reads_at) reads them
+//   dj_group(m, q, g, x)      Django (0677 fix 3c): field x is in group g, a set of fields the database keeps unique
+//                             together for model q's rows: unique_together, or a UniqueConstraint(fields=[...]) with no
+//                             condition, in q's Meta options (dj_opts_from: its own Meta, an abstract base's it takes,
+//                             a concrete base's). g names the group: the Meta's class, the option, the element's index
+//   dj_cond_group(m, q, g, x) the same of a UniqueConstraint with a condition=
+//   dj_opaque(m, q)           q's Meta options hold a uniqueness option not read: not a literal list, an expression
+//                             constraint, fields= not a literal list of strings
+//   dj_unmanaged(m, q)        q's Meta options set `managed` to anything but True
+//   dj_abstract(m, q)         q's own Meta says `abstract = True` (Django passes it on to no subclass)
+//   dj_manager_method(m, q, a, x)  q's attribute a (`objects = ...`, its own or an ancestor's of the run) names a class
+//                             of the run, at any depth of its right side, which defines or inherits method x
+//                             (get_or_create, update_or_create), itself or the class its get_queryset() names
 // An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
 // module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
 // python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
@@ -28,10 +40,12 @@
 
 #include "core.rerail"
 #include "python/scopes.rerail"
+#include "python/django-bases.rerail"
 
 .phase py_names
 .export reads_at, exports, class, defined, public, ancestor, library_ancestor, anc_call, anc_kw, anc_ref, anc_method,
-    member_call, member_kw, member_method
+    member_call, member_kw, member_method, dj_group, dj_cond_group, dj_opaque, dj_unmanaged, dj_abstract,
+    dj_manager_method
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -80,6 +94,15 @@ base(q, b) :- base_here(q, b).
 // resolve_export's two rules, for a base's name (its `export_query` is python/imports' own, decision 0263).
 base(q, b) :- base_name(q, q0), split_dot(q0, m, x), exports(m, x, b).
 base(q, q0) :- base_name(q, q0), count : { split_dot(q0, m, x), exported(m, x) } = 0.
+// A class of the run read as an attribute of a class (`class Meta(Named.Meta)`), as python/names' sym_of rule 3 reads
+// it: the object resolved by the file's own binding or through an import, the base its qualname where some module
+// defines it.
+.decl base_attr_here(q: symbol, c: symbol, a: symbol)
+base_attr_here(q, c, a) :- base_expr(q, e), attr_of(e, o, a), sym_of(o, c).
+.decl base_attr_name(q: symbol, c0: symbol, a: symbol)
+base_attr_name(q, c0, a) :- base_expr(q, e), attr_of(e, o, a), qn(o, c0).
+base(q, b) :- base_attr_here(q, c, a), b = @dot(c, a), defined(_, b).
+base(q, b) :- base_attr_name(q, c0, a), split_dot(c0, m, x), exports(m, x, c), b = @dot(c, a), defined(_, b).
 // anc(q, b): b is among q's bases, at any depth. Linear (a base's ancestors, not a join of two closures): its rows
 // are each class's ancestors, the depth of the hierarchy, not its square.
 .decl anc(q: symbol, b: symbol)
@@ -136,3 +159,111 @@ anc_kw(m, q, x, k, v) :- class(m, q), anc(q, o), own_kw(o, x, k, v).
 anc_ref(m, q, x, s) :- class(m, q), anc(q, o), own_ref(o, x, s).
 .decl anc_method(m: symbol, q: symbol, x: symbol)
 anc_method(m, q, x) :- class(m, q), anc(q, o), own_method(o, x).
+
+// ---- Django's model options and managers (0677 fix 3c) -------------------------------------------------------------
+// Here, not in a phase of Django's own: they need the class line (base, anc) and the names' resolution (sym_of, qn,
+// exports) this phase holds, and a phase of their own would run python/scopes over every file a third time. Each
+// file's rules turn its Meta classes' bodies into symbols (the dj_own_* relations: a class's own Meta); Django's
+// inheritance of Meta options is then joined by symbol, and handed on under the model's own module.
+// dj_meta_node(c, n): class c's body declares `class Meta` n.
+.decl dj_meta_node(c: node, n: node)
+dj_meta_node(c, n) :- kind(c, "class_definition"), kind(n, "class_definition"), def_name(n, "Meta"), nearest(n, c, scope).
+// dj_meta_q(q, mt): class q declares Meta, of qualname mt.
+.decl dj_meta_q(q: symbol, mt: symbol)
+dj_meta_q(q, mt) :- class_def(c, q), dj_meta_node(c, n), class_def(n, mt).
+// dj_opt(q, k, v): class q's own Meta sets option k to v (`unique_together = (...)`), parentheses off.
+.decl dj_opt(q: symbol, k: symbol, v: node)
+dj_opt(q, k, v) :- class_def(c, q), dj_meta_node(c, n), field(n, "body", b), child(b, s, _), kind(s, "expression_statement"),
+    child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, k), field(a, "right", r),
+    unparen(r, v).
+// dj_seq(n): a list or tuple. dj_strings(g): a list or tuple of string literals alone (comments aside), one at least.
+.decl dj_seq(n: node)
+dj_seq(n) :- kind(n, "list") ; kind(n, "tuple").
+.decl dj_odd(g: node)
+dj_odd(g) :- dj_seq(g), child(g, e, _), !kind(e, "string"), !kind(e, "comment").
+.decl dj_strings(g: node)
+dj_strings(g) :- dj_seq(g), child(g, e, _), kind(e, "string"), !dj_odd(g).
+// dj_constraint(k): k is a call of UniqueConstraint (`models.UniqueConstraint(...)`, by the name as imported or bound).
+.decl dj_constraint(k: node)
+dj_constraint(k) :- kind(k, "call"), field(k, "function", f), (sym_of(f, q) ; qn(f, q)), suffix(".UniqueConstraint", q).
+// dj_kwarg(k, x, v): call k passes keyword argument x = v, parentheses off.
+.decl dj_kwarg(k: node, x: symbol, v: node)
+dj_kwarg(k, x, v) :- kind(k, "call"), field(k, "arguments", al), child(al, ka, _), kind(ka, "keyword_argument"),
+    field(ka, "name", n), text(n, x), field(ka, "value", w), unparen(w, v).
+// dj_group_node(q, g, gn, c): list or tuple gn of class q's own Meta is a group, named g; c is "" or "condition" (a
+// UniqueConstraint with a condition: whether a row meets it is not known).
+.decl dj_group_node(q: symbol, g: symbol, gn: node, c: symbol)
+dj_group_node(q, cat(q, "#unique_together"), v, "") :- dj_opt(q, "unique_together", v), dj_strings(v).
+dj_group_node(q, cat(q, "#unique_together.", to_string(i)), g, "") :- dj_opt(q, "unique_together", v), dj_seq(v),
+    child(v, e, i), unparen(e, g), dj_strings(g).
+dj_group_node(q, cat(q, "#constraints.", to_string(i)), g, "") :- dj_opt(q, "constraints", v), dj_seq(v), child(v, k, i),
+    dj_constraint(k), dj_kwarg(k, "fields", g), dj_strings(g), !dj_kwarg(k, "condition", _).
+dj_group_node(q, cat(q, "#constraints.", to_string(i)), g, "condition") :- dj_opt(q, "constraints", v), dj_seq(v),
+    child(v, k, i), dj_constraint(k), dj_kwarg(k, "fields", g), dj_strings(g), dj_kwarg(k, "condition", _).
+.decl dj_own_group(q: symbol, g: symbol, c: symbol, x: symbol)
+dj_own_group(q, g, c, x) :- dj_group_node(q, g, gn, c), child(gn, e, _), str(e, x).
+// dj_own_opaque(q): q's own Meta holds a uniqueness option not read (dj_opaque).
+.decl dj_own_opaque(q: symbol)
+dj_own_opaque(q) :- (dj_opt(q, "unique_together", v) ; dj_opt(q, "constraints", v)), !dj_seq(v).
+dj_own_opaque(q) :- dj_opt(q, "unique_together", v), !dj_strings(v), child(v, e, _), !kind(e, "comment"), unparen(e, g),
+    !dj_strings(g).
+dj_own_opaque(q) :- dj_opt(q, "constraints", v), child(v, k, _), dj_constraint(k), field(k, "arguments", al),
+    child(al, a, _), !kind(a, "keyword_argument"), !kind(a, "comment").
+dj_own_opaque(q) :- dj_opt(q, "constraints", v), child(v, k, _), dj_constraint(k), !dj_fields_lit(k).
+dj_own_opaque(q) :- dj_opt(q, "constraints", v), child(v, k, _), !kind(k, "comment"), !kind(k, "call").
+.decl dj_fields_lit(k: node)
+dj_fields_lit(k) :- dj_kwarg(k, "fields", g), dj_strings(g).
+.decl dj_own_unmanaged(q: symbol)
+dj_own_unmanaged(q) :- dj_opt(q, "managed", v), !text(v, "True").
+.decl dj_own_abstract(q: symbol)
+dj_own_abstract(q) :- dj_opt(q, "abstract", v), text(v, "True").
+// dj_meta_from(c, b): class c takes the Meta of class b, a base of the run, as Django does: c declares no Meta (and so
+// inherits its bases' Meta attribute), or c's Meta subclasses b's own (`class Meta(B.Meta)`); through a chain of such.
+.decl dj_meta_from(c: symbol, b: symbol)
+dj_meta_from(c, b) :- base(c, b), run_class(b), !dj_has_meta(c).
+dj_meta_from(c, b) :- base(c, b), dj_meta_q(c, mt), base(mt, mb), dj_meta_q(b, mb).
+dj_meta_from(c, a) :- dj_meta_from(c, b), dj_meta_from(b, a).
+.decl dj_has_meta(q: symbol)
+dj_has_meta(q) :- dj_meta_q(q, _).
+// dj_model_q(q): q is a model by its line: a known model base itself, or one among its ancestors.
+.decl dj_model_q(q: symbol)
+dj_model_q(q) :- run_class(q), anc(q, b), dj_model_base(b).
+// dj_opts_from(q, s): class q's Meta options include class s's own Meta's: q's own, an abstract base's q takes
+// (dj_meta_from), and a concrete model base's, at any depth (multi-table inheritance or a proxy: that table's
+// constraints hold for q's rows too).
+.decl dj_opts_from(q: symbol, s: symbol)
+dj_opts_from(q, q) :- run_class(q).
+dj_opts_from(q, s) :- dj_meta_from(q, s), dj_own_abstract(s).
+dj_opts_from(q, s) :- base(q, b), run_class(b), !dj_own_abstract(b), dj_model_q(b), dj_opts_from(b, s).
+.decl dj_group(m: symbol, q: symbol, g: symbol, x: symbol)
+dj_group(m, q, g, x) :- class(m, q), dj_opts_from(q, s), dj_own_group(s, g, "", x).
+.decl dj_cond_group(m: symbol, q: symbol, g: symbol, x: symbol)
+dj_cond_group(m, q, g, x) :- class(m, q), dj_opts_from(q, s), dj_own_group(s, g, "condition", x).
+.decl dj_opaque(m: symbol, q: symbol)
+dj_opaque(m, q) :- class(m, q), dj_opts_from(q, s), dj_own_opaque(s).
+.decl dj_unmanaged(m: symbol, q: symbol)
+dj_unmanaged(m, q) :- class(m, q), dj_opts_from(q, s), dj_own_unmanaged(s).
+.decl dj_abstract(m: symbol, q: symbol)
+dj_abstract(m, q) :- class(m, q), dj_own_abstract(q).
+// Managers. dj_gq_call(k, f): class k's own get_queryset() calls f, resolved as a member call is (own_call).
+.decl dj_gq_call_here(k: symbol, f: symbol)
+dj_gq_call_here(k, f) :- class_def(c, k), kind(d, "function_definition"), nearest(d, c, scope), def_name(d, "get_queryset"),
+    kind(e, "call"), within(e, d), field(e, "function", fn), sym_of(fn, f).
+.decl dj_gq_call_name(k: symbol, f0: symbol)
+dj_gq_call_name(k, f0) :- class_def(c, k), kind(d, "function_definition"), nearest(d, c, scope),
+    def_name(d, "get_queryset"), kind(e, "call"), within(e, d), field(e, "function", fn), qn(fn, f0).
+.decl dj_gq_call(k: symbol, f: symbol)
+dj_gq_call(k, f) :- dj_gq_call_here(k, f).
+dj_gq_call(k, f) :- dj_gq_call_name(k, f0), split_dot(f0, m, y), exports(m, y, f).
+// dj_mgr_class(s, k): manager class s runs its queries through class k of the run: itself, or the class its
+// get_queryset() (its own, else an ancestor's) calls (`return SlugQuerySet(self.model, using=self._db)`).
+.decl dj_mgr_class(s: symbol, k: symbol)
+dj_mgr_class(s, s) :- run_class(s).
+dj_mgr_class(s, k) :- own_method(s, "get_queryset"), dj_gq_call(s, k), run_class(k).
+dj_mgr_class(s, k) :- run_class(s), !own_method(s, "get_queryset"), anc(s, o), dj_gq_call(o, k), run_class(k).
+// dj_row_maker(x): the queryset methods that insert a row when the lookup finds none.
+.decl dj_row_maker(x: symbol)
+dj_row_maker("get_or_create"). dj_row_maker("update_or_create").
+.decl dj_manager_method(m: symbol, q: symbol, a: symbol, x: symbol)
+dj_manager_method(m, q, a, x) :- class(m, q), (own_ref(q, a, s) ; anc(q, o), own_ref(o, a, s)), dj_mgr_class(s, k),
+    dj_row_maker(x), (own_method(k, x) ; anc(k, o2), own_method(o2, x)).

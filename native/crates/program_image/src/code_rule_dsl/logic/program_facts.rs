@@ -259,7 +259,10 @@ impl Writer<'_> {
                 }
             }
             Field::Demand(list) => {
-                for (k, rel) in list.iter().enumerate() {
+                // A set (decision 0145): stored sorted, so a program lowered whole and the same program linked from
+                // its modules, which meet its `magic-transform` pragmas in different orders, state one demand.
+                let set: std::collections::BTreeSet<&String> = list.iter().collect();
+                for (k, rel) in set.into_iter().enumerate() {
                     self.row("demand", vec![n(k), s(rel)]);
                 }
             }

@@ -169,8 +169,8 @@ legacy_suppress(w, c) :- with_call(w, c), !op(w, "async"), callee(c, f), lint_do
 // contextlib, or a bare `suppress` while the last `from contextlib import …` before w imports suppress.
 .decl suppress_call(w: node, c: node)
 suppress_call(w, c) :- with_call(w, c), callee(c, f), kind(f, "attribute"), field(f, "attribute", a), name(a, "suppress"),
-    field(f, "object", o), unparen(o, n), kind(n, "identifier"), name(n, "contextlib").
-suppress_call(w, c) :- with_call(w, c), callee(c, f), unparen(f, n), kind(n, "identifier"), name(n, "suppress"),
+    field(f, "object", o), se_unparen(o, n), kind(n, "identifier"), name(n, "contextlib").
+suppress_call(w, c) :- with_call(w, c), callee(c, f), se_unparen(f, n), kind(n, "identifier"), name(n, "suppress"),
     bare_suppress(w).
 
 // bare_suppress(w): the linter's has_bare_suppress flag when it reaches w. Each `from contextlib import …` it visits
@@ -204,10 +204,10 @@ lint_dotted(e, @dot(p, a)) :- dotted_q(e), kind(e, "attribute"), field(e, "objec
     field(e, "attribute", an), name(an, a).
 lint_dotted(e, t) :- dotted_q(e), kind(e, "parenthesized_expression"), child(e, x, 0), lint_dotted(x, t).
 lint_dotted(e, "") :- dotted_q(e), !kind(e, "identifier"), !kind(e, "attribute"), !kind(e, "parenthesized_expression").
-// unparen(e, n): e with any parentheses around it removed.
-.decl unparen(e: node, n: node)
-unparen(e, e) :- dotted_q(e), !kind(e, "parenthesized_expression").
-unparen(e, n) :- dotted_q(e), kind(e, "parenthesized_expression"), child(e, x, 0), unparen(x, n).
+// se_unparen(e, n): e with any parentheses around it removed.
+.decl se_unparen(e: node, n: node)
+se_unparen(e, e) :- dotted_q(e), !kind(e, "parenthesized_expression").
+se_unparen(e, n) :- dotted_q(e), kind(e, "parenthesized_expression"), child(e, x, 0), se_unparen(x, n).
 
 // pos_arg(c, a): a positional argument of with-item call c, `*xs` included (ast's call.args); keywords are not.
 .decl pos_arg(c: node, a: node)

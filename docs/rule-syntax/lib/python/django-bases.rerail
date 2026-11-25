@@ -1,0 +1,13 @@
+// python/django-bases: the classes outside the run that Django's rules take for models. python/django reads them,
+// and so does the phase py_names (its Django section, decision 0677 fix 3c), which includes neither python/names nor
+// python/django: one list for both.
+// dj_model_base(q): classes outside the run that are models: Django's own and common third-party bases.
+.decl dj_model_base(q: symbol)
+dj_model_base("django.db.models.Model"). dj_model_base("django.db.models.base.Model").
+dj_model_base("django.contrib.auth.models.AbstractUser"). dj_model_base("django.contrib.auth.models.AbstractBaseUser").
+dj_model_base("django.contrib.auth.base_user.AbstractBaseUser"). dj_model_base("django.contrib.auth.models.PermissionsMixin").
+dj_model_base("django.contrib.auth.models.User"). dj_model_base("django.contrib.auth.models.Group").
+dj_model_base("mptt.models.MPTTModel"). dj_model_base("polymorphic.models.PolymorphicModel").
+dj_model_base("treebeard.mp_tree.MP_Node"). dj_model_base("treebeard.ns_tree.NS_Node").
+dj_model_base("treebeard.al_tree.AL_Node"). dj_model_base("model_utils.models.TimeStampedModel").
+dj_model_base("django_extensions.db.models.TimeStampedModel"). dj_model_base("wagtail.models.Page").

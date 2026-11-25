@@ -253,14 +253,6 @@ packs/django ghw_model_instance
 packs/django ghw_own_method
 packs/django ghw_self_bound
 packs/django ghw_write
-packs/django goc_call
-packs/django goc_cond_group
-packs/django goc_group
-packs/django goc_meta_from
-packs/django goc_meta_opt
-packs/django goc_mgr_class
-packs/django goc_opaque
-packs/django goc_unknown
 packs/django mro_method
 packs/django pt_aclosed
 packs/django pt_acls

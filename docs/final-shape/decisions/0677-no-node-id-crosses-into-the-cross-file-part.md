@@ -170,7 +170,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
 3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
    Class hierarchy (3a), class members and a Django model read by its symbol (3b): **done (2026-11-24)**, § Fix 3:
-   built. `goc_call` (a model's `Meta`), bwh's hooks, points-to, `plp_anycand` and `item_parts` remain.
+   built. A model's `Meta` options and managers (3c): **done (2026-11-25)**, § Fix 3c: built. bwh's hooks, points-to,
+   `plp_anycand` and `item_parts` remain.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
@@ -399,6 +400,67 @@ read each model's `save()`/`delete()` bodies and the signal receivers of every f
   a sharded pack stays listed. The Python shards' logs, compared with the list, held 8 such (`exports` among them,
   a leftover of fix 2), and python-main's 1. They are out. A check that runs all of a pack's shards and refuses a
   stale entry is open (below).
+
+### Fix 3c: built (2026-11-25): a model's Meta options and managers
+
+**The list.** 541 entries, from 549: Django's 147 are 139. goc's `goc_call(c, m, mc)` paired a call with the model's
+class node in another file, and its readers took the model's `Meta` through it: `goc_meta_opt`, `goc_meta_from`,
+`goc_group`, `goc_cond_group`, `goc_opaque`, `goc_mgr_class` and `goc_unknown`, the 8 entries now out.
+
+**Where the Meta is read.** No other rule reads a model's `Meta`, so it needs no phase of Django's own. Such a phase
+would need the class line (`base`, `anc`) and the names' resolution (`sym_of`, `qn`, the modules' exports) that
+`py_names` holds, and it would run python/scopes over every file a third time. `py_names` has a Django section
+instead. Each file's rules turn its Meta classes' bodies into symbols (`dj_own_group`, `dj_own_opaque`,
+`dj_own_unmanaged`, `dj_own_abstract`). Django's inheritance of Meta options is joined by symbol: a model takes the
+options of its own Meta, of an abstract base whose Meta it takes (`dj_meta_from`: it declares no Meta, or its Meta
+subclasses the base's), and of a concrete model base's, at any depth. The phase hands these on under the model's
+module:
+- `dj_group(m, q, g, x)`: field x is in group g. The group is unique_together, or a UniqueConstraint's `fields=` with
+  no condition. g names the group by the Meta's class, the option and the element's index:
+  `models_base.Coded#constraints.0`.
+- `dj_cond_group(m, q, g, x)`: the same, with a condition.
+- `dj_opaque(m, q)`: a uniqueness option that is not read (not a literal list, an expression constraint, `fields=` not
+  a literal list).
+- `dj_unmanaged(m, q)` and `dj_abstract(m, q)`.
+- `dj_manager_method(m, q, a, x)`: a manager attribute a of the model, or of an ancestor, names a class of the run.
+  That class, or the class its `get_queryset()` calls, defines or inherits x (`get_or_create`, `update_or_create`).
+
+python/django reads them at a node of the reading file that names the model (`dj_model_group`, …, through
+`dj_model_ref`). goc's call now holds that node, `goc_call(c, m, r)`, as `dj_qs_model(q, r)` does. For `cls` in a
+classmethod, the node is the model's own class node. The list of model bases (`dj_model_base`) is one file,
+python/django-bases, included by both python/django and the phase.
+
+**Found on the way.**
+- *`py_names`' `base` missed a class read as an attribute of a class.* `class Meta(Named.Meta)` names
+  `Named.Meta` (python/names' `sym_of` rule 3), and `base` resolved only a name and an import. It now resolves the
+  object, through the file's own binding or an import, and takes the attribute's qualname where a module defines it.
+  The ancestry of fix 3a gains those bases.
+- *`unparen` moved to python/scopes,* so the phase reads it, since python/ast includes python/names. A data-layer
+  policy, swallowed-exceptions, declared its own narrower `unparen` and includes python/names. Its relation is
+  `se_unparen` now.
+- *Demand is a set.* With `unparen`'s `magic-transform` pragma in python/scopes, the program linked from its modules
+  stated `unparen, reaches` and the whole lowering `reaches, unparen`
+  (`a_program_linked_from_its_modules_is_its_whole_lowering`). Demand is stored sorted where every lowering and link
+  writes it (`program_facts`), as fix 2 made a pass's reads. T's goldens are compared with their demand line sorted.
+- *rerail-tests-lang did not compile.* A test passed `&Arc<Atoms>` where `&dyn AtomTable` is taken. The call
+  dereferences it now.
+- *Fix 3's `WRITTEN_SPACES` was in no list of decision 0104* (`every_kept_map_is_state_or_listed`, rerail-logic, a
+  crate fix 3's runs left out). It holds the spaces the open write transaction has swept, and is cleared when its scope
+  closes, so it is listed as state.
+
+**Semantics kept, and one narrowed.** goc's cases pass unchanged. A concrete base's Meta options count when the base
+is a model by its line (a known model base among its ancestors). Before, they also counted when the base was a model
+only by a field in its own body. Then the base's chain leaves the run at a class the list does not know. Such a model
+then has an unrecognised base and a Meta with unique options; none is in the cases.
+
+**Tests.** `a_django_models_meta_and_managers_are_read_by_their_symbol_in_another_file`. views.py imports shop.models
+alone, and reads from it:
+- Plank's options from an abstract base whose Meta Plank's Meta subclasses. That base is in a module views.py never
+  imports.
+- None of them for Board, which declares a Meta of its own (unmanaged).
+- Part's options from its concrete base's constraints, one of them with a condition.
+- Tag's expression constraint, which is opaque.
+- Part's manager, whose `get_queryset()` builds a queryset class that defines `get_or_create`.
 
 ## Open
 

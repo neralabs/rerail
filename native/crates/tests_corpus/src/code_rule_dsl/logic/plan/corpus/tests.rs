@@ -2731,7 +2731,7 @@ fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
-    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm"]
+    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm", "mg", "mc", "mu", "mo", "da", "mm"]
         .into_iter()
         .filter_map(|name| {
             let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
@@ -2889,6 +2889,77 @@ dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p,
         "{rows:?}"
     );
     assert_eq!(rows["dm"], [r(&["views.py", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's Meta options and managers read by its symbol in another file (decision 0677 fix 3c: the phase py_names'
+/// Django section, python/django's dj_model_group and the rest). views.py imports shop.models alone; the Meta options
+/// and the manager's methods come from models_base and shop.managers, which it never imports, each by Django's
+/// inheritance: Plank's Meta subclasses its abstract base's (`class Meta(Named.Meta)`), Board declares a Meta of its
+/// own and takes none of Named's, Part takes its concrete base's constraints, and Part's manager builds a queryset
+/// class that defines get_or_create.
+#[test]
+fn a_django_models_meta_and_managers_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Named(models.Model):\n    name = models.CharField(max_length=50)\n    owner = models.ForeignKey(\"auth.User\", on_delete=models.CASCADE)\n\n    class Meta:\n        abstract = True\n        unique_together = (\"name\", \"owner\")\n\n\nclass Coded(models.Model):\n    code = models.CharField(max_length=10)\n    kind = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [\n            models.UniqueConstraint(fields=[\"code\"], name=\"c\"),\n            models.UniqueConstraint(fields=[\"code\", \"kind\"], condition=models.Q(kind=\"a\"), name=\"d\"),\n        ]\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/managers.py",
+            "from django.db import models\n\n\nclass SlugQuerySet(models.QuerySet):\n    def get_or_create(self, **kw):\n        return super().get_or_create(**kw)\n\n\nclass SlugManager(models.Manager):\n    def get_queryset(self):\n        return SlugQuerySet(self.model, using=self._db)\n",
+        ),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom django.db.models.functions import Lower\nfrom models_base import Coded, Named\nfrom shop.managers import SlugManager\n\n\nclass Plank(Named):\n    class Meta(Named.Meta):\n        ordering = [\"name\"]\n\n\nclass Board(Named):\n    class Meta:\n        managed = False\n\n\nclass Part(Coded):\n    objects = SlugManager()\n\n\nclass Tag(models.Model):\n    label = models.CharField(max_length=10)\n\n    class Meta:\n        constraints = [models.UniqueConstraint(Lower(\"label\"), name=\"l\")]\n",
+        ),
+        ("views.py", "from shop.models import Board, Part, Plank, Tag\n\n\ndef make():\n    Plank.objects.get_or_create(name=\"n\")\n    Board.objects.get_or_create(name=\"n\")\n    Part.objects.get_or_create(code=\"c\")\n    Tag.objects.get_or_create(label=\"l\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-meta", &edits);
+    let program = r#".language python
+#include "python/django.rerail"
+.decl at_view(e: node, mq: symbol)
+at_view(e, mq) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _).
+.decl mg(mq: symbol, g: symbol, x: symbol)
+mg(mq, g, x) :- at_view(e, mq), dj_model_group(e, g, x).
+.output mg
+.decl mc(mq: symbol, g: symbol, x: symbol)
+mc(mq, g, x) :- at_view(e, mq), dj_model_cond_group(e, g, x).
+.output mc
+.decl mu(mq: symbol)
+mu(mq) :- at_view(e, mq), dj_model_unmanaged(e).
+.output mu
+.decl mo(mq: symbol)
+mo(mq) :- at_view(e, mq), dj_model_opaque(e).
+.output mo
+.decl da(p: symbol, mq: symbol)
+da(p, mq) :- dj_model_abstract(e), dj_model_named(e, mq), docof(e, d), doc(d, p, _).
+.output da
+.decl mm(mq: symbol, a: symbol, x: symbol)
+mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
+.output mm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["mg"],
+        [
+            r(&["shop.models.Part", "models_base.Coded#constraints.0", "code"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "name"]),
+            r(&["shop.models.Plank", "models_base.Named#unique_together", "owner"]),
+        ],
+        "Plank takes its abstract base's Meta, Board does not, Part its concrete base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["mc"],
+        [r(&["shop.models.Part", "models_base.Coded#constraints.1", "code"]), r(&["shop.models.Part", "models_base.Coded#constraints.1", "kind"])],
+        "{rows:?}"
+    );
+    assert_eq!(rows["mu"], [r(&["shop.models.Board"])], "{rows:?}");
+    assert_eq!(rows["mo"], [r(&["shop.models.Tag"])], "an expression constraint: {rows:?}");
+    assert_eq!(rows["da"], [r(&["models_base.py", "models_base.Named"]), r(&["shop/models.py", "models_base.Named"])], "{rows:?}");
+    assert_eq!(rows["mm"], [r(&["shop.models.Part", "objects", "get_or_create"])], "{rows:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
