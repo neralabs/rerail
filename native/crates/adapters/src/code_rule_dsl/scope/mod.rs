@@ -288,12 +288,60 @@ pub enum Import {
     Definition,
 }
 
+/// A name's bindings in a scope, in order: the first held in place, a list from the second on. Most names are bound
+/// once: a list a name was half of a Python document's scope arrays (`Builder::bind`, 4.9 M on cold PostHog).
+#[derive(Clone, Debug)]
+pub enum Chain {
+    One(Binding),
+    Many(Vec<Binding>),
+}
+
+impl Chain {
+    pub fn push(&mut self, binding: Binding) {
+        match self {
+            Chain::Many(list) => list.push(binding),
+            Chain::One(_) => {
+                let Chain::One(first) = std::mem::replace(self, Chain::Many(Vec::with_capacity(2))) else { unreachable!() };
+                let Chain::Many(list) = self else { unreachable!() };
+                list.extend([first, binding]);
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for Chain {
+    type Target = [Binding];
+    fn deref(&self) -> &[Binding] {
+        match self {
+            Chain::One(b) => std::slice::from_ref(b),
+            Chain::Many(list) => list,
+        }
+    }
+}
+
+impl std::ops::DerefMut for Chain {
+    fn deref_mut(&mut self) -> &mut [Binding] {
+        match self {
+            Chain::One(b) => std::slice::from_mut(b),
+            Chain::Many(list) => list,
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a Chain {
+    type Item = &'a Binding;
+    type IntoIter = std::slice::Iter<'a, Binding>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 pub struct Scope {
     pub kind: ScopeKind,
     #[allow(dead_code)]
     pub range: Range<usize>,
     pub parent: Option<u32>,
-    pub bindings: HashMap<Box<str>, Vec<Binding>>,
+    pub bindings: HashMap<Box<str>, Chain>,
     /// Python `nonlocal` declarations of this scope.
     pub nonlocals: BTreeSet<Box<str>>,
     /// Python: where each `from m import *` of this scope takes effect, in order. Rust: where each
@@ -1442,7 +1490,7 @@ impl Builder<'_> {
         match bindings.get_mut(name) {
             Some(chain) => chain.push(binding),
             None => {
-                bindings.insert(name.into(), vec![binding]);
+                bindings.insert(name.into(), Chain::One(binding));
             }
         }
     }
