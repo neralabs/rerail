@@ -40,16 +40,19 @@ import {
   parsePublicHosts,
   type ParsedArguments,
 } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commitEveryWriteDurably, defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
   BROWSER_OFF_NOTE,
   dashboardAccessLink,
   dashboardLink,
   daemonNotRunningMessage,
+  foundRunning,
   homeDaemonInStart,
   lookupDaemon,
   NOT_HOME_DAEMON_NOTE,
+  olderDaemonMessage,
+  olderDaemonReplacedMessage,
   openInBrowser,
   openDashboard,
   startDaemon,
@@ -269,6 +272,7 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
   const launch = daemonStartLaunch(parsed);
   // A daemon still in its start, one set-up or another start launched, is waited for; the person is told whose.
   const result = await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, launch);
+  if (result.replaced !== undefined) process.stdout.write(`${olderDaemonReplacedMessage(result.replaced)}\n`);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
@@ -424,10 +428,11 @@ function hookHealthLines(home: string, lookup: DaemonLookup): string[] {
 /**
  * What `rerail status` says of a daemon still in its start that does not answer yet, with the exit code of a daemon that
  * does not answer: that it is starting, never to stop it, after the note that the lookup removed a daemon.json naming
- * another process when it did. Undefined when the lookup found it answering, or none is in its start.
+ * another process when it did. Undefined when the lookup found it answering, found one of a release before the
+ * engine's proof, which holds no lock and so can run beside a daemon in its start, or none is in its start.
  */
 function printStartingDaemon(home: string, lookup: DaemonLookup): number | undefined {
-  if (lookup.status === "running" || lookup.status === "refused") return undefined;
+  if (foundRunning(lookup) || lookup.status === "refused") return undefined;
   const pid = homeDaemonInStart(home);
   if (pid === undefined) return undefined;
   if (lookup.status === "absent" && lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
@@ -437,21 +442,34 @@ function printStartingDaemon(home: string, lookup: DaemonLookup): number | undef
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
+  if (lookup.status !== "running") return printDaemonWithoutHealth(lookup);
+  printDaemon({ state: lookup.state, health: lookup.health });
+  return lookup.health.healthy === false ? 5 : 0;
+}
+
+/**
+ * What `rerail status` says of a daemon it has no health of, and the exit code: 3 when none runs, 4 for one that is
+ * alive and not answering, refused the capability, or runs a release before the engine's proof, which is asked nothing.
+ */
+function printDaemonWithoutHealth(lookup: Exclude<DaemonLookup, { status: "running" }>): number {
   if (lookup.status === "absent") {
     if (lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
     process.stdout.write(`${daemonNotRunningMessage()}\n`);
     return 3;
   }
+  process.stdout.write(`${daemonWithoutHealthLine(lookup)}\n`);
+  return 4;
+}
+
+/** The line {@link printDaemonWithoutHealth} prints for a daemon that is alive. */
+function daemonWithoutHealthLine(lookup: Exclude<DaemonLookup, { status: "absent" | "running" }>): string {
   if (lookup.status === "unresponsive") {
-    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.\n`);
-    return 4;
+    return `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`;
   }
   if (lookup.status === "refused") {
-    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.\n`);
-    return 4;
+    return `Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.`;
   }
-  printDaemon({ state: lookup.state, health: lookup.health });
-  return lookup.health.healthy === false ? 5 : 0;
+  return olderDaemonMessage(lookup.state);
 }
 
 /**
@@ -1008,6 +1026,9 @@ function failed(error: unknown): number {
   return 1;
 }
 
+// Every write this command makes is a change a person asked for, and no hook waits on it: each commit is on the disk
+// before the command says it is made, so a power cut right after cannot roll it back.
+commitEveryWriteDurably();
 try {
   process.exitCode = await main();
 } catch (error) {

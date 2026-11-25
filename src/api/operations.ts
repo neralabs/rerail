@@ -536,7 +536,7 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group, the mode it starts in and, where its pack gives them, its dimensions (risk, layer, severity, hazard), and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
     query: z.object({ checkout: targetShape.checkout }).strict(),
     output: rulePackListSchema,
     handler: (stores, input, caller) => {
@@ -764,6 +764,7 @@ export const operations: readonly Operation[] = [
     output: sessionResponseSchema.extend({
       gaps: z.object({
         droppedEvents: z.number().int().nonnegative().describe("Events the coding agent never delivered, from its `events-dropped` records."),
+        lostEvents: z.number().int().nonnegative().describe("Events Rerail recorded whose records a power cut or an operating system crash took, from the `events-lost` records the session's next open writes: its ledger keeps each event's id, kind and time, never its content."),
         uncheckedBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's shell-write check finished."),
         codeRulesPendingBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's code rules were running."),
         ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),

@@ -1,0 +1,1 @@
+On Windows, beside the record of a gone daemon whose process id another process has taken, while something that does not answer holds its engine pipe, `rerail status` says the record named no daemon of this home, removes it and exits 3, as on Linux. Before, it called that daemon alive but not answering, kept the record and exited 4.

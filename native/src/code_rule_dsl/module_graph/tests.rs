@@ -785,8 +785,9 @@ fn the_walk_stops_past_its_entry_bound() {
 }
 
 /// A rewrite that keeps a source's length and modification time (`'use server'` for
-/// `'use client'`) is read again: a file modified a moment ago is not cached, and on unix a
-/// settled one's status-change time or inode moves.
+/// `'use client'`) is read again: a file modified a moment ago is not cached, and a settled one's
+/// change time or file id moves (on unix its status-change time or inode, on Windows NTFS's change
+/// time or file id).
 #[test]
 fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
     let root = temp_root("restamped");
@@ -803,22 +804,48 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
             .set_modified(modified)
             .unwrap();
     };
+    // The stamp the walk reads for `app/a.ts`.
+    let stamp = || {
+        listing::list(&root.join("app"))
+            .unwrap()
+            .map(Result::unwrap)
+            .find(|entry| entry.name() == "a.ts")
+            .and_then(|entry| Stamp::of(&entry.facts().unwrap()))
+    };
     let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
     let tick = SystemTime::now();
     rewrite("use server", tick);
     assert_eq!(disk_graph(&root, "").unwrap(), server);
     rewrite("use client", tick);
     assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
-    #[cfg(unix)]
     {
         let settled = SystemTime::now() - Duration::from_secs(3600);
+        // On Windows a summary is cached once the clock has left its change time: each settled
+        // rewrite there takes a change time of its own in the past, as a later walk sees it.
+        let rewrites = std::cell::Cell::new(0_u64);
+        let settle = || {
+            rewrites.set(rewrites.get() + 1);
+            #[cfg(windows)]
+            crate::git_workspace::set_change_time(
+                &root.join("app/a.ts"),
+                settled + Duration::from_secs(rewrites.get()),
+            );
+        };
         rewrite("use server", settled);
+        settle();
         assert_eq!(disk_graph(&root, "").unwrap(), server);
-        // Past the status-change time's granularity, as coarse as a scheduler tick.
-        std::thread::sleep(Duration::from_millis(50));
-        rewrite("use client", settled);
+        // The change time is as coarse as a scheduler tick, so a rewrite within the tick of the
+        // last one leaves it: the rewrite repeats until the stamp the walk reads moved.
+        let cached = stamp();
+        (0..10_000)
+            .find(|_| {
+                rewrite("use client", settled);
+                settle();
+                stamp() != cached
+            })
+            .expect("a rewrite moves the stamp");
         assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
-        // A file renamed over the source (as `rsync -t` writes one) is another inode.
+        // A file renamed over the source (as `rsync -t` writes one) is another file.
         write_file(&root, "app/a.tmp", "'use server';\nimport './b';\n");
         std::fs::File::options()
             .write(true)
@@ -830,6 +857,243 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
         assert_eq!(disk_graph(&root, "").unwrap(), server);
     }
     std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A source whose change time the file clock had not left when the walk read it is read again by
+/// the next walk: a rewrite in that change's own tick, keeping the length and modification time,
+/// leaves the whole stamp as it was. A change time ahead of the clock stands for that tick.
+#[cfg(windows)]
+#[test]
+fn a_source_changed_in_the_tick_of_its_read_is_read_again() {
+    let root = temp_root("same-tick");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    let ahead = SystemTime::now() + Duration::from_secs(3600);
+    let rewrite = |directive: &str| {
+        std::fs::write(&source, format!("'{directive}';\nimport './b';\n")).unwrap();
+        crate::git_workspace::backdate(&source, settled);
+        crate::git_workspace::set_change_time(&source, ahead);
+    };
+    rewrite("use server");
+    assert_eq!(
+        disk_graph(&root, "").unwrap(),
+        ["app/a.ts", "app/b.ts", "app/page.tsx"]
+    );
+    rewrite("use client");
+    assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A source whose read a person denied after the walk cached its summary keeps the summary of its
+/// last write, as its modification time and length show it: the denial moves NTFS's change time
+/// alone. A write of another length or at another time has no summary until it is read.
+#[cfg(windows)]
+#[test]
+fn a_source_whose_read_is_denied_keeps_the_summary_of_its_last_write() {
+    let root = temp_root("denied");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    let write = |text: &str, modified: SystemTime| {
+        std::fs::write(&source, text).unwrap();
+        crate::git_workspace::backdate(&source, modified);
+    };
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    write("'use server';\nimport './b';\n", settled);
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    let denied = crate::git_workspace::ReadDenied::new(&source);
+    assert!(std::fs::read(&source).is_err(), "the read is denied");
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    drop(denied);
+    for (text, modified) in [
+        ("'use server';\nimport './b';\n\n", settled),
+        (
+            "'use client';\nimport './b';\n",
+            settled + Duration::from_secs(1),
+        ),
+    ] {
+        write(text, modified);
+        let _denied = crate::git_workspace::ReadDenied::new(&source);
+        assert_eq!(disk_graph(&root, ""), None, "{text:?}");
+    }
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A source rewritten at the same length with its modification time put back, which another
+/// handle locks when the walk comes, keeps the summary of its last write while the lock holds, and
+/// is read once the lock is let go: the summary kept for a source the walk could not read is not
+/// cached under the source's new stamp.
+#[cfg(windows)]
+#[test]
+fn a_rewrite_locked_when_the_walk_comes_is_read_once_let_go() {
+    let root = temp_root("locked");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    // Each rewrite's change time is one the clock has left, as a later walk sees it.
+    let rewrite = |directive: &str, changed: SystemTime| {
+        std::fs::write(&source, format!("'{directive}';\nimport './b';\n")).unwrap();
+        crate::git_workspace::backdate(&source, settled);
+        crate::git_workspace::set_change_time(&source, changed);
+    };
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    rewrite("use server", settled);
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    rewrite("use client", settled + Duration::from_secs(1));
+    let lock = std::fs::File::open(&source).unwrap();
+    lock.lock().unwrap();
+    assert!(std::fs::read(&source).is_err(), "the lock denies the read");
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    drop(lock);
+    assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// A source whose data a provider moved off this disk after the walk cached its summary (a cloud
+/// file placeholder freed, a file moved to offline storage) keeps the summary of its last write
+/// with no read: the attribute moves NTFS's change time, and a read would make the provider
+/// download it. Once its data is back, the walk reads it once.
+#[cfg(windows)]
+#[test]
+fn a_source_whose_data_is_offline_keeps_the_summary_of_its_last_write_with_no_read() {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE};
+    let root = temp_root("offline");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    let settled = SystemTime::now() - Duration::from_secs(3600);
+    for (path, text) in [
+        ("app/page.tsx", "import './a';\nexport default 1;\n"),
+        ("app/a.ts", "'use server';\nimport './b';\n"),
+        ("app/b.ts", ""),
+    ] {
+        write_file(&root, path, text);
+        crate::git_workspace::backdate(&root.join(path), settled);
+    }
+    let source = root.join("app/a.ts");
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    let parsed = |why: &str, sources: usize| {
+        SUMMARIES.set(0);
+        assert_eq!(disk_graph(&root, "").unwrap(), server, "{why}");
+        assert_eq!(SUMMARIES.get(), sources, "{why}");
+    };
+    parsed("the first walk reads every source", 3);
+    crate::git_workspace::set_attributes(&source, FILE_ATTRIBUTE_OFFLINE);
+    parsed("the offline source is not read", 0);
+    crate::git_workspace::set_attributes(&source, FILE_ATTRIBUTE_NORMAL);
+    // The change time the clearing gave, as a later walk sees it: one the clock has left.
+    crate::git_workspace::set_change_time(&source, settled + Duration::from_secs(60));
+    parsed("the source back on disk is read once", 1);
+    parsed("and then taken from the cache", 0);
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// On unix a change to a source's permissions moves its status-change time as a write does, so no
+/// cached summary stands for a source that can no longer be read: the package has no graph.
+#[cfg(unix)]
+#[test]
+fn a_source_whose_read_is_denied_keeps_no_summary_on_unix() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = temp_root("denied");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "import './a';\nexport default 1;\n");
+    write_file(&root, "app/a.ts", "'use server';\nimport './b';\n");
+    write_file(&root, "app/b.ts", "");
+    let source = root.join("app/a.ts");
+    std::fs::File::options()
+        .write(true)
+        .open(&source)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
+    let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
+    assert_eq!(disk_graph(&root, "").unwrap(), server);
+    // The status-change time is as coarse as a scheduler tick, so a change of permissions within
+    // the tick of the time set above leaves it: the change repeats until the time moved.
+    let changed = || {
+        let metadata = std::fs::metadata(&source).unwrap();
+        (metadata.ctime(), metadata.ctime_nsec())
+    };
+    let cached = changed();
+    (0..10_000)
+        .find(|_| {
+            std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o000)).unwrap();
+            changed() != cached
+        })
+        .expect("a change of permissions moves the status-change time");
+    // Permissions do not bind the superuser.
+    if std::fs::read(&source).is_err() {
+        assert_eq!(disk_graph(&root, ""), None);
+    }
+    std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// The walk lists a folder a page at a time as it takes the folder's entries: past its entry
+/// bound it asks for no page after the one that holds the bound.
+#[cfg(windows)]
+#[test]
+fn the_walk_reads_no_folder_page_past_its_entry_bound() {
+    let root = temp_root("pages");
+    // A page holds a few hundred entries of names this long.
+    for number in 0..1_500 {
+        write_file(&root, &format!("lib/{number:04}.ts"), "");
+    }
+    let pages = |bound: usize| {
+        listing::PAGES_READ.set(0);
+        let mut entries = bound;
+        let listed = listed(&root.join("lib"), &mut entries).is_some();
+        (listed, listing::PAGES_READ.get())
+    };
+    let (whole, all) = pages(MAX_GRAPH_ENTRIES);
+    assert!(whole);
+    assert!(all > 2, "the folder takes {all} pages");
+    assert_eq!(pages(10), (false, 1));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+/// The walk follows no junction: one to a folder of the package would read its sources again
+/// under another path, and one to a folder outside it sources the package does not hold.
+#[cfg(windows)]
+#[test]
+fn the_walk_follows_no_junction() {
+    let root = temp_root("junctions");
+    let outside = temp_root("junctions-outside");
+    write_file(&root, "package.json", NEXT_MANIFEST);
+    write_file(&root, "app/page.tsx", "export default 1;\n");
+    write_file(&root, "lib/a.ts", "");
+    write_file(&outside, "b.ts", "");
+    // Each link is named with the system's separator: `mklink` reads a `/` as one of its switches.
+    for (link, target) in [("lib", root.join("lib")), ("outside", outside.clone())] {
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(root.join("app").join(link))
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(
+            made.status.success(),
+            "mklink /J app\\{link}: {}{}",
+            String::from_utf8_lossy(&made.stdout),
+            String::from_utf8_lossy(&made.stderr)
+        );
+    }
+    let mut sources = Vec::new();
+    let (mut budget, mut entries) = (MAX_GRAPH_BYTES, MAX_GRAPH_ENTRIES);
+    assert!(walk(&root, &root, &mut sources, &mut budget, &mut entries));
+    let walked = sources
+        .into_iter()
+        .map(|(relative, _, _)| relative)
+        .collect::<Vec<_>>();
+    assert_eq!(walked, ["app/page.tsx", "lib/a.ts"]);
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&outside).unwrap();
 }
 
 /// An `extends` base already read, one past the chain's depth and an entry past the first

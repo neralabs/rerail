@@ -1,0 +1,1 @@
+With `RERAIL_AUTOSTART=0`, a session that starts beside a daemon hooks may not use, one of another Rerail install or, on Windows, of 0.1.4 or earlier, now says that nothing is recorded and to run `rerail daemon stop`, then `rerail daemon start`. Before, it said nothing, or that no daemon ran.
