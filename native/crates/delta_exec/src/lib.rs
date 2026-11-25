@@ -2,8 +2,11 @@
 //! (*Bootstrap from one tape*, *Delta-first engine primitives*), milestone by milestone as the rebuild plan sets
 //! them, each passing its checks before the next starts.
 //!
-//! At M0 it holds the pieces that are already the final shape:
+//! It holds the pieces that are already the final shape:
 //!
+//! - `op`: operations over blocks (B1): signatures of at most 30 slots, pinned through the blocks' regions when an
+//!   operation starts; the registry of versions, each operation's twin (`rerail_delta_twins`) its reference; the CPU
+//!   executor;
 //! - `sym`: the symbol table, the one program global;
 //! - `tape`: a document's text and its views (`kind`, `field`, `child`, `text`, `value`, `doc`), read where the
 //!   tape lies;
@@ -14,11 +17,12 @@
 //! residency slab, content-addressed sources and tapes), as *0686: Operations* §9 sets out. `Text` is a source given
 //! in memory (the bootstrap's own files and tests).
 //!
-//! The traces (M1), the operator contract (M2), the step operators (M3), the waves, fixpoints, answers and phases
-//! (M4 to M7) and the loop (M8) come after.
+//! The milestones toward one boot operation, L1 (the rebuild plan's §4), come after: the program trace (B2), the
+//! operator contract (B3), l0's tape through the file layer (B4), symbols (B5) and L1 itself (B6).
 
 pub mod k0;
 pub mod kform;
+pub mod op;
 pub mod sym;
 pub mod tape;
 

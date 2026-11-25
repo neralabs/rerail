@@ -16,6 +16,10 @@
 //! What cannot work fails at once, naming the region and where its other use began: two writers, a write while a
 //! read is live (CPU or GPU), a read while a write is, a GPU write of a frozen region, a freeze while it is read or
 //! written, a range past its end. A region's version counts its writes (a CPU write ended, a GPU write completed).
+//!
+//! An operation's slots (decision 0686 B1) are whole blocks, pinned through the block's own region (`whole`) by
+//! `pin_block`, under the same checks. A conflict there is refused, not failed: the caller is starting an operation,
+//! which then does not start, and its `Err` names the operation and what holds the block.
 
 use crate::Block;
 use crate::ledger::Fence;
@@ -24,10 +28,26 @@ use std::panic::Location;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+/// Who holds a CPU use: a guard, by the source line that took it, or an operation's slot, by the operation's name.
+#[derive(Clone, Copy)]
+enum By {
+    Line(&'static Location<'static>),
+    Op(&'static str),
+}
+
+impl std::fmt::Display for By {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            By::Line(l) => write!(f, "from {l}"),
+            By::Op(op) => write!(f, "by {op}"),
+        }
+    }
+}
+
 #[derive(Default)]
 struct Access {
-    reads: Vec<(u64, &'static Location<'static>)>,
-    write: Option<&'static Location<'static>>,
+    reads: Vec<(u64, By)>,
+    write: Option<By>,
     gpu_reads: Vec<(u64, &'static str)>,
     /// Each with the domain it writes in (0: the host's memory, which a unified GPU reads in place).
     gpu_writes: Vec<(u64, &'static str, std::sync::Weak<Fence>, u32)>,
@@ -67,9 +87,9 @@ impl Access {
     fn says(&self) -> String {
         let mut v = Vec::new();
         if let Some(w) = self.write {
-            v.push(format!("a CPU write from {w}"));
+            v.push(format!("a CPU write {w}"));
         }
-        v.extend(self.reads.iter().map(|(_, l)| format!("a CPU read from {l}")));
+        v.extend(self.reads.iter().map(|(_, by)| format!("a CPU read {by}")));
         v.extend(self.gpu_reads.iter().map(|(_, op)| format!("a GPU read by {op}")));
         v.extend(self.gpu_writes.iter().map(|(_, op, _, _)| format!("a GPU write by {op}")));
         v.join(", ")
@@ -109,7 +129,11 @@ pub struct Region {
 }
 
 fn fail(r: &Region, what: String) -> ! {
-    panic!("region '{}' ({} bytes at {} of its block): {what}", r.top().name, r.len, r.at);
+    panic!("{}", says(r, what));
+}
+
+fn says(r: &Region, what: String) -> String {
+    format!("region '{}' ({} bytes at {} of its block): {what}", r.top().name, r.len, r.at)
 }
 
 impl Region {
@@ -250,19 +274,20 @@ impl Region {
 
     #[track_caller]
     fn begin_read(&self) -> u64 {
+        self.try_begin_read(By::Line(Location::caller())).unwrap_or_else(|e| fail(self, e))
+    }
+
+    fn try_begin_read(&self, by: By) -> Result<u64, String> {
         let mut a = self.lock();
         if a.write.is_some() {
-            let says = a.says();
-            drop(a);
-            fail(self, format!("a CPU read from {} while {says}", Location::caller()));
+            return Err(format!("a CPU read {by} while {}", a.says()));
         }
         if let Some(why) = self.host_behind(&a) {
-            drop(a);
-            fail(self, format!("a CPU read from {}: {why}", Location::caller()));
+            return Err(format!("a CPU read {by}: {why}"));
         }
         let id = a.id();
-        a.reads.push((id, Location::caller()));
-        id
+        a.reads.push((id, by));
+        Ok(id)
     }
 
     fn end_read(&self, id: u64) {
@@ -271,19 +296,24 @@ impl Region {
 
     #[track_caller]
     fn begin_write(&self) {
-        let mut a = self.lock();
-        if a.write.is_some() || !a.reads.is_empty() || !a.gpu_reads.is_empty() || !a.gpu_writes.is_empty() {
-            let says = a.says();
-            drop(a);
-            fail(self, format!("a CPU write from {} while {says}", Location::caller()));
+        let by = By::Line(Location::caller());
+        if let Err(e) = self.try_begin_write(by) {
+            fail(self, e);
         }
-        if let Some(why) = self.host_behind(&a) {
-            drop(a);
-            fail(self, format!("a CPU write from {}: {why}", Location::caller()));
-        }
-        a.write = Some(Location::caller());
         // SAFETY of the ledger's check too: the chunk's bytes are not the GPU's now (R4 of 0487).
         self.block.ledger().cpu_write(self.at, self.len);
+    }
+
+    fn try_begin_write(&self, by: By) -> Result<(), String> {
+        let mut a = self.lock();
+        if a.write.is_some() || !a.reads.is_empty() || !a.gpu_reads.is_empty() || !a.gpu_writes.is_empty() {
+            return Err(format!("a CPU write {by} while {}", a.says()));
+        }
+        if let Some(why) = self.host_behind(&a) {
+            return Err(format!("a CPU write {by}: {why}"));
+        }
+        a.write = Some(by);
+        Ok(())
     }
 
     fn end_write(&self) {
@@ -438,6 +468,76 @@ pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static s
         r.pin(fence, op, write);
     }
     true
+}
+
+/// One slot of an operation (decision 0686 B1): `block`, whole, pinned for the CPU by `op`, to read or to write,
+/// through the block's own region (`whole`) and its ledger. Refused, with nothing left held, when it cannot start: a
+/// write of a frozen block, a write while anything else uses the block, a read while something writes it. The `Err`
+/// names the block's region, `op`, and what holds it. The pin ends when it goes; a write's end moves the version.
+pub fn pin_block(block: &Arc<Block>, op: &'static str, write: bool) -> Result<BlockPin, String> {
+    let r = whole(block).r;
+    let by = By::Op(op);
+    if write {
+        if r.is_frozen() {
+            return Err(says(&r, format!("a CPU write by {op} of a frozen block")));
+        }
+        r.try_begin_write(by).map_err(|e| says(&r, e))?;
+        if let Err(e) = block.ledger().try_cpu(0, r.len, true) {
+            r.end_write();
+            return Err(says(&r, format!("a CPU write by {op}: {e}")));
+        }
+        Ok(BlockPin { r, write: true, id: 0 })
+    } else {
+        let id = r.try_begin_read(by).map_err(|e| says(&r, e))?;
+        if let Err(e) = block.ledger().try_cpu(0, r.len, false) {
+            r.end_read(id);
+            return Err(says(&r, format!("a CPU read by {op}: {e}")));
+        }
+        Ok(BlockPin { r, write: false, id })
+    }
+}
+
+/// A block pinned as an operation's slot (`pin_block`): its bytes, all of them, header first, read in place.
+pub struct BlockPin {
+    r: Arc<Region>,
+    write: bool,
+    id: u64,
+}
+
+impl BlockPin {
+    pub fn block(&self) -> &Arc<Block> {
+        &self.r.block
+    }
+
+    /// Whether it was pinned to write.
+    pub fn writes(&self) -> bool {
+        self.write
+    }
+
+    /// The block's bytes: no write but this pin's can be live while it is.
+    pub fn bytes(&self) -> &[u8] {
+        // SAFETY: the pin's checks hold (`pin_block`): no write but its own is live, and none begins while it lives.
+        unsafe { std::slice::from_raw_parts(self.r.bytes(), self.r.len) }
+    }
+
+    /// The block's bytes, to write: `None` for a read pin.
+    pub fn bytes_mut(&mut self) -> Option<&mut [u8]> {
+        if !self.write {
+            return None;
+        }
+        // SAFETY: a write pin is the block's only use while it lives (`pin_block`).
+        Some(unsafe { std::slice::from_raw_parts_mut(self.r.bytes(), self.r.len) })
+    }
+}
+
+impl Drop for BlockPin {
+    fn drop(&mut self) {
+        if self.write {
+            self.r.end_write();
+        } else {
+            self.r.end_read(self.id);
+        }
+    }
 }
 
 impl Drop for Region {
@@ -1141,5 +1241,34 @@ mod tests {
         assert_eq!(m.version(), 1, "not until it completes");
         f.complete();
         assert_eq!(m.share().read().version(), 2);
+    }
+
+    /// An operation's slots (decision 0686 B1): a block pinned by one operation refuses another's conflicting pin,
+    /// naming both; reads share; a frozen block refuses a write; a refused pin leaves nothing held.
+    #[test]
+    fn a_slot_pin_refuses_what_conflicts_and_names_the_operations() {
+        let b = block();
+        let w = pin_block(&b, "consolidate", true).unwrap();
+        let e = pin_block(&b, "step", true).err().expect("a second writer is refused");
+        assert!(e.contains("a CPU write by step") && e.contains("a CPU write by consolidate"), "{e}");
+        let e = pin_block(&b, "seed", false).err().expect("a reader beside a writer is refused");
+        assert!(e.contains("a CPU read by seed") && e.contains("by consolidate"), "{e}");
+        drop(w);
+        let r1 = pin_block(&b, "seed", false).unwrap();
+        let r2 = pin_block(&b, "step", false).unwrap();
+        let e = pin_block(&b, "head", true).err().expect("a writer beside readers is refused");
+        assert!(e.contains("by seed") && e.contains("by step"), "{e}");
+        drop((r1, r2));
+        let held = whole(&b);
+        let mut w = pin_block(&b, "head", true).expect("nothing is left held by the refused pins");
+        let v = held.version();
+        w.bytes_mut().unwrap()[64] = 1;
+        drop(w);
+        assert_eq!(held.version(), v + 1, "a write pin's end moves the version");
+        assert!(pin_block(&b, "seed", false).unwrap().bytes_mut().is_none(), "a read pin gives no bytes to write");
+        let f = Block::anon(kind::FACTS, 1 << 20).freeze();
+        let e = pin_block(f.arc(), "head", true).err().expect("a frozen block refuses a write");
+        assert!(e.contains("a CPU write by head of a frozen block"), "{e}");
+        assert!(pin_block(f.arc(), "seed", false).is_ok(), "and is read");
     }
 }

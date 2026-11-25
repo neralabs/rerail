@@ -16,6 +16,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CRATE = ROOT / "native/crates/delta_exec"
+TWINS = ROOT / "native/crates/delta_twins"
 CHANGE = ROOT / "native/crates/blocks/src/change.rs"
 
 
@@ -87,16 +88,43 @@ def m0(failures: list) -> None:
     hits(CHANGE, strip_rust(CHANGE.read_text()), r"\bfn body\b", "change::body (O1)", failures)
 
 
+def b1(failures: list) -> None:
+    """B1, operations on blocks: a twin is a pure function of its slots and params (Operations §3). Its crate is
+    no_std with no alloc and no dependencies, and names no static, heap type, lock, cell, atomic or unsafe."""
+    lib = TWINS / "src/lib.rs"
+    src = lib.read_text()
+    for attr in ("#![no_std]", "#![forbid(unsafe_code)]"):
+        if attr not in src:
+            failures.append(f"{lib.relative_to(ROOT)}: the twins' crate lacks {attr}")
+    manifest = (TWINS / "Cargo.toml").read_text()
+    deps = manifest.split("[dependencies]", 1)[1] if "[dependencies]" in manifest else ""
+    deps = re.split(r"^\[", deps, flags=re.M)[0]
+    if re.search(r"^\s*[\w-]+\s*=", deps, flags=re.M):
+        failures.append(f"{(TWINS / 'Cargo.toml').relative_to(ROOT)}: the twins' crate has a dependency")
+    forbidden = [
+        (r"\bstatic\b", "a static (a twin reads only its slots and params)"),
+        (r"\balloc\b|\bstd\b|\bVec\b|\bBox\b|\bString\b|\bRc\b|\bArc\b|\bHashMap\b|\bBTreeMap\b",
+         "the heap or std (no alloc)"),
+        (r"thread_local|\bMutex\b|\bRwLock\b|\bOnce\w*|\bCell\b|\bRefCell\b|\bAtomic\w*|\bunsafe\b",
+         "a lock, a cell, an atomic or unsafe (state sneaked in)"),
+    ]
+    for path in sorted((TWINS / "src").rglob("*.rs")):
+        code = strip_rust(path.read_text())
+        code = re.sub(r"'static", "", code)
+        for pattern, why in forbidden:
+            hits(path, code, pattern, why, failures)
+
+
 def main() -> int:
     failures: list = []
-    for check in (m0,):
+    for check in (m0, b1):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0)")
+    print("delta_exec shape: every check holds (M0, B1)")
     return 0
 
 

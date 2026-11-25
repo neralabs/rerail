@@ -405,20 +405,30 @@ impl Ledger {
 
     #[cold]
     fn cpu_locked(&self, at: usize, len: usize, write: bool) {
-        let v = {
-            let s = self.lock();
-            match s.chunks.iter().find(|u| u.at < at + len && at < u.at + u.len && (write || u.access == Access::Write)) {
-                Some(u) => Err(format!(
-                    "a CPU {} of {len} bytes at {at}, with a GPU {:?} of {} bytes at {} queued (wait for its fence first)",
-                    if write { "write" } else { "read" },
-                    u.access,
-                    u.len,
-                    u.at
-                )),
-                None => Ok(()),
-            }
-        };
-        fail(v);
+        fail(self.cpu_queued(at, len, write));
+    }
+
+    /// `cpu_write` or `cpu_read` as a result, for a caller that refuses what it cannot start rather than failing
+    /// (an operation's slots, decision 0686 B1): `Err` says which GPU use is queued over the bytes.
+    pub fn try_cpu(&self, at: usize, len: usize, write: bool) -> Result<(), String> {
+        if self.chunk_uses.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            return Ok(());
+        }
+        self.cpu_queued(at, len, write)
+    }
+
+    fn cpu_queued(&self, at: usize, len: usize, write: bool) -> Result<(), String> {
+        let s = self.lock();
+        match s.chunks.iter().find(|u| u.at < at + len && at < u.at + u.len && (write || u.access == Access::Write)) {
+            Some(u) => Err(format!(
+                "a CPU {} of {len} bytes at {at}, with a GPU {:?} of {} bytes at {} queued (wait for its fence first)",
+                if write { "write" } else { "read" },
+                u.access,
+                u.len,
+                u.at
+            )),
+            None => Ok(()),
+        }
     }
 
     /// Whether no GPU use of the block is queued.

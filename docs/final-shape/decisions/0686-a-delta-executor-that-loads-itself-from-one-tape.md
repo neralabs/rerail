@@ -1,6 +1,7 @@
 # 0686: A delta executor that loads itself from one tape
 
-Status: being rebuilt to the agreed design, milestone by milestone; M0 (the clean slate) done. Design pages: *Bootstrap
+Status: being rebuilt to the agreed design, milestone by milestone; M0 (the clean slate) and B1 (operations on
+blocks) done. Design pages: *Bootstrap
 from one tape* (https://claude.ai/artifact/7Sc29B3894aE1PBsbhwbqa, cited B§), *Delta-first engine primitives*
 (https://claude.ai/artifact/2pcYo27YJWcPwM3msKjoAH, P§) and *The program bistate and the bootstrap*
 (https://claude.ai/artifact/28cUPRyFpEhqCnPbj5gKLT). The rebuild plan: *0686: Rebuild Plan*
@@ -166,6 +167,40 @@ comes when a rule needs it.
 `doc` (2026-11-25): the user, "take a look at the other engine in this branch which defines it". The engine's
 `doc(d: number, path: symbol, module: symbol)`: the module its load named (`Document::module`), else named from its
 path. The view has that column (1301743933).
+
+## B1: operations on blocks (2026-11-25)
+
+Built to *0686: Operations* §2–3, on the blocks' ledger (0487) and regions (0491) as they are:
+
+- `rerail_blocks::region::pin_block(block, op, write)`: one slot, the whole block, pinned for the CPU through the
+  block's own region (`whole`, 0491 step 3) and its ledger, under the regions' checks. A conflict is refused (`Err`),
+  not failed, and names the region, the operation and what holds the block. A CPU use now records who holds it, a
+  guard's source line or an operation's name (`By`); the guards (`Read`, `Write`) keep their failures and messages.
+  `BlockPin` is a guard of that region, as `Read` and `Write` are, not a handle of its own. The ledger gains
+  `try_cpu`, its CPU check as a result.
+- `rerail-delta-twins` (`native/crates/delta_twins`): `#![no_std]`, `#![forbid(unsafe_code)]`, no dependencies. A
+  twin is `fn(&mut [Slot], &[u8])` over its slots' bytes and its params; `params!` declares a params struct once,
+  and its `FIELDS` give UKL the declaration (`ParamsLayout::ukl`).
+- `rerail_delta_exec::op`: `Signature` (at most 30 `SlotSpec`s, each a `Mode` with its UKL row and a block kind;
+  `ParamsLayout`; `Phase`s of §4's `Shape`s), `Registry` and `Version` field for field as §3 writes them (`Impl::Twin`,
+  `Ukl`, `Compiled`; the twin registered first as the one reference), and `run_cpu`, which pins every slot or none and
+  runs the twin on the pinned bytes.
+
+Checks, each passed under Relax on this machine (`relax test rerail-delta-exec --lib`: 10 of 10;
+`relax test rerail-blocks --lib -- region::`: 16 of 16):
+
+- A second writer, a writer beside a reader, one operation reading and writing one block, and a write of a frozen
+  block each refuse the start, naming the operation and what holds the block, and leave nothing pinned:
+  `op::tests::a_conflict_refuses_the_start_and_leaves_nothing_pinned`,
+  `region::tests::a_slot_pin_refuses_what_conflicts_and_names_the_operations`.
+- A 31st slot is refused where the operation is declared: `op::tests::a_thirty_first_slot_is_refused` (and
+  `Signature::new` asserts it for a constant at compile time).
+- `check_delta_exec_shape.py` (section `b1`) refuses a `static`, the heap or std, a lock, a cell, an atomic,
+  `unsafe` or a dependency in the twins' crate; tried against a crate holding each, it named every one.
+- A twin reads only its slots and params: run twice on the same blocks it gives the same facts, and its write moves
+  the block's version: `op::tests::an_operation_runs_its_twin_on_its_blocks_in_place`.
+- Also: a slot takes its kind of block and the params their declared size; the twin is the one reference and comes
+  first; params give UKL their layout.
 
 ## Operations: the execution shape (2026-11-25, being designed)
 

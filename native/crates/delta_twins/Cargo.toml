@@ -1,0 +1,15 @@
+[package]
+name = "rerail-delta-twins"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The Rust twins of the delta executor's operations (decision 0686, Operations §3): each operation's reference version, a pure function of its blocks and params. no_std, no alloc, no dependencies."
+
+[features]
+default = []
+test-hooks = []
+
+[dependencies]
+
+[dev-dependencies]
+rerail-delta-twins = { path = ".", features = ["test-hooks"] }
