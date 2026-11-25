@@ -49,6 +49,7 @@ declare module "*/ui/sessions-model.js" {
   export function placeCorrections(turns: TurnView[], corrections: readonly Correction[]): TurnView[];
   export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; cwd?: string };
   export function droppedEvents(s: { sessionId: string }): number;
+  export function lostEvents(s: { sessionId: string }): number;
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
   export function discoveryGapPlaces(s: { sessionId: string }): Array<{ path?: string; reason: string; boundary: string; observedAt: number }>;
@@ -179,6 +180,8 @@ declare module "*/ui/state.js" {
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
+    /** The status line's footer, as Settings shows it. */
+    presence: "compact" | "silent" | null;
     sessionDetail: Map<string, SessionDetail>;
     repositories: Array<{ repositoryKey: string; [k: string]: unknown }>;
     updatedAt: number;
@@ -218,11 +221,17 @@ declare module "*/ui/attachments.js" {
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
     keepPack(id: string, keep: boolean, message: string, failed?: string): Promise<void> | undefined;
+    addPacks(ids: readonly string[], message: string, failed?: string): Promise<void> | undefined;
   };
 }
 
+declare module "*/ui/api.js" {
+  /** One write to the daemon's API; a refusal rejects, a change made but not confirmed on the disk as `NotOnDisk`. */
+  export function send(method: string, path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<{ status: number; etag: string | undefined; body: unknown }>;
+}
+
 declare module "*/ui/format.js" {
-  /** A failure toast: what did not happen, then the error as a sentence. */
+  /** A failure toast: what did not happen, then the error as a sentence, or a `NotOnDisk` error's words alone. */
   export function failed(what: string, error: unknown): string;
   /** Who a violation is credited to: its session, which its button opens, or the repository (`session` null). */
   export function violationOwner(violation: { sessionId: string | null; host: string | null }): { session: string | null; label: string; title: string };
@@ -362,6 +371,13 @@ declare module "*/ui/views/merge.js" {
   interface Patched { hidden: boolean; textContent: string; getAttribute(name: string): string | null; hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void; removeAttribute(name: string): void }
   export function patchProblem(form: { querySelector(selector: string): Patched | null }, fields: { problem: string | null; field: "command" | "timeout" | null }): void;
   export function stripSignature(status: import("../../src/engine/index.js").MergeAssistStatus): string;
+  /** The page's buttons by `data-act`: `maon` turns Merge Assist on in the scoped checkout. */
+  export const actions: { maon(): Promise<void> };
+}
+
+declare module "*/ui/views/settings.js" {
+  /** Settings' controls by `data-act`: the footer's switch and Follow .gitignore's. */
+  export const actions: { presence(value: "compact" | "silent"): Promise<void>; gitignore(value: "on" | "off"): Promise<void> };
 }
 
 declare module "*/ui/views/create.js" {

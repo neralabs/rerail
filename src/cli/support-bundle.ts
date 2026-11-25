@@ -445,21 +445,33 @@ function selectSession(database: RerailDatabase, historyIds: readonly string[], 
   return session;
 }
 
+interface TimelineRow {
+  kind: string; at: number; tool: string | null; failed: number | null; ruleIds: string | null; count: number | null; boundary: string | null; activeRuleCount: number | null;
+}
+
+type TimelineFields = Omit<SupportBundleTimelineEntry, "at" | "kind">;
+
+const toolOf = ({ tool }: TimelineRow): TimelineFields => (tool === null ? {} : { tool });
+const countOf = ({ count }: TimelineRow): TimelineFields => (count === null ? {} : { count });
+const boundaryOf = ({ boundary }: TimelineRow): TimelineFields => (boundary === null ? {} : { boundary });
+
 /**
  * The fields of a stored event that may leave it, by kind. They are read with `json_extract`, so a payload's text never
  * reaches this process, and a kind not named here is recorded by its name alone.
  */
-function timelineEntry(row: {
-  kind: string; at: number; tool: string | null; failed: number | null; ruleIds: string | null; count: number | null; boundary: string | null; activeRuleCount: number | null;
-}): SupportBundleTimelineEntry {
-  const entry: SupportBundleTimelineEntry = { at: row.at, kind: row.kind };
-  if ((row.kind === "call" || row.kind === "result") && row.tool !== null) entry.tool = row.tool;
-  if (row.kind === "result" && row.failed === 1) entry.failed = true;
-  if (row.kind === "steering-delivered" && row.ruleIds !== null) entry.ruleIds = JSON.parse(row.ruleIds) as string[];
-  if (row.kind === "events-dropped" && row.count !== null) entry.count = row.count;
-  if ((row.kind === "source-discovery-pending" || row.kind === "code-rules-pending") && row.boundary !== null) entry.boundary = row.boundary;
-  if (row.kind === "rule-coverage" && row.activeRuleCount !== null) entry.activeRuleCount = row.activeRuleCount;
-  return entry;
+const TIMELINE_FIELDS = new Map<string, (row: TimelineRow) => TimelineFields>([
+  ["call", toolOf],
+  ["result", row => ({ ...toolOf(row), ...(row.failed === 1 ? { failed: true } : {}) })],
+  ["steering-delivered", ({ ruleIds }) => (ruleIds === null ? {} : { ruleIds: JSON.parse(ruleIds) as string[] })],
+  ["events-dropped", countOf],
+  ["events-lost", countOf],
+  ["source-discovery-pending", boundaryOf],
+  ["code-rules-pending", boundaryOf],
+  ["rule-coverage", ({ activeRuleCount }) => (activeRuleCount === null ? {} : { activeRuleCount })],
+]);
+
+function timelineEntry(row: TimelineRow): SupportBundleTimelineEntry {
+  return { at: row.at, kind: row.kind, ...TIMELINE_FIELDS.get(row.kind)?.(row) };
 }
 
 function readTimeline(database: RerailDatabase, sessionId: string): SupportBundleTimelineEntry[] {

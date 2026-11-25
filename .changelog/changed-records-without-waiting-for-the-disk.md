@@ -1,0 +1,1 @@
+Hooks no longer wait for the disk at each write, up to a second when busy. Rule and setting changes reach the disk before Rerail says they are made. A power cut or an operating system crash can take about the last 5 s of history, more on a stalled disk; the next start records the loss, not its content.

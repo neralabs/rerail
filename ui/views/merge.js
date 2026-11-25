@@ -16,6 +16,7 @@
  * to the one that took its place (`refocusIndex`), unless the person moved it meanwhile.
  */
 import { h, icon, setAttr, setContent, setText, syncChildren } from "../dom.js";
+import { madeButUnconfirmed } from "../api.js";
 import { ago, failed, fmt, plural, stamp } from "../format.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, inScope, mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../poll.js";
@@ -45,7 +46,8 @@ async function write(scope, method, path, body, failure) {
   try {
     return await writeMergeAssist(scope, method, path, body);
   } catch (error) {
-    toast(failed(failure, writeError(error)));
+    // A change made but not confirmed on the disk keeps its error, so the toast is the daemon's words alone (`failed`).
+    toast(failed(failure, madeButUnconfirmed(error) ? error : writeError(error)));
     return null;
   }
 }

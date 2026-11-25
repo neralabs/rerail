@@ -27,13 +27,14 @@ import { worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { violationCopiesSql } from "../engine/storage/audit-history.js";
-import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commitDurably, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { keepFilesPrivate } from "../engine/storage/private-files.js";
 import { defaultRerailHome, REMOTE_OUTBOX_FILE } from "../engine/storage/rerail-home.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import {
   excludedAt, machineId, machineLabel, readRemoteConfig, readRemoteToken, remoteStateKey, type RemoteEntry, type RepositoryExclusion,
 } from "./remote-config.js";
+import { POSTED_EVENTS_STREAM } from "./remote-cursors.js";
 
 export const SINK_PROTOCOL = 1;
 /** C1: one batch is at most 5 MB uncompressed. */
@@ -279,6 +280,65 @@ type PostOutcome = { kind: "accepted" } | { kind: "rejected"; error: string } | 
 
 const isEmptyBatch = (batch: BatchBuilder): boolean => batch.records.length === 0 && batch.oversized.length === 0;
 
+/**
+ * The last event number `batch` carries, its records and those too large to send; 0 when it carries none. Both the
+ * record of a batch about to go out (`#markPosted`) and the cursor its acknowledgement moves (`#acknowledge`) hold it.
+ */
+const lastSequence = (batch: { readonly records: readonly OutboxRecord[]; readonly oversized: readonly OutboxRecord[] }): number =>
+  [...batch.records, ...batch.oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
+
+/** A batch the remote answered, and where its answer is written: the outbox's state, in one transaction (`#acknowledge`). */
+interface AnsweredBatch {
+  readonly state: Database.Database;
+  readonly remote: string;
+  readonly machine: string;
+  readonly records: readonly OutboxRecord[];
+  readonly oversized: readonly OutboxRecord[];
+}
+
+const ADD_GAP_SQL = "INSERT OR REPLACE INTO pending_gaps (remote, id, record_json) VALUES (?, ?, ?)";
+
+/** The event cursor moves past the batch's last event, and each record it carried is held under its hash. */
+function holdAnswered({ state, remote, records, oversized }: AnsweredBatch): void {
+  const sequence = lastSequence({ records, oversized });
+  if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
+  const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
+  for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
+}
+
+/** The queued gaps the batch carried leave the queue; a rejected one is reported again inside the new gap's records. */
+function clearSentGaps({ state, remote, records }: AnsweredBatch): void {
+  const sentGap = state.prepare("DELETE FROM pending_gaps WHERE remote = ? AND id = ?");
+  for (const item of records) if (item.stream === "gap" && item.sequence === undefined) sentGap.run(remote, item.id);
+}
+
+/** A gap queued for each record of the batch too large to send, which the next batch tells the remote of. */
+function queueTooLargeGaps({ state, remote, machine, oversized }: AnsweredBatch): void {
+  const addGap = state.prepare(ADD_GAP_SQL);
+  for (const item of oversized) {
+    const id = `${machine}:too-large:${item.stream}:${item.id}`;
+    const gap = item.stream === "event"
+      ? { stream: "event", fromSequence: item.sequence ?? null, toSequence: item.sequence ?? null, reason: "too-large" }
+      : { stream: item.stream, fromSequence: null, toSequence: null, records: [{ stream: item.stream, id: item.id }], reason: "too-large" };
+    addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
+  }
+}
+
+/** The remote will never take the batch's records (`rejected`): it is told what is missing instead, in the next batch. */
+function queueRejectedGap({ state, remote, machine, records }: AnsweredBatch, rejected: string): void {
+  const events = records.filter(item => item.stream === "event").map(item => item.sequence ?? 0);
+  const others = records.filter(item => item.stream !== "event" && item.stream !== "gap" && item.stream !== "skip").map(item => ({ stream: item.stream, id: item.id }));
+  const gap = {
+    stream: "batch",
+    fromSequence: events.length === 0 ? null : Math.min(...events),
+    toSequence: events.length === 0 ? null : Math.max(...events),
+    records: others,
+    reason: rejected,
+  };
+  const id = `${machine}:rejected:${batchIdOf(records)}`;
+  state.prepare(ADD_GAP_SQL).run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
+}
+
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** What the remote's answer to a batch means: `detail` is its status, and the start of its body when it sent one. */
@@ -387,14 +447,17 @@ export class RemoteOutbox {
   }
 
   /**
-   * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it writes
-   * nothing more: every write checks the remote is still configured under that key first.
+   * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it records
+   * nothing more of the remote's answers: each such write checks the remote is still configured under that key first.
+   * The records of the batches sent to it (`#markPosted`) stay, the one written for a batch still out included, with no
+   * such check: the remote may hold their events, so their numbers stay taken (`keepEventNumbersPastRemotes`).
    */
   forget(key: string): void {
     const state = openState(this.#home);
     try {
       state.transaction(() => {
-        for (const table of ["cursors", "sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(key);
+        for (const table of ["sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(key);
+        state.prepare("DELETE FROM cursors WHERE remote = ? AND stream <> ?").run(key, POSTED_EVENTS_STREAM);
       })();
     } finally {
       state.close();
@@ -479,6 +542,7 @@ export class RemoteOutbox {
       this.#acknowledge(state, key, batch.records, batch.oversized, undefined);
       return "next";
     }
+    this.#markPosted(state, key, batch);
     const outcome = await this.#post(remote, token, batch.records, options.signal);
     const stopped = this.#stoppedWhileOut(sending);
     if (stopped !== undefined) return stopped;
@@ -488,6 +552,21 @@ export class RemoteOutbox {
       return "next";
     }
     return this.#settleBatch(sending, batch, outcome);
+  }
+
+  /**
+   * The last event number `batch` carries, on disk before the batch goes out (`POSTED_EVENTS_STREAM`): once the remote
+   * may hold an event, the next writer of events numbers past it (`keepEventNumbersPastRemotes`), whatever a power cut
+   * takes after, the remote's answer and the cursor's move included. Of the outbox's commits only this one waits for the
+   * disk (`commitDurably`), once per batch that carries events. None runs inside a hook, but the daemon's timer runs
+   * them on the daemon's thread, which a hook arriving meanwhile waits for; and a cut that takes another of them only
+   * makes the outbox send again what the remote holds.
+   */
+  #markPosted(state: Database.Database, remote: string, batch: BatchBuilder): void {
+    const sequence = lastSequence(batch);
+    if (sequence === 0) return;
+    commitDurably(state, () => state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, ?, ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)")
+      .run(remote, POSTED_EVENTS_STREAM, sequence));
   }
 
   /** The result that ends the sync when the lock is lost or the remote is removed (or removed and added again) while a batch was out: nothing more is sent or recorded for it. */
@@ -732,36 +811,11 @@ export class RemoteOutbox {
     state.transaction(() => {
       // Removed, or removed and added again, while this batch was out: its answer belongs to no remote now.
       if (!this.#configured(remote)) return;
-      const machine = machineId(this.#home);
-      const sequence = [...records, ...oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
-      if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
-      const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
-      for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
-      const sentGap = state.prepare("DELETE FROM pending_gaps WHERE remote = ? AND id = ?");
-      // Only the gaps this batch carried: a rejected one is reported again inside the new gap's records.
-      for (const item of records) if (item.stream === "gap" && item.sequence === undefined) sentGap.run(remote, item.id);
-      const addGap = state.prepare("INSERT OR REPLACE INTO pending_gaps (remote, id, record_json) VALUES (?, ?, ?)");
-      for (const item of oversized) {
-        const id = `${machine}:too-large:${item.stream}:${item.id}`;
-        const gap = item.stream === "event"
-          ? { stream: "event", fromSequence: item.sequence ?? null, toSequence: item.sequence ?? null, reason: "too-large" }
-          : { stream: item.stream, fromSequence: null, toSequence: null, records: [{ stream: item.stream, id: item.id }], reason: "too-large" };
-        addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
-      }
-      if (rejected !== undefined) {
-        // The remote will never take these: it is told what is missing instead, in the next batch.
-        const events = records.filter(item => item.stream === "event").map(item => item.sequence ?? 0);
-        const others = records.filter(item => item.stream !== "event" && item.stream !== "gap" && item.stream !== "skip").map(item => ({ stream: item.stream, id: item.id }));
-        const gap = {
-          stream: "batch",
-          fromSequence: events.length === 0 ? null : Math.min(...events),
-          toSequence: events.length === 0 ? null : Math.max(...events),
-          records: others,
-          reason: rejected,
-        };
-        const id = `${machine}:rejected:${batchIdOf(records)}`;
-        addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
-      }
+      const answered: AnsweredBatch = { state, remote, machine: machineId(this.#home), records, oversized };
+      holdAnswered(answered);
+      clearSentGaps(answered);
+      queueTooLargeGaps(answered);
+      if (rejected !== undefined) queueRejectedGap(answered, rejected);
     })();
   }
 
