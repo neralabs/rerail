@@ -185,5 +185,31 @@ Decided on the proposal's first revision (*0686: Operations*, https://claude.ai/
 - D8: reading files on the host, "and this needs to be handled carefully"; parsing on the host "okay for now, but we
   are close to much parsing being doable on the GPU".
 
-The second revision's points E1–E6 (ownership types, references, forms, work shapes, where planning is split between
-rules and kernels, reading files) wait on the user.
+On the second revision the user decided (2026-11-25), in their words:
+
+- The file layer: "There is a specific Rust file-handling layer, that deals with checksums, tapes, parsing packing
+  into blocks, fswatch, etc. We need to maintain that and ensure that we key everything properly so that each file's
+  facts are content-addressed and we will re-generated things when that content changes. That's mostly existing code
+  that needs to be minimally adapted."
+- Caches: "They are vital to not redoing work and the overall performance. They need to be implemented as blocks but
+  are every bit as important as the inputs and outputs."
+- E1: "The runtime should track read and write references and fail if we attempt to (for example) run two writers at
+  once or a writer when there are readers, just like Rust".
+- E2: "We will need a descriptor table (like we currently have) to enable references to be managed across GPUs".
+- E3: "we just need the ability to register versions of an operation and some metadata so that they can be chosen.
+  For specializations of things inside other operations, we will need to design this separately once we have the
+  ability to JIT-compile things".
+- E4: "Please survey to figure out the missing shapes. There are a lot of shapes."
+- E5: "Agreed, planning is not done in rerail programs".
+- E6: "Reading files needs to be basically the same as it is today in the existing engine, you should never have
+  created a new World::read string/text path."
+
+M0's `World` and `Files` (a read returning a `String`) were that path of its own. They are deleted (`f5d060b50d`),
+and `check_delta_exec_shape.py` refuses a file read in the crate. Loads are to be answered through the engine's file
+layer as it is: the observer (stat reuse under the racy rule, the journal, a Git blob's digest), the run's one read
+placed into a residency slab room, sources and tapes as content-addressed objects, documents' places, and a file's
+facts keyed by content, path and plan.
+
+The page's third revision surveys the file layer and the caches as they are, and the work shapes of the engine's
+kernels (23, on six axes). Open on it, for the user: any shape the survey missed (E4), results with several valid
+answers (F1), and `load`'s columns against B§5's (F2).
