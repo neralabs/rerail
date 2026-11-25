@@ -273,6 +273,49 @@ mod tests {
         }
     }
 
+    /// The relation's own node-keyed index (`Relation::try_add_node_bits`, decision 0694 step 1), over nodes of several
+    /// documents, answers every test as its hashed index does, values of no document, slot or word included, in
+    /// either of a document's forms (bits, or its sorted lows); it is found by its column and rows, not by
+    /// `find_index`.
+    #[test]
+    fn a_relations_node_bits_answer_as_its_hashed_index() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let mut s = 11u64;
+        let node = |doc: u32, l: u32| (i64::from(doc) << 32) | i64::from(l);
+        // Ids as the engine's are (`packed::ID_SPLIT`): a granule's slot, then an index in it.
+        let id = |slot: u32, x: u32| slot << crate::packed::ID_SPLIT | x;
+        let held: Vec<i64> = (0..4_000).map(|_| { let d = lcg(&mut s) % 7 * 3; node(d, id(3 + lcg(&mut s) % 40 * 2, 5 + lcg(&mut s) % 300)) }).collect();
+        let (rel, ix) = relation(&block, 1, &held);
+        let n = rel.rows.len();
+        // SAFETY: one thread; the rows are written.
+        let bits = unsafe { rel.try_add_node_bits(&block, 0, n) }.expect("dense enough");
+        assert_eq!(rel.find_node_bits(0, n), Some(bits));
+        assert_eq!(rel.find_node_bits(0, n + 1), None);
+        assert_eq!(rel.find_index(&[0], n), Some(ix), "the hashed index still found as before");
+        let mut hint = 0;
+        for doc in 0..22 {
+            for l in (0..90).flat_map(|slot| (0..330).map(move |x| id(slot, x))).chain([u32::MAX - 1, u32::MAX]) {
+                let v = node(doc, l);
+                let k = [v];
+                let hashed = rel.group(ix, crate::key_hash(&k)).iter().any(|&r| rel.rows.get(r, 0) == v);
+                assert_eq!(rel.node_bits_has(bits, v, &mut hint), hashed, "document {doc} node {l}");
+            }
+        }
+        // A column of a few values a document, far apart: each document holds its lows, and answers as the hashed
+        // index does.
+        let sparse: Vec<i64> = (0..128).flat_map(|d| [node(d, id(d % 50, d * 997 % 200_000)), node(d, id(1_000 + d, 7))]).collect();
+        let (rel, ix) = relation(&block, 1, &sparse);
+        // SAFETY: as above.
+        let bits = unsafe { rel.try_add_node_bits(&block, 0, rel.rows.len()) }.expect("room");
+        for doc in 0..130 {
+            for l in [id(doc % 50, doc * 997 % 200_000), id(1_000 + doc, 7), id(1_000 + doc, 8), id(doc % 50, 0), 0] {
+                let v = node(doc, l);
+                let hashed = rel.group(ix, crate::key_hash(&[v])).iter().any(|&r| rel.rows.get(r, 0) == v);
+                assert_eq!(rel.node_bits_has(bits, v, &mut hint), hashed, "document {doc} id {l:#x}");
+            }
+        }
+    }
+
     /// A `ONE` gives each node its value; the same value again is no new row, another breaks the key and says where.
     #[test]
     fn a_one_keeps_a_value_a_node_and_reports_a_broken_key() {
