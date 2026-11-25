@@ -1133,7 +1133,7 @@ impl<'a> G<'a> {
                 self.leaf_call.set(true);
                 let mut out = vec![line("self.leaf_open();")];
                 out.extend(self.code(&Gram::Sym(r.clone()), rest, rule)?);
-                out.push(line(format!("self.leaf_close({})?;", self.kind_const(kind)?)));
+                out.extend(self.leaf_end(r, kind)?);
                 out
             }
             Gram::Lit(_) | Gram::Sym(_) if self.token_of(g).is_some() => {
@@ -2309,6 +2309,65 @@ impl<'a> G<'a> {
     /// Where a decision's arms each open a node, an arm that only calls a node's rule of one caller opens and closes
     /// that node itself, and the rule's method reads what is inside it, as the lean parser's `violation`: so the
     /// decision can open its node once (`moves::open_once`, decision 0685 step 2).
+    /// A leaf the rules grow a token at a time (a take of the token as a leaf of kind `K`, then merges into it, here
+    /// and in the functions they call that only merge) is one leaf over the tokens: `leaf_open`, the tokens passed,
+    /// `leaf_close(K)`, as the lean parser scans and then writes one `leaf_over` (rock 3). For a kind each of whose
+    /// merges, and each call of whose merging functions, is in such a run; else as it was.
+    fn leaves(made: &mut [(String, Block)]) {
+        let mut kinds = Vec::new();
+        for (_, b) in made.iter_mut() {
+            moves::merge_kinds(b, &mut kinds);
+        }
+        let body = |b: &Block| -> Option<usize> {
+            // A method: its lines around one block, none of them a move of the tree's or a take.
+            let at = b.iter().position(|o| matches!(o, Op::At(..)))?;
+            let plain = b.iter().enumerate().all(|(i, o)| match o {
+                Op::Line(l) => l.lines().all(|l| {
+                    let t = l.trim();
+                    t.is_empty() || t.starts_with("///") || t.starts_with("fn ") || t.starts_with("#[") || matches!(t, "self.deeper()?;" | "self.depth -= 1;" | "Ok(())" | "}")
+                }),
+                _ => i == at,
+            });
+            plain.then_some(at)
+        };
+        for k in kinds {
+            // The functions that only merge into `k`: those whose code merges, calling only such (the most there are:
+            // they may call each other).
+            let mut merging: HashSet<String> = made.iter().filter(|(_, b)| body(b).is_some()).map(|(f, _)| f.clone()).collect();
+            loop {
+                let out: Vec<String> = made
+                    .iter()
+                    .filter(|(f, b)| merging.contains(f) && !body(b).is_some_and(|at| matches!(&b[at], Op::At(_, x) if moves::merges_only(x, &k, &merging))))
+                    .map(|(f, _)| f.clone())
+                    .collect();
+                if out.is_empty() {
+                    break;
+                }
+                for f in out {
+                    merging.remove(&f);
+                }
+            }
+            let mut new: Vec<(String, Block)> = made.to_vec();
+            let mut calls: HashMap<String, usize> = HashMap::new();
+            let mut any = false;
+            for (f, b) in new.iter_mut() {
+                if merging.contains(f) {
+                    moves::passes_in(b, &k, &merging, &mut calls);
+                } else {
+                    any |= moves::one_leaf(b, &k, &merging, &mut calls);
+                }
+            }
+            let mut left = Vec::new();
+            for (_, b) in new.iter_mut() {
+                moves::merge_kinds(b, &mut left);
+            }
+            let all_calls = merging.iter().all(|f| calls.get(f).copied().unwrap_or(0) == made.iter_mut().map(|(_, b)| moves::calls_of(b, f)).sum::<usize>());
+            if any && !left.contains(&k) && all_calls {
+                made.clone_from_slice(&new);
+            }
+        }
+    }
+
     /// `made`: the rules' methods (`inlined`'s, each its name's), their moves rewritten. A method rewritten again is
     /// `rewrite`'s.
     fn opened_by_caller(&self, made: &mut [(String, Block)], rewrite: &dyn Fn(&mut Block)) {
@@ -2386,6 +2445,18 @@ impl<'a> G<'a> {
             let block = vec![line(format!("    /// The loop the parser reads in more than one place (decision 0685 step 4).\n    fn {name}(&mut self) -> R {{\n")), Op::At("        ".into(), seq), line("        Ok(())\n    }\n\n")];
             made.push((name, block, None));
         }
+    }
+
+    /// The end of `leaf K R`: the marks `R` refuses checked over its tokens where the grammar says so
+    /// (`leaf_refuses`), as the lean parser checks a policy document is JSON once it has read it, then the leaf
+    /// (`leaf_close`, the lean parser's `leaf_over`).
+    fn leaf_end(&self, r: &str, kind: &str) -> Result<Vec<Op>, String> {
+        let mut out = Vec::new();
+        if let Some(m) = self.leaf_refuses.get(r).filter(|m| **m != 0) {
+            out.push(line(format!("self.leaf_refuses({m:#x})?;")));
+        }
+        out.push(line(format!("self.leaf_close({})?;", self.kind_const(kind)?)));
+        Ok(out)
     }
 
     /// The runs around a loop the rules repeat but for the rules they call and the fields they set: each one function
@@ -2473,8 +2544,10 @@ impl<'a> G<'a> {
         if methods.len() == bs.len() {
             let mut made: Vec<(String, Block)> = methods.into_iter().zip(std::mem::take(&mut bs)).collect();
             self.opened_by_caller(&mut made, &rewrite);
+            Self::leaves(&mut made);
             bs = made.into_iter().map(|(_, b)| b).collect();
         }
+        bs.iter_mut().for_each(moves::joined);
         let names = self.names.get_or_init(|| moves::Names::of(&mut bs));
         bs.iter().map(|b| moves::print_named(b, "", names)).collect()
     }
@@ -3061,12 +3134,10 @@ impl<'a> G<'a> {
         }
         // The helpers only some grammars' rules call, each written where it is called.
         // A leaf's refused marks (`leaf_refuses`): one set, the grammar's, else no check.
-        let refused = self.leaf_refuses.values().fold(0, |a, b| a | b);
-        let check = "        // The marks the leaf refuses (`refuse M in L`), at any of its tokens: its text checked, as the lean parser checks\n        // a policy document is JSON.\n        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, REFUSED)) {\n            return self.refuse();\n        }\n";
         let used: Vec<String> = MORE
             .iter()
             .filter(|(name, _)| rules.contains(&format!("self.{name}(")))
-            .map(|(_, code)| if refused == 0 { code.replace(check, "") } else { code.replace("REFUSED", &format!("{refused:#x}")) })
+            .map(|(_, code)| code.to_string())
             .collect();
         if !used.is_empty() {
             out.push_str("\n#[allow(clippy::all, dead_code)]\nimpl<L: Layout> P<'_, L> {\n");
@@ -3256,13 +3327,20 @@ const MORE: &[(&str, &str)] = &[
         while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
             self.pend += 1;
         }
-        // The marks the leaf refuses (`refuse M in L`), at any of its tokens: its text checked, as the lean parser checks
-        // a policy document is JSON.
-        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, REFUSED)) {
-            return self.refuse();
-        }
         let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
         self.set_made(at as u32);
+        Ok(())
+    }
+"#,
+    ),
+    (
+        "leaf_refuses",
+        r#"    /// The marks a `leaf`'s rule refuses (`refuse M in L`), at any of the tokens it read: its text checked, as the
+    /// lean parser checks a policy document is JSON.
+    fn leaf_refuses(&self, marks: u32) -> R {
+        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, marks)) {
+            return self.refuse();
+        }
         Ok(())
     }
 "#,

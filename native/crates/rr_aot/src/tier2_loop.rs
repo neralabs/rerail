@@ -818,29 +818,13 @@ impl<L: Layout> P<'_, L> {
 
     /// `raw_line`.
     fn raw_line(&mut self) -> R {
-        match self.word() {
-            _ if PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 => {
-                self.bump_as(k::RAW_TEXT)?;
-            }
-            _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                self.bump_as(k::RAW_TEXT)?;
-            }
-            _ => {
-                return self.refuse();
-            }
+        if PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER {
+            self.bump_as(k::RAW_TEXT)?;
+        } else {
+            return self.refuse();
         }
-        while !(self.i >= self.n || self.bit_at(self.i, 1)) {
-            match self.word() {
-                _ if PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while !(self.i >= self.n || self.bit_at(self.i, 1)) && (PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER) {
+            self.merge_as(true, k::RAW_TEXT)?;
         }
         if !(self.i >= self.n || self.bit_at(self.i, 1)) {
             return self.refuse();
@@ -1053,9 +1037,7 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 10 => {
-                    if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 {
-                        return self.refuse();
-                    } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 {
+                    if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 {
                         return self.refuse();
                     } else if self.word() == w::HASH_INCLUDE_34 {
                         self.include()?;
@@ -1141,6 +1123,7 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 13 => {
+                    self.leaf_refuses(0x800)?;
                     self.leaf_close(k::JSON_OBJECT)?;
                     self.field_made(f::DOCUMENT);
                     self.close()?;
@@ -1166,17 +1149,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 16 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.pass_as(true)?;
-                            stack.push(16);
-                            st = 17;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 15;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.pass_as(true)?;
+                        stack.push(16);
+                        st = 17;
+                        continue 'run;
+                    } else {
+                        st = 15;
+                        continue 'run;
                     }
                 }
                 17 => {
@@ -1238,17 +1218,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 21 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.pass_as(true)?;
-                            stack.push(21);
-                            st = 18;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 20;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.pass_as(true)?;
+                        stack.push(21);
+                        st = 18;
+                        continue 'run;
+                    } else {
+                        st = 20;
+                        continue 'run;
                     }
                 }
                 22 => {
@@ -1393,15 +1370,12 @@ impl<L: Layout> P<'_, L> {
                             st = 5;
                             continue 'run;
                         } else {
-                            match self.word() {
-                                w::LBRACE_20 => {
-                                    stack.push(33);
-                                    st = 34;
-                                    continue 'run;
-                                }
-                                _ => {
-                                    return self.refuse();
-                                }
+                            if self.word() == w::LBRACE_20 {
+                                stack.push(33);
+                                st = 34;
+                                continue 'run;
+                            } else {
+                                return self.refuse();
                             }
                         }
                     } else {
@@ -1531,15 +1505,12 @@ impl<L: Layout> P<'_, L> {
                         st = 3;
                         continue 'run;
                     } else {
-                        match self.word() {
-                            w::CODE_37 => {
-                                stack.push(46);
-                                st = 47;
-                                continue 'run;
-                            }
-                            _ => {
-                                return self.refuse();
-                            }
+                        if self.word() == w::CODE_37 {
+                            stack.push(46);
+                            st = 47;
+                            continue 'run;
+                        } else {
+                            return self.refuse();
                         }
                     }
                 }
@@ -1572,15 +1543,12 @@ impl<L: Layout> P<'_, L> {
                         st = 3;
                         continue 'run;
                     } else {
-                        match self.word() {
-                            w::LBRACE_20 => {
-                                stack.push(50);
-                                st = 34;
-                                continue 'run;
-                            }
-                            _ => {
-                                return self.refuse();
-                            }
+                        if self.word() == w::LBRACE_20 {
+                            stack.push(50);
+                            st = 34;
+                            continue 'run;
+                        } else {
+                            return self.refuse();
                         }
                     }
                 }
@@ -1692,17 +1660,14 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 59 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.implied()?;
-                            stack.push(60);
-                            st = 61;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 5;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.implied()?;
+                        stack.push(60);
+                        st = 61;
+                        continue 'run;
+                    } else {
+                        st = 5;
+                        continue 'run;
                     }
                 }
                 60 => {
@@ -1719,17 +1684,14 @@ impl<L: Layout> P<'_, L> {
                         st = 5;
                         continue 'run;
                     } else {
-                        match self.word() {
-                            w::LPAREN_10 => {
-                                self.implied()?;
-                                stack.push(62);
-                                st = 63;
-                                continue 'run;
-                            }
-                            _ => {
-                                st = 5;
-                                continue 'run;
-                            }
+                        if self.word() == w::LPAREN_10 {
+                            self.implied()?;
+                            stack.push(62);
+                            st = 63;
+                            continue 'run;
+                        } else {
+                            st = 5;
+                            continue 'run;
                         }
                     }
                 }
@@ -1848,17 +1810,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 70 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.implied()?;
-                            stack.push(71);
-                            st = 72;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 69;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.implied()?;
+                        stack.push(71);
+                        st = 72;
+                        continue 'run;
+                    } else {
+                        st = 69;
+                        continue 'run;
                     }
                 }
                 71 => {
@@ -1900,18 +1859,15 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 76 => {
-                    match self.word() {
-                        w::PLUS_28 | w::MINUS_27 => {
-                            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                            self.tk_as(matches!(self.word(), w::PLUS_28 | w::MINUS_27), ADDITIVE[self.word() as usize], f::OPERATOR)?;
-                            stack.push(77);
-                            st = 78;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 75;
-                            continue 'run;
-                        }
+                    if matches!(self.word(), w::PLUS_28 | w::MINUS_27) {
+                        self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+                        self.tk_as(matches!(self.word(), w::PLUS_28 | w::MINUS_27), ADDITIVE[self.word() as usize], f::OPERATOR)?;
+                        stack.push(77);
+                        st = 78;
+                        continue 'run;
+                    } else {
+                        st = 75;
+                        continue 'run;
                     }
                 }
                 77 => {
@@ -1926,18 +1882,15 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 79 => {
-                    match self.word() {
-                        w::STAR_24 | w::SLASH_29 | w::PERCENT_30 => {
-                            self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
-                            self.tk_as(matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30), MULTIPLICATIVE[self.word() as usize], f::OPERATOR)?;
-                            stack.push(80);
-                            st = 81;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 3;
-                            continue 'run;
-                        }
+                    if matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30) {
+                        self.wrap(k::BINARY_EXPRESSION, f::LEFT)?;
+                        self.tk_as(matches!(self.word(), w::STAR_24 | w::SLASH_29 | w::PERCENT_30), MULTIPLICATIVE[self.word() as usize], f::OPERATOR)?;
+                        stack.push(80);
+                        st = 81;
+                        continue 'run;
+                    } else {
+                        st = 3;
+                        continue 'run;
                     }
                 }
                 80 => {
@@ -1961,11 +1914,7 @@ impl<L: Layout> P<'_, L> {
                 }
                 82 => {
                     self.deeper()?;
-                    if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 {
-                        stack.push(75);
-                        st = 92;
-                        continue 'run;
-                    } else if matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) {
+                    if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) {
                         stack.push(75);
                         st = 92;
                         continue 'run;
@@ -2059,15 +2008,12 @@ impl<L: Layout> P<'_, L> {
                         st = 3;
                         continue 'run;
                     } else {
-                        match self.word() {
-                            w::MINUS_27 => {
-                                stack.push(3);
-                                st = 84;
-                                continue 'run;
-                            }
-                            _ => {
-                                return self.refuse();
-                            }
+                        if self.word() == w::MINUS_27 {
+                            stack.push(3);
+                            st = 84;
+                            continue 'run;
+                        } else {
+                            return self.refuse();
                         }
                     }
                 }
@@ -2119,17 +2065,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 90 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.implied()?;
-                            stack.push(91);
-                            st = 74;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 89;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.implied()?;
+                        stack.push(91);
+                        st = 74;
+                        continue 'run;
+                    } else {
+                        st = 89;
+                        continue 'run;
                     }
                 }
                 91 => {
@@ -2178,17 +2121,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 96 => {
-                    match self.word() {
-                        w::SEMI_14 => {
-                            self.implied()?;
-                            stack.push(97);
-                            st = 98;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 95;
-                            continue 'run;
-                        }
+                    if self.word() == w::SEMI_14 {
+                        self.implied()?;
+                        stack.push(97);
+                        st = 98;
+                        continue 'run;
+                    } else {
+                        st = 95;
+                        continue 'run;
                     }
                 }
                 97 => {
@@ -2210,17 +2150,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 100 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.implied()?;
-                            stack.push(101);
-                            st = 102;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 99;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.implied()?;
+                        stack.push(101);
+                        st = 102;
+                        continue 'run;
+                    } else {
+                        st = 99;
+                        continue 'run;
                     }
                 }
                 101 => {
@@ -2316,16 +2253,13 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 109 => {
-                    match self.word() {
-                        _ if COMPARISON_OPERATOR[self.word() as usize] != 0 || self.word() == w::TILDE_31 => {
-                            stack.push(103);
-                            st = 106;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 103;
-                            continue 'run;
-                        }
+                    if COMPARISON_OPERATOR[self.word() as usize] != 0 || self.word() == w::TILDE_31 {
+                        stack.push(103);
+                        st = 106;
+                        continue 'run;
+                    } else {
+                        st = 103;
+                        continue 'run;
                     }
                 }
                 110 => {
@@ -2385,18 +2319,15 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 117 => {
-                    match self.word() {
-                        w::SEMI_14 => {
-                            self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
-                            self.p(w::SEMI_14)?;
-                            stack.push(97);
-                            st = 98;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 3;
-                            continue 'run;
-                        }
+                    if self.word() == w::SEMI_14 {
+                        self.wrap(k::DISJUNCTION, f::ALTERNATIVE)?;
+                        self.p(w::SEMI_14)?;
+                        stack.push(97);
+                        st = 98;
+                        continue 'run;
+                    } else {
+                        st = 3;
+                        continue 'run;
                     }
                 }
                 118 => {
@@ -2425,17 +2356,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 120 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.implied()?;
-                            stack.push(121);
-                            st = 74;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 119;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.implied()?;
+                        stack.push(121);
+                        st = 74;
+                        continue 'run;
+                    } else {
+                        st = 119;
+                        continue 'run;
                     }
                 }
                 121 => {
@@ -2469,26 +2397,20 @@ impl<L: Layout> P<'_, L> {
                         st = 74;
                         continue 'run;
                     } else {
-                        match self.word() {
-                            w::BY_45 | w::SEP_46 | w::COLON_15 => {
-                                match self.word() {
-                                    w::BY_45 => {
-                                        self.bump_as(k::BY)?;
-                                        stack.push(u64::from(self.flags));
-                                        self.flags = self.flags | FLAG_NO_NAMED;
-                                        stack.push(123);
-                                        st = 74;
-                                        continue 'run;
-                                    }
-                                    _ => {
-                                        st = 122;
-                                        continue 'run;
-                                    }
-                                }
+                        if matches!(self.word(), w::BY_45 | w::SEP_46 | w::COLON_15) {
+                            if self.word() == w::BY_45 {
+                                self.bump_as(k::BY)?;
+                                stack.push(u64::from(self.flags));
+                                self.flags = self.flags | FLAG_NO_NAMED;
+                                stack.push(123);
+                                st = 74;
+                                continue 'run;
+                            } else {
+                                st = 122;
+                                continue 'run;
                             }
-                            _ => {
-                                return self.refuse();
-                            }
+                        } else {
+                            return self.refuse();
                         }
                     }
                 }
@@ -2543,15 +2465,12 @@ impl<L: Layout> P<'_, L> {
                         st = 5;
                         continue 'run;
                     } else {
-                        match self.word() {
-                            w::LBRACE_20 => {
-                                stack.push(130);
-                                st = 39;
-                                continue 'run;
-                            }
-                            _ => {
-                                return self.refuse();
-                            }
+                        if self.word() == w::LBRACE_20 {
+                            stack.push(130);
+                            st = 39;
+                            continue 'run;
+                        } else {
+                            return self.refuse();
                         }
                     }
                 }
@@ -2598,17 +2517,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 136 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.implied()?;
-                            stack.push(137);
-                            st = 74;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 135;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.implied()?;
+                        stack.push(137);
+                        st = 74;
+                        continue 'run;
+                    } else {
+                        st = 135;
+                        continue 'run;
                     }
                 }
                 137 => {
@@ -2617,17 +2533,14 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 138 => {
-                    match self.word() {
-                        w::EQ_GT_4 => {
-                            self.implied()?;
-                            stack.push(137);
-                            st = 74;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 135;
-                            continue 'run;
-                        }
+                    if self.word() == w::EQ_GT_4 {
+                        self.implied()?;
+                        stack.push(137);
+                        st = 74;
+                        continue 'run;
+                    } else {
+                        st = 135;
+                        continue 'run;
                     }
                 }
                 139 => {
@@ -2636,31 +2549,25 @@ impl<L: Layout> P<'_, L> {
                     continue 'run;
                 }
                 140 => {
-                    match self.word() {
-                        w::COLON_MINUS_3 => {
-                            self.implied()?;
-                            stack.push(139);
-                            st = 94;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 138;
-                            continue 'run;
-                        }
+                    if self.word() == w::COLON_MINUS_3 {
+                        self.implied()?;
+                        stack.push(139);
+                        st = 94;
+                        continue 'run;
+                    } else {
+                        st = 138;
+                        continue 'run;
                     }
                 }
                 141 => {
-                    match self.word() {
-                        w::COMMA_12 => {
-                            self.implied()?;
-                            stack.push(142);
-                            st = 143;
-                            continue 'run;
-                        }
-                        _ => {
-                            st = 140;
-                            continue 'run;
-                        }
+                    if self.word() == w::COMMA_12 {
+                        self.implied()?;
+                        stack.push(142);
+                        st = 143;
+                        continue 'run;
+                    } else {
+                        st = 140;
+                        continue 'run;
                     }
                 }
                 142 => {
@@ -2882,13 +2789,17 @@ impl<L: Layout> P<'_, L> {
         while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
             self.pend += 1;
         }
-        // The marks the leaf refuses (`refuse M in L`), at any of its tokens: its text checked, as the lean parser checks
-        // a policy document is JSON.
-        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, 0x800)) {
-            return self.refuse();
-        }
         let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
         self.set_made(at as u32);
+        Ok(())
+    }
+
+    /// The marks a `leaf`'s rule refuses (`refuse M in L`), at any of the tokens it read: its text checked, as the
+    /// lean parser checks a policy document is JSON.
+    fn leaf_refuses(&self, marks: u32) -> R {
+        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, marks)) {
+            return self.refuse();
+        }
         Ok(())
     }
 

@@ -852,6 +852,7 @@ impl<L: Layout> P<'_, L> {
                     self.p(w::POLICY_66)?;
                     self.leaf_open();
                     self.json_document()?;
+                    self.leaf_refuses(0x800)?;
                     self.leaf_close(k::JSON_OBJECT)?;
                     self.field_made(f::DOCUMENT);
                 }
@@ -958,16 +959,12 @@ impl<L: Layout> P<'_, L> {
                     break;
                 }
             }
-            if (self.i >= self.n || self.bit_at(self.i, 2)) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::COMMA_12 } {
-            } else {
-                match self.word() {
-                    w::LBRACE_20 => {
-                        self.json()?;
-                        self.field_made(f::ARGUMENT);
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
+            if !((self.i >= self.n || self.bit_at(self.i, 2)) && { let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::COMMA_12 }) {
+                if self.word() == w::LBRACE_20 {
+                    self.json()?;
+                    self.field_made(f::ARGUMENT);
+                } else {
+                    return self.refuse();
                 }
             }
         } else {
@@ -1015,9 +1012,7 @@ impl<L: Layout> P<'_, L> {
 
     /// `block_statement`.
     fn block_statement(&mut self) -> R {
-        if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 {
-            return self.refuse();
-        } else if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 {
+        if self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::TEST_53 || self.word() == w::DOT_13 && self.word_at(self.i + 1) == w::FIXTURES_57 {
             return self.refuse();
         } else if matches!(self.word(), w::MUST_35 | w::MAY_36) && self.kind_at(self.i + 1) == t::IDENTIFIER {
             self.clause()?;
@@ -1154,33 +1149,19 @@ impl<L: Layout> P<'_, L> {
 
     /// `raw_line`.
     fn raw_line(&mut self) -> R {
-        match self.word() {
-            _ if PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 => {
-                self.bump_as(k::RAW_TEXT)?;
-            }
-            _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                self.bump_as(k::RAW_TEXT)?;
-            }
-            _ => {
-                return self.refuse();
-            }
+        self.leaf_open();
+        if PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER {
+            self.pass_as(true)?;
+        } else {
+            return self.refuse();
         }
-        while !(self.i >= self.n || self.bit_at(self.i, 1)) {
-            match self.word() {
-                _ if PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                _ => {
-                    break;
-                }
-            }
+        while !(self.i >= self.n || self.bit_at(self.i, 1)) && (PUNCTUATION[self.word() as usize] != 0 || self.word() == w::LBRACE_20 || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER) {
+            self.pass_as(true)?;
         }
         if !(self.i >= self.n || self.bit_at(self.i, 1)) {
             return self.refuse();
         }
+        self.leaf_close(k::RAW_TEXT)?;
         Ok(())
     }
 
@@ -1205,22 +1186,24 @@ impl<L: Layout> P<'_, L> {
 
     /// `io_parameters`.
     fn io_parameters(&mut self) -> R {
+        self.leaf_open();
         match self.word() {
             _ if PUNCTUATION[self.word() as usize] != 0 && !matches!(self.word(), w::LPAREN_10 | w::RPAREN_11) || self.word() == w::LBRACE_20 => {
-                self.bump_as(k::RAW_TEXT)?;
+                self.pass_as(true)?;
             }
             w::LPAREN_10 => {
-                self.bump_as(k::RAW_TEXT)?;
+                self.pass_as(true)?;
                 self.io_inner()?;
             }
             _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                self.bump_as(k::RAW_TEXT)?;
+                self.pass_as(true)?;
             }
             _ => {
                 return self.refuse();
             }
         }
         self.raw_texts()?;
+        self.leaf_close(k::RAW_TEXT)?;
         Ok(())
     }
 
@@ -1228,7 +1211,7 @@ impl<L: Layout> P<'_, L> {
     fn io_inner(&mut self) -> R {
         self.deeper()?;
         self.raw_texts()?;
-        self.merge_as(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
+        self.pass_as(self.word() == w::RPAREN_11)?;
         self.depth -= 1;
         Ok(())
     }
@@ -1316,21 +1299,18 @@ impl<L: Layout> P<'_, L> {
             self.p(w::CODE_37)?;
             self.tk_as(self.kind() == t::STRING, k::STRING, f::CODE)?;
         } else {
-            match self.word() {
-                w::CODE_37 => {
-                    self.open(k::CODE_COLUMN);
-                    self.p(w::CODE_37)?;
-                    self.braced_column()?;
-                    if self.word() == w::IN_38 {
-                        self.implied()?;
-                        self.tk_as(self.kind() == t::STRING, k::STRING, f::CODES)?;
-                    }
-                    self.close()?;
-                    self.field_made(f::CODE);
+            if self.word() == w::CODE_37 {
+                self.open(k::CODE_COLUMN);
+                self.p(w::CODE_37)?;
+                self.braced_column()?;
+                if self.word() == w::IN_38 {
+                    self.implied()?;
+                    self.tk_as(self.kind() == t::STRING, k::STRING, f::CODES)?;
                 }
-                _ => {
-                    return self.refuse();
-                }
+                self.close()?;
+                self.field_made(f::CODE);
+            } else {
+                return self.refuse();
             }
         }
         Ok(())
@@ -1343,14 +1323,11 @@ impl<L: Layout> P<'_, L> {
             self.id(f::COLUMN)?;
             self.p(w::RBRACE_21)?;
         } else {
-            match self.word() {
-                w::LBRACE_20 => {
-                    self.raw_braces()?;
-                    self.field_made(f::COLUMN);
-                }
-                _ => {
-                    return self.refuse();
-                }
+            if self.word() == w::LBRACE_20 {
+                self.raw_braces()?;
+                self.field_made(f::COLUMN);
+            } else {
+                return self.refuse();
             }
         }
         Ok(())
@@ -1358,8 +1335,10 @@ impl<L: Layout> P<'_, L> {
 
     /// `raw_braces`.
     fn raw_braces(&mut self) -> R {
-        self.p_stored(w::LBRACE_20, k::RAW_TEXT)?;
+        self.leaf_open();
+        self.word_pass_as(w::LBRACE_20)?;
         self.raw_text_x_0()?;
+        self.leaf_close(k::RAW_TEXT)?;
         Ok(())
     }
 
@@ -1380,14 +1359,11 @@ impl<L: Layout> P<'_, L> {
                 self.id(f::OVER)?;
                 self.p(w::RBRACE_21)?;
             } else {
-                match self.word() {
-                    w::LBRACE_20 => {
-                        self.raw_braces()?;
-                        self.field_made(f::OVER);
-                    }
-                    _ => {
-                        return self.refuse();
-                    }
+                if self.word() == w::LBRACE_20 {
+                    self.raw_braces()?;
+                    self.field_made(f::OVER);
+                } else {
+                    return self.refuse();
                 }
             }
         }
@@ -1397,8 +1373,10 @@ impl<L: Layout> P<'_, L> {
 
     /// `json`.
     fn json(&mut self) -> R {
-        self.p_stored(w::LBRACE_20, k::JSON_OBJECT)?;
+        self.leaf_open();
+        self.word_pass_as(w::LBRACE_20)?;
         self.json_object_x_1()?;
+        self.leaf_close(k::JSON_OBJECT)?;
         Ok(())
     }
 
@@ -1606,16 +1584,10 @@ impl<L: Layout> P<'_, L> {
         } else if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) || self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::LPAREN_10 || self.flags & FLAG_NO_NAMED == 0 && self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && (self.kind_at(self.i + 1) == t::NUMBER || self.kind_at(self.i + 1) == t::STRING || self.kind_at(self.i + 1) == t::CODE_LITERAL || self.kind_at(self.i + 1) == t::IDENTIFIER || self.word_at(self.i + 1) == w::LBRACE_20 || self.word_at(self.i + 1) == w::AT_23) {
             self.term()?;
         } else {
-            match self.word() {
-                w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::LPAREN_10 => {
-                    self.term()?;
-                }
-                _ if self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER => {
-                    self.term()?;
-                }
-                _ => {
-                    return self.refuse();
-                }
+            if matches!(self.word(), w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::LPAREN_10) || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER {
+                self.term()?;
+            } else {
+                return self.refuse();
             }
         }
         if self.made_is(k::CALL) {
@@ -1703,9 +1675,7 @@ impl<L: Layout> P<'_, L> {
     /// `unsigned`.
     fn unsigned(&mut self) -> R {
         self.deeper()?;
-        if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 {
-            self.aggregate()?;
-        } else if matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) {
+        if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) {
             self.aggregate()?;
         } else if self.word() == w::MINUS_27 && self.kind_at(self.i + 1) == t::NUMBER {
             self.minus()?;
@@ -1847,26 +1817,23 @@ impl<L: Layout> P<'_, L> {
                         }
                     }
                 } else {
-                    match self.word() {
-                        w::BY_45 | w::SEP_46 | w::COLON_15 => {
-                            if self.word() == w::BY_45 {
-                                self.bump_as(k::BY)?;
-                                let flags = self.flags;
-                                self.flags = self.flags | FLAG_NO_NAMED;
-                                self.term()?;
-                                self.flags = flags;
-                                self.field_made(f::KEY);
-                            }
-                            if self.word() == w::SEP_46 {
-                                self.bump_as(k::SEP)?;
-                                self.tk_as(self.kind() == t::STRING, k::STRING, f::SEPARATOR)?;
-                            }
-                            self.p_stored(w::COLON_15, k::COLON)?;
-                            self.p(w::LBRACE_20)?;
+                    if matches!(self.word(), w::BY_45 | w::SEP_46 | w::COLON_15) {
+                        if self.word() == w::BY_45 {
+                            self.bump_as(k::BY)?;
+                            let flags = self.flags;
+                            self.flags = self.flags | FLAG_NO_NAMED;
+                            self.term()?;
+                            self.flags = flags;
+                            self.field_made(f::KEY);
                         }
-                        _ => {
-                            return self.refuse();
+                        if self.word() == w::SEP_46 {
+                            self.bump_as(k::SEP)?;
+                            self.tk_as(self.kind() == t::STRING, k::STRING, f::SEPARATOR)?;
                         }
+                        self.p_stored(w::COLON_15, k::COLON)?;
+                        self.p(w::LBRACE_20)?;
+                    } else {
+                        return self.refuse();
                     }
                 }
             }
@@ -1887,21 +1854,21 @@ impl<L: Layout> P<'_, L> {
         loop {
             match self.word() {
                 _ if PUNCTUATION[self.word() as usize] != 0 && self.word() != w::RBRACE_21 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
+                    self.pass_as(true)?;
                 }
                 w::LBRACE_20 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
+                    self.pass_as(true)?;
                     self.raw_text_x_0()?;
                 }
                 _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.merge_as(true, k::RAW_TEXT)?;
+                    self.pass_as(true)?;
                 }
                 _ => {
                     break;
                 }
             }
         }
-        self.merge_as(self.word() == w::RBRACE_21, k::RAW_TEXT)?;
+        self.pass_as(self.word() == w::RBRACE_21)?;
         self.depth -= 1;
         Ok(())
     }
@@ -1912,21 +1879,21 @@ impl<L: Layout> P<'_, L> {
         loop {
             match self.word() {
                 _ if PUNCTUATION[self.word() as usize] != 0 && self.word() != w::RBRACE_21 => {
-                    self.merge_as(true, k::JSON_OBJECT)?;
+                    self.pass_as(true)?;
                 }
                 w::LBRACE_20 => {
-                    self.merge_as(true, k::JSON_OBJECT)?;
+                    self.pass_as(true)?;
                     self.json_object_x_1()?;
                 }
                 _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.merge_as(true, k::JSON_OBJECT)?;
+                    self.pass_as(true)?;
                 }
                 _ => {
                     break;
                 }
             }
         }
-        self.merge_as(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
+        self.pass_as(self.word() == w::RBRACE_21)?;
         self.depth -= 1;
         Ok(())
     }
@@ -1936,14 +1903,14 @@ impl<L: Layout> P<'_, L> {
         loop {
             match self.word() {
                 _ if PUNCTUATION[self.word() as usize] != 0 && !matches!(self.word(), w::LPAREN_10 | w::RPAREN_11) || self.word() == w::LBRACE_20 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
+                    self.pass_as(true)?;
                 }
                 w::LPAREN_10 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
+                    self.pass_as(true)?;
                     self.io_inner()?;
                 }
                 _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.merge_as(true, k::RAW_TEXT)?;
+                    self.pass_as(true)?;
                 }
                 _ => {
                     break;
@@ -2186,13 +2153,17 @@ impl<L: Layout> P<'_, L> {
         while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
             self.pend += 1;
         }
-        // The marks the leaf refuses (`refuse M in L`), at any of its tokens: its text checked, as the lean parser checks
-        // a policy document is JSON.
-        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, 0x800)) {
-            return self.refuse();
-        }
         let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
         self.set_made(at as u32);
+        Ok(())
+    }
+
+    /// The marks a `leaf`'s rule refuses (`refuse M in L`), at any of the tokens it read: its text checked, as the
+    /// lean parser checks a policy document is JSON.
+    fn leaf_refuses(&self, marks: u32) -> R {
+        if (self.leaf_from..self.i).any(|j| self.marks_hold(j, marks)) {
+            return self.refuse();
+        }
         Ok(())
     }
 

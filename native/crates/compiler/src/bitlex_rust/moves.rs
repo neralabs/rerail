@@ -649,6 +649,225 @@ pub(crate) fn call_for_run(b: &mut Block, norm: &Block, call: &dyn Fn(&[String],
     });
 }
 
+/// Whether `b` only joins tokens to a leaf of kind `k` begun before it (`merge_as`): its takes merges into `k`, its
+/// calls of `merging`'s, nothing else written (decision 0685 rock 3, `G::leaves`).
+pub(crate) fn merges_only(b: &[Op], k: &str, merging: &HashSet<String>) -> bool {
+    b.iter().all(|op| match op {
+        Op::Take { take: Take::Merge { kind, .. }, .. } => kind == k,
+        Op::Call(f) => merging.contains(f),
+        Op::Break | Op::Refuse => true,
+        Op::If { arms, els } => arms.iter().all(|(_, x)| merges_only(x, k, merging)) && els.as_ref().is_none_or(|e| merges_only(e, k, merging)),
+        Op::Match { arms, default, .. } => arms.iter().all(|(_, x)| merges_only(x, k, merging)) && merges_only(default, k, merging),
+        Op::Loop(x) | Op::While(_, x) => merges_only(x, k, merging),
+        _ => false,
+    })
+}
+
+/// Whether `op` begins a leaf of kind `k` (a take of the token as one, no field), on each way through it that does not
+/// refuse.
+fn begins(op: &Op, k: &str, merging: &HashSet<String>) -> bool {
+    let arm = |x: &Block| matches!(x.as_slice(), [Op::Refuse]) || (x.first().is_some_and(|f| begins(f, k, merging)) && merges_only(&x[1..], k, merging));
+    match op {
+        Op::Take { take: Take::Leaf { kind, field, .. }, .. } => kind == k && field == "0",
+        Op::Take { take: Take::WordLeaf { kind, .. }, .. } => kind == k,
+        Op::If { arms, els: Some(e) } => arms.iter().all(|(_, x)| arm(x)) && arm(e),
+        Op::Match { arms, default, .. } => arms.iter().all(|(_, x)| arm(x)) && arm(default),
+        _ => false,
+    }
+}
+
+/// `b` with each take into a leaf of kind `k` (its beginning and its merges) a pass (`pass_as`): read into the leaf
+/// `leaf_close` makes. The calls of `merging` it makes, counted in `calls`.
+fn passes(b: &mut Block, k: &str, merging: &HashSet<String>, calls: &mut HashMap<String, usize>) {
+    blocks(b, &mut |x| {
+        for op in x.iter_mut() {
+            match op {
+                Op::Take { take, .. } => {
+                    let new = match &*take {
+                        Take::Merge { test, kind } | Take::Leaf { test, kind, .. } if kind == k => Some(Take::Pass { test: test.clone() }),
+                        Take::WordLeaf { word, kind } if kind == k => Some(Take::WordPass { word: word.clone() }),
+                        _ => None,
+                    };
+                    if let Some(n) = new {
+                        *take = n;
+                    }
+                }
+                Op::Call(f) if merging.contains(f) => *calls.entry(f.clone()).or_default() += 1,
+                _ => {}
+            }
+        }
+    });
+}
+
+/// `b` with each run that begins a leaf of kind `k` and then only joins tokens to it (`begins`, `merges_only`) one leaf
+/// over the tokens it reads: `leaf_open`, the tokens passed, `leaf_close(k)`, as the lean parser's `leaf_over` after
+/// its scan. The calls of `merging` in them counted in `calls`; whether it had one.
+pub(crate) fn one_leaf(b: &mut Block, k: &str, merging: &HashSet<String>, calls: &mut HashMap<String, usize>) -> bool {
+    // The outermost run first: a run's arms that each begin the leaf are its, not leaves of their own.
+    fn walk(x: &mut Block, k: &str, merging: &HashSet<String>, calls: &mut HashMap<String, usize>, found: &mut bool) {
+        let mut i = 0;
+        while i < x.len() {
+            if begins(&x[i], k, merging) {
+                let mut j = i + 1;
+                while j < x.len() && merges_only(&x[j..=j], k, merging) {
+                    j += 1;
+                }
+                let mut run: Block = x[i..j].to_vec();
+                passes(&mut run, k, merging, calls);
+                let mut new = vec![Op::Line("self.leaf_open();".into())];
+                new.extend(run);
+                new.push(Op::Line(format!("self.leaf_close({k})?;")));
+                let n = new.len();
+                x.splice(i..j, new);
+                *found = true;
+                i += n;
+            } else {
+                match &mut x[i] {
+                    Op::If { arms, els } => {
+                        arms.iter_mut().for_each(|(_, y)| walk(y, k, merging, calls, found));
+                        if let Some(e) = els {
+                            walk(e, k, merging, calls, found);
+                        }
+                    }
+                    Op::Match { arms, default, .. } => {
+                        arms.iter_mut().for_each(|(_, y)| walk(y, k, merging, calls, found));
+                        walk(default, k, merging, calls, found);
+                    }
+                    Op::Loop(y) | Op::While(_, y) | Op::At(_, y) => walk(y, k, merging, calls, found),
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+    }
+    let mut found = false;
+    walk(b, k, merging, calls, &mut found);
+    found
+}
+
+/// `b`, a function that only joins tokens (`merges_only`), its takes passes (`passes`): the calls of `merging` it makes
+/// counted in `calls`.
+pub(crate) fn passes_in(b: &mut Block, k: &str, merging: &HashSet<String>, calls: &mut HashMap<String, usize>) {
+    passes(b, k, merging, calls);
+}
+
+/// The kinds the merges in `b` join tokens into (`merge_as`).
+pub(crate) fn merge_kinds(b: &mut Block, out: &mut Vec<String>) {
+    blocks(b, &mut |x| {
+        for o in x.iter() {
+            if let Op::Take { take: Take::Merge { kind, .. }, .. } = o
+                && !out.contains(kind)
+            {
+                out.push(kind.clone());
+            }
+        }
+    });
+}
+
+/// How many calls of `f` `b` makes.
+pub(crate) fn calls_of(b: &mut Block, f: &str) -> usize {
+    let mut n = 0;
+    blocks(b, &mut |x| n += x.iter().filter(|o| matches!(o, Op::Call(g) if g == f)).count());
+    n
+}
+
+/// `a && b`, each that holds an `||` in parentheses.
+fn and(a: Cond, b: Cond) -> Cond {
+    // An `||` outside any parentheses in its text (an `Or` itself `And` prints in parentheses).
+    let bare_or = |t: &str| {
+        let mut depth = 0i32;
+        let b = t.as_bytes();
+        (0..b.len()).any(|i| {
+            match b[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth -= 1,
+                _ => {}
+            }
+            depth == 0 && b[i] == b'|' && b.get(i + 1) == Some(&b'|')
+        })
+    };
+    let g = |c: Cond| if !matches!(c, Cond::Or(_)) && bare_or(&c.print()) { Cond::Group(Box::new(c)) } else { c };
+    let mut cs = match a {
+        Cond::And(cs) => cs,
+        a => vec![g(a)],
+    };
+    match b {
+        Cond::And(bs) => cs.extend(bs),
+        b => cs.push(g(b)),
+    }
+    Cond::And(cs)
+}
+
+/// The decisions in `b` once their arms' code is final (after `classes` and `G::leaves`): arms next to each other whose
+/// code is the same one arm, their tests `||`'d; a last arm whose code is the `else`'s gone; a `match` of the word of one
+/// arm an `if`; a `while` whose code is `if d { x } else { break; }` a `while` of both tests. As the lean parser's
+/// `raw_line` scans `while on_line { bump }`, not a test of each token's class whose code is the same.
+pub(crate) fn joined(b: &mut Block) {
+    blocks(b, &mut |x| {
+        for op in x.iter_mut() {
+            match op {
+                Op::If { arms, els } => {
+                    let mut out: Vec<(Cond, Block)> = Vec::new();
+                    for (c, body) in std::mem::take(arms) {
+                        match out.last_mut() {
+                            Some(last) if last.1 == body => last.0 = Cond::or(std::mem::replace(&mut last.0, Cond::text("true")), c),
+                            _ => out.push((c, body)),
+                        }
+                    }
+                    while out.len() > 1 && els.as_ref().is_some_and(|e| *e == out[out.len() - 1].1) {
+                        out.pop();
+                    }
+                    *arms = out;
+                }
+                Op::Match { subject, arms, default } => {
+                    let mut out: Vec<(Pat, Block)> = Vec::new();
+                    for (pat, body) in std::mem::take(arms) {
+                        match out.last_mut() {
+                            Some(last) if last.1 == body && last.0.guard.is_none() && pat.guard.is_none() => last.0.words.extend(pat.words),
+                            Some(last) if last.1 == body => {
+                                let c = Cond::or(last.0.cond(), pat.cond());
+                                last.0 = Pat::guard(c);
+                            }
+                            _ => out.push((pat, body)),
+                        }
+                    }
+                    while out.last().is_some_and(|a| a.1 == *default) {
+                        out.pop();
+                    }
+                    if subject == "self.word()" && out.len() == 1 {
+                        let (pat, body) = out.pop().expect("one arm");
+                        *op = Op::If { arms: vec![(pat.cond(), body)], els: Some(std::mem::take(default)) };
+                    } else {
+                        *arms = out;
+                    }
+                }
+                _ => {}
+            }
+        }
+        for op in x.iter_mut() {
+            if let Op::While(c, body) = op
+                && let [Op::If { arms, els: Some(e) }] = body.as_slice()
+                && let [(d, inner)] = arms.as_slice()
+                && matches!(e.as_slice(), [Op::Break])
+            {
+                *op = Op::While(and(c.clone(), d.clone()), inner.clone());
+            }
+        }
+        x.retain(|op| !matches!(op, Op::If { arms, els: None } if arms.iter().all(|(_, b)| b.is_empty())));
+        // `if c {} else { y }`: `if !c { y }`.
+        for op in x.iter_mut() {
+            if let Op::If { arms, els } = op
+                && arms.len() == 1
+                && arms[0].1.is_empty()
+                && let Some(e) = els.take()
+            {
+                let c = std::mem::replace(&mut arms[0].0, Cond::text("true"));
+                arms[0] = (Cond::Not(Box::new(c)), e);
+            }
+        }
+    });
+}
+
 /// `b` with each run of moves `seq` a call of `f` instead.
 pub(crate) fn call_for(b: &mut Block, seq: &[Op], f: &str) {
     blocks(b, &mut |x| {

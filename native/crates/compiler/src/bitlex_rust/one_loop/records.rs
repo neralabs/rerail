@@ -330,7 +330,7 @@ impl Rl<'_, '_> {
                 then(vec![line(format!("self.reread_{}()?;", super::super::ident(reading)))], self.walk(body, rest, rule, k)?)
             }
             // `leaf K R`: `R` reads the tokens, then one leaf of `K` over them (`leaf_open` holds where it starts).
-            Gram::Leaf { kind, rule: r } => then(vec![line("self.leaf_open();")], self.walk(&Gram::Sym(r.clone()), rest, rule, then(vec![line(format!("self.leaf_close({})?;", self.g.kind_const(kind)?))], k))?),
+            Gram::Leaf { kind, rule: r } => then(vec![line("self.leaf_open();")], self.walk(&Gram::Sym(r.clone()), rest, rule, then(self.g.leaf_end(r, kind)?, k))?),
             other => return self.err(format!("rule {rule}: a level's call inside {other:?} is not written yet")),
         })
     }
