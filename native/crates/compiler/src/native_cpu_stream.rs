@@ -8136,11 +8136,64 @@ pub struct Tape {
 thread_local! {
     /// The code ids by key, kept between a thread's tapes: each image's end clears what it set.
     static IDS: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The buffers of the thread's last tape, each kept for the same use in the next (`CompiledStream::sized`).
+    static SPARE: std::cell::RefCell<Spare> = std::cell::RefCell::new(Spare::default());
+}
+
+/// A tape's buffers given back (`Tape`'s drop), each in its slot: the rows, sizes, offsets, tails and image; the
+/// bases, code keys, codes' first nodes, supertypes' nodes and kinds, open nodes, returns, frames and chains. The
+/// tape's image, where the caller took it, is not given back.
+#[derive(Default)]
+struct Spare {
+    bytes: [Vec<u8>; 5],
+    words: [Vec<u32>; 13],
+}
+
+/// The slot's buffer, empty, where it holds `n`; else a new one.
+fn spare_or_new<T>(slot: &mut Vec<T>, n: usize) -> Vec<T> {
+    let mut v = std::mem::take(slot);
+    if v.capacity() < n {
+        return Vec::with_capacity(n);
+    }
+    v.clear();
+    v
+}
+
+/// A tape's buffer kept in its slot, where it is the larger.
+fn give_back<T>(slot: &mut Vec<T>, v: &mut Vec<T>) {
+    if v.capacity() > slot.capacity() {
+        *slot = std::mem::take(v);
+    }
 }
 
 impl Drop for Tape {
     /// The id table back to the thread. A run that stopped before its end clears what it set.
     fn drop(&mut self) {
+        SPARE.with(|s| {
+            let s = &mut *s.borrow_mut();
+            let [b0, b1, b2, b3, b4] = &mut s.bytes;
+            give_back(b0, &mut self.rows);
+            give_back(b1, &mut self.size);
+            give_back(b2, &mut self.off);
+            give_back(b3, &mut self.tail);
+            give_back(b4, &mut self.image);
+            let [w0, w1, w2, w3, w4, w5, w6, w7, w8, w9, w10, w11, w12] = &mut s.words;
+            give_back(w0, &mut self.base);
+            give_back(w1, &mut self.code_kf);
+            give_back(w2, &mut self.code_first);
+            give_back(w3, &mut self.super_node);
+            give_back(w4, &mut self.super_kind);
+            give_back(w5, &mut self.open);
+            give_back(w6, &mut self.returns);
+            let [f0, f1, f2] = &mut self.frames;
+            give_back(w7, f0);
+            give_back(w8, f1);
+            give_back(w9, f2);
+            let [c0, c1, c2] = &mut self.chains;
+            give_back(w10, c0);
+            give_back(w11, c1);
+            give_back(w12, c2);
+        });
         // A format 16 run's tape took no table (`sized`).
         if self.id_of.capacity() == 0 {
             return;
@@ -8210,18 +8263,20 @@ impl CompiledStream {
         // Format 15's buffers only in a format 15 run; the working rows, their sizes and the supertypes only where the
         // nodes are passed from rows (not `direct`).
         let (f15, rowed) = (!self.sixteen, !self.direct);
-        let room = |n: usize, used: bool| -> Vec<u32> {
+        // Each buffer the thread's last tape gave back for it (`Spare`), where it holds `n`: its pages are the
+        // process's already, as simdjson's parser keeps its room from one document to the next. Else a new one.
+        let room = |slot: usize, n: usize, used: bool| -> Vec<u32> {
             match (used, poison) {
                 (false, _) => Vec::new(),
                 (true, true) => vec![u32::MAX; n],
-                (true, false) => Vec::with_capacity(n),
+                (true, false) => SPARE.with(|s| spare_or_new(&mut s.borrow_mut().words[slot], n)),
             }
         };
-        let bytes = |n: usize, used: bool| -> Vec<u8> {
+        let bytes = |slot: usize, n: usize, used: bool| -> Vec<u8> {
             match (used, poison) {
                 (false, _) => Vec::new(),
                 (true, true) => vec![u8::MAX; n],
-                (true, false) => Vec::with_capacity(n),
+                (true, false) => SPARE.with(|s| spare_or_new(&mut s.borrow_mut().bytes[slot], n)),
             }
         };
         let wraps = |n: usize| if self.wraps { n } else { 0 };
@@ -8243,23 +8298,23 @@ impl CompiledStream {
         };
         let returns = if self.context { 2 * pushes } else { pushes };
         let mut t = Tape {
-            rows: bytes(ROW as usize * nodes + SLACK, rowed),
-            size: bytes(usize::from(w.size) * nodes + SLACK, rowed),
-            off: bytes(usize::from(w.off) * nodes + SLACK, f15),
-            tail: bytes(usize::from(w.tail) * nodes + SLACK, f15),
-            base: room(blocks + SLACK, f15),
-            image: bytes(image, f15),
+            rows: bytes(0, ROW as usize * nodes + SLACK, rowed),
+            size: bytes(1, usize::from(w.size) * nodes + SLACK, rowed),
+            off: bytes(2, usize::from(w.off) * nodes + SLACK, f15),
+            tail: bytes(3, usize::from(w.tail) * nodes + SLACK, f15),
+            base: room(0, blocks + SLACK, f15),
+            image: bytes(4, image, f15),
             id_of,
-            code_kf: if f15 { Vec::with_capacity(nodes + 1) } else { Vec::new() },
-            code_first: room(nodes + 1, f15),
-            super_node: room(supers, rowed),
-            super_kind: room(supers, rowed),
+            code_kf: if f15 { room(1, nodes + 1, true) } else { Vec::new() },
+            code_first: room(2, nodes + 1, f15),
+            super_node: room(3, supers, rowed),
+            super_kind: room(4, supers, rowed),
             // The stack of open nodes: the Rust's format 16 run keeps its own here.
-            open: room(nodes, true),
-            returns: room(returns, true),
+            open: room(5, nodes, true),
+            returns: room(6, returns, true),
             counts: [0; 3],
-            frames: std::array::from_fn(|_| room(wraps(nodes + 1), true)),
-            chains: std::array::from_fn(|k| room(wraps(if k == 2 { 2 * nodes + 2 } else { nodes }), true)),
+            frames: std::array::from_fn(|k| room(7 + k, wraps(nodes + 1), true)),
+            chains: std::array::from_fn(|k| room(10 + k, wraps(if k == 2 { 2 * nodes + 2 } else { nodes }), true)),
             room: [nodes, supers, pushes],
             writer: std::ptr::null_mut(),
             numbers: std::ptr::null(),

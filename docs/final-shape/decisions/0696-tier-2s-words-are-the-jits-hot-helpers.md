@@ -34,7 +34,6 @@ stored to `ctx` before the call and loaded back after it, and the token marks ea
    (`ladder.rs`: each `blr` is one of tier 2's own calls) reads the code that is compiled.
 7. **An inlined instruction takes its caller word's place** (`srcloc`), since Cranelift's inliner drops the callee's.
    `word_ranges` and the profile then attribute each instruction to a word.
-
 8. **Jumps threaded** (`native_cpu_codegen::thread_jumps`), on every function the JIT defines, after the switches
    are lowered: a block whose one instruction is a `brif` on one of its own parameters is passed over. A `jump` into
    it becomes that `brif` on the argument it passes, and a branch into it with a constant argument goes to the side
@@ -46,6 +45,14 @@ stored to `ctx` before the call and loaded back after it, and the token marks ea
    Forwarding a field across a join (a value every predecessor holds) was tried and was slower: it holds the fields
    in registers through the marks' chains, where reloading them from `ctx` costs less. It stays forwarding along
    chains of one predecessor.
+10. **A thread keeps its tape's buffers for the next tape** (`Spare`, as `IDS` keeps the code ids): each buffer a
+    tape drops goes back to its own slot (its rows, sizes, offsets, tails, bases, code keys, supertypes, open nodes,
+    returns, frames, chains), and `sized` takes it again where it holds what the next file needs, as simdjson's
+    parser keeps its room from one document to the next. The image the caller takes is its own. A pool that handed
+    any buffer large enough to any use was tried first and was slower.
+11. **Holding fields across rules is not done this way.** With `Cut::held` set again (the token's index alone), the
+    words, which read and write the state in `ctx`, read a value the rule held elsewhere and refused every file.
+    Holding a field needs each word's function to take the held fields as parameters and give them back.
 
 ## Not done
 
@@ -56,5 +63,4 @@ From the list the user asked for:
 - The working row (format 15's key, start and end) is still written and read back. Nodes are not written directly.
 - The state is not passed as the tail calls' arguments (`held`, `pass` stay empty). With the words inlined, most of
   what they carried is now in registers within a rule. Across the rules' tail calls it still goes through `ctx`.
-- Tier 2's tape: its buffers are made for each file (`Tape::sized`). A pool of them was tried and was slower.
 - Inlining makes the rules' code larger, and Cranelift's compile of tier 2 takes longer with it.
