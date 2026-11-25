@@ -429,7 +429,8 @@ impl Reads {
     unsafe fn view(self, i: usize, d: *const ViewDir, e: *const ViewRow, r: u32, col: u32) -> u64 {
         let f: unsafe extern "C" fn(u64, u64, u64, u64, u32, u32) -> u64 = core::mem::transmute(*self.0.add(i));
         let (b, t, l) = view_parts(d, e);
-        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, r, col)
+        let mut own = [0u32; 32];
+        f((b as u64).wrapping_add((*e).entry), t as u64, host_view(d, e, t, &mut own) as u64, l as u64, r, col)
     }
 
     /// A view's walk read `i` (`child_first`, `child_next`, `number`, `up`, `end`) of node `x`.
@@ -437,7 +438,8 @@ impl Reads {
     unsafe fn walk(self, i: usize, d: *const ViewDir, e: *const ViewRow, x: u32) -> u32 {
         let f: unsafe extern "C" fn(u64, u64, u64, u64, u32) -> u32 = core::mem::transmute(*self.0.add(i));
         let (b, t, l) = view_parts(d, e);
-        f((b as u64).wrapping_add((*e).entry), t as u64, (*e).view.as_ptr() as u64, l as u64, x)
+        let mut own = [0u32; 32];
+        f((b as u64).wrapping_add((*e).entry), t as u64, host_view(d, e, t, &mut own) as u64, l as u64, x)
     }
 
     #[inline]
@@ -463,10 +465,34 @@ unsafe fn view_block(d: *const ViewDir) -> *const u8 {
 unsafe fn view_rows(d: *const ViewDir) -> *const ViewRow {
     view_block(d).add((*d).rows as usize) as *const ViewRow
 }
+/// Home `h`'s bytes at `at`, by its host address: this executor is the host's, whatever device the directory is
+/// also made for (`ViewHome::gpu` is that device's).
 unsafe fn view_home(d: *const ViewDir, h: u32, at: u64) -> *const u8 {
     let homes = view_block(d).add((*d).homes as usize) as *const ViewHome;
-    (*homes.add(h as usize)).gpu.wrapping_add(at as usize)
+    ((*homes.add(h as usize)).host as *const u8).wrapping_add(at as usize)
 }
+/// Where `TapeView`'s format and its 16z cache's offset (`side`) are among its words, and 16z's format
+/// (`rerail_clif::view`'s, a test holds them to it).
+const VIEW_FORMAT: usize = 3;
+const VIEW_SIDE: usize = 11;
+const F16Z_FORMAT: u32 = 1016;
+
+/// Document `e`'s view as this executor reads it, its tape at `t`: the row's own, but for a 16z view of a directory
+/// made for a device too, whose cache offset (`side`) the row holds as that device's addresses. Then `own`, the row's
+/// view with the host's: the cache's host address (its home, `ViewDir::cache`) less the tape's, as the host's
+/// `Reader` sets it (`rerail_clif::view::Reader::new`).
+unsafe fn host_view(d: *const ViewDir, e: *const ViewRow, t: *const u8, own: &mut [u32; 32]) -> *const u32 {
+    let view = &(*e).view;
+    if (*d).cache == 0 || view[VIEW_FORMAT] != F16Z_FORMAT {
+        return view.as_ptr();
+    }
+    *own = *view;
+    let homes = view_block(d).add((*d).homes as usize) as *const ViewHome;
+    let rel = ((*homes.add((*d).cache as usize - 1)).host as i64).wrapping_sub(t as i64);
+    (own[VIEW_SIDE], own[VIEW_SIDE + 1]) = (rel as u32, (rel >> 32) as u32);
+    own.as_ptr()
+}
+
 /// The directory's block, document `e`'s tape and its lines.
 unsafe fn view_parts(d: *const ViewDir, e: *const ViewRow) -> (*const u8, *const u8, *const u8) {
     (view_block(d), view_home(d, (*e).homes[0], (*e).tape), view_home(d, (*e).homes[1], (*e).lines))
@@ -3505,5 +3531,15 @@ mod tests {
         for (name, at) in places {
             assert_eq!(rerail_clif::reads::READS[at].name, name, "READS[{at}]");
         }
+    }
+
+    /// The words of a tape's view the host's 16z reads set (`host_view`) are `TapeView`'s, which a row holds whole.
+    #[test]
+    fn a_views_format_and_cache_offset_are_where_the_reads_put_them() {
+        use rerail_clif::view::{F16Z_FORMAT, TapeView};
+        assert_eq!(core::mem::offset_of!(TapeView, format), 4 * super::VIEW_FORMAT);
+        assert_eq!(core::mem::offset_of!(TapeView, side), 4 * super::VIEW_SIDE);
+        assert_eq!(F16Z_FORMAT, super::F16Z_FORMAT);
+        assert!(size_of::<TapeView>() <= 4 * 32);
     }
 }

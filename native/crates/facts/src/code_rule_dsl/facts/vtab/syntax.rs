@@ -3930,16 +3930,24 @@ impl Source for Viewed {
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let loc = matches!(self.view, View::Loc(_));
         // The directory is of the process's device's addresses, which the stages read it by (decision 0440 step C):
-        // none where its buffers have none (`views_in_place`). With no process device, of the host's, where the join
-        // programs then run (`rerail_accel::gpu::shared::on_host`).
+        // none where its buffers have none (`views_in_place`). Where the join programs run on the host
+        // (`rerail_accel::gpu::shared::on_host`, or no process device), of the host's (`ViewsInPlace::host`).
         let on_device = rerail_accel::gpu::join::device().is_ok() || rerail_accel::gpu::shared::layer().is_none();
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+        let host = rerail_accel::gpu::shared::is_on_host() || rerail_accel::gpu::shared::layer().is_none();
         let read_only = matches!(view, device_chunk::VIEW_TAPE | device_chunk::VIEW_DEPTH | device_chunk::VIEW_ORDER);
         let in_place = (on_device && (loc || read_only || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)))
             .then(|| device_chunk::views_in_place(&self.batch, chunk))
             .flatten()
-            .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
+            .filter(|v| if host { (view != device_chunk::VIEW_LINE || v.host.lines) && (!loc || v.host.locs) } else { (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs) })
             .and_then(|v| {
-                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir?, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+                // The host reads by address and makes nothing resident: no device buffer, its cache's included.
+                let (dir, buffers, cache) = if host {
+                    (v.host.dir, Vec::new(), v.cache.clone().map(|c| crate::code_rule_dsl::facts::vtab::ZCache { buffer: None, ..c }))
+                } else {
+                    (v.dir?, v.buffers.clone(), v.cache.clone())
+                };
+                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir, kind: device_chunk::read_kind(view), buffers, cache, failed: 0, format: v.format, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
                 in_place.failed = in_place.cache_failed();
                 Some(in_place)
             });

@@ -184,12 +184,25 @@ pub struct ViewsInPlace {
     /// block, which every reader of the batch's views shares, on the host and on the device: none where no tape is
     /// 16z.
     pub cache: Option<crate::code_rule_dsl::facts::vtab::ZCache>,
+    /// The directory as the host's join programs read it (`rerail_accel::gpu::shared::on_host`), whether or not a
+    /// device reads it too.
+    pub host: HostDir,
     /// The tape format of every document read off its tape (15, 16, `F16Z_FORMAT`), or 0 for a batch of several: the
     /// stages that read its views are compiled for it (decision 0576).
     pub format: u32,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
+
+/// A views' directory as the host reads it: its host address, and whether it holds every document's lines and `Loc`
+/// rows there (the device's refusals of homes it has no address for are not the host's).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[derive(Clone, Copy, Debug)]
+pub struct HostDir {
+    pub dir: u64,
+    pub lines: bool,
+    pub locs: bool,
+}
 
 /// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -216,11 +229,12 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     build_dir(&chunk.block, &docs_of(batch, [0; NVIEWS]))
 }
 
-/// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
+/// One document of a views' directory: its projection, its dialect (none: a text read as text only, no nodes), and
+/// its first row in each view (`VIEWS`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct DirDoc<'a> {
     p: &'a super::Projected,
-    dialect: &'a super::Dialect,
+    dialect: Option<&'a super::Dialect>,
     rows: [u32; NVIEWS],
 }
 
@@ -235,7 +249,7 @@ fn docs_of(batch: &Batch, past: [u32; NVIEWS]) -> Vec<DirDoc<'_>> {
         .map(|(i, p)| {
             let (n, loc) = (nodes[i] as u32, locs.get(i).map_or(0, |&r| r as u32));
             let own = [n, children[i] as u32, fields[i] as u32, n, n, loc, loc, loc, loc, n, n, n];
-            DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|v| past[v] + own[v]) }
+            DirDoc { p, dialect: batch.dialects.get(p.tag), rows: std::array::from_fn(|v| past[v] + own[v]) }
         })
         .collect()
 }
@@ -293,6 +307,9 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     // What the device reads: every tape of a document with nodes (else no stage reads the directory), every
     // document's lines (else the batch's `line` view is made, counted), its `Loc` rows.
     let (mut on_device, mut lines) = (device.is_some() || host_reads, true);
+    // What the device alone refuses (a home it has no address for): the host reads it all the same, by the homes'
+    // host addresses (`ViewsInPlace::host`).
+    let (mut dev_lines, mut dev_locs) = (true, true);
     // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
     let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
     let mut locs = docs.iter().all(|d| d.p.extra.is_some());
@@ -305,6 +322,9 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         };
         if !Arc::ptr_eq(p.block(), b) {
             return refused("views.refused.block");
+        }
+        if dialect.is_none() && p.len() > 0 {
+            return refused("views.refused.no_dialect");
         }
         let mut row = ViewRow { rows: first_rows, ..Default::default() };
         if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(p).is_none() {
@@ -344,7 +364,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
                 // The device's refusal, by why: the host reads it all the same.
                 let why = if tape_format == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" };
                 crate::code_rule_dsl::prof::count(why, 1);
-                if only_locs { locs = false } else { on_device = false }
+                if only_locs { dev_locs = false } else { on_device = false }
             }
             // Its lines, read where they lie (its places' lines: a guest's are its host's, `Locs::place_lines`).
             let table = p.extra.as_deref().map_or(&p.facts.lines, |x| x.place_lines());
@@ -354,7 +374,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             // The `Loc` views read the lines' words too (decision 0612): lines the device cannot reach refuse both.
             if !lines_on_device && (lines || locs) && device.is_some() {
                 crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
-                (lines, locs) = (false, false);
+                (dev_lines, dev_locs) = (false, false);
             }
             let entry = super::view_docs::ViewEntry::new(b, p, dialect);
             row.entry = b.offset_of(entry.desc()) as u64;
@@ -450,9 +470,12 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         }
         dir_on_device = Some(b.base_ptr() as u64 + at as u64);
     }
-    let lines = lines && dir_on_device.is_some();
-    let locs = locs && dir_on_device.is_some();
-    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, cache, format: format.unwrap_or(0), _entries: entries })
+    // The host's: the same directory at its host address, its homes read by theirs (`ViewHome::host`), and each 16z
+    // view's cache found from the directory's (`ViewDir::cache`), not the device's offset in the row.
+    let host = HostDir { dir: b.base_ptr() as u64 + at as u64, lines, locs };
+    let lines = lines && dev_lines && dir_on_device.is_some();
+    let locs = locs && dev_locs && dir_on_device.is_some();
+    Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, host, cache, format: format.unwrap_or(0), _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.

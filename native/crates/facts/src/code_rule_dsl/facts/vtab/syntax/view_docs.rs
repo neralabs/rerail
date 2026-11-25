@@ -16,14 +16,15 @@ pub struct ViewEntry {
 }
 
 impl ViewEntry {
-    /// `p`'s entry, in `block` (the block its numbering is in), its kinds as `dialect` holds them.
-    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect) -> Self {
+    /// `p`'s entry, in `block` (the block its numbering is in), its kinds as `dialect` holds them. `None`: a document
+    /// with no grammar (a text read as text only), which has no nodes: no kind is read, and each reads 0.
+    pub fn new(block: &Arc<Block>, p: &Projected, dialect: Option<&Dialect>) -> Self {
         let f = &*p.facts;
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
         let kinds = Cells::build(block, n.max(1), |out| {
             for (c, k) in out.iter_mut().enumerate().take(n) {
-                *k = dialect.kind_of_atom(f.code_entry(c as u32).0);
+                *k = dialect.map_or(0, |d| d.kind_of_atom(f.code_entry(c as u32).0));
             }
             n
         })

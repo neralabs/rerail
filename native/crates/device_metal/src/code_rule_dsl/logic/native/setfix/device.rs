@@ -1405,6 +1405,13 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
             if mj::device_bytes_left() < 8 * k * n + headroom() {
                 mj::give_back();
             }
+            // The host's program reads views where they lie or not at all: a view its directory cannot answer (a
+            // document's `Loc` rows with no tape to read them off) is refused, and the stratum's joins read it on
+            // the host as the scalar executor does, made by nothing. Made here, it was a copy and a launch of its
+            // own (decision 0603).
+            if let Some(d) = made.as_ref().filter(|_| rerail_accel::gpu::shared::is_on_host()) {
+                return Err(format!("the host's program reads no view made (view {}, {n} rows): its directory does not read it in place", d.view));
+            }
             let dev = if let Some(d) = made {
 // copy (0353 step 4): a view made on the device for a stratum (decision 0353).
                 let device = rerail_accel::gpu::join::device()?;
