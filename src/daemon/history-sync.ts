@@ -80,8 +80,9 @@ function errorText(error: unknown): string {
  * Syncs the log of the database at `databasePath` every `periodMs` while commits wait, one sync at a time, off the
  * daemon's thread (`syncHistoryLog`): the next look is due `periodMs` after the last one ended, so a stalled disk
  * piles nothing up, and no hook or commit waits for a sync. The first look syncs what the daemon's start committed; a
- * later look that finds no commit since the last one does nothing, so an idle daemon does no disk work. A failed sync is said once in the daemon's log until one succeeds
- * again, and the next look tries again, commits or not. It never throws and never holds the daemon open.
+ * later look that finds no commit since the last one does nothing, so an idle daemon does no disk work. A failed sync
+ * is said once in the daemon's log until one succeeds again, and the next look tries again, commits or not. It never
+ * throws and never holds the daemon open.
  */
 export function startHistorySync(databasePath: string, options: HistorySyncOptions = {}): HistorySync {
   const periodMs = options.periodMs ?? HISTORY_SYNC_PERIOD_MS;

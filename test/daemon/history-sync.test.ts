@@ -1,7 +1,7 @@
 // The daemon's sync of the history in the background (`startHistorySync`): while commits wait, the log reaches the
 // disk about every period, one sync at a time, the next due a period after the last one ended; the first look syncs
-// what came before the sync started, and after it an idle daemon does no disk work; it stops with the daemon; a failed sync is said once and tried again. The period is injected, so no case
-// waits 5 s on the real clock.
+// what came before the sync started, and after it an idle daemon does no disk work; it stops with the daemon; a failed
+// sync is said once and tried again. The period is injected, so no case waits 5 s on the real clock.
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
