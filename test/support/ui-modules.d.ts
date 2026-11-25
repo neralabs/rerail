@@ -180,6 +180,8 @@ declare module "*/ui/state.js" {
     checkout: { checkoutPath: string; folder: string; state: string } | null;
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
+    /** The status line's footer, as Settings shows it. */
+    presence: "compact" | "silent" | null;
     sessionDetail: Map<string, SessionDetail>;
     repositories: Array<{ repositoryKey: string; [k: string]: unknown }>;
     updatedAt: number;
@@ -219,6 +221,7 @@ declare module "*/ui/attachments.js" {
   export function attachmentWrites(page: { toast: (message: string) => void; invalidate: () => void }): {
     setUpRecommended(): Promise<void>;
     keepPack(id: string, keep: boolean, message: string, failed?: string): Promise<void> | undefined;
+    addPacks(ids: readonly string[], message: string, failed?: string): Promise<void> | undefined;
   };
 }
 
@@ -368,6 +371,13 @@ declare module "*/ui/views/merge.js" {
   interface Patched { hidden: boolean; textContent: string; getAttribute(name: string): string | null; hasAttribute(name: string): boolean; setAttribute(name: string, value: string): void; removeAttribute(name: string): void }
   export function patchProblem(form: { querySelector(selector: string): Patched | null }, fields: { problem: string | null; field: "command" | "timeout" | null }): void;
   export function stripSignature(status: import("../../src/engine/index.js").MergeAssistStatus): string;
+  /** The page's buttons by `data-act`: `maon` turns Merge Assist on in the scoped checkout. */
+  export const actions: { maon(): Promise<void> };
+}
+
+declare module "*/ui/views/settings.js" {
+  /** Settings' controls by `data-act`: the footer's switch and Follow .gitignore's. */
+  export const actions: { presence(value: "compact" | "silent"): Promise<void>; gitignore(value: "on" | "off"): Promise<void> };
 }
 
 declare module "*/ui/views/create.js" {

@@ -13,7 +13,7 @@
  * sheet's, from `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the
  * further pages the person loaded.
  */
-import { ACCESS_KEY, follow, get, send } from "./api.js";
+import { ACCESS_KEY, follow, get, madeButUnconfirmed, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -150,18 +150,19 @@ export async function sendInScope(scope, method, path, body) {
 
 /**
  * The last attachment write queued on this page: the scope `token` it was clicked in, whether it is still
- * `pending`, whether it was sent and answered OK (`clear`), and `settled` once those are known.
+ * `pending`, whether it was sent and its change made (`clear`: answered OK or `madeButUnconfirmed`), and `settled`
+ * once those are known.
  */
 let lastAttachmentWrite = { token: generation, pending: false, clear: true, settled: Promise.resolve() };
 
 /**
  * `sendInScope` for attachment writes, in click order. The place is taken at the call, while `body` (the body, or a
  * promise of it, `null` to send nothing) may still be loading. A write called while an earlier one in the same
- * scope is still pending is sent once that one is answered OK, and dropped (resolves `false`, nothing sent) when it
- * failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added behind a
- * set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to load, as
- * when its send fails, and like a send only while the page still shows the scope: a failure after a switch resolves
- * `false`, so no rollback lands on the other repository's page. A scope switch starts a new queue.
+ * scope is still pending is sent once that one's change is made (`clear`), and dropped (resolves `false`, nothing
+ * sent) when it failed or was dropped. Each was clicked against the state the earlier ones would make: a pack added
+ * behind a set-up that failed would set the repository up with that pack alone. Rejects when its own body fails to
+ * load, as when its send fails, and like a send only while the page still shows the scope: a failure after a switch
+ * resolves `false`, so no rollback lands on the other repository's page. A scope switch starts a new queue.
  */
 export function queueInScope(scope, method, path, body) {
   const before = lastAttachmentWrite;
@@ -186,7 +187,7 @@ export function queueInScope(scope, method, path, body) {
   const write = { token: scope.token, pending: true, clear: false, settled: null };
   write.settled = sending.then(
     sent => { write.pending = false; write.clear = sent; },
-    () => { write.pending = false; },
+    error => { write.pending = false; write.clear = madeButUnconfirmed(error); },
   );
   lastAttachmentWrite = write;
   return sending;
@@ -278,7 +279,8 @@ export async function loadFollowGitignore() {
 
 /**
  * Settings: turn the scoped repository's Follow .gitignore on or off. The page shows it at once and puts it back, with
- * a toast, when the write fails; nothing of the answer lands once the page shows another repository.
+ * a toast, when the write fails (a change made but not confirmed on the disk stays, with the daemon's words); nothing
+ * of the answer lands once the page shows another repository.
  */
 export async function saveFollowGitignore(follow, { toast, invalidate }) {
   const scope = captureScope(), was = data.followGitignore;
@@ -287,7 +289,7 @@ export async function saveFollowGitignore(follow, { toast, invalidate }) {
     if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
     toast(follow ? "New sessions skip Git-ignored files." : "New sessions include Git-ignored files.");
   } catch (error) {
-    data.followGitignore = was;
+    if (!madeButUnconfirmed(error)) data.followGitignore = was;
     toast(failed("Couldn’t change Follow .gitignore", error));
   }
   invalidate();

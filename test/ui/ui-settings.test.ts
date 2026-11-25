@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { changeScope } from "../../ui/poll.js";
 import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/repo-rule-counts.js";
 import { repoLine, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
 import { agentStatus, installedLabel, isNewerVersion, newerRelease, releaseUrl } from "../../ui/settings-model.js";
+import { data } from "../../ui/state.js";
+import { actions as settingsActions } from "../../ui/views/settings.js";
+import type * as Shell from "../../ui/shell.js";
+
+const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
+// The page's toast, and no redraw: Settings' switches are driven without a page.
+vi.mock("../../ui/shell.js", async importOriginal => ({ ...(await importOriginal<typeof Shell>()), invalidate: () => {}, toast }));
 
 type DataAccess = "kept-out" | "file-tools" | "open";
 const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null; access: DataAccess; fix: string | null }>) => {
@@ -202,5 +210,50 @@ describe("reading every repo's rule counts", () => {
 
     expect(repoRuleCounts("store")).toBeNull();
     expect(repoRuleCounts("billing")).toBeNull();
+  });
+});
+
+describe("a Settings switch after its write", () => {
+  const NOT_ON_DISK = "the change was made, but Rerail could not confirm it is on the disk (EIO)";
+  let answer: { status: number; body: unknown };
+  let sent: unknown[];
+
+  beforeEach(() => {
+    sent = [];
+    toast.mockReset();
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
+    vi.stubGlobal("fetch", async (_input: URL, init: { body?: string } = {}) => {
+      sent.push(JSON.parse(init.body ?? "null"));
+      return new Response(JSON.stringify(answer.body), { status: answer.status });
+    });
+    changeScope({ repository: "A", checkout: "/work/a" });
+    data.presence = "compact";
+    data.followGitignore = true;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const switches = [
+    { name: "the footer", act: () => settingsActions.presence("silent"), shown: () => data.presence, was: "compact", now: "silent" },
+    { name: "Follow .gitignore", act: () => settingsActions.gitignore("off"), shown: () => data.followGitignore, was: true, now: false },
+  ];
+
+  it.each(switches)("$name keeps its new value when the daemon made the change but could not confirm it on the disk", async ({ act, shown, now }) => {
+    answer = { status: 503, body: { error: "not-on-disk", message: NOT_ON_DISK } };
+    await act();
+
+    expect(sent).toHaveLength(1);
+    expect(shown()).toBe(now);
+    expect(toast).toHaveBeenCalledExactlyOnceWith("The change was made, but Rerail could not confirm it is on the disk (EIO).");
+  });
+
+  it.each(switches)("$name goes back to its old value when the write fails", async ({ act, shown, was }) => {
+    answer = { status: 403, body: { error: "agent-not-permitted", message: "not yours" } };
+    await act();
+
+    expect(shown()).toBe(was);
+    expect(toast).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^Couldn’t change .+ answered 403/u));
   });
 });

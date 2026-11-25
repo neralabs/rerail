@@ -124,6 +124,12 @@ function writeRefused(method, path, status, text) {
   return new Error(`${method} ${path} answered ${status}: ${text.slice(0, 200)}`);
 }
 
+/**
+ * Whether a write's error is a change the daemon made but could not confirm on the disk (`writeRefused`'s
+ * `NotOnDisk`): the page keeps what it shows of the change and sends the writes after it.
+ */
+export const madeButUnconfirmed = error => error?.name === "NotOnDisk";
+
 /** `signal`, when given, aborts the request: `send` then rejects with the signal's reason. */
 export async function send(method, path, body, { signal } = {}) {
   const response = await fetch(apiUrl(path), {
