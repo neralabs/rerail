@@ -1,0 +1,76 @@
+# 0681: Tier 2 is printed once from the lean parser's moves
+
+Status: step 1 done (the user, 2026-11-24: "what are the BIG FUCKING ROCKS?", then "so do 1"). Follows 0673. The bar is
+0673's: is the generated code the lean parser's (`rr_syntax/src/lean.rs`) shape?
+
+## Intro
+
+0668 and 0673 brought tier 2's code closer to the lean parser one form at a time, and each form was a rewrite of the
+code's text. The generator (`bitlex_rust.rs`) writes each rule's Rust as strings: `code` gives a grammar element's
+lines, `decide` a decision's. Then eleven passes rewrite those lines: `takes`, `leaf_fields`, `one_arm_a_take`,
+`no_retests`, `ifs_and_whiles`, `no_empty_elses`, `no_code_after_return`, `no_taken_retests`, `shared_test_as_match`,
+`no_outer_parens`, `loops_as_whiles`, `no_retest_after_while`. Each pass finds a shape by matching lines and
+indentation, and `decide` itself reads its own conditions back out of strings (`holds`, `untested`, `word_arms`).
+
+That is why each round changed little. A pass can rename a call or join two `if`s. It cannot see what the code does,
+so it cannot change the code's structure, and each new form needs another pass that matches the last pass's output.
+The lean parser is written in a few moves, and the generator has no model of them.
+
+## Decision
+
+The generator builds each rule's code as the lean parser's moves, rewrites the moves, and prints Rust from them once.
+
+### The moves (`bitlex_rust/moves.rs`)
+
+A rule's code is a block of moves:
+
+- **A take** of the token: its test (none where the code before it tested it), and its leaf (none, the lean parser's
+  `p` and `implied`; a kind and a field, `p_stored`, `id`, `bump_as`; or the word's own kind, `anon`). A pass and a
+  merge are takes too: into a `leaf`'s text, into the leaf made last.
+- **A call** of a rule, with the state it saves around it.
+- **The tree's moves**: open, close, wrap, retag, a field set on the node made last, relabel.
+- **A decision**: an `if` chain of tests and blocks, or a `match` on the word at a place (the token, or one after it),
+  each arm its words, an optional guard and a block, and a default.
+- **A repetition**: `while` a test, or a `loop` its blocks `break` out of.
+- **A refusal** (`return self.refuse()`), and a few statements of their own (the flags saved and set, a scan's `let`).
+
+A test is structured too: the word at a place is one of some words, the token is of a kind, a mark holds (a peek), a
+flag is clear; and `!`, `&&` and `||` of tests. A test the moves do not model yet is its text, so the moves can be
+built a part at a time.
+
+### The rewrites are of moves
+
+Each of the eleven text passes becomes a rewrite of the moves, and the text pass goes:
+
+- a take whose test the decision around it tested takes the token with no test (`no_retests`, `no_taken_retests`,
+  `one_arm_a_take`'s untested take, `untested`);
+- a field set on the leaf just taken is the take's field (`leaf_fields`);
+- arms of one block are one arm, their words joined (`merged_arms`);
+- a `match` of one arm is an `if`; a `loop` whose decision breaks where one test holds is a `while` (`ifs_and_whiles`,
+  `loops_as_whiles`); a `while` whose refusal follows it refuses at its `break` (`no_retest_after_while`);
+- an `if` chain whose tests share their first test and then ask the next word is that test and a `match` on the word
+  (`shared_test_as_match`);
+- no empty `else`, no move after a refusal (`no_empty_elses`, `no_code_after_return`);
+- the take's tests (`takes`' `M` and `F`) are the take's own fields, and the printer writes lean's names (`lean_names`
+  for the rules' code).
+
+`decide` decides on tests, not strings: where a test may hold (`holds`) is read from its structure.
+
+### Both forms
+
+The loop form (`one_loop/records.rs`) builds its places from the same moves (`G::code`, `G::decide`), a jump to a
+place one more move, and the same rewrites run on each place.
+
+## Steps
+
+1. The moves, and a printer that writes the text the generator writes now. `code`, `decide` and the loop form build
+   moves. The generated files do not change. (Done: `moves.rs`; `G::code`, `decide`, `decide_tests`, `asking`,
+   `token_choice`, `take_token`, `ending_code` and the loop form's `walk`, `level` and places build moves, and
+   `records::no_refusing` on them is a field of each take. rr's, Kotlin's and JSON's generated files are byte for
+   byte the same.)
+2. Each text pass on the rules' code becomes a rewrite of moves, and is removed. The generated files do not change,
+   or each change is named.
+3. `decide` reads tests, not strings.
+
+The passes over the runtime's text (`one_take`, `no_field`, `no_dead_methods`, `plain_writer`, the runtime's
+replacements in `assemble`) are not rule code and are not part of this decision.
