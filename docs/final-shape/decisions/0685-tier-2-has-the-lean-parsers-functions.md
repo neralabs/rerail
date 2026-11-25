@@ -101,3 +101,8 @@ changed and how.
    `match` of two arms of the same code in a loop; Kotlin's loops whose arms all `break` but one are `while c && d`
    (`source_file`'s annotations, `import_header`s), and `if c {} else { y }` is `if !c { y }`. Kotlin's tier 2 is 300
    lines shorter; the loop form changes alike.)
+7. Known tokens taken untested (`moves::known_takes`, before `joined`). A take whose token the code before it tested
+   (an `if`'s, a `match`'s pattern or guard, a `while`'s test, of this token or one further on, past moves that take
+   no token: an open, a field, a retag) takes it untested: rr's `directive` arms take the `.` and their word as
+   `self.implied()?` (`bump_as(k::DOT)` where the `.` is stored), as the lean parser's `statement`; `@`, `code`,
+   `options`, `tag`, `fix`, `safe`, a `<` `>` pair and `()` likewise. `id` keeps its test, as the lean parser's.

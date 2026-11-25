@@ -771,6 +771,114 @@ pub(crate) fn calls_of(b: &mut Block, f: &str) -> usize {
     n
 }
 
+/// A test of one token as a fact: where it is (places on from the token) and its text as a test of the token itself
+/// (`self.word()`, `self.kind()`); none where it reads more than one token or other state.
+fn fact(c: &Cond) -> Option<(usize, String)> {
+    let t = c.print();
+    let mut at = None;
+    let mut out = t.clone();
+    for (f, base) in [("self.word_at(", "self.word()"), ("self.kind_at(", "self.kind()")] {
+        while let Some(i) = out.find(f) {
+            let rest = &out[i + f.len()..];
+            let close = rest.find(')')?;
+            let arg = &rest[..close];
+            let n = if arg == "self.i" { 0 } else { arg.strip_prefix("self.i + ")?.parse::<usize>().ok()? };
+            if at.is_some_and(|a| a != n) {
+                return None;
+            }
+            at = Some(n);
+            out = format!("{}{base}{}", &out[..i], &rest[close + 1..]);
+        }
+    }
+    let at = at.unwrap_or(0);
+    if out.contains("self.i") || out.contains("_at(") || out.contains("||") || !(out.contains("self.word()") || out.contains("self.kind()")) {
+        return None;
+    }
+    if out.contains("self.") && out.replace("self.word()", "").replace("self.kind()", "").contains("self.") {
+        return None;
+    }
+    Some((at, out))
+}
+
+/// The facts of a test that holds: each of its conjuncts' (`fact`).
+fn facts_of(c: &Cond) -> Vec<(usize, String)> {
+    c.conjuncts().into_iter().filter_map(fact).collect()
+}
+
+/// `b` with each take whose token the code before it tested (an `if`'s or a `match`'s, a `while`'s, past the moves
+/// that take no token: opening a node, setting a field) taking it untested, as the lean parser's `statement` bumps
+/// the `.` and the word it matched.
+pub(crate) fn known_takes(b: &mut Block) {
+    fn walk(b: &mut Block, mut facts: Vec<(usize, String)>) {
+        for op in b.iter_mut() {
+            match op {
+                Op::Take { take, .. } => {
+                    let held = |t: String| facts.iter().any(|(a, f)| *a == 0 && *f == t);
+                    let yes = Cond::text("true");
+                    let new = match &*take {
+                        Take::WordLeaf { word, kind } if held(format!("self.word() == {word}")) => Some(Take::Leaf { test: yes, kind: kind.clone(), field: "0".into() }),
+                        Take::WordSkip { word } if held(format!("self.word() == {word}")) => Some(Take::Skip { test: yes }),
+                        Take::WordPass { word } if held(format!("self.word() == {word}")) => Some(Take::Pass { test: yes }),
+                        Take::Leaf { test: Cond::Kind { test, .. }, kind, .. } if test == "self.kind() == t::IDENTIFIER" && kind == "k::IDENTIFIER" => None,
+                        t => {
+                            let mut t = t.clone();
+                            match t.test_mut() {
+                                Some(c) if !c.is_true() && held(c.print()) => {
+                                    *c = yes;
+                                    Some(t)
+                                }
+                                _ => None,
+                            }
+                        }
+                    };
+                    if let Some(n) = new {
+                        *take = n;
+                    }
+                    facts = facts.into_iter().filter(|(a, _)| *a > 0).map(|(a, f)| (a - 1, f)).collect();
+                }
+                Op::Open(_) | Op::Field(_) => {}
+                Op::Line(l) if ["let kind", "self.retag(", "self.marked", "self.deeper()", "self.leaf_open()", "self.open(", "self.field_made("].iter().any(|p| l.trim_start().starts_with(p)) => {}
+                Op::If { arms, els } => {
+                    for (c, x) in arms.iter_mut() {
+                        let mut f = facts.clone();
+                        f.extend(facts_of(c));
+                        walk(x, f);
+                    }
+                    if let Some(e) = els {
+                        walk(e, facts.clone());
+                    }
+                    facts.clear();
+                }
+                Op::Match { subject, arms, default } => {
+                    let at = if subject == "self.word()" { Some(0) } else { subject.strip_prefix("self.word_at(self.i + ").and_then(|r| r.strip_suffix(')')).and_then(|n| n.parse::<usize>().ok()) };
+                    for (pat, x) in arms.iter_mut() {
+                        let mut f = facts.clone();
+                        if let (Some(a), [w]) = (at, pat.words.as_slice()) {
+                            f.push((a, format!("self.word() == {w}")));
+                        }
+                        if let Some(g) = &pat.guard {
+                            f.extend(facts_of(g));
+                        }
+                        walk(x, f);
+                    }
+                    walk(default, facts.clone());
+                    facts.clear();
+                }
+                Op::While(c, x) => {
+                    walk(x, facts_of(c));
+                    facts.clear();
+                }
+                Op::Loop(x) | Op::At(_, x) => {
+                    walk(x, Vec::new());
+                    facts.clear();
+                }
+                _ => facts.clear(),
+            }
+        }
+    }
+    walk(b, Vec::new());
+}
+
 /// `a && b`, each that holds an `||` in parentheses.
 fn and(a: Cond, b: Cond) -> Cond {
     // An `||` outside any parentheses in its text (an `Or` itself `And` prints in parentheses).

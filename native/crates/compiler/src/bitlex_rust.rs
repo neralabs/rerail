@@ -2547,7 +2547,10 @@ impl<'a> G<'a> {
             Self::leaves(&mut made);
             bs = made.into_iter().map(|(_, b)| b).collect();
         }
-        bs.iter_mut().for_each(moves::joined);
+        bs.iter_mut().for_each(|b| {
+            moves::known_takes(b);
+            moves::joined(b);
+        });
         let names = self.names.get_or_init(|| moves::Names::of(&mut bs));
         bs.iter().map(|b| moves::print_named(b, "", names)).collect()
     }
