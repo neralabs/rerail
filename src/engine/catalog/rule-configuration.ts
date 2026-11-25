@@ -328,6 +328,29 @@ function bundledPresenceFields(document: RuleDocument): Pick<Presence, "revision
   return { revision: document.kind === "conversation" ? 1 : document.rule.revision, payloadHash: ruleDocumentDigest(document) };
 }
 
+/**
+ * The document each rule runs as at each mode, by the rule: nothing changes a rule once read, so every checkout whose
+ * settings run one rule at one mode, in every runtime, gets one document, and what is worked out from it once (its
+ * stable text and digest, `ruleSourceText`) serves every checkout's catalog. A copy per checkout made each catalog
+ * build serialize every rule again: a session's first take of 190 worktrees held the daemon's thread for seconds.
+ */
+const runningDocuments = new WeakMap<object, Map<RuleMode, RuleDocument>>();
+
+/** `rule` of a document of `kind` at `mode`; a rule belongs to one document, so its kind never varies. */
+function runningDocument(kind: RuleDocument["kind"], rule: RuleDocument["rule"], mode: RuleMode): RuleDocument {
+  let byMode = runningDocuments.get(rule);
+  if (byMode === undefined) {
+    byMode = new Map();
+    runningDocuments.set(rule, byMode);
+  }
+  let document = byMode.get(mode);
+  if (document === undefined) {
+    document = { kind, rule: { ...rule, mode } } as RuleDocument;
+    byMode.set(mode, document);
+  }
+  return document;
+}
+
 /** Resolves effective rules at any path from rows read once. */
 class ConfigurationResolver {
   readonly unavailable: readonly UnavailableReference[];
@@ -490,38 +513,22 @@ class ConfigurationResolver {
   }
 
   #effective(presence: Presence, path: string): EffectiveRule {
-    const { packRule } = presence;
-    const packId = presence.source.packId;
-    const start = packRule === null || packId === null ? undefined : { rule: packRule, decider: { by: "pack-start", packId } as Decider };
-    const ruleDefault: Decider = { by: "rule-default" };
+    const start = packStart(presence);
     const on = this.#decide<boolean>(presence, path, setting => setting.on)
-      ?? (start === undefined ? { value: true, decider: ruleDefault } : { value: start.rule.on, decider: start.decider });
-    const configuredMode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
-      ?? (start === undefined ? { value: presence.document.rule.mode, decider: ruleDefault } : { value: start.rule.mode, decider: start.decider });
-    const subject = this.#approvalSubject(presence);
-    const approval = subject === undefined ? undefined : { subject, approved: this.#approvals.has(approvalKey(subject)) };
-    // Content no one approved is recorded, and never steers.
-    const mode = approval?.approved === false && configuredMode.value !== "log"
-      ? { value: "log" as RuleMode, decider: { by: "awaiting-approval" } as Decider }
-      : configuredMode;
-    const pack = packId === null ? undefined : this.#ruleCatalog.packs.get(packId);
-    const suppressions = this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
-      ?? (start === undefined || pack === undefined
-        ? { value: "honour", decider: ruleDefault }
-        : { value: pack.honourSuppressionComments ? "honour" : "ignore", decider: start.decider });
-    const { config, deciders } = this.#config(presence);
-    const configured = config === null ? undefined : configureBundledCodeRule(this.#ruleCatalog, presence.document.rule.id, config);
-    const rule = configured?.ok === true ? configured.rule : presence.document.rule;
-    const document = { kind: presence.document.kind, rule: { ...rule, mode: mode.value } } as RuleDocument;
+      ?? (start === undefined ? { value: true, decider: { by: "rule-default" } as Decider } : { value: start.rule.on, decider: start.decider });
+    const approval = this.#approval(presence);
+    const mode = this.#mode(presence, path, start, approval);
+    const suppressions = this.#suppressions(presence, path, start);
+    const { rule, config, deciders, configError } = this.#configured(presence);
     return {
-      document,
+      document: runningDocument(presence.document.kind, rule, mode.value),
       source: presence.source,
       attachmentFolder: presence.folder,
       on: on.value,
       mode: mode.value,
       suppressions: suppressions.value,
       config,
-      configError: configured?.ok === false ? configured.reason : null,
+      configError,
       // A rule created by you under a pack rule's id shadows it: its document is its own, not the pack's.
       notRun: presence.source.kind === "library_rule" ? null : this.#ruleCatalog.notRun.get(presence.document.rule.id) ?? null,
       decidedBy: { on: on.decider, mode: mode.decider, suppressions: suppressions.decider, config: deciders },
@@ -530,6 +537,56 @@ class ConfigurationResolver {
       ...(approval === undefined ? {} : { approval }),
     };
   }
+
+  /** Whether a person approved the rule's content, where it waits for one (`#approvalSubject`). */
+  #approval(presence: Presence): EffectiveRule["approval"] {
+    const subject = this.#approvalSubject(presence);
+    return subject === undefined ? undefined : { subject, approved: this.#approvals.has(approvalKey(subject)) };
+  }
+
+  /** The rule's mode at `path`: a setting's, else its pack's start, else the rule's own; Log while its content awaits approval. */
+  #mode(presence: Presence, path: string, start: PackStart | undefined, approval: EffectiveRule["approval"]): Decided<RuleMode> {
+    const configured: Decided<RuleMode> = this.#decide<RuleMode>(presence, path, setting => setting.mode)
+      ?? (start === undefined ? { value: presence.document.rule.mode, decider: { by: "rule-default" } } : { value: start.rule.mode, decider: start.decider });
+    // Content no one approved is recorded, and never steers.
+    return approval?.approved === false && configured.value !== "log" ? { value: "log", decider: { by: "awaiting-approval" } } : configured;
+  }
+
+  /** Whether the rule honours suppression comments at `path`: a setting's answer, else its pack's, else it honours them. */
+  #suppressions(presence: Presence, path: string, start: PackStart | undefined): Decided<RuleSuppressions> {
+    const packId = presence.source.packId;
+    const pack = packId === null ? undefined : this.#ruleCatalog.packs.get(packId);
+    return this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
+      ?? (start === undefined || pack === undefined
+        ? { value: "honour", decider: { by: "rule-default" } }
+        : { value: pack.honourSuppressionComments ? "honour" : "ignore", decider: start.decider });
+  }
+
+  /** The rule as its settings' options configure it, those options and who set each, and why they do not apply when they do not. */
+  #configured(presence: Presence): { rule: RuleDocument["rule"]; config: RuleConfig | null; deciders: Record<string, Decider>; configError: string | null } {
+    const { config, deciders } = this.#config(presence);
+    const configured = config === null ? undefined : configureBundledCodeRule(this.#ruleCatalog, presence.document.rule.id, config);
+    if (configured === undefined) return { rule: presence.document.rule, config, deciders, configError: null };
+    return configured.ok ? { rule: configured.rule, config, deciders, configError: null } : { rule: presence.document.rule, config, deciders, configError: configured.reason };
+  }
+}
+
+/** A value of a rule's configuration and who decided it. */
+interface Decided<T> {
+  readonly value: T;
+  readonly decider: Decider;
+}
+
+/** The on and mode a pack starts one of its rules at, and the pack as their decider. */
+interface PackStart {
+  readonly rule: RulePackRule;
+  readonly decider: Decider;
+}
+
+function packStart(presence: Presence): PackStart | undefined {
+  const { packRule } = presence;
+  const packId = presence.source.packId;
+  return packRule === null || packId === null ? undefined : { rule: packRule, decider: { by: "pack-start", packId } };
 }
 
 function deciderOf(owner: Owner, setting: SettingRow): Decider {

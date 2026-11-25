@@ -3,6 +3,7 @@ import { constants, type Dirent, type Stats } from "node:fs";
 import { access, type FileHandle, lstat, mkdtemp, open, opendir, realpath, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import type {
   AuditorCloseOptions,
   CodeRuleEdit,
@@ -5056,8 +5057,25 @@ export class CodeRuleBridge {
     let bytes = this.#firstSightBytes;
     while (listed.length > 0 && bytes < this.#firstSightTextBytes && !this.#abandoned(discovery)) {
       const wave = listed.splice(0, OBSERVATION_CONCURRENCY);
-      bytes += takeFirstSeen(taking, await Promise.all(wave.map(path => this.#readSource(discovery.root, path))));
+      bytes += takeFirstSeen(taking, await Promise.all(await this.#startReads(discovery.root, wave)));
     }
+  }
+
+  /**
+   * Starts a read of each of `paths`, giving the thread back after each start. A read first finds its file's checkout,
+   * which builds that checkout's rules the first time the session asks of it: a take of many worktrees new to a session
+   * built a wave's worth at once, and other sessions' hooks waited seconds for the thread.
+   */
+  async #startReads(root: string, paths: readonly string[]): Promise<Array<Promise<Source | undefined>>> {
+    const reads: Array<Promise<Source | undefined>> = [];
+    for (const path of paths) {
+      const read = this.#readSource(root, path);
+      // Handled where the reads are awaited together; this keeps a failure from counting as unhandled meanwhile.
+      read.catch(() => undefined);
+      reads.push(read);
+      await nextTurn();
+    }
+    return reads;
   }
 
   /**

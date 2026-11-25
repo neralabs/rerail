@@ -801,6 +801,56 @@ describe("CodeRuleBridge", () => {
     ]);
   });
 
+  it("gives the thread back after finding each file's checkout as a walk reads its first sights", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    commitAll(root);
+    const drafts = Array.from({ length: 12 }, (_, index) => join(root, "src", `draft${index}.py`));
+    for (const [index, draft] of drafts.entries()) await writeFile(draft, `draft ${index}\n`);
+    await awaitClockAfter(...drafts);
+    // Finding a file's checkout can build its rules; the walk itself asks its own view, so these are the reads' asks.
+    let located = 0;
+    let locatedAtTurn: number | undefined;
+    const view = { acceptsPath: () => true, ignoresPath: () => false };
+    const acceptsPath = (path: string): boolean => {
+      if (!path.includes("draft")) return true;
+      located += 1;
+      if (located === 1) setImmediate(() => { locatedAtTurn = located; });
+      return true;
+    };
+    const { auditGeneratedEdits } = await opened(root, { walkView: () => view, acceptsPath });
+    expect(located).toBeGreaterThanOrEqual(drafts.length);
+    // Without the turn, every file of a wave was located before anything else ran: 12.
+    expect(locatedAtTurn).toBe(1);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("fails a first-sight read whose checkout cannot be found as the walk's error, never as an unhandled one", async () => {
+    const root = await workspace();
+    await writeFile(join(root, "src", "kept.py"), "kept\n");
+    commitAll(root);
+    const drafts = [join(root, "src", "draft0.py"), join(root, "src", "draft1.py")];
+    for (const draft of drafts) await writeFile(draft, "draft\n");
+    await awaitClockAfter(...drafts);
+    const view = { acceptsPath: () => true, ignoresPath: () => false };
+    const acceptsPath = (path: string): boolean => {
+      if (path.includes("draft")) throw new Error("no owner for a draft");
+      return true;
+    };
+    const unhandled: unknown[] = [];
+    const note = (reason: unknown): void => { unhandled.push(reason); };
+    process.on("unhandledRejection", note);
+    try {
+      const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+      const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), walkView: () => view, acceptsPath }, { worktreeWalkGapMs: 0 });
+      await bridge.openWorkspace("session-1");
+      const turn = await bridge.checkpoint("turn");
+      expect(turn.failures.map(failure => failure.message).join("; ")).toContain("no owner for a draft");
+    } finally {
+      process.off("unhandledRejection", note);
+    }
+    expect(unhandled).toEqual([]);
+  });
   it("keeps first-sight text only within its budget, and measures a shell edit past it as before", async () => {
     const root = await workspace();
     const [first, second] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
