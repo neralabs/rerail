@@ -3575,8 +3575,27 @@ impl Model {
         self.plan_inner_in(pf, b, first, fixed, explain, &mut joins::SearchCx::default())
     }
 
-    /// `plan_inner` under `cx` (decisions 0203, 0104): how wide the search is, and its runners-up, handed back.
+    /// `plan_inner` under `cx` (decisions 0203, 0104): how wide the search is, and its runners-up, handed back. Its
+    /// order's runs of tests in the order they cut rows soonest (`tests_ordered`).
     fn plan_inner_in(
+        &self,
+        pf: Fields<'_>,
+        b: &Body<'_>,
+        first: Option<usize>,
+        fixed: Option<&[Step]>,
+        explain: bool,
+        cx: &mut joins::SearchCx,
+    ) -> Result<(Plan, Option<super::super::profile::RulePlan>)> {
+        let (mut plan, explained) = self.plan_inner_searched(pf, b, first, fixed, explain, cx)?;
+        if !tests_ordered(b, &mut plan.0) {
+            return Ok((plan, explained));
+        }
+        let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { explained };
+        Ok((plan, explained))
+    }
+
+    /// The search `plan_inner_in` makes, its order as the search placed each filter: as soon as it is ready.
+    fn plan_inner_searched(
         &self,
         pf: Fields<'_>,
         b: &Body<'_>,
@@ -6070,5 +6089,47 @@ pub struct Left {
 /// What the runs on `db` left with it (`Left`).
 pub fn left_on(db: &Connection) -> std::sync::Arc<parking_lot::Mutex<Left>> {
     crate::code_rule_dsl::facts::vtab::connection_data(db).get::<parking_lot::Mutex<Left>>()
+}
+
+
+/// t57 §8, E6 and E10: a run of steps that bind nothing (each reads only variables bound before the run) is a run of
+/// tests, which may run in any order, and runs best in the order that drops rows soonest for least: comparisons of
+/// bound values first, then memberships (a positive atom every variable of which is bound: it passes at most the rows
+/// it is given, often few), then negations (an anti-join passes most of its rows), then tests that call a function.
+/// The search places each filter as soon as it is ready, so a negation ran on every row a membership after it dropped:
+/// `cls_late`'s 192,165 rows went through three anti-joins before `bound_in` kept 15,521 of them, and `rf_builtin`'s
+/// 628,398 through `!rf_after_310` before `builtin` kept 44,635. The first step (a seed's or a delta's driver) stays
+/// first. Whether the order changed.
+pub(in crate::code_rule_dsl) fn tests_ordered(b: &Body<'_>, order: &mut [Step]) -> bool {
+    let rank = |at: usize| -> Option<u8> {
+        match b.view(at) {
+            Lit::Cmp { l, r, .. } => Some(if matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..)) { 3 } else { 0 }),
+            Lit::Atom(a) => Some(if a.neg() { 2 } else { 1 }),
+            _ => None,
+        }
+    };
+    let mut bound = VarSet::new();
+    let mut changed = false;
+    let mut k = 0;
+    while k < order.len() {
+        let mut end = k;
+        while k > 0 && end < order.len() && rank(order[end].at).is_some() && b.vars(order[end].at).is_subset(&bound) {
+            end += 1;
+        }
+        if end > k + 1 {
+            let run = &mut order[k..end];
+            if run.windows(2).any(|w| rank(w[0].at) > rank(w[1].at)) {
+                run.sort_by_key(|s| rank(s.at));
+                changed = true;
+            }
+        }
+        if end > k {
+            k = end;
+            continue;
+        }
+        bound.extend(b.vars(order[k].at));
+        k += 1;
+    }
+    changed
 }
 
