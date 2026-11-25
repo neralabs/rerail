@@ -343,8 +343,12 @@ relation; W has no such parse.
 
 **The AST matchers.** Without `dbg_cls`, the head's matchers take 7.9 s against W's 10.0 s in the same run (wave
 7.9 s → 5.3 s, captures 2.2 s, confirmations 0.4 s): no longer a gap. The captures now write a tape's rows into one
-buffer as W's match binds them (`findings::captured_each`), no `Vector` a capture and no row cloned a capture; the
-cost case `the_matcher_wave_allocates_little` passes since.
+buffer as W's match binds them (`findings::captured_each`), no `Vector` a capture and no row cloned a capture. The
+cost case `the_matcher_wave_allocates_little` still fails (an earlier "passes" here was wrong): six runs at
+ec929805d0 allocate 1,632-1,636 bytes a name read, and six at the merge of django-bugs (187dc91678) 774-777, its
+bound 128. The merge's arenas (394543d27f, f5e6f0d694) take it from about 1,630 to 775; diffs reversed in the tree:
+without them 1,625, without the whole django merge 1,637. What remains is one wave over a chunk's documents made
+ahead (1.20 MB of 1.25 MB).
 
 **E6 and E10: a plan's tests in the order that drops rows soonest** (`tests_ordered`). Cost cases: `cls_late` 945 →
 657 units, `rf_builtin` 3,441 → 2,881. Their orders are now as the cases ask; what keeps them over their bounds is a
