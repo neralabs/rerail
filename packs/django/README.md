@@ -1,6 +1,6 @@
 # Rerail rule pack: Django
 
-Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add django`, then add it to a repository in the dashboard. It needs Rerail 0.2.1 or newer.
+Install it with Rerail ([`@neralabs/rerail`](https://www.npmjs.com/package/@neralabs/rerail)), not with npm: `rerail packs add django`, then add it to a repository in the dashboard. It needs Rerail 0.2.2 or newer.
 
 The 27 `django-practice-*` rules are Rerail's own; none is a port of a linter rule. Each is advice that the Django docs
 give, or that Django maintainers give again and again in code review, and that no linter checks. A rule was kept when
@@ -74,6 +74,10 @@ a task class) makes it harmless there; a repository that disagrees turns the rul
 every read match was real in that sense. It logs where many matches do not hold the pattern, or where the pattern
 holds but the advised rewrite is often unsafe in ways one file cannot show; each Log rule's details give the reason.
 A rule starts on only when at least 90% of its read matches were real.
+
+Each rule also says what it guards against (its risk, such as data safety or performance), where its code lives
+and how badly a violation can go. The Django pack's page in the dashboard filters its rules by risk and shows each
+rule's risk and severity ([rule dimensions](../../docs/rule-dimensions.md)).
 
 ## Starting values and what a run costs
 
@@ -1126,8 +1130,8 @@ cannot tell a cached path from a querying one, so offloading is often unneeded t
 
 31 open-source Django apps, cloned shallow at these commits. The numbers below were measured with two exclusions the
 engine of the time needed, which it no longer does ([ENGINE-BUGS.md](ENGINE-BUGS.md), bugs 2 and 6): PostHog/posthog
-(`37c895112cd9830ba6161037c34c431a2a6d7d0c`, MIT, 29,885 Python files) was left out, as no run finished; with #878 and
-#882 the whole pack finishes on it in 100 minutes (1,264 findings, not read). In netbox-community/netbox,
+(`37c895112cd9830ba6161037c34c431a2a6d7d0c`, MIT, 29,885 Python files) was left out, as no run finished; with later engine
+fixes the whole pack finishes on it in 100 minutes (1,264 findings, not read). In netbox-community/netbox,
 `netbox/extras/data/un_locode.py` (6.2 MB, one tuple of about 111k string pairs, no Django code) was removed from the
 working tree; main runs the whole pack over netbox with it in 164 s.
 
