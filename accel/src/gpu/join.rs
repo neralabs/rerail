@@ -102,7 +102,16 @@ pub struct Column {
 
 /// The process's device in the device layer, whatever its backend.
 pub fn device() -> Result<&'static rerail_device::device::Device, String> {
-    shared::layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
+    shared::join_layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
+}
+
+/// `b` as the join programs' device binds it (`device`): a pooled lease of the process's GPU as the host's wrap of
+/// it by its address, where they run on the host (`shared::on_host`).
+fn bound_here(b: &Buffer) -> Buffer {
+    match device() {
+        Ok(d) => rerail_device::device::on_device(d, b),
+        Err(_) => b.clone(),
+    }
 }
 
 /// Why a command the device failed failed: once a run for each reason (a wave's strata are refused to the CPU with
@@ -173,12 +182,16 @@ fn pipes() -> Arc<Pipes> {
 /// source is compiled once, into one library, and each of its kernels made from that library. A kernel that does not
 /// compile is fatal (decision 0382): the run stops, naming it, and no caller runs another path on it.
 pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> Result<Arc<Pipe>, String> {
-    let key = format!("join {variant} {name}");
+    let host = shared::is_on_host();
+    let key = format!("join {}{variant} {name}", if host { "host " } else { "" });
     if let Some(p) = pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
         return Ok(Arc::clone(p));
     }
     device()?;
-    let function = crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
+    let function = match host {
+        true => crate::score::phase("compile", || super::kernels::host_function(&source(), name))?,
+        false => crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None)),
+    };
     let mut args: Vec<_> = function.get_argument_info().to_vec();
     args.sort_by_key(|a| a.compute_function_arg_index);
     let bound: Vec<_> = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").collect();
@@ -404,7 +417,7 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             shared::kept_change(shared::Kept::Scratch, new.length() as isize);
             s[slot] = Some(new);
         }
-        Ok(s[slot].as_ref().expect("a scratch buffer").device_buffer().clone())
+        Ok(bound_here(s[slot].as_ref().expect("a scratch buffer").device_buffer()))
     })
 }
 
@@ -454,7 +467,7 @@ impl Held {
 
     /// `lease`, held by its own ledger while it lives (`shared::Pooled`).
     fn pooled(lease: shared::Pooled) -> Held {
-        let buffer = lease.device_buffer().clone();
+        let buffer = bound_here(lease.device_buffer());
         Held { _lease: Lease::Pooled(lease), buffer }
     }
 
@@ -500,7 +513,7 @@ pub struct Pass {
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), key: Box::new(0) })
+        Ok(Pass { queue: shared::Queue::on(shared::join_layer().ok_or("no device")?)?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), key: Box::new(0) })
     }
 
     fn pointer(&self) -> usize {

@@ -103,6 +103,30 @@ pub fn backend() -> &'static str {
     }
 }
 
+/// A buffer as the CPU's: its own, or another backend's host memory by its address (a pooled lease, a block's
+/// slab), which the host device's work reads in place (decision 0353: no copy).
+fn on_cpu(b: &Buffer) -> cpu::CpuBuffer {
+    match b {
+        Buffer::Cpu(c) => c.clone(),
+        b => {
+            let at = b.contents().cast::<u8>();
+            assert!(!at.is_null(), "a buffer the host cannot address bound to the CPU's work");
+            // SAFETY: the buffer outlives the work, as its own would (the caller's binds hold it).
+            unsafe { cpu::wrap_host_memory(&cpu::CpuDevice::host(), at, b.length() as usize) }.expect("a CPU wrap")
+        }
+    }
+}
+
+/// `b` as `device` binds it: a CPU device's wrap of another backend's host memory by its address (`on_cpu`), else
+/// `b` itself. What a buffer's address (`Buffer::device_address`) is on that device: a pooled lease of the process's
+/// GPU bound by the host's work is its host address there.
+pub fn on_device(device: &Device, b: &Buffer) -> Buffer {
+    match (device, b) {
+        (Device::Cpu(_), Buffer::Cpu(_)) | (Device::Native(_), _) | (Device::OpenCl(_), _) => b.clone(),
+        (Device::Cpu(_), b) => Buffer::Cpu(on_cpu(b)),
+    }
+}
+
 fn other() -> ! {
     panic!("a value of one backend given to another's (the GPU's, OpenCL's and the CPU's)")
 }
@@ -438,7 +462,7 @@ impl ComputeQueue {
         self.sees(dst, true, "a copy from the host");
         match (&self.kind, dst) {
             (QueueKind::Native(q), Buffer::Native(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
-            (QueueKind::Cpu(q), Buffer::Cpu(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
+            (QueueKind::Cpu(q), d) => q.enqueue_copy_from_host(&on_cpu(d), dst_offset, bytes),
             (QueueKind::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
             _ => other(),
         }
@@ -448,7 +472,7 @@ impl ComputeQueue {
         self.sees(dst, true, "a fill");
         match (&self.kind, dst) {
             (QueueKind::Native(q), Buffer::Native(d)) => q.enqueue_fill_array(d, value, offset, count),
-            (QueueKind::Cpu(q), Buffer::Cpu(d)) => q.enqueue_fill_array(d, value, offset, count),
+            (QueueKind::Cpu(q), d) => q.enqueue_fill_array(&on_cpu(d), value, offset, count),
             (QueueKind::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_fill_array(d, value, offset, count),
             _ => other(),
         }
@@ -459,7 +483,7 @@ impl ComputeQueue {
         self.sees(dst, true, "a copy's destination");
         match (&self.kind, src, dst) {
             (QueueKind::Native(q), Buffer::Native(s), Buffer::Native(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
-            (QueueKind::Cpu(q), Buffer::Cpu(s), Buffer::Cpu(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
+            (QueueKind::Cpu(q), s, d) => q.enqueue_copy_between_device_regions(&on_cpu(s), &on_cpu(d), src_offset, dst_offset, length),
             (QueueKind::OpenCl(q), Buffer::OpenCl(s), Buffer::OpenCl(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
             _ => other(),
         }
@@ -682,7 +706,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         self.sees(arg_num, buffer);
         match (&mut self.kind, buffer) {
             (BindKind::Native(c), Buffer::Native(b)) => c.set_buffer(arg_num, b),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.set_buffer(arg_num, b),
+            (BindKind::Cpu(c), b) => c.set_buffer(arg_num, &on_cpu(b)),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer(arg_num, b),
             _ => other(),
         }
@@ -695,7 +719,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         self.sees(arg_num, buffer);
         match (&mut self.kind, buffer) {
             (BindKind::Native(c), Buffer::Native(b)) => c.set_buffer_at(arg_num, b, offset),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.set_buffer_at(arg_num, b, offset),
+            (BindKind::Cpu(c), b) => c.set_buffer_at(arg_num, &on_cpu(b), offset),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer_at(arg_num, b, offset),
             _ => other(),
         }
@@ -732,7 +756,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         }
         match (&mut self.kind, buffer) {
             (BindKind::Native(c), Buffer::Native(b)) => c.use_buffer(b),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.use_buffer(b),
+            (BindKind::Cpu(c), b) => c.use_buffer(&on_cpu(b)),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.use_buffer(b),
             _ => other(),
         }
@@ -747,7 +771,7 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         }
         match (&mut self.kind, groups) {
             (BindKind::Native(c), Buffer::Native(b)) => c.launch_indirect(b, offset, max_groups, block),
-            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.launch_indirect(b, offset, max_groups, block),
+            (BindKind::Cpu(c), b) => c.launch_indirect(&on_cpu(b), offset, max_groups, block),
             (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.launch_indirect(b, offset, max_groups, block),
             _ => other(),
         }

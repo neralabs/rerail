@@ -3899,7 +3899,7 @@ impl Kit {
             }
         }
         for f in &blocks {
-            let old = f.block.kept_device_buffer();
+            let old = f.block.kept_device_buffer(device);
             let new = f.block.device_buffer(device).map_err(|_| Error::BackendCapacity)?;
             if let Some((ob, len)) = old {
                 self.rebind(address(&ob)?, len as u64, &new)?;

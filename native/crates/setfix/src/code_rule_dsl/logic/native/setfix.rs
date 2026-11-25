@@ -1058,11 +1058,12 @@ impl Rel {
     /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
     fn push_fresh(&mut self, f: Fresh, pend: bool) -> bool {
-        let (from, placed) = (self.n, !f.placed.is_empty());
+        let (from, placed, host_placed) = (self.n, !f.placed.is_empty(), f.host_placed);
         let new = self.push_fresh_rows(f, pend);
-        // A declared key's check over the rows written (decision 0361 step 6). Rows the device placed are not read on
-        // the host (decision 0384: no host work on the Metal path): their key's check is the device's, left open.
-        if new && !self.keyed.is_empty() && !placed {
+        // A declared key's check over the rows written (decision 0361 step 6). Rows a GPU placed are not read on the
+        // host (decision 0384: no host work on the Metal path): their key's check is the device's, left open. Rows the
+        // host's run of the program placed are this CPU's, checked here.
+        if new && !self.keyed.is_empty() && (!placed || host_placed) {
             self.check_keys(from);
         }
         new
@@ -1401,7 +1402,10 @@ pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, break
                    in_order: Vec<(usize, Vec<u32>)>,
                    /// A lattice relation's key map the device folded its placed rows through (decision 0384 step 5):
                    /// the relation takes it as its own with them.
-                   map: Option<keys::KeyMap> }
+                   map: Option<keys::KeyMap>,
+                   /// `placed` was written by the host's run of the device's program (`device host`): its rows are this
+                   /// CPU's to read, so its declared keys are checked as rows written here are (decision 0361 step 6).
+                   host_placed: bool }
 
 /// Where another writer (the device) wrote rows of a relation (decision 0325 step 4).
 #[derive(Clone)]
@@ -1661,6 +1665,8 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
                    /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
                    waiting: Option<(closure::Closure, closure::Prepared, Vec<u64>)>,
                    device: Option<Vec<(usize, JoinPlan)>>,
+                   /// Its device plans run on the host (`device host`: `rerail_accel::gpu::shared::on_host`).
+                   device_host: bool,
                    /// Device joins waiting in this thread's wave (`submit`): their ticket.
                    device_wait: Option<u64>,
                    seed_specs: Vec<(usize, Arc<JoinSpec>)>,
@@ -2266,6 +2272,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // `device`: the placement put the stratum on the device (decision 0095 §7); its seeds are parsed without the
     // CPU's indexes, and compiled for the device below.
     let mut device_wanted = false;
+    // `device host`: the device's program on the host (`rerail_accel::gpu::shared::on_host`), the run bound to the CPU.
+    let mut device_host = false;
     // The delta joins' specs, by probe, for the device's plans of a recursive component (their rules' keys).
     let mut delta_specs: Vec<(usize, String)> = Vec::new();
     let mut leveled = false;
@@ -2334,7 +2342,10 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             }
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
             Line::Unplanned { head, delta } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Unplanned, whole: None, wkey: None, budget: Default::default(), full: Default::default() }),
-            Line::Device => device_wanted = solver().is_some(),
+            Line::Device { host } => {
+                device_wanted = solver().is_some();
+                device_host = *host;
+            }
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
             Line::Measured { desc, key, keyed, cols, ranks } => maint.measured = Some(Measured { desc: *desc, key: key.clone(), keyed: *keyed, cols: cols.clone(), ranks: ranks.clone() }),
             Line::KeptOld => kept_old = true,
@@ -2429,6 +2440,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     }
     // The device's plans of the seeds, or why it takes none of them: then they are parsed again with the CPU's indexes.
     let device_plans = if let Some(dev) = solver().filter(|_| device_wanted) {
+        let _host = device_host.then(rerail_accel::gpu::shared::on_host);
         let _plan = crate::code_rule_dsl::logic::profile::span(|| "open: device plans".into());
         let recursive = probes.iter().any(|p| p.delta != SEED);
         let refused = if !edges.is_empty() || !gates.is_empty() || !requests.is_empty() || !produced.is_empty() {
@@ -2548,19 +2560,32 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let mut reg = on.components.lock();
     let key = name.clone();
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
-                               device: device_plans, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
+                               device: device_plans, device_host, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
     let on_device_rounds = match (solver(), comp.device.as_ref()) {
         (Some(dev), Some(d)) => d.iter().any(|(_, p)| dev.reads_own(p)),
         _ => false,
     };
-    // The maintain mode's component neither: its first wave's delta is the rows its removals put back.
-    if !on_device_rounds && comp.maint.drivers.is_empty() {
+    // The maintain mode's component neither: its first wave's delta is the rows its removals put back. On the host
+    // (`device host`, the run bound to the CPU) a closure is the closure form's still (decision 0098 §1, the user's
+    // choice 2026-11-25): its rounds are not the program's, and its seeds run as they did before the host's program.
+    if (!on_device_rounds || comp.device_host) && comp.maint.drivers.is_empty() {
         comp.closure = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
             closure::recognize(&comp)
         };
+        if comp.closure.is_some() && comp.device_host {
+            // Its seeds were parsed for the device, without the CPU's indexes: parsed again with them, as a run the
+            // device refuses has them (`run`).
+            let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+            let mut syms = Interner::for_loading(&symbols);
+            for (pi, js) in std::mem::take(&mut comp.seed_specs) {
+                comp.probes[pi].body = Body::Join(Box::new(join_rule(conn, &js, &mut syms)?));
+            }
+            syms.check()?;
+            comp.device = None;
+        }
     }
     reg.insert(key, Arc::new(Mutex::new(comp)));
     Ok(name)
@@ -2766,8 +2791,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     // Decision 0113 §3 for the device joins: when the caller can wait for its level's wave, a stratum placed on the
     // device encodes its seed joins into the wave's one command buffer and returns `3`; the run after the wave
     // finishes them (`SolverDevice::resume`). A level's small strata so share one commit and one wait. A recursive one
-    // runs its rounds here.
-    if !seeded && comp.cut.is_none() && comp.device_wait.is_none() && crate::code_rule_dsl::logic::lanes::wave::can_wait()
+    // runs its rounds here. Not on the host (`device host`): its work runs as it is flushed, on this thread, so a wave
+    // shares no commit and no wait there.
+    if !seeded && !comp.device_host && comp.cut.is_none() && comp.device_wait.is_none() && crate::code_rule_dsl::logic::lanes::wave::can_wait()
         && let Some(dev) = solver()
         && let Some(plans) = comp.device.as_ref()
         && !plans.iter().any(|(_, p)| dev.reads_own(p))
@@ -2777,6 +2803,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             Body::Join(j) => (plan, &**j, comp.probes[*pi].head),
             Body::Sql(_) | Body::Unplanned => unreachable!("a device plan is a join's"),
         }).collect();
+        let _host = comp.device_host.then(rerail_accel::gpu::shared::on_host);
         let submitted = { let syms = symbols.read().unwrap(); let s = comp.store.read().unwrap(); dev.submit(&rules, &s, &syms) };
         if let Ok(Some(t)) = submitted {
             comp.device_wait = Some(t);
@@ -2851,6 +2878,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         // The component's fixpoint ran on the device (a recursive one): its rows are all of them, and it is done.
         let mut device_fixed = false;
         let on_device = resumed_on_device || tried && {
+            let _host = comp.device_host.then(rerail_accel::gpu::shared::on_host);
+            let host_rows = comp.device_host;
             let dev = dev.expect("a device");
             let plans = comp.device.as_ref().expect("device plans");
             let tp = Instant::now();
@@ -2875,6 +2904,19 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 dev.resume(t, &rules, store, syms, &mut dev_fresh)
             } else {
                 dev.run_joins(&rules, store, syms, &mut dev_fresh)
+            };
+            // Decision 0462: a head the device's rows would take to the width cap is the scalar joins', which stop the
+            // run there or cut it, as the rule says (the device's run has no cap of its own).
+            let got = match got {
+                Ok(made) if {
+                    // Each head's rows: what it held, and what the device's rules made of it (staged, or in place).
+                    let mut to = vec![0usize; nrels];
+                    for ((pi, _), n) in plans.iter().zip(made.iter().copied()) {
+                        to[comp.probes[*pi].head] += n as usize;
+                    }
+                    to.iter().enumerate().any(|(r, n)| *n > 0 && store.rels[r].n + n >= limits.cap)
+                } => Err(format!("a head at the width cap ({} rows, decision 0462)", limits.cap)),
+                got => got,
             };
             match got {
                 Ok(made) => {
@@ -2910,6 +2952,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         // Its lots in the first order with them, at their places past `f`'s own.
                         let at = f.placed.len();
                         f.in_order.extend(d.in_order.into_iter().map(|(l, r)| (at + l, r)));
+                        f.host_placed |= host_rows && !d.placed.is_empty();
                         f.placed.extend(d.placed);
                         if d.map.is_some() {
                             debug_assert!(f.map.is_none(), "two folds' maps for one relation");

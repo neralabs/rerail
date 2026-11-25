@@ -3676,7 +3676,7 @@ impl<'a> Run<'a, '_> {
                     *l = SpecLine::Join { head: h, delta: d, join, whole: None };
                 }
             }
-            spec.lines.insert(0, SpecLine::Device);
+            spec.lines.insert(0, SpecLine::Device { host: placed.host });
             None
         };
         let cpu_at = if profiling { let (u, s) = crate::code_rule_dsl::prof::thread_usage(); u + s } else { 0.0 };

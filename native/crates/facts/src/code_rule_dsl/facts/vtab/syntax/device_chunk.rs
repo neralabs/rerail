@@ -272,6 +272,9 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
     // Made whether or not a device is open (decision 0353 step 3 on the CPU): the host reads it too.
     let device = placed::device();
+    // No process device: the join programs run on the host (`rerail_accel::gpu::shared::on_host`), which reads every
+    // home where it lies, its device address its host address. Nothing is placed or wrapped for it (decision 0353).
+    let host_reads = device.is_none();
     let n = docs.len();
     let rows: *mut ViewRow = b.alloc_t(n.max(1));
     let dir: *mut ViewDir = b.alloc_t(1);
@@ -279,7 +282,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     let mut homes: Vec<placed::HomeOf> = Vec::new();
     let mut home = |h: placed::HomeOf| -> (u32, u64, bool) {
         let at = h.at;
-        let on_device = h.device.is_some();
+        let on_device = h.device.is_some() || host_reads;
         let k = homes.iter().position(|o| o.id == h.id).unwrap_or_else(|| {
             homes.push(h);
             homes.len() - 1
@@ -289,7 +292,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     let mut entries = Vec::with_capacity(n);
     // What the device reads: every tape of a document with nodes (else no stage reads the directory), every
     // document's lines (else the batch's `line` view is made, counted), its `Loc` rows.
-    let (mut on_device, mut lines) = (device.is_some(), true);
+    let (mut on_device, mut lines) = (device.is_some() || host_reads, true);
     // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
     let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
     let mut locs = docs.iter().all(|d| d.p.extra.is_some());
@@ -397,13 +400,13 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
     let cache_home = cache.as_ref().map(|c| {
         let host = c.block.ptr::<u8>(c.at) as usize;
         let device = c.buffer.as_ref().and_then(|buf| Some((buf.device_address()? + c.at as u64, buf.clone())));
-        on_device &= device.is_some();
+        on_device &= device.is_some() || host_reads;
         home(placed::HomeOf { id: host, host: host as u64, at: 0, device }).0
     });
     let homes_at: *mut ViewHome = b.alloc_t(homes.len().max(1));
     for (k, h) in homes.iter().enumerate() {
         // SAFETY: home `k` of the homes just allocated in `b`.
-        unsafe { homes_at.add(k).write(ViewHome { host: h.host, gpu: h.device.as_ref().map_or(0, |d| d.0) }) };
+        unsafe { homes_at.add(k).write(ViewHome { host: h.host, gpu: h.device.as_ref().map_or(if host_reads { h.host } else { 0 }, |d| d.0) }) };
     }
     let at = b.offset_of(dir);
     // SAFETY: the directory just allocated in `b`.
@@ -434,6 +437,18 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             }
         }
         dir_on_device = Some(base + at as u64);
+    } else if host_reads && on_device {
+        // The host's: the directory at its address in the block, each 16z view's cache by its host address less its
+        // tape's.
+        if let Some(k) = cache_home {
+            for &i in &zrows {
+                // SAFETY: row `i`, written above in `b`.
+                let row = unsafe { &mut *rows.add(i) };
+                let rel = homes[k as usize].host.wrapping_sub(homes[row.homes[0] as usize].host + row.tape) as i64;
+                (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
+            }
+        }
+        dir_on_device = Some(b.base_ptr() as u64 + at as u64);
     }
     let lines = lines && dir_on_device.is_some();
     let locs = locs && dir_on_device.is_some();

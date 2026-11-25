@@ -321,6 +321,15 @@ pub fn function(source: &str, name: &str, constant: Option<u32>) -> Arc<Function
     elsewhere(source, &[name], constant).map(|mut f| f.remove(0)).unwrap_or_else(|e| panic!("the kernel {name}: {e}"))
 }
 
+/// The kernel `name` of `source` (UKL) on the host as a device (`shared::host_layer`): its Rust where it has it, else
+/// the vector path's interpreter's (`rerail_gpu::kernels::host_program_with`). Made once a process, by the program's
+/// cache.
+pub fn host_function(source: &str, name: &str) -> Result<Arc<Function>, String> {
+    let library: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+    let program = rerail_gpu::kernels::host_program_with(&format!("{}.ukl", &hex(&library)[..16]), source, &[])?;
+    Ok(Arc::new(program.library().get_function(&rerail_gpu::shared::host().device, name)?))
+}
+
 /// [`function`] through Metal's tier: this process's pipeline, else an archive's, else the compile.
 #[cfg(target_os = "macos")]
 fn on_metal(source: &str, name: &str, constant: Option<u32>) -> Arc<Function> {

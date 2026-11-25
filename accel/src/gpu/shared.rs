@@ -221,6 +221,34 @@ pub fn layer() -> Option<Layer> {
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
 }
 
+/// The host as a device (`rerail_gpu::shared::host`): the CPU's, its queue's work run on the flushing thread. What
+/// a run bound to the CPU runs the device's join programs on (`on_host`), beside the process's device.
+pub fn host_layer() -> Layer {
+    crate::blocks::install();
+    let one = rerail_forest::gpu::shared::host();
+    Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() }
+}
+
+/// Whether the device's join programs run on the host here (`on_host`): the run's context's.
+#[derive(Clone, Copy, Default)]
+struct OnHost(bool);
+
+/// The device's join programs run on the host (`host_layer`) until the guard drops: on this thread, and in every job
+/// taken here. A run bound to the CPU's.
+pub fn on_host() -> rerail_context::Bound {
+    rerail_context::bind(OnHost(true))
+}
+
+/// Whether the device's join programs run on the host here.
+pub fn is_on_host() -> bool {
+    rerail_context::bound::<OnHost>().0
+}
+
+/// The device the join programs run on here: the host's (`on_host`), else the process's.
+pub fn join_layer() -> Option<Layer> {
+    if is_on_host() { Some(host_layer()) } else { layer() }
+}
+
 /// Holds what a queue's work reaches: the block or pooled lease each buffer lies in (by its contents' address), on
 /// the submission's fence, read or written as the work declares (decision 0491 step 2). A buffer of the device's own
 /// (`contents` 0, or memory no block or lease holds) is the device's to keep: its command buffer retains it.
@@ -246,7 +274,11 @@ pub struct Queue {
 
 impl Queue {
     pub fn new() -> Result<Queue, String> {
-        let layer = layer().ok_or("no device")?;
+        Queue::on(layer().ok_or("no device")?)
+    }
+
+    /// One submission on `layer`'s queue (the process's, or the host's: `host_layer`).
+    pub fn on(layer: Layer) -> Result<Queue, String> {
         let fence = rerail_blocks::ledger::Fence::new();
         let queue = rerail_device::device::ComputeQueue::watched(layer.queue, std::sync::Arc::new(Holds(fence.clone())));
         Ok(Queue { queue, fence })
@@ -708,7 +740,12 @@ fn traced_new(bytes: usize) {
 
 /// A buffer of at least `bytes`. Its contents are a previous lease's: every reader writes it first.
 pub fn lease(bytes: usize) -> Result<Pooled, String> {
-    let shared = layer().ok_or("no device")?;
+    // The process's device's memory, which the host's work reads in place too; the host's where it has none.
+    let shared = match layer() {
+        Some(l) => l,
+        None if is_on_host() => host_layer(),
+        None => return Err("no device".to_owned()),
+    };
     let class = class(bytes);
     if class as u64 > shared.max_buffer {
         if bytes as u64 > shared.max_buffer {

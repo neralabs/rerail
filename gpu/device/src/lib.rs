@@ -91,6 +91,20 @@ pub mod shared {
             .as_ref()
     }
 
+    /// The host as a device, beside the process's (`get`): the CPU's, its kernels their Rust where they have it and
+    /// the vector path's interpreter's otherwise (`CpuDevice::host`, no compiler), its queues inline
+    /// (`CpuQueueRoot::inline`): a flush runs its work on the flushing thread. What a run bound to the CPU runs the
+    /// device's programs on (the engine's CPU joins), whatever device the process has. The machine's, as the
+    /// process's device is.
+    pub fn host() -> &'static Shared {
+        static HOST: OnceLock<Shared> = OnceLock::new();
+        HOST.get_or_init(|| {
+            use crate::compute_kernel_cpu::{CpuDevice, CpuQueueRoot};
+            let d = CpuDevice::host();
+            Shared { device: Device::Cpu(d), queue: QueueRoot::Cpu(CpuQueueRoot::inline(d)), waiting: QueueRoot::Cpu(CpuQueueRoot::inline(d)) }
+        })
+    }
+
     /// The OpenCL GPU, or none (why, on stderr: a process that asked for OpenCL says why it has no device).
     fn open_opencl() -> Option<Shared> {
         opencl().map_err(|e| eprintln!("RERAIL_GPU=opencl: {e}")).ok()

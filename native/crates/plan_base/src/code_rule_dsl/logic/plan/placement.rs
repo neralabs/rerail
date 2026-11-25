@@ -576,6 +576,7 @@ pub fn record(key: &str, placed: &Placement, refused: Option<Option<String>>) {
     {
         use crate::code_rule_dsl::logic::profile;
         let (ran, device): (&'static str, Vec<String>) = match (placed.gpu, &refused) {
+            (true, Some(None)) if placed.host => ("host program", Vec::new()),
             (true, Some(None)) => ("Metal", Vec::new()),
             (true, Some(Some(why))) => ("native CPU", vec![format!("refused at run time: {why}")]),
             (true, None) => ("native CPU", vec!["placed, no device report".into()]),
@@ -615,6 +616,8 @@ pub fn device_on() -> bool {
 pub struct Placement {
     /// Whether it runs on the device.
     pub gpu: bool,
+    /// Whether its device run is the host's (the run bound to the CPU: `host_joins`).
+    pub host: bool,
     /// Whether the GPU's estimate is under `GPU_BIAS` times the CPU's.
     pub(in crate::code_rule_dsl) gpu_cheaper: bool,
     /// The forms the device lacks (none when it has them all).
@@ -725,8 +728,18 @@ pub fn place(shape: &Shape) -> Placement {
     let device = binding != Binding::Cpu;
     // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0321).
     let gpu_cheaper = device_s < cpu_work_s * gpu_bias();
-    let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
-    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
+    // Bound to the CPU: the device's join program on the host (`host_joins`), wherever it has every form; the
+    // scalar joins only for what it lacks.
+    let host = !device && host_joins();
+    let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper || host);
+    Placement { gpu, host: gpu && host, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
+}
+
+/// Whether a run bound to the CPU runs the device's join program on the host (`rerail_accel::gpu::shared::on_host`):
+/// `rerail_ukl_rust`'s `join_run`, on `rerail_simd`. `RERAIL_CPU_JOINS=scalar`, a measurement aid: the scalar joins,
+/// as before.
+pub fn host_joins() -> bool {
+    !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_CPU_JOINS").is_ok_and(|v| v == "scalar"))
 }
 
 /// A measurement aid only: `RERAIL_DEVICE_JOINS=off` keeps every stratum's joins on the CPU under a device binding,
