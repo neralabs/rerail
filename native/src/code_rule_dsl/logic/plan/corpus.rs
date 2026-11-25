@@ -4278,9 +4278,10 @@ fn run_observed(
             let measured = counts.statistics(&|_| true);
             repository.push((rel.clone(), source, measured));
         }
-        // A library's own input that core does not make and no fact gives (`tsx/node-resolve.rerail`'s
-        // `spec_resolved`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
-        // input like any other, so it is bound, empty (ported from Jeremy Barnes's 9699816b84).
+        // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
+        // `npm_ignored`, `tsx/node-resolve.rerail`'s `spec_resolved`, "until core has it"): no rows, under its declared
+        // columns. A cross-file rule reads it as an input like any other, so it is bound, empty (ported from Jeremy
+        // Barnes's 9699816b84).
         let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
         for rel in unbound {
             let own = projection.columns(rel).is_none() && !prog.facts.contains_key(rel.as_str());
