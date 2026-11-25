@@ -626,36 +626,41 @@ fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec
 
 /// Sorts `ids` (positions of `src`'s rows, column `c` ranging over `lo[c]..=hi[c]`) into the canonical order of
 /// `key`, reading the rows where they lie: as `relation::sort_canonical` sorts columns, the packed keys radix sorted
-/// with the ids and returned alongside them when the key packs into 64 bits, else the ids sorted by comparing rows.
+/// with the ids and returned alongside them when the key packs into 64 bits. A wider key is cut into runs of its
+/// columns that each pack into 64 bits, and the ids radix sorted by each run's packed keys from the last run to the
+/// first: the sort is stable (`radix_pairs`), so the last pass orders by the first run and keeps the later runs'
+/// order within it. No row is compared, and each value is read once a pass: a comparison sort read two rows' values
+/// a comparison, through the rows' reader (3.5 s of a cold run's kept writes on all, t56's corpus).
 fn sort_rows<'s>(scratch: &'s Scratch, src: Src<'_>, n: usize, key: &[usize], lo: &[i64], hi: &[i64], ids: &mut [u32]) -> Option<&'s [u64]> {
     let m = ids.len();
     let bits_for = |range: u64| 64 - range.leading_zeros();
     let kbits: Vec<u32> = key.iter().map(|&c| if n == 0 { 0 } else { bits_for((hi[c] as i128 - lo[c] as i128) as u64) }).collect();
-    let packed_bits: u32 = kbits.iter().sum();
-    if packed_bits > 64 {
-        ids.sort_unstable_by(|&x, &y| {
-            for &c in key {
-                let o = src.get(x as usize, c).cmp(&src.get(y as usize, c));
-                if o != std::cmp::Ordering::Equal {
-                    return o;
-                }
-            }
-            std::cmp::Ordering::Equal
-        });
-        return None;
-    }
-    let keys: &mut [u64] = scratch.take(m);
-    for (k, &i) in keys.iter_mut().zip(ids.iter()) {
-        let mut x = 0u64;
-        for (j, &c) in key.iter().enumerate() {
-            // A column of one value takes no bits; `checked_shl` keeps a 64-bit shift of an empty key defined.
-            x = x.checked_shl(kbits[j]).unwrap_or(0) | (src.get(i as usize, c) as i128 - lo[c] as i128) as u64;
+    // The key's runs of columns, `[from, to)` in `key`, each packing into 64 bits; a column takes 64 at most.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let (mut from, mut bits) = (0, 0u32);
+    for (j, &b) in kbits.iter().enumerate() {
+        if bits + b > 64 {
+            runs.push((from, j));
+            (from, bits) = (j, 0);
         }
-        *k = x;
+        bits += b;
     }
+    runs.push((from, key.len()));
+    let keys: &mut [u64] = scratch.take(m);
     let (tk, ti) = (scratch.take::<u64>(m), scratch.take::<u32>(m));
-    crate::sort::radix_pairs(keys, ids, packed_bits, tk, ti);
-    Some(keys)
+    for &(a, b) in runs.iter().rev() {
+        for (k, &i) in keys.iter_mut().zip(ids.iter()) {
+            let mut x = 0u64;
+            for (&c, &kb) in key[a..b].iter().zip(&kbits[a..b]) {
+                // A column of one value takes no bits; `checked_shl` keeps a 64-bit shift of an empty key defined.
+                x = x.checked_shl(kb).unwrap_or(0) | (src.get(i as usize, c) as i128 - lo[c] as i128) as u64;
+            }
+            *k = x;
+        }
+        crate::sort::radix_pairs(keys, ids, kbits[a..b].iter().sum(), tk, ti);
+    }
+    // One run's keys are the rows' keys: equal keys, equal rows. Several runs' last keys are the first run's alone.
+    (runs.len() == 1).then_some(&*keys)
 }
 
 impl Prepared<'_> {
@@ -1111,6 +1116,41 @@ mod tests {
             let split: usize = stats.cols.iter().map(|c| c.2).sum();
             assert!(split * 2 < whole, "split {split} bytes against whole {whole}");
         });
+    }
+
+    /// Rows whose canonical key packs into more than 64 bits (three columns of about 50 bits each) are sorted by
+    /// stable radix passes over runs of their columns, last run first: read back in canonical order, duplicates
+    /// dropped, as a comparison of rows would order them.
+    #[test]
+    fn a_key_wider_than_64_bits_sorts_as_rows_compare() {
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        let mut next = || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 14) as i64
+        };
+        // Few distinct leading values, so later columns decide most orders; every tenth row a duplicate.
+        let mut rows: Vec<[i64; 3]> = (0..4000).map(|_| [(next() % 5) << 40, next(), next() % 3]).collect();
+        let dups: Vec<[i64; 3]> = rows.iter().step_by(10).copied().collect();
+        rows.extend(dups);
+        let mut want = rows.clone();
+        want.sort();
+        want.dedup();
+        let n = rows.len();
+        let block = Block::anon(kind::KEPT, 16 << 20);
+        let got = crate::scratch::with(|s| {
+            let c = s.take::<i64>(3 * n);
+            // copy: load (the test's rows into the scratch the pack reads)
+            for (k, v) in (0..3).flat_map(|c| rows.iter().map(move |r| r[c])).enumerate() {
+                c[k] = v;
+            }
+            let p = prepare(s, c, n, 3, &Spec { widths: vec![8; 3], order: vec![0], indexes: Vec::new(), min_log: 0 }, None, Order::Canonical);
+            assert!(!p.in_order);
+            let packed = p.place_in(&block).0;
+            (0..packed.len()).map(|i| [packed.get(i, 0), packed.get(i, 1), packed.get(i, 2)]).collect::<Vec<_>>()
+        });
+        assert_eq!(got, want);
     }
 
     /// K-R3: each row's level is read at its packed position, the rows sorted or not.

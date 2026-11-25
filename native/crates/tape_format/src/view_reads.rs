@@ -225,14 +225,25 @@ impl<'a> Doc<'a> {
         self.node_id(if self.is(0, q) { self.rank(q) } else { 0 })
     }
 
+    /// Numbered node `l`'s tape node: `x` where the caller has it (`NONE`: not), else selected (`tape_node`).
+    #[inline(always)]
+    fn x_of(&self, l: u32, x: u32) -> u32 {
+        if x == NONE { self.tape_node(l) } else { x }
+    }
+
     /// `view_node(l, col)`: the document (a program's file), the id, the kind atom, the start, the end.
     #[inline]
     pub fn node(&self, l: u32, col: u32) -> i64 {
+        self.node_at(l, NONE, col)
+    }
+    /// `node`, numbered node `l`'s tape node `x` given where the caller has it (`NONE`: not): no select.
+    #[inline]
+    pub fn node_at(&self, l: u32, x: u32, col: u32) -> i64 {
         match col {
             0 => i64::from(self.entry.file),
             1 => self.node_id(l),
             _ => {
-                let x = self.tape_node(l);
+                let x = self.x_of(l, x);
                 match col {
                     2 => i64::from(self.items(&self.entry.kinds)[self.tape.number(x) as usize]),
                     3 => i64::from(self.tape.start(x)),
@@ -244,14 +255,19 @@ impl<'a> Doc<'a> {
     /// `view_child(i, col)`, of numbered node `i + 1`: the parent's id, the child's id, its place.
     #[inline]
     pub fn child(&self, i: u32, col: u32) -> i64 {
+        self.child_at(i, NONE, col)
+    }
+    /// `child`, the child's tape node `x` given where the caller has it (`NONE`: not).
+    #[inline]
+    pub fn child_at(&self, i: u32, x: u32, col: u32) -> i64 {
         let l = i + 1;
         match col {
-            0 => self.parent_id(l, self.tape_node(l)),
+            0 => self.parent_id(l, self.x_of(l, x)),
             1 => self.node_id(l),
             // An outermost anchor's, its rank among the anchors; any other's read in the tape's auxiliary index, as the
             // entry's shape numbers places (decision 0656 step 4).
             _ => {
-                let x = self.tape_node(l);
+                let x = self.x_of(l, x);
                 let anchor = rerail_clif::view_reads::ANCHOR_ITEM as u32;
                 i64::from(if self.is(anchor, x) {
                     // SAFETY: as `tape_node`.
@@ -275,6 +291,11 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn field(&self, i: u32, col: u32) -> i64 {
         let (l, x) = self.fielded(i);
+        self.field_at(l, x, col)
+    }
+    /// `field`'s row of numbered node `l`, its tape node `x` (`fielded`'s), where the caller has both.
+    #[inline]
+    pub fn field_at(&self, l: u32, x: u32, col: u32) -> i64 {
         match col {
             0 => self.parent_id(l, x),
             1 => i64::from(self.items(&self.entry.fields)[self.tape.number(x) as usize]),
@@ -284,41 +305,66 @@ impl<'a> Doc<'a> {
     /// `view_core(l, col)`: the document, its tape node, its id.
     #[inline]
     pub fn core(&self, l: u32, col: u32) -> i64 {
+        self.core_at(l, NONE, col)
+    }
+    /// `core`, `l`'s tape node `x` given where the caller has it (`NONE`: not).
+    #[inline]
+    pub fn core_at(&self, l: u32, x: u32, col: u32) -> i64 {
         match col {
             0 => i64::from(self.entry.key),
-            1 => i64::from(self.tape_node(l)),
+            1 => i64::from(self.x_of(l, x)),
             _ => self.node_id(l),
         }
     }
     /// `view_line(l, col)`: its id, the line its start is on (from 1, `lines_line`).
     #[inline]
     pub fn line(&self, l: u32, col: u32) -> i64 {
+        self.line_at(l, NONE, col)
+    }
+    /// `line`, `l`'s tape node `x` given where the caller has it (`NONE`: not).
+    #[inline]
+    pub fn line_at(&self, l: u32, x: u32, col: u32) -> i64 {
         match col {
             0 => self.node_id(l),
-            _ => i64::from(lines_line(self.lines, self.tape.start(self.tape_node(l)))),
+            _ => i64::from(lines_line(self.lines, self.tape.start(self.x_of(l, x)))),
         }
     }
 
     /// `tape(n, p, size, depth)`: its id, its parent's, the numbered nodes under it, its depth.
     #[inline]
     pub fn tape_row(&self, l: u32, col: u32) -> i64 {
+        self.tape_row_at(l, NONE, col)
+    }
+    /// `tape_row`, `l`'s tape node `x` given where the caller has it (`NONE`: not).
+    #[inline]
+    pub fn tape_row_at(&self, l: u32, x: u32, col: u32) -> i64 {
         match col {
             0 => self.node_id(l),
-            1 => self.parent_id(l, self.tape_node(l)),
-            2 => i64::from(self.size(l)),
-            _ => i64::from(self.depth(l)),
+            1 => self.parent_id(l, self.x_of(l, x)),
+            2 => i64::from(self.size_at(l, x)),
+            _ => i64::from(self.depth_at(l, x)),
         }
     }
     /// The numbered nodes under numbered node `l`: those of its tape subtree, by rank.
     #[inline]
     pub fn size(&self, l: u32) -> u32 {
-        let x = self.tape_node(l);
+        self.size_at(l, NONE)
+    }
+    /// `size`, `l`'s tape node `x` given where the caller has it (`NONE`: not).
+    #[inline]
+    pub fn size_at(&self, l: u32, x: u32) -> u32 {
+        let x = self.x_of(l, x);
         self.rank(x.wrapping_add(self.tape.size(x))).wrapping_sub(l).wrapping_sub(1)
     }
     /// Numbered node `l`'s depth, the root's 0: its numbered tape ancestors, by a climb.
     #[inline]
     pub fn depth(&self, l: u32) -> u32 {
-        let mut x = self.tape_node(l);
+        self.depth_at(l, NONE)
+    }
+    /// `depth`, `l`'s tape node `x` given where the caller has it (`NONE`: not).
+    #[inline]
+    pub fn depth_at(&self, l: u32, x: u32) -> u32 {
+        let mut x = self.x_of(l, x);
         let mut d = 0;
         loop {
             let q = self.tape.parent(x);
@@ -332,7 +378,12 @@ impl<'a> Doc<'a> {
     /// `ast_depth(n, k)`: its id, its depth.
     #[inline]
     pub fn depth_row(&self, l: u32, col: u32) -> i64 {
-        if col == 0 { self.node_id(l) } else { i64::from(self.depth(l)) }
+        self.depth_row_at(l, NONE, col)
+    }
+    /// `depth_row`, `l`'s tape node `x` given where the caller has it (`NONE`: not).
+    #[inline]
+    pub fn depth_row_at(&self, l: u32, x: u32, col: u32) -> i64 {
+        if col == 0 { self.node_id(l) } else { i64::from(self.depth_at(l, x)) }
     }
     /// `node_order(n, k)`: its id, `document << 32 |` its order key (`num_order_of`).
     #[inline]
@@ -356,6 +407,11 @@ impl<'a> Doc<'a> {
     #[inline]
     pub fn sibling(&self, i: u32, col: u32) -> i64 {
         let (l, x) = self.after_sibling(i);
+        self.sibling_at(l, x, col)
+    }
+    /// `sibling`'s row of numbered node `l`, its tape node `x` (`after_sibling`'s), where the caller has both.
+    #[inline]
+    pub fn sibling_at(&self, l: u32, x: u32, col: u32) -> i64 {
         if col != 0 {
             return self.node_id(l);
         }

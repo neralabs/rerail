@@ -4940,9 +4940,7 @@ impl Source for Viewed {
         if self.kernel_view()
             && let Some(d) = self.batch.docs.read(doc, matches!(self.view, View::Loc(_)))
         {
-            for (o, &c) in out.iter_mut().zip(columns) {
-                *o = self.read_value(&d, i, c);
-            }
+            self.read_row(&d, i, columns, out);
             return;
         }
         let (p, i) = (&self.batch.docs[doc], i);
@@ -5217,6 +5215,8 @@ impl Viewed {
         let [doc_hint, granule] = &mut cursor.hint;
         let mut vals = [0i64; 8];
         let (firsts, kernel) = (b.firsts(view), self.kernel_view());
+        // The directory row read last (`Docs::read`): a probe's matches are mostly one document's.
+        let mut open: Option<(usize, Option<rerail_tape_format::view_reads::Doc<'_>>)> = None;
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known, and its place
         // and depth where the probe knows them (a probe by parent: the hop's counter, one below the parent).
         let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>, known: Known| {
@@ -5225,15 +5225,18 @@ impl Viewed {
             let Some(row) = row else { return };
             // Read through the document's directory row (decision 0353 step 3 on the CPU), as a scan reads it; off the
             // plan where the view is the host's alone or the row has no tape read.
-            if kernel
-                && let Some(d) = b.docs.read(doc, false)
-            {
-                let i = row - firsts.at(doc);
-                for (o, &c) in vals[..len].iter_mut().zip(columns) {
-                    *o = self.read_value(&d, i, c);
+            if kernel {
+                if open.as_ref().is_none_or(|o| o.0 != doc) {
+                    open = Some((doc, b.docs.read(doc, false)));
                 }
-                each(row, &vals[..len]);
-                return;
+                if let Some((_, Some(d))) = &open {
+                    let i = row - firsts.at(doc);
+                    for ((o, &c), &op) in vals[..len].iter_mut().zip(columns).zip(&plan.ops) {
+                        *o = self.read_known(d, i, InHand { local, x, id, up, known }, op, c);
+                    }
+                    each(row, &vals[..len]);
+                    return;
+                }
             }
             let p = &b.docs[doc];
             // A match by its own id: its tape node through the read's memo (`Batch::tape_node`).
@@ -5355,6 +5358,64 @@ impl Viewed {
             None => self.value_at(&self.batch.docs[doc], i, column),
         }
     }
+    /// Row `i`'s `columns` through its document's directory row (`read_value`), its node selected once however many
+    /// columns read it (`in_hand`).
+    #[inline]
+    fn read_row(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize, columns: &[usize], out: &mut [i64]) {
+        if columns.len() < 2 {
+            for (o, &c) in out.iter_mut().zip(columns) {
+                *o = self.read_value(d, i, c);
+            }
+            return;
+        }
+        let m = self.in_hand(d, i);
+        for (o, &c) in out.iter_mut().zip(columns) {
+            *o = self.read_known(d, i, m, Self::read_op(self.view, c).0, c);
+        }
+    }
+    /// Row `i`'s numbered node and its tape node, selected (`InHand`): what its columns' reads share. `NONE` for a
+    /// view whose columns read no tape node.
+    #[inline]
+    fn in_hand(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize) -> InHand {
+        let i = i as u32;
+        let (local, x) = match self.view {
+            View::Node | View::Line | View::Core | View::Tape | View::Depth => (i, d.tape_node(i)),
+            View::Child => (i + 1, d.tape_node(i + 1)),
+            View::Field => d.fielded(i),
+            View::Sibling => d.after_sibling(i),
+            _ => (i, NONE),
+        };
+        InHand { local, x, id: None, up: None, known: Known::default() }
+    }
+    /// `read_value` of a probe's match (`read_matches`), with what the probe has of it (`InHand`). Those in hand are
+    /// not read again: no select of the row's tape node, no id, parent, place or depth read. `op` is column `c`'s
+    /// (`read_op`).
+    #[inline]
+    fn read_known(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize, m: InHand, op: u8, c: usize) -> i64 {
+        let InHand { local, x, id, up, known } = m;
+        let got = match (op, id, up, known.idx, known.depth) {
+            (read_op::ID, Some(id), ..) => id,
+            (read_op::UP, _, Some(up), ..) => up,
+            (read_op::IDX, _, _, Some(idx), _) => i64::from(idx),
+            (read_op::DEPTH, .., Some(depth)) => i64::from(depth),
+            _ => {
+                let (i, c) = (i as u32, c as u32);
+                match self.view {
+                    View::Node => d.node_at(i, x, c),
+                    View::Line => d.line_at(i, x, c),
+                    View::Child => d.child_at(i, x, c),
+                    View::Core => d.core_at(i, x, c),
+                    View::Tape => d.tape_row_at(i, x, c),
+                    View::Depth => d.depth_row_at(i, x, c),
+                    View::Field if x != NONE => d.field_at(local, x, c),
+                    View::Sibling if x != NONE => d.sibling_at(local, x, c),
+                    _ => return self.read_value(d, i as usize, c as usize),
+                }
+            }
+        };
+        debug_assert_eq!(got, self.read_value(d, i, c), "a match's known read (column {c}, op {op})");
+        got
+    }
     /// Row `i` of a document's rows in this view, column `c`, read through its directory row (`view_reads::Doc`).
     pub(super) fn read_value(&self, d: &rerail_tape_format::view_reads::Doc<'_>, i: usize, c: usize) -> i64 {
         use rerail_tape_format::view_reads::Place as P;
@@ -5396,9 +5457,7 @@ impl Viewed {
         {
             let mut vals = vec![0i64; columns.len()];
             for i in 0..n {
-                for (o, &c) in vals.iter_mut().zip(columns) {
-                    *o = self.read_value(&d, i, c);
-                }
+                self.read_row(&d, i, columns, &mut vals);
                 row(i, &vals);
             }
             return;
@@ -5672,6 +5731,17 @@ mod read_op {
     pub const NEED_X: u8 = 1;
     pub const NEED_ID: u8 = 2;
     pub const NEED_UP: u8 = 4;
+}
+
+/// What a probe has of a match, for its directory read (`Viewed::read_known`): its local id (the numbered node), its
+/// tape node (`NONE`: not known), its id and its parent's id where known, and its place and depth (`Known`).
+#[derive(Clone, Copy)]
+struct InHand {
+    local: u32,
+    x: u32,
+    id: Option<i64>,
+    up: Option<i64>,
+    known: Known,
 }
 
 /// What a walk or a probe already has of a match (`Viewed::op_value`): its place among its parent's children, its depth
