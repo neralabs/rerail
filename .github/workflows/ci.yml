@@ -1510,7 +1510,7 @@ jobs:
 
       # Also Windows-only: `rerail install --remove` from a home laid out as the installer leaves it, beside a daemon
       # that does not answer, while each Windows PowerShell takes 30 s to start and while powershell.exe is blocked. It
-      # runs the built CLI with the engine the steps above took, about 15 s on a lab machine.
+      # runs the built CLI with the engine the steps above took: 12 to 16 s a case on a loaded lab machine.
       - name: Uninstall stop integration test
         if: matrix.shard == 1
         env:

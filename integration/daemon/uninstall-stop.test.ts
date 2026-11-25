@@ -70,13 +70,15 @@ async function daemonRecord(home: string, env: NodeJS.ProcessEnv): Promise<Daemo
 }
 
 /**
- * A daemon too busy to answer, as one whose threads are all suspended: a process that holds the engine pipe the record
- * names and never answers on it. daemon.json names it, stamped after it started, and the record beside the home's lock
- * is gone, so only its start proves it this home's daemon.
+ * A daemon too busy to answer, as one whose threads are all suspended: a process that has loaded the installed
+ * package's engine, as a daemon of that package has, and holds the engine pipe the record names and never answers on
+ * it. daemon.json names it, stamped after it started, and the record beside the home's lock is gone, so only its start
+ * proves it this home's daemon. Windows lets the uninstall delete `versions/` only once it has ended.
  */
-async function busyDaemon(home: string, state: DaemonState): Promise<ChildProcess> {
-  const daemon = spawn(process.execPath, ["-e", `require("node:net").createServer(socket => socket.pause())
-    .listen(process.argv[1], () => process.stdout.write("listening\\n"));`, state.kernelSocketPath], { stdio: ["ignore", "pipe", "ignore"] });
+async function busyDaemon(home: string, state: DaemonState, pkg: string): Promise<ChildProcess> {
+  const engine = join(pkg, "native", "rerail_engine.node");
+  const daemon = spawn(process.execPath, ["-e", `require(process.argv[2]); require("node:net").createServer(socket => socket.pause())
+    .listen(process.argv[1], () => process.stdout.write("listening\\n"));`, state.kernelSocketPath, engine], { stdio: ["ignore", "pipe", "ignore"] });
   await once(daemon.stdout!, "data");
   await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: daemon.pid, startedAt: Date.now() }));
   await rm(join(home, LOCKS_DIR, "daemon.json"), { force: true });
@@ -116,7 +118,7 @@ async function uninstallBesideBusyDaemon(powershell: PowerShellStart, extra: rea
     await symlink(join(process.cwd(), "node_modules"), modules, "junction");
     await mkdir(home, { recursive: true });
     const pkg = await installedPackage(home);
-    daemon = await busyDaemon(home, await daemonRecord(home, env));
+    daemon = await busyDaemon(home, await daemonRecord(home, env), pkg);
     const ran = await uninstall(pkg, env, powershell, extra);
     const result = { ...ran, daemonRuns: runs(daemon.pid!), versionsGone: !existsSync(join(home, "versions")) };
     const row = { powershell, command: ["install", "--remove", ...extra].join(" "), ...result, stdout: ran.stdout.split(/\r?\n/u).filter(line => /daemon|could not|did not answer|versions/iu.test(line)) };

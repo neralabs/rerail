@@ -516,6 +516,17 @@ describe("the process reader a process that must not load the engine reads throu
     }
   });
 
+  it("reads another way when its child exits 0 with no answer it can read", async () => {
+    for (const line of ["not an answer", "42", "{}"]) {
+      const { reader, folder } = await readerPrinting(line);
+      try {
+        expect(processStartedAtInChild(7, reader, () => 5, "win32"), line).toBe(5);
+      } finally {
+        await removeFolder(folder);
+      }
+    }
+  });
+
   it("reads no start, and starts no PowerShell, when its child is still running at the bound", () => {
     vi.mocked(childProcess.spawnSync).mockImplementationOnce((() => ({
       pid: 0, output: [null, "", ""], stdout: "", stderr: "", status: null, signal: "SIGTERM",
