@@ -16,7 +16,7 @@ fn main() {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn main() {
-    protocol::read_states(std::io::stdin().lock(), |incoming| {
+    protocol::read_states(std::io::stdin().lock(), std::io::stderr(), |incoming| {
         if let protocol::Incoming::Closed = incoming {
             std::process::exit(0);
         }

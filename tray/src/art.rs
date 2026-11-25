@@ -170,7 +170,7 @@ mod tests {
 
     /// Every pixel inside a disc of `radius` around the badge's centre, in a square icon.
     fn badge_disc(image: &Rgba, radius: f32) -> Vec<[u8; 4]> {
-        let centre = image.width as f32 - image.width as f32 * 0.45 / 2.0;
+        let centre = image.width as f32 - image.width as f32 * BADGE / 2.0;
         let mut seen = Vec::new();
         for y in 0..image.height {
             for x in 0..image.width {

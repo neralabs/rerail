@@ -8,7 +8,7 @@ use tao::event::Event;
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 #[cfg(target_os = "macos")]
 use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
-use tray_icon::{TrayIcon, TrayIconBuilder};
+use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::art::{self, Badge, Rgba};
 use crate::protocol::{self, Action, Incoming, MenuState};
@@ -38,7 +38,7 @@ pub fn run() -> ! {
 
     let proxy = event_loop.create_proxy();
     std::thread::spawn(move || {
-        protocol::read_states(std::io::stdin().lock(), |incoming| {
+        protocol::read_states(std::io::stdin().lock(), std::io::stderr(), |incoming| {
             // Fails only once the event loop has gone, and then there is no one left to tell.
             let _ = proxy.send_event(incoming);
         });
@@ -49,6 +49,10 @@ pub fn run() -> ! {
             write_action(action);
         }
     })));
+
+    // The icon's own clicks and hovers have no use here; a handler keeps them out of tray-icon's unbounded channel,
+    // which nothing reads and which would otherwise grow for as long as the daemon runs.
+    TrayIconEvent::set_event_handler(Some(|_: TrayIconEvent| {}));
 
     let base = art::decode_png(ICON);
     let mut tray: Option<Tray> = None;
@@ -118,8 +122,8 @@ struct Tray {
 
 impl Tray {
     fn new(state: &MenuState, base: &Rgba) -> Result<Self, String> {
-        // The status line stays enabled, with no action: macOS dims a disabled item's icon, which would wash out
-        // the circle.
+        // The status line stays enabled, with no action, until it is checked by eye whether macOS dims a disabled
+        // item's icon and so washes out the circle. That dimming is assumed here, not seen.
         let status = IconMenuItem::with_id("status", "", true, None, None);
         let version = MenuItem::new("", false, None);
         let dashboard = MenuItem::new("", false, None);
