@@ -7,9 +7,13 @@
 // react/jsx-no-undef: a component tag names a variable no enclosing scope declares. A member tag is checked by its
 // leftmost name; DOM tags (<div>), namespaced tags (<svg:path>) and `this` are not variables. In a module, globals
 // do not count (the allowGlobals option is off), so <Foo/> needs a declaration or an import even if Foo is global.
+// The plugin also counts the names of the module's first child scope and of that scope's first child ("Temporary
+// fix for babel-eslint"), wherever the tag is: the file's first function, class, block or (in TypeScript) type
+// scope, and the first scope inside it.
 //   <Foo />                         reported if no Foo is declared or imported
 //   import { Bar } from "x"; <Bar.Item />    not reported
 //   function f(Icon) { return <Icon /> }      not reported: a parameter
+//   function setup() { const Icon = load(); }  export const T = () => <Icon />;   not reported: the first scope
 #include "tsx/react.rerail"
 
 .violation undefined_tag(at: node, x: symbol)
@@ -27,19 +31,273 @@ tag_root(t, n) :- kind(t, "member_expression"), field(t, "object", o), (kind(o, 
     kind(o, "member_expression"), tag_root(o, n)).
 // declared_at(n, x): some scope around n declares x (names.rerail's decl_site: variables, functions, classes,
 // parameters, imports, catch and loop bindings, a function or class expression's own name; types and interfaces
-// too, since ESLint's scope manager for TypeScript knows them). JSX tag names are not names.rerail references, so this
-// looks the name up directly in the enclosing scopes.
+// too, since ESLint's scope manager for TypeScript knows them), or the first scopes do (first_var). JSX tag names
+// are not names.rerail references, so this looks the name up directly in the enclosing scopes.
 .decl declared_at(n: node, x: symbol)
 declared_at(n, x) :- tag_root(_, n), text(n, x), (inside(n, s, block_scope) ; inside(n, s, fn_scope)),
-    decl_site(s, x, _, _, _).
-// TypeScript's other declarations: `enum E {}`, `namespace N {}` and `module M {}` in their block, and a type
-// parameter (`function f<T>()`, `class C<T>`) anywhere inside what declares it.
-declared_at(n, x) :- tag_root(_, n), text(n, x), (inside(n, s, block_scope) ; inside(n, s, fn_scope)),
-    kind(d, k), (k = "enum_declaration" ; k = "internal_module" ; k = "module"), field(d, "name", m), text(m, x),
-    nearest(d, s, block_scope).
+    bound_in(s, x).
+// A type parameter (`function f<T>()`, `class C<T>`) anywhere inside what declares it.
 declared_at(n, x) :- tag_root(_, n), text(n, x), kind(p, "type_parameter"), field(p, "name", m), text(m, x),
     child(ps, p, _), field(o, "type_parameters", ps), within(n, o).
+declared_at(n, x) :- tag_root(_, n), text(n, x), docof(n, d), first_var(d, x).
+// bound_in(s, x): block or function scope s declares x: decl_site, and TypeScript's declarations decl_site lacks,
+// each in its block: `enum E {}`, `namespace N {}`, `module M {}`, `abstract class B {}`, `declare function W()`
+// (and an overload signature), `import L = require("l")` and `import A = N.A`.
+.decl bound_in(s: node, x: symbol)
+bound_in(s, x) :- decl_site(s, x, _, _, _).
+bound_in(s, x) :- kind(d, k), ts_decl_kind(k), field(d, "name", m), text(m, x), nearest(d, s, block_scope).
+bound_in(s, x) :- (kind(d, "import_require_clause") ; kind(d, "import_alias")), child(d, m, 0), kind(m, "identifier"),
+    text(m, x), nearest(d, s, block_scope).
+.decl ts_decl_kind(k: symbol)
+ts_decl_kind("enum_declaration"). ts_decl_kind("internal_module"). ts_decl_kind("module").
+ts_decl_kind("abstract_class_declaration"). ts_decl_kind("function_signature").
 // `import { default as Form } from "./form"`: the tape keeps no node for `default`, so the specifier has an alias and
 // no name, and names.rerail's import_binding (which reads the name) binds nothing. The alias is the binding.
 declared_at(n, x) :- tag_root(_, n), text(n, x), kind(sp, "import_specifier"), !field(sp, "name", _),
     field(sp, "alias", a), text(a, x), docof(sp, d), docof(n, d).
+
+// ---- the first scopes ------------------------------------------------------------------------------------------
+// escope(s): s opens a scope of ESLint's scope manager (eslint-scope; typescript-eslint's for TypeScript), the
+// scopes created in source order. Checked against ESLint 9 and eslint-plugin-react 7.37.5:
+//   a function, method, arrow, `declare function`, a method or call signature, a function or constructor type;
+//   a class from its body on (a function in `extends` comes first, in JavaScript and TypeScript alike);
+//   a block (not a function's or static block's own), a `for`/`for in` with let or const, a catch clause, a switch
+//   body, a static block, a field's initializer (`x = 1`, `accessor x = 1`; not `x;`);
+//   an enum, a namespace or module, a type alias or interface with type parameters, a conditional or mapped type.
+// A named function expression opens two: its name's, and inside it the function's (named_fx).
+.decl escope(s: node)
+escope(f) :- kind(f, k), (function_kind(k) ; sig_kind(k)).
+escope(b) :- kind(b, k), (k = "class_body" ; k = "catch_clause" ; k = "switch_body" ; k = "class_static_block" ;
+    k = "enum_declaration" ; k = "internal_module" ; k = "module" ; k = "conditional_type").
+escope(b) :- kind(b, "statement_block"), !own_block(b).
+escope(l) :- kind(l, "for_statement"), field(l, "initializer", i), kind(i, "lexical_declaration").
+escope(l) :- kind(l, "for_in_statement"), (op(l, "let") ; op(l, "const")).
+escope(f) :- (kind(f, "field_definition") ; kind(f, "public_field_definition")), field(f, "value", _).
+escope(t) :- (kind(t, "type_alias_declaration") ; kind(t, "interface_declaration")), field(t, "type_parameters", _).
+escope(i) :- kind(i, "index_signature"), child(i, c, _), kind(c, "mapped_type_clause").
+.decl sig_kind(k: symbol)  // TypeScript's function scopes with no body
+sig_kind("function_signature"). sig_kind("method_signature"). sig_kind("abstract_method_signature").
+sig_kind("function_type"). sig_kind("constructor_type"). sig_kind("call_signature"). sig_kind("construct_signature").
+.decl own_block(b: node)  // the `{ … }` of a function, static block or namespace: no scope of its own
+own_block(b) :- field(s, "body", b), kind(s, k), (function_kind(k) ; k = "class_static_block" ; k = "internal_module" ;
+    k = "module").
+.decl named_fx(f: node, x: symbol)
+named_fx(f, x) :- kind(f, k), (k = "function_expression" ; k = "generator_function"), field(f, "name", n), text(n, x).
+// first_scope(d, s): the module's first child scope; first_child(s, c): the first scope directly inside s.
+.decl top_scope(d: number, s: node)
+top_scope(d, s) :- escope(s), !scope_up(s, _), docof(s, d).
+.decl scope_up(c: node, s: node)  // s is the scope c is directly in
+scope_up(c, s) :- escope(c), nearest(c, s, escope).
+.decl first_scope(d: number, s: node)
+first_scope(d, s) :- doc(d, _, _), a = min b : { top_scope(d, t), node(d, t, _, b, _) }, top_scope(d, s),
+    node(d, s, _, a, _).
+.decl first_child(s: node, c: node)
+first_child(s, c) :- first_scope(_, s), a = min b : { scope_up(t, s), node(_, t, _, b, _) }, scope_up(c, s),
+    node(_, c, _, a, _).
+// first_var(d, x): x is a variable of the first scope or of its first child. A named function expression first
+// gives its name, then its own scope.
+.decl first_var(d: number, x: symbol)
+first_var(d, x) :- first_scope(d, s), named_fx(s, x).
+first_var(d, x) :- first_scope(d, s), named_fx(s, _), scope_var(s, x).
+first_var(d, x) :- first_scope(d, s), !named_fx(s, _), scope_var(s, x).
+first_var(d, x) :- first_scope(d, s), !named_fx(s, _), first_child(s, c), named_fx(c, x).
+first_var(d, x) :- first_scope(d, s), !named_fx(s, _), first_child(s, c), !named_fx(c, _), scope_var(c, x).
+// scope_var(s, x): the variables scope s holds itself (a named function expression's name is not among them).
+.decl scope_var(s: node, x: symbol)
+scope_var(s, x) :- escope(s), bound_in(s, x), !named_fx(s, x).
+scope_var(s, x) :- escope(s), named_fx(s, x), fn_own_name(s, x).
+scope_var(s, x) :- escope(s), field(s, "body", b), own_block(b), bound_in(b, x).
+scope_var(s, x) :- escope(s), field(s, "type_parameters", ps), child(ps, p, _), field(p, "name", m), text(m, x).
+scope_var(s, x) :- escope(s), kind(s, k), sig_kind(k), field(s, "parameters", ps), within(p, ps), param_name(p, x).
+scope_var(b, x) :- kind(b, "class_body"), child(c, b, _), (field(c, "name", m), text(m, x) ;
+    field(c, "type_parameters", ps), child(ps, p, _), field(p, "name", m), text(m, x)).
+scope_var(e, x) :- kind(e, "enum_declaration"), field(e, "body", b), child(b, m, _),
+    (kind(m, "property_identifier"), text(m, x) ; kind(m, "enum_assignment"), field(m, "name", n), text(n, x)).
+scope_var(t, x) :- kind(t, "conditional_type"), has(t, i, "infer_type"), child(i, n, 0), text(n, x).
+scope_var(i, x) :- kind(i, "index_signature"), child(i, c, _), kind(c, "mapped_type_clause"), field(c, "name", n),
+    text(n, x).
+
+// The review's counterexamples (react-03.review.md) and the scope order they rest on, each checked against
+// ESLint 9.39.5, eslint-plugin-react 7.37.5 and @typescript-eslint/parser 8.70.1: which scope is the module's first
+// child, what it and its first child hold, and TypeScript's declarations that bind a name.
+.test review_cases exactly
+    .fixture "nu-first-scope.jsx" ```
+        function setup() { const Icon = load(); }
+        export function Toolbar() { return <Icon />; }
+        ```
+    .fixture "nu-ts-decls.tsx" ```
+        import Legacy = require("legacy");
+        declare function Widget(): any;
+        abstract class Base {}
+        export const z = <><Legacy /><Widget /><Base /></>;
+        ```
+    .fixture "s03-named-fnexpr.jsx" ```
+        const f = function G() { const Icon = 1; if (x) { const Deep = 1; } };
+        export const a = <><Icon /><G /><Deep /></>;
+        ```
+    .fixture "s04-fndecl.jsx" ```
+        function setup() { if (a) { const Inner = 1; } const Outer = 1; }
+        export const z = <><Inner /><Outer /></>;
+        ```
+    .fixture "s05-class.jsx" ```
+        class First { render() { const Inner = 1; if (a) { const Deeper = 1; } } }
+        export const z = <><Inner /><First /><Deeper /></>;
+        ```
+    .fixture "s06-arrow-then-fn.jsx" ```
+        const x = () => { const A = 1; };
+        function f() { const B = 1; }
+        export const z = <><A /><B /></>;
+        ```
+    .fixture "s07-second.jsx" ```
+        function F() { return <Icon />; }
+        function G() { const Icon = 1; }
+        ```
+    .fixture "s09-for.jsx" ```
+        for (let Item of xs) { const InBody = 1; }
+        export const z = <><Item /><InBody /></>;
+        ```
+    .fixture "s10-heritage.jsx" ```
+        class A extends mix(() => { const Q = 1; }) { m() { const R = 1; } }
+        export const z = <><Q /><R /><A /></>;
+        ```
+    .fixture "s14-field.jsx" ```
+        class C { x = 1; y = () => { const CF = 1; }; }
+        export const z = <CF />;
+        ```
+    .fixture "s15-block.jsx" ```
+        if (a) { const BlockFirst = 1; }
+        export const z = <BlockFirst />;
+        ```
+    .fixture "s21-catch.jsx" ```
+        try { a(); } catch (Err) { const InCatch = 1; }
+        export const z = <><Err /><InCatch /></>;
+        ```
+    .fixture "s22-switch.jsx" ```
+        switch (a) { case 1: const InSwitch = 1; }
+        export const z = <InSwitch />;
+        ```
+    .fixture "s23-static.jsx" ```
+        class S { static { const InStatic = 1; } }
+        export const z = <InStatic />;
+        ```
+    .fixture "s24-tag-in-first.jsx" ```
+        import x from "y";
+        export function App() { return <Later />; }
+        function later() { const Later = 1; }
+        ```
+    .fixture "s29-class-expr.jsx" ```
+        const v = class Named { m() { const InCE = 1; } };
+        export const z = <><Named /><InCE /></>;
+        ```
+    .fixture "s30-default-param.jsx" ```
+        function f(a = () => { const InDef = 1; }) { const InF = 1; }
+        export const z = <><InDef /><InF /></>;
+        ```
+    .fixture "s31-for-var.jsx" ```
+        for (var i = 0; i < 1; i++) { const InVarFor = 1; }
+        export const z = <InVarFor />;
+        ```
+    .fixture "s32-for-let.jsx" ```
+        for (let j = 0; j < 1; j++) { const InLetFor = 1; }
+        export const z = <InLetFor />;
+        ```
+    .fixture "s39-field-noinit.jsx" ```
+        class A { x; y = () => { const NoInit = 1; } }
+        export const z = <NoInit />;
+        ```
+    .fixture "s45-named-gen.jsx" ```
+        const f = function* Gen() { const InGen = 1; };
+        export const z = <><Gen /><InGen /></>;
+        ```
+    .fixture "s47-not-first.jsx" ```
+        function f() { return 1; }
+        function F() { return <Inner />; }
+        function G() { const Inner = 1; }
+        ```
+    .fixture "s01-fntype.tsx" ```
+        interface P { render: (Item: any) => void }
+        export const a = <Item />;
+        ```
+    .fixture "s02-enum.tsx" ```
+        enum E { Icon }
+        export const a = <Icon />;
+        ```
+    .fixture "s08-typeparams.tsx" ```
+        type T<Icon> = Icon;
+        export const z = <Icon />;
+        ```
+    .fixture "s08b-methodsig.tsx" ```
+        type U = { f(Btn: any): void };
+        export const z = <Btn />;
+        ```
+    .fixture "s10b-heritage.tsx" ```
+        class A extends mix(() => { const Q = 1; }) { m() { const R = 1; } }
+        export const z = <><Q /><R /><A /></>;
+        ```
+    .fixture "s11-namespace.tsx" ```
+        namespace NS { export const InNs = 1; function h() { const InH = 1; } }
+        export const z = <><InNs /><InH /></>;
+        ```
+    .fixture "s17-declare-fn.tsx" ```
+        declare function Sig(Prm: any): void;
+        export const z = <Prm />;
+        ```
+    .fixture "s18-param-fntype.tsx" ```
+        const f = (a: (Cb: any) => void) => { const Body = 1; };
+        export const z = <><Cb /><Body /></>;
+        ```
+    .fixture "s19-cond.tsx" ```
+        type C<T> = T extends Array<infer Inf> ? Inf : never;
+        export const z = <Inf />;
+        ```
+    .fixture "s20-mapped.tsx" ```
+        type M<T> = { [Key in keyof T]: 1 };
+        export const z = <Key />;
+        ```
+    .fixture "s26-ambient-module.tsx" ```
+        declare module "m" { const InMod: any; }
+        export const z = <InMod />;
+        ```
+    .fixture "s28-interface-tp.tsx" ```
+        interface I<IP> { a: IP }
+        export const z = <IP />;
+        ```
+    .fixture "s33-abstract-method.tsx" ```
+        abstract class A { abstract am(AP: any): void; }
+        export const z = <AP />;
+        ```
+    .fixture "s34-overload-method.tsx" ```
+        class A { ov(OP: any): void; ov(o: any) {} }
+        export const z = <OP />;
+        ```
+    .fixture "s35-accessor.tsx" ```
+        class A { accessor g = () => { const AV = 1; }; }
+        export const z = <AV />;
+        ```
+    .fixture "s36-callsig.tsx" ```
+        type O = { (CallP: any): void };
+        export const z = <CallP />;
+        ```
+    .fixture "s37-iface-noscope.tsx" ```
+        interface P { a: string }
+        function F() { const AfterIface = 1; }
+        export const z = <AfterIface />;
+        ```
+    .fixture "s46-import-alias.tsx" ```
+        namespace N { export const A = 1; }
+        import Al = N.A;
+        export const z = <><Al /><A /></>;
+        ```
+    .expect "react/jsx-no-undef" at "s03-named-fnexpr.jsx":2
+    .expect "react/jsx-no-undef" at "s05-class.jsx":2
+    .expect "react/jsx-no-undef" at "s06-arrow-then-fn.jsx":3
+    .expect "react/jsx-no-undef" at "s07-second.jsx":1
+    .expect "react/jsx-no-undef" at "s10-heritage.jsx":2
+    .expect "react/jsx-no-undef" at "s14-field.jsx":2
+    .expect "react/jsx-no-undef" at "s21-catch.jsx":2
+    .expect "react/jsx-no-undef" at "s24-tag-in-first.jsx":2
+    .expect "react/jsx-no-undef" at "s39-field-noinit.jsx":2
+    .expect "react/jsx-no-undef" at "s47-not-first.jsx":2
+    .expect "react/jsx-no-undef" at "s10b-heritage.tsx":2
+    .expect "react/jsx-no-undef" at "s35-accessor.tsx":2
+.end

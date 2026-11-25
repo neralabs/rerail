@@ -12,12 +12,14 @@
 //                             spec's shorthand `{ x }`); a string key has none
 //     method_key(m, x)        m is a Property, MethodDefinition or PropertyDefinition whose key is identifier x
 //                             (ESTree's `key.name`): x: 1, x() {}, #x = …, [x]() {}; not "x": 1
-//     set_state_in(f, x)      f calls this.setState in a member keyed x, nested in at most one function
+//     set_state_in(f, x)      f calls this.setState in a member keyed x, nested in at most one function; a member
+//                             is a method, property, field (not `accessor`) or a pattern's `{ x = … }`
 //   scopes
 //     same_scope(a, b)        ESLint's getScope gives a and b the same scope
 //   this
-//     this_prop(n, x)         n is `this.x`, `this.#x`, `this?.x` or `this[x]` (ESTree's property.name)
-//     this_call(c, x, f)      c calls `this.x(…)`; f is the callee `this.x`
+//     this_prop(n, x)         n is `this.x`, `this.#x`, `this?.x` or `this[x]` (ESTree's property.name); `(this).x`
+//                             too, as ESTree has no parentheses
+//     this_call(c, x, f)      c calls `this.x(…)` or `(this.x)(…)`; f is the callee `this.x`
 //     state_read(n)           n is `this.state`
 //   values
 //     fresh_kind(k)           a node of kind k is a new value each time it runs: an object, array, function,
@@ -58,7 +60,8 @@ method_key(m, x) :- (kind(m, "pair") ; kind(m, "pair_pattern")), field(m, "key",
 .decl estree_name(n: node, x: symbol)
 estree_name(n, x) :- kind(n, "property_identifier"), text(n, x).
 estree_name(n, x) :- kind(n, "private_property_identifier"), text(n, t), x = substr(t, 1, strlen(t) - 1).
-estree_name(n, x) :- kind(n, "computed_property_name"), child(n, i, 0), kind(i, "identifier"), text(i, x).
+estree_name(n, x) :- kind(n, "computed_property_name"), child(n, i0, 0), deparen(i0, i), kind(i, "identifier"),
+    text(i, x).   // [x] and [(x)]: ESTree has no parentheses
 
 // ---- values -----------------------------------------------------------------------------------------------------
 .decl fresh_kind(k: symbol)
@@ -67,13 +70,14 @@ fresh_kind("class"). fresh_kind("new_expression"). fresh_kind("regex"). fresh_ki
 fresh_kind("jsx_element").
 
 // ---- this -----------------------------------------------------------------------------------------------------
+// ESTree has no parentheses: `(this).state` and `(this.setState)(…)` are a plain this.state and this.setState(…).
 .decl this_prop(n: node, x: symbol)
-this_prop(n, x) :- kind(n, "member_expression"), field(n, "object", t), kind(t, "this"), field(n, "property", p),
-    estree_name(p, x).
-this_prop(n, x) :- kind(n, "subscript_expression"), field(n, "object", t), kind(t, "this"), field(n, "index", i),
-    kind(i, "identifier"), text(i, x).  // this[x]: ESTree's property is the identifier x
+this_prop(n, x) :- kind(n, "member_expression"), field(n, "object", t0), deparen(t0, t), kind(t, "this"),
+    field(n, "property", p), estree_name(p, x).
+this_prop(n, x) :- kind(n, "subscript_expression"), field(n, "object", t0), deparen(t0, t), kind(t, "this"),
+    field(n, "index", i), kind(i, "identifier"), text(i, x).  // this[x]: ESTree's property is the identifier x
 .decl this_call(c: node, x: symbol, f: node)
-this_call(c, x, f) :- kind(c, "call_expression"), field(c, "function", f), this_prop(f, x).
+this_call(c, x, f) :- kind(c, "call_expression"), field(c, "function", f0), deparen(f0, f), this_prop(f, x).
 .decl state_read(n: node)
 state_read(n) :- this_prop(n, "state").
 
@@ -88,18 +92,28 @@ same_scope(a, b) :- nearest(a, s, escope_node), nearest(b, s, escope_node).   //
 // ---- ancestry -------------------------------------------------------------------------------------------------
 .decl fn_up(n: node, f: node)
 fn_up(n, f) :- inside(n, f, function_kind).
-// set_state_in(f, x): f is the callee of this.setState(…) inside a member keyed x (method_key), with at most one
+// set_state_in(f, x): f is the callee of this.setState(…) inside a member keyed x (set_state_key), with at most one
 // function between them, the member's own included (makeNoMethodSetStateRule's depth, "allow-in-func"). Every
 // enclosing member with that key is tried, not only the nearest, and the member need not be in a component.
 //   componentDidMount() { this.setState({}); }                         depth 1: the method itself
 //   componentDidMount = () => { this.setState({}); };                  depth 1: the arrow
 //   componentDidMount() { xs.forEach(() => this.setState({})); }       depth 2: not reported
+//   const { componentDidMount = this.setState({}) } = props;          depth 0: a pattern's Property
 .decl set_state_in(f: node, x: symbol)
-set_state_in(f, x) :- this_call(c, "setState", f), inside(c, m, keyed_kind), method_key(m, x),
+set_state_in(f, x) :- this_call(c, "setState", f), inside(c, m, set_state_kind), set_state_key(m, x),
     k = count : { fn_up(c, g), within(g, m) }, (kind(m, "method_definition"), k = 0 ; !kind(m, "method_definition"),
     k <= 1).
-// keyed_kind: the ESTree nodes with a key that the setState-in-method rules look for: Property, MethodDefinition,
-// PropertyDefinition.
+// The rules look for a Property, MethodDefinition or PropertyDefinition by type. A shorthand default in a pattern,
+// `{ x = v }`, is a Property keyed x (tree-sitter's object_assignment_pattern); `accessor x = v` is an
+// AccessorProperty, which they skip.
+.decl set_state_kind(k: symbol)
+set_state_kind(k) :- keyed_kind(k).
+set_state_kind("object_assignment_pattern").
+.decl set_state_key(m: node, x: symbol)
+set_state_key(m, x) :- method_key(m, x), !op(m, "accessor").
+set_state_key(m, x) :- kind(m, "object_assignment_pattern"), field(m, "left", l),
+    kind(l, "shorthand_property_identifier_pattern"), text(l, x).
+// keyed_kind: the ESTree nodes with a key: Property, MethodDefinition, PropertyDefinition and AccessorProperty.
 .decl keyed_kind(k: symbol)
 keyed_kind("pair"). keyed_kind("pair_pattern"). keyed_kind("method_definition"). keyed_kind("field_definition").
 keyed_kind("public_field_definition").
