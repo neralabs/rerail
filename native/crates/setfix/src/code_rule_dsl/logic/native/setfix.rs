@@ -5721,10 +5721,14 @@ impl Drop for InRel {
 
 impl InRel {
     /// Column `c`'s least and greatest value over its rows (dead ones too), each column's read once when first asked
-    /// (`[MAX, MIN]` with no rows): none for a view (its rows are reads of the tape, not held).
+    /// (`[MAX, MIN]` with no rows); a view's from its source, where its source knows them (`Source::col_bounds`).
     pub fn col_range(&self, c: usize) -> Option<[i64; 2]> {
-        if self.view.is_some() || c >= self.k {
+        if c >= self.k {
             return None;
+        }
+        // A view's, its source's where it knows them (a stored table's), over all its rows: a bound of a view of some.
+        if let Some(v) = &self.view {
+            return v.src.col_bounds(*v.cols.get(c)?);
         }
         if self.n == 0 {
             return Some([i64::MAX, i64::MIN]);

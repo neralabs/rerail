@@ -492,8 +492,9 @@ fn a_node_columns_counts_are_its_rows_counts() {
 /// Every bound a syntax source gives a column (`col_bounds`), asked before its rows are made, holds each value its
 /// rows hold: a stratum's head key packs a value less its least in the bits its bounds need, so a value past them
 /// packs wrong. The columns the strata's keys read are bounded within what their kind needs: a node 32 bits and the
-/// span of the documents' keys, a document's key that span, a text and a child's place 32 bits. In T's shape and in
-/// core.rerail's, the core-shaped batch's keys far apart (5 and 1000: 42 bits a node, not 64).
+/// span of the documents' keys, a document's key that span, a text (an atom, a made relation's too: `text.s`), a
+/// kind, a field, a position, a line, a column and a child's place 32 bits. In T's shape and in core.rerail's, the
+/// core-shaped batch's keys far apart (5 and 1000: 42 bits a node, not 64).
 #[test]
 fn a_syntax_sources_column_bounds_hold_its_rows() {
     let check = |sources: &[(&'static str, Arc<dyn Source>)], keys: [i64; 2], want: &[&str]| {
@@ -528,12 +529,12 @@ fn a_syntax_sources_column_bounds_hold_its_rows() {
     let docs: Vec<Document> = documents().into_iter().take(4).collect();
     let keys = [docs.iter().map(|d| i64::from(d.key)).min().unwrap(), docs.iter().map(|d| i64::from(d.key)).max().unwrap()];
     let t = sources(&store, docs).unwrap();
-    check(&t, keys, &["node.d", "node.n", "child.p", "child.c", "child.idx", "field.p", "field.c", "core_node.d", "core_node.n", "doc.d", "doc.path", "doc.module", "text.n"]);
+    check(&t, keys, &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "field.p", "field.f", "field.c", "core_node.d", "core_node.n", "doc.d", "doc.path", "doc.module", "text.n"]);
     let src = "import os\ndef f(a, b):\n    x = a not in b\n    return g(x, [a, b])\n";
     let docs = vec![document(5, "m.py", "python", src), document(1000, "n.py", "python", "class C:\n    def m(self):\n        return self.v\n")];
-    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "child", "line", "col", "name"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "str", "child", "line", "col", "name"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let core = shaped(&store, docs, &projection).unwrap();
-    check(&core, [5, 1000], &["node.d", "node.n", "child.p", "child.c", "child.idx", "text.n", "line.n", "col.n", "name.n"]);
+    check(&core, [5, 1000], &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "text.n", "text.s", "str.n", "str.s", "line.n", "line.l", "col.n", "col.c", "name.n", "name.s"]);
     // A file's own tree alone (`Made::File`, decision 0512), under a hidden key: its document column is its file's
     // (decision 0431 §4), a key the batch does not hold.
     let mut tree = document(HIDDEN_KEYS + 5, "t.py", "python", src);
