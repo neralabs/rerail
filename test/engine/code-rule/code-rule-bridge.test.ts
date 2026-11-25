@@ -1924,7 +1924,7 @@ describe("CodeRuleBridge", () => {
       await awaitClockAfter(join(root, "src", "a.py"), join(sub, "b.py"));
       // `.git` before `b.py`, as Windows lists them: a folder that failed at its `.git` would not have walked `b.py` yet.
       discovery.inNameOrder = true;
-      // As the router's walk view and owner lookup throw for a path removed as they ask: ENOENT, or on Windows EBADF.
+      // As the router's walk view and owner lookup throw for a path removed as they ask.
       const removed: Array<{ path: string; error: Error }> = [];
       const askedOf = (path: string): void => {
         const at = removed.findIndex(entry => entry.path === path);
@@ -1947,7 +1947,7 @@ describe("CodeRuleBridge", () => {
       const observed = (): string[] => [...observations.get(root)?.keys() ?? []].filter(path => path.endsWith(".py")).sort();
       expect(observed()).toEqual(["src/a.py", "src/sub/b.py"]);
 
-      for (const gone of [removedAs("src/sub", "ENOENT", "realpath"), removedAs("src/sub", "EBADF", "realpath"), removedAs("src/sub/.git", "ENOENT", "lstat")]) {
+      for (const gone of [removedAs("src/sub", "ENOENT", "realpath"), removedAs("src/sub/.git", "ENOENT", "lstat")]) {
         removed.push(gone);
         await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
         expect(removed).toEqual([]);
@@ -1964,6 +1964,26 @@ describe("CodeRuleBridge", () => {
         ["src/sub/b.py", "Source changed outside a tool with a captured preimage", "b = 2\n"],
       ]);
       expect(onDiscoveryGaps).not.toHaveBeenCalled();
+    });
+
+    it("records the folder that listed a child folder still there whose owner lookup fails with EBADF", async () => {
+      const root = await workspace();
+      const sub = join(root, "src", "sub");
+      await mkdir(sub);
+      await writeFile(join(sub, "b.py"), "b = 1\n");
+      // The lookup answers for a folder gone as it resolves it (`physicalPath`): one still there that fails is no removal.
+      const failure = Object.assign(new Error(`EBADF: bad file descriptor, realpath '${sub}'`), { code: "EBADF", syscall: "realpath", path: sub });
+      let failing = false;
+      const view = { acceptsPath: () => true, ignoresPath: (path: string) => { if (failing && path === "src/sub") throw failure; return false; } };
+      const onDiscoveryGaps = vi.fn();
+      const bridge = gapBridge(root, {
+        ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view,
+      }, { onDiscoveryGaps });
+      await bridge.openWorkspace("session-1");
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+      failing = true;
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src: ${failure.message}`));
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src", failure.message, "EBADF")]]]);
     });
 
     /** An error as Windows gives it for a path it refuses. */
