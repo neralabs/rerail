@@ -1,4 +1,4 @@
-.policy "typescript-eslint-no-unused-private-class-members" revision 2
+.policy "typescript-eslint-no-unused-private-class-members" revision 3
 .description "Remove private and #private class members that nothing in their class reads; they are dead code."
 .language typescript
 .mode steer
@@ -6,6 +6,8 @@
 
 #include "tsx/eslint-a-functions.rerail"
 //   holder_key, member_kind, is_static, ctor, fn_param, deparen, static_string; through tsx/names: ref_site
+#include "tsx/next-01.rerail"
+//   src_before
 
 // typescript-eslint's no-unused-private-class-members: a `private` or `#private` member that nothing reads. Fields,
 // methods, accessors and `constructor(private x)` parameter properties count. Reads are found the way
@@ -14,7 +16,7 @@
 //                plain function only with a `this: C` parameter; arrow functions see the `this` around them
 //   C.x          the class's own name: a static member
 //   self.x       `const self = this` never reassigned;   o.x for `o: C` (instance) or `o: typeof C` (static)
-//   const { x } = this     destructuring this
+//   const { x } = this     destructuring this (a parameter's default `({ x } = this) => …` too)
 //   #x           anywhere inside the nearest class that has #x
 // Writes are not reads: `this.x = v`, `this.x += v;` and `this.x++;` as statements, `for (this.x of xs)`, a
 // destructuring target. An accessor counts as used when written, too.
@@ -50,7 +52,7 @@ spelled(v, cat("'", v)) :- static_string(_, v), match("#.*", v).
 .decl final_member(c: node, m: node, k: symbol, st: symbol)  // the last member under a key: the analyser's Map
 final_member(c, m, k, st) :- member(c, m, k, _, _, st), !later_member(c, m, k, st).
 .decl later_member(c: node, m: node, k: symbol, st: symbol)
-later_member(c, m, k, st) :- member(c, m, k, _, _, st), member(c, o, k, _, _, st), earlier(m, o).
+later_member(c, m, k, st) :- member(c, m, k, _, _, st), member(c, o, k, _, _, st), src_before(m, o).
 .decl private_member(m: node)
 private_member(m) :- child(m, a, _), kind(a, "accessibility_modifier"), text(a, "private").
 private_member(m) :- holder_key(m, k), kind(k, "private_property_identifier").
@@ -134,12 +136,15 @@ typed_site(s, "static", x) :- site_type(s, r), kind(r, "type_query"), child(r, i
 .decl site_type(s: node, r: node)
 site_type(s, r) :- kind(s, "variable_declarator"), field(s, "type", a), child(a, r, 0).
 site_type(s, r) :- kind(s, "identifier"), field(p, "pattern", s), field(p, "type", a), child(a, r, 0).
-// this_pattern(p): object pattern p is destructured from this: `const { a } = this`, `({ a } = this)`, `{ a } = this`.
+// this_pattern(p): object pattern p is destructured from this: `const { a } = this`, `({ a } = this)`, `{ a } = this`,
+// a parameter's `({ a } = this) => …`.
 .decl this_pattern(p: node)
 this_pattern(p) :- kind(d, "variable_declarator"), field(d, "name", p), kind(p, "object_pattern"), field(d, "value", v),
     deparen(v, t), kind(t, "this").
 this_pattern(p) :- (kind(a, "assignment_expression") ; kind(a, "assignment_pattern")), field(a, "left", p),
     kind(p, "object_pattern"), field(a, "right", v), deparen(v, t), kind(t, "this").
+this_pattern(p) :- (kind(a, "required_parameter") ; kind(a, "optional_parameter")), field(a, "pattern", p),
+    kind(p, "object_pattern"), field(a, "value", v), deparen(v, t), kind(t, "this").
 .decl pattern_key(q: node, k: symbol)  // a property with a plain, non-computed key
 pattern_key(q, k) :- kind(q, "shorthand_property_identifier_pattern"), text(q, k).
 pattern_key(q, k) :- kind(q, "pair_pattern"), field(q, "key", i), kind(i, "property_identifier"), text(i, k).

@@ -1,0 +1,28 @@
+// tsx/typescript-03: two corrections to tsx/ts-b-scope that the scope rules of batch typescript-03 (no-unused-vars,
+// no-use-before-define) share, until ts-b-scope takes them (NOTES-typescript-03.md).
+//
+// What a rule gets from this library:
+//   variable(s, x, id, "using")   `using a = f()` and `await using a = f()` declare a, as `const` does
+//   reexport_name(r)              r is a name in `export { r } from "m"`: another module's binding, no reference
+//
+// Examples, one per rule:
+//   no-unused-vars          using res = open();                       res is a variable, assigned and never read
+//   no-use-before-define    export type { A } from "./a"; import type { A } from "./a";   no use of the local A
+//
+// using. The TypeScript grammar now parses `using a = f()` as a using_declaration (tsx/statements' var_decl already
+// reads it), but ts-b-scope declares variables from lexical_declaration only, so a `using` name was no variable and
+// its uses resolved to nothing. Its declaring_stmt, initialised and space already take the kind "using".
+// Re-exports. typescript-eslint's scope manager makes no reference for `export { a } from "m"` or
+// `export { a as b } from "m"`: a is the other module's. ts-b-scope's use excludes the `name` of an export
+// specifier only through export_local, which (rightly) holds only without a source, so these names were value
+// uses that resolved to a local `a` when the file declares one.
+//
+// Builds on tsx/ts-b-scope.
+#include "tsx/ts-b-scope.rerail"
+
+variable(s, x, id, "using") :- kind(v, "using_declaration"), child(v, d, _), declarator_name(d, id, x),
+    nearest(v, s, scope_node).
+
+.decl reexport_name(r: node)
+reexport_name(r) :- kind(sp, "export_specifier"), (field(sp, "name", r) ; field(sp, "alias", r)), kind(r, "identifier"),
+    nearest(sp, e, "export_statement"), field(e, "source", _).

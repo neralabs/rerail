@@ -1,0 +1,54 @@
+[
+  {
+    "id": "typescript-eslint-no-unnecessary-parameter-property-assignment",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-no-unused-private-class-members",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-no-unused-vars",
+    "status": "different",
+    "reason": "Every translation-only key is one ESLint (typescript-eslint 8.74.0, default options) reports. fixtures, 6: consistent-indexed-object-style 037:1, 038:1, 039:2, 040:2, 088:2, 089:2, \"'Foo' is defined but never used\" in files with an index signature without a type (`type Foo = { [key: string] };`, `{ [] }`), which TypeScript's parser accepts and tree-sitter does not; the original refuses those files (source-incomplete: file has syntax errors). rerail-typescript, 1: test/scripts/pack-test-data.test.mjs:1299, `const { \"packs/…/LICENSES.md\": _licences, ...withoutLicences } = …`, where ESLint reports '_licences' (ignoreRestSiblings is false by default); the original misses a binding under a string-keyed pair pattern (NOTES-typescript-03.md).",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 6
+      },
+      "rerail-typescript": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      }
+    }
+  },
+  {
+    "id": "typescript-eslint-no-use-before-define",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-parameter-properties",
+    "status": "different",
+    "reason": "The original reports src/engine/storage/database.ts:35 and :267, `function connectSqlite(path: string, readonly: boolean)` and `function openChecked(path: string, readonly: boolean, …)`: a parameter named `readonly` in a plain function, which is no parameter property. ESLint (typescript-eslint 8.74.0) reports neither; the translation reports exactly ESLint's keys on both corpora (NOTES-typescript-03.md).",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "rerail-typescript": {
+        "originalOnly": 2,
+        "translationOnly": 0
+      }
+    }
+  }
+]
