@@ -1,6 +1,6 @@
 import { execFile as nodeExecFile, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -45,22 +45,48 @@ import { startGitInThread } from "../../../src/engine/git-thread.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { until } from "../../support/processes/daemon-home.js";
 
-/** The preload: a start whose environment names files waits, without a turn of the thread's loop, as Node's start does. */
+/**
+ * The preload: a start whose environment names files waits, without a turn of the thread's loop, as Node's start does,
+ * and its mark holds the id of the thread that made it. While `ends-held` exists beside the preload, each end of a tree a
+ * thread makes waits there the same way (`endsHeld`).
+ */
 const PRELOAD = String.raw`const cp = require("node:child_process");
 const { existsSync, writeFileSync } = require("node:fs");
+const { basename, join } = require("node:path");
+const { threadId } = require("node:worker_threads");
 const spawnOf = cp.spawn;
 const nap = new Int32Array(new SharedArrayBuffer(4));
+const endsHeld = join(__dirname, "ends-held");
+function holdEnd() {
+  if (!existsSync(endsHeld)) return;
+  writeFileSync(endsHeld + ".holding", "");
+  const until = Date.now() + 20000;
+  while (existsSync(endsHeld) && Date.now() < until) Atomics.wait(nap, 0, 0, 10);
+}
 cp.spawn = function spawn(file, args, options) {
+  if (/^taskkill/i.test(basename(String(file)))) holdEnd();
   const env = (options && options.env) || {};
-  if (env.RERAIL_TEST_START_MARK) writeFileSync(env.RERAIL_TEST_START_MARK, "");
+  if (env.RERAIL_TEST_START_MARK) writeFileSync(env.RERAIL_TEST_START_MARK, String(threadId));
   const wait = env.RERAIL_TEST_START_WAIT ? env.RERAIL_TEST_START_WAIT.split(${JSON.stringify(delimiter)}) : [];
   const until = Date.now() + 20000;
   while (wait.length > 0 && !wait.some(path => existsSync(path)) && Date.now() < until) Atomics.wait(nap, 0, 0, 10);
   if (wait.length > 0 && !wait.some(path => existsSync(path))) writeFileSync(wait[0] + ".gave-up", "");
   return spawnOf.apply(this, arguments);
 };
+// Off Windows a tree's end is the child's kill; on Windows it is taskkill's start, held above.
+const killOf = cp.ChildProcess.prototype.kill;
+cp.ChildProcess.prototype.kill = function kill() {
+  holdEnd();
+  return killOf.apply(this, arguments);
+};
 require("node:module").syncBuiltinESMExports();
 `;
+
+/** The file whose being there holds each end of a tree a starter thread makes, and the file the first end held writes. */
+function endsHeld(): { held: string; holding: string } {
+  const held = join(dirname(threads.preload), "ends-held");
+  return { held, holding: `${held}.holding` };
+}
 
 const MIB = 1024 * 1024;
 
@@ -475,6 +501,37 @@ describe("Git started in starter threads, when a read ends or a thread does", ()
     const printed = Number(readFileSync(noted, "utf8"));
     expect({ status: answer.status, code: (answer.error as NodeJS.ErrnoException | undefined)?.code, printed: printed <= 4 * MIB ? "at most 4 MiB" : `${printed} bytes` })
       .toEqual({ status: null, code: "ENOBUFS", printed: "at most 4 MiB" });
+  }, 60_000);
+
+  it("makes a start in another thread while one ends a read's tree, and starts in that one again once it has", async () => {
+    const { root, head } = await repository();
+    await endStarters();
+    const at = await folder("ending");
+    const [first, next, after, done] = [join(at, "first"), join(at, "next"), join(at, "after"), join(at, "done")];
+    const { held, holding } = endsHeld();
+    const threadOf = (mark: string): string => readFileSync(mark, "utf8");
+    expect(startGitInThread("win32")).toBe(true);
+    const stop = new AbortController();
+    const read = runGitAsync(root, waitingFor(done), { signal: stop.signal, env: { RERAIL_TEST_START_MARK: first } });
+    await lastStarted();
+    // The end of the read's tree waits in its thread, as a slow start of taskkill does there on Windows.
+    await writeFile(held, "");
+    try {
+      stop.abort();
+      await until(() => existsSync(holding), 20_000, "the end of the read's tree");
+      const answered = runGitAsync(root, ["rev-parse", "HEAD"], { env: { RERAIL_TEST_START_MARK: next } });
+      await until(() => existsSync(next), 20_000, "the next start, made while the end waits");
+      rmSync(held);
+      await writeFile(done, "");
+      const answers = [(await answered).stdout.trim(), (await read).error?.message];
+      await runGitAsync(root, ["rev-parse", "HEAD"], { env: { RERAIL_TEST_START_MARK: after } });
+      expect({ answers, nextInAnother: threadOf(next) !== threadOf(first), afterInFirst: threadOf(after) === threadOf(first) })
+        .toEqual({ answers: [head, "Git was ended: the read was stopped"], nextInAnother: true, afterInFirst: true });
+    } finally {
+      rmSync(held, { force: true });
+      rmSync(holding, { force: true });
+      await writeFile(done, "");
+    }
   }, 60_000);
 });
 

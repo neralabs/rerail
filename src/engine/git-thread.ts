@@ -16,10 +16,13 @@ import { Worker } from "node:worker_threads";
 import type { ChildProcess } from "node:child_process";
 import { assertProgramPath } from "./child-process.js";
 import type { GitProcess } from "./git-start.js";
-import { applyAsked, type ChildAsked, type ChildRelayed, claimed, DROPPED, type DescribedError, type Relayed, startAsked, type StartAsked } from "./git-starter/git-starter.js";
+import { applyAsked, type ChildAsked, type ChildRelayed, claimed, DROPPED, type DescribedError, type Relayed, startAsked, type StartAsked, type ThreadPosted } from "./git-starter/git-starter.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "./package-root.js";
 
-/** A starter thread, the children it holds for this thread by id, how many it is still starting, and whether it runs. */
+/**
+ * A starter thread, the children it holds for this thread by id, how many starts it is still making (the end of a tree
+ * among them, `endTree`), and whether it runs.
+ */
 interface Starter {
   readonly worker: Worker;
   readonly children: Map<number, ThreadGit>;
@@ -147,8 +150,9 @@ function startStarter(): Starter | undefined {
   }
   const made: Starter = { worker, children: new Map(), next: 1, starting: 0, ready: false };
   worker.unref();
-  worker.on("message", (relayed: Relayed) => {
-    if (relayed.ev !== "ready") made.children.get(relayed.id)?.relayed(relayed);
+  worker.on("message", (relayed: ThreadPosted) => {
+    if (relayed.ev === "ending-tree") made.starting -= 1;
+    else if (relayed.ev !== "ready") made.children.get(relayed.id)?.relayed(relayed);
     else {
       made.ready = true;
       failedInARow = 0;
@@ -262,12 +266,17 @@ class ThreadGit extends EventEmitter implements GitProcess {
   /**
    * Ends the child with every process it started. A start the thread has not taken yet is dropped: it is never made,
    * and the child ends at once as a start that failed. Else the thread that holds the child decides whether it still
-   * runs and ends its tree from it, after the starts asked before it.
+   * runs and ends its tree from it, after the starts asked before it: on Windows it starts `taskkill`, as slowly as any
+   * start, so the thread counts that as a start it makes until it says it returned (`ending-tree`), and a new start
+   * goes to a thread that makes none.
    */
   endTree(): void {
     if (this.#done) return;
     if (this.#here === undefined && claimed(this.#asked.claim, DROPPED)) process.nextTick(() => this.#dropped());
-    else this.#post({ id: this.#asked.id, op: "end-tree" });
+    else {
+      if (this.#here === undefined) this.#thread.starting += 1;
+      this.#post({ id: this.#asked.id, op: "end-tree" });
+    }
   }
 
   /** One event of this child's, as the starter thread relayed it. */

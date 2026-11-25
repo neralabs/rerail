@@ -70,12 +70,18 @@ export type ChildRelayed =
 /** What a starter thread posts: its children's events, and once it runs, `ready` (id 0, which names no child). */
 export type Relayed = ChildRelayed | { id: 0; ev: "ready" };
 
+/**
+ * What a starter thread posts on its port: {@link Relayed}, and `ending-tree` once it has done an `end-tree`, whose
+ * start of `taskkill` on Windows has returned then: the asking thread counts that start as one the thread still makes.
+ */
+export type ThreadPosted = Relayed | { id: number; ev: "ending-tree" };
+
 /** Where a starter relays to: the asking thread's port, or, for a start made on the asking thread, its child. */
 export type Post = (message: Relayed, transfer?: ArrayBuffer[]) => void;
 
 /** The port a starter thread serves: `parentPort` in the thread. */
 export interface StarterPort {
-  postMessage(message: Relayed, transfer: ArrayBuffer[]): void;
+  postMessage(message: ThreadPosted, transfer: ArrayBuffer[]): void;
   on(event: "message", listener: (asked: StartAsked | ChildAsked) => void): unknown;
 }
 
@@ -94,6 +100,8 @@ export function serveGitStarts(port: StarterPort): void {
     if (asked.op !== "start") {
       const child = children.get(asked.id);
       if (child !== undefined) applyAsked(child, asked, post);
+      // Whether or not this thread still held the child: the asking thread counts each end-tree until this says so.
+      if (asked.op === "end-tree") port.postMessage({ id: asked.id, ev: "ending-tree" }, []);
     } else if (claimed(asked.claim, TAKEN)) {
       const child = startAsked(asked, post);
       if (child !== undefined) children.set(asked.id, child.once("close", () => children.delete(asked.id)));
