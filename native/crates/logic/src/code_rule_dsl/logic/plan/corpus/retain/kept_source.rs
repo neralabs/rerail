@@ -185,11 +185,11 @@ impl Source for KeptSource {
         true
     }
 
-    /// A single entry's canonical order: the order key's columns, then the rest (an entry put as given, or granules
-    /// one after another, record none).
+    /// A single entry's order: the columns it records (`Packed::okey`: a relation's one sort column, a store table's
+    /// leading columns); an entry put as given, or granules one after another, record none.
     fn order(&self) -> Option<rerail_blocks::vector::Vector<usize>> {
         let rows = self.single()?;
         let key = &rows.okey[..rows.nokey as usize];
-        (!key.is_empty()).then(|| key.iter().map(|&c| c as usize).chain((0..rows.arity as usize).filter(|c| !key.contains(&(*c as u16)))).collect())
+        (!key.is_empty()).then(|| key.iter().map(|&c| c as usize).collect())
     }
 }

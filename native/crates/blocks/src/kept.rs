@@ -4,7 +4,8 @@
 //!
 //! Each file is a block whose root holds a directory of entries sorted by key (`rel`, `ident`, `part`): an entry is
 //! found by a binary search in place, and a relation's entries (its documents' and its granules') are adjacent. An
-//! entry's rows are a `packed::Packed` (0456 K1): its live rows in canonical order, each column an `IntCol` in the
+//! entry's rows are a `packed::Packed` (0456 K1): its live rows in its put's order (`packed::Order`: a relation's
+//! sorted on column 0, a store table's on every column, or as given), each column an `IntCol` in the
 //! bits its values need, and its rows' levels. A packed relation is one contiguous range of its file with relative
 //! references only, so a roll-up moves it by `memcpy`.
 //!
@@ -116,12 +117,12 @@ impl<'b> Kept<'b> {
         self.range.1
     }
 
-    /// Row `i` (in canonical order).
+    /// Row `i` (in its put's order).
     pub fn row(&self, i: usize) -> Vec<i64> {
         (0..self.rows.arity as usize).map(|c| self.rows.get(i, c)).collect()
     }
 
-    /// Every row in canonical order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
+    /// Every row in its put's order, handed to `f` one at a time: each column resolved for reads once (`Col::dec`),
     /// not per cell as `row` resolves it, and decoded a chunk of rows at a time as it goes (`ColDec::fill`, a run's
     /// value once per run), the row read into one buffer the rows share.
     pub fn each_row(&self, mut f: impl FnMut(&[i64])) {
@@ -561,8 +562,9 @@ impl KeptW {
     }
 
     /// `n` rows of `a` columns (`cols`, column-major) with each row's level when they have one, prepared and packed
-    /// (`put`), in the calling thread's scratch. In canonical order (columns 0, 1, … ascending), the order recorded
-    /// on its first `MAX_KEY` columns, so a probe of a leading column is a range (`Packed::leads`); or as given.
+    /// (`put`), in the calling thread's scratch, in order `given` (`packed::Order`) with column 0 its sort column:
+    /// `Column`, sorted on column 0 only, so a probe of it is a range (`Packed::leads`); `Rows`, sorted on every
+    /// column, the first `MAX_KEY` recorded; or as given.
     pub fn put_cols(&mut self, meta: Meta, cols: &[i64], n: usize, a: usize, levels: Option<&[u32]>, given: crate::packed::Order) -> io::Result<Put> {
         let spec = crate::relation::Spec { widths: vec![8; a], sort: (a > 0).then_some(0), indexes: Vec::new(), min_log: 0 };
         crate::scratch::with(|s| {
@@ -732,7 +734,7 @@ mod tests {
     /// Rows of two columns, as columns.
     fn put(w: &mut KeptW, m: Meta, rows: &[(i64, i64)], levels: Option<&[u32]>) -> Put {
         let cols: Vec<i64> = rows.iter().map(|r| r.0).chain(rows.iter().map(|r| r.1)).collect();
-        w.put_cols(m, &cols, rows.len(), 2, levels, crate::packed::Order::Canonical).unwrap()
+        w.put_cols(m, &cols, rows.len(), 2, levels, crate::packed::Order::Column).unwrap()
     }
 
     fn rows_of(k: &Kept) -> Vec<Vec<i64>> {

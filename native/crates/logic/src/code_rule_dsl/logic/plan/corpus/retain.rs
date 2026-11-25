@@ -3624,7 +3624,7 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         // The granules its rows lie in, recorded with its documents' frame (`GRANULES_READ`): a run that reads none of
         // its owners admits them from this, decoding no frame (`kept_inputs`, Q91).
         let mask = docs.keys().fold(0u64, |m, d| m | granule_bit(granule(d)));
-        // Its documents read where they lie as the writer packs them, in its canonical order (decision 0353 step 8):
+        // Its documents read where they lie as the writer packs them, sorted on column 0 (decisions 0353 step 8, 0678):
         // a kept entry's by position, others by document (`DocRows`).
         let what = KeptWhat::Picked(Box::new(DocRows::of(Arc::clone(&docs))));
         kept.push(KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads: vec![(GRANULES_READ.to_owned(), mask)], what, types: docs_types(atom_owner) });
@@ -3769,7 +3769,7 @@ pub(in crate::code_rule_dsl) fn kept_put(name: &KeptRel, digest: u64, reads: Vec
         return put;
     }
     // A relation with no block of its rows (a view's rows read from its source, or none): its live rows read where
-    // they lie as the writer packs them (decision 0353 step 8), in canonical order, with their levels.
+    // they lie as the writer packs them (decision 0353 step 8), sorted on column 0 (0678 step 8), with their levels.
     let ids = (rel.rows() != rel.len()).then(|| (0..rel.len() as u32).filter(|&id| !crate::code_rule_dsl::logic::native::component::is_dead(&rel.dead, id)).collect());
     let levels = rel.live_levels();
     KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Picked(Box::new(LiveRows { rel: Arc::clone(rel), ids, levels })), types }
@@ -3784,8 +3784,9 @@ struct LiveRows {
 }
 
 impl crate::content_store::kept_facts::KeptPicked for LiveRows {
-    fn given(&self) -> bool {
-        false
+    /// A relation's rows: sorted on column 0 alone (decision 0678 step 8).
+    fn order(&self) -> rerail_blocks::packed::Order {
+        rerail_blocks::packed::Order::Column
     }
     fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
         self.levels.as_deref().map(std::borrow::Cow::Borrowed)
@@ -3832,8 +3833,9 @@ impl DocRows {
 }
 
 impl crate::content_store::kept_facts::KeptPicked for DocRows {
-    fn given(&self) -> bool {
-        false
+    /// A relation's rows: sorted on column 0 alone (decision 0678 step 8).
+    fn order(&self) -> rerail_blocks::packed::Order {
+        rerail_blocks::packed::Order::Column
     }
 }
 

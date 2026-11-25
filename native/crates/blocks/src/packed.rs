@@ -1,9 +1,8 @@
 //! A packed relation: a frozen relation written again, exactly sized, in the fewest bits.
 //!
-//! Its rows are its live rows in canonical order, so a row's position is its place in that order. The canonical
-//! order is the spec's sort column, then every other column (`canonical`): a stored form's bytes are the same for
-//! the same set, however its rows came, and the store merges and probes its entries on leading columns. (A relation
-//! in memory sorts on its one column only, decision 0678 step 8; this order is the kept form's.)
+//! Its rows are its live rows in the order `prepare` was asked for (`Order`), so a row's position is its place in
+//! that order: sorted on the spec's one sort column (a relation's, and a kept relation's: decision 0678 step 8), or
+//! on every row (the store's own tables, which it merges and probes on leading columns), or as given.
 //!
 //! - no order array, no dead bits and no duplicates: they were the in-place form's;
 //! - each column a `PCol`: one `IntCol`, or a node id's two parts (split at `ID_SPLIT`), each its own `IntCol`, and
@@ -95,13 +94,14 @@ pub(crate) fn canonical(spec: &Spec, a: usize) -> Vec<usize> {
     s.into_iter().chain((0..a).filter(|&c| Some(c) != s)).collect()
 }
 
-/// The order a packed relation records (`Packed::okey`): the canonical order's first `MAX_KEY` columns when the spec
-/// sorts, none when it does not (its rows are canonical all the same, but no probe is a range).
-fn recorded(spec: &Spec, a: usize) -> Vec<u16> {
-    if spec.sort.is_none() {
-        return Vec::new();
+/// The order a packed relation records (`Packed::okey`): in `Order::Rows`, the canonical order's first `MAX_KEY`
+/// columns; in `Order::Column`, the sort column; none as given, or with no sort column.
+fn recorded(spec: &Spec, a: usize, kind: Order) -> Vec<u16> {
+    match (kind, spec.sort) {
+        (Order::AsGiven, _) | (_, None) => Vec::new(),
+        (Order::Column, Some(c)) => vec![c],
+        (Order::Rows, Some(_)) => canonical(spec, a).into_iter().take(crate::relation::MAX_KEY).map(|c| c as u16).collect(),
     }
-    canonical(spec, a).into_iter().take(crate::relation::MAX_KEY).map(|c| c as u16).collect()
 }
 
 /// Whether index `cols` is answered by the order recorded (`lead`): its columns are its first ones, in any order.
@@ -331,10 +331,10 @@ enum Rel {
     Never,
 }
 
-fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, src: Src<'s>, order: Option<&'s [u32]>, n: usize) -> Plan<'s> {
+fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, order_kind: Order, src: Src<'s>, order: Option<&'s [u32]>, n: usize) -> Plan<'s> {
     use crate::col::Vals;
     let mut indexes = Vec::new();
-    let lead = recorded(spec, arity);
+    let lead = recorded(spec, arity, order_kind);
     for ix in &spec.indexes {
         if on_order(&lead, ix) {
             continue;
@@ -461,9 +461,8 @@ fn place_at(block: &Block, plan: &Plan, okey: &[u16]) -> *mut Packed {
 }
 
 /// Packs what `view` reads (a full relation, or a base and its delta) into a new block of its exact size. A full
-/// frozen relation's columns are read a chunk at a time; a base and its delta through their merged order. Their
-/// rows are sorted on one column (decision 0678 step 8), so they are put into canonical order here, unless they
-/// are in it already (`prepare`'s check).
+/// frozen relation's columns are read a chunk at a time; a base and its delta through their merged order, which is
+/// the sort column's already, so nothing is sorted (`Order::Column`'s check).
 pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
     crate::scratch::with(|s| {
         let a = view.arity();
@@ -487,13 +486,13 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
                 (cols, n)
             }
         };
-        let prepared = prepare_src(s, Src::Cols { raw: cols, n }, n, a, spec, None, Order::Canonical);
+        let prepared = prepare_src(s, Src::Cols { raw: cols, n }, n, a, spec, None, Order::Column);
         place(&prepared.plan, &prepared.order, kind)
     })
 }
 
-/// Packs an open relation's rows directly, never freezing them in place: each column read once, sorted into
-/// canonical order and deduplicated (`prepare`'s), encoded.
+/// Packs an open relation's rows directly, never freezing them in place: each column read once, sorted on the sort
+/// column and deduplicated (`Order::Column`), encoded.
 pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Block, PackStats) {
     assert!(!rel.is_delta(), "a delta is packed through its view, with its base");
     crate::scratch::with(|s| {
@@ -508,7 +507,7 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
             raw.chunks_mut(n.max(1)).enumerate().for_each(read)
         }
         let raw = &*raw;
-        let prepared = prepare_src(s, Src::Cols { raw, n }, n, a, spec, None, Order::Canonical);
+        let prepared = prepare_src(s, Src::Cols { raw, n }, n, a, spec, None, Order::Column);
         place(&prepared.plan, &prepared.order, kind)
     })
 }
@@ -534,12 +533,16 @@ fn in_canonical_order(src: Src<'_>, n: usize, key: &[usize]) -> bool {
     })
 }
 
-/// The order `prepare` lays rows out in.
+/// The order `prepare` lays rows out in. None sorts rows already in it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Order {
-    /// Canonical: the spec's order columns, then the rest; duplicates dropped.
-    Canonical,
-    /// As given, every row.
+    /// Sorted on the spec's sort column, stably (none: as given); duplicates dropped by hashing the rows. The order
+    /// recorded is that column. A relation's (decision 0678 step 8).
+    Column,
+    /// Sorted on every column (the spec's sort column, then the rest); duplicates dropped. The order recorded is its
+    /// first `MAX_KEY` columns: a table the store merges with others on leading columns (`sorted_put`).
+    Rows,
+    /// As given, every row; no order recorded.
     AsGiven,
 }
 
@@ -564,6 +567,9 @@ pub fn prepare_rows<'s>(s: &'s Scratch, rows: &'s dyn RowsIn, spec: &Spec, level
 
 fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
     assert!(levels.is_none_or(|l| l.len() == n), "a level a row");
+    if given == Order::Column {
+        return prepare_column(s, src, n, a, spec, levels);
+    }
     let key = canonical(spec, a);
     let as_given = given == Order::AsGiven;
     let in_order = as_given || in_canonical_order(src, n, &key);
@@ -609,10 +615,42 @@ fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec
         });
         (Some(order), lv, m)
     };
-    let mut plan = plan(s, a, spec, src, order, m);
+    let mut plan = plan(s, a, spec, given, src, order, m);
     plan.levels = lv.map(|v| (v, choose(v)));
-    let order = if as_given { Vec::new() } else { recorded(spec, a) };
+    let order = recorded(spec, a, given);
     Prepared { plan, order, in_order: in_order && !as_given }
+}
+
+/// `prepare_src` in `Order::Column`: the rows sorted on the spec's one column unless they lie in its order already,
+/// and distinct by a table of their hashes (`relation::distinct_sorted`), never sorted on every column.
+fn prepare_column<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>) -> Prepared<'s> {
+    let sort = spec.sort.map(|c| c as usize).filter(|&c| c < a);
+    let range = sort.map(|c| {
+        let (lo, hi) = (0..n).fold((i64::MAX, i64::MIN), |(l, h), r| {
+            let v = src.get(r, c);
+            (l.min(v), h.max(v))
+        });
+        (c, lo, hi.max(lo))
+    });
+    let ids: &mut [u32] = s.take(n);
+    for (i, id) in ids.iter_mut().enumerate() {
+        *id = i as u32;
+    }
+    let m = crate::relation::distinct_sorted(s, |c, i| src.get(i, c), a, range, ids);
+    let ids = &ids[..m];
+    let in_order = m == n && ids.iter().enumerate().all(|(i, &id)| id as usize == i);
+    let order = (!in_order).then_some(ids);
+    let lv = levels.map(|l| {
+        let out: &mut [i64] = s.take(m);
+        for (p, o) in out.iter_mut().enumerate() {
+            *o = l[order.map_or(p, |ids| ids[p] as usize)] as i64;
+        }
+        &*out
+    });
+    let mut plan = plan(s, a, spec, Order::Column, src, order, m);
+    plan.levels = lv.map(|v| (v, choose(v)));
+    let order = recorded(spec, a, Order::Column);
+    Prepared { plan, order, in_order }
 }
 
 /// Sorts `ids` (positions of `src`'s rows, column `c` ranging over `lo[c]..=hi[c]`) into the canonical order of
@@ -715,19 +753,32 @@ impl Packed {
         self.nokey > 0 && self.okey[0] as usize == c
     }
 
-    /// The positions whose columns `cols` equal `key`, in canonical order: a range when the key leads the order,
-    /// else through the column's permutation index.
+    /// The positions whose columns `cols` equal `key`, in order: a range of the order's leading columns the key holds
+    /// (each of the key's other columns checked within it: a relation's entry records its one sort column), else
+    /// through the column's permutation index.
     pub fn probe(&self, cols: &[u16], key: &[i64]) -> Probe<'_> {
         let ok = &self.okey[..self.nokey as usize];
-        if cols.len() <= ok.len() && cols.iter().all(|c| ok[..cols.len()].contains(c)) {
+        let lead = ok.iter().take_while(|c| cols.contains(c)).count();
+        if lead > 0 {
             let (mut lo, mut hi) = (0usize, self.len());
-            for &oc in &ok[..cols.len()] {
+            for &oc in &ok[..lead] {
                 let k = key[cols.iter().position(|&c| c == oc).unwrap()];
                 (lo, hi) = self.col(oc as usize).dec().equal_range(lo, hi, k);
             }
-            return Probe::Range(lo..hi);
+            let mut rest = [(0u16, 0i64); crate::relation::MAX_KEY];
+            let mut m = 0;
+            for (&c, &k) in cols.iter().zip(key) {
+                if !ok[..lead].contains(&c) {
+                    rest[m] = (c, k);
+                    m += 1;
+                }
+            }
+            if m == 0 {
+                return Probe::Range(lo..hi);
+            }
+            return Probe::Checked(self, lo..hi, rest, m);
         }
-        assert_eq!(cols.len(), 1);
+        assert_eq!(cols.len(), 1, "a key of several columns leads with the order's first");
         let ix = self.indexes.as_slice().iter().find(|ix| ix.col == cols[0] as u32).expect("an index on the column");
         let keys = ix.keys.dec();
         let k = keys.lower_bound(0, keys.len(), key[0]);
@@ -951,6 +1002,8 @@ impl ColDec<'_> {
 pub enum Probe<'a> {
     Range(std::ops::Range<usize>),
     Perm(crate::col::Dec<'a>, std::ops::Range<usize>),
+    /// A range of the order's leading columns, each position's other key columns checked (the first `usize`).
+    Checked(&'a Packed, std::ops::Range<usize>, [(u16, i64); crate::relation::MAX_KEY], usize),
 }
 
 impl Iterator for Probe<'_> {
@@ -961,6 +1014,7 @@ impl Iterator for Probe<'_> {
         match self {
             Probe::Range(r) => r.next(),
             Probe::Perm(p, r) => r.next().map(|i| p.get(i) as usize),
+            Probe::Checked(p, r, rest, m) => r.find(|&i| rest[..*m].iter().all(|&(c, k)| p.get(i, c as usize) == k)),
         }
     }
 }
@@ -995,10 +1049,10 @@ mod tests {
         let (a, b) = crate::scratch::with(|s| {
             let ca = s.take::<i64>(10_000);
             ca.copy_from_slice(&columns(&sorted));
-            let pa = prepare(s, ca, 5000, 2, &spec(2), None, Order::Canonical);
+            let pa = prepare(s, ca, 5000, 2, &spec(2), None, Order::Column);
             let cb = s.take::<i64>(10_200);
             cb.copy_from_slice(&columns(&shuffled));
-            let pb = prepare(s, cb, 5100, 2, &spec(2), None, Order::Canonical);
+            let pb = prepare(s, cb, 5100, 2, &spec(2), None, Order::Column);
             assert!(pa.in_order && !pb.in_order);
             assert_eq!((pa.len(), pb.len()), (5000, 5000), "duplicates dropped");
             (read(pa.place_in(&block).0), read(pb.place_in(&block).0))
@@ -1037,7 +1091,7 @@ mod tests {
             let c = s.take::<i64>(2 * n);
             // copy: load (the test's rows into the scratch the pack reads)
             c.copy_from_slice(&columns(&rows));
-            let p = prepare(s, c, n, 2, &spec(2), None, Order::Canonical);
+            let p = prepare(s, c, n, 2, &spec(2), None, Order::Column);
             assert!(p.in_order);
             let (packed, stats) = p.place_in(&block);
             assert_eq!(read(packed), rows, "every value, by get");
@@ -1068,7 +1122,7 @@ mod tests {
             // copy: load (the test's rows into the scratch the pack reads)
             c.copy_from_slice(&columns(&rows));
             let held = Block::anon(kind::KEPT, 64 << 20);
-            let (pb, _) = prepare(s, c, n, 2, &both, None, Order::Canonical).place_in(&held);
+            let (pb, _) = prepare(s, c, n, 2, &both, None, Order::Column).place_in(&held);
             assert_eq!(pb.col(1).form(), "pack rel", "an order column after column 0, relative");
             assert_eq!(read(pb), rows, "every value, by get");
             for (i, r) in rows.iter().enumerate().step_by(5) {
@@ -1110,7 +1164,7 @@ mod tests {
         crate::scratch::with(|s| {
             let c = s.take::<i64>(6000);
             c.copy_from_slice(&columns(&rows));
-            let p = prepare(s, c, 3000, 2, &spec(2), Some(&levels[..]), Order::Canonical);
+            let p = prepare(s, c, 3000, 2, &spec(2), Some(&levels[..]), Order::Column);
             assert!(!p.in_order);
             let (packed, _) = p.place_in(&block);
             let lv = packed.levels().expect("levels kept");
@@ -1123,7 +1177,7 @@ mod tests {
         crate::scratch::with(|s| {
             let c = s.take::<i64>(6000);
             c.copy_from_slice(&columns(&rows));
-            assert!(prepare(s, c, 3000, 2, &spec(2), None, Order::Canonical).place_in(&block).0.levels().is_none());
+            assert!(prepare(s, c, 3000, 2, &spec(2), None, Order::Column).place_in(&block).0.levels().is_none());
         });
     }
 }

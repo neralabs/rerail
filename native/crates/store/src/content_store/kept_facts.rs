@@ -55,13 +55,14 @@ fn holder_ident() -> [u8; 32] {
 /// `rel`'s rows of partition `part`: `n` rows of `types.len()` words, which `fill` gives row by row, written into a
 /// block of their own as they are given (`BlockFlat`, never a heap vector) and digested there; with none, the
 /// partition's rows of `rel` gone. A fill that gives other than `n` whole rows is refused. Kept as given: in the order
-/// given, none dropped (`sorted_put` keeps them in canonical order).
+/// given, none dropped (`sorted_put` keeps them sorted on every column).
 pub fn filled_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
     block_put(rel, ident, part, types, n, true, fill)
 }
 
-/// `filled_put`, its rows kept in canonical order (columns ascending, duplicates dropped), the order recorded: a probe
-/// of leading columns is a range (`Packed::probe`).
+/// `filled_put`, its rows kept sorted on every column (columns ascending, duplicates dropped; not sorted when they
+/// come in that order, as the store's tables do), the order recorded: a probe of leading columns is a range
+/// (`Packed::probe`), and the prefilter merges its runs on them.
 pub fn sorted_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
     block_put(rel, ident, part, types, n, false, fill)
 }
@@ -72,7 +73,8 @@ fn block_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: 
     let (what, digest) = if n == 0 {
         (KeptWhat::Gone, 0)
     } else {
-        let mut block = BlockFlat::new(n, width, given);
+        // Not as given: a store table, sorted on every column (`sorted_put`).
+        let mut block = if given { BlockFlat::new(n, width, true) } else { BlockFlat::new(n, width, false).sorted_on_every_column() };
         let mut h = sha2::Sha256::new();
         let mut given = 0;
         fill(&mut |v| {
@@ -487,7 +489,12 @@ fn rows_of<'a>(what: &'a KeptWhat) -> (PutRows<'a>, Option<std::borrow::Cow<'a, 
 /// writer's scratch first: that was a second copy of every kept row, at eight bytes a value (blocks are never copied,
 /// decision 0353).
 fn put_rows(w: &mut KeptW, meta: Meta, p: &KeptPut, map: Option<MapIds>) -> StoreResult<()> {
-    let given = if matches!(&p.what, KeptWhat::Picked(k) if k.given()) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
+    // A relation's rows sorted on column 0 alone (decision 0678 step 8: one sort column, and nothing sorted that
+    // lies in its order); picked rows in their own order (`KeptPicked::order`).
+    let given = match &p.what {
+        KeptWhat::Picked(k) => k.order(),
+        _ => rerail_blocks::packed::Order::Column,
+    };
     let (rows, levels) = rows_of(&p.what);
     let mapped = map.map(|m| Mapped::of(&rows, &p.types, m)).transpose()?;
     let rows: &dyn RowsIn = match &mapped { Some(m) => m, None => &rows };

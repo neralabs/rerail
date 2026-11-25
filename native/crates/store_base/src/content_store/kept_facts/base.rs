@@ -17,11 +17,12 @@ pub trait KeptRows: Send + Sync {
 
 /// Rows a put reads where they lie (an input's granule, read from the input in place; a view's rows, read from its
 /// source; rows written in a block of their own, `BlockFlat`), which the writer's packer reads by row and column as it
-/// writes them (`RowsIn`, decision 0353 step 8): nothing is filled into columns or a scratch first. `given`: kept in
-/// the order given, every row (read by position); else in canonical order, as a relation's.
+/// writes them (`RowsIn`, decision 0353 step 8): nothing is filled into columns or a scratch first. `order`: the
+/// order they are kept in (`packed::Order`): as given, every row (read by position); a relation's, sorted on column
+/// 0 alone; or a store table's, on every column, as its readers merge them.
 pub trait KeptPicked: RowsIn + Send {
-    fn given(&self) -> bool {
-        true
+    fn order(&self) -> rerail_blocks::packed::Order {
+        rerail_blocks::packed::Order::AsGiven
     }
     /// Each row's level (decision 0090), where its rows have them.
     fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
@@ -42,11 +43,12 @@ pub struct BlockFlat {
     n: usize,
     width: usize,
     levels: Option<usize>,
-    given: bool,
+    order: rerail_blocks::packed::Order,
 }
 
 impl BlockFlat {
-    /// `n` rows of `width` columns, every value 0, kept as given (`given`) or in canonical order.
+    /// `n` rows of `width` columns, every value 0, kept as given (`given`) or as a relation's rows, sorted on column 0
+    /// (`packed::Order::Column`).
     pub fn new(n: usize, width: usize, given: bool) -> BlockFlat {
         Self::with_levels(n, width, given, false)
     }
@@ -58,7 +60,15 @@ impl BlockFlat {
         let block = rerail_blocks::block::Block::anon(rerail_blocks::block::kind::FACTS, values + level_bytes + 4096);
         let at = block.alloc(values.max(8), 8);
         let levels = levels.then(|| block.alloc(level_bytes.max(4), 4));
-        BlockFlat { block, at, n, width, levels, given }
+        use rerail_blocks::packed::Order;
+        BlockFlat { block, at, n, width, levels, order: if given { Order::AsGiven } else { Order::Column } }
+    }
+
+    /// Kept sorted on every column (`packed::Order::Rows`): a store table its readers merge on leading columns
+    /// (`sorted_put`).
+    pub fn sorted_on_every_column(mut self) -> BlockFlat {
+        self.order = rerail_blocks::packed::Order::Rows;
+        self
     }
 
     /// One row of these values, kept as given.
@@ -177,8 +187,8 @@ impl RowsIn for BlockFlat {
 }
 
 impl KeptPicked for BlockFlat {
-    fn given(&self) -> bool {
-        self.given
+    fn order(&self) -> rerail_blocks::packed::Order {
+        self.order
     }
     fn levels(&self) -> Option<std::borrow::Cow<'_, [u32]>> {
         self.level_words().map(std::borrow::Cow::Borrowed)

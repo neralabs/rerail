@@ -740,7 +740,7 @@ mod tests {
         let cols: Vec<i64> = data.iter().map(|r| r.0).chain(data.iter().map(|r| r.1)).collect();
         let mut w = KeptW::create(&d.join("t.blk"), 5, 16 << 20).unwrap();
         let key = FactKey { rel: "r", ident: &[7; 32], part: 0 };
-        w.put_cols(Meta { key, digest: 1, reads: &[], types: &[] }, &cols, data.len(), 2, None, crate::packed::Order::Canonical).unwrap();
+        w.put_cols(Meta { key, digest: 1, reads: &[], types: &[] }, &cols, data.len(), 2, None, crate::packed::Order::Column).unwrap();
         w.finish(Flush::Synced).unwrap();
         let files = [KeptFacts::open(&d.join("t.blk"), 5).unwrap()];
         let chain = KeptChain { files: &files };

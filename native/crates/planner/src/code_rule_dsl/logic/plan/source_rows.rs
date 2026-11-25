@@ -68,8 +68,9 @@ impl SourceRows {
 }
 
 impl crate::content_store::kept_facts::KeptPicked for SourceRows {
-    fn given(&self) -> bool {
-        false
+    /// A relation's rows: sorted on column 0 alone (decision 0678 step 8).
+    fn order(&self) -> rerail_blocks::packed::Order {
+        rerail_blocks::packed::Order::Column
     }
 }
 

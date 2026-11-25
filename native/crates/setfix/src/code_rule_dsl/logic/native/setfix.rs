@@ -559,8 +559,8 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              /// level or above is no row (`dead`), as a row present only below the candidate's level supports it.
              /// `u32::MAX`: none.
              cap: u32,
-             /// Declared sorted (`.decl … sorted`, decision 0456 K7): its live rows laid out in canonical order (its
-             /// columns in turn) when its component is done (`InRel::moved`).
+             /// Declared sorted (`.decl … sorted`, decision 0456 K7): its live rows laid out sorted on column 0 (one
+             /// sort column, decision 0678 step 8) when its component is done (`InRel::moved`).
              ordered: bool,
              /// The keys its layout declares (`key` lines, decision 0361 step 6), each checked as rows are written;
              /// and those a second row of a key broke, not checked again, until `key_breaks` takes them.
@@ -6526,10 +6526,10 @@ impl InRel {
             killed.sort_unstable();
             killed.dedup();
         }
-        // Declared sorted (decision 0456 K7): laid out in canonical order, unless its rows are numbered as the kept
+        // Declared sorted (decision 0456 K7): laid out sorted on column 0, unless its rows are numbered as the kept
         // relation it started from numbers them (its versions are read by id, decision 0364).
         if rel.ordered && rel.from.is_none() && rel.lat.is_none() && rel.k > 0 {
-            return InRel::in_canonical_order(rel);
+            return InRel::sorted_on_first(rel);
         }
         let rows = rel.data.freeze(rel.n);
         let chains = in_block_orders(rel.idx, &rows, rel.k, rel.n);
@@ -6542,14 +6542,16 @@ impl InRel {
         InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains, sorted,
                 sketches: rel.sketches, serves: rel.serves, dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
     }
-    /// `rel`'s live rows in canonical order (its columns in turn, as the keep orders a kept relation, decision 0456
-    /// K3): one sort here, so the keep sorts nothing and its readers probe its leading columns as a range of rows in
-    /// place (`runs::Sorted` over every row, on its columns but the last: on every column an order is the dedup
-    /// order, which leads with a hash). Its levels follow their rows; its orders are made again as probed.
-    fn in_canonical_order(rel: Rel) -> InRel {
+    /// `rel`'s live rows sorted on column 0, stably (one sort column, decision 0678 step 8; as the keep sorts a kept
+    /// relation): one sort here, unless they lie in that order already, so the keep sorts nothing and its readers
+    /// probe column 0 as a range of rows in place (`runs::Sorted` over every row, on column 0). Its levels follow
+    /// their rows; its orders are made again as probed.
+    fn sorted_on_first(rel: Rel) -> InRel {
         let k = rel.k;
         let mut ids: Vector<u32> = (0..rel.n as u32).filter(|&id| !is_dead(&rel.dead, id)).collect();
-        ids.sort_unstable_by(|&a, &b| (0..k).map(|c| rel.data.value(a, k, c).cmp(&rel.data.value(b, k, c))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal));
+        if !ids.windows(2).all(|w| rel.data.value(w[0], k, 0) <= rel.data.value(w[1], k, 0)) {
+            ids.sort_by_key(|&id| rel.data.value(id, k, 0));
+        }
         let n = ids.len();
         let mut flat = rerail_blocks::vector::Vector::with_capacity(n * k);
         for &id in &ids {
@@ -6557,7 +6559,7 @@ impl InRel {
         }
         let level = if rel.level.len() == rel.n { ids.iter().map(|&id| rel.level[id as usize]).collect() } else { Vec::new() };
         let mut sorted = runs::Sorted::default();
-        let lead: Vector<usize> = (0..k.saturating_sub(1).max(1)).collect();
+        let lead: Vector<usize> = [0].into_iter().collect();
         sorted.note(&flat[..], k, &lead, 0, n as u32);
         let rows = Rows::frozen(k, flat, n);
         // Its known-sorted ranges and its levels in its block too (decision 0478 steps 5c, R5).
@@ -10126,9 +10128,9 @@ pub mod posted_tests {
         }
     }
 
-    /// K-R11 (decision 0456 K7): a relation declared sorted is laid out in canonical order when its component is
-    /// done: its live rows (a dead one left out) in its columns' order, known sorted on its leading column for the
-    /// whole of them, so an order on it is its rows in place.
+    /// K-R11 (decision 0456 K7): a relation declared sorted is laid out sorted on column 0 when its component is
+    /// done: its live rows (a dead one left out) sorted on that column alone, stably (decision 0678 step 8), known
+    /// sorted on it for the whole of them, so an order on it is its rows in place.
     #[test]
     fn a_relation_declared_sorted_is_laid_out_in_order() {
         let mut rel = Rel::new("t", b"ii");
@@ -10140,7 +10142,7 @@ pub mod posted_tests {
         rel.ndead += 1;
         let r = InRel::moved(rel);
         let rows: Vector<[i64; 2]> = (0..r.n).map(|i| [r.at(i).at(0), r.at(i).at(1)]).collect();
-        assert_eq!(rows, [[1, 1], [2, 3], [5, 0], [5, 1]]);
+        assert_eq!(rows, [[1, 1], [2, 3], [5, 1], [5, 0]], "on column 0, ties as they came");
         assert_eq!((r.ndead, r.sorted.within(&[0], 2, 0, r.n as u32)), (0, vec![(0, 4)]));
     }
 

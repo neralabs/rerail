@@ -1156,16 +1156,16 @@ fn bits_for(range: u64) -> u32 {
     64 - range.leading_zeros()
 }
 
-/// Sorts `ids` (rows of `cols`: column `c`'s `n` values at `cols[c * n..]`) on column `sort` when given (with its
-/// range `lo..=hi`), stably, so ties keep their order; then drops each row equal to one before it, found in a table
-/// of the rows' hashes in `scratch`. The rows left are moved to the front of `ids`, in order: their count. Set
-/// semantics without a sort on every column (decision 0678 step 8).
-pub(crate) fn distinct_sorted(scratch: &crate::scratch::Scratch, cols: &[i64], n: usize, a: usize, sort: Option<(usize, i64, i64)>, ids: &mut [u32]) -> usize {
+/// Sorts `ids` (rows read by `val(column, row)`) on column `sort` when given (with its range `lo..=hi`), stably, so
+/// ties keep their order, unless they are in its order already (one pass checks); then drops each row equal to one
+/// before it, found in a table of the rows' hashes in `scratch`. The rows left are moved to the front of `ids`, in
+/// order: their count. Set semantics without a sort on every column (decision 0678 step 8).
+pub(crate) fn distinct_sorted(scratch: &crate::scratch::Scratch, val: impl Fn(usize, usize) -> i64, a: usize, sort: Option<(usize, i64, i64)>, ids: &mut [u32]) -> usize {
     let m = ids.len();
-    let val = |c: usize, i: usize| cols[c * n + i];
     if let Some((c, lo, hi)) = sort {
         let bits = bits_for((hi as i128 - lo as i128) as u64);
-        if m > 1 && bits > 0 {
+        let sorted = ids.windows(2).all(|w| val(c, w[0] as usize) <= val(c, w[1] as usize));
+        if m > 1 && bits > 0 && !sorted {
             let keys: &mut [u64] = scratch.take(m);
             for (k, &i) in keys.iter_mut().zip(ids.iter()) {
                 *k = (val(c, i as usize) as i128 - lo as i128) as u64;
@@ -1283,7 +1283,7 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             m += 1;
         }
     }
-    let m = distinct_sorted(scratch, cols, n, a, sort.map(|c| (c, lo[c], hi[c])), &mut ids[..m]);
+    let m = distinct_sorted(scratch, val, a, sort.map(|c| (c, lo[c], hi[c])), &mut ids[..m]);
     let ids = &ids[..m];
 
     // Set semantics: a row once, and in a delta, not a row its base holds. The base row equal to own row `i`, if
