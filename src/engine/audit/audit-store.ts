@@ -6,6 +6,7 @@ import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } f
 import { decodeCursor, encodeCursor } from "../storage/page-cursor.js";
 import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 import { holdsTable } from "../storage/table-probe.js";
+import { ITEMS, nameOnce, storedList, type StoredItem, type StoredListLog } from "../storage/stored-list.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../secret-scrub.js";
 import {
@@ -111,14 +112,6 @@ const STORED_LISTS = {
 } as const;
 const LIST_NAMES = Object.keys(STORED_LISTS) as StoredList[];
 type StoredList = keyof typeof STORED_LISTS;
-type StoredItem = (typeof STORED_LISTS)[StoredList]["item"];
-/** Whether a parsed item is of each `StoredItem` type: a string, or a plain object. */
-const IS_ITEM: Record<StoredItem, (item: unknown) => boolean> = {
-  text: item => typeof item === "string",
-  object: item => typeof item === "object" && item !== null && !Array.isArray(item),
-};
-/** What a list of each `StoredItem` type holds, in the failure that marks it and in the log. */
-const ITEMS: Record<StoredItem, string> = { text: "strings", object: "objects" };
 
 /**
  * An `audits` row with each stored list as the text the database holds, which `record` parses (`readLists`), so one
@@ -166,26 +159,13 @@ export function isUnreadableList(failure: AuditFailure): boolean {
 
 /** The JSON array of `list`'s items `text` holds, as an audit record reads it, or why it holds none. */
 export function parsedList(text: string, list: StoredList): unknown[] | string {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch (error) {
-    return (error as SyntaxError).message; // JSON.parse throws nothing else
-  }
-  if (!Array.isArray(value)) return "it parses to another JSON value";
-  return value.every(IS_ITEM[STORED_LISTS[list].item]) ? value : "an item of it is another JSON value";
+  return storedList(text, STORED_LISTS[list].item);
 }
-
-/**
- * Each damaged text this process has named in its log, by its file and place, so a page read again, or the same text
- * read through another audit or connection, writes no line again.
- */
-const NAMED_UNREADABLE = new Set<string>();
 
 /** Where an audit record is read from: its database, and where the line that names a damaged list goes. */
 interface AuditSource {
   readonly database: RerailDatabase;
-  readonly log: Pick<NodeJS.WriteStream, "write">;
+  readonly log: StoredListLog;
 }
 
 /**
@@ -201,10 +181,7 @@ function sayUnreadable({ database, log }: AuditSource, row: AuditReadRow, list: 
   const [where, place] = copy === null
     ? [`audit ${row.auditId} ${column.name}`, `the ${column.name} of its own row`]
     : [`copy ${copy}`, `${auditRuleProvenances.ruleProvenance.name} of ${getTableName(auditRuleProvenances)} row ${copy}, which every audit naming it reads,`];
-  const key = `${database.$client.name}\0${where}`;
-  if (NAMED_UNREADABLE.has(key)) return;
-  NAMED_UNREADABLE.add(key);
-  log.write(`rerail: ${database.$client.name}: audit ${row.auditId} reads with no ${name}, and a failure `
+  nameOnce(log, { file: database.$client.name, place: where }, `rerail: ${database.$client.name}: audit ${row.auditId} reads with no ${name}, and a failure `
     + `that says so: ${place} is not a JSON array of ${ITEMS[item]} (${why}).\n`);
 }
 
@@ -525,18 +502,29 @@ function unreadableLists(held: Readonly<Record<StoredList, SQL>>): SQL<number> {
 }
 
 /**
+ * Each stored list's length in a select from `audits`, as `listLength` tests it, under the list's name: NULL for a list
+ * the record reads as none. A query tests each list once here and reads the result through `heldIn`.
+ */
+function listLengths(): SQL {
+  return sql.join(LIST_NAMES.map(list => sql`${listLength(listText(list), STORED_LISTS[list].item)} AS ${sql.identifier(list)}`), sql`, `);
+}
+/** Each list's test in SQL (1 when it reads), from the `listLengths` of the row `alias` names. */
+function heldIn(alias: string): Record<StoredList, SQL> {
+  return Object.fromEntries(LIST_NAMES.map(list => [list, sql`(${sql.identifier(alias)}.${sql.identifier(list)} IS NOT NULL)`])) as Record<StoredList, SQL>;
+}
+
+/**
  * The session's latest audit's counts, each the audit record's: violations or failures that are no JSON array of
  * objects count as none, and each stored list that reads as none counts the failure its record lists, rather than
  * failing the session's page. It is read at every presentation request, so each list is tested once (`listLength`), in
  * a row SQLite makes once (`MATERIALIZED`) and the counts read.
  */
 function latestAuditSummary(database: RerailDatabase, sessionId: string): AuditSummary | undefined {
-  const lengths = sql.join(LIST_NAMES.map(list => sql`${listLength(listText(list), STORED_LISTS[list].item)} AS ${sql.identifier(list)}`), sql`, `);
-  const held = Object.fromEntries(LIST_NAMES.map(list => [list, sql`(latest.${sql.identifier(list)} IS NOT NULL)`])) as Record<StoredList, SQL>;
+  const held = heldIn("latest");
   const failures = sql`(CASE WHEN failures IS NULL THEN '[]' ELSE failures_json END)`;
   return database.get<AuditSummary | undefined>(sql`WITH latest AS MATERIALIZED (
       SELECT ${audits.workspaceRoot} AS workspaceRoot, ${audits.scope} AS scope, ${audits.mode} AS mode, ${audits.status} AS status,
-        ${audits.failures} AS failures_json, ${unlistedFailures(database)} AS unlisted, ${lengths}
+        ${audits.failures} AS failures_json, ${unlistedFailures(database)} AS unlisted, ${listLengths()}
       FROM ${audits} WHERE ${audits.sessionId} = ${sessionId} ORDER BY ${audits.startedAt} DESC, ${audits.auditId} DESC LIMIT 1)
     SELECT workspaceRoot, scope, mode, status, coalesce(violations, 0) AS violationCount,
       coalesce(failures, 0) + ${unreadableLists(held)} + unlisted AS failureCount, unlisted AS unlistedFailureCount,
@@ -585,6 +573,10 @@ function listRepositoryAudits(
       SELECT workspace_root FROM ${audits} WHERE ${scopedOwner(audits.sessionId, audits.repositoryId, repositoryId)}
       UNION
       SELECT workspace_root FROM ${repositoryAudits} WHERE ${scopedSessions(repositoryAudits.sessionId, repositoryId)}
+    ),
+    lengths AS MATERIALIZED (
+      SELECT ${audits.auditId} AS audit_id, ${listLengths()} FROM ${audits}
+      WHERE ${audits.auditId} IN (SELECT ${repositoryAudits.auditId} FROM ${repositoryAudits})
     )
     SELECT
       repositories.workspace_root AS workspaceRoot,
@@ -601,14 +593,15 @@ function listRepositoryAudits(
       audit.finished_at AS auditFinishedAt,
       audit.revision AS revision,
       audit.catalog_revision AS catalogRevision,
-      json_array_length(audit.rule_revisions_json) AS ruleRevisionCount,
-      json_array_length(audit.violations_json) AS violationCount,
-      json_array_length(audit.failures_json) + coalesce(${unlisted}, 0) AS failureCount,
+      coalesce(lengths.ruleRevisions, 0) AS ruleRevisionCount,
+      coalesce(lengths.violations, 0) AS violationCount,
+      coalesce(lengths.failures, 0) + ${unreadableLists(heldIn("lengths"))} + coalesce(${unlisted}, 0) AS failureCount,
       coalesce(${unlisted}, 0) AS unlistedFailureCount,
       count(*) OVER () AS total
     FROM repositories
     LEFT JOIN ${repositoryAudits} repositoryAudit ON repositoryAudit.workspace_root = repositories.workspace_root
     LEFT JOIN ${audits} audit ON audit.audit_id = repositoryAudit.audit_id
+    LEFT JOIN lengths ON lengths.audit_id = audit.audit_id
     WHERE (${workspaceRoot} IS NULL OR repositories.workspace_root = ${workspaceRoot})
       AND (${status} IS NULL OR repositoryAudit.status = ${status})
     ORDER BY repositories.workspace_root
@@ -643,6 +636,24 @@ function listRepositoryAudits(
   };
 }
 
+/**
+ * The failure entries a repository audit's entries page lists for the audit's stored lists its record reads as none,
+ * the failures `unreadable` makes, in the columns of that page's `entries`: one row for each list `lists.<name>` holds
+ * NULL for (`listLengths`).
+ */
+function unreadableEntries(): SQL {
+  return sql.join(LIST_NAMES.map(list => {
+    const failure = unreadable(list);
+    return sql`SELECT 'failure' AS kind, ${JSON.stringify(failure)} AS payload, NULL AS mode, ${failure.code} AS code, NULL AS path,
+      ${failure.message} AS message, NULL AS ruleId, ${failure.clauseId} AS clauseId FROM lists WHERE lists.${sql.identifier(list)} IS NULL`;
+  }), sql` UNION ALL `);
+}
+
+/**
+ * A repository audit's violations and failures, a page at a time. Each stored list is tested once (`listLengths`): one
+ * its record reads as none lists no entry, where `json_each` would raise on it for the whole page, and the page lists the
+ * failure the record lists for it instead (`unreadableEntries`).
+ */
 function listRepositoryAuditEntries(
   database: RerailDatabase,
   query: RepositoryAuditEntryQuery,
@@ -657,7 +668,8 @@ function listRepositoryAuditEntries(
   const path = query.path?.trim() || null;
   const text = query.q?.trim() || null;
   const rows = database.all<{ kind: "violation" | "failure"; payload: string; total: number }>(sql`
-    WITH entries AS (
+    WITH lists AS MATERIALIZED (SELECT ${listLengths()} FROM ${audits} WHERE ${audits.auditId} = ${query.auditId}),
+    entries AS (
       SELECT
         'violation' AS kind,
         violation.value AS payload,
@@ -667,7 +679,7 @@ function listRepositoryAuditEntries(
         json_extract(violation.value, '$.message') AS message,
         json_extract(violation.value, '$.ruleId') AS ruleId,
         json_extract(violation.value, '$.clauseId') AS clauseId
-      FROM ${audits} audit, json_each(audit.violations_json) violation
+      FROM ${audits} audit, lists, json_each(CASE WHEN lists.violations IS NULL THEN '[]' ELSE audit.violations_json END) violation
       WHERE audit.audit_id = ${query.auditId}
       UNION ALL
       SELECT
@@ -679,8 +691,10 @@ function listRepositoryAuditEntries(
         json_extract(failure.value, '$.message') AS message,
         json_extract(failure.value, '$.ruleId') AS ruleId,
         json_extract(failure.value, '$.clauseId') AS clauseId
-      FROM ${audits} audit, json_each(audit.failures_json) failure
+      FROM ${audits} audit, lists, json_each(CASE WHEN lists.failures IS NULL THEN '[]' ELSE audit.failures_json END) failure
       WHERE audit.audit_id = ${query.auditId}
+      UNION ALL
+      ${unreadableEntries()}
     )
     SELECT kind, payload, count(*) OVER () AS total
     FROM entries
@@ -786,12 +800,71 @@ function sessionsWithViolations(database: RerailDatabase, since: number, reposit
 /** A history row's place in newest-first order: audit start, then audit id (both descending), then report order. */
 const historyCursorSchema = z.tuple([z.number().int(), z.string(), z.number().int().nonnegative()]);
 
+/** A row of the history's page: its stored violation as JSON text, NULL where its audit's text holds none there. */
+interface HistoryRow {
+  payload: string | null;
+  auditId: string;
+  ordinal: number;
+  sessionId: string | null;
+  at: number;
+  host: string | null;
+  logged: number;
+}
+
+/**
+ * The text of the violation at `ordinal` in an audit's `violations_json`, in SQL, or NULL when the text holds no JSON
+ * object there: text that does not parse, which `json_extract` would raise on for the whole page, or another JSON value
+ * at that place, which the page could not read as a violation. `json_valid` comes first, since `json_type` raises too.
+ */
+function storedViolation(ordinal: SQL): SQL<string | null> {
+  const place = sql`'$[' || ${ordinal} || ']'`;
+  return sql<string | null>`(CASE WHEN NOT json_valid(${audits.violations}) THEN NULL
+    WHEN json_type(${audits.violations}, ${place}) = 'object' THEN json_extract(${audits.violations}, ${place}) END)`;
+}
+
+/**
+ * The entries of the history's `rows` whose stored violation reads (`storedViolation`). A row whose audit's text holds
+ * none there is left out, and the line that names the audit goes to the log once, so one damaged audit costs its own
+ * violations, never the page.
+ */
+function readableHistory(source: AuditSource, rows: readonly HistoryRow[]): ViolationHistoryPage["violations"] {
+  const entries: ViolationHistoryPage["violations"] = [];
+  for (const row of rows) {
+    if (row.payload === null) {
+      sayHistoryLeftOut(source, row.auditId);
+      continue;
+    }
+    entries.push({
+      // The payload is this daemon's own serialized violation, re-read from the audit that wrote it.
+      violation: JSON.parse(row.payload) as CodeRuleViolation,
+      sessionId: row.sessionId,
+      auditId: row.auditId,
+      at: row.at,
+      host: row.host,
+      logged: row.logged === 1,
+    });
+  }
+  return entries;
+}
+
+/** The line that names an audit whose violations the history leaves out (`readableHistory`), once for each audit. */
+function sayHistoryLeftOut({ database, log }: AuditSource, auditId: string): void {
+  const file = database.$client.name;
+  // The column name the schema gives, so the line names the place a person mends.
+  const column = audits.violations.name;
+  nameOnce(log, { file, place: `history audit ${auditId} ${column}` }, `rerail: ${file}: the violation history leaves out `
+    + `violations of audit ${auditId}: the ${column} of its row holds no JSON object for them, which only a damaged file or a hand edit leaves.\n`);
+}
+
 /**
  * Violations newest first, one row per audit that produced them. Repeats within a single audit collapse;
  * repeats across audits stay, because the page shows a rule's history rather than its current state. Pages
- * continue from `cursor`; only the returned rows read their payload from `audits.violations_json`.
+ * continue from `cursor`; only the returned rows read their payload from `audits.violations_json`. A row whose payload
+ * does not read is left out (`readableHistory`); the cursor and the total still count it, so a readable row's page,
+ * place and total are those it has with every audit readable.
  */
-function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQuery, repositoryId?: Repository): ViolationHistoryPage {
+function listViolationHistory(source: AuditSource, query: ViolationHistoryQuery, repositoryId?: Repository): ViolationHistoryPage {
+  const { database } = source;
   const { limit } = paging(query);
   const ruleId = query.ruleId?.trim() || null;
   const sessionId = query.sessionId?.trim() || null;
@@ -809,9 +882,9 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   )`;
   // The page and its total from one snapshot, so a commit between them cannot make them disagree.
   const { rows, total } = database.transaction(() => ({
-    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string | null; at: number; host: string | null; logged: number }>(sql`
+    rows: database.all<HistoryRow>(sql`
     SELECT
-      json_extract(${audits.violations}, '$[' || page.ordinal || ']') AS payload,
+      ${storedViolation(sql`page.ordinal`)} AS payload,
       page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
       ${sessions.host} AS host, page.logged AS logged
     FROM (
@@ -831,15 +904,7 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   const shown = rows.slice(0, limit);
   const last = shown.at(-1);
   return {
-    violations: shown.map(row => ({
-      // The payload is this daemon's own serialized violation, re-read from the audit that wrote it.
-      violation: JSON.parse(row.payload) as CodeRuleViolation,
-      sessionId: row.sessionId,
-      auditId: row.auditId,
-      at: row.at,
-      host: row.host,
-      logged: row.logged === 1,
-    })),
+    violations: readableHistory(source, shown),
     total,
     nextCursor: rows.length > limit && last !== undefined ? encodeCursor([last.at, last.auditId, last.ordinal]) : null,
   };
@@ -994,7 +1059,7 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
     return ruleActivity(this.#recorded(), since, repositoryIds);
   }
   listViolationHistory(query: ViolationHistoryQuery, repositoryIds?: readonly string[]): ViolationHistoryPage {
-    return listViolationHistory(this.#recorded(), query, repositoryIds);
+    return listViolationHistory({ database: this.#recorded(), log: process.stderr }, query, repositoryIds);
   }
   workspaceRoots(auditIds: readonly string[]): Map<string, string> {
     return workspaceRoots(this.#recorded(), auditIds);
@@ -1077,7 +1142,7 @@ export class SqliteAuditReader implements AuditReader {
     const database = this.#database.open();
     return database === undefined
       ? { violations: [], total: 0, nextCursor: null }
-      : listViolationHistory(database, query, repositoryIds ?? this.#repositoryId);
+      : listViolationHistory({ database, log: this.#log }, query, repositoryIds ?? this.#repositoryId);
   }
   workspaceRoots(auditIds: readonly string[]): Map<string, string> {
     const database = this.#database.open();

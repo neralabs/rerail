@@ -25,6 +25,7 @@ import {
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
+import { nameOnce, storedList, type StoredListLog } from "../storage/stored-list.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -553,13 +554,40 @@ export interface RepositoryListing extends RepositoryRecord {
   readonly checkouts: readonly RecordedCheckout[];
 }
 
-/** Every repository Rerail knows, with its recorded checkouts, ordered by name. */
-export function listRepositories(db: Reader): RepositoryListing[] {
+/**
+ * A `repositories` row with `aliases_json` as the text the database holds, which `listedRow` parses, so one repository's
+ * damaged text fails no page that lists repositories.
+ */
+const LISTED_COLUMNS = { ...getTableColumns(repositories), aliases: sql<string>`${repositories.aliases}` };
+type ListedRow = Omit<RepositoryRow, "aliases"> & { aliases: string };
+
+/**
+ * `row` with its aliases parsed. Text that is no JSON array of strings, which only a damaged file or a hand edit leaves
+ * (a CHECK refuses text that is no JSON array, not one whose items are not strings), reads as no aliases, rather than
+ * failing every page that lists repositories, and the line that names the repository goes to `log` once.
+ */
+function listedRow(row: ListedRow, file: string, log: StoredListLog): RepositoryRow {
+  const aliases = storedList(row.aliases, "text");
+  if (Array.isArray(aliases)) return { ...row, aliases: aliases as RepositoryKey[] }; // each item is a string: `storedList` tested it
+  // The column name the schema gives, so the line names the place a person mends.
+  const column = repositories.aliases.name;
+  nameOnce(log, { file, place: `repository ${row.repositoryKey} ${column}` }, `rerail: ${file}: repository ${row.repositoryKey} `
+    + `reads with no aliases: the ${column} of its row is not a JSON array of strings (${aliases}), which only a damaged file or a hand edit leaves.\n`);
+  return { ...row, aliases: [] };
+}
+
+/**
+ * Every repository Rerail knows, with its recorded checkouts, ordered by name. `log`: where the line that names a
+ * repository whose stored aliases do not read goes (`listedRow`): `daemon.log` for the daemon, a command's own error
+ * output for a command that passes it.
+ */
+export function listRepositories(db: Reader & Pick<RerailDatabase, "$client">, log: StoredListLog = process.stderr): RepositoryListing[] {
   const byRepository = new Map<RepositoryKey, RecordedCheckout[]>();
   for (const row of db.select(recordedCheckoutColumns).from(checkouts).orderBy(checkouts.checkoutPath).all()) {
     byRepository.set(row.repositoryKey, [...(byRepository.get(row.repositoryKey) ?? []), row]);
   }
-  return db.select().from(repositories).all()
+  return db.select(LISTED_COLUMNS).from(repositories).all()
+    .map(row => listedRow(row, db.$client.name, log))
     .map(repository => ({ ...recordOf(repository), checkouts: byRepository.get(repository.repositoryKey) ?? [] }))
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
 }

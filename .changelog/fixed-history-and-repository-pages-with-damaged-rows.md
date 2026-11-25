@@ -1,0 +1,1 @@
+One audit whose stored violations are damaged no longer makes the violation history fail (the dashboard's history by rule and by session, `violations_list`), nor one repository whose stored aliases are damaged every repository page: the history leaves out what it cannot read, the repository lists with no aliases, and `daemon.log` names the audit or the repository.
