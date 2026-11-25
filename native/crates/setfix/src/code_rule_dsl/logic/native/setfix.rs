@@ -4544,7 +4544,7 @@ fn push_text(syms: &Interner, s: &mut String, v: i64) {
 
 /// `cat_held` for texts not all in memory: each read where it is.
 fn cat_held_read(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
-    if syms.name(a).is_empty() {
+    if syms.with_name(a, str::is_empty) {
         return Some(b);
     }
     let mut s = std::mem::take(&mut syms.buf);
@@ -4575,7 +4575,7 @@ fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
 
 /// `cat` for texts not all in memory: each read where it is.
 fn cat_read(syms: &mut Interner, a: i64, b: i64) -> i64 {
-    if syms.name(a).is_empty() {
+    if syms.with_name(a, str::is_empty) {
         return b;
     }
     let mut s = std::mem::take(&mut syms.buf);
@@ -9296,8 +9296,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     }
                     (Some(m), ..) => cx.syms.with_name(v, |t| m.is_match(t)),
                     (None, ..) => {
-                        let pattern = cx.syms.name(val(slots, *p));
-                        cx.syms.with_name(v, |t| crate::code_rule_dsl::logic::strings::test(op, t, &pattern))
+                        // The pattern read into the interner's buffer: a text made a test was 2.7 M on cold PostHog.
+                        let mut pattern = std::mem::take(&mut cx.syms.buf);
+                        pattern.clear();
+                        cx.syms.with_name(val(slots, *p), |t| pattern.push_str(t));
+                        let hit = cx.syms.with_name(v, |t| crate::code_rule_dsl::logic::strings::test(op, t, &pattern));
+                        cx.syms.buf = pattern;
+                        hit
                     }
                 };
                 if hit == *want { go(cx, i + 1, slots) }
