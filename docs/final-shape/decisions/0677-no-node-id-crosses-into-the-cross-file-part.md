@@ -705,6 +705,27 @@ rules.
 | javascript (121 policies) | 9,922, the same, apart from no-octal-escape's 34 messages | 1.091 → 1.032 × 10¹² | 1.94 → 1.71 GB |
 | typescript (65 policies) | 4,365, the same | 0.450 → 0.384 × 10¹² | 1.29 → 1.31 GB |
 
+**Batch 2: the Python libraries' value tables.** The list went from 288 to 256: python 32. Each was a table of a
+value, filled from every file's nodes, and read at a node:
+- `fast_strip` held the empty value as a row of its own (`fast_strip(e, e) :- unset(e)`). That row names no
+  document, so the relation had no location. `fast_param` now tests the empty annotation and default in its own rule,
+  `(unset(a0), unset(a) ; fast_strip(a0, a))`, and fast_strip covers nodes alone. Written `a = a0` instead of
+  `unset(a)`, the column is not seen as nullable, and FAST002's `route_param` is refused as joining two documents.
+- `canon_number(t, r)` and `negate(a, b)`, F601's numbers, were keyed by the number's text. They are keyed by the
+  literal now, `canon_number(e, t, r)` and `negate(e, a, b)`.
+- `typing_name(q, r)` took its names from `ruff_qual(_, q)`. It is `typing_q(n, q)`, keyed by the node that
+  `ruff_qual` reads. RUF009 tests NewType's three names itself.
+- `identifier(x)` took its strings from every str literal and every name. It is `identifier_str(s)`, a test of the
+  literal, and `bb_mangled(s)` with it. B009, B010, PIE804, UP013 and UP014 read it at their literal.
+
+Compared on 473 files (Ruff's pack test data, and two files of FastAPI, NewType and TypedDict cases), all 546
+policies of the python pack, in 8 runs of 70, the same CLI builds as batch 1:
+
+| Pack | Findings, old and new | Instructions, old → new | Peak RSS, old → new |
+|---|---|---|---|
+| python (546 policies) | 6,708, the same; F601 50, B009 27, PIE804 20, B010 13 of them | 1.968 → 1.937 × 10¹² | 0.86 → 0.79 GB |
+| FAST001/002/003, RUF009, UP013 cases | 7, the same | | |
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
