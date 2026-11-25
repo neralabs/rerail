@@ -191,6 +191,28 @@ describe("a session record of any size", () => {
     expect((await readSessionLedger(at.record, { sampleText: false })).entries).toEqual([sample("read", ""), sample("prompt", "")]);
   });
 
+  it("gives a session whose content source keeps samples, as OMP's does, their text back when it opens", async () => {
+    const at = await world();
+    const item = { ref: { source: "host:event", id: "prompt" }, text: "Keep the guest checkout.", metadata: { owner: "user", session: SESSION.sessionId } };
+    await writeFile(at.record, `${JSON.stringify({ type: "sample", item })}\n`);
+    const runtime = runtimeIn(at);
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: SESSION.sessionId, cwd: at.root } });
+      const selected = await runtime.select(SESSION.sessionId, {}) as { items: Array<{ text: string }> };
+      expect(selected.items.map(restored => restored.text)).toEqual(["Keep the guest checkout."]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("reads no line of a record that is a symbolic link", async context => {
+    const at = await world();
+    const elsewhere = join(at.root, "elsewhere.jsonl");
+    await writeFile(elsewhere, ruleLine("planted"));
+    symlinkOrSkip(context, elsewhere, at.record, "file");
+    await expect(readSessionLedger(at.record, { sampleText: true })).rejects.toThrow(`through ${at.record}: it is a symbolic link`);
+  });
+
   it("refuses a record that is a symbolic link and writes nothing where it leads", async context => {
     const at = await world();
     const elsewhere = join(at.root, "elsewhere.jsonl");
