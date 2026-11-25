@@ -161,6 +161,8 @@ Rerunning `npx @neralabs/rerail setup` also updates.
   six engines, about 240 MB, because the version you update from runs it
   ([what an update downloads](how-setup-works.md#updates)).
 - The new version applies to coding agent sessions started afterwards; connected coding agents get its commands.
+  The daemon restarts on it, on the same port, so reload an open dashboard to see it
+  ([how updates hand over](how-setup-works.md#one-main-instance)).
 - Once core is updated, `rerail update` updates each installed rule pack to the newest version that fits it
   (`rerail packs update` does the same on its own). The update from 0.1.5 runs 0.1.5's updater, which only lists the
   newer packs: run `rerail packs update` once after it.

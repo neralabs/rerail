@@ -1,0 +1,1 @@
+After `rerail update`, the dashboard and the daemon run the new version at once, from this update on: the update restarts a daemon still running the old version, on the same port. They used to stay on the old version until a coding agent's next tool call.

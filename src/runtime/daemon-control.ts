@@ -74,7 +74,10 @@ export interface DaemonState {
    */
   ui: "bundled" | "dev";
   startedAt: number;
-  /** The package the daemon was launched from; `rerail setup` restarts a daemon whose root is no longer `current`. */
+  /**
+   * The package the daemon was launched from; `rerail setup`, and `rerail install --refresh`, which every update ends
+   * with, restart a daemon whose root is no longer `current`.
+   */
   packageRoot: string;
   workspaceRoot?: string;
   /** Same-user capability for normal native sessions; never exposed by health/API responses. */
