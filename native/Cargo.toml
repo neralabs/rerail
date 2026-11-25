@@ -134,9 +134,9 @@ serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
 # The reach index (decision 0119): each start's closure as a compressed bitmap.
-roaring = "=0.11.5"
+roaring = "=0.12.0"
 regex-automata = "=0.4.18"
-regex-syntax = "=0.8.11"
+regex-syntax = "=0.8.12"
 # Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
 # `rollback_hook`, `authorizer`) through `&mut Connection`, and the engine installs them on connections its
 # statements share.

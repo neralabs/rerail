@@ -9,8 +9,10 @@ import {
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
+  type HeldSession,
   type RerailEventLoop,
   type RerailHost,
+  type SessionNoteRules,
   type SteerStrategy,
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
@@ -21,8 +23,8 @@ import {
   type FileDigests, type OwedEntry, type OwedSteer,
 } from "./owed-ledger.js";
 import {
-  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type HeldCall, type Preimage, type RewoundEdit, type SessionWalkResume,
-  type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, UNSEEN_START, type HeldCall, type Preimage, type RewoundEdit,
+  type SessionWalkResume, checkAtResult, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { claudeCodeReportedPreimage } from "../engine/code-rule/tool-result/reported-preimage.js";
@@ -48,6 +50,9 @@ import { keepFolderPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { placeCheckout, placeWorktrees } from "../engine/catalog/checkouts/checkout-placement.js";
+import type { WorktreeRegistry } from "../engine/catalog/repository-identity.js";
+import { GitReads } from "../engine/git.js";
 import type { CheckoutContext } from "../engine/catalog/repository-model.js";
 import type { PendingNote } from "./merge-assist/notes.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "./merge-assist/service.js";
@@ -56,12 +61,12 @@ import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
-import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
+import { restorableRule, type DroppedEvents, type LostEvent, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin, steerTitle } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
-import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
+import { SqliteSessionStore, type RuleCoverage, type SessionAttribution } from "./session-store.js";
 import { isDefaultStorageRoot, sessionDirectory } from "./session-paths.js";
 import type {
   ContentItem,
@@ -104,20 +109,19 @@ function noteCallsAwaitingResult(calls: Set<string>, event: AdapterEvent): void 
   else if (event.kind === "turn-end") calls.clear();
 }
 
-/** What `opening` settled to within `ms`: the bridge, or undefined once the evaluator failed; `settled: false` when it was still opening. */
-async function openedWithin(opening: Promise<CodeRuleBridge | undefined>, ms: number): Promise<{ settled: true; bridge: CodeRuleBridge | undefined } | { settled: false }> {
-  const late = Promise.withResolvers<{ settled: false }>();
-  const timer = setTimeout(() => late.resolve({ settled: false }), ms);
-  try {
-    return await Promise.race([opening.then(bridge => ({ settled: true as const, bridge })), late.promise]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
+/**
+ * Which code-rule boundaries of a session whose rules are still opening wait for them, within
+ * `REOPENED_RULES_WAIT_MS` (`whileRulesOpen`). `none`: a first start, or a host that does not wait. `needed`: a
+ * reopened session in a hook host, whose boundaries that need the rules wait (`needsRules`). `turn-end`: such a session
+ * after one of them waited the bound out: only its turn ends still wait, since a turn's end is the last boundary whose
+ * answer reaches the agent in that turn, and holding every tool call for rules that take longer would cost each one the
+ * bound.
+ */
+type RulesWait = "none" | "needed" | "turn-end";
 
-/** Whether a session `recorded` before, opening again in `host`, waits at its code-rule boundaries for its rules (`waitsForRules`). */
-function waitsForRulesOnReopen(recorded: boolean, host: RerailHost): boolean {
-  return recorded && ADAPTER_CAPABILITIES[host].toolSurface !== "native";
+/** How a session `recorded` before, opening again in `host`, waits for its rules at its boundaries (`RulesWait`). */
+function rulesWaitOnReopen(recorded: boolean, host: RerailHost): RulesWait {
+  return recorded && ADAPTER_CAPABILITIES[host].toolSurface !== "native" ? "needed" : "none";
 }
 
 /**
@@ -138,12 +142,41 @@ const HOOK_EDIT_CHECK_MS = 1_000;
 const NATIVE_EDIT_CHECK_MS = 10_000;
 /**
  * How long a code-rule boundary of a reopened session waits for its rules to open. A session opens again on its next
- * event after an idle close (`IDLE_SESSION_MS`), a daemon restart or a resume, and its rules may compile again (about 12 s
- * of CPU for a TypeScript repository's five packs on a Windows laptop). Its first edit went unchecked at its own result
- * while they did, and its steer arrived a turn later. The prompt that reopens the session starts the opening, so the
- * first tool call usually finds it nearly done. Inside the 30 s the hook gives the daemon to answer (`ingestEngineEvent`).
+ * event after an idle close (`IDLE_SESSION_MS`), a daemon restart or a resume, and its rules may compile again (about
+ * 12 s of CPU for a TypeScript repository's five packs on a Windows laptop). Its first edit went unchecked at its own
+ * result while they did, and its steer arrived a turn later. The prompt that reopens the session starts the opening, so
+ * the first tool call usually finds it nearly done. Inside the 30 s the hook gives the daemon to answer
+ * (`ingestEngineEvent`). Only a boundary whose check needs the rules waits (`needsRules`), and once a tool call or
+ * result has waited this out only turn ends wait again (`RulesWait`): rules that take longer would hold every tool call
+ * for it.
  */
 const REOPENED_RULES_WAIT_MS = 20_000;
+
+/**
+ * Whether a code-rule boundary of a reopened session needs its rules, so a steer from it rides its own answer: a call
+ * the evaluator checks at its result (`checkAtResult`) and that call's result do, and so does a turn's end, whose
+ * walk checks what the turn's shell and other tools wrote. A call that writes nothing the evaluator checks, and its
+ * result, go on at once, as every boundary does while a session's first index runs.
+ */
+function needsRules(event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): boolean {
+  if (event.kind === "call") return checkAtResult(event.toolName, generatedEditPaths(event.toolName, event.input)) !== undefined;
+  if (event.kind === "result") return pending.some(call => call.id === event.toolCallId && call.checked);
+  return event.kind === "turn-end";
+}
+
+/**
+ * What the code-rule boundary `event` of a session whose rules are still opening does (`RulesWait`): `wait` for them
+ * within `REOPENED_RULES_WAIT_MS`; go on without them, counted in the session's history among the boundaries they were
+ * not yet running at (`skip`); or go on with nothing to count (`pass`): a reopened session's call that writes nothing
+ * the evaluator checks at its result, and that call's result, which the rules would not have checked. A first start
+ * skips every boundary, since its first index is never waited for.
+ */
+function whileRulesOpen(wait: RulesWait, event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): "wait" | "skip" | "pass" {
+  if (wait === "none") return "skip";
+  if (!needsRules(event, pending)) return "pass";
+  return wait === "needed" || event.kind === "turn-end" ? "wait" : "skip";
+}
+
 /**
  * How many closed sessions a runtime keeps for late receipts. A late receipt comes from a send still in flight as its
  * session closed, so the last few closes are plenty; a checkout's runtime lives while any session there does, and would
@@ -153,16 +186,41 @@ const CLOSED_SESSIONS_KEPT = 16;
 
 /**
  * Waits for `work` up to `ms`, and says whether it finished; past the cap the work carries on in the background. The
- * wait only decides when the hook answers, so a failure of the check is not raised here: the check records its own
- * failures in its audit.
+ * wait only decides when the hook answers, so a failure of the work is not raised here: an edit check records its own
+ * failures in its audit, and an evaluator that cannot open in the session's history.
  */
-async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> {
+async function settledWithin(work: Promise<unknown>, ms: number): Promise<boolean> {
   const capped = Promise.withResolvers<false>();
   const timer = setTimeout(() => capped.resolve(false), ms);
   try {
     return await Promise.race([work.then(() => true, () => true), capped.promise]);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** When the event `state` is ingesting happened, for its record: only for one that reaches the runtime later (`IngestOptions.observedAt`). */
+function happenedAt(state: Pick<RuntimeSessionState, "observedAt">): { observedAt?: number } {
+  return state.observedAt === undefined ? {} : { observedAt: state.observedAt };
+}
+
+/**
+ * Waits for `work` until `signal` aborts (no one waits for the answer any more), and says whether it finished first;
+ * without a signal, until it finishes. A failure of `work` before then is raised, as waiting on it raises it.
+ */
+async function settledBefore(work: Promise<void>, signal: AbortSignal | undefined): Promise<boolean> {
+  if (signal === undefined) {
+    await work;
+    return true;
+  }
+  if (signal.aborted) return false;
+  const gaveUp = Promise.withResolvers<false>();
+  const giveUp = (): void => gaveUp.resolve(false);
+  signal.addEventListener("abort", giveUp, { once: true });
+  try {
+    return await Promise.race([work.then(() => true as const), gaveUp.promise]);
+  } finally {
+    signal.removeEventListener("abort", giveUp);
   }
 }
 
@@ -231,6 +289,41 @@ function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
   return new Set(ledger.flatMap((entry) => (entry.type === "event" ? [entry.eventId] : [])));
 }
+
+/** When the ledger's first event that carries its row's time was recorded; undefined when none does. */
+function firstDatedEvent(ledger: readonly LedgerEntry[]): number | undefined {
+  for (const entry of ledger) if (entry.type === "event" && entry.observedAt !== undefined) return entry.observedAt;
+  return undefined;
+}
+
+/** The event kinds the ledger's lines name (`persistEvent` writes each line with its row's kind). */
+function ledgerKinds(ledger: readonly LedgerEntry[]): Set<string> {
+  return new Set(ledger.flatMap((entry) => (entry.type === "event" && entry.kind !== undefined ? [entry.kind] : [])));
+}
+
+/**
+ * The events the ledger holds whose rows a power cut or an operating system crash took, oldest first. An event's row is
+ * committed before its ledger line is written, one event after another, or, while another process holds the write lock,
+ * waits in the record writer behind the rows before it (`openRecordWriter`); such a loss, like a daemon killed with rows
+ * still waiting, takes only the store's last rows: so the lost events are those after `recorded`
+ * (`SqliteSessionStore.lastRecordedEvent`), the newest one whose row is there, or the last of a stretch a record of lost
+ * events already counted. A ledger that does not hold `recorded` gives none, whatever lines an older build wrote in it:
+ * `rerail reset` deleted the session's history, or the loss took every row of it, which nothing tells apart. Between
+ * `recorded` and the ledger's end, a line an older build wrote (no kind or time) ends the walk, since those builds
+ * synced every commit. The walk reads only the ledger in memory.
+ */
+function lostEvents(ledger: readonly LedgerEntry[], recorded: string | undefined): LostEvent[] {
+  const from = ledger.findLastIndex(entry => entry.type === "event" && entry.eventId === recorded);
+  if (from < 0) return [];
+  const lost: LostEvent[] = [];
+  for (let index = ledger.length - 1; index > from; index -= 1) {
+    const entry = ledger[index]!;
+    if (entry.type !== "event") continue;
+    if (entry.kind === undefined || entry.observedAt === undefined) break;
+    lost.push({ eventId: entry.eventId, kind: entry.kind, observedAt: entry.observedAt });
+  }
+  return lost.reverse();
+}
 interface AuditRequestVerdict {
   status: "completed" | "failed" | "interrupted";
   error: string | null;
@@ -269,6 +362,12 @@ const MERGE_ASSIST_WAIT_MS = 1_000;
 interface PendingCodeRuleCall {
   id: string;
   toolName: string;
+  /**
+   * Whether its result is checked (`checkAtResult`), and so needs a reopened session's rules (`needsRules`): such a
+   * result waits for them when its call was held in the ledger across a restart, and is counted among the boundaries
+   * they were not yet running at once a tool call waited them out; any other result does neither.
+   */
+  checked: boolean;
   /** The subagent that made it (Claude Code's `agent_id`), absent for the session's own agent. */
   agentId?: string | undefined;
   /** Still waiting after a yield of the session's agent, which a subagent's call may outlive. */
@@ -393,7 +492,8 @@ const ContentItemSchema = z.object({
   }),
 });
 const LedgerEntrySchema = z.union([
-  z.object({ type: z.literal("event"), eventId: z.string() }),
+  // `kind` and `observedAt` are the event's row's own, which a ledger written before they were added lacks.
+  z.object({ type: z.literal("event"), eventId: z.string(), kind: z.string().optional(), observedAt: z.number().int().optional() }),
   z.object({ type: z.literal("hud-tracking-start") }),
   z.object({ type: z.literal("sample"), item: ContentItemSchema }),
   z.object({ type: z.literal("turn"), eventId: z.string() }),
@@ -419,7 +519,7 @@ const LedgerEntrySchema = z.union([
 ]);
 
 type LedgerEntry =
-  | { type: "event"; eventId: string }
+  | { type: "event"; eventId: string; kind?: string; observedAt?: number }
   | { type: "hud-tracking-start" }
   | { type: "sample"; item: ContentItem }
   | { type: "turn"; eventId: string }
@@ -691,6 +791,8 @@ interface RuntimeSessionState {
   steerStrategy: SteerStrategy;
   /** Open while a tool call's result is ingested; unset otherwise. */
   resultWindow: ResultWindow | undefined;
+  /** While an event that happened earlier is ingested, when it happened (`IngestOptions.observedAt`); unset otherwise. */
+  observedAt: number | undefined;
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
   /** Sources whose queued steer a newer revision of them dropped before delivery, until the auditor asks (`undelivered`). */
@@ -706,10 +808,11 @@ interface RuntimeSessionState {
   /** The evaluator is still opening and owns its own release: closing the session does not wait for it. */
   codeRuleOpening: boolean;
   /**
-   * The session opened again (after an idle close, a daemon restart or a resume) in a hook host: its code-rule
-   * boundaries wait for its rules to open, within `REOPENED_RULES_WAIT_MS`.
+   * Which of its code-rule boundaries wait for its rules while they open (`RulesWait`): `needed` once it opened again
+   * (after an idle close, a daemon restart or a resume) in a hook host, `turn-end` once a tool call or result waited
+   * `REOPENED_RULES_WAIT_MS` out, so the opening holds no later tool call.
    */
-  waitsForRules: boolean;
+  rulesWait: RulesWait;
   ownerClaim: PolicyOwnerClaim | undefined;
   /**
    * Set while this runtime's claim on the session, written again when a write put the session's row back, has not
@@ -965,6 +1068,14 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
 }
 
 /**
+ * What the session store keeps of `event`: scrubbed of secrets (`scrubValue`), and a result whose call named a
+ * secret-like path (`withheld`) without its output. The live event, which rules match, keeps them.
+ */
+function storedPayload(event: AdapterEvent, withheld: boolean): unknown {
+  return event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event);
+}
+
+/**
  * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
  * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
  * written down; the call itself is kept.
@@ -1206,6 +1317,23 @@ export interface RerailRuntimeOptions {
   mergeAssistWaitMs?: number;
 }
 
+/** How an event's answer is waited for (`RerailRuntime.ingest`). */
+export interface IngestOptions {
+  /**
+   * Aborts once whoever waits for the answer stops waiting: the engine service's hook request closed before its answer
+   * was written (the hook gave up at its 30 s, or its process ended). Such an event stops waiting for edit checks and
+   * takes none of what the session holds for its agent, which waits for the session's next event. Without one, the
+   * answer counts as read. One aborted when the event begins says its tool may have run already: a call then captures
+   * no "before" of its files (`#beginCall`).
+   */
+  signal?: AbortSignal | undefined;
+  /**
+   * When the event happened (epoch ms), where it reaches the runtime later: a hook left it while the daemon did not read
+   * (`untaken-events.ts`). Its record keeps that time. Without one, the event happens as it is ingested.
+   */
+  observedAt?: number | undefined;
+}
+
 export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #storageRoot: string;
   /** The root is the workspace's default (`isDefaultStorageRoot`), so its records get a `.gitignore`. */
@@ -1222,7 +1350,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
+  /**
+   * The Git reads that place a session's checkout, then the other worktrees Git lists for it (`placeCheckout`,
+   * `placeWorktrees`): a disposed runtime ends them, and returns once each Git they started has exited, so none is left
+   * running in a checkout (Windows refuses to remove a folder a process holds). A read another runtime started and
+   * shares with them goes on, and is not waited for (`sharedRead`).
+   */
+  readonly #placing = new GitReads();
   readonly #sessions = new Map<string, RuntimeSessionState>();
+  /**
+   * While an event that happened earlier opens its session (`IngestOptions.observedAt`), when it happened, by session id:
+   * a session it opens starts then (`#asOf`).
+   */
+  readonly #startsAt = new Map<string, number>();
   /** The sessions `resumeSession` is opening again for a scan, whose open fails rather than wait for a write lock. */
   readonly #resumingForScan = new Set<string>();
   /**
@@ -1238,7 +1378,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #beforeSessionPublish: RerailRuntimeOptions["beforeSessionPublish"];
   readonly #auditSettings: CheckoutAuditSettings;
   readonly #controls: SqliteAuditControlStore;
-  readonly #controlTimer: NodeJS.Timeout;
+  /** The control timer (`#pollControlsWhileSessionsOpen`): set only while some session is open here. */
+  #controlTimer: NodeJS.Timeout | undefined;
+  /** Set as `dispose` begins: the sessions it closes start no control timer again. */
+  #disposing = false;
   readonly #autostart: boolean;
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
@@ -1312,8 +1455,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       catalogs?.close();
       throw error;
     }
-    this.#controlTimer = setInterval(() => this.#pollAuditControls(), 250);
-    this.#controlTimer.unref?.();
+  }
+
+  /**
+   * Runs the control timer (`#pollAuditControls`, every 250 ms) while some session is open in this runtime, and stops it
+   * once none is: each tick reads the database's `data_version` to find a session whose settings or scans changed, and a
+   * runtime with no session, which the engine service keeps open for its checkout's next session, has none to find.
+   * Asked each time a session enters or leaves the runtime.
+   */
+  #pollControlsWhileSessionsOpen(): void {
+    if (this.#sessions.size > 0 && !this.#disposing) {
+      if (this.#controlTimer !== undefined) return;
+      this.#controlTimer = setInterval(() => this.#pollAuditControls(), 250);
+      this.#controlTimer.unref?.();
+      return;
+    }
+    clearInterval(this.#controlTimer);
+    this.#controlTimer = undefined;
   }
 
   /**
@@ -1334,7 +1492,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#startWatch !== undefined && !this.#startWatch.started();
   }
 
-  ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
+  ingest(event: AdapterEvent, options: IngestOptions = {}): Promise<readonly AdapterDelivery[]> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     if (this.#stopped() && event.kind !== "session-end") return Promise.resolve([]);
     return this.#ingestLanes.run(sessionId, async () => {
@@ -1344,7 +1502,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         return [];
       }
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
-      const deliveries = await this.#ingestOrDropOwed(event);
+      const deliveries = await this.#ingestOrDropOwed(event, options);
       if (event.kind !== "assistant-delta" || event.final
           || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) {
         await this.#sessionRulesBuilt(sessionId);
@@ -1371,9 +1529,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * `owed` entry its ledger keeps emptied before the failure goes on: an end drops what the session owed, as any end
    * does, and the session's next start under the same id would take it back. Its engine service ends its record.
    */
-  async #ingestOrDropOwed(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
+  async #ingestOrDropOwed(event: AdapterEvent, options: IngestOptions): Promise<readonly AdapterDelivery[]> {
     try {
-      return await this.#ingest(event);
+      return await this.#ingest(event, options);
     } catch (error) {
       if (event.kind === "session-end" && !this.#sessions.has(event.sessionId)) await this.#dropLedgerOwed(event.sessionId);
       throw error;
@@ -1397,15 +1555,29 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#session(sessionId).turn = turn;
   }
 
-  async #ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
-    if (event.kind === "session-start") {
-      this.#sessions.get(event.session.sessionId)?.ruleSync?.refresh();
-      return this.#ingestSessionStart(event);
-    }
+  /** One event in its session's lane, waited for and timed as `IngestOptions` says. */
+  async #ingest(event: AdapterEvent, { signal, observedAt }: IngestOptions): Promise<readonly AdapterDelivery[]> {
+    if (event.kind === "session-start") return await this.#ingestSessionStart(event, observedAt);
 
     const { active, descriptor } = this.#resolveEventSession(event);
-    if (active === undefined) await this.#router(descriptor.host).start(descriptor);
+    if (active === undefined) await this.#asOf(descriptor.sessionId, observedAt, () => this.#router(descriptor.host).start(descriptor));
     const state = this.#session(event.sessionId);
+    // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
+    const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
+    // The event's records, a boundary it met before the code rules opened included, and the run of its tool call, at the
+    // time it happened.
+    state.observedAt = observedAt;
+    try {
+      await this.#ingestInSession(state, event, yields, signal);
+    } finally {
+      state.observedAt = undefined;
+    }
+    if (event.kind === "session-end") return [];
+    return this.#boundaryDeliveries(state, event.eventId, yields, signal);
+  }
+
+  /** The work of `event` in its open session, before what its answer delivers. */
+  async #ingestInSession(state: RuntimeSessionState, event: Exclude<AdapterEvent, { kind: "session-start" }>, yields: boolean, signal: AbortSignal | undefined): Promise<void> {
     this.#writeOwedClaim(state);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
@@ -1413,29 +1585,60 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
     await this.#noteTurnWindow(state, event);
+    await this.#ingestEventWork(state, bridge, event, yields, signal);
+  }
 
-    // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
-    const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
-    await this.#ingestEventWork(state, bridge, event, yields);
-    if (event.kind === "session-end") return [];
-    return this.#boundaryDeliveries(state, event.eventId, yields);
+  /**
+   * Runs `work`, which opens the session `sessionId` or records its start, as of `observedAt` (`IngestOptions.observedAt`):
+   * a session it opens starts then, and its records made meanwhile keep that time.
+   */
+  async #asOf(sessionId: string, observedAt: number | undefined, work: () => Promise<void>): Promise<void> {
+    if (observedAt === undefined) return await work();
+    this.#startsAt.set(sessionId, observedAt);
+    const open = this.#sessions.get(sessionId);
+    if (open !== undefined) open.observedAt = observedAt;
+    try {
+      await work();
+    } finally {
+      this.#startsAt.delete(sessionId);
+      const state = this.#sessions.get(sessionId);
+      if (state !== undefined) state.observedAt = undefined;
+    }
+  }
+
+  /** When a session not yet recorded starts as it opens now: when the event opening it happened (`#asOf`), else now. */
+  #startTime(sessionId: string): number {
+    return this.#startsAt.get(sessionId) ?? Date.now();
+  }
+
+  /**
+   * When `sessionId` started as recorded, undefined when it never was: its row as it is on disk. The read makes none of
+   * this process's waiting record writes first, which would hold this thread, and so every session's hooks, for the lock
+   * until the oldest of them is 5 s old. A session this process opened has its row on disk already: its open ends with
+   * the owner claim, which this process's waiting writes are made before (`requireRecordWritesMade`), or fails.
+   */
+  #recordedStart(sessionId: string): number | undefined {
+    return this.#sessionStore.storedSession(sessionId)?.startedAt;
   }
 
   /**
    * The event's own work around the host router's: a call's record, a session end's settling of the calls still waiting
    * (no result comes after it), a result's edit check, a turn end's waits.
    */
-  async #ingestEventWork(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: AdapterEvent, yields: boolean): Promise<void> {
-    if (event.kind === "call") await this.#recordCall(state, bridge, event);
+  async #ingestEventWork(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: AdapterEvent, yields: boolean, signal: AbortSignal | undefined): Promise<void> {
+    if (event.kind === "call") await this.#recordCall(state, bridge, event, signal);
     if (event.kind === "session-end") await this.#settleUnresolvedCalls(state, true);
     await this.#router(state.descriptor.host).ingest(event);
     noteCallsAwaitingResult(state.callsAwaitingResult, event);
     if (event.kind === "result") await this.#ingestResult(state, bridge, event);
-    if (event.kind === "turn-end") await this.#ingestTurnEnd(state, bridge, yields);
+    if (event.kind === "turn-end") await this.#ingestTurnEnd(state, bridge, yields, signal);
   }
 
-  /** A turn's end: the boundary waits for the source walk, then for the turn's own edit checks (all of them where it `yields`). */
-  async #ingestTurnEnd(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, yields: boolean): Promise<void> {
+  /**
+   * A turn's end: the boundary waits for the source walk, then for the turn's own edit checks (all of them where it
+   * `yields`, until `signal` says no one waits for the answer).
+   */
+  async #ingestTurnEnd(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, yields: boolean, signal: AbortSignal | undefined): Promise<void> {
     const { sessionId } = state.descriptor;
     // The source walk checks the shell writes it finds as generated edits, so the boundary waits from its start.
     await this.#waitingForEditChecks(state, yields, async () => {
@@ -1448,25 +1651,32 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
       // A hook host's stop hook carries the turn's steers, so it waits for all of them; OMP and Pi wait within the cap.
       const settleStartedAt = performance.now();
-      if (yields) await bridge?.settleGeneratedEdits();
+      if (yields) await this.#settleWhileAnswerWaited(state, bridge, signal);
       else await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
       this.#reportSlowTurnEndWait(sessionId, "generated-edit audits", settleStartedAt);
     });
   }
 
   /**
-   * What a boundary answers: the Merge Assist notes and steers pending for the session, the missed digest where the
-   * agent `yields`, and the deliveries held for the event itself.
+   * What a boundary answers: what the session holds for its agent (`#heldForAgent`), and the deliveries held for the
+   * event itself. An event no one waits for any more (`signal` aborted) takes nothing the session holds: no one reads its
+   * answer, so its notes and steers wait for the session's next event, unmarked and unrecorded.
    */
-  async #boundaryDeliveries(state: RuntimeSessionState, eventId: string, yields: boolean): Promise<AdapterDelivery[]> {
+  async #boundaryDeliveries(state: RuntimeSessionState, eventId: string, yields: boolean, signal: AbortSignal | undefined): Promise<AdapterDelivery[]> {
+    const deliveries = signal?.aborted === true ? [] : await this.#heldForAgent(state, yields);
+    deliveries.push(...(state.eventDeliveries.get(eventId) ?? []));
+    state.eventDeliveries.delete(eventId);
+    return deliveries;
+  }
+
+  /** The Merge Assist notes and steers pending for the session, and the missed digest where the agent `yields`. */
+  async #heldForAgent(state: RuntimeSessionState, yields: boolean): Promise<AdapterDelivery[]> {
     this.#offerMergeAssistNotes(state);
     const deliveries = await this.#collectPendingSteers(state);
     if (yields) {
       const digest = await this.#takeMissedDigest(state);
       if (digest !== undefined) deliveries.push(digest);
     }
-    deliveries.push(...(state.eventDeliveries.get(eventId) ?? []));
-    state.eventDeliveries.delete(eventId);
     return deliveries;
   }
 
@@ -1544,7 +1754,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (bridge === undefined || waitsBehind(state.overdueEditChecks, only)) return;
     const settled = bridge.settleGeneratedEdits(only);
     if (await settledWithin(settled, capMs)) return;
-    const kinds = overdueKinds(only, bridge.steeringWaitsForLog());
+    this.#leaveOverdue(state, settled, overdueKinds(only, bridge.steeringWaitsForLog()));
+  }
+
+  /**
+   * A hook host's stop waits for every edit check of the session, so the turn's steers ride its answer, for as long as
+   * its answer is waited for (`signal`): once the hook gives up, the stop stops waiting and the session's next event runs
+   * at once. The checks carry on, overdue as past a cap (`#awaitEditChecks`), and their steers wait for that next event.
+   */
+  async #settleWhileAnswerWaited(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, signal: AbortSignal | undefined): Promise<void> {
+    if (bridge === undefined) return;
+    const settled = bridge.settleGeneratedEdits();
+    if (await settledBefore(settled, signal)) return;
+    this.#leaveOverdue(state, settled, overdueKinds(undefined, bridge.steeringWaitsForLog()));
+  }
+
+  /**
+   * The checks `settled` waits for carry on past the boundary that stopped waiting for them, overdue under `kinds`: a
+   * later wait of those kinds would sit behind them, so it answers at once (`waitsBehind`).
+   */
+  #leaveOverdue(state: RuntimeSessionState, settled: Promise<void>, kinds: ReadonlyArray<keyof OverdueEditChecks>): void {
     const overdue: Promise<void> = settled.catch(() => undefined).finally(() => {
       for (const kind of kinds) if (state.overdueEditChecks[kind] === overdue) delete state.overdueEditChecks[kind];
     });
@@ -1561,13 +1790,18 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
    * is the session's own, so it opens only its window, which names the files its tool names (`CodeRuleBridge.unwatchedCall`).
+   * One no one waited for as it began (`signal` aborted: its hook gave up, or left it while the daemon did not read) may
+   * have run already, so what its files hold now is no "before": it captures none, and its edit is read against the text
+   * it was made on where its own text edits make that certain, else whole (`UNSEEN_START`).
    */
   async #beginCall(
     state: RuntimeSessionState,
     bridge: CodeRuleBridge | undefined,
     event: Extract<AdapterEvent, { kind: "call" }>,
+    signal: AbortSignal | undefined,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
-    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, undefined, event.cwd);
+    const unseen = signal?.aborted === true ? UNSEEN_START : undefined;
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, unseen, event.cwd);
     await state.codeRuleBridge?.unwatchedCall(event.toolCallId, { toolName: event.toolName, input: event.input, cwd: event.cwd });
     return undefined;
   }
@@ -1577,16 +1811,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * it: a subagent's call outlives the main agent's stop, after a daemon restart too, which settled it at the first stop.
    * An edit is marked for Merge Assist's detection at its result.
    */
-  async #recordCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: Extract<AdapterEvent, { kind: "call" }>): Promise<void> {
+  async #recordCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: Extract<AdapterEvent, { kind: "call" }>, signal: AbortSignal | undefined): Promise<void> {
     const id = event.toolCallId;
     const agent = event.agentId === undefined ? {} : { agentId: event.agentId };
-    const preimages = await this.#beginCall(state, bridge, event);
+    const preimages = await this.#beginCall(state, bridge, event, signal);
     const paths = generatedEditPaths(event.toolName, event.input);
     await this.#append(state, {
       type: "policy-call", toolCallId: id, toolName: event.toolName, paths,
       ...(preimages === undefined ? {} : { preimages }), ...agent, ...(event.cwd === undefined ? {} : { cwd: event.cwd }),
     });
-    state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, ...agent });
+    const checked = checkAtResult(event.toolName, paths) !== undefined;
+    state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, checked, ...agent });
     if (paths.length > 0) state.mergeAssistEdits.add(id);
   }
 
@@ -1656,16 +1891,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * is not waited for at a session's first start, so the agent is never held up by a first index: such a boundary is
    * answered without code rules and recorded in the session's history. The boundary's own check is skipped, but the file
    * stays checked: the first pass once the evaluator is open finds the edit and checks it, so its steer can arrive a
-   * turn later. A reopened session (`waitsForRules`) waits for its rules instead, within `REOPENED_RULES_WAIT_MS`, so
-   * its first edit is checked at its own result as every later one is.
+   * turn later. A reopened session waits for its rules instead at a boundary that needs them (`whileRulesOpen`), within
+   * `REOPENED_RULES_WAIT_MS`, so its first edit is checked at its own result as every later one is. Once a tool call or
+   * result has waited that out, later ones go on without code rules as at a first start, and only turn ends still wait.
+   * A reopened session's boundary that needs no rules goes on at once and is not recorded: it skipped no check.
    */
   async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
-    if (state.waitsForRules) {
-      const opened = await openedWithin(state.codeRuleWorkspace, REOPENED_RULES_WAIT_MS);
-      if (opened.settled) return opened.bridge;
+    const step = whileRulesOpen(state.rulesWait, event, state.pendingCodeRuleCalls);
+    if (step === "wait") {
+      if (await settledWithin(state.codeRuleWorkspace, REOPENED_RULES_WAIT_MS)) return await state.codeRuleWorkspace;
+      state.rulesWait = "turn-end";
     }
-    this.#recordRulesPending(state, event);
+    if (step !== "pass") this.#recordRulesPending(state, event);
     return undefined;
   }
 
@@ -1677,6 +1915,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#recordSessionFact(
         state.descriptor.sessionId,
         (store, descriptor, attribution) => store.recordCodeRulesPending(descriptor, boundary, attribution),
+        happenedAt(state),
       );
     } catch (error) {
       // Recording a boundary that answered without code rules is best-effort: it never fails the boundary.
@@ -2041,8 +2280,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     };
   }
 
+  /** Records the receipt of a steer delivered in `sessionId`, crediting `ruleIds`; throws for a session it does not hold. */
   recordSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): void {
+    if (!this.recordHeldSteer(sessionId, receiptId, ruleIds)) throw new Error(`Unknown session: ${sessionId}`);
+  }
+
+  /**
+   * `recordSteer` for a caller that may hand over a receipt of a session this runtime does not hold (the engine service
+   * routes a hook's receipt by its folder): false, recording nothing, for such a session, open or closed by it.
+   */
+  recordHeldSteer(sessionId: string, receiptId: string, ruleIds: readonly string[] = []): boolean {
+    if (!this.#sessions.has(sessionId) && !this.#closedSessions.has(sessionId)) return false;
     this.#recordSessionFact(sessionId, (store, descriptor, attribution) => store.recordSteer(descriptor, receiptId, ruleIds, attribution));
+    return true;
   }
 
   /** The host's record of session events it never delivered, so the session's history reads as incomplete. */
@@ -2053,6 +2303,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #recordSessionFact(
     sessionId: string,
     record: (store: SqliteSessionStore, descriptor: AdapterSession, attribution: SessionAttribution) => void,
+    // A fact of the event the session is ingesting: recorded at the time that event happened (`happenedAt`).
+    happened?: { observedAt?: number },
   ): void {
     const state = this.#sessions.get(sessionId);
     const closed = this.#closedSessions.get(sessionId);
@@ -2065,6 +2317,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         startedAt: state?.startedAt ?? closed!.startedAt,
         endedAt: closed?.endedAt ?? null,
         repositoryKey: state === undefined ? closed!.repositoryKey : this.#repositoryKey(state.checkout),
+        ...happened,
       });
     } finally {
       if (this.#sessionStoreClosed) sessionStore.close();
@@ -2088,22 +2341,79 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const state = this.#sessions.get(sessionId);
     if (!recordsCoverage(state)) return;
     try {
-      const { root } = state.checkout;
-      const repositoryId = this.#repositoryKey(state.checkout);
-      if (repositoryId === null) return;
-      const catalog = this.#catalogs.catalog(root);
-      const loaded = catalog.status.sourceSignature;
-      // Current only while the code and conversation rules were loaded from the same configuration.
-      const synchronized = state.ruleSync === undefined || state.ruleSync.sourceSignature === loaded;
-      this.#sessionStore.recordRuleCoverage(state.descriptor, {
-        repositoryId,
-        ownerCheckoutPaths: this.#catalogs.ownerCheckoutPaths(root),
-        activeRuleCount: (state.registry?.count ?? 0) + catalog.status.ruleCount,
-        ruleSignature: (synchronized ? configurationSignatureOf(loaded) : undefined) ?? "",
-      });
+      const coverage = this.#ruleCoverage(state);
+      if (coverage !== undefined) this.#sessionStore.recordRuleCoverage(state.descriptor, coverage);
     } catch (error) {
       console.error("rerail rule coverage:", error);
     }
+  }
+
+  /** The rules `state`'s session runs, as its checkout's catalog loaded them; undefined in a checkout Rerail does not record. */
+  #ruleCoverage(state: RuntimeSessionState): RuleCoverage | undefined {
+    const { root } = state.checkout;
+    const repositoryId = this.#repositoryKey(state.checkout);
+    if (repositoryId === null) return undefined;
+    const catalog = this.#catalogs.catalog(root);
+    const loaded = catalog.status.sourceSignature;
+    // Current only while the code and conversation rules were loaded from the same configuration.
+    const synchronized = state.ruleSync === undefined || state.ruleSync.sourceSignature === loaded;
+    return {
+      repositoryId,
+      ownerCheckoutPaths: this.#catalogs.ownerCheckoutPaths(root),
+      activeRuleCount: (state.registry?.count ?? 0) + catalog.status.ruleCount,
+      ruleSignature: (synchronized ? configurationSignatureOf(loaded) : undefined) ?? "",
+    };
+  }
+
+  /**
+   * What this runtime holds of `event`'s session once it has taken the event, for the facts of its answer: the checkout
+   * the session works in and, at a session's start, what the note says of its rules. Undefined for a session not open
+   * here. Read from memory, but for the checkout's start state, which every event reads (`#heldState`).
+   */
+  heldSession(event: AdapterEvent): HeldSession | undefined {
+    const state = this.#heldState(event);
+    if (state === undefined) return undefined;
+    const checkout = this.#catalogs.checkout(state.checkout.root);
+    return {
+      checkout: checkout === undefined ? null : { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath },
+      ...(event.kind === "session-start" ? { sessionNote: this.#sessionNoteRules(state) } : {}),
+    };
+  }
+
+  /**
+   * `event`'s session while it is open here in a checkout where Rerail is started; undefined otherwise. A stopped
+   * checkout's runtime takes no event, so what it holds of a session opened before the stop is not read again.
+   */
+  #heldState(event: AdapterEvent): RuntimeSessionState | undefined {
+    const state = this.#sessions.get(event.kind === "session-start" ? event.session.sessionId : event.sessionId);
+    return state === undefined || state.closed || this.#stopped() ? undefined : state;
+  }
+
+  /**
+   * What the session-start note says of `state`'s rules, as the session's footer reads its coverage
+   * (`SqliteSessionReader.hud`): its checkout is not set up; the rules it runs while they are current; or no count where
+   * the checkout is stopped or the rules were loaded before the configuration last changed, which the session's next
+   * tool call loads again. Asked once the session's start is taken, when its coverage is recorded.
+   */
+  #sessionNoteRules(state: RuntimeSessionState): SessionNoteRules {
+    const eligibility = this.#catalogs.eligibility(state.checkout.root);
+    if (eligibility === "not-set-up") return { setUp: false };
+    return { setUp: true, ruleCount: eligibility === "ok" ? this.#currentRuleCount(state) : null };
+  }
+
+  /**
+   * The rules `state`'s session runs while its coverage is current as the footer reads it: the configuration signature
+   * it records is the configuration's as the session's start has just read it. The start's ingest reads it once, as its
+   * conversation rules load or refresh (`LiveConversationRules.sourceSignature`), in this session's lane, so the count
+   * reads nothing more; only a runtime with no conversation rules (no model) reads it here. A session whose code and
+   * conversation rules were loaded from different configurations records none, so it reads no count either. Null
+   * otherwise.
+   */
+  #currentRuleCount(state: RuntimeSessionState): number | null {
+    const coverage = this.#ruleCoverage(state);
+    if (coverage === undefined) return null;
+    const read = state.ruleSync?.sourceSignature ?? this.#catalogs.catalog(state.checkout.root).sourceSignature();
+    return coverage.ruleSignature === configurationSignatureOf(read) ? coverage.activeRuleCount : null;
   }
 
   #repositoryKey(checkout: StartingCheckout): string | null {
@@ -2133,7 +2443,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async dispose(): Promise<void> {
-    clearInterval(this.#controlTimer);
+    this.#disposing = true;
+    this.#pollControlsWhileSessionsOpen();
+    const placingEnded = this.#placing.stop();
     // No conflict change is offered to a session that is closing.
     this.#mergeAssistUnlisten?.();
     // The sessions still open did not end: what each owes its agent waits in its ledger for its next event, as across
@@ -2142,6 +2454,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
     await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
+    await placingEnded;
     // A Merge Assist this runtime made works over its database: its hook's late answers stop before that closes.
     if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
@@ -2157,10 +2470,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
     // A session the engine service suspended goes on from where its walks stood (`SessionSuspension`).
     const suspension = this.#suspendedSessions?.get(session.sessionId);
-    const recordedSession = this.#sessionStore.session(session.sessionId);
-    const startedAt = recordedSession?.startedAt ?? Date.now();
-    const ledger = await this.#openLedger(session, recordedSession === undefined);
+    // A resume for a scan stops here while another process holds the write lock, before any of the open's work.
     this.#failWhileWriteLockedForScan(session.sessionId);
+    const recordedStart = this.#recordedStart(session.sessionId);
+    // Read before the wait below, which can last as long as Git's reads of the checkout.
+    const startTime = this.#startTime(session.sessionId);
+    // What the checkout's first events ask Git is learnt here without blocking the daemon (`placeCheckout`), so the
+    // steps below find it kept: every other session's events are answered meanwhile, and this session's wait in order.
+    const ledger = await this.#ledgerWhilePlaced(session, recordedStart === undefined);
+    // A session whose row is gone (a power cut took it with its first commits, or `rerail reset` took an ended one's)
+    // started when its ledger's first dated event came, not now.
+    const startedAt = recordedStart ?? firstDatedEvent(ledger.entries) ?? startTime;
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
     const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));
@@ -2223,6 +2543,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let auditor: CodeRuleAuditor | undefined;
     let bridge: CodeRuleBridge | undefined;
     this.#sessions.set(session.sessionId, opened);
+    this.#pollControlsWhileSessionsOpen();
     try {
       const followsGitignore = this.#catalogs.followsGitignore(checkout.root);
       auditor = this.#createAuditor({
@@ -2240,6 +2561,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await this.#beforeSessionPublish?.(session);
       this.#failWhileWriteLockedForScan(session.sessionId);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
+      const recorded = this.#sessionStore.lastRecordedEvent(session.sessionId, ledgerKinds(ledger.entries));
+      this.#sessionStore.recordLostEvents(session, lostEvents(ledger.entries, recorded));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, ledger.completeTracking);
       opened.ownerClaim = this.#registerOwner(session.sessionId);
@@ -2249,7 +2572,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
     const settings = { ...this.#auditSettings, ...auditSettings };
     opened.codeRuleOpening = true;
-    opened.waitsForRules = waitsForRulesOnReopen(recordedSession !== undefined, session.host);
+    opened.rulesWait = rulesWaitOnReopen(recordedStart !== undefined, session.host);
     opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger.entries, settings).then(open => {
       if (open === undefined) {
         retired = true;
@@ -2300,6 +2623,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }): CodeRuleBridge {
     return new CodeRuleBridge(checkout.cwd, auditor, {
       observations: this.#sourceObservations,
+      // A call checked after it ran (`IngestOptions.observedAt`) ran when its hooks met it.
+      eventTime: () => opened.observedAt,
       ...walkResumeOption(suspension),
       heldCalls: heldCallsOf(opened.restoredCalls),
       // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
@@ -2400,6 +2725,31 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (state.claimOwed === true) this.#claimAgain(state.descriptor.sessionId);
   }
 
+  /**
+   * The session's ledger ({@link #openLedger}), read while its checkout is placed ({@link #placeCheckout}): both settle
+   * before it answers or fails, so an open that fails leaves no Git of its placement running in the checkout. Once both
+   * stand, the other worktrees Git lists are placed ({@link placeWorktrees}) under the same reads, and the open does not
+   * wait for them: its first hook waits for its own checkout only, and a dispose ends that pass and waits for its Git.
+   */
+  async #ledgerWhilePlaced(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
+    const [ledger, placed] = await Promise.allSettled([this.#openLedger(session, unrecorded), this.#placeCheckout(session)]);
+    if (ledger.status === "rejected") throw ledger.reason;
+    if (placed.status === "rejected") throw placed.reason;
+    const registry = placed.value;
+    if (registry !== undefined) void this.#placing.run(signal => placeWorktrees(registry, { signal }));
+    return ledger.value;
+  }
+
+  /**
+   * {@link placeCheckout} for the session's folder, with the registry Git listed for it; a runtime disposed meanwhile
+   * fails the open before any Git finds the checkout.
+   */
+  async #placeCheckout(session: AdapterSession): Promise<WorktreeRegistry | undefined> {
+    const registry = await this.#placing.run(signal => placeCheckout(session.cwd, { signal }));
+    if (this.#placing.stopped) throw new Error(`the session ${session.sessionId} opened while Rerail was stopping`);
+    return registry;
+  }
+
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
   async #openLedger(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
     const directory = sessionDirectory(this.#storageRoot, session.sessionId);
@@ -2447,6 +2797,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       pendingSteers: [],
       steerStrategy,
       resultWindow: undefined,
+      observedAt: this.#startsAt.get(session.sessionId),
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
       undeliveredSources: new Set(),
@@ -2455,14 +2806,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       codeRuleWorkspace: Promise.resolve(undefined),
       codeRuleReady: false,
       codeRuleOpening: false,
-      waitsForRules: false,
+      rulesWait: "none",
       auditRequestWork: undefined,
       mergeAssistNotesInFlight: new Set(),
       mergeAssistEdits: new Set(),
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
       pendingCodeRuleCalls: openCalls.map(call => ({
-        id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
+        id: call.toolCallId, toolName: call.toolName, checked: checkAtResult(call.toolName, call.paths) !== undefined,
+        ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
       overdueEditChecks: {},
@@ -2555,6 +2907,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     opened.pendingSteers = [];
     opened.missedFindings = [];
     this.#sessions.delete(sessionId);
+    this.#pollControlsWhileSessionsOpen();
     if (opened.ownerClaim !== undefined) {
       this.#controls.interrupt(sessionId);
       this.#controls.interruptRepositoryAudit(sessionId);
@@ -2669,8 +3022,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * delivered (`ownSteers`) or a finding held for the yield's digest, among them those its ledger gave back as it opened
    * again (`owedNow`: a scan opens a suspended session with no event to take them), or a scan (`#owesScan`). A steer
    * would reach the agent with the next event all the same, but the session that event opened again would hold the
-   * agent's next tool call while its rules compile again (`REOPENED_RULES_WAIT_MS`), or check its edit only at the turn
-   * end in a host that does not wait: a session left in memory checks it at once.
+   * agent's next edit or command while its rules compile again (`REOPENED_RULES_WAIT_MS`), or check its edit only at
+   * the turn end in a host that does not wait: a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
     return state.callsAwaitingResult.size > 0 || anyOverdue(state.overdueEditChecks)
@@ -2717,6 +3070,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         }
       } finally {
         this.#sessions.delete(sessionId);
+        this.#pollControlsWhileSessionsOpen();
         // The runtime outlives its sessions, and their walks of the other worktrees looked up every folder of each.
         if (this.#sessions.size === 0) this.#owners.forgetFolders();
         // A suspended session's record stays open: its agent may still be at work.
@@ -2795,26 +3149,30 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
-    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) {
-      // Recorded before the event counts as processed: a call sent again after a crash here is judged again.
-      await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
-      state.secretCalls.add(event.toolCallId);
-    }
+    await this.#noteSecretCall(state, event);
     const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
-    this.#sessionStore.append({
-      sessionId,
-      eventId: event.eventId,
-      kind: event.kind,
-      // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
-      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
-    }, state.descriptor);
-    if (withheld) {
-      await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
-      state.secretCalls.delete(event.toolCallId);
-      state.withheldResults.add(event.eventId);
-    }
-    await this.#append(state, { type: "event", eventId: event.eventId });
+    // When the event happened: for one that reaches the runtime later, its own time (`happenedAt`), else now.
+    const observedAt = happenedAt(state).observedAt ?? Date.now();
+    this.#sessionStore.append({ sessionId, eventId: event.eventId, kind: event.kind, observedAt, payload: storedPayload(event, withheld) }, state.descriptor);
+    if (withheld) await this.#noteWithheldResult(state, event);
+    // The row's kind and time go with the line, so the session's next open can record which events a power cut took
+    // (`lostEvents`).
+    await this.#append(state, { type: "event", eventId: event.eventId, kind: event.kind, observedAt });
     state.processed.add(event.eventId);
+  }
+
+  /** A call that names a secret-like path, recorded before the event counts as processed: sent again after a crash here, it is judged again. */
+  async #noteSecretCall(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
+    if (event.kind !== "call" || !callNamesSecretPath(event.input, state.descriptor.cwd)) return;
+    await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
+    state.secretCalls.add(event.toolCallId);
+  }
+
+  /** A result of such a call, its output left out of its row, recorded once the row is written. */
+  async #noteWithheldResult(state: RuntimeSessionState, event: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
+    await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
+    state.secretCalls.delete(event.toolCallId);
+    state.withheldResults.add(event.eventId);
   }
 
   async persistTurn(sessionId: string, eventId: string): Promise<void> {
@@ -3302,10 +3660,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
   }
 
-  async #ingestSessionStart(event: Extract<AdapterEvent, { kind: "session-start" }>): Promise<readonly AdapterDelivery[]> {
-    assertEventHost(event.session.host);
+  /** A session's start, which happened at `observedAt` when it reaches the runtime later (`IngestOptions.observedAt`). */
+  async #ingestSessionStart(event: Extract<AdapterEvent, { kind: "session-start" }>, observedAt: number | undefined): Promise<readonly AdapterDelivery[]> {
+    const { session } = event;
+    this.#sessions.get(session.sessionId)?.ruleSync?.refresh();
+    assertEventHost(session.host);
     if (this.#autostart) autostartDaemon();
-    await this.#router(event.session.host).ingest(event);
+    await this.#asOf(session.sessionId, observedAt, () => this.#router(session.host).ingest(event));
     return [];
   }
 

@@ -50,9 +50,11 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   `0.1.1`) and writes its `CHANGELOG.md` section.
 - **Core ranges:** a pack it releases that an older core cannot load has its core range raised to leave those cores
   out, once core is at the release that first loads it. Each released core from 0.1.5 checks the pack's rules itself,
-  with the `validateCodeRule` it exports (`acceptedFloor` in `scripts/release/core.mjs`), so any rule it refuses counts. For the
-  cores before 0.1.5, which can't check, a rule held off or a rule in a language or with an ast rule key added since
-  counts. The description lists each raised range, and the run log names the rules each core refuses.
+  with the `validateCodeRule` it exports (`acceptedFloor` in `scripts/release/core.mjs`), so any rule it refuses counts.
+  So does what `core.mjs` maps to the release that first reads it, all that counts for the cores before 0.1.5, since
+  they can't check: a rule held off, a rule in a language or with an ast rule key added since, a rule written in `.rerail` and a
+  rule's `dimensions`. The range leaves out every core before the newer of the two. The description lists each raised
+  range, and the run log names the rules each core refuses.
 - **Merge:** tags the merge commit `v<version>`, which starts `release.yml`. Core and the packs publish to `next`.
 
 <details>
@@ -419,7 +421,9 @@ and core names all six as optional dependencies at that exact version.
   the six pins in and takes them out again ([Shrinkwrap](#shrinkwrap)).
 - **Loading.** Rerail loads the engine `RERAIL_ENGINE_PATH` names, else the one in the package root's `native/` (a
   checkout's own build, or `npm run engine:pull`), else its platform's engine package, and that only at Rerail's own
-  version. A checkout and CI's jobs build into `native/`, so they never resolve an engine package.
+  version. A checkout and CI's jobs build into `native/`, so they never resolve an engine package. A process finds and
+  loads the engine at its first call into it that finds one, and from then on looks again only where
+  `RERAIL_ENGINE_PATH` has changed.
 - **Size.** Packed from 0.2.0's engines, an engine package is 35 to 42 MB and core about 12 MB. npm's registry refused
   0.2.0's single tarball of 248.5 MB, which is why the engines are packages of their own.
 

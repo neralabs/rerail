@@ -16,6 +16,7 @@
  * to the one that took its place (`refocusIndex`), unless the person moved it meanwhile.
  */
 import { h, icon, setAttr, setContent, setText, syncChildren } from "../dom.js";
+import { madeButUnconfirmed } from "../api.js";
 import { ago, failed, fmt, plural, stamp } from "../format.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, inScope, mergeAssistMark, mergeAssistReadAfter, writeMergeAssist } from "../poll.js";
@@ -45,7 +46,8 @@ async function write(scope, method, path, body, failure) {
   try {
     return await writeMergeAssist(scope, method, path, body);
   } catch (error) {
-    toast(failed(failure, writeError(error)));
+    // A change made but not confirmed on the disk keeps its error, so the toast is the daemon's words alone (`failed`).
+    toast(failed(failure, madeButUnconfirmed(error) ? error : writeError(error)));
     return null;
   }
 }
@@ -341,7 +343,7 @@ function build() {
     root: h("div.mpage", null, head, notice, off, strip, settings.root, conflicts.root),
     heading, notice, off, strip, settings, conflicts,
     // Built with the consent card and the strip; patched in place on every render.
-    onButton: null, stripWhen: null, scanButton: null, offButton: null, problems: null,
+    onButton: null, stripWhen: null, githubWhen: null, scanButton: null, offButton: null, problems: null,
   };
 }
 
@@ -386,13 +388,14 @@ function cell(label, value, attrs = null) {
   return h("div.mcell", attrs, h("span.k", null, label), h("span.v", null, value));
 }
 
-/** The strip's cells: on, branch → base, gh and the last scan. */
+/** The strip's cells: on, branch → base, gh with when it was read, and the last scan. */
 function stripCells(status, scan) {
   const { branch, base } = branchText(status), github = githubText(status.readiness.github);
+  const read = page.githubWhen === null ? null : h("span.sub", null, "read ", page.githubWhen);
   return h("div.mcells", null,
     cell("Status", h("span.mon-state", null, h("span.dot", { "aria-hidden": "true" }), "On")),
     cell("Branch", [h("span.mono", null, branch), h("span.marrow", { "aria-hidden": "true" }, " → "), h("span.vh", null, " into "), h("span.mono", null, base)]),
-    cell("GitHub", github.ok ? github.text : h("span.mwarn-t", null, github.text)),
+    cell("GitHub", [github.ok ? github.text : h("span.mwarn-t", null, github.text), read]),
     cell("Last scan", scan === null ? "Not scanned yet" : [page.stripWhen, h("span.sub", null, scannedWhat(scan))]));
 }
 
@@ -415,17 +418,28 @@ function patchStripButtons(status) {
   setText(page.offButton, switching ? "Turning off…" : "Turn off");
 }
 
+/**
+ * What the strip draws, which rebuilds it when it changes. Of gh's reading only its state, login, repository and whether
+ * gh was read: the time it was read is patched in place (`patchStripTimes`), and the time until it is read again moves
+ * at every status.
+ */
+export function stripSignature(status) {
+  const { state, login, repository, readAt } = status.readiness.github;
+  const github = { state, login, repository, read: readAt !== null };
+  return JSON.stringify([status.branch, status.baseBranch, { ...status.readiness, github }, status.lastScan]);
+}
+
 /** The status strip while on: its cells, Scan now and Turn off, and the last scan's problems. */
 function renderStrip(status) {
   if (status === null || !status.enabled) {
     setContent(page.strip, "off", () => null);
-    Object.assign(page, { stripWhen: null, scanButton: null, offButton: null, problems: null });
+    Object.assign(page, { stripWhen: null, githubWhen: null, scanButton: null, offButton: null, problems: null });
     return;
   }
   const scan = status.lastScan;
-  const sig = JSON.stringify([status.branch, status.baseBranch, status.readiness, scan]);
-  setContent(page.strip, sig, () => {
+  setContent(page.strip, stripSignature(status), () => {
     page.stripWhen = scan === null ? null : h("span.when");
+    page.githubWhen = status.readiness.github.readAt === null ? null : h("span.when");
     page.scanButton = h("button.btn.sm.solid.mscan", { "data-act": "mascan" });
     page.offButton = h("button.btn.sm.danger.quiet", { "data-act": "maoff", title: "Turn Merge Assist off for this repository" });
     page.problems = scanProblems(scan);
@@ -433,7 +447,13 @@ function renderStrip(status) {
   });
   patchStripButtons(status);
   if (page.problems !== null) setAttr(page.problems, "open", ui.mergeOpen.has("problems"));
-  if (page.stripWhen !== null) setText(page.stripWhen, ago(Date.parse(scan.at)));
+  patchStripTimes(status);
+}
+
+/** The strip's times, patched on every render so they move on without a rebuild: the last scan's and gh's reading's. */
+function patchStripTimes(status) {
+  if (page.stripWhen !== null) setText(page.stripWhen, ago(Date.parse(status.lastScan.at)));
+  if (page.githubWhen !== null) setText(page.githubWhen, ago(Date.parse(status.readiness.github.readAt)));
 }
 
 /** A text field of the Settings form, holding `value` when built; typing keeps it in `ui.mergeSettings` (`onInput`). */

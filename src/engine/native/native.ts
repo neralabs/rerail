@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
@@ -549,10 +549,12 @@ export interface NativeTreeWatcher {
 
 /** The process holding the server end of a Windows named pipe ({@link NativeBinding.namedPipeServer}). */
 export interface NativeNamedPipeServer {
-  /** Absent when other clients kept every instance of the pipe taken until the wait ran out. */
+  /** Absent when other clients kept every instance taken until the wait ran out, or Windows gave `windowsError`. */
   pid?: number | null;
   /** When it started, epoch ms; absent where this user may not ask. */
   startedAt?: number | null;
+  /** The error Windows gave where a pipe of that name is there but refused the open or would not name its holder. */
+  windowsError?: number | null;
 }
 
 export interface NativeBinding {
@@ -600,6 +602,18 @@ export interface NativeBinding {
    */
   detachedExitCode?(pid: number): number | null;
   /**
+   * Windows only: when the process holding `pid` started (its creation time), in epoch milliseconds, or null where
+   * Windows does not say: no process holds `pid`, or this user may not query it. A binary built before it lacks it.
+   */
+  processStartedAt?(pid: number): number | null;
+  /**
+   * Windows only: opens the process holding `pid`, reads its creation time and, when that is no later than `startedAt`
+   * (epoch ms), ends it and waits up to `waitMs` for it to exit, all through the one handle it opened: `ended`,
+   * `running` (ended, still running after the wait), `later` (started after `startedAt`, let alone) or `unread` (not
+   * opened or not read). A binary built before it lacks it.
+   */
+  endProcessStartedBy?(pid: number, startedAt: number, waitMs: number): string;
+  /**
    * Linux only: starts Git through `posix_spawn`, which copies nothing of this process (`git-start.ts`). A binary built
    * before it lacks it.
    */
@@ -618,14 +632,24 @@ export interface NativeBinding {
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
   /**
    * Windows only: the process holding the server end of the named pipe `path` and when it started, opening again while
-   * other clients hold every instance until `timeoutMs` has passed, on a thread of the worker pool; null where no pipe
-   * of that name takes a connection, and on every other system. A binary built before it lacks it.
+   * other clients hold every instance until `timeoutMs` has passed, on a thread of the worker pool; null where Windows
+   * says no pipe of that name exists, and on every other system. A binary built before it lacks it.
    */
   namedPipeServer?(path: string, timeoutMs: number): Promise<NativeNamedPipeServer | null>;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
+  /**
+   * Locks `path` exclusively, creating the file, waiting up to `waitMs` while another handle holds it (0 tries once). A
+   * free lock is taken at once: the promise is already settled when the call returns, with no thread started. A held one
+   * resolves with the lock the moment the OS hands it over at its holder's release or exit, or with null when it is
+   * still held at the bound; that wait runs on a thread of its own, and one given up never ends up holding the lock.
+   * On Unix, where `flock` takes no bound, a wait given up keeps its thread and the file open until the holder lets go
+   * or ends: a process waits only where it, or the holder, ends soon after (a command, a daemon's start), never in a
+   * loop of a process that lives on. Throws at once when the file does not open or the first try fails.
+   */
+  lockExclusive(path: string, waitMs: number): Promise<NativeExclusiveFileLock | null>;
   /** The owner of the engine's in-process Git reads; make it through `nativeGitAccess` (`git-access.ts`), once per process. */
   GitAccess: new (installation: NativeGitInstallation) => NativeGitAccess;
   ConversationEngine: NativeConversationEngineConstructor;
@@ -711,8 +735,11 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
 }
 
 /**
- * The engine file of each Rerail package's engine package, once found. `loadNativeBinding` runs for every call into
- * the engine, so the package is resolved and its version read once per process, and only where `native/` has no engine.
+ * The engine file of each Rerail package's engine package, once found at Rerail's version, where `native/` has none.
+ * `loadNativeBinding` keeps the engine it loaded, yet looks again while a load fails and where `RERAIL_ENGINE_PATH`
+ * comes and goes, and a catalog read before a load stamps the file a load would take (`loadedEngineFile`): such a look
+ * returns this file without resolving the package or reading its version again, so a process gets back the engine it
+ * loaded though an install has changed the package on disk since.
  */
 const packagedEngines = new Map<string, string>();
 
@@ -877,25 +904,71 @@ function namesRerail(manifestPath: string): boolean {
   }
 }
 
-/**
- * The engine's busy refusal, kept when the addon first loads. `isWorkspaceBusy` runs in a retry's `catch`, after the
- * failed call loaded the addon, so it reads this instead of resolving the addon there again, where a moved addon would
- * throw over the error it classifies.
- */
-let workspaceBusy: unknown;
-
 /** Whether this process has named Rerail's package to its engine (`setPackageRoot`): once, as the engine never forgets it. */
 let packageRootNamed = false;
 
+/** An engine file by its path, with its time and size as they were read. */
+export interface EngineFile {
+  readonly path: string;
+  readonly mtimeMs: number;
+  readonly size: number;
+}
+
+/**
+ * The engine this process loaded, with the `RERAIL_ENGINE_PATH` it was found under and its file as it was loaded. Every
+ * call into the engine goes through `loadNativeBinding`, a walk once per file and per Git ignore question. Node never
+ * unloads an addon, so a later look could only hand back this engine or load a second one beside it: the engine is kept
+ * from the first call that loads one, and looked for again only where `RERAIL_ENGINE_PATH` has changed since. A look
+ * that fails replaces nothing: the next call looks again, and the engine loaded before comes back with its own value.
+ */
+let loaded: { readonly configuredPath: string | undefined; readonly file: EngineFile; readonly binding: NativeBinding } | undefined;
+
+/**
+ * Each engine file this process has loaded, by the name Node keeps its module under (`require.resolve`, which follows
+ * links), with the file as it was read just before Node first loaded it under that name. Node loads a file under one
+ * name once and hands back that engine at every later `require` of the name, though a build has replaced the file since.
+ */
+const loadedFiles = new Map<string, EngineFile>();
+
 export function loadNativeBinding(): NativeBinding {
-  const addonPath = resolveNativeBindingPath();
+  const configuredPath = process.env.RERAIL_ENGINE_PATH;
+  if (loaded === undefined || loaded.configuredPath !== configuredPath) {
+    const path = resolveNativeBindingPath(configuredPath);
+    const name = require.resolve(path);
+    // Read before Node first loads the name: a file replaced between the two leaves a stamp no file on disk has.
+    const file = loadedFiles.get(name) ?? engineFile(path);
+    loaded = { configuredPath, file, binding: requireEngine(path) };
+    loadedFiles.set(name, file);
+  }
+  return loaded.binding;
+}
+
+/**
+ * The engine file the next call into the engine runs: the one this process loaded, with its time and size as they were
+ * then, as Node keeps the engine it loaded though a build replaces its file or writes one ahead of it in the look; while
+ * this process holds no engine under the `RERAIL_ENGINE_PATH` set now, the file a load would take, as it was when Node
+ * first loaded it under its name, or as it is now where Node has not.
+ */
+export function loadedEngineFile(): EngineFile {
+  const configuredPath = process.env.RERAIL_ENGINE_PATH;
+  if (loaded !== undefined && loaded.configuredPath === configuredPath) return loaded.file;
+  const path = resolveNativeBindingPath(configuredPath);
+  return loadedFiles.get(require.resolve(path)) ?? engineFile(path);
+}
+
+function engineFile(path: string): EngineFile {
+  const { mtimeMs, size } = statSync(path);
+  return { path, mtimeMs, size };
+}
+
+/** The engine at `addonPath`; the first one this process loads is told where Rerail's package is. */
+function requireEngine(addonPath: string): NativeBinding {
   let binding: NativeBinding;
   try {
     binding = require(addonPath) as NativeBinding;
   } catch (error) {
     throw engineLoadFailure(error);
   }
-  workspaceBusy ??= binding.WORKSPACE_BUSY;
   if (!packageRootNamed) {
     // In an engine package of its own the engine cannot always find Rerail's package from its own file: npm can put
     // the two side by side, and a package manager that keeps a store links the engine package in from there.
@@ -905,10 +978,14 @@ export function loadNativeBinding(): NativeBinding {
   return binding;
 }
 
-/** Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. */
+/**
+ * Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. It runs in a retry's
+ * `catch`, after the failed call loaded the engine, so it reads the engine kept in `loaded`: a look on disk there, where
+ * `RERAIL_ENGINE_PATH` has changed since, could throw over the error it classifies.
+ */
 export function isWorkspaceBusy(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  const busy = workspaceBusy ?? loadNativeBinding().WORKSPACE_BUSY;
+  const busy = (loaded?.binding ?? loadNativeBinding()).WORKSPACE_BUSY;
   if (typeof busy !== "string") {
     throw new Error("The native addon exports no WORKSPACE_BUSY, so it is older than this Rerail; rebuild or reinstall it", { cause: error });
   }

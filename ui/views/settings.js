@@ -8,7 +8,7 @@
  */
 import { h, setContent, icon } from "../dom.js";
 import { andList, failed, fmt, plural } from "../format.js";
-import { send } from "../api.js";
+import { madeButUnconfirmed, send } from "../api.js";
 import { data, ui, repoName } from "../state.js";
 import { captureScope, changeScope, inScope, loadAgents, loadPresence, loadFollowGitignore, saveFollowGitignore } from "../poll.js";
 import { applyTheme, invalidate, toast } from "../shell.js";
@@ -217,7 +217,10 @@ async function savePresence(presence) {
   try {
     await send("PUT", "/api/presentation-preferences", { repository: "", host: "", presence });
     toast(presence === "silent" ? "Footer hidden." : "Footer shown.");
-  } catch (error) { data.presence = was; toast(failed("Couldn’t change the footer setting", error)); }
+  } catch (error) {
+    if (!madeButUnconfirmed(error)) data.presence = was;
+    toast(failed("Couldn’t change the footer setting", error));
+  }
   invalidate();
 }
 

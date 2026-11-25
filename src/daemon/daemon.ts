@@ -14,16 +14,18 @@ import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { prepareDaemonGit } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/daemon/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
+import type { UntakenPass } from "../engine/storage/untaken-events.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
+import { startHistorySync, type HistorySync, type HistorySyncOptions } from "./history-sync.js";
 import type { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -33,6 +35,8 @@ import { createRerailMcpHandler } from "../api/mcp.js";
 import type { RerailApiStores } from "../api/operation.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
+import { eventAnswerFacts } from "../api/event-answer.js";
+import type { ChangeFeedOptions } from "../api/change-feed.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -41,7 +45,7 @@ import { moveRuleProvenancesInWorker } from "../engine/storage/rule-provenance-m
 import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
-import { holdHomeDaemonLock } from "../engine/native/home-daemon-lock.js";
+import { holdHomeDaemonLock, type HolderRuns, type HomeDaemonLease } from "../engine/native/home-daemon-lock.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -66,9 +70,10 @@ const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 /**
  * How long a client has to send its headers, then its whole request. Both bound receiving the request only, never how
- * long a handler takes to answer, and `/mcp` answers each POST with one JSON body (no SSE stream: `mcp.ts`), so no
- * response is cut short. Dashboard polls are small GETs; between them a kept-alive connection is closed by Node's
- * `keepAliveTimeout`, not these. Loopback carries the largest native body in well under 60 seconds.
+ * long a handler takes to answer, so no response is cut short: `/mcp` answers each POST with one JSON body (no SSE
+ * stream: `mcp.ts`), and the dashboard's change stream (`GET /api/changes`) is a GET received at once and answered for
+ * as long as the page shows. Between requests a kept-alive connection is closed by Node's `keepAliveTimeout`, not
+ * these. Loopback carries the largest native body in well under 60 seconds.
  */
 const HTTP_TIMEOUTS = { headersTimeout: 10_000, requestTimeout: 60_000 } as const;
 const INTERNAL_ERROR_MESSAGE = "The Rerail daemon could not answer this request; daemon.log in the Rerail home has the cause.";
@@ -79,6 +84,10 @@ export interface RerailDaemonOptions {
   remoteSink?: false | { intervalMs: number };
   /** False keeps the hourly forgetting of removed checkouts off ({@link startCheckoutPruning}); tests may shorten its interval. */
   checkoutPruning?: false | { intervalMs: number };
+  /** False keeps the history's sync in the background off ({@link startHistorySync}); tests may pass its period and sync. */
+  historySync?: false | HistorySyncOptions;
+  /** How the dashboard's change stream watches and beats; tests drive its notices and set its beat. */
+  changeFeed?: ChangeFeedOptions;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -109,6 +118,12 @@ export interface RerailDaemonOptions {
    * (`runHomeDaemon`), since it alone holds the home's lock; omitted, the state file is written once.
    */
   recordCheck?: { readonly everyMs: number; readonly home: string; readonly holdsHome: () => boolean };
+  /**
+   * The Rerail home's daemon lock this daemon holds (`holdHomeDaemonLock`), given up as the last step of `close`: a
+   * daemon restarting at its heap ceiling closes, then launches the next one, so that one finds the home free however
+   * long this process then takes to exit. The daemon of a home passes it (`runHomeDaemon`).
+   */
+  homeLease?: Pick<HomeDaemonLease, "release">;
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
@@ -119,6 +134,11 @@ export interface RerailDaemonOptions {
   enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * Hears of each pass over the events hooks left untaken while the daemon did not read, once their checks ended: the
+   * daemon's entry point writes it to the hook failure log, where `rerail status` reads it.
+   */
+  lateChecked?: (pass: UntakenPass) => void;
   /**
    * Starts the daily update check `/healthz.update` reports, stopped when the daemon closes. The entry point of a
    * managed install passes set-up's (`startUpdateChecks`); omitted, as for a checkout's daemon and in tests, nothing
@@ -447,6 +467,8 @@ interface StartedServices {
  * stderr, so a later EADDRINUSE has its cause on record.
  */
 async function closeAfterFailedStart({ engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+  // A watch of the untaken folder holds it open, and on Windows keeps the home from being removed: the engine service's
+  // close ends it first.
   const failed = (what: string, reason: unknown): void => {
     process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
   };
@@ -476,6 +498,33 @@ function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: Merg
   return mergeAssistExperimentEnabled() ? { mergeAssist: createMergeAssistService({ database }) } : {};
 }
 
+/**
+ * The engine service's option naming the home whose untaken events it checks (`EngineService.untaken`): the one
+ * `stateFile` is in, since hooks find the daemon there; none for a daemon no state file names. Each pass goes to
+ * daemon.log and to `lateChecked`.
+ */
+function untakenEventsOption(
+  stateFile: string | undefined, lateChecked: RerailDaemonOptions["lateChecked"],
+): { untakenEvents?: { home: string; lateChecked: (pass: UntakenPass) => void } } {
+  if (stateFile === undefined) return {};
+  return {
+    untakenEvents: {
+      home: dirname(stateFile),
+      lateChecked: pass => {
+        process.stdout.write(`rerail daemon: ${lateCheckLine(pass)}\n`);
+        lateChecked?.(pass);
+      },
+    },
+  };
+}
+
+/** What daemon.log says of a pass over the events hooks left while the daemon did not read. */
+function lateCheckLine({ events, from, to, failed }: UntakenPass): string {
+  const what = events === 1 ? "1 hook event" : `${events} hook events`;
+  const lost = failed === 0 ? "" : `; ${failed} could not be checked and ${failed === 1 ? "is" : "are"} lost`;
+  return `checked late ${what} left from ${new Date(from).toISOString()} to ${new Date(to).toISOString()} while it did not read${lost}`;
+}
+
 export class RerailDaemon {
   readonly host: string;
   readonly port: number;
@@ -501,6 +550,7 @@ export class RerailDaemon {
   readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
   #checkoutPruning: CheckoutPruning | undefined;
+  #historySync: HistorySync | undefined;
   /** What `RerailDaemonOptions.updateChecks` started, once nothing can fail the start. */
   #updateChecks: ReturnType<NonNullable<RerailDaemonOptions["updateChecks"]>> | undefined;
   #recordCheck: NodeJS.Timeout | undefined;
@@ -509,6 +559,8 @@ export class RerailDaemon {
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
+  /** The id of the untaken folder its watch watches, which the state file names so hooks leave events there unasked. */
+  #untakenFolder: string | undefined;
   /** What `RerailDaemonOptions.statusLines` started: stopped first on close, while the stores it reads are open. */
   #statusLines: { stop(): Promise<void> } | undefined;
 
@@ -586,6 +638,7 @@ export class RerailDaemon {
       // reports a failure itself, and its close waits for the open.
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
+      changeFeed: options.changeFeed,
     });
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
@@ -599,8 +652,11 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        ...untakenEventsOption(options.stateFile, options.lateChecked),
         worktreeWalks,
         ...sharedMergeAssist,
+        // Until the dashboard listens, a hook reads what it needs as it did before answers carried it.
+        answerFacts: (event, deliveries, held) => daemon === undefined ? undefined : eventAnswerFacts(stores.dashboardOrigin(), event, deliveries, held),
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
           ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
@@ -622,6 +678,7 @@ export class RerailDaemon {
       await daemon.#announce(remembered);
       daemon.#statusLines = options.statusLines?.(stores);
       daemon.#startCheckoutPruning();
+      daemon.#startHistorySync();
       daemon.#startUpdateChecks();
       daemon.#startProvenanceMove();
       return daemon;
@@ -646,9 +703,47 @@ export class RerailDaemon {
     if (pruning !== false) this.#checkoutPruning = startCheckoutPruning(this.#databasePath, pruning ?? {});
   }
 
+  /** Once nothing can fail the start: the log's sync about every 5 s while commits wait, off the daemon's thread. */
+  #startHistorySync(): void {
+    const sync = this.#options.historySync;
+    if (sync !== false) this.#historySync = startHistorySync(this.#databasePath, sync ?? {});
+  }
+
   /** Once nothing can fail the start: the daily ask for a newer Rerail, where the entry point passes one. */
   #startUpdateChecks(): void {
     this.#updateChecks = this.#options.updateChecks?.();
+  }
+
+  /**
+   * Watches this daemon's home for the events hooks leave untaken (`untaken-events.ts`), taking each as soon as this
+   * daemon's event loop runs. Only while the watch runs does the state file tell hooks they may leave events for it
+   * without asking it, naming the folder it watches (`#untakenFollowed`). Without one, events left by a hook that waited
+   * out this daemon are still taken at its next event and its next start.
+   */
+  #watchUntaken(stateFile: string): void {
+    this.#untakenFolder = this.#engineService.untaken.watch(folder => this.#untakenFollowed(stateFile, folder));
+  }
+
+  /**
+   * The watch followed the untaken folder to another one at its path (`folder`), or could follow it no more (undefined):
+   * the state file names that folder, or none, so hooks leave events unasked only where this daemon watches.
+   */
+  #untakenFollowed(stateFile: string, folder: string | undefined): void {
+    if (folder === this.#untakenFolder) return;
+    this.#untakenFolder = folder;
+    this.#recordChecked = this.#recordChecked.then(async () => {
+      if (this.#closed) return;
+      await this.#writeRecord(stateFile).catch((error: unknown) => {
+        process.stderr.write(`rerail daemon: could not write ${stateFile} again: ${errorText(error)}\n`);
+      });
+    });
+  }
+
+  /** Writes this daemon's state to `stateFile`, as what its record check keeps there. */
+  async #writeRecord(stateFile: string): Promise<void> {
+    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
+    await replaceFile(stateFile, text, { mode: 0o600 });
+    this.#recordText = text;
   }
 
   /**
@@ -672,13 +767,15 @@ export class RerailDaemon {
    * start and hook in that home while it records into a database that home does not hold.
    */
   async #record(stateFile: string): Promise<void> {
-    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
-    await replaceFile(stateFile, text, { mode: 0o600 });
-    this.#recordText = text;
+    this.#watchUntaken(stateFile);
+    await this.#writeRecord(stateFile);
+    // After the file, so a launcher waiting for it is not held by a backlog; an event sent meanwhile waits for the pass
+    // to begin every check of it first (the engine service's before-event step).
+    void this.#engineService.untaken.taken();
     const check = this.#options.recordCheck;
     if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
-      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, text, check));
+      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, this.#recordText!, check));
     }, check.everyMs);
     this.#recordCheck.unref();
   }
@@ -746,6 +843,7 @@ export class RerailDaemon {
       readsSpelling: true,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
       ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
+      ...(this.#untakenFolder === undefined ? {} : { untakenFolder: this.#untakenFolder }),
     };
   }
 
@@ -771,10 +869,19 @@ export class RerailDaemon {
     };
   }
 
+  /**
+   * Closes every checkout runtime no session uses (`EngineService.closeUnusedRuntimes`), settling once their memory was
+   * collected: the heap watch asks it before it restarts the daemon at its ceiling.
+   */
+  async closeUnusedRuntimes(): Promise<void> {
+    await this.#engineService.closeUnusedRuntimes();
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     clearInterval(this.#recordCheck);
+    this.#engineService.untaken.close();
     this.#updateChecks?.stop();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
@@ -788,6 +895,8 @@ export class RerailDaemon {
       await closeHttpServer(this.#server);
     } finally {
       try {
+        // Before the database closes: the last connection to close removes the log, which no sync may hold open then.
+        await this.#historySync?.stop();
         await this.#nativeServer.close();
         await this.#engineService.close();
       } finally {
@@ -795,6 +904,9 @@ export class RerailDaemon {
         await this.#mergeAssist?.stop();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await this.#removeOwnRecord(this.#options.stateFile);
+        // Last, once nothing of this daemon is open and its record is gone. Where a step above threw, the process's exit
+        // gives the lock up instead.
+        this.#options.homeLease?.release();
       }
     }
   }
@@ -1330,29 +1442,48 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "updateChecks" | "statusLines" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<
+  RerailDaemonOptions,
+  "codingAgents" | "lateChecked" | "updateChecks" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
+>;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
  * daemon lock before anything opens a store or binds a pipe, a socket or a port, so a second daemon stops here naming
  * the first: two starts at once, or a start whose wait for a slow daemon ran out, could otherwise leave two, one holding
  * the port and the other the one daemon.json names. Only the holder keeps daemon.json (`recordCheck`): two daemons
- * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
- * holder's record beside it. A loopback restart for a TLS key it may not serve with runs in this process and keeps the
- * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one keeps trying
- * for the lock for a second. From the lock to the end of its start, the record beside the lock says it is starting
- * (`homeDaemonStarting`), so a start that finds it then waits for it rather than taking it for a daemon that does not
- * answer or launching a second one.
+ * that each did would write over each other. The daemon gives the lock up at the end of its close (`homeLease`), and
+ * the lock goes with the process however else it ends; an exit also removes the holder's record beside it. A loopback
+ * restart for a TLS key it may not serve with runs in this process and keeps the lock. A restart at the heap ceiling
+ * closes the daemon, so the home is free before it launches the next daemon, whatever this process does before it exits.
+ * From the lock to the end of its start, the record beside the lock says it is starting (`homeDaemonStarting`), so a
+ * start that finds it then waits for it rather than taking it for a daemon that does not answer or launching a second
+ * one.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
-  const homeLock = await holdHomeDaemonLock(home);
+  const homeLock = await holdHomeDaemonLock(home, holderAnswers(home));
   if (homeLock === undefined) return await serveRerailDaemon(argv, services);
   process.once("exit", () => homeLock.release());
-  await serveRerailDaemon(argv, { ...services, recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() } });
+  await serveRerailDaemon(argv, {
+    ...services,
+    recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() },
+    homeLease: homeLock,
+  });
   // Its start is over: it has recorded itself, said where it listens, and its one thread is free to answer. Until now
   // its record beside the lock said it was starting, and a start that found it waited for this.
   homeLock.started();
+}
+
+/**
+ * Whether the process the home's lock record names is the daemon daemon.json records, answering as it does to a start
+ * (`lookupDaemon`, its record's proof and its health) within the bound given.
+ */
+function holderAnswers(home: string): HolderRuns {
+  return async (pid, withinMs) => {
+    const lookup = await lookupDaemon(home, undefined, withinMs);
+    return lookup.status === "running" && lookup.health.pid === pid;
+  };
 }
 
 /**
@@ -1519,6 +1650,8 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   process.once("SIGTERM", way.stop);
   process.once("SIGINT", way.stop);
   watchHeap({
+    // What the daemon keeps for its checkouts' next sessions goes before a restart that would make every hook wait.
+    relieve: () => daemon.closeUnusedRuntimes(),
     onCeiling: ({ used, limit }) => {
       process.stderr.write(`rerail daemon: heap at ${Math.round(used / 1e6)} MB of its ${Math.round(limit / 1e6)} MB limit; restarting before it runs out\n`);
       way.restart();

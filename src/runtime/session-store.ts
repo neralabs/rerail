@@ -1,4 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, inArray, isNull, lt, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
@@ -9,15 +12,19 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
+import { flushRecordWrites, openRecordWriter, type RecordWrite, type RecordWriter } from "../engine/storage/record-writes.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, checkouts, events, ruleViolationRollup, sessions, sessionsOfRepository, steerFeedback, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
-import type { DroppedEvents } from "./session-state.js";
+import type { DroppedEvents, LostEvent, LostEvents } from "./session-state.js";
+import { eventNumbersBehindRemotes, keepEventNumbersPastRemotes } from "./remote-cursors.js";
+import { SteerReceiptSchema, type SteerReceipt } from "./event-protocol.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
+import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
 export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
@@ -71,6 +78,8 @@ export interface SessionEventQuery {
 /** What a session's whole transcript says it missed (`SqliteSessionReader.gaps`). */
 export interface SessionGaps {
   droppedEvents: number;
+  /** Events Rerail recorded whose rows a power cut or an operating system crash took (`events-lost` counts). */
+  lostEvents: number;
   uncheckedBoundaries: number;
   codeRulesPendingBoundaries: number;
   /** Tool edits of files no rule checked because Git ignores them (`ignored-edit`). */
@@ -91,9 +100,12 @@ export type DiscoveryGapRecord = z.infer<typeof discoveryGapPayloadSchema> & { r
 
 /** The id of the one record that says the walks met more places than the record takes (`DiscoveryGap.more`): no place. */
 const MORE_DISCOVERY_GAPS_EVENT = "source-discovery-gap:more";
+/** A record of lost events (`recordLostEvents`): its kind, and its id, the start of one before its stretch's last event. */
+const LOST_EVENTS_KIND = "events-lost";
+const LOST_EVENTS_ID = `${LOST_EVENTS_KIND}:`;
 
 const NO_GAPS: SessionGaps = {
-  droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+  droppedEvents: 0, lostEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
 };
 
 /** A coding agent's note on a steer it declined (`rerail feedback`), with the audit whose steer it was. */
@@ -225,11 +237,16 @@ export interface RepositoryScope {
   repositoryId?: string | readonly string[] | undefined;
 }
 
-/** Who a session row belongs to when a write has to (re)create it. */
+/**
+ * Who a session row belongs to when a write has to (re)create it, and when the fact an event row records happened where
+ * that is earlier than the write (`observedAt`: a fact of an event a hook left while the daemon did not read), which
+ * the event's own `observedAt` overrides.
+ */
 export interface SessionAttribution {
   startedAt?: number;
   endedAt?: number | null;
   repositoryKey?: string | null;
+  observedAt?: number;
 }
 
 function repositoryFilter(repositoryIds: string | readonly string[] | undefined) {
@@ -387,11 +404,14 @@ export function decodeEventPayload(payload: Uint8Array): unknown {
 /**
  * Append-only, process-safe session and event persistence. Raw event payloads remain local to the
  * configured database. Sessions are attributed to the repository key given when they open, else to the
- * store's own `repositoryId`.
+ * store's own `repositoryId`. Every write goes through the database's record writer (`openRecordWriter`): made at
+ * once, or, while another process holds the write lock, in order once it is given back, never waiting on the caller's
+ * thread. Every read here is of what this process recorded, so it makes the waiting writes first (`#recorded`).
  */
 export class SqliteSessionStore {
   readonly path: string;
   readonly #database: RerailDatabase;
+  readonly #records: RecordWriter;
   readonly #repositoryId: string | null;
   /**
    * Each open session's repository as it opened here, to restore its row after a reset. A session's entry goes when it
@@ -400,6 +420,8 @@ export class SqliteSessionStore {
    */
   readonly #sessionRepositories = new Map<string, string | null>();
   readonly #onRowPutBack: ((sessionId: string) => void) | undefined;
+  /** Whether a session opened here yet: its first open moves the event numbers past a remote's (`openSession`). */
+  #opened = false;
 
   /**
    * `onRowPutBack` is told the session's id each time a write finds the session's row gone and writes it again
@@ -413,11 +435,23 @@ export class SqliteSessionStore {
     this.#repositoryId = repositoryId ?? null;
     this.#onRowPutBack = onRowPutBack;
     this.#database = openRerailDatabase(path);
+    this.#records = openRecordWriter(path);
   }
 
+  /**
+   * The first session open here moves the store's event numbers past those a remote has taken
+   * (`keepEventNumbersPastRemotes`), which a power cut can have taken back, before that session's first event: a writer
+   * that opens no session, as a hook's steer receipt, reads no outbox. It is a record write, so it never waits for
+   * another process's lock on this thread and commits ahead of the session's row and events, which wait behind it; and
+   * one of no effect, as when the home has no remote, takes no write lock (`writeUnless`).
+   */
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
+    if (!this.#opened) {
+      this.#records.writeUnless(() => !eventNumbersBehindRemotes(this.#database, this.path), database => keepEventNumbersPastRemotes(database, this.path));
+    }
+    this.#opened = true;
     this.#sessionRepositories.set(session.sessionId, repositoryKey);
-    this.#database
+    this.#records.write(database => database
       .insert(sessions)
       .values({ ...session, repositoryId: repositoryKey, startedAt, endedAt: null })
       .onConflictDoUpdate({
@@ -429,7 +463,7 @@ export class SqliteSessionStore {
           ...(repositoryKey === null ? {} : { repositoryId: repositoryKey }),
         },
       })
-      .run();
+      .run());
   }
 
   /** A stable identity makes reopen idempotent; missing history can never become complete later. */
@@ -449,12 +483,7 @@ export class SqliteSessionStore {
     ruleIds: readonly string[] = [],
     attribution?: SessionAttribution,
   ): void {
-    this.append({
-      sessionId: session.sessionId,
-      eventId: `steering-delivered:${receiptId}`,
-      kind: "steering-delivered",
-      payload: { ruleIds: [...ruleIds] },
-    }, session, attribution);
+    this.append(steerEvent(session, receiptId, ruleIds), session, attribution);
   }
 
   /** Marks the session's history incomplete over a stretch of events its host never delivered. */
@@ -465,6 +494,50 @@ export class SqliteSessionStore {
       kind: "events-dropped",
       payload: dropped,
     }, session, attribution);
+  }
+
+  /**
+   * Where a walk back over the session's ledger for lost events ends (`lostEvents`): the id of the newest event of
+   * `kinds` the session's history holds, or, when a record of lost events (`recordLostEvents`) is newer, the last event
+   * of the stretch it looked over. One read: the session's rows newest first, to the first of those kinds, after this
+   * process's waiting record writes are made (`#recorded`). A row whose write the lock still keeps waiting past the bound
+   * of that wait reads as not recorded; `recordLostEvents` looks for it again once its own write is made, behind it.
+   */
+  lastRecordedEvent(sessionId: string, kinds: ReadonlySet<string>): string | undefined {
+    const wanted = [...kinds, LOST_EVENTS_KIND].map(kind => sql`${kind}`);
+    // `+kind` keeps SQLite on `events_session_sequence`, newest first, stopping at the first row of those kinds; on
+    // `events_session_kind_sequence` it would read every row of each kind and sort them.
+    const row = this.#recorded().get<{ kind: string; eventId: string } | undefined>(sql`
+      SELECT ${events.kind} AS kind, ${events.eventId} AS eventId FROM ${events}
+      WHERE ${events.sessionId} = ${sessionId} AND +${events.kind} IN (${sql.join(wanted, sql`, `)})
+      ORDER BY ${events.sequence} DESC LIMIT 1
+    `);
+    return row?.kind === LOST_EVENTS_KIND ? row.eventId.slice(LOST_EVENTS_ID.length) : row?.eventId;
+  }
+
+  /**
+   * Marks the session's history incomplete over `lost`, the ledger's events after the last recorded one, oldest first:
+   * events it recorded whose rows a power cut or an operating system crash took (`LostEvents`). One record for the
+   * stretch. Its id names the stretch's last event and it takes that event's time, whether that event's row is there
+   * or not: the record commits after every row of the stretch that was made, so the next open's walk
+   * (`lastRecordedEvent`) starts after the whole stretch, and what reads when the newest event was recorded
+   * (`lastObservedEventAt`, `rerail status`) reads the newest event's time.
+   * The record counts only the events whose rows the history lacks when its write is made, after the last event an
+   * earlier record of the session named (`uncountedLostEvents`). The write is made behind every record write this
+   * process asked for before it: an event whose row waited for another process's lock past the bound of
+   * `lastRecordedEvent`'s wait is on disk by then and is not counted, and an event whose row never came is counted by
+   * one record, however often the session opened while rows waited. When it would count none it writes nothing, and,
+   * when no write waits, takes no write lock (`writeUnless`).
+   */
+  recordLostEvents(session: AdapterSession, lost: readonly LostEvent[]): void {
+    const whole = lostEventsRow(session.sessionId, lost);
+    if (whole === undefined) return;
+    const uncounted = (database: RerailDatabase): LostEvent[] => uncountedLostEvents(database, session.sessionId, lost);
+    const restore = this.#sessionRestore(session);
+    this.#records.writeUnless(() => uncounted(this.#database).length === 0, database => {
+      const row = lostEventsRow(session.sessionId, lost, uncounted(database));
+      if (row !== undefined) this.#eventWrite([row], restore)(database);
+    }, rowBytes(whole));
   }
 
   /** Marks a boundary answered before its shell-write check finished: what that check finds reaches a later boundary. */
@@ -489,19 +562,17 @@ export class SqliteSessionStore {
   }
 
   /**
-   * `recordDiscoveryGap` for each of `gaps`, in one transaction: a write each would wait for the disk once per place, 4 ms
-   * a place on Linux, and a turn end that first meets 1,000 places would answer 4 s late. All of them or none. A write
-   * that finds the session's row gone puts it back inside the transaction, and `onRowPutBack` is told once it has
-   * committed: its claim write goes through another connection, which would wait out the busy timeout (5 s) behind this
-   * one's write lock and fail, holding the turn end that long.
+   * `recordDiscoveryGap` for each of `gaps`, in one record write, so one transaction: a write each would commit once per
+   * place, and a commit that runs a checkpoint waits for the disk (`database.ts`), so a turn end that first meets 1,000
+   * places would pay up to 1,000 of them. All of them or none. A write that finds the session's row gone puts it back
+   * inside the transaction, and `onRowPutBack` is told once it has committed (`#eventWrite`): its claim write goes
+   * through another connection, which would wait out the busy timeout (5 s) behind this one's write lock and fail,
+   * holding the turn end that long.
    */
   recordDiscoveryGaps(session: AdapterSession, gaps: readonly DiscoveryGap[], attribution?: SessionAttribution): void {
-    const putBack = this.#database.transaction(() => {
-      let back = false;
-      for (const gap of gaps) back = this.#insert(discoveryGapEvent(session.sessionId, gap), session, attribution).putBack || back;
-      return back;
-    });
-    if (putBack) this.#onRowPutBack?.(session.sessionId);
+    const rows = gaps.map(gap => eventRow(discoveryGapEvent(session.sessionId, gap), attribution?.observedAt));
+    const bytes = rows.reduce((total, row) => total + rowBytes(row), 0);
+    this.#records.write(this.#eventWrite(rows, this.#sessionRestore(session, attribution)), bytes);
   }
 
   /** Marks a code-rule boundary answered before the session's evaluator had opened: what it would have checked reaches a later boundary. */
@@ -535,79 +606,98 @@ export class SqliteSessionStore {
   }
 
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
-    const latest = this.#database.select({ payloadJson: events.payloadJson }).from(events)
-      .where(and(eq(events.sessionId, session.sessionId), eq(events.kind, "rule-coverage")))
-      .orderBy(desc(events.sequence)).limit(1).get();
-    // Streaming ingestion checks coverage often; persist transitions, not identical copies.
-    // Looking in SQLite rather than an in-memory cache also recovers after a reset.
-    if (latest?.payloadJson === stableJsonText(coverage)) return;
-    this.append({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage }, session);
+    // Streaming ingestion checks coverage often; persist transitions, not identical copies, read first so an unchanged
+    // coverage takes no write lock and never waits. Looking in SQLite rather than an in-memory cache also recovers after
+    // a reset. The write reads again, since a coverage still waiting for the lock may be the latest.
+    const payloadJson = stableJsonText(coverage);
+    const unchanged = (database: RerailDatabase): boolean => latestCoverage(database, session.sessionId) === payloadJson;
+    const row = eventRow({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage });
+    const restore = this.#sessionRestore(session);
+    const write = this.#eventWrite([row], restore);
+    this.#records.writeUnless(() => unchanged(this.#database), database => {
+      if (!unchanged(database)) write(database);
+    }, rowBytes(row));
   }
 
   append(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): string {
-    const { eventId, putBack } = this.#insert(event, session, attribution);
-    if (putBack) this.#onRowPutBack?.(event.sessionId);
-    return eventId;
+    const row = eventRow(event, attribution?.observedAt);
+    const restore = session === undefined ? undefined : this.#sessionRestore(session, attribution);
+    this.#records.write(this.#eventWrite([row], restore), rowBytes(row));
+    return row.eventId;
   }
 
   /**
-   * Writes `event`, and the session's row again first when the write finds it gone and `session` is given; `putBack`
-   * says it did, so the caller tells `onRowPutBack` once its own transaction, if any, has committed.
+   * The record write of `rows` (`insertEvent`), one transaction for all of them. When one puts the session's row back,
+   * the store's owner is told (`onRowPutBack`) once, after the write's transaction has ended, in a microtask: the owner
+   * writes on its own connection, which would wait for the lock this write holds. A write kept until the lock is given
+   * back tells it then.
    */
-  #insert(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): { eventId: string; putBack: boolean } {
-    const eventId = event.eventId ?? randomUUID();
-    const row = {
-      sessionId: event.sessionId,
-      eventId,
-      kind: event.kind,
-      observedAt: event.observedAt ?? Date.now(),
-      payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
-      payloadV8: serialize(event.payload),
+  #eventWrite(rows: readonly EventRow[], restore: typeof sessions.$inferInsert | undefined): RecordWrite {
+    return database => {
+      let putBack: string | undefined;
+      for (const row of rows) if (insertEvent(database, row, restore)) putBack = row.sessionId;
+      const told = this.#onRowPutBack;
+      const sessionId = putBack;
+      if (sessionId !== undefined && told !== undefined) queueMicrotask(() => told(sessionId));
     };
-    try {
-      this.#database.insert(events).values(row).onConflictDoNothing().run();
-    } catch (error) {
-      // A `rerail reset` rebuilt the tables underneath a running session: its row is gone, so put
-      // it back and keep going. The events before the reset are gone by design; these are not.
-      if (session === undefined || !isForeignKeyFailure(error)) throw error;
-      this.#database.insert(sessions).values({
-        ...session,
-        repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
-        startedAt: attribution?.startedAt ?? Date.now(),
-        endedAt: attribution?.endedAt ?? null,
-      }).onConflictDoNothing().run();
-      this.#database.insert(events).values(row).onConflictDoNothing().run();
-      return { eventId, putBack: true };
-    }
-    return { eventId, putBack: false };
+  }
+
+  /**
+   * The session row `insertEvent` puts back when a `rerail reset` rebuilt the tables underneath a running session,
+   * its times and repository taken now: a write that waits for the lock is made later.
+   */
+  #sessionRestore(session: AdapterSession, attribution?: SessionAttribution): typeof sessions.$inferInsert {
+    return {
+      ...session,
+      repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
+      startedAt: attribution?.startedAt ?? Date.now(),
+      endedAt: attribution?.endedAt ?? null,
+    };
   }
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
     this.#sessionRepositories.delete(sessionId);
-    this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
+    this.#records.write(database => database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run());
   }
 
   sessions(): readonly StoredSessionSummary[] {
-    return listSessions(this.#database, { repositoryIds: this.#repositoryId ?? undefined });
+    return listSessions(this.#recorded(), { repositoryIds: this.#repositoryId ?? undefined });
   }
 
   session(sessionId: string): StoredSessionSummary | undefined {
+    return listSessions(this.#recorded(), { sessionId })[0];
+  }
+
+  /**
+   * {@link session} as the database holds it on disk, this process's waiting record writes not made first: for a caller
+   * that must not wait for another process's write lock, and knows itself what this process recorded.
+   */
+  storedSession(sessionId: string): StoredSessionSummary | undefined {
     return listSessions(this.#database, { sessionId })[0];
   }
 
   linkWork(link: WorkLink, createdAt = Date.now()): void {
-    this.#database
+    this.#records.write(database => database
       .insert(workLinks)
       .values({ ...link, url: link.url ?? null, createdAt })
       .onConflictDoUpdate({
         target: [workLinks.sessionId, workLinks.kind, workLinks.reference],
         set: { url: link.url ?? null },
       })
-      .run();
+      .run());
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {
-    return listWorkLinks(this.#database, sessionId);
+    return listWorkLinks(this.#recorded(), sessionId);
+  }
+
+  /**
+   * The connection for a read of what this process recorded, its waiting writes made first: a link just added, a row
+   * just opened, which a holder of a moment in another process would otherwise hide from the caller acting on it.
+   */
+  #recorded(): RerailDatabase {
+    flushRecordWrites(this.path);
+    return this.#database;
   }
 
   /**
@@ -615,11 +705,110 @@ export class SqliteSessionStore {
    * met, with the record that says they met more where it falls: the bridge reads it as its bound.
    */
   discoveryGaps(sessionId: string, limit: number): readonly DiscoveryGapRecord[] {
-    return listDiscoveryGaps(this.#database, sessionId, limit, true);
+    return listDiscoveryGaps(this.#recorded(), sessionId, limit, true);
   }
 
   close(): void {
+    this.#records.close();
     this.#database.$client.close();
+  }
+}
+
+type EventRow = typeof events.$inferInsert & { eventId: string; payloadJson: string; payloadV8: Buffer };
+
+/** The event a steer's receipt is recorded as: its id is the receipt's, so a receipt recorded twice counts once. */
+function steerEvent(session: AdapterSession, receiptId: string, ruleIds: readonly string[]): SessionEvent {
+  return { sessionId: session.sessionId, eventId: `steering-delivered:${receiptId}`, kind: "steering-delivered", payload: { ruleIds: [...ruleIds] } };
+}
+
+/**
+ * The row of `event`, observed at its own `observedAt`, else at `happenedAt` (`SessionAttribution.observedAt`), else now,
+ * and its id, where it has none, made now: a write that waits for the lock is made later with both.
+ */
+function eventRow(event: SessionEvent, happenedAt?: number): EventRow {
+  return {
+    sessionId: event.sessionId,
+    eventId: event.eventId ?? randomUUID(),
+    kind: event.kind,
+    observedAt: event.observedAt ?? happenedAt ?? Date.now(),
+    payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
+    payloadV8: serialize(event.payload),
+  };
+}
+
+/**
+ * The record of lost events (`recordLostEvents`) over the stretch `stretch`, oldest first, counting `counted`, the
+ * events of it whose rows are gone: its id names the stretch's last event and it takes that event's time. Undefined
+ * when it counts none.
+ */
+function lostEventsRow(sessionId: string, stretch: readonly LostEvent[], counted: readonly LostEvent[] = stretch): EventRow | undefined {
+  const [end, first, last] = [stretch.at(-1), counted[0], counted.at(-1)];
+  if (end === undefined || first === undefined || last === undefined) return undefined;
+  const payload: LostEvents = {
+    count: counted.length, kinds: kindCounts(counted), firstEventId: first.eventId, lastEventId: last.eventId,
+    firstObservedAt: first.observedAt, lastObservedAt: last.observedAt,
+  };
+  return eventRow({ sessionId, eventId: `${LOST_EVENTS_ID}${end.eventId}`, kind: LOST_EVENTS_KIND, observedAt: end.observedAt, payload });
+}
+
+/** How many of `lost` there are of each kind. */
+function kindCounts(lost: readonly LostEvent[]): Record<string, number> {
+  const kinds: Record<string, number> = {};
+  for (const event of lost) kinds[event.kind] = (kinds[event.kind] ?? 0) + 1;
+  return kinds;
+}
+
+/**
+ * The events of `lost`, a stretch of the session's ledger oldest first, that no record of lost events has counted and
+ * whose rows the history lacks. A record names the last event of the stretch it looked over, and an open's stretch
+ * ends at the ledger's end, so the session's newest record names the furthest: its write looked at every event up to
+ * that one, and only those after it are left.
+ */
+function uncountedLostEvents(database: RerailDatabase, sessionId: string, lost: readonly LostEvent[]): LostEvent[] {
+  const countedThrough = newestLostEventsEnd(database, sessionId);
+  const from = lost.findIndex(event => event.eventId === countedThrough) + 1;
+  return lost.slice(from).filter(event => !holdsEvent(database, sessionId, event.eventId));
+}
+
+/** The event the session's newest record of lost events names (one read on `events_session_kind_sequence`). */
+function newestLostEventsEnd(database: RerailDatabase, sessionId: string): string | undefined {
+  const row = database.select({ eventId: events.eventId }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, LOST_EVENTS_KIND)))
+    .orderBy(desc(events.sequence)).limit(1).get();
+  return row?.eventId.slice(LOST_EVENTS_ID.length);
+}
+
+/** Whether the session's history holds the row of `eventId` (one lookup on `events_session_event`). */
+function holdsEvent(database: RerailDatabase, sessionId: string, eventId: string): boolean {
+  return database.select({ eventId: events.eventId }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.eventId, eventId))).get() !== undefined;
+}
+
+/** The payload of the session's latest rule coverage event, as stored. */
+function latestCoverage(database: RerailDatabase, sessionId: string): string | undefined {
+  return database.select({ payloadJson: events.payloadJson }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
+    .orderBy(desc(events.sequence)).limit(1).get()?.payloadJson;
+}
+
+function rowBytes(row: EventRow): number {
+  return row.payloadJson.length + row.payloadV8.byteLength;
+}
+
+/**
+ * Inserts `row`, and says whether it put the session's row back. A `rerail reset` rebuilt the tables underneath a
+ * running session, or another program removed its row: it is gone, so `restore` puts it back and the event goes in after
+ * it. The events before the reset are gone by design; these are not.
+ */
+function insertEvent(database: RerailDatabase, row: EventRow, restore: typeof sessions.$inferInsert | undefined): boolean {
+  try {
+    database.insert(events).values(row).onConflictDoNothing().run();
+    return false;
+  } catch (error) {
+    if (restore === undefined || !isForeignKeyFailure(error)) throw error;
+    database.insert(sessions).values(restore).onConflictDoNothing().run();
+    database.insert(events).values(row).onConflictDoNothing().run();
+    return true;
   }
 }
 
@@ -737,10 +926,10 @@ export class SqliteSessionReader {
 
   /**
    * What the session's whole transcript says it missed, however much of it a reader has loaded: events its host
-   * never delivered (`events-dropped` counts), boundaries that answered before the shell-write check finished or
-   * before code rules were running, tool edits of files Git ignores, changes to Git's ignore rules, and what the
-   * shell-write check could not check, the record that says it met more of those than the record takes counted apart
-   * (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
+   * never delivered (`events-dropped` counts), events whose rows a power cut took (`events-lost` counts), boundaries
+   * that answered before the shell-write check finished or before code rules were running, tool edits of files Git
+   * ignores, changes to Git's ignore rules, and what the shell-write check could not check, the record that says it
+   * met more of those than the record takes counted apart (`MORE_DISCOVERY_GAPS_EVENT`). Indexed by session and kind.
    */
   gaps(sessionId: string): SessionGaps {
     const database = this.#database.open();
@@ -748,6 +937,7 @@ export class SqliteSessionReader {
     const row = database.all<Omit<SessionGaps, "discoveryGapsMore"> & { discoveryGapsMore: number }>(sql`
       SELECT
         coalesce(sum(CASE WHEN ${events.kind} = 'events-dropped' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS droppedEvents,
+        coalesce(sum(CASE WHEN ${events.kind} = 'events-lost' THEN coalesce(json_extract(${events.payloadJson}, '$.count'), 0) END), 0) AS lostEvents,
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-pending') AS uncheckedBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'code-rules-pending') AS codeRulesPendingBoundaries,
         count(*) FILTER (WHERE ${events.kind} = 'ignored-edit') AS ignoredEdits,
@@ -756,7 +946,7 @@ export class SqliteSessionReader {
         count(*) FILTER (WHERE ${events.kind} = 'source-discovery-gap' AND ${events.eventId} = ${MORE_DISCOVERY_GAPS_EVENT}) AS discoveryGapsMore
       FROM ${events}
       WHERE ${events.sessionId} = ${sessionId}
-        AND ${events.kind} IN ('events-dropped', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
+        AND ${events.kind} IN ('events-dropped', 'events-lost', 'source-discovery-pending', 'code-rules-pending', 'ignored-edit', 'ignore-rules-changed', 'source-discovery-gap')
     `)[0];
     return row === undefined ? { ...NO_GAPS } : { ...row, discoveryGapsMore: row.discoveryGapsMore > 0 };
   }
@@ -953,5 +1143,134 @@ export function lastObservedEventAt(databasePath: string): number | null {
     return null;
   } finally {
     database?.$client.close();
+  }
+}
+
+/**
+ * The record write of `receipt` in the database at `databasePath`, for a record writer (`openRecordWriter`): its event
+ * (`steerEvent`), and, when a reset removed its session's row, that row put back, crediting the repository of the
+ * checkout the session's folder is in. The file is opened read-only here to find that repository, which checks it is a
+ * database this build can write, as a writable open does, without taking its write lock.
+ */
+export function steerReceiptWrite(databasePath: string, { session, receiptId, ruleIds }: SteerReceipt): RecordWrite {
+  const database = openRerailDatabase(databasePath, { readonly: true });
+  let repositoryId: string | null;
+  try {
+    repositoryId = checkoutRepository(database, session.cwd);
+  } finally {
+    database.$client.close();
+  }
+  const row = eventRow(steerEvent(session, receiptId, ruleIds));
+  const restore = { ...session, repositoryId, startedAt: Date.now(), endedAt: null };
+  return target => insertEvent(target, row, restore);
+}
+
+/** The repository key of the checkout `cwd` is in; null when none is known or the lookup fails. */
+function checkoutRepository(database: RerailDatabase, cwd: string): string | null {
+  try {
+    return lookupCheckout(database, cwd)?.repositoryKey ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * The receipts of steers the daemon took from hooks while another process held the database's write lock, kept on
+ * disk until their records are made. The hook that handed one over has ended by then, so a daemon that dies first
+ * (killed, crashed, the machine shut down) would lose it, where the hook used to wait for the lock and record it
+ * itself. One file per receipt in a folder beside the database (`rerail.sqlite-receipts`), named by its id's hash, which
+ * goes once its record is made; the next daemon's start records what is left (`keptReceipts`). A receipt recorded twice
+ * counts once, so a file a removal missed costs one more insert of nothing.
+ */
+
+/** A receipt kept on disk, and the record write that removes its file once queued behind the receipt's own write. */
+export interface KeptReceipt {
+  readonly receipt: SteerReceipt;
+  /**
+   * Removes the receipt's file once the database holds the receipt's event. A record writer makes writes in the order
+   * they were asked for, so queued behind the receipt's own write it runs once that one is made, or failed: a record
+   * that failed (the disk full, the database read-only) leaves the file for the next start, as a removal that fails
+   * does.
+   */
+  readonly forget: RecordWrite;
+}
+
+function keptReceiptsFolder(databasePath: string): string {
+  return `${databasePath}-receipts`;
+}
+
+/** Removes `file`; one a scanner holds on Windows stays, and the next start records it again, which counts once. */
+function forgetFile(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    // Left for the next start.
+  }
+}
+
+function keptReceipt(file: string, receipt: SteerReceipt): KeptReceipt {
+  const where = and(eq(events.sessionId, receipt.session.sessionId), eq(events.eventId, steerEvent(receipt.session, receipt.receiptId, []).eventId!));
+  return {
+    receipt,
+    forget: database => {
+      if (database.select({ sequence: events.sequence }).from(events).where(where).get() !== undefined) forgetFile(file);
+    },
+  };
+}
+
+/**
+ * Keeps `receipt` in a file beside the database at `databasePath` (0600, in a 0700 folder) before it resolves, off the
+ * calling thread. The file survives the end of this process; it is not flushed to the drive, as the hook that held
+ * the receipt in memory before survived no power loss either.
+ */
+export async function keepReceipt(databasePath: string, receipt: SteerReceipt): Promise<KeptReceipt> {
+  const folder = keptReceiptsFolder(databasePath);
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const file = join(folder, `${createHash("sha256").update(receipt.receiptId).digest("hex")}.json`);
+  await writeFile(file, JSON.stringify(receipt), { mode: 0o600 });
+  return keptReceipt(file, receipt);
+}
+
+/**
+ * The receipts kept beside the database at `databasePath` whose records were never made: a daemon took them and ended
+ * first. A file read whole that holds no receipt (one whose write the daemon's end cut short, before it answered the
+ * hook, which then recorded the receipt itself) is removed. A file that cannot be read now (another process holds it,
+ * access is refused, no descriptor is free) stays, so the next start reads it again. None when the folder does not
+ * exist, as it does not until a receipt is handed over while the lock is held.
+ */
+export function keptReceipts(databasePath: string): KeptReceipt[] {
+  const folder = keptReceiptsFolder(databasePath);
+  let names: string[];
+  try {
+    names = readdirSync(folder);
+  } catch {
+    return [];
+  }
+  return names.flatMap(name => {
+    const file = join(folder, name);
+    const text = keptText(file);
+    if (text === undefined) return [];
+    const receipt = receiptIn(text);
+    if (receipt !== undefined) return [keptReceipt(file, receipt)];
+    forgetFile(file);
+    return [];
+  });
+}
+
+/** What `file` holds, or undefined when it cannot be read now. */
+function keptText(file: string): string | undefined {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/** The receipt `text` holds, or undefined when it holds none. */
+function receiptIn(text: string): SteerReceipt | undefined {
+  try {
+    return SteerReceiptSchema.parse(JSON.parse(text));
+  } catch {
+    return undefined;
   }
 }

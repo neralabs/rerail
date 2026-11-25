@@ -13,7 +13,9 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { placeWorktrees, placingWorktrees } from "../catalog/checkouts/checkout-placement.js";
+import { learnWorktreeList, worktreeRegistry, type WorktreeListLearning, type WorktreeRegistry } from "../catalog/repository-identity.js";
+import type { GitReads } from "../git.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
@@ -30,6 +32,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
+import { appendToGroup } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutCodeRuleCatalog, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
 import type { SteerShell } from "./rerail-steer.js";
@@ -335,10 +338,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * `acceptsPath` and `ignoresPath` for one walk. A path's full lookup (`#owner`) resolves its real path and looks for
-   * `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file. A file the walk found is
-   * no link, so its checkout is its folder's: each folder gets the full lookup once, for itself and its files. A
-   * checkout recorded while the walk runs owns its files from the next walk.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk. A path's full lookup (`#owner`) resolves its real path
+   * and looks for `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file, and the
+   * grouping of what it found by checkout a third. A file the walk found is no link, so its checkout is its folder's:
+   * each folder gets the full lookup once, for itself and its files. A checkout recorded while the walk runs owns its
+   * files from the next walk.
    */
   walkView(): Required<WalkView> {
     const folders = new Map<string, CheckoutOwner | undefined>();
@@ -355,6 +359,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return {
       acceptsPath: path => this.#accepts(fileOwner(path)),
       ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory),
+      sourceRoot: path => fileOwner(path)?.checkoutRoot,
     };
   }
 
@@ -541,15 +546,30 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * The other worktrees Git registers for the session's checkout that may run rules: a shell write in one is an edit
    * like any other, wherever the worktree sits and whatever the session's checkout ignores. The walk cannot tell which
-   * session wrote a file, so what it finds there is recorded under the repository and steers no session.
+   * session wrote a file, so what it finds there is recorded under the repository and steers no session. `registry` is
+   * the list `learnWorktreeRoots` gave as stored, in the same synchronous run; without it the registry is read now.
    */
-  worktreeRoots(): string[] {
+  worktreeRoots(registry: WorktreeRegistry | undefined = worktreeRegistry(this.#options.startingCheckout)): string[] {
     const starting = this.#options.startingCheckout;
-    const registry = worktreeRegistry(starting);
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
     return (registry?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /**
+   * Git's list of the worktrees `worktreeRoots` reads, learnt through `git` as a process no thread waits on and kept as
+   * the registry keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
+   * While the stored list stands, that list, for a `worktreeRoots` in the same synchronous run to take; but where a
+   * session opening there is placing the listed worktrees (`placeWorktrees`), that pass, joined through `git`, so the
+   * walk after it asks Git for none of them itself. Undefined for a checkout placed by a kept acceptance, whose list the
+   * registry reads as before.
+   */
+  learnWorktreeRoots(git: GitReads): WorktreeListLearning | undefined {
+    const learnt = learnWorktreeList(this.#options.startingCheckout, git);
+    if (learnt?.kind !== "stored" || !placingWorktrees(learnt.registry)) return learnt;
+    const { registry } = learnt;
+    return { kind: "learning", done: git.run(signal => placeWorktrees(registry, { signal })) };
   }
 
   /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */
@@ -578,8 +598,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const partitioned = new Map<Lane, CodeRuleEdit[]>();
     for (const edit of batch.edits) {
       const routed = this.#route(edit.path);
-      if (routed === undefined) continue;
-      partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), { ...edit, path: routed.path }]);
+      if (routed !== undefined) appendToGroup(partitioned, routed.lane, { ...edit, path: routed.path });
     }
     const responses: CodeRuleResponse[] = [];
     for (const lane of [...this.#lanes.values()]) {

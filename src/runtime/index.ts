@@ -10,6 +10,7 @@ export {
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   daemonFetch,
+  daemonLeftEventUntaken,
   type DaemonHealth,
   type DaemonMachine,
   type DaemonLaunchOptions,
@@ -21,7 +22,7 @@ export {
   startDaemon,
   stopDaemon,
 } from "./daemon-control.js";
-export { type EngineService, ingestEngineEvent, startEngineService } from "./engine-service.js";
+export { engineRequestBody, type EngineService, ingestEngineEvent, parseEngineRequest, startEngineService } from "./engine-service.js";
 export { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof } from "./daemon/engine-proof.js";
 export {
   AdapterEventSchema,
@@ -58,6 +59,7 @@ export { resolveModelPath } from "./session-paths.js";
 export { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, TURN_ENTRY_TYPE, type DroppedEvents } from "./session-state.js";
 export {
   SESSION_EVENT_PAGE_LIMIT,
+  lastObservedEventAt,
   type SessionEventRecord,
   SqliteSessionReader,
   SqliteSessionStore,

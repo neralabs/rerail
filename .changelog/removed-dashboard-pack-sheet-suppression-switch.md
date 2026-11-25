@@ -1,1 +1,0 @@
-A pack's sheet in the dashboard no longer switches whether the pack's rules obey suppression comments such as `eslint-disable` or `noqa`; it still says how they treat them. The setting stays: `PUT /api/repository/settings` changes it (`suppressions`), and a coding agent can change it for its own worktree.

@@ -30,9 +30,15 @@ const evaluationSchema = z.object({
   failures: z.array(z.unknown()).default([]),
 });
 
+/**
+ * Every rule document of packs/node and its candidates, read once for the file: two of them hold close to 2 MB of JSON
+ * each, and a case compiles one rule.
+ */
+const NODE_DOCUMENTS = loadPackRuleDocuments([repositoryPath("packs", "node"), repositoryPath("packs", "node", "candidates")]);
+
 function compile(ruleId: string): NativeCompiledCodeRuleDsl {
   if (runtime === undefined) throw new Error("Native binding must export CodeRuleDslRuntime");
-  const document = loadPackRuleDocuments([repositoryPath("packs", "node"), repositoryPath("packs", "node", "candidates")]).find(candidate => candidate.rule.id === ruleId);
+  const document = NODE_DOCUMENTS.find(candidate => candidate.rule.id === ruleId);
   if (document === undefined) throw new Error(`${ruleId} is in neither packs/node/rules nor packs/node/candidates/rules`);
   return runtime.compile(JSON.stringify(document.rule), "json", capabilities);
 }

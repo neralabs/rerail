@@ -41,7 +41,7 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
     enabled: true,
     settings: DEFAULT_MERGE_ASSIST_SETTINGS,
     readiness: {
-      github: { state: "signed-in", login: "akim", repository: "acme/app" },
+      github: { state: "signed-in", login: "akim", repository: "acme/app", readAt: "2026-11-03T14:05:00Z" },
     },
     scanning: false,
     lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 2, pullRequests: 1 }, problems: [] },
@@ -103,5 +103,10 @@ export class RecordingMergeAssistService implements MergeAssistService {
 
   dismissConflict(checkout: string, conflictId: string): Promise<MergeAssistStatus> {
     return this.#answer({ method: "dismissConflict", checkout, conflictId });
+  }
+
+  /** No `gh` stands behind these statuses, so nothing moves its sign-in. */
+  signInStamp(): Promise<string> {
+    return Promise.resolve("");
   }
 }

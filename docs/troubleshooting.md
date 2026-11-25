@@ -600,7 +600,12 @@ Agents load hooks and commands when a session starts. Open a new session after s
 A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
 failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
-(it was busy, for example opening a large checkout; events are recorded again once it answers),
+(it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an
+older version, or could not watch `untaken-events`; events are recorded again once it answers), `the Rerail daemon
+(pid …) is running but not reading, and 256 events already wait for it, the most Rerail keeps` or `… would pass the
+16 MiB Rerail keeps` (see below), `… and
+the event is larger than the 1 MiB one event may hold` (a tool call that large, which a daemon that reads refuses
+too), `… and the event could not be left for it` with the error that kept it out of `untaken-events`,
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
@@ -617,11 +622,38 @@ was: `since <time>, as far back as the log goes`; when another program keeps `ho
 it counts from when `hook-failures.jsonl` began. When every failure it still holds came after the last recorded
 event, hooks may have failed before the time it leads with, and the line says `as far back as the log goes` too.
 
+A daemon that runs but does not answer costs only the hooks that start in its first 12 s their wait: each leaves its
+event in `untaken-events` in the Rerail home and answers, and while such an event waits there each later hook leaves
+its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
+it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
+check finds reaches the agent with the session's next answer, not with the hook that left the event. Rerail never saw
+such a tool call's files before it ran, so it tells the call its own lines only where the file before the call is
+certain, and checks the whole file the call left everywhere else. The file before the call is certain only when the
+call is an Edit or MultiEdit (not a Write), its edits put back (each new text, found exactly once, replaced by its old
+text, at every place for an edit of every place) give a text on which the tool would make them again and leave
+exactly the file as it is, and that text is the file as the session last saw it. Then the call is told exactly its
+own lines, as when Rerail sees it run, but for one case: an edit of every place is also told a line holding its new
+text that another program wrote over an older line since the session last looked, one line more, never fewer.
+Anything else is checked whole, and a finding can name lines the call did not write, but none of its own is missed: a
+Write; an Edit that created its file; an Edit whose new text the file no
+longer holds once; a file another program or another such call changed since the session last saw it, or that the
+session first saw after the call ran, as in a busy spell that starts with the session. A tool's output is not kept
+with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check
+is bounded; past that a hook's event is lost and the line above counts it. An entry there the daemon cannot read (a
+folder under an event's name, a file another user or program left, one another program holds open) counts once as
+an event it could not check, and is removed where it can be. While events wait, `rerail status` says
+`Hooks: N hook events wait in untaken-events for the Rerail daemon, which has not read since <time>`; once the daemon
+has checked them it says how many it checked late, and how many it could not check. In Cursor, prompts and answers
+read from the transcript stay unread until the next hook the daemon answers, which checks them.
+
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
 show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
 `rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
-nothing is recorded until it runs, and to start it with `rerail daemon start`.
+nothing is recorded until it runs, and to start it with `rerail daemon start`. A daemon that runs but that hooks may
+not use, one of another Rerail package or, on Windows, one of Rerail 0.1.4 or earlier, is not replaced either: the
+session's start says that nothing is recorded until a daemon from the active package runs, and to run
+`rerail daemon stop`, then `rerail daemon start`. Each event lost beside it goes to the hook failure log above.
 
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
@@ -744,8 +776,9 @@ A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machi
 
 ### `Another Rerail daemon (pid …) runs in …`
 
-Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there waits a second for it, then
-writes this line to the home's `daemon.log` and exits; a `rerail daemon start` that launched it prints the line under
+Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there writes this line to the
+home's `daemon.log` and exits as soon as the holder answers as the home's daemon, or after waiting a second for the lock
+when the holder does not answer. A `rerail daemon start` that launched it prints the line under
 `Rerail daemon exited with code 1 before it was ready`. While the daemon it names answers, the next
 `rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
 pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
@@ -755,6 +788,19 @@ pid to end; if the stop finds none and a start prints this line again, end the p
 The Rerail home was moved or removed while its daemon ran. The daemon writes this line to `daemon.log` and stops
 writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
 database of the home it lost. End the pid it names, then run `rerail daemon start`.
+
+### `not-on-disk: the change was made, but Rerail could not confirm it is on the disk …`
+
+The daemon made a change you asked for in the dashboard, with `rerail settings` or `rerail scan` (in internal testing),
+or through an MCP tool, then waited for the disk to keep it, and the disk gave the error the message ends with. The
+dashboard shows the same message. Rerail says a change is made only once it is on the disk, so a power cut cannot undo
+it; this one is made, but a power cut or an operating system crash may still undo it. Do not make it again unless you
+see it is gone: making it again can make it twice, such as a second audit request.
+
+The daemon's background sync of the history syncs the same file. While that sync fails, `daemon.log` says
+`rerail daemon: syncing the history to the disk failed, trying again every 5 s: …` once, and
+`rerail daemon: syncing the history to the disk works again` once a sync succeeds. Until then a power cut or an
+operating system crash can take more than the last 5 s of history ([Rerail database](reference.md#rerail-database)).
 
 ### Containers: the dashboard does not open from the host
 

@@ -3,7 +3,7 @@
  * `sheet.js`, the frame and each view's own actions) write `ui` and optimistic `data`, and `poll.js` writes fetches.
  * Rules are keyed by id so a poll can patch the row that changed and nothing else.
  */
-import { isFromPack, isLog, isRunning, packOriginName, ruleTitle, rulePrefix, scopeText } from "./derive.js";
+import { isFromPack, isLog, isRunning, packOriginName, riskLabel, ruleTitle, rulePrefix, scopeText } from "./derive.js";
 import { startOfDay } from "./format.js";
 
 /**
@@ -93,8 +93,17 @@ export const data = {
   mergeAssistExperiment: null,
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
   agentsError: null,
-  /** Freshness: last successful poll, and whether the last attempt failed. */
+  /**
+   * Freshness: the last successful poll (views that read more after each poll key on it), the last message of the
+   * daemon's change stream (the status reads the later of the two as when the daemon was last heard), since when the
+   * page knows the daemon holds something it has not read yet (0 while it holds what the daemon had: a read begun
+   * after that moment answered), since when a read it started has not answered (0 while none is out), and whether
+   * the last attempt failed.
+   */
   updatedAt: 0,
+  heardAt: 0,
+  behindSince: 0,
+  readingSince: 0,
   disconnected: false,
   /** The daemon answered that it does not know the scoped repository or checkout. */
   missing: false,
@@ -241,13 +250,20 @@ export const packFolder = (recommendations, id) => recommendations.find(r => r.p
 /** The row title: the rule's own title; else the pack's plain title when the rule comes from one; else the rule's fallback. */
 export const titleOf = stored => (stored.rule.title?.trim() ? ruleTitle(stored) : packRuleOf(stored.rule.id)?.rule.title ?? ruleTitle(stored));
 
+/** The dimensions a rule's pack gives it (risk, layer, severity, hazard), or undefined. */
+export const dimensionsOf = stored => packRuleOf(stored.rule.id)?.rule.dimensions;
+
 const haystacks = new WeakMap();
-/** Text the search box runs over: title, id, description, scope, pack and group. */
+/** A rule's dimensions as search words: its risk by label and by id (`data safety`, `data-safety`), severity, layer, hazard. */
+const dimensionWords = d => (d === undefined ? [] : [riskLabel(d.risk), d.risk, d.severity, d.layer, d.hazard ?? ""]);
+
+/** Text the search box runs over: title, id, description, scope, pack, group, and the dimensions the pack gives. */
 function searchText(stored) {
   let hay = haystacks.get(stored);
   if (hay === undefined) {
     const entry = packRuleOf(stored.rule.id);
-    hay = [titleOf(stored), stored.rule.id, stored.rule.description ?? "", scopeText(stored), entry?.pack.name ?? "", entry?.rule.group ?? ""].join(" ").toLowerCase();
+    hay = [titleOf(stored), stored.rule.id, stored.rule.description ?? "", scopeText(stored), entry?.pack.name ?? "", entry?.rule.group ?? "",
+      ...dimensionWords(entry?.rule.dimensions)].join(" ").toLowerCase();
     haystacks.set(stored, hay);
   }
   return hay;
@@ -262,11 +278,14 @@ const FILTER_KEEPS = {
   log: stored => isRunning(stored) && isLog(stored),
   fired: stored => fires(stored.rule.id) !== 0,
 };
+/** A Filter choice for one risk (`pageRiskFilters`): `risk:<risk>` keeps the rules its pack gives that risk. */
+export const RISK_FILTER = "risk:";
 
 export function matches(stored) {
-  const keeps = FILTER_KEEPS[ui.filter];
-  if (keeps !== undefined && !keeps(stored)) return false;
-  return !ui.query || searchText(stored).includes(ui.query);
+  const kept = ui.filter.startsWith(RISK_FILTER)
+    ? dimensionsOf(stored)?.risk === ui.filter.slice(RISK_FILTER.length)
+    : FILTER_KEEPS[ui.filter]?.(stored) ?? true;
+  return kept && (!ui.query || searchText(stored).includes(ui.query));
 }
 export const filtering = () => ui.filter !== "all" || ui.query !== "";
 

@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
+import { admitsRefusingCore, CHANGE_TYPES, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreBeforeFloor, coreFloor, coreTagRefusal, DIMENSIONS_SINCE, firstChangelogSection, handWrittenChangelogEntries, HELD_OFF_SINCE, heldOffRules, isOpenRange, LANGUAGE_SINCE, newChangelogEntries, nextCoreVersion, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, publishRefusal, raiseNext, readDistTagsOrNone, releaseChannel } from "../../scripts/release/dist-tags.mjs";
 import { linkFolder } from "../support/platform/links.ts";
@@ -600,30 +600,35 @@ describe("coreFloor", () => {
   const stored = RULE_KEY_SINCE.get("stored");
 
   it("is undefined for a pack every core loads", () => {
-    expect(coreFloor([], ["python", "typescript", "vue"], [], [])).toBeUndefined();
-    expect(coreFloor([], [], [], [])).toBeUndefined();
+    expect(coreFloor([], ["python", "typescript", "vue"], [], [], [])).toBeUndefined();
+    expect(coreFloor([], [], [], [], [])).toBeUndefined();
   });
 
   it("is the release that first reads heldOff for a pack holding a rule off", () => {
-    expect(coreFloor(["ruff-b009-get-attr-with-constant"], ["python"], [], [])).toBe(HELD_OFF_SINCE);
+    expect(coreFloor(["ruff-b009-get-attr-with-constant"], ["python"], [], [], [])).toBe(HELD_OFF_SINCE);
   });
 
   it("is the release that first reads the language for a pack with a rule in one added since", () => {
-    expect(coreFloor([], ["python", "java"], [], [])).toBe(java);
+    expect(coreFloor([], ["python", "java"], [], [], [])).toBe(java);
   });
 
   it("is the release that first reads the key for a pack whose ast rule uses one added since", () => {
-    expect(coreFloor([], ["python"], ["stored"], [])).toBe(stored);
+    expect(coreFloor([], ["python"], ["stored"], [], [])).toBe(stored);
   });
 
   it("is the newest of them for a pack with several", () => {
-    expect(coreFloor(["held"], ["java"], [], [])).toBe([HELD_OFF_SINCE, java].sort(semver.compare).at(-1));
-    expect(coreFloor(["held"], ["java"], ["stored"], [])).toBe([HELD_OFF_SINCE, java, stored].sort(semver.compare).at(-1));
+    expect(coreFloor(["held"], ["java"], [], [], [])).toBe([HELD_OFF_SINCE, java].sort(semver.compare).at(-1));
+    expect(coreFloor(["held"], ["java"], ["stored"], [], [])).toBe([HELD_OFF_SINCE, java, stored].sort(semver.compare).at(-1));
   });
 
   it("is 0.2.1, the release that first reads a rule written in .rerail, for a pack that ships one", () => {
-    expect(coreFloor([], ["python"], [], ["django-practice-count-not-len"])).toBe("0.2.1");
-    expect(coreFloor([], ["python"], [], [])).toBeUndefined();
+    expect(coreFloor([], ["python"], [], ["django-practice-count-not-len"], [])).toBe("0.2.1");
+    expect(coreFloor([], ["python"], [], [], [])).toBeUndefined();
+  });
+
+  it("is the release that first reads dimensions for a pack giving a rule them, and newer than .rerail's", () => {
+    expect(coreFloor([], ["python"], [], [], ["django-practice-enqueue-on-commit"])).toBe(DIMENSIONS_SINCE);
+    expect(coreFloor([], ["python"], [], ["django-practice-enqueue-on-commit"], ["django-practice-enqueue-on-commit"])).toBe(DIMENSIONS_SINCE);
   });
 });
 

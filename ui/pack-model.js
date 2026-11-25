@@ -3,11 +3,23 @@
  * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, the catalog's kinds,
  * order and the packs suggested for the repository, and the sheet's rules. Nothing here touches the DOM.
  */
-import { categoryLabel, isLog, isRunning } from "./derive.js";
-import { activityOf, fires, matches, ruleSections, titleOf, ui } from "./state.js";
+import { categoryLabel, isLog, isRunning, RISK_LABELS } from "./derive.js";
+import { activityOf, dimensionsOf, fires, matches, RISK_FILTER, ruleSections, titleOf, ui } from "./state.js";
 
 /** The Filter select of a pack page: `ui.filter` values `matches()` reads. */
 export const PAGE_FILTERS = [["all", "All rules"], ["on", "On"], ["steer", "Steer"], ["log", "Log only"], ["off", "Off"], ["fired", "Has violations"]];
+/**
+ * The Filter select's risk choices for a page's `rules`: one `risk:<risk>` per risk their packs give at least one of
+ * them, in the risks' order, with how many rules have it. None when no rule on the page has dimensions.
+ */
+export function pageRiskFilters(rules) {
+  const counts = new Map();
+  for (const r of rules) {
+    const risk = dimensionsOf(r)?.risk;
+    if (risk !== undefined) counts.set(risk, (counts.get(risk) ?? 0) + 1);
+  }
+  return RISK_LABELS.filter(([risk]) => counts.has(risk)).map(([risk, label]) => [`${RISK_FILTER}${risk}`, `${label} (${counts.get(risk)})`]);
+}
 /** The Sort select of a pack page: `ui.sort` values `sortPageRules` reads. */
 export const PAGE_SORTS = [["violations", "Most violations logged"], ["recent", "Most recent violations logged"], ["newest", "Newest first"], ["az", "A to Z"]];
 
