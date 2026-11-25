@@ -58,15 +58,16 @@ Shared by all five rules:
 - Clauses added to vue/component's script relations over the view: `vin_script`, `vin_setup`, `vsetup_doc`, vcomp's
   `export default`, `vmacro_site`.
 - `vvalued`: reads `value` of no particular node, which keeps `value` an input made for every node (engine gap 3).
-- Restated library clauses the engine cannot specialise: `vopt_fn` with h tied to v (gap 4), `vlater_setter` by line
-  and column (gap 6), tsx/names' `pattern_name` and `bound_name` with kind atoms (gap 5).
+- Restated library clauses the engine cannot specialise: `vlater_setter` by line and column (gap 6), tsx/names'
+  `pattern_name`, `bound_name` and the type alias / interface `decl_site` with kind atoms (gap 5).
 
 Proposed changes to existing libraries, so that vue-01 can shrink to the seeds:
 
-- vue/component.rerail: read the scripts from the view (vblock, vtop) rather than per-block `parsed`; `vopt_fn(h, v, v)`
-  tied by `field(h, "value", w), vunwrap(w, v)`; `vlater_setter` without `earlier`.
+- vue/component.rerail: read the scripts from the view (vblock, vtop) rather than per-block `parsed`; `vlater_setter`
+  without `earlier`. (`vopt_fn`'s pair clause now ties h's value to v in component.rerail itself, gap 4.)
 - tsx/names.rerail: `kind(x, k), (k = "a" ; k = "b")` as `(kind(x, "a") ; kind(x, "b"))` (pattern_name, bound_name,
-  import_spec, the named function expression's decl_site, write_target, plain_param, escope_node, erased).
+  import_spec, the named function expression's and the type alias / interface decl_site, write_target, plain_param,
+  escope_node, erased).
 
 ## Engine gaps (main, ~/pt/bin/rerail-engine)
 
@@ -89,3 +90,42 @@ Proposed changes to existing libraries, so that vue-01 can shrink to the seeds:
    names (`const { a } = toRefs(p)`, `let [m] = defineModel()`, `setup(_, { emit })`) declared nothing.
 6. **`earlier` / `visit_index` have no row over the view** (react-04 found the same for TypeScript files).
 7. Minor: `cat("c", c)` with c from `col(n, c)` printed unrelated interned strings in a probe; the rules don't do it.
+
+## Review fixes (vue-01.review.md)
+
+All 21 defects fixed; none disputed. Each counterexample is a `.test` of its rule (22 tests, all passing under
+`rerail-engine test-rr`), with ESLint's (eslint-plugin-vue 10.11.1) lines as the expected findings. Over the
+reviewer's 45 files and 4 more of mine (an accessor's setter, `:[a].sync`, `{ "emit": e2, emit = … }`, the
+ignoredObjectNames wrappers), ESLint and the translations report the same 84 (file, rule, line) keys.
+
+Library, vue/component.rerail (shared with no-side-effects-in-computed-properties, return-in-computed-property,
+no-template-shadow and no-watch-after-await, whose originals use the same utils):
+
+- `vcomputed` follows utils.getComputedProperties: a method or accessor (`get x()`, and a setter's body too, as
+  ESLint reports it), or a FunctionExpression value without `as`, or the `get` FunctionExpression of an object; an
+  arrow is no getter. `vgetter` stays computed()'s (getGetterBodyFromComputedFunction takes arrows).
+- `vvue_import_call` reads the imported name (`import { computed as c }` calls computed), as ReferenceTracker does;
+  a default or namespace binding called directly is none.
+- `vname` (iteratePropertyValue) and `vopt_fn` read an option's value through parentheses only: `props: ['a'] as any`
+  declares nothing.
+- `vprop_name` flattens defineProps<T>'s type as flattenTypeNodes: unions, intersections, parentheses, and a type
+  name resolved (ref_site) to its interface's body or its alias's type.
+
+Rules:
+
+- no-async-in-computed-properties: an async getter is reported only when the reported function starts on its body's
+  line (verify's line test); `$nextTick` on a `const vm = this`; the ignoredObjectNames root skips `!`, `as`,
+  `satisfies`, `<T>x` and `x<T>` (skipWrapper). The option is read through `ignored_name`, which a test can give.
+- no-dupe-keys: type aliases and interfaces are module-scope variables (decl_site's type clause restated with kind
+  atoms in vue-01, gap 5); one report per name, at its first declaration (defs[0]); an initialiser that reads the
+  props through `{ props }` (a shorthand property) skips the name.
+- no-export-in-script-setup: any `export declare …` is a type export.
+- no-mutating-props: v-model's and `.sync`'s dynamic argument is checked as their value is (the view writes it as
+  its own statement at the `[…]`); type aliases leave the template's props through the restated decl_site.
+- no-ref-as-operand: makers by imported name; a maker under `as` makes no ref variable (`deparen`, not `vunwrap`);
+  toRefs binds only the pattern's top-level properties; an event name may be a template without `${}`;
+  `{ emit: e }` and a defaulted context (`ctx = {}`) are setup's; a variable declared with defineModel() is remade
+  only by another defineModel(), as the plugin processes defineModel() calls after every ref() call.
+
+Option tests: run-policies takes no options, so ignoredObjectNames was checked with `run-rr … options.json`
+(`{"ignoredObjectNames": ["z"]}`) against ESLint with the same option: both report x4-ign.vue:5 only.

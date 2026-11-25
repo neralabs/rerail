@@ -13,17 +13,20 @@
 //   vname(o, g, x, n)       o's option g declares the name x at node n (utils.iterateProperties): props, computed,
 //                           methods (array strings or object keys), data, asyncData, setup (keys of the object the
 //                           function returns)
-//   vcomputed(o, x, f)      f is the getter of o's computed property x: `x() {}`, `x: () => …`, `x: { get() {} }`
+//   vcomputed(o, x, f)      f is the getter of o's computed property x (utils.getComputedProperties): `x() {}`,
+//                           `get x() {}`, `x: function () {}`, `x: { get() {} }`; an arrow is none
 //   vsetup(o, f)            f is o's setup function: `setup(props) {}` or `setup: (props) => {}`
 //   vvue_call(c, x)         c calls Vue's API x (computed, watch, ref, …): imported from vue, @vue/composition-api,
 //                           @nuxtjs/composition-api or #imports, or a free global x (auto-imports)
-//   vvue_import_call(c, x)  the same, imported only (ReferenceTracker's ESM map): `import { watch } from "vue"`
+//   vvue_import_call(c, x)  the same, imported only (ReferenceTracker's ESM map, by the imported name):
+//                           `import { watch } from "vue"`, `import { computed as c } from "vue"; c(…)` is computed
 //   vcomputed_fn(c, f)      f is the getter of composition computed(c), imported: computed(() => …), computed({ get() {} })
 //   vmacro(c, x)            c is <script setup>'s compiler macro x: defineProps, withDefaults, defineEmits, defineModel,
 //                           as a top-level declarator's value or expression statement (defineProps also inside
 //                           withDefaults there)
 //   vprops_call(c)          c is defineProps(…) (also inside withDefaults(defineProps(…), …))
-//   vprop_name(c, x, n)     the props c declares: defineProps(['a']), defineProps({ a: … }), defineProps<{ a: T }>()
+//   vprop_name(c, x, n)     the props c declares: defineProps(['a']), defineProps({ a: … }), defineProps<{ a: T }>(),
+//                           defineProps<Props>() through the file's interfaces, aliases, unions and intersections
 //
 //   export default { props: ['a'], computed: { b() { return 1 } }, data() { return { c: 1 } } }
 //     vcomp(o); vname(o, "props", "a", …), vname(o, "computed", "b", …), vname(o, "data", "c", …); vcomputed(o, "b", f)
@@ -107,21 +110,22 @@ vopt(o, x, h, h) :- vcomp(o), child(o, h, _), kind(h, "method_definition"), fiel
 vprop_key(o, p, x, k) :- kind(o, "object"), child(o, p, _), (kind(p, "pair") ; kind(p, "method_definition")),
     (field(p, "key", k) ; field(p, "name", k)), key_static(k, x).
 vprop_key(o, p, x, p) :- kind(o, "object"), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, x).
-// vname: utils.iterateProperties. The option's value is read the same way for every group: an array gives its
-// string items, an object its static keys (`['a']` is one, `[a]` is not; a setter beside its getter counts once), a
-// function the keys of the objects its body's own top-level `return {…}` statements give, an arrow with an object
-// body that object.
+// vname: utils.iterateProperties. The option's value is read by its own node type, through parentheses only
+// (`props: ['a'] as any` declares nothing): an array gives its string items, an object its static keys (`['a']` is
+// one, `[a]` is not; a setter beside its getter counts once), a function the keys of the objects its body's own
+// top-level `return {…}` statements give, an arrow with an object body that object.
 //   props: ['a'], computed: { b() {} }, data() { return { c: 1 } }, setup: () => ({ d })     a, b, c, d
 .decl vname(o: node, g: symbol, x: symbol, n: node)
 vname(o, g, x, s) :- vgroup_value(o, g, c), kind(c, "array"), child(c, s, _), (kind(s, "string") ;
     kind(s, "template_string")), value(s, x).
 vname(o, g, x, k) :- vgroup_value(o, g, c), kind(c, "object"), vprop_key(c, p, x, k), !vshadowed_setter(c, p, x).
 .decl vgroup_value(o: node, g: symbol, c: node)
-vgroup_value(o, g, v) :- vopt(o, g, h, v), h != v, (kind(v, "array") ; kind(v, "object")).
+vgroup_value(o, g, v) :- vopt(o, g, h, v), h != v, field(h, "value", w), deparen(w, v), (kind(v, "array") ;
+    kind(v, "object")).
 vgroup_value(o, g, r) :- vopt(o, g, h, v), vopt_fn(h, v, f), field(f, "body", b), kind(b, "statement_block"),
-    child(b, ret, _), kind(ret, "return_statement"), child(ret, x, 0), kind(x, "object"), r = x.
+    child(b, ret, _), kind(ret, "return_statement"), child(ret, x, 0), deparen(x, r), kind(r, "object").
 vgroup_value(o, g, r) :- vopt(o, g, h, v), vopt_fn(h, v, f), kind(f, "arrow_function"), field(f, "body", b),
-    vunwrap(b, r), kind(r, "object").
+    deparen(b, r), kind(r, "object").
 // vshadowed_setter: `set x() {}` beside `get x() {}`. Each getter pairs with one setter, the first.
 .decl vshadowed_setter(c: node, p: node, x: symbol)
 vshadowed_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, _, x, "get"), !vlater_setter(c, p, x).
@@ -129,9 +133,10 @@ vshadowed_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, _, x, "get"
 vlater_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, q, x, "set"), earlier(q, p).
 .decl vaccessor(c: node, p: node, x: symbol, w: symbol)
 vaccessor(c, p, x, w) :- vprop_key(c, p, x, _), kind(p, "method_definition"), op(p, w), (w = "get" ; w = "set").
+// vopt_fn(h, v, f): option h's function f, a method or a function value as written (no `as`).
 .decl vopt_fn(h: node, v: node, f: node)
 vopt_fn(h, h, h) :- kind(h, "method_definition").
-vopt_fn(h, v, v) :- kind(h, "pair"), function_node(v).
+vopt_fn(h, v, v) :- kind(h, "pair"), field(h, "value", w), deparen(w, v), function_node(v).
 // vfn_returns(f, x): x is what function f returns, from its own code: `return x`, or an arrow's expression body.
 .decl vfn_returns(f: node, x: node)
 vfn_returns(f, x) :- function_node(f), field(f, "body", b), !kind(b, "statement_block"), x = b.
@@ -141,14 +146,24 @@ vfn_returns(f, x) :- function_node(f), field(f, "body", b), kind(b, "statement_b
 vfn_kind(k) :- function_kind(k).
 
 // ---- computed properties ---------------------------------------------------------------------------------------------
+// vcomputed: utils.getComputedProperties. The `computed` option's value is an object as written; each property's
+// getter is its value without `as` when that is a FunctionExpression (a method or accessor, `get x() {}` too, or a
+// function value), or else the `get` property's FunctionExpression of an object value. An arrow gives no getter.
 .decl vcomputed(o: node, x: symbol, f: node)
-vcomputed(o, x, f) :- vopt(o, "computed", _, v), vprop_key(v, p, x, _), vgetter(p, f).
-// vgetter(p, f): property p's getter: a method, a function value, or the `get` of an object value.
+vcomputed(o, x, f) :- vopt(o, "computed", h, v), h != v, field(h, "value", w), deparen(w, v), kind(v, "object"),
+    vprop_key(v, p, x, _), vcomputed_getter(p, f).
+.decl vcomputed_getter(p: node, f: node)
+vcomputed_getter(p, p) :- kind(p, "method_definition").
+vcomputed_getter(p, f) :- kind(p, "pair"), field(p, "value", w), vskip_as(w, f), vfn_expression(f).
+vcomputed_getter(p, f) :- kind(p, "pair"), field(p, "value", w), vskip_as(w, v), kind(v, "object"),
+    vprop_key(v, q, "get", _), (kind(q, "method_definition"), f = q ; kind(q, "pair"), field(q, "value", u),
+    deparen(u, f), vfn_expression(f)).
+.decl vfn_expression(f: node)  // an ESTree FunctionExpression: no arrow
+vfn_expression(f) :- kind(f, "function_expression") ; kind(f, "generator_function").
+// vgetter(p, f): property p's getter for computed(): a method, a function value, or the `get` of an object value.
 .decl vgetter(p: node, f: node)
 vgetter(p, p) :- kind(p, "method_definition"), !op(p, "get"), !op(p, "set").
 vgetter(p, f) :- kind(p, "pair"), field(p, "value", w), vunwrap(w, f), function_node(f).
-vgetter(p, f) :- kind(p, "pair"), field(p, "value", w), vunwrap(w, v), kind(v, "object"), vprop_key(v, q, "get", _),
-    vgetter(q, f).
 .decl vsetup(o: node, f: node)
 vsetup(o, f) :- vopt(o, "setup", h, v), vopt_fn(h, v, f).
 
@@ -160,7 +175,7 @@ vvue_call(c, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function
     kind(o, "identifier"), ref_site(o, s), import_binding(s, _, m, "*"), vue_package(m).
 .decl vvue_import_call(c: node, x: symbol)
 vvue_import_call(c, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), kind(f, "identifier"),
-    text(f, x), ref_site(f, s), import_binding(s, _, m, _), vue_package(m).
+    ref_site(f, s), import_binding(s, _, m, x), x != "*", x != "default", vue_package(m).
 vvue_import_call(c, x) :- kind(c, "call_expression"), vin_script(c), field(c, "function", f), static_prop(f, o, x),
     kind(o, "identifier"), ref_site(o, s), import_binding(s, _, m, "*"), vue_package(m).
 .decl vcomputed_fn(c: node, f: node)
@@ -189,14 +204,16 @@ vprops_call(c) :- vmacro(c, "defineProps").
 vprop_name(c, x, s) :- vprops_call(c), call_arg(c, a, 0), vunwrap(a, v), kind(v, "array"), child(v, s, _),
     kind(s, "string"), str(s, x).
 vprop_name(c, x, k) :- vprops_call(c), call_arg(c, a, 0), vunwrap(a, v), kind(v, "object"), vprop_key(v, _, x, k).
-// defineProps<{ a: string; b?: number }>(): the type literal's property names.
-vprop_name(c, x, k) :- vprops_call(c), field(c, "type_arguments", ta), child(ta, t, 0), kind(t, "object_type"),
-    child(t, m, _), kind(m, "property_signature"), field(m, "name", k), key_static(k, x).
-// defineProps<Props>() with `interface Props { … }` or `type Props = { … }` in the same file.
-vprop_name(c, x, k) :- vprops_call(c), field(c, "type_arguments", ta), child(ta, t, 0), kind(t, "type_identifier"),
-    text(t, y), vprops_type(y, body), child(body, m, _), kind(m, "property_signature"), field(m, "name", k),
-    key_static(k, x).
-.decl vprops_type(y: symbol, body: node)
-vprops_type(y, b) :- kind(i, "interface_declaration"), vin_script(i), field(i, "name", n), text(n, y), field(i, "body", b).
-vprops_type(y, b) :- kind(i, "type_alias_declaration"), vin_script(i), field(i, "name", n), text(n, y),
-    field(i, "value", b), kind(b, "object_type").
+// defineProps<T>(): the props of T's type literals and interface bodies, after utils.flattenTypeNodes: a union or
+// an intersection gives its members, a type name the body of the interface or the type of the alias it resolves to,
+// followed further. `interface P extends B {}` gives P's own members only.
+vprop_name(c, x, k) :- vprops_flat(c, t), child(t, m, _), (kind(m, "property_signature") ;
+    kind(m, "method_signature")), field(m, "name", k), key_static(k, x).
+.decl vprops_flat(c: node, t: node)
+vprops_flat(c, t) :- vprops_call(c), field(c, "type_arguments", ta), child(ta, t, 0).
+vprops_flat(c, u) :- vprops_flat(c, t), (kind(t, "union_type") ; kind(t, "intersection_type") ;
+    kind(t, "parenthesized_type")), child(t, u, _).
+vprops_flat(c, b) :- vprops_flat(c, t), kind(t, "type_identifier"), ref_site(t, s), vprops_type(s, b).
+.decl vprops_type(s: node, body: node)
+vprops_type(i, b) :- kind(i, "interface_declaration"), vin_script(i), field(i, "body", b).
+vprops_type(i, b) :- kind(i, "type_alias_declaration"), vin_script(i), field(i, "value", b).

@@ -11,19 +11,21 @@
 // Options API: a name that props, computed, data, methods or setup (option groups: more option names) already
 // declared earlier in the same component is reported where it repeats.
 //   props: ['foo'], computed: { foo() {} }                 the computed foo is reported
-// <script setup>: a top-level binding named like a defineProps prop is reported at its declaration, unless it is the
-// destructured prop itself, a renamed one (`{ foo: bar }`), or a variable whose initialiser reads the props.
+// <script setup>: a top-level binding named like a defineProps prop is reported at its first declaration (a type
+// alias, an interface or a type import too: typescript-eslint's scope has them), unless it is the destructured prop
+// itself, a renamed one (`{ foo: bar }`), or a variable one of whose declarators' initialiser reads the props.
 //   const props = defineProps(['foo']); const foo = ref(1)                    foo is reported
 //   const props = defineProps(['foo']); const foo = computed(() => props.foo)  not reported
+//   const props = defineProps(['foo']); const foo = useX({ props })            not reported
 .violation dupe_key(at: node, x: symbol) code "vue/no-dupe-keys"
     "Duplicate key '{x}'. May cause name collision in script or template tag."
     suppress eslint "vue/no-dupe-keys"
 // Each clause that starts a search once per view grammar (vue/vue-01).
 dupe_key(n, x) :- named(o, x, n), named(o, x, m), before(m, n).
-dupe_key(site, x) :- vprops_call(c), vjs(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
-    !reads_props(c, site).
-dupe_key(site, x) :- vprops_call(c), vts(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
-    !reads_props(c, site).
+dupe_key(site, x) :- vprops_call(c), vjs(c), vprop_name(c, x, _), !renamed(c, x), first_binding(c, x, site),
+    !props_init(c, x).
+dupe_key(site, x) :- vprops_call(c), vts(c), vprop_name(c, x, _), !renamed(c, x), first_binding(c, x, site),
+    !props_init(c, x).
 .decl named(o: node, x: symbol, n: node)
 named(o, x, n) :- vname(o, g, x, n), vjs(n), (group(g) ; option_item("groups", _, g)).
 named(o, x, n) :- vname(o, g, x, n), vts(n), (group(g) ; option_item("groups", _, g)).
@@ -44,10 +46,18 @@ renamed(c, x) :- pattern(c, l), kind(l, "object_pattern"), child(l, p, _), kind(
     field(p, "key", k), kind(k, "property_identifier"), text(k, x), field(p, "value", v), kind(v, "identifier"),
     !text(v, x).
 // top_binding(c, x, site): x is declared at the top of the scripts (the view's module scope, as vue-eslint-parser
-// reads both blocks as one program); the site is the declaration.
+// reads both blocks as one program), as a value or a type; the site is the declaration (ESLint's def.node).
 .decl top_binding(c: node, x: symbol, site: node)
 top_binding(c, x, at) :- vprop_name(c, x, _), docof(c, d), vview_root(p), docof(p, d),
-    decl_site(p, x, s, _, "value"), def_node(s, at).
+    decl_site(p, x, s, _, _), def_node(s, at).
+// first_binding: variable.defs[0], the declaration that comes first.
+.decl first_binding(c: node, x: symbol, at: node)
+first_binding(c, x, at) :- top_binding(c, x, at), !later_binding(c, x, at).
+.decl later_binding(c: node, x: symbol, at: node)
+later_binding(c, x, at) :- top_binding(c, x, at), top_binding(c, x, b), line(b, lb), line(at, la), (lb < la ;
+    lb = la, col(b, cb), col(at, ca), cb < ca).
+.decl props_init(c: node, x: symbol)
+props_init(c, x) :- top_binding(c, x, at), reads_props(c, at).
 .decl def_node(s: node, at: node)  // ESLint's def.node: the declarator of a destructured name
 def_node(s, s) :- decl_site(_, _, s, f, _), f != "pattern".
 def_node(s, d) :- decl_site(_, _, s, "pattern", _), nearest(s, d, "variable_declarator").
@@ -57,8 +67,66 @@ reads_props(c, at) :- top_binding(c, _, at), kind(at, "variable_declarator"), fi
 reads_props(c, at) :- top_binding(c, _, at), kind(at, "variable_declarator"), field(at, "value", v), c = v.
 reads_props(c, at) :- top_binding(c, _, at), kind(at, "variable_declarator"), field(at, "value", v), read_in(v, r),
     ref_site(r, s), binds(c, s).
-.decl read_in(v: node, r: node)
-read_in(v, r) :- top_binding(_, _, at), field(at, "value", v), (has(v, r, "identifier") ; kind(v, "identifier"), r = v).
+.decl read_in(v: node, r: node)  // a name v's initialiser reads, `{ props }` too
+read_in(v, r) :- top_binding(_, _, at), field(at, "value", v), (has(v, r, "identifier") ;
+    has(v, r, "shorthand_property_identifier") ; kind(v, "identifier"), r = v).
 .decl binds(c: node, s: node)  // s is a declaration site of a name the props pattern binds
 binds(c, d) :- pattern(c, l), field(d, "name", l).
 binds(c, s) :- pattern(c, l), decl_site(_, _, s, "pattern", _), within(s, l).
+
+// Review (vue-01): defect 1, `props: ['a'] as any` declares nothing.
+.test review_option_value_under_as exactly
+    .fixture "d1-as-options.vue" ```
+        <script lang="ts">
+        export default {
+          props: ['a'] as any,
+          data() {
+            return { a: 1 }
+          }
+        }
+        </script>
+        ```
+.end
+// Review (vue-01): defect 2, `useX({ props })` reads the props.
+.test review_props_read_through_shorthand exactly
+    .fixture "d2-shorthand-props.vue" ```
+        <script setup>
+        import { useX } from './x'
+        const props = defineProps(['modelValue'])
+        const modelValue = useX({ props })
+        </script>
+        ```
+.end
+// Review (vue-01): defect 3, a type import, a type alias and an interface named like a prop.
+.test review_type_names exactly
+    .fixture "d3-type-names.vue" ```
+        <script setup lang="ts">
+        import type { foo } from './t'
+        type bar = string
+        const props = defineProps<{ foo: string; bar: string }>()
+        </script>
+        ```
+    .fixture "d13-interface-name.vue" ```
+        <script setup lang="ts">
+        interface foo { x: string }
+        defineProps<{ foo: string }>()
+        </script>
+        ```
+    .expect "vue/no-dupe-keys" at "d3-type-names.vue":2
+    .expect "vue/no-dupe-keys" at "d3-type-names.vue":3
+    .expect "vue/no-dupe-keys" at "d13-interface-name.vue":2
+.end
+// Review (vue-01): defect 4, props of `Base & { bar: string }`.
+.test review_intersection_props exactly
+    .fixture "d12-intersection-dupe.vue" ```
+        <script setup lang="ts">
+        interface Base { foo: string }
+        type Props = Base & { bar: string }
+        defineProps<Props>()
+        const foo = 1
+        const bar = 2
+        </script>
+        ```
+    .expect "vue/no-dupe-keys" at "d12-intersection-dupe.vue":5
+    .expect "vue/no-dupe-keys" at "d12-intersection-dupe.vue":6
+.end
