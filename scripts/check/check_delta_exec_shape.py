@@ -71,6 +71,8 @@ def m0(failures: list) -> None:
         (r"\bstratum\b", "strata stated per head (strata are files, O4)"),
         (r"change::body|\bPart::|\bBody::", "the k-way body operator (steps are separate operators, O1)"),
         (r"write_pair|write_diff|write_keys", "the first build's writes"),
+        (r"\bWorld\b|std::fs::|File::open|read_to_string",
+         "a file read of the crate's own (files come through the engine's file layer: the observer, placed reads)"),
     ]
     for path in sorted((CRATE / "src").rglob("*.rs")):
         code = strip_rust(path.read_text())

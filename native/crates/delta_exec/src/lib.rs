@@ -8,8 +8,11 @@
 //! - `tape`: a document's text and its views (`kind`, `field`, `child`, `text`, `value`, `doc`), read where the
 //!   tape lies;
 //! - `kform`: K-form's relations;
-//! - `k0`: L1's walk of a K0 tape into K-form rows;
-//! - `world`: what a `load` is answered from.
+//! - `k0`: L1's walk of a K0 tape into K-form rows.
+//!
+//! Files are not read here: loads are answered through the engine's file layer (the observer, its placed read into a
+//! residency slab, content-addressed sources and tapes), as *0686: Operations* §9 sets out. `Text` is a source given
+//! in memory (the bootstrap's own files and tests).
 //!
 //! The traces (M1), the operator contract (M2), the step operators (M3), the waves, fixpoints, answers and phases
 //! (M4 to M7) and the loop (M8) come after.
@@ -18,7 +21,6 @@ pub mod k0;
 pub mod kform;
 pub mod sym;
 pub mod tape;
-pub mod world;
 
 #[cfg(test)]
 mod tests;
