@@ -732,6 +732,19 @@ pub fn with_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R
     }
 }
 
+/// `with_bound` for a read that binds nothing: `f` of the value where this thread's context holds it, the context
+/// borrowed while `f` runs, so `f` must not bind on this thread (a bind there panics, the context borrowed). Takes no
+/// count of the run's chain, which every thread of a run shares: `with_bound`'s clone of it a call was the head's
+/// most contended count (a vector's block, `open_chunk`, 3.9 s of CPU on all).
+pub fn read_bound<T: Default + Send + Sync + 'static, R>(f: impl FnOnce(&T) -> R) -> R {
+    let mut f = Some(f);
+    let found = CONTEXT.try_with(|c| c.borrow().find::<T>().map(|t| f.take().expect("once")(t))).ok().flatten();
+    match found {
+        Some(r) => r,
+        None => f.take().expect("not called")(&T::default()),
+    }
+}
+
 /// Binds `value` in the run's context on this thread, and in every job taken here, until the guard drops; then the
 /// context is as it was.
 pub fn bind<T: Send + Sync + 'static>(value: T) -> Bound {
@@ -1134,6 +1147,19 @@ mod tests {
             assert_eq!(bound::<Depth>(), Depth(1));
         }
         assert_eq!((bound::<Depth>(), links()), (Depth(0), 0));
+    }
+
+    /// `read_bound` reads what `with_bound` reads, the nearest binding else the default, and takes no count of the
+    /// chain it reads (its links' counts are as they were).
+    #[test]
+    fn a_bound_value_is_read_in_place() {
+        assert_eq!(read_bound(|d: &Depth| d.0), 0, "unbound: the default");
+        let _one = bind(Depth(1));
+        let _two = bind(Depth(2));
+        let counts = || CONTEXT.with(|c| c.borrow().0.as_ref().map(std::sync::Arc::strong_count));
+        let before = counts();
+        assert_eq!(read_bound(|d: &Depth| (d.0, counts())), (2, before), "the nearest, its chain not counted again");
+        assert_eq!(read_bound(|s: &Site| s.0), Site::default().0, "a type not bound: its default");
     }
 
     #[test]

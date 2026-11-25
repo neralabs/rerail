@@ -364,8 +364,10 @@ pub(in crate::code_rule_dsl) fn captured_counted(
                 if let Some(text) = env.get_transformed(name) {
                     return Some(Capture::Text(String::from_utf8_lossy(text).into_owned()));
                 }
-                let nodes: Vector<u32> = match env.get_match(name) {
-                    Some(node) => rerail_blocks::vector![node.node_id() as u32],
+                // A match's temporary, read into the rows at once: one block allocation a capture of every root cost
+                // more than the match.
+                let nodes: Vec<u32> = match env.get_match(name) {
+                    Some(node) => vec![node.node_id() as u32],
                     None => env.get_multiple_matches(name).iter().map(|node| node.node_id() as u32).collect(),
                 };
                 (!nodes.is_empty()).then_some(Capture::Nodes(nodes))
@@ -378,7 +380,7 @@ pub(in crate::code_rule_dsl) fn captured_counted(
 /// What a name of an `ast` atom binds at a match (`captured`): nodes (a multi-capture's every node), or the text a
 /// rule's `transform` makes.
 pub(in crate::code_rule_dsl) enum Capture {
-    Nodes(Vector<u32>),
+    Nodes(Vec<u32>),
     Text(String),
 }
 

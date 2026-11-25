@@ -666,3 +666,20 @@ fn a_kept_measure_is_scaled_without_a_sample_of_each_chunk() {
         assert!(*n <= window, "{rel}: measured on a sample by the plan window's chunks alone, not by each of {}: {n}", n + reused);
     }
 }
+
+/// An `ast` atom of two captures, one of many nodes (`$$$R`): at each root W's matcher matched, a row for each node of
+/// the product of its captures' nodes, the root's first (`captured_rows`, its rows laid flat a tape at a time).
+#[test]
+fn an_ast_atoms_captures_give_the_product_of_their_nodes() {
+    const PROGRAM_AST: &str = concat!(
+        "\n.decl argrest(a: symbol, r: symbol)\n",
+        "argrest(a, r) :- ast(d, f, {\"language\": \"python\", \"syntax\": \"valid\", \"rule\": {\"pattern\": \"f($A, $$$R)\"}}, A: x, R: y), text(x, a), text(y, r).\n",
+        ".output argrest\n"
+    );
+    let program = format!("{PROGRAM}{PROGRAM_AST}");
+    let mut c = Corpus::with("ast-product", &program, &["shape", "named", "span", "home", "argrest"]);
+    c.write("e.py", "f(b, c, d)\nf(e)\nf(g, h)\n");
+    let (_, rows) = c.run();
+    let want: BTreeSet<Vec<String>> = [["b", "c"], ["b", "d"], ["g", "h"]].iter().map(|r| r.iter().map(|s| s.to_string()).collect()).collect();
+    assert_eq!(rows[4], want, "the product of A's node and each of R's, at each call matched");
+}

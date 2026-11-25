@@ -396,8 +396,8 @@ fn matched(
             if budget > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
             }
-            for row in found_rows {
-                r.push(&row);
+            for row in found_rows.chunks_exact(1 + m.captures.len()) {
+                r.push(row);
                 rows += 1;
             }
         }
@@ -429,7 +429,7 @@ fn matched(
             if crate::code_rule_dsl::prof::on() {
                 crate::code_rule_dsl::prof::count_named(format!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
                 profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
-                    format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_rows.len(), m.captures.len(), cpu as f64 / 1e6)
+                    format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_rows.len() / (1 + m.captures.len()), m.captures.len(), cpu as f64 / 1e6)
                 });
             }
             if limited > 0 {
@@ -438,11 +438,11 @@ fn matched(
             // A relaxed matcher's cost (decision 0107 §3): the roots W confirmed on the host, and the rows it kept.
             if m.captor.verify {
                 crate::code_rule_dsl::prof::count("ast.relaxed_roots", roots);
-                crate::code_rule_dsl::prof::count("ast.relaxed_kept", found_rows.len());
-                profile::decision("relaxed matchers: roots W confirmed, rows kept", || format!("{}: {roots} roots, {} kept", m.rel, found_rows.len()));
+                crate::code_rule_dsl::prof::count("ast.relaxed_kept", found_rows.len() / (1 + m.captures.len()));
+                profile::decision("relaxed matchers: roots W confirmed, rows kept", || format!("{}: {roots} roots, {} kept", m.rel, found_rows.len() / (1 + m.captures.len())));
             }
-            for row in found_rows {
-                r.push(&row);
+            for row in found_rows.chunks_exact(1 + m.captures.len()) {
+                r.push(row);
                 rows += 1;
             }
         }
@@ -455,7 +455,8 @@ fn matched(
 /// A captured matcher's rows (decision 0107): at each root the transducer matched, W's matcher of the atom's rule
 /// matched again on the host, and each capture's nodes read from its bindings (a multi-capture's every node, so its
 /// rows are the product of the captures' nodes). A node the projection leaves out has no row. Tapes in parallel; also
-/// how many roots hit their file's visit budget (no rows).
+/// how many roots hit their file's visit budget (no rows). The rows flat, each `1 + m.captures.len()` wide: one vector a
+/// tape, not one a row.
 fn captured_rows(
     m: &Matcher,
     held: &[usize],
@@ -464,7 +465,7 @@ fn captured_rows(
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
     atoms: &dyn crate::content_store::AtomTable,
     w_key: Option<String>,
-) -> StoreResult<(Vec<Vector<i64>>, usize, u128)> {
+) -> StoreResult<(Vector<i64>, usize, u128)> {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs as costs;
     use crate::code_rule_dsl::waves::findings::Capture;
     use rayon::prelude::*;
@@ -472,13 +473,14 @@ fn captured_rows(
     // wave weighs a clause over its budget against. And each tape's CPU, for the profile's captures (t45).
     let measure = w_key.is_some();
     // A tape's rows, its roots past the budget, W's steps and nodes, and its CPU (ns).
-    type TapeRun = (Vec<Vector<i64>>, usize, u64, u64, u128);
+    type TapeRun = (Vector<i64>, usize, u64, u64, u128);
+    let width = 1 + m.captures.len();
     let per: Vec<StoreResult<TapeRun>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
         held
             .par_iter()
             .zip(found.par_iter())
             .map(crate::code_rule_dsl::logic::profile::carried("ast captures (pool)", |(&i, roots): (&usize, &BTreeSet<u32>)| {
-                let mut rows = Vec::new();
+                let mut rows = Vector::new();
                 let (mut limited, mut steps, mut nodes) = (0, 0_u64, 0_u64);
                 if roots.is_empty() {
                     return Ok((rows, limited, steps, nodes, 0));
@@ -494,6 +496,8 @@ fn captured_rows(
                     let local = p.local_of_node(core);
                     (local != NONE).then(|| p.global(local))
                 };
+                // A root's rows as captures are added (`k` wide), its next, and a capture's nodes: reused across roots.
+                let (mut product, mut next, mut captured): (Vec<i64>, Vec<i64>, Vec<i64>) = Default::default();
                 for &n in roots {
                     let Some(n_global) = global(n) else { continue };
                     let (names, used) = crate::code_rule_dsl::waves::findings::captured_counted(&m.captor.grammar, &root, n, &m.captures, work);
@@ -509,20 +513,28 @@ fn captured_rows(
                             continue;
                         }
                     };
-                    let mut product: Vec<Vector<i64>> = vec![rerail_blocks::vector![n_global]];
+                    product.clear();
+                    product.push(n_global);
+                    let mut k = 1;
                     for capture in names {
                         // A transform's text is a symbol, the store's atom, as the program's constants are.
-                        let nodes: Vector<i64> = match capture {
-                            Capture::Nodes(nodes) => nodes.into_iter().filter_map(global).collect(),
-                            Capture::Text(text) => rerail_blocks::vector![i64::from(atoms.intern(&text)?)],
-                        };
-                        product = product.into_iter().flat_map(|row| nodes.iter().map(move |&x| {
-                            let mut row = row.clone();
-                            row.push(x);
-                            row
-                        })).collect();
+                        captured.clear();
+                        match capture {
+                            Capture::Nodes(found) => captured.extend(found.into_iter().filter_map(global)),
+                            Capture::Text(text) => captured.push(i64::from(atoms.intern(&text)?)),
+                        }
+                        next.clear();
+                        for row in product.chunks_exact(k) {
+                            for &x in &captured {
+                                next.extend_from_slice(row);
+                                next.push(x);
+                            }
+                        }
+                        std::mem::swap(&mut product, &mut next);
+                        k += 1;
                     }
-                    rows.extend(product);
+                    debug_assert_eq!(k, width, "{}: a root's captures, not the matcher's", m.rel);
+                    rows.extend_from_slice(&product);
                 }
                 let cpu = (rerail_prof::thread_cpu() - started).as_nanos();
                 Ok((rows, limited, steps, nodes, cpu))
@@ -538,6 +550,10 @@ fn captured_rows(
             costs::observe([costs::Observation { program: key, steps, size: nodes, predicted: 0, over_budget: false }]);
         }
     }
-    Ok((per.into_iter().flat_map(|(rows, ..)| rows).collect(), limited, cpu))
+    let mut all = Vector::with_capacity(per.iter().map(|(rows, ..)| rows.len()).sum());
+    for (rows, ..) in &per {
+        all.extend_from_slice(rows);
+    }
+    Ok((all, limited, cpu))
 }
 

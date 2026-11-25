@@ -265,6 +265,14 @@ fn open_blocks() -> Arc<Open> {
     }
 }
 
+/// `f` of the open blocks (`open_blocks`), borrowed: a vector's growth asks for them, and each clone of the run's
+/// object and of its `Open` was a write to a line every thread of the run shares (on the M3's `all`, 7 s of the
+/// run's CPU in `open_blocks`, its `run_own` and `local`, against none before vectors lay in blocks).
+fn with_open_blocks<R>(f: impl FnOnce(&Open) -> R) -> R {
+    let in_run = crate::code_rule_dsl::logic::profile::RUN.try_with(|r| r.borrow().is_some()).unwrap_or(false);
+    if in_run { crate::code_rule_dsl::logic::profile::with_local::<Open, R>(f) } else { f(&crate::code_rule_dsl::logic::profile::machine::<Open>()) }
+}
+
 /// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
 /// machine's, as the memory it counts is).
 #[derive(Default)]
@@ -691,20 +699,30 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// if a chunk's evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
 /// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
+///
+/// The chunk and the run's open blocks are borrowed where they are bound, not cloned (`read_bound`, `with_open_blocks`).
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
-    let chunk = current_chunk();
-    let runs = open_blocks();
-    let mut open = chunk.as_ref().map_or(runs.1.here(life), |c| c.lanes.here(life)).lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(f) = &*open
-        && f.admits(need)
-        && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
-    {
-        return Ok((f.clone(), c));
-    }
-    let f = new_open(&chunk, life, need)?;
-    *open = Some(f.clone());
-    let c = f.block.try_alloc_chunk_fit(need, align).ok_or_else(|| format!("a new open block holds no chunk of {need} bytes"))?;
-    Ok((f, c))
+    // Read in place (`read_bound`): nothing here binds.
+    crate::code_rule_dsl::logic::profile::read_bound::<InChunk, _>(|chunk| {
+        let chunk = &chunk.0;
+        let take = |lane: &Mutex<Option<Arc<Facts>>>| {
+            let mut open = lane.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(f) = &*open
+                && f.admits(need)
+                && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
+            {
+                return Ok((f.clone(), c));
+            }
+            let f = new_open(chunk, life, need)?;
+            *open = Some(f.clone());
+            let c = f.block.try_alloc_chunk_fit(need, align).ok_or_else(|| format!("a new open block holds no chunk of {need} bytes"))?;
+            Ok((f, c))
+        };
+        match chunk {
+            Some(c) => take(c.lanes.here(life)),
+            None => with_open_blocks(|runs| take(runs.1.here(life))),
+        }
+    })
 }
 
 /// The room of a `Life`'s open blocks (`open_chunk`) for the block structures (`rerail_blocks::maps`): a run's maps,

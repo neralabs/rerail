@@ -275,14 +275,22 @@ impl CodeTable {
         &self.words()[s..s + n]
     }
     fn str_bytes(&self) -> &[u8] {
-        let s = self.section(H_STR, (self.words()[H_STR_N] as usize).div_ceil(4));
-        // SAFETY: the section's words, read as their bytes, `H_STR_N` of them.
-        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u8>(), self.words()[H_STR_N] as usize) }
+        Self::str_bytes_in(self.words())
     }
-    fn classes_all(&self) -> &[u16] {
-        let s = self.section(H_CLS, (self.words()[H_CLS_N] as usize).div_ceil(2));
+    // Of the words read once (`entry`, a node at a time): each `words` is a call through the owner's `AsRef`.
+    #[inline(always)]
+    fn str_bytes_in(w: &[u32]) -> &[u8] {
+        let (s, n) = (w[H_STR] as usize, w[H_STR_N] as usize);
+        let s = &w[s..s + n.div_ceil(4)];
+        // SAFETY: the section's words, read as their bytes, `H_STR_N` of them.
+        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u8>(), n) }
+    }
+    #[inline(always)]
+    fn classes_in(w: &[u32]) -> &[u16] {
+        let (s, n) = (w[H_CLS] as usize, w[H_CLS_N] as usize);
+        let s = &w[s..s + n.div_ceil(2)];
         // SAFETY: the section's words, read as their u16s (little-endian, as `encode` packed them), `H_CLS_N` of them.
-        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), self.words()[H_CLS_N] as usize) }
+        unsafe { std::slice::from_raw_parts(s.as_ptr().cast::<u16>(), n) }
     }
     /// The words it is read from, for an owner that keeps them elsewhere.
     pub fn as_words(&self) -> &[u32] {
@@ -328,13 +336,15 @@ impl CodeTable {
     /// Code `number`'s entry.
     #[inline(always)]
     pub fn entry(&self, number: u32) -> EntryRef<'_> {
-        let r = self.rec(number);
+        let w = self.words();
+        let at = w[H_REC] as usize + number as usize * REC;
+        let r = &w[at..at + REC];
         let alias = (r[1] >> 8 & 1 != 0).then(|| {
-            let b = &self.str_bytes()[r[4] as usize..(r[4] + r[5]) as usize];
+            let b = &Self::str_bytes_in(w)[r[4] as usize..(r[4] + r[5]) as usize];
             // SAFETY: `over` checked the aliases' bytes are UTF-8, and `encode` wrote each alias whole.
             (unsafe { std::str::from_utf8_unchecked(b) }, r[1] >> 9 & 1 != 0)
         });
-        EntryRef { kind: r[0] as u16, field: (r[0] >> 16) as u16, flags: r[1] as u8, alias, classes: &self.classes_all()[r[2] as usize..(r[2] + r[3]) as usize] }
+        EntryRef { kind: r[0] as u16, field: (r[0] >> 16) as u16, flags: r[1] as u8, alias, classes: &Self::classes_in(w)[r[2] as usize..(r[2] + r[3]) as usize] }
     }
     /// The entries, by number.
     pub fn entries(&self) -> impl ExactSizeIterator<Item = EntryRef<'_>> + '_ {

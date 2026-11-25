@@ -720,6 +720,22 @@ impl Drop for Fence {
     }
 }
 
+/// A block's ledger as a region's guard (`rerail_vector::Region::guarded`): a vector in the block has each CPU read and
+/// write checked against the device's queued uses (R4).
+impl rerail_vector::Guard for Ledger {
+    #[inline]
+    fn cpu_read(&self, at: usize, len: usize) {
+        Ledger::cpu_read(self, at, len)
+    }
+    #[inline]
+    fn cpu_write(&self, at: usize, len: usize) {
+        Ledger::cpu_write(self, at, len)
+    }
+    fn uses(&self) -> Option<&std::sync::atomic::AtomicUsize> {
+        Some(&self.chunk_uses)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -819,6 +835,39 @@ mod tests {
         b.ledger().cpu_read(next, 4096);
         // A use on a complete fence fails.
         assert!(fails(|| r.reads(&b)));
+    }
+
+    /// R4 through a vector in the block (`Region::guarded`): read freely while nothing is queued on the block
+    /// (`Region::quiet` skips the guard), refused while a device write of its chunk is queued, read again once that
+    /// fence completes.
+    #[test]
+    fn a_vector_in_a_block_is_checked_while_a_use_of_it_is_queued() {
+        struct InBlock(Arc<Block>, std::sync::atomic::AtomicUsize);
+        impl crate::maps::Room for InBlock {
+            fn region(&self, bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
+                let (at, kept) = self.0.try_alloc_chunk_fit(bytes, align).expect("room in the block");
+                self.1.store(at, Relaxed);
+                // SAFETY: the chunk was taken for this region, `kept` bytes at `at`.
+                let m = unsafe { crate::region::Mutable::<u8>::adopt(&self.0, at, bytes, kept, name) };
+                crate::maps::region_of(m, None).guarded(self.0.ledger().clone(), at)
+            }
+        }
+        let b = Arc::new(listed());
+        let room = Arc::new(InBlock(b.clone(), std::sync::atomic::AtomicUsize::new(0)));
+        let mut v = crate::vector::Vector::<u64>::new_in(room.clone());
+        v.extend_from_slice(&[1, 2, 3]);
+        assert_eq!(v.iter().sum::<u64>(), 6, "nothing queued: read");
+        let other = b.try_alloc_chunk(4096, 64).unwrap();
+        let w = Fence::new();
+        w.writes_chunk(&b, other, 4096);
+        assert_eq!(v.iter().sum::<u64>(), 6, "a use of another chunk queued: read");
+        let mine = Fence::new();
+        mine.writes_chunk(&b, room.1.load(Relaxed), 64);
+        assert!(fails(|| drop(v.iter().sum::<u64>())), "its own chunk written by the device: refused");
+        mine.complete();
+        w.complete();
+        v.push(4);
+        assert_eq!(v.iter().sum::<u64>(), 10, "the fences complete: read and written");
     }
 
     struct Watched {
@@ -988,18 +1037,5 @@ mod tests {
         let b = Block::anon(kind::FACTS, 1 << 20);
         let (slab, _) = watched();
         drop(b.relocate(slab));
-    }
-}
-
-/// A block's ledger as a region's guard (`rerail_vector::Region::guarded`): a vector in the block has each CPU read and
-/// write checked against the device's queued uses (R4).
-impl rerail_vector::Guard for Ledger {
-    #[inline]
-    fn cpu_read(&self, at: usize, len: usize) {
-        Ledger::cpu_read(self, at, len)
-    }
-    #[inline]
-    fn cpu_write(&self, at: usize, len: usize) {
-        Ledger::cpu_write(self, at, len)
     }
 }

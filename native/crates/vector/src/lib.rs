@@ -38,6 +38,8 @@ pub struct Region {
     len: usize,
     owner: Box<dyn Any + Send + Sync>,
     guard: Option<(Arc<dyn Guard>, usize)>,
+    /// Its guard's count of the device's queued uses (`Guard::uses`), read in place: null where it gives none.
+    uses: *const std::sync::atomic::AtomicUsize,
     share: Option<fn(&Region) -> Region>,
 }
 
@@ -46,6 +48,12 @@ pub struct Region {
 pub trait Guard: Send + Sync {
     fn cpu_read(&self, at: usize, len: usize);
     fn cpu_write(&self, at: usize, len: usize);
+    /// How many of the device's uses of the block are queued, where the guard counts them: a region reads it in place,
+    /// and calls the guard only while one is (a vector's every read called it, through the trait object: on the M3's
+    /// `all`, 10 s of the run's CPU in `as_ref` and `Ledger::cpu_read`, with no device use ever queued).
+    fn uses(&self) -> Option<&std::sync::atomic::AtomicUsize> {
+        None
+    }
 }
 
 // SAFETY: the region's bytes are its holder's alone, written through `&mut self` or as atomics.
@@ -58,13 +66,23 @@ impl Region {
     /// # Safety
     /// `ptr..ptr + len` is writable, aligned as asked, and this region's alone while `owner` lives.
     pub unsafe fn new(ptr: *mut u8, len: usize, owner: Box<dyn Any + Send + Sync>) -> Region {
-        Region { ptr, len, owner, guard: None, share: None }
+        Region { ptr, len, owner, guard: None, uses: std::ptr::null(), share: None }
     }
 
     /// It, each CPU read and write checked by `guard`, its first byte at `at` of the guard's block.
     pub fn guarded(mut self, guard: Arc<dyn Guard>, at: usize) -> Region {
+        // The count lies in the guard, which the region holds: valid while it lives.
+        self.uses = guard.uses().map_or(std::ptr::null(), |u| u as *const _);
         self.guard = Some((guard, at));
         self
+    }
+
+    /// Whether its guard counts no queued use of the device (`Guard::uses`), read in place: a CPU read or write then
+    /// needs no check. `false` where its guard counts none, or it has none.
+    #[inline]
+    pub fn quiet(&self) -> bool {
+        // SAFETY: `uses` points into the guard this region holds, or is null.
+        !self.uses.is_null() && unsafe { &*self.uses }.load(std::sync::atomic::Ordering::Relaxed) == 0
     }
 
     /// It, borrowed again by `share` (a borrowed vector's clone: another borrow of the same bytes).

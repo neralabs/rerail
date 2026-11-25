@@ -5967,11 +5967,26 @@ fn run_observed_within(
         }
         // The files a row is attributed to: its document's (a guest's is its host file's), or every file that asked
         // for its value document. Rows are sets, so a value's rows kept by each of its files restore as one.
-        let owners = |v: i64| -> Vector<i64> {
+        // A value's files: those that asked for it, borrowed, or its document's host alone; no vector made a call
+        // (one a run of an export's rows, 7.7 s of the head's CPU as a block's vector each).
+        enum Owners<'a> {
+            Asked(&'a [i64]),
+            One([i64; 1]),
+        }
+        impl std::ops::Deref for Owners<'_> {
+            type Target = [i64];
+            fn deref(&self) -> &[i64] {
+                match self {
+                    Owners::Asked(files) => files,
+                    Owners::One(file) => file,
+                }
+            }
+        }
+        let owners = |v: i64| {
             let d = memo::document_of(v);
             match askers.get(&d) {
-                Some(files) => files.clone(),
-                None => rerail_blocks::vector![host_of.get(&d).copied().unwrap_or(d)],
+                Some(files) => Owners::Asked(files.as_slice()),
+                None => Owners::One([host_of.get(&d).copied().unwrap_or(d)]),
             }
         };
         if chunk_nodes_built > 0 {
@@ -6073,7 +6088,7 @@ fn run_observed_within(
                 // location's node is of.
                 let mut cells: Vec<output::Cell<'_>> = Vec::with_capacity(rows.width());
                 for i in 0..rows.len() {
-                    let files = at.filter(|&c| c < rows.width()).and_then(|c| match rows.cell(i, c) { output::Cell::Int(v) => Some(v), output::Cell::Text(_) => None }).map(owners).unwrap_or_default();
+                    let files = at.filter(|&c| c < rows.width()).and_then(|c| match rows.cell(i, c) { output::Cell::Int(v) => Some(v), output::Cell::Text(_) => None }).map(owners).unwrap_or(Owners::Asked(&[]));
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
                         memo_why.insert(format!("output {rel}: {}", if files.is_empty() { "no location" } else { "another chunk's document" }));
                         attributable = false;
@@ -6081,7 +6096,7 @@ fn run_observed_within(
                     }
                     cells.clear();
                     cells.extend((0..rows.width()).map(|c| rows.cell(i, c)));
-                    for d in files {
+                    for &d in files.iter() {
                         let e = entries.get_mut(&d).expect("checked");
                         e.outputs.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), output::Rows::new(rows.types().to_vec()))).1.push(&cells);
                     }
@@ -6099,7 +6114,7 @@ fn run_observed_within(
                     attributable = false;
                     break;
                 }
-                for d in files {
+                for &d in files.iter() {
                     asked.push(by_file.entry(d).or_insert_with(memo::Answered::rows));
                 }
             }
@@ -6121,23 +6136,37 @@ fn run_observed_within(
                 return Err(format!("export {rel}: no location column"));
             };
             let width = rows.columns().len();
-            let mut by_file: HashMap<i64, Vector<i64>> = HashMap::new();
-            let mut run: Option<(i64, Vector<i64>)> = None;
-            let mut row = Vec::with_capacity(width);
-            for r in 0..rows.len() {
+            // The runs (first row, owners) and each file's row count first, so that each file's rows are given their
+            // room once rather than grown a row at a time.
+            let mut runs: Vec<(usize, Owners<'_>)> = Vec::new();
+            let mut counts: HashMap<i64, usize> = HashMap::new();
+            let mut doc = None;
+            let n = rows.len();
+            for r in 0..n {
                 let v = rows.value(r, at);
                 let d = memo::document_of(v);
-                if run.as_ref().is_none_or(|(rd, _)| *rd != d) {
+                if doc != Some(d) {
                     let files = owners(v);
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
                         return Err(format!("export {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
                     }
-                    run = Some((d, files));
+                    doc = Some(d);
+                    runs.push((r, files));
                 }
-                row.clear();
-                row.extend((0..width).map(|c| rows.value(r, c)));
-                for f in &run.as_ref().expect("set").1 {
-                    by_file.entry(*f).or_default().extend_from_slice(&row);
+                for f in runs.last().expect("set").1.iter() {
+                    *counts.entry(*f).or_default() += 1;
+                }
+            }
+            let mut by_file: HashMap<i64, Vector<i64>> = counts.into_iter().map(|(f, k)| (f, Vector::with_capacity(k * width))).collect();
+            let mut row = Vec::with_capacity(width);
+            for (i, (from, files)) in runs.iter().enumerate() {
+                let to = runs.get(i + 1).map_or(n, |(next, _)| *next);
+                for r in *from..to {
+                    row.clear();
+                    row.extend((0..width).map(|c| rows.value(r, c)));
+                    for f in files.iter() {
+                        by_file.get_mut(f).expect("counted").extend_from_slice(&row);
+                    }
                 }
             }
             Ok(by_file)
@@ -6169,7 +6198,13 @@ fn run_observed_within(
                     Ok(by_file) => {
                         let width = rows.columns().len();
                         for (f, values) in by_file {
-                            entries.get_mut(&f).expect("checked").rows.entry(rel.clone()).or_insert_with(|| (width, Vector::new())).1.extend(values);
+                            // Most often the file's first rows of the relation: the vector itself, not a copy.
+                            let held = &mut entries.get_mut(&f).expect("checked").rows.entry(rel.clone()).or_insert_with(|| (width, Vector::new())).1;
+                            if held.is_empty() {
+                                *held = values;
+                            } else {
+                                held.extend(values);
+                            }
                         }
                     }
                     Err(why) => {
