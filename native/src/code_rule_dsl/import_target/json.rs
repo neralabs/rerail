@@ -23,7 +23,7 @@ impl Json {
 
     /// A JSON-with-comments text, as TypeScript reads a configuration file.
     pub(crate) fn parse_jsonc(text: &str) -> Option<Self> {
-        serde_json::from_str(&crate::code_rule_dsl::module_graph::strip_jsonc(text)).ok()
+        serde_json::from_str(&crate::code_rule_dsl::json::strip_jsonc(text)).ok()
     }
 
     /// An object's value at `key`.
