@@ -171,16 +171,31 @@ pub struct Doc<'a> {
     pub tape: Tape<'a>,
     pub lines: &'a [u8],
     pub source: &'a [u8],
-    /// The numbered node last selected and its tape node (`tape_node`): a row's columns read one after another
-    /// select its node once. `u32::MAX`: none yet.
-    last: std::cell::Cell<(u32, u32)>,
+    /// The numbered node last selected and its tape node (`tape_node`), and the `field` view's row it is the node of
+    /// (`fielded`; `u32::MAX`: none): a row's columns read one after another select its node once. `u32::MAX`: none
+    /// yet.
+    last: std::cell::Cell<Selected>,
+}
+
+/// What a `Doc` last selected (`Doc::selected`): numbered node `l`, its tape node `x`, and the `field` view's row
+/// `field_row` whose node it is (`u32::MAX`: none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selected {
+    pub l: u32,
+    pub x: u32,
+    pub field_row: u32,
+}
+
+impl Selected {
+    /// Nothing selected.
+    pub const NONE: Selected = Selected { l: u32::MAX, x: 0, field_row: u32::MAX };
 }
 
 impl<'a> Doc<'a> {
     /// The document's reads, through its directory row's `entry`.
     #[inline]
     pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8]) -> Doc<'a> {
-        Doc { entry, tape, lines, source, last: std::cell::Cell::new((u32::MAX, 0)) }
+        Doc { entry, tape, lines, source, last: std::cell::Cell::new(Selected::NONE) }
     }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
@@ -193,16 +208,28 @@ impl<'a> Doc<'a> {
         // SAFETY: one of the entry's runs of u32s, set where it was made, in its block.
         unsafe { run.as_slice::<u32>() }
     }
+    /// What it last selected: what a caller keeps to read the document again without selecting the node again.
+    #[inline]
+    pub fn selected(&self) -> Selected {
+        self.last.get()
+    }
+    /// It, knowing numbered node `l`'s tape node `x` (a probe's hop found it), and the `field` view's row it is the
+    /// node of (`u32::MAX`: not known).
+    #[inline]
+    pub fn knowing(self, l: u32, x: u32, field_row: u32) -> Self {
+        self.last.set(Selected { l, x, field_row });
+        self
+    }
     /// Numbered node `l`'s tape node (`num_select`).
     #[inline]
     pub fn tape_node(&self, l: u32) -> u32 {
-        let (at, x) = self.last.get();
-        if at == l {
-            return x;
+        let s = self.last.get();
+        if s.l == l {
+            return s.x;
         }
         // SAFETY: the entry's numbering (`numbering`).
         let x = unsafe { self.numbering().select(0, l) };
-        self.last.set((l, x));
+        self.last.set(Selected { l, x, field_row: u32::MAX });
         x
     }
     /// The numbered nodes before tape node `x` (`num_rank`).
@@ -281,9 +308,15 @@ impl<'a> Doc<'a> {
     /// The numbered node of the `field` view's row `i`, and its tape node.
     #[inline]
     pub fn fielded(&self, i: u32) -> (u32, u32) {
+        let s = self.last.get();
+        if s.field_row == i {
+            return (s.l, s.x);
+        }
         // SAFETY: as `tape_node`.
         let x = unsafe { self.numbering().select(2, i) };
-        (self.rank(x), x)
+        let l = self.rank(x);
+        self.last.set(Selected { l, x, field_row: i });
+        (l, x)
     }
     /// `view_field(i, col)`: the parent's id, the field atom, the child's id.
     #[inline]
