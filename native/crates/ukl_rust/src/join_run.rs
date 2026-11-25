@@ -152,6 +152,7 @@ struct ViewDir {
     rows: u64,
     homes: u64,
     cache: u64,
+    keys: u64,
 }
 #[repr(C)]
 struct PlacedDir {
@@ -161,7 +162,7 @@ struct PlacedDir {
     rows: u32,
     pad: u32,
 }
-const _: () = assert!(size_of::<ViewRow>() == 208 && size_of::<ViewDir>() == 40 && size_of::<PlacedDir>() == 32);
+const _: () = assert!(size_of::<ViewRow>() == 208 && size_of::<ViewDir>() == 48 && size_of::<PlacedDir>() == 32);
 
 #[repr(C)]
 struct Copy {

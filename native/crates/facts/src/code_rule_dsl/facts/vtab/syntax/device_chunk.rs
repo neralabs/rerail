@@ -428,9 +428,16 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         // SAFETY: home `k` of the homes just allocated in `b`.
         unsafe { homes_at.add(k).write(ViewHome { host: h.host, gpu: h.device.as_ref().map_or(if host_reads { h.host } else { 0 }, |d| d.0) }) };
     }
+    // The documents' numbers in key order (`ViewDir::keys`): a chunk's tape values follow its batch's documents in
+    // the order admitted, not by key.
+    let keys_at: *mut u32 = b.alloc_t(n.max(1));
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_by_key(|&i| docs[i as usize].p.key);
+    // SAFETY: `n` numbers, just allocated in `b`.
+    unsafe { std::ptr::copy_nonoverlapping(order.as_ptr(), keys_at, n) };
     let at = b.offset_of(dir);
     // SAFETY: the directory just allocated in `b`.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: homes.len() as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes_at) as u64, cache: cache_home.map_or(0, |k| u64::from(k) + 1) }) };
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: homes.len() as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes_at) as u64, cache: cache_home.map_or(0, |k| u64::from(k) + 1), keys: b.offset_of(keys_at) as u64 }) };
     // The device's: the block's buffer made after the last allocation, so it covers them, and each 16z view's cache
     // offset, the cache's device address less its tape's (the kernels read the view where it lies).
     let mut buffers = Vec::new();
