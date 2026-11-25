@@ -212,7 +212,7 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   that makes a new session records folder outside the profile folder private before its first record, still start on
   the daemon's thread. Git's two asks that name the config files the engine's own Git reads take start as the daemon
   starts, as Git that does not block, so a session's first hooks wait for neither, however slowly Git starts or
-  answers; until Git answers, the engine's reads take no system file Git named. A read's
+  answers; until Git answers, the reads through the engine's opener (below) take no system file Git named. A read's
   time limit counts from its Git's start, not from its wait for a thread, and a read stopped while its start waits
   never starts its Git. A starter thread that fails before it runs is replaced; after two such failures in a row the
   daemon makes no more, and starts Git on its own thread while no starter thread runs. `daemon.log` gets a line for
@@ -235,9 +235,9 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   folder, as Git for Windows does. So Rerail reads and watches the `~/.gitconfig` and `core.excludesFile` that Git
   reads.
 - The engine reads repositories in process for the ignore rules and the code-rule store's view of a checkout, through
-  one opener (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config file it
-  reads (`src/engine/native/git-access.ts`: `git var GIT_CONFIG_SYSTEM` and its config listing outside any
-  repository), so the engine takes Git for Windows' `core.autocrlf=true` from that Git's `etc\gitconfig` and
+  one opener (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config
+  file it reads (the daemon asks as it starts, above; `src/engine/native/git-access.ts`: `git var GIT_CONFIG_SYSTEM`
+  and its config listing outside any repository), so the engine takes Git for Windows' `core.autocrlf=true` from that Git's `etc\gitconfig` and
   starts no `git.exe` of its own. Before, the Git library the engine links found the system file by running the first
   `git.exe` on `PATH`, once per process, past the checks above. Three reads of the code rules still open the
   repository that way (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD`
