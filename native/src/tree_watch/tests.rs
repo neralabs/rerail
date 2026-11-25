@@ -73,7 +73,7 @@ fn merge(into: &mut TreeNotice, notice: TreeNotice) {
 }
 
 /// Takes `root`'s notices until what they add up to satisfies `done`; panics past the deadline.
-fn wait_with(
+pub(super) fn wait_with(
     root: &str,
     mut take: impl FnMut() -> Vec<TreeNotice>,
     done: impl Fn(&TreeNotice) -> bool,
@@ -207,6 +207,50 @@ fn a_stopped_root_drops_its_notices() {
     assert!(notices.take().is_empty());
 }
 
+#[test]
+fn an_unheard_root_is_lost_at_every_take_until_it_is_heard_again() {
+    let notices = Notices::default();
+    notices.start("/a");
+    notices.unheard("/a");
+    for take in 0..2 {
+        let taken = notices.take();
+        assert_eq!(taken.len(), 1, "take {take}");
+        assert!(
+            taken[0].lost && !taken[0].ended,
+            "take {take}: {:?}",
+            taken[0]
+        );
+    }
+    notices.heard("/a");
+    let after = notices.take();
+    assert!(
+        after
+            .iter()
+            .all(|notice| notice.root != "/a" || notice.lost),
+        "the take right after holds what was queued while unheard"
+    );
+    assert!(notices.take().is_empty(), "heard again: nothing more");
+}
+
+#[test]
+fn an_ended_or_stopped_root_is_no_longer_unheard() {
+    let notices = Notices::default();
+    for end in [true, false] {
+        notices.start("/a");
+        notices.unheard("/a");
+        if end {
+            notices.ended("/a");
+        } else {
+            notices.stop("/a");
+        }
+        notices.take();
+        notices.start("/a");
+        notices.take();
+        assert!(notices.take().is_empty(), "end {end}");
+        notices.stop("/a");
+    }
+}
+
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 mod adapter {
     use super::{DEADLINE, NOTICE_CAP, QUIET, Scratch, names, wait_for_watcher};
@@ -297,6 +341,30 @@ mod adapter {
         assert!(watcher.watch(root.clone(), folders).expect("watch again"));
         scratch.write("checkout/src/a.txt", "again");
         wait_for_changed(&mut watcher, &root, "src/a.txt");
+        watcher.close().expect("close");
+    }
+
+    /// Linux reads what the kernel queued at the take; on Windows the rename waits for the handle,
+    /// which marks the root lost first. FSEvents hands notices over later, so macOS is left out.
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn renaming_a_watched_root_is_a_notice_at_the_first_take_after_the_rename() {
+        let scratch = Scratch::new("root-rename-take");
+        scratch.write("checkout/a.txt", "a");
+        let mut watcher = TreeWatcher::new();
+        let root = scratch.path("checkout").to_string_lossy().into_owned();
+        assert!(
+            watcher
+                .watch(root.clone(), vec![String::new()])
+                .expect("watch")
+        );
+        std::fs::rename(scratch.path("checkout"), scratch.path("moved")).expect("rename the root");
+        let taken = watcher.take().expect("take");
+        let notice = taken.iter().find(|notice| notice.root == root);
+        assert!(
+            notice.is_some_and(|notice| notice.lost || notice.ended),
+            "{taken:?}"
+        );
         watcher.close().expect("close");
     }
 

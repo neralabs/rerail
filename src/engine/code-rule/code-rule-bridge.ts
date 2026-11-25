@@ -3543,7 +3543,7 @@ export class CodeRuleBridge {
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan,
       stack: [], roots: new Set([discovery.root]),
-      view: this.#auditor.walkView?.() ?? this.#auditor,
+      view: this.#auditor.walkView?.(discovery.root) ?? this.#auditor,
       held: path => this.#holdsRefusal(path),
       withdrawn: discovery.withdrawn,
     };
@@ -3608,7 +3608,7 @@ export class CodeRuleBridge {
     }
     const prefix = sessionPath(discovery.root, request.root);
     const named = (path: string): string => (path === "" ? prefix : `${prefix}/${path}`);
-    const asked = this.#auditor.walkView?.() ?? this.#auditor;
+    const asked = this.#auditor.walkView?.(request.root) ?? this.#auditor;
     const view: WalkView = {
       acceptsPath: path => asked.acceptsPath(named(path)),
       ignoresPath: (path, directory) => asked.ignoresPath?.(named(path), directory) === true,

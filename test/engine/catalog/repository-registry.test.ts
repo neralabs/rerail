@@ -20,6 +20,7 @@ import {
   pruneCheckouts,
   recordCheckout,
   recordedCheckoutsReader,
+  recordedCheckoutsVersionReader,
 } from "../../../src/engine/catalog/repository-registry.js";
 import { outsideGit, repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
@@ -423,6 +424,26 @@ function unmountedDrive(): string {
 }
 
 describe("the repository registry", () => {
+  it("reads the recorded checkouts' version again after a write of its own connection and a commit of another's", async () => {
+    const root = await temporary("rerail-registry-version-");
+    const database = open(join(root, "rerail.sqlite"));
+    const other = open(join(root, "rerail.sqlite"));
+    // Rows written straight to the tables: no Git start, which a loaded Windows machine makes slow.
+    database.$client.prepare("INSERT INTO repositories (repository_key, display_name, created_at, updated_at) VALUES ('key', 'repo', 1, 1)").run();
+    const checkout = (db: RerailDatabase, path: string) => db.$client
+      .prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, 'key', 'clone', NULL, 2, 2)")
+      .run(join(root, path));
+    const version = recordedCheckoutsVersionReader(database);
+    const empty = version();
+    checkout(database, "own");
+    const own = version();
+    expect(own).not.toBe(empty);
+    expect(version()).toBe(own);
+    checkout(other, "other");
+    expect(version()).not.toBe(own);
+  });
+
+
   it("puts clones that share a remote and worktrees that share a clone in one repository", async () => {
     const root = await temporary("rerail-registry-join-");
     const database = open(join(root, "rerail.sqlite"));

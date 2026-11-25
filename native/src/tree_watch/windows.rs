@@ -12,8 +12,9 @@
 //!   holder's break runs) is asked again `RENEW_RETRY` later, the handle and its read kept, up to
 //!   `RENEWS` asks; then the handle is let go as for a rename, below.
 //! - A rename or deletion of the folder or one above it breaks its handle part and waits for the
-//!   handle: the thread closes it at once, which lets that go on, and opens the path again
-//!   `REOPEN_DELAY` later. The same folder there (its volume and file id) is watched on and `lost`,
+//!   handle: the thread marks the root unheard (`lost` at every take until a handle is back, so the
+//!   host sees it before the rename or removal ends), closes it at once, which lets that go on,
+//!   and opens the path again `REOPEN_DELAY` later. The same folder there (its volume and file id) is watched on and `lost`,
 //!   since what changed while no handle was open is unknown; none there, or another folder, ends
 //!   the watch. A root reopened `REOPENS` times within `REOPEN_WINDOW` ends at the next, so a
 //!   folder renamed over and over is read whole rather than chased.
@@ -665,6 +666,7 @@ impl Loop {
             Break::LetGo => false,
         };
         if !kept {
+            self.notices.unheard(&watch.root);
             watch.let_go(now);
         }
     }
@@ -710,6 +712,7 @@ impl Loop {
                 continue;
             };
             if !watch.renew(renewal.acknowledge, renewal.tries, now) {
+                self.notices.unheard(&watch.root);
                 watch.let_go(now);
             }
         }
@@ -755,7 +758,9 @@ impl Loop {
         if !watch.start(self.port, key) {
             return self.end(key);
         }
+        // Lost before heard: a take that finds the root heard again holds this notice.
         self.notices.lost(&watch.root);
+        self.notices.heard(&watch.root);
     }
 
     /// Closes every handle and waits for their cancelled operations, so nothing is freed under the
@@ -987,7 +992,7 @@ mod tests {
     };
     use crate::tree_watch::TreeWatcher;
     use crate::tree_watch::notices::Notices;
-    use crate::tree_watch::tests::{Scratch, names, wait_for_watcher};
+    use crate::tree_watch::tests::{Scratch, names, wait_for_watcher, wait_with};
     use std::collections::{HashMap, VecDeque};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -1261,12 +1266,23 @@ mod tests {
         watcher.close().unwrap();
     }
 
-    /// Renames `scratch`'s `checkout` away and back, then waits for the notice it makes.
+    /// Renames `scratch`'s `checkout` away and back, then waits for the notices it makes until its
+    /// handle is open again or its watch ended: lost from the rename on, and ended when it is not
+    /// opened again. Whether it ended.
     fn rename_away_and_back(watcher: &mut TreeWatcher, scratch: &Scratch, root: &str) -> bool {
         std::fs::rename(scratch.path("checkout"), scratch.path("moved")).expect("rename away");
         std::fs::rename(scratch.path("moved"), scratch.path("checkout")).expect("rename back");
-        let notice = wait_for_watcher(watcher, root, |notice| notice.lost || notice.ended);
-        assert!(notice.lost != notice.ended, "{notice:?}");
+        let notices = Arc::clone(&watcher.notices);
+        // Read before each take: once a handle is back (or the watch ended), that take holds its notice.
+        let heard = std::cell::Cell::new(false);
+        let take = || {
+            heard.set(!notices.is_unheard(root));
+            watcher.take().expect("take")
+        };
+        let notice = wait_with(root, take, |notice| {
+            (notice.lost || notice.ended) && heard.get()
+        });
+        assert!(notice.lost, "lost from the rename on: {notice:?}");
         notice.ended
     }
 

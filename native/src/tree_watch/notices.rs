@@ -52,6 +52,8 @@ impl Pending {
 struct State {
     watched: HashSet<String>,
     pending: IndexMap<String, Pending>,
+    /// The watched roots no handle reports on for now (see [`Notices::unheard`]).
+    unheard: HashSet<String>,
 }
 
 impl State {
@@ -98,7 +100,34 @@ impl Notices {
     pub(crate) fn stop(&self, root: &str) {
         let mut state = self.state();
         state.watched.remove(root);
+        state.unheard.remove(root);
         state.pending.shift_remove(root);
+    }
+
+    /// No handle reports on `root` for now (Windows: its handle was let go for a rename or removal
+    /// of the root or a folder above it, which waits for that). It is `lost` now, before what let
+    /// it go ends, and at every take until [`Notices::heard`]: a host never takes a root as unmoved
+    /// while nothing watches it.
+    #[cfg(any(windows, test))]
+    pub(crate) fn unheard(&self, root: &str) {
+        let mut state = self.state();
+        let Some(pending) = state.watched(root) else {
+            return;
+        };
+        pending.lose();
+        state.unheard.insert(root.to_owned());
+    }
+
+    /// Whether no handle reports on `root` for now (see [`Notices::unheard`]).
+    #[cfg(test)]
+    pub(crate) fn is_unheard(&self, root: &str) -> bool {
+        self.state().unheard.contains(root)
+    }
+
+    /// A handle reports on `root` again (see [`Notices::unheard`]).
+    #[cfg(any(windows, test))]
+    pub(crate) fn heard(&self, root: &str) {
+        self.state().unheard.remove(root);
     }
 
     /// Whether `root` is watched: started, and neither stopped nor ended since.
@@ -157,6 +186,7 @@ impl Notices {
         };
         pending.ended = true;
         state.watched.remove(root);
+        state.unheard.remove(root);
     }
 
     /// Every watched root's watch stopped (the adapter's thread failed).
@@ -168,9 +198,18 @@ impl Notices {
         }
     }
 
-    /// Takes every notice since the last take, at most one per root.
+    /// Takes every notice since the last take, at most one per root. A root no handle reports on
+    /// is `lost` again at the next take.
     pub(crate) fn take(&self) -> Vec<TreeNotice> {
-        let pending = std::mem::take(&mut self.state().pending);
+        let mut state = self.state();
+        let pending = std::mem::take(&mut state.pending);
+        let unheard: Vec<String> = state.unheard.iter().cloned().collect();
+        for root in unheard {
+            if let Some(next) = state.watched(&root) {
+                next.lose();
+            }
+        }
+        drop(state);
         pending
             .into_iter()
             .map(|(root, pending)| TreeNotice {

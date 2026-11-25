@@ -14,6 +14,7 @@
  */
 import { channel } from "node:diagnostics_channel";
 import { relative, sep } from "node:path";
+import { FolderPlaces } from "../catalog/checkouts/folder-places.js";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import { gitModifiedOrUntrackedPaths, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
 import { readGitHead } from "../git-head-reader.js";
@@ -1228,6 +1229,11 @@ export class RepositoryWorktreeWalks {
   readonly #options: { gapMs?: number; fullWalkMs?: number };
   readonly #treeWatch: SharedTreeWatch | undefined;
   /**
+   * Where each worktree's top folder is on disk, for every session of every repository: kept while the watch shows
+   * nothing moved it (`FolderPlaces`), through a user of the watch of its own.
+   */
+  readonly places: FolderPlaces;
+  /**
    * By repository, the walk its sessions watch, dropped once none does: nothing of an idle walk is worth keeping, and
    * a folder the catalog does not know is a repository of its own.
    */
@@ -1237,6 +1243,7 @@ export class RepositoryWorktreeWalks {
     const { treeWatch, ...walks } = options;
     this.#options = walks;
     this.#treeWatch = treeWatch === undefined ? undefined : new SharedTreeWatch(treeWatch);
+    this.places = new FolderPlaces({ watch: this.#treeWatch?.user({ flagsOnly: true }) });
   }
 
   /** The walk of the repository `repository` names, the same for every checkout of it (its clone id). */

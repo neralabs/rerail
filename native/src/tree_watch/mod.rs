@@ -37,7 +37,8 @@ pub struct TreeNotice {
     /// Created, deleted or renamed entries, relative `/`-paths. Capped (see `lost`).
     pub renamed: Vec<String>,
     /// Notices were dropped (an OS overflow, more than 16,384 entries between two takes, or a
-    /// Windows handle let go for a rename above the root and opened again): read the whole root.
+    /// Windows handle let go for a rename of the root or above it, at every take until it is open
+    /// again): read the whole root.
     pub lost: bool,
     /// The watch stopped (the root or a folder above it renamed, moved or deleted, a watch error).
     /// The root is no longer watched: read it whole and watch it again.
@@ -65,6 +66,10 @@ pub(crate) trait Backend {
     /// How many roots the adapter holds a handle on.
     #[cfg(test)]
     fn roots(&self) -> usize;
+    /// Reports what the OS queued for the adapter and its thread has not read yet, so a take holds
+    /// every change the OS reported before it. A no-op where the OS hands nothing over that way:
+    /// on Windows the thread is woken by the kernel, and the move of a watched root waits for it.
+    fn flush(&mut self) {}
 }
 
 /// The adapter of this OS, or none where there is none or it cannot start.
@@ -141,11 +146,15 @@ impl TreeWatcher {
         Ok(())
     }
 
-    /// Takes every notice since the last take, at most one per root. Never blocks on the OS.
+    /// Takes every notice since the last take, at most one per root, with what the OS reported
+    /// before the take that the adapter's thread had not read yet. Never blocks on the OS.
     /// A root whose watch ended is let go of here: the adapter that ended it may still hold it
     /// (an FSEvents stream cannot stop itself from its callback).
     #[napi(catch_unwind)]
     pub fn take(&mut self) -> Result<Vec<TreeNotice>> {
+        if let Some(backend) = self.backend.as_mut() {
+            backend.flush();
+        }
         let taken = self.notices.take();
         if let Some(backend) = self.backend.as_mut() {
             for notice in taken.iter().filter(|notice| notice.ended) {

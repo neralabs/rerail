@@ -239,6 +239,9 @@ impl Watches {
 /// What the reading thread and the host's thread share.
 struct Shared {
     instance: OwnedFd,
+    /// The buffer events are read into, held while they are read and reported, so the thread and a
+    /// take's flush report them in the kernel's order.
+    reading: Mutex<Vec<u8>>,
     notices: Arc<Notices>,
     watches: Mutex<Watches>,
     stop: AtomicBool,
@@ -249,6 +252,10 @@ struct Shared {
 impl Shared {
     fn watches(&self) -> MutexGuard<'_, Watches> {
         self.watches.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn reading(&self) -> MutexGuard<'_, Vec<u8>> {
+        self.reading.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Reports one event of `descriptor` (`name`: the entry of its folder, absent for the folder's
@@ -374,6 +381,7 @@ impl Inotify {
             owned(unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) }).ok()?;
         let shared = Arc::new(Shared {
             instance,
+            reading: Mutex::new(vec![0_u8; 64 * 1024]),
             notices,
             watches: Mutex::new(Watches::default()),
             stop: AtomicBool::new(false),
@@ -583,6 +591,14 @@ impl Backend for Inotify {
     fn roots(&self) -> usize {
         self.shared.watches().root_count()
     }
+
+    /// Reads what the kernel queued and the thread has not read yet: a change is queued as its
+    /// syscall returns, and the thread may not have woken by the take.
+    fn flush(&mut self) {
+        if !self.shared.failed.load(Ordering::Acquire) {
+            drain(&self.shared, &mut self.shared.reading());
+        }
+    }
 }
 
 impl Drop for Inotify {
@@ -604,10 +620,9 @@ fn run(shared: &Shared, wake: RawFd) {
 }
 
 fn read_events(shared: &Shared, wake: RawFd) {
-    let mut buffer = vec![0_u8; 64 * 1024];
     while !shared.stop.load(Ordering::Acquire) {
         if wait_readable(shared.instance.as_raw_fd(), wake) {
-            drain(shared, &mut buffer);
+            drain(shared, &mut shared.reading());
         }
     }
 }
@@ -905,6 +920,30 @@ mod tests {
         let notice = notice_of(&notices, &root);
         assert!(names(&notice, "c.ts") && !notice.ended, "{notice:?}");
         assert_eq!(backend.roots(), 1);
+        backend.close();
+    }
+
+    #[test]
+    fn a_flush_reports_what_the_kernel_queued_before_the_thread_read_it() {
+        let notices = Arc::new(Notices::default());
+        let mut backend = paused(&notices);
+        let scratch = Scratch::new("flush");
+        scratch.write("parent/checkout/a.ts", "a");
+        let root = scratch
+            .path("parent/checkout")
+            .to_string_lossy()
+            .into_owned();
+        notices.start(&root);
+        assert!(backend.watch(&root, &[String::new()]));
+        std::fs::rename(scratch.path("parent"), scratch.path("moved")).expect("rename parent");
+        backend.flush();
+        let taken = notices.take();
+        assert!(
+            taken
+                .iter()
+                .any(|notice| notice.root == root && notice.ended),
+            "{taken:?}"
+        );
         backend.close();
     }
 

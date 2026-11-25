@@ -1267,9 +1267,32 @@ export function recordedCheckoutsVersion(db: Pick<RerailDatabase, "select">): st
  * {@link recordedCheckoutsVersion} for a connection that asks on every lookup, as a source walk does for each file: the
  * statement is prepared once, where each one-off read prepared it again.
  */
-export function recordedCheckoutsVersionReader(db: Pick<RerailDatabase, "select">): () => string {
+export function recordedCheckoutsVersionReader(db: Pick<RerailDatabase, "select"> & Partial<Pick<RerailDatabase, "$client">>): () => string {
   const query = recordedCheckoutsVersionQuery(db).prepare();
-  return () => query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+  if (db.$client === undefined) return () => query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+  // Each owner look-up asks this, a few hundred times a walk at a few hundred worktrees, and the query reads every row:
+  // it runs again only once a write reached the database.
+  const commits = commitMark(db.$client);
+  let mark = "";
+  let version: string | undefined;
+  return () => {
+    const now = commits();
+    if (version === undefined || now !== mark) {
+      mark = now;
+      version = query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+    }
+    return version;
+  };
+}
+
+/**
+ * A text that changes whenever a write reaches the database: SQLite's `data_version`, which another connection's commit
+ * changes, and `total_changes()`, which counts this connection's own. While it holds, every table reads the same. One
+ * statement, as the version query it stands in front of is.
+ */
+function commitMark(client: RerailDatabase["$client"]): () => string {
+  const mark = client.prepare("SELECT (SELECT data_version FROM pragma_data_version()) || ':' || total_changes()").pluck();
+  return () => String(mark.get());
 }
 
 const EMPTY_RECORDED_CHECKOUTS = "0:0:0";

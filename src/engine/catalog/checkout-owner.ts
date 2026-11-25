@@ -7,6 +7,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { declaredSubmodulePaths } from "./checkouts/declared-submodules.js";
+import { FolderPlaces } from "./checkouts/folder-places.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
 
 export interface CheckoutOwner {
@@ -97,6 +98,8 @@ function within(root: string, candidate: string): boolean {
  */
 export class CheckoutOwners {
   readonly #recordedVersion: (() => string) | undefined;
+  /** Where each folder is on disk (`FolderPlaces`): a watched worktree's top folder is not looked up again. */
+  readonly #places: FolderPlaces;
   #version: string | undefined;
   /** Lexical folder → physical root of the checkout that owns it (undefined: no Git checkout above it). */
   readonly #roots = new Map<string, string | undefined>();
@@ -115,14 +118,18 @@ export class CheckoutOwners {
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
 
-  /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
-  constructor(recordedVersion?: () => string) {
+  /**
+   * `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`).
+   * `places`: the daemon's, which every session shares; without it every path is looked up on disk.
+   */
+  constructor(recordedVersion?: () => string, places: FolderPlaces = new FolderPlaces()) {
     this.#recordedVersion = recordedVersion;
+    this.#places = places;
   }
 
   /** A recorded checkout outside Git owns the files below it that no Git checkout owns. */
   addPlainRoot(root: string): void {
-    this.#plainRoots.add(physicalPath(root));
+    this.#plainRoots.add(this.#places.physical(root));
   }
 
   /**
@@ -151,7 +158,7 @@ export class CheckoutOwners {
   lookAgainAt(path: string): boolean {
     this.#revalidate();
     const lexical = resolve(path);
-    const real = physicalPath(lexical);
+    const real = this.#places.physical(lexical);
     const outgrown = (real === lexical ? [lexical] : [lexical, real])
       .map(start => this.#outgrownAbove(start))
       .filter((folder): folder is string => folder !== undefined);
@@ -171,7 +178,21 @@ export class CheckoutOwners {
   ownerOf(absolute: string): CheckoutOwner | undefined {
     this.#revalidate();
     const lexical = resolve(absolute);
-    const real = physicalPath(lexical);
+    return this.#ownerAt(lexical, this.#places.physical(lexical));
+  }
+
+  /**
+   * `ownerOf` for a path that is its own real path: a file or folder a walk reached through folders alone (never a
+   * link) from a folder whose place it checked. Its real path is not looked up again.
+   */
+  ownerOfReal(path: string): CheckoutOwner | undefined {
+    this.#revalidate();
+    const real = resolve(path);
+    return this.#ownerAt(real, real);
+  }
+
+  /** The checkout holding `lexical`, whose real path is `real` (see `ownerOf`). */
+  #ownerAt(lexical: string, real: string): CheckoutOwner | undefined {
     const root = this.#rootOf(lexical, real);
     if (root === undefined || !within(root, real)) return undefined;
     if (real !== lexical && this.#rootOf(real, real) !== root) return undefined;
@@ -201,7 +222,7 @@ export class CheckoutOwners {
   declaredSubmodules(root: string): string[] {
     return declaredSubmodulePaths(root)
       .map(path => join(root, path))
-      .filter(folder => within(root, folder) && this.#confirm(folder) === physicalPath(folder));
+      .filter(folder => within(root, folder) && this.#confirm(folder) === this.#places.physical(folder));
   }
 
   /** The checkout root above `path` (the path itself when it is one), searched from `path`; `real` finds plain roots. */

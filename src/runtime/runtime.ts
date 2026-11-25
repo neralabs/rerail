@@ -1349,7 +1349,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #evaluatorOpens = new Set<Promise<CodeRuleBridge | undefined>>();
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
-  readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
+  /** Every session's owner look-ups, which find a watched worktree's place on disk in the daemon's places. */
+  readonly #owners: CheckoutOwners;
   /**
    * The Git reads that place a session's checkout, then the other worktrees Git lists for it (`placeCheckout`,
    * `placeWorktrees`): a disposed runtime ends them, and returns once each Git they started has exited, so none is left
@@ -1415,6 +1416,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#worktreeWalks = options.worktreeWalks ?? new RepositoryWorktreeWalks();
     this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
+    this.#owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion(), this.#worktreeWalks.places);
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1423,6 +1425,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       sessionRoot: auditorOptions.workspaceRoot,
       startingCheckout: startingCheckout(this.#owners, auditorOptions.workspaceRoot).checkoutRoot,
       owners: this.#owners,
+      places: this.#worktreeWalks.places,
       catalogs: this.#catalogs,
       gitIgnoreMatchers: this.#gitIgnoreMatchers,
     }));

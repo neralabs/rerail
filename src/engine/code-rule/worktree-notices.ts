@@ -535,15 +535,22 @@ export class SharedTreeWatch {
    * every notice queued for it has none.
    */
   readonly #queues = new Map<object, Map<string, TreeNotice>>();
+  /** The users that read only whether a root's notices were lost or its watch ended (`user`). */
+  readonly #flagsOnly = new WeakSet<object>();
   #closed = false;
 
   constructor(watch: TreeWatch) {
     this.#watch = watch;
   }
 
-  /** A `TreeWatch` for one walk; closing it lets go of every root it watches. */
-  user(): TreeWatch {
+  /**
+   * A `TreeWatch` for one walk; closing it lets go of every root it watches. `flagsOnly`: the user reads only whether a
+   * root's notices were lost or its watch ended, so it is queued no paths, and nothing for a root whose notices only
+   * name entries: the daemon's places (`FolderPlaces`) take every root's notices after each walk.
+   */
+  user(options: { readonly flagsOnly?: boolean } = {}): TreeWatch {
     const user = {};
+    if (options.flagsOnly === true) this.#flagsOnly.add(user);
     return {
       watch: (root, folders, spare) => this.#watchFor(user, root, { folders, spare: spare === true }),
       unwatch: root => this.#unwatchFor(user, root),
@@ -612,11 +619,16 @@ export class SharedTreeWatch {
     return this.#watch.watch(root, unionOf(users), [...users.values()].every(asked => asked.spare));
   }
 
-  /** Queues `notice` for each of `users` still watching anything, merged with what it has not taken of that root. */
+  /**
+   * Queues `notice` for each of `users` still watching anything, merged with what it has not taken of that root; for a
+   * user that reads only flags, only whether the root's notices were lost or its watch ended.
+   */
   #queue(users: Iterable<object>, notice: TreeNotice): void {
+    const flags = flagsOf(notice);
     for (const user of users) {
       const queue = this.#queues.get(user);
-      queue?.set(notice.root, mergedNotice(queue.get(notice.root), notice));
+      const queued = this.#flagsOnly.has(user) ? flags : notice;
+      if (queue !== undefined && queued !== undefined) queue.set(notice.root, mergedNotice(queue.get(notice.root), queued));
     }
   }
 
@@ -656,6 +668,12 @@ function unionOf(users: ReadonlyMap<object, Asked>): string[] {
 /** A notice that `root`'s queued notices were lost, and with `ended` that its watch ended. */
 function lostNotice(root: string, ended: boolean): TreeNotice {
   return { root, changed: [], renamed: [], lost: true, ended };
+}
+
+/** What a user that reads only flags is told of `notice`: whether its root's notices were lost or its watch ended. */
+function flagsOf(notice: TreeNotice): TreeNotice | undefined {
+  if (!notice.lost && !notice.ended) return undefined;
+  return { root: notice.root, changed: [], renamed: [], lost: notice.lost, ended: notice.ended };
 }
 
 /**
