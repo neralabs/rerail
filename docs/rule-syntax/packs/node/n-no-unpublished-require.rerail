@@ -11,8 +11,10 @@
 // skipped. Option allowModules lists packages never reported. What npm publishes is node-package.rerail's proposed
 // npm_ignored; the resolved file is node-resolve.rerail's proposed spec_resolved. Not read: convertPath.
 
-#include "tsx/node-resolve.rerail"   // spec_unpublished
+#include "tsx/node-resolve.rerail"   // spec_publish_file, spec_publish_dep, pkg_unpublished_file, pkg_dev_only
 
 .violation unpublished_require(at: node, msg: symbol) code "n/no-unpublished-require" "{msg}"
     suppress eslint "n/no-unpublished-require"
-unpublished_require(n, m) :- spec_unpublished(n, "require", m).
+// Each target as its file names it, joined with what npm publishes (decision 0677: that is other files' facts).
+unpublished_require(n, m) :- spec_publish_file(n, "require", d, f), pkg_unpublished_file(d, f), spec_unpublished_says("file", m).
+unpublished_require(n, m) :- spec_publish_dep(n, "require", d, p), pkg_dev_only(d, p), spec_unpublished_says("dev", m).

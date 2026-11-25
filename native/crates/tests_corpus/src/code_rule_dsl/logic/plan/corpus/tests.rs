@@ -1272,7 +1272,9 @@ fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
 /// A program that states facts of a library relation (`lit_repr_threshold(16384).`, an `extensible` one) asks of the
 /// library as one that derives it does (decision 0089 §3): its readers in the library (`dec_lit_repr`) are copied into
 /// its request, over its facts. Taken as the library's, they read the library's relation without them, and
-/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
+/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47). The library's own
+/// `lit_repr_threshold`, which its own rules still read, is stated empty: a run constant, not a relation of no location
+/// that would take every reader through it to the cross-file part (decision 0677, node-trace's `module_global`).
 #[test]
 fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
@@ -1284,6 +1286,7 @@ fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
     assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
     let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
     assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+    assert!(v.fact_names().iter().any(|k| k == "lit_repr_threshold") && v.fact_rows("lit_repr_threshold").is_empty(), "the shared one stated empty: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
 }
 
 /// match-frames' `mf_def` (the innermost def around a node, read off the tree per node) has the rows of the climb it

@@ -353,7 +353,7 @@ pub fn push_equal_columns() -> bool {
 pub use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
-const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
+pub const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
 
 use std::collections::BTreeMap;
 

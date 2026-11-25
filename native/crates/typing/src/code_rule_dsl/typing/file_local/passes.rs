@@ -169,7 +169,17 @@ impl ProgramPass for Locate {
         // `rewired`: a relay an earlier round made is read by a cross-file rule a later round's move made (0290).
         let mut relayed: HashMap<String, String> = HashMap::new();
         let mut rewired = false;
+        // A request (`WORLD`'s, a language's or the engine's) is asked by the cross-file part's fixpoint, a load's in its cone of requests
+        // (decision 0065 §2a), which reads no base relation: located, its rule would read `doc` there. It is left, and
+        // moved there with its readers, as a relation whose rows name no document is. C's `c_pp_tu_req(tu, spec)` over
+        // a configuration of stated tables alone (each a run constant), which was refused so before decision 0677's
+        // `extensible` tables stated empty made the configuration of a program stating few of them the same.
+        let requests: BTreeSet<&str> = crate::code_rule_dsl::logic::rr::WORLD.iter().map(|&(_, q)| q).chain(f.answers().iter().map(|&(q, _)| v.rel_name(q))).collect();
         for rel in &targets {
+            if requests.contains(rel.as_str()) {
+                self.blocked.push(rel.clone());
+                continue;
+            }
             let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0) || f.qualified(rel, crate::code_rule_dsl::logic::plan::fields::PART_LOCAL_READ);
             // Read locally but keyed by a path: each row's document is its path's (decision 0665).
             let key = split.paths.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));

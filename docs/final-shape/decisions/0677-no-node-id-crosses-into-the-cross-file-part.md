@@ -958,6 +958,57 @@ wrote it.
 Django's entries go from 31 to 2 (65 to 36 in all): `dar_non_atomic_wrapped`, and `rr_found_through` under
 `smi_named`. The second is the located-output item that stays open below. All 27 case tests pass.
 
+**Batch 7: Node, two engine fixes and one run fix.** Every node entry but one hung off `node_module` or `node_global`.
+Their rules read node-trace's `module_global(g, m, x)`, an `extensible` table whose rows the policies that name
+globals state. A program that names none (n-no-deprecated-api, run alone) states no row. In the pack's batch, each
+stating policy's rows go to its own copy (`link::Names`, `q<k>_module_global`), and the shared table keeps none. Never
+stated, it is a base relation of no location to the split, so `trace_module`, `node_module`, `node_global` and every
+reader of a value through them went to the cross part: `val`, `api_use`, `loader`, `module_load`, `env_global`, and
+n-no-path-concat's and n-no-deprecated-api's rules.
+
+- **The engine: an `extensible` table nothing states is stated empty, where the whole program is known.** The split
+  must not decide it: a library module planned alone (decision 0639) does not see its includer's rows. t50 tried the
+  structural rule ("declared and not derived is a constant") and found the engine's world facts are such relations
+  too. Decision 0263 says an `extensible` table's rows come only from the files that include its own. So the
+  lowering keeps `extensible` as a word of the relation's qualifiers (not core's: `env`, `option` and `load` are the
+  engine's). The link states each one that no part states and that has only value columns empty: a batch's
+  (`Merged::finish`) and a program's linked alone (`combine_linked_as`). Stated, it is a run constant, as stated rows
+  are (t50's `.references` setting precedent). Test: `a_programs_facts_of_a_library_relation_ask_of_the_library` (the
+  library's `lit_repr_threshold`, each part's rows in its own copy, is stated empty).
+- **The engine: locate leaves a request where it is asked.** C's configuration tables (`c_predefine`, `c_feature`,
+  …) are `extensible` too. Stated empty, a configuration became a run constant, `c_pp_tu_req(tu, spec)` a file's by
+  its unit's path, and locate gave it a located form that joins `doc`. The cross part's cone of requests asks it, and
+  reads no base relation (decision 0065 §2a), so the run was refused. A program stating every table was refused the
+  same way before this batch (checked on batch 5's engine). A request (`WORLD`'s) is now left by locate and moved to
+  the cross part with its readers, as a relation whose rows name no document is. Test:
+  `c_includes_resolve_over_a_configuration_of_stated_tables`.
+- **The run: a program's own empty input is bound for the per-file part too.** A library's input that core does not
+  make yet (`spec_resolved`, node-resolve's "PROPOSED core input") was bound empty for the cross part's reads only.
+  Once its reader moved per file, that part's planner had no statistics for it. `corpus.rs` binds the per-file
+  part's own inputs empty in the same place.
+- **node-resolve's specifier tables keyed by the target.** `spec_kind(name, k)`, `spec_package(name, m)` and
+  `spec_allowed(name)` enumerated every file's specifiers (`node_target(_, x, _)`) and were read at a target, so the
+  target node crossed. They are now `spec_kind(n, k)`, `spec_package(n, m)` and `spec_allowed(n)`, tested at the
+  target from its own name, and `spec_unbang` folds into `node_target`. The readers (no-missing-require and -import,
+  no-extraneous-require) changed with them.
+- **checkPublish in two halves.** `spec_unpublished(n, style, msg)` asked of the target's file whether npm leaves it
+  out (`npm_ignored`, `pkg_outside`), and of the package whether it is only a devDependency. Both are facts of other
+  files. A file now names its targets under its document: `spec_publish_file(n, st, d, f)` and
+  `spec_publish_dep(n, st, d, m)`. The cross part answers by document and path or package:
+  `pkg_unpublished_file(d, f)`, which takes `pkg_outside` in, and `pkg_dev_only(d, m)`. The violation joins them,
+  with the message from `spec_unpublished_says`.
+- **n-handle-callback-err** tests the option's name at the function (`err_first(f, p)`), not as a table of every
+  file's first-parameter names (`err_name`).
+
+The node pack, run whole over its translation corpus (this repository's TypeScript at its pin, 602 files), gives the
+same 5,767 findings with batch 6's rules as with batch 7's, line for line: 3,276 of no-missing-import and 368 of
+no-unpublished-import among them, in 2% more instructions. The data layer's 18 policies give the same findings on
+batch 5's engine and this one. Node's entries go from 13 to 2 (36 to 25 in all): `exists_9` under `unpublished_bin`,
+and `rr_found_through` under `pkg_workspace_root`. Both are the located-output item below.
+
+The translation suite (`scripts/ship/translations.ts`) made its stores with the default mode, and the engine refuses a
+store folder others may read (decision 0574). Each translation failed before running. It now makes them mode 700.
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard

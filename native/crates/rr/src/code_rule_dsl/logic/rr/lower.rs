@@ -3282,7 +3282,13 @@ impl Lowerer {
                     self.three.insert(name.clone());
                 }
                 // Open to the rules and facts of the files that include its own (decision 0263): checked on reading.
-                "extensible" => {}
+                // A library's (not core's, whose `env`, `option` and `load` the engine gives) is kept as a word of the
+                // relation's, as the qualifiers are, through module images and links: where the whole program is known
+                // (`plan::corpus::link`), one that nothing states is stated empty (decision 0677).
+                "extensible" if self::core::is_core(&name) => {}
+                "extensible" => self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |all| {
+                    all.entry(name.clone()).or_default().insert("extensible".to_owned());
+                }),
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
                 // What the relation keeps (decision 0099): an override of the planner's choice.
                 q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {

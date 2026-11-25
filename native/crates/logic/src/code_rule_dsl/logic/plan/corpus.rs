@@ -3275,8 +3275,18 @@ fn run_observed_within(
         }
         // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
         // `npm_ignored`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
-        // input like any other (decision 0652 moves such readers there), so it is bound, empty.
-        let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        // input like any other (decision 0652 moves such readers there), so it is bound, empty. So is one the
+        // file-local part reads (`tsx/node-resolve.rerail`'s `spec_resolved`, read at the target of the file that names
+        // it, decision 0677): bound once in the run's database, measured for every chunk (`repository_stats`). Not a
+        // chunk's own values, nor an answer of the world, which the chunk and the cross part make.
+        let local_own: Vec<String> = local_f
+            .inputs()
+            .filter(|rel| !crate::code_rule_dsl::typing::file_local::CHUNK_VALUES.contains(rel) && !crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(r, _)| r == rel))
+            .map(str::to_owned)
+            .collect();
+        let mut unbound: Vec<&String> = split.base.iter().chain(&local_own).filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        unbound.sort();
+        unbound.dedup();
         for rel in unbound {
             let own = projection.columns(rel).is_none() && head.find(rel).and_then(|a| head.facts(a)).is_none();
             let Some(cols) = head.columns_of(rel).filter(|_| own) else { continue };

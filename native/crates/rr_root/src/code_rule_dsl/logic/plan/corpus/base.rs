@@ -1273,7 +1273,11 @@ pub fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::A
     }
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
     if parsed.len() == 1 {
-        let one = parsed.pop().expect("one program");
+        let mut one = parsed.pop().expect("one program");
+        let empty = link::extensible_unstated(one.head());
+        if !empty.is_empty() {
+            one.edit_head(&mut |f| empty.iter().for_each(|rel| f.set_facts(rel, &[])))?;
+        }
         return Ok((one.alone()?, Tail::One));
     }
     let mut all = link::Merged::new(P::fields());

@@ -4872,6 +4872,35 @@ entered(p) :- c_pp_included(_, _, _, _, p, _).
     assert_eq!(entered, closure);
 }
 
+/// The same search over a configuration every table of which the program states (or which is stated empty, decision
+/// 0677): a run constant, so `c_pp_tu_req` is a file's by its unit's path. It is a request, asked in the cross-file
+/// part's cone of requests, which reads no base relation: located by its path, its rule read `doc` there and the run
+/// was refused. Locate leaves a request where it is asked.
+#[test]
+fn c_includes_resolve_over_a_configuration_of_stated_tables() {
+    let rule = r#"
+.language c
+#include "c/includes.rerail"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+c_lang("c", "c", "gnu17").
+c_include_dir("c", 0, "sys1", "angle").
+c_include_dir("c", 0, "sys2", "system").
+c_predefine("c", 0, "X", "1").
+c_config_undef("c", 1, "Y").
+c_feature("c", "__has_builtin", "__builtin_expect", 1).
+c_fixed("c", "__DATE__", "Jan  1 1970").
+c_tu(p, "c") :- c_file(p).
+.decl res(f: symbol, p: symbol)
+res(f, p) :- c_resolved(_, f, _, _, p).
+.output res
+"#;
+    let a = "#include \"h.h\"\n#include <x.h>\n";
+    let files = [("a.c", a), ("h.h", ""), ("x.h", ""), ("sys1/x.h", "#include_next <x.h>\n"), ("sys2/x.h", "")];
+    let [res] = <[Vec<String>; 1]>::try_from(joined(guests_run("cincludes-stated", &files, rule, &["res"]))).unwrap();
+    assert_eq!(res, ["a.c\th.h", "a.c\tsys1/x.h", "sys1/x.h\tsys2/x.h"]);
+}
+
 /// Decision 0327: phase 1 (`sources.rerail`) loads the headers a C run's units include, to the closure's fixed point, as
 /// library documents, as Python's imports are: a `.h` file is C++'s by its suffix, so no document of a C run until
 /// reached. A program that reads `sources__library` has them as its documents (`struct.rerail`'s way). A header no unit

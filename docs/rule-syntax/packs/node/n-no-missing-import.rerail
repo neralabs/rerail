@@ -16,5 +16,5 @@
 .violation missing_import(at: node) code "n/no-missing-import"
     "This module cannot be resolved: no installed package or file in the repository provides it."
     suppress eslint "n/no-missing-import"
-missing_import(n) :- node_target(n, x, st), st != "require", !builtin_spec(x), spec_failed(n), !spec_allowed(x),
+missing_import(n) :- node_target(n, x, st), st != "require", !builtin_spec(x), spec_failed(n), !spec_allowed(n),
     !spec_type_skipped(n).
