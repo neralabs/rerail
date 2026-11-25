@@ -69,7 +69,9 @@ const SLOW_ENGINE_DELAY_MS = 4_000;
  * its entry, so it runs in the daemon daemon.json records, and on Windows a hook sends its events there as to that
  * daemon's own pipe: Windows names that daemon as the pipe's holder. Only the daemon's main thread serves it, at the path
  * `SLOW_ENGINE_PATH` gives, which it takes out of its environment, so the workers and processes the daemon starts
- * serve nothing.
+ * serve nothing. A failure to pass an event on is answered 502 with its message, which the hook's failure carries; a
+ * failure to listen is written to the daemon's stderr, and the hooks then fail on a pipe nothing listens on. Neither
+ * ends the daemon the later cases use.
  */
 const SLOW_ENGINE = `
 import { readFileSync } from "node:fs";
@@ -80,21 +82,27 @@ const path = process.env.SLOW_ENGINE_PATH;
 delete process.env.SLOW_ENGINE_PATH;
 if (isMainThread && path !== undefined) {
   const server = createServer((incoming, outgoing) => {
+    const fail = error => outgoing.headersSent ? outgoing.destroy() : outgoing.writeHead(502, { "content-type": "text/plain" }).end(\`slow engine: \${String(error)}\`);
     const chunks = [];
     incoming.on("data", chunk => chunks.push(chunk)).on("end", () => setTimeout(() => {
-      const body = Buffer.concat(chunks);
-      const state = JSON.parse(readFileSync(join(process.env.RERAIL_HOME, ${JSON.stringify(DAEMON_STATE_FILE)}), "utf8"));
-      const forwarded = request({
-        socketPath: state.kernelSocketPath, method: "POST", path: incoming.url,
-        headers: { "content-type": "application/json", "content-length": body.length, "x-rerail-access": state.accessToken ?? "" },
-      }, answer => {
-        outgoing.writeHead(answer.statusCode ?? 502, { "content-type": "application/json" });
-        answer.pipe(outgoing);
-      });
-      forwarded.on("error", () => outgoing.destroy());
-      forwarded.end(body);
+      try {
+        const body = Buffer.concat(chunks);
+        const state = JSON.parse(readFileSync(join(process.env.RERAIL_HOME, ${JSON.stringify(DAEMON_STATE_FILE)}), "utf8"));
+        const forwarded = request({
+          socketPath: state.kernelSocketPath, method: "POST", path: incoming.url,
+          headers: { "content-type": "application/json", "content-length": body.length, "x-rerail-access": state.accessToken ?? "" },
+        }, answer => {
+          outgoing.writeHead(answer.statusCode ?? 502, { "content-type": "application/json" });
+          answer.pipe(outgoing);
+        });
+        forwarded.on("error", fail);
+        forwarded.end(body);
+      } catch (error) {
+        fail(error);
+      }
     }, ${SLOW_ENGINE_DELAY_MS}));
   });
+  server.on("error", error => process.stderr.write(\`slow engine: \${String(error)}\\n\`));
   server.listen(path);
   server.unref();
 }
