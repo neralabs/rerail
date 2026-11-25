@@ -20,8 +20,8 @@ import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 /**
  * How many times a walk read each file whole (`WalkReadBuffers.lend`), by the path it was read at; each path `lstat` was
  * asked about; the listings held back until a test lets them go, by folder; the openings held back the same way, by
- * file; how many times Git listed each checkout's changed files; and the files whose next opening fails as one another
- * process holds does.
+ * file; how many times Git listed each checkout's changed files, and read blobs there; and the files whose next opening
+ * fails as one another process holds does.
  */
 const counted = vi.hoisted(() => ({
   reads: new Map<string, number>(),
@@ -29,6 +29,7 @@ const counted = vi.hoisted(() => ({
   held: new Map<string, () => Promise<void>>(),
   heldOpenings: new Map<string, () => Promise<void>>(),
   listings: new Map<string, number>(),
+  blobReads: new Map<string, number>(),
   busy: new Set<string>(),
   heads: 0,
 }));
@@ -73,6 +74,10 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
       counted.listings.set(args[0], (counted.listings.get(args[0]) ?? 0) + 1);
       return await actual.gitFirstSightListing(...args);
     },
+    readGitBlobs: async (...args: Parameters<typeof actual.readGitBlobs>) => {
+      counted.blobReads.set(args[0], (counted.blobReads.get(args[0]) ?? 0) + 1);
+      return await actual.readGitBlobs(...args);
+    },
     // Each question of `HEAD` that starts Git: `gitHead`, or a `rev-parse` naming `HEAD`.
     gitHead: async (...args: Parameters<typeof actual.gitHead>) => {
       counted.heads += 1;
@@ -84,7 +89,7 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
     },
   };
 });
-const { reads, stats, listings } = counted;
+const { reads, stats, listings, blobReads } = counted;
 
 // Each test opens several sessions and walks four or five checkouts many times over.
 vi.setConfig({ testTimeout: 60_000 });
@@ -101,6 +106,7 @@ afterEach(async () => {
   reads.clear();
   stats.length = 0;
   listings.clear();
+  blobReads.clear();
   await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
 });
 
@@ -714,6 +720,27 @@ describe("a walk of the other worktrees with change notices", () => {
     stats.length = 0;
     await turn(watching);
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 0]);
+  });
+
+  // A walk keeps what it read of a worktree while no notice tells of a change there, and hands that read to a session
+  // that first sees the worktree at a later walk: here one whose list of the repository's worktrees names it only after
+  // another session's walk read it. Git added the worktree after that session opened, so each of its files is stamped
+  // since, and the walk lists the kept read's index against `HEAD` for that first sight.
+  it("reads no blob of a worktree's files for a session that first sees it from a kept read, Git having added it after the session opened", async () => {
+    const { main, worktrees, checkouts } = await repository(["w1"]);
+    const walks = noticedWalks();
+    const named = [main];
+    const seer = await session(main, named, walks);
+    const other = await session(worktrees[0]!, checkouts, walks);
+    const added = join(dirname(main), "w2");
+    git(main, "worktree", "add", "--quiet", "--detach", added);
+    checkouts.push(added);
+    await turn(other);
+    named.push(added);
+    reads.clear();
+    await turn(seer);
+    expect({ read: reads.get(join(added, "src", "a.py")) ?? 0, blobs: blobReads.get(added) ?? 0, audits: seer.auditGeneratedEdits.mock.calls.length })
+      .toEqual({ read: 0, blobs: 0, audits: 0 });
   });
 
   it("stats no entry when a file Git ignores changes after a walk that read no worktree", async () => {
