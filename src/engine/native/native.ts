@@ -944,8 +944,8 @@ export function loadNativeBinding(): NativeBinding {
 /**
  * The engine file the next call into the engine runs: the one this process loaded, with its time and size as they were
  * then, as Node keeps the engine it loaded though a build replaces its file or writes one ahead of it in the look; while
- * this process holds another engine than the `RERAIL_ENGINE_PATH` set now takes, the file a load would take, as it was
- * when Node first loaded it under its name, or as it is now where Node has not.
+ * this process holds no engine under the `RERAIL_ENGINE_PATH` set now, the file a load would take, as it was when Node
+ * first loaded it under its name, or as it is now where Node has not.
  */
 export function loadedEngineFile(): EngineFile {
   const configuredPath = process.env.RERAIL_ENGINE_PATH;
