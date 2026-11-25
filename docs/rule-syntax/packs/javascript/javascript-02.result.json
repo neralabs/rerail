@@ -1,0 +1,8 @@
+[
+  { "id": "eslint-no-empty-function", "status": "same" },
+  { "id": "eslint-no-extra-bind", "status": "same" },
+  { "id": "eslint-no-irregular-whitespace", "status": "same" },
+  { "id": "eslint-no-lonely-if", "status": "same" },
+  { "id": "eslint-no-magic-numbers", "status": "same" },
+  { "id": "eslint-no-redeclare", "status": "same" }
+]

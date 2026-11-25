@@ -1,4 +1,4 @@
-.policy "eslint-no-redeclare" revision 5
+.policy "eslint-no-redeclare" revision 6
 .description "Don't declare a variable twice in the same JavaScript scope or redeclare a built-in global, including in global comments; the duplicate hides a mistake."
 .language typescript
 .mode steer
@@ -26,15 +26,20 @@ no_redeclare(id, cat("'", x, "' is already defined.")) :- var_site(s, x, id), !b
     var_site(s, x, o), node(_, o, _, a, _), node(_, id, _, b, _), a < b.
 no_redeclare(id, cat("'", x, "' is already defined as a built-in global variable.")) :-
     (var_site(s, x, id) ; lexical_site(s, x, id)), builtin_in(s, x).
-// A comment's item is reported on its own line (a place: the item is not a node). The built-in comes first
-// in every document, script or module: `/* global Array */` alone is reported.
-no_redeclare(at, cat("Remove '", x, "' from this global comment; it is already a built-in global.")) :-
-    listed(c, x, at), docof(c, d), builtin_doc(d, x).
-no_redeclare(at, cat("Remove '", x, "' from this global comment; a variable declaration already defines it.")) :-
-    listed(c, x, at), docof(c, d), !builtin_doc(d, x), program(d, p), script_declared(p, x).
-no_redeclare(at, cat("Remove this duplicate '", x, "' from the global comments; it is already listed.")) :-
-    listed(c, x, at), docof(c, d), program(d, p), !builtin_doc(d, x), !script_declared(p, x), listed(o, x, _),
-    docof(o, d), earlier(o, c).
+// A comment's item is reported on its own line: at the comment on its first line, else at a place on the item's
+// line (the item is not a node; a place is made only in a violation's head). The built-in comes first in every
+// document, script or module: `/* global Array */` alone is reported.
+no_redeclare(c, msg) :- comment_redeclares(c, l, msg), line(c, l).
+no_redeclare(@place(f, l), msg) :- comment_redeclares(c, l, msg), !line(c, l), docof(c, d), doc(d, f, _).
+.decl comment_redeclares(c: node, l: number, msg: symbol)
+comment_redeclares(c, l, cat("Remove '", x, "' from this global comment; it is already a built-in global.")) :-
+    listed(c, x, l), docof(c, d), builtin_doc(d, x).
+comment_redeclares(c, l, cat("Remove '", x, "' from this global comment; a variable declaration already defines it.")) :-
+    listed(c, x, l), docof(c, d), !builtin_doc(d, x), program(d, p), script_declared(p, x).
+// A comment is no node of the AST's visit order (earlier), so comments are ordered by where they start.
+comment_redeclares(c, l, cat("Remove this duplicate '", x, "' from the global comments; it is already listed.")) :-
+    listed(c, x, l), docof(c, d), program(d, p), !builtin_doc(d, x), !script_declared(p, x), listed(o, x, _),
+    node(d, o, _, a, _), node(d, c, _, b, _), a < b.
 
 // builtin_doc(d, x): with builtinGlobals, x is a built-in global of document d. A `/* global x */` comment
 // does not change that: the built-in is still the variable's first declaration, and the comment a later one.
@@ -53,8 +58,11 @@ lexical_site(p, x, n) :- global_scope(p), kind(c, "class_declaration"), nearest(
     field(c, "name", n), text(n, x).
 .decl script_declared(p: node, x: symbol)
 script_declared(p, x) :- global_scope(p), (var_site(p, x, _) ; lexical_site(p, x, _)).
-// listed(c, x, at): comment c's item x declares the global x (an `off` item removes it instead); at is the
-// comment, or a place on the item's line when that is a later line of the comment.
-.decl listed(c: node, x: symbol, at: loc)
-listed(c, x, c) :- global_item(c, x, v, l), v != "off", line(c, l).
-listed(c, x, @place(f, l)) :- global_item(c, x, v, l), v != "off", !line(c, l), docof(c, d), doc(d, f, _).
+// listed(c, x, l): comment c's item x, on line l, declares the global x. As in ESLint's linter, the comments that
+// list x all declare it, `x:off` ones too, unless the last of them says `off`; then none does:
+//   /* global a:off */ /* global a */   the second is a duplicate      /* global a */ /* global a:off */   neither
+.decl listed(c: node, x: symbol, l: number)
+listed(c, x, l) :- global_item(c, x, _, l), docof(c, d), !turned_off(d, x).
+.decl turned_off(d: number, x: symbol)
+turned_off(d, x) :- global_item(c, x, "off", _), docof(c, d), node(d, c, _, a, _),
+    count : { global_item(o, x, v, _), v != "off", docof(o, d), node(d, o, _, b, _), b > a } = 0.
