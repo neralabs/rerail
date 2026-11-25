@@ -111,10 +111,10 @@ jobs:
     # `reviewer_ref` is where the called workflow loads the reviewer's own code from, so it is the same commit:
     # Dependabot moves `uses:` alone, and `npm run check:pins` fails until `npm run deps:sync` brings `reviewer_ref`
     # along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@6b393dd3c809fd695a034d96067c471b17dca79f # v0.1.3
+    uses: neralabs/reviewer/.github/workflows/review.yml@d835587a49d26533af63576fc91852f79b823ebb # v0.1.4-unreleased
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: 6b393dd3c809fd695a034d96067c471b17dca79f
+      reviewer_ref: d835587a49d26533af63576fc91852f79b823ebb
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
@@ -131,12 +131,12 @@ jobs:
       # violations to post; a new violation of a steer rule can be a blocker that names its rule. The review itself
       # never sees the scan. The scan result is sent to the Rerail remote (send_results), in a job that holds only
       # the remote's URL and token. To turn it off, remove these three inputs and the two RESULTS_SINK secrets.
-      # rerail_package: the published Rerail to scan with. 0.2.0 is the first that reads .rerail/packs.json and a
-      # pack's config; 0.2.1 is the current release. The reviewer's own default still pins 0.1.5, which reads neither
-      # and would run no packs here. Drop this input once the reviewer pins 0.2.0 or later. No rerail_packs or
-      # rerail_repo_packs: either would replace the file's packs.
+      # rerail_image: the modules job runs in this image and scans with its Rerail, the newest release on `next` that
+      # could scan main's packs (rerail-image.yml, docs/release.md "Rerail image"). So a release candidate reaches the
+      # reviewer when it is published, and a pack that needs a newer Rerail never waits on a pin moved by hand. No
+      # rerail_package beside it, and no rerail_packs or rerail_repo_packs: either would replace the file's packs.
       modules: rerail
-      rerail_package: "@neralabs/rerail@0.2.1"
+      rerail_image: ghcr.io/neralabs/rerail:next
       send_results: true
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:
