@@ -706,7 +706,9 @@ interface AccessListHolder {
  * A process that serves the Windows pipe `path`, one instance at a time, with an access list that allows everyone the
  * rights `allow` names and denies everyone those `deny` names (.NET's `PipeAccessRights`): Node cannot set a pipe's
  * access list, so PowerShell makes it, through .NET calls alone, as `oneInstancePipeLines` says why. It writes a line
- * for each connection once its client closes, with what the client wrote. `connectionsBefore` has cmd.exe write
+ * for each connection once its client closes, with what the client wrote. It waits for a connection before it says it
+ * holds the pipe and again after each one, and until it waits Windows tells a client the pipe is busy: a client that
+ * opens and closes the pipe before the holder waits ends its wait with an error. `connectionsBefore` has cmd.exe write
  * `sentinel` to the pipe and gives the lines before the sentinel's: the holder takes one connection at a time, so each
  * earlier connection has its line by then.
  */
@@ -718,15 +720,17 @@ async function accessListHolder(path: string, allow: string, deny?: string): Pro
     "$security = [System.IO.Pipes.PipeSecurity]::new()",
     ...(deny === undefined ? [] : [rule(deny, "Deny")]),
     rule(allow, "Allow"),
-    `$pipe = [System.IO.Pipes.NamedPipeServerStream]::new('${pipeNameOf(path)}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 4096, 4096, $security)`,
+    `$pipe = [System.IO.Pipes.NamedPipeServerStream]::new('${pipeNameOf(path)}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::Asynchronous, 4096, 4096, $security)`,
+    "$waiting = $pipe.BeginWaitForConnection($null, $null)",
     "[Console]::Out.WriteLine('holding'); [Console]::Out.Flush()",
     "$buffer = [byte[]]::new(64)",
     "while ($true) {",
-    "  $pipe.WaitForConnection()",
+    "  $pipe.EndWaitForConnection($waiting)",
     "  $text = ''",
     "  try { while (($read = $pipe.Read($buffer, 0, $buffer.Length)) -gt 0) { $text += [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read) } } catch { }",
     "  [Console]::Out.WriteLine('connection ' + $text.Trim()); [Console]::Out.Flush()",
     "  $pipe.Disconnect()",
+    "  $waiting = $pipe.BeginWaitForConnection($null, $null)",
     "}",
   ].join("\n");
   const holder = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
