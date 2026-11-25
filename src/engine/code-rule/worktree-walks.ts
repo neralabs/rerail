@@ -75,7 +75,8 @@ export interface WorktreeFindings {
   readonly listed: ReadonlyMap<string, readonly string[] | undefined>;
   /**
    * Listed with `listed`, for the worktree's own checkout: which files hold what `head` holds and which may differ
-   * (`FirstSightListing.byHead`); absent where Git did not say.
+   * (`FirstSightListing.byHead`); absent where Git did not say, and where the first sight takes no file of the worktree
+   * for Git to judge: none is stamped since the earliest session seeing it first opened (`listedFor`).
    */
   readonly byHead: ReadonlyMap<string, HeadListing>;
   /** Subtrees the walk could not read. */
@@ -324,8 +325,8 @@ interface WalkBegun {
   readonly skip: ReadonlySet<string>;
   readonly files: WalkFiles;
   readonly walking: ReadonlyMap<Watching, WatcherWalk>;
-  /** The worktrees whose checkouts' changed files the walk lists (`firstSeenIn`). */
-  readonly firstSeen: ReadonlySet<string>;
+  /** The worktrees whose checkouts' changed files the walk lists, each with when its earliest first seer opened (`firstSeenIn`). */
+  readonly firstSeen: ReadonlyMap<string, number>;
 }
 
 /**
@@ -475,27 +476,45 @@ async function listChanged(git: GitReads, root: string, checkouts: ReadonlySet<s
  * takes for the first time (`WatcherWalk.firstSight`), but where the walk that session is still taking shows it that
  * worktree first too. That walk listed it, and the session takes that walk before this one, which ends its first sight:
  * listing it again for each walk that began meanwhile started a Git process per worktree on every one of them. Should
- * that take not end it, the session lists the worktree itself as it takes this walk (`CodeRuleBridge`).
+ * that take not end it, the session lists the worktree itself as it takes this walk (`CodeRuleBridge`). Each maps to
+ * the earliest a session seeing it first opened (`WatcherWalk.startedAt`): that session's first sight takes the most.
  */
-function firstSeenIn(walking: ReadonlyMap<Watching, WatcherWalk>): Set<string> {
-  const roots = new Set<string>();
+function firstSeenIn(walking: ReadonlyMap<Watching, WatcherWalk>): Map<string, number> {
+  const roots = new Map<string, number>();
   for (const [watching, walk] of walking) {
-    for (const root of walk.firstSight) if (watching.takingPart?.firstSight.has(root) !== true) roots.add(root);
+    for (const root of walk.firstSight) {
+      if (watching.takingPart?.firstSight.has(root) !== true) roots.set(root, Math.min(roots.get(root) ?? Infinity, walk.startedAt));
+    }
   }
   return roots;
 }
 
 /**
- * `WorktreeFindings.listed` and `byHead` of the worktree at `root` whose `HEAD` the walk read as `head`: listed when
- * the walk shows a session it first (`firstSeen`).
+ * Whether `sources`, a worktree's snapshot, holds a file stamped at or after `since`: of the files a session opened then
+ * first sees, only such a file goes to Git's verdicts (`CodeRuleBridge.#firstSightPaths`). Any other is its baseline,
+ * and a `.gitignore` it takes for its rules is no change unless stamped since.
+ */
+function stampedSince(sources: ReadonlyMap<string, ObservedSource>, since: number): boolean {
+  for (const source of sources.values()) if ((source.modifiedAt ?? -Infinity) >= since) return true;
+  return false;
+}
+
+/**
+ * `WorktreeFindings.listed` and `byHead` of the worktree at `root` whose `HEAD` the walk read as `head` and whose
+ * snapshot holds `sources`: listed when the walk shows a session it first (`firstSeen`), and `byHead` asked only where
+ * that first sight takes a file for Git to judge (`stampedSince`). A session that opens beside worktrees Git added
+ * before it takes none of their files, and the index's three listings cost each of them, one worktree after another:
+ * on Windows 11, beside 104 worktrees, the walk that first showed a new session the worktrees took 26 to 78 s.
  */
 async function listedFor(
   git: GitReads,
-  { root, head }: { readonly root: string; readonly head: string | undefined },
-  firstSeen: ReadonlySet<string>,
+  { root, head, sources }: { readonly root: string; readonly head: string | undefined; readonly sources: ReadonlyMap<string, ObservedSource> },
+  firstSeen: ReadonlyMap<string, number>,
   checkouts: ReadonlySet<string>,
 ): Promise<FirstSightListings> {
-  return firstSeen.has(root) ? await listChanged(git, root, checkouts, head) : { listed: new Map(), byHead: new Map() };
+  const since = firstSeen.get(root);
+  if (since === undefined) return { listed: new Map(), byHead: new Map() };
+  return await listChanged(git, root, checkouts, stampedSince(sources, since) ? head : undefined);
 }
 
 /** The list `learnt` stored for the registry, read with no Git, which the walk's list takes in the same synchronous run. */
@@ -1088,8 +1107,9 @@ export class WorktreeWalks {
   }
 
   /** What a walk hands on of a worktree it did not read: what was kept, no text, and Git's listing for a session's first sight. */
-  async #keptFindings(root: string, kept: Kept, firstSeen: ReadonlySet<string>): Promise<Omit<WorktreeFindings, "inner">> {
-    const listings = await listedFor(this.#git, { root, head: kept.findings.head }, firstSeen, kept.findings.checkouts);
+  async #keptFindings(root: string, kept: Kept, firstSeen: ReadonlyMap<string, number>): Promise<Omit<WorktreeFindings, "inner">> {
+    const { head, snapshot, checkouts } = kept.findings;
+    const listings = await listedFor(this.#git, { root, head, sources: snapshot.sources }, firstSeen, checkouts);
     return { ...kept.findings, texts: new Map(), ...listings, changes: [] };
   }
 
@@ -1137,7 +1157,7 @@ export class WorktreeWalks {
       this.#notices.read(root, scan.seen);
       const { snapshot, texts } = nextSnapshot(previous, scan);
       const changes = previous === undefined ? [] : changesBetween(previous, snapshot);
-      const listings = await listedFor(this.#git, { root, head: read.head }, begun.firstSeen, scan.checkouts);
+      const listings = await listedFor(this.#git, { root, head: read.head, sources: snapshot.sources }, begun.firstSeen, scan.checkouts);
       const findings = {
         snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts, ...listings,
         failedRoots: scan.failedRoots, gaveUp: scan.gaveUp === true, errors: scan.errors, unread: scan.unread, readFrom: read.observedAt,
