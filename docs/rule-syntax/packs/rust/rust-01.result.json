@@ -1,0 +1,82 @@
+[
+  {
+    "id": "clippy-allow-attributes",
+    "status": "different",
+    "reason": "fixtures clippy/tests/ui/allow_attributes.rs:26 (`#[allow(clippy::allow_attributes, unused)]`, an attribute allowing its own lint) and :30 (`#[allow(unused)]` under `#[expect(clippy::allow_attributes)]` on the same item): Clippy's UI test expects no finding at either. `rerail-engine run-policies` returns the translation's diagnostics with no `suppress clippy` applied or marked, while the original's product path drops findings under an `#[allow]`/`#[expect]` of a listed lint (suppress/clippy.rs). The translation declares the same lints as the JSON; an engine gap, not the rule's logic (NOTES-rust-01.md).",
+    "right": "original",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 2
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "clippy-decimal-literal-representation",
+    "status": "different",
+    "reason": "rerail-native native/src/code_rule_dsl/compile/config.rs:1062 `9_007_199_254_740_993u64` (0x20_0000_0000_0001) and :1071 `-9_007_199_254_740_992i64` (literal 0x20_0000_0000_0000): Clippy's check_text lints a hex form whose first digit is 1/2/4/8 and middle digits are 0. The JSON caps its value tests below 2^53 (a JavaScript number's exact range) and misses both; the translation reads values below 10^18.",
+    "right": "translation",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 2
+      }
+    }
+  },
+  {
+    "id": "clippy-decimal-literal-representation-threshold",
+    "status": "different",
+    "reason": "rerail-native native/src/code_rule_dsl/compile/config.rs:1062 `9_007_199_254_740_993u64` (0x20_0000_0000_0001) and :1071 `-9_007_199_254_740_992i64` (literal 0x20_0000_0000_0000), both above the 0xFFFFFF threshold: Clippy's check_text lints a hex form whose first digit is 1/2/4/8 and middle digits are 0. The JSON caps its value tests below 2^53 (a JavaScript number's exact range) and misses both; the translation reads values below 10^18.",
+    "right": "translation",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 2
+      }
+    }
+  },
+  {
+    "id": "clippy-double-parens",
+    "status": "different",
+    "reason": "fixtures clippy/tests/ui/double_parens.rs:64 `assert_eq!(((1, 2)), (1, 2), \"Error\")`, marked `//~^ double_parens` in Clippy's UI test (Clippy lints the expansion). The JSON reads only macro_rules! transcribers; the translation also reads std expression macros' arguments.",
+    "right": "translation",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "clippy-inconsistent-digit-grouping-no-fractions",
+    "status": "different",
+    "reason": "fixtures clippy/tests/ui-toml/lint_decimal_readability/test.rs:6 `100_200_300.123456789` inside a fn whose `#![allow(clippy::inconsistent_digit_grouping)]` silences it; Clippy's UI test expects no finding there. `rerail-engine run-policies` returns the translation's diagnostics with no `suppress clippy` applied or marked, while the original's product path drops findings under an `#[allow]`/`#[expect]` of a listed lint (suppress/clippy.rs). The translation declares the same lints as the JSON; an engine gap, not the rule's logic (NOTES-rust-01.md).",
+    "right": "original",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  }
+]
