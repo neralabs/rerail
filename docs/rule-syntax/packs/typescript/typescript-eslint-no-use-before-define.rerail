@@ -1,4 +1,4 @@
-.policy "typescript-eslint-no-use-before-define" revision 2
+.policy "typescript-eslint-no-use-before-define" revision 3
 .description "Declare TypeScript variables, functions and classes before using them; a use earlier in the file can read an undefined or uninitialized binding."
 .language typescript
 .mode steer
@@ -6,6 +6,8 @@
 
 #include "tsx/ts-b-scope.rerail"
 //   use, resolves, variable, declarator_name, scope_of, variable_scope, scope_type, export_local
+#include "tsx/typescript-03.rerail"
+//   variable for `using`, reexport_name
 
 // typescript-eslint's no-use-before-define: a use that comes before the variable's first declaration, or inside
 // its own initialiser, is reported at the use.
@@ -19,7 +21,8 @@
 //   ignoreTypeReferences (true)   uses in type positions and `typeof x` types are never reported
 //   allowNamedExports (false)     `export { a }` before `const a` is fine; otherwise it is reported even when a
 //                                 is not declared at all
-// Uses inside a type signature (`(a: typeof b) => void`) and a class's name in its own decorators are exempt.
+// Uses inside a type signature (`(a: typeof b) => void`), a class's name in its own decorators and the names of
+// `export { a } from "m"` (another module's) are exempt.
 .violation no_use_before_define(at: node, x: symbol) code "@typescript-eslint/no-use-before-define" "Move the declaration of '{x}' above this use."
     suppress eslint "@typescript-eslint/no-use-before-define"
     suppress biome "lint/correctness/noInvalidUseBeforeDeclaration"
@@ -27,7 +30,7 @@ no_use_before_define(r, x) :- export_local(r), opt("allowNamedExports", "false")
 no_use_before_define(r, x) :- export_local(r), opt("allowNamedExports", "false"), use(r, x, _), resolves(r, s, x),
     !defined_before(r, s, x).
 no_use_before_define(r, x) :- use(r, x, _), !(export_local(r), opt("allowNamedExports", "false")), resolves(r, s, x),
-    !defined_before(r, s, x), forbidden(r, s, x), !in_signature(r), !decorator_self(r, s, x).
+    !defined_before(r, s, x), forbidden(r, s, x), !in_signature(r), !decorator_self(r, s, x), !reexport_name(r).
 
 // opt(o, d): boolean option o, with the default d.
 .decl opt(o: symbol, v: symbol)
@@ -44,11 +47,12 @@ defined_before(r, s, x) :- resolves(r, s, x), first_decl(s, x, id, _), node(_, i
     !(use(r, x, "value"), in_initialiser(r, s, id)).
 // in_initialiser(r, s, id): r, in the variable's own scope s, is in the value a declarator, a for-in/of head or a
 // default gives the name id: `const a = a`, `for (const b of b)`, `const { c = c } = o`, `function f(d = d) {}`.
+// A `var` head makes no scope of the loop (the scope manager's): `for (var e in e)` is in e's own scope.
 .decl in_initialiser(r: node, s: node, id: node)
 in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, s), declarator_name(d, id, _),
     field(d, "value", v), (r = v ; within(r, v)).
-in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, s), for_head(f, _), field(f, "left", l),
-    (l = id ; within(id, l)), field(f, "right", v), (r = v ; within(r, v)).
+in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, u), for_head(f, k), field(f, "left", l),
+    (l = id ; within(id, l)), field(f, "right", v), (r = v ; within(r, v)), (u = s ; k = "var", u = f, scope_up(f, s)).
 in_initialiser(r, s, id) :- resolves(r, s, x), first_decl(s, x, id, _), scope_of(r, s),
     (kind(p, "object_assignment_pattern") ; kind(p, "assignment_pattern")), field(p, "left", l), (l = id ; within(id, l)),
     field(p, "right", v), (r = v ; within(r, v)).
@@ -80,6 +84,7 @@ type_use(r) :- use(r, _, "both").
 type_use(r) :- use(r, _, "value"), inside(r, _, "type_query").
 .decl in_signature(r: node)  // the use's scope is a type signature's
 in_signature(r) :- scope_of(r, s), scope_type(s, "functionType").
-.decl decorator_self(r: node, s: node, x: symbol)  // @dec(C) on class C itself
+.decl decorator_self(r: node, s: node, x: symbol)  // @dec(C) on class C itself (`@dec export class C`: the export's)
 decorator_self(r, s, x) :- resolves(r, s, x), first_decl(s, x, id, k), (k = "class" ; k = "class-name"), field(c, "name", id),
-    inside(r, dc, "decorator"), (child(c, dc, _) ; child(b, dc, _), field(c, "body", b)).
+    inside(r, dc, "decorator"), (child(c, dc, _) ; child(b, dc, _), field(c, "body", b) ;
+    child(e, dc, _), kind(e, "export_statement"), field(e, "declaration", c)).

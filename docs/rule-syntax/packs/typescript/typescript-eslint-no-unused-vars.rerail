@@ -1,4 +1,4 @@
-.policy "typescript-eslint-no-unused-vars" revision 6
+.policy "typescript-eslint-no-unused-vars" revision 7
 .description "Remove TypeScript variables, parameters, caught errors, imports and types that are declared but never used, and don't use names marked as ignored."
 .language typescript
 .mode steer
@@ -9,6 +9,10 @@
 //   declarator_name, for_head, param_target, deparen, estree_parent, source_type, program
 #include "tsx/eslint-b-scope.rerail"
 //   global_item
+#include "tsx/next-01.rerail"
+//   src_before
+#include "tsx/typescript-03.rerail"
+//   variable for `using`, reexport_name
 
 // typescript-eslint's no-unused-vars: a variable nothing reads. Reported at its last write in its own function,
 // else at its first declaration: "'a' is defined but never used." or "… assigned a value …" once anything
@@ -51,7 +55,12 @@ var(s, x) :- variable(s, x, _, k), k != "function-name".
 used(s, x) :- marked(s, x).
 used(s, x) :- var(s, x), variable(s, x, id, _), declaring_stmt(id, n), (child(e, n, _) ; child(a, n, _), kind(a, "ambient_declaration"),
     child(e, a, _)), kind(e, "export_statement").
-used(s, x) :- var(s, x), resolves(r, s, x), reads(r), !itself(r, s, x), !type_read(r, s, x), !self_ref(r, s, x).
+used(s, x) :- var(s, x), resolves(r, s, x), reads(r), !itself(r, s, x), !type_read(r, s, x), !self_ref(r, s, x),
+    !reexport_name(r).
+// `@dec(C) class C {}`: the decorator runs outside the class, so it reads the outer C (tree-sitter hangs it inside
+// the class, where C would find the class's own name).
+used(s, x) :- variable(s, x, id, "class"), field(c, "name", id), child(c, dc, _), kind(dc, "decorator"), within(r, dc),
+    resolves(r, _, x), reads(r).
 // type_read(r, s, x): r reads x in a `typeof` type, and x is not only type imports. Written inline as
 // `!(type_query(r), !type_imports(s, x))`, its lowering kept var(s, x) but not resolves(r, s, x): every typeof
 // read times every variable.
@@ -60,7 +69,9 @@ type_read(r, s, x) :- resolves(r, s, x), type_query(r), !type_imports(s, x).
 // marked(s, x): the rule's visitor marks the variable used.
 .decl marked(s: node, x: symbol)
 marked(s, x) :- variable(s, x, _, k), (k = "enum-member" ; k = "signature-param" ; k = "class-name").
-marked(s, x) :- variable(s, x, _, "type-param"), scope_type(s, "mappedType").
+// A mapped type's key `[K in …]`, also where tree-sitter's recovery leaves no index_signature around it
+// (`{ [k in string]; }` without a type, which TypeScript parses as a mapped type).
+marked(s, x) :- variable(s, x, id, "type-param"), field(c, "name", id), kind(c, "mapped_type_clause").
 marked(s, x) :- variable(s, x, id, "param"), param_target(p, id), param_property(p).
 marked(s, x) :- variable(s, x, id, "param"), kind(m, "method_definition"), op(m, "set"), field(m, "parameters", ps),
     within(id, ps).
@@ -177,7 +188,7 @@ bare_param(id, f) :- variable(f, _, id, "param"), field(f, "parameters", ps), ch
 bare_param(id, f) :- variable(f, _, id, "param"), field(f, "parameter", id).
 // later_param_used(id, f): a parameter after id has a reference (a default is a write reference), or is marked used.
 .decl later_param_used(id: node, f: node)
-later_param_used(id, f) :- bare_param(id, f), variable(f, y, j, "param"), earlier(id, j),
+later_param_used(id, f) :- bare_param(id, f), variable(f, y, j, "param"), src_before(id, j),
     (resolves(_, f, y) ; marked(f, y) ; initialised(j)).
 .decl rest_sibling(id: node)  // id is a property of an object pattern that ends in `...rest`
 rest_sibling(id) :- (kind(id, "shorthand_property_identifier_pattern") ; estree_parent(id, pp), kind(pp, "pair_pattern"),
