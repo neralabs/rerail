@@ -3256,6 +3256,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         let mut d = d;
                         // Its rows written in place (decision 0325 step 4), and a lattice's key map they were folded
                         // through (decision 0384 step 5).
+                        // Its lots in the first order with them, at their places past `f`'s own.
+                        let at = f.placed.len();
+                        f.in_order.extend(d.in_order.iter().map(|&l| at + l));
                         f.placed.append(&mut d.placed);
                         if d.map.is_some() {
                             debug_assert!(f.map.is_none(), "two folds' maps for one relation");
