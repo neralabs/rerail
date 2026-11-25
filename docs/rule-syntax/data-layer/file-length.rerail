@@ -61,7 +61,8 @@ FILE_LENGTH(@place(p, 1), p, n, m) :- long_file(_, p, n), allowlisted(p, m), n >
 
 // Not findings in the script either: allowlisted files that shrank and stale entries are printed as advice.
 // Published for anyone who wants the burn-down, never reported.
-.decl stale_entry(path: symbol)
+// Cross-file: the allowlist's paths against every file's length (decision 0652).
+.decl stale_entry(path: symbol) cross_file
 .output stale_entry
 stale_entry(p) :- allowlisted(p, _), !long_file(_, p, _).
 

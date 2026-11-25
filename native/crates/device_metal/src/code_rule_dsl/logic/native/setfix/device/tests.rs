@@ -19,7 +19,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -148,7 +148,7 @@ use rerail_blocks::vector::Vector;
     /// CPU's.
     fn closure(sizes: &[(&str, &str)]) -> super::Report {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -259,7 +259,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -341,7 +341,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -419,7 +419,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -490,7 +490,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -623,7 +623,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -776,7 +776,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -885,7 +885,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -924,7 +924,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -995,7 +995,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1034,7 +1034,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1107,7 +1107,7 @@ use rerail_blocks::vector::Vector;
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1247,7 +1247,7 @@ use rerail_blocks::vector::Vector;
     /// A store with `temp.n` of `rows` rows (`s<k % 37>`, k), the native module registered: the wave tests' input.
     fn wave_db(rows: i64) -> Connection {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1280,7 +1280,7 @@ use rerail_blocks::vector::Vector;
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1348,7 +1348,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1597,7 +1597,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1713,7 +1713,7 @@ use rerail_blocks::vector::Vector;
         use crate::code_rule_dsl::model::FileInput;
         use crate::code_rule_dsl::transducer::packed::metal_join as mj;
         use std::sync::Arc;
-        if !mj::available() || !rerail_accel::gpu::join::device().is_ok_and(|d| d.has_addresses()) {
+        if !mj::available() || !rerail_accel_gpu::gpu::join::device().is_ok_and(|d| d.has_addresses()) {
             return;
         }
         crate::test_languages();
@@ -1825,7 +1825,7 @@ use rerail_blocks::vector::Vector;
         let store_path = std::env::temp_dir().join(format!("rerail-chunk-views-{}-{nonce}.sqlite", std::process::id()));
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
-        let device = rerail_accel::gpu::join::device().expect("the device");
+        let device = rerail_accel_gpu::gpu::join::device().expect("the device");
         let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
         // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
@@ -2119,7 +2119,7 @@ use rerail_blocks::vector::Vector;
             rows
         };
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2161,6 +2161,87 @@ use rerail_blocks::vector::Vector;
         }
     }
 
+    /// `child` probed by its parent is walked on the tape (`by_parent`) over a chunk's documents and the tape values
+    /// admitted after them (decision 0431 §8), whose directory is in row order: the chunk's documents, then the
+    /// values', so not in key order where a value's key is below the chunk's. A parent's document is found by its key
+    /// through the directory's key order (`ViewDir::by_key`); bisected in row order, a value's parents found no
+    /// document and had no children (t50 step 9, Metal at 512 MB: `tp_ident` and `tp_list`, 9 rows each).
+    #[test]
+    fn a_childs_parent_walk_finds_the_values_admitted_below_the_chunks_keys() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::nearest::Binding;
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::facts::vtab::syntax::values::{Layered, Values};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, Grower, Matchers, Projection};
+        use crate::code_rule_dsl::model::FileInput;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        crate::test_languages();
+        let doc = |key: u32, source: &str| {
+            let path = format!("d{key}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new(source.to_owned().into()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        };
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-child-walk-{}-{nonce}.sqlite", std::process::id()))).unwrap();
+        let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+        let projection = Projection::core();
+        let chunk = vec![doc(20, "import os\nx = f(1, y=[2, g(3)])\n"), doc(23, "class C(B):\n    def m(self, a, *b):\n        return [a for a in b]\n")];
+        let (sources, mut grower) = Grower::start(&content, chunk, &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
+        let values = Arc::new(Values::default());
+        // A tape value whose key is below the chunk's: its rows past theirs, its document before theirs by key.
+        let admitted = grower.admit(&content, vec![doc(5, "def v(p, q=[1, 2]):\n    return h(p, *q)\n")], &[], &tests, Binding::Cpu, &projection).unwrap();
+        values.add(&[5], &[], admitted);
+        let base = sources.iter().find(|(n, _)| n == "child").expect("the chunk's child view").1.clone();
+        let child: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Layered::new("child", base, Arc::clone(&values)));
+        assert!(child.device_view().is_some(), "the chunk's and the value's views read in place");
+        let rows: Vec<(i64, i64, i64)> = (0..child.len()).map(|r| (child.value(r, 0), child.value(r, 1), child.value(r, 2))).collect();
+        let mut parents: Vec<i64> = rows.iter().map(|r| r.0).collect();
+        parents.sort_unstable();
+        parents.dedup();
+        let mut want = rows.clone();
+        want.sort_unstable();
+        assert!(want.iter().filter(|r| r.0 >> 32 == 5).count() > 5, "the value's children: {want:x?}");
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE q (c0);").unwrap();
+        for &p in &parents {
+            db.execute("INSERT INTO q VALUES (?1)", [p]).unwrap();
+        }
+        super::super::hold_source(&db, "child_t", Arc::clone(&child), b"iii".to_vec());
+        let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
+        let c = format!("r:{}", hex("child_t"));
+        // h0(p, n, i) :- q(p), child(p, n, i): by the parent.
+        let rule = format!("pos {q} v0\npos {c} v0 v1 v2\nhead v0 v1 v2");
+        for device in [false, true] {
+            db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1, c2);").unwrap();
+            let mut spec = vec!["name child_walk".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            spec.push("rel h0 iii empty".into());
+            spec.push(format!("seed 0 {}", hex(&rule)));
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "child_walk", 0).unwrap();
+            let report = super::take_report();
+            super::super::close(&db, "child_walk").unwrap();
+            if device {
+                let r = report.as_ref().expect("a device run");
+                assert!(r.refused.is_none(), "walked on the tape: {r:?}");
+            }
+            let mut got: Vec<(i64, i64, i64)> = db.prepare("SELECT c0, c1, c2 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().map(Result::unwrap).collect();
+            got.sort_unstable();
+            assert_eq!(got, want, "device {device}: every parent's children, the value's too");
+        }
+    }
+
     /// A view chosen by a constant (`child … WHERE idx = 0`) is its source read in place, the constant a key of the
     /// stage's (decision 0353 step 6, `reads_source`): nothing uploaded, scanned (an index of the constant's column)
     /// or probed by its parent (its children walked on the tape, each checked against it), the CPU's rows.
@@ -2193,7 +2274,7 @@ use rerail_blocks::vector::Vector;
         want.sort_unstable();
         assert!(want.len() > 20 && want.len() < child.len(), "{} of {} rows", want.len(), child.len());
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2279,7 +2360,7 @@ use rerail_blocks::vector::Vector;
         }
         let runs: usize = std::env::var("RERAIL_MEASURE_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

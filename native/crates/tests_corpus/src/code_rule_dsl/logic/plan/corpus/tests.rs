@@ -87,7 +87,7 @@ fn a_runs_chunks_normalize_the_program_once() {
     std::fs::write(&rule, r#"
 .decl def(n: node, x: symbol)
 def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
-.decl calls(n: node, x: symbol)
+.decl calls(n: node, x: symbol) cross_file
 calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
 .output calls
 "#).unwrap();
@@ -141,7 +141,7 @@ fn a_program_reading_the_import_closure_has_its_rules() {
     let text = program(
         r#"
 #include "core.rerail"
-.decl seen(p: symbol, q: symbol)
+.decl seen(p: symbol, q: symbol) cross_file
 seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
 .output seen
 "#,
@@ -149,7 +149,7 @@ seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
     .unwrap();
     run(&text).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap(), [["b.py", "a.py"]]);
-    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol)\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
+    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol) cross_file\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
     assert!(err.contains("cross-memo") && err.contains("removed"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -334,7 +334,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
-         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
+         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number) cross_file\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
          .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
@@ -359,7 +359,7 @@ pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
 .mode steer
 .scope include "**/*.py"
 #include "python/names.rerail"
-.decl dep(a: number, b: number)
+.decl dep(a: number, b: number) cross_file
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl own(a: number)
 own(a) :- doc(a, _, _).
@@ -504,7 +504,7 @@ fn cross_file_strata_are_kept_across_runs_in_the_tape_cache() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -556,7 +556,7 @@ fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl used(f: node)
+.decl used(f: node) cross_file
 used(f) :- imp(_, q), def(f, q).
 .decl finding(category: symbol, q: symbol, n: node)
 finding("unused", q, f) :- def(f, q), !used(f).
@@ -891,7 +891,7 @@ fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -944,7 +944,7 @@ fn a_maintained_run_decodes_and_copies_no_tree() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -990,7 +990,7 @@ fn a_maintained_strata_pieces_run_as_one_component() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl used(f: node)
 used(f) :- uses(_, f).
@@ -1065,7 +1065,7 @@ fn a_cycle_closed_by_an_empty_relation_still_keeps_levels() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl never(n: node)
 never(n) :- kind(n, "no_such_kind").
@@ -1118,7 +1118,7 @@ fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl fanout(f: node, n: number)
 fanout(f, n) :- def(f, _), n = count : { uses(_, f) }.
@@ -1180,7 +1180,7 @@ fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_r
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .output uses
 "#;
@@ -1305,7 +1305,7 @@ fn mf_def_is_the_climb_through_classes() {
         gap(\"old\", k, l, lf) :- odef(n, f), !mf_def(n, f), kind(n, k), line(n, l), line(f, lf).\n\
         gap(\"new up\", k, l, lf) :- mf_up(n, f), !oup(n, f), kind(n, k), line(n, l), line(f, lf).\n\
         gap(\"old up\", k, l, lf) :- oup(n, f), !mf_up(n, f), kind(n, k), line(n, l), line(f, lf).\n.output gap\n\
-        .decl rows(k: number)\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
+        .decl rows(k: number) cross_file\nrows(k) :- k = count : { mf_def(_, _) }.\n.output rows\n\
         .decl decorated(l: number, lf: number)\n\
         decorated(l, lf) :- mf_def(n, f), kind(n, \"identifier\"), text(n, x), (x = \"w\" ; x = \"v\" ; x = \"arg\" ; x = \"q\" ; x = \"p\" ; x = \"c\"), line(n, l), line(f, lf).\n.output decorated\n";
     let py = "@top(lambda q: q)\ndef f(a=lambda: 1):\n    class B:\n        x = 1\n        @staticmethod\n        def m(self):\n            def g():\n                return h(1)\n            return g\n        @deco(arg(2))\n        class Inner:\n            y = 2\n    return B\n@cls_deco(z)\nclass C:\n    def n(self):\n        @wrap(w)\n        class D:\n            @d2(v)\n            class E:\n                pass\n        return D\nu = 3\ndef outer():\n    @wrap2(p)\n    def inner():\n        return p2\n    if p:\n        @a\n        @b(c)\n        def k(): pass\n    return inner\n";
@@ -1396,6 +1396,25 @@ fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, 
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
     (alone, together)
+}
+
+/// RUF034 alone: `value` answered on request, and python/ast.rerail's demand on `unparen`. `value`'s request reads
+/// `unparen`, whose demand comes from `same_pair`, which negates `same_leaf`, which reads `value`: the demand leaves
+/// `same_pair` out to stay stratified, and then joins the compared nodes by a child's position only, across files. Its
+/// answer was cross-file once preparation applied the demand, after combining had judged it file-local, and the run
+/// was refused ("`value` is answered on request in the cross-file part"). Beside a reader of `value` across files it
+/// ran, `value` eager. Alone it runs too, and finds what it finds there.
+#[test]
+fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack() {
+    let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
+                .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
+                cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
+    let across = ".language python\n.decl twin(v: symbol)\n\
+                  twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
+    let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
+    let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
+    assert_eq!(together, [["1"], ["3"]], "the same branches, literals by value");
+    assert_eq!(alone, together);
 }
 
 /// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
@@ -1767,7 +1786,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
-        crate::content_store::atoms::install_kept_tables(&db).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1903,7 +1922,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
-        crate::content_store::atoms::install_kept_tables(&db).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -2013,7 +2032,7 @@ fn a_cross_file_text_test_is_maintained_as_a_filter() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -2067,7 +2086,7 @@ fn a_cross_file_reader_finds_the_text_of_another_files_node() {
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl passes(f: node)
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
@@ -2221,12 +2240,17 @@ fn every_switch_lowering_reads_is_classified() {
     let region = |from: &str, to: &str| region_of("corpus.rs", &corpus, from, to);
     let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
-    // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
-    // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    // reads a switch (`scoping`, the tail's passes), the `.rerail` lowering its `rr::parse` runs (`logic/rr`,
+    // `front`), and the passes it replays to judge an answer as the program's own demand leaves it
+    // (`answers_where_documents_are_version` through `reading_demanded`: simplify, reach index, demand). The combined
+    // program is kept under `COMBINING` alone.
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
+        "logic/plan/corpus/preparation/simplify.rs", "logic/plan/corpus/preparation/prune.rs", "logic/plan/corpus/preparation/demand.rs",
+        "logic/plan/corpus/preparation/magic.rs", "logic/plan/corpus/preparation/magic",
     ]);
+    combining.push(("corpus/base.rs, answers_where_documents_are_version".to_owned(), base_region("\npub fn answers_where_documents_are_version(", "\n/// The programs `programs` linked into one")));
     combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
     combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
@@ -2345,7 +2369,7 @@ const CROSS_FILE_VALUES: &str = r#"
 ann_node(m, x) :- string_annotation(n), parsed(n, "annotation", _), guest_of(m, n), kind(m, "identifier"), text(m, x).
 .decl cls(c: node, x: symbol)
 cls(c, x) :- kind(c, "class_definition"), field(c, "name", i), text(i, x).
-.decl refers(m: node, c: node)
+.decl refers(m: node, c: node) cross_file
 refers(m, c) :- ann_node(m, x), cls(c, x).
 .decl shown(x: symbol, p: symbol, l: number)
 shown(x, p, l) :- refers(m, c), text(m, x), guest_place(m, _, l, _), docof(c, d), doc(d, p, _).

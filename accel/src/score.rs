@@ -304,19 +304,23 @@ thread_local! {
     static PHASES: std::cell::RefCell<Vec<(&'static str, u64, f64, f64)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// Adds `cpu` and `wall` seconds to this thread's job under `name`. In the thread's teardown (a submission a
-/// thread-local held, waited as it drops) the phases are gone with the job: nothing is counted.
+/// This thread's phases, given to `f`; nothing in the thread's teardown, once they are gone: a batch held in a
+/// thread-local (a wave left open) waits for its work as it is dropped there, with no job to count it to. Read then,
+/// they aborted the process at its exit ("cannot access a Thread Local Storage value during or after destruction",
+/// t50 step 9: one run of four on Metal at 512 MB).
+fn phases(f: impl FnOnce(&mut Vec<(&'static str, u64, f64, f64)>)) {
+    let _ = PHASES.try_with(|p| f(&mut p.borrow_mut()));
+}
+
+/// Adds `cpu` and `wall` seconds to this thread's job under `name`.
 pub fn add(name: &'static str, cpu: f64, wall: f64) {
-    let _ = PHASES.try_with(|p| {
-        let mut p = p.borrow_mut();
-        match p.iter_mut().find(|e| e.0 == name) {
-            Some(e) => {
-                e.1 += 1;
-                e.2 += cpu;
-                e.3 += wall;
-            }
-            None => p.push((name, 1, cpu, wall)),
+    phases(|p| match p.iter_mut().find(|e| e.0 == name) {
+        Some(e) => {
+            e.1 += 1;
+            e.2 += cpu;
+            e.3 += wall;
         }
+        None => p.push((name, 1, cpu, wall)),
     });
 }
 
@@ -325,12 +329,9 @@ pub fn count(name: &'static str, n: u64) {
     if n == 0 {
         return;
     }
-    let _ = PHASES.try_with(|p| {
-        let mut p = p.borrow_mut();
-        match p.iter_mut().find(|e| e.0 == name) {
-            Some(e) => e.1 += n,
-            None => p.push((name, n, 0.0, 0.0)),
-        }
+    phases(|p| match p.iter_mut().find(|e| e.0 == name) {
+        Some(e) => e.1 += n,
+        None => p.push((name, n, 0.0, 0.0)),
     });
 }
 
@@ -344,7 +345,9 @@ pub fn phase<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
 
 /// This thread's phases so far, taken (a job's start clears them, its end takes them).
 pub fn take_phases() -> Vec<(&'static str, u64, f64, f64)> {
-    PHASES.with_borrow_mut(std::mem::take)
+    let mut taken = Vec::new();
+    phases(|p| taken = std::mem::take(p));
+    taken
 }
 
 /// A finished job, for the cost statistics (decision 0100 §14): what it was, what the price expected, and what it
@@ -811,6 +814,33 @@ impl Scoreboard {
 mod tests {
     use super::*;
 
+    /// A value held in a thread-local that counts a phase as it is dropped (a batch waiting for its work, a wave left
+    /// open) is dropped in the thread's teardown, after the phases may be gone: its count is lost, and the thread ends.
+    /// Read regardless, the phases' thread-local aborted the process at its exit.
+    #[test]
+    fn a_phase_counted_in_a_threads_teardown_is_dropped() {
+        struct CountsOnDrop;
+        impl Drop for CountsOnDrop {
+            fn drop(&mut self) {
+                add("teardown", 0.0, 1.0);
+                count("teardown events", 1);
+                crate::exec::command_committed();
+            }
+        }
+        thread_local! {
+            static HELD: std::cell::RefCell<Option<CountsOnDrop>> = const { std::cell::RefCell::new(None) };
+        }
+        std::thread::spawn(|| {
+            // Held first, the phases after: their destructors run in the reverse order, the phases' first.
+            HELD.with_borrow_mut(|h| *h = Some(CountsOnDrop));
+            add("before", 0.0, 1.0);
+            assert_eq!(take_phases().len(), 1, "counted while the thread runs");
+            add("before", 0.0, 1.0);
+        })
+        .join()
+        .expect("the thread ends, its teardown's count dropped");
+    }
+
     /// A job's estimate is outstanding from its queueing to its end, and its counts land on its lane and form.
     #[test]
     fn a_job_is_outstanding_until_it_ends_and_counted_on_its_lane() {
@@ -841,6 +871,7 @@ mod tests {
         let (mut first, mut second) = (b.queue(Lane::Gpu, item()), b.queue(Lane::Gpu, item()));
         let begun = Instant::now();
         b.start(&mut first);
+        let after_first_start = Instant::now();
         pause();
         let before_second = Instant::now();
         b.start(&mut second);
@@ -850,17 +881,22 @@ mod tests {
         let (ran_first, _) = b.finish(first, true);
         let after_first = Instant::now();
         pause();
+        let before_second_finish = Instant::now();
         let (ran_second, _) = b.finish(second, true);
         let span = begun.elapsed().as_secs_f64();
+        let ended = begun + std::time::Duration::from_secs_f64(span);
         let busy = b.score().units[Lane::Gpu.index()].busy;
         // Each ran about 60 ms; together the lane was busy about 90. The walls overlap by the time both ran: from the
-        // second's start to the first's finish, bounded by the clock read on either side of each (a stall of the
-        // machine anywhere stretches the span and the walls alike, never the overlap's bounds).
+        // second's start to the first's finish, bounded by the clock read on either side of each. The span is read
+        // outside the first's start and the second's finish: it is longer than the lane's busy time by at most the
+        // time between those reads and the calls they bracket (`outside`), however long the machine stalled there.
         let overlap = ran_first + ran_second - span;
+        let outside = (after_first_start - begun).as_secs_f64() + (ended - before_second_finish).as_secs_f64();
         let (least, most) = ((before_first - after_second).as_secs_f64(), (after_first - before_second).as_secs_f64());
         assert!(least > 0.025, "the jobs ran side by side for {least} s");
-        assert!(overlap > least - 0.002 && overlap < most + 0.002, "the walls overlap by {overlap}, not within {least}..{most}");
-        assert!((busy - span).abs() < 0.005, "shares {busy} against the lane's span {span}");
+        let slack = 1e-6;
+        assert!(overlap > least - outside - slack && overlap < most + slack, "the walls overlap by {overlap}, not within {least}..{most} less {outside}");
+        assert!(busy <= span + slack && busy >= span - outside - slack, "shares {busy} against the lane's span {span} less {outside}");
         // The cores run jobs on threads of their own: each is charged its wall.
         let (mut a, mut c) = (b.queue(Lane::Cpu, item()), b.queue(Lane::Cpu, item()));
         b.start(&mut a);

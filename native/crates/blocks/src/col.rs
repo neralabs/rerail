@@ -12,6 +12,11 @@
 //!   group's width and offset one `rbits`-bit entry). The random-access counterpart of a delta varint: a sorted id
 //!   column's 128 values span a small range, and a group that crosses a document costs that group alone.
 //!
+//! - `DICT` (decision 0622 step 4, MLDB's table): the column's distinct values, sorted, each less `base` in `bits` bits
+//!   (`runs`, `nruns` of them), and each row's index among them in `rbits` bits (`data`). A column of few values
+//!   spread wide (atoms, kinds, a few documents' ids): its codes take the bits its count needs, not its range. Taken
+//!   for a relation's sealed chunks only (`choose_for_reads`), where it is smaller than every other encoding.
+//!
 //! Reads are arithmetic on the words: the same on a GPU, where a column is read for its bandwidth and the extra
 //! instructions to decode it cost nothing.
 
@@ -24,6 +29,7 @@ pub const PACK: u32 = 1;
 pub const RUNS: u32 = 2;
 pub const LINE: u32 = 3;
 pub const GROUPS: u32 = 4;
+pub const DICT: u32 = 5;
 
 /// A `GROUPS` group's values, as a shift.
 const GROUP_LOG: u32 = 7;
@@ -32,7 +38,7 @@ const GROUP: usize = 1 << GROUP_LOG;
 const WIDTH_BITS: u32 = 7;
 
 /// The encodings' names, by tag.
-pub const TAG_NAMES: [&str; 5] = ["const", "pack", "runs", "line", "groups"];
+pub const TAG_NAMES: [&str; 6] = ["const", "pack", "runs", "line", "groups", "dict"];
 
 structure! {
     pub struct IntCol {
@@ -388,7 +394,7 @@ fn runs_in<V: Vals + ?Sized>(v: &V, r: std::ops::Range<usize>) -> usize {
 /// The smallest encoding of `v`: one pass for the range and the runs, one for the line's residuals (when a sample
 /// says the line may win), each in pieces in parallel.
 pub fn choose<V: Vals + ?Sized>(v: &V) -> Choice {
-    choose_with(v, usize::MAX)
+    choose_with(v, usize::MAX, false)
 }
 
 /// The runs past which `choose_for_reads` takes no `RUNS`: a read's search of their starts is then 5 steps at most.
@@ -396,12 +402,39 @@ pub const RUNS_FOR_READS: usize = 32;
 
 /// `choose` for a column read at random, by position (a relation's sealed chunk, decision 0622): every read a few
 /// words. `RUNS` only with few runs, its read a search of their starts; `GROUPS` holds long runs about as small, its
-/// read three words.
+/// read three words. `DICT` where it is smaller than all of them, its read two words.
 pub fn choose_for_reads<V: Vals + ?Sized>(v: &V) -> Choice {
-    choose_with(v, RUNS_FOR_READS)
+    choose_with(v, RUNS_FOR_READS, true)
 }
 
-fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize) -> Choice {
+/// The most distinct values a `DICT` of `n` values `bits` wide (their range's) may have and still take fewer words
+/// than `best`: over each code width `cb` below `bits`, the values its codes can name and the dictionary's words can
+/// hold. 0 where none would.
+fn dict_limit(n: usize, bits: u32, best: usize) -> usize {
+    (1..bits.min(32))
+        .filter(|&cb| words(n, cb) < best)
+        .map(|cb| (1usize << cb).min((best - words(n, cb) - 1) * 64 / bits as usize))
+        .max()
+        .unwrap_or(0)
+}
+
+/// `v`'s distinct values, sorted, where there are `limit` or fewer (`None` past it: the count stops there).
+fn distinct_upto<V: Vals + ?Sized>(v: &V, limit: usize) -> Option<Vec<i64>> {
+    if limit < 2 {
+        return None;
+    }
+    let mut seen = rustc_hash::FxHashSet::default();
+    for x in (0..v.len()).map(|i| v.at(i)) {
+        if seen.insert(x) && seen.len() > limit {
+            return None;
+        }
+    }
+    let mut d: Vec<i64> = seen.into_iter().collect();
+    d.sort_unstable();
+    Some(d)
+}
+
+fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
     let n = v.len();
     let none = Choice { tag: CONST, bits: 0, rbits: 0, nruns: 0, base: 0, slope: 0, rmin: 0, n, data_words: 1, runs_words: 0 };
     if n == 0 {
@@ -444,6 +477,14 @@ fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize) -> Choice {
     let groups = (gbits / 64 + 2, words(ngroups, gb) + words(ngroups, eb));
     let runs = if nruns > max_runs { (usize::MAX / 4, usize::MAX / 4) } else { runs };
     let best = pack_words.min(runs.0 + runs.1).min(line_words).min(groups.0 + groups.1);
+    // `DICT`, counted only up to the values past which it could not be smaller than `best`.
+    if dict && let Some(d) = distinct_upto(v, dict_limit(n, bits, best)) {
+        let cb = bits_for(d.len() as u64 - 1);
+        let (dw, vw) = (words(n, cb), words(d.len(), bits));
+        if dw + vw < best {
+            return Choice { tag: DICT, bits, rbits: cb, nruns: d.len() as u32, base: lo, slope: 0, rmin: 0, n, data_words: dw, runs_words: vw };
+        }
+    }
     if best == groups.0 + groups.1 && best < pack_words.min(runs.0 + runs.1).min(line_words) {
         return Choice { tag: GROUPS, bits: gb, rbits: eb, nruns: ngroups as u32, base: lo, slope: 0, rmin: 0, n, data_words: groups.0, runs_words: groups.1 };
     }
@@ -581,6 +622,7 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
         PACK => pack_resid(data, v, Line { base: c.base, slope: 0, rmin: 0 }, c.bits),
         LINE => pack_resid(data, v, Line { base: c.base, slope: c.slope, rmin: c.rmin }, c.bits),
         GROUPS => write_groups(c, v, data, runs),
+        DICT => write_dict(c, v, data, runs),
         _ => {
             let counts = over_pieces(v.len(), |r| runs_in(v, r));
             let (d, s) = (atomics(data), atomics(runs));
@@ -611,6 +653,23 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
             });
         }
     }
+}
+
+/// `DICT`'s words: the distinct values, sorted, less `base` into `runs`; then in pieces in parallel each row's index
+/// among them into `data` (a piece is `PIECE` values, so its codes start on a word of their own).
+fn write_dict<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64]) {
+    let d = distinct_upto(v, c.nruns as usize).expect("as chosen");
+    let vals: Vec<u64> = d.iter().map(|&x| x.wrapping_sub(c.base) as u64).collect();
+    pack_into(runs, &vals, c.bits);
+    let code: rustc_hash::FxHashMap<i64, u64> = d.iter().enumerate().map(|(k, &x)| (x, k as u64)).collect();
+    let out = atomics(data);
+    over_pieces(v.len(), |r| {
+        let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
+        for i in r {
+            w.push(code[&v.at(i)]);
+        }
+        w.flush();
+    });
 }
 
 /// `GROUPS`' words: each group's minimum and width (a pass in pieces), their offsets (a prefix sum), then in pieces
@@ -811,6 +870,10 @@ impl IntCol {
                 let w = (e & ((1 << WIDTH_BITS) - 1)) as u32;
                 let r = rd_bit(self.data.as_slice(), (e >> WIDTH_BITS) as usize + (i & (GROUP - 1)) * w as usize, mask_of(w));
                 self.base.wrapping_add(min as i64).wrapping_add(r as i64)
+            }
+            DICT => {
+                let k = rd(self.data.as_slice(), i, self.rbits, mask_of(self.rbits));
+                self.base.wrapping_add(rd(self.runs.as_slice(), k as usize, self.bits, mask_of(self.bits)) as i64)
             }
             _ => self.dec().get(i),
         }
@@ -1015,6 +1078,13 @@ impl Dec<'_> {
         self.base.wrapping_add(min as i64).wrapping_add(r as i64)
     }
 
+    /// `DICT`'s value `i`: its index among the sorted distinct values, then that value.
+    #[inline(always)]
+    fn dct(&self, i: usize) -> i64 {
+        let k = rd(self.data, i, self.rbits, self.rmask) as usize;
+        self.base.wrapping_add(rd(self.runs, k, self.bits, self.mask) as i64)
+    }
+
     /// Run `k`'s first position (`n` past the last run).
     #[inline(always)]
     fn start(&self, k: usize) -> usize {
@@ -1047,6 +1117,7 @@ impl Dec<'_> {
             PACK => self.val(i),
             RUNS => self.val(self.run_of(i)),
             GROUPS => self.grp(i),
+            DICT => self.dct(i),
             _ => self.on_line(i),
         }
     }
@@ -1085,6 +1156,7 @@ impl Dec<'_> {
                 self.start(search(a, b, key, |k| self.val(k))).clamp(lo, hi)
             }
             GROUPS => search(lo, hi, key, |i| self.grp(i)),
+            DICT => search(lo, hi, key, |i| self.dct(i)),
             _ => search(lo, hi, key, |i| self.on_line(i)),
         }
     }
@@ -1114,6 +1186,10 @@ impl Dec<'_> {
             GROUPS => {
                 let a = search(lo, hi, key, |i| self.grp(i));
                 if a == hi || self.grp(a) != key { (a, a) } else { (a, upper_from(a, hi, key, |i| self.grp(i))) }
+            }
+            DICT => {
+                let a = search(lo, hi, key, |i| self.dct(i));
+                if a == hi || self.dct(a) != key { (a, a) } else { (a, upper_from(a, hi, key, |i| self.dct(i))) }
             }
             _ => {
                 let a = search(lo, hi, key, |i| self.on_line(i));
@@ -1217,6 +1293,55 @@ mod tests {
                 assert_eq!(&out[..], &v[lo..lo + m], "{} from {lo}", c.tag_name());
             }
         }
+    }
+
+    /// Decision 0622 step 4: a column of few values spread wide is a `DICT` for reads at random (`choose_for_reads`),
+    /// smaller than every other encoding, and reads back by position, in order, and by search where sorted; across
+    /// pieces packed in parallel, and at a code width of one bit. `choose` (the packed store's) takes none. A column
+    /// of many values, or of few close together, is not one.
+    #[test]
+    fn a_column_of_few_values_spread_wide_is_a_dictionary() {
+        let spread = [-(1i64 << 40), 7, 1 << 50, 3, i64::MAX - 5];
+        let cases: Vec<Vec<i64>> = vec![
+            (0..3 * PIECE as i64 + 11).map(|i| spread[(i * 2_654_435_761 % 5) as usize]).collect(),
+            (0..1000i64).map(|i| if i % 3 == 0 { 1 << 45 } else { -9 }).collect(),
+        ];
+        for v in &cases {
+            let c = choose_for_reads(v);
+            assert_eq!(c.tag, DICT, "{c:?}");
+            let others = choose(v);
+            assert!(c.bytes() < others.bytes() && others.tag != DICT, "{c:?} against {others:?}");
+            let block = crate::block::Block::anon(crate::block::kind::FACTS, 8 << 20);
+            let p: *mut IntCol = block.alloc_t(1);
+            let words: *mut u64 = block.alloc_t(c.data_words + c.runs_words);
+            let (data, runs) = unsafe { IntCol::lay_out_at(p, words, &c) };
+            write(&c, v, data, runs);
+            let col = unsafe { &*p };
+            assert!((0..v.len()).all(|i| col.get(i) == v[i] && col.dec().get(i) == v[i]), "a value read back");
+            let mut each = Vec::new();
+            col.for_each(|x| each.push(x));
+            assert_eq!(&each, v);
+        }
+        // Sorted, it is a few runs, and `RUNS` is smaller: the same values written in the unsorted column's `DICT`
+        // (the same values and count, so the same widths) are searched by their values.
+        let c = choose_for_reads(&cases[0]);
+        let mut sorted = cases[0].clone();
+        sorted.sort_unstable();
+        assert_ne!(choose_for_reads(&sorted).tag, DICT);
+        let block = crate::block::Block::anon(crate::block::kind::FACTS, 8 << 20);
+        let p: *mut IntCol = block.alloc_t(1);
+        let words: *mut u64 = block.alloc_t(c.data_words + c.runs_words);
+        let (data, runs) = unsafe { IntCol::lay_out_at(p, words, &c) };
+        write(&c, &sorted, data, runs);
+        let col = unsafe { &*p };
+        for key in spread.iter().copied().chain([0, i64::MIN]) {
+            let want = (sorted.partition_point(|&x| x < key), sorted.partition_point(|&x| x <= key));
+            assert_eq!(col.equal_range(0, sorted.len(), key), want, "{key}");
+            assert_eq!(col.lower_bound(0, sorted.len(), key), want.0, "{key}");
+        }
+        // Many values, or few within a small range: not a dictionary.
+        assert_ne!(choose_for_reads(&(0..5000i64).map(|i| i * 2_654_435_761 % 100_000).collect::<Vec<_>>()).tag, DICT);
+        assert_ne!(choose_for_reads(&(0..5000i64).map(|i| i % 4).collect::<Vec<_>>()).tag, DICT);
     }
 
     #[test]

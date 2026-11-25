@@ -30,8 +30,9 @@ pub fn register() {
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
+        rerail_blocks::maps::install();
         crate::code_rule_dsl::logic::profile::strict_on_every_connection();
-        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", rerail_logic::code_rule_dsl::logic::CARRIERS);
         crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
         super::register();
         // The compiled CPU, which the device's tests compare it with, as boot registers it (`install_devices`).
@@ -125,6 +126,10 @@ impl SolverDevice for Metal {
 
     fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
         joins::column_stats(cols, k).map_err(Refused::Failed)
+    }
+
+    fn kernels_on_cpu(&self) -> bool {
+        rerail_device::device::cpu_chosen()
     }
 }
 

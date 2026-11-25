@@ -6,6 +6,7 @@ import { delimiter, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
 import { runNpm } from "../src/runtime/index.js";
+import { thirdPartyPack } from "../test/support/installed-packs.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
@@ -112,39 +113,85 @@ async function createPackageFixture(source: string, root: string, version: strin
   return packageRoot;
 }
 
-/** Installs pack packages (a `package.json` each) into `home`'s packs as npm records them from the registry. */
-async function installRegistryPacks(home: string, packs: Record<string, string>): Promise<void> {
+/**
+ * Installs pack packages (a `package.json` each) into `home`'s packs as npm records them from the registry; with `keep`,
+ * beside the packs already recorded there.
+ */
+async function installRegistryPacks(home: string, packs: Record<string, string>, { keep = false } = {}): Promise<void> {
   const prefix = join(home, "packs");
   for (const [packageName, version] of Object.entries(packs)) {
     await mkdir(join(prefix, "node_modules", ...packageName.split("/")), { recursive: true });
     await writeFile(join(prefix, "node_modules", ...packageName.split("/"), "package.json"), JSON.stringify({ name: packageName, version }));
   }
-  await writeFile(join(prefix, "package.json"), JSON.stringify({ dependencies: packs }));
+  const recorded = keep ? (JSON.parse(await readFile(join(prefix, "package.json"), "utf8")) as { dependencies: Record<string, string> }).dependencies : {};
+  await writeFile(join(prefix, "package.json"), JSON.stringify({ dependencies: { ...recorded, ...packs } }));
+}
+
+/** Pack versions npm serves in the local registry: their dist-tags, core ranges and folders (`RERAIL_PACK_REGISTRY`). */
+function packRegistry(root: string): string {
+  const fits = ">=0.0.0-0";
+  const at = (packageName: string, id: string, version: string, range = fits) => ({ range, folder: thirdPartyPack(join(root, "pack-registry"), packageName, id, version, range) });
+  return JSON.stringify({
+    "@acme/rerail-pack-sql": { tags: { latest: "0.9.0" }, versions: { "0.2.0": { range: fits }, "0.9.0": at("@acme/rerail-pack-sql", "sql", "0.9.0") } },
+    "@neralabs/rerail-pack-typescript": {
+      tags: { latest: "1.0.0" },
+      versions: { "0.1.0": { range: fits }, "0.9.0": at("@neralabs/rerail-pack-typescript", "typescript", "0.9.0"), "1.0.0": { range: ">=99.0.0" } },
+    },
+    // Each version npm has fits; 1.1.0 as published names a core range none of these cores is in.
+    "@acme/rerail-pack-lint": {
+      tags: { latest: "1.1.0" },
+      versions: { "1.0.0": at("@acme/rerail-pack-lint", "lint", "1.0.0"), "1.1.0": { range: fits, folder: thirdPartyPack(join(root, "pack-registry"), "@acme/rerail-pack-lint", "lint", "1.1.0", ">=99.0.0") } },
+    },
+    "@acme/rerail-pack-fmt": { tags: { latest: "1.1.0" }, versions: { "1.0.0": { range: fits }, "1.1.0": at("@acme/rerail-pack-fmt", "fmt", "1.1.0") } },
+    // Published under next only, as set-up installs it.
+    "@neralabs/rerail-pack-java": {
+      tags: { next: "0.1.0-next.3" },
+      versions: { "0.1.0-next.1": { range: fits }, "0.1.0-next.3": at("@neralabs/rerail-pack-java", "java", "0.1.0-next.3") },
+    },
+  });
 }
 
 async function createLocalRegistry(root: string): Promise<string> {
   const bin = join(root, "bin");
   await mkdir(bin, { recursive: true });
   const fixture = join(bin, "npm-fixture.mjs");
-  await writeFile(fixture, `import { cpSync, readFileSync } from "node:fs";
+  await writeFile(fixture, `import { cpSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 // Rerail puts npm's own options (fetch retries) ahead of the command, as npm accepts them: the command is the first
 // argument that is not an option.
 const argv = process.argv.slice(2);
 const command = argv.findIndex(argument => !argument.startsWith("-"));
 const args = command === -1 ? [] : argv.slice(command);
-if (args[0] === "view" && args[1].startsWith("@neralabs/rerail-pack-java@")) {
-  // Java is published under next only, as set-up installs it.
-  if (!args[1].endsWith("@next")) {
-    process.stderr.write("npm error code E404\\nnpm error 404 No match found for version " + args[1].split("@").at(-1) + "\\n");
+// Rule packs, from RERAIL_PACK_REGISTRY: each package's dist-tags, and each version's folder and core range.
+const packRegistry = JSON.parse(process.env.RERAIL_PACK_REGISTRY ?? "{}");
+const packOf = spec => spec.slice(0, spec.lastIndexOf("@"));
+if (args[0] === "view" && args[1].includes("rerail-pack-")) {
+  const listing = args[2] === "dist-tags";
+  const found = packRegistry[listing ? args[1] : packOf(args[1])];
+  if (found === undefined) {
+    process.stderr.write("npm error code E404\\nnpm error 404 Not Found - " + args[1] + "\\n");
     process.exit(1);
   }
-  process.stdout.write(JSON.stringify({ version: "0.1.0-next.3", peerDependencies: { "@neralabs/rerail": ">=0.0.0-0" } }) + "\\n");
+  if (listing) {
+    process.stdout.write(JSON.stringify({ "dist-tags": found.tags, versions: Object.keys(found.versions) }) + "\\n");
+    process.exit(0);
+  }
+  const named = args[1].slice(args[1].lastIndexOf("@") + 1).split(" || ").filter(version => version in found.versions);
+  const answers = named.map(version => ({ name: packOf(args[1]), version, peerDependencies: { "@neralabs/rerail": found.versions[version].range } }));
+  process.stdout.write(JSON.stringify(answers.length === 1 ? answers[0] : answers) + "\\n");
   process.exit(0);
 }
-if (args[0] === "view" && args[1].includes("/rerail-pack-")) {
-  // Every other rule pack has a newer version for any core.
-  process.stdout.write(JSON.stringify({ version: "0.9.0", peerDependencies: { "@neralabs/rerail": ">=0.0.0-0" } }) + "\\n");
+if (args[0] === "install" && args.at(-1).includes("rerail-pack-")) {
+  // What npm leaves for a pack installed from the registry: its folder in node_modules, and its version recorded.
+  const prefix = args[args.indexOf("--prefix") + 1];
+  const spec = args.at(-1);
+  const packageName = packOf(spec);
+  const version = spec.slice(spec.lastIndexOf("@") + 1);
+  const installed = join(prefix, "node_modules", ...packageName.split("/"));
+  rmSync(installed, { recursive: true, force: true });
+  cpSync(packRegistry[packageName].versions[version].folder, installed, { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(prefix, "package.json"), "utf8"));
+  writeFileSync(join(prefix, "package.json"), JSON.stringify({ ...manifest, dependencies: { ...manifest.dependencies, [packageName]: version } }));
   process.exit(0);
 }
 if (args[0] === "view") {
@@ -232,6 +279,7 @@ describe("Rerail managed launcher", () => {
       RERAIL_REJECTED_PACKAGE: rejected,
       RERAIL_LAUNCH_MARKER: marker,
       RERAIL_REJECTED_VERSION: rejectedVersion,
+      RERAIL_PACK_REGISTRY: packRegistry(root),
     };
     const entrypoint = join(launcherRoot, "dist", "cli", "cli.js");
     const connected = await run(["node", entrypoint, "install", "--root", launcherRoot, "--agents", "claude-code"], environment, root);
@@ -269,35 +317,57 @@ describe("Rerail managed launcher", () => {
     expect(await readFile(showMe, "utf8")).toContain(join(home, "current", "dist", "cli", "cli.js"));
     expect(await readdir(join(userHome, ".cursor"))).toEqual([]);
 
-    // With nothing newer, update still refreshes the connected coding agents, and still suggests the newer version of
-    // an installed rule pack: packs are released without core.
+    // With nothing newer, update still refreshes the connected coding agents, and still moves each installed rule pack
+    // to the newest version that fits: packs are released without core.
     await rm(showMe);
     await installRegistryPacks(home, { "@acme/rerail-pack-sql": "0.2.0", "@neralabs/rerail-pack-typescript": "0.1.0" });
     const current = await run(["node", entrypoint, "update"], environment);
     expect(current.exitCode).toBe(0);
-    expect(current.stderr.split("\n").filter(line => line !== "")).toEqual(nothingNewerSteps);
-    // A third party's pack goes by its package name, and its new version waits for approval again.
-    expect(current.stdout).toContain([
-      "Newer versions of 2 rule packs you installed are on latest:",
+    expect(current.stderr.split("\n").filter(line => line !== "")).toEqual([
+      ...nothingNewerSteps,
+      "Installing @acme/rerail-pack-sql@0.9.0…",
+      "Installing @neralabs/rerail-pack-typescript@0.9.0…",
+    ]);
+    // A third party's pack goes by its package name, and its new version waits for approval again. Typescript's 1.0.0
+    // is for a later core, so it moves to 0.9.0.
+    expect(current.stdout.endsWith([
+      "Updated 2 rule packs; every repository that adds one runs its new rules:",
       "  @acme/rerail-pack-sql 0.2.0 → 0.9.0 (Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve @acme/rerail-pack-sql)",
       "  typescript 0.1.0 → 0.9.0",
-      "A pack's new version changes the rules of every repository that adds it. To update them:",
-      "  rerail packs add @acme/rerail-pack-sql@0.9.0 typescript@0.9.0",
       "",
-    ].join("\n"));
-    expect(current.stdout.trimEnd().endsWith("rerail packs add @acme/rerail-pack-sql@0.9.0 typescript@0.9.0")).toBe(true);
-    // A pack the channel has no version of is looked up under next: its line says so, and the header names no channel.
-    await installRegistryPacks(home, { "@acme/rerail-pack-sql": "0.2.0", "@neralabs/rerail-pack-java": "0.1.0-next.1", "@neralabs/rerail-pack-typescript": "0.1.0" });
+    ].join("\n"))).toBe(true);
+    const packs = JSON.parse(await readFile(join(home, "packs", "package.json"), "utf8")) as { dependencies: Record<string, string> };
+    expect(packs.dependencies).toEqual({ "@acme/rerail-pack-sql": "0.9.0", "@neralabs/rerail-pack-typescript": "0.9.0" });
+    // A pack the channel has no version of is taken up to its version under next, and its line says so.
+    await installRegistryPacks(home, { "@neralabs/rerail-pack-java": "0.1.0-next.1" }, { keep: true });
     const held = await run(["node", entrypoint, "update"], environment);
     expect(held.exitCode).toBe(0);
-    expect(held.stderr.split("\n").filter(line => line !== "")).toEqual(nothingNewerSteps);
-    expect(held.stdout).toContain([
-      "Newer versions of 3 rule packs you installed:",
-      "  @acme/rerail-pack-sql 0.2.0 → 0.9.0 (Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve @acme/rerail-pack-sql)",
-      "  java 0.1.0-next.1 → 0.1.0-next.3 (on next)",
-      "  typescript 0.1.0 → 0.9.0",
+    expect(held.stderr.split("\n").filter(line => line !== "")).toEqual([...nothingNewerSteps, "Installing @neralabs/rerail-pack-java@0.1.0-next.3…"]);
+    expect(held.stdout.endsWith([
+      "Updated a rule pack; every repository that adds it runs its new rules:",
+      "  java 0.1.0-next.1 → 0.1.0-next.3 (from next)",
       "",
-    ].join("\n"));
+    ].join("\n"))).toBe(true);
+    // Nothing newer for any pack: the update says so.
+    const settled = await run(["node", entrypoint, "update"], environment);
+    expect(settled.exitCode).toBe(0);
+    expect(settled.stderr.split("\n").filter(line => line !== "")).toEqual(nothingNewerSteps);
+    expect(settled.stdout.endsWith(`Your rule packs are the newest versions that fit Rerail ${acceptedVersion}.\n`)).toBe(true);
+    // A pack whose new version does not load is put back alone: the other still moves, the new core stays active, and
+    // the update fails, saying why and how to try again.
+    const recordedPacks = await readFile(join(home, "packs", "package.json"), "utf8");
+    await installRegistryPacks(home, { "@acme/rerail-pack-fmt": "1.0.0", "@acme/rerail-pack-lint": "1.0.0" }, { keep: true });
+    const unloadable = await run(["node", entrypoint, "update"], environment);
+    expect(unloadable.exitCode).toBe(1);
+    expect(unloadable.stderr).toMatch(/rerail: could not update @acme\/rerail-pack-lint to 1\.1\.0: @acme\/rerail-pack-lint@1\.1\.0 cannot be used: .*>=99\.0\.0.*\. Nothing was changed\.\n/u);
+    expect(unloadable.stderr.trimEnd().endsWith("Run `rerail packs update` to try again.")).toBe(true);
+    expect(unloadable.stdout).toContain("Updated a rule pack; every repository that adds it runs its new rules:\n  @acme/rerail-pack-fmt 1.0.0 → 1.1.0");
+    expect((JSON.parse(await readFile(join(home, "packs", "package.json"), "utf8")) as { dependencies: Record<string, string> }).dependencies)
+      .toMatchObject({ "@acme/rerail-pack-fmt": "1.1.0", "@acme/rerail-pack-lint": "1.0.0" });
+    expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
+    // Both go again, so the later updates find every pack current.
+    for (const packageName of ["rerail-pack-fmt", "rerail-pack-lint"]) await rm(join(home, "packs", "node_modules", "@acme", packageName), { recursive: true });
+    await writeFile(join(home, "packs", "package.json"), recordedPacks);
     expect(await readdir(commands)).toContain("rerail-show-me.md");
     const acceptedState = JSON.parse(await readFile(join(home, "update-state.json"), "utf8")) as Record<string, unknown>;
     expect(acceptedState).toMatchObject({
@@ -344,7 +414,7 @@ describe("Rerail managed launcher", () => {
     expect(unwritable.stderr).toContain(settingsPath);
     expect(unwritable.stderr).toContain("rerail install --refresh");
     expect(JSON.parse(await readFile(join(home, "update-state.json"), "utf8"))).toMatchObject({ current: { version: acceptedVersion } });
-  }, 60_000); // Twelve CLI runs, four of them updates that health-check the version they install: about 16s locally, twice that in CI.
+  }, 60_000); // Fourteen CLI runs, eight of them updates: about 15 s locally, twice that in CI.
 
   test("keeps status available when the active managed CLI is missing", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-launcher-"));

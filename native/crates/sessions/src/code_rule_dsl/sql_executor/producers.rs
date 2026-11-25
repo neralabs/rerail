@@ -71,7 +71,7 @@ pub fn take(program: Arc<Version>) -> Result<(Arc<Version>, Vec<Producer>)> {
             kept.push((key, text));
             continue;
         };
-        let params = plan::corpus::input_parameters(params).map_err(error)?;
+        let params = plan::corpus::inputs::parameters(params).map_err(error)?;
         if params.get("IO").map(String::as_str) != Some("sql") {
             kept.push((key, text));
             continue;

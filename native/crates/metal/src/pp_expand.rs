@@ -1367,6 +1367,12 @@ impl Exp {
         out
     }
 
+    /// The requests posted (`LPQ` 5).
+    pub fn posted(&self) -> u32 {
+        // SAFETY: the device finished; `lpq` holds the queue's control words.
+        unsafe { *self.lpq.host().cast::<u32>().add(5) }
+    }
+
     /// The rows the roll-up walked (`CTL` 26, `lp_roll_rows`).
     pub fn log_rows(&self) -> u32 {
         // SAFETY: the device finished; `ctl` holds 32 words.
@@ -1540,6 +1546,8 @@ pub struct Expanded {
     /// The rows the roll-up walked (`CTL` 26: each run's log, an occurrence's rows each time it is read): the
     /// logs' use of the tokens' store, as the output's is the output's.
     pub log_rows: u32,
+    /// The requests posted (`LPQ` 5): the calls read in a run of their own (decision 0613 §4).
+    pub posted: u32,
     /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
     pub run: u64,
 }
@@ -1579,7 +1587,7 @@ fn expand_sized_once(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<Exp
         let arena = Arena::new();
         let m = match r.make(&arena) {
             Ok(m) => m,
-            Err(done) => return done,
+            Err(done) => return *done,
         };
         match arena.lease() {
             Ok(()) => {}
@@ -1625,7 +1633,7 @@ pub fn expand_batch(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
             }
             match runs[k].make(&arena) {
                 Ok(m) => made.push((k, m)),
-                Err(done) => out[k] = Some(done),
+                Err(done) => out[k] = Some(*done),
             }
         }
         if made.is_empty() {
@@ -1715,7 +1723,7 @@ impl<'u> Runs<'u> {
     }
 
     /// The next run's stores in `arena`; or the unit's answer, where they are past the device's room.
-    fn make(&mut self, arena: &Arena) -> Result<Made, Result<Expanded, Error>> {
+    fn make(&mut self, arena: &Arena) -> Result<Made, Box<Result<Expanded, Error>>> {
         let (unit, lay) = (self.unit, self.lay);
         self.x = self.x.fit(self.p1.top);
         let rung = self.x.rung;
@@ -1728,8 +1736,8 @@ impl<'u> Runs<'u> {
         })();
         let (front, defs, vis, exp) = match made {
             Ok(m) => m,
-            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Ok(self.short.take().unwrap())),
-            Err(e) => return Err(Err(e)),
+            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Box::new(Ok(self.short.take().unwrap()))),
+            Err(e) => return Err(Box::new(Err(e))),
         };
         let mut l = Lay::new();
         front.lay(&mut l, TO_ALL);
@@ -1759,7 +1767,7 @@ impl<'u> Runs<'u> {
         }
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
-            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), run })
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), posted: exp.posted(), gives: exp.gives(), steps: exp.steps(), memo: exp.memo(), tree: None, def_rung, expansions: exp.expansions(), log_rows: exp.log_rows(), run })
         };
         // SAFETY: the device finished writing `room`.
         let why = |room: &str| {

@@ -51,40 +51,9 @@ pub mod validated;
 pub mod formats;
 pub mod placed;
 pub mod token_census;
-/// Python's tape from the lean parser (`rerail_python_lean`).
-pub mod python_lean;
-/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
-pub mod ecma_lean;
-/// Rust's tape from the lean parser (`rerail_rust_lean`).
-pub mod rust_lean;
-/// Java's tape from the lean parser (`rerail_java_lean`).
-pub mod java_lean;
-/// Go's tape from the lean parser (`rerail_go_lean`).
-pub mod go_lean;
-/// C's and C++'s tapes from the lean parser (`rerail_c_lean`).
-pub mod c_lean;
-/// C#'s tape from the lean parser (`rerail_csharp_lean`).
-pub mod csharp_lean;
-/// Kotlin's tape from the lean parser (`rerail_kotlin_lean`).
-pub mod kotlin_lean;
-/// Swift's tape from the lean parser (`rerail_swift_lean`).
-pub mod swift_lean;
-/// Scala's tape from the lean parser (`rerail_scala_lean`).
-pub mod scala_lean;
-/// PHP's tape from the lean parser (`rerail_php_lean`).
-pub mod php_lean;
-/// HTML's tape from the lean parser (`rerail_html_lean`).
-pub mod html_lean;
-/// CSS's tape from the lean parser (`rerail_css_lean`).
-pub mod css_lean;
-/// Markdown's tape from the lean parser (`rerail_markdown_lean`).
-pub mod markdown_lean;
-/// Markdown's inline texts' tapes from the lean parser (`rerail_markdown_inline_lean`).
-pub mod markdown_inline_lean;
-/// SQL's tape from the lean parser (`rerail_sql_lean`).
-pub mod sql_lean;
-/// Vue's tape from the lean parser (`rerail_vue_lean`).
-pub mod vue_lean;
+// The lean parsers' adapters (`tape::<language>_lean`) are rerail-lean-tapes', above this crate: the engine reads a
+// dialect through the parser it registers in the router (`install_parsers`), a file (`TreeParser::parse`), a fragment
+// (`parse_from`) or an embedded program (`program`).
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -293,6 +262,14 @@ pub trait TreeParser: Send + Sync {
         None
     }
 
+    /// A program's text as an embedder hands it (`embed::Parse::read`): its tape, as tree-sitter's tree of it encodes
+    /// to (decision 0198), without the placeholders `omit` spans (`embed::Parse::read_program`): the parse leaves them
+    /// out as it writes the tape (`Writer::omitting`). `None` where the parser refuses the text or reads no program
+    /// (tree-sitter reads it then), `Some(Err)` where the tape cannot be made.
+    fn program(&self, _grammar: &Grammar, _text: &str, _omit: rerail_blocks::vector::Vector<[u32; 2]>, _budget: &dyn Fn() -> bool) -> Option<Result<TapeImage, String>> {
+        None
+    }
+
     /// Its own kinds, where its trees are not a tree-sitter grammar's.
     fn kinds(&self) -> Option<OwnTable> {
         None
@@ -408,6 +385,17 @@ pub struct TapeImage {
     /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
     /// an image read from bytes, whose store pairs it with its source.
     pub source_digest: Option<[u8; 32]>,
+}
+
+/// A parsed image as the store's writer takes its bytes (`TapeBytes`) where no device reads tapes: the image's own
+/// extent, where the parser wrote it (`stored_extent`), not a copy into a room (decision 0353 step 4a). A read of the
+/// queued tape before it is written takes the image again (`facts::core::queued_image`).
+pub struct StoredImage(pub TapeImage);
+
+impl AsRef<[u8]> for StoredImage {
+    fn as_ref(&self) -> &[u8] {
+        self.0.stored_extent()
+    }
 }
 
 /// A stored tape's presence, read in place in its stored bytes (`f16::StoredPresence`).
@@ -1238,12 +1226,34 @@ impl TapeImage {
         }
     }
 
+    /// The bytes the store keeps (`emit`'s), where the image holds them: format 16's and 16z's extent.
+    pub fn stored_extent(&self) -> &[u8] {
+        match &self.held {
+            Held::F16(t) => t.extent(),
+            Held::F16Z(t) => t.extent(),
+        }
+    }
+
     /// Whether the tape's home holds its presence (decision 0434 §4, step 6).
     pub fn has_presence(&self) -> bool {
         match &self.held {
             Held::F16(t) => t.presence_bytes().is_some(),
             Held::F16Z(t) => t.presence_bytes().is_some(),
         }
+    }
+
+    /// The tape's auxiliary index in its home, after its presence (decision 0656 step 3), read where it lies.
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        match &self.held {
+            Held::F16(t) => t.aux_bytes(),
+            Held::F16Z(t) => t.aux_bytes(),
+        }
+    }
+
+    /// The document's index (decision 0656 step 4), read in its home: every image holds one, its writer's
+    /// (`written_16`), and one read in without it is refused (`sixteen`).
+    pub fn doc_index(&self) -> rerail_tape_format::doc_index::DocIndex<'_> {
+        rerail_tape_format::doc_index::DocIndex::read(self.aux_bytes().expect("an image holds its index")).expect("an image's index reads")
     }
 
     /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 16 (or 16z) as stored.
@@ -1289,6 +1299,12 @@ impl TapeImage {
         let image = Self { held, language: grammar.lang, source_len: usize::try_from(source_len).map_err(|_| "source length overflow")?, source_digest: None };
         if image.node_count() == 0 {
             return Err("an empty tape".into());
+        }
+        // Its index, which every reader reads (`doc_index`): a home without one, or without a section its reads need,
+        // was written by no writer of this layout.
+        match image.aux_bytes() {
+            Some(b) => rerail_tape_format::doc_index::DocIndex::read(b).map(drop).map_err(|e| format!("a stored tape's auxiliary index: {e}"))?,
+            None => return Err("a stored tape without its auxiliary index".into()),
         }
         Ok(image)
     }
@@ -2311,7 +2327,9 @@ impl TapeDoc {
 
     pub fn transducer_kind(&self, node: u32) -> u16 {
         read!("kind");
-        kind_of(self.entry(node))
+        let t = self.t();
+        let (kind, _, flags) = t.table().kind_field(t.code(node as usize));
+        if flags & CODE_ERROR != 0 { ERROR_SYMBOL } else { kind }
     }
 
     /// Whether a node of the document may have kind `kind` (`transducer_kind`'s), by its image's presence (decision
@@ -2357,7 +2375,8 @@ impl TapeDoc {
 
     pub fn transducer_field(&self, node: u32) -> u16 {
         read!("field");
-        self.entry(node).field
+        let t = self.t();
+        t.table().kind_field(t.code(node as usize)).1
     }
 
     pub fn transducer_flags(&self, node: u32) -> u8 {

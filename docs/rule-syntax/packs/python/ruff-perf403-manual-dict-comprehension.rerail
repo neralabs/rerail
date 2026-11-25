@@ -41,7 +41,7 @@ loop_store(t, v, "value") :- perf_for(f, t, _), perf_body(f, st, _), store(st, _
 odd_target(t) :- perf_for(_, t, _), (has(t, _, "attribute") ; has(t, _, "subscript")).
 .decl flat(e: node, x: symbol)
 flat(e, x) :- loop_store(_, e, "value"), text(e, y), x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
-flat(e, x) :- loop_store(_, e, "key"), match("[^\\[]*\\[(?<y>[\\s\\S]*)\\]", e),
+flat(e, x) :- loop_store(_, e, "key"), text(e, z), match("[^\\[]*\\[(?<y>[\\s\\S]*)\\]", z),
     x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
 flat(c, x) :- loop_store(t, _, _), child(t, c, _), text(c, y), x = @replace_all(@replace_all(y, "#[^\\n]*", ""), "[\\s()]", "").
 flat(t, y) :- loop_store(t, _, _), kind(t, "identifier"), text(t, y).

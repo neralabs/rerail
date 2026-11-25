@@ -2,8 +2,9 @@
 //! back. Sources and tapes are not compressed: each is kept as it is, in a segment (`object_segments`; decision
 //! 0295 step 5, 2026-11-19).
 //!
-//! - **Plain frames** are what `zstd::stream::encode_all` writes, from one compression context per thread instead of
-//!   a fresh one (and its zeroed tables) per call.
+//! - **Plain frames** are what a fresh streaming `zstd::stream::Encoder` writes (no content size in the header), from
+//!   one compression context per thread instead of a fresh one (and its zeroed tables) per call. `encode_all` wrote
+//!   the same until zstd 0.14.4, which records the size of a source under 128 KiB.
 //! - Every reader of a store frame goes through [`decompress`], [`decompress_into`], [`decompress_head`] or
 //!   [`decompress_chunks`]. A frame that names a dictionary is refused: the store compresses with none.
 
@@ -33,9 +34,8 @@ fn counted(frame: io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
     frame
 }
 
-/// `bytes` as one plain zstd frame at `level`, byte for byte what `encode_all` writes: streamed,
-/// so the frame header carries no content size. For store-internal blobs (results, pages, memo
-/// entries).
+/// `bytes` as one plain zstd frame at `level`, byte for byte what a fresh streaming encoder writes: streamed, so the
+/// frame header carries no content size. For store-internal blobs (results, pages, memo entries).
 pub fn compress(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
     counted(plain(bytes, level))
 }
@@ -215,10 +215,16 @@ fn reserve(frame: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+
+    /// The frame a fresh streaming encoder writes for `input` at `level`: the store's plain frame.
+    fn streamed(input: &[u8], level: i32) -> Vec<u8> {
+        let mut encoder = zstd::stream::Encoder::new(Vec::new(), level).unwrap();
+        std::io::Write::write_all(&mut encoder, input).unwrap();
+        encoder.finish().unwrap()
+    }
 
     #[test]
-    fn frames_equal_encode_all_at_every_level_and_size() {
+    fn frames_equal_a_fresh_streamed_frame_at_every_level_and_size() {
         let mut state = 0x9e37_79b9_7f4a_7c15_u64;
         let mut noise = |len: usize| {
             (0..len)
@@ -242,9 +248,16 @@ mod tests {
         // Levels interleaved, so a reused context changes level between frames.
         for level in [3, 1, 3, 19, -5, 3] {
             for input in &inputs {
+                let frame = compress(input, level).unwrap();
                 assert_eq!(
-                    compress(input, level).unwrap(),
-                    zstd::stream::encode_all(Cursor::new(input), level).unwrap(),
+                    frame,
+                    streamed(input, level),
+                    "level {level}, {} bytes",
+                    input.len()
+                );
+                assert_eq!(
+                    decompress(&frame, input.len()).unwrap(),
+                    *input,
                     "level {level}, {} bytes",
                     input.len()
                 );

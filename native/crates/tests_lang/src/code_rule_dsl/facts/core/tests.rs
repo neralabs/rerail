@@ -179,6 +179,11 @@ fn a_stored_tape_holds_the_presence_its_writer_made() {
         let (_, doc) = build_in_wave_with_tape(&file, &cache, None, Some(&frame), false, true).unwrap();
         let doc = doc.expect("the tape, read from the store");
         assert!(doc.has_presence(), "{at}: a stored tape's home holds its presence");
+        // Decision 0656 step 3: and its auxiliary index after it, the parse's bytes, read where they lie.
+        let aux = parsed.image.aux_bytes().unwrap_or_else(|| panic!("{at}: a parse lays its auxiliary index in the tape's home"));
+        assert_eq!(doc.image.aux_bytes(), Some(aux), "{at}: a stored tape's home holds its auxiliary index");
+        let read = rerail_tape_format::aux_index::AuxIndex::read(aux).unwrap();
+        assert_eq!(read.nodes() as usize, parsed.transducer_len(), "{at}: the index of the tape's nodes");
         let blocks = parsed.transducer_len().div_ceil(PRESENCE_BLOCK);
         assert!(blocks >= 2, "{blocks} blocks");
         let mut lacking = false;

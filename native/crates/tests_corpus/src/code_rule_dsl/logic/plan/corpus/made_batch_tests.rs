@@ -14,7 +14,7 @@ use std::path::PathBuf;
 const PROGRAM: &str = r#"
 .decl ident(a: node, t: symbol)
 ident(a, t) :- kind(a, "identifier"), text(a, t).
-.decl shared(a: node)
+.decl shared(a: node) cross_file
 shared(a) :- ident(a, t), docof(a, d), ident(b, t), docof(b, e), d < e.
 .decl spelled(t: symbol)
 spelled(t) :- shared(a), text(a, t).
@@ -153,7 +153,7 @@ fn r5_the_documents_counts_are_kept_and_given_to_the_corpus_batch() {
 const SHAPES: &str = r#"
 .decl named_in(f: node, t: symbol)
 named_in(f, t) :- kind(f, "function_definition"), field(f, "name", c), text(c, t).
-.decl pair(f: node, g: node, t: symbol)
+.decl pair(f: node, g: node, t: symbol) cross_file
 pair(f, g, t) :- named_in(f, t), docof(f, d), named_in(g, t), docof(g, e), d < e.
 .decl twins(t: symbol, b: node, x: node)
 twins(t, b, x) :- pair(f, g, t), child(f, b, _), field(g, "body", y), within(x, y).

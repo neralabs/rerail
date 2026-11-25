@@ -239,9 +239,12 @@ pub fn install_languages(tests: bool) {
     compile::resolve::install_flow_resolves(compile::resolve::php::compile_php_resolves);
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
+    // The learned models (the cost model, the join model): rerail-forest's, on the device (crate split 10d-2).
+    rerail_accel_gpu::install();
     // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
     facts::rows::install_block_device(logic::plan::placement::block_device);
-    // Every crate's vectors made with no room take the run's blocks (decision 0628 §3).
+    // Every crate's vectors and maps made with no room take the calling thread's stack, or the room of the owner
+    // making them (decision 0342, amended 2026-11-24, which supersedes 0628 §8's run room as the default).
     rerail_blocks::maps::install();
     // Where the tape crate places the code tables it makes: a block (decision 0628 §2).
     rerail_tape_format::tape::place_tables_with(facts::rows::place_table);

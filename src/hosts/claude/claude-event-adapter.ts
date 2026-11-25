@@ -74,6 +74,8 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
       const toolUseId = requiredText(input, "tool_use_id");
       // A subagent's hooks come under its parent's session id, with its own agent_id.
       const agentId = optionalText(input, "agent_id");
+      // The session is named by its launch folder (`claudeWorkspace`); the call runs where the agent has `cd`'d to.
+      const cwd = optionalText(input, "cwd");
       return [{
         kind: "call",
         eventId: `${sessionId}:tool-call:${toolUseId}`,
@@ -83,6 +85,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
         toolName: requiredText(input, "tool_name"),
         input: input.tool_input,
         ...(agentId === undefined ? {} : { agentId }),
+        ...(cwd === undefined ? {} : { cwd }),
       }];
     }
     case "PostToolUse":

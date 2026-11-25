@@ -470,3 +470,20 @@ mod ukl_tests {
         assert_eq!(4 * words, std::mem::size_of::<super::TapeView>(), "{msl}");
     }
 }
+
+/// The auxiliary index's numbers `tape_place` (`reads`) reads by: `aux_index::Kind`'s and `aux_index::K`, which the tape crate
+/// holds equal to these (it depends on this crate, not this on it).
+pub mod aux {
+    /// SIBLINGS' kind and version: every 8th named child.
+    pub const SIBLINGS: u16 = 4;
+    pub const SIBLINGS_VERSION: u16 = 2;
+    /// NAMED's kind and version.
+    pub const NAMED: u16 = 7;
+    pub const NAMED_VERSION: u16 = 1;
+    /// COMMENTS' kind and version: the comment codes, and the comments before each SIBLINGS entry.
+    pub const COMMENTS: u16 = 8;
+    pub const COMMENTS_VERSION: u16 = 1;
+    /// Every `K`-th named child is in SIBLINGS.
+    pub const K: u32 = 8;
+}
+

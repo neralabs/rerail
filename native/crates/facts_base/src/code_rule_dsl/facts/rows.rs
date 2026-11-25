@@ -83,16 +83,18 @@ pub const AXIS_KEYS: usize = 4;
 
 /// An index the device builds into a relation of a block (`Facts::ix`), its builder's work committed: the relation's
 /// descriptor's offset in the block, the index's room, and its builder's submission, for a taker to wait on (a builder
-/// the device failed fails its takers' batches too). `taken`: a taker took it (set under the block's index lock), so
-/// its builder never gives its room back.
+/// the device failed fails its takers' batches too). `lent`: a taker took it (set under the block's index lock), so
+/// its builder never gives its room back. `whole`: whether its builder wrote it whole and right, asked once `done` is.
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
-    pub done: rerail_accel::gpu::join::Submitted,
+    /// Its builder's committed work (the lane's `Submitted::flushed`): a taker waits on it.
+    pub done: std::sync::Arc<rerail_accel::gpu::shared::Flushed>,
     /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
     pub lent: bool,
     /// Whether its builder's program ran it to its end, read once `done` completed: a program stopped before it (an
-    /// arena passed, decision 0603 step 5) left it unwritten.
+    /// arena passed, decision 0603 step 5) left it unwritten. Nor is one whose builder read its keys through a view whose
+    /// reads found no room in their batch's cache (`Building::misread`): its buckets hold the dead entry's keys.
     pub whole: Whole,
 }
 
@@ -224,9 +226,30 @@ pub enum Life {
 }
 
 /// The blocks a run's new relations go in outside a chunk, while they have room: one a `Life` (decision 0442: the
-/// run's, so no two runs' relations share a block).
+/// run's, so no two runs' relations share a block); and its vectors' (`Lanes`).
 #[derive(Default)]
-struct Open([Mutex<Option<Arc<Facts>>>; 4]);
+struct Open([Mutex<Option<Arc<Facts>>>; 4], Lanes);
+
+/// How many open blocks a `Life`'s vectors and structures with no home of their own spread over (`open_chunk`).
+const LANES: usize = 32;
+
+/// The open blocks of a `Life`'s vectors and structures with no home of their own (`open_chunk`): one a thread (by its
+/// id), so a thread's short-lived arrays (a lookup's rows, a join's keys) are taken and given back in a block no other
+/// thread takes them from, under a lock no other thread waits on. In one open block a `Life`, every thread's took its
+/// lock and its ledger's: on corpus0 × B-now, 90 s of the run's 168 s CPU in the system's lock waits. Two threads
+/// whose ids meet share one, as every thread did.
+#[derive(Default)]
+struct Lanes([[Mutex<Option<Arc<Facts>>>; LANES]; 4]);
+
+impl Lanes {
+    /// This thread's open block of `life`.
+    fn here(&self, life: Life) -> &Mutex<Option<Arc<Facts>>> {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        std::thread::current().id().hash(&mut h);
+        &self.0[life as usize][(h.finish() >> 7) as usize % LANES]
+    }
+}
 
 /// The open blocks new relations go in outside a chunk (`Open`): the run's, or outside a run the machine's (decision
 /// 0442: every piece of state has an owner). A session's work between its runs shares the machine's, as a run's
@@ -383,6 +406,8 @@ pub fn held() -> [(usize, usize, usize); 3] {
 #[derive(Default)]
 pub struct Chunk {
     open: [Mutex<Option<Arc<Facts>>>; 4],
+    /// Its vectors' open blocks, one a thread (`Lanes`).
+    lanes: Lanes,
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
     /// The bytes written in its blocks given back (`Facts`'s drop), and in those held when it ended (`Written`).
     tally: Arc<std::sync::atomic::AtomicUsize>,
@@ -540,7 +565,7 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     impl Drop for Leave {
         fn drop(&mut self) {
             drop(self.0.take());
-            for open in &self.1.open {
+            for open in self.1.open.iter().chain(self.1.lanes.0.iter().flatten()) {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
             let made = std::mem::take(&mut *self.1.made.lock().unwrap_or_else(|e| e.into_inner()));
@@ -590,13 +615,9 @@ fn lease(bytes: usize, life: Life) -> Result<Block, String> {
 /// `lease`'s block of `bytes`, no more: a relation's alone in it outside a run (`Part::try_new_with`).
 fn lease_room(bytes: usize) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
-    let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
+    let device = rerail_blocks::alloc::run_device();
     rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Churn, device, ..Need::SLAB })
 }
-
-/// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
-/// above this crate, installed by `install_block_device`); `May` until one is installed.
-static BLOCK_DEVICE: std::sync::OnceLock<fn() -> rerail_blocks::alloc::Device> = std::sync::OnceLock::new();
 
 /// A code table's words (`rerail_tape_format::tape::CodeTable`, decision 0628 §2) in a block: what the tape crate,
 /// below the blocks, places a table it makes in (`place_tables_with`).
@@ -607,19 +628,21 @@ pub fn place_table(words: &[u32]) -> rerail_tape_format::tape::Words {
     Arc::new(v)
 }
 
-/// Installs what a block of relations asks about the device (`placement::block_device`); the first one stays.
+/// Installs what a block of relations, and a tape's room (`tape::placed::place`), asks about the device
+/// (`placement::block_device`): `rerail_blocks::alloc::run_device`'s answer; the first one stays.
 pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
-    let _ = BLOCK_DEVICE.set(device);
+    rerail_blocks::alloc::install_run_device(device);
 }
 
 /// The batches' relations held now, the most bytes first (`syntax::made::sources_held`, above this crate, installed by
 /// `install_sources_held`): (bytes in their blocks, name, documents made, the batch's documents, the span of its first
-/// group, of its latest). None until one is installed.
-static SOURCES_HELD: rerail_registry::Slot<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> = rerail_registry::Slot::new("what lists the batches' relations held (facts::rows::SOURCES_HELD)");
+/// group, of its latest). None until boot registers it.
+pub static SOURCES_HELD: rerail_registry::Slot<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> =
+    rerail_registry::Slot::new("the batches' relations held (facts::rows::SOURCES_HELD)");
 
-/// Installs what lists the batches' relations held (`syntax::made::sources_held`): once, at load.
+/// Registers what lists the batches' relations held (`syntax::made::sources_held`), once, by boot.
 pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32, u32)>) {
-    SOURCES_HELD.register("boot", held);
+    SOURCES_HELD.register("rerail-boot", held);
 }
 
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
@@ -628,6 +651,24 @@ pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32,
 fn seal_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| !std::env::var("RERAIL_SEAL_CHUNKS").is_ok_and(|v| v == "off"))
+}
+
+/// Whether a tail's full chunks are sealed as its writer passes them (0622 step 3), not only at its relation's freeze:
+/// `RERAIL_SEAL_TAILS=on`. Off by default: on `all` it sealed the same bytes earlier, the peak 2.99 GB against 2.97 GB,
+/// for 199.0 s of CPU against 178.2 s, the tails read sealed while they are written (0622).
+fn seal_tails() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(on) = SEAL_TAILS_HERE.get() {
+        return on;
+    }
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| seal_on() && std::env::var("RERAIL_SEAL_TAILS").is_ok_and(|v| v == "on"))
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Tests: this thread's tails sealed as they are written (`Some(true)`), or not, whatever the setting.
+    static SEAL_TAILS_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
@@ -643,14 +684,14 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     Ok(f)
 }
 
-/// A chunk of `need` bytes (aligned to `align`) in the open block of `life`'s relations (the chunk's, if a chunk's
-/// evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
+/// A chunk of `need` bytes (aligned to `align`) in this thread's open block of `life`'s vectors (`Lanes`; the chunk's,
+/// if a chunk's evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
 /// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
     let runs = open_blocks();
-    let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+    let mut open = chunk.as_ref().map_or(runs.1.here(life), |c| c.lanes.here(life)).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
         && f.admits(need)
         && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
@@ -2415,8 +2456,17 @@ impl Rows {
         if n > 1 {
             tail.grow(u64::from(tail.len()) + n as u64);
         }
+        let before = tail.len();
         for row in rows.chunks_exact(self.k) {
             tail.push(row);
+        }
+        // 0622 step 3, with `RERAIL_SEAL_TAILS=on`: a chunk the writer has passed is sealed now (`Part::seal_full`
+        // takes only full chunks below the rows, and only where this tail alone holds its relation).
+        if seal_tails() && before < tail.len() {
+            let min_log = tail.rel().rows.min_log;
+            if rerail_blocks::rows::chunk_of(before, min_log).0 != rerail_blocks::rows::chunk_of(tail.len(), min_log).0 {
+                tail.seal_full("rows.sealed_tail");
+            }
         }
         self.absorbed();
     }
@@ -2836,21 +2886,6 @@ impl Rows {
         let (p, i) = self.part_of(from);
         let (q, _) = self.part_of(to - 1);
         std::ptr::eq(p, q).then(|| RangeRead { col: p.cols[c], add: (p.skip + i).wrapping_sub(from), _rows: std::marker::PhantomData })
-    }
-
-    /// The first row whose value in column `c` is not below `key`, the column sorted over every row (`rows()` where
-    /// none is): the parts by their last values, then the one part's own search (`rerail_blocks::rows::Rows::
-    /// lower_bound`: its chunks' first values, then the chunk's encoding or slice). A bisection by `get` searched the
-    /// parts and the chunks again for every row it read.
-    pub fn lower_bound(&self, c: usize, key: i64) -> u32 {
-        let parts = self.segs.iter().map(|(first, p)| (*first, p)).chain(self.tail.as_ref().map(|t| (self.from, t)));
-        for (first, p) in parts {
-            let n = p.len();
-            if n > 0 && p.cols[c].get(n - 1) >= key {
-                return first + p.rel().rows.lower_bound(c, 0, n, key);
-            }
-        }
-        self.rows() as u32
     }
 
     /// The relation holding row `id`, and the row's place in it.
@@ -3284,6 +3319,30 @@ mod tests {
         assert!(fails(&mut || { std::hint::black_box(v[3]); }), "a read under a GPU write");
         w.complete();
         assert_eq!(v[3], 7);
+    }
+
+    /// 0622 step 3 (`RERAIL_SEAL_TAILS=on`): a tail's chunks are sealed as its writer passes them, each full chunk
+    /// below its rows, and every row reads back as written, before and after more rows are pushed past them. Off (the
+    /// default), they stay raw until the relation is frozen.
+    #[test]
+    fn a_tails_passed_chunks_are_sealed_as_it_is_written() {
+        let k = 2;
+        let row = |i: i64| [i / 100, i % 7];
+        for on in [true, false] {
+            SEAL_TAILS_HERE.set(Some(on));
+            let mut rows = Rows::new(k);
+            for lo in (0..40_000i64).step_by(1000) {
+                // copy: not block data: a test's rows
+                let batch: Vec<i64> = (lo..lo + 1000).flat_map(row).collect();
+                rows.extend_from_slice(&batch);
+            }
+            SEAL_TAILS_HERE.set(None);
+            let tail = rows.tail.as_ref().expect("written");
+            assert_eq!(tail.rel().rows.is_sealed(0), on, "the first chunk sealed as the writer passed it: {on}");
+            for i in 0..40_000i64 {
+                assert_eq!(&*rows.row(i as u32, k), &row(i)[..], "row {i}, sealing {on}");
+            }
+        }
     }
 
     /// A tail opened past a relation of its own that cannot be continued in its block (a full one) holds every row it

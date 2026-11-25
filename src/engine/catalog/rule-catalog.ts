@@ -10,6 +10,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, relationalRulesOff, storableCodeRule } from "../code-rule/code-rule-compile.js";
+import type { CodeRule } from "../code-rule/code-rule-schema.js";
+import { describeRerailRules } from "./rerail-rules/rerail-rule.js";
+import { sha256Of } from "./rerail-rules/kept-rerail-descriptions.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
@@ -24,8 +27,9 @@ import {
   type LoadedRulePack,
   type RulePackLocalSource,
 } from "./rule-packs.js";
-import { packCompileChecks, type PackCompileChecks } from "./pack-compile-checks.js";
+import { packCompileChecks, type PackCompileChecks, type PackVerdict } from "./pack-compile-checks.js";
 import { engineRegexIssues } from "./rule-regexes.js";
+import type { ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 
 /** In the Rerail home: the npm prefix rule packs are installed into. */
@@ -170,7 +174,8 @@ export interface RuleCatalogOptions {
   readonly coreVersion?: string;
   /**
    * Skip a pack with a code rule the engine rejects. A rule refused only as `language-not-supported` loads and stays
-   * inactive. Without the native engine nothing is compiled here; the checkout catalog quarantines such rules.
+   * inactive; one that reads a token parsed files leave out loads and is listed in `notRun`. Without the native engine
+   * nothing is compiled here; the checkout catalog quarantines such rules.
    */
   readonly compile?: boolean;
   /** With `compile`, verdicts kept from earlier reads: a pack with one is not compiled again, and one compiled adds its own. */
@@ -231,57 +236,98 @@ function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): num
   return rank(left) - rank(right) || compareDeterministicStrings(left.pack.packageName ?? "", right.pack.packageName ?? "");
 }
 
+/** What the engine says of one rule of a pack: it leaves the pack out, with why, or it loads but never runs. */
+type EngineRefusal = { readonly leavesPackOut: string } | { readonly notRun: true };
+
+/** Why the engine refuses conversation rule `rule`'s patterns, or undefined. */
+function conversationRefusal(rule: ConversationRule): EngineRefusal | undefined {
+  // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
+  const [issue] = engineRegexIssues(rule);
+  return issue === undefined ? undefined : { leavesPackOut: `${issue.path.join(".")} ${issue.message}` };
+}
+
 /**
- * Why the engine rejects `document`, in its own words, or undefined; throws `EngineUnavailableError` without the
- * engine. A code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern
- * leaves the pack out here rather than failing a session when it loads the rule.
- * Two refusals are no problem of the pack: a code rule reading a token a tape may leave out (`readsLeftOutToken`) is an
- * older pack's form this engine no longer answers, and a `relational` clause waits for its experiment
- * (`relationalRulesOff`). Its pack loads, and the live catalog skips that rule alone and reports it with the reason, as
- * it does every rule that fails to compile when it loads.
+ * What the engine says of code rule `rule`, or undefined when it compiles. Two refusals are no problem of the pack. A
+ * code rule reading a token a tape may leave out (`readsLeftOutToken`) is an older pack's form this engine no longer
+ * answers: `notRun`, so its pack loads and the catalog lists the rule as not run. A `relational` clause waits for its
+ * experiment (`relationalRulesOff`): its pack loads, and the live catalog skips that rule alone and reports it with the
+ * reason, as it does every rule that fails to compile when it loads.
  */
-function engineRefusal(document: RuleDocument): string | undefined {
-  if (document.kind === "conversation") {
-    // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
-    const [issue] = engineRegexIssues(document.rule);
-    return issue === undefined ? undefined : `${issue.path.join(".")} ${issue.message}`;
-  }
+function codeRuleRefusal(rule: CodeRule): EngineRefusal | undefined {
   try {
-    storableCodeRule(document.rule);
+    storableCodeRule(rule);
     return undefined;
   } catch (error) {
     if (!(error instanceof CodeRuleCompileError)) throw error;
-    return readsLeftOutToken(error.reason) || error.reason === relationalRulesOff(document.rule) ? undefined : error.reason;
+    if (readsLeftOutToken(error.reason)) return { notRun: true };
+    return error.reason === relationalRulesOff(rule) ? undefined : { leavesPackOut: error.reason };
   }
 }
 
 /**
- * Why the first rule of `loaded` the engine rejects (`engineRefusal`) leaves the pack out, or undefined.
+ * Whether the engine rejects `document`, or undefined; throws `EngineUnavailableError` without the engine. A code rule
+ * must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern leaves the pack out
+ * here, in the engine's own words, rather than failing a session when it loads the rule. A `.rerail` rule was read and
+ * checked by the engine when its pack was read (`readRulePack`), which fails for one the engine refuses.
+ */
+function engineRefusal(document: RuleDocument): EngineRefusal | undefined {
+  switch (document.kind) {
+    case "conversation": return conversationRefusal(document.rule);
+    case "code": return codeRuleRefusal(document.rule);
+    case "rerail": return undefined;
+  }
+}
+
+/**
+ * The engine's verdict on `loaded` (`engineRefusal`): why its first rule the engine rejects leaves the pack out, and the
+ * rules it loads without running.
  * A published pack passed the engine of the core it was released with, so on a person's machine a rule that does not
  * compile almost always means their Rerail is older than the pack: the reason says so before the engine's own words.
  */
-function compileProblem(loaded: LoadedRulePack, coreVersion: string | undefined): string | undefined {
+function compileVerdict(loaded: LoadedRulePack, coreVersion: string | undefined): PackVerdict {
   const rerail = coreVersion === undefined ? "this Rerail" : `this Rerail (${coreVersion})`;
+  const notRun: string[] = [];
   for (const document of loaded.documents) {
     const engineSays = engineRefusal(document);
-    if (engineSays !== undefined) {
-      return `${rerail} cannot run its rule ${document.rule.id}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${engineSays}`;
+    if (engineSays === undefined) continue;
+    if ("notRun" in engineSays) {
+      notRun.push(document.rule.id);
+      continue;
     }
+    const problem = `${rerail} cannot run its rule ${document.rule.id}, so the pack may need a newer Rerail (\`rerail update\` installs the newest). The engine says: ${engineSays.leavesPackOut}`;
+    return { problem, notRun: [] };
   }
-  return undefined;
+  return { problem: null, notRun };
 }
 
-/** {@link compileProblem}, from the verdict `options.compileChecks` kept on this pack's content when there is one. */
-function checkedCompileProblem(loaded: LoadedRulePack, options: RuleCatalogOptions): string | undefined {
+/** {@link compileVerdict}, from the verdict `options.compileChecks` kept on this pack's content when there is one. */
+function checkedCompileVerdict(loaded: LoadedRulePack, options: RuleCatalogOptions): PackVerdict {
   const { compileChecks: checks, coreVersion } = options;
-  if (checks === undefined) return compileProblem(loaded, coreVersion);
+  if (checks === undefined) return compileVerdict(loaded, coreVersion);
   // The core version is in the key because the reason names it.
   const packKey = `${coreVersion ?? "-"} ${catalogDigest([loaded])}`;
   const kept = checks.verdict(packKey);
-  if (kept !== undefined) return kept ?? undefined;
-  const problem = compileProblem(loaded, coreVersion);
-  checks.record(packKey, problem ?? null);
-  return problem;
+  if (kept !== undefined) return kept;
+  const verdict = compileVerdict(loaded, coreVersion);
+  checks.record(packKey, verdict);
+  return verdict;
+}
+
+/**
+ * Why this Rerail does not run a rule of `pack` it lists in `notRun`, in words for the person: the pack's next version
+ * runs it again.
+ */
+export function notRunReason(pack: { readonly name: string; readonly version: string | null }): string {
+  const which = pack.version === null ? pack.name : `${pack.name} ${pack.version}`;
+  return `This Rerail no longer runs the rule as ${which} writes it: it tests a token that parsed files now leave out. The pack's next version runs it again.`;
+}
+
+/** The loaded packs with rules this Rerail does not run (`notRun`), and how many, whether those rules start on or off. */
+export function packsWithRulesNotRun(catalog: RuleCatalog): { readonly name: string; readonly version: string | null; readonly ruleCount: number }[] {
+  return [...catalog.packs.values()].flatMap(pack => {
+    const ruleCount = pack.rules.filter(rule => catalog.notRun.has(rule.id)).length;
+    return ruleCount === 0 ? [] : [{ name: pack.name, version: pack.version, ruleCount }];
+  });
 }
 
 /**
@@ -338,17 +384,18 @@ export function catalogDigest(packs: readonly LoadedRulePack[]): string {
 }
 
 /**
- * {@link checkedCompileProblem} while `engine.compile` holds. Without the engine nothing compiles: the first pack to
+ * {@link checkedCompileVerdict} while `engine.compile` holds. Without the engine nothing compiles: the first pack to
  * find that turns `engine.compile` off, so the packs after it are not asked either.
  */
-function engineProblem(loaded: LoadedRulePack, options: RuleCatalogOptions, engine: { compile: boolean }): string | undefined {
-  if (!engine.compile) return undefined;
+function engineVerdict(loaded: LoadedRulePack, options: RuleCatalogOptions, engine: { compile: boolean }): PackVerdict {
+  const unchecked = { problem: null, notRun: [] };
+  if (!engine.compile) return unchecked;
   try {
-    return checkedCompileProblem(loaded, options);
+    return checkedCompileVerdict(loaded, options);
   } catch (error) {
     if (!(error instanceof EngineUnavailableError)) throw error;
     engine.compile = false;
-    return undefined;
+    return unchecked;
   }
 }
 
@@ -373,7 +420,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   };
   packDirectories.forEach((directory, at) => {
     try {
-      const loaded = readRulePack(directory);
+      const loaded = readRulePack(directory, options.compileChecks?.describe ?? describeRerailRules);
       const localSource = options.localSources?.get(directory);
       read.push({ at, directory, loaded: localSource === undefined ? loaded : { ...loaded, pack: { ...loaded.pack, localSource } } });
     } catch (error) {
@@ -385,9 +432,12 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   const loaded: LoadedRulePack[] = [];
   const holders = new Map<string, string>();
   const owner = new Map<string, string>();
+  const notRun = new Map<string, string>();
   const engine = { compile: options.compile === true };
   for (const { at, directory, loaded: pack } of read.sort((left, right) => comparePackPrecedence(left.loaded, right.loaded))) {
-    const problem = packProblem(pack, directory, { holders, owner, reserved }, options) ?? engineProblem(pack, options, engine);
+    const claimed = packProblem(pack, directory, { holders, owner, reserved }, options);
+    const verdict = claimed === undefined ? engineVerdict(pack, options, engine) : undefined;
+    const problem = claimed ?? verdict?.problem ?? undefined;
     if (problem !== undefined) {
       reserve(directory, pack.pack.packageName);
       skipped.push({ at, entry: skippedPack(directory, problem) });
@@ -395,6 +445,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
     }
     holders.set(pack.pack.id, pack.pack.packageName ?? directory);
     for (const rule of pack.pack.rules) owner.set(rule.id, pack.pack.id);
+    for (const id of verdict?.notRun ?? []) notRun.set(id, notRunReason(pack.pack));
     loaded.push(pack);
   }
   loaded.sort((left, right) => compareRulePacks(left.pack, right.pack));
@@ -405,34 +456,65 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
     sources: new Map(loaded.flatMap(({ sources }) => [...sources])),
     digest: catalogDigest(loaded),
     skipped: skipped.sort((left, right) => left.at - right.at).map(({ entry }) => entry),
+    notRun,
   };
+}
+
+/** A file's modification time and size, or `-` when it cannot be read. */
+function fileStamp(path: string): string {
+  try {
+    const info = statSync(path);
+    return `${info.mtimeMs}:${info.size}`;
+  } catch {
+    return "-";
+  }
 }
 
 /**
  * A cheap stamp of what is installed and what checks it: changes when npm installs, removes or updates a pack, a pack's
  * files move, or another core version becomes active (its range decides which packs load). It does not see an edit to
- * a rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to reload.
+ * a JSON rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to
+ * reload. An edit to a `.rerail` rule's files is seen by `rerailFilesStamp`.
  */
 function installedStamp(home: string, directories: readonly string[], coreVersion: string): string {
-  const stamp = (path: string): string => {
-    try {
-      const info = statSync(path);
-      return `${info.mtimeMs}:${info.size}`;
-    } catch {
-      return "-";
-    }
-  };
   const prefix = installedPacksPrefix(home);
   const lock = join(prefix, "node_modules", ".package-lock.json");
-  return [home, coreVersion, stamp(lock), stamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, stamp(join(directory, "package.json")), stamp(join(directory, "pack.json"))])].join("\0");
+  return [home, coreVersion, fileStamp(lock), fileStamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, fileStamp(join(directory, "package.json")), fileStamp(join(directory, "pack.json"))])].join("\0");
 }
 
-let installed: { readonly stamp: string; readonly catalog: RuleCatalog } | undefined;
+/**
+ * A stamp of every file the catalog's `.rerail` rules were read from: each rule file and each file it includes. The
+ * `.rerail` runner reads them from disk, so an edit to any of them reloads the catalog, which gives the rule, and its
+ * pack's approval, a new digest: an edit someone has not approved runs in Log, as a JSON rule's would.
+ */
+function rerailFilesStamp(catalog: RuleCatalog): string {
+  const paths = new Set([...catalog.documents.values()].flatMap(document => (document.kind === "rerail" ? [document.rule.path, ...document.rule.includes.map(file => file.path)] : [])));
+  return [...paths].map(path => `${path}\0${fileStamp(path)}`).join("\0");
+}
+
+/** Whether every `.rerail` rule file of `catalog`, and every file it includes, still has the bytes the engine read. */
+function rerailFilesAsRead(catalog: RuleCatalog): boolean {
+  return [...catalog.documents.values()].every(document => document.kind !== "rerail"
+    || [{ path: document.rule.path, sha256: document.rule.sha256 }, ...document.rule.includes].every(file => sha256Of(file.path) === file.sha256));
+}
+
+/**
+ * The `.rerail` files' stamp for a catalog just read: taken first, then the files checked against the bytes the engine
+ * read. A file edited between the engine's read and the stamp would otherwise pin the older reading under the newer
+ * stamp; then no stamp is kept (empty), and the next load reads the packs again.
+ */
+function readRerailFilesStamp(catalog: RuleCatalog): string {
+  const stamp = rerailFilesStamp(catalog);
+  return rerailFilesAsRead(catalog) ? stamp : "";
+}
+
+let installed: { readonly stamp: string; readonly rerailFiles: string; readonly catalog: RuleCatalog } | undefined;
 
 /**
  * The catalog of the packs installed in the Rerail home `home`, checked against its active core and the engine. It is
- * read again whenever the installed packs or the active core change (`rerail packs add`, `remove`, set-up installing
- * them, `rerail update`), so a running daemon and every catalog built on it follow an install without a restart;
+ * read again whenever the installed packs, a `.rerail` rule's files or the active core change (`rerail packs add`,
+ * `remove`, set-up installing them, `rerail update`), so a running daemon and every catalog built on it follow an
+ * install without a restart;
  * otherwise each call returns the same one. A pack on disk the person did not install is left out with why
  * (`unrecordedPacks`), after those the catalog read. The engine's verdict on each pack is kept in the home
  * (`packCompileChecks`), so only a pack it has not seen under this engine is compiled.
@@ -441,11 +523,11 @@ export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog
   const directories = installedPackDirectories(home);
   const coreVersion = activeCoreVersion(home);
   const stamp = installedStamp(home, packDirectoriesOnDisk(home), coreVersion);
-  if (installed?.stamp !== stamp) {
+  if (installed?.stamp !== stamp || installed.rerailFiles !== rerailFilesStamp(installed.catalog)) {
     const compileChecks = packCompileChecks(home);
     const catalog = readRuleCatalog(directories, { coreVersion, compile: true, compileChecks, localSources: localSources(home, directories) });
     compileChecks.save();
-    installed = { stamp, catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
+    installed = { stamp, rerailFiles: readRerailFilesStamp(catalog), catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
   }
   return installed.catalog;
 }

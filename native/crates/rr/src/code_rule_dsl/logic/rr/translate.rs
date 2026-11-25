@@ -493,6 +493,11 @@ impl Translator<'_> {
                 if let Some(k) = widen {
                     self.out.push_str(&format!(" widen {k}"));
                 }
+                // `cross_file` (decision 0652), as `.rerail` writes it.
+                if self.is_id("cross_file") {
+                    self.i += 1;
+                    self.out.push_str(" cross_file");
+                }
             }
             "input" | "output" => {
                 let mut names = vec![relation(&self.id()?)];

@@ -146,6 +146,29 @@ export function andList(names: readonly string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 }
 
+/** How wide the summary's note about rules not run is wrapped, as its other lines are written. */
+const SUMMARY_NOTE_WIDTH = 72;
+
+/** An installed pack with rules this Rerail does not run (`RuleCatalog.notRun`), and how many. */
+export interface PackNotRun {
+  readonly name: string;
+  readonly version: string | null;
+  readonly ruleCount: number;
+}
+
+/**
+ * Which installed packs have rules this Rerail does not run, and what runs them again; undefined when every rule runs.
+ * Said after an update and at set-up, which both keep a pack at the version installed.
+ */
+export function notRunLine(packs: readonly PackNotRun[]): string | undefined {
+  if (packs.length === 0) return undefined;
+  const total = packs.reduce((sum, pack) => sum + pack.ruleCount, 0);
+  const which = andList(packs.map(pack => `${clean(pack.name)}${pack.version === null ? "" : ` ${clean(pack.version)}`} (${pack.ruleCount})`));
+  const [they, them] = total === 1 ? ["it tests", "it"] : ["they test", "them"];
+  const next = packs.length === 1 ? "The pack's next version" : "Each pack's next version";
+  return `This Rerail does not run ${plural(total, "rule")} of ${which}: ${they} a token parsed files now leave out. ${next} runs ${them} again; rerail packs list names ${them}.`;
+}
+
 function agentNames(agents: readonly CodingAgent[]): string[] {
   return agents.map(agent => clean(agent.name));
 }
@@ -892,7 +915,10 @@ export interface SummaryInput {
   readonly repoName: string;
   /** The rule packs now on, by name. Never the rules themselves. */
   readonly packNames: readonly string[];
+  /** The rules on that run: those this Rerail does not run (`notRun`) are left out. */
   readonly ruleCount: number;
+  /** The packs added with rules on here that this Rerail does not run, and how many: `ruleCount` leaves those out. */
+  readonly notRun?: readonly PackNotRun[];
   readonly dashboard: DashboardLink;
   /** Other repos where Rerail is already started; empty on a first set-up. */
   readonly otherStartedRepos?: readonly string[];
@@ -995,8 +1021,10 @@ function summaryLines(input: SummaryInput, style: Style): string[] {
     "to watch Rerail catch and fix a broken rule.",
     ...otherFormLines(connected, "rerail-show-me"),
   ]);
+  const notRun = notRunLine(input.notRun ?? []);
   return [
     bullet(`Rerail is on in ${repo} · ${packsOn}`, style),
+    ...(notRun === undefined ? [] : wrapWords(notRun.split(" "), SUMMARY_NOTE_WIDTH).map(row => `  ${row}`)),
     ...connectionNotes(agents, style),
     "",
     ...codexTrustRows(agents),

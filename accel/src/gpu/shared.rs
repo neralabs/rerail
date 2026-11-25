@@ -195,10 +195,10 @@ pub struct Shared {
     pub max_buffer: u64,
 }
 
-/// The process's device as Metal's, once something opened it, without opening it (`rerail_forest::gpu::shared::opened`).
+/// The process's device as Metal's, once something opened it, without opening it (`rerail_device::shared::opened`).
 #[cfg(target_os = "macos")]
 pub fn opened_device() -> Option<&'static metal::DeviceRef> {
-    rerail_forest::gpu::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
+    rerail_device::shared::opened().and_then(|s| s.device.metal()).map(|d| &**d)
 }
 
 /// The process's device in the device layer, whatever its backend (decision 0440 step C): what the pool leases
@@ -217,8 +217,13 @@ pub struct Layer {
 /// The process's device in the device layer: `None` without one. On Metal, `RERAIL_GPU=cpu` or `=opencl`.
 pub fn layer() -> Option<Layer> {
     crate::blocks::install();
-    let one = rerail_forest::gpu::shared::get()?;
+    let one = rerail_device::shared::get()?;
     Some(Layer { device: &one.device, queue: &one.queue, max_buffer: one.device.max_buffer_length() })
+}
+
+/// The process's device in the device layer, whatever its backend.
+pub fn device() -> Result<&'static rerail_device::device::Device, String> {
+    layer().map(|l| l.device).ok_or_else(|| "no device".to_owned())
 }
 
 /// Holds what a queue's work reaches: the block or pooled lease each buffer lies in (by its contents' address), on
@@ -326,7 +331,7 @@ pub fn get() -> Option<&'static Shared> {
             crate::blocks::install();
             objc::rc::autoreleasepool(|| {
                 // The forest's (the lowest crate that uses Metal): one device and one queue for the process.
-                let one = rerail_forest::gpu::shared::get()?;
+                let one = rerail_device::shared::get()?;
                 // None when the process's kernels run elsewhere (`RERAIL_GPU=cpu`): the engine's lanes stay on the host.
                 let (device, queue): (Device, CommandQueue) = (one.device.metal()?.clone(), one.queue.metal()?.clone());
                 let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
@@ -1043,6 +1048,7 @@ mod tests {
         if layer().is_none() {
             return;
         }
+        let _big = big_leases();
         let p = lease(1 << 16).unwrap();
         let at = p.host() as usize;
         let q = Queue::new().unwrap();
@@ -1058,12 +1064,6 @@ mod tests {
         let at = p.host() as usize;
         drop(p);
         assert!(rerail_blocks::ledger::of_address(at).is_none());
-    }
-
-    /// Held by each test that leases tens of MB at once: the budget test counts every live lease in the process.
-    fn big_leases() -> std::sync::MutexGuard<'static, ()> {
-        static BIG: Mutex<()> = Mutex::new(());
-        BIG.lock().unwrap_or_else(|p| p.into_inner())
     }
 
     /// A bounded lease is refused once relational work's leases would pass the Metal budget, and fits again once they
@@ -1253,6 +1253,7 @@ mod tests {
         assert!(unsafe { std::slice::from_raw_parts(b.ptr::<u8>(at), 1 << 20) }.iter().all(|&x| x == 0));
     }
 
+    /// A lease handed to a command buffer goes back to the pool when it completes.
     #[test]
     #[cfg(target_os = "macos")]
     fn a_lease_after_a_command_returns_when_it_completes() {

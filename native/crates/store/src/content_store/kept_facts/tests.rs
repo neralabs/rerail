@@ -329,7 +329,7 @@ fn a_waves_reader_records_of_one_program_are_one() {
 fn the_kept_relations_read_through_sql_equal_their_entries() {
     let (path, c) = store("entries");
     write(&path, &c, vec![put("q", 0, 2, KeptWhat::Rows(lent_dead(&[(1, 10), (2, 20), (3, 30)], &[1]))), put("p", 4, 3, flat(&[7, 70, 8, 80]))]);
-    crate::content_store::atoms::Atoms::attach(&c).unwrap();
+    crate::content_store::attach_atoms(&c).unwrap();
     let space = KeptSpace::open(&path, &SPACE, &chain_rows(&c, &SPACE).unwrap()).unwrap();
     let view = space.view();
     // An entry's relation, part, digest, row count and rows.
@@ -395,7 +395,7 @@ fn kept_facts_are_a_virtual_table() {
     let (path, c) = store("vtab");
     write(&path, &c, vec![put("p", 0, 1, flat(&[3, 30, 1, 10, 3, 31])), put("q", 0, 2, flat(&[5, 50])), put("g", 0, 3, flat(&[7, 70]))]);
     write(&path, &c, vec![put("q", 0, 4, flat(&[6, 60])), put("g", 0, 0, KeptWhat::Gone)]);
-    crate::content_store::atoms::Atoms::attach(&c).unwrap();
+    crate::content_store::attach_atoms(&c).unwrap();
     let rows = |sql: &str| -> Vec<Vec<Option<i64>>> {
         let mut st = c.prepare(sql).unwrap();
         st.query_map([&SPACE[..]], |r| (0..3).map(|i| r.get::<_, Option<i64>>(i)).collect()).unwrap().map(Result::unwrap).collect()

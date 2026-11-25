@@ -15,7 +15,15 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-pub use rerail_run::content_store;
+// The store's records and interface; the tests open the store itself (crate split 10b-2).
+/// The store's records and interface (rerail-store-base, through observe), and its atoms (rerail-atoms).
+#[cfg(not(test))]
+pub mod content_store {
+    pub use rerail_atoms as atoms;
+    pub use rerail_observe::content_store::*;
+}
+#[cfg(test)]
+pub use rerail_store::content_store;
 pub use rerail_run::git_access;
 pub use rerail_run::git_workspace;
 pub use rerail_run::threads;
@@ -23,9 +31,15 @@ extern crate self as rerail_setfix;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_run::code_rule_dsl::*;
+    // The facts with the syntax table (rerail-facts): the run reads facts-base's.
+    pub use rerail_facts::code_rule_dsl::facts;
+    // The SQL profiler and admission ledger the waves' owner installs (rerail-sql-profile, crate split 10c).
+    pub use rerail_sql_profile::code_rule_dsl::{sql_admission, sql_profile};
     #[path = "logic"]
     pub mod logic {
         pub use rerail_run::code_rule_dsl::logic::*;
+        // The logic language's core (rerail-logic-core), which the run does not read.
+        pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
         #[path = "device"]
         pub mod device {
             pub use rerail_run::code_rule_dsl::logic::device::*;

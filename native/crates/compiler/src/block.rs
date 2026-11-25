@@ -1922,6 +1922,7 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                         crate::records::ReadNone::Refuse => "refuse".to_string(),
                         crate::records::ReadNone::End => "end".to_string(),
                         crate::records::ReadNone::Bytes(m) => format!("bytes{m}"),
+                        crate::records::ReadNone::Bad(k) => format!("bad{k}"),
                     };
                     let retag = a.retag.map_or(String::new(), |(kind, marks)| format!(" retag {kind} {marks}"));
                     let last = a.last.map_or(String::new(), |o| format!(" last {o}"));

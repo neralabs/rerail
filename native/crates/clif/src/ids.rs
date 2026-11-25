@@ -14,9 +14,10 @@
 //! of each stretch between them (`runs`), and the slots and runs by key (`by_slot`, `run_at`).
 
 /// The items a rank index marks: numbered nodes, tokens, nodes under a field, nodes after a numbered sibling, spread
-/// nodes, the token order's (the lexical tokens, the places with a token, one before, one after), and `op`'s (a
-/// numbered node's anonymous children), and the nodes with a numbered tape parent (and the root: `structural_before`'s, `rr_token_named`'s; `Item`'s numbers).
-pub const ITEMS: u32 = 11;
+/// nodes, the token order's (the lexical tokens, the places with a token, one before, one after), `op`'s (a
+/// numbered node's anonymous children), the nodes with a numbered tape parent (and the root: `structural_before`'s,
+/// `rr_token_named`'s), an anchored projection's anchors, and the nodes with text (`Item`'s numbers).
+pub const ITEMS: u32 = 13;
 /// A group's words: one of bits an item, then the counts before it, two to a word.
 pub const WORDS: u32 = ITEMS + ITEMS.div_ceil(2);
 /// Items a select sample stands for.
@@ -104,7 +105,7 @@ pub struct Numbering {
     /// granule is searched between two of them.
     pub jumps: [Run; 2],
 }
-const _: () = assert!(std::mem::size_of::<Numbering>() == 56 + 16 * 30);
+const _: () = assert!(std::mem::size_of::<Numbering>() == 64 + 16 * 32);
 
 /// No number, no node, no granule: a read's answer for none (the CLIF's `NONE`).
 pub const NONE: u32 = u32::MAX;

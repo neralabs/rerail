@@ -35,144 +35,17 @@ pub struct Masks {
     pub o_chr: Vec<u64>,
 }
 
-/// Tier 1's records, one a token, the masks tier 2 reads, and whether the file goes to tree-sitter.
+/// Tier 1's records, one a grammar token; the comments (the extras) apart, as the lean lexer keeps its comments; the
+/// masks tier 2 reads; and whether the file goes to tree-sitter.
 pub struct Lexed {
     pub recs: Vec<Rec>,
+    pub extras: Vec<Rec>,
     pub masks: Masks,
     pub refused: bool,
 }
 
 /// Each byte's record kind, as a token's first byte.
 const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 17, 18, 19, 20, 15, 16, 1, 5, 6, 4, 0, 0];
-
-/// A token's word: the code of the word its bytes are, 0 for none.
-fn word(b: &[u8]) -> u32 {
-    match b {
-        b"annotation" => 1,
-        b"\x40" => 2,
-        b"file" => 3,
-        b"\x3a" => 4,
-        b"\x5b" => 5,
-        b"\x5d" => 6,
-        b"package" => 7,
-        b"import" => 8,
-        b"\x2a" => 9,
-        b"as" => 10,
-        b"typealias" => 11,
-        b"\x3d" => 12,
-        b"class" => 13,
-        b"fun" => 14,
-        b"interface" => 15,
-        b"enum" => 16,
-        b"\x7b" => 17,
-        b"\x7d" => 18,
-        b"\x28" => 19,
-        b"\x2c" => 20,
-        b"\x29" => 21,
-        b"val" => 22,
-        b"var" => 23,
-        b"suspend" => 24,
-        b"by" => 25,
-        b"\x3c" => 26,
-        b"\x3e" => 27,
-        b"where" => 28,
-        b"init" => 29,
-        b"companion" => 30,
-        b"object" => 31,
-        b"\x2e" => 32,
-        b"\x3b" => 33,
-        b"get" => 34,
-        b"set" => 35,
-        b"constructor" => 36,
-        b"this" => 37,
-        b"super" => 38,
-        b"dynamic" => 39,
-        b"\x3f" => 40,
-        b"\x2d\x3e" => 41,
-        b"for" => 42,
-        b"in" => 43,
-        b"while" => 44,
-        b"do" => 45,
-        b"\x2e\x2e" => 46,
-        b"\x2e\x2e\x3c" => 47,
-        b"\x3f\x3a" => 48,
-        b"\x21" => 49,
-        b"\x26\x26" => 50,
-        b"\x7c\x7c" => 51,
-        b"data" => 52,
-        b"if" => 53,
-        b"else" => 54,
-        b"when" => 55,
-        b"try" => 56,
-        b"catch" => 57,
-        b"finally" => 58,
-        b"throw" => 59,
-        b"return" => 60,
-        b"continue" => 61,
-        b"break" => 62,
-        b"\x3a\x3a" => 63,
-        b"\x2b\x3d" => 64,
-        b"\x2d\x3d" => 65,
-        b"\x2a\x3d" => 66,
-        b"\x2f\x3d" => 67,
-        b"\x25\x3d" => 68,
-        b"\x21\x3d" => 69,
-        b"\x21\x3d\x3d" => 70,
-        b"\x3d\x3d" => 71,
-        b"\x3d\x3d\x3d" => 72,
-        b"\x3c\x3d" => 73,
-        b"\x3e\x3d" => 74,
-        b"is" => 75,
-        b"\x2b" => 76,
-        b"\x2d" => 77,
-        b"\x2f" => 78,
-        b"\x25" => 79,
-        b"\x2b\x2b" => 80,
-        b"\x2d\x2d" => 81,
-        b"\x21\x21" => 82,
-        b"\x3f\x2e" => 83,
-        b"sealed" => 84,
-        b"inner" => 85,
-        b"value" => 86,
-        b"override" => 87,
-        b"lateinit" => 88,
-        b"public" => 89,
-        b"private" => 90,
-        b"internal" => 91,
-        b"protected" => 92,
-        b"out" => 93,
-        b"tailrec" => 94,
-        b"operator" => 95,
-        b"infix" => 96,
-        b"inline" => 97,
-        b"external" => 98,
-        b"const" => 99,
-        b"abstract" => 100,
-        b"final" => 101,
-        b"open" => 102,
-        b"vararg" => 103,
-        b"noinline" => 104,
-        b"crossinline" => 105,
-        b"reified" => 106,
-        b"expect" => 107,
-        b"actual" => 108,
-        b"field" => 109,
-        b"property" => 110,
-        b"receiver" => 111,
-        b"param" => 112,
-        b"setparam" => 113,
-        b"delegate" => 114,
-        b"L" => 115,
-        b"true" => 116,
-        b"false" => 117,
-        b"null" => 118,
-        b"u" => 119,
-        b"U" => 120,
-        b"uL" => 121,
-        b"UL" => 122,
-        _ => 0,
-    }
-}
 
 /// `punct`'s last byte from its first, `s`: its next where the two are a pair, and the one after where the three are a triple, as the lean lexer reads an operator.
 fn pair_52(src: &[u8], s: usize) -> usize {
@@ -1800,6 +1673,8 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Room for a record a byte, as the lean lexer's: each token's first byte is after the last's, so the writes need no check.
     let mut recs: Vec<Rec> = Vec::with_capacity(n + 1);
     let out = recs.as_mut_ptr();
+    // The comments, apart from the tokens, as the lean lexer's `comments`.
+    let mut extras: Vec<Rec> = Vec::new();
     let mut len = 0usize;
     let mut at = 0usize;
     // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.
@@ -1905,7 +1780,7 @@ pub fn lex(src: &[u8]) -> Lexed {
         }
         let here_2: bool;
         let mut hits = 0u32;
-        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
+        let (l, kind, extra, mut marks, word): (usize, u32, bool, u32, u32) = {
             // The row: the first whose start holds, of those whose start may be the byte's.
             let row = match group {
                 // `!#$%&()*+,-:;<=>?@[\]^{|~`
@@ -2007,7 +1882,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = fs_5;
                     fill_6 = false;
-                    (l, 0, true, 0x100)
+                    (l, 0, true, 0x100, 0)
                 }
 ,
                 1 => {
@@ -2052,7 +1927,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = fs_5;
                     fill_6 = false;
-                    (l, 0, true, 0x300)
+                    (l, 0, true, 0x300, 0)
                 }
 ,
                 2 => {
@@ -2101,7 +1976,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word_at(src, s, l + 1 - s))
                 }
 ,
                 3 => {
@@ -2158,7 +2033,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 4 => {
@@ -2210,7 +2085,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, 4, false, 0x0)
+                    (l, 4, false, 0x0, word_at(src, s, l + 1 - s))
                 }
 ,
                 5 => {
@@ -2259,7 +2134,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, 6, false, 0x0)
+                    (l, 6, false, 0x0, 0)
                 }
 ,
                 6 => {
@@ -2308,7 +2183,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, 5, false, 0x0)
+                    (l, 5, false, 0x0, 0)
                 }
 ,
                 7 => {
@@ -2378,7 +2253,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 8 => {
@@ -2489,7 +2364,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 9 => {
@@ -2749,7 +2624,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, 0)
                 }
 ,
                 12 => {
@@ -2788,7 +2663,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     xl_4 = false;
                     fill_5 = false;
                     fill_6 = false;
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80, 0)
                 }
 ,
                 13 => {
@@ -2846,18 +2721,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                         refused = true;
                         break 'tokens;
                     }
-                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0, word_at(src, s, l + 1 - s))
                 }
 ,
                 _ => {
-                    // A byte no token begins with.
+                    // A byte no row takes: its group's tests, none of which holds.
                     refused = true;
                     break 'tokens;
                 }
             }
         }
 ;
-        let word = if extra { 0 } else { word(&src[s..=l]) };
         // The token marks: tier 2 tests the rest of each.
         if extra {
             // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.
@@ -2920,10 +2794,15 @@ pub fn lex(src: &[u8]) -> Lexed {
         rec_1 = false;
         // The gap mask `((ws & code) | o_line) | o_block`: on after a token the grammar skips; else from this token's bytes after its start.
         acc_2 = extra && (acc_2 || here_2);
-        debug_assert!(len < n && l >= s, "a token a byte at most");
-        // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
-        unsafe { out.add(len).write(Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 }) };
-        len += 1;
+        let rec = Rec { start: s as u32, last: l as u32, code: kind | word << 8 | marks << 16 };
+        if extra {
+            extras.push(rec);
+        } else {
+            debug_assert!(len < n && l >= s, "a token a byte at most");
+            // SAFETY: `len < n`, the room reserved: a record's first byte is after the record before's last.
+            unsafe { out.add(len).write(rec) };
+            len += 1;
+        }
         at = l + 1;
         if at >= base + 64 {
             b = at / 64;
@@ -2955,6 +2834,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     unsafe { recs.set_len(len) };
     Lexed {
         recs,
+        extras,
         masks: Masks {
             rd0_close: fw_rd0_close,
             o_str: fw_o_str,
@@ -2983,10 +2863,99 @@ pub fn lex(src: &[u8]) -> Lexed {
         refused,
     }
 }
+/// The words the grammar reads, a word's code its place plus one, as the lean lexer's `WORD_LIST`.
+const WORD_LIST: [&[u8]; 122] = [
+    b"annotation", b"@", b"file", b":", b"[", b"]", b"package", b"import", b"*", b"as", b"typealias", b"=",
+    b"class", b"fun", b"interface", b"enum", b"{", b"}", b"(", b",", b")", b"val", b"var", b"suspend",
+    b"by", b"<", b">", b"where", b"init", b"companion", b"object", b".", b";", b"get", b"set", b"constructor",
+    b"this", b"super", b"dynamic", b"?", b"->", b"for", b"in", b"while", b"do", b"..", b"..<", b"?:",
+    b"!", b"&&", b"||", b"data", b"if", b"else", b"when", b"try", b"catch", b"finally", b"throw", b"return",
+    b"continue", b"break", b"::", b"+=", b"-=", b"*=", b"/=", b"%=", b"!=", b"!==", b"==", b"===",
+    b"<=", b">=", b"is", b"+", b"-", b"/", b"%", b"++", b"--", b"!!", b"?.", b"sealed",
+    b"inner", b"value", b"override", b"lateinit", b"public", b"private", b"internal", b"protected", b"out", b"tailrec", b"operator", b"infix",
+    b"inline", b"external", b"const", b"abstract", b"final", b"open", b"vararg", b"noinline", b"crossinline", b"reified", b"expect", b"actual",
+    b"field", b"property", b"receiver", b"param", b"setparam", b"delegate", b"L", b"true", b"false", b"null", b"u", b"U",
+    b"uL", b"UL",
+];
 
-/// The marks tier 1's records leave to tier 2 (decision 0623): those it asks of the bytes (`ASKED`: a record holds only
-/// its token tests' hits of them), and the token marks its code reads no bit of (it asks them of the tokens).
+/// Up to 8 bytes as one word of memory: little-endian, zeros past them.
+const fn word_key(s: &[u8]) -> u64 {
+    let (mut v, mut i) = (0u64, 0);
+    while i < s.len() {
+        v |= (s[i] as u64) << (8 * i);
+        i += 1;
+    }
+    v
+}
+
+/// A word's slot in `WORDS`: its first 8 bytes and its length, hashed by a multiplier under which the 122 words take
+/// 122 slots, as the lean lexer's `word_slot`.
+const fn word_slot(k: u64, len: usize) -> usize {
+    ((k ^ len as u64).wrapping_mul(0x0a4b1e2e6fbad881) >> 54) as usize
+}
+
+/// Each slot's word (`word_at`): its first 8 bytes, the next 8, its length, its code (0: none), as the lean lexer's
+/// `WORDS`.
+static WORDS: [(u64, u64, u32, u32); 1024] = {
+    let mut t = [(0, 0, 0, 0); 1024];
+    let mut i = 0;
+    while i < WORD_LIST.len() {
+        let w = WORD_LIST[i];
+        let (head, tail) = w.split_at(if w.len() > 8 { 8 } else { w.len() });
+        let slot = word_slot(word_key(head), w.len());
+        assert!(t[slot].3 == 0, "two words in a slot");
+        t[slot] = (word_key(head), word_key(tail), w.len() as u32, i as u32 + 1);
+        i += 1;
+    }
+    t
+};
+
+/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none, as the lean lexer's `word_code`. Its
+/// first 8 bytes, masked to its length, and the length, hashed by one multiply into `WORDS`; its bytes 8 to 16 masked
+/// the same, compared with the first and the length in one test (lean's `ninth`), without a branch.
+#[inline(always)]
+fn word_at(src: &[u8], s: usize, len: usize) -> u32 {
+    let raw = load8(src, s);
+    let rest = load8(src, s + 8);
+    let k = raw & (u64::MAX >> (64 - 8 * len.clamp(1, 8)));
+    let t = rest & u64::MAX.checked_shr(128 - 8 * len.clamp(8, 16) as u32).unwrap_or(0);
+    let (key, tail, l, code) = WORDS[word_slot(k, len)];
+    code & 0u32.wrapping_sub(u32::from((key == k) & (tail == t) & (l as usize == len)))
+}
+
+/// The 8 bytes at `i`, little-endian, zeros past the file.
+#[inline(always)]
+fn load8(src: &[u8], i: usize) -> u64 {
+    match src.get(i..i + 8) {
+        Some(b) => u64::from_le_bytes(b.try_into().expect("8 bytes")),
+        None => load8_at_end(src, i),
+    }
+}
+
+/// `load8` within 8 bytes of the file's end.
+#[cold]
+#[inline(never)]
+fn load8_at_end(src: &[u8], i: usize) -> u64 {
+    let rest = src.get(i..).unwrap_or(&[]);
+    let have = rest.len().min(8);
+    let mut w = [0u8; 8];
+    w[..have].copy_from_slice(&rest[..have]);
+    u64::from_le_bytes(w)
+}
+
+
+/// The marks tier 1's records leave to tier 2 (decisions 0623, 0655): those it asks of the bytes (`ASKED`), those whose
+/// token tests it asks (`TESTED`), and the token marks its code reads no bit of (it asks them of the tokens).
 pub const UNRECORDED: u32 = 0x0;
+
+/// The marks whose token tests tier 2 asks (decision 0655 step 6): none, the records hold them.
+pub const TESTED: u32 = 0;
+
+/// Whether a token test of mark `b` holds at grammar token `j`: never asked.
+pub fn tested(src: &[u8], recs: &[Rec], xs: &[Rec], j: usize, b: u32) -> bool {
+    let _ = (src, recs, xs, j, b);
+    false
+}
 
 /// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
 /// records hold only its token tests' hits of them.

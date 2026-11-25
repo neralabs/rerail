@@ -144,10 +144,6 @@ pub mod regex_block;
 // cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
 pub mod block_digest_tests;
-// The `.rerail` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
-// what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
-#[allow(unused_imports)]
-pub use rerail_rr_parser as rr_parser;
 // cratify: `json_parser` is rerail-lang-json's (it mounts it)
 pub mod stream;
 // cratify: `regex_relocation_tests` is rerail-device-metal's (it mounts it)

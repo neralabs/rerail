@@ -37,6 +37,14 @@ fn main() {
     let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).recs.len()).sum::<usize>();
     let parse = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len(), &mut rerail_rr_syntax::lean::Sink16::new(false, true)).map_or(0, |c| c.map_or(0, |f| f.tape.len()))).sum::<usize>();
     let mut best = [Duration::MAX; 2];
+    // `RR_ONLY=lex`: tier 1 alone, for a count of its work (instructions, cycles) apart from tier 2's.
+    if std::env::var("RR_ONLY").as_deref() == Ok("lex") {
+        for _ in 0..rounds {
+            best[0] = best[0].min(time(&lex));
+        }
+        println!("tier 1 alone, {rounds} rounds: {:.3} ms", best[0].as_secs_f64() * 1e3);
+        return;
+    }
     for _ in 0..rounds {
         best[0] = best[0].min(time(&lex));
         best[1] = best[1].min(time(&parse));
@@ -51,7 +59,7 @@ fn main() {
     let refused = bufs.iter().zip(&files).filter(|(b, t)| rerail_rr_aot::parse(b, t.len(), &mut rerail_rr_syntax::lean::Sink16::new(false, true)).is_err()).count();
     let mb = bytes as f64 / 1e6;
     let row = |name: &str, d: Duration| println!("  {name:<44} {:>9.3} ms  {:>8.1} MB/s  {:>6.2} ns/byte", d.as_secs_f64() * 1e3, mb / d.as_secs_f64(), d.as_secs_f64() * 1e9 / bytes as f64);
-    println!("{} files, {mb:.2} MB, {refused} refused; the least wall time of {rounds} rounds", files.len());
+    println!("{} files, {mb:.2} MB, {refused} refused, {} records; the least wall time of {rounds} rounds", files.len(), lex());
     row("tier 1 (lex)", best[0]);
     row("tier 2 (parse - lex)", best[1].saturating_sub(best[0]));
     row("whole (parse)", best[1]);

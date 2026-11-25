@@ -12,7 +12,7 @@ fn hex(s: &str) -> String {
 #[test]
 fn a_cpu_text_test_reads_and_keeps_its_verdicts_in_the_stores_cache() {
     let store = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&store));
+    drop(crate::content_store::ContentStore::open(&store).unwrap());
     let db = Connection::open(&store).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -45,7 +45,7 @@ fn a_cpu_text_test_reads_and_keeps_its_verdicts_in_the_stores_cache() {
 #[test]
 fn a_cpu_text_function_reads_and_keeps_its_text_in_the_stores_cache() {
     let store = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&store));
+    drop(crate::content_store::ContentStore::open(&store).unwrap());
     let db = Connection::open(&store).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

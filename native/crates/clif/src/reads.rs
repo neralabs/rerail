@@ -168,6 +168,10 @@ pub const READS: &[Read] = &[
     // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
     Read { family: Family::Relation, name: "dir_doc_of_key", params: &[I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_key },
+    // A named node's place among its named siblings, in the tape's auxiliary index in its home (decision 0656 step
+    // 4): `child`'s place. Last, so no other read's number moves.
+    Read { family: Family::Tape, name: "tape_place", params: &[I32], ret: I32, hot: false, body: place },
+    Read { family: Family::Tape, name: "tape_place_past_comments", params: &[I32], ret: I32, hot: false, body: place_past_comments },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -276,7 +280,7 @@ pub fn view_ukl_source() -> Result<(String, String), String> {
     let (header, body) = crate::ukl::translate_view_reads(&funcs, "clif_")?;
     let (head, rest) = header.split_at(crate::ukl::HELPERS.len());
     let made = generated("view_ukl_source", "the views' reads in CLIF (decision 0353 step 4c, 0576)", "the_view_kernels_reads_are_these");
-    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/ids.h>\n#include <ukl/reads/lines.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
+    Ok((format!("{made}{head}#include <ukl/reads/tape_z.h>\n#include <ukl/reads/aux_index_tape.h>\n#include <ukl/reads/ids.h>\n#include <ukl/reads/lines.h>\n{}{rest}", crate::view_reads::ukl()), format!("{made}{body}")))
 }
 
 /// A document's lines' reads as UKL (decision 0612): `<ukl/reads/lines.h>`, its line index read at its base, which the
@@ -2436,6 +2440,206 @@ fn has_kind(b: &mut B<'_, '_>) -> Value {
             )
         },
     )
+}
+
+// ---- the tape's auxiliary index (`rerail_tape_format::aux_index`, decision 0656) --------------------------------
+
+/// Where the tape's auxiliary index lies in its home, from the tape's base: after its presence (at the view's
+/// `presence`), the presence's bytes rounded up to 16 (`f16::presence::aux_at`, `ukl_aux_in_home`).
+fn aux_at(b: &mut B<'_, '_>, presence: Value) -> Value {
+    let field = |b: &mut B<'_, '_>, k: i64| {
+        let off = b.c32(k);
+        b.u32(presence, off)
+    };
+    let (kinds, fields, count, tail) = (field(b, 0), field(b, 4), field(b, 8), field(b, 12));
+    let words = b.f.ins().iadd(kinds, fields);
+    let words = b.f.ins().imul(words, count);
+    let len = b.f.ins().ishl_imm(words, 3);
+    let tail = b.f.ins().ishl_imm(tail, 2);
+    let len = b.f.ins().iadd(len, tail);
+    let len = b.f.ins().iadd_imm(len, 16 + 15);
+    let len = b.f.ins().band_imm(len, !15);
+    b.f.ins().iadd(presence, len)
+}
+
+/// Section `kind`'s offset in the auxiliary index at `aux` (from it), or 0 where it has none of `kind`'s version
+/// (`AuxIndex::read`'s directory, `ukl_aux_section`): its directory searched.
+fn aux_section(b: &mut B<'_, '_>, aux: Value, kind: u16, version: u16) -> Value {
+    let four = b.c32(4);
+    let count = b.u32(aux, four);
+    let count = b.f.ins().ushr_imm(count, 16);
+    let want = b.c32(i64::from(u32::from(kind) | u32::from(version) << 16));
+    let (head, body, next, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    let zero = b.c32(0);
+    b.f.ins().jump(head, &[zero.into()]);
+    b.f.switch_to_block(head);
+    let e = b.f.block_params(head)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, e, count);
+    let none = b.c32(0);
+    b.f.ins().brif(more, body, &[], done, &[none.into()]);
+    b.f.switch_to_block(body);
+    let d = b.f.ins().ishl_imm(e, 4);
+    let d = b.f.ins().iadd_imm(d, 32);
+    let entry = b.u32(aux, d);
+    let is = b.f.ins().icmp(IntCC::Equal, entry, want);
+    let at = b.f.ins().iadd_imm(d, 8);
+    let off = b.u32(aux, at);
+    b.f.ins().brif(is, done, &[off.into()], next, &[]);
+    b.f.switch_to_block(next);
+    let e = b.f.ins().iadd_imm(e, 1);
+    b.f.ins().jump(head, &[e.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// The first of `lo..hi` at which `below` is false (`below` true before it, false from it): a binary search.
+fn lower_bound(b: &mut B<'_, '_>, lo: Value, hi: Value, below: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
+    let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(done, I32);
+    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    b.f.switch_to_block(head);
+    let (lo, hi) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+    b.f.ins().brif(more, body, &[], done, &[lo.into()]);
+    b.f.switch_to_block(body);
+    let width = b.f.ins().isub(hi, lo);
+    let half = b.f.ins().ushr_imm(width, 1);
+    let mid = b.f.ins().iadd(lo, half);
+    let is = below(b, mid);
+    let up = b.f.ins().iadd_imm(mid, 1);
+    let lo = b.f.ins().select(is, up, lo);
+    let hi = b.f.ins().select(is, hi, mid);
+    b.f.ins().jump(head, &[lo.into(), hi.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// `tape_place(node)`: named node `node`'s place among its parent's named children (0 for the first, and for the
+/// root), from the tape's auxiliary index in its home (decision 0656 step 4): the last every-8th named sibling at or
+/// before it (SIBLINGS), then the tape's siblings stepped to it, each named one counted (NAMED). `aux_index::place`
+/// in Rust, `ukl_aux_place` in UKL (`clif_tape_place`). `NONE` for a tape without presence, which no writer makes.
+fn place(b: &mut B<'_, '_>) -> Value {
+    place_by(b, false)
+}
+
+/// `tape_place_past_comments(node)`: as `tape_place`, among the named children that are no comment (T's shape's
+/// places): the comments before the every-8th taken off (COMMENTS), and the steps counting no comment.
+/// `aux_index::place_past_comments` in Rust, `ukl_aux_place_past_comments` in UKL.
+fn place_past_comments(b: &mut B<'_, '_>) -> Value {
+    place_by(b, true)
+}
+
+/// Code `code`'s bit in the code bitmap of the section at `sec` of the index at `aux` (its head's word 0 its words,
+/// the bitmap after the head): 0 where the section is missing or the code past it.
+fn code_bit(b: &mut B<'_, '_>, aux: Value, sec: Value, code: Value) -> Value {
+    let base = b.f.ins().iadd(aux, sec);
+    let zero = b.c32(0);
+    let words = b.u32(base, zero);
+    let word = b.f.ins().ushr_imm(code, 6);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, word, words);
+    let has = b.f.ins().icmp_imm(IntCC::NotEqual, sec, 0);
+    let inside = b.f.ins().band(inside, has);
+    b.either(I32, inside, |b| {
+        let base = b.f.ins().iadd(aux, sec);
+        let at = b.f.ins().ishl_imm(word, 3);
+        let at = b.f.ins().iadd_imm(at, 16);
+        let w = b.word(base, at);
+        let shift = b.f.ins().band_imm(code, 63);
+        let shift = b.f.ins().uextend(I64, shift);
+        let bit = b.f.ins().ushr(w, shift);
+        let bit = b.f.ins().band_imm(bit, 1);
+        b.f.ins().ireduce(I32, bit)
+    }, |b| b.c32(0))
+}
+
+/// A place, past comments or not (`place`, `place_past_comments`).
+fn place_by(b: &mut B<'_, '_>, past_comments: bool) -> Value {
+    use crate::view::aux::*;
+    let node = b.arg(0);
+    let presence = b.view(at::PRESENCE);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, presence, 0);
+    b.either(I32, none, |b| b.c32(NONE), |b| {
+        let aux = aux_at(b, presence);
+        let p = b.call("tape_parent", &[node]);
+        let root = b.f.ins().icmp_imm(IntCC::Equal, p, NONE);
+        b.either(I32, root, |b| b.c32(0), |b| {
+            let sib = aux_section(b, aux, SIBLINGS, SIBLINGS_VERSION);
+            let named = aux_section(b, aux, NAMED, NAMED_VERSION);
+            let comments = if past_comments { aux_section(b, aux, COMMENTS, COMMENTS_VERSION) } else { b.c32(0) };
+            let sibs = b.f.ins().iadd(aux, sib);
+            let zero = b.c32(0);
+            let n = b.u32(sibs, zero);
+            let has = b.f.ins().icmp_imm(IntCC::NotEqual, sib, 0);
+            let n = b.f.ins().select(has, n, zero);
+            // Entry `i`'s parent (`k` 0) or node (`k` 4).
+            let pair = move |b: &mut B<'_, '_>, i: Value, k: i64| {
+                let at = b.f.ins().ishl_imm(i, 3);
+                let at = b.f.ins().iadd_imm(at, 16 + k);
+                b.u32(sibs, at)
+            };
+            let first = lower_bound(b, zero, n, &|b, mid| {
+                let q = pair(b, mid, 0);
+                b.f.ins().icmp(IntCC::UnsignedLessThan, q, p)
+            });
+            let p1 = b.f.ins().iadd_imm(p, 1);
+            let past = lower_bound(b, first, n, &|b, mid| {
+                let q = pair(b, mid, 0);
+                b.f.ins().icmp(IntCC::UnsignedLessThan, q, p1)
+            });
+            let lo = lower_bound(b, first, past, &|b, mid| {
+                let c = pair(b, mid, 4);
+                b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, c, node)
+            });
+            let found = b.f.ins().icmp(IntCC::NotEqual, lo, first);
+            let last = b.f.ins().iadd_imm(lo, -1);
+            let from = b.either(I32, found, |b| pair(b, last, 4), |_| p1);
+            let k = b.f.ins().isub(lo, first);
+            let k = b.f.ins().imul_imm(k, i64::from(K));
+            // Past comments: the comments before that every-8th taken off (COMMENTS' count at its entry).
+            let k = if past_comments {
+                let before = b.either(I32, found, |b| {
+                    let base = b.f.ins().iadd(aux, comments);
+                    let eight = b.c32(8);
+                    let counts = b.u32(base, eight);
+                    let at = b.f.ins().ishl_imm(last, 2);
+                    let at = b.f.ins().iadd(at, counts);
+                    b.u32(base, at)
+                }, |b| b.c32(0));
+                b.f.ins().isub(k, before)
+            } else {
+                k
+            };
+            // The siblings from there to `node`, each named one counted (past comments: each that is no comment).
+            let (head, body, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(head, I32);
+            b.f.append_block_param(done, I32);
+            b.f.ins().jump(head, &[from.into(), k.into()]);
+            b.f.switch_to_block(head);
+            let (c, i) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+            let before = b.f.ins().icmp(IntCC::UnsignedLessThan, c, node);
+            b.f.ins().brif(before, body, &[], done, &[i.into()]);
+            b.f.switch_to_block(body);
+            let code = b.call("tape_number", &[c]);
+            let is = code_bit(b, aux, named, code);
+            let is = if past_comments {
+                let comment = code_bit(b, aux, comments, code);
+                let not = b.f.ins().bxor_imm(comment, 1);
+                b.f.ins().band(is, not)
+            } else {
+                is
+            };
+            let i = b.f.ins().iadd(i, is);
+            let c = b.call("tape_end_of", &[c]);
+            b.f.ins().jump(head, &[c.into(), i.into()]);
+            b.f.switch_to_block(done);
+            b.f.block_params(done)[0]
+        })
+    })
 }
 
 /// `lines_line(at)`: the lines starting at or before byte `at`, the 1-based line holding it (`LineTable::line` + 1):

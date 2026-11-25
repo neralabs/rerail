@@ -47,7 +47,15 @@ pub enum Item {
     /// A numbered node whose tape parent is a numbered node, and the document's root (tape node 0) where it is numbered:
     /// `structural_before`'s and `structural_after`'s rows, and without the root `rr_token_named`'s (`tape_rows`).
     Child = 10,
+    /// An outermost anchor of a projection narrowed to anchors (`Projected::anchored`): a child of the root in the
+    /// projection, whose place among the root's children is its rank among them (`Projected::idx`).
+    Anchor = 11,
+    /// A numbered node with text, as the rules read it (`text`'s node rows, `text_view`): of a kind or field whose text
+    /// a rule reads, within the inline bound or token-like or of a kind read at any length.
+    Text = 12,
 }
+
+const _: () = assert!(Item::Anchor as i64 == rerail_clif::view_reads::ANCHOR_ITEM && Item::Text as u32 + 1 == rerail_clif::ids::ITEMS);
 
 /// The items, as `Item`'s numbers.
 const ITEMS: usize = rerail_clif::ids::ITEMS as usize;
@@ -191,7 +199,7 @@ impl Ranks {
             })
             .expect("a batch's block holds its projection")
         };
-        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op, Item::Child].map(sample);
+        let samples = [Item::Node, Item::Token, Item::Field, Item::Sibling, Item::Spread, Item::Lexeme, Item::Leads, Item::Follows, Item::Precedes, Item::Op, Item::Child, Item::Anchor, Item::Text].map(sample);
         let desc = Desc::<Numbering>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live
