@@ -25,6 +25,13 @@ vi.mock("../../src/engine/native/native.js", { spy: true });
 /** A pid no live process can hold on the platforms Rerail supports. */
 const DEAD_PID = 2 ** 22 - 1;
 
+/**
+ * A case's own guard against a real Windows PowerShell that never answers, as one held by a prompt or a locked module
+ * cache: `spawnSync` blocks the worker, so the case's 60 s limit cannot end the run. It is not the product's bound,
+ * which the case asserts apart, and below it how fast this machine starts PowerShell decides nothing.
+ */
+const POWERSHELL_GUARD_MS = 50_000;
+
 const refusing = (code: string): ProcessSignal => () => {
   throw Object.assign(new Error(`kill ${code}`), { code });
 };
@@ -245,17 +252,27 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
   });
 
   // PowerShell's own setting that loads only the modules a command names stands in for a computer with many modules: a
-  // cmdlet named alone is not found under it. The bound is the uninstall's, the stop's wait and its kill wait. The case
-  // gives that bound and the engine's first load in its worker room: on a loaded machine that load took 27 s.
-  it.runIf(process.platform === "win32")("ends a process through PowerShell within the uninstall's bound while PowerShell loads only the modules a command names", async () => {
+  // cmdlet named alone is not found under it. PowerShell runs to its answer, so how fast this machine starts it decides
+  // nothing; the bound it was given, the uninstall's 15 s (its stop's wait and its kill wait), goes to `bounds`. The
+  // case that ends a PowerShell that does not answer covers that bound; {@link POWERSHELL_GUARD_MS} ends one that never
+  // answers here. The case's time gives the engine's first load in its worker room: on a loaded machine that load took
+  // 27 s.
+  it.runIf(process.platform === "win32")("ends a process through PowerShell, given the uninstall's bound, while PowerShell loads only the modules a command names", async () => {
+    const bounds: unknown[] = [];
     const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
-    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) =>
-      runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options)) as unknown as typeof childProcess.spawnSync);
+    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      bounds.push(options.timeout);
+      const result = runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), { ...options, timeout: POWERSHELL_GUARD_MS });
+      const failed: NodeJS.ErrnoException | undefined = result.error;
+      if (failed?.code === "ETIMEDOUT") throw new Error(`Windows PowerShell did not answer within the case's own ${POWERSHELL_GUARD_MS / 1_000} s guard`);
+      return result;
+    }) as unknown as typeof childProcess.spawnSync);
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
     const closed = once(child, "close");
     try {
       const started = processStartedAtThroughEngine(child.pid!)!;
       expect(endProcessStartedByPowerShell(child.pid!, started, 15_000)).toBe("ended");
+      expect(bounds).toEqual([15_000]);
     } finally {
       child.kill();
       await closed;
