@@ -31,10 +31,13 @@ will_mount(at) :- unsafe_member("UNSAFE_componentWillMount", at).
 will_receive_props(at) :- unsafe_member("UNSAFE_componentWillReceiveProps", at).
 will_update(at) :- unsafe_member("UNSAFE_componentWillUpdate", at).
 
-// The plugin reports the first member with the name (getPropertyName: the key's name, so #x and [x] count).
+// The plugin reports the first member with the name (getPropertyName: the key's name, so #x and [x] count). A
+// component's members are siblings (class body, spec object), so "first" is: no earlier sibling has the name.
 .decl unsafe_member(x: symbol, at: node)
 unsafe_member(x, at) :- react_component(k), member_named(k, x, m), unsafe_name(x), docof(k, d), react_doc(d),
-    vi = min i : { member_named(k, x, m2), visit_index(m2, i) }, visit_index(m, vi), member_at(m, at).
+    !later_twin(k, x, m), member_at(m, at).
+.decl later_twin(k: node, x: symbol, m: node)  // m has the name x, and so does a member of k before it
+later_twin(k, x, m) :- member_named(k, x, m), unsafe_name(x), member_named(k, x, m2), precedes(m2, m).
 .decl unsafe_name(x: symbol)
 unsafe_name("UNSAFE_componentWillMount"). unsafe_name("UNSAFE_componentWillReceiveProps").
 unsafe_name("UNSAFE_componentWillUpdate").
