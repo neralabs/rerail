@@ -829,6 +829,28 @@ So:
    - The C and C++ corpus: 3,135 of 3,135 units the serial pass's, none refused, 0.30 s GPU against 2.1 s serial.
    - What bounds Boost now: the readings again past `LP_READINGS`, inline, and the longest piece's chain of
      requests one after another.
+   - **Then (2026-11-24): the arguments collected a window at a time, and two roll-up fixes.**
+     - Where the time went: `array.c` has no readings past `LP_READINGS`. About 70% of a long request's steps
+       collected arguments, one entry a step, at every level that passes a 256-element tuple on. The longest chain is
+       `BOOST_PP_WHILE`'s, each iteration's state its next one's argument: serial in the serial pass too. More request
+       levels (`LP_RQ_LEVELS` 16, not 4) doubled the steps, and stayed at 4.
+     - The collector reads lists and nodes (`FK_LIST`, `FK_STOP`, a node not a room) as it reads the text: the
+       group looks at the next 64 entries (`LQ_LPUNCT`, `lp_lwindow`: each entry's punctuator class, a span with no
+       delimiter of at most `LP_WSPAN` tokens one entry), and the run takes the entries before the next `(`, `)` or
+       stop in one step (`lp_collect_lrun`), commas at depth 0 included, in both windows.
+     - `array.c`'s big unit, CPU backend: 1.85 M steps in all to 0.88 M; the longest request 229 K to 99 K.
+       Collecting from lists 717 K to 268 K, from nodes 376 K to 73 K.
+     - The roll-up's two bugs, found by `expansions_are_the_serial_passes` on CUDA (3 failures in 20 runs at the step
+       before, 9 in 20 with the windows: more holes read in place):
+       - A room's request's holder's rows (`XP_H`) were read as the reader's own; where the hole is a result's read
+         in another room they are that room's. The room's row keeps that offset (its `st`, the frame's `hoff`), and
+         the roll-up adds it.
+       - A token of a node inside a room's result reaches the room's first row (its request's own call, no row of
+         its own) rebased by `lp_xin` alone, not through `lp_fin`. The roll-up reads that row as the occurrence's
+         call row. `INS`'s `SIZE`, `T2` and `DATA` had lost their parent there.
+       - After: 0 failures in 25 runs on CUDA; the 51 eval tests pass on the CPU backend and CUDA.
+     - Boost: 61 of 64 units the serial pass's, the same three `seq.*` refused (a batch past 4 GiB, reported as a
+       device error), 31.0 s GPU against 32.8 s. The corpus: 3,135 of 3,135, none refused, 0.30 s GPU.
 
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
