@@ -44,6 +44,8 @@ vi.mock("../../../src/engine/git.js", async importOriginal => {
       if (signal?.aborted !== false) return { status: null, stdout: "", stderr: "", error: new Error("Git was not started: the read was stopped") };
       asks.begun += 1;
       await new Promise(ended => signal.addEventListener("abort", ended, { once: true }));
+      // As a real ask's Git, which exits a turn or more after the abort: only a close that awaits the ask sees its end.
+      await new Promise(ended => setImmediate(ended));
       asks.ended += 1;
       return { status: null, stdout: "", stderr: "", error: new Error("Git was ended: the read was stopped") };
     },
