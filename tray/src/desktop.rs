@@ -1,6 +1,5 @@
 //! The macOS menu bar item and the Windows notification-area icon: `tray-icon` and `muda` on a `tao` event loop.
 
-use std::io::Write;
 use std::sync::Arc;
 
 use muda::{IconMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -46,7 +45,7 @@ pub fn run() -> ! {
     // Called on the thread that runs the menu, as soon as an item is clicked.
     MenuEvent::set_event_handler(Some(Arc::new(|event: MenuEvent| {
         if let Some(action) = action_for(event.id.as_ref()) {
-            write_action(action);
+            protocol::write_action(action);
         }
     })));
 
@@ -88,16 +87,6 @@ fn action_for(id: &str) -> Option<Action> {
         "update" => Some(Action::Update),
         "stop" => Some(Action::Stop),
         _ => None,
-    }
-}
-
-fn write_action(action: Action) {
-    let mut stdout = std::io::stdout().lock();
-    let written = stdout
-        .write_all(protocol::encode_action(action).as_bytes())
-        .and_then(|()| stdout.flush());
-    if let Err(error) = written {
-        eprintln!("rerail-tray: could not send {action:?} to the daemon: {error}");
     }
 }
 

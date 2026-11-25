@@ -1058,6 +1058,66 @@ jobs:
       - name: Tree watch tests
         run: cargo test --manifest-path Cargo.toml -p rerail-tree-watch --lib
 
+  # The tray (tray/): the macOS and Windows icon and the Linux one. package.yml builds it only from release.yml and from
+  # env-matrix.yml after a push to main, never on a pull request, so without this job desktop.rs and linux.rs would
+  # first compile in a release. Each system lints and tests the code it compiles; Linux also builds the static musl
+  # binary the release ships, which is the one that must link. The crate reads no pack data and needs no engine, so a
+  # cold build takes a few minutes. A debug build, as in the rust job.
+  rust-tray:
+    name: Tray (${{ matrix.os }})
+    needs: changes
+    if: >-
+      ${{
+        (needs.changes.outputs.rust-all != 'false' || contains(fromJSON(needs.changes.outputs.rust-packages), 'rerail-tray')) &&
+        needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
+        (
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
+        )
+      }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-2025, ubuntu-24.04]
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_INCREMENTAL: "0"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - id: rust-toolchain
+        name: Read pinned Rust toolchain
+        run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: clippy
+
+      - name: Tray lints
+        run: cargo clippy -p rerail-tray --locked --all-targets -- -D warnings
+
+      - name: Tray tests
+        run: cargo test -p rerail-tray --locked
+
+      - name: Tray static Linux build
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo build -p rerail-tray --locked --target x86_64-unknown-linux-musl
+
   # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. An engine an
   # earlier run built from the same inputs is downloaded, not built (.github/actions/engine-artifact); otherwise the
   # engine builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target), and
@@ -2182,6 +2242,7 @@ jobs:
       - rust
       - rust-profiling
       - rust-macos
+      - rust-tray
       - build
       - build-windows
       - build-macos

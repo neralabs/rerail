@@ -100,6 +100,30 @@ pub fn badged(base: &Rgba, badge: Badge, template: bool) -> Rgba {
 }
 
 impl Rgba {
+    /// The pixels as ARGB32 in network byte order (alpha first), which is what a StatusNotifierItem icon takes.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn to_argb(&self) -> Vec<u8> {
+        self.pixels
+            .chunks_exact(4)
+            .flat_map(|rgba| [rgba[3], rgba[0], rgba[1], rgba[2]])
+            .collect()
+    }
+
+    /// The image as a PNG file, which is what a dbusmenu item's icon takes.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    pub fn to_png(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, self.width, self.height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        // Writing to memory fails only on dimensions the tray's own images never have.
+        encoder
+            .write_header()
+            .and_then(|mut writer| writer.write_image_data(&self.pixels))
+            .expect("an image the tray drew encodes");
+        bytes
+    }
+
     /// Calls `f` with each pixel's centre and its four bytes.
     fn each_pixel(&mut self, mut f: impl FnMut(f32, f32, &mut [u8])) {
         let width = self.width as usize;
@@ -157,6 +181,22 @@ fn erase(pixel: &mut [u8], coverage: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn argb_from_rgba_reorders_channels() {
+        let image = Rgba {
+            width: 2,
+            height: 1,
+            pixels: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        };
+        assert_eq!(image.to_argb(), [4, 1, 2, 3, 8, 5, 6, 7]);
+    }
+
+    #[test]
+    fn png_round_trips() {
+        let image = status_circle(true, 16);
+        assert_eq!(decode_png(&image.to_png()), image);
+    }
 
     const GREEN: [u8; 4] = [0x34, 0xC7, 0x59, 255];
     const RED: [u8; 4] = [0xFF, 0x3B, 0x30, 255];

@@ -40,6 +40,17 @@ pub fn encode_action(action: Action) -> String {
     format!("{{\"action\":\"{name}\"}}\n")
 }
 
+/// Tells the daemon about a click. A failure is noted on stderr: the daemon is gone, or the click is lost.
+pub fn write_action(action: Action) {
+    let mut stdout = std::io::stdout().lock();
+    let written = stdout
+        .write_all(encode_action(action).as_bytes())
+        .and_then(|()| stdout.flush());
+    if let Err(error) = written {
+        eprintln!("rerail-tray: could not send {action:?} to the daemon: {error}");
+    }
+}
+
 #[derive(PartialEq, Debug)]
 pub enum Incoming {
     State(MenuState),
