@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
@@ -735,9 +735,9 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
 /**
  * The engine file of each Rerail package's engine package, once found at Rerail's version, where `native/` has none.
  * `loadNativeBinding` keeps the engine it loaded, yet looks again while a load fails and where `RERAIL_ENGINE_PATH`
- * comes and goes, and each catalog read stamps the engine's file (`engineBuild`): such a look returns this file without
- * resolving the package or reading its version again, so a process gets back the engine it loaded though an install
- * has changed the package on disk since.
+ * comes and goes, and a catalog read before a load stamps the file a load would take (`loadedEngineFile`): such a look
+ * returns this file without resolving the package or reading its version again, so a process gets back the engine it
+ * loaded though an install has changed the package on disk since.
  */
 const packagedEngines = new Map<string, string>();
 
@@ -905,21 +905,46 @@ function namesRerail(manifestPath: string): boolean {
 /** Whether this process has named Rerail's package to its engine (`setPackageRoot`): once, as the engine never forgets it. */
 let packageRootNamed = false;
 
+/** An engine file by its path, with its time and size as they were read. */
+export interface EngineFile {
+  readonly path: string;
+  readonly mtimeMs: number;
+  readonly size: number;
+}
+
 /**
- * The engine this process loaded, with the `RERAIL_ENGINE_PATH` it was found under. Every call into the engine goes
- * through `loadNativeBinding`, a walk once per file and per Git ignore question. Node never unloads an addon, so a later
- * look could only hand back this engine or load a second one beside it: the engine is kept from the first call that
- * loads one, and looked for again only where `RERAIL_ENGINE_PATH` has changed since. A look that fails keeps nothing:
- * the next call looks again, and the engine loaded before comes back with its own value.
+ * The engine this process loaded, with the `RERAIL_ENGINE_PATH` it was found under and its file as it was loaded. Every
+ * call into the engine goes through `loadNativeBinding`, a walk once per file and per Git ignore question. Node never
+ * unloads an addon, so a later look could only hand back this engine or load a second one beside it: the engine is kept
+ * from the first call that loads one, and looked for again only where `RERAIL_ENGINE_PATH` has changed since. A look
+ * that fails replaces nothing: the next call looks again, and the engine loaded before comes back with its own value.
  */
-let loaded: { readonly configuredPath: string | undefined; readonly binding: NativeBinding } | undefined;
+let loaded: { readonly configuredPath: string | undefined; readonly file: EngineFile; readonly binding: NativeBinding } | undefined;
 
 export function loadNativeBinding(): NativeBinding {
   const configuredPath = process.env.RERAIL_ENGINE_PATH;
   if (loaded === undefined || loaded.configuredPath !== configuredPath) {
-    loaded = { configuredPath, binding: requireEngine(resolveNativeBindingPath(configuredPath)) };
+    // Read before the load: a file replaced between the two leaves a stamp no file on disk has, never the new file's.
+    const file = engineFile(resolveNativeBindingPath(configuredPath));
+    loaded = { configuredPath, file, binding: requireEngine(file.path) };
   }
   return loaded.binding;
+}
+
+/**
+ * The engine file the next call into the engine runs: the one this process loaded, with its time and size as they were
+ * then, as Node keeps the engine it loaded though a build replaces its file or writes one ahead of it in the look; while
+ * this process holds no engine under the `RERAIL_ENGINE_PATH` set now, the file a load would take, as it is now.
+ */
+export function loadedEngineFile(): EngineFile {
+  const configuredPath = process.env.RERAIL_ENGINE_PATH;
+  if (loaded !== undefined && loaded.configuredPath === configuredPath) return loaded.file;
+  return engineFile(resolveNativeBindingPath(configuredPath));
+}
+
+function engineFile(path: string): EngineFile {
+  const { mtimeMs, size } = statSync(path);
+  return { path, mtimeMs, size };
 }
 
 /** The engine at `addonPath`; the first one this process loads is told where Rerail's package is. */
