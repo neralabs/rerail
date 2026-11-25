@@ -94,6 +94,8 @@ pub mod cone_rounds;
 pub mod prepared;
 pub use rerail_corpus_memo::code_rule_dsl::logic::plan::corpus::maintain;
 pub mod retain;
+// SPIKE (spike-w-refs): W's reference graph in Rust in place of its strata.
+pub(crate) mod w_refs;
 pub use rerail_corpus_memo::code_rule_dsl::logic::plan::corpus::keptstats;
 pub mod input_delta;
 pub use inputs::parameters as input_parameters;
@@ -2966,7 +2968,7 @@ fn run_observed_within(
         Some(cache) if t.is_none() => Some(memo::Memo::Stored(cache)),
         _ => None,
     };
-    let memoised = memo.is_some() && t.is_none() && unlocated.is_empty() && !reads_declared && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off") && options.get("memo").and_then(|v| v.as_str()) != Some("off");
+    let memoised = memo.is_some() && t.is_none() && unlocated.is_empty() && !reads_declared && !w_refs::on() && std::env::var("RERAIL_CORPUS_MEMO").map_or(true, |v| v != "off") && options.get("memo").and_then(|v| v.as_str()) != Some("off");
     crate::code_rule_dsl::logic::profile::decision("per-file memo", || match (&located, memoised) {
         (_, true) => format!("each file's file-local rows are memoised under its content, path and the run's plan; {} relations given a document column; {}", located.as_ref().map_or(0, Vec::len), match prepared_placed.fields().map(|f| crate::code_rule_dsl::typing::file_local::moved_in(&f)).unwrap_or_default() {
             m if m.is_empty() => "none moved to the cross-file part".to_owned(),
@@ -3294,7 +3296,7 @@ fn run_observed_within(
             named[i] |= !matches!(t, crate::code_rule_dsl::logic::program_image::TermRef::Wild);
         }
     }
-    for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
+    for rel in split.base.iter().filter(|rel| !(w_refs::on() && w_refs::RELATIONS.contains(&rel.as_str())) && !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = projection.columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
             "node" if decodes => &["d", "n"],
@@ -4501,6 +4503,9 @@ fn run_observed_within(
     }
     let chunk_matchers = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the chunks' matchers, compiled".into()); matchers::compiled(matchers, &demand, &ProgramFields::policies(head)).map_err(Error::Plan)? };
     let keep_tapes = !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
+    // SPIKE (spike-w-refs): W's reference graph summarizes each file from its tape as it is built.
+    let w_refs = w_refs::Files::new(&read, docs.iter().map(|(_, p)| p.as_str()), matches!(projection.shape, syntax::Shape::Core));
+    let keep_tapes_built = keep_tapes || w_refs.is_some();
     if !chunk_matchers.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
     }
@@ -4587,9 +4592,9 @@ fn run_observed_within(
                             }
                         };
                         if tape.is_some() { &file_tapes.0 } else { &file_tapes.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        core::build_in_wave_with_tape(&file, cache, Some(source_digest), tape.as_ref(), true, keep_tapes)
+                        core::build_in_wave_with_tape(&file, cache, Some(source_digest), tape.as_ref(), true, keep_tapes_built)
                     }
-                    None => core::build_with_tape(&file, keep_tapes),
+                    None => core::build_with_tape(&file, keep_tapes_built),
                 }
                 .map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
                 let Built::Facts(facts) = built else { return Err(Error::Plan(format!("{path} did not parse"))) };
@@ -4601,6 +4606,10 @@ fn run_observed_within(
         };
         let (facts, tape) = held.as_ref();
         let tape = tape.as_ref();
+        if let (Some(w), Some(doc)) = (&w_refs, tape) {
+            w.add(*d as u32, path, &file.source, facts, doc)?;
+        }
+        let tape = tape.filter(|_| keep_tapes);
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
         let tape = tape.cloned().map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
@@ -8610,6 +8619,15 @@ fn run_observed_within(
         }
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(db, &rel, source)?;
+    }
+    // SPIKE (spike-w-refs): W's reference graph, linked, bound as the cross part's base relations.
+    if let Some(w) = &w_refs {
+        for (rel, columns, values) in w.relations(store)? {
+            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
+            cross_stats.measured(rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+            cross_inputs.push((rel.to_owned(), Arc::clone(&source)));
+            modules.bind(db, rel, source)?;
+        }
     }
     // One fixpoint (no bounded rounds) reads each export from `x` when its first reader runs and drops it, and each
     // base relation held for it, after its last; rounds read them all, every round. A session's run keeps its

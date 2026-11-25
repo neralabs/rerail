@@ -95,6 +95,8 @@ unicode-normalization = "=0.1.26"
 zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-facts = { path = "../facts", default-features = false }
+# SPIKE (spike-w-refs): W's reference graph, `corpus::w_refs`.
+rerail-adapters = { path = "../adapters", default-features = false }
 # The logic language's core, under the planner (the crate split, step 5).
 rerail-logic-core = { path = "../logic_core", default-features = false }
 # The cost statistics (`logic::costs`), which the corpus starts and reports.

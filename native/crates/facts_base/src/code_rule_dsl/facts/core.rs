@@ -1259,6 +1259,9 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "prev_token" => &["n", "s"],
         "token" | "rr_token_anon" => &["p", "i", "s", "start", "end_"],
         "rr_token_named" => &["p", "i", "c", "start", "end_"],
+        // SPIKE (spike-w-refs): W's Python reference graph, bound by the run (`corpus::w_refs`).
+        "reference_edge" => &["src", "dst", "via"],
+        "reference_open" => &["n"],
         "rx_span" => &["p", "c", "j", "g", "m"],
         "ast_match" => &["p", "n", "g", "c"],
         // Decision 0055's (`facts::vtab::syntax::guests`).

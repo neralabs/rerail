@@ -107,7 +107,7 @@ struct Pass<'a> {
 impl<'a> Pass<'a> {
     /// A relation the chunk holds by document: file-local or a base input of the chunk.
     fn usable(&self, rel: &str) -> bool {
-        (self.local.contains(rel) || self.f.is_input(rel)) && self.same_doc.contains_key(rel)
+        (self.local.contains(rel) || self.f.is_input(rel)) && !matches!(rel, "reference_edge" | "reference_open") && self.same_doc.contains_key(rel)
     }
     fn same(&self, rel: &str, at: usize) -> bool {
         self.same_doc.get(rel).is_some_and(|c| c.contains(&at))

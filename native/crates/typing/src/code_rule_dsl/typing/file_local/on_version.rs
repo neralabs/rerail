@@ -359,6 +359,10 @@ impl<'v> Program<'v> {
     /// `pkg`, `syntax_error`, `cpython_syntax_error`, the source text's, the path's, the guests') and `docof(n, d)`'s
     /// document.
     fn base_locations(&self, rel: &str) -> Vector<usize> {
+        // SPIKE (spike-w-refs): the reference graph is cross-file, bound by the run.
+        if matches!(rel, "reference_edge" | "reference_open") {
+            return Vector::new();
+        }
         // An undeclared one (a tree axis before lowering declares it) has none of its own, as the tree's.
         let mut columns: Vector<usize> = self.f.columns(rel).unwrap_or_default().iter().enumerate().filter(|(_, (_, t))| *t == "node").map(|(i, _)| i).collect();
         if let Some(column) = document_column(rel) {
