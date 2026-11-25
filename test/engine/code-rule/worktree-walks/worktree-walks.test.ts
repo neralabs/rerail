@@ -772,6 +772,26 @@ describe("a walk of the other worktrees with change notices", () => {
     expect(audited(seer).flatMap(([paths]) => paths)).toContain("written ../w2/src/a.py");
   });
 
+  // A stamp proves a file unchanged since a walk read it only where the walk read a stamp older than its own start: a
+  // write in the clock tick of the read can leave the stamp as it was. So a file written after the walk began goes to
+  // Git's reading, though Git names it as holding HEAD's text and its stamp holds after the listing.
+  it("reads Git's verdict of a file written after the walk began, for a session that first sees its worktree", async () => {
+    const { main } = await repository([]);
+    const walks = noticedWalks();
+    const named = [main];
+    const seer = await session(main, named, walks);
+    const added = join(dirname(main), "w2");
+    git(main, "worktree", "add", "--quiet", "--detach", added);
+    named.push(added);
+    const listing = holdListing(join(added, "src"));
+    const walked = turn(seer);
+    await listing.entered;
+    await writeFile(join(added, "src", "a.py"), "old\n");
+    listing.release();
+    await walked;
+    expect(blobReads.get(added) ?? 0).toBe(1);
+  });
+
   it("stats no entry when a file Git ignores changes after a walk that read no worktree", async () => {
     const { main, worktrees, checkouts } = await repository();
     const cache = join(worktrees[2]!, "src", "cache.tmp");
