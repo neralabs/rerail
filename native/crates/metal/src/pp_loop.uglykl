@@ -1241,6 +1241,16 @@ UKL_INLINE uint32_t lp_node_of(UKL_GLOBAL LpRun* r, Ux u, Ar a, uint32_t at, uin
 UKL_INLINE uint32_t lp_node(UKL_GLOBAL LpRun* r, Ux u, Ar a, uint32_t at, uint32_t n, uint32_t live) {
     return lp_node_of(r, u, a, at, n, live, false);
 }
+// An argument's expansion as a node (decision 0613 §4, arguments as references): one entry that is a span of more
+// than `LP_NODE_SPAN` tokens a node of it too, so the calls it is passed on to read its summary (`lp_node_sum`,
+// made once), not its tokens again at each level: the argument's own span too (passed through unchanged), a memo
+// template's hole of the argument as the span is (`lp_node_one_span`).
+#define LP_NODE_SPAN (8u)
+UKL_INLINE uint32_t lp_node_arg(UKL_GLOBAL LpRun* r, Ux u, Ar a, uint32_t at, uint32_t n, uint32_t live) {
+    LpTok e = lp_get(r, a, 1u, at);
+    bool span = n == 1u && lp_is_span(e) && !lp_is_node(e) && !LP_IS_HOLE(e) && lp_span_len(e) > LP_NODE_SPAN;
+    return lp_node_of(r, u, a, at, n, live, span);
+}
 
 // Arguments as holes (decision 0613 §1): a call keyed by its arguments' spelling keeps its result with the
 // places it read its arguments at open, and a hit fills them with its own. A hole is an entry (or an output
@@ -1269,7 +1279,31 @@ UKL_INLINE uint32_t lp_hole_of(UKL_GLOBAL LpRun* r, Ar a, uint32_t ra, uint32_t 
     }
     return LP_HOLE_NONE;
 }
+// A node of one span (an argument's expansion, `lp_node_arg`) is that span's hole, as the span would be.
+UKL_INLINE bool lp_node_one_span(Ar a, LpTok e, UKL_PRIVATE LpTok* x) {
+    if (!lp_is_node(e) || a.psrc[e.st] != 1u) return false;
+    *x = lp_gget(a, e.st + LN_ENTRIES);
+    return lp_is_span(*x) && !lp_is_node(*x) && !LP_IS_HOLE(*x);
+}
+// A call's raw entries `lo..hi` about to be posted with it: each node of one span (an argument's expansion passed
+// on, `lp_node_arg`) its span again, read as the node's frame would read it (`lp_xin`: its rows the node's, its
+// first token's space the node's). A request's raw tokens are its holders' by their index (`XP_ARG`), which a
+// node's entries have no form for (`lp_raw_flat`); the poster reads these entries no more once it posts.
+UKL_INLINE void lp_raw_unwrap(UKL_GLOBAL LpRun* r, Ar a, uint32_t lo, uint32_t hi) {
+    for (uint32_t k = lo; k < hi; k++) {
+        LpTok e = lp_get(r, a, 0u, k), one;
+        if (!lp_node_one_span(a, e, &one)) continue;
+        LpTok x = lp_xin(one, e.xp, e.org == LP_NONE ? 0u : e.org);
+        x.flags = (x.flags & ~15u) | (e.flags & 15u);
+        lp_put(r, a, 0u, k, x);
+    }
+}
 UKL_INLINE uint32_t lp_hole_entry(UKL_GLOBAL LpRun* r, Ar a, LpMemo mo, LpTok e, UKL_PRIVATE bool* part) {
+    LpTok one;
+    if (lp_node_one_span(a, e, &one)) {
+        uint32_t c = lp_hole_of(r, a, mo.ra, mo.rn, lp_span_src(one.src & ~P_KIND), one.st, lp_span_len(one), false, part);
+        if (c != LP_HOLE_NONE) return c;
+    }
     if (lp_is_node(e)) return lp_hole_of(r, a, mo.ra, mo.rn, 0u, e.st, 1u, true, part);
     bool sp = lp_is_span(e);
     return lp_hole_of(r, a, mo.ra, mo.rn, sp ? lp_span_src(e.src & ~P_KIND) : e.src, e.st, sp ? lp_span_len(e) : 1u, false, part);
@@ -1280,6 +1314,9 @@ UKL_INLINE LpTok lp_hole_fill(UKL_GLOBAL LpRun* r, Ar a, uint32_t ra, LpTok e, u
     LpTok x = lp_get(r, a, 0u, ra + (code >> 16));
     uint32_t off = code & 0xffffu;
     if (lp_is_node(x)) { x.flags = (x.flags & ~15u) | (e.flags & 15u); return x; }
+    // A node of one span: the span's run, its length the span's, its first token's space the node's.
+    LpTok one;
+    if (lp_node_one_span(a, e, &one)) e.flags = (one.flags & ~15u) | (e.flags & 15u);
     LpTok t;
     if (lp_is_span(e)) {
         t = lp_is_span(x) ? x : lp_span_of(x, 1u, 0u);
@@ -1963,7 +2000,9 @@ UKL_INLINE void lp_args_post(UKL_GLOBAL LpRun* r, Ux u, Ar a, UKL_GLOBAL LpCall*
         uint32_t e = r->mem[1].base + c->tab + q;
         if (q == q0 || a.pexp[e] != LP_NONE) continue;
         uint32_t lo = lp_raw_at(r, a, *c, q), hi = lp_raw_end(r, a, *c, q), rn = hi - lo;
-        if (!lp_arg_worth(r, u, a, lo, hi) || !lp_raw_flat(r, a, lo, hi)) continue;
+        if (!lp_arg_worth(r, u, a, lo, hi)) continue;
+        lp_raw_unwrap(r, a, lo, hi);
+        if (!lp_raw_flat(r, a, lo, hi)) continue;
         uint32_t n = RQ_ENTRIES + rn + ndr + LP_LB_ENTRIES, rq = ukl_atomic_add(&a.ctl[0], n);
         if (rq + n > a.tok_cap || rq + n < rq) return;
         uint32_t rb = rq + RQ_ENTRIES, d0 = rb + rn, lb = d0 + ndr;
@@ -3077,7 +3116,9 @@ UKL_INLINE bool lp_collect_close(UKL_GLOBAL LpRun* r, UKL_PRIVATE LpOut* o, Ux u
     // argument another group reads too): a request too, its hole in the argument's expansion (decision 0613 §4).
     bool inarg = r->cl_m < L_DEFS && (r->rq == LP_NONE ? r->rq_on : r->rq_sub) && r->nc > (r->rq == LP_NONE ? 0u : 1u) && r->cl_sp == r->sp;
     for (uint32_t j = 0u; j < r->nc && inarg; j++) if ((r->calls[(j) & (LP_CALLS - 1u)].bi & LP_BI_DUP) != 0u) inarg = false;
-    if ((r->rq_on && r->nc == 0u && r->sp == 1u && (r->cl_name.src & P_KIND) == P_TOP) || ((inarg || (r->rq_sub && r->nc == 1u && r->cl_sp == r->sp)) && lp_raw_flat(r, a, r->cl_cstart, r->mem[0].top))) {
+    bool sub = inarg || (r->rq_sub && r->nc == 1u && r->cl_sp == r->sp);
+    if (sub) lp_raw_unwrap(r, a, r->cl_cstart, r->mem[0].top);
+    if ((r->rq_on && r->nc == 0u && r->sp == 1u && (r->cl_name.src & P_KIND) == P_TOP) || (sub && lp_raw_flat(r, a, r->cl_cstart, r->mem[0].top))) {
         uint32_t edge = lp_rq_edge(r, u, a);
         if (r->stop != 0u) return false;
         if ((edge & RQ_NEXTP) == 0u) return lp_rq_post(r, o, u, a, trn, r->cl_m, nargs, tab, r->cl_cstart, r->cl_nsp, r->cl_org, r->cl_name.st, edge);
@@ -3981,7 +4022,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     c->bi &= ~LP_BI_DUP;
                     uint32_t e1 = rp->mem[1].base + c->tab + c->p, live = a.pn[e1];
                     a.pst[e1] = c->ocur; a.pn[e1] = rp->mem[1].top - c->ocur;
-                    a.pexp[e1] = lp_node(rp, u, a, c->ocur, rp->mem[1].top - c->ocur, live);
+                    a.pexp[e1] = lp_node_arg(rp, u, a, c->ocur, rp->mem[1].top - c->ocur, live);
                     if (rp->stop != 0u) break;
                     rp->mem[0].top = rp->fr[(rp->sp - 1u) & (LP_DEPTH - 1u)].mark;
                     rp->sp--;

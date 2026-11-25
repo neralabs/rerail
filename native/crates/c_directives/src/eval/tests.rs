@@ -2948,6 +2948,51 @@ fn the_frames_are_as_deep_as_the_input() {
     }
 }
 
+/// Decision 0613 §4: a call takes its arguments as references. An argument passed on through `depth` calls is a
+/// reference at each, never its entries again: the longest piece's steps for a tuple of 256 elements passed 1 and
+/// 8 levels down differ by what they differ for one of 2 elements, give or take a few steps (the calls' own), and
+/// the tuple is read twice in all (its names, its commas at the end), a window a step: a tuple that is a macro's
+/// body (the argument's expansion) and one written in the text (the raw argument, passed on unchanged). Each output
+/// is the serial pass's, none refused.
+#[test]
+fn an_argument_passed_on_costs_nothing_for_its_size() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::expand_from;
+    // `in_text`: the tuple written in the call's argument (the text's span, the raw argument passed on unchanged),
+    // else a macro's body (`T`'s: the argument's expansion).
+    let steps = |n: usize, depth: usize, in_text: bool| -> u32 {
+        let elems: Vec<String> = (0..n).map(|i| format!("e{i}")).collect();
+        let tuple = format!("({})", elems.join(", "));
+        let mut text = format!("#define T {tuple}\n#define P0(x) x\n#define FIRST(a, ...) a\n#define APPLY(f, t) f t\n");
+        for k in 1..=depth {
+            text += &format!("#define P{k}(x) P{}(x)\n", k - 1);
+        }
+        let arg = if in_text { tuple.clone() } else { "T".to_string() };
+        text += &format!("int v = APPLY(FIRST, P{depth}({arg}));\n");
+        let what = format!("{n} elements, {depth} deep, in the text {in_text}");
+        let (got, want, refused, _) = expanded(&[("main.c", text.as_str())], false);
+        same(refused, 0, format!("{what}: refused"));
+        same(got.map(|g| show(&g)), Ok(show(&want)), what.clone());
+        let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), text.into_bytes())].into_iter().collect();
+        let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+        let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+        let x = expand_from(&d.unit, &d.lay, 0).unwrap();
+        same(x.refused, 0, format!("{what}: refused on the device"));
+        x.steps
+    };
+    for in_text in [false, true] {
+        let (s2, s2d, s256, s256d) = (steps(2, 1, in_text), steps(2, 8, in_text), steps(256, 1, in_text), steps(256, 8, in_text));
+        let what = if in_text { "written in the text" } else { "a macro's body" };
+        eprintln!("steps, {what}: 2 elements {s2} (1 deep) {s2d} (8 deep); 256 elements {s256} (1 deep) {s256d} (8 deep)");
+        // Passing it on: the same steps a level whatever its size.
+        assert!(s256d.abs_diff(s256) <= s2d.abs_diff(s2) + 8, "{what}: passing 256 elements 7 levels more cost {} steps, 2 elements {}", s256d - s256, s2d - s2);
+        // Reading it: twice (its names looked up where it is expanded, its commas where `FIRST` splits it), a step a
+        // window of 32 tokens (a group's width), not once a level or an element.
+        let reads = 2 * (2 * 256 + 1u32).div_ceil(32);
+        assert!(s256 <= s2 + reads + 4, "{what}: 256 elements cost {s256} steps, 2 elements {s2}");
+    }
+}
+
 /// Decision 0588 §1: the text's expansion is one phase of the loop, whatever its rescans' depth (the rounds took
 /// a few phases a rescan): a run's phases are the same for chains of object-like and function-like macros 1, 8 and
 /// 20 deep, and each output is the serial pass's.

@@ -851,6 +851,35 @@ So:
        - After: 0 failures in 25 runs on CUDA; the 51 eval tests pass on the CPU backend and CUDA.
      - Boost: 61 of 64 units the serial pass's, the same three `seq.*` refused (a batch past 4 GiB, reported as a
        device error), 31.0 s GPU against 32.8 s. The corpus: 3,135 of 3,135, none refused, 0.30 s GPU.
+   - **Then (2026-11-25): an argument passed on is a reference, whatever its size** (§4's arguments as references,
+     which the collector windows above had only made cheaper per entry).
+     - What was not built: an argument's expansion of one entry was passed on bare, never a node. A span (a macro's
+       body, or the text's own tokens) has no summary, so each call it was passed on to read all its tokens again:
+       to find its arguments' commas, and again to look its names up. A 256-element tuple passed 7 levels on cost
+       174 steps more on the CPU backend (2 elements: 38).
+     - Now a span of more than `LP_NODE_SPAN` (8) tokens that is an argument's expansion is a node of one entry
+       (`lp_node_arg`). Its summary is made once, on the first read (`lp_node_sum`), and every later call takes it
+       whole. The same 7 levels cost 27 steps for 256 elements (the body's) and 25 (the text's).
+     - Two places a node of one span must be read as its span:
+       - a memo template's hole: a hit fills it with its own argument (`lp_node_one_span`, `lp_hole_entry`,
+         `lp_hole_fill`);
+       - a call posted as a request: its raw tokens are its holders' by their index (`XP_ARG`), which has no form for
+         a node's entries (`lp_raw_flat` refused them, and the calls ran inline: `array.c` 2.23 M steps). At posting
+         such a node is its span again (`lp_raw_unwrap`).
+     - `array.c`'s big unit, CPU backend: 787 K steps against 880 K, the longest piece 86.7 K against 99.4 K; the memo
+       keeps 4,966 results (4,983 before).
+     - Test: `an_argument_passed_on_costs_nothing_for_its_size` (a tuple of 2 and of 256 elements, a macro's body and
+       written in the text, 1 and 8 levels deep: the extra levels cost what they cost for 2 elements, and the tuple
+       is read twice in all, a 32-token window a step).
+     - Validation (spark2): the 52 eval tests pass on the CPU backend and CUDA. Boost on CUDA, run alone: 61 of 64,
+       the same three refused, 30.5 s GPU against 31.0 s. The corpus: 3,135 of 3,135, 0.31 s GPU.
+       `a_disabled_macro_paints_alike_in_a_memoized_expansion` failed once on CUDA in a full suite run, its message not
+       kept; it passed 3 full suite runs and 42 runs alone or four at a time after. Its arguments are at most 8
+       tokens, so none of this step's paths is reached there.
+     - Still a cost of the argument's size, not counted in steps: sealing a node hashes its tokens' spelling
+       (`lp_node_seal`), and a memo key hashes its arguments' spelling, both on one thread; a posted call's request
+       makes its argument's node again. A request's raw arguments are still copied into its record (`lp_rq_post`,
+       `lp_rq_begin`), and a node's tokens still have their origins in each run's log, not the tree (§6).
 
 3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
