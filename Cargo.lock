@@ -5830,6 +5830,7 @@ dependencies = [
  "serde_json",
  "tao",
  "tray-icon",
+ "zbus",
 ]
 
 [[package]]

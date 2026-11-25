@@ -44,16 +44,22 @@ pub fn run() -> ! {
 /// Exits with the reason on stderr, which the daemon logs once: 2 when there is no tray on this desktop, 1 for any
 /// other failure.
 fn exit_for(error: &Error) -> ! {
-    match error {
-        Error::Watcher(_) | Error::WontShow => {
-            eprintln!("rerail-tray: {NO_HOST}");
-            std::process::exit(2)
-        }
-        other => {
-            eprintln!("rerail-tray: could not show the tray icon: {other}");
-            std::process::exit(1)
-        }
+    if no_host(error) {
+        eprintln!("rerail-tray: {NO_HOST}");
+        std::process::exit(2)
     }
+    eprintln!("rerail-tray: could not show the tray icon: {error}");
+    std::process::exit(1)
+}
+
+/// Whether `error` says this desktop has no tray: no StatusNotifierWatcher on the session bus (D-Bus answers
+/// `ServiceUnknown`), or one with no host to draw the icon. A watcher that is there but refuses the icon is another
+/// failure, whose own words are logged.
+fn no_host(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Watcher(zbus::fdo::Error::ServiceUnknown(_)) | Error::WontShow
+    )
 }
 
 /// Menu text as given. dbusmenu reads a lone `_` as a keyboard mnemonic marker and shows `__` as one `_`, so each
@@ -175,6 +181,17 @@ impl Tray for RerailTray {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_missing_watcher_or_host_is_no_tray_host() {
+        let unknown = zbus::fdo::Error::ServiceUnknown(
+            "The name org.kde.StatusNotifierWatcher was not provided by any .service files".into(),
+        );
+        assert!(no_host(&Error::Watcher(unknown)));
+        assert!(no_host(&Error::WontShow));
+        let denied = zbus::fdo::Error::AccessDenied("not allowed".into());
+        assert!(!no_host(&Error::Watcher(denied)));
+    }
 
     #[test]
     fn labels_keep_their_underscores() {

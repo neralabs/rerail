@@ -23,3 +23,5 @@ tray-icon = { version = "=0.27.0", default-features = false }
 # The Linux icon, over the StatusNotifierItem D-Bus protocol: no GTK, and no async runtime of ours.
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "=0.3.7", default-features = false, features = ["blocking", "async-io"] }
+# ksni's own zbus, named only to tell a missing StatusNotifierWatcher from another failure to register with one.
+zbus = { version = "=5.19.0", default-features = false }

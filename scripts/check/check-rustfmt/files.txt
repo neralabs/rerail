@@ -373,5 +373,6 @@ scripts/profiling/preparation/src/code_rule_dsl.rs
 scripts/profiling/reachability/src/code_rule_dsl.rs
 tray/src/art.rs
 tray/src/desktop.rs
+tray/src/linux.rs
 tray/src/main.rs
 tray/src/protocol.rs
