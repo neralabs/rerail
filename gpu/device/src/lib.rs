@@ -70,11 +70,14 @@ pub mod shared {
         SHARED.get().and_then(Option::as_ref)
     }
 
-    /// The process's device and queue: `None` without a device. The CPU's when `RERAIL_GPU=cpu`
+    /// The process's device and queue: `None` without a device, and with `RERAIL_GPU=none`. The CPU's when `RERAIL_GPU=cpu`
     /// (`device::cpu_chosen`), an OpenCL GPU's when `RERAIL_GPU=opencl`, else the target's GPU's.
     pub fn get() -> Option<&'static Shared> {
         SHARED
             .get_or_init(|| {
+                if crate::device::none_chosen() {
+                    return None;
+                }
                 // A measurement aid: `RERAIL_DEVICE_TRACE` prints where the process first opens the device.
                 if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
                     eprintln!("RERAIL_DEVICE_TRACE the device opened at:\n{}", std::backtrace::Backtrace::force_capture());
