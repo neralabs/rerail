@@ -1157,6 +1157,32 @@ fn an_unbound_relation_is_named() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A program's own input that nothing gives (`tsx/node-package.rerail`'s `npm_ignored`, `tsx/node-resolve.rerail`'s
+/// `spec_resolved`) is bound empty where the cross-file part reads it: its negation holds everywhere, its reads find
+/// nothing, and the run does not stop at "no columns for" it.
+#[test]
+fn a_programs_own_input_nothing_gives_is_read_empty_across_files() {
+    let dir = corpus("own-input-empty", &[TREE, ("u.py", "import t\n")]);
+    let program = r#"
+.decl ignored(path: symbol)
+.input ignored
+.decl resolved(n: node, file: symbol)
+.input resolved
+.decl kept(p: symbol)
+kept(p) :- doc(_, p, _), !ignored(p).
+.decl failed(p: symbol)
+failed(p) :- kind(n, "import_statement"), docof(n, d), doc(d, p, _), !resolved(n, _).
+.decl found(p: symbol, f: symbol)
+found(p, f) :- kind(n, "import_statement"), docof(n, d), doc(d, p, _), resolved(n, f), doc(_, f, _).
+.output kept, failed, found
+"#;
+    let [kept, failed, found] = <[_; 3]>::try_from(run(&dir, program, &["kept", "failed", "found"])).unwrap();
+    assert_eq!(kept, vec![r!["t.py"], r!["u.py"]]);
+    assert_eq!(failed, vec![r!["u.py"]]);
+    assert!(found.is_empty(), "{found:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The run that failed before (`an_unbound_relation_is_named`'s fourth case in the first three's directory): a
 /// failed run's store reopened.
 #[test]
