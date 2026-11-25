@@ -9,7 +9,7 @@
  *   writes none, taken again once the file's stamp changed): a path the index tracks is never ignored, and the matcher
  *   reads its rules again with the index; every answer of the checkout ends, and answers are kept again. An index that
  *   cannot be read keeps none;
- * - a `.gitignore` on the way to the path changed, appeared or went (its text, folder by folder from the checkout's
+ * - a `.gitignore` on the way to the path changed, appeared or went (its bytes, folder by folder from the checkout's
  *   root): the answers of that folder and the folders below it end, and the matcher is told to read the folders'
  *   files again as questions enter them (`sourcesUnchanged`), as it does once a question leaves a folder; where it says
  *   the rules it read changed (the configuration, the excludes file, the root `.gitignore`, `info/exclude`), which it
@@ -35,7 +35,7 @@ const SHA1_BYTES = 20;
  */
 const STAMP_TELLS_AFTER_NS = 2_015_625_000n;
 
-/** The answers of one folder's entries, with its `.gitignore` as they were learnt (`rulesOf`). */
+/** The answers of one folder's entries, with the stamp of its `.gitignore` they were learnt under (`rulesOf`). */
 export interface FolderAnswers {
   readonly rules: string;
   /** Git's answer for each entry, by its path; a folder's path ends with `/`. */
@@ -52,13 +52,15 @@ export interface CheckedInWalk {
 }
 
 /**
- * The `.gitignore` at `path` as its rules come from it: its text, "none" where there is no such file, or the failure of
- * a read that fails, so the answers learnt while it fails end once it no longer does. The engine reads a rules file by
- * its bytes too: a rewrite at the same size within one tick of the file clock changes it, and a touch does not.
+ * The `.gitignore` at `path` as its rules come from it: the SHA-256 of its bytes, "none" where there is no such file,
+ * or the failure of a read that fails, so the answers learnt while it fails end once it no longer does. The engine
+ * reads a rules file by its bytes too: a rewrite at the same size within one tick of the file clock changes it, and a
+ * touch does not.
  */
 function rulesOf(path: string): string {
   try {
-    return lstatSync(path, { throwIfNoEntry: false }) === undefined ? "none" : `text ${readFileSync(path, "latin1")}`;
+    if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return "none";
+    return `digest ${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
   } catch (error) {
     return `failed ${(error as NodeJS.ErrnoException).code ?? "?"}`;
   }
