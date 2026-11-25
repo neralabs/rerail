@@ -1016,6 +1016,27 @@ pub struct ExecutionArena {
     greedy_indexes: HashMap<(u16, u32, u32, u32, u32), u32>,
 }
 
+impl ExecutionArena {
+    /// As `default`, its containers' room kept: one arena serves every root of a run (`execute_roots_split`), where
+    /// an arena a root made seven containers each time (2.3 M arenas on cold PostHog).
+    pub fn clear(&mut self) {
+        self.captures.truncate(1);
+        self.captures[0].clear();
+        self.ordered_captures.truncate(1);
+        self.capture_transitions.clear();
+        self.cursors.truncate(1);
+        self.cursors[0].clear();
+        self.cursor_indexes.clear();
+        self.cursor_indexes.insert(Vec::new(), 0);
+        self.repeats.truncate(1);
+        self.repeats[0].clear();
+        self.repeat_indexes.clear();
+        self.repeat_indexes.insert(Vector::new(), 0);
+        self.greedy_paths.clear();
+        self.greedy_indexes.clear();
+    }
+}
+
 impl Default for ExecutionArena {
     fn default() -> Self {
         Self {
@@ -3533,12 +3554,15 @@ impl Program {
         let reach = if self.set_mode { set_mode::Reach::of(&self.words) } else { None };
         let eligible = |node: u32, named: bool| !named || tape.transducer_flags(node) & 1 != 0;
         let next_descendant = |from: u32, end: u32, named: bool| (from..end).find(|&node| eligible(node, named));
+        // A root's arena and states, cleared at each root: their room kept across the run's roots.
+        let mut arena = ExecutionArena::default();
+        let mut seen_states = HashMap::<QueryStateKey, CaptureStateSet>::new();
         for root in roots {
             debug_assert!(pending.is_empty());
             let mut fired = 0_u64;
-            let mut seen_states = HashMap::<QueryStateKey, CaptureStateSet>::new();
+            seen_states.clear();
             let mut task_work = 0_usize;
-            let mut arena = ExecutionArena::default();
+            arena.clear();
             pending.push(WorkItem::Path(Path {
                 pc: initial_pc,
                 node: root,
