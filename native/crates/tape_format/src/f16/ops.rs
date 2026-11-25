@@ -100,14 +100,35 @@ pub struct Writer {
     pub(super) jit: Option<&'static Jit>,
 }
 
+thread_local! {
+    /// This thread's writer between documents (`Writer::reused`, `give_back`): its parts' buffers kept.
+    static SPARE: std::cell::Cell<Option<Writer>> = const { std::cell::Cell::new(None) };
+}
+
 impl Writer {
     /// A writer of a document of `source` in `lang`, of about `nodes` nodes, in 16z where `z`, with each block's
     /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow them.
     pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        // (`reused` takes the thread's writer between documents instead.)
         let mut w = Writer::empty();
         w.begin(lang, source, terminators, tag, z, blocks, nodes);
         w
+    }
+
+    /// This thread's writer begun on the next document (as `new`): the one a document before gave back
+    /// (`give_back`), its parts' buffers kept, else a new one. Its parts are a document's working memory (about 20
+    /// buffers): a writer made a document made them each again (1.14 M arrays on cold PostHog).
+    pub fn reused(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        let mut w = SPARE.try_with(|s| s.take()).ok().flatten().unwrap_or_else(Writer::empty);
+        w.begin(lang, source, terminators, tag, z, blocks, nodes);
+        w
+    }
+
+    /// Gives this writer to its thread's next document (`reused`). Its tape, once finished, is the document's own:
+    /// `finish` took it out.
+    pub fn give_back(self) {
+        let _ = SPARE.try_with(|s| s.set(Some(self)));
     }
 
     /// A writer of no document yet, its parts empty: `begin` starts each.

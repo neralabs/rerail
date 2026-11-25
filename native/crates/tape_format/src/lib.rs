@@ -392,7 +392,8 @@ impl<T> Sink<()> for Kept<'_, T> {
 
 /// The format 16 writer the nodes are passed to as they are committed (`Writer::pass`).
 struct Passing {
-    w: f16::Writer,
+    /// The thread's format 16 writer (`f16::Writer::reused`), given back when the parse is done.
+    w: std::mem::ManuallyDrop<f16::Writer>,
     number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
     /// Each code id's number, as far as resolved.
     numbers: Vector<u32>,
@@ -419,6 +420,13 @@ struct Passed {
 
 // SAFETY: `repr(C)`, two words and four `u32`s: no padding, no address.
 unsafe impl Pod for Passed {}
+
+impl Drop for Passing {
+    fn drop(&mut self) {
+        // SAFETY: taken once, here, and not used after.
+        unsafe { std::mem::ManuallyDrop::take(&mut self.w) }.give_back();
+    }
+}
 
 impl Passing {
     fn fail(&mut self, why: impl FnOnce() -> String) {
@@ -580,7 +588,7 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        let w = f16::Writer::new(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap);
+        let w = std::mem::ManuallyDrop::new(f16::Writer::reused(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap));
         self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {

@@ -318,6 +318,11 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     if !c.edges.is_empty() || !c.gates.is_empty() || !c.requests.is_empty() || !c.produced.is_empty() {
         return None;
     }
+    // A lattice relation's rows are folded, one a key, by its join (`Rel::lat`): the closure's reach is of distinct
+    // rows, its seeds pending for its dedup tests, which a fold has no place for. Such a component runs semi-naive.
+    if store.rels.iter().any(|r| r.lat.is_some()) {
+        return None;
+    }
     let nrels = store.rels.len();
     // A lattice relation folds each row it is given, one a key; the closure writes rows by distinct node and pends its
     // seeds as a plain relation's. A component holding one runs semi-naive.

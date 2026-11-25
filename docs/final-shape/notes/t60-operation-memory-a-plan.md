@@ -461,3 +461,52 @@ How 0687 sits with 0342 is recorded in 0687 ("With 0342's stack"). The work it l
    the default room, for everything else.
 4. **Measure again on cold PostHog.** The run is the merged engine against `de8d639702`: instructions, peak and
    findings (29,930). 0342's own figures are for one-file edits of corpus0.
+
+### 9.1 The re-baseline and the batches since (2026-11-25)
+
+A binary from before the merge cannot run against the merged tree (phase 0's library changed with it:
+`cross_file` is not lowered by the old binary). The merged engine (`de3b8fc8b3`, "mg") is the baseline, measured in
+the same session as each batch, cold PostHog on m1max, CPU, with the probe off:
+
+| | Instructions | User CPU | Wall | Peak | Findings |
+|---|---|---|---|---|---|
+| Merged (mg) | 2.698–2.704 T | 252.4–253.8 s | 64.4–67.6 s | 7.83–7.93 GB | 29,930 |
+| Batches 1–2 (`cec68d61cf`) | 2.670 T (−1.0%) | 252.5 s | 65.3 s | 7.53 GB | 29,930 |
+| Batches 1–3 (`151426b629`) | 2.656 T (−1.8%) | 249.7 s (−1.6%) | 63.9 s | 7.57 GB (−0.26 GB) | 29,930 |
+
+The merged engine runs 0.5 T fewer instructions than this morning's step 2 (3.215 T): the hub's and
+Typing-support's own work. Its peak is 0.76 GB more (7.17 GB then).
+
+The merged engine's survey (`RERAIL_PROBE_SCRATCH`, 327 M arrays, 13,306 makers) ordered the batches:
+
+1. **Step 4's operations** (`f79fad2426`). `granules::number` and the memo encoder (`encode_parts`) run in frames.
+   Each writes its table once: the granule table is one region of 18 columns, not 18 arrays.
+2. **Reads in place** (`cec68d61cf`). A walk reads node and long texts where they lie (`node_read_ref`,
+   `Interner::with_name`): 17.15 M and 5.38 M arrays. A tape's digest is shown without a `String`
+   (`tape_hex`, 11.1 M). A projection's 13 rank samples are one region.
+3. **Run and chunk data** (`719c9f4ee5`, `151426b629`, and the plan search's).
+   - A chunk's held rows stay one segment a chunk, in the chunk thread's long room. Before, one run-long array was
+     grown by every chunk.
+   - The cone rounds' answers and the planner's answer log are made in the long room.
+   - A relation's column names are interned once per schema, and its columns' indexes and orders are one list.
+     Before, each relation had `1 + k` strings and two boxes: 3.74 M + 2 × 1.07 M arrays.
+   - A kept plan's search account is shared, not cloned at each of 3.65 M lookups.
+
+The merge's red tests, fixed on the way:
+
+- 0652's check now takes a demand set (`magic_…`) as the engine's own crossing (#932's case).
+- Placement is as 0661 decided.
+- The executor-coverage ledger is blessed.
+- The state censuses follow the crate moves.
+- The closure form refuses a component with a lattice relation.
+
+Left, by the survey:
+
+- `values::Keys::add` (5.44 M). The parts index is copy-on-write: each value admitted clones the parts map (a
+  string per relation), the parts it adds to, and the shards it touches. It wants shards changed in place under the
+  admit lock and read under theirs.
+- The batch's `Vector<i64>` makers inlined into `make_rows` (7.46 M + 1.15 M), found by line in the next survey.
+- The rayon collects (3.7 M).
+- `View::find_into`, `distinct_upto`, `RowsView::lookup`, `scope::Builder::bind` and `ExecutionArena`.
+- The parse writers (`f16::Writer::begin_with`, the largest footprint at 19,650 GB·s).
+- The hand-offs (`Own::put`, `memo::cover`, `Interner::id`).

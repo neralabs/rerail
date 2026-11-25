@@ -70,6 +70,13 @@ impl Format {
     }
 }
 
+impl Drop for TreeOps {
+    fn drop(&mut self) {
+        // SAFETY: taken once, here, and not used after.
+        unsafe { std::mem::ManuallyDrop::take(&mut self.w) }.give_back();
+    }
+}
+
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// The format this thread's run stores, where a test sets it (`as_run`).
@@ -132,7 +139,8 @@ pub fn run_16(language: GrammarDialect) -> Result<(&'static Lang, u8, bool), Str
 /// table lacks, or a node past format 16's bounds, makes `finish` an error.
 pub(super) struct TreeOps {
     lang: &'static Lang,
-    w: f16::Writer,
+    /// The thread's writer (`SPARE`), its parts' buffers kept from the documents before: given back when done.
+    w: std::mem::ManuallyDrop<f16::Writer>,
     /// The open nodes' ends.
     ends: Vec<u32>,
     numbers: rustc_hash::FxHashMap<Code, u32>,
@@ -152,8 +160,11 @@ impl TreeOps {
     pub(super) fn of_run_as(language: GrammarDialect, source: &[u8], nodes: usize, packed: bool) -> Result<Self, String> {
         let (lang, tag, z) = run_16(language)?;
         let z = z && packed;
-        let w = f16::Writer::new(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
-        Ok(TreeOps { lang, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
+        // The thread's writer, used again: its parts are a document's working memory (about 20 buffers), and a new
+        // writer a document made them each again (1.14 M arrays, 14,091 GB·s on cold PostHog). Its tape is the
+        // document's own (`finish` takes it out).
+        let w = f16::Writer::reused(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
+        Ok(TreeOps { lang, w: std::mem::ManuallyDrop::new(w), ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
 
     /// `v`'s number in the language's table, a member of `classes`: `Err` names a code the table lacks.
@@ -192,7 +203,7 @@ impl TreeOps {
 
     /// The tape, or why the nodes are not a format 16 tape.
     pub(super) fn finish(mut self) -> Result<f16::Finished, String> {
-        match self.bad {
+        match self.bad.take() {
             Some(why) => Err(why),
             None => self.w.finish(),
         }

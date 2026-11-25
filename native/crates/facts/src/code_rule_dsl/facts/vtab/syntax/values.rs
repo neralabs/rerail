@@ -94,7 +94,8 @@ const SHARDS: usize = 256;
 
 #[derive(Clone)]
 struct Keys<K: ShardKey = u32> {
-    shards: Vec<Arc<Shard<K>>>,
+    /// Each shard once a key of it is added (none of a key's yet: `None`), so that keys with few entries make few.
+    shards: Vec<Option<Arc<Shard<K>>>>,
 }
 
 /// One shard of the keys, in blocks (decision 0353): per key, the first and last links of its chain in `chained`;
@@ -132,7 +133,7 @@ impl<K: ShardKey> Keys<K> {
     }
     /// The parts that hold rows of key `k`, in the order admitted.
     fn parts(&self, k: K) -> impl Iterator<Item = usize> + '_ {
-        let shard = self.shards.get(Self::shard(k));
+        let shard = self.shards.get(Self::shard(k)).and_then(Option::as_ref);
         let mut at = shard.and_then(|s| s.by_key.get(&k)).map_or(END, |c| c[0]);
         std::iter::from_fn(move || {
             let [part, next] = *shard?.chained.as_slice().get(at as usize)?;
@@ -143,13 +144,15 @@ impl<K: ShardKey> Keys<K> {
     /// Part `i` holds rows of key `k`.
     fn add(&mut self, k: K, i: usize) {
         if self.shards.is_empty() {
-            self.shards = (0..SHARDS).map(|_| Arc::default()).collect();
+            self.shards = vec![None; SHARDS];
         }
-        let shard = &self.shards[Self::shard(k)];
-        if shard.by_key.get(&k).is_some_and(|c| shard.chained[c[1] as usize][0] == i as u32) {
+        let slot = &mut self.shards[Self::shard(k)];
+        if let Some(shard) = slot.as_ref()
+            && shard.by_key.get(&k).is_some_and(|c| shard.chained[c[1] as usize][0] == i as u32)
+        {
             return;
         }
-        let shard = Arc::make_mut(&mut self.shards[Self::shard(k)]);
+        let shard = Arc::make_mut(slot.get_or_insert_with(Arc::default));
         let link = shard.chained.len() as u32;
         match shard.by_key.get_mut(&k) {
             Some(chain) => {
@@ -220,7 +223,7 @@ pub struct Values {
     /// Each relation's parts, as the values admitted so far make them: read without a lock, as every join's probe of a
     /// layered source reads them, and replaced whole by `add`. Read under a read-write lock, the probes of a chunk's
     /// jobs wrote its count of readers each time: a third of the running threads' time spun on it (R7, 0494 step 5).
-    parts: arc_swap::ArcSwap<FxHashMap<String, Arc<Parts>>>,
+    parts: arc_swap::ArcSwap<FxHashMap<Arc<str>, Arc<Parts>>>,
     /// Held while `add` makes the next `parts` from the last.
     adding: parking_lot::Mutex<()>,
     admitted: AtomicUsize,
@@ -258,7 +261,8 @@ impl Values {
 
     fn add_within(&self, own: &[u32], hosts: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
         let _adding = self.adding.lock();
-        let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
+        // The next map from the last: its names shared, not made again (`Arc<str>`).
+        let mut parts: FxHashMap<Arc<str>, Arc<Parts>> = (**self.parts.load()).clone();
         // The keys a part is found by in a lookup by document (`Parts::of`): the values' and their hosts', and its
         // documents' and their files'.
         // A relation whose rows are its documents' own (`Source::rows_of_own_documents`, a view of the value's tape) is
@@ -296,7 +300,10 @@ impl Values {
             } else {
                 (own, true)
             };
-            let p = Arc::make_mut(parts.entry(name).or_default());
+            if !parts.contains_key(name.as_str()) {
+                parts.insert(Arc::from(name.as_str()), Arc::default());
+            }
+            let p = Arc::make_mut(parts.get_mut(name.as_str()).expect("inserted"));
             let i = p.list.len();
             // Its rows past the chunk's and the parts' before, in their block relation: the device binds that whole.
             let slice = src.as_any().and_then(|a| a.downcast_ref::<Slice>());
@@ -524,7 +531,7 @@ impl Layered {
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return None;
         }
-        self.values.parts.load().get(&self.name).filter(|p| !p.list.is_empty()).map(|p| f(p))
+        self.values.parts.load().get(self.name.as_str()).filter(|p| !p.list.is_empty()).map(|p| f(p))
     }
     /// With no value admitted, no relation has parts: a probe of a chunk with none (most of them) reads only the
     /// count, where the parts' load (`arc_swap`'s, a thread-local each) and the name's lookup took about 600 samples
@@ -647,9 +654,9 @@ impl Layered {
     fn solved_in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         let base = self.base.as_any()?.downcast_ref::<super::within::Within>()?;
         let parts = self.values.parts.load();
-        let p = parts.get(&self.name)?;
+        let p = parts.get(self.name.as_str())?;
         let mut solved = self.values.solved.lock();
-        if let Some((n, made)) = solved.get(&self.name)
+        if let Some((n, made)) = solved.get(self.name.as_str())
             && *n == p.list.len()
         {
             return made.as_ref().map(|w| w.in_block(w.len()));
@@ -678,7 +685,7 @@ impl Source for Layered {
             return Some(v);
         }
         let parts = self.values.parts.load();
-        let p = parts.get(&self.name)?;
+        let p = parts.get(self.name.as_str())?;
         p.by_key.parts((n >> 32) as u32).find_map(|i| p.list[i].src.node_read(name, n))
     }
     /// `node_read`, the base's text lent; a part's is made (the parts are read under their list's guard).
@@ -687,7 +694,7 @@ impl Source for Layered {
             return Some(v);
         }
         let parts = self.values.parts.load();
-        let p = parts.get(&self.name)?;
+        let p = parts.get(self.name.as_str())?;
         p.by_key.parts((n >> 32) as u32).find_map(|i| p.list[i].src.node_read(name, n)).map(super::super::NodeRead::Value)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
@@ -816,7 +823,7 @@ impl Source for Layered {
         }
         // The relation's parts, loaded and found once a probe (`has_parts`' and `parts`' one lookup by name).
         let all = self.values.parts.load();
-        let Some(p) = all.get(&self.name).filter(|p| p.total > 0) else {
+        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else {
             return self.base.lookup_read_at(column, value, columns, cursor, each);
         };
         if columns.len() > 8 || !self.base.lookup_read_at(column, value, columns, cursor, each) {
@@ -1240,7 +1247,7 @@ mod tests {
         let after = values.parts.load().get("r").cloned().expect("r's parts");
         let shared = |a: &[Arc<Vec<Part>>], b: &[Arc<Vec<Part>>]| a.iter().zip(b).filter(|(x, y)| Arc::ptr_eq(x, y)).count();
         assert_eq!(shared(&before.list.blocks, &after.list.blocks), before.list.blocks.len() - 1, "every block but the last shared");
-        let copied = before.by_key.shards.iter().zip(&after.by_key.shards).filter(|(x, y)| !Arc::ptr_eq(x, y)).count();
+        let copied = before.by_key.shards.iter().zip(&after.by_key.shards).filter(|(x, y)| !matches!((x, y), (Some(x), Some(y)) if Arc::ptr_eq(x, y)) && (x.is_some() || y.is_some())).count();
         assert_eq!(copied, 1, "one key's shard written again");
         // Each value's rows are found by its key, and each row in its part.
         assert_eq!(after.list.len(), 201);

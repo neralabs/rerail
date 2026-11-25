@@ -5968,11 +5968,12 @@ fn run_observed_within(
         }
         // The files a row is attributed to: its document's (a guest's is its host file's), or every file that asked
         // for its value document. Rows are sets, so a value's rows kept by each of its files restore as one.
-        let owners = |v: i64| -> Vector<i64> {
+        // Lent where they lie, or the one file: a list made a run of rows was 7.4 M on cold PostHog.
+        let owners = |v: i64| -> Owners<'_> {
             let d = memo::document_of(v);
             match askers.get(&d) {
-                Some(files) => files.clone(),
-                None => rerail_blocks::vector![host_of.get(&d).copied().unwrap_or(d)],
+                Some(files) => Owners::Of(files),
+                None => Owners::One([host_of.get(&d).copied().unwrap_or(d)]),
             }
         };
         if chunk_nodes_built > 0 {
@@ -6076,7 +6077,7 @@ fn run_observed_within(
                 // location's node is of.
                 let mut cells: Vec<output::Cell<'_>> = Vec::with_capacity(rows.width());
                 for i in 0..rows.len() {
-                    let files = at.filter(|&c| c < rows.width()).and_then(|c| match rows.cell(i, c) { output::Cell::Int(v) => Some(v), output::Cell::Text(_) => None }).map(owners).unwrap_or_default();
+                    let files = at.filter(|&c| c < rows.width()).and_then(|c| match rows.cell(i, c) { output::Cell::Int(v) => Some(v), output::Cell::Text(_) => None }).map(owners).unwrap_or(Owners::Of(&[]));
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
                         memo_why.insert(format!("output {rel}: {}", if files.is_empty() { "no location" } else { "another chunk's document" }));
                         attributable = false;
@@ -6084,7 +6085,7 @@ fn run_observed_within(
                     }
                     cells.clear();
                     cells.extend((0..rows.width()).map(|c| rows.cell(i, c)));
-                    for d in files {
+                    for &d in files.iter() {
                         let e = entries.get_mut(&d).expect("checked");
                         e.outputs.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), output::Rows::new(rows.types().to_vec()))).1.push(&cells);
                     }
@@ -6102,7 +6103,7 @@ fn run_observed_within(
                     attributable = false;
                     break;
                 }
-                for d in files {
+                for &d in files.iter() {
                     asked.push(by_file.entry(d).or_insert_with(memo::Answered::rows));
                 }
             }
@@ -6117,33 +6118,35 @@ fn run_observed_within(
         // The chunk's own files: their documents' rows no other chunk gives.
         let own_docs: rustc_hash::FxHashSet<i64> = chunk_docs.iter().map(|(d, ..)| *d).collect();
         // Each export's rows by file, for the entries (`attribute`): found on the pool, an export a job, rows coming in
-        // runs of one document, so a run's owners are found once. `Err` names why the chunk's rows cannot be
-        // attributed.
-        let by_file_of = |rel: &str, rows: &dyn crate::code_rule_dsl::facts::vtab::Source| -> std::result::Result<HashMap<i64, Vector<i64>>, String> {
+        // runs of one document, so a run's owners are found once. Each run is a range of the export's rows and a file
+        // that owns it, in the rows' order: the entries take the rows from where they lie, once (no list a file a
+        // relation made first: 3.7 M on cold PostHog). `Err` names why the chunk's rows cannot be attributed.
+        let by_file_of = |rel: &str, rows: &dyn crate::code_rule_dsl::facts::vtab::Source| -> std::result::Result<Vec<(i64, u32, u32)>, String> {
             let Some(&at) = split.locations.get(rel).and_then(|l| l.first()) else {
                 return Err(format!("export {rel}: no location column"));
             };
-            let width = rows.columns().len();
-            let mut by_file: HashMap<i64, Vector<i64>> = HashMap::new();
-            let mut run: Option<(i64, Vector<i64>)> = None;
-            let mut row = Vec::with_capacity(width);
+            let mut runs: Vec<(i64, u32, u32)> = Vec::new();
+            // The run under way: its document, its owners, and its first row.
+            let mut run: Option<(i64, Owners<'_>, u32)> = None;
+            let close = |runs: &mut Vec<(i64, u32, u32)>, run: &Option<(i64, Owners<'_>, u32)>, end: u32| {
+                if let Some((_, files, lo)) = run {
+                    runs.extend(files.iter().map(|&f| (f, *lo, end)));
+                }
+            };
             for r in 0..rows.len() {
                 let v = rows.value(r, at);
                 let d = memo::document_of(v);
-                if run.as_ref().is_none_or(|(rd, _)| *rd != d) {
+                if run.as_ref().is_none_or(|(rd, ..)| *rd != d) {
                     let files = owners(v);
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
                         return Err(format!("export {rel}: {}", if files.is_empty() { "a row naming no document" } else { "a row naming another chunk's document" }));
                     }
-                    run = Some((d, files));
-                }
-                row.clear();
-                row.extend((0..width).map(|c| rows.value(r, c)));
-                for f in &run.as_ref().expect("set").1 {
-                    by_file.entry(*f).or_default().extend_from_slice(&row);
+                    close(&mut runs, &run, r as u32);
+                    run = Some((d, files, r as u32));
                 }
             }
-            Ok(by_file)
+            close(&mut runs, &run, rows.len() as u32);
+            Ok(runs)
         };
         // Exports remain in native memory; this boundary performs no SQL writes. Rows another chunk wrote too (a
         // file-local relation without a location column) are kept once; a kept export is measured in place.
@@ -6161,7 +6164,7 @@ fn run_observed_within(
             let _s = crate::code_rule_dsl::logic::profile::span(|| "attribute to files".into());
             use rayon::prelude::*;
             let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-            let found: Vec<std::result::Result<HashMap<i64, Vector<i64>>, String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            let found: Vec<std::result::Result<Vec<(i64, u32, u32)>, String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
                 export_rows.par_iter().map(|(rel, rows)| {
                     let _in = carry.enter();
                     by_file_of(rel, rows.as_ref())
@@ -6169,10 +6172,18 @@ fn run_observed_within(
             });
             for ((rel, rows), found) in export_rows.iter().zip(found) {
                 match found {
-                    Ok(by_file) => {
+                    Ok(runs) => {
                         let width = rows.columns().len();
-                        for (f, values) in by_file {
-                            entries.get_mut(&f).expect("checked").rows.entry(rel.clone()).or_insert_with(|| (width, Vector::new())).1.extend(values);
+                        for (f, lo, hi) in runs {
+                            let held = &mut entries.get_mut(&f).expect("checked").rows;
+                            if !held.contains_key(rel.as_str()) {
+                                held.insert(rel.clone(), (width, Vector::new()));
+                            }
+                            let out = &mut held.get_mut(rel.as_str()).expect("inserted").1;
+                            out.reserve((hi - lo) as usize * width);
+                            for r in lo as usize..hi as usize {
+                                out.extend((0..width).map(|c| rows.value(r, c)));
+                            }
                         }
                     }
                     Err(why) => {
@@ -10673,6 +10684,21 @@ struct ChunkCounted {
     /// Each semi-join's counts at the chunk's held nodes (`chunk_held_counts`).
     held: Vec<(String, keptstats::SemijoinCounts)>,
 }
+/// A run of rows' owning files (`owners` in the export's attribution): the askers' list where it lies, or one file.
+enum Owners<'a> {
+    Of(&'a [i64]),
+    One([i64; 1]),
+}
+impl std::ops::Deref for Owners<'_> {
+    type Target = [i64];
+    fn deref(&self) -> &[i64] {
+        match self {
+            Owners::Of(f) => f,
+            Owners::One(f) => f,
+        }
+    }
+}
+
 /// The most strings a text test's union holds before it is given up (counted off the batch instead).
 const UNION_MOST: usize = 1 << 16;
 impl ChunkCounts {
