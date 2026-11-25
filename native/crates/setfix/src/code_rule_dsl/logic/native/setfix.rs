@@ -9282,13 +9282,49 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         _ => None,
                     }
                 } else {
-                    let mut strs = Vec::new();
-                    let mut numbers = Vec::new();
-                    for (k, a) in kinds.iter().zip(args) {
-                        match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
-                    }
-                    let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
-                    let v = eval(name, &strs, &numbers);
+                    // The arguments' texts read into one buffer, the interner's, and their places, numbers and
+                    // slices in arrays: a string an argument and two lists a call were 3.7 M on cold PostHog.
+                    const ARGS: usize = 8;
+                    let v = if args.len() <= ARGS {
+                        let mut buf = std::mem::take(&mut cx.syms.buf);
+                        buf.clear();
+                        let (mut ends, mut numbers) = ([0usize; ARGS], [0i64; ARGS]);
+                        let (mut nt, mut nn) = (0, 0);
+                        for (k, a) in kinds.iter().zip(args) {
+                            let x = val(slots, *a);
+                            match k {
+                                Kind::Text => {
+                                    match scratch(cx, x) {
+                                        Some(t) => buf.push_str(t),
+                                        None => cx.syms.with_name(x, |t| buf.push_str(t)),
+                                    }
+                                    ends[nt] = buf.len();
+                                    nt += 1;
+                                }
+                                Kind::Number => {
+                                    numbers[nn] = x;
+                                    nn += 1;
+                                }
+                            }
+                        }
+                        let mut strs = [""; ARGS];
+                        let mut from = 0;
+                        for (s, &end) in strs.iter_mut().zip(&ends[..nt]) {
+                            *s = &buf[from..end];
+                            from = end;
+                        }
+                        let v = eval(name, &strs[..nt], &numbers[..nn]);
+                        cx.syms.buf = buf;
+                        v
+                    } else {
+                        let mut strs = Vec::new();
+                        let mut numbers = Vec::new();
+                        for (k, a) in kinds.iter().zip(args) {
+                            match k { Kind::Text => strs.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                        }
+                        let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
+                        eval(name, &strs, &numbers)
+                    };
                     if let (Some((f, s)), Value::Text(t)) = (keep, &v) {
                         cx.syms.atoms.kept().keep_text(f, s, t);
                     }
