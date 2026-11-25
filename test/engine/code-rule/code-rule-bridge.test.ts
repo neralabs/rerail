@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
-import { type Dirent, existsSync, readdirSync } from "node:fs";
+import { type Dirent, existsSync, readdirSync, writeFileSync } from "node:fs";
 import { appendFile, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5687,6 +5687,41 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       asyncGitCalls.failing = undefined;
     }
     expect(editPaths(auditGeneratedEdits)).toContain(named("src/a.py"));
+  });
+
+  // The walk reads a worktree's files before its Git lists them. A file the session's command changed there, that the
+  // walk read and something then put back to HEAD's text before the listing (`git checkout -- <file>`), is one Git names
+  // as holding that text, though the walk read the command's.
+  it("records a file the session's command changed in a worktree before its first walk, put back to HEAD's text before the walk's listing", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
+    const file = join(worktree, "src", "a.py");
+    asyncGitCalls.before = args => {
+      if (!args.includes(worktree) || !args.includes("--modified")) return;
+      asyncGitCalls.before = undefined;
+      writeFileSync(file, "old\nviolation\n");
+    };
+    await shellInWorktree(bridge, async () => {
+      await writeFile(file, "old\nviolation\nmine\n");
+      roots.push(worktree);
+    }, worktree);
+    expect(editPaths(auditGeneratedEdits)).toContain(named("src/a.py"));
+  });
+
+  // Only a newest move of `HEAD` known to be no commit lets a first sight take the listings for Git's verdicts: a commit
+  // may hold what a command wrote, and a reflog Git cannot read does not say.
+  it("reads Git's verdicts in the session for a worktree it first sees whose reflog Git cannot read", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree } = await worktreeAddedLater();
+    asyncGitCalls.failing = "reflog";
+    asyncGitCalls.args.length = 0;
+    try {
+      await shellInWorktree(bridge, () => {
+        roots.push(worktree);
+      });
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
+    expect(asyncGitCalls.args.filter(args => args.includes("cat-file")).length).toBe(1);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
   it("records a file the session's command added and staged in a worktree before its first walk whose listing of the index failed", async () => {

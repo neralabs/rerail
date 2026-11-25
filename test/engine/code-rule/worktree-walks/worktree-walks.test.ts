@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import type * as FileSystem from "node:fs/promises";
 import { cp, lstat, mkdir, mkdtemp, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,8 +20,9 @@ import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 /**
  * How many times a walk read each file whole (`WalkReadBuffers.lend`), by the path it was read at; each path `lstat` was
  * asked about; the listings held back until a test lets them go, by folder; the openings held back the same way, by
- * file; how many times Git listed each checkout's changed files, and read blobs there; and the files whose next opening
- * fails as one another process holds does.
+ * file; how many times Git listed each checkout's changed files, and read blobs there; what runs just before and just
+ * after the next such listing of a checkout, by checkout; and the files whose next opening fails as one another process
+ * holds does.
  */
 const counted = vi.hoisted(() => ({
   reads: new Map<string, number>(),
@@ -30,6 +31,7 @@ const counted = vi.hoisted(() => ({
   heldOpenings: new Map<string, () => Promise<void>>(),
   listings: new Map<string, number>(),
   blobReads: new Map<string, number>(),
+  aroundListing: new Map<string, { readonly before: () => void; readonly after: () => void }>(),
   busy: new Set<string>(),
   heads: 0,
 }));
@@ -72,7 +74,12 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
     ...actual,
     gitFirstSightListing: async (...args: Parameters<typeof actual.gitFirstSightListing>) => {
       counted.listings.set(args[0], (counted.listings.get(args[0]) ?? 0) + 1);
-      return await actual.gitFirstSightListing(...args);
+      const around = counted.aroundListing.get(args[0]);
+      counted.aroundListing.delete(args[0]);
+      around?.before();
+      const listing = await actual.gitFirstSightListing(...args);
+      around?.after();
+      return listing;
     },
     readGitBlobs: async (...args: Parameters<typeof actual.readGitBlobs>) => {
       counted.blobReads.set(args[0], (counted.blobReads.get(args[0]) ?? 0) + 1);
@@ -102,6 +109,7 @@ afterEach(async () => {
   counted.held.clear();
   counted.heldOpenings.clear();
   counted.busy.clear();
+  counted.aroundListing.clear();
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   reads.clear();
   stats.length = 0;
@@ -741,6 +749,27 @@ describe("a walk of the other worktrees with change notices", () => {
     await turn(seer);
     expect({ read: reads.get(join(added, "src", "a.py")) ?? 0, blobs: blobReads.get(added) ?? 0, audits: seer.auditGeneratedEdits.mock.calls.length })
       .toEqual({ read: 0, blobs: 0, audits: 0 });
+  });
+
+  // A kept read pairs what the walk read before with Git's listing of the worktree now. A file the session's command
+  // changed there before that read, put back to HEAD's text for the listing and written again after it (`git stash`,
+  // then `git stash pop`), is one Git names as holding that text, though the kept read and the file hold the command's.
+  it("records a file its command changed in a worktree it first sees from a kept read, put back for the walk's listing and written again", async () => {
+    const { main, worktrees, checkouts } = await repository(["w1"]);
+    const walks = noticedWalks();
+    const named = [main];
+    const seer = await session(main, named, walks);
+    const other = await session(worktrees[0]!, checkouts, walks);
+    const added = join(dirname(main), "w2");
+    git(main, "worktree", "add", "--quiet", "--detach", added);
+    const file = join(added, "src", "a.py");
+    await shell(seer.bridge, "shell-1", () => writeFile(file, "old\nmine\n"), added);
+    checkouts.push(added);
+    await turn(other);
+    named.push(added);
+    counted.aroundListing.set(added, { before: () => writeFileSync(file, "old\n"), after: () => writeFileSync(file, "old\nmine\n") });
+    await turn(seer);
+    expect(audited(seer).flatMap(([paths]) => paths)).toContain("written ../w2/src/a.py");
   });
 
   it("stats no entry when a file Git ignores changes after a walk that read no worktree", async () => {
