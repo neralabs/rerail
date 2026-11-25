@@ -174,6 +174,19 @@ impl RowsIn for BlockFlat {
     fn get(&self, r: usize, c: usize) -> i64 {
         BlockFlat::get(self, r, c)
     }
+    /// Column `c` where it lies: a range of it is a slice of the block's values, rows by position a load each.
+    #[inline]
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        let col = &self.cols()[c * self.n..(c + 1) * self.n];
+        match at {
+            rerail_blocks::packed::At::From(r) => out.copy_from_slice(&col[r..r + out.len()]),
+            rerail_blocks::packed::At::Rows(rows) => {
+                for (o, &r) in out.iter_mut().zip(rows) {
+                    *o = col[r as usize];
+                }
+            }
+        }
+    }
 }
 
 impl KeptPicked for BlockFlat {

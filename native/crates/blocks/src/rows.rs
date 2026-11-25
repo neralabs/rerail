@@ -543,6 +543,45 @@ impl Rows {
             .map(|(_, len, p)| unsafe { std::slice::from_raw_parts(p as *const u32, len) })
     }
 
+    /// Column `c`'s values at rows `from..from + out.len()` into `out`, read where they lie a chunk at a time: a
+    /// sealed chunk's decoded in one pass (`Dec::fill`), a raw chunk's as a slice; no per-row chunk arithmetic or
+    /// encoding dispatch (`get`'s). The rows are reserved.
+    pub fn read_range(&self, c: usize, from: u32, out: &mut [i64]) {
+        let d = self.col(c);
+        let end = u64::from(from) + out.len() as u64;
+        let mut done = 0usize;
+        while done < out.len() {
+            let i = from + done as u32;
+            let (k, place) = chunk_of(i, self.min_log);
+            let first = chunk_first(k, self.min_log);
+            let len = (chunk_rows(k, self.min_log).min(end - first) as usize) - place;
+            let o = &mut out[done..done + len];
+            if let Some(sealed) = d.sealed(k) {
+                sealed.dec().fill(place, o);
+            } else {
+                let (_, _, p) = self.chunk_raw(c, k, end).expect("a reserved row's chunk");
+                if d.width == 4 {
+                    // SAFETY: the chunk holds its rows' 4-byte values from `p`, `place + len` of them reserved.
+                    let s = unsafe { std::slice::from_raw_parts((p as *const u32).add(place), len) };
+                    if d.has_runs() {
+                        for (j, (o, &v)) in o.iter_mut().zip(s).enumerate() {
+                            // SAFETY: the column's runs are set (`set_runs`).
+                            *o = i64::from(unsafe { d.high(i + j as u32) }) << 32 | i64::from(v);
+                        }
+                    } else {
+                        for (o, &v) in o.iter_mut().zip(s) {
+                            *o = i64::from(v);
+                        }
+                    }
+                } else {
+                    // SAFETY: as above, 8-byte values.
+                    o.copy_from_slice(unsafe { std::slice::from_raw_parts((p as *const i64).add(place), len) });
+                }
+            }
+            done += len;
+        }
+    }
+
     /// Column `c`'s first `n` values into `out`, a chunk at a time (no per-row chunk arithmetic).
     pub fn read_col(&self, c: usize, n: u32, out: &mut [i64]) {
         let d = self.col(c);
@@ -813,6 +852,14 @@ mod tests {
                 assert_eq!(rows.get(i, c), want, "row {i} of column {c}");
                 assert_eq!(r.get(i), want);
                 assert_eq!(back[i as usize], want);
+            }
+            // Ranges from inside a chunk, across chunks' ends, to the last row (`read_range`).
+            for (from, len) in [(0u32, n), (1, 9), (63, 2), (1_000, 7_777), (n - 300, 300), (12_345, 1)] {
+                let mut got = vec![0i64; len as usize];
+                rows.read_range(c, from, &mut got);
+                for (j, &g) in got.iter().enumerate() {
+                    assert_eq!(g, col(c, i64::from(from) + j as i64), "row {} of column {c}, read from {from}", from as usize + j);
+                }
             }
         }
         let vals: Vec<i64> = (0..n).map(|i| col(0, i64::from(i))).collect();

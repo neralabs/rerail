@@ -1791,6 +1791,12 @@ impl Part {
         self.cols[c].get(self.skip + i)
     }
 
+    /// Column `c`'s values at its rows `i..i + out.len()`, read where they lie a chunk at a time
+    /// (`rerail_blocks::rows::Rows::read_range`).
+    pub fn read_range(&self, c: usize, i: u32, out: &mut [i64]) {
+        self.rel().rows.read_range(c, self.skip + i, out);
+    }
+
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
     /// host fills (decision 0325 step 4: the device writes a head's rows in place, through the reads written once,
     /// `rows_at`), then says how many it wrote (`written`).
@@ -2852,6 +2858,11 @@ impl Rows {
     /// Rows `lo..hi`, part by part in id order: each part, the rows of it (its own row numbers `from..to`), and the
     /// id of row `from`. A sequential reader finds each part once, not each row's (rows gathered from many relations,
     /// `append_part`, lie in many parts).
+    /// Column `c`'s values at ids `lo..lo + out.len()`, each part's run read as a range of it (`Part::read_range`).
+    pub fn read_range(&self, c: usize, lo: u32, out: &mut [i64]) {
+        self.each_run(lo, lo + out.len() as u32, |p, i, j, id| p.read_range(c, i, &mut out[(id - lo) as usize..(id - lo + j - i) as usize]));
+    }
+
     pub fn each_run(&self, lo: u32, hi: u32, mut f: impl FnMut(&Part, u32, u32, u32)) {
         let mut id = lo;
         while id < hi {

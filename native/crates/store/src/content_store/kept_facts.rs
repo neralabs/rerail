@@ -438,11 +438,32 @@ impl RowsIn for PutRows<'_> {
             PutRows::Picked(rows) => rows.get(r, c),
         }
     }
-    /// A relation's chunk read row by row here (no call a value through the reader); a picked put's by its own read.
+    /// A relation's chunk read where it lies: rows from a position on, as a range of its column (`Rows::read_range`: a
+    /// chunk at a time, a sealed chunk decoded in one pass); rows by id, through the column resolved once (`reader`).
+    /// A continuation's rows, down its chain, row by row. A picked put's by its own read.
     #[inline]
     fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
         use rerail_blocks::packed::At;
         match self {
+            PutRows::Rel { rel, ids, .. } if !rel.continues() => match (ids, at) {
+                (None, At::From(r)) => rel.rows.read_range(c, r as u32, out),
+                (ids, at) => {
+                    let col = rel.rows.reader(c);
+                    let id = |r: usize| ids.as_ref().map_or(r as u32, |ids| ids[r]);
+                    match at {
+                        At::From(r) => {
+                            for (j, o) in out.iter_mut().enumerate() {
+                                *o = col.get(id(r + j));
+                            }
+                        }
+                        At::Rows(rows) => {
+                            for (o, &r) in out.iter_mut().zip(rows) {
+                                *o = col.get(id(r as usize));
+                            }
+                        }
+                    }
+                }
+            },
             PutRows::Rel { rel, ids, .. } => {
                 let one = |r: usize| {
                     let id = ids.as_ref().map_or(r as u32, |ids| ids[r]);
@@ -555,7 +576,12 @@ fn put_rows(w: &mut KeptW, meta: Meta, p: &KeptPut, map: Option<MapIds>) -> Stor
     let (rows, levels) = rows_of(&p.what);
     let mapped = map.map(|m| Mapped::of(&rows, &p.types, m)).transpose()?;
     let rows: &dyn RowsIn = match &mapped { Some(m) => m, None => &rows };
+    // `RERAIL_KEPT_PUT_TRACE`: each put's relation, its values and the time its rows took to pack and write.
+    let traced = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_KEPT_PUT_TRACE").is_some()).then(std::time::Instant::now);
     w.put_rows(meta, rows, levels.as_deref(), given).map_err(StoreError::Io)?;
+    if let Some(t0) = traced {
+        eprintln!("RERAIL_KEPT_PUT {} values {} arity {} us {}", p.rel, expected_bytes(&p.what) / 3, p.types.len(), t0.elapsed().as_micros());
+    }
     Ok(())
 }
 
