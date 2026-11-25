@@ -1669,13 +1669,18 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
     log: line => process.stderr.write(line),
   });
   shutdown = way.stop;
-  trayHandle = tray?.({
-    health: () => daemon.health(),
-    url: () => daemon.url,
-    dashboardLink: () => dashboardLink(daemon.state()),
-    loopback: loopbackBindHost(arguments_.host),
-    stop: way.stop,
-  });
+  // The icon is an extra: a tray that throws as it starts is logged, and the daemon serves on without one.
+  try {
+    trayHandle = tray?.({
+      health: () => daemon.health(),
+      url: () => daemon.url,
+      dashboardLink: () => dashboardLink(daemon.state()),
+      loopback: loopbackBindHost(arguments_.host),
+      stop: way.stop,
+    });
+  } catch (error) {
+    process.stderr.write(`rerail tray: could not start: ${(error as Error).message}\n`);
+  }
   process.once("SIGTERM", way.stop);
   process.once("SIGINT", way.stop);
   watchHeap({

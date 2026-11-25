@@ -10,14 +10,15 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync } from "node:fs";
+import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { spawn } from "../engine/child-process.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
-import { nativeTrayFileName, resolveNativeTrayPath } from "../engine/native/native.js";
+import { NATIVE_ENGINE_SYSTEMS, nativeTrayFileName, resolveNativeTrayPath } from "../engine/native/native.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { DAEMON_LOG_FILE, launchDetached, openInBrowser, type DaemonHealth, type DaemonMachine } from "../runtime/daemon-control.js";
+import { BROWSER_OFF_NOTE, DAEMON_LOG_FILE, launchDetached, openInBrowser, type DaemonHealth, type DaemonMachine } from "../runtime/daemon-control.js";
 
 /** What {@link trayGate} decides from: this process's environment and system, and what the daemon knows of itself. */
 export type TrayGateFacts = {
@@ -36,12 +37,6 @@ export type TrayGateFacts = {
 };
 
 /**
- * The systems an engine package ships a tray program for (`scripts/release/engine/packages.mjs`), as
- * `<platform>-<arch>`: a main build on one of them that finds none has lost a file, and says so.
- */
-const TRAY_SYSTEMS: ReadonlySet<string> = new Set(["darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"]);
-
-/**
  * Whether the daemon puts up a tray icon. Every gate must hold: a main build or `RERAIL_TRAY=1`, `RERAIL_TRAY` not `0`
  * or `false`, no `CI`, a loopback daemon, no SSH, on Linux a display and a session bus, and the binary. Tests, CI and a
  * daemon reached over SSH never put an icon up. A failed gate is silent, but for a missing binary on a system that
@@ -51,7 +46,9 @@ export function trayGate(facts: TrayGateFacts): { start: true; trayPath: string 
   const { platform, architecture, trayPath } = facts;
   if (!trayWanted(facts) || !desktopSession(facts)) return { start: false };
   if (trayPath !== undefined) return { start: true, trayPath };
-  if (!TRAY_SYSTEMS.has(`${platform}-${architecture}`)) return { start: false };
+  // Every engine package ships a tray program (`scripts/release/engine/packages.mjs`): a main build on one of their
+  // systems that finds none has lost a file, and says so.
+  if (!NATIVE_ENGINE_SYSTEMS.some(([os, cpu]) => os === platform && cpu === architecture)) return { start: false };
   return { start: false, log: `rerail tray: not started: this install has no ${nativeTrayFileName(platform, architecture)}` };
 }
 
@@ -377,12 +374,30 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
     trayPath: gate.trayPath,
     daemon,
     home,
-    defaultHome: defaultRerailHome({}),
+    defaultHome: accountRerailHome(),
     isNewer: deps.isNewer,
-    openUrl: url => void openInBrowser(url),
+    // The link carries the access token, so the line does not name it.
+    openUrl: url => {
+      if (!openInBrowser(url)) log(`rerail tray: could not open the dashboard: ${BROWSER_OFF_NOTE}`);
+    },
     runUpdate: async () => await runRerailUpdate(home, env),
     log,
   });
+}
+
+/**
+ * `~/.rerail` in the account's own home, not `HOME`'s: a sandbox that sets `HOME` runs a daemon whose home the menu
+ * names, so its icon is told apart from the user's own. An account without a user database entry (a container's
+ * arbitrary uid) falls back to `HOME`.
+ */
+export function accountRerailHome(): string {
+  let home: string;
+  try {
+    home = userInfo().homedir;
+  } catch {
+    home = homedir();
+  }
+  return join(home, ".rerail");
 }
 
 /**

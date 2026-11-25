@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DAEMON_STATE_FILE, probeDaemon, readDaemonState, type DaemonHealth } from "../../src/runtime/index.js";
 import { serveRerailDaemon } from "../../src/daemon/daemon.js";
-import { runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
+import { accountRerailHome, runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { until } from "../support/processes/daemon-home.js";
@@ -176,6 +176,20 @@ describe("trayMenuState", () => {
   it("names the home only when it is not the default", () => {
     expect(menu({ home: "/Users/a/.rerail/" }).home).toBeNull();
     expect(menu({ home: "/tmp/sandbox/.rerail" }).home).toBe("Home: /tmp/sandbox/.rerail");
+  });
+});
+
+describe("accountRerailHome", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is the account's own ~/.rerail, so a sandbox's HOME still gets the Home line", () => {
+    const sandbox = join(tmpdir(), "rerail-tray-sandbox-user");
+    vi.stubEnv("HOME", sandbox);
+    vi.stubEnv("USERPROFILE", sandbox);
+    expect(accountRerailHome()).toBe(join(userInfo().homedir, ".rerail"));
+    const home = join(sandbox, ".rerail");
+    const state = trayMenuState({ health: health(), url: "http://127.0.0.1:4737/", home, defaultHome: accountRerailHome(), newer: null, update: { state: "idle" } });
+    expect(state.home).toBe(`Home: ${home}`);
   });
 });
 
@@ -581,6 +595,35 @@ describe("the daemon's tray service", () => {
     expect(exit).toHaveBeenCalledWith(0);
     expect(close).toHaveBeenCalledTimes(1);
     expect(close).toHaveReturnedWith(true);
+    expect(existsSync(stateFile)).toBe(false);
+    expect((await probeDaemon(state)).status).toBe("unreachable");
+  }, 60_000);
+
+  it("a tray that throws as it starts is logged, and the daemon serves on and stops cleanly", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tray-"));
+    const home = join(root, "home");
+    await mkdir(home, { recursive: true });
+    process.env.RERAIL_HOME = home;
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const stderr = vi.spyOn(process.stderr, "write");
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const tray = vi.fn((daemon: TrayDaemon): TrayHandle => {
+      given = daemon;
+      throw new Error("no tray today");
+    });
+
+    await serveRerailDaemon(["--port", "0", "--dev", "--workspace-root", root, "--state-file", stateFile], { tray });
+
+    expect(tray).toHaveBeenCalledTimes(1);
+    expect(stderr.mock.calls.some(([chunk]) => String(chunk).endsWith("rerail tray: could not start: no tray today\n"))).toBe(true);
+    const state = await readDaemonState(stateFile);
+    if (state === undefined || given === undefined) throw new Error("the daemon wrote no state file, or gave the tray nothing");
+    expect((await probeDaemon(state)).status).toBe("ok");
+    expect(exit).not.toHaveBeenCalled();
+
+    given.stop();
+    await until(() => exit.mock.calls.length > 0, 30_000, "the daemon's close");
+    expect(exit).toHaveBeenCalledWith(0);
     expect(existsSync(stateFile)).toBe(false);
     expect((await probeDaemon(state)).status).toBe("unreachable");
   }, 60_000);
