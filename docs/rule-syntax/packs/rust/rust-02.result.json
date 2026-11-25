@@ -1,0 +1,82 @@
+[
+  {
+    "id": "clippy-many-single-char-names",
+    "status": "different",
+    "reason": "fixtures tests/ui/many_single_char_names.rs:77 (translation only): the function carries #[allow(clippy::many_single_char_names)], which Clippy and the original honour; the translation declares the same `suppress clippy` lints, but `rerail-engine run-policies` applies no suppress settings, so the suite sees it (engine gap; here the original is right). rerail-native native/src/code_rule_dsl/literal/phpdoc/lexer.rs:148 (original only): the original counts typed closure parameters (`|i: usize|` is a tree-sitter `parameter`), Clippy records only the function's parameters, let and arm patterns, so `fn token` has at most 3 single-letter names in scope and Clippy does not report it; here the translation is right. Counterexample: `fn f(a: u8, b: u8, c: u8, d: u8) { let _ = |e: u8| e; }` is reported by the original only. NOTES-rust-02.md.",
+    "right": "neither",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "rerail-native": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "clippy-needless-raw-string-hashes",
+    "status": "different",
+    "reason": "fixtures tests/ui/needless_raw_string.rs:8, 12, 16, 38 (translation only): r#\"\\s\"#, br#\"\\s\"#, cr#\"\\s\"# and r##\"SELECT * FROM \"posts\"\"## have more hashes than they need, but the file starts with #![expect(clippy::needless_raw_string_hashes, …)], which Clippy and the original honour. The translation declares the same `suppress clippy` lints, but `rerail-engine run-policies` applies no suppress settings (engine gap, not the rule's logic). NOTES-rust-02.md.",
+    "right": "original",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 4
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "clippy-needless-raw-string-hashes-one-allowed",
+    "status": "different",
+    "reason": "fixtures tests/ui/needless_raw_string.rs:38 (translation only): r##\"SELECT * FROM \"posts\"\"## needs one hash and has two, but the file's #![expect(clippy::needless_raw_string_hashes, …)] silences it in Clippy and the original. The translation declares the same `suppress clippy` lints, but `rerail-engine run-policies` applies no suppress settings (engine gap, not the rule's logic). NOTES-rust-02.md.",
+    "right": "original",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "clippy-precedence",
+    "status": "different",
+    "reason": "fixtures, 12 keys, translation only: rerail/precedence_bits.rs:50, 56-59 under #![allow(…, clippy::precedence)] and tests/ui/precedence_bits.rs:14-20 under #![expect(…, clippy::precedence)]. Clippy and the original honour them; the translation declares the same `suppress clippy` lints, but `rerail-engine run-policies` applies no suppress settings (engine gap, not the rule's logic). The 30 shared keys are exactly Clippy's precedence recording. NOTES-rust-02.md.",
+    "right": "original",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 12
+      },
+      "rerail-native": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "clippy-unnested-or-patterns",
+    "status": "different",
+    "reason": "fixtures tests/ui/unnested_or_patterns2.rs:18 (translation only): `box (0 | 1) | (box 2 | box (3 | 4))` is in Clippy's recording; the original misses it. rerail-native native/src/code_rule_dsl/compile/layout.rs:26 (original only): `(Some(_), Some(_), _) | (Some(_), _, Some(_))` differs in two positions, and Clippy nests tuples only when all elements but one are equal (eq_pre_post), so it does not report it; the original does. NOTES-rust-02.md.",
+    "right": "translation",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "rerail-native": {
+        "originalOnly": 1,
+        "translationOnly": 0
+      }
+    }
+  }
+]
