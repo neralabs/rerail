@@ -28,8 +28,8 @@ fn views_over_a_three_line_tape() {
     let sym = Symbols::new();
     let names = Names::new(&sym);
     let t = text("a(1, x).\n// a comment\nb(2) :- a(2, _).\nc(\"x\", 3).\n");
-    let path = sym.intern("three.rerail");
-    let v = |view| TapeView::new(view, 1, path, &t, &sym, &names);
+    let (path, module) = (sym.intern("three.rerail"), sym.intern("three"));
+    let v = |view| TapeView::new(view, 1, path, module, &t, &sym, &names);
     let (kind, field, child, txt, value, doc) = (
         v(View::Kind),
         v(View::Field),
@@ -67,6 +67,7 @@ fn views_over_a_three_line_tape() {
         .collect();
     assert_eq!(nums, [1, 2, 3].into());
     assert_eq!(probe(&doc, &[0], &[1], 1), vec![path]);
+    assert_eq!(probe(&doc, &[0, 1], &[1, path], 2), vec![module]);
     // Another document's key finds nothing here.
     assert!(probe(&kind, &[0], &[2], 1).is_empty());
 }

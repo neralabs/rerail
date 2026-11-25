@@ -25,6 +25,6 @@ k_num(d, t, n) :- kind(d, t, "number"), value(d, t, n).
 k_wild(d, t) :- kind(d, t, "wildcard").
 
 // Strata are files: a module's stratum is the number of the load that asked for it.
-k_order(d, k) :- load(p, k), doc(d, p).
+k_order(d, k) :- load(p, k), doc(d, p, _).
 
 // The kernel's loads, one file a stratum, come with its files (rebuild plan, M10).

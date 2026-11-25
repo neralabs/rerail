@@ -7,7 +7,8 @@
 //! - `child(d, p, c, i)`: `c` is `p`'s `i`-th child, counting named children that are no comment;
 //! - `text(d, n, s)`: `n`'s source text, a symbol;
 //! - `value(d, n, v)`: a literal's value: a string's unescaped contents (a symbol), a number's value;
-//! - `doc(d, path)`: the document's path.
+//! - `doc(d, path, module)`: the document's path, and the module its load named it (as the engine's `doc` is,
+//!   `Document::module`).
 //!
 //! A `TapeView` is one view of one document's tape: a `Table` whose row ids are the tape's node ids. How the views
 //! of many documents are read as one relation, partitioned by document, comes with the traces (rebuild plan, M1 and
@@ -59,7 +60,7 @@ impl View {
         (View::Child, "child", 4),
         (View::Text, "text", 3),
         (View::Value, "value", 3),
-        (View::Doc, "doc", 2),
+        (View::Doc, "doc", 3),
     ];
 
     pub fn arity(self) -> usize {
@@ -193,9 +194,10 @@ impl<'t> Reads<'t> {
 /// One view of one document's tape: a `Table` read where the tape lies, its row ids the tape's node ids.
 pub struct TapeView<'t> {
     pub view: View,
-    /// The document's id and path, as symbols.
+    /// The document's id, and its path and module, as symbols.
     d: i64,
     path: i64,
+    module: i64,
     reads: Reads<'t>,
     sym: &'t Symbols,
     names: &'t Names,
@@ -206,6 +208,7 @@ impl<'t> TapeView<'t> {
         view: View,
         d: i64,
         path: i64,
+        module: i64,
         text: &'t Text,
         sym: &'t Symbols,
         names: &'t Names,
@@ -214,6 +217,7 @@ impl<'t> TapeView<'t> {
             view,
             d,
             path,
+            module,
             reads: Reads::of(text),
             sym,
             names,
@@ -238,6 +242,7 @@ impl<'t> TapeView<'t> {
         match (self.view, c) {
             (_, 0) => self.d,
             (View::Doc, 1) => self.path,
+            (View::Doc, 2) => self.module,
             (View::Kind, 2) => self.names.kind(r.node(n).0),
             (View::Field, 1) | (View::Child, 1) => r.parent(n).map_or(-1, |x| x as i64),
             (View::Field, 2) => self.names.field(r.node(n).1),
