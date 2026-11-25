@@ -3,8 +3,8 @@
  {
   "id": "react-hooks-exhaustive-deps",
   "status": "different",
-  "reason": "samples-react: 31 of the 32 translation-only lines sit under an eslint-disable-next-line comment (naming the rule, or bare), which the original and ESLint honour and rerail-engine run-policies does not apply (engine gap); the 32nd, useVoiceInput.ts:294, sits under an oxlint-disable-next-line comment that the original honours and ESLint does not, and ESLint reports the line as the translation does.",
-  "right": "original",
+  "reason": "samples-react: 31 of the 32 translation-only lines sit under an eslint-disable-next-line comment (naming the rule, or bare), which the original and ESLint honour and rerail-engine run-policies does not apply (engine gap): there the original is right. The 32nd, useVoiceInput.ts:294, sits under an oxlint-disable-next-line comment that the original honours and ESLint does not; ESLint reports the line, as the translation does: there the translation is right. So neither side matches ESLint on all 32.",
+  "right": "neither",
   "counts": {
    "examples": { "originalOnly": 0, "translationOnly": 0 },
    "fixtures": { "originalOnly": 0, "translationOnly": 0 },
@@ -47,12 +47,12 @@
  {
   "id": "react-hooks-refs",
   "status": "different",
-  "reason": "samples-react: the 1 original-only line, Modal.tsx:335, is the shorthand `modalRef` (a useRef binding) in the object of a context value, which the original's literal-element clause and ESLint report and the translation does not model. The 1 translation-only line, UnitAmountInput.tsx:49, sits under `// eslint-disable-next-line react-hooks/refs -- …`, which rerail-engine run-policies does not apply (engine gap).",
-  "right": "original",
+  "reason": "samples-react: the 1 original-only line, Modal.tsx:335, is the shorthand `modalRef` (a useRef binding) in the object of a context value, which the original's literal-element clause and ESLint report and the translation does not model (original right). Of the 6 translation-only lines, UnitAmountInput.tsx:49 sits under `// eslint-disable-next-line react-hooks/refs -- …`, which rerail-engine run-policies does not apply (engine gap; original right); the other 5 are reported by ESLint (inline comments honoured) and missed by the original (translation right): mui Ad.tsx:131/135/139 (`const { current: randomAdblock } = React.useRef(…)`, then the value used in render) and react-bootstrap Offcanvas.tsx:341 (`manager={getModalManager()}`, a render-time call of a function that uses a ref).",
+  "right": "neither",
   "counts": {
    "examples": { "originalOnly": 0, "translationOnly": 0 },
    "fixtures": { "originalOnly": 0, "translationOnly": 0 },
-   "samples-react": { "originalOnly": 1, "translationOnly": 1 }
+   "samples-react": { "originalOnly": 1, "translationOnly": 6 }
   }
  }
 ]
