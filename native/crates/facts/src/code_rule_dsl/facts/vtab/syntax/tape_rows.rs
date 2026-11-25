@@ -735,7 +735,13 @@ impl TapeRows for DocRow {
     /// By its key, its document; by its path or module, the documents the batch's interned paths and modules name.
     fn find(&self, batch: &Batch, column: usize, value: i64, each: &mut dyn FnMut(usize, u32)) {
         let keys = match column {
-            0 => u32::try_from(value).ok().into_iter().collect(),
+            // By its key: the one document, no list made (a list of the key a probe was 2.06 M on cold PostHog).
+            0 => {
+                if let Ok(k) = u32::try_from(value) && let Some(doc) = batch.docs.position(k) {
+                    each(doc, 0);
+                }
+                return;
+            }
             1 => batch.keys_of_paths(&[value]).unwrap_or_default(),
             _ => batch.keys_of_modules(&[value]).unwrap_or_default(),
         };
