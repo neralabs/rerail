@@ -169,6 +169,24 @@ describe("rule pack definitions", () => {
     const directories = await packFolder([definition("one", "cyclomatic", rule)]);
     expect(() => readRulePacks(directories)).toThrow(message);
   });
+
+  it("list a rule with the dimensions its pack gives it", async () => {
+    const dimensions = { risk: "data-safety", layer: "jobs", severity: "critical", hazard: "tx.side-effect-before-commit" };
+    const directories = await packFolder([definition("one", "cyclomatic", { dimensions }), definition("two", "talk")]);
+    const loaded = readRulePacks(directories);
+    expect(loaded.find(found => found.id === "one")!.rules[0]).toMatchObject({ dimensions });
+    expect(loaded.find(found => found.id === "two")!.rules[0]).not.toHaveProperty("dimensions");
+  });
+
+  it.each([
+    ["a risk outside the list", { risk: "style", layer: "code", severity: "low" }, "rules.0.dimensions.risk"],
+    ["no severity", { risk: "security", layer: "server" }, "rules.0.dimensions.severity"],
+    ["a hazard without an area", { risk: "security", layer: "server", severity: "high", hazard: "missing-auth" }, "must be <area>.<hazard>"],
+    ["an axis it does not know", { risk: "security", layer: "server", severity: "high", owner: "web" }, "owner"],
+  ])("reject dimensions with %s", async (_, dimensions, message) => {
+    const directories = await packFolder([definition("one", "cyclomatic", { dimensions })]);
+    expect(() => readRulePacks(directories)).toThrow(message);
+  });
 });
 
 describe("globPattern", () => {

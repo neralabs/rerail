@@ -64,7 +64,7 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer, type PipeServer } from "../../src/runtime/daemon/engine-pipe.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer, type PipeServerAnswer } from "../../src/runtime/daemon/engine-pipe.js";
 import { HOOK_DAEMON_WAIT_MS } from "../../src/runtime/daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "../../src/runtime/daemon/engine-proof.js";
 import { ingestEngineEvent } from "../../src/runtime/engine-service.js";
@@ -1892,7 +1892,7 @@ describe("a state file Windows left behind", () => {
       held.length = 0;
     });
     /** Windows (unless `platform` says otherwise) with the pipe listed, its engine answering the proof `answer`. */
-    const answering = (answer: EngineProofAnswer, platform: NodeJS.Platform = "win32", server?: PipeServer): DaemonMachine => fakeMachine(platform, {
+    const answering = (answer: EngineProofAnswer, platform: NodeJS.Platform = "win32", server: PipeServerAnswer = "no-pipe"): DaemonMachine => fakeMachine(platform, {
       env: { RERAIL_HOME: home },
       kill: () => true,
       pipes: () => [PIPE_NAME],
@@ -1919,25 +1919,33 @@ describe("a state file Windows left behind", () => {
       }
     };
     const notOurs = `the engine pipe ${PIPE} is not this Rerail home's daemon`;
+    const notShown = `the engine pipe ${PIPE} could not be shown to be this Rerail home's daemon`;
+    /** What the hook says once Windows named no holder and the engine gave no proof: the reason it gave none. */
+    const unproved = (why: string) => `${notShown}: Windows named no process as its holder, and ${why}, so nothing was sent to it`;
 
-    it("asks Windows which process holds it first, and its engine to prove it holds the capability only when Windows names another, within a wait the event shares", async () => {
+    it("asks Windows which process holds it first, and its engine to prove it holds the capability only when Windows names none, within a wait the event shares", async () => {
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
-      const other = { pid: DEAD_PID + 1, startedAt: STARTED - 1 };
-      const endpoint = await atStandInTime(async () => await engineEndpointAt(PIPE, undefined, answering("proved", "win32", other)));
+      const endpoint = await atStandInTime(async () => await engineEndpointAt(PIPE, undefined, answering("proved")));
       expect(endpoint).toEqual({ socketPath: PIPE, accessToken: "capability", proofTookMs: 0 });
-      expect(held).toEqual([[PIPE, ENGINE_ANSWER_WAIT_MS]]);
-      expect(asked).toEqual([[PIPE, "capability", ENGINE_ANSWER_WAIT_MS]]);
+      const file = join(home, DAEMON_STATE_FILE);
+      await expect(engineEndpointAt(PIPE, undefined, answering("refused"))).rejects.toThrow(unproved(`the engine on it did not prove it holds the capability in ${file}`));
+      await expect(engineEndpointAt(PIPE, undefined, answering("silent"))).rejects.toThrow(unproved(`the engine on it did not prove within 30 s that it holds the capability in ${file}`));
+      expect(held).toEqual(Array(3).fill([PIPE, ENGINE_ANSWER_WAIT_MS]));
+      expect(asked).toEqual(Array(3).fill([PIPE, "capability", ENGINE_ANSWER_WAIT_MS]));
     });
 
-    it("is sent nothing when another process holds it and gives no proof, and the hook says why", async () => {
+    it("is sent nothing, not even the proof's challenge, when Windows names another process as its holder, and the hook says which", async () => {
       // The other process began before the daemon daemon.json records stamped its start, so only its pid tells them apart.
+      // Its server could act as this user once it read a write of the hook's, so not even an engine that would prove
+      // itself is asked.
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
       const other = { pid: DEAD_PID + 1, startedAt: STARTED - 1 };
-      await expect(engineEndpointAt(PIPE, undefined, answering("refused"))).rejects.toThrow(notOurs);
-      await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", other))).rejects.toThrow(notOurs);
-      await expect(engineEndpointAt(PIPE, undefined, answering("silent", "win32", other))).rejects.toThrow(`the engine on the pipe ${PIPE} did not prove within 30 s`);
-      expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(3).fill([PIPE, "capability"]));
-      expect(held.map(([socketPath]) => socketPath)).toEqual([PIPE, PIPE, PIPE]);
+      const why = `${notOurs}: Windows names process ${DEAD_PID + 1} as its holder, and ${join(home, DAEMON_STATE_FILE)} records process ${DEAD_PID}, so nothing was sent to it`;
+      for (const answer of ["proved", "refused", "silent"] as const) {
+        await expect(engineEndpointAt(PIPE, undefined, answering(answer, "win32", other))).rejects.toThrow(why);
+      }
+      expect(asked).toEqual([]);
+      expect(held).toEqual(Array(3).fill([PIPE, ENGINE_ANSWER_WAIT_MS]));
     });
 
     /**
@@ -1956,9 +1964,9 @@ describe("a state file Windows left behind", () => {
       },
     });
 
-    it("gives the engine's proof the whole wait from when Windows named another holder, however long Windows took to free an instance, and the event how long the proof took", async () => {
+    it("gives the engine's proof the whole wait from when Windows named no holder, however long Windows took to answer, and the event how long the proof took", async () => {
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
-      const other = answering("proved", "win32", { pid: DEAD_PID + 1, startedAt: STARTED - 1 });
+      const other = answering("proved");
       const took = await atStandInTime(async advance => {
         const proofs: Array<number | undefined> = [];
         for (const freedAfterMs of [10_000, ENGINE_ANSWER_WAIT_MS - 1_000]) {
@@ -1974,7 +1982,7 @@ describe("a state file Windows left behind", () => {
     it("is asked the home's proof when daemon.json names another pipe, and sent nothing without it", async () => {
       // The daemon moved to a pipe of its own because another process held the default name first.
       await recordState({ kernelSocketPath: fallbackPipe(PIPE), accessToken: "capability" });
-      await expect(engineEndpointAt(PIPE, undefined, answering("refused"))).rejects.toThrow(notOurs);
+      await expect(engineEndpointAt(PIPE, undefined, answering("refused"))).rejects.toThrow(notShown);
       expect(await engineEndpointAt(PIPE, undefined, answering("proved"))).toMatchObject({ socketPath: PIPE, accessToken: "capability" });
       expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(2).fill([PIPE, "capability"]));
     });
@@ -1998,9 +2006,10 @@ describe("a state file Windows left behind", () => {
       });
 
       it("is sent nothing, and the hook says why, when Windows names another process or none", async () => {
-        const why = `the engine pipe ${PIPE} is not this Rerail home's daemon: Windows did not name the daemon ${join(home, DAEMON_STATE_FILE)} records as its holder, and that file records no capability for the engine to prove`;
-        await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", { pid: DEAD_PID + 1, startedAt: STARTED - 1 }))).rejects.toThrow(why);
-        await expect(engineEndpointAt(PIPE, undefined, answering("proved"))).rejects.toThrow(why);
+        const another = `${notOurs}: Windows names process ${DEAD_PID + 1} as its holder, and ${join(home, DAEMON_STATE_FILE)} records process ${DEAD_PID}`;
+        await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", { pid: DEAD_PID + 1, startedAt: STARTED - 1 }))).rejects.toThrow(another);
+        const none = unproved(`${join(home, DAEMON_STATE_FILE)} records no capability for the engine to prove`);
+        await expect(engineEndpointAt(PIPE, undefined, answering("proved"))).rejects.toThrow(none);
         expect(asked).toEqual([]);
       });
     });
@@ -2028,26 +2037,32 @@ describe("a state file Windows left behind", () => {
         expect(asked).toEqual([]);
       });
 
-      it("is sent nothing when the holder has the recorded pid but started after the daemon recorded itself, or Windows does not say when", async () => {
+      it("is sent nothing, not even the proof's challenge, when the holder has the recorded pid but started after the daemon recorded itself, or Windows does not say when", async () => {
         // Windows gave a dead daemon's pid to the process holding the pipe now.
-        await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID, startedAt: STARTED + 1 }))).rejects.toThrow(notOurs);
-        await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID }))).rejects.toThrow(notOurs);
-        await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", { pid: DEAD_PID, startedAt: null }))).rejects.toThrow(notOurs);
+        const why = `${notOurs}: Windows names process ${DEAD_PID} as its holder, which Windows does not show to have started before ${join(home, DAEMON_STATE_FILE)} recorded the daemon's start`;
+        for (const startedAt of [STARTED + 1, undefined, null]) {
+          const holder = startedAt === undefined ? { pid: DEAD_PID } : { pid: DEAD_PID, startedAt };
+          await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", holder))).rejects.toThrow(why);
+        }
+        expect(asked).toEqual([]);
       });
     });
 
     // A daemon of Rerail 0.1.4 or earlier has no proof to give. Named outright, its pipe gets the event with the
     // capability that daemon wrote once Windows names it the holder, as a daemon of any release does; held by another
-    // process, the pipe gets nothing, as one that refuses the proof. A lookup, which a hook makes when no variable
-    // names a pipe, finds the same daemon older and gives no caller its capability, so a start replaces it.
+    // process, the pipe gets nothing, not even the proof's challenge; with no holder named, only that challenge, which
+    // the engine answers with no proof. A lookup, which a hook makes when no variable names a pipe, finds the same
+    // daemon older and gives no caller its capability, so a start replaces it.
     it("is sent the event when Windows names the recorded daemon of Rerail 0.1.4 or earlier as its holder, and nothing otherwise, while a lookup finds that daemon older", async () => {
       const recorded = { kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED, version: "0.1.4" };
       await recordState(recorded);
-      const holding = (server: PipeServer): DaemonMachine => ({ ...answering("no-proof", "win32", server), processStartedAt: () => STARTED - 600 });
+      const holding = (server: PipeServerAnswer): DaemonMachine => ({ ...answering("no-proof", "win32", server), processStartedAt: () => STARTED - 600 });
       const own = holding({ pid: DEAD_PID, startedAt: STARTED - 600 });
       expect(await engineEndpointAt(PIPE, undefined, own)).toEqual({ socketPath: PIPE, accessToken: "capability" });
-      expect(asked).toEqual([]);
       await expect(engineEndpointAt(PIPE, undefined, holding({ pid: DEAD_PID + 1, startedAt: STARTED - 1 }))).rejects.toThrow(notOurs);
+      expect(asked).toEqual([]);
+      const file = join(home, DAEMON_STATE_FILE);
+      await expect(engineEndpointAt(PIPE, undefined, holding("no-pipe"))).rejects.toThrow(unproved(`the engine on it did not prove it holds the capability in ${file}`));
       expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual([[PIPE, "capability"]]);
       expect(await lookupDaemon(home, own)).toEqual({ status: "older", state: { ...stateFor(recorded), accessToken: undefined } });
     });
@@ -2077,7 +2092,7 @@ describe("a state file Windows left behind", () => {
       try {
         const unloaded = (answer: EngineProofAnswer): DaemonMachine => ({ ...answering(answer), pipeServer });
         expect(await engineEndpointAt(PIPE, undefined, unloaded("proved"))).toMatchObject({ socketPath: PIPE, accessToken: "capability" });
-        await expect(engineEndpointAt(PIPE, undefined, unloaded("refused"))).rejects.toThrow(notOurs);
+        await expect(engineEndpointAt(PIPE, undefined, unloaded("refused"))).rejects.toThrow(`${notShown}: Windows could not be asked which process holds it`);
         expect(written.mock.calls.map(([text]) => String(text))).toEqual([expect.stringContaining(`which process serves the pipe ${PIPE}, so the engine on it must prove it holds the capability daemon.json records, and where daemon.json records none nothing is sent to it: RERAIL_ENGINE_PATH does not exist: ${missing}`)]);
       } finally {
         written.mockRestore();
@@ -2086,12 +2101,33 @@ describe("a state file Windows left behind", () => {
       expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(2).fill([PIPE, "capability"]));
     });
 
+    it("says Windows could not be asked, never that the pipe is another process's, while the engine's binding cannot ask it and the home's daemon of Rerail 0.1.4 or earlier gives no proof", async () => {
+      // As during an update, when the binding in the hook's process predates the question or will not load.
+      const cannotAsk = `${notShown}: Windows could not be asked which process holds it, since the engine's native binding would not load in this process, predates that question or failed while asking`;
+      const file = join(home, DAEMON_STATE_FILE);
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", "not-asked")))
+        .rejects.toThrow(`${cannotAsk}, and the engine on it did not prove it holds the capability in ${file}, so nothing was sent to it`);
+      await recordState({ kernelSocketPath: PIPE, pid: DEAD_PID, startedAt: STARTED });
+      await expect(engineEndpointAt(PIPE, undefined, answering("refused", "win32", "not-asked")))
+        .rejects.toThrow(`${cannotAsk}, and ${file} records no capability for the engine to prove, so nothing was sent to it`);
+      expect(asked).toEqual([[PIPE, "capability", ENGINE_ANSWER_WAIT_MS]]);
+    });
+
     it("is sent nothing, and the hook says the pipe stayed busy, when other clients kept every instance taken for the whole wait", async () => {
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
       const busy = `other clients kept every instance of the engine pipe ${PIPE} taken for 30 s, so Windows could not say whether this Rerail home's daemon holds it, so nothing was sent to it`;
       // Windows names no holder then, which the native binding may give as an absent pid or a null one.
       for (const holder of [{}, { pid: null }]) await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", holder))).rejects.toThrow(busy);
       // The wait is spent, so no proof is asked.
+      expect(asked).toEqual([]);
+    });
+
+    it("is sent nothing, not even the proof's challenge, and the hook says Windows refused to say who holds it, when the pipe is there but refuses the lookup's open", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const refused = `the engine pipe ${PIPE} is there, but Windows refused to say which process holds it (Windows error 5), so it could not be shown to be this Rerail home's daemon, so nothing was sent to it`;
+      // As the native binding gives it, the pid and start absent or null.
+      for (const holder of [{ windowsError: 5 }, { pid: null, startedAt: null, windowsError: 5 }]) await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", holder))).rejects.toThrow(refused);
       expect(asked).toEqual([]);
     });
 
@@ -2126,10 +2162,10 @@ describe("a state file Windows left behind", () => {
         } finally {
           now.mockRestore();
         }
-        const refusing = answering("refused", "win32", { pid: DEAD_PID + 1, startedAt: STARTED });
+        const refusing = answering("refused");
         await recordState(state);
         expect(await recordedDaemonStatus(state, refusing)).toBe("gone");
-        await expect(engineEndpointAt(PIPE, deadlineFrom(Date.now()), refusing)).rejects.toThrow("is not this Rerail home's daemon");
+        await expect(engineEndpointAt(PIPE, deadlineFrom(Date.now()), refusing)).rejects.toThrow("could not be shown to be this Rerail home's daemon");
         expect(asked.length).toBe(6);
       });
     });
