@@ -96,12 +96,14 @@ export function enginePackageJson(enginePackage, core) {
   };
 }
 
-/** An engine package's README.md: what it is, and that core is the package to install. */
+/** An engine package's README.md: what it is, what else it holds, and that core is the package to install. */
 export function enginePackageReadme(enginePackage, core) {
   return [
     `# ${enginePackage.name}`,
     "",
     `The native engine of [Rerail](${core.homepage}) for ${SYSTEMS[enginePackage.os]} on ${enginePackage.cpu}.`,
+    "",
+    `It also holds \`${enginePackage.tray}\`, the program that shows Rerail's icon in the menu bar or system tray while its daemon runs.`,
     "",
     `[\`${core.name}\`](https://www.npmjs.com/package/${core.name}) depends on this package at its own version and loads the engine from it. Install \`${core.name}\`, not this package: it holds the engine and nothing to import.`,
     "",

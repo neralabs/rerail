@@ -119,6 +119,7 @@ describe("packEnginePackages", () => {
     expect(JSON.parse(tar("-xzOf", file, "package/package.json"))).toEqual(enginePackageJson(linuxX64, core));
     expect(tar("-xzOf", file, `package/${linuxX64.engine}`)).toBe(`engine ${linuxX64.engine}`);
     expect(tar("-xzOf", file, "package/README.md")).toContain(`# ${linuxX64.name}\n\nThe native engine of [Rerail](${core.homepage}) for Linux with glibc on x64.\n`);
+    expect(tar("-xzOf", file, "package/README.md")).toContain(`It also holds \`${linuxX64.tray}\`, the program that shows Rerail's icon`);
   });
 
   // Windows has no execute bit to give the file, so a tarball packed there marks it as npm finds it; the release packs on Linux.
