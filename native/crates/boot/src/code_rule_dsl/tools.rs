@@ -2643,7 +2643,7 @@ mod pack_split_tests {
         found
     }
 
-    /// plan-helpers-allowlist finds what its linter finds (scripts/lint_plan_helpers_allowlist.py, decision 0690): a
+    /// plan-helpers-allowlist finds what its linter finds (scripts/lint_plan_helpers_allowlist.py, decision 0692): a
     /// name's helper is the latest write in its own file (the linter's map is one per file: `a.py` and `b.py` write `h`
     /// at the same visit index, each a helper of its own, and neither's `fetch` takes the other's), and a private or
     /// eager-sounding name is one by its spelling alone.
@@ -2672,8 +2672,44 @@ mod pack_split_tests {
         );
     }
 
+    /// pure-lazy-runtime-purity closes over the calls as its linter does (scripts/lint_pure_lazy_runtime_purity.py,
+    /// `_pure_lazy_closure`, `_runtime_owner_closure`, decision 0693): from a `@pure_lazy` def through an imported
+    /// helper in another file, through `self.` to a base class's method in a third, stopping at a `@legacy_*` def, and
+    /// a def nothing reaches is not analysed. The third and fourth files name a trigger (`scan_paths` reads a file a
+    /// seed reaches only through a base class when its text names one). Each analysed def's findings are its own file's, and the split derives
+    /// the analysis per file: only the walk over the records' ids crosses files.
+    #[test]
+    fn pure_lazy_closes_over_the_calls_and_analyses_each_file_on_its_own() {
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: nextest runs each test in a process of its own.
+        unsafe { std::env::set_var("RERAIL_SPLIT_DUMP", tmp.path().join("split.txt")) };
+        let found = findings_of(
+            "data-layer/pure-lazy-runtime-purity.rerail",
+            &[
+                ("impl/a.py", "from impl.b import helper\nfrom impl.c import Base\n\n\n@pure_lazy\ndef entry(x):\n    return helper(x)\n\n\nclass Child(Base):\n    @pure_lazy\n    def run(self, x):\n        return self.step(x)\n"),
+                ("impl/b.py", "def helper(txn):\n    return txn._conn\n\n\ndef unreached(txn):\n    return txn._conn\n"),
+                ("impl/c.py", "from impl.d import old\n\n\nclass Base:\n    def step(self, txn):\n        y = txn._conn\n        return old(txn)\n# pure_lazy: scanned\n"),
+                ("impl/d.py", "@legacy_sync\ndef old(txn):\n    return txn._conn\n# pure_lazy: scanned\n"),
+            ],
+        );
+        // The plugin's grandfathered list is not in the tree (PLP-ALLOWLIST).
+        let keys: Vec<(&str, &str, i64)> = found.iter().filter(|f| f.0 != "PLP-ALLOWLIST").map(|(c, p, l, _)| (c.as_str(), p.as_str(), *l)).collect();
+        assert_eq!(keys, [("PLP-001", "impl/c.py", 6), ("PLP-003", "impl/b.py", 2)], "{found:#?}");
+        let causes: String = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.to_string_lossy().ends_with(".causes.txt"))
+            .map(|p| std::fs::read_to_string(p).unwrap())
+            .collect();
+        assert!(!causes.is_empty(), "no split dumped");
+        for r in ["plp_an", "plp_in", "plp_tnt_at", "plp_opq_before", "plp_bfs"] {
+            let named: Vec<&str> = causes.lines().filter(|l| l.split('\t').next() == Some(r)).collect();
+            assert!(named.is_empty(), "{r} is cross-file: {named:?}");
+        }
+    }
+
     /// versioned-merged-identity finds what its checker finds (scripts/check_versioned_merged_identity.py, decision
-    /// 0690): an unreviewed caller (VMI002), a reviewed one whose projection is assigned only after the call, through
+    /// 0692): an unreviewed caller (VMI002), a reviewed one whose projection is assigned only after the call, through
     /// an imported alias (VMI003), one backed through `b = a` (nothing), each reviewed caller absent (VMI001, at the
     /// steps directory), and a caller two files share (`b.py:go`, under both roots) reported at the last path the
     /// plugin recorded for it, the graph query's, each at its own line.

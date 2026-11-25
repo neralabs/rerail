@@ -282,7 +282,9 @@ impl FileLocal {
 
 impl Analysis for FileLocal {
     const NAME: &'static str = "file-local split";
-    const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::FACTS).or(Reads::INPUTS).or(Reads::ABOUT);
+    /// The outputs too: an output is never covered, staged or a guard's to hold (decision 0693: a part's fields, which
+    /// set its outputs alone, carried a split made for others).
+    const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::FACTS).or(Reads::INPUTS).or(Reads::OUTPUTS).or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<FileLocal, String> {
         let d = cx.get::<FieldsData>()?;
         let p = Program::of(cx.v(), Fields::over(cx.v(), &d));
@@ -755,6 +757,10 @@ impl<'v> Program<'v> {
         let mut facts: Vec<&str> = self.v.all_facts().into_iter().filter(|f| !f.about()).map(|f| self.v.text(f.name())).collect();
         facts.sort_unstable();
         facts.hash(&mut g);
+        // The outputs: an output is never covered, staged or a guard's to hold (a part's fields set them alone).
+        let mut outputs: Vec<&str> = (0..self.rels.n).filter(|&r| self.rels.output[r]).map(|r| self.name(r as u32)).collect();
+        outputs.sort_unstable();
+        outputs.hash(&mut g);
         // The `.about` rows: natives and lattices, and the rest, which the split does not read (a change there
         // splits whole, as a change of a native does).
         let mut about: Vec<u64> = self.v.about_facts().into_iter().map(|f| f.hash()).collect();
@@ -1090,7 +1096,7 @@ impl<'v> Program<'v> {
             let view = |x: u32| covered_now[x as usize] && local_now[x as usize] && rels.is_derived(x) && locs[x as usize].is_empty();
             local_now[r as usize] && { let inputs = self.native_inputs(r); !inputs.is_empty() && inputs.iter().all(|(i, ..)| view(*i)) }
         };
-        // A reader's demand (`READER_DEMAND`, decision 0690): the optional guard product demand installs on a relation's
+        // A reader's demand (`READER_DEMAND`, decision 0692): the optional guard product demand installs on a relation's
         // producers, its rules its relation's readers' prefixes. It is each file's own, as a covered view of values is,
         // where its rules are each on one document and the relation it guards, and every reader of that, is per-file:
         // the keys a file's readers ask for are made from the file's rows, so in each file it holds them. A reader
@@ -2982,7 +2988,7 @@ impl Form {
     }
 
     /// Whether each derivation of the rule reads one document's rows at most, a positive read whose location columns are
-    /// left open (`alias(_, x)`) on a document of its own: a reader's demand (decision 0690), whose rows may name none.
+    /// left open (`alias(_, x)`) on a document of its own: a reader's demand (decision 0692), whose rows may name none.
     fn one_document_each(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], covered: &[bool], locs: &[Vec<usize>], nulls: &[Vec<usize>]) -> bool {
         self.documents(head, rels, placeless, local, filters, covered, locs, nulls, true)
     }

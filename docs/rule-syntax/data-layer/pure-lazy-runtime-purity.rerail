@@ -216,21 +216,23 @@ plp_explicit(f) :- decorator(f, e), short_name(e, x), (plp_name("PURE_DECORATOR_
 .decl plp_legacy(f: node)
 plp_legacy(f) :- decorator(f, e), short_name(e, x), plp_name("LEGACY_DECORATOR_NAMES", x).
 .decl plp_terminal(f: node)  // f targets or calls a plan-helper terminal
-plp_terminal(f) :- pc_edge(f, g, _), pc_sym(_, q, g), plp_name("PLAN_HELPER_TERMINAL_NAMES", q).
+plp_terminal(f) :- pc_edge(f, t, _), pc_qof(t, q), plp_name("PLAN_HELPER_TERMINAL_NAMES", q).
 plp_terminal(f) :- pc_rec(f), ast_walk(f, c), kind(c, "call"), short_name(c, x), plp_name("PLAN_HELPER_TERMINAL_NAMES", x).
 .decl plp_owner_seed(f: node)
 plp_owner_seed(f) :- pc_rec(f), def_name(f, x), suffix("_lazy", x), pc_param(f, p), !plp_name("receiver_names", p),
     plp_name("RUNTIME_OWNER_PARAM_NAMES", p), plp_terminal(f).
 // The files scan_paths reads (its shared-facts narrowing): those whose text has a pure-lazy trigger, those
 // defining a global-state factory, and those a seed reaches without a base class. When there is none, every file.
-.decl plp_shared(f: node)
-plp_shared(f) :- pc_rec(f), plp_explicit(f).
-plp_shared(f) :- plp_owner_seed(f).
-plp_shared(g) :- plp_shared(f), pc_edge(f, g, 0).
+// The walks are the linter's, over the records' ids (pc_sid): what crosses files is ids, and each file reads back
+// its own records' (decision 0693).
+.decl plp_shared(s: symbol)
+plp_shared(s) :- pc_sid(s, f), plp_explicit(f).
+plp_shared(s) :- pc_sid(s, f), plp_owner_seed(f).
+plp_shared(t) :- plp_shared(s), pc_sedge(s, t, 0).
 .decl plp_cand(d: number)
 plp_cand(d) :- source(d, sp), text(sp, t), plp_name("file_triggers", x), contains(x, t).
 plp_cand(d) :- pc_rec(f), def_name(f, x), docof(f, d), plp_name("global_state_factories", x).
-plp_cand(d) :- plp_shared(f), docof(f, d).
+plp_cand(d) :- plp_shared(s), pc_sid(s, f), docof(f, d).
 .decl plp_anycand()
 plp_anycand() :- plp_cand(_).
 .decl plp_docin(d: number)
@@ -238,12 +240,27 @@ plp_docin(d) :- plp_cand(d).
 plp_docin(d) :- doc(d, _, _), !plp_anycand().
 .decl plp_in_rec(f: node)
 plp_in_rec(f) :- pc_rec(f), docof(f, d), plp_docin(d).
+// plp_id_in(s, d): the record of id s is in file d, which scan_paths reads (the flag read in d's own part, decision
+// 0686); plp_id_legacy(s): it is a boundary.
+.decl plp_id_in(s: symbol, d: number)
+plp_id_in(s, d) :- pc_sid(s, f), plp_in_rec(f), docof(f, d).
+.decl plp_id_legacy(s: symbol)
+plp_id_legacy(s) :- pc_sid(s, f), plp_legacy(f).
+// plp_step(s, t): both walks step from record s to the record of id t it calls, when t is in a file scan_paths reads
+// and is no boundary. A call in one file joined to the record it reaches in another: a crossing meant (decision 0652).
+// The walks over it read names alone, and are staged (decision 0675).
+.decl plp_step(s: symbol, t: symbol) cross_file
+plp_step(s, t) :- pc_sedge(s, t, _), plp_id_in(t, _), !plp_id_legacy(t).
+.decl plp_colored_id(s: symbol)
+plp_colored_id(s) :- pc_sid(s, f), plp_in_rec(f), plp_explicit(f).
+plp_colored_id(t) :- plp_colored_id(s), plp_step(s, t).
+.decl plp_owner_id(s: symbol)
+plp_owner_id(s) :- pc_sid(s, f), plp_in_rec(f), plp_owner_seed(f).
+plp_owner_id(t) :- plp_owner_id(s), plp_step(s, t).
 .decl plp_colored(f: node)
-plp_colored(f) :- plp_in_rec(f), plp_explicit(f).
-plp_colored(g) :- plp_colored(f), pc_edge(f, g, _), plp_in_rec(g), !plp_legacy(g).
+plp_colored(f) :- pc_sid(s, f), plp_colored_id(s).
 .decl plp_owner(f: node)
-plp_owner(f) :- plp_in_rec(f), plp_owner_seed(f).
-plp_owner(g) :- plp_owner(f), pc_edge(f, g, _), plp_in_rec(g), !plp_legacy(g).
+plp_owner(f) :- pc_sid(s, f), plp_owner_id(s).
 
 // plp_an(f, strict, owner): f is analysed; strict: any receiver of a protected attribute counts; owner: only
 // PLP-001…005 are kept.

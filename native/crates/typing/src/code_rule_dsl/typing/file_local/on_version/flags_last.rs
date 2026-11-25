@@ -215,7 +215,9 @@ impl<'v> Program<'v> {
             }
             let at = if one_column {
                 match placeless.locations.get(rel).and_then(|c| c.first()) {
-                    Some(&c) if self.f.columns(rel).is_some_and(|t| t[c].1 == "number") || self.f.declared("docof") => Some(c),
+                    // A location column is a node (its document through `docof`) or a document's id, read as it is:
+                    // declared `number`, a column type the image spells `int` (decision 0693).
+                    Some(&c) if self.f.columns(rel).is_some_and(|t| t[c].1 != "node") || self.f.declared("docof") => Some(c),
                     Some(_) => return Err(format!("{rel}, read outside its cone, is placed by a node, and no `docof` names its document")),
                     None => return Err(format!("{rel}, read outside its cone, has no location")),
                 }
@@ -316,7 +318,7 @@ fn rewrite(v: &Arc<Version>, applied: &[Applied]) -> Result<Arc<Version>, String
                 let mut rb = b.rule().head(rel.as_str(), &args).atom(copy.as_str(), &args);
                 rb = match at {
                     None => rb.atom_with(a.flag.as_str(), &unit, !value, false),
-                    Some(c) if types[*c].1 == "number" => rb.atom_with(a.flag.as_str(), &[T::Var(vars[*c].as_str())], !value, false),
+                    Some(c) if types[*c].1 != "node" => rb.atom_with(a.flag.as_str(), &[T::Var(vars[*c].as_str())], !value, false),
                     Some(c) => rb.atom("docof", &[T::Var(vars[*c].as_str()), T::Var("rr_flag_d")]).atom_with(a.flag.as_str(), &[T::Var("rr_flag_d")], !value, false),
                 };
                 rb.finish()?;

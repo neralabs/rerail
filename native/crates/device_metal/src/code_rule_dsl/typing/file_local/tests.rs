@@ -337,7 +337,7 @@ far(f, k) :- node(_, f, "call", _, _), text(f, x), node(_, k, "class", _, _), te
 
 /// A reader's demand (`rr_reader_demand_…`, the restriction product demand installs on a relation's producers) whose
 /// rules are each on one document, guarding a per-file relation every reader of which is per-file, is each file's own
-/// (decision 0690): its rules are its readers' prefixes, so in each file it holds every key the file's readers ask for.
+/// (decision 0692): its rules are its readers' prefixes, so in each file it holds every key the file's readers ask for.
 /// Read as a test, it leaves `callee` and its readers per-file, though its rows (`alias`'s names) name no document.
 /// One guarding a relation a cross-file rule reads (`far`, through `callee2`) is every file's, as before: that reader
 /// may join one file's prefix with another's rows.

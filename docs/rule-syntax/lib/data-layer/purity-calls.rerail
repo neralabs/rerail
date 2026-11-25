@@ -10,10 +10,14 @@
 //   pc_qn(n, q)                 a def's or class's name joined to the enclosing class and def names (no <locals>)
 //   pc_sym(d, q, f)             record f has qualname q in file d: the last def of that name (records is a dict)
 //   pc_fq(s, f)                 "module.qualname" of record f
+//   pc_sid(s, f)                record f's id, "module::qualname": the linter keys its records, and walks its calls,
+//                               by id (symbol_id), so what crosses files is names (decision 0693)
+//   pc_qof(t, q)                id t's qualname
 //   pc_param(f, x), pc_local(f, x)   f's parameter names; the names f itself binds (less global / nonlocal)
 //   pc_imp(s, x, q, k)          scope s (a module or a def) imports x as q: k "sym" (`from m import y`) or "mod"
 //   pc_isym(f, x, q), pc_imod(f, x, q)   what x names in record f: a from-import (f's own first), an import
-//   pc_edge(f, g, via)          record f calls record g; via 1 when found through a base class
+//   pc_edge(f, t, via)          record f calls the record of id t; via 1 when found through a base class
+//   pc_sedge(s, t, via)         the same between ids: the record of id s calls the record of id t
 //
 // The records: every def but those that are statements of a def's own body (and what is inside them). The
 // qualname joins the class and def names around it: `class C: def m(): if x: def g()` gives "C.m.g".
@@ -65,6 +69,12 @@ pc_sym(d, q, f) :- pc_rec0(f, d, q), count : { pc_rec0(g, d, q), earlier(f, g) }
 pc_rec(f) :- pc_sym(_, _, f).
 .decl pc_fq(s: symbol, f: node)
 pc_fq(cat(m, ".", q), f) :- pc_sym(d, q, f), doc(d, _, m), m != "".
+.decl pc_sid(s: symbol, f: node)
+pc_sid(cat(m, "::", q), f) :- pc_sym(d, q, f), doc(d, _, m).
+.decl pc_qof(t: symbol, q: symbol)
+pc_qof(cat(m, "::", q), q) :- pc_sym(d, q, _), doc(d, _, m).
+.decl pc_fqid(p: symbol, t: symbol)  // "module.qualname" p is the record of id t
+pc_fqid(cat(m, ".", q), cat(m, "::", q)) :- pc_sym(d, q, _), doc(d, _, m), m != "".
 .decl pc_param(f: node, x: symbol)
 pc_param(f, x) :- sig_param(f, _, nm, _, _, _, _), text(nm, x).
 // pc_local(f, x): _collect_function_local_bindings: assignment, augmented-assignment, for and with targets of f
@@ -116,13 +126,13 @@ pc_shadowed(f, e) :- pc_rec(f), pc_root(e, x), (pc_local(f, x) ; pc_param(f, x))
 pc_pre(s, s) :- pc_want(s).
 pc_pre(s, p) :- pc_pre(s, q), split_dot(q, p, qx).
 .decl pc_fqlen(s: symbol, p: symbol, n: number)
-pc_fqlen(s, p, n) :- pc_pre(s, p), pc_fq(p, _), n = strlen(p).
-.decl pc_res(s: symbol, g: node)
-pc_res(s, g) :- pc_fqlen(s, p, n), n = max k : { pc_fqlen(s, _, k) }, pc_fq(p, g).
+pc_fqlen(s, p, n) :- pc_pre(s, p), pc_fqid(p, _), n = strlen(p).
+.decl pc_res(s: symbol, t: symbol)  // the id of the record s resolves to
+pc_res(s, t) :- pc_fqlen(s, p, n), n = max k : { pc_fqlen(s, _, k) }, pc_fqid(p, t).
 // Methods. pc_mq(m, cq, x) asks for method x of class cq of module m. A class that has no def x takes the answer
 // of its first base (in order) that has one, as _resolve_method_target returns the first that resolves.
-.decl pc_method(m: symbol, cq: symbol, x: symbol, g: node)
-pc_method(m, cq, x, g) :- pc_sym(d, q, g), doc(d, _, m), split_dot(q, cq, x).
+.decl pc_method(m: symbol, cq: symbol, x: symbol, t: symbol)
+pc_method(m, cq, x, cat(m, "::", q)) :- pc_sym(d, q, _), doc(d, _, m), split_dot(q, cq, x).
 .decl pc_cls(f: node, m: symbol, cq: symbol)  // the record's qualname less its last name
 pc_cls(f, m, cq) :- pc_sym(d, q, f), doc(d, _, m), split_dot(q, cq, qx).
 // pc_base(m, cq, i, bm, bq): base i of class cq names class bq of module bm: a from-import, a module attribute,
@@ -149,26 +159,27 @@ pc_has(m, cq, x) :- pc_mq(m, cq, x), pc_base(m, cq, _, bm, bq), pc_has(bm, bq, x
 .decl pc_first(m: symbol, cq: symbol, x: symbol, i: number)  // the first base that has it
 pc_first(m, cq, x, i) :- pc_has(m, cq, x), !pc_method(m, cq, x, _),
     i = min j : { pc_base(m, cq, j, bm, bq), pc_has(bm, bq, x) }.
-.decl pc_mans(m: symbol, cq: symbol, x: symbol, g: node, via: number)
-pc_mans(m, cq, x, g, 0) :- pc_mq(m, cq, x), pc_method(m, cq, x, g).
-pc_mans(m, cq, x, g, 1) :- pc_first(m, cq, x, i), pc_base(m, cq, i, bm, bq), pc_mans(bm, bq, x, g, _).
+.decl pc_mans(m: symbol, cq: symbol, x: symbol, t: symbol, via: number)
+pc_mans(m, cq, x, t, 0) :- pc_mq(m, cq, x), pc_method(m, cq, x, t).
+pc_mans(m, cq, x, t, 1) :- pc_first(m, cq, x, i), pc_base(m, cq, i, bm, bq), pc_mans(bm, bq, x, t, _).
 
-// pc_tgt(f, g, via): _resolve_call_target for each call of record f.
-.decl pc_tgt(f: node, g: node, via: number)
+// pc_tgt(f, t, via): _resolve_call_target for each call of record f: the id of the record it calls.
+.decl pc_tgt(f: node, t: symbol, via: number)
 // `x(…)`: a top-level def x of the file; else an imported x; else a method x of f's class.
-pc_tgt(f, g, 0) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), pc_sym(d, x, g).
+pc_tgt(f, cat(m, "::", x), 0) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), pc_sym(d, x, _),
+    doc(d, _, m).
 pc_want(q) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), !pc_sym(d, x, _), pc_isym(f, x, q).
-pc_tgt(f, g, 0) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), !pc_sym(d, x, _),
-    pc_isym(f, x, q), pc_res(q, g).
+pc_tgt(f, t, 0) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), !pc_sym(d, x, _),
+    pc_isym(f, x, q), pc_res(q, t).
 pc_mq(m, cq, x) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), !pc_sym(d, x, _),
     !pc_isym(f, x, _), pc_cls(f, m, cq).
-pc_tgt(f, g, v) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), !pc_sym(d, x, _),
-    !pc_isym(f, x, _), pc_cls(f, m, cq), pc_mans(m, cq, x, g, v).
+pc_tgt(f, t, v) :- pc_ref(f, _, e), kind(e, "identifier"), text(e, x), docof(f, d), !pc_sym(d, x, _),
+    !pc_isym(f, x, _), pc_cls(f, m, cq), pc_mans(m, cq, x, t, v).
 // `self.x(…)` / `cls.x(…)`: a method of f's class.
 pc_mq(m, cq, x) :- pc_ref(f, _, e), attr_of(e, o, x), kind(o, "identifier"), text(o, s), (s = "self" ; s = "cls"),
     pc_cls(f, m, cq).
-pc_tgt(f, g, v) :- pc_ref(f, _, e), attr_of(e, o, x), kind(o, "identifier"), text(o, s), (s = "self" ; s = "cls"),
-    pc_cls(f, m, cq), pc_mans(m, cq, x, g, v).
+pc_tgt(f, t, v) :- pc_ref(f, _, e), attr_of(e, o, x), kind(o, "identifier"), text(o, s), (s = "self" ; s = "cls"),
+    pc_cls(f, m, cq), pc_mans(m, cq, x, t, v).
 // `mod.x(…)` through `import mod`, or `name.x(…)` through `from m import name`.
 .decl pc_dotcall(f: node, s: symbol)
 pc_dotcall(f, cat(q, ".", x)) :- pc_ref(f, _, e), attr_of(e, o, x), kind(o, "identifier"), text(o, y), y != "self",
@@ -176,6 +187,8 @@ pc_dotcall(f, cat(q, ".", x)) :- pc_ref(f, _, e), attr_of(e, o, x), kind(o, "ide
 pc_dotcall(f, cat(q, ".", x)) :- pc_ref(f, _, e), attr_of(e, o, x), kind(o, "identifier"), text(o, y), y != "self",
     y != "cls", !pc_imod(f, y, _), pc_isym(f, y, q).
 pc_want(s) :- pc_dotcall(_, s).
-pc_tgt(f, g, 0) :- pc_dotcall(f, s), pc_res(s, g).
-.decl pc_edge(f: node, g: node, via: number)
-pc_edge(f, g, v) :- pc_tgt(f, g, v), f != g.
+pc_tgt(f, t, 0) :- pc_dotcall(f, s), pc_res(s, t).
+.decl pc_edge(f: node, t: symbol, via: number)
+pc_edge(f, t, v) :- pc_tgt(f, t, v), pc_sid(s, f), s != t.
+.decl pc_sedge(s: symbol, t: symbol, via: number)
+pc_sedge(s, t, v) :- pc_edge(f, t, v), pc_sid(s, f).

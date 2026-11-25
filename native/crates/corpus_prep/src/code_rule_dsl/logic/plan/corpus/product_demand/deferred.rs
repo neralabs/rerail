@@ -159,7 +159,7 @@ fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof)
 /// writes it). It asks for
 /// every node of a document before or after some point, which restricts nothing the producer does not, and costs a
 /// join of the document's nodes with the other side: versioned-merged-identity's `rr_deferred_pairs_vmi_alias(i)`,
-/// every node before a call, nodes × calls in each file (decision 0690). A join left as written is always right.
+/// every node before a call, nodes × calls in each file (decision 0692). A join left as written is always right.
 fn order_only(v: &Version, cols: &[usize], proof: &upstream::Proof) -> bool {
     use super::Part;
     let Some(reader) = v.rule(proof.rule) else { return false };

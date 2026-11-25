@@ -1,4 +1,4 @@
-# 0690. A reader's demand over per-file readers is each file's own
+# 0692. A reader's demand over per-file readers is each file's own
 
 Status: decided (2026-11-25), by the user's plan for the rules the position report flagged after 0665: "E and F, read
 against the originals, 14 rules." This is its first part: plan-helpers-allowlist and versioned-merged-identity, read

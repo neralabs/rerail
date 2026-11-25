@@ -2570,7 +2570,9 @@ called(n, p, x) :- kind(n, "call"), field(n, "function", f), text(f, x), def(_, 
 /// `plp_docin`). Each file derives `inrec`, `checked` and `unchecked` under both of the flag's values, per-file (the
 /// run's split, `RERAIL_SPLIT_DUMP`, names no copy), and the cross-file part takes each row from its document's value.
 /// An edit that turns the flag over for every file (b.py no longer shares `f`) gives every file's rows under the other
-/// value, and the rows are a fresh run's.
+/// value, and the rows are a fresh run's. `named_in(x, d)` is placed by a document's id, and the cross-file part reads
+/// it at an open location (`both`, as pure-lazy's walk reads `plp_id_in`): its choice reads the flag at that id, not at
+/// a node's document (decision 0693).
 #[test]
 fn a_flag_over_every_file_is_applied_last() {
     const PROGRAM: &str = r#"
@@ -2591,7 +2593,11 @@ inrec(n) :- def(n, _), docof(n, d), docin(d).
 checked(n, p, x) :- inrec(n), def(n, x), docof(n, d), doc(d, p, _).
 .decl unchecked(n: node, p: symbol, x: symbol)
 unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
-.output checked, unchecked
+.decl named_in(x: symbol, d: number)
+named_in(x, d) :- inrec(n), def(n, x), docof(n, d).
+.decl both(m: node, p: symbol, x: symbol)
+both(m, p, x) :- named_in(x, _), def(m, x), shared(m), docof(m, d), doc(d, p, _).
+.output checked, unchecked, both
 "#;
     let files = [("a.py", "def f():\n    pass\n\ndef h():\n    pass\n"), ("b.py", "def f():\n    pass\n"), ("c.py", "def g():\n    pass\n")];
     let edit = ("b.py", "def k():\n    pass\n");
@@ -2612,7 +2618,7 @@ unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
         unsafe { std::env::set_var("RERAIL_SPLIT_DUMP", dir.join("split.txt")) };
         super::run(PROGRAM, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
-        let mut rows: Vec<(String, Vec<String>)> = ["checked", "unchecked"]
+        let mut rows: Vec<(String, Vec<String>)> = ["checked", "unchecked", "both"]
             .iter()
             .flat_map(|o| outputs.get(o).map(|r| r.shown()).unwrap_or_default().into_iter().map(move |r| (o.to_string(), r[1..].to_vec())))
             .collect();
@@ -2622,7 +2628,7 @@ unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
     let row = |o: &str, p: &str, x: &str| (o.to_owned(), vec![p.to_owned(), x.to_owned()]);
     let dir = make("flag-last", &[]);
     let rows = run(&dir);
-    assert_eq!(rows, [row("checked", "a.py", "f"), row("checked", "a.py", "h"), row("checked", "b.py", "f"), row("unchecked", "c.py", "g")], "{rows:?}");
+    assert_eq!(rows, [row("both", "a.py", "f"), row("both", "b.py", "f"), row("checked", "a.py", "f"), row("checked", "a.py", "h"), row("checked", "b.py", "f"), row("unchecked", "c.py", "g")], "{rows:?}");
     // The run's split: no copy of the gated relations is cross-file.
     let causes: String = std::fs::read_dir(&dir)
         .unwrap()
@@ -2656,7 +2662,7 @@ unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A reader's demand guarding a per-file relation all of whose readers are per-file is each file's own (decision 0690):
+/// A reader's demand guarding a per-file relation all of whose readers are per-file is each file's own (decision 0692):
 /// versioned-merged-identity's shape, `callee(f, x)` asked for at the constructor's name and at each alias of it. The
 /// guard's rows are names from every file's aliases, but each file's readers ask only for their own: a run's rows are
 /// a whole run's, the guard is derived in the files' part, and an edit dropping a file's alias gives a fresh run's rows.
