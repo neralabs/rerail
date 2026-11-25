@@ -84,8 +84,8 @@ function indexFileOf(root: string): string | undefined {
 /**
  * What tells the index file at `path` from every other: Git's checksum at its end, which Git computes over every byte
  * before it, or the SHA-256 of its bytes where Git wrote zero bytes in its place (`index.skipHash`, which
- * `feature.manyFiles` turns on), as `digest` keeps it; "none" where there is no file; undefined where it cannot be
- * read. A stamp of the file's identity, size and times alone is not enough: ext4 gives a freed inode number to the
+ * `feature.manyFiles` turns on), as `digest` keeps it; "none" where there is no file; undefined where it cannot be read
+ * whole. A stamp of the file's identity, size and times alone is not enough: ext4 gives a freed inode number to the
  * next new file at once, so two writes of one size within one tick of the file clock can leave all four as they were.
  * Every read goes through one open, so they read one file while Git renames a new index over it.
  */
@@ -105,12 +105,13 @@ function indexStamp(path: string, digest: IndexDigest): string | undefined {
   }
 }
 
-/** `indexStamp` of the open index file `descriptor`. */
+/** `indexStamp` of the open index file `descriptor`; it throws where the file ends before the size its stat gave. */
 function openStamp(descriptor: number, digest: IndexDigest): string {
   const stats = fstatSync(descriptor, { bigint: true });
   const size = Number(stats.size);
   const end = Buffer.alloc(Math.min(size, CHECKSUM_BYTES));
-  readSync(descriptor, end, 0, end.length, size - end.length);
+  const read = readSync(descriptor, end, 0, end.length, size - end.length);
+  if (read < end.length) throw new Error(`the index ended ${end.length - read} bytes before its size`);
   if (end.subarray(-SHA1_BYTES).some(byte => byte !== 0)) return `checksum ${size} ${end.toString("hex")}`;
   return `digest ${digest.of(descriptor, stats)}`;
 }
