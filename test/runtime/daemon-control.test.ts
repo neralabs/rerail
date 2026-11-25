@@ -3261,12 +3261,20 @@ describe("a record whose live pid is not the home's daemon", () => {
   }, 30_000);
 
   /**
+   * The case's own guard against a real Windows PowerShell that never answers, as one held by a prompt or a locked
+   * module cache: `spawnSync` blocks the worker, so the case's 60 s limit cannot end the run. It is not the stop's bound,
+   * which the cases assert apart, and below it how fast this machine starts PowerShell decides nothing.
+   */
+  const POWERSHELL_GUARD_MS = 50_000;
+
+  /**
    * Stops the busy daemon `LIVE_PID` names, which the home's lock does not prove, on Windows, where each read of its
    * start is the real one through Windows PowerShell, of this process, which started before the record, with
    * PowerShell's own setting that loads only the modules a command names. The case's clock takes `answerMs` for each
    * answer, so how fast this machine starts PowerShell decides nothing: a read answered within the bound the stop gave
-   * it is PowerShell's own, run to its end; one past that bound comes back, unrun, as Node's `spawnSync` gives a
-   * PowerShell it ended there. Each read's program and bound go to `reads`.
+   * it is PowerShell's own, run to its end, and a PowerShell still running at {@link POWERSHELL_GUARD_MS} fails the case;
+   * one past that bound comes back, unrun, as Node's `spawnSync` gives a PowerShell it ended there. Each read's program
+   * and bound go to `reads`.
    */
   async function stopReadingStartsFor(answerMs: number, signals: Array<string | number | undefined>, reads: Array<{ program: string; boundMs: number }>): Promise<StopDaemonResult> {
     const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
@@ -3278,8 +3286,9 @@ describe("a record whose live pid is not the home's daemon", () => {
         const ended = Object.assign(new Error("spawnSync powershell.exe ETIMEDOUT"), { code: "ETIMEDOUT" });
         return { pid: 0, output: [null, "", ""], stdout: "", stderr: "", status: null, signal: "SIGTERM", error: ended };
       }
-      const { timeout: _bound, ...unbounded } = options;
-      const result = runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), unbounded);
+      const result = runSync(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), { ...options, timeout: POWERSHELL_GUARD_MS });
+      const failed: NodeJS.ErrnoException | undefined = result.error;
+      if (failed?.code === "ETIMEDOUT") throw new Error(`Windows PowerShell did not answer within the case's own ${POWERSHELL_GUARD_MS / 1_000} s guard`);
       vi.setSystemTime(Date.now() + answerMs);
       return result;
     }) as unknown as typeof childProcess.spawnSync;
