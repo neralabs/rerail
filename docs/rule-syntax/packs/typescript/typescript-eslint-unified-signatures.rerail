@@ -1,4 +1,4 @@
-.policy "typescript-eslint-unified-signatures" revision 6
+.policy "typescript-eslint-unified-signatures" revision 7
 .description "Combine TypeScript overloads that differ only in one parameter type or one extra parameter into a single signature with a union or optional parameter."
 .language typescript
 .mode steer
@@ -12,7 +12,9 @@
 //   f(x: number): void;  f(x: string): void;        → at the second x: "… taking `number | string`."
 //   f(): void;           f(x?: number): void;       → at x: "… with an optional parameter." (`...xs`: a rest one)
 //   f(x: number): void;  f(x: number): void;        → at the second: "… with identical parameters."
-// Overloads group by name (computed keys other than literals all share one): `declare function` signatures in the program or a namespace body, a class's bodiless
+// Overloads group by name (a computed name keys on its identifier, `[a]`, or literal, `["a"]`; any other computed
+// name, `[Symbol.iterator]`, keys as "undefined", so all such share one): `declare function` signatures in the
+// program, a namespace body or `declare global {}`, a class's (named, or `export default class {}`) bodiless
 // methods (static ones apart), and an interface's or object type's methods, call signatures and construct
 // signatures. Two overloads compare when their return types and type parameters read alike, and both or neither
 // use the class's or interface's type parameters. Every pair in a group is checked; with more than two, the
@@ -55,12 +57,16 @@ overload(g, k, m) :- (kind(m, "method_signature") ; kind(m, "abstract_method_sig
     k = cat(c, cat(s, i)), (computed(m), c = "0" ; !computed(m), c = "1"), (op(m, "static"), s = "0" ; !op(m, "static"), s = "1").
 overload(g, "11()", c) :- kind(c, "call_signature"), child(g, c, _), container(g).
 overload(g, "11constructor", c) :- kind(c, "construct_signature"), child(g, c, _), container(g).
-.decl container(g: node)  // the program, a namespace body, a class declaration's body, an interface, an object type
+.decl container(g: node)  // the program, a namespace or `declare global` body, a class declaration's body, an interface, an object type
 container(g) :- kind(g, "program") ; kind(g, "interface_body") ; kind(g, "object_type").
 container(g) :- ts_module_body(g).
 container(g) :- kind(g, "class_body"), child(c, g, _), (kind(c, "class_declaration") ; kind(c, "abstract_class_declaration")).
+// `export default class {}` is a ClassDeclaration (with no id) in ESTree, a `class` in tree-sitter.
+container(g) :- kind(g, "class_body"), child(c, g, _), kind(c, "class"), child(e, c, _), kind(e, "export_statement").
 .decl ts_module_body(g: node)
 ts_module_body(g) :- (kind(m, "internal_module") ; kind(m, "module")), field(m, "body", g).
+// `declare global { … }`: an ambient declaration holding a block (ESTree: a TSModuleDeclaration with a TSModuleBlock).
+ts_module_body(g) :- kind(g, "statement_block"), child(a, g, _), kind(a, "ambient_declaration").
 .decl lifted(f: node, t: node)  // f as its block holds it: through `declare` and `export`
 lifted(f, f) :- kind(f, "function_signature"), child(t, f, _), !kind(t, "ambient_declaration"), !kind(t, "export_statement").
 lifted(f, t) :- kind(f, "function_signature"), child(a, f, _), kind(a, "ambient_declaration"), !exported(a, _),
@@ -78,10 +84,15 @@ member_key(m, cat("identifier_", x)) :- field(m, "name", n), kind(n, "property_i
 member_key(m, cat("private_identifier_", x)) :- field(m, "name", n), kind(n, "private_property_identifier"), text(n, y),
     x = @slice(y, 1, 1000).
 member_key(m, x) :- field(m, "name", n), (kind(n, "string") ; kind(n, "number")), text(n, x).
+member_key(m, cat("identifier_", x)) :- field(m, "name", n), kind(n, "computed_property_name"), child(n, e, 0),
+    deparen(e, l), kind(l, "identifier"), text(l, x).
 member_key(m, x) :- field(m, "name", n), kind(n, "computed_property_name"), child(n, e, 0), deparen(e, l),
-    (kind(l, "string") ; kind(l, "number")), text(l, x).
+    key_literal(l), text(l, x).
 member_key(m, "undefined") :- field(m, "name", n), kind(n, "computed_property_name"), child(n, e, 0), deparen(e, l),
-    !kind(l, "string"), !kind(l, "number").
+    !key_literal(l), !kind(l, "identifier").
+.decl key_literal(l: node)  // an ESTree Literal, whose raw text keys
+key_literal(l) :- kind(l, "string") ; kind(l, "number") ; kind(l, "true") ; kind(l, "false") ; kind(l, "null") ;
+    kind(l, "regex").
 .decl computed(m: node)
 computed(m) :- field(m, "name", n), kind(n, "computed_property_name").
 .decl group_size(a: node, k: number)
@@ -140,8 +151,9 @@ same_tparams(a, b) :- pairable(a, b), !tparams(a, _), !tparams(b, _).
 same_tparams(a, b) :- pairable(a, b), tparams(a, n), tparams(b, n), !tparam_apart(a, b).
 .decl tparam_apart(a: node, b: node)
 tparam_apart(a, b) :- pairable(a, b), tparam(a, i, x, c), tparam(b, i, y, d), (x != y ; c != d).
-// uses_tparam(g, s): a parameter's type is one of the container's type parameters, maybe as an array or under
-// `readonly` or `keyof`.
+// uses_tparam(g, s): a parameter's type is one of the container's type parameters, maybe as an array, under
+// `readonly` or `keyof`, or as a mapped type's value (typeContainsTypeParameter follows `typeAnnotation` and
+// `elementType`).
 .decl uses_tparam(g: node, s: node)
 uses_tparam(g, s) :- overload(g, _, s), outer_tparam(g, x), sig_param(s, _, p), type_of(p, t), reaches(t, u),
     (kind(u, "type_identifier"), text(u, x) ; kind(u, "generic_type"), field(u, "name", n), kind(n, "type_identifier"),
@@ -153,6 +165,10 @@ outer_tparam(g, x) :- (kind(g, "class_body") ; kind(g, "interface_body")), child
 reaches(t, t) :- type_of(_, t).
 reaches(t, u) :- reaches(t, v), (kind(v, "array_type") ; kind(v, "readonly_type") ; kind(v, "index_type_query") ;
     kind(v, "parenthesized_type")), child(v, u, 0).
+// `{ [K in X]: V }`: an object type whose index signature is a mapped clause; its value type V.
+reaches(t, u) :- reaches(t, v), kind(v, "object_type"), child(v, ix, _), kind(ix, "index_signature"), child(ix, c, _),
+    kind(c, "mapped_type_clause"), child(ix, a, _), (kind(a, "type_annotation") ; kind(a, "omitting_type_annotation") ;
+    kind(a, "adding_type_annotation") ; kind(a, "opting_type_annotation")), child(a, u, 0).
 
 // ---- the two ways ----
 // one_differs(a, b, p, q): as many parameters, alike but for the one at p (in a) and q (in b), plain on both sides.
@@ -182,10 +198,13 @@ type_apart(a, b, k) :- pair(a, b), params(a, m), params(b, n), (m < n, k = m ; n
 rest_last(o, k) :- params(o, k), k > 0, sig_param(o, k - 1, p), rest(p).
 
 // ---- options ----
+// on(x): boolean option x is set true (a test gives it with `.given on`).
+.decl on(x: symbol)
+on(x) :- option(x, "true").
 // named_apart(a, b): ignoreDifferentlyNamedParameters, and at some shared place both are plain names (or both
 // rest names), named differently.
 .decl named_apart(a: node, b: node)
-named_apart(a, b) :- option("ignoreDifferentlyNamedParameters", "true"), pairable(a, b), sig_param(a, i, p), sig_param(b, i, q),
+named_apart(a, b) :- on("ignoreDifferentlyNamedParameters"), pairable(a, b), sig_param(a, i, p), sig_param(b, i, q),
     shape(p, h), shape(q, h), name_of(p, x), name_of(q, y), x != y.
 .decl shape(p: node, h: symbol)  // ESTree's parameter type: "Identifier", "RestElement", "TSParameterProperty", …
 shape(p, "TSParameterProperty") :- sig_param(_, _, p), param_property(p).
@@ -198,7 +217,7 @@ name_of(p, x) :- sig_param(_, _, p), field(p, "pattern", n), kind(n, "rest_patte
     text(i, x).
 // doc_apart(a, b): ignoreOverloadsWithDifferentJSDoc, and the last block comment right before each differs.
 .decl doc_apart(a: node, b: node)
-doc_apart(a, b) :- option("ignoreOverloadsWithDifferentJSDoc", "true"), pairable(a, b), sig_doc(a, x), sig_doc(b, y), x != y.
+doc_apart(a, b) :- on("ignoreOverloadsWithDifferentJSDoc"), pairable(a, b), sig_doc(a, x), sig_doc(b, y), x != y.
 .decl sig_doc(s: node, x: symbol)  // "" for none
 sig_doc(s, x) :- overload(_, _, s), doc_target(s, t), block_before(t, c), text(c, x), node(_, c, _, a, _),
     a = max b : { block_before(t, d), node(_, d, _, b, _) }.
@@ -209,5 +228,90 @@ doc_target(s, s) :- overload(_, _, s), !lifted(s, _).
 .decl run_before(t: node, c: node)  // comments right before t
 run_before(t, c) :- doc_target(_, t), next_sibling(c, t), kind(c, "comment").
 run_before(t, c) :- run_before(t, d), next_sibling(c, d), kind(c, "comment").
-.decl block_before(t: node, c: node)
-block_before(t, c) :- run_before(t, c), match("/\\*.*", c).
+.decl block_before(t: node, c: node)  // a block comment, on one line or many
+block_before(t, c) :- run_before(t, c), text(c, x), prefix("/*", x).
+
+// Tests (decision 0130). The review of batch typescript-04 found each of these; typescript-eslint 8.70 reports
+// at the lines named here and nowhere else.
+.test computed_identifier_keys_group_by_name exactly
+    .fixture "u1.ts" ```
+        declare const sa: unique symbol;
+        declare const sb: unique symbol;
+        export interface I {
+          [sa](x: number): void;
+          [sb](x: string): void;
+        }
+        export interface J {
+          [(sa)](x: number): void;
+          [sa](x: string): void;
+        }
+        export interface K {
+          [Symbol.iterator](x: number): void;
+          [Symbol.asyncIterator](x: string): void;
+        }
+        ```
+    .expect "@typescript-eslint/unified-signatures" at "u1.ts":9
+    .expect "@typescript-eslint/unified-signatures" at "u1.ts":13
+.end
+
+.test declare_global_is_a_scope exactly
+    .fixture "u2.ts" ```
+        export {};
+        declare global {
+          function g(x: number): void;
+          function g(x: string): void;
+        }
+        ```
+    .expect "@typescript-eslint/unified-signatures" at "u2.ts":4
+.end
+
+.test an_anonymous_default_class_is_a_scope exactly
+    .fixture "u3.ts" ```
+        export default class {
+          m(x: number): void;
+          m(x: string): void;
+          m(x: unknown) {}
+        }
+        ```
+    .expect "@typescript-eslint/unified-signatures" at "u3.ts":3
+.end
+
+.test a_mapped_types_value_uses_the_type_parameter exactly
+    .fixture "u4.ts" ```
+        export interface I<T> {
+          m(x: { [K in "a"]: T }): void;
+          m(x: number): void;
+          n(x: { readonly [K in "a"]-?: T }): void;
+          n(x: number): void;
+          o(x: { [K in "a"]: number }): void;
+          o(x: string): void;
+        }
+        ```
+    .expect "@typescript-eslint/unified-signatures" at "u4.ts":7
+.end
+
+.test multi_line_jsdoc_keeps_overloads_apart exactly
+    .given on
+    on("ignoreOverloadsWithDifferentJSDoc").
+    .fixture "u5.ts" ```
+        export interface I {
+          /**
+           * Takes a number.
+           */
+          m(x: number): void;
+          /**
+           * Takes a string.
+           */
+          m(x: string): void;
+          /**
+           * The same.
+           */
+          n(x: number): void;
+          /**
+           * The same.
+           */
+          n(x: string): void;
+        }
+        ```
+    .expect "@typescript-eslint/unified-signatures" at "u5.ts":17
+.end

@@ -9,7 +9,23 @@
   },
   {
     "id": "vitest-no-disabled-tests",
-    "status": "same"
+    "status": "different",
+    "reason": "Every translation-only key is a test context's `context.skip()` inside a test callback (`it(\"…\", async context => { … context.skip(); })`): test/api/api-mcp-caller.test.ts:141, test/daemon/daemon.test.ts:798, test/engine/catalog/checkouts/checkout-spelling.test.ts:43, test/engine/no-follow.test.ts:35 and :53. @vitest/eslint-plugin 1.6.27's resolveScope takes any plain-named parameter of a function passed to an it/test call as a test context, and no-disabled-tests reports its `skip` member: ESLint 9.39.5 reports all five (disabledTest at `skip`). The original only takes a context root named `it`, so it misses them. On the whole rerail-typescript corpus ESLint's keys equal the translation's (NOTES-typescript-04.md).",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "rerail-typescript": {
+        "originalOnly": 0,
+        "translationOnly": 5
+      }
+    }
   },
   {
     "id": "vitest-no-focused-tests",
