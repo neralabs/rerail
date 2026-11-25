@@ -33,6 +33,11 @@
 //   dj_manager_method(m, q, a, x)  q's attribute a (`objects = ...`, its own or an ancestor's of the run) names a class
 //                             of the run, at any depth of its right side, which defines or inherits method x
 //                             (get_or_create, update_or_create), itself or the class its get_queryset() names
+//   dj_hook(m, q, k, h)       a hook of kind k ("save" or "delete") that a bulk write on model q skips, h its
+//                             description: q's save()/delete(), or an ancestor's of the run, doing more than call the
+//                             base class's (`Book.save() (shop/models.py:22)`); a pre_save/post_save receiver connected
+//                             for sender q in any file (`post_save receiver `tag_saved` (shop/signals.py:7)`)
+//   dj_receiver_fn(m, f, q)   function f of module m is connected as a pre_save/post_save receiver for sender q
 // An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
 // module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
 // python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
@@ -40,12 +45,12 @@
 
 #include "core.rerail"
 #include "python/scopes.rerail"
-#include "python/django-bases.rerail"
+#include "python/django-shared.rerail"
 
 .phase py_names
 .export reads_at, exports, class, defined, public, ancestor, library_ancestor, anc_call, anc_kw, anc_ref, anc_method,
     member_call, member_kw, member_method, dj_group, dj_cond_group, dj_opaque, dj_unmanaged, dj_abstract,
-    dj_manager_method
+    dj_manager_method, dj_hook, dj_receiver_fn
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -188,8 +193,7 @@ dj_strings(g) :- dj_seq(g), child(g, e, _), kind(e, "string"), !dj_odd(g).
 dj_constraint(k) :- kind(k, "call"), field(k, "function", f), (sym_of(f, q) ; qn(f, q)), suffix(".UniqueConstraint", q).
 // dj_kwarg(k, x, v): call k passes keyword argument x = v, parentheses off.
 .decl dj_kwarg(k: node, x: symbol, v: node)
-dj_kwarg(k, x, v) :- kind(k, "call"), field(k, "arguments", al), child(al, ka, _), kind(ka, "keyword_argument"),
-    field(ka, "name", n), text(n, x), field(ka, "value", w), unparen(w, v).
+dj_kwarg(k, x, v) :- call_arg(k, -1, x, w), unparen(w, v).
 // dj_group_node(q, g, gn, c): list or tuple gn of class q's own Meta is a group, named g; c is "" or "condition" (a
 // UniqueConstraint with a condition: whether a row meets it is not known).
 .decl dj_group_node(q: symbol, g: symbol, gn: node, c: symbol)
@@ -207,8 +211,7 @@ dj_own_group(q, g, c, x) :- dj_group_node(q, g, gn, c), child(gn, e, _), str(e, 
 dj_own_opaque(q) :- (dj_opt(q, "unique_together", v) ; dj_opt(q, "constraints", v)), !dj_seq(v).
 dj_own_opaque(q) :- dj_opt(q, "unique_together", v), !dj_strings(v), child(v, e, _), !kind(e, "comment"), unparen(e, g),
     !dj_strings(g).
-dj_own_opaque(q) :- dj_opt(q, "constraints", v), child(v, k, _), dj_constraint(k), field(k, "arguments", al),
-    child(al, a, _), !kind(a, "keyword_argument"), !kind(a, "comment").
+dj_own_opaque(q) :- dj_opt(q, "constraints", v), child(v, k, _), dj_constraint(k), posarg(k, _, _).
 dj_own_opaque(q) :- dj_opt(q, "constraints", v), child(v, k, _), dj_constraint(k), !dj_fields_lit(k).
 dj_own_opaque(q) :- dj_opt(q, "constraints", v), child(v, k, _), !kind(k, "comment"), !kind(k, "call").
 .decl dj_fields_lit(k: node)
@@ -267,3 +270,71 @@ dj_row_maker("get_or_create"). dj_row_maker("update_or_create").
 .decl dj_manager_method(m: symbol, q: symbol, a: symbol, x: symbol)
 dj_manager_method(m, q, a, x) :- class(m, q), (own_ref(q, a, s) ; anc(q, o), own_ref(o, a, s)), dj_mgr_class(s, k),
     dj_row_maker(x), (own_method(k, x) ; anc(k, o2), own_method(o2, x)).
+
+// ---- Django's model hooks (0677 fix 3d) ----------------------------------------------------------------------------
+// What a queryset's bulk write skips (django-practice-bulk-write-skips-hooks): a model's save()/delete() overrides, its
+// own and its ancestors', and the pre_save/post_save receivers connected for it in any file. Each file's rules turn its
+// own into symbols, keyed by place ("path:line"); the phase joins senders and ancestors by symbol.
+// dj_place(n, p): node n's place, "path:line".
+.decl dj_place(n: node, p: symbol)
+dj_place(n, p) :- docof(n, d), doc(d, path, _), line(n, l), p = cat(path, ":", to_string(l)).
+// dj_bare_super(f): f's body, its docstring aside, is one statement calling the base class's method of f's name, maybe
+// returned: `super().<name>(…)`, or the old style `models.Model.<name>(self, …)`.
+.decl dj_bare_super(f: node)
+dj_bare_super(f) :- def_name(f, x), field(f, "body", b), dj_code_len(f, b, 1), body_stmt(b, s, _), !doc_stmt(s, _),
+    text(s, t), match(cat("(?s)(return\\s+)?(super\\([^)]*\\)\\.", x, "\\(.*\\)|[\\w.]+\\.", x, "\\(\\s*self\\b.*\\))"), t).
+.decl dj_code_len(f: node, b: node, k: number)
+dj_code_len(f, b, k) :- field(f, "body", b), body_len(b, n), docstring(f, _), k = n - 1.
+dj_code_len(f, b, k) :- field(f, "body", b), body_len(b, k), !docstring(f, _).
+// dj_own_hook(o, k, h): class o's own body defines method k, save or delete, doing more than a bare base call.
+.decl dj_own_hook(o: symbol, k: symbol, h: symbol)
+dj_own_hook(o, k, h) :- class_def(c, o), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, k),
+    (k = "save" ; k = "delete"), !dj_bare_super(f), def_name(c, cn), dj_place(f, p), h = cat(cn, ".", k, "() (", p, ")").
+// dj_signal(e, x): e names Django's model signal x, pre_save or post_save. dj_receiver_deco(e): e names Django's
+// `receiver` decorator. Library names, read as the file binds or imports them.
+.decl dj_signal(e: node, x: symbol)
+dj_signal(e, x) :- (sym_of(e, q) ; qn(e, q)), split_dot(q, "django.db.models.signals", x), (x = "pre_save" ; x = "post_save").
+.decl dj_sig_arg(a: node, x: symbol)
+dj_sig_arg(a, x) :- dj_signal(a, x).
+dj_sig_arg(a, x) :- (kind(a, "list") ; kind(a, "tuple")), child(a, e, _), dj_signal(e, x).
+.decl dj_receiver_deco(e: node)
+dj_receiver_deco(e) :- (sym_of(e, q) ; qn(e, q)), (q = "django.dispatch.receiver" ; q = "django.dispatch.dispatcher.receiver").
+// dj_rcv_site(k, v, x, fname, a): call k, outside test code, connects a receiver of signal x for the sender v names:
+// `@receiver(sig, sender=M)` on def a (sig maybe a list or tuple), or `sig.connect(a, sender=M)`; fname is the
+// receiver's name as written.
+.decl dj_rcv_site(k: node, v: node, x: symbol, fname: symbol, a: node)
+dj_rcv_site(e, v, x, fname, f) :- decorator(f, e), kind(e, "call"), field(e, "function", rf), dj_receiver_deco(rf),
+    posarg(e, 0, s), dj_sig_arg(s, x), call_arg(e, -1, "sender", v), def_name(f, fname), docof(e, d), !dj_test_doc(d).
+dj_rcv_site(k, v, x, fname, a) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "connect"), dj_signal(o, x),
+    call_arg(k, -1, "sender", v), (posarg(k, 0, a) ; call_arg(k, -1, "receiver", a)), text(a, fname), docof(k, d),
+    !dj_test_doc(d).
+// dj_rcv(p, x, fname): at place p a receiver fname of signal x is connected.
+.decl dj_rcv(p: symbol, x: symbol, fname: symbol)
+dj_rcv(p, x, fname) :- dj_rcv_site(k, _, x, fname, _), dj_place(k, p).
+// The sender and the receiver function at place p, resolved by the three rules a base is (`base`).
+.decl dj_rcv_sender_here(p: symbol, q: symbol)
+dj_rcv_sender_here(p, q) :- dj_rcv_site(k, v, _, _, _), dj_place(k, p), sym_of(v, q).
+.decl dj_rcv_sender_name(p: symbol, q0: symbol)
+dj_rcv_sender_name(p, q0) :- dj_rcv_site(k, v, _, _, _), dj_place(k, p), qn(v, q0).
+.decl dj_rcv_sender(p: symbol, q: symbol)
+dj_rcv_sender(p, q) :- dj_rcv_sender_here(p, q).
+dj_rcv_sender(p, q) :- dj_rcv_sender_name(p, q0), split_dot(q0, m, y), exports(m, y, q).
+dj_rcv_sender(p, q0) :- dj_rcv_sender_name(p, q0), count : { split_dot(q0, m, y), exported(m, y) } = 0.
+.decl dj_rcv_fn_here(p: symbol, f: symbol)
+dj_rcv_fn_here(p, fq) :- dj_rcv_site(k, _, _, _, a), dj_place(k, p), kind(a, "function_definition"), qualname(a, fq).
+dj_rcv_fn_here(p, fq) :- dj_rcv_site(k, _, _, _, a), dj_place(k, p), sym_of(a, fq).
+.decl dj_rcv_fn_name(p: symbol, f0: symbol)
+dj_rcv_fn_name(p, f0) :- dj_rcv_site(k, _, _, _, a), dj_place(k, p), qn(a, f0).
+.decl dj_rcv_fn(p: symbol, f: symbol)
+dj_rcv_fn(p, fq) :- dj_rcv_fn_here(p, fq).
+dj_rcv_fn(p, fq) :- dj_rcv_fn_name(p, f0), split_dot(f0, m, y), exports(m, y, fq).
+// dj_rcv_hook(q, h): a receiver connected for sender q, described: its signals, its name, its place.
+.decl dj_rcv_hook(q: symbol, h: symbol)
+dj_rcv_hook(q, h) :- dj_rcv_sender(p, q), dj_rcv(p, _, fname), s = join x by x sep "/" : { dj_rcv(p, x, fname) },
+    h = cat(s, " receiver `", fname, "` (", p, ")").
+.decl dj_hook(m: symbol, q: symbol, k: symbol, h: symbol)
+dj_hook(m, q, k, h) :- class(m, q), dj_own_hook(q, k, h).
+dj_hook(m, q, k, h) :- class(m, q), anc(q, o), dj_own_hook(o, k, h).
+dj_hook(m, q, "save", h) :- class(m, q), dj_rcv_hook(q, h).
+.decl dj_receiver_fn(m: symbol, f: symbol, q: symbol)
+dj_receiver_fn(m, fq, q) :- dj_rcv_fn(p, fq), dj_rcv_sender(p, q), defined(m, fq).

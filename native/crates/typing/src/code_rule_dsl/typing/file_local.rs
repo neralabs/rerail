@@ -235,7 +235,7 @@ pub fn setting_input(rel: &str) -> bool {
 /// module (`py_names__reads_at(path, m)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder,
 /// target or module, in column 0.
 pub const SETTINGS_BY_PATH: [(&str, usize); 4] = [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2), ("py_names__reads_at", 1)];
-pub const SETTINGS_BY_FOLDER: [&str; 25] = [
+pub const SETTINGS_BY_FOLDER: [&str; 27] = [
     "package",
     "package_field",
     "tsconfig",
@@ -261,6 +261,8 @@ pub const SETTINGS_BY_FOLDER: [&str; 25] = [
     "py_names__dj_unmanaged",
     "py_names__dj_abstract",
     "py_names__dj_manager_method",
+    "py_names__dj_hook",
+    "py_names__dj_receiver_fn",
 ];
 
 /// The folder, target or module column of a setting keyed by a file's path (`SETTINGS_BY_PATH`).

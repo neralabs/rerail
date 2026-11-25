@@ -170,8 +170,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
 3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
    Class hierarchy (3a), class members and a Django model read by its symbol (3b): **done (2026-11-24)**, § Fix 3:
-   built. A model's `Meta` options and managers (3c): **done (2026-11-25)**, § Fix 3c: built. bwh's hooks, points-to,
-   `plp_anycand` and `item_parts` remain.
+   built. A model's `Meta` options and managers (3c), and its hooks (3d): **done (2026-11-25)**, § Fix 3c: built,
+   § Fix 3d: built. Points-to, `plp_anycand` and `item_parts` remain.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
@@ -428,7 +428,7 @@ module:
 python/django reads them at a node of the reading file that names the model (`dj_model_group`, …, through
 `dj_model_ref`). goc's call now holds that node, `goc_call(c, m, r)`, as `dj_qs_model(q, r)` does. For `cls` in a
 classmethod, the node is the model's own class node. The list of model bases (`dj_model_base`) is one file,
-python/django-bases, included by both python/django and the phase.
+included by both python/django and the phase (python/django-shared since fix 3d).
 
 **Found on the way.**
 - *`py_names`' `base` missed a class read as an attribute of a class.* `class Meta(Named.Meta)` names
@@ -461,6 +461,44 @@ alone, and reads from it:
 - Part's options from its concrete base's constraints, one of them with a condition.
 - Tag's expression constraint, which is opaque.
 - Part's manager, whose `get_queryset()` builds a queryset class that defines `get_or_create`.
+
+### Fix 3d: built (2026-11-25): a model's hooks
+
+**The list.** 538 entries, from 541: Django's 139 are 136. bwh (django-practice-bulk-write-skips-hooks) paired a bulk
+write with the model's `save()`/`delete()` defs in the model's and its bases' files (`bwh_method`), and with the
+receivers connected for it in any file (`bwh_hook`, `bwh_in_hook`).
+
+**By symbol.** `py_names`' Django section hands on two more relations:
+- `dj_hook(m, q, k, h)`: a hook of kind k (`save`, `delete`) that a bulk write on model q skips, with h its
+  description. It is a `save()`/`delete()` that does more than call the base class's, the model's own or an
+  ancestor's of the run (`Stamped.save() (models_base.py:8)`). Or it is a `pre_save`/`post_save` receiver for sender
+  q, connected by `@receiver` or `.connect` in any file (`` post_save/pre_save receiver `book_saved`
+  (shop/signals.py:7) ``).
+- `dj_receiver_fn(m, f, q)`: function f of module m is such a receiver for q.
+
+Each file's rules turn its own sites into symbols keyed by place ("path:line"). The phase resolves a receiver's sender
+and function by the three rules a base is resolved by, and joins them by symbol. The place is a value of the file's
+own rule, like a keyword argument's text, and no node crosses. python/django reads `dj_model_hook(e, k, h)` at the
+queryset's root, and `dj_receiver_def(f, mq)` at a def of the reading file. bwh's in-hook test reads a save/delete
+def of the reading file, its class matched to the model or its ancestors (`py_names__ancestor`). `bwh_method` and
+bwh's receiver relations are gone.
+
+**python/syntax.** The phase needed `call_arg`, `posarg`, `body_stmt`, `body_len`, `docstring` and their string
+forms. Those lived in python/calls and python/ast, which include python/names, which reads the phase. They and
+`unparen` are moved, unchanged, into python/syntax: the syntax helpers that read the tree alone. python/scopes
+includes it, so every rule that had them still has them. `dj_test_doc` moved into python/django-shared (formerly
+python/django-bases) for the phase too. The executor-coverage ledger (`gate/executor-coverage/packs.tsv`) counts two
+device gaps where they now are, in the phase (`engine`): the receivers' string join and the bare-super regex. Both
+were bwh's.
+
+**Tests.** `a_django_models_hooks_are_read_by_their_symbol_in_another_file`. views.py imports shop.models alone,
+and reads Book's hooks:
+- the `save()` it inherits from a base in a module views.py never imports;
+- a receiver connected by `@receiver`, for both signals;
+- a receiver connected by `.connect`.
+
+Both receivers are in a signals module nothing imports. A bare `super().save()` with a docstring is no hook. The
+signals module's own defs are known as receivers.
 
 ## Open
 

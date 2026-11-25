@@ -2731,7 +2731,7 @@ fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
-    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm", "mg", "mc", "mu", "mo", "da", "mm"]
+    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm", "mg", "mc", "mu", "mo", "da", "mm", "hk", "rd"]
         .into_iter()
         .filter_map(|name| {
             let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
@@ -2960,6 +2960,58 @@ mm(mq, a, x) :- at_view(e, mq), dj_model_manager_method(e, a, x).
     assert_eq!(rows["mo"], [r(&["shop.models.Tag"])], "an expression constraint: {rows:?}");
     assert_eq!(rows["da"], [r(&["models_base.py", "models_base.Named"]), r(&["shop/models.py", "models_base.Named"])], "{rows:?}");
     assert_eq!(rows["mm"], [r(&["shop.models.Part", "objects", "get_or_create"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model's hooks read by its symbol in another file (decision 0677 fix 3d: the phase py_names' Django section,
+/// python/django's dj_model_hook and dj_receiver_def). views.py imports shop.models alone. Book's save() is
+/// inherited from Stamped, in models_base, which views.py never imports; Book's receivers are connected in
+/// shop/signals.py, which nothing imports: a decorated def, and a def connected with `.connect`, both for sender Book.
+/// Note's save() only calls the base class's, so it is no hook. signals.py's own defs know they are receivers.
+#[test]
+fn a_django_models_hooks_are_read_by_their_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Stamped(models.Model):\n    class Meta:\n        abstract = True\n\n    def save(self, *args, **kwargs):\n        self.updated = None\n        super().save(*args, **kwargs)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Stamped\n\n\nclass Book(Stamped):\n    title = models.CharField(max_length=10)\n\n\nclass Note(models.Model):\n    def save(self, *args, **kwargs):\n        \"\"\"Just super.\"\"\"\n        return super().save(*args, **kwargs)\n",
+        ),
+        (
+            "shop/signals.py",
+            "from django.db.models.signals import post_save, pre_save\nfrom django.dispatch import receiver\n\nfrom .models import Book\n\n\n@receiver([pre_save, post_save], sender=Book)\ndef book_saved(sender, instance, **kwargs):\n    pass\n\n\ndef book_checked(sender, instance, **kwargs):\n    pass\n\n\npre_save.connect(book_checked, sender=Book)\n",
+        ),
+        ("views.py", "from shop.models import Book, Note\n\n\ndef bulk():\n    Book.objects.update(title=\"t\")\n    Note.objects.update(title=\"t\")\n"),
+    ];
+    let dir = py_classes_workspace("dj-hooks", &edits);
+    let program = r#".language python
+#include "python/django.rerail"
+.decl hk(mq: symbol, k: symbol, h: symbol)
+hk(mq, k, h) :- dj_qs_root(_, e), dj_model_named(e, mq), docof(e, d), doc(d, "views.py", _), dj_model_hook(e, k, h).
+.output hk
+.decl rd(p: symbol, f: symbol, mq: symbol)
+rd(p, x, mq) :- dj_receiver_def(f, mq), def_name(f, x), docof(f, d), doc(d, p, _).
+.output rd
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["hk"],
+        [
+            r(&["shop.models.Book", "save", "Stamped.save() (models_base.py:8)"]),
+            r(&["shop.models.Book", "save", "post_save/pre_save receiver `book_saved` (shop/signals.py:7)"]),
+            r(&["shop.models.Book", "save", "pre_save receiver `book_checked` (shop/signals.py:16)"]),
+        ],
+        "Book's inherited save() and its receivers; Note's bare save() is none: {rows:?}"
+    );
+    assert_eq!(
+        rows["rd"],
+        [r(&["shop/signals.py", "book_checked", "shop.models.Book"]), r(&["shop/signals.py", "book_saved", "shop.models.Book"])],
+        "{rows:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

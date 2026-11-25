@@ -25,6 +25,7 @@
 //
 // Precision: this is approximate, file-local name resolution, not a type checker. Lookup lands on a scope, and every
 // binding of the name in that scope is a candidate (may-precise); only straight-line rebinding (layer 5) prunes.
+#include "python/syntax.rerail"       // syntax alone: unparen, call_arg, body_stmt, docstring, ...
 #include "python/annotation.rerail"   // before imports: names and imports are one unit, listed after what it includes
 #include "python/imports.rerail"
 
@@ -338,16 +339,6 @@ live_asg(s, x, r) :- asg(s, x, r, a), !asgstmt(a, _).
 live_asg(s, x, r) :- asg(s, x, r, a), asgstmt(a, st), !shadowed(st).
 
 
-// unparen(e, m): m is e with any parentheses taken off: `((x))` gives x. Every other node gives itself. A comment
-// inside the parentheses is a child of them too, so the expression is the one child that is not a comment:
-//   assert (
-//       # why
-//       a and b
-//   )                    unparen(<( … )>, <a and b>)
-.decl unparen(e: node, m: node)
-.pragma "magic-transform" "unparen"
-unparen(e, e) :- kind(e, k), k != "parenthesized_expression".
-unparen(e, m) :- kind(e, "parenthesized_expression"), child(e, i, _), !kind(i, "comment"), unparen(i, m).
 // attr_of(n, o, a): n is the attribute expression `o.a`.
 .decl attr_of(n: node, o: node, a: symbol)
 attr_of(n, o, a) :- kind(n, "attribute"), field(n, "object", o), field(n, "attribute", at), text(at, a).

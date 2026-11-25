@@ -216,9 +216,6 @@ packs/blade php_truthy
 packs/blade rr_found_through
 packs/django bnl_counter
 packs/django bnl_number
-packs/django bwh_hook
-packs/django bwh_in_hook
-packs/django bwh_method
 packs/django call_open
 packs/django call_target
 packs/django cfr_block

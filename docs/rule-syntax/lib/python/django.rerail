@@ -86,7 +86,7 @@
 //         if Book.objects.count() > 0:                  py_empty_cmp(<the comparison>, <the count() call>)
 #include "python/ast.rerail"
 #include "python/calls.rerail"   // call_arg, posarg: its syntax helpers only
-#include "python/django-bases.rerail"   // dj_model_base, which the phase py_names reads too
+#include "python/django-shared.rerail"  // dj_model_base, dj_test_doc: the phase py_names reads them too
 
 // ---- models ------------------------------------------------------------------------------------------------------
 // dj_field_module(m): the modules model field classes are imported from (`models.CharField`, `JSONField`, ...).
@@ -198,6 +198,19 @@ dj_model_opaque(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__d
 dj_model_unmanaged(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_unmanaged(m, mq).
 .decl dj_model_abstract(e: node)
 dj_model_abstract(e) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_abstract(m, mq).
+// A model's hooks, by symbol (0677 fix 3d), from the phase's Django section:
+//   dj_model_hook(e, k, h)        a hook of kind k ("save" or "delete") that a bulk write on the model e names skips,
+//                                 h its description: its save()/delete(), or an ancestor's of the run, doing more than
+//                                 call the base class's; a pre_save/post_save receiver for it in any file
+//   dj_receiver_def(f, mq)        def f of the reading file is connected, in any file, as a pre_save/post_save receiver
+//                                 for sender mq
+.decl py_names__dj_hook(m: symbol, q: symbol, k: symbol, h: symbol)
+.decl py_names__dj_receiver_fn(m: symbol, f: symbol, q: symbol)
+.decl dj_model_hook(e: node, k: symbol, h: symbol)
+dj_model_hook(e, k, h) :- dj_model_named(e, mq), dj_model_ref(e, mq, m), py_names__dj_hook(m, mq, k, h).
+.decl dj_receiver_def(f: node, mq: symbol)
+dj_receiver_def(f, mq) :- kind(f, "function_definition"), qualname(f, fq), docof(f, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__dj_receiver_fn(m, fq, mq).
 .decl dj_model_manager_method(e: node, a: symbol, x: symbol)
 dj_model_manager_method(e, a, x) :- dj_model_named(e, mq), dj_model_ref(e, mq, m),
     py_names__dj_manager_method(m, mq, a, x).
@@ -438,12 +451,6 @@ dj_view_class(c) :- class_def(c, q), class_base(c, b), dj_view_q(b).
 .decl dj_migration_doc(d: number)
 dj_migration_doc(d) :- class_def(c, _), def_name(c, "Migration"), class_base(c, "django.db.migrations.Migration"),
     docof(c, d).
-// dj_test_doc(d): DefectDojo keeps its tests in `unittests/`, netbox its test helpers in `utilities/testing/`.
-.decl dj_test_doc(d: number)
-dj_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing") ;
-    path_part(d, "unittests")).
-dj_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ; s = "tests.py" ;
-    s = "test.py" ; s = "conftest.py").
 // dj_django_doc(d): document d imports Django or Django REST framework (an `import` or `from … import`, a star import
 // included), so names such as `request.user` or `X.objects` in it are likely Django's: a gate for rules whose shapes
 // other frameworks share (Starlette's `request.user`, mongoengine's `Document.objects`). A relative import
