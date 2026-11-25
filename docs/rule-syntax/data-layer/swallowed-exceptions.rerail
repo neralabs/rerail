@@ -24,9 +24,10 @@
 //   and a closure over e is not a read. Each counts for the innermost handler around it only.
 //
 // How to read this file
-//   1. handler(x, b) lists every except clause and its body. reraises, protocol_only, reads_exc and ignored_at are
-//      yes/no facts about one handler.
-//   2. swallowed(x, b): a handler that does not re-raise, catches more than protocol exceptions, and is not ignored.
+//   1. handler(x, b) lists every except clause and its body. reraises, protocol_only and reads_exc are yes/no facts
+//      about one handler.
+//   2. swallowed(x, b): a handler that does not re-raise and catches more than protocol exceptions. A finding whose
+//      file and line the ignores file lists is not reported.
 //   3. reads_exc splits swallowed handlers: WARNING if the handler reads its exception variable, else CRITICAL.
 //   4. suppress_with adds the contextlib.suppress case to CRITICAL, by the linter's two text tests (legacy_suppress,
 //      suppress_call).
@@ -101,9 +102,9 @@ not_name(n) :- kind(i, k), (k = "import_statement" ; k = "import_from_statement"
 not_name(n) :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _).
 not_name(n) :- kind(x, "except_clause"), child(x, ap, _), kind(ap, "as_pattern"), field(ap, "alias", t),
     child(t, n, _).
-// ignored_at(n): n's file and start line is a key in the ignores file. The Python linter applies ignores after scanning.
-.decl ignored_at(n: node)
-ignored_at(n) :- docof(n, d), doc(d, p, _), line(n, l), ignored(p, l).
+// The ignores file's keys are "path:line": each finding's candidate (warn_at, critical_at) carries its handler's file
+// and start line, and the finding tests them (the Python linter applies ignores after scanning). The file is every
+// file's setting: a relation of nodes that read it would go to the cross-file part (decision 0677).
 
 // summary(b, s): what block b amounts to, as the Python linter's message reports it.
 // trivial(s): a statement that does nothing: pass, `...`, and comments. Comments are nodes in this grammar (the
@@ -131,21 +132,26 @@ real_count(b, n) :- kind(b, "block"), n = count : { child(b, t, _), !trivial(t) 
 
 // swallowed(x, b): the Python linter's _finalize_handler conditions for reporting at all.
 .decl swallowed(x: node, b: node)
-swallowed(x, b) :- handler(x, b), !reraises(x), !protocol_only(x), !ignored_at(x).
+swallowed(x, b) :- handler(x, b), !reraises(x), !protocol_only(x).
 
 // WARNING: the handler uses the exception (logs it, stores it, returns it) but still does not re-raise.
 .violation WARNING(at: node, body: symbol)
     "Swallowed exception: the handler communicates the error but does not re-raise (body: {body})"
-WARNING(x, s) :- swallowed(x, b), reads_exc(x), summary(b, s).
+WARNING(x, s) :- warn_at(x, s, p, l), !ignored(p, l).
+.decl warn_at(x: node, s: symbol, p: symbol, l: number)
+warn_at(x, s, p, l) :- swallowed(x, b), reads_exc(x), summary(b, s), docof(x, d), doc(d, p, _), line(x, l).
 
 // CRITICAL, first rule: a swallowed handler that never reads the exception.
 // Second rule: a with-statement item the linter reads as a suppress that matters (suppress_with). {body}
 // summarises the with body.
 .violation CRITICAL(at: node, form: symbol, body: symbol)
     "Swallowed exception: {form} discards the error without re-raising (body: {body})"
-CRITICAL(x, "except", s) :- swallowed(x, b), !reads_exc(x), summary(b, s).
-CRITICAL(w, "contextlib.suppress", s) :- suppress_with(w, _), !ignored_at(w),
-    field(w, "body", b), summary(b, s).
+CRITICAL(x, f, s) :- critical_at(x, f, s, p, l), !ignored(p, l).
+.decl critical_at(x: node, form: symbol, s: symbol, p: symbol, l: number)
+critical_at(x, "except", s, p, l) :- swallowed(x, b), !reads_exc(x), summary(b, s), docof(x, d), doc(d, p, _),
+    line(x, l).
+critical_at(w, "contextlib.suppress", s, p, l) :- suppress_with(w, _), field(w, "body", b), summary(b, s),
+    docof(w, d), doc(d, p, _), line(w, l).
 
 // suppress_with(w, c): with-statement w has the item c, a call the Python linter reads as contextlib.suppress, and
 // c does not suppress only protocol exceptions. The linter tests each item twice; either test reports (CRITICAL at

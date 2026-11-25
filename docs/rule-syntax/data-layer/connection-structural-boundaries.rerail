@@ -70,7 +70,9 @@ csb_connector("connect"). csb_connector("connect_async"). csb_connector("ensure_
 csb_connector("ensure_connected_async").
 
 // csb_role(d, role): document d is the connection, lifecycle or sql file, or a "backend" (sqlite, postgres,
-// mariadb) or "scan" file (those three, mongodb, neo4j). "lifecycle" is the file the lifecycle rules read.
+// mariadb) or "scan" file (those three, mongodb, neo4j). Each from the document's own path, the options and the
+// constants: a document's path names a file that exists, so the role is decided in its file (decision 0677). The
+// lifecycle rules read the lifecycle file, else the connection file when no lifecycle file exists (CSB030).
 .decl csb_path(role: symbol, p: symbol)
 csb_path("connection", p) :- option("connectionPath", p).
 csb_path("connection", "l2000_connection/connection.py") :- !option("connectionPath", _).
@@ -78,12 +80,10 @@ csb_path("lifecycle_file", p) :- option("lifecyclePath", p).
 csb_path("lifecycle_file", "l2000_connection/connection_lifecycle.py") :- !option("lifecyclePath", _).
 csb_path("sql", p) :- option("sqlPath", p).
 csb_path("sql", "impl/common/l2200_sql_dialect/sql_connection.py") :- !option("sqlPath", _).
-csb_path("lifecycle", p) :- csb_path("lifecycle_file", p), file(p).
-csb_path("lifecycle", p) :- csb_path("lifecycle_file", l), !file(l), csb_path("connection", p).
-csb_path("backend", p) :- glob("impl/{sqlite,postgres,mariadb}/connection.py", p), file(p).
-csb_path("scan", p) :- glob("impl/{sqlite,postgres,mariadb,mongodb,neo4j}/connection.py", p), file(p).
 .decl csb_role(d: number, role: symbol)
 csb_role(d, r) :- csb_path(r, p), doc(d, p, _).
+csb_role(d, "backend") :- doc(d, p, _), glob("impl/{sqlite,postgres,mariadb}/connection.py", p).
+csb_role(d, "scan") :- doc(d, p, _), glob("impl/{sqlite,postgres,mariadb,mongodb,neo4j}/connection.py", p).
 
 // csb_top(d, n, x): n, named x, is a top-level def or class of document d.
 .decl csb_top(d: number, n: node, x: symbol)
@@ -145,8 +145,14 @@ CSB020(@place(p, 1), k) :- csb_long(d, "backend", m), line_count(d, k), k > m, d
 CSB021(n, x) :- csb_role(d, "backend"), csb_top(d, n, x), csb_residual("backend", x).
 
 .violation CSB030(at: node, x: symbol) "_ConnectionLifecycleMixin.{x} auto-opens driver state"
-CSB030(f, x) :- csb_role(d, "lifecycle"), csb_class(d, c, "_ConnectionLifecycleMixin"), csb_method(c, f, x),
-    (x = "__enter__" ; x = "__aenter__"), csb_connects(f).
+CSB030(f, x) :- csb_lifecycle(f, x, "lifecycle_file").
+CSB030(f, x) :- csb_lifecycle(f, x, "connection"), csb_path("lifecycle_file", l), !file(l).
+// csb_lifecycle(f, x, r): f, named x, auto-opens in the mixin of the file of role r. In its file; whether the
+// lifecycle file exists, a fact of the whole repository, is the finding's test.
+.decl csb_lifecycle(f: node, x: symbol, r: symbol)
+csb_lifecycle(f, x, r) :- (r = "lifecycle_file" ; r = "connection"), csb_role(d, r),
+    csb_class(d, c, "_ConnectionLifecycleMixin"), csb_method(c, f, x), (x = "__enter__" ; x = "__aenter__"),
+    csb_connects(f).
 // csb_owner(c, cx): a top-level *Connection / *ConnectionCore class of a backend connection file.
 .decl csb_owner(c: node, cx: symbol)
 csb_owner(c, cx) :- csb_role(d, "scan"), csb_class(d, c, cx), glob("*{Connection,ConnectionCore}", cx).

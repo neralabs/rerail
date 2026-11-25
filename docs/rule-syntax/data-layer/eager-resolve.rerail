@@ -129,8 +129,10 @@ er_param(f, x, a) :- er_sym(f, _), sig_param(f, _, nm, _, k, a, _), (k = "posonl
 .decl er_mentions(a: loc, x: symbol)
 er_mentions(a, x) :- er_ann_part(a, n), kind(n, "identifier"), text(n, x).
 er_mentions(a, x) :- er_ann_part(a, n), kind(n, "attribute"), field(n, "attribute", m), text(m, x).
+// er_ann(a): an annotation. A parameter without one has the empty value, which places nothing: kind(a, _) leaves
+// it out (decision 0677).
 .decl er_ann(a: loc)
-er_ann(a) :- er_param(_, _, a).
+er_ann(a) :- er_param(_, _, a), kind(a, _).
 er_ann(t) :- assign_ann(_, t).
 .decl er_ann_part(a: loc, n: loc)
 er_ann_part(a, a) :- er_ann(a).
@@ -438,22 +440,30 @@ er_skip(s) :- er_sym(_, s), (prefix("l2050_transaction.legacy_wrappers.", s) ;
 .decl er_part(f: node, s: symbol)
 er_part(f, s) :- er_sym(f, s), !er_skip(s).
 .decl er_dirty(p: symbol, s: symbol, c: symbol)  // p: s's file's path; the calls are same-file (er_edge)
-er_dirty(p, s, c) :- er_tr(f, k), c = cat("transitive:", k), er_part(f, s), !er_exempt(f, s, c), docof(f, d),
-    doc(d, p, _).
+er_dirty(p, s, c) :- er_tr_dirty(p, s, c), !er_io_exempt(s, c).
 er_dirty(p, s, cat("transitive:legacy-boundary-call:", x, "()")) :- er_boundary_call(f, t), er_part(f, s),
     match(".*\\.(?<x>[^.]*)", t), docof(f, d), doc(d, p, _).
 er_dirty(p, s, c) :- er_dirty(p, t, c), er_caller(p, s, t).
+// er_tr_dirty(p, s, c): def s, in the file at p, does pattern c itself, unless its own facts exempt it. Each file's.
+.decl er_tr_dirty(p: symbol, s: symbol, c: symbol)
+er_tr_dirty(p, s, c) :- er_tr(f, k), c = cat("transitive:", k), er_part(f, s), !er_exempt(f, s, c), docof(f, d),
+    doc(d, p, _).
 // er_caller(p, s, t): er_edge's calls whose caller takes part.
 .decl er_caller(p: symbol, s: symbol, t: symbol)
 er_caller(p, s, t) :- er_call(f, _, t), er_part(f, s), docof(f, d), doc(d, p, _).
 // er_exempt(f, s, c): a pattern f's own symbol is exempt from: resolve() in the non-lazy modules, result() in the
-// non-lazy symbols, eager I/O in a signed external-I/O boundary, the wrapper's own legacy helper.
+// non-lazy symbols, the wrapper's own legacy helper. er_io_exempt(s, c): eager I/O in a signed external-I/O boundary.
+// The signature is checked over the run's allowlist, in no file: each file states, by symbol, what an I/O-decorated
+// def of its own does (er_io_does), and the cross part tests the symbols (decision 0677).
 .decl er_exempt(f: node, s: symbol, c: symbol)
 er_exempt(f, s, "transitive:*.resolve()") :- er_sym(f, s), er_nonlazy_resolve_prefix(p), prefix(p, s).
 er_exempt(f, s, "transitive:*.result()") :- er_sym(f, s), er_nonlazy_result(s).
-er_exempt(f, s, c) :- er_sym(f, s), er_io_symbol(s), er_dec_base(f, x), er_io_dec(x), er_tr(f, k),
-    c = cat("transitive:", k), er_io_pattern(c).
 er_exempt(f, s, cat("transitive:", h, "()")) :- er_sym(f, s), er_wrapper(f, h).
+.decl er_io_does(s: symbol, c: symbol)
+er_io_does(s, c) :- er_sym(f, s), er_dec_base(f, x), er_io_dec(x), er_tr(f, k), c = cat("transitive:", k),
+    er_io_pattern(c).
+.decl er_io_exempt(s: symbol, c: symbol)
+er_io_exempt(s, c) :- er_io_does(s, c), er_io_symbol(s).
 // er_io_pattern(c): what a signed external-I/O boundary may do.
 .decl er_io_pattern(c: symbol)
 er_io_pattern(c) :- er_tr(_, k), c = cat("transitive:", k), (prefix("non-lazy-call:", k) ; k = "*.resolve()" ;

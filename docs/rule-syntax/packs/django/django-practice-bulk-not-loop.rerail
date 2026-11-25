@@ -49,16 +49,22 @@ QueryInLoop(c, cat(cat("objects.", m), "()"), "`in_bulk()` or one `filter(..__in
 // on its old value (`v.name = v.name + suffix`) stays reported.
 .decl bnl_counter(body: node, v: symbol)
 bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "augmented_assignment"), within(a, body), (op(a, "+=") ; op(a, "-=")),
-    field(a, "left", l), attr_of(l, o, x), kind(o, "identifier"), text(o, v), field(a, "right", r), bnl_number(x, r).
+    field(a, "left", l), attr_of(l, o, x), kind(o, "identifier"), text(o, v), field(a, "right", r),
+    (bnl_number_literal(r) ; docof(a, d), bnl_number_field(d, x)).
 bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body), field(a, "left", l),
     attr_of(l, o, x), kind(o, "identifier"), text(o, v), text(l, lt), field(a, "right", rr), unparen(rr, r),
     kind(r, "binary_operator"), (op(r, "+") ; op(r, "-")), child(r, e, _), text(e, lt), child(r, n, _), n != e,
-    bnl_number(x, n).
-// bnl_number(x, n): field x moved by step n is a number: n is an int or float literal, or a model of the run declares
-// x as a number field (python/django's dj_number_field). Cross-file: the run's models are in any file (decision 0652).
-.decl bnl_number(x: symbol, n: node) cross_file
-bnl_number(x, n) :- attr_of(_, _, x), unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
-bnl_number(x, n) :- attr_of(_, _, x), kind(n, _), dj_has_field(_, x, t), dj_number_field(t).
+    (bnl_number_literal(n) ; docof(a, d), bnl_number_field(d, x)).
+// Field x moved by step n is a number: n is an int or float literal (bnl_number_literal, a test of the step), or a
+// model the counter's file can name declares x as a number field (bnl_number_field(d, x), python/django's
+// dj_number_field), in its body or an ancestor's of the run. The models are read by symbol, in the rows the phase
+// py_names hands on for the modules document d reads, as dj_model_field reads them: no node crosses (decision 0677).
+.decl bnl_number_literal(n: node)
+bnl_number_literal(n) :- unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
+.decl bnl_number_field(d: number, x: symbol)
+bnl_number_field(d, x) :- doc(d, p, _), py_names__reads_at(p, m),
+    (py_names__member_call(m, _, x, f) ; py_names__anc_call(m, _, x, f)), x != "output_field", split_dot(f, fm, t),
+    dj_field_module(fm), dj_number_field(t).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may

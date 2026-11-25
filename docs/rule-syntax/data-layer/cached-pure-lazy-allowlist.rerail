@@ -126,15 +126,14 @@ cpl_err(f, "cached pure-lazy functions must be synchronous") :- cpl_def(f, _), i
 cpl_err(f, "cached pure-lazy functions cannot use variadic arguments") :- cpl_param(f, _, k, _, _),
     (k = "vararg" ; k = "kwarg").
 cpl_err(f, "cached pure-lazy functions cannot be generators") :- cpl_def(f, _), ast_walk(f, y), kind(y, "yield").
-cpl_err(f, cat("cache argument ", r, " requires an exact annotation")) :- cpl_arg(f, _, a), py_repr(a, r),
+cpl_err(f, cat("cache argument ", r, " requires an exact annotation")) :- cpl_arg(f, _, a), r = @py_repr(a),
     !cpl_annotated(f, a).
-cpl_err(f, cat("cache argument ", r, " cannot have a default")) :- cpl_arg(f, _, a), py_repr(a, r),
+cpl_err(f, cat("cache argument ", r, " cannot have a default")) :- cpl_arg(f, _, a), r = @py_repr(a),
     cpl_param(f, a, k, _, d), cpl_named(k), !unset(d).
-cpl_err(f, cat("cache argument ", r, " must be keyword-only")) :- cpl_arg(f, _, a), a != "self", py_repr(a, r),
+cpl_err(f, cat("cache argument ", r, " must be keyword-only")) :- cpl_arg(f, _, a), a != "self", r = @py_repr(a),
     cpl_param(f, a, k, _, _), (k = "posonly" ; k = "pos").
 .decl cpl_annotated(f: node, a: symbol)
 cpl_annotated(f, a) :- cpl_param(f, a, k, ann, _), cpl_named(k), !unset(ann).
-repr_want(a) :- cpl_arg(_, _, a).
 
 // Each use of a cache argument a in ast.walk(f): cpl_use(f, n) is a Name reading a.
 .decl cpl_use(f: node, n: node)
@@ -149,7 +148,7 @@ cpl_err(f, "a cache argument can only be used through signed member access") :- 
 cpl_err(f, "cached pure-lazy functions cannot write mutable global state") :- cpl_def(f, _), ast_walk(f, g),
     (kind(g, "global_statement") ; kind(g, "nonlocal_statement")).
 cpl_err(f, cat("cached pure-lazy functions cannot read mutable global state ", r)) :- cpl_def(f, _), ast_walk(f, n),
-    cpl_name(n, x), expr_ctx(n, "load"), !cpl_arg(f, _, x), docof(f, d), cpl_mutable_global(d, x), py_repr(x, r).
+    cpl_name(n, x), expr_ctx(n, "load"), !cpl_arg(f, _, x), docof(f, d), cpl_mutable_global(d, x), r = @py_repr(x).
 cpl_err(f, cat(x, "() on a cache argument is forbidden")) :- cpl_def(f, _), ast_walk(f, c), cpl_callee(c, g),
     cpl_name(g, x), cpl_reflect(x), field(c, "arguments", al), child(al, a, _),
     !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), cpl_has_use(f, a).
@@ -175,11 +174,10 @@ cpl_path(f, n, p) :- cpl_def(f, _), ast_walk(f, n), cpl_link(n, a), cpl_attr(a, 
 cpl_top(f, n, p) :- cpl_path(f, n, p), !cpl_parent_attr(n).
 // The parent decides the use: a store or del is a mutation, an assignment's value an alias, a dunder dynamic access;
 // otherwise it is a call (`a.m()`), a resolver (`f(a.m)`) or a read.
-cpl_err(f, cat("direct cache attribute mutation ", r, " is forbidden")) :- cpl_top(f, n, p), cpl_store(n), py_repr(p, r).
-cpl_err(f, cat("cache member alias ", r, " is forbidden")) :- cpl_top(f, n, p), !cpl_store(n), cpl_alias(n), py_repr(p, r).
+cpl_err(f, cat("direct cache attribute mutation ", r, " is forbidden")) :- cpl_top(f, n, p), cpl_store(n), r = @py_repr(p).
+cpl_err(f, cat("cache member alias ", r, " is forbidden")) :- cpl_top(f, n, p), !cpl_store(n), cpl_alias(n), r = @py_repr(p).
 cpl_err(f, cat("dynamic cache access ", r, " is forbidden")) :- cpl_top(f, n, p), !cpl_store(n), !cpl_alias(n),
-    cpl_dunder(p), py_repr(p, r).
-repr_want(p) :- cpl_path(_, _, p).
+    cpl_dunder(p), r = @py_repr(p).
 .decl cpl_member(f: node, p: symbol, mode: symbol)
 cpl_member(f, p, m) :- cpl_top(f, n, p), !cpl_store(n), !cpl_alias(n), !cpl_dunder(p), cpl_mode(n, m).
 .decl cpl_store(n: node)
@@ -197,8 +195,8 @@ cpl_mode(n, "read") :- cpl_top(_, n, _), !cpl_called(n).
 .decl cpl_called(n: node)
 cpl_called(n) :- ast_parent(n, c), kind(c, "call").
 // `a.m[k]`: a subscript of a member is never allowed.
-cpl_err(f, cat("cache subscript mutation through ", r, " is forbidden")) :- cpl_sub(f, s, p), cpl_store(s), py_repr(p, r).
-cpl_err(f, cat("cache subscript access through ", r, " is forbidden")) :- cpl_sub(f, s, p), !cpl_store(s), py_repr(p, r).
+cpl_err(f, cat("cache subscript mutation through ", r, " is forbidden")) :- cpl_sub(f, s, p), cpl_store(s), r = @py_repr(p).
+cpl_err(f, cat("cache subscript access through ", r, " is forbidden")) :- cpl_sub(f, s, p), !cpl_store(s), r = @py_repr(p).
 .decl cpl_sub(f: node, s: node, p: symbol)
 cpl_sub(f, s, p) :- kind(s, "subscript"), field(s, "value", v0), unparen(v0, v), cpl_path(f, v, p), ast_walk(f, s).
 
@@ -207,7 +205,6 @@ cpl_sub(f, s, p) :- kind(s, "subscript"), field(s, "value", v0), unparen(v0, v),
 .decl cpl_mutable_global(d: number, x: symbol)
 cpl_mutable_global(d, x) :- modnode(d, m), child(m, st, _), asgstmt(a, st), assign_target(a, t), cpl_name(t, x),
     assign_value(a, v), cpl_mut(v).
-repr_want(x) :- cpl_mutable_global(_, x).
 .decl cpl_gval(v: node)  // the values that test looks at
 cpl_gval(v) :- modnode(_, m), child(m, st, _), asgstmt(a, st), assign_value(a, v).
 cpl_gval(e) :- cpl_gval(v), unparen(v, t), (kind(t, "tuple") ; kind(t, "expression_list")), child(t, e, _),
@@ -345,12 +342,35 @@ policy_call(c, "memoized") :- cpl_policy_doc(d), docof(c, d), cpl_callee(c, g),
     cpl_name(g, "MemoizedPureLazyPolicyEntry").
 .decl cpl_policy_doc(d: number)
 cpl_policy_doc(d) :- doc(d, "l2055_lazy_result/cached_pure_lazy_policy.py", _), !option("policyEntries", _).
-pe_kind(to_string(c), k) :- policy_call(c, k).
-pe_str(to_string(c), f, v) :- policy_call(c, _), cpl_kw(c, f, n), plain_str(n, v).
-pe_num(to_string(c), f, v) :- policy_call(c, _), cpl_kw(c, f, n), kind(n, "integer"), value(n, v).
-pe_num(to_string(c), f, "null") :- policy_call(c, _), cpl_kw(c, f, n), kind(n, "none").
-pe_list(to_string(c), f, j) :- policy_call(c, _), cpl_kw(c, f, t), kind(t, "tuple"),
+// pe_call(c, e): policy call c's entry is e, its place among its module's policy calls ("call:3"), as an option
+// entry's is its index ("opt:3"): a value, where c's node id would move with every edit of the module (decision 0677).
+// pc_str, pc_num: a policy call's fields, read at the call (cpl_signed_text). pm_*: the module's entries, keyed by
+// their place, in its file; pe_* adds the option's.
+.decl pe_at(c: node, n: number)
+pe_at(c, n) :- policy_call(c, _), docof(c, d), visit_index(c, v),
+    n = count : { policy_call(b, _), docof(b, d), visit_index(b, w), w < v }.
+.decl pe_call(c: node, e: symbol)
+pe_call(c, cat("call:", to_string(n))) :- pe_at(c, n).
+.decl pm_kind(e: symbol, k: symbol)
+pm_kind(e, k) :- policy_call(c, k), pe_call(c, e).
+.decl pc_str(c: node, f: symbol, v: symbol)
+pc_str(c, f, v) :- policy_call(c, _), cpl_kw(c, f, n), plain_str(n, v).
+.decl pc_num(c: node, f: symbol, v: symbol)
+pc_num(c, f, v) :- policy_call(c, _), cpl_kw(c, f, n), kind(n, "integer"), value(n, v).
+pc_num(c, f, "null") :- policy_call(c, _), cpl_kw(c, f, n), kind(n, "none").
+.decl pm_str(e: symbol, f: symbol, v: symbol)
+pm_str(e, f, v) :- pe_call(c, e), pc_str(c, f, v).
+.decl pm_num(e: symbol, f: symbol, v: symbol)
+pm_num(e, f, v) :- pe_call(c, e), pc_num(c, f, v).
+.decl pm_list(e: symbol, f: symbol, j: symbol)
+pm_list(e, f, j) :- pe_call(c, e), cpl_kw(c, f, t), kind(t, "tuple"),
     j = join q by i sep ", " : { child(t, el, i), pe_item(el, q) }.
+.decl pm_ord(e: symbol, n: number)
+pm_ord(e, n) :- pe_at(c, n), pe_call(c, e).
+pe_kind(e, k) :- pm_kind(e, k).
+pe_str(e, f, v) :- pm_str(e, f, v).
+pe_num(e, f, v) :- pm_num(e, f, v).
+pe_list(e, f, j) :- pm_list(e, f, j).
 .decl pe_el(el: node)  // an element of a policy call's tuple field
 pe_el(el) :- policy_call(c, _), cpl_kw(c, _, t), child(t, el, _).
 .decl pe_lit_pair(el: node, a: symbol, b: symbol)  // the element is `("a", "b")`
@@ -376,7 +396,7 @@ pe_num(cat("opt:", to_string(i)), k, v) :- opt_entry(i, b), match_all("\"(?<k>[a
 
 // pe_ord(e, n): the entry's place in its list; the verifier's dict keeps the last entry of a name (pe_last).
 .decl pe_ord(e: symbol, n: number)
-pe_ord(to_string(c), n) :- policy_call(c, _), visit_index(c, n).
+pe_ord(e, n) :- pm_ord(e, n).
 pe_ord(cat("opt:", to_string(i)), i) :- opt_entry(i, _).
 .decl pe_last(e: symbol, k: symbol, fn: symbol)
 pe_last(e, k, fn) :- pe(e, k, fn), pe_ord(e, n), n = max j : { pe(e2, k, fn), pe_ord(e2, j) }.
@@ -395,14 +415,31 @@ py_tuple(j, r) :- cpl_want_tuple(j),
 
 // ---- 5. the differences -----------------------------------------------------------------------------------------
 // item_of(x, k, fn): item x of kind "cached" or "memoized" is for fn. The verifier's dicts keep the last item and
-// the last entry of a name (item_last, pe_last); item_entry pairs those two, and is what the comparisons read.
+// the last entry of a name (item_last, pe_last); item_entry pairs those two, and is what the comparisons read. An
+// item's name holds its module, so its last item is found in its file, and what the comparisons read of it (it_*)
+// is keyed there by its kind and name: the cross-file part joins names, never an item's node (decision 0677).
 .decl item_of(x: node, k: symbol, fn: symbol)
 item_of(x, "cached", fn) :- cpl_item(x, fn).
 item_of(x, "memoized", fn) :- mpl_item(x, fn).
 .decl item_last(x: node, k: symbol, fn: symbol)
-item_last(x, k, fn) :- item_of(x, k, fn), visit_index(x, n), n = max j : { item_of(y, k, fn), visit_index(y, j) }.
-.decl item_entry(x: node, e: symbol, k: symbol, fn: symbol)
-item_entry(x, e, k, fn) :- item_last(x, k, fn), pe_last(e, k, fn).
+item_last(x, k, fn) :- item_of(x, k, fn), docof(x, d), visit_index(x, n),
+    n = max j : { item_of(y, k, fn), docof(y, d), visit_index(y, j) }.
+.decl it_last(k: symbol, fn: symbol)
+it_last(k, fn) :- item_last(_, k, fn).
+.decl it_err(fn: symbol, m: symbol)  // a cached item's errors
+it_err(fn, m) :- item_last(x, "cached", fn), cpl_err(x, m).
+.decl it_hashes(k: symbol, fn: symbol, body: symbol, sig: symbol)
+it_hashes(k, fn, b, s) :- item_last(x, k, fn), tree_hashes(x, b, s).
+.decl it_args(fn: symbol, s: symbol)
+it_args(fn, s) :- item_last(x, "cached", fn), cpl_args_txt(x, s).
+.decl it_ann(fn: symbol, a: symbol, s: symbol)
+it_ann(fn, a, s) :- item_last(x, "cached", fn), cpl_ann(x, a, s).
+.decl it_members(fn: symbol, s: symbol)
+it_members(fn, s) :- item_last(x, "cached", fn), cpl_members_txt(x, s).
+.decl it_max(fn: symbol, s: symbol)
+it_max(fn, s) :- item_last(x, "memoized", fn), mpl_max_txt(x, s).
+.decl item_entry(e: symbol, k: symbol, fn: symbol)
+item_entry(e, k, fn) :- it_last(k, fn), pe_last(e, k, fn).
 // cpl_word(k, dup, w): the words of the kind's messages, "duplicate {dup}decorator entry", "unsigned {w} pure-lazy …".
 .decl cpl_word(k: symbol, dup: symbol, w: symbol)
 cpl_word("cached", "", "cached"). cpl_word("memoized", "memoized ", "memoized").
@@ -413,48 +450,44 @@ cpl_msg(cat("duplicate ", p, "policy entry: ", fn)) :- pe(_, k, fn), cpl_word(k,
 cpl_msg(cat("unsigned ", w, " pure-lazy function: ", fn)) :- item_of(_, k, fn), cpl_word(k, _, w), !pe(_, k, fn).
 cpl_msg(cat("stale ", w, " pure-lazy policy entry: ", fn)) :- pe(_, k, fn), cpl_word(k, _, w), !item_of(_, k, fn).
 // Errors: a cached item's only when it is compared; every memoized item's.
-cpl_msg(cat(fn, ": ", m)) :- item_entry(x, _, "cached", fn), cpl_err(x, m).
+cpl_msg(cat(fn, ": ", m)) :- item_entry(_, "cached", fn), it_err(fn, m).
 cpl_msg(cat(fn, ": ", m)) :- mpl_item(x, fn), mpl_err(x, m).
 // Both kinds: a rationale and the two hashes.
-cpl_msg(cat(fn, ": review rationale is required")) :- item_entry(_, e, _, fn), pe_str(e, "rationale", s), match("\\s*", s).
-cpl_msg(cat(fn, ": function body hash changed")) :- item_entry(x, e, _, fn), tree_hashes(x, h, _), !pe_str(e, "body_hash", h).
-cpl_msg(cat(fn, ": function signature hash changed")) :- item_entry(x, e, _, fn), tree_hashes(x, _, h),
+cpl_msg(cat(fn, ": review rationale is required")) :- item_entry(e, _, fn), pe_str(e, "rationale", s), match("\\s*", s).
+cpl_msg(cat(fn, ": function body hash changed")) :- item_entry(e, k, fn), it_hashes(k, fn, h, _), !pe_str(e, "body_hash", h).
+cpl_msg(cat(fn, ": function signature hash changed")) :- item_entry(e, k, fn), it_hashes(k, fn, _, h),
     !pe_str(e, "signature_hash", h).
 
 // Cached only.
-cpl_msg(cat(fn, ": decorator cache arguments changed")) :- item_entry(x, e, "cached", fn), cpl_args_txt(x, s),
+cpl_msg(cat(fn, ": decorator cache arguments changed")) :- item_entry(e, "cached", fn), it_args(fn, s),
     !pe_list(e, "cache_args", s).
 // dict(cache_types) must have as many keys as the list has pairs, and the keys must be the cache arguments.
 .decl pe_key(e: symbol, f: symbol, a: symbol)
 pe_key(e, f, a) :- pe_pair(e, f, a, _).
-cpl_msg(cat(fn, ": cache type metadata must name each cache argument exactly once")) :- item_entry(_, e, "cached", fn),
+cpl_msg(cat(fn, ": cache type metadata must name each cache argument exactly once")) :- item_entry(e, "cached", fn),
     pe_list(e, "cache_types", j), @count_matches("\\[", j) != count : { pe_key(e, "cache_types", _) }.
-cpl_msg(cat(fn, ": cache type metadata must name each cache argument exactly once")) :- item_entry(_, e, "cached", fn),
+cpl_msg(cat(fn, ": cache type metadata must name each cache argument exactly once")) :- item_entry(e, "cached", fn),
     (pe_key(e, "cache_types", a), !pe_elem(e, "cache_args", a) ; pe_elem(e, "cache_args", a), !pe_key(e, "cache_types", a)).
-cpl_msg(cat(fn, ": cache type ", r, " is not approved")) :- item_entry(_, e, "cached", fn), pe_pair(e, "cache_types", _, t),
-    t != "l2070_batching.optimizer_run_cache.OptimizerRunCache", py_repr(t, r).
+cpl_msg(cat(fn, ": cache type ", r, " is not approved")) :- item_entry(e, "cached", fn), pe_pair(e, "cache_types", _, t),
+    t != "l2070_batching.optimizer_run_cache.OptimizerRunCache", r = @py_repr(t).
 cpl_msg(cat(fn, ": cache argument ", ra, " annotation ", rn, " does not match cache type ", rt)) :-
-    item_entry(x, e, "cached", fn), pe_pair(e, "cache_types", a, t), match("(?:.*\\.)?(?<last>[^.]*)", t), py_repr(a, ra),
-    py_repr(t, rt), ( cpl_ann(x, a, s), s != last, py_repr(s, rn) ; !cpl_ann(x, a, _), rn = "None" ).
-repr_want(a), repr_want(t) :- pe_pair(_, "cache_types", a, t).
-repr_want(s) :- cpl_ann(_, _, s).
-cpl_msg(cat(fn, ": owner scope ", r, " is not approved")) :- item_entry(_, e, "cached", fn), pe_str(e, "owner_scope", s),
-    s != "optimizer_run", py_repr(s, r).
-repr_want(s) :- pe_str(_, "owner_scope", s).
-cpl_msg(cat(fn, ": cache member access modes are invalid: [", l, "]")) :- item_entry(_, e, "cached", fn), cpl_bad_mode(e, _),
-    l = join r by m sep ", " : { cpl_bad_mode(e, m), py_repr(m, r) }.
+    item_entry(e, "cached", fn), pe_pair(e, "cache_types", a, t), match("(?:.*\\.)?(?<last>[^.]*)", t), ra = @py_repr(a),
+    rt = @py_repr(t), ( it_ann(fn, a, s), s != last, rn = @py_repr(s) ; !it_ann(fn, a, _), rn = "None" ).
+cpl_msg(cat(fn, ": owner scope ", r, " is not approved")) :- item_entry(e, "cached", fn), pe_str(e, "owner_scope", s),
+    s != "optimizer_run", r = @py_repr(s).
+cpl_msg(cat(fn, ": cache member access modes are invalid: [", l, "]")) :- item_entry(e, "cached", fn), cpl_bad_mode(e, _),
+    l = join r by m sep ", " : { cpl_bad_mode(e, m), r = @py_repr(m) }.
 .decl cpl_bad_mode(e: symbol, m: symbol)
 cpl_bad_mode(e, m) :- pe_pair(e, "allowed_cache_members", _, m), m != "call", m != "read", m != "resolver".
-repr_want(m) :- cpl_bad_mode(_, m).
-cpl_msg(cat(fn, ": cache member access changed: actual=", ra, " policy=", rp)) :- item_entry(x, e, "cached", fn),
-    cpl_members_txt(x, a), pe_list(e, "allowed_cache_members", p), a != p, py_tuple(a, ra), py_tuple(p, rp).
-cpl_want_tuple(a), cpl_want_tuple(p) :- item_entry(x, e, "cached", _), cpl_members_txt(x, a),
+cpl_msg(cat(fn, ": cache member access changed: actual=", ra, " policy=", rp)) :- item_entry(e, "cached", fn),
+    it_members(fn, a), pe_list(e, "allowed_cache_members", p), a != p, py_tuple(a, ra), py_tuple(p, rp).
+cpl_want_tuple(a), cpl_want_tuple(p) :- item_entry(e, "cached", fn), it_members(fn, a),
     pe_list(e, "allowed_cache_members", p).
 
 // Memoized only: the bound (None as null on both sides) and the approved policies.
-cpl_msg(cat(fn, ": memoization bound changed")) :- item_entry(x, e, "memoized", fn), mpl_max_txt(x, s),
+cpl_msg(cat(fn, ": memoization bound changed")) :- item_entry(e, "memoized", fn), it_max(fn, s),
     !pe_num(e, "max_entries", s).
-cpl_msg(cat(fn, ": ", what, " is not approved")) :- item_entry(_, e, "memoized", fn), mpl_approved(f, what, ok),
+cpl_msg(cat(fn, ": ", what, " is not approved")) :- item_entry(e, "memoized", fn), mpl_approved(f, what, ok),
     pe_str(e, f, v), v != ok.
 .decl mpl_approved(field: symbol, what: symbol, v: symbol)
 mpl_approved("cache_lifetime", "cache lifetime", "process"). mpl_approved("key_policy", "key policy", "bound_explicit_immutable_v1").
@@ -493,11 +526,10 @@ cpl_runtime_last(src, x, s) :- cpl_runtime_def(src, x, s), count : { cpl_runtime
 .decl cpl_missing(x: symbol) cross_file
 cpl_missing(x) :- cpl_const("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", _), cpl_runtime_symbol(src, x),
     !cpl_runtime_last(src, x, _).
-repr_want(x) :- cpl_missing(x).
 .decl cpl_crash(m: symbol)
 cpl_crash(cat("Missing cached pure-lazy runtime symbols: (", l, t, ")")) :- cpl_missing(_),
     n = count : { cpl_missing(_) }, ( n = 1, t = "," ; n > 1, t = "" ),
-    l = join r by x sep ", " : { cpl_missing(x), py_repr(x, r) }.
+    l = join r by x sep ", " : { cpl_missing(x), r = @py_repr(x) }.
 .decl cpl_runtime_hash(h: symbol)
 cpl_runtime_hash(@sha256(p)) :- cpl_runtime_symbol(_, _),
     p = join q by x sep "|" : { cpl_runtime_last(src, x, s), q = cat(src, ":", x, ":", @tree_digest(s)) }.
@@ -524,17 +556,17 @@ cpl_sign_msg(cat("Allowlist signature verification failed for ", name)) :- cpl_c
 cpl_signed_text(cat("{\"allowed_cache_members\":[", am, "],\"body_hash\":", @json_str(bh), ",\"cache_args\":[", ca,
         "],\"cache_types\":[", ct, "],\"function\":", @json_str(fn), ",\"owner_scope\":", @json_str(os),
         ",\"rationale\":", @json_str(ra), ",\"signature_hash\":", @json_str(sh), "}")) :-
-    policy_call(c, "cached"), e = to_string(c), pe_compact(c, "allowed_cache_members", am), pe_compact(c, "cache_args", ca),
-    pe_compact(c, "cache_types", ct), pe_str(e, "function", fn), pe_str(e, "body_hash", bh),
-    pe_str(e, "owner_scope", os), pe_str(e, "rationale", ra), pe_str(e, "signature_hash", sh).
+    policy_call(c, "cached"), pe_compact(c, "allowed_cache_members", am), pe_compact(c, "cache_args", ca),
+    pe_compact(c, "cache_types", ct), pc_str(c, "function", fn), pc_str(c, "body_hash", bh),
+    pc_str(c, "owner_scope", os), pc_str(c, "rationale", ra), pc_str(c, "signature_hash", sh).
 cpl_signed_text(cat("{\"body_hash\":", @json_str(bh), ",\"cache_lifetime\":", @json_str(cl), ",\"exception_policy\":",
         @json_str(ep), ",\"function\":", @json_str(fn), ",\"key_policy\":", @json_str(kp), ",\"max_entries\":", mx,
         ",\"rationale\":", @json_str(ra), ",\"return_policy\":", @json_str(rp), ",\"signature_hash\":", @json_str(sh),
         "}")) :-
-    policy_call(c, "memoized"), e = to_string(c), pe_str(e, "body_hash", bh), pe_str(e, "cache_lifetime", cl),
-    pe_str(e, "exception_policy", ep), pe_str(e, "function", fn), pe_str(e, "key_policy", kp),
-    pe_num(e, "max_entries", mx), pe_str(e, "rationale", ra), pe_str(e, "return_policy", rp),
-    pe_str(e, "signature_hash", sh).
+    policy_call(c, "memoized"), pc_str(c, "body_hash", bh), pc_str(c, "cache_lifetime", cl),
+    pc_str(c, "exception_policy", ep), pc_str(c, "function", fn), pc_str(c, "key_policy", kp),
+    pc_num(c, "max_entries", mx), pc_str(c, "rationale", ra), pc_str(c, "return_policy", rp),
+    pc_str(c, "signature_hash", sh).
 cpl_signed_text(cat("{\"runtime_source_hash\":", @json_str(h), ",\"runtime_symbols\":[", l, "]}")) :-
     cpl_const("CACHED_PURE_LAZY_RUNTIME_SOURCE_HASH", n), plain_str(n, h),
     l = join q by i sep "," : { cpl_listed(i, x), q = @json_str(x) }.

@@ -198,11 +198,10 @@ csa_param(f, x) :- sig_param(f, _, nm, _, "pos", _, _), text(nm, x).
 .violation CONN200(at: node, cx: symbol, x: symbol) "{cx}.{x}/{x}_async are substantial sync/async twins; factor shared pure/lazy logic"
 CONN200(f, cx, x) :- csa_class(d, c, cx), csa_surface(d), !csa_carrier(c),
     cx != "LazySchemaTransaction", cx != "SyncSchemaTransaction", cx != "AsyncSchemaTransaction",
-    csa_last(c, f, x), !suffix("_async", x), csa_schema_name(x), csa_last(c, g, cat(x, "_async")),
-    csa_len(f, k), k >= 5, csa_len(g, j), j >= 5.
-.decl csa_schema_name(x: symbol)  // _is_schema_related_pair_name
-csa_schema_name(x) :- csa_method(_, _, x), csa_operational(x).
-csa_schema_name(x) :- csa_method(_, _, x), glob("*{schema,versioned,polymorphic,large_column,column_exists}*", x).
+    csa_last(c, f, x), !suffix("_async", x),
+    (csa_operational(x) ; glob("*{schema,versioned,polymorphic,large_column,column_exists}*", x)),
+    csa_last(c, g, cat(x, "_async")), csa_len(f, k), k >= 5, csa_len(g, j), j >= 5.
+// The name test is _is_schema_related_pair_name, in the rule: never a table of every file's method names (0677).
 
 // ---- CONN300, CONN301: operational schema methods with several owners ---------------------------------------------
 // csa_owner(d, c, cx, f, x): f, named x, is a non-delegate operational schema method of non-carrier class c.
@@ -225,8 +224,8 @@ csa_legacy(c, cx, f, x, k) :- csa_class(d, c, cx), csa_surface(d), !csa_carrier(
 // csa_lazy_name(f, k, y): its lazy counterpart's name: a non-empty lazy_name="…" on the decorator call, else the default.
 .decl csa_lazy_name(f: node, k: symbol, y: symbol)
 csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, _, k), csa_lazy_kw(f, k, y), y != "".
-csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, x, k), !csa_lazy_kw(f, k, _), csa_default_lazy(x, k, y).
-csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, x, k), csa_lazy_kw(f, k, ""), csa_default_lazy(x, k, y).
+csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, x, k), !csa_lazy_kw(f, k, _), csa_default_lazy(f, x, k, y).
+csa_lazy_name(f, k, y) :- csa_legacy(_, _, f, x, k), csa_lazy_kw(f, k, ""), csa_default_lazy(f, x, k, y).
 // csa_lazy_kw(f, k, y): the first @k(…) decorator of f with a str lazy_name="…" gives y (_legacy_lazy_name).
 .decl csa_lazy_kw_at(f: node, k: symbol, e: node, y: symbol)
 csa_lazy_kw_at(f, k, e, y) :- decorator(f, e), kind(e, "call"), field(e, "function", g), csa_dname(g, k),
@@ -234,11 +233,13 @@ csa_lazy_kw_at(f, k, e, y) :- decorator(f, e), kind(e, "call"), field(e, "functi
     text(n, "lazy_name"), field(ka, "value", v), str_const(v, y).
 .decl csa_lazy_kw(f: node, k: symbol, y: symbol)
 csa_lazy_kw(f, k, y) :- csa_lazy_kw_at(f, k, e, y), count : { csa_lazy_kw_at(f, k, e2, _), e2 < e } = 0.
-.decl csa_default_lazy(x: symbol, k: symbol, y: symbol)
-csa_default_lazy(x, "legacy_async", cat(b, "_lazy")) :- csa_legacy(_, _, _, x, "legacy_async"),
+// csa_default_lazy(f, x, k, y): legacy def f, named x, decorated k, defaults to the lazy name y. Keyed by f: a
+// function of f's own name, never a table of every file's names (decision 0677).
+.decl csa_default_lazy(f: node, x: symbol, k: symbol, y: symbol)
+csa_default_lazy(f, x, "legacy_async", cat(b, "_lazy")) :- csa_legacy(_, _, f, x, "legacy_async"),
     match("(?<b>.*)_async", x).
-csa_default_lazy(x, "legacy_async", cat(x, "_lazy")) :- csa_legacy(_, _, _, x, "legacy_async"), !suffix("_async", x).
-csa_default_lazy(x, "legacy_sync", cat(x, "_lazy")) :- csa_legacy(_, _, _, x, "legacy_sync").
+csa_default_lazy(f, x, "legacy_async", cat(x, "_lazy")) :- csa_legacy(_, _, f, x, "legacy_async"), !suffix("_async", x).
+csa_default_lazy(f, x, "legacy_sync", cat(x, "_lazy")) :- csa_legacy(_, _, f, x, "legacy_sync").
 // csa_counterpart(f, y, g): g is the lazy counterpart y: in the same class, or for the Sync/Async schema
 // transactions, in the file's first LazySchemaTransaction.
 .decl csa_counterpart(f: node, y: symbol, g: node)

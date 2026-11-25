@@ -847,6 +847,71 @@ Each other changed pack's policies on its fixtures, the same way (each engine re
 | sql | 21, 20 | 118, the same | 20.8 → 20.3 |
 | rust | 33, 60 | 286, the same | 38.2 → 37.2 |
 
+**Batch 5: the data layer, and one engine fix.** The list went from 170 to 65. The data layer's 51 entries (its
+policies batched) are 4, and its 59 (each policy alone) are 3. Django's bulk-not-loop took 2 more. What the data layer
+still holds is the lowering's: `rr_found_through` and the negation helpers (`exists_N`) of a located output (§ Open),
+and bounded-composed-graph-paths' `violation`. `exists_55` is the listed `exists_53` (plan-optimizer-v2's
+`pv2_doc_text`), renumbered by the lowering.
+
+The rules. The patterns of batches 1–4 again, and four more:
+- **Tables of every file's values, read at a node.** The fix is to key them by the node or the entry, or to test the
+  value in the reader's rule.
+  - cached-pure-lazy-allowlist's policy entries (`pm_str`, `pm_num`, `pm_list`, … keyed by the entry; `pc_str` and
+    `pc_num`, keyed by the call, for the call's own reader).
+  - purity-ast's `py_repr` table, which is now core's `@py_repr` functor, called in the reader's rule.
+  - Name cuts and prefixes, each now tested inline in its one reader: lazy-adapter-ownership's (`lao_base`,
+    `lao_cut`), connection-service-architecture's schema name, plan-optimizer-v2's module prefix (`pv2_under`),
+    pub-lines' line separator (`py_line_sep`), and bootstrap-engine-invariants' lowerer prefix.
+- **A fact of a whole document, written nullary or keyed by a value.** A nullary relation of a file's rows names no
+  document. A relation with a document column is placed by `docof`. Now keyed by the document:
+  - post-op-side-effects: `pos_has(d, what)`, `pos_allow_fault(d)`, `pos_has_verifier(d)`;
+  - conditional-architecture: `ca_role_found(d, r)`, `ca_has_compile(d)`;
+  - authentication-plan-purity: `app_semantic(d, x)`;
+  - schema-introspection-data-paths: `sidp_marked(d)`;
+  - lazy-adapter-ownership: `lao_lookup(d, …)`;
+  - bootstrap-engine-invariants: `bei_installed`.
+- **A test of every file's rows, made at a node.** swallowed-exceptions joined each `except` with every file's ignore
+  entries (`ignored_at`). Its findings now carry their path and line (`warn_at`, `critical_at`), and the output tests
+  `!ignored(p, l)`, a test of values. lazy-architecture's first deferral (`la_defer`, a `min` over the file's own) and
+  versioned-merged-identity's backing test (`vmi_unbacked`) are per file the same way.
+- **Roles taken from the run's paths.** connection-structural-boundaries' `csb_path` read `file(p)`, which has no
+  location, so every role and every reader of a role went to the cross part. A document's role now comes from its own
+  path, the options and the globs: a document's path names a file that exists. Whether the lifecycle file exists is
+  tested in the finding (`CSB030`), over a per-file candidate (`csb_lifecycle(f, x, r)`).
+- **An aggregate over two documents' nodes.** cached-pure-lazy-allowlist's `item_last` took a `max` over pairs of
+  nodes from any two files. It is per document now (`docof(x, d), docof(y, d)`), and its per-file items (`it_last`,
+  `it_err`, `it_hashes`, …) are joined to the policy entries by key.
+- **Django's bulk-not-loop.** `bnl_number(x, n)` was declared `cross_file`: the product of every field name with every
+  number literal. The step's test is per node now (`bnl_number_literal(n)`). The field's test is per document
+  (`bnl_number_field(d, x)`): a model that the counter's file can name declares x a number field. It reads the rows
+  the phase `py_names` hands on for the modules the document reads (`member_call`, `anc_call`), as `dj_model_field`
+  does. Before, any model of the run counted. A rule reading those rows with the module left free would leave a
+  model's edit out of the file's memo key (0665), so it is narrowed. A literal step (`+= 1`) is still found in every
+  file.
+
+The engine. **A symbol demand on a relation of a file's nodes is installed only when constants alone ask for it**
+(`asked_by_constants`, product_demand's `upstream.rs`). A demand fed by a file's rows is a table of every file's
+values. The demanded relation's rules read it at their nodes and went to the cross part: the data layer's
+`vmi_callee(f, x)`, asked for by each file's aliases. A demand asked for by facts alone, which no rule with a body
+derives, is a fixed set and is installed as before. Test: `a_symbol_demand_on_a_files_nodes_is_of_constants_alone`.
+With the demand gone, one rule lost the location the demand had given it by accident. VMI001's
+`!vmi_caller(_, s, _)` asks of the whole run whether some file has caller s, and its place rule then read every file's
+callers with no location. It now reads a name set that each file relays (`vmi_seen(s)`). The batched data layer
+refused the run until it did.
+
+Compared, the old engine with the old rules (HEAD before the batch, 6c5dda1725) against the new. Both are the CLI at
+O0 with `test-hooks`, on this Mac, and each engine reads its own rules and libraries.
+
+| Run | Policies | Findings, old and new |
+|---|---|---|
+| The data layer's 224-file sample | the 17 changed ones | 52, the same (swallowed-exceptions 26, VMI001 12, lazy-architecture 7, post-op 3, lazy-adapter 2, eager-resolve 1, plan-optimizer-v2 1) |
+| The port's conformance probes, each with its recorded options | lazy-architecture 197, eager-resolve 77, plan-helpers-allowlist 77, cached-pure-lazy-allowlist 54, swallowed-exceptions 34, post-op-side-effects 29, versioned-merged-identity 12, lazy-adapter-ownership 9, authentication-plan-purity 7, public-api-triples 6, executor-publication-repairs 5 | the same, probe by probe |
+| bulk-not-loop's cases (`test-rr`) | 1 | pass |
+
+The other packs' split tests (blade, complexity, django, javascript, next, node, php, python, python-main, react,
+rerail, rr, rust, sql, typescript, vue) find what they found before the demand change, so the change made no new
+crossing there.
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
