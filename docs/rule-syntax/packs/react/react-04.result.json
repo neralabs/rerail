@@ -2,7 +2,7 @@
   {
     "id": "react-no-find-dom-node",
     "status": "different",
-    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-find-dom-node silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md).",
+    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-find-dom-node silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md). Review react-04's four defects (a parenthesised callee, this.#findDOMNode(), api[findDOMNode](), a tagged template reported) are fixed and are the rule's .test; no corpus holds one, so the counts are unchanged.",
     "right": "original",
     "counts": {
       "examples": {
@@ -22,7 +22,7 @@
   {
     "id": "react-no-render-return-value",
     "status": "different",
-    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-render-return-value silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md).",
+    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-render-return-value silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md). Review react-04's three defects (the call as a computed key, ReactDOM[render](), a tagged template reported) are fixed and are the rule's .test; no corpus holds one, so the counts are unchanged.",
     "right": "original",
     "counts": {
       "examples": {
@@ -42,7 +42,7 @@
   {
     "id": "react-no-string-refs",
     "status": "different",
-    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-string-refs silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md).",
+    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-string-refs silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md). Review react-04's defect (a comment before the string in ref={…}) is fixed and is the rule's .test; no corpus holds one, so the counts are unchanged.",
     "right": "original",
     "counts": {
       "examples": {
@@ -82,7 +82,7 @@
   {
     "id": "react-no-unknown-property",
     "status": "different",
-    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-unknown-property silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md).",
+    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-unknown-property silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md). Review react-04's defect (<this …> in a .jsx file) is fixed and is the rule's .test; no corpus holds one, so the counts are unchanged.",
     "right": "original",
     "counts": {
       "examples": {
@@ -102,7 +102,7 @@
   {
     "id": "react-no-unsafe",
     "status": "different",
-    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-unsafe silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md).",
+    "reason": "Every translation-only key is a finding an eslint-disable comment for react/no-unsafe silences (eslint-disable-next-line, eslint-disable-line, or a file-level /* eslint-disable */), which ESLint (eslint-plugin-react 7.37.5) and the original honour. The translation declares the JSON's `suppress eslint` lines, but `rerail-engine run-policies` returns diagnostics with no suppression applied or marked, so the suite counts them. With ESLint's noInlineConfig on, its keys on samples-react equal the translation's exactly. An engine/harness gap, not the rule's logic (NOTES-react-04.md). Review react-04's seven defects (JSDoc components, new createReactClass, a parenthesised superclass, abstract methods, overloads, a parenthesised computed key, the @jsx pragma) are fixed in tsx/react and tsx/react-class and are the rule's .tests; no corpus holds one, so the counts are unchanged.",
     "right": "original",
     "counts": {
       "examples": {

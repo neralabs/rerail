@@ -4,16 +4,58 @@
 .mode steer
 .scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-// react/no-find-dom-node: every call of a function named findDOMNode, bare or as a member, whatever it is bound to.
+// react/no-find-dom-node: every CallExpression whose callee's `.name`, or its property's `.name`, is findDOMNode,
+// whatever it is bound to. ESTree has no parentheses, a private name's `.name` has no `#`, and a computed member's
+// property is the identifier inside the brackets.
 //   ReactDOM.findDOMNode(this)   findDOMNode(this)   this.findDOMNode()      reported, at the callee
-//   findDOMNode                                                             not: only calls
-#include "tsx/react.rerail"
+//   (findDOMNode)(this)   this.#findDOMNode()   api[findDOMNode](this)     reported
+//   findDOMNode   findDOMNode`x`   api["findDOMNode"](this)                 not: a reference, a tagged template, a Literal
+#include "tsx/react-class.rerail"
 
 .violation no_find_dom_node(at: node)
     code "react/no-find-dom-node"
     "Replace findDOMNode() with a ref on the element you need; findDOMNode is deprecated and fails in StrictMode."
     suppress eslint "react/no-find-dom-node"
     suppress oxlint "no-find-dom-node"
-no_find_dom_node(f) :- kind(c, "call_expression"), field(c, "function", f), docof(c, d), react_doc(d),
-    (kind(f, "identifier"), text(f, "findDOMNode") ;
-     kind(f, "member_expression"), field(f, "property", p), text(p, "findDOMNode")).
+no_find_dom_node(f) :- called(c, f), find_dom_node(f), docof(c, d), react_doc(d).
+.decl find_dom_node(f: node)
+find_dom_node(f) :- kind(f, "identifier"), text(f, "findDOMNode").
+find_dom_node(f) :- kind(f, "member_expression"), field(f, "property", p), estree_name(p, "findDOMNode").
+find_dom_node(f) :- kind(f, "subscript_expression"), field(f, "index", i), deparen(i, p), kind(p, "identifier"),
+    text(p, "findDOMNode").
+
+// Review (react-04): a parenthesised callee, a private method and a computed member are calls of findDOMNode
+// (ESLint reports fd-parens 3 and 4, fd-private 4, fd-computed 3); a tagged template is no CallExpression.
+.test review_callees exactly
+    .fixture "src/fd-parens.jsx" ```
+        import ReactDOM, { findDOMNode } from "react-dom";
+        export function f(c) {
+          const a = (findDOMNode)(c);
+          const b = (ReactDOM.findDOMNode)(c);
+          return [a, b];
+        }
+        ```
+    .fixture "src/fd-private.jsx" ```
+        class A extends React.Component {
+          #findDOMNode() { return null; }
+          componentDidMount() {
+            this.#findDOMNode();
+          }
+        }
+        ```
+    .fixture "src/fd-computed.jsx" ```
+        import { findDOMNode } from "react-dom";
+        const api = { [findDOMNode.name]: findDOMNode };
+        api[findDOMNode](this);
+        api["findDOMNode"](this);
+        ```
+    .fixture "src/fd-tagged.jsx" ```
+        const findDOMNode = (s) => s;
+        export const q = findDOMNode`select * from nodes`;
+        export const r = ReactDOM.findDOMNode`x`;
+        ```
+    .expect "react/no-find-dom-node" at "src/fd-parens.jsx":3
+    .expect "react/no-find-dom-node" at "src/fd-parens.jsx":4
+    .expect "react/no-find-dom-node" at "src/fd-private.jsx":4
+    .expect "react/no-find-dom-node" at "src/fd-computed.jsx":3
+.end

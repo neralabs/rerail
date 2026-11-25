@@ -16,6 +16,18 @@
     suppress eslint "react/no-string-refs"
     suppress oxlint "no-string-refs"
     suppress biome "lint/nursery/noReactStringRefs"
-// ESTree has no parentheses, so ref={("x")} is a string too.
-no_string_refs(a) :- jsx_prop(o, "ref", a), child(a, v, 1), docof(a, d), react_doc(d),
-    (kind(v, "string") ; kind(v, "jsx_expression"), child(v, e, 0), deparen(e, s), kind(s, "string")).
+// ESTree has no parentheses and no comments, so ref={("x")} and ref={/* c */ "x"} are strings too (prop_value
+// skips the comments in the braces).
+no_string_refs(a) :- jsx_prop(o, "ref", a), prop_value(a, v), deparen(v, s), kind(s, "string"), docof(a, d),
+    react_doc(d).
+
+// Review (react-04): a comment before the string in the braces (ESLint reports it).
+.test review_comment_before_the_string exactly
+    .fixture "src/sr-comment.jsx" ```
+        export const a = <div ref={/* legacy */ "a"} />;
+        export const b = <div ref={/* a */ ("b") /* c */} />;
+        export const c = <div ref={/* a */ this.c} />;
+        ```
+    .expect "react/no-string-refs" at "src/sr-comment.jsx":1
+    .expect "react/no-string-refs" at "src/sr-comment.jsx":2
+.end

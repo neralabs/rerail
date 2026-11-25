@@ -30,8 +30,10 @@
 //     create_tag(c, x)        c's type argument is the string x: createElement("button")
 //     create_dom(c)           c's type argument is a string starting with a lower-case letter: createElement("div")
 //   class components (eslint-plugin-react's isES5Component, isES6Component)
-//     class_component(k)      class k extends Component, PureComponent, React.Component or React.PureComponent
-//     create_class(k)         object k is the spec of createReactClass({…}) or React.createReactClass({…})
+//     class_component(k)      class k extends Component, PureComponent, React.Component or React.PureComponent, or
+//                             its JSDoc says `@extends React.Component` (or `@augments`, or PureComponent)
+//     create_class(k)         object k is an argument of createReactClass(…) or React.createReactClass(…), or of
+//                             `new` either
 //     react_component(k)      either: the node a component's members are read from
 //     comp_member(k, m, x)    m is a member of component k named x: a method, a field, a spec property
 //
@@ -59,11 +61,12 @@ other_jsx(d) :- !import_source_names(d, _), !factory_import(d), !jsx_pragma_reac
 .decl import_source_names(d: number, r: symbol)
 import_source_names(d, r) :- jsx_source(d, src), jsx_source_runtime(src, r).
 .decl jsx_source(d: number, src: symbol)  // the first comment's @jsxImportSource
-jsx_source(d, src) :- first_source_comment(d, c), comment(c, t), match(".*@jsxImportSource\\s+(?<x>\\S+).*", t),
-    src = x.
+jsx_source(d, src) :- first_source_comment(d, c), comment(c, t),
+    match("(?s).*?@jsxImportSource\\s+(?<x>\\S+).*", t), src = x.
+// The first comment is the one that starts first: visit_index has no rows under run-policies, offsets always do.
 .decl first_source_comment(d: number, c: node)
-first_source_comment(d, c) :- docof(c, d), i = min j : { kind(n, "comment"), docof(n, d), comment(n, t),
-    contains("@jsxImportSource", t), visit_index(n, j) }, kind(c, "comment"), visit_index(c, i), docof(c, d).
+first_source_comment(d, c) :- doc(d, _, _), i = min st : { kind(n, "comment"), docof(n, d), comment(n, t),
+    contains("@jsxImportSource", t), node(d, n, _, st, _) }, node(d, c, "comment", i, _).
 .decl jsx_source_runtime(src: symbol, r: symbol)
 jsx_source_runtime(src, r) :- jsx_library(p, r), (src = p ; prefix(cat(p, "/"), src)), jsx_source(_, src).
 .decl jsx_library(p: symbol, r: symbol)  // @jsxImportSource packages, by runtime
@@ -102,9 +105,9 @@ pragma(d, p) :- pragma_comment(d, f), match("(?<x>[_$a-zA-Z][_$a-zA-Z0-9]*)(\\..
 pragma(d, "React") :- doc(d, _, _), !pragma_comment(d, _).
 pragma(d, "React") :- pragma_comment(d, f), !match("[_$a-zA-Z][_$a-zA-Z0-9]*(\\..*)?", f).
 .decl pragma_comment(d: number, f: symbol)  // the first comment with @jsx (not @jsxImportSource, @jsxFrag…)
-pragma_comment(d, f) :- i = min j : { kind(n, "comment"), docof(n, d), comment(n, t),
-    match(".*@jsx\\s+\\S+.*", t), visit_index(n, j) }, kind(c, "comment"), visit_index(c, i), docof(c, d),
-    comment(c, t), match(".*@jsx\\s+(?<x>\\S+).*", t), f = x.
+pragma_comment(d, f) :- doc(d, _, _), i = min st : { kind(n, "comment"), docof(n, d), comment(n, u),
+    match("(?s).*@jsx\\s+\\S.*", u), node(d, n, _, st, _) }, node(d, c, "comment", i, _), comment(c, t),
+    match("(?s).*?@jsx\\s+(?<x>\\S+).*", t), f = x.
 
 // ---- JSX ------------------------------------------------------------------------------------------------------
 // Props live on the open tag: <a href="x">…</a> is a jsx_element whose open_tag is a jsx_opening_element, and <a/>
@@ -181,26 +184,59 @@ create_tag(c, x) :- create_element(c), call_arg(c, t, 0), kind(t, "string"), str
 create_dom(c) :- create_tag(c, x), glob("[a-z]**", x).
 
 // ---- class components -----------------------------------------------------------------------------------------
-// isES6Component: `extends Component`, `extends PureComponent`, or the pragma's: `extends React.Component`.
+// isES6Component: a class whose JSDoc says `@extends React.Component` (isExplicitComponent), or one that extends
+// `Component`, `PureComponent`, or the pragma's `React.Component` (ESTree has no parentheses, so `extends
+// (React.Component)` too, and `React[Component]`, whose property is the identifier).
 //   class Hello extends React.Component { render() { … } }
 .decl class_component(k: node)
-class_component(k) :- (kind(k, "class_declaration") ; kind(k, "class")), child(k, h, _), kind(h, "class_heritage"),
-    child(h, s, 0), component_base(s).
-// TypeScript wraps the superclass in an extends_clause: class A extends React.Component<P> { … }.
-class_component(k) :- (kind(k, "class_declaration") ; kind(k, "class") ; kind(k, "abstract_class_declaration")),
-    child(k, h, _), kind(h, "class_heritage"), child(h, e, _), kind(e, "extends_clause"), field(e, "value", s),
-    component_base(s).
+class_component(k) :- superclass(k, s), component_base(s).
+class_component(k) :- class_target(k, t), next_sibling(c, t), kind(c, "comment"), text(c, s), jsdoc_extends(s),
+    end_line(c, ce), line(t, ts), ts - ce <= 1.
+// superclass(k, s): the expression after `extends`, parentheses skipped. TypeScript wraps it in an extends_clause:
+// class A extends React.Component<P> { … }.
+.decl superclass(k: node, s: node)
+superclass(k, s) :- (kind(k, "class_declaration") ; kind(k, "class")), child(k, h, _), kind(h, "class_heritage"),
+    child(h, e, _), !not_stmt(e), !kind(e, "extends_clause"), !kind(e, "implements_clause"), deparen(e, s).
+superclass(k, s) :- (kind(k, "class_declaration") ; kind(k, "class") ; kind(k, "abstract_class_declaration")),
+    child(k, h, _), kind(h, "class_heritage"), child(h, e, _), kind(e, "extends_clause"), field(e, "value", v),
+    deparen(v, s).
 .decl component_base(s: node)
 component_base(s) :- kind(s, "identifier"), (text(s, "Component") ; text(s, "PureComponent")).
-component_base(s) :- kind(s, "member_expression"), field(s, "object", o), field(s, "property", p),
-    (text(p, "Component") ; text(p, "PureComponent")), docof(s, d), pragma(d, x), text(o, x).
-// isES5Component: the object passed to createReactClass, bare or off the pragma.
+component_base(s) :- pragma_member(s, x), (x = "Component" ; x = "PureComponent").
+// pragma_member(s, x): s is `React.x` or `React[x]` with React the pragma (an optional `React?.x` is a ChainExpression).
+.decl pragma_member(s: node, x: symbol)
+pragma_member(s, x) :- kind(s, "member_expression"), !field(s, "optional_chain", _), field(s, "property", p),
+    kind(p, "property_identifier"), text(p, x), field(s, "object", w), deparen(w, o), kind(o, "identifier"),
+    docof(s, d), pragma(d, y), text(o, y).
+pragma_member(s, x) :- kind(s, "subscript_expression"), !field(s, "optional_chain", _), field(s, "index", i),
+    deparen(i, p), kind(p, "identifier"), text(p, x), field(s, "object", w), deparen(w, o), kind(o, "identifier"),
+    docof(s, d), pragma(d, y), text(o, y).
+// isExplicitComponent: ESLint's getJSDocComment finds a `/** … */` right before the class's target, ending at most a
+// line above it; the target is a declaration's export statement, else the declaration, and a class expression's
+// ESTree grandparent (`const A = class {}`: the declaration). doctrine must read an `@extends` or `@augments` tag at
+// a line's start naming React.Component or React.PureComponent and nothing after it up to the next tag.
+//   /** @extends React.Component */ class Legacy { … }
+.decl class_target(k: node, t: node)
+class_target(k, t) :- (kind(k, "class_declaration") ; kind(k, "abstract_class_declaration") ; kind(k, "class")),
+    child(t, k, _), kind(t, "export_statement").
+class_target(k, k) :- (kind(k, "class_declaration") ; kind(k, "abstract_class_declaration")), child(t, k, _),
+    !kind(t, "export_statement").
+class_target(k, t) :- kind(k, "class"), estree_up(k, p), !kind(p, "export_statement"), estree_up(p, t).
+.decl estree_up(x: node, p: node)  // ESTree's parent of a class expression or of its parent: an arguments list is none
+estree_up(x, p) :- kind(x, "class"), (estree_parent(x, p), !kind(p, "arguments") ;
+    estree_parent(x, a), kind(a, "arguments"), child(p, a, _)).
+estree_up(p, g) :- estree_up(x, p), kind(x, "class"), (estree_parent(p, g), !kind(g, "arguments") ;
+    estree_parent(p, a), kind(a, "arguments"), child(g, a, _)).
+.decl jsdoc_extends(s: symbol)
+jsdoc_extends(s) :- text(c, s), kind(c, "comment"),
+    match("(?s)/\\*\\*(?:.*\\n)?[ \\t]*\\*?[ \\t]*@(?:extends|augments)\\s+React\\.(?:Pure)?Component[ \\t]*(?:\\*/|(?:\\n[ \\t]*\\*?[ \\t]*)+(?:\\*/|@.*))",
+    s).
+// isES5Component: an object passed to createReactClass or the pragma's React.createReactClass, called or with `new`.
 //   const Hello = createReactClass({ render() { … } });
 .decl create_class(k: node)
-create_class(k) :- kind(k, "object"), child(l, k, _), kind(l, "arguments"), field(c, "arguments", l),
-    field(c, "function", f), (text(f, "createReactClass") ;
-    kind(f, "member_expression"), field(f, "property", p), text(p, "createReactClass"), field(f, "object", o),
-    docof(c, d), pragma(d, x), text(o, x)).
+create_class(k) :- kind(k, "object"), estree_parent(k, l), kind(l, "arguments"), field(c, "arguments", l),
+    (field(c, "function", f0) ; field(c, "constructor", f0)), deparen(f0, f),
+    (kind(f, "identifier"), text(f, "createReactClass") ; pragma_member(f, "createReactClass")).
 .decl react_component(k: node)
 react_component(k) :- class_component(k) ; create_class(k).
 // comp_member(k, m, x): `render() {}`, `state = {}`, `static defaultProps = …` in a class body; `render() {}` or

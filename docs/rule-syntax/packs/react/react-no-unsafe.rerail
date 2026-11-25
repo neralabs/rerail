@@ -5,11 +5,13 @@
 .scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
 // react/no-unsafe: a class component or createReactClass spec that declares UNSAFE_componentWillMount,
-// UNSAFE_componentWillReceiveProps or UNSAFE_componentWillUpdate, as a method, field or spec property.
+// UNSAFE_componentWillReceiveProps or UNSAFE_componentWillUpdate, as a method, field, spec property, abstract method
+// or overload signature (tsx/react's class_component and create_class, tsx/react-class's method_key).
 //   class Foo extends React.Component { UNSAFE_componentWillMount() {} }     reported, at the member
+//   /** @extends React.Component */ class Foo { UNSAFE_componentWillMount() {} }   reported: JSDoc says component
 //   class Foo { UNSAFE_componentWillMount() {} }                             not: not a component
 // The option checkAliases (also the unprefixed names) is not in the JSON. A member with decorators is reported
-// where its first decorator starts, as ESTree's range includes them.
+// where its first decorator starts, as ESTree's range includes them. With overloads, the first signature.
 #include "tsx/react-class.rerail"
 
 .violation will_mount(at: node)
@@ -48,3 +50,89 @@ member_at(m, a) :- decorated(m, a), count : { next_sibling(b, a), kind(b, "decor
 .decl decorated(m: node, a: node)
 decorated(m, a) :- member_named(_, x, m), unsafe_name(x), next_sibling(a, m), kind(a, "decorator").
 decorated(m, b) :- decorated(m, a), next_sibling(b, a), kind(b, "decorator").
+
+// Review (react-04): a component declared by its JSDoc, `new createReactClass`, a parenthesised superclass, an
+// abstract method, overloads (the first signature), a parenthesised computed key, and the `@jsx` pragma. Each line
+// below is ESLint's.
+.test review_jsdoc_components exactly
+    .fixture "src/us-jsdoc.jsx" ```
+        /**
+         * @extends React.Component
+         */
+        class Legacy {
+          UNSAFE_componentWillMount() {}
+        }
+        /** @augments React.PureComponent */
+        export class Legacy2 {
+          UNSAFE_componentWillUpdate() {}
+        }
+        /** @extends React.Component */
+
+        class Gap {
+          UNSAFE_componentWillMount() {}
+        }
+        ```
+    .fixture "src/us-jsdoc-export.jsx" ```
+        /** @extends React.Component */
+        export default class Legacy {
+          UNSAFE_componentWillMount() {}
+        }
+        ```
+    .expect "react/no-unsafe" at "src/us-jsdoc.jsx":5
+    .expect "react/no-unsafe" at "src/us-jsdoc.jsx":9
+    .expect "react/no-unsafe" at "src/us-jsdoc-export.jsx":3
+.end
+
+.test review_es5_and_superclass exactly
+    .fixture "src/us-new.jsx" ```
+        const N = new createReactClass({
+          UNSAFE_componentWillMount() {},
+        });
+        ```
+    .fixture "src/us-parens-super.jsx" ```
+        class A extends (React.Component) {
+          UNSAFE_componentWillMount() {}
+        }
+        ```
+    .fixture "src/us-computed-parens.jsx" ```
+        class A extends React.Component {
+          [(UNSAFE_componentWillMount)]() {}
+        }
+        ```
+    .expect "react/no-unsafe" at "src/us-new.jsx":2
+    .expect "react/no-unsafe" at "src/us-parens-super.jsx":2
+    .expect "react/no-unsafe" at "src/us-computed-parens.jsx":2
+.end
+
+.test review_typescript_signatures exactly
+    .fixture "src/us-abstract.tsx" ```
+        import React from "react";
+        export abstract class Base extends React.Component<{}> {
+          abstract UNSAFE_componentWillMount(): void;
+        }
+        ```
+    .fixture "src/us-overload.tsx" ```
+        import React from "react";
+        export class A extends React.Component<{}> {
+          UNSAFE_componentWillReceiveProps(next: {}): void;
+          UNSAFE_componentWillReceiveProps(next: {}, ctx: unknown): void;
+          UNSAFE_componentWillReceiveProps(next: {}, ctx?: unknown) {}
+        }
+        ```
+    .expect "react/no-unsafe" at "src/us-abstract.tsx":3
+    .expect "react/no-unsafe" at "src/us-overload.tsx":3
+.end
+
+.test review_jsx_pragma exactly
+    .fixture "src/us-pragma.jsx" ```
+        /** @jsx h */
+        import { h, Component } from "./my-jsx";
+        class A extends React.Component {
+          UNSAFE_componentWillMount() {}
+        }
+        class B extends h.Component {
+          UNSAFE_componentWillMount() {}
+        }
+        ```
+    .expect "react/no-unsafe" at "src/us-pragma.jsx":7
+.end
