@@ -1733,6 +1733,26 @@ fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
     cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
 }
 
+/// The same through a phase (decision 0665's `tsx_names`): the phase's run is warm too, its program read from the
+/// store as the cold run kept it, and its exports handed on from its kept parts.
+#[test]
+fn the_run_after_a_cold_one_through_a_phase_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let program = temp.path().join("names.rerail");
+    std::fs::write(&program, ".language typescript\n#include \"tsx/names.rerail\"\n.decl used(n: node, q: symbol)\nused(n, q) :- sym_of(n, q).\n.output used\n").unwrap();
+    let files = [("a.ts", "import { g } from \"./b\";\ng();\n"), ("b.ts", "export function g() {}\n")];
+    cold_then_warm(&temp.path().join("w"), Some(&program), &files, &mut None);
+}
+
+/// The same policy over sources with no string annotation: no tape value.
+#[test]
+fn the_run_after_a_cold_one_of_a_names_policy_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let c408 = rerail_store::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: dict = dict()\nb: List[int] = list()\n"), ("main.py", "c = tuple()\n")];
+    cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
+}
+
 /// `cold_then_warm`'s sources by default: a small Python package and a file importing it.
 const PICKLE_PACKAGE: &[(&str, &str)] = &[("pkg/__init__.py", ""), ("pkg/loader.py", "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n"), ("main.py", "from pkg.loader import load\nload(b'x')\n")];
 
@@ -2529,6 +2549,131 @@ fn a_files_entry_is_kept_under_its_own_imports_resolution() {
     assert_eq!(edited.memo.0, edited.files - 2, "b.ts and its importer a.ts alone miss: {:?} of {}", edited.memo, edited.files);
     let fresh = make("tsx-names-memo-fresh", &[edit]);
     assert_eq!(rows, run(&fresh).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0677, fix 2: Python's names through the phase `py_names`. `sym_of` and `site_exported` read the phase's
+/// rows at their own file's path (or by a module those name), so they are file-local, and they find what the cross-file
+/// rules found before: those rules are written out here (`old_sym`, `old_public`) and run beside them. The workspace
+/// has a package re-exporting a class from a submodule, a chain of two re-exports, a star import under `__all__` and
+/// one without, a class's nested class and method read as its attributes, and a module outside the workspace.
+const PY_NAMES_FILES: [(&str, &str); 6] = [
+    ("pkg/__init__.py", "from .core import App\nfrom .more import *\nfrom .nall import *\n"),
+    ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        pass\n"),
+    ("pkg/more.py", "__all__ = [\"helper\"]\n\n\ndef helper():\n    pass\n\n\ndef hidden():\n    pass\n"),
+    ("pkg/nall.py", "def visible():\n    pass\n\n\ndef _private():\n    pass\n"),
+    ("pkg/chain.py", "from pkg import App as Root\n"),
+    ("use.py", "import os\nfrom pkg import App, helper, visible\nfrom pkg.chain import Root\nApp.Meta\nApp.run\nRoot\nhelper\nvisible\nos.path.join\n"),
+];
+
+const PY_NAMES_PROGRAM: &str = r#".language python
+#include "python/names.rerail"
+.decl at(n: node, p: symbol, l: number)
+at(n, p, l) :- kind(e, "expression_statement"), child(e, n, 0), line(n, l), docof(n, d), doc(d, p, _).
+.decl used(p: symbol, l: number, q: symbol)
+used(p, l, q) :- at(n, p, l), sym_of(n, q).
+.output used
+.decl exported_at(p: symbol, x: symbol)
+exported_at(p, x) :- site_exported(site), binding(s, x, site, _), docof(s, d), doc(d, p, _).
+.output exported_at
+"#;
+
+/// The rules `py_names` replaced (python/names' `sym_of` rules 1 and 3, and `site_exported`, before 0677 fix 2): they
+/// read every file's rows.
+const PY_NAMES_OLD: &str = r#"
+.decl old_sym(n: node, q: symbol) cross_file
+old_sym(n, q) :- qn(n, q0), resolve_export(q0, q).
+export_query(q) :- qn(_, q).
+old_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
+old_sym(n, q) :- attr_of(n, o, a), old_sym(o, c), class_def(_, c), q = @dot(c, a), qualname(_, q).
+old_sym(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
+.decl old_used(p: symbol, l: number, q: symbol)
+old_used(p, l, q) :- at(n, p, l), old_sym(n, q).
+.output old_used
+.decl old_exported_at(p: symbol, x: symbol)
+old_exported_at(p, x) :- binding(s, x, site, _), kind(s, "module"), module_of(s, m), public_name(m, x), docof(s, d), doc(d, p, _).
+.output old_exported_at
+"#;
+
+/// The workspace `files` (with `edits` written over them) in a fresh directory named for `name`.
+fn py_names_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in PY_NAMES_FILES.iter().chain(edits) {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    dir
+}
+
+/// `program` run over `dir`'s workspace: the report, and each output's rows, shown, by name.
+fn py_names_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let rows = ["used", "exported_at", "old_used", "old_exported_at"]
+        .into_iter()
+        .filter_map(|name| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
+            rows.sort();
+            Some((name.to_owned(), rows))
+        })
+        .collect();
+    (report, rows)
+}
+
+#[test]
+fn python_names_through_the_phase_are_the_cross_file_rules_answers() {
+    let dir = py_names_workspace("py-names", &[]);
+    let (_, rows) = py_names_run(&dir, &format!("{PY_NAMES_PROGRAM}{PY_NAMES_OLD}"));
+    let row = |p: &str, l: i64, q: &str| vec![p.to_owned(), l.to_string(), q.to_owned()];
+    assert_eq!(
+        rows["used"],
+        [
+            row("use.py", 4, "pkg.App.Meta"),
+            row("use.py", 4, "pkg.core.App.Meta"),
+            row("use.py", 5, "pkg.App.run"),
+            row("use.py", 5, "pkg.core.App.run"),
+            row("use.py", 6, "pkg.core.App"),
+            row("use.py", 7, "pkg.more.helper"),
+            row("use.py", 8, "pkg.nall.visible"),
+            row("use.py", 9, "os.path.join"),
+        ],
+        "each name, re-exports and star imports followed, and each member of a class read as its attribute: {rows:?}"
+    );
+    assert_eq!(rows["used"], rows["old_used"], "sym_of finds what the cross-file rules found");
+    assert_eq!(rows["exported_at"], rows["old_exported_at"], "site_exported finds what the cross-file rule found");
+    let exported = |p: &str, x: &str| rows["exported_at"].contains(&vec![p.to_owned(), x.to_owned()]);
+    assert!(exported("pkg/more.py", "helper") && !exported("pkg/more.py", "hidden"), "__all__ names helper alone: {:?}", rows["exported_at"]);
+    assert!(exported("pkg/nall.py", "visible") && !exported("pkg/nall.py", "_private"), "without __all__, no leading _: {:?}", rows["exported_at"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0677, fix 2: an edit misses the files whose `py_names` rows changed. A body edit in pkg/core.py misses that
+/// file alone. A method added to `App` adds a row to pkg.core's `defined`: the files that read pkg.core (core.py,
+/// pkg/__init__.py and chain.py, which re-export App, and use.py, which reads it) miss, and more.py and nall.py are
+/// read from the memo. The rows are a fresh run's.
+#[test]
+fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
+    let body = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n");
+    let method = ("pkg/core.py", "class App:\n    class Meta:\n        pass\n\n    def run(self):\n        return 1\n\n    def stop(self):\n        pass\n");
+    let dir = py_names_workspace("py-names-memo", &[]);
+    let (_, before) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    std::fs::write(dir.join("ws").join(body.0), body.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(rows, before, "a body edit changes no name");
+    assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
+    std::fs::write(dir.join("ws").join(method.0), method.1).unwrap();
+    let (edited, rows) = py_names_run(&dir, PY_NAMES_PROGRAM);
+    assert_eq!(edited.memo.0, edited.files - 4, "pkg.core's readers alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = py_names_workspace("py-names-memo-fresh", &[method]);
+    assert_eq!(rows, py_names_run(&fresh, PY_NAMES_PROGRAM).1, "the rows are a fresh run's");
     let _ = std::fs::remove_dir_all(&fresh);
     let _ = std::fs::remove_dir_all(&dir);
 }

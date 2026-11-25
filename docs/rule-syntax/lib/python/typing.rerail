@@ -121,10 +121,8 @@ tuple_len(e, k) :- kind(e, "tuple"), k = count : { child(e, x, _), !kind(x, "com
 // pyi_sym(e, q): e names the qualified name q through this file's imports, aliases, attribute chains and
 // definitions, or a builtin: python/names' sym_of without its step through other modules' re-exports.
 //   from compat import Literal; Literal       pyi_sym(<Literal>, "compat.Literal"), whatever compat imports
-// Ruff resolves a name in its own file (resolve_qualified_name), so the PYI rules read this, not sym_of. It keeps a
-// rule's program file-local: sym_of's re-exports (python/imports' resolve_export) read every module of the
-// repository, so a rule reading them is evaluated across files (PYI008 on Ruff's 1,820 fixture files: 41 s, and
-// 4.7 s with pyi_sym).
+// Ruff resolves a name in its own file (resolve_qualified_name), so the PYI rules read this, not sym_of, which follows
+// other modules' re-exports (the phase py_names).
 .decl pyi_sym(e: node, q: symbol)
 pyi_sym(n, q) :- qn(n, q).
 pyi_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).

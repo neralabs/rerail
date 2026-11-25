@@ -649,7 +649,12 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
     let mut settings: Vec<(String, String)> = ProgramFields::settings(v).into_iter().filter(|(k, _)| k != "context" && k != "from").collect();
     for c in d.contexts.values().filter(|c| !c.made) {
         let exports: Vec<&str> = c.exports.iter().map(String::as_str).collect();
-        let reads: Vec<String> = d.reads.iter().filter(|r| r.reader == c.name).map(|r| d.name_in(&r.source, &r.rel)).collect();
+        // A set, as its exports are: the `.from` statements of two modules neither includes have no order, and the
+        // library's link (decision 0639) puts such modules in another order than their files' includes. In the order
+        // read, a program linked from its modules printed another `.pass` than its whole lowering (python/scopes and
+        // python/points-to's reads of `annotation`, decision 0677 fix 2).
+        let reads: std::collections::BTreeSet<String> = d.reads.iter().filter(|r| r.reader == c.name).map(|r| d.name_in(&r.source, &r.rel)).collect();
+        let reads: Vec<String> = reads.into_iter().collect();
         let reads = if reads.is_empty() { String::new() } else { format!(" reads {}", reads.join(", ")) };
         let holes = c.holes.as_ref().map_or(String::new(), |h| format!(" holes {}", d.name_in(&c.host, h)));
         settings.push(("pass".to_owned(), format!("{} of {} roots {}{holes} exports {}{reads}", c.name, c.host, d.name_in(&c.host, &c.roots), exports.join(", "))));

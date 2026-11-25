@@ -86,7 +86,8 @@ fn read(path: &Path, c: &Connection) -> Vec<(String, i64, u64, Vec<Vec<i64>>)> {
 }
 
 fn files(path: &Path) -> Vec<String> {
-    let mut out: Vec<String> = std::fs::read_dir(space_dir(path, &SPACE)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    // The space's kept files: not its staging lock, which a run staging rows made (`STAGING_LOCK`).
+    let mut out: Vec<String> = std::fs::read_dir(space_dir(path, &SPACE)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).filter(|n| n != STAGING_LOCK).collect();
     out.sort();
     out
 }
@@ -640,6 +641,31 @@ fn rows_another_writer_replaced_open_as_the_last_commit() {
     assert_eq!(store.kept_row(&SPACE).unwrap(), Some(now), "the rows held are the last commit's");
 }
 
+/// The same, where the reader is inside a read transaction (a virtual table's statement reads the space as its
+/// statement's transaction finds it): its connection reads its snapshot's rows however often it reads them, so they
+/// are read on a connection of their own. Before, two policies' runs of one phase over one store failed now and then
+/// ("a space's kept facts: No such file or directory", `rule_files_pass_their_own_tests`, decision 0677's fix 2).
+#[test]
+fn a_reader_inside_a_transaction_whose_files_a_commit_swept_reads_the_last_commits() {
+    let (path, c) = store("swept-in-transaction");
+    write(&path, &c, vec![put("p", 0, 1, flat(&[1, 10]))]);
+    let reader = Connection::open(&path).unwrap();
+    reader.execute_batch("BEGIN").unwrap();
+    let stale = chain_rows(&reader, &SPACE).unwrap();
+    let big: Vec<i64> = (0..100_000i64).flat_map(|i| [(i * 7919) % 100_003, (i * 104_729) % 150_001]).collect();
+    write(&path, &c, vec![put("q", 0, 2, flat(&big))]);
+    write(&path, &c, vec![put("r", 0, 3, flat(&[2, 20]))]);
+    assert!(stale.iter().all(|(_, name, _)| !space_dir(&path, &SPACE).join(name).exists()), "the stale rows' file swept");
+    assert_eq!(chain_rows(&reader, &SPACE).unwrap(), stale, "the reader's snapshot names the swept file still");
+    let (rows, kept) = KeptSpace::settle(&path, &reader, &SPACE, stale).unwrap().expect("the space");
+    assert_eq!(rows, chain_rows(&c, &SPACE).unwrap(), "mapped by the last commit's rows");
+    let view = kept.view();
+    for (rel, digest) in [("p", 1), ("q", 2), ("r", 3)] {
+        assert_eq!(view.get(&FactKey { rel, ident: &ID, part: 0 }).map(|k| k.digest), Some(digest), "{rel}");
+    }
+    reader.execute_batch("COMMIT").unwrap();
+}
+
 /// A reader's rows can name a file a later commit swept: read before a write merged the chain into one file, and the
 /// write after removed the file they name. The space is read by the rows read again (`KeptSpace::settle`), as the
 /// store's last commit names its files; a file gone from the rows the store names still is corruption. Before, a
@@ -666,4 +692,31 @@ fn a_reader_whose_files_a_commit_swept_reads_the_last_commits() {
     std::fs::remove_file(space_dir(&path, &SPACE).join(&rows[0].1)).unwrap();
     let err = KeptSpace::read(&path, &c, &SPACE).err().expect("a file the last commit names, gone");
     assert!(err.to_string().contains("a space's kept facts"), "{err}");
+}
+
+/// A file staged ahead of its wave (`KeptStage`) outlives every sweep of its space until its commit, whatever context
+/// or process sweeps: it holds the space's `STAGING_LOCK`, a file lock, where a set kept in one context's shared object
+/// let a run in another context of the same process remove it, and its commit then named a file not there.
+#[test]
+fn a_staged_file_outlives_another_contexts_sweep_until_its_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = dir.path().join("store.sqlite");
+    let space = space_dir(&store, &[7; 32]);
+    std::fs::create_dir_all(&space).unwrap();
+    let staged = space.join(format!("{STAGED_PREFIX}00000000000000aa.blk"));
+    let unnamed = space.join("c1-00000000000000bb.blk");
+    std::fs::write(&staged, b"staged").unwrap();
+    std::fs::write(&unnamed, b"rolled back").unwrap();
+    let held = staging_lock(&space, true).unwrap();
+    held.lock_shared().unwrap();
+    // Another context's sweep (its own open of the lock, as another run's or process's is).
+    sweep(&space, &ChainRows::default());
+    assert!(staged.exists(), "a staged file whose run holds the lock is kept");
+    assert!(!unnamed.exists(), "an unnamed file not staged is swept as before");
+    drop_space_files(&store, &[7; 32]);
+    assert!(staged.exists(), "a sweep through a dropped space keeps it too");
+    drop(held);
+    sweep(&space, &ChainRows::default());
+    assert!(!staged.exists(), "with no run staging, a staged file no chain names is a crashed run's, swept");
+    assert!(space.join(STAGING_LOCK).exists(), "the lock itself is never swept");
 }

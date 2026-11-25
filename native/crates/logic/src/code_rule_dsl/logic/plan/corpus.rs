@@ -133,6 +133,10 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_RULE_ORDER",
     // The split (`file_local::assemble`): a cross part reading positions is refused (decision 0649).
     "RERAIL_STRICT_POSITIONS",
+    // The split's node check (decision 0677): a cross part holding a node id is refused, or named in a file. A prepared
+    // program reused under another value would neither refuse nor name its crossings.
+    "RERAIL_STRICT_NODES",
+    "RERAIL_NODE_CROSSINGS",
 ];
 
 pub mod owner {
@@ -5509,7 +5513,7 @@ fn run_observed_within(
             for asked in &asked_before {
                 // Its value, the keys of the nodes its rows hold, and whether it was made here, as `parse_answer` admits it.
                 let entry = match asked {
-                    memo::Answered::Embed { at, grammar } => match made.admit(docs, *at, grammar, &guest_parses).map_err(Error::Plan)? {
+                    memo::Answered::Embed { at, grammar, .. } => match made.admit(docs, *at, grammar, &guest_parses).map_err(Error::Plan)? {
                         guests::Got::New(d) => {
                             values_admitted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             tape_text_made(&tape_texts, grammar, &d);
@@ -5566,7 +5570,8 @@ fn run_observed_within(
                             }
                             guests::Got::Not => continue,
                         };
-                        answered.push(memo::Answered::Embed { at, grammar });
+                        let text = made.tape_text(i64::from(key)).map(|(_, t)| t.to_owned()).unwrap_or_default();
+                        answered.push(memo::Answered::Embed { at, grammar, text });
                         (key, Some((at >> 32) as u32), fresh)
                     }
                     (guests::PARSE, &[at, g, x]) => {
@@ -5854,6 +5859,12 @@ fn run_observed_within(
                         // Its document, for the corpus batch (decision 0458): made from its tape once the chunks are done.
                         // Its tape values' requests (`memo::VALUES`): not an output.
                         let values = entry.outputs.remove(memo::VALUES).map(|(_, rows)| rows);
+                        // Their tapes' sources named, as the run that parsed them named them (`Parses::name_kept`).
+                        for asked in values.as_ref().map(memo::Answered::read).unwrap_or_default() {
+                            if let Some((grammar, text)) = asked.text() {
+                                guest_parses.name_kept(grammar, text);
+                            }
+                        }
                         if !stored.is_empty() {
                             corpus_hits.push(CorpusHit { key: entry.key, path: path.clone(), module: module.clone(), values });
                         }
@@ -7317,7 +7328,7 @@ fn run_observed_within(
                     continue;
                 }
                 match asked {
-                    memo::Answered::Embed { at, grammar } => {
+                    memo::Answered::Embed { at, grammar, .. } => {
                         made.admit(docs, at, &grammar, &guest_parses).map_err(Error::Plan)?;
                     }
                     memo::Answered::Value(request) => {

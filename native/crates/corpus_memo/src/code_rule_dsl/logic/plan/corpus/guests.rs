@@ -928,6 +928,23 @@ impl<'a> Parses<'a> {
         Self { store, ..Self::default() }
     }
 
+    /// The source of `text`'s tape as `grammar_name`'s, named in the run's manifest where the root's last runs named
+    /// it (`ValueStore`): a hit's entry made of the value (`memo::VALUES`) names it as the run that parsed it did,
+    /// though the hit reads nothing of it. Nothing parsed, read or queued; a tape not found is not named, and a run that
+    /// needs it parses it then. Without it a warm run whose files were all hits named fewer sources than the cold one,
+    /// which parsed them in its fixpoint: a new manifest, a write in a warm run (decision 0677 fix 2 made C408's files
+    /// all file-local, so no corpus batch remade them).
+    pub fn name_kept(&self, grammar_name: &str, text: &str) {
+        let Some(s) = &self.store else { return };
+        let Some(tag) = grammar(grammar_name).and_then(|(label, fragment)| tape_tag_of(label, fragment)) else { return };
+        use sha2::Digest as _;
+        let hash = crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(text.as_bytes()).into());
+        let found = if s.run_tag == Some(tag) { s.by_text.get(&hash) } else { s.others.get(&(hash, tag)) };
+        if let Some((source, _)) = found {
+            s.late.lock().expect("the late sources").push(*source);
+        }
+    }
+
     /// The texts this run parsed.
     pub fn parsed(&self) -> usize {
         self.parsed.load(std::sync::atomic::Ordering::Relaxed)

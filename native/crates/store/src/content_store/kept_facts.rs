@@ -245,6 +245,13 @@ pub fn chain_rows(connection: &Connection, space: &[u8; 32]) -> StoreResult<Chai
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
+/// `space`'s chain rows as the store's last commit names them, read on a connection of its own, outside any
+/// transaction a reader's connection is in.
+fn last_commit_rows(store: &Path, space: &[u8; 32]) -> StoreResult<ChainRows> {
+    let c = Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| StoreError::Invalid(e.to_string()))?;
+    chain_rows(&c, space)
+}
+
 /// A space's files, mapped, oldest first.
 #[derive(Default)]
 pub struct KeptSpace {
@@ -261,7 +268,8 @@ impl KeptSpace {
     /// keeps none. A writer's commit sweeps the files it replaced (`sweep`), and one the rows named can go between
     /// the read and the mapping (another shared object's writer in this process, or another process): the rows are
     /// read again, and name the files that commit wrote. Outside a transaction each read is the store's last commit;
-    /// inside a write transaction no commit comes between. A file gone from rows read twice the same is corruption.
+    /// inside a write transaction no commit comes between; inside a read transaction the rows are read again on a
+    /// connection of their own (`last_commit_rows`). A file gone from the last commit's rows is corruption.
     pub fn read(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
         Ok(Self::read_rows(store, t, space)?.map(|(_, kept)| kept))
     }
@@ -280,7 +288,16 @@ impl KeptSpace {
             match Self::mapped(store, space, &rows) {
                 Ok(kept) => return Ok(Some((rows, kept))),
                 Err((path, e)) => {
-                    let again = (e.kind() == std::io::ErrorKind::NotFound).then(|| chain_rows(t, space)).transpose()?;
+                    // Read again on `t`, then on a connection of its own: inside a transaction (a virtual table's
+                    // statement), `t` reads its snapshot, whose rows name the files a later commit swept, however
+                    // often it reads them.
+                    let again = match e.kind() == std::io::ErrorKind::NotFound {
+                        true => match chain_rows(t, space)? {
+                            now if now != rows => Some(now),
+                            _ => Some(last_commit_rows(store, space)?),
+                        },
+                        false => None,
+                    };
                     match again {
                         Some(now) if now != rows => rows = now,
                         _ => return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display()))),
@@ -311,30 +328,39 @@ impl KeptSpace {
 
 /// Removes the files of `dir` that `rows` (read in the write transaction) do not name: the files a committed write
 /// replaced, a rolled-back write's, a crashed maker's under its making name. A process mapping one keeps reading it.
-/// A file this process staged (`KeptStage`) is kept until a chain row names it: its wave has not committed yet.
+/// A staged file (`KeptStage`, named `s-…`) is removed only while no run of any process or context stages one in this
+/// space (`STAGING_LOCK`, taken exclusive): until its wave's commit names it, its run holds the lock shared.
 fn sweep(dir: &Path, rows: &ChainRows) {
     let named: HashSet<&str> = rows.iter().map(|(_, n, _)| n.as_str()).collect();
     let Ok(entries) = std::fs::read_dir(dir) else { return };
-    let staging = staging();
-    let mut pending = staging.0.lock().expect("the staged kept files");
+    // No lock: no run ever staged here.
+    let lock = staging_lock(dir, false);
+    let quiet = lock.as_ref().map_or_else(|e| e.kind() == std::io::ErrorKind::NotFound, |f| f.try_lock().is_ok());
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        let path = e.path();
-        if named.contains(name.as_str()) {
-            pending.remove(&path);
-        } else if !pending.contains(&path) {
-            let _ = std::fs::remove_file(path);
+        if named.contains(name.as_str()) || name == STAGING_LOCK || (!quiet && name.starts_with(STAGED_PREFIX)) {
+            continue;
         }
+        let _ = std::fs::remove_file(e.path());
     }
 }
 
-/// The kept files this process wrote ahead of their wave's commit (`KeptStage`), by path: until a chain row names
-/// one, no sweep removes it. Another process's (or a crashed one's) are removed as any unnamed file.
-#[derive(Default)]
-struct Staging(std::sync::Mutex<HashSet<PathBuf>>);
+/// A space directory's lock on its staged files (`KeptStage`): a run holds it shared from staging a file until its
+/// wave's commit linked it (`StagedFile::held`), and a sweep removes a staged file only under it exclusive. A file
+/// lock, so runs in other contexts (decision 0442) and other processes see it, and a crashed run's goes with it: its
+/// staged files are the next sweep's. In-process bookkeeping missed the first: one context's sweep removed another
+/// context's staged file in the same store before its commit named it, and every reader then found the chain naming a
+/// file that was not there ("corrupt content store").
+const STAGING_LOCK: &str = "staging.lock";
+const STAGED_PREFIX: &str = "s-";
 
-fn staging() -> std::sync::Arc<Staging> {
-    rerail_prof::code_rule_dsl::logic::profile::shared::<Staging>()
+/// The lock of space directory `dir`, made where `create` (a stager's); a sweep's finds none where no run ever staged.
+fn staging_lock(dir: &Path, create: bool) -> std::io::Result<std::fs::File> {
+    let mut o = std::fs::OpenOptions::new();
+    o.read(true).write(true).create(create).truncate(false);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
+    o.open(dir.join(STAGING_LOCK))
 }
 
 /// A space's puts written to a file of their own ahead of their wave (`KeptStage`): what its commit links.
@@ -343,6 +369,8 @@ struct StagedFile {
     space: [u8; 32],
     name: String,
     tag: u64,
+    /// Its space's `STAGING_LOCK`, held shared until every copy of this is dropped: after its commit.
+    _held: std::sync::Arc<std::fs::File>,
 }
 
 /// Where a gather's stage job leaves its files for the gather's commit job: `None` until it ran.
@@ -390,9 +418,10 @@ fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_b
             break t;
         }
     };
-    let name = format!("s-{tag:016x}.blk");
+    let name = format!("{STAGED_PREFIX}{tag:016x}.blk");
     let path = dir.join(&name);
-    staging().0.lock().expect("the staged kept files").insert(path.clone());
+    let held = staging_lock(&dir, true).map_err(io)?;
+    held.lock_shared().map_err(io)?;
     let reserve = puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + (64 << 20);
     let mut w = KeptW::create(&path, tag, reserve).map_err(io)?;
     for p in puts {
@@ -402,7 +431,7 @@ fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_b
     }
     w.finish(flush).map_err(io)?;
     sync_dir(&dir, flush).map_err(io)?;
-    Ok(StagedFile { space: *space, name, tag })
+    Ok(StagedFile { space: *space, name, tag, _held: std::sync::Arc::new(held) })
 }
 
 /// Links `f` as the newest file of its space's chain, in the commit's transaction.
@@ -574,8 +603,15 @@ pub fn rewrite_space(store: &Path, t: &Connection, space: &[u8; 32], keep: &dyn 
 }
 
 /// The files of a space collection dropped, removed once its commit is: a process mapping one keeps reading it.
+/// A run staging a file in it (`STAGING_LOCK`) keeps the directory and its staged files; the rest are swept.
 pub fn drop_space_files(store: &Path, space: &[u8; 32]) {
-    let _ = std::fs::remove_dir_all(space_dir(store, space));
+    let dir = space_dir(store, space);
+    let lock = staging_lock(&dir, false);
+    if lock.as_ref().map_or_else(|e| e.kind() == std::io::ErrorKind::NotFound, |f| f.try_lock().is_ok()) {
+        let _ = std::fs::remove_dir_all(&dir);
+    } else {
+        sweep(&dir, &ChainRows::default());
+    }
 }
 
 /// The files of `space` its committed `rows` do not name, removed (`sweep`): those a collection's roll-up replaced.
@@ -1153,7 +1189,8 @@ pub fn copy_facts(from: &Path, to: &Path) -> std::io::Result<()> {
         private_dir(&into)?;
         for f in std::fs::read_dir(space.path())? {
             let f = f?;
-            if !f.file_name().to_string_lossy().ends_with(".new") {
+            let name = f.file_name().to_string_lossy().into_owned();
+            if !name.ends_with(".new") && name != STAGING_LOCK {
                 clone_file(&f.path(), &into.join(f.file_name()))?;
             }
         }

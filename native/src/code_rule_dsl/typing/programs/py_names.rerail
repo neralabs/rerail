@@ -1,0 +1,50 @@
+// The phase `py_names` (decisions 0083, 0677): Python module resolution across the workspace's modules, run over the same
+// files as the program that reads it, in its language. It hands on symbols alone, keyed by a module, or by a file's path,
+// so a per-file rule reading them stays per-file, and no node crosses into the cross-file part (0677). As `tsx_names`,
+// it reads the modules' definitions and import statements alone, never a name's use: each file resolves its own names
+// against these rows.
+//   reads_at(p, m)    the file at path p can name something of workspace module m: its own module, each module its
+//                     imports name, each module above or below one in the package tree, and the module of each
+//                     definition one of those exports
+//   exports(m, x, q)  module m exposes x, which denotes q: re-exports and star imports followed (python/imports)
+//   class(m, c)       module m defines class c
+//   defined(m, q)     module m defines q: a def or a class, nested ones too (its qualname)
+//   public(m, x)      x is part of module m's public interface (public_name: `__all__`, else no leading `_`)
+// python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
+// python/names, so it never reads its own exports.
+
+#include "core.rerail"
+#include "python/scopes.rerail"
+
+.phase py_names
+.export reads_at, exports, class, defined, public
+
+// imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
+// "pkg.m"), or a name of one ("pkg.m.x").
+.decl imported(p: symbol, q: symbol)
+imported(p, m) :- import_alias(i, _, m, _, _), docof(i, d), doc(d, p, _).
+imported(p, @dot(m, x)) :- import_alias(i, _, m, x, _), x != "", docof(i, d), doc(d, p, _).
+// above(q, m): m is q with one or more of its last segments dropped ("pkg" and "pkg.m" for "pkg.m.x").
+.decl above(q: symbol, m: symbol)
+above(q, m) :- imported(_, q), m = @pkg_up(q, 1), m != "".
+above(q, m) :- above(q, m1), m = @pkg_up(m1, 1), m != "".
+// named_module(p, m): workspace module m is one the file at p names, or one above or below one it names: a name
+// through an import (`pkg.core.App` after `import pkg`) is resolved in the module its last dot ends.
+.decl named_module(p: symbol, m: symbol)
+named_module(p, m) :- doc(_, p, m).
+named_module(p, q) :- imported(p, q), workspace_module(q).
+named_module(p, m) :- imported(p, q), above(q, m), workspace_module(m).
+named_module(p, m) :- imported(p, q), pkg_above(m, q).
+
+.decl reads_at(p: symbol, m: symbol)
+reads_at(p, m) :- named_module(p, m).
+reads_at(p, m) :- named_module(p, m0), exports(m0, _, r), defined(m, r).
+
+.decl defined(m: symbol, q: symbol)
+defined(m, q) :- qualname(f, q), module_of(f, m).
+
+.decl class(m: symbol, c: symbol)
+class(m, c) :- class_def(n, c), module_of(n, m).
+
+.decl public(m: symbol, x: symbol)
+public(m, x) :- public_name(m, x).

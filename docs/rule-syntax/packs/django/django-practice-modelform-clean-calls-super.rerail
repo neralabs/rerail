@@ -40,7 +40,7 @@ mcs_skip(c, "the uniqueness check across the formset's forms", "Call `super().cl
 mcs_clean(c, f) :- mcs_model_form(c), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, "clean").
 
 // mcs_base(q): model form and model formset classes outside the run, whose clean() a subclass must call.
-.decl mcs_base(q: symbol)
+.decl mcs_base(q: symbol) cross_file  // every file's bases: symbols alone (decisions 0652, 0677)
 mcs_base("django.forms.ModelForm"). mcs_base("django.forms.models.ModelForm").
 mcs_base("django.forms.models.BaseModelForm"). mcs_base("django.forms.BaseModelForm").
 mcs_base("django.forms.BaseModelFormSet"). mcs_base("django.forms.models.BaseModelFormSet").

@@ -243,8 +243,24 @@ impl RulePass for GateRules<'_> {
                 // earlier negation or aggregate of the component gated, not read raw).
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 let key: Vec<T<'_>> = at.iter().map(|&k| t_of(v, r, args[k])).collect();
+                // A key variable the literals before bind none of, a later positive one binds (the rule is safe): the
+                // ask reads the later positive atoms and comparisons too, never a negation or an aggregate. Each holds
+                // wherever the rule does, so the keys asked are the rule's own.
+                let unbound = at.iter().any(|&k| matches!(args[k], TermRef::Var(s) if !at_bound.contains(&s)));
+                let late: Vec<Out> = if unbound {
+                    (i + 1..lits.len())
+                        .filter(|&j| match lits[j].view() {
+                            Lit::Atom(b) => !b.neg(),
+                            Lit::Cmp { .. } | Lit::Nearest { .. } => true,
+                            _ => false,
+                        })
+                        .map(Out::Copy)
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 let mut rb = out.rule().head(ask.as_str(), &key);
-                for o in &outs {
+                for o in outs.iter().chain(&late) {
                     rb = write(v, r, &lits, rb, o);
                 }
                 rb.finish()?;

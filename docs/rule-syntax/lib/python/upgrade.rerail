@@ -118,10 +118,16 @@ site_root(a, m, "import") :- import_alias(_, a, m, "", _), kind(a, "aliased_impo
 site_root(a, @head(m), "import") :- import_alias(_, a, m, "", _), kind(a, "dotted_name").
 site_root(f, q, "def") :- binding(_, _, f, form), (form = "def" ; form = "class"), qualname(f, q).
 // sym_at(e, q): the head's binding, then e's attributes. An import's target is followed through workspace
-// re-exports; a local def or class is itself (resolve_export would mix in the module's other bindings of it).
+// re-exports (the phase py_names); a local def or class is itself (resolving it would mix in the module's other
+// bindings of it).
 .decl sym_at(e: node, q: symbol)
-sym_at(e, q) :- up_chain_name(e, q0, "import"), resolve_export(q0, q).
-sym_at(e, q0) :- up_chain_name(e, q0, "import"), !resolve_export(q0, _).
+sym_at(e, q) :- up_chain_name(e, q0, "import"), up_export(e, q0, q).
+sym_at(e, q0) :- up_chain_name(e, q0, "import"), !up_export(e, q0, _).
+// up_export(e, q0, q): q0 ("m.x"), the qualified name e's chain spells, is module m's export x, q (python/names'
+// export_at, for the names up_chain_name spells).
+.decl up_export(e: node, q0: symbol, q: symbol)
+up_export(e, q0, q) :- up_chain_name(e, q0, "import"), split_dot(q0, m, x), docof(e, d), doc(d, p, _),
+    py_names__reads_at(p, m), py_names__exports(m, x, q).
 sym_at(e, q) :- up_chain_name(e, q, "def").
 sym_at(e, @dot("builtins", x)) :- ast_name(e, x), up_unbound(e), builtin(x).
 .decl up_chain_name(e: node, q: symbol, how: symbol)

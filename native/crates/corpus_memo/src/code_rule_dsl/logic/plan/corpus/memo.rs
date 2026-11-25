@@ -50,8 +50,9 @@ pub const VALUES: &str = "values:";
 /// a value `@parse` or `@splice` asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answered {
-    /// The string at node `at`, parsed as `grammar`.
-    Embed { at: i64, grammar: String },
+    /// The string at node `at`, parsed as `grammar`, and its text: a hit's run names its tape's source by it, as the
+    /// run that parsed it did (`guests::Parses::name_kept`). Empty in an entry kept before it was.
+    Embed { at: i64, grammar: String, text: String },
     /// `@parse`'s or `@splice`'s request.
     Value(super::guests::Request),
 }
@@ -66,17 +67,25 @@ impl Answered {
     }
 
     /// The rows `VALUES` holds them in: a kind (0 `Embed`, 1 `@parse`, 2 `@splice`), the node, and two texts (a
-    /// grammar and a text, a grammar, or the tape spliced in).
+    /// grammar and a text, or the tape spliced in).
     pub fn rows() -> super::super::output::Rows {
         use super::super::output::col;
         super::super::output::Rows::new(vec![col::INT, col::INT, col::TEXT, col::TEXT])
+    }
+
+    /// The grammar and text of the value it was answered with, where its row holds them (not a splice's).
+    pub fn text(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Embed { grammar, text, .. } | Self::Value(super::guests::Request::Parse { grammar, text, .. }) if !text.is_empty() => Some((grammar, text)),
+            _ => None,
+        }
     }
 
     /// Its row of `rows`.
     pub fn push(&self, rows: &mut super::super::output::Rows) {
         use super::super::output::Cell;
         let (kind, a, b) = match self {
-            Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
+            Self::Embed { grammar, text, .. } => (0, grammar.as_str(), text.as_str()),
             Self::Value(super::guests::Request::Parse { grammar, text, .. }) => (1, grammar.as_str(), text.as_str()),
             Self::Value(super::guests::Request::Splice { with, .. }) => (2, with.as_str(), ""),
         };
@@ -88,7 +97,7 @@ impl Answered {
         use super::super::output::Cell;
         (0..rows.len())
             .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
-                (Cell::Int(0), Cell::Int(at), Cell::Text(g), _) => Some(Self::Embed { at, grammar: g.to_owned() }),
+                (Cell::Int(0), Cell::Int(at), Cell::Text(g), t) => Some(Self::Embed { at, grammar: g.to_owned(), text: if let Cell::Text(t) = t { t.to_owned() } else { String::new() } }),
                 (Cell::Int(1), Cell::Int(at), Cell::Text(g), Cell::Text(t)) => Some(Self::Value(super::guests::Request::Parse { at, grammar: g.to_owned(), text: t.to_owned() })),
                 (Cell::Int(2), Cell::Int(node), Cell::Text(w), _) => Some(Self::Value(super::guests::Request::Splice { node, with: w.to_owned() })),
                 _ => None,

@@ -165,8 +165,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
      node now enters at them.
    - **One hand-written use remains.** A JavaScript policy's two relations are under `value_type`, and are listed
      with the tail.
-2. **Python name resolution: the phase `py_names`.** This is family 1. It covers 2,536 relations, 84% of the list.
-   The design is below (§ Fix 2).
+2. **Python name resolution, the phase `py_names`: done (2026-11-24).** This is family 1, 2,536 relations, 84% of
+   the list. The design is below (§ Fix 2), and what it took (§ Fix 2: built).
 3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
@@ -195,29 +195,41 @@ is 0083 §2.3's every-file miss again. So the phase hands on what each file read
 facts by the module, anchored at the file's path.
 
 **The phase** (`native/src/code_rule_dsl/typing/programs/py_names.rerail`, `.phase py_names`). It runs over the same
-files, first, to its fixed point, and holds no node in its cross part. Its own per-file rules may use nodes (`qn`,
-`def_name`, `qualname`), as `tsx_names`'s do (`import_spec`). It hands on:
-- `resolved_at(p, q0, r)`: in the file at path `p`, the qualified name `q0` (a `qn` of that file) is `r`. Re-exports
-  and star imports are followed (`resolve_export`). Where `q0`'s module exports no such name, `r = q0`.
-- `reads_at(p, m)`: the file at `p` reads module `m`. That is its own module, the module of each `r` it resolves to,
-  and every package above them.
+files, first, to its fixed point, and holds no node in its cross part. Its own per-file rules may use nodes
+(`def_name`, `qualname`, `import_alias`), as `tsx_names`'s do (`import_spec`). It reads the modules' definitions
+and import statements, never a name's use, so an edit that changes neither changes none of its rows. It hands on:
+- `reads_at(p, m)`: the file at path `p` can name something of workspace module `m`. That is its own module; each
+  module its imports name, and each module above or below one in the package tree (a name through `import pkg` is
+  resolved in the module its last dot ends); and the module of each definition one of those exports.
+- `exports(m, x, q)`: module `m` exposes `x`, which denotes `q`, re-exports and star imports followed
+  (`imports.rerail`'s `exports`).
 - `class(m, c)`, `defined(m, q)` and `public(m, x)`: module `m` defines the class `c`, and the qualname `q` (its
   defs, classes and their members, nested). `x` is part of `m`'s public interface (`public_name`).
 
-**The reader** (`names.rerail`, `upgrade.rerail`):
-- `sym_of(n, q) :- qn(n, q0), <n's file at p>, py_names__resolved_at(p, q0, q)`.
+**The reader** (`names.rerail`, `upgrade.rerail`). `names.rerail` is what a rule includes: `scopes.rerail` (the old
+`names.rerail`'s per-file half: who binds a name, what a reference reads) and the reads of the phase.
+- `export_at(n, q0, q) :- qn(n, q0), split_dot(q0, m, x), <n's file at p>, py_names__reads_at(p, m),
+  py_names__exports(m, x, q)`.
+- `sym_of(n, q) :- export_at(n, _, q)`, and `sym_of(n, q0) :- qn(n, q0), !export_at(n, q0, _)`: a name whose
+  module exports no such name (an external module's, a class's member read through its dotted name) is itself.
 - `sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), <n's file at p>, py_names__reads_at(p, m),
   py_names__class(m, c), q = @dot(c, a), py_names__defined(m, q)`.
 
   A member is defined in its class's module, so the class's module anchors both reads.
 - `site_exported` reads `py_names__public(m, x)` for its own module, which is anchored by `reads_at`.
-- `upgrade.rerail`'s `sym_at` reads `resolved_at` as `sym_of` does.
-- `resolve_export`, `export_query`, `exports` and `exported` leave the per-file programs. They stay in
-  `imports.rerail` for the phase, and for the rules that ask about modules themselves (`reaches`, the data layer's
-  `public-api-triples`), which hold no node.
+- `upgrade.rerail`'s `sym_at` reads `exports` as `export_at` does (`up_export`).
+- `export_query` no longer gathers every file's `qn` names: only a from-import's, the chains `exports` follows.
+  `resolve_export`, `exports` and `exported` stay in `imports.rerail` for the phase, and for the rules that ask about
+  modules themselves (`reaches`, the data layer's `public-api-triples`), which hold no node.
 
-`file_local::SETTINGS_BY_PATH` gains `("py_names__resolved_at", none)` and `("py_names__reads_at", 1)`, and
-`SETTINGS_BY_FOLDER` gains `py_names__class`, `py_names__defined` and `py_names__public`.
+Each of these reads is by the file's own path, or by a module its own `reads_at` row names, so a file's entry is
+keyed by those rows alone (`settings_scopes`, 0665). `file_local::SETTINGS_BY_PATH` gains `("py_names__reads_at", 1)`,
+and `SETTINGS_BY_FOLDER` gains `py_names__exports`, `py_names__class`, `py_names__defined` and `py_names__public`.
+
+**Why by module and not by path.** The first version handed on `resolved_at(p, q0, r)`: each file's own names,
+resolved, by its path. The phase then had to read every name's use (`queried(p, q) :- qn(…)`), so every body edit
+changed its rows, and its table held a row per name per file. Keyed by module, the phase's rows are a function of
+the modules' interfaces, and the resolution of a name is its own file's join, as `tsx_names` does it (0665).
 
 **Tests first**, as 0665's were:
 1. The phase's exports on a small workspace: a package's `__init__` re-exporting from a submodule, a chain of two
@@ -230,6 +242,65 @@ files, first, to its fixed point, and holds no node in its cross part. Its own p
 4. The edits: a body edit misses its own file alone. A change to a module's exports misses that module's file and
    the files whose `resolved_at` rows changed. `maintain_tests::a_moved_definition_costs_about_itself` is measured
    again.
+
+### Fix 2: built (2026-11-24)
+
+**The list.** 592 entries, from 3,140 (the packs and the data layer 484, the data layer's policies alone 108):
+
+| Pack | Before | After |
+|---|---:|---:|
+| python-main | 2,390 | 11 |
+| python | 195 | 85 |
+| django | 220 | 180 |
+| data-layer | 111 | 102 |
+| data-layer:alone | 117 | 108 |
+| javascript | 38 | 37 (a duplicate line) |
+| the others | 69 | 69 |
+
+No reader of Python names reads `resolve_export` now. python-main's 11 are its shards' sightings, which a shard can
+only add to (§ Built). A Django relation the old `sym_of` hid is now its own crossing:
+`goc_meta_from(c, b)` joins two classes' nodes across files, and is declared `cross_file` until fix 3 rewrites it,
+as `mcs_base` and `cfr_form_base` (their bases' symbols) are.
+
+**Tests.** `python_names_through_the_phase_are_the_cross_file_rules_answers` (tests 1 and 2): a package's
+`__init__` re-exporting a submodule's class, a chain of re-exports, star imports with and without `__all__`, a
+class's method and nested class, and a name of a module outside the workspace. Each use's symbol, and each public
+binding, are the old cross-file rules' (run beside them in one program). `a_python_files_entry_is_kept_under_its_own_names_resolution`
+(test 4): a body edit misses its own file alone, and an added method misses the four files that read its module;
+each answer is a fresh run's. The pack split tests (test 3) take the list above.
+
+**Latent faults the split exposed.** While `sym_of` was cross-file, every relation that read it was too, and the
+split never checked them. Each is fixed at its root:
+- *A rule that can never hold.* `unset(x)` (the empty value, `rr::lower::UNSET`) substituted into later literals
+  leaves rules with `kind(-1, …)`, `xd_…(-1)` or `-1 != -1`. The split now drops a rule whose comparison of two
+  constants fails, or whose positive literal holds `UNSET` at a location column, and reads a negated or aggregated
+  literal with `UNSET` there as holding no location. Its numbered check (`Form::one_document`) and its text check
+  (`why_not_local`) agree on them (`on_version.rs`).
+- *A gated negation's ask.* The ask rule of a negation (`ask_<rel>_<adornment>`, 0065 §2a) was built from the
+  literals before it alone. Where a key variable is bound only after it, the ask read an unbound variable (`$rr_kd is
+  unbound in SQL`). It now reads the later positive atoms and comparisons too (`answers.rs`).
+- *Two runs of one store, in one process.* The rule-file tests now run `py_names` beside their own programs, in the
+  same kept space. One context's sweep removed a file another had staged before its commit named it, and every
+  reader then found a chain naming a missing file ("corrupt content store"). The staged files' guard was a set in
+  the run's shared object (0442), which another context does not see. A staged file now holds its space's
+  `staging.lock` shared until its commit, and a sweep removes one only under that lock taken exclusive: a file lock,
+  seen by every context and process, and released by a crashed one
+  (`a_staged_file_outlives_another_contexts_sweep_until_its_commit`). A reader inside a read transaction whose files
+  a later commit swept reads the last commit's chain (`a_reader_inside_a_transaction_whose_files_a_commit_swept_reads_the_last_commits`).
+- *A warm run's manifest.* C408's files are all file-local now, so its warm run is all hits and no corpus batch
+  remakes their hosts. The cold run had named its tape values' sources (it parsed them), and the warm one named none:
+  a new manifest, a write in a warm run. A memo entry's `VALUES` row now keeps each embedded string's text, as a
+  parsed value's row did, and a hit names its value's tape by that text's SHA-256 among the root's last runs' tapes,
+  with nothing parsed or read (`guests::Parses::name_kept`). An entry kept before has no text and names nothing, as
+  before. `the_run_after_a_cold_one_with_tape_values_writes_nothing` holds again. `…_of_a_names_policy_…` (no string)
+  and `…_through_a_phase_…` (`tsx_names`) are its neighbours.
+- *A pass's reads, in order.* The library's link (0639) orders modules of one rank by name, and the whole lowering
+  by their files' includes. `python/scopes` (the old `names`' half) and `python/points-to` both add `.from` reads to
+  the `annotation` pass, and now link in the other order, so the printed `.pass` differed from the whole lowering's
+  (`a_program_linked_from_its_modules_is_its_whole_lowering`). Its reads are a set, as its exports are, and are
+  printed sorted (`contexts::write`).
+- *The switches.* `RERAIL_STRICT_NODES` and `RERAIL_NODE_CROSSINGS` are classified as preparing switches
+  (`every_switch_lowering_reads_is_classified`).
 
 ## Open
 
