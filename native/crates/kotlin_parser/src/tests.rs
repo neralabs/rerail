@@ -2038,10 +2038,14 @@ fn the_shipped_answers_answer_the_grammar() {
 
 /// A cold compile (no answers known) makes the program the shipped answers make, and its answers,
 /// given to another compile, leave nothing to ask (decision 0414): the answers decide nothing a
-/// proof would not, and the compiler's maps hash with a fixed seed. Cold, so in nextest's slow tier.
+/// proof would not, and the compiler's maps hash with a fixed seed. Cold, so in nextest's slow tier;
+/// the budget lifted, as a bless lifts it (a cold compile does not fit in it, decision 0646).
 #[test]
 fn a_cold_compile_makes_the_shipped_answers_program() {
-    let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+    bitlex_compile::PROVING_STEPS_HERE.set(Some(1 << 40));
+    let cold = compile_text(GRAMMAR);
+    bitlex_compile::PROVING_STEPS_HERE.set(None);
+    let cold = cold.expect("the grammar compiles");
     let shipped = super::compiled().expect("the grammar compiles");
     assert_eq!(fingerprint(&cold), fingerprint(shipped), "the shipped answers make another program");
     assert!(cold.words == shipped.words && cold.program.words == shipped.program.words, "the grammar compiles to two programs");
@@ -2477,39 +2481,6 @@ fn lazy_probe() {
     let blank_bits = rerail_compiler::native_cpu_block::blank_bits(r, &|o| bw.can(o));
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
-
-/// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change at most what tier 2 is
-/// proved to need: the grammar reads each text as without them, the same tape or the same refusal.
-#[test]
-fn walk_lemmas_keep_the_tapes() {
-    let with = super::compiled().expect("the grammar compiles");
-    assert!(!with.program.block_programs[0].walks.is_empty(), "the grammar has no walk for the lemmas");
-    bitlex_compile::NO_WALK_LEMMAS.set(true);
-    let without = compile_text(GRAMMAR);
-    bitlex_compile::NO_WALK_LEMMAS.set(false);
-    let without = without.expect("the grammar compiles without the walk lemmas");
-    // Since tier 1 reads a string as one token (3a5cf85230) and the comment escapes became questions (86d31b6fae),
-    // Kotlin's tier 2 is proved to need the same without them (5,892 words either way, as `.rerail`'s 2,745; JSON's
-    // grammars have no walk): what is checked is that they never make tier 2 need more.
-    assert!(with.program.words.len() <= without.program.words.len(), "the walk lemmas make tier 2 larger: {} words, {} without", with.program.words.len(), without.program.words.len());
-    let texts = [
-        "package a\n\nimport b.c\n",
-        "val s = \"a // b\" // c \"d\"\n",
-        "/* \"x\" */ val c = '\"'\n",
-        "val a = 0x1F + 1_000L - 1.5e-3f // \"\n",
-        "val s = \"\"\"raw /* x */ \"\"\"\n",
-        "val s = \"${a + \"b\"}\"\n",
-        "// only\n",
-        "/* open\n",
-        "val s = \"open\n",
-        "val c = '\\n' + '\\'' /* '\" */\n",
-        "fun f() {\n    a(\"x\") /* y */ // z\n}\n",
-    ];
-    for t in texts {
-        assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
-    }
-}
-
 
 /// Each text of the file `RERAIL_KOTLIN_PROBE` (texts separated by a line `---`): whether the lean
 /// parser and the compiled grammar read it, and whether their tapes agree. A tool, run by hand.

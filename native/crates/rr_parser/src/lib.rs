@@ -238,6 +238,45 @@ fn the_shipped_answers_answer_the_grammar() {
 
 #[cfg(test)]
 pub mod tests {
+    use super::bitlex_compile;
+
+    /// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap; this grammar's walk has six
+    /// kinds, strings, comments and backtick spans) change at most what tier 2 is proved to need: the grammar reads
+    /// each text as without them, the same tape or the same refusal. (Kotlin's grammar had this test until its
+    /// regions nested, decision 0621, with no walk.) The compile without them proves cold, the budget lifted.
+    #[test]
+    fn walk_lemmas_keep_the_tapes() {
+        let with = crate::compiled().expect("the grammar compiles");
+        let walks = &with.program.block_programs[0].walks;
+        assert!(walks.iter().any(|w| w.kinds.len() > 1), "the grammar has no walk of two kinds for the lemmas");
+        bitlex_compile::NO_WALK_LEMMAS.set(true);
+        bitlex_compile::PROVING_STEPS_HERE.set(Some(1 << 40));
+        let without = super::compile_known(super::GRAMMAR, bitlex_compile::Shape::Rules, rerail_compiler::native_cpu_block::BACK as u16, Default::default());
+        bitlex_compile::PROVING_STEPS_HERE.set(None);
+        bitlex_compile::NO_WALK_LEMMAS.set(false);
+        let without = without.expect("the grammar compiles without the walk lemmas").0;
+        assert!(with.program.words.len() <= without.program.words.len(), "the walk lemmas make tier 2 larger: {} words, {} without", with.program.words.len(), without.program.words.len());
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("samples");
+        let mut texts: Vec<String> = std::fs::read_dir(&dir).expect("the samples").map(|e| std::fs::read_to_string(e.expect("a sample").path()).expect("a sample's text")).collect();
+        texts.sort();
+        for t in [
+            ".decl r(x: symbol)\nr(\"a // b\") :- true. // c \"d\"\n",
+            "/* \"x\" // */ .decl a()\n",
+            "r(\"/* x */\"). // `y`\n",
+            "`a` ``b`` ```c // d``` \"`\"\n",
+            "// only\n",
+            "/* open\n",
+            "\"open\n",
+            "``open\n",
+            "```open\n",
+        ] {
+            texts.push(t.to_string());
+        }
+        for t in &texts {
+            assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
+        }
+    }
+
     /// The compiled grammar's tape is the engine's, node for node (extras and parents too), on
     /// documents it parses; the ones it leaves to the engine come back from there.
     /// Tier 2's grammar calls are the machine's (`by_rules`): nested past `DEPTH`, a file is

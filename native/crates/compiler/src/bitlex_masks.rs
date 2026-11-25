@@ -606,7 +606,7 @@ fn phase_mark(low: &Lowering, what: &str) {
 /// decision 0414): a question among them is answered without its proof. The program is the same.
 pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape, known: bitlex_prove::Known, as_rust: AsRust) -> Result<Compiled, String> {
     let mut low = Lowering {
-        proofs: bitlex_prove::Proofs { known, made: Vec::new(), used: Vec::new(), work: bitlex_prove::Budget::new(std::env::var("RERAIL_PROVING_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(bitlex_prove::PROVING_STEPS)) },
+        proofs: bitlex_prove::Proofs { known, made: Vec::new(), used: Vec::new(), work: bitlex_prove::Budget::new(proving_steps()) },
         shape,
         first_bits_kept: HashMap::default(),
         program: BlockProgram::default(),
@@ -3828,6 +3828,19 @@ thread_local! {
     /// Compile with no walk lemmas (`Lowering::induction`), for the tests' oracle: the program they prove smaller
     /// reads every file as this one does.
     pub static NO_WALK_LEMMAS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// This thread's compiles' proving budget, before `RERAIL_PROVING_STEPS`: a test's cold compile that must make
+    /// the shipped answers' program lifts it, as a bless does (decision 0646: a cold compile of Kotlin does not fit
+    /// in `PROVING_STEPS`).
+    pub static PROVING_STEPS_HERE: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// A compile's proving budget (`bitlex_prove::Budget`): `RERAIL_PROVING_STEPS`, else `PROVING_STEPS`.
+fn proving_steps() -> u64 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(n) = PROVING_STEPS_HERE.get() {
+        return n;
+    }
+    std::env::var("RERAIL_PROVING_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(bitlex_prove::PROVING_STEPS)
 }
 
 #[cfg(test)]
