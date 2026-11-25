@@ -11,7 +11,11 @@ use rerail_compiler::stream::Refused;
 /// shared memory, where tier 1 wrote them. Or the word that refused it. A file whose tape does not
 /// fit the narrow widths is read again at wider ones (`Parser::again`).
 pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<Vec<u8>, Refused> {
-    image_with(parser, &parser.tier2, run, i).or_else(|narrow| parser.again(narrow, |t2| image_with(parser, t2, run, i)))
+    // The device's records are its layout's (`RecordLayout::choose`: columns, where the CPU's are rows): the tier 2
+    // that reads that stride.
+    let stride = run.layout.stride();
+    let t2 = parser.tier2_at(stride).ok_or(Refused { pc: 0, why: "no tier 2 that reads the device's records", at: None })?;
+    image_with(parser, t2, run, i).or_else(|narrow| parser.again_at(narrow, stride, |t2| image_with(parser, t2, run, i)))
 }
 
 /// `image_on`, by tier 2 `t2`.

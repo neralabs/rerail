@@ -50,7 +50,13 @@ stored to `ctx` before the call and loaded back after it, and the token marks ea
     returns, frames, chains), and `sized` takes it again where it holds what the next file needs, as simdjson's
     parser keeps its room from one document to the next. The image the caller takes is its own. A pool that handed
     any buffer large enough to any use was tried first and was slower.
-11. **Holding fields across rules is not done this way.** With `Cut::held` set again (the token's index alone), the
+11. **The record stride is compiled in** (`Cut::stride`, `stride_known`). A `Parser` compiles its tier 2 at the
+    stride of its own tier 1's records (`cpu_stride`: rows on the CPU), and with `ctx` pinned each read of the
+    stride is that constant. `CompiledStream::stride` says which, and `call` refuses records of another. Records of
+    another stride (the device's, columns, `RecordLayout::choose`) take a tier 2 that reads the stride from `ctx`,
+    compiled on first use (`Parser::tier2_at`, `again_at`, `Wide::at_any`); `CompiledStream::run` lays the
+    interpreter's records out in the stride its stream reads.
+12. **Holding fields across rules is not done this way.** With `Cut::held` set again (the token's index alone), the
     words, which read and write the state in `ctx`, read a value the rule held elsewhere and refused every file.
     Holding a field needs each word's function to take the held fields as parameters and give them back.
 
@@ -58,8 +64,7 @@ stored to `ctx` before the call and loaded back after it, and the token marks ea
 
 From the list the user asked for:
 
-- The record stride as a constant. One compiled tier 2 reads tier 1's rows, the interpreter's columns and Metal's
-  resident buffers (`Tier1View::record_stride`), so a constant needs one compile per layout.
+- Metal's path to the tier 2 of its own stride (`tier2_on::image_on`) is not run: Metal runs are paused.
 - The working row (format 15's key, start and end) is still written and read back. Nodes are not written directly.
 - The state is not passed as the tail calls' arguments (`held`, `pass` stay empty). With the words inlined, most of
   what they carried is now in registers within a rule. Across the rules' tail calls it still goes through `ctx`.

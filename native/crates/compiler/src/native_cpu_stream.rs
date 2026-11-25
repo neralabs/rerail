@@ -318,6 +318,8 @@ pub struct CompiledStream {
     /// Its calls, each of an outlined function made from the same program (`outline`): the
     /// only calls the machine code may have.
     pub own_calls: usize,
+    /// The record stride compiled in (`Cut::stride`): a call reads records of that stride only. `None`: any.
+    pub stride: Option<u64>,
     /// Of `own_calls`, the calls of a pass over the table's tail (`TableFns`' `shift` and `drop`, a
     /// wrap's and a dropped node's): none where nothing wraps or is dropped. The others are the
     /// tape's rare steps (a block's base, a commit of codes, the image's end) and the words'.
@@ -7329,6 +7331,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // takes the registers that loop's state is held in.
     let hot_words: Vec<cranelift_module::FuncId> = word_fns.iter().filter(|(k, _)| !matches!(k, WordFn::Check { .. })).map(|(_, w)| w.0).collect();
     let calls_left = std::cell::Cell::new(0usize);
+    // The record stride, where the cut knows it and `ctx` is the pinned register (every read of it, `ctx`'s).
+    let known_stride = cut.stride.filter(|_| pinned_ctx);
     let mut word_fns: Vec<_> = word_fns.into_values().collect();
     word_fns.sort_by_key(|w| w.0.as_u32());
     // A format 16 run's word code calls the writer's ops too (a failure, `Table::uncode`).
@@ -7381,6 +7385,9 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let defined = crate::native_cpu_codegen::define_functions_inlining(&mut module, items, cut.near, &hot_words, &|func| {
         // With `ctx` pinned, the state's fields kept in registers once the words are inlined: a word's body loads
         // what the word before stored, and no call is left between them.
+        if let Some(stride) = known_stride {
+            stride_known(func, stride);
+        }
         if pinned_ctx {
             state_in_registers(func, true);
         }
@@ -7453,7 +7460,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let marks = marks_of(words);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, _limits: limits, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::stream_facts::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges })
+    Ok(CompiledStream { _module: module, _split: split, _fetch: fetch, _limits: limits, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, part_scans: { all_scans.sort_unstable(); all_scans }, part_onward: { all_onward.sort_unstable(); all_onward }, fused_checks: { all_fused.sort_unstable(); all_fused }, static_checks: { all_static.sort_unstable(); all_static }, wraps, widths, tag, classes: supertype_classes(native)?, extras: native.readings.extras.clone(), sixteen, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, stride: known_stride.map(u64::from), table_passes, row_calls, direct, open_bound: if sixteen && direct { crate::stream_facts::open_bound(native, widths, tag) } else { None }, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -7633,6 +7640,29 @@ fn constant_fields(func: &mut cranelift_codegen::ir::Function, access: &dyn Fn(&
 /// The fields are `ctx`'s, at fixed offsets from its address (the function's first argument);
 /// the tape's buffers are elsewhere. A function where `ctx` goes anywhere but a load's or a
 /// store's address, or a call, is left as it is.
+/// Each read of `ctx`'s record stride (`RECORD_STRIDE`, `ctx` in the pinned register) made the constant `stride`: a
+/// token's record is then found by a shift and an add, as the lean parser's `self.recs[i]` is.
+fn stride_known(func: &mut cranelift_codegen::ir::Function, stride: u32) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstBuilder, InstructionData, Opcode, ValueDef};
+    let blocks: Vec<Block> = func.layout.blocks().collect();
+    for b in blocks {
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(b).collect();
+        for i in insts {
+            let InstructionData::Load { opcode: Opcode::Load, offset, arg, .. } = func.dfg.insts[i] else { continue };
+            let on_ctx = matches!(func.dfg.value_def(func.dfg.resolve_aliases(arg)), ValueDef::Result(d, _) if func.dfg.insts[d].opcode() == Opcode::GetPinnedReg);
+            if !on_ctx || i32::from(offset) != RECORD_STRIDE {
+                continue;
+            }
+            let r = func.dfg.first_result(i);
+            let x = FuncCursor::new(func).at_inst(i).ins().iconst(types::I64, i64::from(stride));
+            func.dfg.detach_inst_results(i);
+            func.dfg.change_to_alias(r, x);
+            func.layout.remove_inst(i);
+        }
+    }
+}
+
 fn state_in_registers(func: &mut cranelift_codegen::ir::Function, pinned: bool) {
     use cranelift_codegen::ir::{InstructionData, Opcode};
     let Some(entry) = func.layout.entry_block() else { return };
@@ -8329,6 +8359,7 @@ impl CompiledStream {
     /// # Safety
     /// The pointers must be as stated, and `tape` from `self.tape(self.tokens(tier1.nstarts, len))`.
     pub unsafe fn call(&self, bytes: *const u8, len: usize, tier1: Tier1View, tape: &mut Tape) -> u64 {
+        assert!(self.stride.is_none_or(|s| s == tier1.record_stride as u64), "records of the stride tier 2 was compiled for");
         // Where tier 2 makes the records, `TOKEN` reads the starts as a column.
         assert!(self._fetch.is_none() || tier1.record_stride == crate::records::RecordLayout::Columns.stride() as usize, "the starts as a column where tier 2 makes the records");
         // With no room check (`Bounds::unchecked`), a tape short of the bound's is replaced first.
@@ -8513,18 +8544,38 @@ impl CompiledStream {
         let mut codes = tier1.codes.clone();
         codes.extend([0, 0]);
         let totals = if tier1.totals.is_empty() { vec![0] } else { tier1.totals.clone() };
+        // The records in the layout this tier 2 reads (`stride`): the interpreter's columns as they are, or a row a
+        // token (start, last, code), as the CPU's token loop writes them.
+        let layout = if self.stride == Some(crate::records::RecordLayout::Rows.stride()) { crate::records::RecordLayout::Rows } else { crate::records::RecordLayout::Columns };
+        let rows: Vec<u32> = match layout {
+            crate::records::RecordLayout::Rows => {
+                let m = starts.0.len().max(lasts.0.len()).max(codes.len());
+                let end = bytes.len() as u32;
+                let mut r = vec![0u32; 3 * m];
+                for (k, row) in r.chunks_exact_mut(3).enumerate() {
+                    row.copy_from_slice(&[starts.0.get(k).copied().unwrap_or(end), lasts.0.get(k).copied().unwrap_or(end), codes.get(k).copied().unwrap_or(0)]);
+                }
+                r
+            }
+            crate::records::RecordLayout::Columns => Vec::new(),
+        };
+        let (starts_p, lasts_p, codes_p) = match layout {
+            // As `words_raw`: a stream tier 2 has no extract of is passed as its own column.
+            crate::records::RecordLayout::Rows => (if self.starts.is_some() { rows.as_ptr() } else { starts.0.as_ptr() }, if self.lasts.is_some() { rows[1..].as_ptr() } else { lasts.0.as_ptr() }, rows[2..].as_ptr()),
+            crate::records::RecordLayout::Columns => (starts.0.as_ptr(), lasts.0.as_ptr(), codes.as_ptr()),
+        };
         // SAFETY: `padded` has the byte before and 64 after; each stream two slots past its count;
         // the tape is sized for the stream; every output has `count` words in `all`.
         let view = Tier1View {
-            starts: starts.0.as_ptr(),
+            starts: starts_p,
             // Where tier 2 makes the records (page 40), tier 1 writes no lasts.
             nstarts: if self._fetch.is_some() { starts.1 } else { starts.1.min(lasts.1) },
-            lasts: lasts.0.as_ptr(),
-            codes: codes.as_ptr(),
+            lasts: lasts_p,
+            codes: codes_p,
             lasts_stride: 8 * n,
             outputs: all.as_ptr(),
             output_stride: 8,
-            record_stride: crate::records::RecordLayout::Columns.stride() as usize,
+            record_stride: layout.stride() as usize,
             totals: totals.as_ptr().cast(),
             totals_stride: 8,
             totals_mask: u64::MAX,
@@ -8653,13 +8704,15 @@ struct Wide {
     native: Structure,
     cut: crate::native_cpu_clusters::Cut,
     streams: [std::sync::OnceLock<Option<CompiledStream>>; 8],
+    /// The same, reading the record stride from `ctx` (`Cut::stride` `None`): for records of another stride.
+    any: [std::sync::OnceLock<Option<CompiledStream>>; 8],
     /// Tier 2 writing format 16 (`Parser::sixteen`).
     sixteen: std::sync::OnceLock<Option<CompiledStream>>,
 }
 
 impl Wide {
     fn new(native: &Structure, cut: crate::native_cpu_clusters::Cut) -> Option<Self> {
-        Some(Wide { native: native.clone(), cut, streams: Default::default(), sixteen: Default::default() })
+        Some(Wide { native: native.clone(), cut, streams: Default::default(), any: Default::default(), sixteen: Default::default() })
     }
 
     fn slot(w: rerail_tape_format::Widths) -> usize {
@@ -8670,6 +8723,17 @@ impl Wide {
     /// compiler refuses the structure at those widths.
     fn at(&self, w: rerail_tape_format::Widths) -> Option<&CompiledStream> {
         self.streams[Self::slot(w)].get_or_init(|| compile_at(&self.native, &self.cut, w, self.native.tag).ok()).as_ref()
+    }
+
+    /// `at`, reading the record stride from `ctx`.
+    fn at_any(&self, w: rerail_tape_format::Widths) -> Option<&CompiledStream> {
+        let cut = crate::native_cpu_clusters::Cut { stride: None, ..self.cut.clone() };
+        self.any[Self::slot(w)].get_or_init(|| compile_at(&self.native, &cut, w, self.native.tag).ok()).as_ref()
+    }
+
+    /// `at` where `stride` is the cut's, else `at_any`.
+    fn at_stride(&self, w: rerail_tape_format::Widths, stride: u64) -> Option<&CompiledStream> {
+        if self.cut.stride.is_none_or(|s| u64::from(s) == stride) { self.at(w) } else { self.at_any(w) }
     }
 }
 
@@ -8694,16 +8758,34 @@ pub fn least_widths(image: &[u8]) -> rerail_tape_format::Widths {
     rerail_tape_format::Widths { size: width_for(n as u32), off: width_for(most(off_at, wo)), tail: width_for(most(tail_at, wt)), from_start: false }
 }
 
+/// The record stride of `tier1`'s records as the CPU's batch holds them (`Parser::words`): its layout's, or a
+/// column's where it keeps no records.
+fn cpu_stride(tier1: &crate::native_cpu_block::CompiledBlock) -> u32 {
+    tier1.records.as_ref().map_or(crate::records::RecordLayout::Columns, |t| t.layout).stride() as u32
+}
+
 impl Parser {
     pub fn new(native: &Structure) -> Result<Self, Error> {
-        let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile(native)?, wide: Wide::new(native, one_cut(native)) })
+        Self::with_cut(native, &one_cut(native))
     }
 
-    /// `new`, with tier 2 in the clusters of `cut` (`compile_cut`).
+    /// `new`, with tier 2 in the clusters of `cut` (`compile_cut`), at the stride of its own tier 1's records
+    /// (`Cut::stride`).
     pub fn with_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<Self, Error> {
         let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)?, wide: Wide::new(native, cut.clone()) })
+        let tier1 = crate::native_cpu_block::compile(block)?;
+        let cut = crate::native_cpu_clusters::Cut { stride: Some(cpu_stride(&tier1)), ..cut.clone() };
+        Ok(Parser { tier2: compile_cut(native, &cut)?, wide: Wide::new(native, cut), tier1 })
+    }
+
+    /// Tier 2 for records of `stride` (another tier 1's: a device's, `rerail_cpu_stream::tier2_on`): `tier2` where
+    /// it reads that stride, else one that reads the stride from `ctx`, compiled on first use. `None` for a parser
+    /// `from_parts` whose tier 2 reads another.
+    pub fn tier2_at(&self, stride: u64) -> Option<&CompiledStream> {
+        if self.tier2.stride.is_none_or(|s| s == stride) {
+            return Some(&self.tier2);
+        }
+        self.wide.as_ref()?.at_any(rerail_tape_format::Narrow::WIDTHS)
     }
 
     /// Tiers 1 and 2 of `native` cut by `cut`, compiled by the caller (`native_cpu_block::compile`,
@@ -8728,10 +8810,16 @@ impl Parser {
     /// values fit narrower columns (`least_widths`), at those, so the image is the writer's.
     /// A refusal at `WIDE` is the grammar's: the file goes to the fallback.
     pub fn again(&self, narrow: Refused, read: impl Fn(&CompiledStream) -> Result<Vec<u8>, Refused>) -> Result<Vec<u8>, Refused> {
-        let (Some(w), Some(wide)) = (self.wide.as_ref(), self.wide()) else { return Err(narrow) };
+        self.again_at(narrow, u64::from(cpu_stride(&self.tier1)), read)
+    }
+
+    /// `again`, for records of `stride` (`tier2_at`).
+    pub fn again_at(&self, narrow: Refused, stride: u64, read: impl Fn(&CompiledStream) -> Result<Vec<u8>, Refused>) -> Result<Vec<u8>, Refused> {
+        let Some(w) = self.wide.as_ref() else { return Err(narrow) };
+        let Some(wide) = w.at_stride(rerail_tape_format::Widths::WIDE, stride) else { return Err(narrow) };
         let image = read(wide)?;
         let least = least_widths(&image);
-        match w.at(least) {
+        match w.at_stride(least, stride) {
             Some(t2) if least != rerail_tape_format::Widths::WIDE => read(t2),
             _ => Ok(image),
         }
