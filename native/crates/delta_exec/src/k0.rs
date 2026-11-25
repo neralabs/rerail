@@ -15,7 +15,7 @@ use crate::tape::{Names, Reads, Text};
 use rerail_rr_syntax::tape::Kind;
 
 /// Walks document `d`'s tape, giving each K-form row to `put` with its relation's place in `RELATIONS` (`k_order` is
-/// not the pass's: a module's stratum is given by the load that asked for it). Every step is at key `(k, -1)`, and
+/// not the pass's: a module's stratum is its file's place in the bootstrap, `boot(path, k)`). Every step is at key `(k, -1)`, and
 /// the head at `(-1, -1)`.
 pub fn walk(
     text: &Text,

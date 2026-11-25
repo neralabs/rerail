@@ -102,7 +102,7 @@ fn k0_pass_rows_by_hand() {
     for (i, w) in want.iter().enumerate() {
         assert_eq!(&got(i), w, "{}\n{dump}", RELATIONS[i].0);
     }
-    assert!(got(7).is_empty(), "k_order is the loads', not the pass's");
+    assert!(got(7).is_empty(), "k_order is boot's, not the pass's");
 }
 
 /// The hand-written rows of `k0_pass_rows_by_hand`'s file, module 7.

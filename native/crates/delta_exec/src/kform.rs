@@ -8,7 +8,7 @@
 //!   after atom `p` puts it at `(p, f)`, with no arithmetic (the rebuild plan, O2);
 //! - `k_arg(m, rule, k, j, i, term)`: the step's `i`-th argument; `(-1, -1)` is the head;
 //! - `k_var(m, term, name)`, `k_str(m, term, s)`, `k_num(m, term, n)`, `k_wild(m, term)`: what a term is;
-//! - `k_order(m, k)`: module `m`'s stratum, from the load that asked for it (§5): strata are files.
+//! - `k_order(m, k)`: module `m`'s stratum, its file's place in the bootstrap (`boot(path, k)`): strata are files.
 //!
 //! What a program means is fixed by §3's five sentences, and nothing else is: the executor never reorders, rewrites
 //! or stratifies a rule.

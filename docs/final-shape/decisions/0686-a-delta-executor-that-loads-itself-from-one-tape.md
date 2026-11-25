@@ -37,8 +37,8 @@ words.
   (the document it was read from: the partition column): `k_rule(m, rule, head)`, `k_step(m, rule, k, j, kind,
   rel)` (kind `atom`, `not` or `cmp`; a `cmp`'s rel is its operator; steps run in `(k, j)` order, as read at
   `(k, -1)`), `k_arg(m, rule, k, j, i, term)` (`(-1, -1)`: the head), `k_var(m, t, name)`, `k_str(m, t, s)`,
-  `k_num(m, t, n)`, `k_wild(m, t)`, and `k_order(m, k)` (a module's stratum, the number of the load that asked for
-  it). Rule and term ids are tape node ids, local to their module (L9); they renumber on any edit, and the module is
+  `k_num(m, t, n)`, `k_wild(m, t)`, and `k_order(m, k)` (a module's stratum: its file's place in the bootstrap,
+  `boot(path, k)`; see F2 below). Rule and term ids are tape node ids, local to their module (L9); they renumber on any edit, and the module is
   the grain; across modules only symbols cross.
 - **What the executor does with it, fixed** (B§3's five sentences): a rule's steps run in key order; a variable is
   bound at its first occurrence and tested at every later one; an `atom` step joins the rows so far with the
@@ -53,7 +53,7 @@ words.
 - **L1, the K0 pass:** one fixed Rust pass over `bootstrap-l0.rerail`'s tape, writing P2's K-form rows and refusing
   anything outside K0. As a delta operator: the tape's bistate in, P2's bistate out, the file its grain; no program
   port.
-- **`bootstrap-l0.rerail`:** the pass's meaning as 13 K0 rules (P2's reader), the `k_order` rule, and the loads of
+- **`bootstrap-l0.rerail`:** the pass's meaning as 13 K0 rules (P2's reader), the `k_order` rule, and the `boot` rows of
   the next level's files. Its check: P2 run over `l0`'s own tape gives P2 again, row for row.
 - **The chain and the loop:** each level is a Δphase whose program came from the level before; its output's K-form
   relations are the next program and the rest are the next facts; B§8's loop runs it until a phase exports no
@@ -211,5 +211,14 @@ placed into a residency slab room, sources and tapes as content-addressed object
 facts keyed by content, path and plan.
 
 The page's third revision surveys the file layer and the caches as they are, and the work shapes of the engine's
-kernels (23, on six axes). Open on it, for the user: any shape the survey missed (E4), results with several valid
-answers (F1), and `load`'s columns against B§5's (F2).
+kernels (23, on six axes). On it the user decided (2026-11-25):
+
+- E4: "no idea, be thorough". The survey is to be done again, thoroughly.
+- F1 (a search with several valid answers): "so may a CPU search, so what? ANything numeric can vary. The results
+  need to be correct; determinism is nice to have but not required". This revises D2: a result must be correct on
+  every executor and tiling; the same bytes are not required. Tests check correctness (the same set of facts, a valid
+  answer, a numeric result within its bound), not bytes.
+- F2 (B§5's `load(path, k)` against the engine's `load(path, module, grammar)`): "use something different for
+  bootstrapping than load, we already agreed before to not have a separate strata fact". The bootstrap's files are
+  `boot(path, k)`, a file's place in the bootstrap being its stratum (O4), and `k_order(d, k) :- boot(p, k), doc(d,
+  p, _).`; `load` is the engine's. `check_delta_exec_shape.py` refuses `load(` in the crate's `.rerail` files.

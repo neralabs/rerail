@@ -28,7 +28,7 @@ mod tests;
 use std::sync::Arc;
 use tape::Text;
 
-/// `bootstrap-l0.rerail`: the reader of rules (P2) and the rule that orders the modules its loads ask for.
+/// `bootstrap-l0.rerail`: the reader of rules (P2) and the rule that orders the bootstrap's modules.
 pub const L0: &str = include_str!("../rerail/bootstrap-l0.rerail");
 
 /// A text parsed, for callers holding a source.

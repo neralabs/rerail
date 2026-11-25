@@ -82,6 +82,8 @@ def m0(failures: list) -> None:
         code = strip_rerail(path.read_text())
         hits(path, code, r"[\w)]\s*[-+*/%]\s*[\w(]", "arithmetic (K0 has none, O2)", failures)
         hits(path, code, r"\bstratum\s*\(", "a stated stratum (strata are files, O4)", failures)
+        hits(path, code, r"\bload\s*\(", "load in a bootstrap rule (the bootstrap's files are boot(path, k); load is "
+             "the engine's, load(path, module, grammar))", failures)
     hits(CHANGE, strip_rust(CHANGE.read_text()), r"\bfn body\b", "change::body (O1)", failures)
 
 
