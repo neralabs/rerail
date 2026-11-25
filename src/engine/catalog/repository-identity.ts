@@ -448,6 +448,54 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
   return again === ANOTHER_REGISTRY ? undefined : again;
 }
 
+/**
+ * The registries of the recorded checkouts asked about many worktrees in one synchronous pass, such as a read of the
+ * recorded checkouts that records each worktree of a started clone: each recorded checkout's registry is read once for
+ * the pass ({@link worktreeRegistry}), and each worktree it lists is resolved to its stored path at most once, as far
+ * as the questions need. A question per worktree read every registry file and resolved the listed worktrees again for
+ * each one, so a pass over a repository's n worktrees cost n times n file reads and real paths. A pass answers what the
+ * registry held at its first question: nothing else runs on the thread before its last one, and the next pass reads
+ * the registry again, so a worktree added, moved, removed or pruned meanwhile is answered at the next use.
+ */
+export class WorktreeRegistryPass {
+  readonly #listed = new Map<string, ListedWorktrees | undefined>();
+
+  /** Whether the registry the recorded `checkout` reads is in `commonDirectory` and lists the worktree at `root`, a stored path. */
+  lists(checkout: string, commonDirectory: string, root: string): boolean {
+    const listed = this.#listedBy(checkout);
+    return listed?.commonDirectory === commonDirectory && listed.has(root);
+  }
+
+  #listedBy(checkout: string): ListedWorktrees | undefined {
+    if (!this.#listed.has(checkout)) {
+      const registry = worktreeRegistry(checkout);
+      this.#listed.set(checkout, registry === undefined ? undefined : new ListedWorktrees(registry));
+    }
+    return this.#listed.get(checkout);
+  }
+}
+
+/** A registry's worktrees by stored path, each resolved once, in Git's order, until a question finds its answer. */
+class ListedWorktrees {
+  readonly commonDirectory: string;
+  readonly #unresolved: string[];
+  readonly #stored = new Set<string>();
+
+  constructor(registry: WorktreeRegistry) {
+    this.commonDirectory = registry.commonDirectory;
+    this.#unresolved = registry.worktrees.toReversed();
+  }
+
+  has(root: string): boolean {
+    while (!this.#stored.has(root)) {
+      const next = this.#unresolved.pop();
+      if (next === undefined) return false;
+      this.#stored.add(storedPath(next));
+    }
+    return true;
+  }
+}
+
 /** What {@link registryAsPlaced} gives when Git listed the registry of another common Git folder than the one placed. */
 const ANOTHER_REGISTRY = Symbol("another registry");
 

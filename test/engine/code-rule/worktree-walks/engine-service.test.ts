@@ -295,6 +295,8 @@ describe("the engine service and the other worktrees of a repository", () => {
     const { main, worktrees } = repository(root, databasePath, ["w1", "w2"]);
     const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
     const roots = vi.spyOn(CheckoutCodeRuleRouter.prototype, "worktreeRoots");
+    // A session's walk lists them in turns (`worktreeRootsInTurns`), each list one read of the registry as well.
+    const inTurns = vi.spyOn(CheckoutCodeRuleRouter.prototype, "worktreeRootsInTurns");
     const service = await startEngineService({ socketPath: socketPathIn(root, "registry-reads"), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
     const session = { host: "claude-code" as const, sessionId: "session-1", cwd: worktrees[0]! };
     try {
@@ -304,13 +306,14 @@ describe("the engine service and the other worktrees of a repository", () => {
       const bridge = opens.mock.contexts[0] as CodeRuleBridge;
       await bridge.checkpoint("turn");
       await bridge.settleWorktreeWalk();
-      const [read, listed] = [registryReads(main), roots.mock.calls.length];
+      const [read, listed] = [registryReads(main), roots.mock.calls.length + inTurns.mock.calls.length];
 
       // A turn with nothing changed: the session folder's walk, then the shared walk of the other worktrees.
       await bridge.checkpoint("turn");
       await bridge.settleWorktreeWalk();
-      const lists = roots.mock.calls.length - listed;
-      expect({ reads: registryReads(main) - read, walked: lists > 1 }).toEqual({ reads: lists, walked: true });
+      const lists = roots.mock.calls.length + inTurns.mock.calls.length - listed;
+      expect({ reads: registryReads(main) - read, walked: lists > 1, inTurns: inTurns.mock.calls.length > 0 })
+        .toEqual({ reads: lists, walked: true, inTurns: true });
     } finally {
       await service.close();
     }

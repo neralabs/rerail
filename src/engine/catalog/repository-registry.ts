@@ -7,7 +7,7 @@ import { opendir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, parse, resolve, sep } from "node:path";
 import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
-import { earlierPhysicalPath, physicalPath, storedPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
+import { earlierPhysicalPath, physicalPath, storedPathAsync, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGitAsync } from "../git.js";
 import { mergeAssistExperimentEnabled } from "../experimental-features.js";
@@ -21,7 +21,7 @@ import {
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
-  worktreeRegistry,
+  WorktreeRegistryPass,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, mergeAssistState, repositories, ruleSettings } from "../storage/schema.js";
@@ -272,21 +272,21 @@ function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context:
  * its `.git` keeps the clone id but reads its own registry, so it neither grants nor refuses for the original. Git runs
  * only in a recorded checkout Rerail runs in; false when nothing was recorded.
  */
-export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
+export function recordStartedWorktree(
+  db: RerailDatabase,
+  root: string,
+  location: RepositoryIdentityLocation,
+  registries: WorktreeRegistryPass = new WorktreeRegistryPass(),
+): boolean {
   const cloneId = readCloneIdAt(location.identityPath);
   if (!location.git || cloneId === undefined || physicalPath(location.workspaceRoot) !== root) return false;
   const commonDirectory = physicalPath(dirname(location.identityPath));
   const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
+  // A gone folder lists nothing. A caller recording many worktrees passes one pass for all, which reads each registry once.
   const listed = recorded.some(peer =>
-    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registryLists(peer.path, commonDirectory, root));
+    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registries.lists(peer.path, commonDirectory, root));
   if (listed) recordCheckout(db, root);
   return listed;
-}
-
-/** Whether the recorded `checkout` reads Git's registry in `commonDirectory` and lists `root` there; a gone folder lists nothing. */
-function registryLists(checkout: string, commonDirectory: string, root: string): boolean {
-  const registry = worktreeRegistry(checkout);
-  return registry?.commonDirectory === commonDirectory && registry.worktrees.some(worktree => storedPath(worktree) === root);
 }
 
 /**

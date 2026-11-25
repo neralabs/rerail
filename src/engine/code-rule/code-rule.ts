@@ -1641,6 +1641,8 @@ export interface CodeRuleAuditor {
    * `registry`: the list {@link CodeRuleAuditor.learnWorktreeRoots} gave as stored, in the same synchronous run.
    */
   worktreeRoots?(registry?: WorktreeRegistry): readonly string[];
+  /** `worktreeRoots`, with turns of the event loop while it reads checkouts it has not read before; `worktreeRoots` when absent. */
+  worktreeRootsInTurns?(registry?: WorktreeRegistry): Promise<readonly string[]>;
   /**
    * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
    * next call finds Git's list kept while the registry's contents stay as they were: what to wait for, or the list

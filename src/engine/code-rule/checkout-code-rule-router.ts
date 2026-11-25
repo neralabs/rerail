@@ -69,6 +69,13 @@ interface Lane {
 /** How many repositories' rules a session builds ahead as it opens (`#aheadRoots`): each may hold hundreds of MB compiled. */
 const BUILT_AHEAD_REPOSITORIES = 8;
 
+/**
+ * How many worktrees a session's first list of the other worktrees records and filters between two turns of the event
+ * loop (`worktreeRootsInTurns`): each one first seen costs its checkout's record and its owner's look-up, about 12 ms
+ * of the daemon's thread on Windows 11 with 190 worktrees, so a turn holds the thread for about 200 ms.
+ */
+const ELIGIBILITY_PER_TURN = 16;
+
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
     revision,
@@ -547,11 +554,58 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * the list `learnWorktreeRoots` gave as stored, in the same synchronous run; without it the registry is read now.
    */
   worktreeRoots(registry: WorktreeRegistry | undefined = worktreeRegistry(this.#options.startingCheckout)): string[] {
+    const roots = this.#listedWorktreeRoots(registry);
+    this.#readEligibility(roots);
+    return this.#worktreesThatMayRun(roots);
+  }
+
+  /**
+   * {@link worktreeRoots}, giving the event loop a turn after each {@link ELIGIBILITY_PER_TURN} worktrees while any of
+   * them has an eligibility this session has not read: a session's first list of a repository with hundreds of
+   * worktrees records each of them and then finds each one's owner afresh (recording changes what the owners know), and
+   * done at once that held the daemon's thread for seconds on Windows. Each group is recorded and filtered before the
+   * next turn. The list is Git's as the first turn read it (`registry` as `worktreeRoots` takes it); the next list
+   * reads Git's registry again.
+   */
+  async worktreeRootsInTurns(registry: WorktreeRegistry | undefined = worktreeRegistry(this.#options.startingCheckout)): Promise<string[]> {
+    const roots = this.#listedWorktreeRoots(registry);
+    if (roots.every(root => this.#eligibility.has(root))) return this.#worktreesThatMayRun(roots);
+    const running: string[] = [];
+    for (let at = 0; at < roots.length; at += ELIGIBILITY_PER_TURN) {
+      if (at > 0) await new Promise(resolve => setImmediate(resolve));
+      const group = roots.slice(at, at + ELIGIBILITY_PER_TURN);
+      this.#readEligibility(group);
+      running.push(...this.#worktreesThatMayRun(group));
+    }
+    return running;
+  }
+
+  /** The other worktrees `registry` lists for the session's checkout, by their stored paths, that exist. */
+  #listedWorktreeRoots(registry: WorktreeRegistry | undefined): string[] {
     const starting = this.#options.startingCheckout;
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
     return (registry?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
-      .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+      .filter(root => root !== starting && existsSync(root));
+  }
+
+  /** Each of `roots` that is its own checkout's top folder and may run rules. */
+  #worktreesThatMayRun(roots: readonly string[]): string[] {
+    return roots.filter(root => this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /**
+   * The eligibility of each of `roots` that is its own checkout's top folder and that this session has not read yet,
+   * read in one read of the recorded checkouts (`refreshAll`), which records the worktrees of a started clone among them
+   * in one pass over Git's registry: a read per worktree read the whole registry again for each one. A folder that is no
+   * checkout's top yet, such as a worktree Git lists before it writes its `.git` file, is left to the look-up that finds
+   * it one, as a look-up per worktree left it.
+   */
+  #readEligibility(roots: readonly string[]): void {
+    const owners = this.#options.owners;
+    const unread = roots.filter(root => !this.#eligibility.has(root) && owners.ownerOf(root)?.checkoutRoot === root);
+    if (unread.length === 0) return;
+    for (const [root, eligibility] of this.#options.catalogs.refreshAll(unread)) this.#eligibility.set(root, eligibility);
   }
 
   /**

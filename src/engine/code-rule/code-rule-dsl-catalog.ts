@@ -28,7 +28,7 @@ import {
   type CodeRulePlacementEntry,
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
-import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
+import { repositoryIdentityLocation, WorktreeRegistryPass, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
 import {
   followsGitignore,
   recordedCheckoutsReader,
@@ -971,8 +971,10 @@ export class CheckoutCatalogs {
   #read(entries: readonly CheckoutEntry[]): void {
     const roots = entries.map(entry => entry.root);
     let recorded = this.#recorded.read(roots);
-    // A worktree recorded here may hold another of the entries, so all of them are read again with its row.
-    if (entries.filter(entry => !recorded.has(entry.root) && this.#recordWorktree(entry)).length > 0) recorded = this.#recorded.read(roots);
+    // One pass over Git's registries for every worktree this read records, and a worktree recorded here may hold another
+    // of the entries, so all of them are read again with its row.
+    const registries = new WorktreeRegistryPass();
+    if (entries.filter(entry => !recorded.has(entry.root) && this.#recordWorktree(entry, registries)).length > 0) recorded = this.#recorded.read(roots);
     for (const entry of entries) this.#apply(entry, recorded.get(entry.root));
   }
 
@@ -994,12 +996,12 @@ export class CheckoutCatalogs {
     else entry.eligibility = status.setUp ? "ok" : "not-set-up";
   }
 
-  /** Records `entry` when it is a worktree of a started clone (`recordStartedWorktree`); whether it did. */
-  #recordWorktree(entry: CheckoutEntry): boolean {
+  /** Records `entry` when it is a worktree of a started clone (`recordStartedWorktree`) by `registries`; whether it did. */
+  #recordWorktree(entry: CheckoutEntry, registries: WorktreeRegistryPass): boolean {
     // A folder outside Git may become a checkout, so only a Git location is kept.
     const location = entry.location ?? repositoryIdentityLocation(entry.root);
     if (location.git) entry.location = location;
-    return recordStartedWorktree(this.database, entry.root, location);
+    return recordStartedWorktree(this.database, entry.root, location, registries);
   }
 
   /** `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`. */

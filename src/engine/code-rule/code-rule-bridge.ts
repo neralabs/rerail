@@ -3197,10 +3197,10 @@ export class CodeRuleBridge {
    * The repository's other worktrees as they are now, each relative to the session folder in `WorktreeDiscovery.roots`. One
    * first seen now is a baseline but for what changed since the session opened, which Git's verdicts judge. One gone took
    * its files with it, and none of them is an edit. `registry`: the list the walk's learn step gave as stored, in the same
-   * synchronous run (`worktreeRoots`).
+   * synchronous run (`worktreeRoots`); `listedInTurns`: the list `worktreeRootsInTurns` gave for it, when it was asked.
    */
-  #syncWorktrees(discovery: SourceDiscovery, registry?: WorktreeRegistry): readonly string[] {
-    const worktrees = (this.#auditor.worktreeRoots?.(registry) ?? []).filter(worktree => worktree !== discovery.root);
+  #syncWorktrees(discovery: SourceDiscovery, registry?: WorktreeRegistry, listedInTurns?: readonly string[]): readonly string[] {
+    const worktrees = (listedInTurns ?? this.#auditor.worktreeRoots?.(registry) ?? []).filter(worktree => worktree !== discovery.root);
     const current = new Set(worktrees.map(worktree => sessionPath(discovery.root, worktree)));
     const { roots, fresh, listed } = discovery.worktrees;
     for (const worktree of current) {
@@ -3340,7 +3340,10 @@ export class CodeRuleBridge {
     const learnt = this.#auditor.learnWorktreeRoots?.(discovery.git);
     const learning = this.#learnWorktrees(discovery, learnt);
     if (learning !== undefined && !(await learning)) return;
-    const worktrees = this.#syncWorktrees(discovery, storedRegistry(learnt));
+    const registry = storedRegistry(learnt);
+    // The first list of many worktrees records each one, with turns between, so other sessions are answered meanwhile.
+    const inTurns = this.#auditor.worktreeRootsInTurns?.(registry);
+    const worktrees = this.#syncWorktrees(discovery, registry, inTurns === undefined ? undefined : await inTurns);
     const start: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
