@@ -7,10 +7,11 @@
 // exception into a dependency that yields, at its `yield`. Code after the `yield` that no `finally` (or `with`)
 // covers then never runs, so every failing request leaks what that code would have released; repeated errors
 // exhaust the pool ("QueuePool limit of size 5 overflow 10 reached"). An `except` around the `yield` that does not
-// re-raise hides the error: the client gets a 500 and the server logs nothing. The rule reads generators that
-// lib/fastapi's fa_yield_dep calls dependencies (some `Depends(...)` of the run names them, in any module: the
-// generator in db.py, the `Depends` in deps.py or a route), outside test code, and reports in the generator's own
-// frame:
+// re-raise hides the error: FastAPI (0.124 and later) answers 500 and logs only "Response not awaited ... not raising
+// the exception again", so the route's own exception and traceback are lost and an HTTPException(404) becomes a 500.
+// The rule reads generators that lib/fastapi's fa_yield_dep calls dependencies (some `Depends(...)` of the run names
+// them, in any module: the generator in db.py, the `Depends` in deps.py or a route; a class's `__call__` through
+// `Depends(instance)` or a name bound to the instance), outside test code, and reports in the generator's own frame:
 //   - UnprotectedCleanup: a call to `close`, `aclose`, `release`, `remove`, `dispose`, `shutdown`, `disconnect`,
 //     `terminate`, `cleanup`, `unlink` or `rollback` (awaited or not) after the `yield`, unless the `yield` sits in a
 //     `with`/`async with` block, the call is in the `finally` of a `try` whose body holds the `yield`, the call is in
@@ -20,18 +21,23 @@
 //     `BaseException`, everything (bare `except:`), or a database or HTTP error class (`SQLAlchemyError`,
 //     `DBAPIError`, `DatabaseError`, `OperationalError`, `IntegrityError`, `HTTPException`, or anything from
 //     `sqlalchemy.exc`), alone or in a tuple, whose handler can finish without raising: its last statement is not a
-//     `raise`, or is an `if` without `else` or with a branch that can finish (lib/django's py_reraising_handler).
+//     `raise`, or is an `if` without `else` or with a branch that can finish (lib/django's py_reraising_handler), or
+//     is a call of a def of the run whose every path ends in `raise` or that is annotated `-> NoReturn`/`-> Never`
+//     (`abort(500)`).
 //   db.py:    def get_db(): db = SessionLocal(); yield db; db.close()              reported at db.close()
 //   db.py:    try: yield db  except Exception: db.rollback()                      reported at the except
-//   deps.py:  SessionDep = Annotated[Session, Depends(get_db)]                     makes get_db a dependency
+//   deps.py:  SessionDep = Annotated[Session, Depends(get_db)]                     makes get_db a dependency;
+//             `rw = Depends(write_session)` with `write_session = WriteSession()` makes `WriteSession.__call__` one
 // Left alone: `try: yield db finally: db.close()`; `with SessionLocal() as db: yield db` and `async with`; `try: yield
 // db; db.commit() except: db.rollback(); raise finally: db.close()`; `commit()` after the yield (an error skips it on
 // purpose; moving it into `finally` would commit failed requests); handlers that re-raise or raise a new exception on
 // every path; handlers for other classes (`except KeyboardInterrupt`); statements after the yield that release
 // nothing (logging, metrics); generators no `Depends` names (`@contextmanager` helpers, pytest fixtures); test files.
-// Gaps: cleanup in a helper the generator calls after the yield (`close_all(db)`) is not seen; a `with` around the
-// yield silences every call after it, even one on another resource; a handler that ends in a call which always
-// raises (`abort(500)`) counts as finishing; an `except ValueError:` that swallows around the yield is not reported.
+// A release written after a `try` around the yield whose handler re-raises is reported: the raise skips it
+// (python-practice-contextmanager-cleanup-skipped, for `@contextmanager` generators, leaves that shape alone).
+// Gaps: cleanup in a helper the generator calls after the yield (`_release(db)`) is not seen; a `with` around the
+// yield silences every call after it, even one on another resource; a raising helper is followed one call deep; a
+// handler for a project's own class (`except AppError: pass`) is not reported.
 
 #include "lib/fastapi.rerail"
 
@@ -40,7 +46,7 @@
 UnprotectedCleanup(c, what, fx) :- yd_cleanup(c, g, _), yd_yield(g, y), earlier(y, c), !yd_protected(c, y),
     def_name(g, fx), field(c, "function", fn), text(fn, ft), what = cat(ft, "()").
 .violation SwallowedError(at: node, fx: symbol)
-    "This `except` around the `yield` in dependency `{fx}` can finish without raising, so the route's error is lost and the client gets a 500 with no log; end the handler with `raise`."
+    "This `except` around the `yield` in dependency `{fx}` can finish without raising, so the route's own error and traceback are lost and an HTTPException turns into a 500; end the handler with `raise`."
 SwallowedError(x, fx) :- yd_yield(g, y), yd_try_around(t, y), child(t, x, _), kind(x, "except_clause"), yd_catches(x),
     !yd_reraising(x), def_name(g, fx).
 
@@ -115,10 +121,33 @@ yd_if_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(
 yd_has_else(s) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause").
 .decl yd_may_end(b: node)
 yd_may_end(b) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), !kind(s, "raise_statement"),
-    !kind(s, "if_statement").
+    !kind(s, "if_statement"), !yd_raising_call(s).
 yd_may_end(b) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), kind(s, "if_statement"),
     !yd_has_else(s).
 yd_may_end(b) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), yd_if_branch(s, cb), yd_may_end(cb).
+
+// A handler that ends in a call of a helper that always raises (`abort(500)`), one call deep: the helper's body is
+// read with the same path rule, without following its own calls.
+// yd_end_call(s, h): statement s, the last of a handler's path, calls def h of the run.
+.decl yd_end_call(s: node, h: node)
+yd_end_call(s, h) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j),
+    kind(s, "expression_statement"), child(s, c0, 0), unparen(c0, c), kind(c, "call"), call_target(c, h).
+.decl yd_hblock(b: node)
+yd_hblock(b) :- yd_end_call(_, h), field(h, "body", b).
+yd_hblock(b) :- yd_hblock(p), body_len(p, k), j = k - 1, body_stmt(p, s, j), kind(s, "if_statement"), yd_if_branch(s, b).
+.decl yd_hmay_end(b: node)
+yd_hmay_end(b) :- yd_hblock(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), !kind(s, "raise_statement"),
+    !kind(s, "if_statement").
+yd_hmay_end(b) :- yd_hblock(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), kind(s, "if_statement"),
+    !yd_has_else(s).
+yd_hmay_end(b) :- yd_hblock(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), yd_if_branch(s, cb), yd_hmay_end(cb).
+// yd_noreturn(h): every path of helper h ends in `raise`, or h is annotated `-> NoReturn` / `-> Never`.
+.decl yd_noreturn(h: node)
+yd_noreturn(h) :- yd_end_call(_, h), field(h, "body", b), !yd_hmay_end(b).
+yd_noreturn(h) :- yd_end_call(_, h), field(h, "return_type", t0), fa_strip(t0, t),
+    (leaf_name(t, "NoReturn") ; leaf_name(t, "Never")).
+.decl yd_raising_call(s: node)
+yd_raising_call(s) :- yd_end_call(s, h), yd_noreturn(h).
 
 // The cases, `cases/fastapi-practice-yield-dependency-cleanup/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.
@@ -142,5 +171,7 @@ yd_may_end(b) :- yd_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j
     .expect _ at "app/db.py":116
     .expect _ at "app/db.py":125
     .expect _ at "app/db.py":136
+    .expect _ at "app/db.py":288
     .expect _ at "app/routes.py":18
+    .expect _ at "app/routes.py":26
 .end

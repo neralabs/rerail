@@ -1,5 +1,5 @@
 .policy "fastapi-practice-sync-session-in-async-route" revision 1
-.description "An async FastAPI route, dependency or middleware must not run sync SQLAlchemy session work, itself or through helpers; use def, an AsyncSession or run_in_threadpool."
+.description "Keep sync SQLAlchemy session work out of async FastAPI routes, dependencies, middleware and the helpers they call; use def, an AsyncSession or run_in_threadpool."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -43,10 +43,10 @@
 #include "python/types.rerail"
 
 .violation SessionCallInAsync(at: node, what: symbol, fx: symbol)
-    "`{what}` runs blocking IO on a sync SQLAlchemy session inside `async def {fx}`, stalling the event loop and every concurrent request. If `{fx}` awaits nothing and sets no ContextVar the request reads, declare it with plain `def` (FastAPI runs it in a threadpool); otherwise move to an `AsyncSession`, or put the session work in a sync helper called through `await run_in_threadpool(...)`."
+    "`{what}` blocks the event loop inside `async def {fx}`. Make `{fx}` a plain `def` if it awaits nothing and sets no ContextVar; otherwise use an `AsyncSession` or `await run_in_threadpool(...)`."
 SessionCallInAsync(o, what, fx) :- ss_work(o, f, what), ss_async_start(f), def_name(f, fx).
 .violation SessionReached(at: node, x: symbol, fx: symbol, what: symbol, p: symbol, o: node)
-    "`{x}()` runs blocking IO on a sync SQLAlchemy session (`{what}` at {p}:{o.line}) inside `async def {fx}`, stalling the event loop and every concurrent request. If `{fx}` awaits nothing and sets no ContextVar the request reads, declare it with plain `def` (FastAPI runs it in a threadpool); otherwise call the helper through `await run_in_threadpool({x}, ...)`, or move to an `AsyncSession`."
+    "`{x}()` runs sync session work (`{what}` at {p}:{o.line}) on the event loop in `async def {fx}`. Make `{fx}` a plain `def` if it awaits nothing; else `await run_in_threadpool({x}, ...)`."
 SessionReached(c, x, fx, what, p, o) :- ss_start(f, c, g), def_name(f, fx), field(c, "function", fn), text(fn, x),
     o = min y : { ss_reach(g, h), ss_work(y, h, _) }, ss_work(o, _, what), docof(o, d), doc(d, p, _).
 

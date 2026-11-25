@@ -33,22 +33,39 @@
 //                 al_table(c, t)             operation c acts on the table named t: its table argument, or the
 //                                            batch_alter_table's (a literal, `op.f("...")`, or a module constant)
 //                 al_batch_with(w, v, tn, b) with-statement w opens `op.batch_alter_table(tn, ...)` as v; b its body
-//                 al_creates_table(f, t)     step f creates table t: `op.create_table("t", ...)` or a project's own
-//                                            `create_table("t", ...)` wrapper
-//                 al_on_existing(c, m, t, f) operation m (c) in upgrade step f acts on table t, which f does not
-//                                            create: a table that already holds rows in production
+//                 al_creates_table(f, t)     step f creates table t: `op.create_table("t", ...)`, a project's own
+//                                            `create_table("t", ...)` wrapper, or `op.execute("CREATE TABLE t ...")`
+//                 al_empties_table(f, t)     step f deletes every row of t (`DELETE FROM t` without WHERE, TRUNCATE)
+//                 al_on_existing(c, m, t, f) operation m (c) in upgrade step f acts on table t, which f neither
+//                                            creates nor empties: a table that may hold rows in production
+//                 al_forwarded(c, m, t, ci, f)  call c in upgrade step f calls a function of the run (through its
+//                                            import, or of the same file) that runs operation m (ci) on the table
+//                                            its parameter names; c passes existing table t (one call deep)
+//                 al_added_ddl(c, t, k, f)   add_column c makes Alembic emit a second statement on existing table t:
+//                                            k "unique", "index", "foreign_key" or "check" (Alembic 1.20 renders all)
+//                 al_exec_sql(f, y)          step f runs op.execute with the literal SQL y, normalised
 //                 al_kw(c, k, v)             call c passes keyword k=v
-//                 al_true_kw(c, k)           call c passes k=True
+//                 al_bool(v, b)              v is statically b ("true", "false", "none"): a literal or a module
+//                                            constant, of the same file or imported (al_module_const)
+//                 al_true_kw(c, k), al_false_kw(c, k)   call c passes k= True / False by value
+//                 al_kw_on(c, k)             call c passes k= something not known to be False or None
 //   Transactions: al_autocommit_with(w, b)   with-statement w opens `...autocommit_block()`; b is its body
 //                 al_in_autocommit(n)        n runs inside an autocommit block (outside the migration transaction)
-//   Dialects:     al_non_pg(n)               n sits in a branch that runs only on a database other than PostgreSQL:
-//                                            the else of `if _is_pg(conn):`/`if dialect.name == "postgresql":`, the
-//                                            body of `if dialect.name != "postgresql":` or `if ... == "sqlite":`,
-//                                            the else of `if not isinstance(d, SQLiteDialect):`, or code after
-//                                            `if not _is_mysql(): return` (tests read lowercased)
+//   Dialects:     al_non_pg(n)               n sits in a branch that runs only on a database other than PostgreSQL,
+//                                            read by the test's structure (al_db_if): comparisons with a database
+//                                            name literal, isinstance() on SQLAlchemy dialect classes, not/and/or,
+//                                            test functions of the run (through imports), names assigned a test;
+//                                            the else of a PostgreSQL test, the body of another database's test,
+//                                            and code after `if not _is_mysql(): return`
+//   Types:        al_type_class(e, n)        type expression e's class, lowercased, resolved through imports,
+//                                            aliases, TypeDecorator `impl`, SQLAlchemy subclasses and functions that
+//                                            return a type (`Text().with_variant(...)`)
+//                 al_pg_type(e, k)           the PostgreSQL type k e renders ("varchar", "text", "integer", "bigint",
+//                                            "timestamp", "timestamptz", "uuid", "jsonb", ...); al_mysql_type(e)
 //   Columns:      al_column_call(c)          call c builds a sqlalchemy Column (`sa.Column`, `Column`, sqlmodel's)
 //                 al_column_name(c, x)       Column c's name: its first positional argument
-//                 al_added_column(c, col)    add_column operation c adds the Column call col
+//                 al_added_column(c, col)    add_column operation c adds the Column call col (inline, or a name
+//                                            bound to it in the same scope)
 //                 al_name_value(e, s)        expression e names the string s: a literal, `op.f("s")`, or a module
 //                                            constant bound to a literal
 //   Models:       al_model(k, t)             class k maps table t: `__tablename__ = "t"` in its body, or a sqlmodel
@@ -58,14 +75,16 @@
 //                                            `a = mapped_column(...)`, `a: Mapped[T] = mapped_column(...)`, a bare
 //                                            `a: Mapped[T]`, or (sqlmodel) an annotated field; x is the Column's
 //                                            explicit name when it has one, else the attribute
-//                 al_model_column(k, t, x)   model k (table t) maps column x, declared on k or on a base of the run
 //                 al_mapped_class(k)         class k is a mapped ORM class: al_model, or a subclass of one
-//   env.py:       al_env_configure(c)        call c is `context.configure(...)` in env.py
+//   env.py:       al_env_doc(d)              document d is an env.py naming alembic.context (a name or an attribute)
+//                 al_env_configure(c)        call c is `context.configure(...)` in env.py
 //                 al_env_tree(d, e)          revision d sits under the directory of env.py e (a repository can hold
 //                                            several Alembic trees, each with its own env.py: dispatch's core and
 //                                            tenant schemas)
 //                 al_in_some_tree(d)         revision d sits under some env.py's directory
-//                 al_sets_lock_timeout(d)    document d holds a string that mentions lock_timeout
+//                 al_env_reads(e, d)         env.py e reads its settings from d: itself, a module of the run it
+//                                            imports a name from (`from app.db import engine`), or a module it
+//                                            imports whole (`from app import db`, then `db.engine`)
 //
 // Alembic background
 //   - Each revision runs `upgrade()` in one transaction on PostgreSQL (transactional DDL) unless env.py turns it off;
@@ -100,12 +119,26 @@ al_top_assign(d, x, v) :- kind(a, "assignment"), field(a, "left", l), kind(l, "i
 .decl al_migration_doc(d: number)
 al_migration_doc(d) :- al_top_assign(d, "revision", _), al_top_assign(d, "down_revision", _).
 .decl al_env_doc(d: number)
-al_env_doc(d) :- file_name(d, "env.py"), kind(e, "identifier"), sym_of(e, q), prefix("alembic.context", q), docof(e, d).
+// An env.py names alembic.context through a name (`from alembic import context`) or an attribute (`import
+// alembic.context` then `alembic.context.configure(...)`, open-webui's).
+al_env_doc(d) :- file_name(d, "env.py"), (kind(e, "identifier") ; kind(e, "attribute")), sym_of(e, q),
+    prefix("alembic.context", q), docof(e, d).
 .decl al_env_tree(d: number, e: number)
 al_env_tree(d, e) :- al_env_doc(e), doc(e, ep, _), r = @replace_all(ep, "env\\.py$", ""), al_migration_doc(d),
     doc(d, p, _), prefix(r, p).
 .decl al_in_some_tree(d: number)
 al_in_some_tree(d) :- al_env_tree(d, _).
+// al_env_reads(e, d): env.py e's settings come from document d: e itself, a module of the run e imports a name from
+// (`from app.db import engine`), or a module e imports whole (`from app import db`), whose engine options (isolation
+// level, connect_args) then apply to the migrations.
+.decl al_env_reads(e: number, d: number)
+al_env_reads(e, e) :- al_env_doc(e).
+al_env_reads(e, d) :- al_env_doc(e), kind(u, "identifier"), docof(u, e), sym_of(u, q), x = @replace_all(q, "^.*\\.", ""),
+    al_module_const(q, _), modnode(d, m), modname(m, mq), q = @dot(mq, x), d != e.
+al_env_reads(e, d) :- al_env_doc(e), kind(u, "identifier"), docof(u, e), sym_of(u, q), x = @replace_all(q, "^.*\\.", ""),
+    qualname(g, q), docof(g, d), modnode(d, m), modname(m, mq), q = @dot(mq, x), d != e.
+al_env_reads(e, d) :- al_env_doc(e), kind(u, "identifier"), docof(u, e), sym_of(u, q), modname(m, q), modnode(d, m),
+    d != e.
 .decl al_test_doc(d: number)
 al_test_doc(d) :- doc(d, _, _), (path_part(d, "tests") ; path_part(d, "test") ; path_part(d, "testing")).
 al_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s) ; glob("*_test.py", s) ;
@@ -220,24 +253,171 @@ al_name_value(e, s) :- unparen(e, u), al_call(u, "f", _), call_arg(u, 0, "", a),
 .decl al_table(c: node, t: symbol)
 al_table(c, t) :- al_call(c, _, "op"), al_role(c, "table", e), al_name_value(e, t).
 al_table(c, t) :- al_batch_call(c, _, w), al_batch_with(w, _, tn, _), al_name_value(tn, t).
-// al_creates_table(f, t): step f creates table t: `op.create_table("t", ...)`, or a project's own wrapper called
+// al_creates_table(f, t): step f creates table t: `op.create_table("t", ...)`, a project's own wrapper called
 // `create_table` (a bare name or an attribute, such as superset's `migrations.shared.utils.create_table("t", ...)`)
-// whose first argument names t.
+// whose first argument names t, or `op.execute("CREATE TABLE t ...")` (also IF NOT EXISTS, quoted names) when another
+// operation of f acts on t.
 .decl al_creates_table(f: node, t: symbol)
 al_creates_table(f, t) :- al_call(c, "create_table", "op"), al_in_step(c, f), al_table(c, t).
 al_creates_table(f, t) :- al_create_table_wrapper(c), (call_arg(c, 0, "", a) ; call_arg(c, -1, "table_name", a)),
     al_name_value(a, t), al_in_step(c, f).
+al_creates_table(f, t) :- al_exec_sql(f, y), al_call(c, _, _), al_table(c, t), al_in_step(c, f), u = @lower(t),
+    (contains(cat(cat("create table ", u), " "), y) ; contains(cat(cat("create table ", u), "("), y) ;
+    contains(cat(cat("create table if not exists ", u), " "), y) ;
+    contains(cat(cat("create table if not exists ", u), "("), y)).
+// al_exec_sql(f, y): step f runs `op.execute("...")` with the literal SQL y, lowercased, quotes dropped, whitespace
+// runs as one space, and a space at the end.
+.decl al_exec_sql(f: node, y: symbol)
+al_exec_sql(f, y) :- al_call(c, "execute", "op"), al_in_step(c, f), call_arg(c, 0, "", a), unparen(a, s),
+    kind(s, "string"), text(s, x), x1 = @replace_all(@lower(x), "[\"`']", ""), x2 = @replace_all(x1, "\\s+", " "),
+    y = cat(x2, " ").
 .decl al_create_table_wrapper(c: node)
 al_create_table_wrapper(c) :- kind(c, "call"), field(c, "function", fn), kind(fn, "identifier"), text(fn, "create_table").
 al_create_table_wrapper(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "create_table"),
     !al_call(c, "create_table", _).
+// al_empties_table(f, t): step f deletes every row of t first: `op.execute("DELETE FROM t")` without WHERE, or
+// TRUNCATE.
+.decl al_empties_table(f: node, t: symbol)
+al_empties_table(f, t) :- al_exec_sql(f, y), al_call(c, _, _), al_table(c, t), al_in_step(c, f), u = @lower(t),
+    (contains(cat(cat("delete from ", u), " "), y) ; contains(cat(cat("truncate ", u), " "), y) ;
+    contains(cat(cat("truncate table ", u), " "), y)), !contains(" where ", y).
+// al_on_existing(c, m, t, f): operation m (c) in upgrade step f acts on table t, which f neither creates nor empties:
+// a table that may hold rows in production.
 .decl al_on_existing(c: node, m: symbol, t: symbol, f: node)
 al_on_existing(c, m, t, f) :- al_call(c, m, _), al_table(c, t), al_in_step(c, f), al_step(f, "upgrade"),
-    !al_creates_table(f, t).
+    !al_creates_table(f, t), !al_empties_table(f, t).
 .decl al_kw(c: node, k: symbol, v: node)
 al_kw(c, k, v) :- call_arg(c, -1, k, v).
+// al_bool(v, b): expression v is statically b ("true", "false" or "none"): the literal, or a name bound to it at
+// module level, in the same file or in the module it is imported from (`CONCURRENT = True`).
+.decl al_bool(v: node, b: symbol)
+al_bool(v, b) :- unparen(v, u), kind(u, k), al_bool_kind(k, b).
+al_bool(v, b) :- unparen(v, u), kind(u, "identifier"), text(u, x), docof(u, d), al_top_assign(d, x, w), al_bool(w, b).
+al_bool(v, b) :- unparen(v, u), kind(u, "identifier"), sym_of(u, q), al_module_const(q, w), al_bool(w, b).
+.decl al_bool_kind(k: symbol, b: symbol)
+al_bool_kind("true", "true"). al_bool_kind("false", "false"). al_bool_kind("none", "none").
+// al_module_const(q, v): module-level name q (qualified: `pkg.mod.NAME`) is bound to v.
+.decl al_module_const(q: symbol, v: node)
+al_module_const(q, v) :- al_top_assign(d, x, v), modnode(d, m), modname(m, mq), q = @dot(mq, x).
 .decl al_true_kw(c: node, k: symbol)
-al_true_kw(c, k) :- call_arg(c, -1, k, v), unparen(v, u), kind(u, "true").
+al_true_kw(c, k) :- call_arg(c, -1, k, v), al_bool(v, "true").
+.decl al_false_kw(c: node, k: symbol)
+al_false_kw(c, k) :- call_arg(c, -1, k, v), al_bool(v, "false").
+// al_kw_on(c, k): call c passes k= something not known to be False or None (a flag that may be on).
+.decl al_kw_on(c: node, k: symbol)
+al_kw_on(c, k) :- call_arg(c, -1, k, v), !al_bool(v, "false"), !al_bool(v, "none").
+
+// ---- types -------------------------------------------------------------------------------------------------------
+// A type is read by the class it resolves to, not by its spelling: `sa.INTEGER()`, `Integer`, `from sqlalchemy
+// import Integer as Int`, a module alias `BigInt = sa.BigInteger`, a project TypeDecorator (`impl = TEXT`), a project
+// subclass of a SQLAlchemy type, and a project function that returns a type (superset's `MediumText()` returns
+// `Text().with_variant(MEDIUMTEXT(), "mysql")`) all resolve to the SQLAlchemy class whose DDL PostgreSQL runs. Only a
+// name that resolves to nothing (a class outside the run that is not SQLAlchemy's) falls back to its last name.
+// al_type_site(e): e is used as a type: alter_column's type_/existing_type, a Column's second positional argument or
+// type_, a TypeDecorator's `impl`, a type-returning function's return value, or an alias bound to one of those.
+.decl al_type_site(e: node)
+al_type_site(e) :- al_call(c, "alter_column", _), (al_kw(c, "type_", v) ; al_kw(c, "existing_type", v)), unparen(v, e).
+al_type_site(e) :- al_column_call(col), (call_arg(col, 1, "", v) ; call_arg(col, -1, "type_", v)), unparen(v, e).
+al_type_site(e) :- al_type_ref(_, g), kind(g, "class_definition"), field(g, "body", b), body_stmt(b, s, _),
+    child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "impl"), field(a, "right", v), unparen(v, e).
+al_type_site(e) :- al_type_ref(_, g), kind(g, "function_definition"), kind(r, "return_statement"), within(r, g),
+    child(r, v, _), kind(v, "call"), unparen(v, e).
+al_type_site(e) :- al_type_site(s), al_type_head(s, h), al_type_alias(h, v), unparen(v, e).
+al_type_site(o) :- al_type_site(e), al_variant_of(e, o).
+// al_variant_of(e, o): e is `o.with_variant(...)` (or another method call on a type instance o).
+.decl al_variant_of(e: node, o: node)
+al_variant_of(e, o) :- kind(e, "call"), field(e, "function", f), attr_of(f, x, m), (m = "with_variant" ;
+    m = "evaluates_none" ; m = "copy"), unparen(x, o), kind(o, "call").
+// al_type_head(e, h): the class expression of type e: the callee of `sa.String(255)`, or e itself.
+.decl al_type_head(e: node, h: node)
+al_type_head(e, h) :- al_type_site(e), kind(e, "call"), !al_variant_of(e, _), field(e, "function", h).
+al_type_head(e, e) :- al_type_site(e), (kind(e, "identifier") ; kind(e, "attribute")).
+// al_type_ref(h, g): type head h names g, a class or function of the run.
+.decl al_type_ref(h: node, g: node)
+al_type_ref(h, g) :- al_type_head(_, h), sym_of(h, q), qualname(g, q).
+// al_type_q(e, q): type e resolves to the class with qualified name q outside the run (SQLAlchemy's, a dialect's,
+// sqlmodel's).
+.decl al_type_q(e: node, q: symbol)
+al_type_q(e, q) :- al_type_head(e, h), sym_of(h, q), !al_type_ref(h, _), !al_type_alias(h, _).
+al_type_q(e, q) :- al_type_head(e, h), al_type_ref(h, g), kind(g, "class_definition"), field(g, "body", b),
+    body_stmt(b, s, _), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "impl"),
+    field(a, "right", v), unparen(v, i), al_type_q(i, q).
+al_type_q(e, q) :- al_type_head(e, h), al_type_ref(h, g), kind(g, "class_definition"), !al_has_impl(g),
+    class_base(g, q), prefix("sqlalchemy.", q), !suffix(".TypeDecorator", q).
+al_type_q(e, q) :- al_type_head(e, h), al_type_ref(h, g), kind(g, "function_definition"), kind(r, "return_statement"),
+    within(r, g), child(r, v, _), unparen(v, i), al_type_q(i, q).
+al_type_q(e, q) :- al_type_head(e, h), al_type_alias(h, v), unparen(v, i), al_type_q(i, q).
+al_type_q(e, q) :- al_variant_of(e, o), al_type_q(o, q).
+.decl al_has_impl(g: node)
+al_has_impl(g) :- kind(g, "class_definition"), field(g, "body", b), body_stmt(b, s, _), child(s, a, 0),
+    kind(a, "assignment"), field(a, "left", l), text(l, "impl").
+// al_type_alias(h, v): identifier h names a module-level binding to v, of its own file or imported from another module
+// of the run (`BigInt = sa.BigInteger`; `from app.types import Int32`).
+.decl al_type_alias(h: node, v: node)
+al_type_alias(h, v) :- al_type_head(_, h), kind(h, "identifier"), text(h, x), docof(h, d), al_top_assign(d, x, v).
+al_type_alias(h, v) :- al_type_head(_, h), kind(h, "identifier"), sym_of(h, q), al_module_const(q, v).
+// al_type_class(e, n): type e's class name, lowercased (`sqlalchemy.dialects.postgresql.UUID` -> "uuid"); for a
+// name that resolves to nothing, its last name.
+.decl al_type_class(e: node, n: symbol)
+al_type_class(e, n) :- al_type_q(e, q), n = @lower(@replace_all(q, "^.*\\.", "")).
+al_type_class(e, n) :- al_type_head(e, h), !al_type_q(e, _), !al_type_ref(h, _), !al_type_alias(h, _),
+    name(h, s), n = @lower(@replace_all(s, "^.*\\.", "")).
+// al_mysql_type(e): type e is a MySQL dialect type (`sqlalchemy.dialects.mysql.LONGTEXT`), which PostgreSQL never runs.
+.decl al_mysql_type(e: node)
+al_mysql_type(e) :- al_type_q(e, q), prefix("sqlalchemy.dialects.mysql", q).
+// al_pg_type(e, k): the PostgreSQL type k that type e renders, for the classes whose DDL is known.
+.decl al_pg_type(e: node, k: symbol)
+al_pg_type(e, k) :- al_type_class(e, n), al_pg_class(n, k), !al_mysql_type(e).
+al_pg_type(e, "timestamp") :- al_type_class(e, n), (n = "datetime" ; n = "timestamp"), !al_tz(e).
+al_pg_type(e, "timestamptz") :- al_type_class(e, n), (n = "datetime" ; n = "timestamp"), al_tz(e).
+.decl al_tz(e: node)
+al_tz(e) :- al_type_site(e), kind(e, "call"), (call_arg(e, -1, "timezone", v) ; call_arg(e, 0, "", v)), al_bool(v, "true").
+.decl al_pg_class(n: symbol, k: symbol)
+al_pg_class("string", "varchar"). al_pg_class("varchar", "varchar"). al_pg_class("unicode", "varchar").
+al_pg_class("nvarchar", "varchar"). al_pg_class("autostring", "varchar"). al_pg_class("text", "text").
+al_pg_class("unicodetext", "text"). al_pg_class("integer", "integer"). al_pg_class("int", "integer").
+al_pg_class("biginteger", "bigint"). al_pg_class("bigint", "bigint"). al_pg_class("smallinteger", "smallint").
+al_pg_class("smallint", "smallint"). al_pg_class("boolean", "boolean"). al_pg_class("bool", "boolean").
+al_pg_class("date", "date"). al_pg_class("time", "time"). al_pg_class("interval", "interval").
+al_pg_class("uuid", "uuid"). al_pg_class("json", "json"). al_pg_class("jsonb", "jsonb").
+al_pg_class("numeric", "numeric"). al_pg_class("decimal", "numeric"). al_pg_class("float", "float").
+al_pg_class("double", "float"). al_pg_class("double_precision", "float"). al_pg_class("real", "float").
+al_pg_class("largebinary", "bytea"). al_pg_class("bytea", "bytea"). al_pg_class("enum", "enum").
+al_pg_class("char", "char").
+
+// ---- what add_column emits beyond ADD COLUMN ---------------------------------------------------------------------
+// al_added_ddl(c, t, kind, f): add_column c, in upgrade step f, adds to existing table t a Column whose options make
+// Alembic emit a second statement (Alembic 1.20, offline render): kind "unique" (ADD UNIQUE), "index" (CREATE INDEX),
+// "foreign_key" (ADD FOREIGN KEY, unless `inline_references=True` renders it inside the ADD COLUMN) or "check" (ADD
+// CHECK). The constraint classes resolve through imports.
+.decl al_added_ddl(c: node, t: symbol, kind: symbol, f: node)
+al_added_ddl(c, t, "unique", f) :- al_on_existing(c, "add_column", t, f), al_added_column(c, col), al_true_kw(col, "unique").
+al_added_ddl(c, t, "index", f) :- al_on_existing(c, "add_column", t, f), al_added_column(c, col), al_true_kw(col, "index").
+al_added_ddl(c, t, k, f) :- al_column_part(c, t, k, f), k = "check".
+al_added_ddl(c, t, k, f) :- al_column_part(c, t, k, f), k = "foreign_key", !al_true_kw(c, "inline_references").
+.decl al_column_part(c: node, t: symbol, k: symbol, f: node)
+al_column_part(c, t, k, f) :- al_on_existing(c, "add_column", t, f), al_added_column(c, col), call_arg(col, _, "", a),
+    unparen(a, u), kind(u, "call"), field(u, "function", fn), sym_of(fn, q), al_column_part_q(q, k).
+// al_column_part_q(q, k): qualified name q is SQLAlchemy's (or sqlmodel's re-export of) ForeignKey or CheckConstraint.
+.decl al_column_part_q(q: symbol, k: symbol)
+al_column_part_q(q, "foreign_key") :- sym_of(_, q), (prefix("sqlalchemy.", q) ; prefix("sqlmodel.", q)),
+    suffix(".ForeignKey", q).
+al_column_part_q(q, "check") :- sym_of(_, q), (prefix("sqlalchemy.", q) ; prefix("sqlmodel.", q)),
+    suffix(".CheckConstraint", q).
+
+// al_forwarded(c, m, t, ci, f): call c, in upgrade step f, calls a function of the run (a module-level function of
+// another module through its import, such as superset's `migrations.shared.utils.create_index(table, name, cols)`,
+// or of the same file) whose body runs Alembic operation m (ci) on the table one of its parameters names; c passes
+// table t there, positionally or by keyword, and f does not create t. One call deep.
+.decl al_fwd_op(g: node, m: symbol, x: symbol, ci: node)
+al_fwd_op(g, m, x, ci) :- al_call(ci, m, "op"), al_role(ci, "table", e), unparen(e, u), kind(u, "identifier"),
+    text(u, x), nearest(ci, g, fdef), kind(g, "function_definition"), param(g, x, _), !al_step(g, _).
+.decl al_fwd_target(c: node, g: node)
+al_fwd_target(c, g) :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q), al_fwd_op(g, _, _, _), qualname(g, q).
+.decl al_forwarded(c: node, m: symbol, t: symbol, ci: node, f: node)
+al_forwarded(c, m, t, ci, f) :- al_fwd_target(c, g), al_fwd_op(g, m, x, ci), param(g, x, i),
+    k = count : { param(g, _, j), j < i }, (call_arg(c, k, "", a) ; call_arg(c, -1, x, a)), al_name_value(a, t),
+    al_in_step(c, f), al_step(f, "upgrade"), !al_creates_table(f, t).
 
 // ---- transactions ------------------------------------------------------------------------------------------------
 // al_autocommit_with(w, b): `with op.get_context().autocommit_block():` (or any `<x>.autocommit_block()`, such as a
@@ -250,39 +430,100 @@ al_autocommit_with(w, b) :- kind(w, "with_statement"), child(w, wc, _), kind(wc,
 al_in_autocommit(n) :- al_autocommit_with(_, b), within(n, b).
 
 // ---- dialects ----------------------------------------------------------------------------------------------------
-// The test of an if statement, read as lowercased text: does it name PostgreSQL (`_is_pg(conn)`, `dialect.name ==
-// "postgresql"`, `is_postgres`, `PGDialect`), another database (`"sqlite"`, `SQLiteDialect`, `_is_mysql()`), or negate?
-.decl al_pg_test(x: symbol)
-al_pg_test(x) :- al_if_test(_, x), (contains("postgres", x) ; contains("_pg", x) ; contains("is_pg", x) ;
-    contains("pgdialect", x)).
-.decl al_other_db_test(x: symbol)
-al_other_db_test(x) :- al_if_test(_, x), (contains("sqlite", x) ; contains("mysql", x) ; contains("mssql", x) ;
-    contains("oracle", x) ; contains("mariadb", x)).
-.decl al_negated_test(x: symbol)
-al_negated_test(x) :- al_if_test(_, x), (contains("!=", x) ; contains("not ", x) ; contains("not(", x)).
-.decl al_if_test(s: node, x: symbol)
-al_if_test(s, y) :- kind(s, "if_statement"), field(s, "condition", c), text(c, x), y = @lower(x).
-// al_else_part(s, e): the elif and else clauses of if statement s.
-.decl al_else_part(s: node, e: node)
-al_else_part(s, e) :- kind(s, "if_statement"), field(s, "alternative", e).
-// al_non_pg(n): n runs only on another database: the else of a PostgreSQL test, the body of a negated one, the body of
-// another database's test, the else of a negated other-database test (`if not isinstance(d, SQLiteDialect): ... else:`),
-// or code after a guard that returns unless the database is another one (`if not _is_mysql(): return`, `if _is_pg(c):
-// return`). The opposite guard (`if dialect != "postgresql": return`) leaves what follows on PostgreSQL.
+// A dialect test is read by its structure, not its spelling: a comparison of anything with a database name literal
+// (`bind.dialect.name == "postgresql"`, `dialect_name in {"mysql", "mariadb"}`, `"sqlite" in DATABASE_URI`), an
+// isinstance() test against a class SQLAlchemy's dialect packages define (resolved through imports: `SQLiteDialect`,
+// `PGDialect`, `mysql.dialect`), `not`, `and`, `or`, a call of a function of the run whose body returns a test
+// (`_is_pg(conn)`, `is_mysql()` imported from another module), and a name assigned a test in the same scope
+// (`is_mysql = bind.dialect.name == "mysql"`). A name or call that is no such test (`settings.USE_SQLITE`,
+// `_postgres_enabled()` that reads a setting) tells nothing.
+// al_db_name(s, db): string s names database db ("pg", "sqlite", "mysql", "mssql", "oracle"), lowercased prefix.
+.decl al_db_name(s: symbol, db: symbol)
+al_db_name(s, db) :- al_db_str(_, s), y = @lower(s), ((prefix("postgres", y), db = "pg") ; (prefix("sqlite", y),
+    db = "sqlite") ; (prefix("mysql", y), db = "mysql") ; (prefix("mariadb", y), db = "mysql") ; (prefix("mssql", y),
+    db = "mssql") ; (prefix("oracle", y), db = "oracle")).
+.decl al_db_str(e: node, s: symbol)
+al_db_str(e, s) :- al_cond(c), kind(c, "comparison_operator"), child(c, e, _), unparen(e, u), str(u, s).
+al_db_str(e, s) :- al_cond(c), kind(c, "comparison_operator"), child(c, l, _), unparen(l, u), (kind(u, "set") ;
+    kind(u, "tuple") ; kind(u, "list")), child(u, e, _), str(e, s).
+// al_cond(x): x is a test the dialect reading looks at: an if/elif condition, a part of one, the value a called test
+// function returns, or the value a tested name was assigned.
+.decl al_cond(x: node)
+al_cond(x) :- (kind(s, "if_statement") ; kind(s, "elif_clause")), field(s, "condition", c), unparen(c, x).
+al_cond(x) :- al_cond(c), kind(c, "not_operator"), field(c, "argument", a), unparen(a, x).
+al_cond(x) :- al_cond(c), kind(c, "boolean_operator"), (field(c, "left", a) ; field(c, "right", a)), unparen(a, x).
+al_cond(x) :- al_cond(c), al_test_fn(c, g), al_returns(g, x).
+al_cond(x) :- al_cond(c), kind(c, "identifier"), text(c, v), nearest(c, s, scope), rasg(s, v, r, _), unparen(r, x).
+// al_test_fn(c, g): call c calls g, a function of the run (same file by name, or through its import).
+.decl al_test_fn(c: node, g: node)
+al_test_fn(c, g) :- al_cond(c), kind(c, "call"), field(c, "function", fn), sym_of(fn, q), qualname(g, q),
+    kind(g, "function_definition").
+al_test_fn(c, g) :- al_cond(c), kind(c, "call"), field(c, "function", fn), kind(fn, "identifier"), text(fn, x),
+    docof(c, d), kind(g, "function_definition"), def_name(g, x), nearest(g, m, scope), kind(m, "module"), docof(g, d).
+// al_returns(g, x): g's body is one `return x` (after any docstring).
+.decl al_returns(g: node, x: node)
+al_returns(g, x) :- kind(g, "function_definition"), field(g, "body", b), body_stmt(b, r, _), kind(r, "return_statement"),
+    !al_other_stmt(b), child(r, v, _), unparen(v, x).
+.decl al_other_stmt(b: node)
+al_other_stmt(b) :- body_stmt(b, s, _), !kind(s, "return_statement"), !doc_stmt(s, _).
+// al_db_if(x, when, db, pol): when x is `when` ("true" or "false"), the database is db (pol "is") or is not (pol "not").
+.decl al_db_if(x: node, when: symbol, db: symbol, pol: symbol)
+al_db_if(x, "true", db, "is") :- al_cond(x), cmp(x, "==", l, r), (al_db_str(l, s) ; al_db_str(r, s)), al_db_name(s, db).
+al_db_if(x, "false", db, "not") :- al_cond(x), cmp(x, "==", l, r), (al_db_str(l, s) ; al_db_str(r, s)), al_db_name(s, db).
+al_db_if(x, "true", db, "not") :- al_cond(x), cmp(x, "!=", l, r), (al_db_str(l, s) ; al_db_str(r, s)), al_db_name(s, db).
+al_db_if(x, "false", db, "is") :- al_cond(x), cmp(x, "!=", l, r), (al_db_str(l, s) ; al_db_str(r, s)), al_db_name(s, db).
+al_db_if(x, "true", db, "is") :- al_cond(x), cmp(x, "in", l, _), al_db_str(l, s), al_db_name(s, db).
+al_db_if(x, "true", db, "is") :- al_cond(x), cmp(x, "in", _, r), unparen(r, u), al_db_set(u, db).
+al_db_if(x, "false", db, "not") :- al_cond(x), cmp(x, "in", _, r), unparen(r, u), al_db_set(u, db).
+al_db_if(x, "true", db, "not") :- al_cond(x), cmp(x, "not in", _, r), unparen(r, u), al_db_set(u, db).
+al_db_if(x, "true", db, "is") :- al_cond(x), al_isinstance_db(x, db).
+al_db_if(x, "false", db, "not") :- al_cond(x), al_isinstance_db(x, db).
+al_db_if(x, "true", db, p) :- kind(x, "not_operator"), field(x, "argument", a), unparen(a, y), al_db_if(y, "false", db, p).
+al_db_if(x, "false", db, p) :- kind(x, "not_operator"), field(x, "argument", a), unparen(a, y), al_db_if(y, "true", db, p).
+al_db_if(x, "true", db, p) :- kind(x, "boolean_operator"), op(x, "and"), (field(x, "left", a) ; field(x, "right", a)),
+    unparen(a, y), al_db_if(y, "true", db, p).
+al_db_if(x, "false", db, p) :- kind(x, "boolean_operator"), op(x, "or"), (field(x, "left", a) ; field(x, "right", a)),
+    unparen(a, y), al_db_if(y, "false", db, p).
+al_db_if(x, w, db, p) :- al_test_fn(x, g), al_returns(g, y), al_db_if(y, w, db, p).
+al_db_if(x, w, db, p) :- al_cond(x), kind(x, "identifier"), text(x, v), nearest(x, s, scope), rasg(s, v, r, _),
+    unparen(r, y), al_db_if(y, w, db, p).
+// al_db_set(u, db): a set, tuple or list literal whose every element names db (a group of other databases counts as
+// "other": `{"mysql", "mariadb"}` is mysql, `("sqlite", "mysql")` is other).
+.decl al_db_set(u: node, db: symbol)
+al_db_set(u, db) :- al_db_set_one(u, db).
+al_db_set(u, "other") :- al_db_str(e, _), child(u, e, _), n = count : { child(u, _, _) },
+    n = count : { child(u, f, _), al_db_str(f, t), al_db_name(t, b), b != "pg" }, !al_db_set_one(u, _).
+.decl al_db_set_one(u: node, db: symbol)
+al_db_set_one(u, db) :- al_db_str(e, s), child(u, e, _), al_db_name(s, db), n = count : { child(u, _, _) },
+    n = count : { child(u, f, _), al_db_str(f, t), al_db_name(t, db) }.
+// al_isinstance_db(x, db): `isinstance(_, K)` with K a class of SQLAlchemy's dialect package for db.
+.decl al_isinstance_db(x: node, db: symbol)
+al_isinstance_db(x, db) :- al_cond(x), kind(x, "call"), field(x, "function", fn), text(fn, "isinstance"),
+    call_arg(x, 1, "", k), sym_of(k, q), al_dialect_pkg(p, db), prefix(cat(cat("sqlalchemy.dialects.", p), "."), q).
+.decl al_dialect_pkg(p: symbol, db: symbol)
+al_dialect_pkg("postgresql", "pg"). al_dialect_pkg("sqlite", "sqlite"). al_dialect_pkg("mysql", "mysql").
+al_dialect_pkg("mssql", "mssql"). al_dialect_pkg("oracle", "oracle").
+// al_non_pg_when(x, w): when x is w, the database is not PostgreSQL.
+.decl al_non_pg_when(x: node, w: symbol)
+al_non_pg_when(x, w) :- al_db_if(x, w, "pg", "not").
+al_non_pg_when(x, w) :- al_db_if(x, w, db, "is"), db != "pg".
+// al_non_pg(n): n runs only on another database: the body of an if/elif whose test, when true, rules PostgreSQL out;
+// the elif/else part of an if whose test, when false, rules it out (`if _is_pg(conn): ... else:`, `if not
+// isinstance(d, SQLiteDialect): ... else:`); or code after a guard `if <test>: return` whose test, when false, rules it
+// out (`if not _is_mysql(): return`, `if _is_pg(c): return`). `if dialect != "postgresql": return` leaves what follows
+// on PostgreSQL.
 .decl al_non_pg(n: node)
-al_non_pg(n) :- al_if_test(s, x), al_pg_test(x), !al_negated_test(x), al_else_part(s, e), within(n, e).
-al_non_pg(n) :- al_if_test(s, x), al_pg_test(x), al_negated_test(x), field(s, "consequence", b), within(n, b).
-al_non_pg(n) :- al_if_test(s, x), al_other_db_test(x), !al_pg_test(x), !al_negated_test(x), field(s, "consequence", b),
-    within(n, b).
-al_non_pg(n) :- al_if_test(s, x), al_other_db_test(x), !al_pg_test(x), al_negated_test(x), al_else_part(s, e),
-    within(n, e).
+al_non_pg(n) :- (kind(s, "if_statement") ; kind(s, "elif_clause")), field(s, "condition", c), unparen(c, x),
+    al_non_pg_when(x, "true"), field(s, "consequence", b), within(n, b).
+al_non_pg(n) :- kind(s, "if_statement"), field(s, "condition", c), unparen(c, x), al_non_pg_when(x, "false"),
+    field(s, "alternative", e), within(n, e).
 al_non_pg(n) :- kind(g, "function_definition"), field(g, "body", fb), body_stmt(fb, s, i), al_non_pg_guard(s),
     body_stmt(fb, s2, j), j > i, within(n, s2).
 al_non_pg(n) :- kind(g, "function_definition"), field(g, "body", fb), body_stmt(fb, s, i), al_non_pg_guard(s),
     body_stmt(fb, n, j), j > i.
 .decl al_non_pg_guard(s: node)
-al_non_pg_guard(s) :- al_if_test(s, x), al_other_db_test(x), !al_pg_test(x), al_negated_test(x), al_return_only(s).
-al_non_pg_guard(s) :- al_if_test(s, x), al_pg_test(x), !al_negated_test(x), al_return_only(s).
+al_non_pg_guard(s) :- kind(s, "if_statement"), field(s, "condition", c), unparen(c, x), al_non_pg_when(x, "false"),
+    al_return_only(s).
 .decl al_return_only(s: node)
 al_return_only(s) :- !field(s, "alternative", _), field(s, "consequence", b), body_len(b, 1), body_stmt(b, r, 0),
     kind(r, "return_statement").
@@ -295,8 +536,12 @@ al_column_q("sqlmodel.Column").
 al_column_call(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), al_column_q(q).
 .decl al_column_name(c: node, x: symbol)
 al_column_name(c, x) :- al_column_call(c), call_arg(c, 0, "", a), al_name_value(a, x).
+// al_added_column(c, col): add_column c adds Column col: inline, or bound to a name in the same scope first
+// (`col = sa.Column(...); op.add_column("users", col)`).
 .decl al_added_column(c: node, col: node)
 al_added_column(c, col) :- al_call(c, "add_column", _), al_role(c, "column", e), unparen(e, col), al_column_call(col).
+al_added_column(c, col) :- al_call(c, "add_column", _), al_role(c, "column", e), unparen(e, u), kind(u, "identifier"),
+    text(u, x), nearest(u, s, scope), rasg(s, x, r, _), unparen(r, col), al_column_call(col).
 
 // ---- models ------------------------------------------------------------------------------------------------------
 // al_class_stmt(k, a): statement a of class k's body is `x = v`, `x: T = v` or a bare `x: T`.
@@ -340,9 +585,6 @@ al_sqlmodel_field_class(b) :- al_sqlmodel_table(k), al_model_super(k, b).
 .decl al_sqlmodel_relationship(a: node)
 al_sqlmodel_relationship(a) :- field(a, "right", v), unparen(v, c), kind(c, "call"), field(c, "function", f),
     sym_of(f, "sqlmodel.Relationship").
-.decl al_model_column(k: node, t: symbol, x: symbol)
-al_model_column(k, t, x) :- al_model(k, t), al_class_column(k, x, _).
-al_model_column(k, t, x) :- al_model(k, t), al_model_super(k, b), al_class_column(b, x, _).
 // al_mapped_class(k): a mapped class: one that names its table, or a subclass of one (single-table inheritance).
 .decl al_mapped_q(q: symbol)
 al_mapped_q(q) :- al_model(k, _), class_def(k, q).
@@ -354,5 +596,3 @@ al_mapped_class(k) :- class_def(k, q), al_mapped_q(q).
 .decl al_env_configure(c: node)
 al_env_configure(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "alembic.context.configure"), docof(c, d),
     al_env_doc(d).
-.decl al_sets_lock_timeout(d: number)
-al_sets_lock_timeout(d) :- kind(s, "string"), text(s, x), contains("lock_timeout", x), docof(s, d).

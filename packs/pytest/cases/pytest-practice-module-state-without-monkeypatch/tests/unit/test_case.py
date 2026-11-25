@@ -2,6 +2,7 @@ from unittest import TestCase, mock
 
 from shop import registry
 from shop.registry import Locks
+from tests.unit.base import TimeoutCase
 
 
 class Restored(TestCase):
@@ -65,3 +66,23 @@ class PatchedInSetUp(TestCase):
 
     def test_x(self):
         registry.TIMEOUT = 4
+
+
+# The base class's tearDown restores the attribute.
+class ChildOfBase(TimeoutCase):
+    def test_timeout(self):
+        registry.TIMEOUT = 1
+
+    def test_other_target(self):
+        registry.DEFAULT_FLOW = ("x",)  # caught
+
+
+# A bound method registered as the cleanup.
+class BoundMethodCleanup(TestCase):
+    def setUp(self):
+        self.old = Locks.timeframe
+        Locks.timeframe = "1s"
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        Locks.timeframe = self.old

@@ -70,3 +70,18 @@ def get_billing() -> Billing:
     if _billing is None:
         _billing = Billing("secret")
     return _billing
+
+
+class Svc:
+    def __init__(self) -> None:
+        self.client = httpx.AsyncClient()
+
+
+@functools.lru_cache
+def get_svc() -> Svc:
+    return Svc()
+
+
+@functools.lru_cache
+def get_shared_http() -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=5)

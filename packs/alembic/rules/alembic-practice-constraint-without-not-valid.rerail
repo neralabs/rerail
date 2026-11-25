@@ -1,5 +1,5 @@
 .policy "alembic-practice-constraint-without-not-valid" revision 1
-.description "Add foreign keys and check constraints to existing tables NOT VALID in Alembic migrations, and validate them in a later revision; a plain add blocks writes while it checks every row."
+.description "Add foreign keys and check constraints to existing tables as NOT VALID in Alembic migrations, and validate them once that has committed; a plain add blocks writes while it checks every row."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -8,9 +8,11 @@
 // committed"; ADD FOREIGN KEY also takes SHARE ROW EXCLUSIVE on the referenced table (PostgreSQL, ALTER TABLE). With
 // NOT VALID the add skips the scan and commits at once; a later VALIDATE CONSTRAINT scans under SHARE UPDATE EXCLUSIVE,
 // which lets writes through. SQLAlchemy passes `postgresql_not_valid=True` through Alembic's create_foreign_key and
-// create_check_constraint. Squawk (adding-foreign-key-constraint, constraint-missing-not-valid) and strong_migrations
-// flag the same thing in SQL and Rails; this rule reads Alembic's Python, knows which tables the same revision
-// creates, and follows batch_alter_table.
+// create_check_constraint. `op.add_column` with a Column that carries `sa.ForeignKey(...)` or `sa.CheckConstraint(...)`
+// makes Alembic emit a second, validated ALTER TABLE ... ADD (Alembic 1.20, offline render); `inline_references=True`
+// renders the reference inside the ADD COLUMN, which PostgreSQL marks valid at once for a nullable column (Alembic's
+// add_column docs). Squawk (adding-foreign-key-constraint, constraint-missing-not-valid) and strong_migrations flag the
+// same thing in SQL and Rails; this rule reads Alembic's Python in the edit window, with no offline render.
 //
 // Reported, in a revision's `upgrade()` (or a module-level helper it calls), on a source table that `upgrade()` does
 // not create:
@@ -23,31 +25,43 @@
 //       batch_op.create_foreign_key("fk", "invoices", ["invoice_id"], ["id"])                reported
 //       batch_op.create_check_constraint("ck", "invoice_id > 0")                             reported
 //   op.create_foreign_key("fk_users_invoice", "users", "invoices", ...)  users exists, invoices is new: reported
+//   op.add_column("orders", sa.Column("user_id", sa.Integer(), nullable=True))
+//   op.create_foreign_key("fk", "orders", "users", ["user_id"], ["id"])   reported, naming inline_references=True
+//   op.add_column("orders", sa.Column("user_id", sa.Integer(), sa.ForeignKey("users.id")))   reported
+//   op.add_column("orders", sa.Column("n", sa.Integer(), sa.CheckConstraint("n > 0")))       reported
 // Left alone:
 //   op.create_table("invoices", ...); op.create_foreign_key("fk", "invoices", "users", ...)  a source table this
 //                                                                     upgrade() creates (also in a dialect branch, or
 //                                                                     through a project's own create_table wrapper)
 //   op.create_foreign_key(..., postgresql_not_valid=True)            the safe form
-//   postgresql_not_valid=<any expression but False>                  not known to be off
+//   postgresql_not_valid=<any expression but False>, or a `**kwargs` splat   not known to be off
+//   op.add_column(..., sa.Column(..., sa.ForeignKey(...)), inline_references=True)   valid at once when nullable
 //   sa.ForeignKey(...), sa.CheckConstraint(...) inside op.create_table(...)   part of CREATE TABLE, no operation
+//   op.execute("CREATE TABLE audit ..."); op.create_foreign_key("fk", "audit", ...)   a table this upgrade() creates
 //   else: op.create_foreign_key(...)  after `if dialect.name == "postgresql":`, `if ... == "sqlite":`, code after
 //                                     `if not _is_mysql(): return`    another database's branch (lib/alembic al_non_pg)
 //   downgrade(), revisions under tests/, files without `revision`/`down_revision`, an `op` that is not alembic.op.
 // Gaps: downgrade() (a rollback re-adds constraints on the rare path); a table name the rule cannot resolve (a function
-// parameter, an f-string); a table created by an earlier revision of the same release, or by `op.execute("CREATE
-// TABLE ...")`, counts as existing; constraints added through op.execute("ALTER TABLE ... ADD CONSTRAINT ...") or a
-// helper in another module are not read; a table known to stay small cannot be told apart, so the message says when to
-// leave it.
-// Corpus (8 Alembic repositories): 221 matches, all on tables an earlier revision created; see the README's rule details.
+// parameter, an f-string); a table created by an earlier revision of the same release (dify's knowledge_fs_* tables),
+// or emptied first, counts as existing; constraints added through op.execute("ALTER TABLE ... ADD CONSTRAINT ...") or a
+// helper in another module are not read; `inline_references=True` on a NOT NULL column or one with a default is left
+// alone; a table known to stay small, or a project that migrates with the app stopped (jupyterhub, mealie), cannot be
+// told apart, so the message says when to leave it.
+// Corpus (8 Alembic repositories): see the README's rule details.
 
 #include "lib/alembic.rerail"
 
-.violation ForeignKeyValidated(at: node, table: symbol, name: symbol) "ADD FOREIGN KEY on existing `{table}` checks every row while writes to it are locked out until the migration commits; the referenced table is locked too. Pass `postgresql_not_valid=True`, then validate once that has committed, on PostgreSQL only: `op.execute(\"ALTER TABLE {table} VALIDATE CONSTRAINT {name}\")` inside `with op.get_context().autocommit_block():` (it commits the steps before it) or in a revision deployed later; validation lets writes through. Fine for a table that stays small."
-.violation CheckValidated(at: node, table: symbol, name: symbol) "ADD CHECK on existing `{table}` checks every row while writes to it are locked out until the migration commits. Pass `postgresql_not_valid=True`, then validate once that has committed, on PostgreSQL only: `op.execute(\"ALTER TABLE {table} VALIDATE CONSTRAINT {name}\")` inside `with op.get_context().autocommit_block():` (it commits the steps before it) or in a revision deployed later; validation lets writes through. Fine for a table that stays small."
+.violation ForeignKeyValidated(at: node, table: symbol, name: symbol) "ADD FOREIGN KEY on `{table}` checks every row while its writes and the referenced table's wait. Pass `postgresql_not_valid=True`, then VALIDATE `{name}` after a commit. Fine for a small table."
+.violation CheckValidated(at: node, table: symbol, name: symbol) "ADD CHECK on `{table}` checks every row while its writes wait. Pass `postgresql_not_valid=True`, then VALIDATE `{name}` after a commit (autocommit block or later revision). Fine for a small table."
+.violation NewColumnForeignKey(at: node, table: symbol, col: symbol) "FOREIGN KEY on `{col}`, which this upgrade adds to `{table}`, validates under a write lock. Put the ForeignKey on the added column with `inline_references=True`, or add it NOT VALID. Fine if small."
+.violation ColumnForeignKey(at: node, table: symbol) "This column's ForeignKey adds a validated FOREIGN KEY to `{table}` under a write lock. Pass `inline_references=True` (nullable column, no default) or add it NOT VALID. Fine for a small table."
+.violation ColumnCheck(at: node, table: symbol) "This column's CheckConstraint adds a validated CHECK to `{table}` under a write lock. Add it with `op.create_check_constraint(..., postgresql_not_valid=True)` instead. Fine for a small table."
 
-// cwn_not_valid(c): operation c passes postgresql_not_valid= something other than a literal False.
+// cwn_not_valid(c): operation c passes postgresql_not_valid= something not known to be False (by value, lib/alembic's
+// al_kw_on), or a `**kwargs` splat that may carry it.
 .decl cwn_not_valid(c: node)
-cwn_not_valid(c) :- al_kw(c, "postgresql_not_valid", v), unparen(v, u), !kind(u, "false").
+cwn_not_valid(c) :- al_kw_on(c, "postgresql_not_valid").
+cwn_not_valid(c) :- al_call(c, _, _), field(c, "arguments", al), child(al, s, _), kind(s, "dictionary_splat").
 // cwn_name(c, s): the constraint's name as the message shows it: the literal (or op.f / constant) when the rule can
 // read it, else a placeholder (None under a naming convention, an f-string).
 .decl cwn_known_name(c: node, s: symbol)
@@ -57,14 +71,37 @@ cwn_named(c) :- cwn_known_name(c, _).
 .decl cwn_name(c: node, s: symbol)
 cwn_name(c, s) :- cwn_known_name(c, s).
 cwn_name(c, "<constraint name>") :- al_call(c, _, _), !cwn_named(c).
-// cwn_validating(c, m, t): operation m (c) adds a validated constraint to existing table t, in a migration that is not
-// test code and outside a branch for another database.
-.decl cwn_validating(c: node, m: symbol, t: symbol)
-cwn_validating(c, m, t) :- al_on_existing(c, m, t, _), (m = "create_foreign_key" ; m = "create_check_constraint"),
-    !cwn_not_valid(c), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
+// cwn_live(c): c sits in a migration that is not test code, outside a branch for another database.
+.decl cwn_live(c: node)
+cwn_live(c) :- al_call(c, _, _), !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
+// cwn_validating(c, m, t, f): operation m (c) in upgrade step f adds a validated constraint to existing table t.
+.decl cwn_validating(c: node, m: symbol, t: symbol, f: node)
+cwn_validating(c, m, t, f) :- al_on_existing(c, m, t, f), (m = "create_foreign_key" ; m = "create_check_constraint"),
+    !cwn_not_valid(c), cwn_live(c).
+// cwn_local_col(c, x): foreign key c's local columns name x (`local_cols`, positional after the referent).
+.decl cwn_local_col(c: node, x: symbol)
+cwn_local_col(c, x) :- al_call(c, "create_foreign_key", fm), ((fm = "op", call_arg(c, 3, "", l)) ;
+    (fm = "batch", call_arg(c, 2, "", l)) ; call_arg(c, -1, "local_cols", l)), unparen(l, u), child(u, e, _),
+    al_name_value(e, x).
+// cwn_adds(f, t, x): upgrade step f adds column x to table t.
+.decl cwn_adds(f: node, t: symbol, x: symbol)
+cwn_adds(f, t, x) :- al_on_existing(c, "add_column", t, f), al_added_column(c, col), al_column_name(col, x).
+// cwn_column_part(c, t, k): add_column c on existing table t makes Alembic add a validated constraint of kind k
+// ("foreign_key" or "check") after the ADD COLUMN (lib/alembic's al_added_ddl, which resolves the classes through
+// imports and leaves `inline_references=True` alone).
+.decl cwn_column_part(c: node, t: symbol, k: symbol)
+cwn_column_part(c, t, k) :- al_added_ddl(c, t, k, _), (k = "foreign_key" ; k = "check"), cwn_live(c).
+// cwn_new_col_fk(c, t, x): foreign key c is on column x, which the same upgrade adds to t.
+.decl cwn_new_col_fk(c: node, t: symbol, x: symbol)
+cwn_new_col_fk(c, t, x) :- cwn_validating(c, "create_foreign_key", t, f), cwn_local_col(c, x), cwn_adds(f, t, x).
+.decl cwn_on_new_col(c: node)
+cwn_on_new_col(c) :- cwn_new_col_fk(c, _, _).
 
-ForeignKeyValidated(c, t, n) :- cwn_validating(c, "create_foreign_key", t), cwn_name(c, n).
-CheckValidated(c, t, n) :- cwn_validating(c, "create_check_constraint", t), cwn_name(c, n).
+ForeignKeyValidated(c, t, n) :- cwn_validating(c, "create_foreign_key", t, _), !cwn_on_new_col(c), cwn_name(c, n).
+CheckValidated(c, t, n) :- cwn_validating(c, "create_check_constraint", t, _), cwn_name(c, n).
+NewColumnForeignKey(c, t, x) :- cwn_new_col_fk(c, t, x).
+ColumnForeignKey(c, t) :- cwn_column_part(c, t, "foreign_key").
+ColumnCheck(c, t) :- cwn_column_part(c, t, "check").
 
 // The cases, `cases/alembic-practice-constraint-without-not-valid/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.
@@ -75,8 +112,10 @@ CheckValidated(c, t, n) :- cwn_validating(c, "create_check_constraint", t), cwn_
     .fixture "migrations/versions/c2_batch_and_new_tables.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c2_batch_and_new_tables.py"
     .fixture "migrations/versions/c3_validate_and_wrapper.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c3_validate_and_wrapper.py"
     .fixture "migrations/versions/c4_other_op.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c4_other_op.py"
+    .fixture "migrations/versions/c5_column_constraints.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c5_column_constraints.py"
+    .fixture "migrations/versions/c6_class_variants.py" from "../cases/alembic-practice-constraint-without-not-valid/migrations/versions/c6_class_variants.py"
     .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-constraint-without-not-valid/tests/migrations/versions/t1_fixture.py"
-    .expect _ at "migrations/versions/c1_orders_constraints.py":14
+    .expect NewColumnForeignKey at "migrations/versions/c1_orders_constraints.py":14
     .expect _ at "migrations/versions/c1_orders_constraints.py":15
     .expect _ at "migrations/versions/c1_orders_constraints.py":23
     .expect _ at "migrations/versions/c1_orders_constraints.py":24
@@ -88,4 +127,13 @@ CheckValidated(c, t, n) :- cwn_validating(c, "create_check_constraint", t), cwn_
     .expect _ at "migrations/versions/c2_batch_and_new_tables.py":44
     .expect _ at "migrations/versions/c2_batch_and_new_tables.py":53
     .expect _ at "migrations/versions/c3_validate_and_wrapper.py":40
+    .expect ColumnForeignKey at "migrations/versions/c5_column_constraints.py":14
+    .expect ColumnCheck at "migrations/versions/c5_column_constraints.py":15
+    .expect ColumnForeignKey at "migrations/versions/c5_column_constraints.py":17
+    .expect NewColumnForeignKey at "migrations/versions/c5_column_constraints.py":20
+    .expect ForeignKeyValidated at "migrations/versions/c5_column_constraints.py":21
+    .expect CheckValidated at "migrations/versions/c5_column_constraints.py":33
+    .expect ColumnForeignKey at "migrations/versions/c6_class_variants.py":17
+    .expect ColumnCheck at "migrations/versions/c6_class_variants.py":18
+    .expect ForeignKeyValidated at "migrations/versions/c6_class_variants.py":19
 .end

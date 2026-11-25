@@ -1,25 +1,38 @@
 .policy "drf-practice-declared-field-meta-ignored" revision 1
-.description "Put read-only and write-only options on a DRF serializer's explicitly declared field, not in its Meta; Meta options don't apply to declared fields."
+.description "Put options on a DRF serializer's declared field itself, not in Meta's read_only_fields or extra_kwargs, which DRF ignores for declared fields."
 .language python
 .mode steer
 .scope include "**/*.py"
 // Rerail's own rule, not a port. ModelSerializer applies Meta.read_only_fields and Meta.extra_kwargs only to the
 // fields it builds from the model; a field the serializer declares (`username = serializers.CharField()`), itself or
 // through a base serializer of the run in any module, ignores both, silently (DRF Serializers guide, two notes; DRF
-// issues #3533, closed as intended, and #3460). A field listed read-only stays writable, so any client can set it
-// (OWASP API3, mass assignment); `extra_kwargs = {"password": {"write_only": True}}` on a declared password leaves it
-// in every response.
-// It matches a ModelSerializer (or HyperlinkedModelSerializer) outside test code with a field x declared as a field
-// call (a rest_framework field or a subclass, a nested serializer of the run, a `…Field`/`…Serializer` of another
-// package), its own or the nearest run base serializer's that no class in between reassigns (`x = None` removes it),
-// and whose Meta, its own or inherited (`class Meta(Base.Meta)`, or no Meta of its own), names x:
-//   - in read_only_fields (a list, a tuple, `+`, `*splat`, `Other.Meta.read_only_fields`), unless the declared field
-//     is read-only anyway: `read_only=True`, or a SerializerMethodField, ReadOnlyField, HiddenField,
-//     HyperlinkedIdentityField, StringRelatedField or a subclass of one;
-//   - as a key of extra_kwargs (a dict literal or `dict(...)`), unless every option of the entry is one the declared
-//     call already passes with the same text (or `read_only: True` on a field read-only anyway, or `required: False`
-//     on one with a `default=` or read-only: neither is required anyway), or the entry is empty. A field both lists
-//     is reported for read_only_fields only.
+// issues #3533, closed as intended, and #3460). A plain Serializer builds no field from a model and ignores its whole
+// Meta. A field listed read-only stays writable, so any client can set it (OWASP API3, mass assignment);
+// `extra_kwargs = {"password": {"write_only": True}}` on a declared password leaves it in every response.
+// It matches a serializer outside test code (a ModelSerializer, a HyperlinkedModelSerializer, or a plain Serializer)
+// with a field x declared as a field call (a rest_framework field or a subclass, a nested serializer of the run, a
+// `…Field`/`…Serializer` of another package), its own or the nearest run base serializer's that no class in between
+// reassigns (`x = None` removes it), and whose Meta, its own or inherited (`class Meta(Base.Meta)`, or no Meta of its
+// own), names x:
+//   - in read_only_fields (a list, a tuple, `+`, `*splat`, a module-level constant such as `READONLY`,
+//     `Other.Meta.read_only_fields`), unless the declared field is read-only anyway: `read_only=True`, written out or
+//     through `**RO` with a module-level `RO = {"read_only": True}`, or a SerializerMethodField, ReadOnlyField,
+//     HiddenField, HyperlinkedIdentityField, StringRelatedField or a subclass of one;
+//   - as a key of extra_kwargs (a dict literal, `dict(...)` or a module-level constant), unless every option of the
+//     entry is one the declared call already passes with the same text (or `read_only: True` on a field read-only
+//     anyway, or `required: False` on one with a `default=` or read-only: neither is required anyway), or the entry is
+//     empty. A field both lists is reported for read_only_fields only.
+// A read_only_fields match gets one of three messages. "Written on purpose" (drop the entry, don't set read_only=True)
+// when there is evidence the field is meant to be written: the serializer, a run base whose Meta lists x at the same
+// entry, or a run subclass that inherits both the entry and the declaration has a `validate_<x>` method, or reads x
+// in its `create`, `update`, `validate`, `save` or `to_internal_value` from an input parameter (`validated_data`,
+// `attrs`, `data`, any name but `self` and a `**` one) or `self.validated_data`/`self.initial_data`, by subscript,
+// `.get` or `.pop` (a store such as `validated_data["x"] = request.user` is no read); or the field's class is a field
+// class of the run with its own or an inherited `to_internal_value` (a parser; a nested serializer is no evidence,
+// since a project base serializer overriding to_internal_value, as Tandoor's does, parses every serializer's input).
+// Otherwise "set read_only=True if clients must not write it, else drop the entry", worded for a plain Serializer
+// when the serializer is one. A subclass that only extends the Meta (`Meta(Base.Meta)`) is no evidence of writes:
+// that is also the shape of a forgeable field.
 // Once per serializer and field, at the place the fix starts from: the name in the Meta option when that name is
 // written in the serializer's own body (its own Meta); else at the field's declaration when the serializer declares
 // it; else (both inherited) at the class name, and only when no base serializer already has the same pair of name
@@ -38,18 +51,30 @@
 //           fields = ["username", "password"]
 //           extra_kwargs = {"username": {"required": True}}  not reported: username is not declared
 // Also left alone: a serializer whose own or a run base's `__init__` or `get_fields` reads the option by name
-// (a mixin applying read_only_fields to the declared fields itself, as addons-server's version serializer does);
-// for read_only_fields, a serializer that refuses all input (its own or a run base's `validate`,
-// `to_internal_value` or `run_validation` raises unconditionally); plain Serializers; test code.
+// (a mixin applying read_only_fields to the declared fields itself, as addons-server's version serializer does), or,
+// for read_only_fields, sets the field read-only itself (`self.fields["x"].read_only = True`, or that assignment in a
+// loop over a literal list of names): the entry is dead but harmless; for read_only_fields, a serializer that
+// refuses all input (its own or a run base's `validate`, `to_internal_value` or `run_validation` raises
+// unconditionally); test code.
 // Gaps: a field declared by two bases in a diamond takes the nearest along each path, not DRF's MRO; a project field
 // class whose own __init__ forces read_only is reported; extra_kwargs built by a call other than dict(), a `**`
-// splat or a comprehension is not read; a base serializer whose name the run resolves only under another import root
-// (label-studio's `from core... import`) is not followed.
+// splat or a comprehension is not read; writes made outside the serializer (a view's perform_update reading
+// `serializer.validated_data["x"]`) or through a helper the method calls are not seen, so such a field gets the
+// read_only=True message, which also offers dropping the entry; an `__init__` loop over a constant or a Meta option
+// other than by name is not read.
 
 #include "lib/drf.rerail"
 
-.violation DeclaredReadOnlyIgnored(at: node, ser: symbol, x: symbol) "`{ser}` declares `{x}`, so DRF ignores read_only_fields for it and clients can write it. Set read_only=True on the declared field, or drop `{x}` from read_only_fields if writes are intended."
-DeclaredReadOnlyIgnored(at, s, x) :- dfm_at(c, x, "read_only_fields", at), def_name(c, s).
+.violation DeclaredReadOnlyIgnored(at: node, ser: symbol, x: symbol) "`{ser}` declares `{x}`, so DRF ignores read_only_fields for it and clients can write it. If clients must not write it, set read_only=True on the declared field; else drop the entry."
+DeclaredReadOnlyIgnored(at, s, x) :- dfm_at(c, x, "read_only_fields", at), drf_model_serializer(c), !dfm_written(c, x),
+    def_name(c, s).
+
+.violation PlainSerializerReadOnlyIgnored(at: node, ser: symbol, x: symbol) "`{ser}` is a plain Serializer, which ignores Meta, so clients can write `{x}`. If clients must not write it, set read_only=True on the declared field; else drop the entry."
+PlainSerializerReadOnlyIgnored(at, s, x) :- dfm_at(c, x, "read_only_fields", at), !drf_model_serializer(c),
+    !dfm_written(c, x), def_name(c, s).
+
+.violation DeclaredReadOnlyWritten(at: node, x: symbol) "`{x}` is written on purpose here; drop it from read_only_fields, which DRF ignores for declared fields. Setting read_only=True instead would break that write."
+DeclaredReadOnlyWritten(at, x) :- dfm_at(c, x, "read_only_fields", at), dfm_written(c, x).
 
 .violation DeclaredExtraKwargsIgnored(at: node, ser: symbol, x: symbol) "`{ser}` declares `{x}`, so DRF ignores its extra_kwargs entry. Pass these arguments to the declared field and drop the entry; if the field already behaves as intended, only drop the entry."
 DeclaredExtraKwargsIgnored(at, s, x) :- dfm_at(c, x, "extra_kwargs", at), def_name(c, s).
@@ -72,9 +97,12 @@ dfm_fieldish(k) :- drf_declared_own(_, _, k), drf_field_lib(k, _).
 dfm_fieldish(k) :- drf_declared_own(_, _, k), drf_nested(k, _).
 dfm_fieldish(k) :- drf_declared_own(_, _, k), call_name(k, t), (suffix("Field", t) ; suffix("Serializer", t)),
     !dfm_run_callee(k).
+// dfm_callee(k, fc): the declared call k constructs class fc of the run.
+.decl dfm_callee(k: node, fc: node)
+dfm_callee(k, fc) :- drf_declared_own(_, _, k), field(k, "function", fn), sym_of(fn, q), drf_cls(q, fc).
 .decl dfm_run_callee(k: node)
-dfm_run_callee(k) :- drf_declared_own(_, _, k), field(k, "function", fn), sym_of(fn, q), class_def(_, q).
-// dfm_ro(k): the declared field is read-only whatever Meta says.
+dfm_run_callee(k) :- dfm_callee(k, _).
+// dfm_ro(k): the declared field is read-only whatever Meta says (drf_kw reads `**RO` too).
 .decl dfm_ro_kind(t: symbol)
 dfm_ro_kind("SerializerMethodField"). dfm_ro_kind("ReadOnlyField"). dfm_ro_kind("HiddenField").
 dfm_ro_kind("HyperlinkedIdentityField"). dfm_ro_kind("StringRelatedField").
@@ -86,82 +114,78 @@ dfm_ro(k) :- drf_declared_own(_, _, k), drf_field_kind(k, t), dfm_ro_kind(t).
 // names option o (`self.Meta.read_only_fields`, `getattr(self.Meta, "read_only_fields", ())`): it applies the option
 // itself.
 .decl dfm_applied(c: node, o: symbol)
-dfm_applied(c, o) :- drf_model_serializer(c), dfm_reads_opt(c, o).
-dfm_applied(c, o) :- drf_model_serializer(c), drf_ancestor(c, b), dfm_reads_opt(b, o).
+dfm_applied(c, o) :- drf_serializer(c), dfm_reads_opt(c, o).
+dfm_applied(c, o) :- drf_serializer(c), drf_ancestor(c, b), dfm_reads_opt(b, o).
 .decl dfm_reads_opt(b: node, o: symbol)
 dfm_reads_opt(b, o) :- (m = "__init__" ; m = "get_fields"), drf_own_method(b, m, f), within(n, f),
     (attr_of(n, _, o) ; str(n, o)), (o = "read_only_fields" ; o = "extra_kwargs").
 // A serializer that refuses all input (its own or a run base's `validate`, `to_internal_value` or `run_validation`
 // raises as a statement of its body, as pretix's `raise TypeError("this serializer is readonly")`) writes no field:
 // read_only_fields has nothing to protect.
-dfm_applied(c, "read_only_fields") :- drf_model_serializer(c), dfm_refuses_input(c).
-dfm_applied(c, "read_only_fields") :- drf_model_serializer(c), drf_ancestor(c, b), dfm_refuses_input(b).
+dfm_applied(c, "read_only_fields") :- drf_serializer(c), dfm_refuses_input(c).
+dfm_applied(c, "read_only_fields") :- drf_serializer(c), drf_ancestor(c, b), dfm_refuses_input(b).
 .decl dfm_refuses_input(b: node)
 dfm_refuses_input(b) :- (m = "validate" ; m = "to_internal_value" ; m = "run_validation"), drf_own_method(b, m, f),
     field(f, "body", fb), body_stmt(fb, s, _), kind(s, "raise_statement").
+// dfm_ro_set(c, x): serializer c, or a run base, makes field x read-only in its `__init__` or `get_fields`:
+// `self.fields["x"].read_only = True` (any receiver of the subscript), or `....fields[name].read_only = True` in a
+// `for name in [...]` loop over literal names.
+.decl dfm_ro_set(c: node, x: symbol)
+dfm_ro_set(c, x) :- drf_serializer(c), dfm_sets_ro(c, x).
+dfm_ro_set(c, x) :- drf_serializer(c), drf_ancestor(c, b), dfm_sets_ro(b, x).
+.decl dfm_ro_store(f: node, a: node, s: node)
+dfm_ro_store(f, a, s) :- (m = "__init__" ; m = "get_fields"), drf_own_method(_, m, f), within(a, f),
+    kind(a, "assignment"), field(a, "left", l), attr_of(l, sub, "read_only"), kind(sub, "subscript"),
+    field(sub, "subscript", s), field(a, "right", r), kind(r, "true").
+.decl dfm_sets_ro(b: node, x: symbol)
+dfm_sets_ro(b, x) :- drf_own_method(b, _, f), dfm_ro_store(f, _, s), str(s, x).
+dfm_sets_ro(b, x) :- drf_own_method(b, _, f), dfm_ro_store(f, a, s), kind(s, "identifier"), text(s, y),
+    kind(fs, "for_statement"), within(a, fs), within(fs, f), field(fs, "left", t), kind(t, "identifier"), text(t, y),
+    field(fs, "right", it), drf_str_elem(it, x).
 
 // ---- Meta values -------------------------------------------------------------------------------------------------
-// dfm_ser(c): a ModelSerializer outside test code.
+// dfm_ser(c): a serializer outside test code.
 .decl dfm_ser(c: node)
-dfm_ser(c) :- drf_model_serializer(c), docof(c, d), !dj_test_doc(d).
-// dfm_elem(v, e, s): string literal e, of value s, is a name read_only_fields value v holds (drf_str_elem with the
-// string's node).
-.decl dfm_rof(v: node)
-dfm_rof(v) :- dfm_ser(c), drf_meta_opt(c, "read_only_fields", v).
-.decl dfm_elem(v: node, e: node, s: symbol)
-dfm_elem(v, e, s) :- dfm_rof(v), dfm_elem_in(v, e, s).
-.decl dfm_elem_in(v: node, e: node, s: symbol)
-dfm_elem_in(v, e, s) :- unparen(v, e), str(e, s).
-dfm_elem_in(v, e, s) :- unparen(v, u), kind(u, k), drf_seq(k), child(u, x, _), unparen(x, e), str(e, s).
-dfm_elem_in(v, e, s) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"),
-    (field(u, "left", x) ; field(u, "right", x)), dfm_elem_in(x, e, s).
-dfm_elem_in(v, e, s) :- unparen(v, u), kind(u, k), drf_seq(k), child(u, sp, _), kind(sp, "list_splat"),
-    child(sp, x, 0), dfm_elem_in(x, e, s).
-dfm_elem_in(v, e, s) :- unparen(v, u), attr_of(u, o, k), attr_of(o, b, "Meta"), sym_of(b, bq), class_def(bc, bq),
-    drf_meta_opt(bc, k, w), dfm_elem_in(w, e, s).
+dfm_ser(c) :- drf_serializer(c), docof(c, d), !dj_test_doc(d).
 
-// dfm_ek(v, e, x, o): extra_kwargs value v has an entry for field x at node e (the key, or a dict() keyword's value)
-// whose options are o.
-.decl dfm_ekv(v: node)
-dfm_ekv(v) :- dfm_ser(c), drf_meta_opt(c, "extra_kwargs", v).
-.decl dfm_ek(v: node, e: node, x: symbol, o: node)
-dfm_ek(v, e, x, o) :- dfm_ekv(v), unparen(v, d), kind(d, "dictionary"), child(d, p, _), kind(p, "pair"),
-    field(p, "key", e), str(e, x), field(p, "value", pv), unparen(pv, o).
-dfm_ek(v, o, x, o) :- dfm_ekv(v), unparen(v, d), kind(d, "call"), field(d, "function", f), sym_of(f, "builtins.dict"),
-    drf_kw(d, x, pv), unparen(pv, o).
-// dfm_opt(o, key, val): options dict o sets key to val: a dict literal or `dict(key=val)`.
-.decl dfm_opt(o: node, key: symbol, val: node)
-dfm_opt(o, key, val) :- dfm_ek(_, _, _, o), kind(o, "dictionary"), child(o, p, _), kind(p, "pair"),
-    field(p, "key", kn), str(kn, key), field(p, "value", val).
-dfm_opt(o, key, val) :- dfm_ek(_, _, _, o), kind(o, "call"), field(o, "function", f), sym_of(f, "builtins.dict"),
-    drf_kw(o, key, val).
-.decl dfm_lit(o: node)
-dfm_lit(o) :- dfm_ek(_, _, _, o), kind(o, "dictionary").
-dfm_lit(o) :- dfm_ek(_, _, _, o), kind(o, "call"), field(o, "function", f), sym_of(f, "builtins.dict").
-// dfm_live(o, k): entry o says something declared call k does not: an option k does not pass with the same text, or
-// options the rule cannot read.
-.decl dfm_cand(o: node, k: node)
-dfm_cand(o, k) :- dfm_ser(c), drf_meta_opt(c, "extra_kwargs", v), dfm_ek(v, _, x, o), dfm_decl(c, x, k).
-.decl dfm_same(o: node, k: node, key: symbol)
-dfm_same(o, k, key) :- dfm_cand(o, k), dfm_opt(o, key, val), drf_kw(k, key, kv), text(kv, t), text(val, t).
-dfm_same(o, k, "read_only") :- dfm_cand(o, k), dfm_opt(o, "read_only", val), kind(val, "true"), dfm_ro(k).
+// dfm_ek(c, x, ov, e): serializer c's (inherited) extra_kwargs has an entry for field x whose options are ov, keyed
+// at node e (the key of a dict literal, or a dict() keyword's value).
+.decl dfm_ek(c: node, x: symbol, ov: node, e: node)
+dfm_ek(c, x, ov, e) :- dfm_ser(c), drf_meta_opt(c, "extra_kwargs", d), drf_dict_entry(d, x, ov), dfm_ek_at(ov, e).
+.decl dfm_ek_at(ov: node, e: node)
+dfm_ek_at(ov, e) :- kind(p, "pair"), field(p, "value", ov), field(p, "key", e).
+dfm_ek_at(ov, ov) :- kind(p, "keyword_argument"), field(p, "value", ov).
+// dfm_lit(ov): the entry's options are written out (a dict literal or `dict(...)`), so the rule reads all of them.
+.decl dfm_lit(ov: node)
+dfm_lit(ov) :- dfm_ek(_, _, ov, _), unparen(ov, u), kind(u, "dictionary").
+dfm_lit(ov) :- dfm_ek(_, _, ov, _), unparen(ov, u), kind(u, "call"), field(u, "function", f),
+    sym_of(f, "builtins.dict").
+// dfm_live(c, x, k): c's entry for x says something declared call k does not: an option k does not pass with the same
+// text, or options the rule cannot read.
+.decl dfm_cand(c: node, x: symbol, k: node)
+dfm_cand(c, x, k) :- dfm_ek(c, x, _, _), dfm_decl(c, x, k).
+.decl dfm_same(c: node, x: symbol, key: symbol)
+dfm_same(c, x, key) :- dfm_cand(c, x, k), drf_extra_kw(c, x, key, val), drf_kw(k, key, kv), text(kv, t), text(val, t).
+dfm_same(c, x, "read_only") :- dfm_cand(c, x, k), drf_extra_kw(c, x, "read_only", val), kind(val, "true"), dfm_ro(k).
 // A field with a default (or a read-only one) is already not required: `required: False` asks nothing new.
-dfm_same(o, k, "required") :- dfm_cand(o, k), dfm_opt(o, "required", val), kind(val, "false"),
+dfm_same(c, x, "required") :- dfm_cand(c, x, k), drf_extra_kw(c, x, "required", val), kind(val, "false"),
     (drf_kw(k, "default", _) ; dfm_ro(k)).
-.decl dfm_live(o: node, k: node)
-dfm_live(o, k) :- dfm_cand(o, k), dfm_opt(o, key, _), !dfm_same(o, k, key).
-dfm_live(o, k) :- dfm_cand(o, k), !dfm_lit(o).
+.decl dfm_live(c: node, x: symbol, k: node)
+dfm_live(c, x, k) :- dfm_cand(c, x, k), drf_extra_kw(c, x, key, _), !dfm_same(c, x, key).
+dfm_live(c, x, k) :- dfm_cand(c, x, k), dfm_ek(c, x, ov, _), !dfm_lit(ov).
 
 // ---- hits and where they are reported ----------------------------------------------------------------------------
+// dfm_rhit(c, x, e, k): serializer c's read_only_fields names its declared, writable field x (call k) at string e.
+.decl dfm_rhit(c: node, x: symbol, e: node, k: node)
+dfm_rhit(c, x, e, k) :- dfm_ser(c), drf_meta_opt(c, "read_only_fields", v), drf_str_at(v, e, x), dfm_decl(c, x, k),
+    dfm_fieldish(k), !dfm_ro(k), !dfm_applied(c, "read_only_fields"), !dfm_ro_set(c, x).
+.decl dfm_rof_hit(c: node, x: symbol)
+dfm_rof_hit(c, x) :- dfm_rhit(c, x, _, _).
 // dfm_hit(c, x, opt, e, k): serializer c's Meta option opt names its declared field x (call k) at node e, uselessly.
 .decl dfm_hit(c: node, x: symbol, opt: symbol, e: node, k: node)
-dfm_hit(c, x, "read_only_fields", e, k) :- dfm_ser(c), drf_meta_opt(c, "read_only_fields", v), dfm_elem(v, e, x),
-    dfm_decl(c, x, k), dfm_fieldish(k), !dfm_ro(k), !dfm_applied(c, "read_only_fields").
-dfm_hit(c, x, "extra_kwargs", e, k) :- dfm_ser(c), drf_meta_opt(c, "extra_kwargs", v), dfm_ek(v, e, x, o),
-    dfm_decl(c, x, k), dfm_fieldish(k), dfm_live(o, k), !dfm_applied(c, "extra_kwargs"), !dfm_rof_hit(c, x).
-.decl dfm_rof_hit(c: node, x: symbol)
-dfm_rof_hit(c, x) :- dfm_ser(c), drf_meta_opt(c, "read_only_fields", v), dfm_elem(v, _, x), dfm_decl(c, x, k),
-    dfm_fieldish(k), !dfm_ro(k), !dfm_applied(c, "read_only_fields").
+dfm_hit(c, x, "read_only_fields", e, k) :- dfm_rhit(c, x, e, k).
+dfm_hit(c, x, "extra_kwargs", e, k) :- dfm_ek(c, x, _, e), dfm_decl(c, x, k), dfm_fieldish(k), dfm_live(c, x, k),
+    !dfm_applied(c, "extra_kwargs"), !dfm_rof_hit(c, x).
 // A base serializer of c with the same pair is reported itself; c, inheriting both, is not.
 .decl dfm_inherited(c: node, x: symbol, opt: symbol)
 dfm_inherited(c, x, opt) :- dfm_hit(c, x, opt, e, k), drf_ancestor(c, b), dfm_hit(b, x, opt, e, k).
@@ -170,6 +194,49 @@ dfm_at(c, x, opt, e) :- dfm_hit(c, x, opt, e, _), within(e, c).
 dfm_at(c, x, opt, a) :- dfm_hit(c, x, opt, e, k), !within(e, c), drf_own_attr(c, x, v, a), unparen(v, k).
 dfm_at(c, x, opt, n) :- dfm_hit(c, x, opt, e, _), !within(e, c), !drf_own_attr_name(c, x),
     !dfm_inherited(c, x, opt), field(c, "name", n).
+
+// ---- written on purpose ------------------------------------------------------------------------------------------
+// dfm_carrier(c, x, h): serializer h shares c's read_only_fields entry for x: c itself, a run base whose Meta lists x
+// at the same string, or a run subclass with the same entry and declaration.
+.decl dfm_carrier(c: node, x: symbol, h: node)
+dfm_carrier(c, x, c) :- dfm_rhit(c, x, _, _).
+dfm_carrier(c, x, b) :- dfm_rhit(c, x, e, _), drf_ancestor(c, b), drf_meta_opt(b, "read_only_fields", v),
+    drf_str_at(v, e, x).
+dfm_carrier(c, x, s) :- dfm_rhit(c, x, e, k), drf_ancestor(s, c), dfm_rhit(s, x, e, k).
+// dfm_written(c, x): some carrier writes x on purpose, or the field's class (a field, not a serializer) parses input.
+.decl dfm_written(c: node, x: symbol)
+dfm_written(c, x) :- dfm_carrier(c, x, h), dfm_writes(h, x).
+dfm_written(c, x) :- dfm_rhit(c, x, _, k), dfm_callee(k, fc), !drf_serializer(fc),
+    drf_method(fc, "to_internal_value", _).
+.decl dfm_in_method(m: symbol)
+dfm_in_method("create"). dfm_in_method("update"). dfm_in_method("validate"). dfm_in_method("save").
+dfm_in_method("to_internal_value").
+.decl dfm_writes(h: node, x: symbol)
+dfm_writes(h, x) :- dfm_carrier(_, x, h), drf_own_method(h, m, _), m = cat("validate_", x).
+dfm_writes(h, x) :- dfm_carrier(_, x, h), drf_own_method(h, m, f), dfm_in_method(m), dfm_reads_key(f, x).
+// dfm_in_fn(f): an input method of a carrier.
+.decl dfm_in_fn(f: node)
+dfm_in_fn(f) :- dfm_carrier(_, _, h), drf_own_method(h, m, f), dfm_in_method(m).
+// dfm_input(o, f): expression o in method f holds the input: a parameter (not self, not a `**` one), or
+// self.validated_data / self.initial_data.
+.decl dfm_input(o: node, f: node)
+dfm_input(o, f) :- dfm_in_fn(f), within(o, f), kind(o, "identifier"), text(o, y), param(f, y, _), y != "self",
+    !dfm_kwsplat(f, y).
+dfm_input(o, f) :- dfm_in_fn(f), within(o, f), attr_of(o, s, a), kind(s, "identifier"), text(s, "self"),
+    (a = "validated_data" ; a = "initial_data").
+.decl dfm_kwsplat(f: node, y: symbol)
+dfm_kwsplat(f, y) :- dfm_in_fn(f), field(f, "parameters", ps), child(ps, p, _), kind(p, "dictionary_splat_pattern"),
+    child(p, id, 0), text(id, y).
+// dfm_reads_key(f, x): method f reads key x of its input: `o["x"]` (not as an assignment target), `o.get("x")`,
+// `o.pop("x")`.
+.decl dfm_reads_key(f: node, x: symbol)
+dfm_reads_key(f, x) :- dfm_input(o, f), field(n, "value", o), kind(n, "subscript"), field(n, "subscript", s), str(s, x),
+    !dfm_store(n).
+dfm_reads_key(f, x) :- dfm_input(o, f), attr_of(fn, o, m), (m = "get" ; m = "pop"), field(n, "function", fn),
+    kind(n, "call"), call_arg(n, 0, "", a), str(a, x).
+.decl dfm_store(n: node)
+dfm_store(n) :- kind(a, "assignment"), field(a, "left", n), kind(n, "subscript").
+dfm_store(n) :- kind(a, "augmented_assignment"), field(a, "left", n), kind(n, "subscript").
 
 // The cases, `cases/drf-practice-declared-field-meta-ignored/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.
@@ -182,14 +249,62 @@ dfm_at(c, x, opt, n) :- dfm_hit(c, x, opt, e, _), !within(e, c), !drf_own_attr_n
     .fixture "accounts/serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/serializers.py"
     .fixture "accounts/tests/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/tests/__init__.py"
     .fixture "accounts/tests/test_serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/accounts/tests/test_serializers.py"
-    .expect _ at "core/serializers.py":22
-    .expect _ at "accounts/serializers.py":25
-    .expect _ at "accounts/serializers.py":47
-    .expect _ at "accounts/serializers.py":60
-    .expect _ at "accounts/serializers.py":73
-    .expect _ at "accounts/serializers.py":92
-    .expect _ at "accounts/serializers.py":100
-    .expect _ at "accounts/serializers.py":105
-    .expect _ at "accounts/serializers.py":166
-    .expect _ at "accounts/serializers.py":192
+    .fixture "writes/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/__init__.py"
+    .fixture "writes/fields.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/fields.py"
+    .fixture "writes/models.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/models.py"
+    .fixture "writes/serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/serializers.py"
+    .fixture "writes/users.py" from "../cases/drf-practice-declared-field-meta-ignored/writes/users.py"
+    .fixture "posts/__init__.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/__init__.py"
+    .fixture "posts/constants.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/constants.py"
+    .fixture "posts/models.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/models.py"
+    .fixture "posts/serializers.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/serializers.py"
+    .fixture "posts/plain.py" from "../cases/drf-practice-declared-field-meta-ignored/posts/plain.py"
+    .expect DeclaredReadOnlyIgnored at "core/serializers.py":22
+    .expect DeclaredReadOnlyIgnored at "accounts/serializers.py":25
+    .expect DeclaredExtraKwargsIgnored at "accounts/serializers.py":47
+    .expect DeclaredExtraKwargsIgnored at "accounts/serializers.py":60
+    .expect DeclaredReadOnlyIgnored at "accounts/serializers.py":73
+    .expect DeclaredReadOnlyIgnored at "accounts/serializers.py":92
+    .expect DeclaredReadOnlyIgnored at "accounts/serializers.py":100
+    .expect DeclaredReadOnlyIgnored at "accounts/serializers.py":105
+    .expect PlainSerializerReadOnlyIgnored at "accounts/serializers.py":144
+    .expect DeclaredExtraKwargsIgnored at "accounts/serializers.py":166
+    .expect DeclaredReadOnlyIgnored at "accounts/serializers.py":192
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":16
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":39
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":54
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":69
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":82
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":97
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":115
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":116
+    .expect DeclaredReadOnlyIgnored at "writes/serializers.py":117
+    .expect DeclaredReadOnlyIgnored at "writes/serializers.py":131
+    .expect DeclaredReadOnlyIgnored at "writes/serializers.py":132
+    .expect DeclaredReadOnlyIgnored at "writes/serializers.py":156
+    .expect DeclaredReadOnlyWritten at "writes/serializers.py":187
+    .expect DeclaredReadOnlyIgnored at "writes/serializers.py":212
+    .expect DeclaredReadOnlyIgnored at "writes/users.py":13
+    .expect DeclaredReadOnlyWritten at "writes/users.py":14
+    .expect DeclaredReadOnlyIgnored at "writes/users.py":49
+    .expect DeclaredReadOnlyIgnored at "writes/users.py":50
+    .expect PlainSerializerReadOnlyIgnored at "posts/plain.py":13
+    .expect PlainSerializerReadOnlyIgnored at "posts/plain.py":26
+    .expect DeclaredReadOnlyWritten at "posts/plain.py":35
+    .expect DeclaredExtraKwargsIgnored at "posts/plain.py":46
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":32
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":33
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":40
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":49
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":50
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":61
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":69
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":79
+    .expect DeclaredExtraKwargsIgnored at "posts/serializers.py":89
+    .expect DeclaredExtraKwargsIgnored at "posts/serializers.py":98
+    .expect DeclaredExtraKwargsIgnored at "posts/serializers.py":102
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":179
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":180
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":196
+    .expect DeclaredReadOnlyIgnored at "posts/serializers.py":212
 .end

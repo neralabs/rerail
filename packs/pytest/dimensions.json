@@ -1,10 +1,4 @@
 {
-  "pytest-practice-django-settings-in-test": {
-    "risk": "test-quality",
-    "layer": "tests",
-    "severity": "medium",
-    "hazard": "test.shared-state-leak"
-  },
   "pytest-practice-environ-without-monkeypatch": {
     "risk": "test-quality",
     "layer": "tests",

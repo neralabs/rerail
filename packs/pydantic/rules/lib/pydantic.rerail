@@ -24,7 +24,9 @@
 //                pd_field_value(a, v)         field a is assigned v (`x: T = v`); none for `x: T`
 //                pd_field_call(e)             e is a call of pydantic.Field (or sqlmodel.Field)
 //                pd_field_default(a, d)       field a's default expression d: v of `x: T = v`, or the default of
-//                                             `x: T = Field(d)` / `Field(default=d)`; none for a default_factory
+//                                             `x: T = Field(d)` / `Field(default=d)`, or of a `Field(d)` /
+//                                             `Field(default=d)` in its `Annotated[T, ...]` metadata (directly or
+//                                             through a module-level alias); none for a default_factory
 //                pd_ann_model(t, c)           annotation t mentions model class c as a value of the field: `M`,
 //                                             `M | None`, `Optional[M]`, `Annotated[M, ...]`, not `list[M]`
 //   Config:      pd_config(c, k, v)           model c sets config key k to v in its own definition: `model_config =
@@ -32,6 +34,9 @@
 //                                             `class Config: k = v`, or a class keyword `class M(BaseModel, k=v)`
 //                pd_config_of(c, k, v)        as pd_config, set by c or by a run class among its bases
 //                pd_config_class(c, k)        model c's body holds a v1-style nested `class Config:` k
+//                pd_from_attributes(c)        from_attributes is on for model c, as Pydantic merges config: c's own
+//                                             setting wins; with none, a base's (run bases through modules and
+//                                             re-exports; sqlmodel.SQLModel sets it); `orm_mode` never counts
 //   Validators:  pd_validator(f, c, api, mode)
 //                                             method f of class c is decorated with Pydantic's validator api
 //                                             ("field_validator", "model_validator", "validator", "root_validator")
@@ -40,7 +45,14 @@
 //                pd_validator_deco(f, api, e) f carries decorator expression e for api (bare or called)
 //                pd_value_param(f, nm, x)     the parameter nm (named x) of validator f that receives the value: the
 //                                             first after cls/self (the first of a staticmethod); for an "after"
-//                                             model_validator, `self`
+//                                             model_validator, `self`; the first of a function validator
+//                pd_fn_validator(k, f, mode)  call k is `BeforeValidator(f)`, `AfterValidator(f)`, `WrapValidator(f)`
+//                                             or `PlainValidator(f)` (mode "before", "after", "wrap", "plain"), f a
+//                                             def of the run that k names, or the lambda k passes
+//                pd_fn_validator_field(k, c)  function validator call k applies to a field of model c: it sits in
+//                                             the field's annotation (`x: Annotated[str, BeforeValidator(f)]`), or
+//                                             in a module-level alias the annotation names (`Code = Annotated[...]`,
+//                                             in the same module or imported from another)
 //   Instances:   pd_instance(e, c)            e holds an instance of model c: `M(...)`, `M.model_validate(...)`
 //                                             (and the other constructors, v1's included), awaited or not; a name
 //                                             the same scope binds to one; `self` in a method of c; a parameter
@@ -59,6 +71,19 @@
 //                pd_manifest_pin(f, i, major) line i of manifest f requires pydantic major version major (1 or 2)
 //                pd_test_doc(d)               document d is test code: a tests/test/testing directory, test_*.py,
 //                                             *_test.py, *_tests.py, tests.py, conftest.py
+//   Names:       pd_name_value(n, v)          name n (an identifier or `mod.name`) reads a module-level assignment
+//                                             `name = v` (or `name: T = v`), in n's own module or, imported, in
+//                                             the module that defines it (re-exports followed by sym_of)
+//   Routes:      pd_route(f)                  def f is a web route: decorated with `o.get(...)`, `o.post(...)`,
+//                                             ... where o is a module-level object built by FastAPI's `FastAPI()`
+//                                             or `APIRouter()`, flask-openapi3's `OpenAPI()` / `APIBlueprint()`,
+//                                             or a run class deriving from one of them (mealie's `UserAPIRouter`)
+//   Shims:       pd_version_guarded(n)        node n (one a rule puts in pd_shim_demand) is code written to run
+//                                             under both majors: under an `if`/elif/conditional expression whose
+//                                             condition reads the Pydantic version or probes the v2 API (resolved,
+//                                             not read as text), or in a `try` catching ImportError,
+//                                             ModuleNotFoundError or AttributeError
+//                pd_shim_demand(n)            extensible: the nodes a rule asks pd_version_guarded about
 //
 // Pydantic background
 //   - A field is a class-body annotation. `x: T` is required; `x: T = v` and `x: T = Field(v)` default to v;
@@ -158,11 +183,21 @@ pd_field_call(e) :- kind(e, "call"), field(e, "function", f), sym_of(f, q), pd_f
 //   created: datetime = datetime.now()                pd_field_default(<...>, <datetime.now()>)
 //   created: datetime = Field(default=datetime.now()) pd_field_default(<...>, <datetime.now()>)
 //   created: datetime = Field(default_factory=datetime.now)   no pd_field_default
+//   created: Annotated[datetime, Field(default=datetime.now())]   pd_field_default(<...>, <datetime.now()>)
 .decl pd_field_default(a: node, d: node)
 pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, d), !pd_field_call(d).
-pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, k), pd_field_call(k), posarg(k, 0, d), !kind(d, "ellipsis").
-pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, k), pd_field_call(k), call_arg(k, -1, "default", d),
-    !kind(d, "ellipsis").
+pd_field_default(a, d) :- pd_field_value(a, v), unparen(v, k), pd_field_call(k), pd_field_default_arg(k, d).
+pd_field_default(a, d) :- pd_field(_, _, a, t), pd_ann_meta(t, k), pd_field_call(k), pd_field_default_arg(k, d).
+// pd_field_default_arg(k, d): Field call k's default d, its first positional argument or `default=`; Ellipsis is
+// none (required).
+.decl pd_field_default_arg(k: node, d: node)
+pd_field_default_arg(k, d) :- pd_field_call(k), posarg(k, 0, d), !kind(d, "ellipsis").
+pd_field_default_arg(k, d) :- pd_field_call(k), call_arg(k, -1, "default", d), !kind(d, "ellipsis").
+// pd_ann_meta(t, k): node k sits in field annotation t, or in the value of a module-level alias t names
+// (`Code = Annotated[str, ...]`), so Pydantic reads it as the field's metadata.
+.decl pd_ann_meta(t: node, k: node)
+pd_ann_meta(t, k) :- pd_field(_, _, _, t), within(k, t).
+pd_ann_meta(t, k) :- pd_field(_, _, _, t), (n = t ; within(n, t)), pd_name_value(n, v), within(k, v).
 // pd_ann_model(t, c): annotation t holds model class c as the field's value, alone or in a union, Optional or
 // Annotated, but not as an item of a container (list[M], dict[str, M]): a name in t resolves to model c, and no
 // container name appears in t.
@@ -246,6 +281,8 @@ pd_validator(f, c, api, m) :- pd_validator_deco(f, api, e), pd_mode(e, api, m), 
 .decl pd_value_param(f: node, nm: node, x: symbol)
 pd_value_param(f, nm, x) :- pd_takes_value(f), !pd_static(f), sig_param(f, _, nm, 1, _, _, _), text(nm, x).
 pd_value_param(f, nm, x) :- pd_takes_value(f), pd_static(f), sig_param(f, _, nm, 0, _, _, _), text(nm, x).
+pd_value_param(f, nm, x) :- pd_fn_validator(_, f, _), !pd_validator(f, _, _, _), sig_param(f, _, nm, 0, _, _, _),
+    text(nm, x).
 pd_value_param(f, nm, x) :- pd_validator(f, _, "model_validator", "after"), sig_param(f, _, nm, 0, _, _, _),
     text(nm, x).
 // pd_takes_value(f): validator f receives the value (or the raw data) as an argument: all but an "after" model
@@ -255,6 +292,63 @@ pd_takes_value(f) :- pd_validator(f, _, api, _), api != "model_validator".
 pd_takes_value(f) :- pd_validator(f, _, "model_validator", m), m != "after".
 .decl pd_static(f: node)
 pd_static(f) :- decorator(f, e), sym_of(e, "builtins.staticmethod").
+
+// ---- validators attached through Annotated ----------------------------------------------------------------------
+// `Annotated[str, BeforeValidator(fn)]` runs fn as the field's validator in the mode the class names. A named def of
+// the run (`BeforeValidator(normalize)`, `BeforeValidator(func=normalize)`) and a lambda passed in place are followed.
+.decl pd_fn_validator_class(x: symbol, mode: symbol)
+pd_fn_validator_class("BeforeValidator", "before"). pd_fn_validator_class("AfterValidator", "after").
+pd_fn_validator_class("WrapValidator", "wrap"). pd_fn_validator_class("PlainValidator", "plain").
+.decl pd_fn_validator_call(k: node, a: node, mode: symbol)
+pd_fn_validator_call(k, a, m) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), split_dot(q, p, x),
+    (p = "pydantic" ; p = "pydantic.functional_validators"), pd_fn_validator_class(x, m),
+    (posarg(k, 0, a) ; call_arg(k, -1, "func", a)).
+.decl pd_fn_validator(k: node, f: node, mode: symbol)
+pd_fn_validator(k, f, m) :- pd_fn_validator_call(k, a, m), sym_of(a, qf), qualname(f, qf), kind(f, "function_definition").
+pd_fn_validator(k, f, m) :- pd_fn_validator_call(k, a, m), unparen(a, f), kind(f, "lambda").
+.decl pd_fn_validator_field(k: node, c: node)
+pd_fn_validator_field(k, c) :- pd_field(c, _, _, t), pd_ann_meta(t, k), pd_fn_validator(k, _, _).
+
+// ---- names -------------------------------------------------------------------------------------------------------
+// pd_name_value(n, v): name n reads a module-level assignment `name = v` (or `name: T = v`): in n's own module by
+// lookup, or, imported (`from app.types import Slug`, `types.Slug`, a package's re-export), in the module that
+// defines it, by the qualified name python/names' sym_of gives n. A name assigned in a function is not followed.
+.decl pd_global_value(q: symbol, v: node)
+pd_global_value(q, v) :- modname(m, mq), asg(m, x, v, _), q = cat(mq, ".", x).
+.decl pd_name_value(n: node, v: node)
+pd_name_value(n, v) :- kind(n, "identifier"), text(n, x), look(n, x, s), kind(s, "module"), asg(s, x, v, _).
+pd_name_value(n, v) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q), pd_global_value(q, v).
+
+// ---- routes ------------------------------------------------------------------------------------------------------
+// pd_router_q(q): a class whose instances register web routes whose parameters the framework validates with
+// Pydantic: FastAPI's app and router, flask-openapi3's app and blueprint, and the run's subclasses of them.
+.decl pd_router_q(q: symbol)
+pd_router_q("fastapi.FastAPI"). pd_router_q("fastapi.applications.FastAPI"). pd_router_q("fastapi.APIRouter").
+pd_router_q("fastapi.routing.APIRouter"). pd_router_q("flask_openapi3.OpenAPI"). pd_router_q("flask_openapi3.APIBlueprint").
+pd_router_q(q) :- class_def(c, q), pd_base(c, b), pd_router_q(b).
+// pd_route(f): def f is decorated with a call `o.<method>(...)` on a router object o (pd_name_value: a module-level
+// `router = APIRouter(...)`, here or imported) built by a router class (pd_router_class).
+.decl pd_route(f: node)
+pd_route(f) :- kind(f, "function_definition"), decorator(f, e0), unparen(e0, e), kind(e, "call"),
+    field(e, "function", fn), attr_of(fn, o, m), pd_route_method(m), pd_name_value(o, v), unparen(v, k),
+    kind(k, "call"), field(k, "function", g), pd_router_class(g).
+// pd_router_class(g): expression g names a router class: by its qualified name (pd_router_q), or as a module-level
+// name bound to what a class factory of the run returns (`APIRouter = get_api_router_class(APIRoute)`, polar's
+// pattern): a def whose return annotation names a router class (`-> type[APIRouter]`) or that returns a class it
+// defines deriving from one.
+.decl pd_router_class(g: node)
+pd_router_class(g) :- sym_of(g, q), pd_router_q(q).
+pd_router_class(g) :- pd_name_value(g, v), unparen(v, k), kind(k, "call"), field(k, "function", h), sym_of(h, fq),
+    qualname(fd, fq), kind(fd, "function_definition"), pd_router_factory(fd).
+.decl pd_router_factory(fd: node)
+pd_router_factory(fd) :- kind(fd, "function_definition"), field(fd, "return_type", t), (n = t ; within(n, t)),
+    sym_of(n, q), pd_router_q(q).
+pd_router_factory(fd) :- kind(fd, "function_definition"), kind(r, "return_statement"), nearest(r, fd, fdef),
+    child(r, e0, 0), unparen(e0, e), sym_of(e, q), pd_router_q(q).
+.decl pd_route_method(m: symbol)
+pd_route_method("get"). pd_route_method("post"). pd_route_method("put"). pd_route_method("patch").
+pd_route_method("delete"). pd_route_method("options"). pd_route_method("head"). pd_route_method("trace").
+pd_route_method("api_route"). pd_route_method("websocket"). pd_route_method("route").
 
 // ---- instances ---------------------------------------------------------------------------------------------------
 // pd_constructor(m): the classmethods that return an instance of their class (v1's deprecated names included).
@@ -354,6 +448,69 @@ pd_v2_doc(d) :- pd_doc_dir(d, x), pd_dir_pin(x, 2), !pd_v1_doc(d).
 pd_v2_doc(d) :- doc(d, _, _), !pd_any_pin(), pd_v2_code().
 .decl pd_v1_doc(d: number)
 pd_v1_doc(d) :- pd_doc_dir(d, x), pd_dir_pin(x, 1).
+
+// ---- from_attributes ---------------------------------------------------------------------------------------------
+// pd_from_attributes(c): from_attributes is on for model c. Pydantic merges config from the bases, then c's own
+// keys: c's own `from_attributes` (ConfigDict, a dict literal, a class keyword, or the v2 key in a nested Config) wins;
+// with none, it is on when it is on for one of c's bases. A run base is read the same way, wherever it is defined;
+// of the bases outside the run, sqlmodel.SQLModel is the one whose config is known to set it (named here: its source
+// is outside the run). `orm_mode = True`, nested or in ConfigDict, is not read: v2 ignores the old name. A model with
+// two bases that disagree is read as on.
+//   class HeroBase(SQLModel): ...; class HeroRead(HeroBase): ...       pd_from_attributes(<HeroRead>)
+//   class Off(HeroRead): model_config = ConfigDict(from_attributes=False)   none for Off, nor its subclasses
+.decl pd_fa_lib(q: symbol)
+pd_fa_lib("sqlmodel.SQLModel"). pd_fa_lib("sqlmodel.main.SQLModel").
+.decl pd_from_attributes(c: node)
+pd_from_attributes(c) :- pd_config(c, "from_attributes", v), !kind(v, "false").
+pd_from_attributes(c) :- pd_model(c), !pd_config(c, "from_attributes", _), pd_base(c, q), pd_fa_lib(q).
+pd_from_attributes(c) :- pd_model(c), !pd_config(c, "from_attributes", _), pd_base(c, q), class_def(b, q),
+    pd_from_attributes(b).
+
+// ---- version shims -----------------------------------------------------------------------------------------------
+// pd_version_guarded(n): n is in code written to run under both Pydantic majors, for the nodes n a rule puts in
+// pd_shim_demand. A guard (an `if` condition, an elif's, any part of a conditional expression) counts when a node in it
+// reads pydantic's version symbol through imports (`pydantic.VERSION`, `from pydantic.version import VERSION as PV`),
+// calls something with the distribution name (`importlib.metadata.version("pydantic")`), probes a v2 name
+// (`hasattr(x, "model_dump")`, `getattr(x, "model_validate", None)`), or reads a variable assigned one of those:
+// module-level through pd_name_value (`from app.compat import PYDANTIC_V2 as IS_V2`, `compat.IS_V1`), or local to its
+// function, followed through further variables (`IS_V1 = not PYDANTIC_V2`). A flag defined outside the run (fastapi's
+// `PYDANTIC_V2`) cannot be read, so there its name decides (`PYDANTIC_V2`, `IS_PYDANTIC_V1`, `PYDANTIC_VERSION`).
+// A `try` whose handler catches ImportError, ModuleNotFoundError or AttributeError is a shim too.
+//   if path.startswith(settings.API_V1_STR): ...     no shim: nothing there reads Pydantic
+.decl pd_shim_demand(n: node) extensible
+// pd_guard(i, c): construct i chooses a branch by condition c.
+.decl pd_guard(i: node, c: node)
+pd_guard(i, c) :- kind(i, "if_statement"), field(i, "condition", c).
+pd_guard(i, c) :- kind(i, "if_statement"), child(i, e, _), kind(e, "elif_clause"), field(e, "condition", c).
+pd_guard(i, c) :- kind(i, "conditional_expression"), child(i, c, _).
+// pd_guard_probe(m): m is read to decide a version test: a node of a guard around a demanded node, and, followed, a
+// node of the value a variable there is assigned.
+.decl pd_guard_probe(m: node)
+pd_guard_probe(m) :- pd_shim_demand(n), within(n, i), pd_guard(i, c), (m = c ; within(m, c)).
+pd_guard_probe(w) :- pd_guard_value(_, v), (w = v ; within(w, v)).
+// pd_guard_value(m, v): probed name m reads a variable assigned v, module-level or local to m's function.
+.decl pd_guard_value(m: node, v: node)
+pd_guard_value(m, v) :- pd_guard_probe(m), pd_name_value(m, v).
+pd_guard_value(m, v) :- pd_guard_probe(m), kind(m, "identifier"), text(m, x), look(m, x, s), !kind(s, "module"),
+    asg(s, x, v, _).
+.decl pd_version_sym(q: symbol)
+pd_version_sym("pydantic.VERSION"). pd_version_sym("pydantic.version.VERSION"). pd_version_sym("pydantic.__version__").
+pd_version_sym("pydantic.version.version_short"). pd_version_sym("pydantic.version.version_info").
+// pd_version_read(m): m reads the Pydantic version or probes the v2 API.
+.decl pd_version_read(m: node)
+pd_version_read(m) :- pd_guard_probe(m), sym_of(m, q), pd_version_sym(q).
+pd_version_read(m) :- pd_guard_probe(m), kind(m, "call"), call_arg(m, _, _, s), str(s, "pydantic").
+pd_version_read(m) :- pd_guard_probe(m), kind(m, "call"), field(m, "function", f),
+    (sym_of(f, "builtins.hasattr") ; sym_of(f, "builtins.getattr")), call_arg(m, 1, "", s), str(s, a),
+    match("model_[a-z_]+", a).
+pd_version_read(m) :- pd_guard_value(m, v), (w = v ; within(w, v)), pd_version_read(w).
+pd_version_read(m) :- pd_guard_probe(m), (kind(m, "identifier") ; kind(m, "attribute")), !pd_guard_value(m, _),
+    (text(m, x) ; attr_of(m, _, x)), match("(?i)(is_)?pydantic_?(v[0-9].*|version.*)", x).
+.decl pd_version_guarded(n: node)
+pd_version_guarded(n) :- pd_shim_demand(n), within(n, i), pd_guard(i, c), (m = c ; within(m, c)), pd_version_read(m).
+pd_version_guarded(n) :- pd_shim_demand(n), within(n, t), kind(t, "try_statement"), child(t, x, _),
+    kind(x, "except_clause"), (catches(x, "builtins.ImportError") ; catches(x, "builtins.ModuleNotFoundError") ;
+    catches(x, "builtins.AttributeError")).
 
 // ---- files -------------------------------------------------------------------------------------------------------
 .decl pd_test_doc(d: number)

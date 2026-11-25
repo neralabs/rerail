@@ -19,23 +19,6 @@
   },
   "rules": [
     {
-      "id": "celery-practice-countdown-past-visibility-timeout",
-      "document": "rules/celery-practice-countdown-past-visibility-timeout.rerail",
-      "title": "Celery practice: a task delayed past the broker's visibility timeout",
-      "group": "Celery",
-      "mode": "steer",
-      "examples": {
-        "caught": {
-          "path": "proj/tasks.py",
-          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\n\n\n@app.task\ndef send_reminder(user_id):\n    pass\n\n\ndef schedule_reminder(user_id):\n    send_reminder.apply_async((user_id,), countdown=60 * 60 * 24)\n"
-        },
-        "passes": {
-          "path": "proj/tasks.py",
-          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\n\n\n@app.task\ndef send_reminder(user_id):\n    pass\n\n\ndef schedule_reminder(user_id):\n    send_reminder.apply_async((user_id,), countdown=10 * 60)\n"
-        }
-      }
-    },
-    {
       "id": "celery-practice-dispatch-before-commit",
       "document": "rules/celery-practice-dispatch-before-commit.rerail",
       "title": "Celery practice: a task sent between a SQLAlchemy write and its commit",
@@ -70,6 +53,23 @@
       }
     },
     {
+      "id": "celery-practice-countdown-past-visibility-timeout",
+      "document": "rules/celery-practice-countdown-past-visibility-timeout.rerail",
+      "title": "Celery practice: a task delayed past the broker's redelivery limit",
+      "group": "Celery",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "proj/tasks.py",
+          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\n\n\n@app.task\ndef send_reminder(user_id):\n    pass\n\n\ndef schedule_reminder(user_id):\n    send_reminder.apply_async((user_id,), countdown=60 * 60 * 24)\n"
+        },
+        "passes": {
+          "path": "proj/tasks.py",
+          "text": "from celery import Celery\n\napp = Celery(\"proj\", broker=\"redis://localhost:6379/0\")\n\n\n@app.task\ndef send_reminder(user_id):\n    pass\n\n\ndef schedule_reminder(user_id):\n    send_reminder.apply_async((user_id,), countdown=10 * 60)\n"
+        }
+      }
+    },
+    {
       "id": "celery-practice-result-get-in-task",
       "document": "rules/celery-practice-result-get-in-task.rerail",
       "title": "Celery practice: a task waits on another task's result",
@@ -92,7 +92,6 @@
       "title": "Celery practice: a SQLAlchemy model or session, a set, a file, a lambda or a function passed as a Celery task argument",
       "group": "Celery",
       "mode": "steer",
-      "on": true,
       "examples": {
         "caught": {
           "path": "shop/orders.py",
@@ -109,7 +108,8 @@
       "document": "rules/celery-practice-unknown-task-name.rerail",
       "title": "Celery practice: task named by a string that no task of the run registers",
       "group": "Celery",
-      "mode": "steer",
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "proj/celery.py",

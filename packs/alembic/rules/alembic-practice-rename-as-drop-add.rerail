@@ -1,5 +1,5 @@
 .policy "alembic-practice-rename-as-drop-add" revision 1
-.description "Rename a column with op.alter_column(new_column_name=...), or copy its data first, instead of dropping it and adding a new one of the same type in one upgrade."
+.description "Rename a column in place, or copy its data first, instead of dropping it and adding a new one of the same type in one Alembic upgrade."
 .language python
 .mode log
 .scope include "**/*.py"
@@ -17,20 +17,22 @@
 //   op.add_column("users", sa.Column("handle", sa.String(40)))
 //   op.execute("UPDATE users SET handle = nick")                         a data statement: the copy pattern
 //   op.drop_column("users", "nick")                                      not reported
-// Data statements: any `.execute(...)`/`.exec_driver_sql(...)` (op, connection, bind, session), `op.bulk_insert`, an
-// `update(...)`/`insert(...)` call (`sa.update`, `table.update()`), a string holding `UPDATE `/`INSERT `, any use of
-// `Session`/`sessionmaker`. Also left alone: types that differ (family by the callee's last name, so VARCHAR matches
-// String and TIMESTAMP matches DateTime; two literal lengths that differ); a drop and an add of the same name; tables
-// with more drops than adds or the reverse (one column replaced by two, a table restructured); two adds and two drops
-// of one type (no pairing to name); tables created or dropped in the same upgrade(); the branch of a dialect test that
-// runs only on another database; downgrade(); tests; an `op` that is not `alembic.op`.
+// Data movement: a string in upgrade() (or a module constant it names) holding `UPDATE `/`INSERT `, `op.bulk_insert`,
+// an `update(...)`/`insert(...)` call (`sa.update`, `table.update()`), any use of `Session`/`sessionmaker`. Any other
+// `execute(...)`, such as `op.execute("SET LOCAL lock_timeout = '5s'")`, moves no data. Also left alone: types that
+// differ (family by the callee's last name, so VARCHAR matches String and TIMESTAMP matches DateTime; a literal length
+// that shrinks); a drop and an add of the same name; tables with more drops than adds or the reverse (one column
+// replaced by two, a table restructured); two adds and two drops of one type (no pairing to name); tables created or
+// dropped in the same upgrade(); the branch of a dialect test that runs only on another database; downgrade(); tests;
+// an `op` that is not `alembic.op`. A widened length (VARCHAR(40) to String(80)) still pairs: a rename with a widening.
 // Gaps: a replacement whose new column means something else (dataset_id -> tenant_id, both UUID) is reported; the old
-// type is read only from downgrade()'s add_column; a data copy in another module's function is not seen (it is seen
-// only in upgrade() and the module-level helpers it calls by name); a table named by a variable is not seen.
+// type is read only from downgrade()'s add_column; a data copy in another module's function, or through SQL held in a
+// variable the rule cannot resolve, is not seen; a table named by a variable is not seen.
+// Corpus (8 Alembic repositories): 2 matches, in dify; 1 a real rename. See the README's rule details.
 
 #include "lib/alembic.rerail"
 
-.violation RenameAsDropAdd(at: node, old: symbol, new: symbol, table: symbol) "This upgrade drops column `{old}` of existing table `{table}` and adds `{new}`, and nothing copies `{old}`'s data, so the deploy deletes it. If this is a rename, use `op.alter_column('{table}', '{old}', new_column_name='{new}')` (while running code still reads `{old}`, add `{new}`, copy, switch the code, then drop `{old}` in a later release); otherwise copy the data with an UPDATE before the drop. Keep it only if `{old}`'s data is meant to be discarded."
+.violation RenameAsDropAdd(at: node, old: symbol, new: symbol, table: symbol) "This upgrade drops `{old}` of `{table}` and adds `{new}` without copying data. For a rename, use `alter_column(..., new_column_name='{new}')`; else copy the data first. Keep it if the data should go."
 
 // ---- operations on an existing table -----------------------------------------------------------------------------
 // rad_drop(d, t, a, f) / rad_add(c, t, b, col, f): upgrade f drops column a / adds Column col named b on table t, which
@@ -62,26 +64,13 @@ rad_old_type(d, e) :- rad_drop(d, t, a, _), docof(d, doc), al_step(g, "downgrade
 .decl rad_type_expr(e: node)
 rad_type_expr(e) :- rad_old_type(_, e).
 rad_type_expr(e) :- rad_add(_, _, _, col, _), rad_coltype(col, e).
-// rad_fam(e, f): the type's family, from the lowercased last name of its callee (`sa.VARCHAR(40)` -> "string").
-.decl rad_head(e: node, h: node)
-rad_head(e, h) :- rad_type_expr(e), kind(e, "call"), field(e, "function", h).
-rad_head(e, e) :- rad_type_expr(e), (kind(e, "identifier") ; kind(e, "attribute")).
-.decl rad_name(e: node, n: symbol)
-rad_name(e, n) :- rad_head(e, h), kind(h, "identifier"), text(h, s), n = @lower(s).
-rad_name(e, n) :- rad_head(e, h), kind(h, "attribute"), field(h, "attribute", a), text(a, s), n = @lower(s).
-.decl rad_alias(n: symbol, f: symbol)
-rad_alias("string", "string"). rad_alias("varchar", "string"). rad_alias("unicode", "string").
-rad_alias("nvarchar", "string"). rad_alias("text", "text"). rad_alias("unicodetext", "text").
-rad_alias("integer", "integer"). rad_alias("int", "integer"). rad_alias("biginteger", "bigint").
-rad_alias("bigint", "bigint"). rad_alias("smallinteger", "smallint"). rad_alias("smallint", "smallint").
-rad_alias("boolean", "boolean"). rad_alias("bool", "boolean"). rad_alias("datetime", "datetime").
-rad_alias("timestamp", "datetime"). rad_alias("float", "float"). rad_alias("double", "float").
-rad_alias("double_precision", "float"). rad_alias("real", "float"). rad_alias("numeric", "numeric").
-rad_alias("decimal", "numeric"). rad_alias("uuid", "uuid"). rad_alias("largebinary", "binary").
-rad_alias("bytea", "binary").
+// rad_fam(e, f): the type's family: the PostgreSQL type its class renders (lib/alembic's al_pg_type, which resolves
+// imports, aliases and project TypeDecorators, so VARCHAR and String, TIMESTAMP and DateTime are one), with and without
+// a time zone taken as one; a class whose DDL the library does not know, by its own name.
 .decl rad_fam(e: node, f: symbol)
-rad_fam(e, f) :- rad_name(e, n), rad_alias(n, f).
-rad_fam(e, n) :- rad_name(e, n), !rad_alias(n, _).
+rad_fam(e, f) :- rad_type_expr(e), al_pg_type(e, k), k != "timestamptz", f = k.
+rad_fam(e, "timestamp") :- rad_type_expr(e), al_pg_type(e, "timestamptz").
+rad_fam(e, n) :- rad_type_expr(e), al_type_class(e, n), !al_pg_type(e, _).
 // rad_len(e, n): a literal length (`String(40)`, `VARCHAR(length=40)`).
 .decl rad_len(e: node, n: number)
 rad_len(e, n) :- rad_type_expr(e), kind(e, "call"), (call_arg(e, 0, "", a) ; call_arg(e, -1, "length", a)),
@@ -89,9 +78,10 @@ rad_len(e, n) :- rad_type_expr(e), kind(e, "call"), (call_arg(e, 0, "", a) ; cal
 .decl rad_same(o: node, n: node)
 rad_same(o, n) :- rad_old_type(_, o), rad_add(_, _, _, col, _), rad_coltype(col, n), rad_fam(o, f), rad_fam(n, f),
     !rad_len_differs(o, n).
+// rad_len_differs(o, n): the added type's literal length is shorter than the dropped one's (a widening still pairs).
 .decl rad_len_differs(o: node, n: node)
 rad_len_differs(o, n) :- rad_old_type(_, o), rad_len(o, x), rad_add(_, _, _, col, _), rad_coltype(col, n),
-    rad_len(n, y), x != y.
+    rad_len(n, y), y < x.
 
 // ---- pairs -------------------------------------------------------------------------------------------------------
 // rad_match(d, c): drop d and add c on the same table in the same upgrade, of other names, whose types agree (or the
@@ -103,18 +93,41 @@ rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), a != b, !rad_ol
 rad_match(d, c) :- rad_drop(d, t, a, f), rad_add(c, t, b, col, f), a != b, !rad_coltype(col, _).
 
 // ---- data movement -----------------------------------------------------------------------------------------------
-.decl rad_data_method(m: symbol)
-rad_data_method("execute"). rad_data_method("exec_driver_sql"). rad_data_method("bulk_insert").
-rad_data_method("update"). rad_data_method("insert").
+// Data movement is read by what it resolves to, not by a method name: `op.bulk_insert` (al_call); SQLAlchemy's
+// `update()`/`insert()` constructs (`sa.update`, `sqlalchemy.dialects.postgresql.insert`, through imports); a table
+// object's `.update()`/`.insert()`, where the object is bound to `sa.table(...)`/`sa.Table(...)` or is a model's
+// `__table__`; SQL text holding UPDATE or INSERT, literal or a module constant; and an ORM session (`Session`,
+// `sessionmaker`, `scoped_session` resolved to sqlalchemy.orm). A `dict.update(...)` or a project's own `insert()`
+// moves no rows.
 .decl rad_moves_data(f: node)
+rad_moves_data(f) :- al_step(f, "upgrade"), al_call(k, "bulk_insert", _), al_in_step(k, f).
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(k, "call"), al_in_step(k, f), field(k, "function", fn), sym_of(fn, q),
+    prefix("sqlalchemy.", q), (suffix(".update", q) ; suffix(".insert", q)).
 rad_moves_data(f) :- al_step(f, "upgrade"), kind(k, "call"), al_in_step(k, f), field(k, "function", fn),
-    attr_of(fn, _, m), rad_data_method(m).
-rad_moves_data(f) :- al_step(f, "upgrade"), kind(k, "call"), al_in_step(k, f), field(k, "function", fn),
-    kind(fn, "identifier"), text(fn, m), rad_data_method(m).
+    attr_of(fn, o, m), (m = "update" ; m = "insert"), unparen(o, u), rad_table_object(u).
 rad_moves_data(f) :- al_step(f, "upgrade"), kind(s, "string"), al_in_step(s, f), text(s, x), y = @lower(x),
     (contains("update ", y) ; contains("insert ", y)).
-rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), text(n, x),
-    (x = "Session" ; x = "sessionmaker" ; x = "scoped_session").
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), sym_of(n, q),
+    al_module_const(q, v), unparen(v, s), text(s, x), y = @lower(x), (contains("update ", y) ; contains("insert ", y)).
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), text(n, x), docof(n, d),
+    al_top_assign(d, x, v), unparen(v, s), kind(s, "string"), text(s, z), y = @lower(z),
+    (contains("update ", y) ; contains("insert ", y)).
+rad_moves_data(f) :- al_step(f, "upgrade"), kind(n, "identifier"), al_in_step(n, f), sym_of(n, q),
+    (q = "sqlalchemy.orm.Session" ; q = "sqlalchemy.orm.sessionmaker" ; q = "sqlalchemy.orm.scoped_session" ;
+    q = "sqlalchemy.orm.session.Session" ; q = "sqlmodel.Session").
+// rad_table_object(u): u is a table: `x.__table__`, a call of `sa.table`/`sa.Table`, or a name bound to one (in the
+// same scope or at module level).
+.decl rad_table_object(u: node)
+rad_table_object(u) :- attr_of(u, _, "__table__").
+rad_table_object(u) :- kind(u, "call"), field(u, "function", fn), sym_of(fn, q), prefix("sqlalchemy.", q),
+    (suffix(".table", q) ; suffix(".Table", q)).
+rad_table_object(u) :- kind(u, "identifier"), text(u, x), nearest(u, s, scope), rasg(s, x, r, _), unparen(r, v),
+    rad_table_call(v).
+rad_table_object(u) :- kind(u, "identifier"), text(u, x), docof(u, d), al_top_assign(d, x, r), unparen(r, v),
+    rad_table_call(v).
+.decl rad_table_call(v: node)
+rad_table_call(v) :- kind(v, "call"), field(v, "function", fn), sym_of(fn, q), prefix("sqlalchemy.", q),
+    (suffix(".table", q) ; suffix(".Table", q)).
 
 RenameAsDropAdd(d, a, b, t) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), rad_match(d, c), rad_balanced(t, f),
     !rad_moves_data(f), count : { rad_match(d, _) } = 1, count : { rad_match(_, c) } = 1.
@@ -127,8 +140,13 @@ RenameAsDropAdd(d, a, b, t) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), rad
     .fixture "migrations/versions/a2_batch_rename.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a2_batch_rename.py"
     .fixture "migrations/versions/a3_unknown_type.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a3_unknown_type.py"
     .fixture "migrations/versions/a4_two_renames.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a4_two_renames.py"
+    .fixture "migrations/versions/a5_lock_timeout_and_widening.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a5_lock_timeout_and_widening.py"
+    .fixture "migrations/versions/a6_look_alike_writes.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/a6_look_alike_writes.py"
     .fixture "migrations/versions/b10_ambiguous.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b10_ambiguous.py"
     .fixture "migrations/versions/b11_same_name_and_length.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b11_same_name_and_length.py"
+    .fixture "migrations/versions/b12_shrink.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b12_shrink.py"
+    .fixture "migrations/versions/b13_copy_constant.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b13_copy_constant.py"
+    .fixture "migrations/versions/b14_copy_table_object.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b14_copy_table_object.py"
     .fixture "migrations/versions/b1_copy_op_execute.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b1_copy_op_execute.py"
     .fixture "migrations/versions/b2_copy_connection.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b2_copy_connection.py"
     .fixture "migrations/versions/b3_copy_sa_update.py" from "../cases/alembic-practice-rename-as-drop-add/migrations/versions/b3_copy_sa_update.py"
@@ -145,4 +163,8 @@ RenameAsDropAdd(d, a, b, t) :- rad_drop(d, t, a, f), rad_add(c, t, b, _, f), rad
     .expect RenameAsDropAdd at "migrations/versions/a4_two_renames.py":13
     .expect RenameAsDropAdd at "migrations/versions/a4_two_renames.py":19
     .expect RenameAsDropAdd at "migrations/versions/a4_two_renames.py":20
+    .expect RenameAsDropAdd at "migrations/versions/a5_lock_timeout_and_widening.py":14
+    .expect RenameAsDropAdd at "migrations/versions/a5_lock_timeout_and_widening.py":17
+    .expect RenameAsDropAdd at "migrations/versions/a6_look_alike_writes.py":21
+    .expect RenameAsDropAdd at "migrations/versions/b11_same_name_and_length.py":14
 .end

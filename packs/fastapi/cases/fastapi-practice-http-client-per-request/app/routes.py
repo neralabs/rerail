@@ -4,7 +4,19 @@ from aiohttp import ClientSession
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from socketio import AsyncClient
 
-from .clients import Weather, geo, get_async_client, get_billing, get_client, get_session, lazy, make_client
+from .clients import (
+    Svc,
+    Weather,
+    geo,
+    get_async_client,
+    get_billing,
+    get_client,
+    get_session,
+    get_shared_http,
+    get_svc,
+    lazy,
+    make_client,
+)
 from .deps import Upstream, get_http
 from .services import fetch_json, notify, sync_lookup
 from .worker import send_webhook
@@ -146,3 +158,30 @@ async def ok_nested(url: str):
 @router.get("/ok/billing")
 async def ok_billing():
     return (await get_billing().http.get("https://billing.example.com/plans")).json()
+
+
+# The module-level helpers build a client per call.
+@router.get("/j")
+def per_call_get(url: str):
+    return httpx.get(url, timeout=5).json()  # caught
+
+
+@router.get("/k")
+async def per_call_aiohttp(url: str):
+    async with aiohttp.request("GET", url) as resp:  # caught
+        return await resp.json()
+
+
+# One client per websocket connection, reused for the socket's lifetime: reported (log mode absorbs it).
+@router.websocket("/ws")
+async def relay(websocket):
+    async with httpx.AsyncClient() as client:  # caught
+        while True:
+            url = await websocket.receive_text()
+            await websocket.send_text((await client.get(url)).text)
+
+
+# A cached dependency builds its service, and the service's client, once: the shared-client idiom.
+@router.get("/ok/cached-dep")
+async def ok_cached_dep(svc: Svc = Depends(get_svc), http: httpx.AsyncClient = Depends(get_shared_http)):
+    return {"ok": True}

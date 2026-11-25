@@ -1,5 +1,5 @@
 .policy "pydantic-practice-dump-mode-json" revision 1
-.description "Dump a model in JSON mode before handing it to json.dumps or an HTTP client's json argument, when the model has a field json cannot encode."
+.description "Dump a model in JSON mode before handing it to json.dumps, a JSONResponse or an HTTP client's json argument, when the model has a field json cannot encode."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -12,13 +12,31 @@
 //   def event_json(event: Event):      (app/services.py)
 //       return json.dumps(event.model_dump())                          reported: starts_at: datetime
 //       requests.post(url, json=event.model_dump())                    reported: requests encodes with json
+//       return JSONResponse(content=event.model_dump())                reported: Starlette renders with json.dumps
 //       return json.dumps(event.model_dump(mode="json"))               not reported
-// The sinks are the standard library's encoder: `json.dumps`/`json.dump` (resolved through imports, so a project's
-// own `json` module, such as superset's `from superset.utils import json`, is not one) with no `default=`, `cls=` or
-// `**kwargs`; the `json=` keyword of `requests.<verb>()`, a `requests.Session()`'s methods, `httpx.<verb>()` and an
-// `httpx.Client()`/`httpx.AsyncClient()`'s methods (a client built in the same function, by assignment or `with ...
-// as`). The dump reaches it as the argument itself, a value or `**` splat of a dict literal, an item of a list or tuple
-// literal or the body of a list comprehension in it, or a name the function last assigned from one of these.
+//       return ORJSONResponse(content=event.model_dump())              not reported: orjson encodes datetime
+// The sinks are resolved symbols, never method names alone; each encodes with the standard library's json and no
+// default:
+//   - `json.dumps`/`json.dump` (through imports, so a project's own `json` module, such as superset's `from
+//     superset.utils import json`, is not one) with no `default=`, `cls=` or `**kwargs`;
+//   - Starlette's `JSONResponse` (`starlette.responses.JSONResponse`, re-exported as `fastapi.responses.JSONResponse`,
+//     reached through any import, alias or re-export of the run) and every run subclass of it that overrides neither
+//     `render` nor `__init__`: its first argument or `content=`. FastAPI's ORJSONResponse/UJSONResponse override
+//     `render` outside the run and are not this symbol; a run subclass with its own `render` is left out with its
+//     subclasses;
+//   - aiohttp's `web.json_response(data)` with no `dumps=`;
+//   - the `json=` keyword of `requests.<verb>()`, `httpx.<verb>()`, `aiohttp.request()`, and of a client object's
+//     HTTP methods, where the client is a `requests.Session()`, `httpx.Client()`/`httpx.AsyncClient()` or
+//     `aiohttp.ClientSession()` (or a run subclass of one that overrides neither `__init__` nor a request method),
+//     followed through assignments: built in place, a name the function assigns one (or a `self.x` that is one), a
+//     `with ... as` name, or `self.x` in a method of a class whose methods (and those of its run bases and
+//     subclasses) assign `self.x` only such a client or None. An aiohttp session built with `json_serialize=` (or
+//     `**kwargs`) is no sink.
+// The verbs (get, post, put, patch, delete, head, options, request, stream) are a name list only on an object already
+// resolved to one of those clients.
+// The dump reaches the sink as the argument itself, a value or `**` splat of a dict literal, an item of a list or
+// tuple literal, the body of a list comprehension, either branch of a conditional expression, an operand of `or` (the
+// right one of `and`), or a name the function last assigned from one of these.
 // The dump is `o.model_dump(...)` or v2's deprecated `o.dict(...)`, in Python mode (no `mode=`, or mode="python"),
 // where o is known to hold model M (lib/pydantic's pd_instance: a constructor call, a name bound to one, `self` in a
 // method of M, a parameter annotated M; or the loop variable of a comprehension over a parameter annotated
@@ -31,9 +49,11 @@
 // JSON-native (str, int, float, bool, None, Literal, str or int enums, lists and dicts of those, nested models of
 // those) encodes today, and `mode="json"` would change nothing there, so reporting it would be noise.
 // Left alone, as they encode or cannot be followed:
-//   - `model_dump(mode="json")`, `model_dump_json()`, `json.dumps(..., default=str)` or `cls=`, orjson, FastAPI's
-//     `jsonable_encoder(...)`, Flask's `jsonify(...)`, a project json module, a client the function did not build
-//     (a TestClient fixture, `self.client`);
+//   - `model_dump(mode="json")`, `model_dump_json()`, `json.dumps(..., default=str)` or `cls=`, orjson and
+//     FastAPI's ORJSONResponse/UJSONResponse, FastAPI's `jsonable_encoder(...)`, Flask's `jsonify(...)`, Django's
+//     `JsonResponse` (its encoder takes datetime, UUID and Decimal), a project json module, a client the rule cannot
+//     resolve (a TestClient fixture, a parameter, a function's return value), an aiohttp session with its own
+//     `json_serialize`;
 //   - a dump with `include=` or `exclude=` (not followed: either may drop the offending fields), or with `**kwargs`;
 //   - a model that defines its own `model_dump`/`dict`, has a `@model_serializer`, or sets `json_encoders` in its
 //     config (Pydantic 2 applies json_encoders in JSON mode only, so such a model can still fail; it is left alone as
@@ -52,11 +72,13 @@
 // a type alias (`UTCDatetime = Annotated[datetime, ...]`) or a type from another library (pydantic_extra_types)
 // is not followed; a model from outside the run; a field typed `Any`/`dict[str, Any]` that holds a datetime;
 // `requests` falls back to simplejson when it is installed, which encodes Decimal (not datetime or UUID); a dump
-// passed through a helper function before it reaches the encoder; an inherited field overridden two levels down.
+// passed through a helper function before it reaches the encoder; an inherited field overridden two levels down; a
+// client held in a module global or a class attribute, or passed in; a JSONResponse subclass with its own
+// `__init__` (it may convert content); SQLAlchemy JSON columns and Celery task arguments fed a dump.
 
 #include "lib/pydantic.rerail"
 
-.violation DumpNotJson(at: node, model: symbol, field: symbol, sink: symbol) "`{model}.model_dump()` reaches {sink} in Python mode, where field `{field}` stays a Python object the json module cannot encode: it raises TypeError whenever that field holds a value. Dump in JSON mode, `.model_dump(mode=\"json\")`, which gives the same dict for JSON-native fields; leave it when the encoder has a `default=` that handles the type."
+.violation DumpNotJson(at: node, model: symbol, field: symbol, sink: symbol) "`{model}` field `{field}` is not JSON-encodable in Python mode, so {sink} raises TypeError. Use `.model_dump(mode=\"json\")`, unless the encoder's `default=` handles it."
 
 // ---- types the json module cannot encode -------------------------------------------------------------------------
 // dmj_bad_q(q, label): a qualified type name whose instances json.dumps rejects, by the label the message shows.
@@ -269,6 +291,11 @@ dmj_carries(e, k) :- unparen(e, u), kind(u, "dictionary"), child(u, s, _), kind(
     dmj_carries(v, k).
 dmj_carries(e, k) :- unparen(e, u), (kind(u, "list") ; kind(u, "tuple")), child(u, v, _), dmj_carries(v, k).
 dmj_carries(e, k) :- unparen(e, u), kind(u, "list_comprehension"), field(u, "body", v), dmj_carries(v, k).
+// a conditional expression is either branch; `a or b` either operand; `a and b` its right one (a falsy dict is {})
+dmj_carries(e, k) :- unparen(e, u), kind(u, "conditional_expression"), (child(u, v, 0) ; child(u, v, 2)),
+    dmj_carries(v, k).
+dmj_carries(e, k) :- unparen(e, u), kind(u, "boolean_operator"), field(u, "right", v), dmj_carries(v, k).
+dmj_carries(e, k) :- unparen(e, u), kind(u, "boolean_operator"), op(u, "or"), field(u, "left", v), dmj_carries(v, k).
 dmj_carries(e, k) :- unparen(e, u), kind(u, "identifier"), latest_assign(u, x, a), rasg(s, x, v, a),
     !dmj_mutated(s, x), dmj_carries(v, k).
 // dmj_mutated(s, x): scope s changes the dict named x in place: `x[...] = ...`, `del x[...]`, `x.update(...)`, ...
@@ -282,11 +309,17 @@ dmj_mutator("update"). dmj_mutator("pop"). dmj_mutator("setdefault"). dmj_mutato
 dmj_mutator("popitem"). dmj_mutator("clear").
 
 // ---- the sinks ---------------------------------------------------------------------------------------------------
-// dmj_sink(s, e, what): call s encodes argument e with the standard library's json.
+// dmj_sink(s, e, what): call s encodes argument e with the standard library's json and no default.
 .decl dmj_sink(s: node, e: node, what: symbol)
 dmj_sink(s, e, what) :- kind(s, "call"), field(s, "function", f), sym_of(f, q), (q = "json.dumps" ; q = "json.dump"),
     !dmj_run_json(), (posarg(s, 0, e) ; call_arg(s, -1, "obj", e)), !call_arg(s, -1, "default", _),
     !call_arg(s, -1, "cls", _), !dmj_splat(s), what = cat(q, "()").
+dmj_sink(s, e, what) :- kind(s, "call"), field(s, "function", f), sym_of(f, q), dmj_response_q(q),
+    (posarg(s, 0, e) ; call_arg(s, -1, "content", e)), split_dot(q, _, x), what = cat(x, "(content=...)").
+dmj_sink(s, e, what) :- kind(s, "call"), field(s, "function", f), sym_of(f, q),
+    (q = "aiohttp.web.json_response" ; q = "aiohttp.web_response.json_response"),
+    (posarg(s, 0, e) ; call_arg(s, -1, "data", e)), !call_arg(s, -1, "dumps", _), !dmj_splat(s),
+    what = "aiohttp's json_response()".
 dmj_sink(s, e, what) :- kind(s, "call"), field(s, "function", f), sym_of(f, q), dmj_http_fn(q),
     call_arg(s, -1, "json", e), what = cat(q, "(json=...)").
 dmj_sink(s, e, what) :- kind(s, "call"), field(s, "function", f), attr_of(f, o0, m), dmj_verb(m), unparen(o0, o),
@@ -294,23 +327,70 @@ dmj_sink(s, e, what) :- kind(s, "call"), field(s, "function", f), attr_of(f, o0,
 // a module of the run named `json` would shadow the standard library's
 .decl dmj_run_json()
 dmj_run_json() :- modname(_, "json").
+// dmj_response_q(q): q is Starlette's JSONResponse, or a run class deriving from it (directly or through other run
+// classes) that keeps its `render` and `__init__`. ORJSONResponse/UJSONResponse live outside the run: never q.
+.decl dmj_response_q(q: symbol)
+dmj_response_q("starlette.responses.JSONResponse"). dmj_response_q("fastapi.responses.JSONResponse").
+dmj_response_q(q) :- class_def(c, q), class_base(c, b), dmj_response_q(b), !dmj_overrides(c, "render"),
+    !dmj_overrides(c, "__init__").
+// dmj_overrides(c, x): class c's body defines method x.
+.decl dmj_overrides(c: node, x: symbol)
+dmj_overrides(c, x) :- kind(c, "class_definition"), kind(f, "function_definition"), nearest(f, c, scope),
+    def_name(f, x).
 .decl dmj_verb(m: symbol)
 dmj_verb("get"). dmj_verb("post"). dmj_verb("put"). dmj_verb("patch"). dmj_verb("delete"). dmj_verb("head").
 dmj_verb("options"). dmj_verb("request"). dmj_verb("stream").
 .decl dmj_http_fn(q: symbol)
 dmj_http_fn(q) :- dmj_verb(m), (q = cat("requests.", m) ; q = cat("requests.api.", m) ; q = cat("httpx.", m)).
-.decl dmj_client_ctor(q: symbol, lib: symbol)
-dmj_client_ctor("requests.Session", "requests"). dmj_client_ctor("requests.sessions.Session", "requests").
-dmj_client_ctor("requests.session", "requests"). dmj_client_ctor("httpx.Client", "httpx").
-dmj_client_ctor("httpx.AsyncClient", "httpx").
+dmj_http_fn("aiohttp.request"). dmj_http_fn("aiohttp.client.request").
+// dmj_client_q(q, lib): q is a client class of lib, or a run subclass of one that overrides neither `__init__` nor a
+// method a request goes through.
+.decl dmj_client_q(q: symbol, lib: symbol)
+dmj_client_q("requests.Session", "requests"). dmj_client_q("requests.sessions.Session", "requests").
+dmj_client_q("requests.session", "requests"). dmj_client_q("httpx.Client", "httpx").
+dmj_client_q("httpx.AsyncClient", "httpx"). dmj_client_q("aiohttp.ClientSession", "aiohttp").
+dmj_client_q("aiohttp.client.ClientSession", "aiohttp").
+dmj_client_q(q, lib) :- class_def(c, q), class_base(c, b), dmj_client_q(b, lib), !dmj_client_override(c).
+.decl dmj_client_override(c: node)
+dmj_client_override(c) :- dmj_overrides(c, x), (dmj_verb(x) ; x = "__init__" ; x = "send" ; x = "build_request" ;
+    x = "_request").
+// dmj_own_encoder(k, lib): client constructor call k may give lib's client its own JSON encoder.
+.decl dmj_encoder_kw(lib: symbol, kw: symbol)
+dmj_encoder_kw("aiohttp", "json_serialize").
+.decl dmj_own_encoder(k: node, lib: symbol)
+dmj_own_encoder(k, lib) :- dmj_encoder_kw(lib, kw), call_arg(k, -1, kw, _).
+dmj_own_encoder(k, lib) :- dmj_encoder_kw(lib, _), dmj_splat(k).
 .decl dmj_client_new(v: node, lib: symbol)
-dmj_client_new(v, lib) :- unparen(v, k), kind(k, "call"), field(k, "function", f), sym_of(f, q), dmj_client_ctor(q, lib).
-// dmj_client(o, lib): o is a client built in place, a name assigned one, or a `with ... as` name bound to one.
+dmj_client_new(v, lib) :- unparen(v, k), kind(k, "call"), field(k, "function", f), sym_of(f, q), dmj_client_q(q, lib),
+    !dmj_own_encoder(k, lib).
+// dmj_client(o, lib): o is a client built in place, a name assigned one (or a `self.x` that is one), a `with ... as`
+// name bound to one, or `self.x` of a class whose code only ever stores such a client (or None) in `self.x`.
 .decl dmj_client(o: node, lib: symbol)
 dmj_client(o, lib) :- dmj_client_new(o, lib).
-dmj_client(o, lib) :- kind(o, "identifier"), text(o, x), look(o, x, s), asg(s, x, v, _), dmj_client_new(v, lib).
+dmj_client(o, lib) :- kind(o, "identifier"), text(o, x), look(o, x, s), asg(s, x, v, _), unparen(v, u),
+    dmj_client(u, lib).
 dmj_client(o, lib) :- kind(o, "identifier"), text(o, x), look(o, x, s), kind(w, "with_item"), nearest(w, s, scope),
     within(k, w), dmj_client_new(k, lib), within(nm, w), kind(nm, "identifier"), text(nm, x), !within(nm, k).
+dmj_client(o, lib) :- attr_of(o, s, x), kind(s, "identifier"), text(s, "self"), look(s, "self", f),
+    param(f, "self", 0), nearest(f, u, scope), kind(u, "class_definition"), dmj_self_client(u, x, lib).
+// dmj_self_client(u, x, lib): the methods of class u and of the run classes related to it (bases and subclasses)
+// assign `self.x` a new client of lib, and nothing else but None.
+.decl dmj_self_client(u: node, x: symbol, lib: symbol)
+dmj_self_client(u, x, lib) :- dmj_kin(u, b), dmj_self_set(b, x, r), dmj_client_new(r, lib), !dmj_self_other(u, x).
+.decl dmj_self_other(u: node, x: symbol)
+dmj_self_other(u, x) :- dmj_kin(u, b), dmj_self_set(b, x, r), !dmj_client_new(r, _), !kind(r, "none").
+// dmj_self_set(b, x, r): a method of class b assigns `self.x = r`.
+.decl dmj_self_set(b: node, x: symbol, r: node)
+dmj_self_set(b, x, r) :- kind(b, "class_definition"), kind(f, "function_definition"), nearest(f, b, scope),
+    assigned_attr(f, "self", x, r).
+// dmj_kin(u, b): b is class u, a run base of u, or a run subclass of u.
+.decl dmj_kin(u: node, b: node)
+dmj_kin(u, u) :- kind(u, "class_definition").
+dmj_kin(u, b) :- dmj_anc(u, b).
+dmj_kin(u, b) :- dmj_anc(b, u).
+.decl dmj_anc(u: node, b: node)
+dmj_anc(u, b) :- class_base(u, q), class_def(b, q).
+dmj_anc(u, b) :- dmj_anc(u, m), class_base(m, q), class_def(b, q).
 
 DumpNotJson(k, mn, desc, what) :- dmj_sink(_, e, what), dmj_carries(e, k), dmj_dump(k, c), dmj_bad(c),
     dmj_witness(c, desc), def_name(c, mn), docof(k, d), !pd_test_doc(d).
@@ -318,19 +398,31 @@ DumpNotJson(k, mn, desc, what) :- dmj_sink(_, e, what), dmj_carries(e, k), dmj_d
 .test cases exactly
     .fixture "pyproject.toml" from "../cases/pydantic-practice-dump-mode-json/pyproject.toml"
     .fixture "app/__init__.py" from "../cases/pydantic-practice-dump-mode-json/app/__init__.py"
+    .fixture "app/aio.py" from "../cases/pydantic-practice-dump-mode-json/app/aio.py"
     .fixture "app/base.py" from "../cases/pydantic-practice-dump-mode-json/app/base.py"
     .fixture "app/clients.py" from "../cases/pydantic-practice-dump-mode-json/app/clients.py"
     .fixture "app/enums.py" from "../cases/pydantic-practice-dump-mode-json/app/enums.py"
+    .fixture "app/lookalike.py" from "../cases/pydantic-practice-dump-mode-json/app/lookalike.py"
+    .fixture "app/responses.py" from "../cases/pydantic-practice-dump-mode-json/app/responses.py"
     .fixture "app/schemas.py" from "../cases/pydantic-practice-dump-mode-json/app/schemas.py"
     .fixture "app/services.py" from "../cases/pydantic-practice-dump-mode-json/app/services.py"
     .fixture "app/utils/__init__.py" from "../cases/pydantic-practice-dump-mode-json/app/utils/__init__.py"
     .fixture "app/utils/json.py" from "../cases/pydantic-practice-dump-mode-json/app/utils/json.py"
+    .fixture "app/views.py" from "../cases/pydantic-practice-dump-mode-json/app/views.py"
     .fixture "tests/test_events.py" from "../cases/pydantic-practice-dump-mode-json/tests/test_events.py"
+    .expect _ at "app/aio.py":14
+    .expect _ at "app/aio.py":19
+    .expect _ at "app/aio.py":25
+    .expect _ at "app/aio.py":31
+    .expect _ at "app/aio.py":42
     .expect _ at "app/clients.py":8
     .expect _ at "app/clients.py":13
     .expect _ at "app/clients.py":18
     .expect _ at "app/clients.py":23
     .expect _ at "app/clients.py":26
+    .expect _ at "app/clients.py":53
+    .expect _ at "app/clients.py":57
+    .expect _ at "app/clients.py":65
     .expect _ at "app/services.py":36
     .expect _ at "app/services.py":40
     .expect _ at "app/services.py":45
@@ -350,4 +442,15 @@ DumpNotJson(k, mn, desc, what) :- dmj_sink(_, e, what), dmj_carries(e, k), dmj_d
     .expect _ at "app/services.py":105
     .expect _ at "app/services.py":222
     .expect _ at "app/services.py":238
+    .expect _ at "app/views.py":22
+    .expect _ at "app/views.py":26
+    .expect _ at "app/views.py":30
+    .expect _ at "app/views.py":34
+    .expect _ at "app/views.py":38
+    .expect _ at "app/views.py":42
+    .expect _ at "app/views.py":46
+    .expect _ at "app/views.py":51
+    .expect _ at "app/views.py":55
+    .expect _ at "app/views.py":59
+    .expect _ at "app/views.py":63
 .end

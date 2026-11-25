@@ -27,7 +27,7 @@
     {
       "id": "alembic-practice-index-not-concurrent",
       "document": "rules/alembic-practice-index-not-concurrent.rerail",
-      "title": "Alembic practice: an index or unique constraint built on an existing table without CONCURRENTLY",
+      "title": "Alembic practice: an index, unique constraint or primary key built on an existing table without CONCURRENTLY",
       "group": "Alembic practice",
       "mode": "steer",
       "on": true,
@@ -158,35 +158,41 @@
         },
         "passes": {
           "path": "migrations/versions/d5e6f7a8b9c0_users_email_not_null.py",
-          "text": "\"\"\"require an email on every user, behind the CHECK added NOT VALID by c4d5e6f7a8b9\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"d5e6f7a8b9c0\"\ndown_revision = \"c4d5e6f7a8b9\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.execute(\"ALTER TABLE users VALIDATE CONSTRAINT ck_users_email_not_null\")\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=False)\n    op.drop_constraint(\"ck_users_email_not_null\", \"users\", type_=\"check\")\n\n\ndef downgrade():\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=True)\n"
+          "text": "\"\"\"require an email on every user, behind the CHECK added NOT VALID by c4d5e6f7a8b9\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"d5e6f7a8b9c0\"\ndown_revision = \"c4d5e6f7a8b9\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.execute(\"ALTER TABLE users VALIDATE CONSTRAINT ck_users_email_not_null\")\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=False)\n    op.drop_constraint(\"ck_users_email_not_null\", \"users\", type_=\"check\")\n\n\ndef downgrade():\n    op.alter_column(\"users\", \"email\", existing_type=sa.String(255), nullable=True)\n",
+          "with": [
+            {
+              "path": "migrations/versions/c4d5e6f7a8b9_users_email_check.py",
+              "text": "\"\"\"check users.email for NULL without scanning: NOT VALID\"\"\"\nfrom alembic import op\n\nrevision = \"c4d5e6f7a8b9\"\ndown_revision = \"b3c4d5e6f7a8\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.create_check_constraint(\"ck_users_email_not_null\", \"users\", \"email IS NOT NULL\", postgresql_not_valid=True)\n\n\ndef downgrade():\n    op.drop_constraint(\"ck_users_email_not_null\", \"users\", type_=\"check\")\n"
+            }
+          ]
         }
       }
     },
     {
       "id": "alembic-practice-missing-lock-timeout",
       "document": "rules/alembic-practice-missing-lock-timeout.rerail",
-      "title": "Alembic practice: a migration that locks an existing table without setting lock_timeout",
+      "title": "Alembic practice: migrations that lock existing tables while no lock_timeout is set for them",
       "group": "Alembic practice",
       "mode": "log",
       "on": true,
       "examples": {
         "caught": {
-          "path": "migrations/versions/b2c3d4e5f6a7_users_nickname.py",
-          "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nickname\", sa.String(50), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nickname\")\n",
+          "path": "migrations/env.py",
+          "text": "from logging.config import fileConfig\n\nfrom alembic import context\nfrom sqlalchemy import engine_from_config, pool\n\nconfig = context.config\nfileConfig(config.config_file_name)\n\n\ndef run_migrations_online():\n    connectable = engine_from_config(config.get_section(config.config_ini_section), poolclass=pool.NullPool)\n    with connectable.connect() as connection:\n        context.configure(connection=connection, target_metadata=None)\n        with context.begin_transaction():\n            context.run_migrations()\n\n\nrun_migrations_online()\n",
           "with": [
             {
-              "path": "migrations/env.py",
-              "text": "from logging.config import fileConfig\n\nfrom alembic import context\nfrom sqlalchemy import engine_from_config, pool\n\nconfig = context.config\nfileConfig(config.config_file_name)\n\n\ndef run_migrations_online():\n    connectable = engine_from_config(config.get_section(config.config_ini_section), poolclass=pool.NullPool)\n    with connectable.connect() as connection:\n        context.configure(connection=connection, target_metadata=None)\n        with context.begin_transaction():\n            context.run_migrations()\n\n\nrun_migrations_online()\n"
+              "path": "migrations/versions/b2c3d4e5f6a7_users_nickname.py",
+              "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nickname\", sa.String(50), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nickname\")\n"
             }
           ]
         },
         "passes": {
-          "path": "migrations/versions/b2c3d4e5f6a7_users_nickname.py",
-          "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nickname\", sa.String(50), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nickname\")\n",
+          "path": "migrations/env.py",
+          "text": "from logging.config import fileConfig\n\nfrom alembic import context\nfrom sqlalchemy import engine_from_config, pool, text\n\nconfig = context.config\nfileConfig(config.config_file_name)\n\n\ndef run_migrations_online():\n    connectable = engine_from_config(config.get_section(config.config_ini_section), poolclass=pool.NullPool)\n    with connectable.connect() as connection:\n        context.configure(connection=connection, target_metadata=None)\n        with context.begin_transaction():\n            connection.execute(text(\"SET LOCAL lock_timeout = '5s'\"))\n            context.run_migrations()\n\n\nrun_migrations_online()\n",
           "with": [
             {
-              "path": "migrations/env.py",
-              "text": "from logging.config import fileConfig\n\nfrom alembic import context\nfrom sqlalchemy import engine_from_config, pool, text\n\nconfig = context.config\nfileConfig(config.config_file_name)\n\n\ndef run_migrations_online():\n    connectable = engine_from_config(config.get_section(config.config_ini_section), poolclass=pool.NullPool)\n    with connectable.connect() as connection:\n        context.configure(connection=connection, target_metadata=None)\n        with context.begin_transaction():\n            connection.execute(text(\"SET LOCAL lock_timeout = '5s'\"))\n            context.run_migrations()\n\n\nrun_migrations_online()\n"
+              "path": "migrations/versions/b2c3d4e5f6a7_users_nickname.py",
+              "text": "\"\"\"add a nickname to users\"\"\"\nimport sqlalchemy as sa\nfrom alembic import op\n\nrevision = \"b2c3d4e5f6a7\"\ndown_revision = \"a1b2c3d4e5f6\"\nbranch_labels = None\ndepends_on = None\n\n\ndef upgrade():\n    op.add_column(\"users\", sa.Column(\"nickname\", sa.String(50), nullable=True))\n\n\ndef downgrade():\n    op.drop_column(\"users\", \"nickname\")\n"
             }
           ]
         }
@@ -195,7 +201,7 @@
     {
       "id": "alembic-practice-multiple-heads",
       "document": "rules/alembic-practice-multiple-heads.rerail",
-      "title": "Alembic practice: two revisions branch from the same parent and leave the migration tree with two heads",
+      "title": "Alembic practice: revisions that leave one migration directory with two heads",
       "group": "Alembic practice",
       "mode": "steer",
       "on": true,

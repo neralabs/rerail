@@ -7,8 +7,8 @@
 // from the environment with a fallback that is insecure when the variable is missing runs one forgetful deploy with
 // debug pages (settings and source shown), any Host header (poisoned password-reset links) or a public signing key
 // (forged sessions, cookies and reset tokens). `check --deploy` sees only the value where it runs and never reports
-// '*'; Ruff PLW1508 flags only a non-str os.getenv default; Bandit S105 a literal `SECRET_KEY = "..."`, which stays
-// Bandit's: only env reads are reported here.
+// '*'; Ruff PLW1508 flags only a non-str os.getenv default (`os.getenv("DEBUG", True)`, as a type error), never a str
+// one like "False"; Bandit S105 a literal `SECRET_KEY = "..."`, which stays Bandit's: only env reads are reported.
 //
 // An env read is a call of os.environ.get or os.getenv, of a django-environ Env instance (`env(...)`, `env.bool`,
 // `env.str`, `env.list`, ...; the instance may be defined in another module) or python-decouple's `config`, or of a
@@ -18,11 +18,24 @@
 // a parameter named like `default`/`fallback`, or one the helper returns or passes on as an env read's default (and
 // the parameter's own default when the call passes none); for `env("X")` with no default, the `X=(type, default)`
 // of the Env's schema; for `os.getenv("X") or "literal"`, the literal.
-//   DEBUG = envbool("DEBUG", "True")                               reported: a truthy fallback
-//   DEBUG = os.environ.get("DEBUG", "true").lower() in ("true", "1")  reported: the fallback compares true
+//
+// DEBUG is evaluated, not matched by shape: the rule computes the Python value the whole expression has when the
+// variable is unset and reports a truthy one, as `if settings.DEBUG` sees it. os.environ.get, os.getenv, decouple
+// without cast= and django-environ return their fallback as written (django-environ never parses a default), and
+// os.environ.get/os.getenv without one return None; decouple with cast= casts it; a project helper is taken to parse
+// it as a bool. bool(), int(), str(), .lower(), .upper(), .strip(), a str-to-bool converter, ==, !=, in, not in, is
+// None, not, and, or then follow Python. ALLOWED_HOSTS is reported for "*" in a fallback, SECRET_KEY for a non-empty
+// literal fallback.
+//   DEBUG = envbool("DEBUG", "True")                               reported: the helper parses "True"
+//   DEBUG = os.getenv("DEBUG", "False")                            reported: a non-empty str is true
+//   DEBUG = bool(os.environ.get("DEBUG", "False"))                 reported: bool("False") is True
+//   DEBUG = os.environ.get("DJANGO_DEBUG") != "0"                  reported: None != "0"
+//   DEBUG = os.environ.get("APP_ENV", "development") == "development"  reported: the fallback compares true
 //   ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")  reported: '*' in the fallback
 //   SECRET_KEY = env("SECRET_KEY", default="insecure")             reported: a literal key
-//   DEBUG = int(os.environ.get("DEBUG", "0"))                      not reported: a false fallback
+//   DEBUG = int(os.environ.get("DEBUG", "0"))                      not reported: int("0") is 0
+//   DEBUG = os.getenv("DEBUG", "False").lower() == "true"          not reported: compares false
+//   DEBUG = config("DEBUG", default="False", cast=bool)            not reported: decouple parses it
 //   SECRET_KEY = os.environ.get("SECRET_KEY") or get_random_secret_key()   not reported: not a public value
 //   SECRET_KEY = os.environ.get("SECRET_KEY", "")                  not reported: Django refuses an empty key
 //   SECRET_KEY = "literal"                                         not reported: Bandit S105
@@ -30,26 +43,32 @@
 // more of DEBUG, ALLOWED_HOSTS, SECRET_KEY, DATABASES, INSTALLED_APPS, MIDDLEWARE at module level, in a run that
 // imports Django. Only module-level assignments count (inside module-level if/try too). Left alone: test code and
 // development modules (dev.py, local.py, test.py, ci.py, settings_test.py, dev/, local/, testutils/, ...); an
-// assignment under an `if` that tests DEBUG; a setting the same module checks in an `if` that raises (`if SECRET_KEY
-// == "change-me": raise ImproperlyConfigured`); and a base module's setting that every non-development module
-// star-importing it (`from .base import *`, matched by path) assigns again: production loads the importing module,
-// whose own read decides the value (label-studio's base.py DEBUG, overridden with a False fallback by
-// label_studio.py).
+// assignment under an `if` that tests DEBUG; a setting the module refuses in a module-level `if` that raises (`if
+// SECRET_KEY == "change-me": raise ImproperlyConfigured`); and a base module's setting that every non-development
+// module star-importing it (`from .base import *`, matched by path) assigns again or refuses that way: production
+// loads the importing module, which decides the value (label-studio's base.py DEBUG, overridden with a False fallback
+// by label_studio.py; a base SECRET_KEY default that production.py refuses).
 // Gaps: a fallback chosen by a branch on the variable (`if host: ALLOWED_HOSTS = [host] else: ALLOWED_HOSTS =
-// ["*"]`); an override in a module that imports the base by name, or two star-imports deep; a fallback held in a
-// variable or a constant of another module; config-file reads (configparser) are not env reads; a helper reached only
-// through a method or a call the name lookup cannot resolve is not an env read.
+// ["*"]`); an override or refusal in a module that imports the base by name, two star-imports deep, or in a function;
+// a refusal is any raising `if` that names the setting, whatever its condition; an `assert` is not a refusal (`-O`
+// strips it); a fallback held in a variable or a constant of another module; a project helper that returns a str
+// fallback unparsed (`get_env("DEBUG", "False")`) is taken to parse it, and its body is not evaluated; the one name
+// list is the str-to-bool converters (a callee named like strtobool, str_to_bool, is_true), since they live in many
+// libraries and projects; str methods are evaluated two deep; config-file reads (configparser) are not env reads; a
+// helper reached only through a method or a call the name lookup cannot resolve is not an env read.
 
 #include "lib/django.rerail"
 
-.violation SettingsEnvFailsOpen(at: node, name: symbol, fallback: symbol, risk: symbol) "When its environment variable is unset, `{name}` falls back to `{fallback}`: {risk}. Make the fallback safe (DEBUG false, ALLOWED_HOSTS without \"*\", SECRET_KEY with no default so startup fails without one) and give development its value in a dev settings module or .env file. Leave it if only development or test settings ever load this module."
-SettingsEnvFailsOpen(a, x, t, k) :- fo_setting(d, x, v, a), fo_insecure(x, v, dv), text(dv, t), fo_risk(x, k),
-    !fo_guarded(a), !fo_checked(d, x), !fo_overridden(d, x).
+.violation DebugFailsOpen(at: node) "DEBUG is on here when its environment variable is unset. Read it as a bool with a false fallback and turn it on only in development settings or .env; leave it if only development loads this module."
+DebugFailsOpen(a) :- fo_setting(d, "DEBUG", v, a), fo_truth(v, "True"), !fo_guarded(a), !fo_handled(d, "DEBUG").
 
-.decl fo_risk(x: symbol, k: symbol)
-fo_risk("DEBUG", "every deploy that forgets it shows debug pages with settings and source code to anyone").
-fo_risk("ALLOWED_HOSTS", "every deploy that forgets it accepts any Host header, so password-reset and other absolute links can be poisoned").
-fo_risk("SECRET_KEY", "every deploy that forgets it signs with a key anyone can read here, so sessions, signed cookies and password-reset tokens can be forged").
+.violation AllowedHostsFailsOpen(at: node, fallback: symbol) "When its environment variable is unset, ALLOWED_HOSTS falls back to {fallback}, which accepts any Host header. Drop \"*\" from the fallback; leave it if only development loads this module."
+AllowedHostsFailsOpen(a, t) :- fo_setting(d, "ALLOWED_HOSTS", v, a), (e = v ; within(e, v)), fo_fallback(e, dv),
+    fo_star(dv), text(dv, t), !fo_guarded(a), !fo_handled(d, "ALLOWED_HOSTS").
+
+.violation SecretKeyFailsOpen(at: node, fallback: symbol) "When its environment variable is unset, SECRET_KEY falls back to the key {fallback}, readable in the source. Require the variable (no fallback); leave it if only development loads this module."
+SecretKeyFailsOpen(a, t) :- fo_setting(d, "SECRET_KEY", v, a), unparen(v, u), fo_fallback(u, dv), plain_str(dv, s),
+    s != "", text(dv, t), !fo_guarded(a), !fo_handled(d, "SECRET_KEY").
 
 // ---- settings modules ----------------------------------------------------------------------------------------------
 // fo_setting(d, x, v, a): module-level assignment a, `x = v`, of setting x in settings module d (not test or
@@ -139,66 +158,145 @@ fo_fallback(c, dv) :- fo_environ_call(c, k, ""), !fo_darg(c, _), posarg(c, 0, n)
 fo_fallback(b, dv) :- kind(b, "boolean_operator"), op(b, "or"), field(b, "left", l), unparen(l, c), fo_env_call(c),
     !fo_darg(c, _), field(b, "right", dv).
 
-// ---- insecure fallbacks --------------------------------------------------------------------------------------------
-// fo_insecure(x, v, dv): value v of setting x is insecure when the variable behind fallback dv is unset.
-.decl fo_insecure(x: symbol, v: node, dv: node)
-fo_insecure("DEBUG", v, dv) :- fo_setting(_, "DEBUG", v, _), fo_on(v, dv).
-fo_insecure("ALLOWED_HOSTS", v, dv) :- fo_setting(_, "ALLOWED_HOSTS", v, _), (e = v ; within(e, v)), fo_fallback(e, dv),
-    fo_star(dv).
-fo_insecure("SECRET_KEY", v, dv) :- fo_setting(_, "SECRET_KEY", v, _), unparen(v, u), fo_fallback(u, dv),
-    plain_str(dv, s), s != "".
-// fo_on(e, dv): e is true when the variable behind fallback dv is unset: the read itself with a truthy fallback,
-// a bool/int-style wrapper or `.lower()` of one, or a comparison that holds for the fallback's text.
-.decl fo_on(e: node, dv: node)
-fo_on(e, dv) :- fo_val(e), unparen(e, u), fo_fallback(u, dv), fo_truthy(dv).
-fo_on(e, dv) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f), posarg(u, 0, a), !posarg(u, 1, _),
-    fo_truth_fn(f), fo_on(a, dv).
-fo_on(e, dv) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f), attr_of(f, o, m),
-    (m = "lower" ; m = "strip"), !posarg(u, 0, _), fo_on(o, dv).
-fo_on(e, dv) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), fo_dtext(l, dv, t), fo_lit_text(r, w),
-    (op = "==", t = w ; op = "!=", t != w).
-fo_on(e, dv) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), fo_dtext(r, dv, t), fo_lit_text(l, w),
-    (op = "==", t = w ; op = "!=", t != w).
-fo_on(e, dv) :- fo_val(e), unparen(e, u), cmp(u, "in", l, r), fo_dtext(l, dv, t), unparen(r, s), child(s, el, _),
-    fo_lit_text(el, t).
-fo_on(e, dv) :- fo_val(e), unparen(e, u), cmp(u, "not in", l, r), fo_dtext(l, dv, t), unparen(r, s),
-    (kind(s, "tuple") ; kind(s, "list") ; kind(s, "set")), count : { child(s, el, _), fo_lit_text(el, t) } = 0.
-// fo_val(e): e is a DEBUG value, or part of one fo_on reads through.
+// ---- DEBUG when its variable is unset ------------------------------------------------------------------------------
+// DEBUG is evaluated, not matched by shape: fo_u gives the Python value each part of a DEBUG expression has when the
+// variable it reads is unset, and DEBUG fails open when the whole value is truthy (Django tests `if settings.DEBUG`).
+// A read returns its fallback as written (os.environ.get, os.getenv, decouple without cast=, django-environ, which
+// never parses a default) or None (os.environ.get/os.getenv without one); decouple with cast= casts it; a project
+// helper is taken to parse it as a bool (its body is not evaluated). Then bool(), int(), str(), .lower(), .upper(),
+// .strip(), a bool-named converter (strtobool, str_to_bool, is_true: the one name list, since such converters live in
+// many libraries and in the project), ==, !=, in, not in (a literal tuple, list or set), is/is not None, not, and,
+// or apply Python's rules.
+// fo_val(e): e is a DEBUG value, a part of one fo_u evaluates through, or a fallback of a read in one.
 .decl fo_val(e: node)
 fo_val(v) :- fo_setting(_, "DEBUG", v, _).
 fo_val(a) :- fo_val(e), unparen(e, u), kind(u, "call"), posarg(u, 0, a).
 fo_val(o) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f), attr_of(f, o, _).
+fo_val(dv) :- fo_val(e), unparen(e, u), kind(u, "call"), fo_fallback(u, dv).
 fo_val(s) :- fo_val(e), unparen(e, u), kind(u, "comparison_operator"), child(u, s, _).
-// fo_truth_fn(f): f converts its argument to a truth value or a number: bool, int, strtobool, is_true, str_to_bool.
-.decl fo_truth_fn(f: node)
-fo_truth_fn(f) :- fo_builtin(f, "bool").
-fo_truth_fn(f) :- fo_builtin(f, "int").
-fo_truth_fn(f) :- (kind(f, "identifier") ; kind(f, "attribute")), text(f, s), match("(?i)(.*\\.)?[a-z_]*(bool|true)[a-z_]*", s).
-// fo_dtext(e, dv, t): when the variable behind fallback dv is unset, e is the text t (through .lower(), .strip(),
-// int() and str()).
-.decl fo_dtext(e: node, dv: node, t: symbol)
-fo_dtext(e, dv, t) :- fo_val(e), unparen(e, u), fo_fallback(u, dv), fo_lit_text(dv, t).
-fo_dtext(e, dv, @lower(t)) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f), attr_of(f, o, "lower"),
-    fo_dtext(o, dv, t).
-fo_dtext(e, dv, t) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f), attr_of(f, o, "strip"),
-    fo_dtext(o, dv, t).
-fo_dtext(e, dv, t) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f),
-    (fo_builtin(f, "int") ; fo_builtin(f, "str")), posarg(u, 0, a), fo_dtext(a, dv, t).
+fo_val(s) :- fo_val(e), unparen(e, u), kind(u, "boolean_operator"), (field(u, "left", s) ; field(u, "right", s)).
+fo_val(s) :- fo_val(e), unparen(e, u), kind(u, "not_operator"), field(u, "argument", s).
+// fo_u(e, t, s): with its variable unset, e is a value of Python type t ("str", "bool", "int", "none"), text s.
+.decl fo_u(e: node, t: symbol, s: symbol)
+fo_u(e, t, s) :- fo_val(e), unparen(e, u), fo_lit(u, t, s).
+fo_u(e, t, s) :- fo_val(e), unparen(e, u), kind(u, "call"), fo_raw_read(u), fo_fallback(u, dv), fo_u(dv, t, s).
+fo_u(e, "none", "None") :- fo_val(e), unparen(e, u), fo_std_call(u), !fo_darg(u, _).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), fo_helper_call(u, _), fo_fallback(u, dv), fo_parsed(dv, b).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), fo_decouple_call(u), call_arg(u, -1, "cast", c), fo_builtin(c, "bool"),
+    fo_fallback(u, dv), fo_parsed(dv, b).
+fo_u(e, "int", n) :- fo_val(e), unparen(e, u), fo_decouple_call(u), call_arg(u, -1, "cast", c), fo_builtin(c, "int"),
+    fo_fallback(u, dv), fo_int(dv, n).
+fo_u(e, "str", s) :- fo_val(e), unparen(e, u), fo_decouple_call(u), call_arg(u, -1, "cast", c), fo_builtin(c, "str"),
+    fo_fallback(u, dv), fo_u(dv, _, s).
+// conversions
+fo_u(e, "bool", b) :- fo_val(e), fo_conv(e, f, a), fo_builtin(f, "bool"), fo_truth(a, b).
+fo_u(e, "int", n) :- fo_val(e), fo_conv(e, f, a), fo_builtin(f, "int"), fo_int(a, n).
+fo_u(e, "str", s) :- fo_val(e), fo_conv(e, f, a), fo_builtin(f, "str"), fo_u(a, _, s).
+fo_u(e, "bool", b) :- fo_val(e), fo_conv(e, f, a), fo_bool_named(f), fo_parsed(a, b).
+fo_u(e, "str", r) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f), attr_of(f, o, m),
+    !posarg(u, 0, _), fo_u(o, t, s), t = "str", fo_tx(s, m, r).
+// comparisons: ==/!= of two values, is/is not None, in/not in a literal collection
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), fo_key(l, kt, ks), fo_key(r, kt, ks),
+    fo_opres(op, "same", b).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), fo_key(l, lt, _), fo_key(r, rt, _), lt != rt,
+    fo_opres(op, "differ", b).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), fo_key(l, kt, ls), fo_key(r, kt, rs), ls != rs,
+    fo_opres(op, "differ", b).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), unparen(r, n), kind(n, "none"), fo_u(l, t, _),
+    t = "none", fo_opres(op, "same", b).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), unparen(r, n), kind(n, "none"), fo_u(l, t, _),
+    t != "none", fo_opres(op, "differ", b).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), fo_lit_coll(r, c), fo_key(l, kt, ks),
+    fo_in_coll(c, kt, ks), fo_opres(op, "in", b).
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), cmp(u, op, l, r), fo_lit_coll(r, c), fo_key(l, kt, ks),
+    !fo_in_coll(c, kt, ks), fo_opres(op, "out", b).
+// not, and, or
+fo_u(e, "bool", b) :- fo_val(e), unparen(e, u), kind(u, "not_operator"), field(u, "argument", a), fo_truth(a, b0),
+    fo_opres("not", b0, b).
+fo_u(e, t, s) :- fo_val(e), unparen(e, u), kind(u, "boolean_operator"), op(u, o), field(u, "left", l),
+    fo_truth(l, b), fo_opres(o, b, "left"), fo_u(l, t, s).
+fo_u(e, t, s) :- fo_val(e), unparen(e, u), kind(u, "boolean_operator"), op(u, o), field(u, "left", l),
+    field(u, "right", r), fo_truth(l, b), fo_opres(o, b, "right"), fo_u(r, t, s).
+// fo_opres(op, c, res): operator op gives res when its operands are in case c: for ==, is, in (and their negations)
+// the operands are the same/differ or the item is in/out of the collection; for not, the operand's truth; for and/or,
+// the left operand's truth, giving the side that is the result.
+.decl fo_opres(op: symbol, c: symbol, res: symbol)
+fo_opres("==", "same", "True"). fo_opres("==", "differ", "False"). fo_opres("!=", "same", "False").
+fo_opres("!=", "differ", "True"). fo_opres("is", "same", "True"). fo_opres("is", "differ", "False").
+fo_opres("is not", "same", "False"). fo_opres("is not", "differ", "True"). fo_opres("in", "in", "True").
+fo_opres("in", "out", "False"). fo_opres("not in", "in", "False"). fo_opres("not in", "out", "True").
+fo_opres("not", "True", "False"). fo_opres("not", "False", "True").
+fo_opres("or", "True", "left"). fo_opres("or", "False", "right").
+fo_opres("and", "False", "left"). fo_opres("and", "True", "right").
+// fo_conv(e, f, a): e is the one-argument call `f(a)`.
+.decl fo_conv(e: node, f: node, a: node)
+fo_conv(e, f, a) :- fo_val(e), unparen(e, u), kind(u, "call"), field(u, "function", f), posarg(u, 0, a),
+    !posarg(u, 1, _), !call_arg(u, -1, _, _).
+// fo_raw_read(c): env read c returns its fallback unconverted.
+.decl fo_raw_read(c: node)
+fo_raw_read(c) :- fo_std_call(c).
+fo_raw_read(c) :- fo_decouple_call(c), !call_arg(c, -1, "cast", _).
+fo_raw_read(c) :- fo_environ_call(c, _, _).
+// fo_truth(e, b): bool(e) with the variable unset.
+.decl fo_truth(e: node, b: symbol)
+fo_truth(e, b) :- fo_u(e, t, s),
+    (t = "none", b = "False" ; t = "str", s = "", b = "False" ; t = "str", s != "", b = "True" ;
+     t = "bool", s = "True", b = "True" ; t = "bool", s = "False", b = "False" ;
+     t = "int", s = "0", b = "False" ; t = "int", s != "0", b = "True").
+// fo_parsed(e, b): e read as a boolean flag ("true", "1", "yes", "on" true; other strings false), as decouple's
+// cast=bool, strtobool and project bool helpers do.
+.decl fo_parsed(e: node, b: symbol)
+fo_parsed(e, b) :- fo_u(e, t, s),
+    (t = "str", match("(?i)\\s*(true|1|yes|on|y|t)\\s*", s), b = "True" ;
+     t = "str", !match("(?i)\\s*(true|1|yes|on|y|t)\\s*", s), b = "False" ; t != "str", fo_truth(e, b)).
+// fo_int(e, n): int(e) with the variable unset (no row: int() raises, and startup fails).
+.decl fo_int(e: node, n: symbol)
+fo_int(e, n) :- fo_u(e, t, s),
+    (t = "str", fo_tx(s, "strip", n), match("[0-9]+", n) ; t = "int", n = s ;
+     t = "bool", s = "True", n = "1" ; t = "bool", s = "False", n = "0").
+// fo_key(e, kt, ks): e's value as == compares it, kind kt and text ks: True == 1, "1" != 1.
+.decl fo_key(e: node, kt: symbol, ks: symbol)
+fo_key(e, kt, ks) :- fo_u(e, t, s),
+    (t = "str", kt = "str", ks = s ; t = "none", kt = "none", ks = s ; t = "int", kt = "num", ks = s ;
+     t = "bool", s = "True", kt = "num", ks = "1" ; t = "bool", s = "False", kt = "num", ks = "0").
+.decl fo_lkey(n: node, kt: symbol, ks: symbol)
+fo_lkey(n, kt, ks) :- fo_lit(n, t, s),
+    (t = "str", kt = "str", ks = s ; t = "none", kt = "none", ks = s ; t = "int", kt = "num", ks = s ;
+     t = "bool", s = "True", kt = "num", ks = "1" ; t = "bool", s = "False", kt = "num", ks = "0").
+// fo_tx(s, m, r): str method m (lower, casefold, upper, strip) turns s into r. Computed over the str literals of
+// DEBUG expressions and their transforms, two methods deep, so the evaluation above creates no new values.
+.decl fo_sd0(s: symbol)
+fo_sd0(s) :- fo_val(e), unparen(e, u), plain_str(u, s).
+.decl fo_sd1(s: symbol)
+fo_sd1(r) :- fo_sd0(s), (r = @lower(s) ; r = @upper(s) ; r = @rx_replace(s, "^\\s+|\\s+$", "")).
+.decl fo_tx(s: symbol, m: symbol, r: symbol)
+fo_tx(s, m, r) :- (fo_sd0(s) ; fo_sd1(s)),
+    ((m = "lower" ; m = "casefold"), r = @lower(s) ; m = "upper", r = @upper(s) ;
+     m = "strip", r = @rx_replace(s, "^\\s+|\\s+$", "")).
+// fo_lit_coll(r, c): DEBUG part r is a tuple, list or set c of literals only; fo_in_coll(c, kt, ks): one of them
+// compares equal to the value with key kt, ks.
+.decl fo_lit_coll(r: node, c: node)
+fo_lit_coll(r, c) :- fo_val(r), unparen(r, c), (kind(c, "tuple") ; kind(c, "list") ; kind(c, "set")),
+    count : { child(c, el, _), !kind(el, "comment"), !fo_lit(el, _, _) } = 0.
+.decl fo_in_coll(c: node, kt: symbol, ks: symbol)
+fo_in_coll(c, kt, ks) :- fo_lit_coll(_, c), child(c, el, _), fo_lkey(el, kt, ks).
+// fo_bool_named(f): f names a str-to-bool converter (strtobool, str_to_bool, is_true, to_bool, ...).
+.decl fo_bool_named(f: node)
+fo_bool_named(f) :- (kind(f, "identifier") ; kind(f, "attribute")), text(f, s), !fo_builtin(f, _),
+    match("(?i)(.*\\.)?[a-z_]*(bool|true)[a-z_]*", s).
 // fo_builtin(f, x): f names builtin x, or the bare name x where it resolves to nothing (a module with a star import).
 .decl fo_builtin(f: node, x: symbol)
 fo_builtin(f, x) :- kind(f, "identifier"), text(f, x), (x = "int" ; x = "str" ; x = "bool"),
     (sym_of(f, @dot("builtins", x)) ; !sym_of(f, _)).
-// fo_lit_text(n, t): literal n's text as a comparison sees it: a str's value, True/False, an integer.
-.decl fo_lit_text(n: node, t: symbol)
-fo_lit_text(n, t) :- plain_str(n, t).
-fo_lit_text(n, "True") :- kind(n, "true").
-fo_lit_text(n, "False") :- kind(n, "false").
-fo_lit_text(n, t) :- kind(n, "integer"), text(n, t).
-// fo_truthy(dv): fallback dv turns DEBUG on: True, a nonzero integer, or a true-looking string.
-.decl fo_truthy(dv: node)
-fo_truthy(dv) :- kind(dv, "true").
-fo_truthy(dv) :- kind(dv, "integer"), text(dv, t), t != "0".
-fo_truthy(dv) :- plain_str(dv, s), match("(?i)(true|1|yes|on|y|t)", s).
+// fo_lit(n, t, s): literal n: a str, True/False, a decimal integer or None.
+.decl fo_lit(n: node, t: symbol, s: symbol)
+fo_lit(n, "str", s) :- plain_str(n, s).
+fo_lit(n, "bool", "True") :- kind(n, "true").
+fo_lit(n, "bool", "False") :- kind(n, "false").
+fo_lit(n, "int", t) :- kind(n, "integer"), text(n, t), match("[0-9]+", t).
+fo_lit(n, "none", "None") :- kind(n, "none").
+
+// ---- ALLOWED_HOSTS -------------------------------------------------------------------------------------------------
 // fo_star(dv): fallback dv allows every host: "*" alone or in a comma-separated string, or an item of a list.
 .decl fo_star(dv: node)
 fo_star(dv) :- plain_str(dv, s), match("(.*[ ,])? *\\* *([ ,].*)?", s).
@@ -210,27 +308,58 @@ fo_star(dv) :- (kind(dv, "list") ; kind(dv, "tuple") ; kind(dv, "set")), child(d
 .decl fo_guarded(a: node)
 fo_guarded(a) :- fo_setting(_, _, _, a), within(a, i), kind(i, "if_statement"), field(i, "condition", t),
     (nameref(t, "DEBUG") ; within(n, t), nameref(n, "DEBUG")).
-// fo_checked(d, x): module d tests setting x in a module-level if whose body raises.
-.decl fo_checked(d: number, x: symbol)
-fo_checked(d, x) :- fo_setting(d, x, _, _), kind(i, "if_statement"), docof(i, d), nearest(i, s, scope), kind(s, "module"),
+// fo_handled(d, x): setting x of module d never reaches production with its fallback: d itself refuses it (a
+// module-level if on x whose body raises), or d is a base that other modules star-import and every non-development
+// one of them assigns x again or refuses it the same way. The loaded module is the one that decides the value.
+.decl fo_handled(d: number, x: symbol)
+fo_handled(d, x) :- fo_setting(d, x, _, _), fo_refuses(d, x).
+fo_handled(d, x) :- fo_setting(d, x, _, _), fo_importer(d, _), count : { fo_importer(d, e), !fo_settles(e, x) } = 0.
+// fo_settles(e, x): module e assigns setting x at module level or refuses it.
+.decl fo_settles(e: number, x: symbol)
+fo_settles(e, x) :- fo_modasg(e, x, _, _), fo_reported(x).
+fo_settles(e, x) :- fo_refuses(e, x).
+// fo_refuses(e, x): module e tests setting x in a module-level if whose body raises
+// (`if SECRET_KEY == "change-me": raise ImproperlyConfigured(...)`).
+.decl fo_refuses(e: number, x: symbol)
+fo_refuses(e, x) :- fo_reported(x), kind(i, "if_statement"), docof(i, e), nearest(i, s, scope), kind(s, "module"),
     field(i, "condition", t), (nameref(t, x) ; within(n, t), nameref(n, x)), field(i, "consequence", b),
     within(r, b), kind(r, "raise_statement").
-// fo_overridden(d, x): every non-development module that star-imports d assigns x again at module level. The imported
-// module is matched by path, `core.settings.base` to a path ending in `core/settings/base.py`, since the import may
-// name d from a source root other than the one its document's module name is taken from (label-studio's
-// `from core.settings.base import *` for `label_studio/core/settings/base.py`).
+// fo_importer(d, e): non-development module e star-imports settings module d.
 .decl fo_importer(d: number, e: number)
-fo_importer(d, e) :- fo_setting(d, _, _, _), doc(d, p, _), kind(i, "import_from_statement"), child(i, w, _),
-    kind(w, "wildcard_import"), module_text(i, m), f = @replace_all(m, "\\.", "/"),
-    (q = cat(f, ".py") ; q = cat(f, "/__init__.py")), (p = q ; suffix(cat("/", q), p)), docof(i, e), e != d,
+fo_importer(d, e) :- fo_setting(d, _, _, _), doc(d, p, _), fo_star_path(i, p), docof(i, e), e != d,
     !dj_test_doc(e), !fo_dev_doc(e).
-.decl fo_overridden(d: number, x: symbol)
-fo_overridden(d, x) :- fo_setting(d, x, _, _), fo_importer(d, _),
-    count : { fo_importer(d, e), !fo_modasg(e, x, _, _) } = 0.
+// fo_star_path(i, p): star import i names the module at path p. A relative one (`from .base import *`, one or two
+// dots) is resolved from the importing file's own directory, so it names one file. An absolute one is matched by
+// path suffix, `core.settings.base` to a path ending in `core/settings/base.py`, since the import may name d from a
+// source root other than the one its document's module name is taken from (label-studio's
+// `from core.settings.base import *` for `label_studio/core/settings/base.py`).
+.decl fo_star_path(i: node, p: symbol)
+fo_star_path(i, p) :- fo_star_import(i), field(i, "module_name", mn), kind(mn, "dotted_name"), text(mn, m),
+    f = @replace_all(m, "\\.", "/"), (q = cat(f, ".py") ; q = cat(f, "/__init__.py")), doc(_, p, _),
+    (p = q ; suffix(cat("/", q), p)).
+fo_star_path(i, p) :- fo_rel_dir(i, b), field(i, "module_name", mn), child(mn, dn, 1), text(dn, m),
+    f = @replace_all(m, "\\.", "/"), (b = "", r = f ; b != "", r = cat(b, cat("/", f))),
+    (p = cat(r, ".py") ; p = cat(r, "/__init__.py")).
+fo_star_path(i, p) :- fo_rel_dir(i, b), field(i, "module_name", mn), !child(mn, _, 1),
+    (b = "", p = "__init__.py" ; b != "", p = cat(b, "/__init__.py")).
+.decl fo_star_import(i: node)
+fo_star_import(i) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_import").
+// fo_rel_dir(i, b): relative star import i starts from directory b ("" at the root).
+.decl fo_rel_dir(i: node, b: symbol)
+fo_rel_dir(i, b) :- fo_star_import(i), field(i, "module_name", mn), kind(mn, "relative_import"), child(mn, pre, 0),
+    text(pre, dots), docof(i, e), doc(e, pe, _), dir = @rx_replace(pe, "(^|/)[^/]*$", ""),
+    (dots = ".", b = dir ; dots = "..", b = @rx_replace(dir, "(^|/)[^/]*$", "")).
 
 // The cases, `cases/django-practice-settings-env-fails-open/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.
 .test cases exactly
+    .fixture "appenv/settings.py" from "../cases/django-practice-settings-env-fails-open/appenv/settings.py"
+    .fixture "asserted/settings.py" from "../cases/django-practice-settings-env-fails-open/asserted/settings.py"
+    .fixture "checked/settings/__init__.py" from "../cases/django-practice-settings-env-fails-open/checked/settings/__init__.py"
+    .fixture "checked/settings/base.py" from "../cases/django-practice-settings-env-fails-open/checked/settings/base.py"
+    .fixture "checked/settings/local.py" from "../cases/django-practice-settings-env-fails-open/checked/settings/local.py"
+    .fixture "checked/settings/production.py" from "../cases/django-practice-settings-env-fails-open/checked/settings/production.py"
+    .fixture "checked/settings/staging.py" from "../cases/django-practice-settings-env-fails-open/checked/settings/staging.py"
     .fixture "decoupled/settings.py" from "../cases/django-practice-settings-env-fails-open/decoupled/settings.py"
     .fixture "deploy/django_conf.py" from "../cases/django-practice-settings-env-fails-open/deploy/django_conf.py"
     .fixture "envconf/dev/settings.py" from "../cases/django-practice-settings-env-fails-open/envconf/dev/settings.py"
@@ -244,17 +373,26 @@ fo_overridden(d, x) :- fo_setting(d, x, _, _), fo_importer(d, _),
     .fixture "labelish/core/settings/base.py" from "../cases/django-practice-settings-env-fails-open/labelish/core/settings/base.py"
     .fixture "labelish/core/settings/label_studio.py" from "../cases/django-practice-settings-env-fails-open/labelish/core/settings/label_studio.py"
     .fixture "labelish/core/utils/params.py" from "../cases/django-practice-settings-env-fails-open/labelish/core/utils/params.py"
+    .fixture "lateguard/settings/__init__.py" from "../cases/django-practice-settings-env-fails-open/lateguard/settings/__init__.py"
+    .fixture "lateguard/settings/base.py" from "../cases/django-practice-settings-env-fails-open/lateguard/settings/base.py"
+    .fixture "lateguard/settings/production.py" from "../cases/django-practice-settings-env-fails-open/lateguard/settings/production.py"
     .fixture "multi/settings/base.py" from "../cases/django-practice-settings-env-fails-open/multi/settings/base.py"
     .fixture "multi/settings/production.py" from "../cases/django-practice-settings-env-fails-open/multi/settings/production.py"
     .fixture "multi/settings/staging.py" from "../cases/django-practice-settings-env-fails-open/multi/settings/staging.py"
+    .fixture "nofallback/settings.py" from "../cases/django-practice-settings-env-fails-open/nofallback/settings.py"
     .fixture "paramdefault/settings.py" from "../cases/django-practice-settings-env-fails-open/paramdefault/settings.py"
     .fixture "plainenv/settings/common.py" from "../cases/django-practice-settings-env-fails-open/plainenv/settings/common.py"
     .fixture "plainenv/settings/local.py" from "../cases/django-practice-settings-env-fails-open/plainenv/settings/local.py"
     .fixture "plainenv/settings/production.py" from "../cases/django-practice-settings-env-fails-open/plainenv/settings/production.py"
     .fixture "plainenv/settings/test.py" from "../cases/django-practice-settings-env-fails-open/plainenv/settings/test.py"
+    .fixture "rawdebug/settings.py" from "../cases/django-practice-settings-env-fails-open/rawdebug/settings.py"
     .fixture "shop/settings.py" from "../cases/django-practice-settings-env-fails-open/shop/settings.py"
     .fixture "shop/tests/settings.py" from "../cases/django-practice-settings-env-fails-open/shop/tests/settings.py"
     .fixture "tools/flags.py" from "../cases/django-practice-settings-env-fails-open/tools/flags.py"
+    .expect _ at "appenv/settings.py":5
+    .expect _ at "appenv/settings.py":6
+    .expect _ at "asserted/settings.py":6
+    .expect _ at "checked/settings/base.py":10
     .expect _ at "decoupled/settings.py":5
     .expect _ at "decoupled/settings.py":6
     .expect _ at "deploy/django_conf.py":6
@@ -266,8 +404,30 @@ fo_overridden(d, x) :- fo_setting(d, x, _, _), fo_importer(d, _),
     .expect _ at "hc/settings.py":24
     .expect _ at "hc/settings.py":25
     .expect _ at "labelish/core/settings/base.py":7
+    .expect _ at "lateguard/settings/base.py":5
     .expect _ at "multi/settings/base.py":6
+    .expect _ at "nofallback/settings.py":5
+    .expect _ at "nofallback/settings.py":6
+    .expect _ at "nofallback/settings.py":7
+    .expect _ at "nofallback/settings.py":8
+    .expect _ at "nofallback/settings.py":9
+    .expect _ at "nofallback/settings.py":10
     .expect _ at "paramdefault/settings.py":16
     .expect _ at "plainenv/settings/common.py":9
     .expect _ at "plainenv/settings/production.py":5
+    .expect _ at "rawdebug/settings.py":16
+    .expect _ at "rawdebug/settings.py":17
+    .expect _ at "rawdebug/settings.py":18
+    .expect _ at "rawdebug/settings.py":19
+    .expect _ at "rawdebug/settings.py":20
+    .expect _ at "rawdebug/settings.py":21
+    .expect _ at "rawdebug/settings.py":22
+    .expect _ at "rawdebug/settings.py":23
+    .expect _ at "rawdebug/settings.py":24
+    .expect _ at "rawdebug/settings.py":25
+    .expect _ at "rawdebug/settings.py":43
+    .expect _ at "rawdebug/settings.py":44
+    .expect _ at "rawdebug/settings.py":45
+    .expect _ at "rawdebug/settings.py":46
+    .expect _ at "rawdebug/settings.py":47
 .end

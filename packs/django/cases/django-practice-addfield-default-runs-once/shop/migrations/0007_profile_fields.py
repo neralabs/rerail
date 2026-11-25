@@ -25,10 +25,10 @@ class Migration(migrations.Migration):
                 ),
             ],
         ),
-        # A random colour per profile: every existing profile gets the same one.
+        # A random colour per profile: every existing profile gets the same one, which is cosmetic.
         migrations.AddField(
             model_name="profile",
             name="background_color",
-            field=models.CharField(default=shop.models.pick_colour, max_length=7),  # caught
+            field=models.CharField(default=shop.models.pick_colour, max_length=7),
         ),
     ]

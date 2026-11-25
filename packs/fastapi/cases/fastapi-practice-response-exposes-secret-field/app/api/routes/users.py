@@ -4,8 +4,40 @@ from fastapi import APIRouter
 
 from app import schemas
 from app.deps import CurrentUser, SessionDep
-from app.models import Device, Hero, Integration, Member, OAuthAccount, User
-from app.schemas import Page, ServiceOut, ServiceWithKey, SmtpSettings, Token, UserInDB, UserList, UserPublic
+from app.models import (
+    Device,
+    Flagged,
+    Hero,
+    Hook,
+    Integration,
+    LegacyLogin,
+    Login,
+    Mailer,
+    Operator,
+    Member,
+    OAuthAccount,
+    Provider,
+    Toggles,
+    User,
+)
+from app.schemas import (
+    AliasMasked,
+    AnnotatedMasked,
+    Exported,
+    HookCreated,
+    LookAlike,
+    MaskedChild,
+    MaskedOut,
+    Page,
+    ServiceOut,
+    ServiceWithKey,
+    SmtpSettings,
+    Token,
+    UserInDB,
+    UserList,
+    UserPublic,
+    WifiOut,
+)
 
 router = APIRouter(prefix="/users")
 
@@ -128,3 +160,84 @@ def read_flags(current_user: CurrentUser):
 @router.post("/", response_model=UserPublic)
 def create_user(user_in: schemas.UserCreate, session: SessionDep) -> UserPublic:
     return UserPublic(id=1, email=user_in.email)
+
+
+@router.get("/logins/{login_id}", response_model=Login)  # caught
+def read_login(login_id: int, session: SessionDep):
+    return session.get(Login, login_id)
+
+
+@router.get("/legacy/{login_id}", response_model=LegacyLogin)  # caught
+def read_legacy_login(login_id: int, session: SessionDep):
+    return session.get(LegacyLogin, login_id)
+
+
+@router.get("/hooks/{hook_id}", response_model=Hook)  # caught
+def read_hook(hook_id: int, session: SessionDep):
+    return session.get(Hook, hook_id)
+
+
+@router.get("/providers/{provider_id}")
+def read_provider(provider_id: int, session: SessionDep):
+    return session.get(Provider, provider_id)  # caught
+
+
+@router.get("/wifi", response_model=WifiOut)  # caught
+def read_wifi() -> WifiOut:
+    return WifiOut(ssid="home", password="hunter2")
+
+
+# Near misses: flags, serializers that decide what is sent, a suffix key on a schema.
+@router.get("/flagged/{flag_id}", response_model=Flagged)
+def read_flagged(flag_id: int, session: SessionDep):
+    return session.get(Flagged, flag_id)
+
+
+@router.get("/masked", response_model=MaskedOut)
+def read_masked() -> MaskedOut:
+    return MaskedOut(email="a@example.com", password="x")
+
+
+@router.get("/masked-child", response_model=MaskedChild)
+def read_masked_child() -> MaskedChild:
+    return MaskedChild(email="a@example.com", password="x", name="n")
+
+
+@router.get("/exported", response_model=Exported)
+def read_exported() -> Exported:
+    return Exported(email="a@example.com", hashed_password="x")
+
+
+@router.post("/hooks", response_model=HookCreated)
+def create_hook() -> HookCreated:
+    return HookCreated(id=1, webhook_secret="s")
+
+
+@router.get("/mailers/{mailer_id}", response_model=Mailer)  # caught
+def read_mailer(mailer_id: int, session: SessionDep):
+    return session.get(Mailer, mailer_id)
+
+
+@router.get("/operators/{operator_id}", response_model=Operator)  # caught
+def read_operator(operator_id: int, session: SessionDep):
+    return session.get(Operator, operator_id)
+
+
+@router.get("/look-alike", response_model=LookAlike)  # caught
+def read_look_alike() -> LookAlike:
+    return LookAlike(password="x")
+
+
+@router.get("/toggles/{toggle_id}", response_model=Toggles)
+def read_toggles(toggle_id: int, session: SessionDep):
+    return session.get(Toggles, toggle_id)
+
+
+@router.get("/alias-masked", response_model=AliasMasked)
+def read_alias_masked() -> AliasMasked:
+    return AliasMasked(password="x")
+
+
+@router.get("/annotated-masked", response_model=AnnotatedMasked)
+def read_annotated_masked() -> AnnotatedMasked:
+    return AnnotatedMasked(password="x")

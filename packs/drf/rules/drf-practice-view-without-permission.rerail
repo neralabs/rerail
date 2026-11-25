@@ -1,5 +1,5 @@
 .policy "drf-practice-view-without-permission" revision 1
-.description "Give every Django REST framework view its permission classes when the project's settings leave the default permission open to everyone."
+.description "Give every DRF view its permission classes when the project's settings leave the default permission open to everyone."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -36,16 +36,16 @@
 
 #include "lib/drf.rerail"
 
-.violation ViewWithoutPermission(at: node, name: symbol, why: symbol) "`{name}` sets no permission classes and {why}, so DRF lets anonymous users call it. Set `permission_classes` (for example `[IsAuthenticated]`) on the view or a base view, or set a default in REST_FRAMEWORK[\"DEFAULT_PERMISSION_CLASSES\"]. If the endpoint is meant to be public, set `permission_classes = [AllowAny]` to say so."
+.violation ViewWithoutPermission(at: node, name: symbol, why: symbol) "`{name}` sets no permission classes and {why}, so anonymous users can call it. Set permission_classes (IsAuthenticated or stricter), or `[AllowAny]` if it is public by design."
 ViewWithoutPermission(n, x, why) :- vwp_open(why), vwp_view(c), field(c, "name", n), text(n, x).
 ViewWithoutPermission(n, x, why) :- vwp_open(why), vwp_fn(f), field(f, "name", n), text(n, x).
 
 // vwp_open(why): the run holds the project's settings (some non-test file assigns REST_FRAMEWORK) and they leave
 // every view without its own permission classes open: no DEFAULT_PERMISSION_CLASSES anywhere, or only AllowAny.
 .decl vwp_open(why: symbol)
-vwp_open("the project's REST_FRAMEWORK settings set no DEFAULT_PERMISSION_CLASSES (DRF's default is AllowAny)") :-
+vwp_open("the project sets no default permission") :-
     drf_settings_known(), !drf_perm_default_set(), !vwp_closed().
-vwp_open("the project's DEFAULT_PERMISSION_CLASSES is AllowAny") :- drf_settings_known(), drf_perm_default_set(),
+vwp_open("the project's default permission is AllowAny") :- drf_settings_known(), drf_perm_default_set(),
     !vwp_closed().
 // vwp_closed(): a settings module sets a default other than AllowAny, or one the rule cannot read; or REST_FRAMEWORK
 // is built from something other than a dict literal or dict(...) call, or a dict literal splices another dict
@@ -76,7 +76,7 @@ vwp_name(e) :- kind(e, "attribute").
 vwp_view(c) :- drf_view(c), !drf_view_sets_perms(c), !vwp_has_subclass(c), def_name(c, x), !prefix("Base", x),
     !prefix("Abstract", x), !vwp_no_auth(c), !vwp_foreign(c), !vwp_actions_only(c), docof(c, d), !dj_test_doc(d).
 .decl vwp_has_subclass(c: node)
-vwp_has_subclass(c) :- class_def(c, q), drf_base(_, q).
+vwp_has_subclass(c) :- drf_sub(_, c).
 // vwp_no_auth(c): view c's (inherited) authentication_classes is an empty list or tuple.
 .decl vwp_no_auth(c: node)
 vwp_no_auth(c) :- drf_attr(c, "authentication_classes", v), unparen(v, u), kind(u, k), drf_seq(k), !vwp_has_elem(u).
@@ -102,7 +102,7 @@ vwp_lib_handlers(c) :- class_def(c, q), drf_lib_q(q, b), split_dot(b, _, x), !vw
 vwp_foreign(c) :- drf_view(c), vwp_foreign_base(c).
 vwp_foreign(c) :- drf_view(c), drf_ancestor(c, b), vwp_foreign_base(b).
 .decl vwp_foreign_base(c: node)
-vwp_foreign_base(c) :- drf_base(c, q), !class_def(_, q), !prefix("rest_framework.", q), !prefix("builtins.", q),
+vwp_foreign_base(c) :- drf_base(c, q), !drf_cls(q, _), !prefix("rest_framework.", q), !prefix("builtins.", q),
     !prefix("typing.", q), !prefix("typing_extensions.", q), !prefix("abc.", q).
 
 // vwp_fn(f): an `@api_view` function outside test code without a `@permission_classes(...)` decorator.

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from shop.models import Article, Author, Book, Review
+from shop.models import Article, Author, Book, Note, Profile, Review, SearchPreference, Theme, UserPreference
 
 
 class AuthorSerializer(serializers.ModelSerializer):
@@ -98,7 +98,7 @@ class BookPlainSerializer(serializers.ModelSerializer):
         fields = ["id", "title", "author", "publisher", "author_id_too"]
 
 
-# write_only fields read nothing; neither do SerializerMethodFields (method-field-query's business).
+# write_only fields read nothing. A SerializerMethodField's body is not read (a gap: get_tag_count queries per row).
 class BookWriteSerializer(serializers.ModelSerializer):
     author = AuthorSerializer(write_only=True)
     tag_count = serializers.SerializerMethodField()
@@ -140,3 +140,52 @@ class ArticleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Article
         fields = ["id", "author"]
+
+
+# Reads two one-row relations and two many ones: one finding lists all four.
+class BookFullSerializer(serializers.ModelSerializer):
+    author = AuthorSerializer(read_only=True)
+    publisher_name = serializers.CharField(source="publisher.name", read_only=True)
+    reviews = ReviewSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Book
+        fields = ["id", "author", "publisher_name", "reviews", "tags"]
+
+
+class ThemeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Theme
+        fields = ["id", "name"]
+
+
+class UserPreferenceSerializer(serializers.ModelSerializer):
+    theme = ThemeSerializer(read_only=True)
+
+    class Meta:
+        model = UserPreference
+        fields = ["user", "theme", "shared_with"]
+
+
+class SearchPreferenceSerializer(serializers.ModelSerializer):
+    theme = ThemeSerializer(read_only=True)
+
+    class Meta:
+        model = SearchPreference
+        fields = ["user", "theme"]
+
+
+class ProfileSerializer(serializers.ModelSerializer):
+    theme = ThemeSerializer(read_only=True)
+
+    class Meta:
+        model = Profile
+        fields = ["id", "theme"]
+
+
+class NoteSerializer(serializers.ModelSerializer):
+    theme = ThemeSerializer(read_only=True)
+
+    class Meta:
+        model = Note
+        fields = ["id", "theme"]

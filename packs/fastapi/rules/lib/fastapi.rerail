@@ -28,8 +28,9 @@
 //                                               or `dispatch` of a BaseHTTPMiddleware subclass of the run
 //   Dependencies:   fa_depends(c)               c is a `Depends(...)` or `Security(...)` call (fastapi, fastapi.params)
 //                   fa_depends_fn(c, g)         Depends call c runs def g: a function by name, a class's `__init__`,
-//                                               an instance's `__call__` (`Depends(Checker(...))`), or the class of
-//                                               `Annotated[T, Depends()]`
+//                                               an instance's `__call__` (`Depends(Checker(...))`, or a name bound to
+//                                               the instance: `checker = Checker(...)` then `Depends(checker)`), or
+//                                               the class of `Annotated[T, Depends()]`
 //                   fa_param(f, p, x, ann, d)   parameter p of def f named x, not `*args`/`**kwargs`, with its
 //                                               annotation and default (unset for none), parentheses and the
 //                                               annotation's `type` wrapper off
@@ -237,6 +238,10 @@ fa_depends_fn(c, g) :- fa_depends_arg(c, e), sym_of(e, q), qualname(g, q), kind(
 fa_depends_fn(c, g) :- fa_depends_arg(c, e), sym_of(e, q), class_def(_, q), mro_method(q, "__init__", g).
 fa_depends_fn(c, g) :- fa_depends_arg(c, e), kind(e, "call"), field(e, "function", k), sym_of(k, q), class_def(_, q),
     mro_method(q, "__call__", g).
+// A name bound to an instance, in any module (`dbdep = DBDep()` then `Depends(dbdep)`): FastAPI's own form for class
+// dependencies.
+fa_depends_fn(c, g) :- fa_depends_arg(c, e), fa_value(e, v), kind(v, "call"), field(v, "function", k), sym_of(k, q),
+    class_def(_, q), mro_method(q, "__call__", g).
 // `Annotated[T, Depends()]`: Depends with no argument runs the class T.
 fa_depends_fn(c, g) :- fa_depends(c), !fa_depends_arg(c, _), fa_annotated(a, t, c), sym_of(t, q), class_def(_, q),
     mro_method(q, "__init__", g).

@@ -130,7 +130,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="order",
             name="maybe_id",
-            field=models.UUIDField(default=uuid.uuid4, null=True),
+            field=models.UUIDField(default=uuid.uuid4, null=True),  # caught
         ),
         migrations.AddField(
             model_name="order",

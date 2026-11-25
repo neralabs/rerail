@@ -1,5 +1,5 @@
 .policy "pytest-practice-module-state-without-monkeypatch" revision 1
-.description "Do not change a module global or class attribute of your code directly in a test; use monkeypatch.setattr/setitem or mock.patch.object, which put it back."
+.description "Use monkeypatch or mock.patch.object to change a module global or class attribute of your code in a test, so the change is undone when the test ends."
 .language python
 .mode log
 .scope include "**/*.py"
@@ -10,32 +10,43 @@
 // `patch.object`/`patch.dict` undo their changes when the test ends (pytest docs, "How to monkeypatch/mock modules
 // and environments").
 //
-// It matches, in a test, fixture or set-up hook (pt_test_code; lambdas inside count, nested defs do not), a write to
-// state of the run's own code that outlives the test, the written object resolved through imports (python/names'
-// sym_of):
+// It matches a change (the library's pt_loc) made inside a test (pt_runs_in_test: a test, a fixture, a set-up hook,
+// or a helper of a test document that one of them calls, through the call graph) to state of the run's own code that
+// outlives the test, the written object resolved through imports (python/names' sym_of):
 //   - an attribute of a module of the run: `registry.TIMEOUT = 1`, `+=`, `del`, `setattr(registry, "TIMEOUT", 1)`;
 //   - an attribute of a class of the run: `Locks.timeframe = "5m"`, `registry.Locks.acquire = fake`;
 //   - an attribute of a module-level object of the run: `config.debug = True` (`config = Config()` in shop/conf.py);
 //   - an item of a module-level object, or of a module's or class's attribute: `registry.HANDLERS["x"] = f`,
 //     `app.config["TESTING"] = True`;
-//   - a list/dict/set mutator called on a module-level container or a class-level container (a literal, a
-//     comprehension, or dict/list/set/defaultdict/OrderedDict/Counter/deque): `PLUGINS.append(x)`,
-//     `registry.HANDLERS.clear()`, `Locks.seen.append(x)`.
-// One function reports each target once, at its first write: a restore by hand at the end of the test is not
-// reported again (the first write is: a failing assert skips that restore).
+//   - a list/dict/set mutator called on a module-level or class-level container (a literal, a comprehension, or
+//     dict/list/set/defaultdict/OrderedDict/Counter/deque): `PLUGINS.append(x)`, `Locks.seen.append(x)`.
+// One def reports each target once, at its first change: a restore by hand at the end of the test is not reported
+// again (the first change is: a failing assert skips that restore). The message names the changed object, the
+// receiver for a method call.
 // Left alone:
 //   def test_x(monkeypatch): monkeypatch.setattr(registry, "TIMEOUT", 1)
 //                                                     the fix (also monkeypatch.setitem/delattr, patch.object,
 //                                                     patch.dict, patch("a.b.X"), patch.multiple)
 //   with mock.patch.object(registry, "TIMEOUT", 1): registry.TIMEOUT = 3
-//                                                     a patch of the same target in the same def, as a decorator of
-//                                                     the def or its class, or started in its class's set-up hook,
-//                                                     puts the original back
+//                                                     a patch of the target active where the change runs (pt_guarded)
 //   old = registry.X; registry.X = 1; try: ... finally: registry.X = old
-//                                                     restored for the same target: in a finally, after a fixture's
-//                                                     yield, in a teardown hook of the class or module, or by an
+//                                                     undone (the library's pt_undo and pt_covers): in a finally,
+//                                                     after a fixture's or @contextmanager's yield, in a teardown hook
+//                                                     or __exit__ of the class or a base class, teardown_module, an
 //                                                     addCleanup / addfinalizer callback (`addCleanup(setattr,
-//                                                     registry, "X", old)`, `addCleanup(registry.HANDLERS.clear)`)
+//                                                     registry, "X", old)`, `addCleanup(registry.HANDLERS.clear)`, a
+//                                                     bound method `self._restore`), a def undo code calls, the
+//                                                     teardown of a fixture the test requests or of an autouse one.
+//                                                     Any write of the target or of a container it runs through
+//                                                     counts, a method call on any object included:
+//                                                     `app.dependency_overrides[get_db] = f ... yield;
+//                                                     app.dependency_overrides.clear()`
+//   _ENGINE_CACHE.clear(); REGISTRY.pop("tmp", None); del View.keys
+//                                                     a reset or cleanup: clear(), discard(), pop with a default or
+//                                                     `del` empties a cache or removes what other code registered;
+//                                                     after a write of the test's own it is a restore by hand, and
+//                                                     the write is reported (`pop(k)` without a default is reported)
+//   app.config["X"]: Callable                         an annotation without a value is no write
 //   mail.outbox = []; g.user = None                   objects of other libraries (Django resets mail.outbox per test;
 //                                                     flask's g is per request); os.environ and django.conf.settings
 //                                                     have rules of their own
@@ -44,15 +55,16 @@
 //   class Spy: calls = [] ... Spy.calls = []          a class of the test module itself that no other module names,
 //                                                     and a class defined inside a def
 //   def pytest_configure(): registry.X = 1            session-wide set-up: pytest hooks, an autouse session-scoped
-//                                                     fixture, module-level code (it runs once, at import)
+//                                                     fixture and the session fixtures it requests, module-level code
+//                                                     (it runs once, at import)
 //   shop/registry.py: HANDLERS.clear()                not test code
-// Gaps: a write in a helper the test calls is not read; a restore in a base class's tearDown, in a fixture the test
-// requests, or in a helper is not seen; an alias (`h = registry.HANDLERS; h["x"] = f`) is not followed; a restore by
-// hand without finally is reported.
+// Gaps: an alias (`h = registry.HANDLERS; h["x"] = f`) is not followed; a change deeper than one attribute and one
+// item below the shared object (`app.extensions["mail"].enabled = False`) is not read; a reset by assignment
+// (`registry.errors = {}`, `_client = None`) is reported like any other write.
 
 #include "lib/pytest.rerail"
 
-.violation ModuleStateWithoutMonkeypatch(at: node, name: symbol) "This test code changes `{name}`, state of a module or class that lives for the whole test session, and nothing puts it back after the test: every later test sees the changed value. Use `monkeypatch.setattr`/`monkeypatch.setitem` or `mock.patch.object`/`mock.patch.dict`, which undo it when the test ends. Leave it only if a finally, teardown or helper this rule cannot see restores it."
+.violation ModuleStateWithoutMonkeypatch(at: node, name: symbol) "`{name}` is module or class state, shared by every later test. Use monkeypatch.setattr/setitem or mock.patch.object instead; keep it only if a restore this rule cannot see puts it back."
 ModuleStateWithoutMonkeypatch(n, x) :- ms_hit(n, k, u), !ms_later(n, k, u), ms_label(n, x).
 
 // ---- what is shared state -------------------------------------------------------------------------------------------
@@ -91,74 +103,49 @@ ms_named_elsewhere(q, d) :- class_def(c, q), docof(c, d), sym_of(n, q), docof(n,
 ms_key(e, q) :- ms_root(e, q, "var").
 ms_key(e, @dot(q, a)) :- attr_of(e, o, a), ms_root(o, q, _).
 
-// ---- writes -------------------------------------------------------------------------------------------------------
-// ms_write(n, k): n changes shared object k: an assignment, augmented assignment or `del` of an attribute of a shared
-// object or of an item of one, a container mutator called on a shared container, setattr/delattr with a literal name.
-.decl ms_write(n: node, k: symbol)
-ms_write(t, @dot(q, a)) :- pt_store(t), attr_of(t, o, a), ms_root(o, q, _).
-ms_write(t, k) :- pt_store(t), kind(t, "subscript"), field(t, "value", v), ms_key(v, k).
-ms_write(c, k) :- kind(c, "call"), field(c, "function", f), attr_of(f, r, m), pt_mutator(m), ms_key(r, k),
-    ms_container(k).
-ms_write(c, @dot(q, a)) :- kind(c, "call"), field(c, "function", f), ms_setattr_fn(f), posarg(c, 0, o),
-    ms_root(o, q, _), posarg(c, 1, s), str(s, a).
-.decl ms_setattr_fn(f: node)
-ms_setattr_fn(f) :- sym_of(f, "builtins.setattr").
-ms_setattr_fn(f) :- sym_of(f, "builtins.delattr").
-// ms_label(n, x): what the message names: the target, or the called method.
+// ---- changes ------------------------------------------------------------------------------------------------------
+// ms_shape(p): a path this rule reads below a shared object: one attribute, one item, or an attribute's item.
+.decl ms_shape(p: symbol)
+ms_shape(p) :- pt_loc(_, _, p, _), match("(\\.[A-Za-z_][A-Za-z0-9_]*)?(\\[('[^']*'|=[^\\]]*|\\*)\\])?", p), p != "".
+// ms_view(n, e, q, p): change or restore n writes path p below e, which names shared object q.
+.decl ms_view(n: node, e: node, q: symbol, p: symbol)
+ms_view(n, e, q, p) :- pt_loc(n, e, p, _), ms_shape(p), ms_root(e, q, _).
+// ms_change(n): a change this rule reads: a store, del, augmented assignment or setattr/delattr, or a mutator called on
+// a shared container (a method call on any other object is no list/dict/set change it can confirm).
+.decl ms_change(n: node)
+ms_change(n) :- pt_change(n), !pt_mcall(n, _, _).
+ms_change(c) :- pt_change(c), pt_mcall(c, r, _), ms_key(r, k), ms_container(k).
+// ms_write(n, k, e, q, p): change n writes k ("pkg.mod.X.attr['key']"), seen as path p below e, naming q.
+.decl ms_write(n: node, k: symbol, e: node, q: symbol, p: symbol)
+ms_write(n, cat(q, p), e, q, p) :- ms_change(n), ms_view(n, e, q, p), pt_at(n, _, _, how), how != "restore".
+// ms_label(n, x): what the message names: the store target, the receiver of a call, `o.x` for setattr.
 .decl ms_label(n: node, x: symbol)
-ms_label(n, x) :- ms_write(n, _), !kind(n, "call"), text(n, x).
-ms_label(n, x) :- ms_write(n, _), kind(n, "call"), field(n, "function", f), !ms_setattr_fn(f), text(f, x).
-ms_label(n, x) :- ms_write(n, k), kind(n, "call"), field(n, "function", f), ms_setattr_fn(f), x = k.
-
-// ms_unit(n, u): the def n runs in (lambdas transparent).
-.decl ms_unit(n: node, u: node)
-ms_unit(n, u) :- ms_write(n, _), def_frame(n, u).
-
-// ms_cand(n, k, u): a write of k in test code u, outside session-wide set-up (pt_session_code: a pytest hook, an
-// autouse session-scoped fixture, conftest.py module-level code; and a session-scoped fixture an autouse fixture
-// requests, which runs before the first test as well).
-.decl ms_cand(n: node, k: symbol, u: node)
-ms_cand(n, k, u) :- ms_write(n, k), ms_unit(n, u), pt_test_code(u, _), !pt_session_code(n), !ms_session_fixture(u).
-pt_session_ask(n) :- ms_write(n, _).
-.decl ms_session_fixture(g: node)
-ms_session_fixture(g) :- pt_fixture_scope(g, "session"), pt_resolves(a, _, g), pt_autouse(a).
+ms_label(n, x) :- ms_write(n, _, _, _, _), !kind(n, "call"), text(n, x).
+ms_label(n, x) :- ms_write(n, _, _, _, _), pt_mcall(n, r, _), text(r, x).
+ms_label(n, cat(t, ".", a)) :- ms_write(n, _, _, _, _), pt_setattr_call(n, _), posarg(n, 0, o), text(o, t),
+    posarg(n, 1, s), str(s, a).
 
 // ---- undoing ------------------------------------------------------------------------------------------------------
-// Writes are asked about pt_undo: after a fixture's yield, in a finally, in a teardown hook of the class or module, or
-// in an addCleanup / addfinalizer callback.
-pt_undo_ask(n) :- ms_write(n, _).
+// ms_restored(n, k): an undo or patch the library sees puts k back (pt_restore, matched by pt_covers on the same
+// shared object), or a patch by dotted name active where n runs names k or an object it runs through.
+.decl ms_restored(n: node, k: symbol)
+ms_restored(n, k) :- ms_write(n, k, e, q, p), pt_restore(n, e2, a), ms_root(e2, q, _), pt_covers(n, e, p, a).
+ms_restored(n, k) :- ms_write(n, k, _, _, _), pt_guarded(n, c), ms_patch_name(c, s),
+    (s = k ; prefix(cat(s, "."), k) ; prefix(cat(s, "["), k)).
+.decl ms_patch_name(c: node, s: symbol)
+ms_patch_name(c, s) :- pt_patch_name(c, s, _).
+ms_patch_name(c, s) :- pt_patch(c, "dict"), posarg(c, 0, a), str(a, s).
+ms_patch_name(c, @dot(s, x)) :- pt_patch(c, "multiple"), posarg(c, 0, a), str(a, s), call_arg(c, -1, x, _), x != "".
+// ms_reset(n): n is a reset (clear, discard, pop with a default, del): alone it empties a cache or removes what other
+// code registered; after a write of the test's own it is a restore by hand, and that write is the one reported.
+.decl ms_reset(n: node)
+ms_reset(n) :- ms_write(n, _, _, _, _), pt_at(n, _, _, "reset").
 
-// ms_patch_key(c, k): patch call c replaces shared object k and puts it back when it ends.
-.decl ms_patch_key(c: node, k: symbol)
-ms_patch_key(c, @dot(q, x)) :- pt_patch_attr(c, o, x), ms_root(o, q, _).
-ms_patch_key(c, s) :- pt_patch_name(c, s, _).
-ms_patch_key(c, k) :- pt_patch(c, "dict"), posarg(c, 0, a), ms_key(a, k).
-ms_patch_key(c, k) :- pt_patch(c, "dict"), posarg(c, 0, a), str(a, k).
-ms_patch_key(c, @dot(q, x)) :- pt_patch(c, "multiple"), posarg(c, 0, o), ms_root(o, q, _), call_arg(c, -1, x, _).
-ms_patch_key(c, k) :- pt_mp_call(c, m), (m = "setitem" ; m = "delitem"), posarg(c, 0, o), ms_key(o, k).
-// ms_patched(u, c): patch call c is active while u runs: in u's own body, as a decorator of u or its class, or in a
-// set-up hook of u's class.
-.decl ms_patched(u: node, c: node)
-ms_patched(u, c) :- ms_patch_key(c, _), def_frame(c, u).
-ms_patched(u, c) :- ms_patch_key(c, _), decorator(u, e), unparen(e, c), kind(u, "function_definition").
-ms_patched(u, c) :- ms_patch_key(c, _), decorator(cl, e), unparen(e, c), kind(cl, "class_definition"),
-    pt_class_of(u, cl).
-ms_patched(u, c) :- ms_patch_key(c, _), def_frame(c, h), pt_setup_hook(h), pt_class_of(h, cl), pt_class_of(u, cl),
-    u != h.
-
-// ms_restores(u, k): u's undo code writes k, u registers a cleanup that does (`addCleanup(setattr, registry, "X",
-// old)`, `addCleanup(registry.HANDLERS.clear)`), or a patch of k is active while u runs.
-.decl ms_restores(u: node, k: symbol)
-ms_restores(u, k) :- ms_write(m, k), pt_undo(m, u).
-ms_restores(u, @dot(q, a)) :- pt_cleanup_call(c, u), posarg(c, 0, f), ms_setattr_fn(f), posarg(c, 1, o),
-    ms_root(o, q, _), posarg(c, 2, s), str(s, a).
-ms_restores(u, k) :- pt_cleanup_call(c, u), posarg(c, 0, f), attr_of(f, r, m), pt_mutator(m), ms_key(r, k).
-ms_restores(u, k) :- ms_patched(u, c), ms_patch_key(c, k).
-
-// ms_hit(n, k, u): a write of k in u that is not itself undo code and that nothing restores; ms_later(n, k, u):
-// another one of k comes before it.
+// ms_hit(n, k, u): a change of k in u, a def that runs inside a test, that is not itself undo code, not a reset, and
+// that nothing puts back; ms_later(n, k, u): another one of k comes before it.
 .decl ms_hit(n: node, k: symbol, u: node)
-ms_hit(n, k, u) :- ms_cand(n, k, u), !pt_undo(n, _), !ms_restores(u, k).
+ms_hit(n, k, u) :- ms_write(n, k, _, _, _), def_frame(n, u), pt_runs_in_test(u), !pt_undo(n, _), !ms_restored(n, k),
+    !ms_reset(n).
 .decl ms_later(n: node, k: symbol, u: node)
 ms_later(n, k, u) :- ms_hit(n, k, u), ms_hit(m, k, u), earlier(m, n).
 
@@ -167,35 +154,43 @@ ms_later(n, k, u) :- ms_hit(n, k, u), ms_hit(m, k, u), earlier(m, n).
 .test cases exactly
     .fixture "conftest.py" from "../cases/pytest-practice-module-state-without-monkeypatch/conftest.py"
     .fixture "shop/__init__.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/__init__.py"
+    .fixture "shop/main.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/main.py"
     .fixture "shop/models.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/models.py"
     .fixture "shop/registry.py" from "../cases/pytest-practice-module-state-without-monkeypatch/shop/registry.py"
     .fixture "tests/__init__.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/__init__.py"
     .fixture "tests/helpers.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/helpers.py"
     .fixture "tests/test_other.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/test_other.py"
+    .fixture "tests/test_overrides.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/test_overrides.py"
     .fixture "tests/test_state.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/test_state.py"
     .fixture "tests/unit/__init__.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/unit/__init__.py"
+    .fixture "tests/unit/base.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/unit/base.py"
     .fixture "tests/unit/test_case.py" from "../cases/pytest-practice-module-state-without-monkeypatch/tests/unit/test_case.py"
     .expect _ at "conftest.py":22
     .expect _ at "conftest.py":28
     .expect _ at "conftest.py":72
+    .expect _ at "tests/helpers.py":10
+    .expect _ at "tests/test_overrides.py":39
+    .expect _ at "tests/test_overrides.py":44
+    .expect _ at "tests/test_overrides.py":66
     .expect _ at "tests/test_state.py":20
     .expect _ at "tests/test_state.py":24
     .expect _ at "tests/test_state.py":28
     .expect _ at "tests/test_state.py":32
-    .expect _ at "tests/test_state.py":36
-    .expect _ at "tests/test_state.py":40
-    .expect _ at "tests/test_state.py":44
-    .expect _ at "tests/test_state.py":48
-    .expect _ at "tests/test_state.py":52
-    .expect _ at "tests/test_state.py":56
-    .expect _ at "tests/test_state.py":60
-    .expect _ at "tests/test_state.py":64
-    .expect _ at "tests/test_state.py":68
-    .expect _ at "tests/test_state.py":72
-    .expect _ at "tests/test_state.py":76
-    .expect _ at "tests/test_state.py":84
-    .expect _ at "tests/test_state.py":90
-    .expect _ at "tests/test_state.py":97
-    .expect _ at "tests/unit/test_case.py":22
-    .expect _ at "tests/unit/test_case.py":28
+    .expect _ at "tests/test_state.py":37
+    .expect _ at "tests/test_state.py":41
+    .expect _ at "tests/test_state.py":45
+    .expect _ at "tests/test_state.py":49
+    .expect _ at "tests/test_state.py":53
+    .expect _ at "tests/test_state.py":57
+    .expect _ at "tests/test_state.py":61
+    .expect _ at "tests/test_state.py":65
+    .expect _ at "tests/test_state.py":69
+    .expect _ at "tests/test_state.py":73
+    .expect _ at "tests/test_state.py":77
+    .expect _ at "tests/test_state.py":85
+    .expect _ at "tests/test_state.py":91
+    .expect _ at "tests/test_state.py":98
+    .expect _ at "tests/unit/test_case.py":23
+    .expect _ at "tests/unit/test_case.py":29
+    .expect _ at "tests/unit/test_case.py":77
 .end

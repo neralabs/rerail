@@ -1,5 +1,5 @@
 .policy "python-security-code-injection" revision 1
-.description "Never let client request data reach eval/exec, import_module, pickle-style or unsafe YAML deserializers, or a template's source; parse it as data instead."
+.description "Never let client request data reach Python evaluation, imports, pickle-style or unsafe YAML deserializers, or a template's source; parse it as data instead."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -26,28 +26,38 @@
 // Left alone: json.loads, yaml.safe_load, ast.literal_eval, django.core.signing.loads and itsdangerous loads (library
 // calls stop the taint), eval of a constant, pickle of what the server wrote (cache, Redis, Celery results: no request
 // source), `SandboxedEnvironment`/`ImmutableSandboxedEnvironment` receivers (and an unresolved environment in a file
-// that builds a sandbox), test files. Sanitisers it trusts: lib/security's sec_checked_expr (the value passes through
-// a validator-named call or an `in` allow-list test in its function, so `if fmt in ALLOWED: import_module(...)` is
-// silent), and, for deserializers, a payload the same function also passes to an `hmac` call (verified before use).
+// that builds a sandbox), `torch.load` without `weights_only=False` (the default is True from torch 2.6; the python
+// pack's bandit-b614 flags every call), test files. Sanitisers it trusts: lib/security's sec_checked_expr (the value
+// passes a check call or an `in` allow-list test in its function, so `if fmt in ALLOWED: import_module(...)` is
+// silent; a function that itself evaluates, such as `validate_expr(e)` running `eval`, is no check), and, for
+// deserializers, a payload the same function also passes to an `hmac` call (verified before use). The taint goes
+// through byte decoders (`bytes.fromhex`, binascii, codecs, zlib/gzip/bz2/lzma, `io.BytesIO`), so a compressed or
+// hex-encoded pickle in a cookie is reported.
+// A Django `Template` or Django `Engine.from_string` gets its own message: the Django template language cannot call
+// arbitrary code, but a client template reads whatever its context reaches (settings, related objects).
 // Gaps: a jinja2 sandbox stays a mitigation (sandbox escapes exist), so a sandboxed environment is not reported even
 // though user templates there are still risky; values stored on objects or in the database and read back later (the
 // changedetection.io advisory's stored template) are not followed; an hmac check after the load is still trusted;
-// torch.load, numpy.load(allow_pickle=True), ruamel.yaml's unsafe typ and Flask-Session's pickle backends are not
-// matched; Django URL keyword arguments are not sources, nor are a DRF serializer's `validate(data)` or a form's own
-// `self.cleaned_data` in `clean()` (netbox's uploaded-script `exec` is reached that way).
+// ruamel.yaml's unsafe typ and Flask-Session's pickle backends are not matched; a DRF serializer's `validate(data)` or
+// a form's own `self.cleaned_data` in `clean()` are not sources (netbox's uploaded-script `exec` is reached that way).
 #include "lib/security.rerail"
 
-.violation Interpreter(at: node, callee: symbol, what: symbol, p: symbol, l: number) "`{callee}` runs {what} ({p}:{l}) as Python code. Parse it as data (json, ast.literal_eval) or map it through an allow-list; leave it only if the value is not client data."
+.violation Interpreter(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{callee} runs {what} ({p}:{l}) as Python code. Parse it as data (json, ast.literal_eval) or map it through an allow-list; leave it only for a deliberate, admin-only scripting feature."
 Interpreter(c, cn, what, p, l) :- ci_sink(c, "interp", a), ci_reported(c, a, s), sec_origin(s, what, p, l),
     ci_callee_text(c, cn).
 
-.violation Deserializer(at: node, callee: symbol, what: symbol, p: symbol, l: number) "`{callee}` deserializes {what} ({p}:{l}), and a crafted payload runs code. Accept JSON (json.loads, yaml.safe_load) or verify an HMAC first; leave it if the bytes are server-written."
+.violation Deserializer(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{callee} deserializes {what} ({p}:{l}), and a crafted payload runs code. Accept JSON (json.loads, yaml.safe_load) or verify an HMAC first; leave it if the bytes are server-written."
 Deserializer(c, cn, what, p, l) :- ci_sink(c, "deser", a), ci_reported(c, a, s), !ci_hmac_checked(a),
     sec_origin(s, what, p, l), ci_callee_text(c, cn).
 
-.violation TemplateSource(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is template source for `{callee}`, so a client can run code. Use a fixed template and pass the value as render context; a jinja2 sandbox only mitigates."
-TemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", a), ci_reported(c, a, s), sec_origin(s, what, p, l),
-    ci_callee_text(c, cn).
+.violation TemplateSource(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is template source for {callee}, so a client can run code. Use a fixed template and pass the value as render context; a jinja2 sandbox only mitigates."
+TemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", a), !ci_django_template(c), ci_reported(c, a, s),
+    sec_origin(s, what, p, l), ci_callee_text(c, cn).
+.violation DjangoTemplateSource(at: node, callee: symbol, what: symbol, p: symbol, l: number) "{what} ({p}:{l}) is Django template source for {callee}, so a client can read any value its context reaches. Use a fixed template and pass the value as render context."
+DjangoTemplateSource(c, cn, what, p, l) :- ci_sink(c, "template", a), ci_django_template(c), ci_reported(c, a, s),
+    sec_origin(s, what, p, l), ci_callee_text(c, cn).
+// The functions that run code are this rule's sinks: a validator-named one is no check.
+sec_sink_fn(g) :- ci_sink(c, _, _), nearest(c, g, fdef).
 
 // ci_reported(c, a, s): sink call c, outside test code, takes argument a, which holds client data from source s (the
 // first source, so one sink is reported once), and a is not a value its function checked.
@@ -69,6 +79,25 @@ ci_callee_text(c, t) :- kind(c, "call"), field(c, "function", f), text(f, t).
 ci_sink(c, fam, a) :- sec_call_q(c, q), ci_first_arg_q(q, fam), ci_first_arg(c, q, a), !ci_yaml_safe_call(c).
 ci_sink(c, "template", a) :- ci_from_string(c), sec_arg(c, 0, "", a).
 ci_sink(c, "template", a) :- ci_from_string(c), sec_arg(c, -1, "source", a).
+// `torch.load(f, weights_only=False)` and `numpy.load(f, allow_pickle=True)` unpickle what they read.
+ci_sink(c, "deser", a) :- sec_call_q(c, "torch.load"), sec_arg(c, -1, "weights_only", v), kind(v, "false"),
+    (sec_arg(c, 0, "", a) ; sec_arg(c, -1, "f", a)).
+ci_sink(c, "deser", a) :- (sec_call_q(c, "numpy.load") ; sec_call_q(c, "numpy.lib.npyio.load")),
+    sec_arg(c, -1, "allow_pickle", v), kind(v, "true"), (sec_arg(c, 0, "", a) ; sec_arg(c, -1, "file", a)).
+// ci_django_template(c): template sink c builds a Django template: `django.template.Template(…)`, or
+// `from_string` on a Django Engine.
+.decl ci_django_template(c: node)
+ci_django_template(c) :- sec_call_q(c, q), (q = "django.template.Template" ; q = "django.template.base.Template").
+ci_django_template(c) :- ci_from_string(c), field(c, "function", f), attr_of(f, r0, _), unparen(r0, r),
+    ci_django_env(r).
+.decl ci_django_env(r: node)
+ci_django_env(r) :- kind(r, "call"), field(r, "function", f), sym_of(f, q),
+    (q = "django.template.Engine" ; q = "django.template.engine.Engine").
+ci_django_env(r) :- kind(r, "call"), field(r, "function", f), attr_of(f, o, "get_default"), sym_of(o, q),
+    (q = "django.template.Engine" ; q = "django.template.engine.Engine").
+ci_django_env(r) :- kind(r, "subscript"), field(r, "value", o), sym_of(o, q),
+    (q = "django.template.engines" ; q = "django.template.utils.engines").
+ci_django_env(r) :- ci_bound_value(r, v), ci_django_env(v).
 
 // ci_first_arg(c, q, a): a is the code argument of call c to q: the first positional one, or the keyword that names it.
 .decl ci_first_arg(c: node, q: symbol, a: node)
@@ -197,6 +226,9 @@ ci_hmac_checked(a) :- sec_reads(a, x), nearest(a, h, fscope), kind(c, "call"), s
     .fixture "app/titles.py" from "../cases/python-security-code-injection/app/titles.py"
     .fixture "app/views.py" from "../cases/python-security-code-injection/app/views.py"
     .fixture "tests/test_views.py" from "../cases/python-security-code-injection/tests/test_views.py"
+    .fixture "app/calc.py" from "../cases/python-security-code-injection/app/calc.py"
+    .fixture "app/decoders.py" from "../cases/python-security-code-injection/app/decoders.py"
+    .fixture "app/django_tpl.py" from "../cases/python-security-code-injection/app/django_tpl.py"
     .expect _ at "app/api.py":31
     .expect _ at "app/api.py":38
     .expect _ at "app/titles.py":5
@@ -232,4 +264,19 @@ ci_hmac_checked(a) :- sec_reads(a, x), nearest(a, h, fscope), kind(c, "call"), s
     .expect _ at "app/views.py":95
     .expect _ at "app/views.py":96
     .expect _ at "app/views.py":97
+    .expect _ at "app/calc.py":10
+    .expect _ at "app/calc.py":18
+    .expect _ at "app/calc.py":24
+    .expect _ at "app/decoders.py":16
+    .expect _ at "app/decoders.py":20
+    .expect _ at "app/decoders.py":25
+    .expect _ at "app/decoders.py":29
+    .expect _ at "app/decoders.py":34
+    .expect _ at "app/decoders.py":38
+    .expect _ at "app/decoders.py":42
+    .expect _ at "app/decoders.py":48
+    .expect _ at "app/django_tpl.py":8
+    .expect _ at "app/django_tpl.py":13
+    .expect _ at "app/django_tpl.py":14
+    .expect _ at "app/django_tpl.py":15
 .end

@@ -20,16 +20,23 @@
 //     `M(...).save()`), setting a foreign key (`update(customer=…)`, `bulk_update(…, ["customer"])`,
 //     `obj.customer_id = …` then save), or deleting rows a foreign key or many-to-many field points at. A foreign key
 //     an AddField earlier in the same migration added does not count: Django adds it `SET CONSTRAINTS … IMMEDIATE`;
-//     nor does one the later operation alters or removes itself: Django first runs `SET CONSTRAINTS <it> IMMEDIATE`.
+//     nor does one the later operation alters or removes itself: Django first runs `SET CONSTRAINTS <it> IMMEDIATE`;
+//     nor any, when `SET CONSTRAINTS ALL IMMEDIATE` runs between the writes and the alteration (a RunSQL between
+//     them, or a string of the RunPython's own code: DefectDojo's `0286_cicd_infrastructure.py`), which runs the
+//     queued checks.
 //       RunPython(merge_duplicate_customers)   # deletes customers orders point at
 //       AlterField("customer", "email", models.EmailField(unique=True))          reported
 //   - LockedBackfill, the alteration before the RunPython: its ACCESS EXCLUSIVE (or SHARE, for an index) lock lasts
-//     until the migration commits, so the table stays locked for the whole backfill.
+//     until the migration commits, so the table stays locked for the whole backfill. Not when every write touches
+//     one row once (rps_one_write): a write on a row fetched with get()/first()/last() or filtered by an exact
+//     lookup on a unique column (the primary key, a field the migrations make unique), or a single insert, with no
+//     loop around it in its def or around the call into its def. Such a lock is held for milliseconds.
 //       AddField("order", "number", models.CharField(null=True)); RunPython(fill_order_numbers)    reported
 // Left alone: migrations with `atomic = False`; squashed migrations (`replaces`), which run on new databases; a run
 // that configures MySQL and names no PostgreSQL database (MySQL commits each DDL statement); a model the same
 // migration creates (its table is new, and its foreign keys are added at the end); before the RunPython, a model the
-// project's code reads as one row (`M.objects.get()`, `M.objects.first()`, `M.get_solo()`), a settings table;
+// project's code reads as one row (dj_one_row: `M.objects.get()`, a lazy-singleton `first()` beside a `create()`,
+// `M.get_solo()`), a settings table;
 // RunPython code that only reads M, or writes another model than the one altered; an AlterField that changes only
 // attributes Django keeps out of the database (choices, help_text, verbose_name, blank, default, validators, ...),
 // judged against the field's nearest earlier definition in the app's migrations; after the RunPython, writes that
@@ -37,19 +44,22 @@
 // points at); RunPython.noop and reverse code; RunSQL; state_operations; migrations in test directories.
 //       RunPython(clear_notes)   # Order.objects.update(note="")
 //       AlterField("order", "note", ...)                                         not reported
-// Gaps: a model is matched by its lowercased name, not its app label; a model name held in a variable
-// (`apps.get_model("app", name)`) or a model passed to a helper is not followed, nor writes through related managers
-// (`order.tags.add()`), raw SQL or a helper more than one call deep. Foreign keys are read from the run's migrations
-// and models by name, so one of another app's same-named model counts. Whether a backfill is long depends on the
-// table's size, which the rule cannot see (hence log mode).
+// Gaps: a model is matched by its lowercased name, not its app label; a model name held in a variable that is not a
+// loop over literal names, or a model passed to a helper, is not followed, nor writes through related managers
+// (`order.tags.add()`), raw SQL (`schema_editor.execute("DELETE …")`) or a helper more than one call deep. Foreign
+// keys are read from the run's migrations and models by name, so one of another app's same-named model counts. An
+// update of rows an earlier operation of the same transaction rewrote queues checks even with unchanged keys; such a
+// migration is reported as LockedBackfill. Whether a backfill is long depends on the table's size, which the rule
+// cannot see (hence log mode, off by default); a team that migrates with the application stopped pays only upgrade
+// time, not an outage.
 
 
 #include "lib/django.rerail"
 
-.violation PendingTriggerEvents(at: node, m: symbol) "This RunPython writes `{m}` rows whose deferred foreign-key checks stay queued until the migration commits, and a later operation alters that table: PostgreSQL then fails with \"cannot ALTER TABLE … because it has pending trigger events\" on real data. Move the RunPython into a migration of its own, or set `atomic = False` on this Migration; leave a migration that has already been applied."
+.violation PendingTriggerEvents(at: node, m: symbol) "This RunPython queues foreign-key checks on {m}, and PostgreSQL refuses the later ALTER of it. Split the migration, or RunSQL SET CONSTRAINTS ALL IMMEDIATE before the ALTER; leave applied migrations."
 PendingTriggerEvents(o, m) :- rps_after(o, m).
 
-.violation LockedBackfill(at: node, m: symbol) "An earlier operation of this migration alters the `{m}` table, and PostgreSQL holds its lock until the migration commits, so the table stays locked while this RunPython writes its rows. Move the RunPython into a migration of its own after this one; keep it for a small table or a migration already applied."
+.violation LockedBackfill(at: node, m: symbol) "An earlier operation locks {m} until the migration commits, so the table stays locked through this backfill. Move the RunPython into its own migration; keep it for a small table or an applied one."
 LockedBackfill(o, m) :- rps_before(o, m), !rps_after(o, m).
 
 // ---- the RunPython and the rows it writes --------------------------------------------------------------------------
@@ -57,15 +67,7 @@ LockedBackfill(o, m) :- rps_before(o, m), !rps_after(o, m).
 // squash, not test code, and the project may run on PostgreSQL.
 .decl rps_rp(o: node, d: number, i: number, g: node)
 rps_rp(o, d, i, g) :- dj_runpython(o, d, i, g), !dj_mig_nonatomic(d), !dj_test_doc(d), !dj_mig_attr(d, "replaces", _),
-    !rps_mysql_only().
-// rps_mysql_only(): the run configures MySQL (an ENGINE "django.db.backends.mysql" or a "mysql://" URL) and names no
-// PostgreSQL database. MySQL commits each DDL statement at once, so Django runs no migration in one transaction there.
-.decl rps_mysql_only()
-rps_mysql_only() :- kind(n, "string"), str(n, s), (s = "django.db.backends.mysql" ; prefix("mysql://", s)), !rps_pg_named().
-.decl rps_pg_named()
-rps_pg_named() :- kind(n, "string"), str(n, s), (prefix("django.db.backends.postgresql", s) ;
-    prefix("django.contrib.gis.db.backends.postgis", s) ; prefix("postgres://", s) ; prefix("postgresql://", s) ;
-    prefix("postgis://", s)).
+    !dj_mysql_only().
 
 // rps_def(o, h): def h runs as RunPython o's code: its function, or a def of the run that function calls.
 .decl rps_def(o: node, h: node)
@@ -82,6 +84,12 @@ rps_get_model(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "
     call_arg(c, -1, "model_name", n), str(n, s).
 rps_get_model(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "get_model"), posarg(c, 0, n),
     !posarg(c, 1, _), !call_arg(c, -1, "model_name", _), str(n, q), split_dot(q, _, s).
+// A model name held in a loop variable over literal names resolves to each of them:
+//   for name in ["Order", "Invoice"]: M = apps.get_model("shop", name)      rps_get_model(<call>, "Order"), (…, "Invoice")
+rps_get_model(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "get_model"),
+    (posarg(c, 1, n) ; call_arg(c, -1, "model_name", n)), kind(n, "identifier"), text(n, y),
+    kind(l, "for_statement"), within(c, l), field(l, "left", v), kind(v, "identifier"), text(v, y),
+    field(l, "right", r), (kind(r, "list") ; kind(r, "tuple")), child(r, e, _), str(e, s).
 
 // rps_model(h, x, m): def h binds name x to the historical model m (lowercased).
 .decl rps_model(h: node, x: symbol, m: symbol)
@@ -145,9 +153,9 @@ rps_target(f, "user") :- rps_rel_field(f, _, _, _), (call_arg(f, -1, "to", v) ; 
     suffix("AUTH_USER_MODEL", q).
 .decl rps_referenced(o: node, m: symbol)
 rps_referenced(o, m) :- rps_write(o, _, m, "delete", _), rps_rp(o, d, i, _), rps_rel_field(f, _, e, j), rps_target(f, m),
-    (rps_mig_before(e, d) ; e = d, j < i).
+    (dj_mig_ran_before(e, d) ; e = d, j < i).
 rps_referenced(o, m) :- rps_write(o, _, m, "delete", _), rps_rp(o, d, i, _), rps_rel_field(f, m, e, j),
-    dj_mig_field_class(f, "ManyToManyField"), (rps_mig_before(e, d) ; e = d, j < i).
+    dj_mig_field_class(f, "ManyToManyField"), (dj_mig_ran_before(e, d) ; e = d, j < i).
 // rps_queues(o, m, x): RunPython o writes rows of m that queue deferred foreign-key checks on m's table: it inserts
 // rows into a model with a deferred foreign key, or deletes rows a foreign key can point at (x is "*": any
 // constraint), or sets deferred foreign key x. A foreign key an AddField earlier in the same migration added is not
@@ -196,8 +204,8 @@ rps_alter(s, "RenameModel", d, j, @lower(t)) :- dj_mig_db_op(s, "RenameModel", d
 // verbose_name, blank, default, ...): its field call differs from the field's nearest earlier definition in no
 // other argument, so it runs no SQL.
 .decl rps_alter_noop(s: node)
-rps_alter_noop(s) :- rps_old(s, fo), dj_mig_arg(s, "field", fn), dj_mig_field_class(fo, t), dj_mig_field_class(fn, t),
-    !rps_db_diff(fo, fn).
+rps_alter_noop(s) :- dj_field_old(s, fo), dj_mig_arg(s, "field", fn), dj_mig_field_class(fo, t),
+    dj_mig_field_class(fn, t), !rps_db_diff(fo, fn).
 // rps_nondb(k): field arguments that change no column (Field.non_db_attrs, and `default`, which Django keeps out of
 // the database unless a null column becomes NOT NULL, a change of `null` that counts anyway).
 .decl rps_nondb(k: symbol)
@@ -205,7 +213,11 @@ rps_nondb("blank"). rps_nondb("choices"). rps_nondb("editable"). rps_nondb("erro
 rps_nondb("limit_choices_to"). rps_nondb("on_delete"). rps_nondb("related_name"). rps_nondb("related_query_name").
 rps_nondb("validators"). rps_nondb("verbose_name"). rps_nondb("default").
 .decl rps_pair(fo: node, fn: node)
-rps_pair(fo, fn) :- rps_old(s, fo), dj_mig_arg(s, "field", fn).
+rps_pair(fo, fn) :- dj_field_old(s, fo), rps_alter_cand(s), dj_mig_arg(s, "field", fn).
+// rps_alter_cand(s): AlterField s is in a migration with a RunPython this rule reads; its field's history comes from
+// the library (dj_field_old), as django-practice-alterfield-rewrites-table reads it.
+.decl rps_alter_cand(s: node)
+rps_alter_cand(s) :- dj_mig_db_op(s, "AlterField", d, _), rps_rp(_, d, _, _).
 .decl rps_kw_same(fo: node, fn: node, k: symbol)
 rps_kw_same(fo, fn, k) :- rps_pair(fo, fn), call_arg(fo, -1, k, a), call_arg(fn, -1, k, b), text(a, t), text(b, t).
 .decl rps_pos_same(fo: node, fn: node, i: number)
@@ -216,59 +228,88 @@ rps_db_diff(fo, fn) :- rps_pair(fo, fn), call_arg(fo, -1, k, _), k != "", !rps_n
 rps_db_diff(fo, fn) :- rps_pair(fo, fn), posarg(fn, i, _), !rps_pos_same(fo, fn, i).
 rps_db_diff(fo, fn) :- rps_pair(fo, fn), posarg(fo, i, _), !rps_pos_same(fo, fn, i).
 
-// The field's history, as django-practice-alterfield-rewrites-table reads it: rps_old(s, f): the nearest earlier
-// definition of AlterField s's field gives it as call f.
-.decl rps_alterfield(s: node, d: number, i: number, m: symbol, x: symbol)
-rps_alterfield(s, d, i, m, x) :- dj_mig_db_op(s, "AlterField", d, i), rps_rp(_, d, _, _), dj_mig_model(s, m),
-    dj_mig_arg(s, "name", n), str(n, x).
-.decl rps_op(o: node, k: symbol, d: number, i: number)
-rps_op(o, k, d, i) :- dj_mig_db_op(o, k, d, i).
-rps_op(o, k, d, i) :- dj_mig_op(s, "SeparateDatabaseAndState", d, i),
-    (call_arg(s, -1, "state_operations", l) ; call_arg(s, 1, "", l)), (kind(l, "list") ; kind(l, "tuple")),
-    child(l, o, _), dj_mig_op_call(o, k).
-.decl rps_fdef(p: node, d: number, i: number, m: symbol, x: symbol)
-rps_fdef(p, d, i, m, x) :- rps_op(p, k, d, i), (k = "AddField" ; k = "AlterField"), dj_mig_model(p, m),
-    dj_mig_arg(p, "name", n), str(n, x).
-rps_fdef(p, d, i, m, x) :- rps_op(p, "CreateModel", d, i), dj_mig_model(p, m), dj_mig_arg(p, "fields", l),
-    child(l, t, _), kind(t, "tuple"), child(t, n, 0), str(n, x).
-rps_fdef(p, d, i, m, x) :- rps_op(p, "RenameField", d, i), dj_mig_model(p, m), dj_mig_arg(p, "new_name", n), str(n, x).
-.decl rps_prev(s: node, p: node, e: number, j: number)
-rps_prev(s, p, e, j) :- rps_alterfield(s, d, _, m, x), rps_fdef(p, e, j, m, x), rps_mig_before(e, d).
-rps_prev(s, p, d, j) :- rps_alterfield(s, d, i, m, x), rps_fdef(p, d, j, m, x), j < i.
-.decl rps_shadowed(s: node, p: node)
-rps_shadowed(s, p) :- rps_prev(s, p, e, _), rps_prev(s, q, e2, _), q != p, rps_mig_before(e, e2).
-rps_shadowed(s, p) :- rps_prev(s, p, e, j), rps_prev(s, q, e, j2), q != p, j2 > j.
-// rps_mig_before(e, d): migration e is applied before d: dj_mig_before, and also through a dependency on a migration
-// a squashed migration of the same package replaces (`("users", "0015_x")`, listed in `0001_squashed_0015_x.py`'s
-// `replaces`), which dj_mig_depends, matching file names only, does not follow.
-.decl rps_mig_depends(d: number, e: number)
-rps_mig_depends(d, e) :- dj_mig_depends(d, e).
-rps_mig_depends(d, e) :- dj_mig_attr(d, "dependencies", l), child(l, p, _), kind(p, "tuple"), child(p, n, 1), str(n, x),
-    pkg(d, k), pkg(e, k), dj_mig_attr(e, "replaces", r), child(r, t, _), kind(t, "tuple"), child(t, rn, 1), str(rn, x).
-.decl rps_mig_before(e: number, d: number)
-rps_mig_before(e, d) :- rps_mig_depends(d, e).
-rps_mig_before(e, d) :- rps_mig_depends(d, m), rps_mig_before(e, m).
-.decl rps_old(s: node, f: node)
-rps_old(s, f) :- rps_prev(s, p, _, _), !rps_shadowed(s, p), rps_alterfield(s, _, _, _, x), dj_mig_field(p, x, f, _).
+// rps_all_immediate(o, j): `SET CONSTRAINTS ALL IMMEDIATE` runs before item j of RunPython o's migration and after
+// o's writes have begun: a RunSQL before item j, or a string in o's own code. It runs every queued check, and the
+// checks of later writes in the transaction at once (DefectDojo's `0286_cicd_infrastructure.py`).
+.decl rps_all_immediate(o: node, j: number)
+rps_all_immediate(o, j) :- rps_rp(o, d, _, _), rps_set_all_sql(d, k), rps_alter(_, _, d, j, _), k < j.
+rps_all_immediate(o, j) :- rps_rp(o, d, _, _), rps_def(o, h), kind(s, "string"), within(s, h), str(s, t),
+    rps_set_all_text(t), rps_alter(_, _, d, j, _).
+.decl rps_set_all_sql(d: number, k: number)
+rps_set_all_sql(d, k) :- dj_mig_db_op(r, "RunSQL", d, k), dj_mig_arg(r, "sql", v), str(v, t), rps_set_all_text(t).
+rps_set_all_sql(d, k) :- dj_mig_db_op(r, "RunSQL", d, k), dj_mig_arg(r, "sql", v), child(v, s, _), str(s, t),
+    rps_set_all_text(t).
+.decl rps_set_all_text(t: symbol)
+rps_set_all_text(t) :- rps_string(t), match("(?is).*set\\s+constraints\\s+all\\s+immediate.*", t).
+.decl rps_string(t: symbol)
+rps_string(t) :- dj_mig_db_op(r, "RunSQL", _, _), dj_mig_arg(r, "sql", v), (str(v, t) ; child(v, s, _), str(s, t)).
+rps_string(t) :- rps_def(_, h), kind(s, "string"), within(s, h), str(s, t).
+
+// rps_one_write(o, c): write c in RunPython o's code touches one row, and runs once (no loop around it in its def,
+// and its def is not called from a loop of the RunPython's function): a write on one fetched row (rps_single), an
+// insert of one row (`create`, `get_or_create`, `update_or_create`, `M(...).save()`). Such a write holds the
+// table's lock for milliseconds.
+//   Order.objects.filter(pk=1).update(status="legacy")     rps_one_write
+//   owner = Customer.objects.get(email=…); owner.save()    rps_one_write
+.decl rps_one_write(o: node, c: node)
+rps_one_write(o, c) :- rps_write(o, c, _, _, "rows"), rps_def(o, h), within(c, h), field(c, "function", f),
+    attr_of(f, u, _), unparen(u, e), rps_single(e, h), !rps_in_loop(c, h), !rps_looped_def(o, h).
+rps_one_write(o, c) :- rps_write(o, c, _, w, _), rps_insert_method(w), rps_def(o, h), within(c, h),
+    !rps_in_loop(c, h), !rps_looped_def(o, h).
+rps_one_write(o, c) :- rps_write(o, c, _, "save", "new"), rps_def(o, h), within(c, h), !rps_in_loop(c, h),
+    !rps_looped_def(o, h).
+// rps_single(e, h): in def h, e is one row of a model, or a queryset of at most one: a `get()` (Django raises on
+// two rows), `first()`, `last()`, `latest()`, `earliest()`; a `filter()`/`get()` with an exact lookup on a unique
+// column (rps_unique: the primary key, `pk`, or a field the app's migrations make unique); the chain methods after
+// one; a name bound to one.
+.decl rps_single(e: node, h: node)
+rps_single(e, h) :- kind(e, "call"), field(e, "function", f), attr_of(f, o, a), rps_one_row_method(a),
+    rps_from(o, h, _, "rows").
+rps_single(e, h) :- kind(e, "call"), field(e, "function", f), attr_of(f, o, a), (a = "filter" ; a = "get"),
+    call_arg(e, -1, k, _), rps_from(o, h, m, "rows"), rps_unique_lookup(m, k).
+rps_single(e, h) :- kind(e, "call"), field(e, "function", f), attr_of(f, o, a), rps_chain_method(a), rps_single(o, h).
+rps_single(e, h) :- kind(e, "identifier"), text(e, y), look(e, y, h), rps_single_name(h, y).
+rps_single(e, h) :- kind(e, "parenthesized_expression"), unparen(e, u), rps_single(u, h).
+.decl rps_single_name(h: node, y: symbol)
+rps_single_name(h, y) :- asg(h, y, v, _), unparen(v, e), rps_single(e, h).
+.decl rps_one_row_method(a: symbol)
+rps_one_row_method("get"). rps_one_row_method("first"). rps_one_row_method("last"). rps_one_row_method("latest").
+rps_one_row_method("earliest").
+// rps_unique_lookup(m, k): keyword k of a filter on model m names one row: `pk`, `id`, `pk__exact`, or a field the
+// run's migrations declare unique (`unique=True`, `primary_key=True`, a OneToOneField), bare or with `__exact`
+// (a OneToOneField also as `<name>_id`).
+.decl rps_unique_lookup(m: symbol, k: symbol)
+rps_unique_lookup(m, k) :- rps_write(_, _, m, _, _), (k = "pk" ; k = "id" ; k = "pk__exact" ; k = "id__exact").
+rps_unique_lookup(m, k) :- rps_unique_field(m, x), (k = x ; k = cat(x, "__exact")).
+rps_unique_lookup(m, cat(x, "_id")) :- rps_unique_field(m, x), dj_field_def(p, _, _, m, x), dj_mig_field(p, x, _, "OneToOneField").
+.decl rps_unique_field(m: symbol, x: symbol)
+rps_unique_field(m, x) :- rps_write(_, _, m, _, _), dj_field_def(p, _, _, m, x), dj_mig_field(p, x, f, t),
+    (t = "OneToOneField" ; call_arg(f, -1, "unique", v), kind(v, "true") ;
+     call_arg(f, -1, "primary_key", v), kind(v, "true")).
+// rps_in_loop(c, h): call c runs in a loop of def h (a for or while statement, a comprehension).
+.decl rps_in_loop(c: node, h: node)
+rps_in_loop(c, h) :- rps_def(_, h), within(c, s), within(s, h), (kind(s, "for_statement") ; kind(s, "while_statement") ;
+    kind(s, "list_comprehension") ; kind(s, "generator_expression") ; kind(s, "set_comprehension") ;
+    kind(s, "dictionary_comprehension")).
+// rps_looped_def(o, h): RunPython o's function calls def h from a loop, so each of h's writes runs many times.
+.decl rps_looped_def(o: node, h: node)
+rps_looped_def(o, h) :- rps_rp(o, _, _, g), kind(c, "call"), within(c, g), rps_in_loop(c, g), field(c, "function", e),
+    sym_of(e, q), rps_def(o, h), qualname(h, q).
+// rps_bulk_write(o, m): RunPython o writes rows of m other than one row once.
+.decl rps_bulk_write(o: node, m: symbol)
+rps_bulk_write(o, m) :- rps_write(o, c, m, _, _), !rps_one_write(o, c).
 
 // ---- the two orders ----------------------------------------------------------------------------------------------
 // rps_after(o, m): RunPython o queues foreign-key checks on m's table, and a later operation alters that table (other
 // than one that runs those checks first, rps_flushes).
 .decl rps_after(o: node, m: symbol)
 rps_after(o, m) :- rps_rp(o, d, i, _), rps_queues(o, m, x), rps_alter(s, _, d, j, m), j > i, !dj_mig_creates(d, m),
-    !rps_flushes(s, x).
-// rps_before(o, m): an earlier operation altered m's table, and RunPython o then writes its rows.
+    !rps_flushes(s, x), !rps_all_immediate(o, j).
+// rps_before(o, m): an earlier operation altered m's table, and RunPython o then writes its rows (other than one row
+// once), and the project's code does not read m as one row (dj_one_row: a settings table).
 .decl rps_before(o: node, m: symbol)
-rps_before(o, m) :- rps_rp(o, d, i, _), rps_write(o, _, m, _, _), rps_alter(_, _, d, j, m), j < i,
-    !dj_mig_creates(d, m), !rps_one_row(m).
-// rps_one_row(m): application code reads model M (lowercased m) as a single row: the library's dj_one_row
-// (`M.objects.get()`, `M.get_solo()`), or `M.objects.first()` / `M.objects.all().first()` with no arguments. Its
-// table holds one row (a settings table), so a lock through its backfill costs nothing.
-//   if System_Settings.objects.get().enable_jira:       rps_one_row("system_settings")
-.decl rps_one_row(m: symbol)
-rps_one_row(m) :- dj_one_row(m).
-rps_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe, q, "first"), py_no_args(c),
-    dj_one_row_qs(q, r), kind(r, "identifier"), text(r, n), docof(c, d), dj_live_doc(d).
+rps_before(o, m) :- rps_rp(o, d, i, _), rps_bulk_write(o, m), rps_alter(_, _, d, j, m), j < i,
+    !dj_mig_creates(d, m), !dj_one_row(m).
 
 // The cases, `cases/django-practice-runpython-with-schema-change/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.
@@ -293,6 +334,12 @@ rps_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe,
     .fixture "shop/migrations/0016_sitesettings.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0016_sitesettings.py"
     .fixture "shop/migrations/0017_tag_order_protect.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0017_tag_order_protect.py"
     .fixture "shop/migrations/0018_tag_product.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0018_tag_product.py"
+    .fixture "shop/migrations/0019_customer_status.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0019_customer_status.py"
+    .fixture "shop/migrations/0020_drop_blank_customers.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0020_drop_blank_customers.py"
+    .fixture "shop/migrations/0021_drop_unnamed_customers.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0021_drop_unnamed_customers.py"
+    .fixture "shop/migrations/0022_drop_guest_customers.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0022_drop_guest_customers.py"
+    .fixture "shop/migrations/0023_loop_models.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0023_loop_models.py"
+    .fixture "shop/migrations/0024_customer_flags.py" from "../cases/django-practice-runpython-with-schema-change/shop/migrations/0024_customer_flags.py"
     .fixture "shop/models.py" from "../cases/django-practice-runpython-with-schema-change/shop/models.py"
     .fixture "shop/settings.py" from "../cases/django-practice-runpython-with-schema-change/shop/settings.py"
     .fixture "shop/tests/migrations/0001_fixture.py" from "../cases/django-practice-runpython-with-schema-change/shop/tests/migrations/0001_fixture.py"
@@ -305,4 +352,9 @@ rps_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe,
     .expect _ at "shop/migrations/0006_walk_in_order.py":16
     .expect _ at "shop/migrations/0007_tag_rename.py":20
     .expect _ at "shop/migrations/0014_order_coupon.py":21
+    .expect _ at "shop/migrations/0019_customer_status.py":30
+    .expect _ at "shop/migrations/0022_drop_guest_customers.py":14
+    .expect _ at "shop/migrations/0023_loop_models.py":16
+    .expect _ at "shop/migrations/0024_customer_flags.py":41
+    .expect _ at "shop/migrations/0024_customer_flags.py":42
 .end

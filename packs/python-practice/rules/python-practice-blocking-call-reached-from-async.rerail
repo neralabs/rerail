@@ -1,5 +1,5 @@
 .policy "python-practice-blocking-call-reached-from-async" revision 1
-.description "Don't call a sync helper that sleeps, does network I/O or runs a subprocess from an async def; run it in a thread or make it async."
+.description "Don't call a sync helper that sleeps, does network I/O, runs a subprocess or starts an event loop from an async def; run it in a thread or make it async."
 .language python
 .mode log
 .scope include "**/*.py"
@@ -7,54 +7,83 @@
 // anywhere below it, also in a plain helper in another module, stalls every other task on the loop until it returns.
 // It reports, in an async def's own frame (not a nested def, lambda or class body) and outside test code:
 //   - a call (BlockingCallReached) whose target, by the call graph (python/calls, across files), is a sync def of the
-//     run that blocks its thread, itself or through a chain of sure calls through other sync defs: time.sleep, the
+//     run that blocks its thread, itself or through a chain of calls through other sync defs: time.sleep, the
 //     sync requests/httpx module functions, urlopen, subprocess.run/call/check_call/check_output/getoutput/
 //     getstatusoutput, os.system, os.popen, os.wait*, socket.create_connection/getaddrinfo/gethostbyname,
-//     smtplib.SMTP (lib: pp_blocking);
+//     smtplib.SMTP (lib: pp_blocking, a name list: core misc2-async has none to reuse);
 //   - a call (LoopStartReached) whose target reaches, the same way, a call that starts an event loop and waits for it:
 //     asyncio.run(), <loop>.run_until_complete(), async_to_sync(f)() (lib: pp_loop_entry). With a loop already running
 //     in the thread these raise RuntimeError: a crash, not a stall;
 //   - such a loop start written in the async def itself (LoopStartInAsync).
-// One call gives one finding, naming the nearest blocking site (the least node) of every target it may have.
+// A step of the chain (lib: pp_step_target) is a sure call target; a def under decorators that keep calling it in the
+// caller's thread, imported from outside the run (functools.lru_cache/cache, cachetools, tenacity.retry, backoff,
+// retrying, stamina: a name list, since their code is not in the run), which the call program leaves open; or the def
+// a decorator of the run wraps, when its wrapper calls the wrapped function in its own frame (`@wraps(f) def w(*a):
+// return f(*a)`, also from a decorator factory `@retrying(3)`). One call gives one finding, naming the nearest
+// blocking site (the least node) of every target it may have.
 //   services/http.py: def fetch(url): return requests.get(url, timeout=5)
 //   routes.py:        async def page(url): r = fetch(url)                          reported at fetch(url)
 //   routes.py:        async def page(url): r = await asyncio.to_thread(fetch, url)  not reported: fetch runs in a thread
+//   services/http.py: @tenacity.retry(stop=stop_after_attempt(3)) def get(url): return requests.get(url, timeout=5)
+//   routes.py:        async def page(url): r = get(url)                            reported: the retry runs it here
 //   services/loops.py: def refresh_now(): asyncio.run(refresh())
 //   routes.py:        async def reload(): refresh_now()                            reported (LoopStartReached)
 // Not reported: a blocking call written in the async def itself (the python pack's async rules report it); a helper
 // passed to a thread (asyncio.to_thread, run_in_executor, anyio.to_thread.run_sync, sync_to_async(f)()) or decorated
-// with sync_to_async/database_sync_to_async; a chain through an async def (calling one only makes a coroutine) or
-// through a call whose target the call program cannot settle (call_open); a call in a nested def, lambda or class
-// body; names that only look alike (`from svc import requests` with svc.requests a module of the run, trio.sleep,
-// asyncio.sleep, httpx.AsyncClient); test files.
-// Also not reported: a blocking call reached from a FastAPI/Starlette lifespan (an asynccontextmanager passed as
-// `lifespan=`) or an `on_event("startup"/"shutdown")` handler: it runs before the server takes requests or after it
-// stops, so no request waits on it. A loop start there is still reported: it raises all the same.
+// with sync_to_async/database_sync_to_async, or by a decorator of the run that hands it to a thread or executor; a
+// chain through an async def (calling one only makes a coroutine), through a call whose target the call program cannot
+// settle (call_open), or through a decorator imported from outside the run that is not in the list above; a call in a
+// nested def, lambda or class body; names that only look alike (`from svc import requests` with svc.requests a
+// module of the run, trio.sleep, asyncio.sleep, httpx.AsyncClient); test files.
+// Loop starts that cannot raise (lib: pp_loop_guarded) are not reported: one in the `except RuntimeError` of a `try`
+// that calls asyncio.get_running_loop(), in the branch `if loop is None:` or `if not loop.is_running():` leads to,
+// or after nest_asyncio.apply(). A dual-mode helper starts its loop only when no loop runs:
+//   def run_sync(coro):
+//       try: asyncio.get_running_loop()
+//       except RuntimeError: return asyncio.run(coro)                 not reported, called from a coroutine or not
+//       return asyncio.ensure_future(coro)
+// Startup code is not reported for a blocking call (a loop start raises all the same, and is): it runs before the
+// server takes requests or after it stops, so no request waits on it. Startup code is a lifespan (an
+// asynccontextmanager passed as `lifespan=`), an on_event("startup"/"shutdown") or add_event_handler("startup", f)
+// handler, an entry of `on_startup=[...]`/`on_shutdown=[...]`, and a coroutine only startup code awaits, at any depth:
+//   app.py:    async def lifespan(app): await server.init_async(); yield
+//   server.py: async def init_async(self): await self._prepare()      _prepare: prepare_sandbox()  not reported
+// A coroutine is startup code only when every live call that may run it (its call targets, and for an open call each
+// async def of the callee's name) is awaited directly in startup code, no other live code names it (passed as a
+// callback, to functools.partial), and it has no decorator but the known ones above. One spawned as a task from the
+// lifespan (`asyncio.create_task(poll())`) runs while serving, and is reported.
 // `self.m()` in a method of class K follows K's own m (or the one K inherits), not a subclass's override: a base's
-// `async def` that calls `self.m()` is judged with the base's m. And a blocking call that runs once per process, under
-// `if self._x is None:` (or a module global) whose body sets that same name: `git --version` probed once and cached.
+// `async def` that calls `self.m()` is judged with the base's m. A blocking call that runs once per process is not
+// reported: under `if self._x is None:` (or a module global) whose body sets that same name (`git --version` probed
+// once and cached), or in a def memoized by lru_cache/cache/cachetools that takes no argument but self or cls, and
+// whatever it calls. A memoized def with arguments blocks for each new key, and is reported.
 // Gaps: file I/O (open(), Path.read_text()) is left out on purpose: short local reads are common in async code and
 // rarely what stalls a loop. Sync clients reached through an object (requests.Session().get, smtplib.SMTP().sendmail,
 // a sync DB driver) are not followed: only the module functions and constructors above count. A class body nested in
 // the async def does run at once, but is skipped with defs and lambdas. A subclass that inherits a base's async def
-// and overrides only the sync m it calls is not reported. Other startup-only code (an `initialize()` or `start()`
-// that runs before the server listens) still blocks the loop and is reported; the message says when to leave it.
+// and overrides only the sync m it calls is not reported, nor is `self.m()` where m is under a decorator of the run.
+// A loop start guarded by a test this rule does not read (a flag, a helper returning whether a loop runs) is reported.
+// Startup code the rule cannot tie to a lifespan is reported: a main coroutine run by asyncio.run(main()) or a
+// tornado IOLoop.run_sync(partial(app.launch, argv)), whose first awaits run before the server listens; telling which
+// awaits precede the first spawned task needs the order of statements across coroutines. The message says when to
+// leave it.
 
 #include "lib/python_practice.rerail"
 
 .violation BlockingCallReached(at: node, g: symbol, what: symbol, p: symbol, o: node)
     "`{g}()` blocks the event loop (`{what}` at {p}:{o.line}), stalling every task. Await `asyncio.to_thread({g}, ...)` or make it async; leave it if it runs only before serving."
 BlockingCallReached(c, x, what, p, o) :- pbr_start(c, _), !pbr_startup(c), field(c, "function", fn), text(fn, x),
-    o = min y : { pbr_start(c, g), pp_sync_reach(g, h), pbr_blocking(y, h) }, pp_blocking(o, _, what),
+    o = min y : { pbr_start(c, g), pbr_each(g, h), pbr_blocking(y, h) }, pp_blocking(o, _, what),
     docof(o, d), doc(d, p, _).
 .violation LoopStartReached(at: node, g: symbol, what: symbol, p: symbol, o: node)
     "`{g}()` starts an event loop (`{what}` at {p}:{o.line}) while one runs in this thread: it raises RuntimeError. Await the coroutine instead, or give the helper an async twin."
 LoopStartReached(c, x, what, p, o) :- pbr_start(c, _), field(c, "function", fn), text(fn, x),
-    o = min y : { pbr_start(c, g), pp_sync_reach(g, h), pp_loop_entry(y, h, _) }, pp_loop_entry(o, _, what),
-    docof(o, d), doc(d, p, _).
+    o = min y : { pbr_start(c, g), pp_sync_reach(g, h), pp_loop_entry(y, h, _), !pp_loop_guarded(y) },
+    pp_loop_entry(o, _, what), docof(o, d), doc(d, p, _).
 .violation LoopStartInAsync(at: node, what: symbol, fx: symbol)
     "`{what}` in `async def {fx}` starts an event loop while one already runs in this thread: it raises RuntimeError. Await the coroutine directly."
-LoopStartInAsync(c, what, fx) :- pp_loop_entry(c, f, what), pp_async_def(f), pp_live(c), def_name(f, fx).
+LoopStartInAsync(c, what, fx) :- pp_loop_entry(c, f, what), pp_async_def(f), pp_live(c), !pp_loop_guarded(c),
+    def_name(f, fx).
 
 // pbr_start(c, g): pp_async_start, with `self.m()` in a method of class K going only to what K resolves m to. The call
 // program also answers a subclass's override (a late-bound self), which runs only for that subclass; when the subclass
@@ -66,14 +95,76 @@ pbr_start(c, g) :- pp_async_start(c, _, g), pbr_self_call(c, kq, m), mro_method(
 .decl pbr_self_call(c: node, kq: symbol, m: symbol)
 pbr_self_call(c, kq, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, m), kind(r, "identifier"),
     text(r, "self"), pp_frame(c, f), nearest(f, k, scope), class_def(k, kq).
-// pbr_startup(c): call c is in a lifespan or a startup/shutdown handler: it runs while no request is served.
+// pbr_each(g, h): pp_sync_reach, but not into a def that runs once per process (pbr_once_def): what blocks each time
+// g is called.
+.decl pbr_each(g: node, h: node)
+pbr_each(g, g) :- pbr_start(_, g), !pbr_once_def(g).
+pbr_each(g, h) :- pbr_each(g, x), pp_sync_step(x, _, h), !pbr_once_def(h).
+// pbr_once_def(g): g is memoized (lru_cache, cache, cachetools) and takes no argument but self or cls.
+.decl pbr_once_def(g: node)
+pbr_once_def(g) :- decorator(g, e), pp_decorator_name(e, q), pp_memoizer(q), !pbr_keyed(g).
+.decl pbr_keyed(g: node)
+pbr_keyed(g) :- param(g, x, _), x != "self", x != "cls".
+
+// ---- startup code -------------------------------------------------------------------------------------------------
+// pbr_startup(c): call c runs while no request is served: in a startup root, or in a coroutine only startup awaits.
 .decl pbr_startup(c: node)
-pbr_startup(c) :- pp_frame(c, f), pbr_lifespan(f).
+pbr_startup(c) :- pp_frame(c, f), pbr_startup_def(f).
+// pbr_lifespan(f): the roots: a lifespan, an on_event/add_event_handler startup or shutdown handler, an entry of
+// `on_startup=[...]` or `on_shutdown=[...]` (Starlette, FastAPI).
 .decl pbr_lifespan(f: node)
 pbr_lifespan(f) :- pp_cm_def(f), kind(a, "keyword_argument"), field(a, "name", n), text(n, "lifespan"),
     field(a, "value", v), sym_of(v, q), qualname(f, q).
 pbr_lifespan(f) :- pp_async_def(f), decorator(f, e), kind(e, "call"), field(e, "function", fn),
     attr_of(fn, _, "on_event"), posarg(e, 0, s), text(s, t), (contains("startup", t) ; contains("shutdown", t)).
+pbr_lifespan(f) :- kind(e, "call"), field(e, "function", fn), attr_of(fn, _, "add_event_handler"), posarg(e, 0, s),
+    text(s, t), (contains("startup", t) ; contains("shutdown", t)), posarg(e, 1, r), sym_of(r, q), qualname(f, q),
+    pp_async_def(f).
+pbr_lifespan(f) :- pp_kwarg(e, k, v), (k = "on_startup" ; k = "on_shutdown"), kind(v, "list"), child(v, r, _),
+    sym_of(r, q), qualname(f, q), pp_async_def(f).
+// pbr_startup_def(f): a root, or an async def awaited from one, any depth, that nothing else may run (!pbr_runtime).
+.decl pbr_startup_def(f: node)
+pbr_startup_def(f) :- pbr_lifespan(f).
+pbr_startup_def(g) :- pbr_caller(c, g), pp_frame(c, f), pbr_startup_def(f), !pbr_runtime(g).
+// pbr_caller(c, g): live call c may run async def g: c's call target, or, when c is open, any async def of its
+// callee's name (`server.init_async()` on a global the program cannot type).
+.decl pbr_caller(c: node, g: node)
+pbr_caller(c, g) :- call_target(c, g), pp_async_def(g), pp_live(c).
+pbr_caller(c, g) :- call_open(c), pp_live(c), field(c, "function", fn), pbr_leaf(fn, x), def_name(g, x),
+    pp_async_def(g).
+.decl pbr_leaf(e: node, x: symbol)
+pbr_leaf(e, x) :- kind(e, "identifier"), text(e, x).
+pbr_leaf(e, x) :- attr_of(e, _, x).
+// pbr_runtime(g): async def g, not a root, may run while requests are served: nothing in the run calls it (the
+// framework does), it has a decorator not known to keep it as it is, live code names it other than as a call's
+// callee, or a live call that may run it is not awaited in a coroutine or sits in a coroutine that may so run.
+.decl pbr_runtime(g: node)
+pbr_runtime(g) :- pp_async_def(g), !pbr_lifespan(g), !pbr_called(g).
+pbr_runtime(g) :- pp_async_def(g), !pbr_lifespan(g), pp_odd_decorator(g).
+pbr_runtime(g) :- pp_async_def(g), !pbr_lifespan(g), def_name(g, x), pbr_named(x).
+pbr_runtime(g) :- pbr_caller(c, g), !pbr_lifespan(g), !pbr_awaited_here(c).
+pbr_runtime(g) :- pbr_caller(c, g), !pbr_lifespan(g), pp_frame(c, f), pbr_runtime(f).
+.decl pbr_called(g: node)
+pbr_called(g) :- pbr_caller(_, g).
+// pbr_awaited_here(c): c is the operand of `await` in an async def's own frame.
+.decl pbr_awaited_here(c: node)
+pbr_awaited_here(c) :- awaited(c), pp_frame(c, f), pp_async_def(f).
+// pbr_named(x): live code reads the name x other than as a call's callee, a def's name or an import: a reference
+// that may hand the coroutine to code the rule does not see (`partial(app.launch, argv)`, `create_task(x)`).
+.decl pbr_named(x: symbol)
+pbr_named(x) :- pbr_coro_name(x), kind(n, "identifier"), text(n, x), pp_live(n), !pbr_callee_name(n),
+    !pbr_def_name_node(n), !inside(n, _, pbr_import_kind).
+.decl pbr_coro_name(x: symbol)
+pbr_coro_name(x) :- pp_async_def(g), def_name(g, x).
+.decl pbr_callee_name(n: node)
+pbr_callee_name(n) :- kind(c, "call"), field(c, "function", n).
+pbr_callee_name(n) :- kind(c, "call"), field(c, "function", fn), kind(fn, "attribute"), field(fn, "attribute", n).
+.decl pbr_def_name_node(n: node)
+pbr_def_name_node(n) :- kind(d, k), (k = "function_definition" ; k = "class_definition"), field(d, "name", n).
+.decl pbr_import_kind(k: symbol)
+pbr_import_kind("import_statement"). pbr_import_kind("import_from_statement").
+
+// ---- once per process ---------------------------------------------------------------------------------------------
 // pbr_blocking(y, h): y is a blocking call in h's own frame that can run more than once: not under a once-guard.
 .decl pbr_blocking(y: node, h: node)
 pbr_blocking(y, h) :- pp_blocking(y, h, _), !pbr_once(y).
@@ -89,18 +180,38 @@ pbr_once(y) :- pp_blocking(y, _, _), kind(i, "if_statement"), field(i, "conseque
 // `# caught` is reported, and no other line.
 .test cases exactly
     .fixture "svc/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/__init__.py"
+    .fixture "svc/decorated.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/decorated.py"
+    .fixture "svc/decorators.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/decorators.py"
+    .fixture "svc/dual.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/dual.py"
     .fixture "svc/lookalikes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/lookalikes.py"
     .fixture "svc/main.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/main.py"
     .fixture "svc/providers.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/providers.py"
     .fixture "svc/requests.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/requests.py"
     .fixture "svc/routes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/routes.py"
     .fixture "svc/safe.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/safe.py"
+    .fixture "svc/server.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/server.py"
     .fixture "svc/services/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/__init__.py"
+    .fixture "svc/services/guards.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/guards.py"
     .fixture "svc/services/http.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/http.py"
     .fixture "svc/services/loops.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/loops.py"
     .fixture "svc/services/shell.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/shell.py"
+    .fixture "svc/services/wrapped.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/services/wrapped.py"
+    .fixture "svc/startup.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/startup.py"
     .fixture "svc/tests/__init__.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/tests/__init__.py"
     .fixture "svc/tests/test_routes.py" from "../cases/python-practice-blocking-call-reached-from-async/svc/tests/test_routes.py"
+    .expect _ at "svc/decorated.py":6
+    .expect _ at "svc/decorated.py":7
+    .expect _ at "svc/decorated.py":8
+    .expect _ at "svc/decorated.py":10
+    .expect _ at "svc/decorated.py":11
+    .expect _ at "svc/decorated.py":12
+    .expect _ at "svc/decorated.py":14
+    .expect _ at "svc/decorated.py":15
+    .expect _ at "svc/decorated.py":18
+    .expect _ at "svc/dual.py":17
+    .expect _ at "svc/dual.py":18
+    .expect _ at "svc/dual.py":19
+    .expect _ at "svc/dual.py":21
     .expect _ at "svc/main.py":28
     .expect _ at "svc/main.py":34
     .expect _ at "svc/providers.py":18
@@ -116,5 +227,12 @@ pbr_once(y) :- pp_blocking(y, _, _), kind(i, "if_statement"), field(i, "conseque
     .expect _ at "svc/routes.py":43
     .expect _ at "svc/routes.py":47
     .expect _ at "svc/routes.py":48
+    .expect _ at "svc/server.py":22
+    .expect _ at "svc/server.py":28
+    .expect _ at "svc/server.py":33
+    .expect _ at "svc/server.py":37
+    .expect _ at "svc/server.py":50
     .expect _ at "svc/services/shell.py":37
+    .expect _ at "svc/services/wrapped.py":97
+    .expect _ at "svc/startup.py":42
 .end

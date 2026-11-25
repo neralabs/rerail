@@ -1,50 +1,139 @@
 .policy "alembic-practice-drop-mapped-column" revision 1
-.description "Stop mapping a column or table in the SQLAlchemy models and deploy that first; drop or rename it in a later Alembic revision."
+.description "Don't drop or rename a column or table in an Alembic upgrade while a model of the same migration tree still maps it; its queries fail once the upgrade runs."
 .language python
 .mode steer
 .scope include "**/*.py"
-// Rerail's own rule, not a port. The running application's queries name every column its models map, so once a
-// migration drops or renames one of them, every SELECT and INSERT of that model fails ("column users.nick does not
-// exist") until new code is deployed. The safe order is expand/contract: stop mapping the column and deploy, then drop
-// it in a later revision (strong_migrations "Removing a column"/"Renaming a column", Squawk ban-drop-column and
-// renaming-column, GoCardless "Zero-downtime Postgres migrations: the hard parts", django-migration-linter
-// DROP_COLUMN/RENAME_COLUMN; polar's env.py keeps UNMAPPED_COLUMNS for exactly this window).
+// Rerail's own rule, not a port. What it checks: the migration and the models disagree. An upgrade drops or renames a
+// column (or table) that a model of the application this Alembic tree migrates still maps, so every SELECT and INSERT
+// of that model names a column that is gone ("column users.nick does not exist") once the upgrade runs, whatever the
+// deploy order: the models must lose the attribute too. When migrations run before the new code is live (a prestart
+// script, a release job), the attribute must go in an earlier release (expand/contract: strong_migrations "Removing a
+// column"/"Renaming a column", Squawk ban-drop-column and renaming-column, GoCardless "Zero-downtime Postgres
+// migrations: the hard parts", django-migration-linter DROP_COLUMN/RENAME_COLUMN; polar's env.py keeps
+// UNMAPPED_COLUMNS for exactly this window). The rule cannot see the deploy order, so it only says when that matters.
 // Reported, in `upgrade()` (or a module-level helper it calls) of a migration outside test code:
-//   op.drop_column("users", "nick")                                 reported while a model maps users.nick
+//   op.drop_column("users", "nick")                                 reported while a model of the tree maps users.nick
 //   batch_op.drop_column("nick")                                    reported (table from batch_alter_table("users"))
-//   op.alter_column("users", "nick", new_column_name="handle")      reported while a model maps users.nick
-//   op.drop_table("users") / op.rename_table("users", "people")     reported while a model maps users
-// A model maps users.nick when an application class (not in a migration, env.py or test file) has
+//   op.alter_column("users", "nick", new_column_name="handle")      reported while a model of the tree maps users.nick
+//   op.drop_table("users") / op.rename_table("users", "people")     reported while a model of the tree maps users
+// The tree's models. A repository can hold several Alembic trees (a monorepo of services, each with its own database
+// and env.py), so a migration sees only the models of the application its env.py migrates:
+//   - the modules env.py imports, and theirs, transitively (`import a.b`, `from a import b` for a submodule b, relative
+//     imports; importing a.b.c runs the packages a and a.b too), wherever they live: `from ledger.registry import
+//     metadata` reaches `shared_models/entries.py` when registry imports it;
+//   - every module of the same package (directory) as a module env.py's imports reach directly: `from app.models
+//     import Base` with an `app/models/__init__.py` that imports only the base still covers `app/models/user.py`;
+//   - when that finds no model (env.py imports no model, or only through `current_app` or a library), the modules
+//     under env.py's top-level directory: `accounts/migrations/env.py` sees `accounts/**`, never `billing/models.py`.
+//   A migration under no env.py (a run without it) sees every application model.
+// A model maps users.nick when an application class (not in a migration, env.py or test file) of the tree has
 // `__tablename__ = "users"` (or is a sqlmodel `table=True` class named User) and declares nick itself or on a mixin or
 // base in another module: `nick = Column(...)`, `nick: Mapped[str] = mapped_column(...)`, a bare `nick: Mapped[str]`,
 // a sqlmodel field, `Column("nick", ...)` / `Column(..., name="nick")` under another attribute, or a Column wrapped in
-// `deferred(...)` / `column_property(...)`. A `Table("users", metadata, Column("nick", ...))` in application code
-// (an association table, or a class's `__table__ = Table(...)`) maps them too.
+// `deferred(...)` / `column_property(...)`. A `Table("users", metadata, Column("nick", ...))` of the tree maps them
+// too: an association table (Core queries name all its columns), or the `__table__` of a class (inline, a module
+// name, or a name imported from another module), whose mapper decides.
+// Not mapped (honoured as SQLAlchemy reads them):
+//   __mapper_args__ = {"exclude_properties": ["bio"]}               bio (also a tuple or set, `dict(...)`, or a Column
+//                                                                     object such as `prefs_table.c.theme`)
+//   __mapper_args__ = {"include_properties": ["id", "token"]}       every column but id and token
+//     (a class's own __mapper_args__, else the nearest one among its bases: Python's attribute lookup)
+//   class User(TokenMixin, Base): legacy_token = None             the model unmaps the mixin's column (polar's way)
 // Left alone:
-//   op.drop_column("users", "old_avatar")                           no model maps it: the normal end state
+//   op.drop_column("users", "old_avatar")                           no model of the tree maps it: the normal end state
+//   op.drop_column("users", "nick") in accounts/migrations          only billing's models (another tree) map it
 //   op.drop_column("users", "nick")                                 when a later operation of the same upgrade()
 //   op.add_column("users", sa.Column("nick", sa.Text()))              adds it back (add_column, create_table, or an
 //                                                                     alter_column/rename_table to that name): a rebuild
 //   a historical revision whose descendant revision (by down_revision) adds the column or table back
-//   class User(TokenMixin, Base): legacy_token = None             the model unmaps the mixin's column (polar's way)
 //   op.drop_table("tags") in both upgrade() and downgrade()       a reset: something else (create_all) rebuilds it
 //   downgrade(); migrations and models in test files; a model class declared inside a migration file
-// Gaps: a `__tablename__` computed by `declared_attr` (dispatch derives names from class names), imperative mappings
-// (`registry.map_imperatively`), tables named by a non-literal expression, `schema=` (a model of another schema with
-// the same table name still counts), and columns a model maps under `__table_args__` or by reflection.
+// Gaps:
+//   - The attribute removed from the model in the same change as the drop: the models and the migration agree, so the
+//     rule is silent, yet old processes still query the column if migrations run before the new code is live. The
+//     rule cannot see the previous code or the deploy order (`alembic check` cannot either).
+//   - Flask-SQLAlchemy `class Widget(db.Model)` without `__tablename__` (a generated table name), a `__tablename__`
+//     computed by `declared_attr` (dispatch derives names from class names), imperative mappings
+//     (`registry.map_imperatively`, `mapper(..., exclude_properties=...)`), `__mapper_args__` computed by a
+//     `declared_attr`, tables named by a non-literal expression, `schema=` (a model of another schema with the same
+//     table name still counts), columns a model maps under `__table_args__` or by reflection.
+//   - A `__table__` Table that Core queries also read directly: its columns count only as its class maps them.
+//   - Models the application imports that env.py's imports never reach, in a package other than theirs (silent):
+//     dispatch's `data/source/models.py`, imported by `dispatch/__init__.py` but in a directory without
+//     `__init__.py`, is the one model module of its 15 that its trees do not reach.
+//   - An env.py that reads the context only as `alembic.context.configure(...)` after `import alembic.context`
+//     (open-webui) is no env.py to lib/alembic's al_env_doc, so its migrations see every application model.
+// Corpus (8 Alembic repositories, 2026-11-25): 0 matches, as expected for repositories whose migrations and models
+// agree. Tree resolution there: the template, jupyterhub, mealie (through `_all_models`' star imports), polar, dify
+// and dispatch reach their models through env.py's imports; superset (metadata through flask_appbuilder) falls back
+// to `superset/`; open-webui has no recognised env.py (above). The edit-window copy of the template reports a new
+// revision's drop of user.full_name, still mapped through UserBase, and stays silent on a drop of an unmapped column.
 
 #include "lib/alembic.rerail"
 
-.violation DropMappedColumn(at: node, t: symbol, x: symbol) "This upgrade drops column {t}.{x}, which a model in this repository still maps: once it runs, every query of that model fails until new code is deployed. Remove the attribute from the model (or exclude it from the mapper) and deploy that first, then drop the column in a later revision. Leave it if the model change ships in this change and your deploy runs migrations only after the new code is live, or if the app is stopped while migrations run."
-.violation RenameMappedColumn(at: node, t: symbol, x: symbol, y: symbol) "This upgrade renames column {t}.{x} to {y} while a model in this repository still maps {x}: once it runs, the deployed code's queries fail, and code that maps {y} fails until it runs. Add {y} as a new column, write both and backfill, move the model to {y} and deploy, then drop {x} in a later revision. Leave it if the app is stopped while migrations run."
-.violation DropMappedTable(at: node, t: symbol) "This upgrade drops table {t}, which a model in this repository still maps: once it runs, every query of that model fails until new code is deployed. Remove the model (and every relationship to it) and deploy that first, then drop the table in a later revision. Leave it if the model change ships in this change and your deploy runs migrations only after the new code is live, or if the app is stopped while migrations run."
-.violation RenameMappedTable(at: node, t: symbol, y: symbol) "This upgrade renames table {t} to {y} while a model in this repository still maps {t}: once it runs, the deployed code's queries fail, and code that maps {y} fails until it runs. Create {y} alongside {t}, write both and backfill, move the model to {y} and deploy, then drop {t} in a later revision (or keep a view named {t} for the old code). Leave it if the app is stopped while migrations run."
+.violation DropMappedColumn(at: node, t: symbol, x: symbol) "A model still maps {t}.{x}, which this upgrade drops. Remove the attribute, or keep the column if code needs it; ship the model change first if migrations run before new code is live."
+.violation RenameMappedColumn(at: node, t: symbol, x: symbol, y: symbol) "A model still maps {t}.{x}, which this upgrade renames to {y}. Map {y} instead; if migrations run before new code is live, add {y} and backfill first, then drop {x} later."
+.violation DropMappedTable(at: node, t: symbol) "A model still maps table {t}, which this upgrade drops. Remove the model and its relationships, or keep the table; ship that first if migrations run before new code is live."
+.violation RenameMappedTable(at: node, t: symbol, y: symbol) "A model still maps table {t}, which this upgrade renames to {y}. Map {y} instead; if migrations run before new code is live, keep a view named {t} until old code is gone."
 
-// ---- what the application maps -----------------------------------------------------------------------------------
+// ---- the models of each Alembic tree -----------------------------------------------------------------------------
 // dm_app_doc(d): application code: no migration, env.py or test file (a migration's own throwaway model is not the
 // application's).
 .decl dm_app_doc(d: number)
 dm_app_doc(d) :- doc(d, _, _), !al_migration_doc(d), !al_env_doc(d), !al_test_doc(d).
+// dm_import_mod(d, q): an import statement of document d names module q: `import q`, `from q import x`, `from q
+// import *` (mealie's `_all_models`), and `from m import x` names q = m.x too (x may be a submodule). Relative imports
+// arrive resolved (python/imports).
+.decl dm_import_mod(d: number, q: symbol)
+dm_import_mod(d, m) :- module_text(i, m), docof(i, d).
+dm_import_mod(d, m) :- import_alias(i, _, m, _, _), docof(i, d).
+dm_import_mod(d, @dot(m, x)) :- import_alias(i, _, m, x, _), x != "", docof(i, d).
+// dm_import_pkg(d, p): importing q runs each package above it first (`import a.b.c` runs a and a.b).
+.decl dm_import_pkg(d: number, p: symbol)
+dm_import_pkg(d, p) :- dm_import_mod(d, q), p = @pkg_up(q, 1), p != "".
+dm_import_pkg(d, p) :- dm_import_pkg(d, q), p = @pkg_up(q, 1), p != "".
+// dm_imports(d, d2): document d imports the module of document d2 itself; dm_runs(d, d2): importing makes d2 run (d2
+// itself, or a package above it).
+.decl dm_imports(d: number, d2: number)
+dm_imports(d, d2) :- dm_import_mod(d, q), doc(d2, _, q), d2 != d.
+.decl dm_runs(d: number, d2: number)
+dm_runs(d, d2) :- dm_imports(d, d2).
+dm_runs(d, d2) :- dm_import_pkg(d, q), doc(d2, _, q), d2 != d.
+// dm_reach(e, d): running env.py e runs module d: through its imports, transitively. dm_reached(e, d): d is imported
+// by name on the way (not only a package above a module), so d's package is the one its models live in.
+.decl dm_reach(e: number, d: number)
+dm_reach(e, d) :- al_env_doc(e), dm_runs(e, d).
+dm_reach(e, d) :- dm_reach(e, m), dm_runs(m, d), d != e.
+.decl dm_reached(e: number, d: number)
+dm_reached(e, d) :- al_env_doc(e), dm_imports(e, d).
+dm_reached(e, d) :- dm_reach(e, m), dm_imports(m, d), d != e.
+// dm_dir(d, p): the directory of document d ("" at the root).
+.decl dm_dir(d: number, p: symbol)
+dm_dir(d, p) :- doc(d, f, _), p = @replace_all(cat("/", f), "/[^/]*$", "").
+// dm_import_tree(e, d): document d holds models env.py e loads: a module it runs, or a module of the same package
+// (directory, not its subpackages) as a module it imports by name. The root directory is no package.
+.decl dm_import_tree(e: number, d: number)
+dm_import_tree(e, d) :- dm_reach(e, d).
+dm_import_tree(e, d) :- dm_reached(e, d1), dm_dir(d1, p), p != "", dm_dir(d, p).
+// dm_model_doc(d): application document d declares a model or a Core Table.
+.decl dm_model_doc(d: number)
+dm_model_doc(d) :- al_model(k, _), docof(k, d), dm_app_doc(d).
+dm_model_doc(d) :- dm_core_table(c, _), docof(c, d).
+.decl dm_import_tree_models(e: number)
+dm_import_tree_models(e) :- dm_import_tree(e, d), dm_model_doc(d).
+// dm_top_dir(d, s): document d's top-level directory s ("" for a file at the root).
+.decl dm_top_dir(d: number, s: symbol)
+dm_top_dir(d, s) :- doc(d, f, _), contains("/", f), s = @replace_all(f, "/.*$", "").
+dm_top_dir(d, "") :- doc(d, f, _), !contains("/", f).
+// dm_tree_doc(e, d): application document d belongs to the tree of env.py e: what env.py loads, or, when that holds
+// no model, what sits under env.py's top-level directory (every document, for an env.py at the root).
+.decl dm_tree_doc(e: number, d: number)
+dm_tree_doc(e, d) :- dm_import_tree(e, d), dm_app_doc(d).
+dm_tree_doc(e, d) :- al_env_doc(e), !dm_import_tree_models(e), dm_top_dir(e, s), s != "", dm_top_dir(d, s),
+    dm_app_doc(d).
+dm_tree_doc(e, d) :- al_env_doc(e), !dm_import_tree_models(e), dm_top_dir(e, ""), dm_app_doc(d).
+
+// ---- what a class maps -------------------------------------------------------------------------------------------
 // Columns al_class_column does not see: a Column wrapped in deferred()/column_property(), and `name="x"` given as a
 // keyword. dm_extra_column(k, x, a): statement a of class k's body maps column x. (Candidates for lib/alembic.)
 .decl dm_wrapper_q(q: symbol)
@@ -61,6 +150,57 @@ dm_extra_column(k, x, a) :- al_class_stmt(k, a), field(a, "right", v), al_mapped
 .decl dm_declared_column(k: node, x: symbol, a: node)
 dm_declared_column(k, x, a) :- al_class_column(k, x, a).
 dm_declared_column(k, x, a) :- dm_extra_column(k, x, a).
+// dm_core_table(c, t): `Table("t", metadata, ...)` in application code: an association table, or a `__table__`.
+.decl dm_table_q(q: symbol)
+dm_table_q("sqlalchemy.Table"). dm_table_q("sqlalchemy.schema.Table"). dm_table_q("sqlalchemy.sql.schema.Table").
+dm_table_q("sqlmodel.Table").
+.decl dm_core_table(c: node, t: symbol)
+dm_core_table(c, t) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), dm_table_q(q), call_arg(c, 0, "", a),
+    al_name_value(a, t), call_arg(c, 1, "", _), docof(c, d), dm_app_doc(d).
+// dm_table_value(v, c): expression v is Table c: the call itself, a module-level name bound to it in the same file,
+// or a name imported from the module that binds it.
+.decl dm_table_value(v: node, c: node)
+dm_table_value(v, c) :- unparen(v, c), dm_core_table(c, _).
+dm_table_value(v, c) :- unparen(v, u), kind(u, "identifier"), text(u, x), docof(u, d), al_top_assign(d, x, r),
+    unparen(r, c), dm_core_table(c, _).
+dm_table_value(v, c) :- unparen(v, u), sym_of(u, q), al_top_assign(d2, x, r), unparen(r, c), dm_core_table(c, _),
+    doc(d2, _, mq), q = @dot(mq, x).
+// dm_table_class(k, c): class k maps Table c: `__table__ = <c>`.
+.decl dm_table_class(k: node, c: node)
+dm_table_class(k, c) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__table__"), field(a, "right", v),
+    dm_table_value(v, c).
+// dm_super(k, b): class b of the run is among the bases of k, a model or a `__table__` class, directly or not.
+.decl dm_super(k: node, b: node)
+dm_super(k, b) :- al_model_super(k, b).
+dm_super(k, b) :- dm_table_class(k, _), class_base(k, q), class_def(b, q).
+dm_super(k, b) :- dm_table_class(k, _), dm_super(k, m), class_base(m, q), class_def(b, q).
+// Mapper arguments. dm_mapper_seq(k, key, s): class k's own `__mapper_args__` (a dict display or `dict(...)`) gives
+// key the sequence s; dm_mapper_name(k, key, x): s lists x, as a string or a Column object (`prefs_table.c.theme`).
+.decl dm_mapper_args(k: node, v: node)
+dm_mapper_args(k, v) :- al_class_stmt(k, a), field(a, "left", l), text(l, "__mapper_args__"), field(a, "right", r),
+    unparen(r, v).
+.decl dm_mapper_seq(k: node, key: symbol, s: node)
+dm_mapper_seq(k, key, s) :- dm_mapper_args(k, v), kind(v, "dictionary"), child(v, p, _), kind(p, "pair"),
+    field(p, "key", kn), unparen(kn, ks), str(ks, key), field(p, "value", s0), unparen(s0, s).
+dm_mapper_seq(k, key, s) :- dm_mapper_args(k, v), kind(v, "call"), field(v, "function", f), text(f, "dict"),
+    call_arg(v, -1, key, s0), unparen(s0, s).
+.decl dm_seq_kind(s: symbol)
+dm_seq_kind("list"). dm_seq_kind("tuple"). dm_seq_kind("set").
+.decl dm_mapper_name(k: node, key: symbol, x: symbol)
+dm_mapper_name(k, key, x) :- dm_mapper_seq(k, key, s), kind(s, sk), dm_seq_kind(sk), child(s, e, _), str(e, x).
+dm_mapper_name(k, key, x) :- dm_mapper_seq(k, key, s), kind(s, sk), dm_seq_kind(sk), child(s, e, _),
+    attr_of(e, _, x).
+// dm_args_of(k, b): the `__mapper_args__` that applies to class k is b's: k's own, else one among its bases (Python
+// finds the attribute on the nearest base; when several bases set it, each counts).
+.decl dm_args_of(k: node, b: node)
+dm_args_of(k, k) :- dm_mapper_args(k, _).
+dm_args_of(k, b) :- dm_super(k, b), !dm_mapper_args(k, _), dm_mapper_args(b, _).
+.decl dm_excluded(k: node, x: symbol)
+dm_excluded(k, x) :- dm_args_of(k, b), dm_mapper_name(b, "exclude_properties", x).
+.decl dm_includes(k: node)
+dm_includes(k) :- dm_args_of(k, b), dm_mapper_seq(b, "include_properties", _).
+.decl dm_included(k: node, x: symbol)
+dm_included(k, x) :- dm_args_of(k, b), dm_mapper_name(b, "include_properties", x).
 // dm_unmapped_attr(k, y): model k, or a class among its bases, sets attribute y to None: the way a subclass stops
 // mapping a column a mixin declares (`client_secret = None`), while the column still exists in the database.
 .decl dm_sets_none(k: node, y: symbol)
@@ -69,27 +209,41 @@ dm_sets_none(k, y) :- al_class_stmt(k, a), !field(a, "type", _), field(a, "left"
 .decl dm_unmapped_attr(k: node, y: symbol)
 dm_unmapped_attr(k, y) :- al_model(k, _), dm_sets_none(k, y).
 dm_unmapped_attr(k, y) :- al_model_super(k, b), dm_sets_none(b, y).
-// dm_model_column(k, t, x): application model k (table t) maps column x, declared on k or on a class among its bases,
-// under an attribute no class of the chain sets to None.
-.decl dm_model_column(k: node, t: symbol, x: symbol)
-dm_model_column(k, t, x) :- al_model(k, t), docof(k, d), dm_app_doc(d), dm_declared_column(k, x, a),
-    field(a, "left", l), text(l, y), !dm_unmapped_attr(k, y).
-dm_model_column(k, t, x) :- al_model(k, t), docof(k, d), dm_app_doc(d), al_model_super(k, b),
-    dm_declared_column(b, x, a), field(a, "left", l), text(l, y), !dm_unmapped_attr(k, y).
-// dm_core_table(c, t): `Table("t", metadata, ...)`: a Core table (an association table, or a `__table__`).
-.decl dm_table_q(q: symbol)
-dm_table_q("sqlalchemy.Table"). dm_table_q("sqlalchemy.schema.Table"). dm_table_q("sqlalchemy.sql.schema.Table").
-dm_table_q("sqlmodel.Table").
-.decl dm_core_table(c: node, t: symbol)
-dm_core_table(c, t) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), dm_table_q(q), call_arg(c, 0, "", a),
-    al_name_value(a, t), call_arg(c, 1, "", _), docof(c, d), dm_app_doc(d).
-.decl dm_mapped_table(t: symbol)
-dm_mapped_table(t) :- al_model(k, t), docof(k, d), dm_app_doc(d).
-dm_mapped_table(t) :- dm_core_table(_, t).
-.decl dm_mapped_column(t: symbol, x: symbol)
-dm_mapped_column(t, x) :- dm_model_column(_, t, x).
-dm_mapped_column(t, x) :- dm_core_table(c, t), call_arg(c, i, "", e), i > 1, unparen(e, col), al_column_call(col),
+// dm_class_column(k, x, y): class k declares column x under attribute y (a Table's column: its own name), itself or
+// on a class among its bases; dm_hidden(k, x, y): k's mapper leaves it out (excluded by column or attribute name, or
+// named by neither in include_properties).
+.decl dm_class_column(k: node, x: symbol, y: symbol)
+dm_class_column(k, x, y) :- al_model(k, _), dm_declared_column(k, x, a), field(a, "left", l), text(l, y).
+dm_class_column(k, x, y) :- al_model(k, _), al_model_super(k, b), dm_declared_column(b, x, a), field(a, "left", l),
+    text(l, y).
+dm_class_column(k, x, x) :- dm_table_class(k, c), call_arg(c, i, "", e), i > 1, unparen(e, col), al_column_call(col),
     al_column_name(col, x).
+.decl dm_hidden(k: node, x: symbol, y: symbol)
+dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_unmapped_attr(k, y).
+dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_excluded(k, x).
+dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_excluded(k, y).
+dm_hidden(k, x, y) :- dm_class_column(k, x, y), dm_includes(k), !dm_included(k, x), !dm_included(k, y).
+// dm_maps(d, t, x): application document d maps column x of table t: a model class there, or a Core Table that no
+// class maps (a Core query names all its columns).
+.decl dm_maps(d: number, t: symbol, x: symbol)
+dm_maps(d, t, x) :- al_model(k, t), dm_class_column(k, x, y), !dm_hidden(k, x, y), docof(k, d), dm_app_doc(d).
+dm_maps(d, t, x) :- dm_table_class(k, c), dm_core_table(c, t), dm_class_column(k, x, y), !dm_hidden(k, x, y),
+    docof(k, d), dm_app_doc(d).
+.decl dm_class_mapped_table(c: node)
+dm_class_mapped_table(c) :- dm_table_class(_, c).
+dm_maps(d, t, x) :- dm_core_table(c, t), !dm_class_mapped_table(c), call_arg(c, i, "", e), i > 1, unparen(e, col),
+    al_column_call(col), al_column_name(col, x), docof(c, d).
+.decl dm_maps_table(d: number, t: symbol)
+dm_maps_table(d, t) :- al_model(k, t), docof(k, d), dm_app_doc(d).
+dm_maps_table(d, t) :- dm_core_table(c, t), docof(c, d).
+// dm_sees_column(m, t, x) / dm_sees_table(m, t): a model of migration m's tree maps t.x / t; with no env.py above m,
+// any application model.
+.decl dm_sees_column(m: number, t: symbol, x: symbol)
+dm_sees_column(m, t, x) :- al_env_tree(m, e), dm_tree_doc(e, d), dm_maps(d, t, x).
+dm_sees_column(m, t, x) :- al_migration_doc(m), !al_in_some_tree(m), dm_maps(_, t, x).
+.decl dm_sees_table(m: number, t: symbol)
+dm_sees_table(m, t) :- al_env_tree(m, e), dm_tree_doc(e, d), dm_maps_table(d, t).
+dm_sees_table(m, t) :- al_migration_doc(m), !al_in_some_tree(m), dm_maps_table(_, t).
 
 // ---- what an upgrade removes and adds ----------------------------------------------------------------------------
 // dm_upgrade_op(c, m, f): operation m (c) runs in upgrade step f of a migration outside test code.
@@ -130,22 +284,37 @@ dm_reset_table(f, t) :- al_step(f, "upgrade"), docof(f, d), al_call(c, "drop_tab
 
 // ---- reports -----------------------------------------------------------------------------------------------------
 DropMappedColumn(c, t, x) :- dm_upgrade_op(c, "drop_column", f), al_table(c, t), al_role(c, "column_name", e),
-    al_name_value(e, x), dm_mapped_column(t, x), !dm_column_back(c, f, t, x).
+    al_name_value(e, x), docof(c, m), dm_sees_column(m, t, x), !dm_column_back(c, f, t, x).
 RenameMappedColumn(c, t, x, y) :- dm_upgrade_op(c, "alter_column", f), al_table(c, t), al_role(c, "column_name", e),
-    al_name_value(e, x), dm_new_name(c, y), y != x, dm_mapped_column(t, x), !dm_column_back(c, f, t, x).
-DropMappedTable(c, t) :- dm_upgrade_op(c, "drop_table", f), al_table(c, t), dm_mapped_table(t),
+    al_name_value(e, x), dm_new_name(c, y), y != x, docof(c, m), dm_sees_column(m, t, x), !dm_column_back(c, f, t, x).
+DropMappedTable(c, t) :- dm_upgrade_op(c, "drop_table", f), al_table(c, t), docof(c, m), dm_sees_table(m, t),
     !dm_table_back(c, f, t), !dm_reset_table(f, t).
 RenameMappedTable(c, t, y) :- dm_upgrade_op(c, "rename_table", f), al_table(c, t), al_role(c, "new_table", e),
-    al_name_value(e, y), y != t, dm_mapped_table(t), !dm_table_back(c, f, t).
+    al_name_value(e, y), y != t, docof(c, m), dm_sees_table(m, t), !dm_table_back(c, f, t).
 
-// The cases, `cases/alembic-practice-drop-mapped-column/`, read as one repository: each line ending in `# caught` is
-// reported, and no other line.
+// The cases, `cases/alembic-practice-drop-mapped-column/`, read as one repository of four Alembic trees (app, billing,
+// accounts, ledger): each line ending in `# caught` is reported, and no other line.
 .test cases exactly
+    .fixture "accounts/flask_models.py" from "../cases/alembic-practice-drop-mapped-column/accounts/flask_models.py"
+    .fixture "accounts/migrations/env.py" from "../cases/alembic-practice-drop-mapped-column/accounts/migrations/env.py"
+    .fixture "accounts/migrations/versions/c1_users.py" from "../cases/alembic-practice-drop-mapped-column/accounts/migrations/versions/c1_users.py"
+    .fixture "accounts/models.py" from "../cases/alembic-practice-drop-mapped-column/accounts/models.py"
+    .fixture "accounts/tables.py" from "../cases/alembic-practice-drop-mapped-column/accounts/tables.py"
     .fixture "app/__init__.py" from "../cases/alembic-practice-drop-mapped-column/app/__init__.py"
     .fixture "app/models/__init__.py" from "../cases/alembic-practice-drop-mapped-column/app/models/__init__.py"
     .fixture "app/models/base.py" from "../cases/alembic-practice-drop-mapped-column/app/models/base.py"
     .fixture "app/models/hero.py" from "../cases/alembic-practice-drop-mapped-column/app/models/hero.py"
     .fixture "app/models/user.py" from "../cases/alembic-practice-drop-mapped-column/app/models/user.py"
+    .fixture "billing/migrations/env.py" from "../cases/alembic-practice-drop-mapped-column/billing/migrations/env.py"
+    .fixture "billing/migrations/versions/b1_init.py" from "../cases/alembic-practice-drop-mapped-column/billing/migrations/versions/b1_init.py"
+    .fixture "billing/migrations/versions/b2_drops.py" from "../cases/alembic-practice-drop-mapped-column/billing/migrations/versions/b2_drops.py"
+    .fixture "billing/models.py" from "../cases/alembic-practice-drop-mapped-column/billing/models.py"
+    .fixture "ledger/all_models.py" from "../cases/alembic-practice-drop-mapped-column/ledger/all_models.py"
+    .fixture "ledger/migrations/env.py" from "../cases/alembic-practice-drop-mapped-column/ledger/migrations/env.py"
+    .fixture "ledger/migrations/versions/l1_drops.py" from "../cases/alembic-practice-drop-mapped-column/ledger/migrations/versions/l1_drops.py"
+    .fixture "ledger/parts/journal.py" from "../cases/alembic-practice-drop-mapped-column/ledger/parts/journal.py"
+    .fixture "ledger/registry.py" from "../cases/alembic-practice-drop-mapped-column/ledger/registry.py"
+    .fixture "migrations/env.py" from "../cases/alembic-practice-drop-mapped-column/migrations/env.py"
     .fixture "migrations/versions/a1_init.py" from "../cases/alembic-practice-drop-mapped-column/migrations/versions/a1_init.py"
     .fixture "migrations/versions/a2_drop_columns.py" from "../cases/alembic-practice-drop-mapped-column/migrations/versions/a2_drop_columns.py"
     .fixture "migrations/versions/a3_tables.py" from "../cases/alembic-practice-drop-mapped-column/migrations/versions/a3_tables.py"
@@ -154,8 +323,19 @@ RenameMappedTable(c, t, y) :- dm_upgrade_op(c, "rename_table", f), al_table(c, t
     .fixture "migrations/versions/a6_readd_name.py" from "../cases/alembic-practice-drop-mapped-column/migrations/versions/a6_readd_name.py"
     .fixture "migrations/versions/a7_drop_user_id.py" from "../cases/alembic-practice-drop-mapped-column/migrations/versions/a7_drop_user_id.py"
     .fixture "migrations/versions/a8_reset_tags.py" from "../cases/alembic-practice-drop-mapped-column/migrations/versions/a8_reset_tags.py"
+    .fixture "shared_models/audit.py" from "../cases/alembic-practice-drop-mapped-column/shared_models/audit.py"
+    .fixture "shared_models/entries.py" from "../cases/alembic-practice-drop-mapped-column/shared_models/entries.py"
     .fixture "tests/migrations/versions/t1_drop.py" from "../cases/alembic-practice-drop-mapped-column/tests/migrations/versions/t1_drop.py"
     .fixture "tests/test_models.py" from "../cases/alembic-practice-drop-mapped-column/tests/test_models.py"
+    .expect _ at "accounts/migrations/versions/c1_users.py":11
+    .expect _ at "accounts/migrations/versions/c1_users.py":14
+    .expect _ at "accounts/migrations/versions/c1_users.py":16
+    .expect _ at "accounts/migrations/versions/c1_users.py":17
+    .expect _ at "billing/migrations/versions/b2_drops.py":9
+    .expect _ at "billing/migrations/versions/b2_drops.py":10
+    .expect _ at "ledger/migrations/versions/l1_drops.py":9
+    .expect _ at "ledger/migrations/versions/l1_drops.py":10
+    .expect _ at "ledger/migrations/versions/l1_drops.py":11
     .expect _ at "migrations/versions/a2_drop_columns.py":13
     .expect _ at "migrations/versions/a2_drop_columns.py":14
     .expect _ at "migrations/versions/a2_drop_columns.py":15

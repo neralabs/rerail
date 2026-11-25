@@ -10,7 +10,7 @@ import shop.registry
 from shop import registry
 from shop.models import Order
 from shop.registry import HANDLERS, PLUGINS, Locks, config
-from tests.helpers import FakeClock
+from tests.helpers import FakeClock, use_short_timeout
 
 # Module-level code of a test module runs at import, before its tests.
 registry.HOOKS["import"].append(print)
@@ -28,8 +28,9 @@ def test_augmented():
     registry.TIMEOUT += 5  # caught
 
 
-def test_delete():
-    del registry.TIMEOUT  # caught
+def test_delete_after_set():
+    registry.TIMEOUT = 5  # caught
+    del registry.TIMEOUT
 
 
 def test_setattr():
@@ -60,8 +61,8 @@ def test_list_mutator():
     PLUGINS.append("x")  # caught
 
 
-def test_dict_clear():
-    registry.HANDLERS.clear()  # caught
+def test_dict_pop_without_default():
+    registry.HANDLERS.pop("refund")  # caught
 
 
 def test_class_container():
@@ -174,6 +175,15 @@ def test_local_rebinding():
     flow.append("x")
     handlers = {}
     handlers["a"] = print
+
+
+def test_helper_called():
+    use_short_timeout()
+
+
+# A reset as the only change of the target: emptying the registry before the test.
+def test_dict_clear():
+    registry.HANDLERS.clear()
 
 
 def test_with_fixtures(fast_timeout, module_handlers):

@@ -76,9 +76,26 @@
 //                                              imported)
 //                  dj_mig_depends(d, e)        d lists migration e of its own package in `dependencies`
 //                  dj_mig_before(e, d)         e is applied before d (dj_mig_depends, transitively)
+//                  dj_mig_ran_before(e, d)     as dj_mig_before, also through a dependency on a migration that a
+//                                              squashed migration of the package replaces
+//                  dj_field_def(p, d, i, m, x) operation p, item i of d, defines field x of model m (CreateModel,
+//                                              AddField, AlterField, RenameField's new name; state_operations too)
+//                  dj_field_old(o, f)          the nearest earlier definition of AlterField o's field gives it as
+//                                              field call f, followed back through a RenameField onto the name
+//                  dj_field_at(q, f)           the field at history point q (an AlterField, a RenameField's old
+//                                              name, a relation call's target key) is field call f
+//                  dj_pk_call(m, f)            field call f is a `primary_key=True` definition of model m's key
+//                  dj_fk_target(f, m)          ForeignKey/OneToOneField call f points at model m (lowercased)
+//                  dj_custom_field(q, t)       q is a field class of the run derived from Django's field class t,
+//                                              with no db_type override on the way
+//                  dj_custom_field_init(q)     a class on the way from q to Django's defines `__init__`, so q's call
+//                                              arguments may not be its column's parameters
+//                  dj_mysql_only()             the run configures MySQL and names no PostgreSQL database
 //                  dj_live_doc(d)              d is application code: not a migration, no `test` in its path
 //                  dj_one_row(m)               live code reads model m (lowercased) as its one row: `M.objects.get()`
-//                                              with no arguments, `M.get_solo()` (a settings table)
+//                                              with no arguments, a no-argument `first()` beside a `create()` of M
+//                                              (the lazy singleton), `M.get_solo()`, the current site's row through
+//                                              a OneToOneField's related name (a settings table)
 //                  dj_one_row_qs(q, r)         q is `r.objects` or `r.objects.all()`
 //   Python tests:  py_truth(e)                 e is read only for its truth: an if/elif/while/assert test, a
 //                                              conditional or comprehension `if`, `not e`, `bool(e)`, an and/or
@@ -124,6 +141,24 @@ dj_field_call(call, t) :- kind(call, "call"), field(call, "function", f), sym_of
 .decl dj_relation_class(t: symbol)
 dj_relation_class("ForeignKey"). dj_relation_class("OneToOneField"). dj_relation_class("ManyToManyField").
 dj_relation_class("ParentalKey"). dj_relation_class("ParentalManyToManyField").
+// dj_custom_field(q, t): q is a field class of the run derived, through its bases, from Django's field class t
+// (`class MoneyField(models.DecimalField)`), with no class on the way defining `db_type`, so its column is t's.
+.decl dj_custom_field(q: symbol, t: symbol)
+dj_custom_field(q, t) :- class_def(c, q), class_base(c, b), split_dot(b, m, t), dj_field_module(m),
+    (suffix("Field", t) ; dj_relation_class(t)), !dj_defines_db_type(c).
+dj_custom_field(q, t) :- class_def(c, q), class_base(c, b), dj_custom_field(b, t), !dj_defines_db_type(c).
+.decl dj_defines_db_type(c: node)
+dj_defines_db_type(c) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "function_definition"), (def_name(s, "db_type") ; def_name(s, "rel_db_type")).
+// dj_custom_field_init(q): a class on the way from field class q of the run to Django's defines `__init__`, which may
+// rewrite the arguments (InvenTree's InvenTreeURLField forces max_length=2000), so q's call arguments do not give its
+// column's parameters.
+.decl dj_custom_field_init(q: symbol)
+dj_custom_field_init(q) :- dj_custom_field(q, _), class_def(c, q), dj_defines_init(c).
+dj_custom_field_init(q) :- dj_custom_field(q, _), class_def(c, q), class_base(c, b), dj_custom_field_init(b).
+.decl dj_defines_init(c: node)
+dj_defines_init(c) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+    kind(s, "function_definition"), def_name(s, "__init__").
 // dj_fk_class(t): the relation classes that hold one related object, whose key the row keeps in `<name>_id`.
 .decl dj_fk_class(t: symbol)
 dj_fk_class("ForeignKey"). dj_fk_class("OneToOneField"). dj_fk_class("ParentalKey").
@@ -591,20 +626,126 @@ dj_mig_depends(d, e) :- dj_mig_attr(d, "dependencies", l), child(l, p, _), kind(
 .decl dj_mig_before(e: number, d: number)
 dj_mig_before(e, d) :- dj_mig_depends(d, e).
 dj_mig_before(e, d) :- dj_mig_depends(d, m), dj_mig_before(e, m).
+// dj_mig_ran_before(e, d): migration e is applied before d: dj_mig_before, and also through a dependency on a
+// migration that a squashed migration of the package replaces (Django reads the dependency as the squashed one when
+// it uses the squash; the replaced file may be gone). pretix depends on `0050_orderposition_positionid`, which
+// `0050_…_squashed_0061_event_location` replaces. A migration the squash itself replaces never comes after it:
+// pretix's `0120_…` sits inside `0108_…_squashed_0141_…`, whose operations hold 0120's own and later changes.
+.decl dj_mig_dep(d: number, e: number)
+dj_mig_dep(d, e) :- dj_mig_depends(d, e).
+dj_mig_dep(d, s) :- dj_mig_attr(d, "dependencies", l), child(l, p, _), kind(p, "tuple"), child(p, n, 1), str(n, x),
+    pkg(d, k), dj_mig_replaces(s, x), pkg(s, k), !dj_mig_replaced_by(d, s).
+.decl dj_mig_replaces(s: number, x: symbol)
+dj_mig_replaces(s, x) :- dj_mig_attr(s, "replaces", l), child(l, p, _), kind(p, "tuple"), child(p, n, 1), str(n, x).
+// dj_mig_replaced_by(d, s): squashed migration s of d's package lists d in its `replaces`.
+.decl dj_mig_replaced_by(d: number, s: number)
+dj_mig_replaced_by(d, s) :- dj_mig_replaces(s, x), pkg(s, k), pkg(d, k), file_name(d, cat(x, ".py")).
+.decl dj_mig_ran_before(e: number, d: number)
+dj_mig_ran_before(e, d) :- dj_mig_dep(d, e).
+dj_mig_ran_before(e, d) :- dj_mig_dep(d, m), dj_mig_ran_before(e, m).
+// ---- a field's history: the nearest earlier definition of an AlterField's field ----
+// dj_field_op(o, k, d, i): the operations that define a field: dj_mig_db_op, and a SeparateDatabaseAndState's
+// state_operations (Django's model state, which the database usually matches through a RunSQL beside it); test
+// migrations left out.
+.decl dj_field_op(o: node, k: symbol, d: number, i: number)
+dj_field_op(o, k, d, i) :- dj_mig_db_op(o, k, d, i), !dj_test_doc(d).
+dj_field_op(o, k, d, i) :- dj_mig_op(s, "SeparateDatabaseAndState", d, i), !dj_test_doc(d),
+    (call_arg(s, -1, "state_operations", l) ; call_arg(s, 1, "", l)), (kind(l, "list") ; kind(l, "tuple")),
+    child(l, o, _), dj_mig_op_call(o, k).
+// dj_field_def(p, d, i, m, x): operation p, item i of migration d, defines field x of model m: an AddField, an
+// AlterField, a CreateModel `fields` item, or a RenameField onto x (whose field is the old name's, followed back).
+.decl dj_field_def(p: node, d: number, i: number, m: symbol, x: symbol)
+dj_field_def(p, d, i, m, x) :- dj_field_op(p, k, d, i), (k = "AddField" ; k = "AlterField"), dj_mig_model(p, m),
+    dj_mig_arg(p, "name", n), str(n, x).
+dj_field_def(p, d, i, m, x) :- dj_field_op(p, "CreateModel", d, i), dj_mig_model(p, m), dj_mig_arg(p, "fields", l),
+    child(l, t, _), kind(t, "tuple"), child(t, n, 0), str(n, x).
+dj_field_def(p, d, i, m, x) :- dj_field_op(p, "RenameField", d, i), dj_mig_model(p, m), dj_mig_arg(p, "new_name", n),
+    str(n, x).
+// dj_alterfield(o, d, i, m, x): AlterField o, item i of migration d (not test code), changes field x of model m.
+.decl dj_alterfield(o: node, d: number, i: number, m: symbol, x: symbol)
+dj_alterfield(o, d, i, m, x) :- dj_mig_db_op(o, "AlterField", d, i), !dj_test_doc(d), dj_mig_model(o, m),
+    dj_mig_arg(o, "name", n), str(n, x).
+// dj_field_q(q, d, i, m, x): the points whose field history is read: an AlterField (its field x); a RenameField (its
+// old name x, whose definition the new name carries on); and a ForeignKey or OneToOneField call q defined at item i
+// of migration d, for its target model m's primary key x (the key's type at that point is the relation column's).
+.decl dj_field_q(q: node, d: number, i: number, m: symbol, x: symbol)
+dj_field_q(q, d, i, m, x) :- dj_alterfield(q, d, i, m, x).
+dj_field_q(q, d, i, m, x) :- dj_field_op(q, "RenameField", d, i), dj_mig_model(q, m), dj_mig_arg(q, "old_name", n),
+    str(n, x).
+dj_field_q(q, d, i, t, x) :- dj_field_def(p, d, i, _, y), dj_mig_field(p, y, q, _), dj_fk_target(q, t),
+    dj_pk_name(t, x).
+// dj_pk_name(m, x): field x is model m's primary key (`primary_key=True`) in some migration of the run.
+.decl dj_pk_name(m: symbol, x: symbol)
+dj_pk_name(m, x) :- dj_pk_def(m, x, _).
+// dj_field_prev(q, p, e, j): definition p, item j of migration e, comes before point q, of the same model and field.
+.decl dj_field_prev(q: node, p: node, e: number, j: number)
+dj_field_prev(q, p, e, j) :- dj_field_q(q, d, _, m, x), dj_field_def(p, e, j, m, x), dj_mig_ran_before(e, d).
+dj_field_prev(q, p, d, j) :- dj_field_q(q, d, i, m, x), dj_field_def(p, d, j, m, x), j < i.
+// dj_field_shadowed(q, p): another earlier definition comes after p, so p is not the field's definition at q.
+.decl dj_field_shadowed(q: node, p: node)
+dj_field_shadowed(q, p) :- dj_field_prev(q, p, e, _), dj_field_prev(q, r, e2, _), r != p, dj_mig_ran_before(e, e2).
+dj_field_shadowed(q, p) :- dj_field_prev(q, p, e, j), dj_field_prev(q, r, e, j2), r != p, j2 > j.
+// dj_field_at(q, f): the field at point q is field call f: its nearest earlier definition's, through renames.
+.decl dj_field_at(q: node, f: node)
+dj_field_at(q, f) :- dj_field_prev(q, p, _, _), !dj_field_shadowed(q, p), dj_field_q(q, _, _, _, x),
+    dj_mig_field(p, x, f, _).
+dj_field_at(q, f) :- dj_field_prev(q, p, _, _), !dj_field_shadowed(q, p), dj_mig_op_call(p, "RenameField"),
+    dj_field_at(p, f).
+// dj_field_old(o, f): the nearest earlier definition of AlterField o's field gives it as field call f, followed back
+// through a RenameField onto the name.
+//   CreateModel("order", [("id", models.AutoField(...))]) … AlterField("order", "id", models.BigAutoField(...))
+//                                                   dj_field_old(<the AlterField>, <the AutoField call>)
+.decl dj_field_old(o: node, f: node)
+dj_field_old(o, f) :- dj_alterfield(o, _, _, _, _), dj_field_at(o, f).
+// dj_pk_call(m, f): field call f defines the primary key of model m (lowercased) somewhere in the run's
+// migrations: a field with `primary_key=True`. A ForeignKey's column takes its target's key type; where the key's
+// history reaches the relation (dj_field_at of the relation call), that is the key at that point.
+.decl dj_pk_call(m: symbol, f: node)
+dj_pk_call(m, f) :- dj_pk_def(m, _, f).
+.decl dj_pk_def(m: symbol, x: symbol, f: node)
+dj_pk_def(m, x, f) :- dj_field_def(p, _, _, m, x), dj_mig_field(p, x, f, _), call_arg(f, -1, "primary_key", v),
+    kind(v, "true").
+// dj_fk_target(f, m): relation field call f (ForeignKey, OneToOneField) points at model m (lowercased): `to="app.M"`,
+// `to="M"`, or the first positional argument as a string.
+.decl dj_fk_target(f: node, m: symbol)
+dj_fk_target(f, @lower(n)) :- dj_mig_field_class(f, t), dj_fk_class(t), (call_arg(f, -1, "to", v) ; posarg(f, 0, v)),
+    str(v, s), split_dot(s, _, n).
+dj_fk_target(f, @lower(s)) :- dj_mig_field_class(f, t), dj_fk_class(t), (call_arg(f, -1, "to", v) ; posarg(f, 0, v)),
+    str(v, s), !contains(".", s).
+// dj_mysql_only(): the run configures MySQL (an ENGINE "django.db.backends.mysql" or a "mysql://" URL) and names no
+// PostgreSQL database. MySQL commits each DDL statement at once and has its own rules for which ALTERs copy a
+// table, so the PostgreSQL lock and transaction hazards do not apply as stated.
+.decl dj_mysql_only()
+dj_mysql_only() :- kind(n, "string"), str(n, s), (s = "django.db.backends.mysql" ; prefix("mysql://", s)), !dj_pg_named().
+.decl dj_pg_named()
+dj_pg_named() :- kind(n, "string"), str(n, s), (prefix("django.db.backends.postgresql", s) ;
+    prefix("django.contrib.gis.db.backends.postgis", s) ; prefix("postgres://", s) ; prefix("postgresql://", s) ;
+    prefix("postgis://", s)).
 // dj_live_doc(d): document d is application code: not a migration, and no part of its path names tests
 // (`tests_e2e/`, `e2e_test_form.py` included, which dj_test_doc does not cover).
 .decl dj_live_doc(d: number)
 dj_live_doc(d) :- doc(d, p, _), !dj_test_doc(d), !dj_migration_doc(d), !contains("test", p).
 // dj_one_row(m): application code reads model M (lowercased m) as its single row: `M.objects.get()` or
-// `M.objects.all().get()` with no arguments (two rows would raise MultipleObjectsReturned), or django-solo's
-// `M.get_solo()`. M's table is a settings table of one row, so a value shared by its rows or a lock held over them
-// costs nothing.
+// `M.objects.all().get()` with no arguments (two rows would raise MultipleObjectsReturned); the lazy singleton,
+// `M.objects.first()` (or `.all().first()`) with no arguments in a function that also creates an M when there is
+// none (paperless's `ApplicationConfiguration`: `first()`, then `create()`); or django-solo's `M.get_solo()`. M's
+// table is a settings table of one row, so a value shared by its rows or a lock held over them costs nothing. A bare
+// `first()` is no such sign: it reads one row of many (saleor's `Product.objects.first()` in an example file). The
+// sites framework's row for the current site counts too: `Site.objects.get_current().<rel>`, `rel` the related name
+// of a model's OneToOneField (saleor's `SiteSettings`).
 //   if System_Settings.objects.get().enable_jira:      dj_one_row("system_settings")
 .decl dj_one_row(m: symbol)
 dj_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe, q, "get"), py_no_args(c),
     dj_one_row_qs(q, r), kind(r, "identifier"), text(r, n), docof(c, d), dj_live_doc(d).
+dj_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe, q, "first"), py_no_args(c),
+    dj_one_row_qs(q, r), kind(r, "identifier"), text(r, n), docof(c, d), dj_live_doc(d), nearest(c, h, fdef),
+    kind(k, "call"), nearest(k, h, fdef), field(k, "function", ke), (attr_of(ke, km, "create") ;
+    attr_of(ke, km, "get_or_create")), dj_manager(km), attr_of(km, kr, _), kind(kr, "identifier"), text(kr, n).
 dj_one_row(@lower(n)) :- kind(c, "call"), field(c, "function", fe), attr_of(fe, r, "get_solo"), kind(r, "identifier"),
     text(r, n), docof(c, d), dj_live_doc(d).
+dj_one_row(@lower(n)) :- kind(a, "attribute"), attr_of(a, g, rel), kind(g, "call"), field(g, "function", fe),
+    attr_of(fe, q, "get_current"), dj_manager(q), docof(a, d), dj_live_doc(d), dj_field(c, _, call, "OneToOneField"),
+    call_arg(call, -1, "related_name", rv), str(rv, rel), field(c, "name", cn), text(cn, n).
 // dj_one_row_qs(q, r): q is `r.objects` or `r.objects.all()`.
 .decl dj_one_row_qs(q: node, r: node)
 dj_one_row_qs(q, r) :- dj_manager(q), attr_of(q, r, _).

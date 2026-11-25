@@ -1,7 +1,7 @@
 import httpx
 import requests
 
-from app.schemas import Event, Plain
+from app.schemas import Event, Invoice, Plain
 
 
 def post_event(event: Event) -> None:
@@ -42,3 +42,61 @@ def unknown_client(api_client, event: Event) -> None:
 
 def json_native(plain: Plain) -> None:
     requests.post("https://hooks.example.com/plain", json=plain.model_dump())
+
+
+# ---- reported: a client the class stores on self, or a subclass of a client class
+class Pusher:
+    def __init__(self) -> None:
+        self.client = httpx.Client()
+
+    def push(self, invoice: Invoice) -> None:
+        self.client.post("/invoices", json=invoice.model_dump())  # caught
+
+    def push_local(self, event: Event) -> None:
+        client = self.client
+        client.post("/events", json=event.model_dump())  # caught
+
+
+class ApiClient(httpx.Client):
+    pass
+
+
+def subclass_client(event: Event) -> None:
+    ApiClient(base_url="https://api.example.com").post("/events", json=event.model_dump())  # caught
+
+
+# ---- left alone: an injected client, a subclass that swaps it, a client that overrides request()
+class Injected:
+    def __init__(self, client: httpx.Client | None = None) -> None:
+        self.client = client or httpx.Client()
+
+    def push(self, event: Event) -> None:
+        self.client.post("/events", json=event.model_dump())
+
+
+class BasePusher:
+    def __init__(self) -> None:
+        self.client = httpx.Client()
+
+    def push(self, event: Event) -> None:
+        self.client.post("/events", json=event.model_dump())
+
+
+class RecordingPusher(BasePusher):
+    def __init__(self) -> None:
+        self.client = RecordingClient()
+
+
+class RecordingClient:
+    def post(self, url: str, json=None) -> None:
+        self.sent = (url, json)
+
+
+class SignedClient(httpx.Client):
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("headers", {})["x-signature"] = "..."
+        return super().request(method, url, **kwargs)
+
+
+def signed_client(event: Event) -> None:
+    SignedClient().post("/events", json=event.model_dump())

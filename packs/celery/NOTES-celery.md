@@ -106,4 +106,13 @@ flags, and the Django-namespace settings at `src/paperless/settings/__init__.py:
 
 ## 5. Corpus results
 
-Filled in from the writers' reports at integration.
+Each rule's corpus figures are in the README's "Rule details", re-measured after the review's rework
+(`REVIEW-celery.md`, "Applied").
+
+## 6. Candidates not built
+
+Ranks 7 to 10 above (`retry-swallowed`, `retry-non-idempotent`, `network-task-without-time-limit`,
+`async-def-task`) were not built: the first round wrote the six rules the review covers, and the fix round only
+reworked those. They stay candidates. The review ranks `retry-swallowed` first among them (Celery issue #4898; 25
+files in 10 Celery repositories call `self.retry(`); `retry-non-idempotent` and `network-task-without-time-limit` are
+expected to start in log; `async-def-task` has no corpus occurrence.

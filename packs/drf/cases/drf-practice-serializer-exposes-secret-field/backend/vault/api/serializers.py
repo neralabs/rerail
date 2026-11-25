@@ -13,3 +13,13 @@ class S3StorageRedactedSerializer(RedactingSerializer):
     class Meta:
         model = S3Storage
         fields = "__all__"
+
+
+# The model through the package re-export (`vault/__init__.py`) and the import root.
+from vault import S3Storage as ReexportedStorage  # noqa: E402
+
+
+class S3StorageExportSerializer(StorageSerializer):
+    class Meta:
+        model = ReexportedStorage
+        fields = ["bucket", "secret_access_key"]  # caught

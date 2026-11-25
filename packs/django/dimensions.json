@@ -29,6 +29,12 @@
     "severity": "high",
     "hazard": "pg.data-and-schema-in-one-transaction"
   },
+  "django-practice-settings-in-test": {
+    "risk": "test-quality",
+    "layer": "tests",
+    "severity": "medium",
+    "hazard": "test.shared-state-leak"
+  },
   "django-practice-settings-env-fails-open": {
     "risk": "security",
     "layer": "config",

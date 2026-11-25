@@ -1,15 +1,15 @@
 {
+  "sqlalchemy-practice-session-reused-after-failed-commit": {
+    "risk": "availability",
+    "layer": "data-access",
+    "severity": "high",
+    "hazard": "tx.no-rollback-after-error"
+  },
   "sqlalchemy-practice-bulk-write-skips-hooks": {
     "risk": "data-safety",
     "layer": "data-access",
     "severity": "high",
     "hazard": "orm.bulk-write-skips-hooks"
-  },
-  "sqlalchemy-practice-connect-without-commit": {
-    "risk": "data-safety",
-    "layer": "data-access",
-    "severity": "critical",
-    "hazard": "tx.writes-without-transaction"
   },
   "sqlalchemy-practice-lazy-load-in-loop": {
     "risk": "performance",
@@ -17,16 +17,16 @@
     "severity": "medium",
     "hazard": "orm.query-in-loop"
   },
-  "sqlalchemy-practice-session-reused-after-failed-commit": {
-    "risk": "availability",
+  "sqlalchemy-practice-lazy-many-to-one-in-loop": {
+    "risk": "performance",
     "layer": "data-access",
-    "severity": "high",
-    "hazard": "tx.no-rollback-after-error"
+    "severity": "low",
+    "hazard": "orm.query-in-loop"
   },
-  "sqlalchemy-practice-text-interpolation": {
-    "risk": "security",
+  "sqlalchemy-practice-connect-without-commit": {
+    "risk": "data-safety",
     "layer": "data-access",
     "severity": "critical",
-    "hazard": "orm.raw-sql-interpolation"
+    "hazard": "tx.writes-without-transaction"
   }
 }

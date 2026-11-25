@@ -28,14 +28,17 @@
 // `.get()` on anything not known to be a result (dicts, caches, querysets, a name rebound to something else); status
 // reads (`ready()`, `state`, `successful()`, `id`); code no task reaches; tasks and waits in test files
 // (lib/celery's cel_test_doc). A function reached from both web code and a task is reported: the task path blocks.
-// Gaps: results passed in as parameters, stored in attributes or containers (`for r in results: r.get()`);
-// calls the call graph cannot resolve (python/calls' call_open); tasks run eagerly (`task_always_eager`), where the
-// wait does not block, are reported all the same; `t.apply(...).get()` (an EagerResult: Celery raises the same
-// RuntimeError in a worker, but nothing waits on the pool) is left alone.
+//   - an element of a list, tuple, dict or comprehension of results: `pending[i]`, and the variable of a `for` or a
+//     comprehension over one (`results = [t.delay(i) for i in ids]`; `[r.get() for r in results]`).
+// Gaps: results passed in as parameters or stored in attributes; calls the call graph cannot resolve (python/calls'
+// call_open); tasks run eagerly (`task_always_eager`), where the wait does not block, are reported all the same;
+// `t.apply(...).get()` (an EagerResult: Celery raises the same RuntimeError in a worker, but nothing waits on the
+// pool) is left alone. Only Celery's own sends are results (lib/celery's cel_task_ref): a thread pool's
+// `apply_async(...).get()` is not.
 
 #include "lib/celery.rerail"
 
-.violation ResultGetInTask(at: node, m: symbol, where: symbol) "`.{m}()` blocks {where} on another task; the pool deadlocks once every slot waits. Chain the next step (a chain or chord callback); keep a deliberate wait only with disable_sync_subtasks=False."
+.violation ResultGetInTask(at: node, m: symbol, where: symbol) "`.{m}()` waits {where} on another task: Celery raises in the worker, and the pool can deadlock. Chain the next step as a callback (chain or chord) instead of waiting."
 ResultGetInTask(w, m, cat("inside task `", cat(t, "`"))) :- rg_wait(w, m), owner(w, g), rg_task(g), def_name(g, t).
 ResultGetInTask(w, m, cat("in `", cat(x, cat("()` (run by task `", cat(t, "`)"))))) :- rg_wait(w, m), owner(w, g),
     !rg_task(g), def_name(g, x), f = min y : { rg_reach(y, g) }, def_name(f, t).
@@ -110,6 +113,24 @@ rg_result(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(
 rg_result(e) :- unparen(e, u), kind(u, "call"), call_target(u, g), rg_returns(g).
 .decl rg_returns(g: node)
 rg_returns(g) :- kind(r, "return_statement"), child(r, v, 0), rg_result(v), nearest(r, g, fdef).
+// A result taken from a collection of them: `pending[i]` with pending a dict or list of results, and the loop
+// variable of a `for` statement or comprehension clause over one (`[r.get() for r in results]`).
+rg_result(e) :- unparen(e, u), kind(u, "subscript"), field(u, "value", c), rg_results(c).
+rg_result(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), kind(fc, "for_in_clause"), field(fc, "left", l),
+    kind(l, "identifier"), text(l, x), field(fc, "right", it), rg_results(it), child(comp, fc, _), within(u, comp),
+    u != l.
+rg_result(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), kind(fs, "for_statement"), field(fs, "left", l),
+    kind(l, "identifier"), text(l, x), field(fs, "right", it), rg_results(it), field(fs, "body", b), within(u, b).
+// rg_results(e): e holds a list, set, dict or generator of results: a literal or comprehension of them, or a name
+// whose latest plain assignment is one.
+.decl rg_results(e: node)
+rg_results(e) :- unparen(e, u), (kind(u, "list_comprehension") ; kind(u, "set_comprehension") ;
+    kind(u, "generator_expression")), field(u, "body", b), rg_result(b).
+rg_results(e) :- unparen(e, u), kind(u, "dictionary_comprehension"), field(u, "body", p), field(p, "value", v),
+    rg_result(v).
+rg_results(e) :- unparen(e, u), (kind(u, "list") ; kind(u, "tuple")), child(u, x, _), rg_result(x).
+rg_results(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), latest_assign(u, x, a), rasg(_, x, v, a),
+    rg_results(v).
 
 // ---- waits ------------------------------------------------------------------------------------------------------
 .decl rg_wait_method(m: symbol)
@@ -125,13 +146,19 @@ rg_wait(w, m) :- kind(w, "call"), field(w, "function", fn), attr_of(fn, o, m), r
 .test cases exactly
     .fixture "proj/__init__.py" from "../cases/celery-practice-result-get-in-task/proj/__init__.py"
     .fixture "proj/celery.py" from "../cases/celery-practice-result-get-in-task/proj/celery.py"
+    .fixture "proj/fanout.py" from "../cases/celery-practice-result-get-in-task/proj/fanout.py"
     .fixture "proj/helpers.py" from "../cases/celery-practice-result-get-in-task/proj/helpers.py"
     .fixture "proj/results.py" from "../cases/celery-practice-result-get-in-task/proj/results.py"
+    .fixture "proj/pools.py" from "../cases/celery-practice-result-get-in-task/proj/pools.py"
     .fixture "proj/tasks.py" from "../cases/celery-practice-result-get-in-task/proj/tasks.py"
     .fixture "proj/tests/__init__.py" from "../cases/celery-practice-result-get-in-task/proj/tests/__init__.py"
     .fixture "proj/tests/test_tasks.py" from "../cases/celery-practice-result-get-in-task/proj/tests/test_tasks.py"
     .fixture "proj/web/__init__.py" from "../cases/celery-practice-result-get-in-task/proj/web/__init__.py"
     .fixture "proj/web/views.py" from "../cases/celery-practice-result-get-in-task/proj/web/views.py"
+    .expect _ at "proj/fanout.py":15
+    .expect _ at "proj/fanout.py":21
+    .expect _ at "proj/fanout.py":29
+    .expect _ at "proj/fanout.py":37
     .expect _ at "proj/helpers.py":11
     .expect _ at "proj/helpers.py":15
     .expect _ at "proj/results.py":23

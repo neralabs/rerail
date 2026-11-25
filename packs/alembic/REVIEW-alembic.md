@@ -891,3 +891,114 @@ index, its `require-concurrent-index-creation`, `adding-foreign-key-constraint`,
 `require-timeout-settings` pages, and its web-frameworks page (the Alembic usage); sqlalchemy/alembic#679; and the
 PandaDoc `migration-lint` README. The Squawk-Alembic packaging projects (`alembic-squawk`, `alembic-squawk-action`) were
 seen in search results.
+
+## Applied
+
+The fixes follow the review's findings, generalised to their root causes, most of them in the library
+(`rules/lib/alembic.rerail`), so every rule that leaned on the same heuristic got the same fix.
+
+**Library.**
+
+- Types are resolved, not spelled (root cause of 2.6's same-type false positives, 2.3's `BigInt` alias and 2.10's
+  type families): `al_type_class`/`al_pg_type` follow imports, module aliases (of the same file or imported),
+  TypeDecorator `impl`, SQLAlchemy subclasses and functions that return a type (`Text().with_variant(...)`), and map the
+  class to the PostgreSQL type it renders. Used by column-type-rewrite, not-null-without-server-default and
+  rename-as-drop-add.
+- Flags are read by value (2.2's `CONCURRENT = True`, 2.5's `PG_NOT_VALID`): `al_bool`, `al_true_kw`, `al_false_kw`,
+  `al_kw_on` follow module constants of the same file or imported. Used by every rule that reads a keyword flag.
+- Dialect tests are read by structure (3.5's `al_non_pg` substring reading): comparisons with a database name literal,
+  `in` sets, `isinstance` on SQLAlchemy dialect classes resolved through imports, `not`/`and`/`or`, test functions of
+  the run (through imports, with a docstring), and names assigned a test. `if not settings.USE_SQLITE_FOR_TESTS:` and
+  `if "postgres" in url and not readonly:` no longer read as other-database branches.
+- What `add_column` emits (3.2): `al_added_ddl` reports the ADD UNIQUE, CREATE INDEX, ADD FOREIGN KEY and ADD CHECK
+  Alembic 1.20 renders after the ADD COLUMN, with the constraint classes resolved through imports (a project class
+  named `ForeignKey` is not one) and `inline_references=True` honoured.
+- Helpers in another module (3.5): `al_forwarded` follows a call into a function of the run, through its import, that
+  runs an operation on the table its parameter names (superset's `create_index`, one call deep).
+- Existing tables (3.5's `al_on_existing`): a table the step creates with `op.execute("CREATE TABLE ...")`, or empties
+  first (DELETE without WHERE, TRUNCATE), no longer counts as holding rows.
+- A Column bound to a name before `add_column` is read (`al_added_column`).
+- env.py and the module it imports its engine from (`al_env_reads`), for AUTOCOMMIT isolation and lock_timeout.
+**Rules.**
+
+- `index-not-concurrent` (2.1): reports `add_column(Column(..., unique=True))` and `index=True` (al_added_ddl),
+  `create_primary_key` with the USING INDEX fix, and calls of project helpers that forward the table to
+  `op.create_index` (superset's shared `create_index`, through its import); groups findings per revision, table and
+  kind, with a count in the message; four messages of at most 200 characters. Cases add aliases (`op as alembic_op`,
+  `Column as Col`, sqlmodel's Column), constants of this and another module, a re-imported helper, and the dialect-test
+  class (c9). Steer, on.
+- `concurrent-index-outside-autocommit` (2.2): `postgresql_concurrently` and `transactional_ddl` read by value
+  (constants, imported too); an env.py whose engine runs with `isolation_level="AUTOCOMMIT"`, in env.py or the module it
+  imports the engine from, counts as no transaction. Description without code; message 196 characters. Steer, on.
+- `not-null-without-server-default` (2.3): the message names `server_default=` first and the nullable route only with
+  NOT NULL in a later revision; the SERIAL test resolves the type (`BigInt = sa.BigInteger`, `Integer as Int`); a
+  Column bound to a name and a table emptied first are read. Steer, on.
+- `constraint-without-not-valid` (2.5): reports `add_column(Column(..., ForeignKey(...)))` (unless
+  `inline_references=True`) and an inline `CheckConstraint`, with the classes resolved (a project class named
+  `ForeignKey` is not one); an FK on a column the same upgrade adds gets the `inline_references=True` message;
+  `**kwargs` splats and constants count as not known to be off; a table made by `op.execute("CREATE TABLE ...")` is
+  new. Description aligned with the message (validate once the add has committed). Steer, on; the README states the
+  62% actionable precision.
+- `column-type-rewrite` (2.6): types compared by the PostgreSQL type their resolved class renders, so TIMESTAMP and
+  DateTime, UUID and Uuid, INTEGER and Integer, BOOLEAN and Boolean, VARCHAR and AutoString, TEXT and Text are one;
+  project TypeDecorators, subclasses, aliases and type-returning functions resolve too. Steer, on.
+- `set-not-null-scan` (2.7): a VALIDATE exempts a column only when the validated constraint is shown, anywhere in the
+  run, to be a NOT NULL check of that column (the name heuristic is gone); description and messages rewritten. Log, on.
+- `rename-as-drop-add` (2.10): data movement is an UPDATE/INSERT in SQL text (literal or module constant), SQLAlchemy's
+  `update()`/`insert()` resolved through imports, a table object's `.update()`/`.insert()`, `op.bulk_insert`, or an
+  ORM session resolved to sqlalchemy.orm; `SET LOCAL lock_timeout`, `dict.update` and a project's own `insert()` move
+  nothing; a widened length still pairs, a shrunk one does not; types through the library. Log, off.
+- `model-import-in-migration` (2.11): Flask-SQLAlchemy `db.Model` subclasses (for `db = SQLAlchemy()`, resolved) are
+  models; a model used only for `__tablename__` or `__table__.name` gets its own message; description no longer
+  absolute; messages under 200 characters. Steer, on.
+- `empty-downgrade` (2.12): a bare `return` is filler; a TODO, FIXME or XXX comment excuses nothing; message 199
+  characters. Log, on.
+- `drop-mapped-column` (2.4): a migration sees only its own tree's models: the modules env.py's imports reach
+  (transitive, star and relative imports, package `__init__`s, the other modules of each imported package), else
+  env.py's top-level directory; `__mapper_args__` `exclude_properties`/`include_properties` are honoured (dict or
+  `dict()`, strings or Columns, inherited from bases); `__table__ = Table(...)` classes link to their Table (inline,
+  same file or imported); description and four messages state the check the rule makes (no deploy-order promise,
+  under 200 characters). The review's two counterexamples give 0 findings (was 2); corpus 0, as before; edit-window
+  copies as expected. The Flask-SQLAlchemy and "attribute removed in the same change" gaps stay documented. Steer, on.
+- `missing-lock-timeout` (2.8): judged per tree: one finding at env.py's `context.configure(connection=...)` unless more
+  than half the tree's locking revisions set lock_timeout, where the per-revision slips stay; a setting is parsed as SQL
+  `SET`/`ALTER ... SET`/`set_config`, a libpq `-c` option or an asyncpg `server_settings` key, with zero in any unit and
+  DEFAULT read as off, so a log call, a comment or a redis `lock_timeout` sets nothing; env.py's engine module counts
+  (`al_env_reads`, now also a module imported whole). Corpus 579 to 11 matches, all read: code 11/11, actionable 8/11.
+  Log, on.
+- `multiple-heads` (2.9): the `depends_on` exemption is gone (only `branch_labels` on a head's own line marks an intentional branch); two heads in one version directory pair even with no common ancestor (a second base); `revision` and `down_revision` bound to a constant are resolved; a tuple or list of one is one parent and gets the rebase message; a line whose parent is unknown (imported name, absent id) is left alone so the wider pairing cannot invent a second base. Messages 196 and 182 characters, description without code. The review's trees a to d are reported as expected; tree e binds `PARENT` after its use (a NameError at import) and stays silent, while a constant bound before its use is reported. Corpus 0, as before. Steer, on.
+
+**Pack level.**
+
+- 3.1: the README gives code and actionable precision for every rule, and says up front that the five lock rules
+  assume migrations run against a live database and should be turned off together where the app is stopped to
+  migrate. No pack-level switch exists in the pack format, so none was added.
+- 3.2: all four shapes are owned (index-not-concurrent: `unique=True`, `index=True`, `create_primary_key`;
+  constraint-without-not-valid: an inline `ForeignKey`); NOTES-alembic.md's "Alembic ignores both" corrected.
+- 3.5: `al_on_existing` now skips raw `CREATE TABLE` and emptied tables; `al_non_pg` is structural; helpers in another
+  module are followed one call deep; `al_env_doc` reads `import alembic.context`; the dead `al_sets_lock_timeout` and
+  `al_model_column` are removed. Tree-scoped models live in drop-mapped-column, the only rule that needs them.
+  Not done: a project-level dialect (`alembic.ini` URL, `render_as_batch`), because rules read Python files only; it is
+  a documented gap of the lock rules.
+- 3.6: every description is one sentence without code, at most 200 characters; every message is at most 200
+  characters.
+- 3.7: README and NOTES state the real advantages over Squawk on offline SQL.
+- 3.3 (missing rules: DROP INDEX without CONCURRENTLY, a volatile `server_default`, a shared reading of `op.execute`
+  SQL) is out of this fix's scope and is not built.
+
+**Re-measured on the 8 repositories** (runs `alembic-fix-*`; the README has the per-repository tables):
+
+| Rule | Matches before | After | Code precision (read) | Actionable (read) | Mode, on |
+|---|--:|--:|---|---|---|
+| index-not-concurrent | 296 | 242 | 99 of 99 | 83 of 99 (84%) | steer, on |
+| concurrent-index-outside-autocommit | 0 | 0 | n/a | n/a | steer, on |
+| not-null-without-server-default | 13 | 13 | 13 of 13 | 13 of 13 deploying main | steer, on |
+| drop-mapped-column | 0 | 0 | n/a | n/a | steer, on |
+| constraint-without-not-valid | 221 | 223 | 67 of 67 | 42 of 67 (63%) | steer, on |
+| column-type-rewrite | 34 | 34 | 34 of 34 | 32 of 34 | steer, on |
+| set-not-null-scan | 77 | 77 | 53 of 56 | 50 of 56 | log, on |
+| missing-lock-timeout | 579 | 11 | 11 of 11 | 8 of 11 | log, on |
+| multiple-heads | 0 | 0 | n/a | n/a | steer, on |
+| rename-as-drop-add | 2 | 2 | 1 of 2 | 1 of 2 | log, off |
+| model-import-in-migration | 13 | 13 | 13 of 13 | 13 of 13 | steer, on |
+| empty-downgrade | 3 | 3 | 3 of 3 | 3 of 3 | log, on |

@@ -1,4 +1,5 @@
 # Event buses, chat frameworks and socket servers have their own on_event: left alone.
+import pyee
 import socketio
 from slack_bolt import App
 
@@ -25,6 +26,14 @@ bus.add_event_handler("shutdown", print)
 def handler(event) -> None: ...
 
 
+emitter = pyee.EventEmitter()
+emitter.on_event("startup", print)
+
+
+def wire(events: Bus) -> None:
+    events.on_event("startup", print)
+
+
 class Plugin:
     def setup(self, events):
         events.on_event(handler)
@@ -44,3 +53,10 @@ sio = socketio.AsyncServer()
 
 @sio.on("connect")
 async def connect(sid, environ) -> None: ...
+
+
+# The emitter class under an alias: still another library's object.
+from pyee.asyncio import AsyncIOEventEmitter as Emitter
+
+aliased = Emitter()
+aliased.on_event("shutdown", print)

@@ -1,5 +1,5 @@
 .policy "fastapi-practice-route-missing-sibling-auth" revision 1
-.description "A FastAPI write route must require the auth dependency every other route of its router requires; add the same dependency, or mark the endpoint public."
+.description "Add the auth dependency every other route of a FastAPI router requires to a write route that lacks it, or mark that endpoint public."
 .language python
 .mode log
 .scope include "**/*.py"
@@ -57,7 +57,7 @@
 #include "lib/fastapi.rerail"
 
 .violation RouteMissingSiblingAuth(at: node, fx: symbol, n: number, dep: symbol)
-    "Write route `{fx}` requires no authentication, while {n} other routes of its router do (`{dep}` for one) and none goes without: add the same dependency to its signature or decorator. If the endpoint is meant to be public, say so in a comment or move it to a public router."
+    "Write route `{fx}` has no auth, while {n} other routes of its router require it (`{dep}` for one). Add that dependency; if the endpoint is meant to be public, say so in a comment."
 
 // ---- names -------------------------------------------------------------------------------------------------------
 // ra_auth_name(x): a dependency or helper named x authenticates the caller.

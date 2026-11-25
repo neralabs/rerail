@@ -560,6 +560,23 @@
       }
     },
     {
+      "id": "django-practice-settings-in-test",
+      "document": "rules/django-practice-settings-in-test.rerail",
+      "title": "Django practice: a test that writes `django.conf.settings` directly and leaves the change for later tests",
+      "group": "Django practice",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "tests/test_upload.py",
+          "text": "from django.conf import settings\n\n\ndef test_svg_upload_sanitized(client):\n    settings.SVG_SECURITY_CLEANUP = True\n    response = client.post(\"/upload\", {\"file\": \"x.svg\"})\n    assert response.status_code == 201\n"
+        },
+        "passes": {
+          "path": "tests/test_upload.py",
+          "text": "from django.test import override_settings\n\n\n@override_settings(SVG_SECURITY_CLEANUP=True)\ndef test_svg_upload_sanitized(client):\n    response = client.post(\"/upload\", {\"file\": \"x.svg\"})\n    assert response.status_code == 201\n"
+        }
+      }
+    },
+    {
       "id": "django-practice-settings-module-import",
       "document": "rules/django-practice-settings-module-import.rerail",
       "title": "Django practice: an import of the project's settings module instead of `django.conf.settings`",
@@ -640,6 +657,35 @@
       }
     },
     {
+      "id": "django-practice-settings-env-fails-open",
+      "document": "rules/django-practice-settings-env-fails-open.rerail",
+      "title": "Django practice: DEBUG, ALLOWED_HOSTS or SECRET_KEY falls back to an insecure value when its environment variable is unset",
+      "group": "Django practice",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/settings.py",
+          "text": "from shop.env import envbool\n\nINSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = envbool(\"DEBUG\", \"True\")\n",
+          "with": [
+            {
+              "path": "shop/env.py",
+              "text": "import os\n\nfrom django.core.exceptions import ImproperlyConfigured\n\n\ndef envbool(name, default):\n    value = os.getenv(name, default)\n    if value not in (\"True\", \"False\"):\n        raise ImproperlyConfigured(f\"{name} must be True or False\")\n    return value == \"True\"\n"
+            }
+          ]
+        },
+        "passes": {
+          "path": "shop/settings.py",
+          "text": "from shop.env import envbool\n\nINSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = envbool(\"DEBUG\", \"False\")\n",
+          "with": [
+            {
+              "path": "shop/env.py",
+              "text": "import os\n\nfrom django.core.exceptions import ImproperlyConfigured\n\n\ndef envbool(name, default):\n    value = os.getenv(name, default)\n    if value not in (\"True\", \"False\"):\n        raise ImproperlyConfigured(f\"{name} must be True or False\")\n    return value == \"True\"\n"
+            }
+          ]
+        }
+      }
+    },
+    {
       "id": "django-practice-addfield-default-runs-once",
       "document": "rules/django-practice-addfield-default-runs-once.rerail",
       "title": "Django practice: an AddField on an existing table whose generated or unique default every existing row shares",
@@ -669,11 +715,47 @@
       }
     },
     {
+      "id": "django-practice-bulk-ignore-conflicts-used",
+      "document": "rules/django-practice-bulk-ignore-conflicts-used.rerail",
+      "title": "Django practice: objects from bulk_create(ignore_conflicts=True) used as the inserted rows",
+      "group": "Django practice",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Label(models.Model):\n    name = models.CharField(max_length=64, unique=True)\n\n\ndef label_ids(names):\n    labels = [Label(name=n) for n in names]\n    Label.objects.bulk_create(labels, ignore_conflicts=True)\n    return [label.pk for label in labels]\n"
+        },
+        "passes": {
+          "path": "shop/views.py",
+          "text": "from django.db import models\n\n\nclass Label(models.Model):\n    name = models.CharField(max_length=64, unique=True)\n\n\ndef label_ids(names):\n    labels = [Label(name=n) for n in names]\n    Label.objects.bulk_create(labels, ignore_conflicts=True)\n    labels = Label.objects.filter(name__in=[label.name for label in labels])\n    return [label.pk for label in labels]\n"
+        }
+      }
+    },
+    {
+      "id": "django-practice-runpython-with-schema-change",
+      "document": "rules/django-practice-runpython-with-schema-change.rerail",
+      "title": "Django practice: a RunPython that writes rows in the same migration transaction as a schema change to that table",
+      "group": "Django practice",
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "shop/migrations/0002_order_number.py",
+          "text": "from django.db import migrations, models\n\n\ndef fill_order_numbers(apps, schema_editor):\n    Order = apps.get_model(\"shop\", \"Order\")\n    for order in Order.objects.iterator():\n        order.number = f\"R{order.pk:08d}\"\n        order.save(update_fields=[\"number\"])\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [\n        migrations.AddField(\n            model_name=\"order\",\n            name=\"number\",\n            field=models.CharField(max_length=20, null=True),\n        ),\n        migrations.RunPython(fill_order_numbers, migrations.RunPython.noop),\n        migrations.AlterField(\n            model_name=\"order\",\n            name=\"number\",\n            field=models.CharField(max_length=20, unique=True),\n        ),\n    ]\n"
+        },
+        "passes": {
+          "path": "shop/migrations/0003_fill_order_numbers.py",
+          "text": "from django.db import migrations\n\n\ndef fill_order_numbers(apps, schema_editor):\n    Order = apps.get_model(\"shop\", \"Order\")\n    for order in Order.objects.iterator():\n        order.number = f\"R{order.pk:08d}\"\n        order.save(update_fields=[\"number\"])\n\n\nclass Migration(migrations.Migration):\n    # 0002 adds the nullable column and 0004 makes it unique: each commits on its own.\n    dependencies = [(\"shop\", \"0002_order_number\")]\n\n    operations = [\n        migrations.RunPython(fill_order_numbers, migrations.RunPython.noop),\n    ]\n"
+        }
+      }
+    },
+    {
       "id": "django-practice-alterfield-rewrites-table",
       "document": "rules/django-practice-alterfield-rewrites-table.rerail",
       "title": "Django practice: an AlterField whose column type change makes PostgreSQL rewrite an existing table",
       "group": "Django practice",
       "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "shop/migrations/0002_order_bigint.py",
@@ -710,23 +792,6 @@
               "text": "from django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n    initial = True\n\n    dependencies = []\n\n    operations = [\n        migrations.CreateModel(\n            name=\"Order\",\n            fields=[\n                (\"id\", models.AutoField(auto_created=True, primary_key=True, serialize=False)),\n                (\"number\", models.CharField(max_length=20)),\n            ],\n        ),\n    ]\n"
             }
           ]
-        }
-      }
-    },
-    {
-      "id": "django-practice-bulk-ignore-conflicts-used",
-      "document": "rules/django-practice-bulk-ignore-conflicts-used.rerail",
-      "title": "Django practice: objects from bulk_create(ignore_conflicts=True) used as the inserted rows",
-      "group": "Django practice",
-      "mode": "steer",
-      "examples": {
-        "caught": {
-          "path": "shop/views.py",
-          "text": "from django.db import models\n\n\nclass Label(models.Model):\n    name = models.CharField(max_length=64, unique=True)\n\n\ndef label_ids(names):\n    labels = [Label(name=n) for n in names]\n    Label.objects.bulk_create(labels, ignore_conflicts=True)\n    return [label.pk for label in labels]\n"
-        },
-        "passes": {
-          "path": "shop/views.py",
-          "text": "from django.db import models\n\n\nclass Label(models.Model):\n    name = models.CharField(max_length=64, unique=True)\n\n\ndef label_ids(names):\n    labels = [Label(name=n) for n in names]\n    Label.objects.bulk_create(labels, ignore_conflicts=True)\n    labels = Label.objects.filter(name__in=[label.name for label in labels])\n    return [label.pk for label in labels]\n"
         }
       }
     },
@@ -778,52 +843,6 @@
             {
               "path": "shop/migrations/__init__.py",
               "text": "# empty module\n"
-            }
-          ]
-        }
-      }
-    },
-    {
-      "id": "django-practice-runpython-with-schema-change",
-      "document": "rules/django-practice-runpython-with-schema-change.rerail",
-      "title": "Django practice: a RunPython that writes rows in the same migration transaction as a schema change to that table",
-      "group": "Django practice",
-      "mode": "log",
-      "examples": {
-        "caught": {
-          "path": "shop/migrations/0002_order_number.py",
-          "text": "from django.db import migrations, models\n\n\ndef fill_order_numbers(apps, schema_editor):\n    Order = apps.get_model(\"shop\", \"Order\")\n    for order in Order.objects.iterator():\n        order.number = f\"R{order.pk:08d}\"\n        order.save(update_fields=[\"number\"])\n\n\nclass Migration(migrations.Migration):\n    dependencies = [(\"shop\", \"0001_initial\")]\n\n    operations = [\n        migrations.AddField(\n            model_name=\"order\",\n            name=\"number\",\n            field=models.CharField(max_length=20, null=True),\n        ),\n        migrations.RunPython(fill_order_numbers, migrations.RunPython.noop),\n        migrations.AlterField(\n            model_name=\"order\",\n            name=\"number\",\n            field=models.CharField(max_length=20, unique=True),\n        ),\n    ]\n"
-        },
-        "passes": {
-          "path": "shop/migrations/0003_fill_order_numbers.py",
-          "text": "from django.db import migrations\n\n\ndef fill_order_numbers(apps, schema_editor):\n    Order = apps.get_model(\"shop\", \"Order\")\n    for order in Order.objects.iterator():\n        order.number = f\"R{order.pk:08d}\"\n        order.save(update_fields=[\"number\"])\n\n\nclass Migration(migrations.Migration):\n    # 0002 adds the nullable column and 0004 makes it unique: each commits on its own.\n    dependencies = [(\"shop\", \"0002_order_number\")]\n\n    operations = [\n        migrations.RunPython(fill_order_numbers, migrations.RunPython.noop),\n    ]\n"
-        }
-      }
-    },
-    {
-      "id": "django-practice-settings-env-fails-open",
-      "document": "rules/django-practice-settings-env-fails-open.rerail",
-      "title": "Django practice: DEBUG, ALLOWED_HOSTS or SECRET_KEY falls back to an insecure value when its environment variable is unset",
-      "group": "Django practice",
-      "mode": "steer",
-      "examples": {
-        "caught": {
-          "path": "shop/settings.py",
-          "text": "from shop.env import envbool\n\nINSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = envbool(\"DEBUG\", \"True\")\n",
-          "with": [
-            {
-              "path": "shop/env.py",
-              "text": "import os\n\nfrom django.core.exceptions import ImproperlyConfigured\n\n\ndef envbool(name, default):\n    value = os.getenv(name, default)\n    if value not in (\"True\", \"False\"):\n        raise ImproperlyConfigured(f\"{name} must be True or False\")\n    return value == \"True\"\n"
-            }
-          ]
-        },
-        "passes": {
-          "path": "shop/settings.py",
-          "text": "from shop.env import envbool\n\nINSTALLED_APPS = [\"django.contrib.auth\", \"shop\"]\nDEBUG = envbool(\"DEBUG\", \"False\")\n",
-          "with": [
-            {
-              "path": "shop/env.py",
-              "text": "import os\n\nfrom django.core.exceptions import ImproperlyConfigured\n\n\ndef envbool(name, default):\n    value = os.getenv(name, default)\n    if value not in (\"True\", \"False\"):\n        raise ImproperlyConfigured(f\"{name} must be True or False\")\n    return value == \"True\"\n"
             }
           ]
         }

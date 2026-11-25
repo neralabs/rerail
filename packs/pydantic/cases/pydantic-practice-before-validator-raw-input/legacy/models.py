@@ -15,5 +15,5 @@ class Account(BaseModel):
         return v["id"]
 
 
-def load_account(data: dict) -> Account:
-    return Account.parse_obj(data)
+def load_account(raw: str) -> Account:
+    return Account.parse_raw(raw)

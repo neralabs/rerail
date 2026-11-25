@@ -1,5 +1,5 @@
 .policy "alembic-practice-concurrent-index-outside-autocommit" revision 1
-.description "Run Alembic index operations with postgresql_concurrently=True inside autocommit_block(); PostgreSQL refuses CONCURRENTLY in the migration's transaction."
+.description "Run concurrent index builds and drops in Alembic migrations inside an autocommit block; PostgreSQL refuses CONCURRENTLY inside a transaction."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -28,12 +28,16 @@
 //       op.create_index(..., postgresql_concurrently=True)                     `if` in it, a batch in it, a helper
 //                                                                              called from it); `<ctx>.autocommit_block()`
 //                                                                              on a context held in a local too
-//   postgresql_concurrently=False, absent, or any expression but `True`        not concurrent (alembic-practice-index-
-//                                                                              not-concurrent's concern)
+//   postgresql_concurrently=False, absent, or an expression the rule cannot evaluate   not concurrent (alembic-practice-
+//                                                                              index-not-concurrent's concern); True
+//                                                                              is read by value: the literal, or a
+//                                                                              module constant of this file or an
+//                                                                              imported one (lib/alembic's al_bool)
 //   else: op.create_index(..., postgresql_concurrently=True) after `if _is_pg(conn):`, or under
 //   `if dialect.name == "sqlite":`                                             another database ignores the keyword
-//   context.configure(..., transactional_ddl=False) in env.py                  no transaction around revisions:
-//                                                                              nothing is reported in the revisions
+//   an env.py that runs its revisions with no transaction around them: `context.configure(...,
+//   transactional_ddl=False)` (by value), or an engine or connection with `isolation_level="AUTOCOMMIT"` in env.py
+//   or in the module env.py imports it from (lib/alembic's al_env_reads)    nothing is reported in the revisions
 //                                                                              under that env.py's directory, nor in
 //                                                                              a revision under no env.py's directory
 //                                                                              (transaction_per_migration=True still
@@ -41,16 +45,19 @@
 //   revisions under tests/, files without `revision`/`down_revision`, an `op` that is not alembic.op.
 // Gaps: raw SQL (`op.execute("CREATE INDEX CONCURRENTLY ...")`) is not read; the old `op.execute("COMMIT")` hack is
 // not recognised (none in the corpus); helpers in another module, or two calls deep; an env.py outside the run (a
-// rule run on the versions directory alone) is not seen, nor `transactional_ddl` set from a variable.
+// rule run on the versions directory alone) is not seen.
+// Corpus (8 Alembic repositories): 0 matches; every concurrent call there is wrapped. See the README's rule details.
 
 #include "lib/alembic.rerail"
 
-.violation ConcurrentIndexInTransaction(at: node, m: symbol) "`{m}(..., postgresql_concurrently=True)` runs inside the revision's transaction, which PostgreSQL refuses: the migration fails with \"cannot run inside a transaction block\". Wrap the call in `with op.get_context().autocommit_block():`. The block first commits what the revision ran before it, so put concurrent index work in its own revision or after the other steps."
+.violation ConcurrentIndexInTransaction(at: node, m: symbol) "`{m}` with CONCURRENTLY runs in the revision's transaction, which PostgreSQL refuses. Wrap it in `with op.get_context().autocommit_block():`; the block commits the steps before it, so run it last."
 
-// ci_no_tx_env(e): env.py e configures Alembic with `transactional_ddl=False`: its revisions run outside any
-// transaction, so CONCURRENTLY needs no autocommit block.
+// ci_no_tx_env(e): env.py e runs its revisions outside any transaction, so CONCURRENTLY needs no autocommit block:
+// `transactional_ddl=False`, or an AUTOCOMMIT isolation level set in env.py or the module it imports its engine from.
 .decl ci_no_tx_env(e: number)
-ci_no_tx_env(e) :- al_env_configure(k), al_kw(k, "transactional_ddl", v), unparen(v, u), kind(u, "false"), docof(k, e).
+ci_no_tx_env(e) :- al_env_configure(k), al_false_kw(k, "transactional_ddl"), docof(k, e).
+ci_no_tx_env(e) :- al_env_reads(e, d), call_arg(k, -1, "isolation_level", v), docof(k, d), unparen(v, u), str(u, s),
+    l = @lower(s), l = "autocommit".
 // ci_no_transaction(d): revision d runs without a transaction: its env.py turns transactional DDL off, or it sits
 // under no env.py of the run and one env.py of the run turns it off.
 .decl ci_no_transaction(d: number)
@@ -79,12 +86,16 @@ ConcurrentIndexInTransaction(c, m) :- ci_concurrent(c, m), ci_in_transaction(c),
     .fixture "autocommit_env/migrations/env.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/env.py"
     .fixture "autocommit_env/migrations/versions/a1_users.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/migrations/versions/a1_users.py"
     .fixture "autocommit_env/elsewhere/a2_orphan.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_env/elsewhere/a2_orphan.py"
+    .fixture "autocommit_iso/db.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/db.py"
+    .fixture "autocommit_iso/migrations/env.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/migrations/env.py"
+    .fixture "autocommit_iso/migrations/versions/i1_users.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/autocommit_iso/migrations/versions/i1_users.py"
     .fixture "app/db.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/app/db.py"
     .fixture "app/search.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/app/search.py"
     .fixture "migrations/env.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/env.py"
     .fixture "migrations/versions/c1_users.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c1_users.py"
     .fixture "migrations/versions/c2_batch_and_dialects.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c2_batch_and_dialects.py"
     .fixture "migrations/versions/c4_helpers.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c4_helpers.py"
+    .fixture "migrations/versions/c5_constants.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c5_constants.py"
     .fixture "migrations/versions/c3_not_alembic.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/migrations/versions/c3_not_alembic.py"
     .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-concurrent-index-outside-autocommit/tests/migrations/versions/t1_fixture.py"
     .expect _ at "migrations/versions/c1_users.py":12
@@ -98,6 +109,8 @@ ConcurrentIndexInTransaction(c, m) :- ci_concurrent(c, m), ci_in_transaction(c),
     .expect _ at "migrations/versions/c2_batch_and_dialects.py":25
     .expect _ at "migrations/versions/c2_batch_and_dialects.py":50
     .expect _ at "migrations/versions/c4_helpers.py":24
+    .expect _ at "migrations/versions/c5_constants.py":15
+    .expect _ at "migrations/versions/c5_constants.py":16
 .end
 
 .test autocommit_env exactly

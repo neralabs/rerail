@@ -1,10 +1,13 @@
 # Alembic pack: mining notes
 
 What a team running Alembic migrations against a live PostgreSQL database flags in review, which of it a linter
-already checks, and what this pack builds. Squawk and django-migration-linter check the same hazards, but on SQL
-files and Django migrations; neither reads Alembic's Python, so neither sees `op.create_index(...)`, a
-`batch_alter_table` block, the models a migration drops a column from, or the `env.py` that configures the run.
-Ruff and Bandit (the `python` pack's ports) check none of these shapes; S608 is the one partial overlap (below).
+already checks, and what this pack builds. Squawk checks the same hazards on the SQL `alembic upgrade head --sql`
+renders (`alembic-squawk` and PandaDoc's `migration-lint` package that pipeline), and django-migration-linter on Django
+migrations. This pack adds the edit window (no offline render, no database), revisions that cannot render offline
+(inspector calls, data migrations), and the cross-file checks no SQL linter can make: the models a migration drops a
+column from, the models it imports, the revision graph, and the `env.py` that configures the run (corrected after the
+independent review, REVIEW-alembic.md 3.7). Ruff and Bandit (the `python` pack's ports) check none of these shapes;
+S608 is the one partial overlap (below).
 
 ## 1. Sources read
 
@@ -57,7 +60,7 @@ before any rule was written; the writers' engine runs give the final numbers.
 | missing-lock-timeout | A locking DDL op in a migration when neither the migration nor `env.py` sets `lock_timeout` | A DDL waiting for a lock queues every later read and write on the table: an outage | S4, S14, S15, S18, S19, S20, S24 | cross-file (migration ↔ env.py) | Squawk require-lock-timeout (per SQL file; cannot see env.py) | env.py `SET lock_timeout` / connect args, migration `op.execute("SET ... lock_timeout")` | polar sets it in 179/205; the other 7 repositories nowhere | build (log: repositories that never set it would match every migration) |
 | empty-downgrade | `downgrade()` that is only `pass`/docstring while `upgrade()` changes the schema, in a repository whose other migrations implement downgrade | `alembic downgrade` reports success and moves the version back while the schema stays: the next upgrade fails | S9, S17, S21 | cross-file (repository convention) | django-migration-linter RUNPYTHON_REVERSIBLE (Django only) | function body; ratio of the repository's downgrades | 82 (superset 52, dispatch 13, mealie 6, open-webui 4, polar 4, dify 3) | build (log first) |
 | execute-interpolated-sql | `op.execute(f"...")` / `.format()` | Injection or quoting breakage | S5, S23 | single | Ruff S608 / Bandit B608 already flag string-built SQL, `op.execute` included; migration values are constants in the corpus | — | — | drop: S608 covers it; no context-aware value |
-| add-column-unique-ignored | `add_column(sa.Column(..., unique=True / index=True))` | Alembic ignores both: no constraint, no index | S5 | single | none | Column kwargs | 0 in 1,095 files | drop: no occurrence in the corpus and no report of teams hitting it beyond the doc note |
+| add-column-unique-ignored | `add_column(sa.Column(..., unique=True / index=True))` | Assumed from Alembic's doc note ("ignored: unique ... index"); the review found Alembic 1.20.1 renders `ADD UNIQUE` and `CREATE INDEX` after the ADD COLUMN, so the real hazard is a non-concurrent index build | S5 | single | none | Column kwargs | 0 in 1,095 files | dropped as its own rule; the shape is now reported by index-not-concurrent (and an inline `ForeignKey`/`CheckConstraint` by constraint-without-not-valid) |
 | volatile-default-rewrite | `add_column(server_default=gen_random_uuid()/clock_timestamp()/random())` on an existing table | Rewrites the table under ACCESS EXCLUSIVE even on PG 11+ | S2, S16 | single | Squawk adding-field-with-default (SQL) | server_default text | 0 on existing tables (all 120 volatile defaults are in `create_table`) | drop: no occurrence |
 | enum-add-value-in-transaction | `op.execute("ALTER TYPE ... ADD VALUE ...")` outside `autocommit_block` | Before PG 12 it fails in a transaction; since 12 the value is unusable until commit | S3, S6, S11 | single | Squawk ban-add-enum-value (opt-in, different concern) | string text | 2 (mealie) | drop: PG 12+ runs it; a later use in the same migration fails loudly in CI |
 | enum-type-not-created | `add_column` with a native `sa.Enum` whose type no `create()` makes | "type does not exist": the migration fails | S11, S22 | single | none | Column type and `.create(` calls | 4 `sa.Enum` in migrations | drop: fails loudly on the first run in CI, rare |

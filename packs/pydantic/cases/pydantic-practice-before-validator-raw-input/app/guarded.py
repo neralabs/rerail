@@ -156,3 +156,82 @@ class Envelope(BaseModel):
     def after_attr(cls, values):
         values.body = values.body.strip()
         return values
+
+
+# The check's meaning decides, not its position.
+class Checks(BaseModel):
+    a: str = ""
+    b: str = ""
+    c: str = ""
+    d: str = ""
+    e: str = ""
+    f: str = ""
+    g: list[str] = []
+    h: str = ""
+    i: str = ""
+
+    # A negated check that raises: what is left is a str.
+    @field_validator("a", mode="before")
+    @classmethod
+    def a_raise(cls, v):
+        if not isinstance(v, str):
+            raise ValueError("a must be a string")
+        return v.strip()
+
+    @field_validator("b", mode="before")
+    @classmethod
+    def b_assert(cls, v):
+        assert isinstance(v, str), "b must be a string"
+        return v.strip()
+
+    # The use in the else of a negated check, and in an elif on a positive one.
+    @field_validator("c", mode="before")
+    @classmethod
+    def c_else(cls, v):
+        if not isinstance(v, str):
+            v2 = v
+        else:
+            return v.strip()
+        return v2
+
+    @field_validator("d", mode="before")
+    @classmethod
+    def d_elif(cls, v):
+        if v is None:
+            return ""
+        elif isinstance(v, bytes):
+            return v.decode()
+        return v
+
+    # `not isinstance(...) or ...`, and a conditional expression on a negated check.
+    @field_validator("e", mode="before")
+    @classmethod
+    def e_or(cls, v):
+        return not isinstance(v, str) or v.isidentifier()
+
+    @field_validator("f", mode="before")
+    @classmethod
+    def f_ternary_neg(cls, v):
+        return v if not isinstance(v, str) else v.strip()
+
+    # A positive check that exits leaves every other type: an int still reaches `.split`.
+    @field_validator("g", mode="before")
+    @classmethod
+    def g_wrong_exit(cls, v):
+        if v is None or isinstance(v, list):
+            return v
+        return v.split(",")  # caught
+
+    # The use on the false side of a positive check.
+    @field_validator("h", mode="before")
+    @classmethod
+    def h_ternary_wrong(cls, v):
+        return v if isinstance(v, str) else v.decode()  # caught
+
+    # The use after an if whose body checked, but which falls through.
+    @field_validator("i", mode="before")
+    @classmethod
+    def i_after_if(cls, v):
+        if isinstance(v, str):
+            v2 = v.lower()
+        return v.upper()  # caught

@@ -12,8 +12,8 @@
 // It reads a migration tree as the revision files of one directory (al_rev_dir: `core/versions` and `tenant/versions`
 // are two trees; test code is left out) and judges a revision against that tree's convention.
 // Reported, at `def downgrade():`:
-//   def upgrade(): op.add_column("users", ...)         downgrade() is only `pass`, `...` or both, and Alembic's
-//   def downgrade(): pass                                autogenerate markers (`# ### commands auto generated ... ###`)
+//   def upgrade(): op.add_column("users", ...)         downgrade() is only `pass`, `...`, a bare `return`, or those,
+//   def downgrade(): pass                                and Alembic's autogenerate markers (`# ### commands ... ###`)
 //   with op.batch_alter_table("orders") as b:          a batch operation, or one in a module-level helper that
 //       b.create_index(...)                            upgrade() calls, is a schema operation too
 // when the revision's tree implements its downgrades: of the tree's counted revisions (one parent, a schema operation in
@@ -32,17 +32,20 @@
 //                                                        table_has_column ...): an idempotent repair, which a second
 //                                                        upgrade after the empty downgrade reruns without error
 //   def downgrade():                                    a downgrade() with a comment of its own (not Alembic's
-//       # the down revision already allows NULL here    markers) or a docstring: a recorded decision that the down
-//       pass                                            revision's schema already accepts this one
+//       # the down revision already allows NULL here    markers, and not one that starts TODO, FIXME or XXX) or a
+//       pass                                            docstring: a recorded decision that the down revision's
+//                                                       schema already accepts this one
 //   revisions in test code
 // Gaps: schema changes made outside Alembic's op (raw DDL in op.execute, a project's own add_columns wrapper,
 // sqlalchemy-searchable's sync_trigger) are not schema operations here, so such a revision is neither reported nor
-// counted; a downgrade() made of other no-op statements (`return`, `print(...)`) counts as implemented; an explaining
-// comment silences the rule whatever it says.
+// counted; a downgrade() made of other no-op statements (`print(...)`, a log call) counts as implemented; an explaining
+// comment silences the rule whatever else it says; in a tree of fewer than 10 counted revisions, two empty downgrades
+// put it under 80% and silence the rule for the whole tree (by design: the habit is then the tree's own).
+// Corpus (8 Alembic repositories): 3 matches, all read, all real; see the README's rule details.
 
 #include "lib/alembic.rerail"
 
-.violation EmptyDowngrade(at: node, k: number, n: number) "This revision's upgrade() changes the schema but its downgrade() does nothing, while {k} of the {n} revisions with schema operations in this migration directory implement theirs: `alembic downgrade` reports success and moves the version table back while the schema keeps the change, so the database no longer matches its recorded revision and the next `alembic upgrade` can fail on what is already there. Write the reverse operations of upgrade() here, or, if the change cannot be reversed, raise (`raise NotImplementedError(\"irreversible: ...\")`) so a rollback stops instead of leaving the schema behind. Leave it in a project that never runs downgrades."
+.violation EmptyDowngrade(at: node, k: number, n: number) "This downgrade() does nothing while upgrade() changes the schema, and {k} of {n} revisions here implement theirs. Reverse upgrade() here, or raise if it cannot be undone. Skip if you never downgrade."
 
 // ---- the revision's parts ----------------------------------------------------------------------------------------
 // ed_non_op(m): an Alembic operation that changes no schema object.
@@ -72,19 +75,21 @@ ed_reflects(d) :- al_step(f, "upgrade"), al_in_step(c, f), kind(c, "call"), fiel
 .decl ed_callee_name(fn: node, x: symbol)
 ed_callee_name(fn, x) :- kind(fn, "identifier"), text(fn, x).
 ed_callee_name(fn, x) :- attr_of(fn, _, x).
-// ed_filler(s): a statement that does nothing: `pass`, `...`, or a lone string literal (a docstring).
+// ed_filler(s): a statement that does nothing: `pass`, `...`, a bare `return`, or a lone string literal (a docstring).
 .decl ed_filler(s: node)
 ed_filler(s) :- kind(s, "pass_statement").
 ed_filler(s) :- kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), kind(e, "ellipsis").
+ed_filler(s) :- kind(s, "return_statement"), text(s, "return").
 ed_filler(s) :- doc_stmt(s, _).
 // ed_does_something(g): downgrade g's body holds a statement other than filler (a raise, a call, an assignment ...).
 .decl ed_does_something(g: node)
 ed_does_something(g) :- al_step(g, "downgrade"), field(g, "body", b), body_stmt(b, s, _), !ed_filler(s).
 // ed_explained(g): downgrade g carries its author's own comment below its `def` line (not Alembic's `# ### ... ###`
-// markers, and not a `# noqa` on the def line) or a docstring.
+// markers, not a `# noqa` on the def line, and not a TODO, FIXME or XXX note, which records no decision) or a docstring.
 .decl ed_explained(g: node)
 ed_explained(g) :- al_step(g, "downgrade"), kind(cm, "comment"), within(cm, g), line(cm, l), line(g, lg), l > lg,
-    text(cm, x), !prefix("# ###", x).
+    text(cm, x), !prefix("# ###", x), y = @lower(@replace_all(x, "^#\\s*", "")), !prefix("todo", y),
+    !prefix("fixme", y), !prefix("xxx", y).
 ed_explained(g) :- al_step(g, "downgrade"), docstring(g, _).
 // ed_counted(d, p, g): revision d in tree p, with downgrade g, is one the tree's convention is measured on.
 .decl ed_counted(d: number, p: symbol, g: node)
@@ -110,6 +115,8 @@ EmptyDowngrade(g, k, n) :- ed_empty(_, p, g), ed_tree(p, k, n), n >= 5, k * 5 >=
     .fixture "app/migrations/versions/c2_batch_index.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/c2_batch_index.py"
     .fixture "app/migrations/versions/c3_helper.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/c3_helper.py"
     .fixture "app/migrations/versions/c4_fk.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/c4_fk.py"
+    .fixture "app/migrations/versions/c5_return.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/c5_return.py"
+    .fixture "app/migrations/versions/c6_todo.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/c6_todo.py"
     .fixture "app/migrations/versions/g01_add_c1.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g01_add_c1.py"
     .fixture "app/migrations/versions/g02_add_c2.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g02_add_c2.py"
     .fixture "app/migrations/versions/g03_add_c3.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g03_add_c3.py"
@@ -126,6 +133,14 @@ EmptyDowngrade(g, k, n) :- ed_empty(_, p, g), ed_tree(p, k, n), n >= 5, k * 5 >=
     .fixture "app/migrations/versions/g14_add_c14.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g14_add_c14.py"
     .fixture "app/migrations/versions/g15_add_c15.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g15_add_c15.py"
     .fixture "app/migrations/versions/g16_add_c16.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g16_add_c16.py"
+    .fixture "app/migrations/versions/g17_add_c17.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g17_add_c17.py"
+    .fixture "app/migrations/versions/g18_add_c18.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g18_add_c18.py"
+    .fixture "app/migrations/versions/g19_add_c19.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g19_add_c19.py"
+    .fixture "app/migrations/versions/g20_add_c20.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g20_add_c20.py"
+    .fixture "app/migrations/versions/g21_add_c21.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g21_add_c21.py"
+    .fixture "app/migrations/versions/g22_add_c22.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g22_add_c22.py"
+    .fixture "app/migrations/versions/g23_add_c23.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g23_add_c23.py"
+    .fixture "app/migrations/versions/g24_add_c24.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/grown/g24_add_c24.py"
     .fixture "app/migrations/versions/n1_raise.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/n1_raise.py"
     .fixture "app/migrations/versions/n2_merge.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/n2_merge.py"
     .fixture "app/migrations/versions/n3_data_only.py" from "../cases/alembic-practice-empty-downgrade/app/migrations/versions/n3_data_only.py"
@@ -153,5 +168,7 @@ EmptyDowngrade(g, k, n) :- ed_empty(_, p, g), ed_tree(p, k, n), n >= 5, k * 5 >=
     .expect _ at "app/migrations/versions/c2_batch_index.py":16
     .expect _ at "app/migrations/versions/c3_helper.py":20
     .expect _ at "app/migrations/versions/c4_fk.py":15
+    .expect _ at "app/migrations/versions/c5_return.py":15
+    .expect _ at "app/migrations/versions/c6_todo.py":15
     .expect _ at "tiny/alembic/versions/s5.py":15
 .end

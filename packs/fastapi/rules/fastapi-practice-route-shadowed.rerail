@@ -42,9 +42,9 @@
 #include "lib/fastapi.rerail"
 
 .violation RouteShadowed(at: node, ms: symbol, p: symbol, ep: symbol, el: number)
-    "Route `{ms} {p}` is never served: the earlier route `{ms} {ep}` (line {el}) on the same router matches its paths first, and Starlette serves the first match. Declare this route before line {el}, or give it a path the earlier route does not match."
+    "Route `{ms} {p}` is never served: the earlier `{ms} {ep}` (line {el}) on this router matches its paths first. Declare it before line {el}, or give it a path the earlier route does not match."
 .violation RouteDuplicate(at: node, ms: symbol, p: symbol, el: number)
-    "Route `{ms} {p}` repeats the path and method of the route on line {el} of the same router, which Starlette serves instead, so this handler never runs. Merge it into the earlier handler, or give it its own path."
+    "Route `{ms} {p}` repeats the path and method of line {el} on this router, which is served instead, so this handler never runs. Merge it into that handler, or give it its own path."
 
 // ---- paths -------------------------------------------------------------------------------------------------------
 // rs_path(p): route path p, a literal whose braces are all parameters with a converter Starlette ships (none, str,

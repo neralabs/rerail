@@ -58,7 +58,7 @@ async def tag_icon(kind: str):
 async def upload_prefixed(file: UploadFile, folder: str = "tags"):
     if not folder.isalnum():
         raise HTTPException(status_code=400)
-    with open(f"{DATA}/{folder}/upload_{file.filename}", "wb") as out:  # caught
+    with open(f"{DATA}/{folder}/upload_{file.filename}", "wb") as out:  # climbing needs a dir upload_x
         out.write(await file.read())
 
 

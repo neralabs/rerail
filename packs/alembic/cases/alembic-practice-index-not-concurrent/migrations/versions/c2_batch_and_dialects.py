@@ -17,7 +17,9 @@ def upgrade():
     with op.batch_alter_table("orders", schema=None) as batch_op:
         batch_op.add_column(sa.Column("ref", sa.String(40), nullable=True))
         batch_op.create_index("ix_orders_ref", ["ref"], unique=False)  # caught
-        batch_op.create_index(batch_op.f("ix_orders_total"), ["total"])  # caught
+        batch_op.create_index("ix_orders_total", ["total"])
+    with op.batch_alter_table("invoices") as batch_op:
+        batch_op.create_index(batch_op.f("ix_invoices_total"), ["total"])  # caught
 
     # Created in a dialect branch: still a table this upgrade() creates.
     conn = op.get_bind()

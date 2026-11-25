@@ -6,51 +6,79 @@ out writes, NOT NULL columns that cannot be added to a populated table, type cha
 dropped while the models still map them, revisions that fork the history, and data migrations that import the
 application's models. Each rule is advice that the PostgreSQL, Alembic or SQLAlchemy documentation gives, or that
 Squawk, strong_migrations, django-migration-linter and well-known migration post-mortems give, from at least two
-independent sources ([NOTES-alembic.md](NOTES-alembic.md)). Squawk and django-migration-linter check the same hazards in
-SQL files and Django migrations; neither reads Alembic's Python, so neither sees a `batch_alter_table` block, which
-tables the same revision creates, the models a dropped column still belongs to, or the `env.py` that runs the
-migrations. Ruff and Bandit check none of these shapes.
+independent sources ([NOTES-alembic.md](NOTES-alembic.md)).
 
-Each rule reads the repository's Python files through the pack's library [`rules/lib/alembic.rerail`](rules/lib/alembic.rerail):
-`op.*` and `batch_op.*` operations resolved through `from alembic import op`, the table each acts on (a literal,
-`op.f(...)` or a module constant), the tables the same `upgrade()` creates, `autocommit_block()` regions, the branches
-of a dialect test that run only on SQLite or MySQL, SQLAlchemy and sqlmodel model classes with their columns (mixins in
-other modules included), revision ids, and env.py.
+**What it adds over a SQL linter.** Squawk reads the SQL that `alembic upgrade head --sql` renders, and projects such
+as `alembic-squawk` and PandaDoc's `migration-lint` package that pipeline; on that SQL it sees batch operations as plain
+ALTERs and ignores indexes on tables the same transaction creates. This pack adds three things that pipeline lacks:
+
+- it runs in the edit window, on the Python the agent just wrote, with no offline render and no database;
+- it reads revisions that cannot render offline (inspector calls, data migrations, `op.get_bind()`), common in dify,
+  superset and open-webui;
+- it has the cross-file rules no SQL linter can have: `drop-mapped-column` (the migration's own models still map the
+  column), `model-import-in-migration`, `multiple-heads`, `empty-downgrade`, and the env.py side of
+  `missing-lock-timeout` and `concurrent-index-outside-autocommit`.
+
+Ruff, mypy, Bandit and pylint check none of these shapes.
+
+**Who it is for.** The five lock rules (`index-not-concurrent`, `constraint-without-not-valid`, `column-type-rewrite`,
+`set-not-null-scan`, `missing-lock-timeout`) assume migrations run against a database that serves traffic. A project
+that stops the application to migrate has no lock hazard (jupyterhub's upgrade guide says "Shut down JupyterHub"
+before `upgrade-db`; mealie runs `command.upgrade(alembic_cfg, "head")` in `mealie/db/init_db.py` before its one
+process serves): turn those five off together in its repository settings. The rules cannot see the deployment, so the
+corpus figures below give two precisions: **code** (the file holds the shape the message describes) and
+**actionable** (a reviewer of that repository would ask for the change: not on a database that migrates with the app
+stopped, not a no-op).
+
+Each rule reads the repository's Python files through the pack's library [`rules/lib/alembic.rerail`](rules/lib/alembic.rerail),
+which resolves what it reads rather than matching spellings: `op.*` and `batch_op.*` operations through `from alembic
+import op`; the table each acts on (a literal, `op.f(...)` or a module constant); the tables the same `upgrade()`
+creates or empties; project helpers that forward a table to an operation (one call deep, across modules); flags by
+value (`postgresql_concurrently=CONCURRENT` with `CONCURRENT = True`, imported too); types by the SQLAlchemy class they
+resolve to (aliases, TypeDecorators, subclasses, functions that return a type); dialect tests by their structure
+(comparisons with a database name, `isinstance` on SQLAlchemy dialect classes, `not`/`and`/`or`, test functions of the
+run); `autocommit_block()` regions; SQLAlchemy and sqlmodel model classes with their columns; revision ids; env.py and
+the module it imports its engine from.
 
 Each rule is proven three ways: by its cases in `cases/<id>/`, where a line ending in `# caught` must be reported and no
 other line may be (`rerail rules test <file>.rerail`, which reads the case directory as one repository); by a run on the
 8 open-source repositories of the corpus that use Alembic ([the corpus](#the-corpus)), whose matches were read and judged
-real or not (every match, or a spread sample covering every repository); and by an independent review
-([REVIEW-alembic.md](REVIEW-alembic.md)). A match is real when the file holds the pattern, even when the table is small
-enough that the lock is harmless there. A rule starts on only when at least 90% of its read matches were real.
+(every match, or a spread sample covering every repository); and by an independent review
+([REVIEW-alembic.md](REVIEW-alembic.md)), whose findings were applied (its "Applied" section). A rule starts on only
+when at least 90% of its read matches were code-real; actionable precision is given beside it, and for the lock rules
+it drops for the projects that migrate with the app stopped.
 
-| Rule | Mode | Catches | Matches (repos) on 8 repositories | Precision of read matches |
-|---|---|---|---|---|
-| `alembic-practice-index-not-concurrent` | Steer | an index or unique constraint built on an existing table without CONCURRENTLY | 296 (6) | 100% (296 of 296) |
-| `alembic-practice-concurrent-index-outside-autocommit` | Steer | `postgresql_concurrently=True` run inside the migration's transaction, outside `autocommit_block()` | 0 (0 of 7 run) | no matches; 224 wrapped concurrent calls left alone |
-| `alembic-practice-not-null-without-server-default` | Steer | a NOT NULL column added to an existing table with no `server_default` (and `default=` mistaken for one) | 13 (3) | 100% (13 of 13) |
-| `alembic-practice-drop-mapped-column` | Steer | a column or table dropped or renamed while a model in the repository still maps it | 0 (0) | no matches at release commits |
-| `alembic-practice-constraint-without-not-valid` | Steer | a foreign key or CHECK added to an existing table without `postgresql_not_valid=True` | 221 (8) | 100% (221 of 221) |
-| `alembic-practice-column-type-rewrite` | Steer | a column type change that rewrites or scans the table (widenings left alone) | 34 (6) | 100% (34 of 34) |
-| `alembic-practice-set-not-null-scan` | Log | `alter_column(nullable=False)` on an existing table: a full scan under ACCESS EXCLUSIVE | 77 (6) | 96% (74 of 77) |
-| `alembic-practice-missing-lock-timeout` | Log | a revision that takes a write-blocking lock on an existing table while neither it nor its env.py sets lock_timeout | 579 (8) | 100% of 220 read hold the pattern; 70% (155) where a lock queue can form (jupyterhub and mealie migrate with no traffic) |
-| `alembic-practice-multiple-heads` | Steer | two revisions that fork one migration tree with no merge revision: `alembic upgrade head` refuses to run | 0 (0) | no matches at release commits |
-| `alembic-practice-rename-as-drop-add` | Log, starts off | one upgrade that drops a column and adds one of the same type on the same table with no data copy: a rename autogenerate rendered as drop and add | 2 (1) | 50% (1 of 2) |
-| `alembic-practice-model-import-in-migration` | Steer | a migration that imports an application ORM model instead of declaring the table it needs | 13 (4) | 100% (13 of 13) |
-| `alembic-practice-empty-downgrade` | Log | a downgrade() that is only pass while upgrade() changes the schema, in a tree whose other revisions implement downgrade | 3 (2) | 100% (3 of 3) |
+Figures are after the review's fixes (runs `alembic-fix-*`), on the 8 Alembic repositories; "read" is every match or
+the spread sample the rule's details name.
 
-Matches are the engine's findings, every one read unless the rule's details say a spread sample was read. Each rule
-details its gaps and the shapes it leaves alone below. Rules in Log mode record matches without steering the agent;
-the details give the reason.
+| Rule | Mode | Catches | Matches (repos) | Code precision (read) | Actionable (read) |
+|---|---|---|---|---|---|
+| `alembic-practice-index-not-concurrent` | Steer | an index, unique constraint or primary key built on an existing table without CONCURRENTLY (also through `add_column(unique=/index=True)` and project helpers), once per table | 242 (7) | 100% (99 of 99) | 84% (83 of 99); 100% outside mealie |
+| `alembic-practice-concurrent-index-outside-autocommit` | Steer | a concurrent index build or drop run inside the migration's transaction | 0 (0) | no matches; 224 wrapped concurrent calls left alone | n/a |
+| `alembic-practice-not-null-without-server-default` | Steer | a NOT NULL column added to an existing table with no `server_default` (and `default=` mistaken for one) | 13 (3) | 100% (13 of 13) | 100% deploying main; 4 of 13 tag to tag |
+| `alembic-practice-drop-mapped-column` | Steer | a column or table dropped or renamed while a model of the migration's own tree still maps it | 0 (0) | no matches at release commits | n/a |
+| `alembic-practice-constraint-without-not-valid` | Steer | a foreign key or CHECK added validated to an existing table (also through `add_column`) | 223 (8) | 100% (67 of 67) | 63% (42 of 67); 76% outside jupyterhub and mealie |
+| `alembic-practice-column-type-rewrite` | Steer | a column type change that rewrites or scans the table (widenings and same-type spellings left alone) | 34 (6) | 100% (34 of 34) | 94% (32 of 34) |
+| `alembic-practice-set-not-null-scan` | Log | `alter_column(nullable=False)` on an existing table not proven NOT NULL by a validated check | 77 (6) | 95% (53 of 56) | 89% (50 of 56) |
+| `alembic-practice-missing-lock-timeout` | Log | a migration tree whose connection has no lock_timeout (once, at env.py), or a revision that slips in a tree that sets it per revision | 11 (8) | 100% (11 of 11) | 73% (8 of 11) |
+| `alembic-practice-multiple-heads` | Steer | revisions that leave one migration directory with two heads: `alembic upgrade head` refuses to run | 0 (0) | no matches at release commits | n/a |
+| `alembic-practice-rename-as-drop-add` | Log, starts off | one upgrade that drops a column and adds one of the same type on the same table with no data copy | 2 (1) | 50% (1 of 2) | 50% |
+| `alembic-practice-model-import-in-migration` | Steer | a migration that imports an application ORM model instead of declaring the table it needs | 13 (4) | 100% (13 of 13) | 100% |
+| `alembic-practice-empty-downgrade` | Log | a downgrade() that does nothing while upgrade() changes the schema, in a tree whose other revisions implement downgrade | 3 (2) | 100% (3 of 3) | 100% |
+
+Each rule details its gaps and the shapes it leaves alone below. Rules in Log mode record matches without steering
+the agent; the details give the reason.
 
 ## Starting values
 
-11 of 12 rules start on: 8 steer and 3 log. `set-not-null-scan` logs because about half its matches are on tables
-that stay small and the safe path spans several revisions; `missing-lock-timeout` logs because 7 of the 8 repositories
-never set `lock_timeout`, so it matches nearly every migration there, and whether a lock queue can form depends on how
-the project deploys (jupyterhub and mealie migrate with no traffic); `empty-downgrade` logs on a sample of 3.
-`rename-as-drop-add` starts off (`"on": false`): one of its two corpus matches was a deliberate replacement, below the
-90% bar. Three rules have no corpus matches by design (`concurrent-index-outside-autocommit`, `drop-mapped-column`,
+11 of 12 rules start on: 8 steer and 3 log, as the review proposed. `set-not-null-scan` logs because about half its
+matches are on tables that stay small and the safe path spans two deploys; `missing-lock-timeout` logs because its
+finding is one decision per tree, which two of the eight repositories make on purpose (they migrate with no traffic);
+`empty-downgrade` logs on a sample of 3. `rename-as-drop-add` starts off (`"on": false`): one of its two corpus matches
+was a deliberate replacement, below the 90% bar. `index-not-concurrent` and `constraint-without-not-valid` steer
+although their actionable precision is under 90%: the misses are projects that migrate with the app stopped (turn the
+five lock rules off there) and tables created earlier in the same release, and following the steer costs little on a
+small table. Three rules have no corpus matches by design (`concurrent-index-outside-autocommit`, `drop-mapped-column`,
 `multiple-heads`): at a release commit every repository already gets these right, and the bug exists only between
 writing a migration and finishing the change, which is when Rerail checks an edit. Each was proven by an edit-window
 test on a copy of a corpus repository (see its details).
@@ -76,84 +104,82 @@ migration directory where a rule reads one revision at a time; each rule's detai
 
 ### `alembic-practice-index-not-concurrent`
 
-Rerail's own rule, not a port. In an Alembic revision's `upgrade()` (or a module-level function of the same file that
-`upgrade()` calls), it reports an index built on a table that already holds rows without `postgresql_concurrently=True`:
+Rerail's own rule, not a port. A plain `CREATE INDEX` "locks out writes (but not reads) on the table until it's done",
+and ADD CONSTRAINT ... UNIQUE or PRIMARY KEY builds the same index under the same or a stronger lock. In an Alembic
+revision's `upgrade()` (or a module-level function it calls), on a table `upgrade()` neither creates nor empties, it
+reports, once per table and kind (the first operation, with a count in the message):
 
-- `op.create_index(...)` and `batch_op.create_index(...)` on the handle of `with op.batch_alter_table("t") as batch_op:`,
-  with or without `unique=True`, with the table given positionally, as `table_name=`, through `op.f("...")` or as a
-  module constant; `postgresql_concurrently=False` counts as missing.
-- `op.create_unique_constraint(...)` and `batch_op.create_unique_constraint(...)`: ADD CONSTRAINT ... UNIQUE builds its
-  index under the same lock. This match has its own message: build the unique index concurrently, then attach it with
-  `ALTER TABLE ... ADD CONSTRAINT ... UNIQUE USING INDEX ...` if a constraint is needed.
+- `op.create_index(...)` and `batch_op.create_index(...)` without `postgresql_concurrently` on (read by value:
+  `postgresql_concurrently=OFF` with `OFF = False` counts as off), with the table given positionally, as
+  `table_name=`, through `op.f("...")` or as a module constant;
+- `op.create_unique_constraint(...)` and the batch form, with its own message: build the unique index concurrently, then
+  add the constraint `USING INDEX`;
+- `op.add_column(t, sa.Column(..., unique=True))` and `index=True`: Alembic 1.20 emits `ALTER TABLE t ADD UNIQUE (c)`
+  and `CREATE INDEX ix_t_c ON t (c)` after the ADD COLUMN (checked with its offline render, although its docs say
+  these are ignored), each with its own message;
+- `op.create_primary_key(...)`, with the fix: build a unique index concurrently, then `ADD CONSTRAINT ... PRIMARY KEY
+  USING INDEX`;
+- a call of a project helper, in another module (through its import) or the same file, whose `op.create_index` takes
+  the table from a parameter: superset's `superset.migrations.shared.utils.create_index(table, name, columns)`, which
+  most of its recent revisions use, reported at the call.
 
-A table "already holds rows" when the same `upgrade()` does not create it: not with `op.create_table("t", ...)`
-(in any branch, a dialect branch included) and not with a project's own `create_table("t", ...)` wrapper (superset's
-`superset.migrations.shared.utils.create_table`). Both messages name the two parts of the fix and their cost:
-`autocommit_block()` commits whatever the migration ran before it, so the index belongs in its own revision or after
-the transactional steps; a concurrent build that fails leaves an INVALID index, so drop it first with
-`op.drop_index(..., if_exists=True, postgresql_concurrently=True)`, as polarsource/polar's
-`server/migrations/versions/2026-07-08-1636_add_index_on_files_path.py` does. Both say when to leave the code alone: a
-table known to stay small.
+The messages name the fix (`postgresql_concurrently=True` inside an autocommit block, which commits the steps before
+it) and when to leave the code alone: a table known to stay small. `postgresql_concurrently` is ignored on SQLite and
+MySQL, so the fix is safe for projects that also run there (mealie, dify, open-webui, superset).
 
-It leaves alone: indexes on a table the same `upgrade()` creates; `postgresql_concurrently=True` or any expression
-other than a literal `False` (whether a concurrent build sits inside `autocommit_block()` is
-`alembic-practice-concurrent-index-outside-autocommit`'s concern); code in a branch that runs only on another database
-(the else of `if _is_pg(conn):` / `if dialect.name == "postgresql":`, the body of `if dialect.name == "sqlite":` or
-`!= "postgresql"`, the else of `if not isinstance(bind.dialect, SQLiteDialect):`; dialect classes count, case aside),
-and code after an early-return guard that leaves only another database (`if not _is_mysql(): return`, dify's
-`3edd6cd27f54`); `downgrade()`; revisions under `tests/`; files without module-level `revision` and
-`down_revision`; an `op` that is not `alembic.op`. `postgresql_concurrently` is ignored on SQLite and MySQL, so the fix
-is safe for projects that also run there (mealie, dify, open-webui, superset).
+It leaves alone: indexes on a table the same `upgrade()` creates (`op.create_table` in any branch, a project's own
+`create_table("t", ...)` wrapper, or `op.execute("CREATE TABLE t ...")`) or empties first; `postgresql_concurrently`
+on (whether the call sits inside `autocommit_block()` is `concurrent-index-outside-autocommit`'s concern); code in a
+branch that runs only on another database, read by the test's structure (the else of `if _is_pg(conn):`, the body of
+`if dialect_name in ("sqlite", "mysql"):`, the else of `if not isinstance(bind.dialect, SQLiteDialect):`, code after
+`if not _is_mysql(): return`, a test function imported from another module); `downgrade()`; revisions under
+`tests/`; files without module-level `revision` and `down_revision`; an `op` that is not `alembic.op`. A test that
+only mentions a database name (`if not settings.USE_SQLITE_FOR_TESTS:`) is no dialect branch.
 
-**Gaps:** `downgrade()` (a rollback re-creates indexes on the rare path); a table name the rule cannot resolve (a
-function parameter, an f-string); a table created by an earlier revision of the same release, or by
-`op.execute("CREATE TABLE ...")`, counts as existing; index helpers in another module (superset's
-`migrations.shared.utils.create_index(table, name, columns)`, which most of its recent revisions use, is not followed);
-the size of a table is not known, so the message says when to leave it.
+**Gaps:** `downgrade()` (a rollback re-creates indexes on the rare path); helpers two calls deep; raw
+`op.execute("CREATE INDEX ...")` and `sa.Index(...).create(bind)`; a plain `DROP INDEX` (ACCESS EXCLUSIVE too; not
+reported); a table created by an earlier revision of the same release counts as existing; a project that runs only on
+SQLite (its `alembic.ini` URL is not read); the size of a table is not known, so the message says when to leave it.
 
-**Corpus** (BRIEF commits; a match is real when the file builds that index on a table that already exists):
+**Corpus** (BRIEF commits; polar, dify and superset on the review's trimmed copies; runs `alembic-fix-mine-*`):
 
-| Repository | Commit | Matches | Real |
-|---|---|--:|--:|
-| fastapi/full-stack-fastapi-template | 77e550a | 0 (its one index is on a table the same `upgrade()` creates) | – |
-| jupyterhub/jupyterhub | 3ca3744 | 0 (no index operations) | – |
-| Netflix/dispatch | dd2837e | 5 (3 index, 2 unique) | 5 |
-| open-webui/open-webui | 0666e59 | 29 (27 index, 2 unique) | 29 |
-| polarsource/polar | 872272f | 17 (11 index, 6 unique) | 17 |
-| mealie-recipes/mealie | 8dbb928 | 151 (136 index, 15 unique) | 151 |
-| langgenius/dify | 724ac15 | 73 (63 index, 10 unique) | 73 |
-| apache/superset | fdf6172 | 21 (5 index, 16 unique) | 21 |
-| Total | | 296 | 296 |
+| Repository | Commit | Before the review's fixes | After | Change |
+|---|---|--:|--:|---|
+| fastapi/full-stack-fastapi-template | 77e550a | 0 | 2 | `create_primary_key` on `user` and `item` (`d98dd8ec85a3:51,52`) |
+| jupyterhub/jupyterhub | 3ca3744 | 0 | 0 | |
+| Netflix/dispatch | dd2837e | 5 | 5 | |
+| open-webui/open-webui | 0666e59 | 29 | 21 | grouped per table; a `batch_op.create_primary_key` on `tag` (`3ab32c4b8f59:45`) added |
+| polarsource/polar | 872272f | 17 | 15 | grouped per table |
+| mealie-recipes/mealie | 8dbb928 | 151 | 96 | grouped per table (the 97-index revision `ff5f73b01a7a` no longer gives 97) |
+| langgenius/dify | 724ac15 | 73 | 64 | grouped per table |
+| apache/superset | fdf6172 | 21 | 39 | 18 calls of the shared `create_index` helper added |
+| Total | | 296 | 242 | |
 
-Every match was read (grouped by file: the whole `upgrade()`, the tables it creates, renames or reflects, and its
-dialect branches). The first runs had 311 matches; three false-positive shapes were fixed and added to the cases:
-superset's own `create_table(...)` wrapper (13 matches on tables the same revision creates), superset's
-`if not isinstance(bind.dialect, SQLiteDialect): ... else:` (1 match in the SQLite-only branch of `c878781977c6`), and
-dify's `if not _is_mysql(): return` guard (1 match on MySQL-only code).
+Read: the review's sample of 78 (every repository) and all 21 new matches. Code precision 99 of 99. Actionable: 83 of
+99 (84%); every read match outside mealie (83 of 83) is one a reviewer would ask for, and mealie's migrate before it
+serves. The 21 new matches build indexes or keys on tables created by earlier revisions: superset's `logs`, `query`,
+`report_execution_log`, `dashboard_slices_version`, `tasks`, `version_transaction` and configuration tables
+(`2026-07-28_09-00_e7d93a524ff6_add_purge_audit_log.py:77` indexes `dashboard_slices_version` and leaves the
+`purge_audit_log` it creates alone), the template's primary keys, open-webui's `tag` key.
 
 Real matches, for example: open-webui `backend/open_webui/migrations/versions/9f6c2a8d1b43_add_channel_lookup_indexes.py`
-(three plain indexes on `message`), `d4c1a8e37b62_add_chat_timer_at_and_chat_indexes.py` (five on `chat`); dify
-`api/migrations/versions/2026_01_09_1630-905527cc8fd3_add_workflow_run_created_at_id_idx.py` (`workflow_runs`),
-`2026_02_26_1336-e288952f2994_add_partial_indexes_on_conversations_.py` (`conversations`); polar
-`server/migrations/versions/2026-07-06-1024_add_subscription_pause_columns.py` (two indexes on `subscriptions`, whose
-own comment counts about 282K rows) and the six `2026-09-17-165x_*_token_v2.py` revisions (`create_unique_constraint` on
-session and token tables); dispatch `src/dispatch/database/revisions/tenant/versions/2023-10-23_f2605bfc1f59.py` (a GIN
-index on `signal_instance`); superset `superset/migrations/versions/2019-07-11_19-02_def97f26fdfb_add_index_to_tagged_object.py`.
-Harmless in context, though real: polar's matches on small tables (`oauth2_clients`, `backoffice_users`,
-`organization_emails`, created two revisions earlier) run under `SET LOCAL lock_timeout = '5s'`, and polar uses the
-concurrent form where a table is large; mealie is self-hosted, and its 97-index revision `ff5f73b01a7a` runs on small
-databases. The message's "fine for a table that stays small" covers these.
+(`message`), `d4c1a8e37b62_add_chat_timer_at_and_chat_indexes.py` (`chat`); dify
+`api/migrations/versions/2026_01_12_1729-3334862ee907_feat_add_created_at_id_index_to_messages.py` (`messages`);
+polar `server/migrations/versions/2026-07-06-1024_add_subscription_pause_columns.py` (`subscriptions`, about 282K
+rows); dispatch `src/dispatch/database/revisions/tenant/versions/2023-10-23_f2605bfc1f59.py` (a GIN index on
+`signal_instance`); superset `2017-01-24_12-40_f18570e03440_add_query_result_key_index.py` (`query`). Real but cheap:
+superset's configuration tables, polar's small tables under `SET LOCAL lock_timeout = '5s'`; the message's "fine for a
+small table" covers them.
 
 **Sources:** PostgreSQL, [CREATE INDEX](https://www.postgresql.org/docs/current/sql-createindex.html) ("locks out
 writes (but not reads) on the table until it's done"; CONCURRENTLY cannot run in a transaction block; a failed
 concurrent build leaves an INVALID index); Alembic,
-[`MigrationContext.autocommit_block`](https://alembic.sqlalchemy.org/en/latest/api/runtime.html); Squawk
+[`MigrationContext.autocommit_block`](https://alembic.sqlalchemy.org/en/latest/api/runtime.html) and
+[`add_column`](https://alembic.sqlalchemy.org/en/latest/ops.html); Squawk
 [require-concurrent-index-creation](https://squawkhq.com/docs/require-concurrent-index-creation) and
-[disallowed-unique-constraint](https://squawkhq.com/docs/disallowed-unique-constraint) (SQL files only);
+[disallowed-unique-constraint](https://squawkhq.com/docs/disallowed-unique-constraint);
 [strong_migrations](https://github.com/ankane/strong_migrations) "Adding an index non-concurrently" and "Adding a unique
-constraint"; django-migration-linter CREATE_INDEX and ADD_UNIQUE (Django only). No Ruff or Bandit rule reads Alembic
-operations; this rule adds what Squawk cannot see in Python: the tables the same revision creates, and the table of a
-`batch_alter_table` block.
+constraint"; django-migration-linter CREATE_INDEX and ADD_UNIQUE (Django only).
 
 ### `alembic-practice-concurrent-index-outside-autocommit`
 
@@ -169,28 +195,32 @@ outside an autocommit block, it reports:
   one in PostgreSQL's own branch of a dialect test.
 
 The message names the fix, `with op.get_context().autocommit_block():` around the call, and its cost: the block first
-commits what the revision ran before it, so concurrent index work belongs in its own revision or after the other
-steps. This rule also guards the steer of `alembic-practice-index-not-concurrent`: an agent told to build an index
-concurrently often adds only the keyword.
+commits what the revision ran before it, so the concurrent work goes last. This rule also guards the steer of
+`alembic-practice-index-not-concurrent`: an agent told to build an index concurrently often adds only the keyword.
+
+`postgresql_concurrently` is read by value: the literal `True`, or a module constant of the same file or one imported
+from another module (`postgresql_concurrently=CONCURRENT`).
 
 It leaves alone: calls inside `with <ctx>.autocommit_block():` at any depth (an `if` or a `batch_alter_table` in it,
-a helper called from it, a MigrationContext held in a local); `postgresql_concurrently=False`, absent, or any
-expression other than a literal `True`; code in a branch that runs only on another database (the else of
-`if _is_pg(conn):` / `if dialect.name == "postgresql":`, the body of `if dialect.name == "sqlite":`); revisions under
-`tests/`; files without module-level `revision` and `down_revision`; an `op` that is not `alembic.op`.
+a helper called from it, a MigrationContext held in a local); `postgresql_concurrently` False, absent, or an
+expression the rule cannot evaluate; code in a branch that runs only on another database (read by the test's
+structure, lib/alembic's `al_non_pg`); revisions under `tests/`; files without module-level `revision` and
+`down_revision`; an `op` that is not `alembic.op`.
 
-**Across files.** An `env.py` whose `context.configure(...)` passes `transactional_ddl=False` runs its revisions
-without a transaction, so CONCURRENTLY works as written: the rule reports nothing in the revisions under that env.py's
-directory, nor in revisions under no env.py's directory of the run when such an env.py exists. Other Alembic trees of
-the same repository, with their own env.py, are still read (a repository can hold several: Netflix/dispatch's core
-and tenant schemas). `transaction_per_migration=True` still opens a transaction per revision: still reported.
+**Across files.** An env.py that runs its revisions with no transaction around them makes CONCURRENTLY work as
+written: `context.configure(..., transactional_ddl=False)` (by value), or an engine or connection with
+`isolation_level="AUTOCOMMIT"` set in env.py or in the module env.py imports it from (`from app.db import engine`).
+The rule reports nothing in the revisions under that env.py's directory, nor in revisions under no env.py's directory
+of the run when such an env.py exists. Other Alembic trees of the same repository, with their own env.py, are still
+read (Netflix/dispatch's core and tenant schemas). `transaction_per_migration=True` still opens a transaction per
+revision: still reported.
 
 **Gaps:** raw SQL (`op.execute("CREATE INDEX CONCURRENTLY ...")`) is not read (Squawk reads SQL); the old
 `op.execute("COMMIT")` workaround is not recognised (none in the corpus); helpers in another module, or two calls
-deep, are not followed; an env.py outside the run, or `transactional_ddl` set through a variable or a `**kwargs`
-dict (superset's env.py sets it that way, for SQLite and MySQL only), is not seen.
+deep, are not followed; an env.py outside the run, or `transactional_ddl` passed through a `**kwargs` dict
+(superset's env.py, for SQLite and MySQL only), is not seen.
 
-**Corpus** (BRIEF commits):
+**Corpus** (BRIEF commits; polar and superset on the review's trimmed copies):
 
 | Repository | Commit | Concurrent index calls | Inside an autocommit block | Matches |
 |---|---|--:|--:|--:|
@@ -201,15 +231,15 @@ dict (superset's env.py sets it that way, for SQLite and MySQL only), is not see
 | Netflix/dispatch | dd2837e | 0 | – | 0 |
 | polarsource/polar | 872272f | 213 | 211, and 2 in helpers called only from inside one | 0 |
 | langgenius/dify | 724ac15 | 11 | 11 | 0 |
+| apache/superset | fdf6172 | 0 | – | 0 |
 
-No match, so no precision to measure: every repository that uses concurrent index operations wraps them, which is
-the practice the rule enforces. A probe of the same logic over polar's and dify's migration directories saw all 213
-and 11 concurrent calls (the rule reads them) and kept every one silent. polar's
+No match before or after the review's fixes, so no precision to measure: every repository that uses concurrent index
+operations wraps them, which is the practice the rule enforces. polar's
 `server/migrations/versions/2026-11-12-1405_add_manual_benefit_grant_timestamps.py` is the shape that needs the
 helper reading: its `_create_index` and `_drop_index` call `op.create_index(..., postgresql_concurrently=True)`
-outside any `with`, and `upgrade()` and `downgrade()` call them only inside `autocommit_block()`; a reading by step
-alone would have reported both. superset (fdf6172) was not run: a Python `ast` survey finds no concurrent index call
-in it, and its env.py sets `transactional_ddl` through a kwargs dict, for SQLite and MySQL only.
+outside any `with`, and `upgrade()` and `downgrade()` call them only inside `autocommit_block()`. The review's
+edit-window test on a copy of the template (a new revision with both calls in `upgrade()` and `downgrade()`) reports
+both lines, and the wrapped version is silent.
 
 **Sources:** PostgreSQL, [CREATE INDEX](https://www.postgresql.org/docs/current/sql-createindex.html) ("a regular
 CREATE INDEX command can be performed within a transaction block, but CREATE INDEX CONCURRENTLY cannot") and
@@ -230,24 +260,24 @@ never reaches the database; only `server_default=` fills the existing rows.
 
 It matches, in `upgrade()` of an Alembic revision (or a module-level helper `upgrade()` calls), `op.add_column(t,
 sa.Column(...))` and `batch_op.add_column(sa.Column(...))` inside `with op.batch_alter_table(t) as batch_op:`
-(positional or `table_name=`/`column=` keywords), on a table `upgrade()` does not create, where the Column passes
-`nullable=False` or `primary_key=True` and no `server_default` (or `server_default=None`). A Column with `default=`
-gets the second message, which explains that `default=` is Python-side only. `sa.Column` and a bare `Column` resolve
-through imports (`sqlalchemy.Column`, `sqlalchemy.schema.Column`, `sqlmodel.Column`).
+(positional or `table_name=`/`column=` keywords, or a Column bound to a name first), on a table `upgrade()` neither
+creates nor empties, where the Column is NOT NULL (`nullable=False`, or `primary_key=True` on a type that gets no
+SERIAL) and passes no `server_default` (or `server_default=None`). Flags are read by value (a module constant counts),
+and types by the class they resolve to. A Column with `default=` gets the second message, which explains that
+`default=` is Python-side only. The first message names `server_default=` first; its other route, a nullable column
+made NOT NULL in a later revision, is the one `set-not-null-scan` then checks.
 
 It leaves alone: any `server_default=` value (`""`, `"0"`, `sa.text(...)`, `sa.false()`); nullable columns (omitted or
-`nullable=True`), including the add-nullable, backfill, `alter_column(..., nullable=False)` sequence; tables the same
-`upgrade()` creates; the branch of a dialect test that runs only on another database (`else:` of dify's `if
-_is_pg(conn):`, the body of `if dialect.name == "sqlite":`; MySQL fills a NOT NULL column with an implicit default);
-generated columns (`sa.Computed(...)`, `sa.Identity(...)`); an integer `primary_key=True` column without
-`autoincrement=False`, which SQLAlchemy renders as `SERIAL`/`BIGSERIAL` on PostgreSQL (checked with Alembic's offline
-SQL: `ADD COLUMN id2 SERIAL NOT NULL`), so the sequence numbers the existing rows; `downgrade()`; test files; files
-that are not Alembic revisions; an `op` that is not `alembic.op`.
+`nullable=True`); tables the same `upgrade()` creates, or empties first (`DELETE FROM t` without WHERE, TRUNCATE); the
+branch of a dialect test that runs only on another database (`else:` of dify's `if _is_pg(conn):`; MySQL fills a NOT
+NULL column with an implicit default); generated columns (`sa.Computed(...)`, `sa.Identity(...)`); an integer
+`primary_key=True` column without `autoincrement=False`, however its type is spelled (`sa.BigInteger`, `BigInt =
+sa.BigInteger`, `from sqlalchemy import Integer as Int`), which SQLAlchemy renders as `SERIAL`/`BIGSERIAL` on
+PostgreSQL (Alembic's offline SQL: `ADD COLUMN id2 SERIAL NOT NULL`), so the sequence numbers the existing rows;
+`downgrade()`; test files; files that are not Alembic revisions; an `op` that is not `alembic.op`.
 
-**Gaps:** a Column built into a variable before `add_column`; `nullable=` given as an expression; a table created by
-an earlier revision that no database has run yet is still empty, but is reported (the message says the column is
-safe as written only when no database that runs the migration can hold rows in the table). On MySQL before 8.0.13 a
-TEXT/BLOB/JSON column takes no server default; the `default=` message names the nullable-backfill route for that case.
+**Gaps:** `nullable=` given as an expression the rule cannot evaluate; a table created by an earlier revision that no
+database has run yet is still empty, but is reported (the message says when the column is fine as written).
 
 **Sources:** Squawk, [adding-required-field](https://squawkhq.com/docs/adding-required-field) ("will fail
 immediately upon running for any populated table"); Alembic, [`add_column`](https://alembic.sqlalchemy.org/en/latest/ops.html)
@@ -259,9 +289,9 @@ NOT_NULL check, which calls the framework-default-is-a-database-default belief a
 before any SQL exists: the Column's keywords (`default=` against `server_default=`), the dialect branch, and which
 tables the same `upgrade()` creates.
 
-**Corpus:** 13 matches in the 8 Alembic repositories, every one read; the same 13 as an independent Python `ast`
-survey of every `upgrade()`. The 6 dify `else:` branches of `if _is_pg(conn):` that pass only `default=` (e.g.
-`api/migrations/versions/2024_08_13_0633-63a83fcf12ba_support_conversation_variables.py:58`) are left alone.
+**Corpus:** after the review's fixes, the same 13 matches as before them, in the 8 Alembic repositories (runs
+`alembic-fix-mine-*`), every one read. The 6 dify `else:` branches of `if _is_pg(conn):` that pass only `default=`
+(e.g. `api/migrations/versions/2024_08_13_0633-63a83fcf12ba_support_conversation_variables.py:58`) are left alone.
 
 | Repository | Commit | Matches | Real |
 |---|---|--:|--:|
@@ -286,30 +316,37 @@ dify's 9 (`00bacef91f18`, `161cadc1af8d`, `714aafe25d39` ×2, `8ec536f3c800`, `a
 shipped in the same dify release (0.3.34, 0.5.0, 0.6.14, 1.15.0, checked against the release tags). An install that
 upgrades from tag to tag had no rows there yet; the DDL fails on any database that ran the earlier revision and got
 rows (a deployment of the main branch, a development database with data). `161cadc1af8d` shows the intent it
-missed: its comment says "Step 1: Add column without NOT NULL constraint" above `nullable=False`. Precision: 13 of 13
-by the code, 4 of 13 counting only tag-to-tag upgrades.
+missed: its comment says "Step 1: Add column without NOT NULL constraint" above `nullable=False`. Precision: code 13 of
+13; actionable 13 of 13 for a team that deploys main, 4 of 13 counting only tag-to-tag upgrades. The fix
+(`server_default=`) is safe either way, so the rule steers.
 
 ### `alembic-practice-drop-mapped-column`
 
-Rerail's own rule, not a port. It reads a migration against the application's models: in `upgrade()` (or a
+Rerail's own rule, not a port. It checks that a migration and its own tree's models agree: in `upgrade()` (or a
 module-level helper it calls by name) of an Alembic revision outside test code, it reports
 
 - `op.drop_column("users", "nick")` / `batch_op.drop_column("nick")` (table from `op.batch_alter_table("users")`) while
-  a model still maps `users.nick`;
-- `op.alter_column("users", "nick", new_column_name="handle")` (or the batch form) while a model still maps `nick`;
-- `op.drop_table("users")` / `op.rename_table("users", "people")` while a model still maps `users`.
+  a model of the migration's tree still maps `users.nick`;
+- `op.alter_column("users", "nick", new_column_name="handle")` (or the batch form) while such a model still maps `nick`;
+- `op.drop_table("users")` / `op.rename_table("users", "people")` while such a model still maps `users`.
+
+**The tree's models.** A migration sees only the models of the application its env.py runs: the modules env.py's
+imports reach, transitively (every import form: `import a.b as c`, `from a import b`, star and relative imports, and
+the packages above each module), plus the other modules of each imported package (a models package's `__init__`
+often imports only the base). When that reaches no model, the documents under env.py's top-level directory count. So
+in a monorepo, `accounts/migrations` dropping `users.nick` is silent while only `billing/models.py`, another service
+with its own Alembic tree, maps `users.nick`.
 
 A table name is a literal, `op.f("...")`, or a module constant. A model maps `users` when an application class (not in
-a migration, `env.py` or test file) has `__tablename__ = "users"`, or is a sqlmodel `table=True` class named `User`
-(table `user`). It maps `nick` when it, or a mixin or base class anywhere in the repository, declares `nick =
-Column(...)`, `nick: Mapped[str] = mapped_column(...)`, a bare `nick: Mapped[str]`, a sqlmodel field, a Column whose
-explicit name is `nick` (`Column("nick", ...)`, `mapped_column(..., name="nick")`) under any attribute, or a Column
-wrapped in `deferred(...)`/`column_property(...)`. A `Table("users", metadata, Column("nick", ...))` in application
-code (an association table, or a class's `__table__ = Table(...)`) maps the table and its columns too. The message
-says which of the four it is and names the expand/contract order: stop mapping it and deploy first, drop it in a later
-revision; for a rename, add the new column, write both and backfill, move the model, and drop the old one later. It
-says when to leave it: the model change ships in the same change and the deploy runs migrations only after the new
-code is live, or the app is stopped while migrations run.
+a migration, `env.py` or test file) has `__tablename__ = "users"`, is a sqlmodel `table=True` class named `User`
+(table `user`), or maps a `__table__ = Table("users", ...)` (inline, a module-level name, or one imported from another
+module). It maps `nick` when it, or a mixin or base class, declares `nick = Column(...)`, `nick: Mapped[str] =
+mapped_column(...)`, a bare `nick: Mapped[str]`, a sqlmodel field, a Column whose explicit name is `nick`, or a Column
+wrapped in `deferred(...)`/`column_property(...)`, and its mapper does not leave it out: `__mapper_args__`'s
+`exclude_properties` and `include_properties` are honoured (a dict display or `dict(...)`, strings or Column objects,
+inherited from bases as Python looks them up). A Table no class maps counts in full. The messages say what the rule
+checks: a model still maps what the upgrade removes, so remove the attribute or model (ship that first if migrations
+run before the new code is live), or keep the column.
 
 It leaves alone:
 
@@ -327,11 +364,11 @@ It leaves alone:
 - `downgrade()`; migrations in test trees; models in test files; a model class declared inside a migration file.
 
 **Gaps:** a `__tablename__` computed by `declared_attr` (Netflix/dispatch derives every table name from the class name,
-so the rule sees none of its models); imperative mappings (`registry.map_imperatively`); a table or column named by a
-loop variable or other non-literal expression (superset's composite-PK migration drops association tables from a
-loop); `schema=` (a model of another schema with the same table name still counts); a model that maps a column only
-through `__table_args__` or reflection; a mixin from an installed library (authlib's `OAuth2ClientMixin`) is outside
-the run, so its columns are not known to be mapped; a re-add by a revision whose `down_revision` is not a literal.
+so the rule sees none of its models); Flask-SQLAlchemy `db.Model` subclasses without `__tablename__` (the table name
+is generated); imperative mappings (`registry.map_imperatively`); a table or column named by a loop variable or other
+non-literal expression; `schema=`; a model that maps a column only through `__table_args__` or reflection; a mixin
+from an installed library; a re-add by a revision whose `down_revision` is not a literal; the attribute removed in
+the same change as the drop (the models and the migration then agree, and the rule cannot see the deploy order).
 
 **Sources:** strong_migrations, "Removing a column" and "Renaming a column" (https://github.com/ankane/strong_migrations);
 Squawk ban-drop-column ("Update your application code to no longer read or write the column",
@@ -348,7 +385,7 @@ columns go.
 
 **Corpus** (8 Alembic repositories at the `MANIFEST.tsv` commits; "removals" counts the `drop_column`, `drop_table`,
 `rename_table` and `alter_column` operations in `upgrade()` whose table the rule resolved, from a diagnostic copy of the
-rule):
+rule before the review; the reworked rule was re-run on all 8, runs `alembic-fix-drop-mapped-column-*`):
 
 | Repository | Commit | Removals read | Reported | Silenced as a rebuild | Table not resolved |
 |---|---|--:|--:|--:|--:|
@@ -361,7 +398,11 @@ rule):
 | langgenius/dify | 724ac15 | 112 | 0 | 0 | 0 |
 | apache/superset | fdf6172 | 141 | 0 | 0 | 7 |
 
-0 matches at the heads, as expected: at a release the models and the migrations agree. The bug lives in the window
+0 matches at the heads, before and after the rework, as expected: at a release the models and the migrations agree.
+Tree resolution after the rework: env.py's imports reach every model module of the template, jupyterhub, mealie
+(through `_all_models`' star imports), polar (117 of 118) and dify, and 14 of 15 of dispatch's; superset falls back to
+its top-level directory (its metadata comes through `flask_appbuilder`, outside the run). The review's two
+counterexamples (the monorepo, `exclude_properties`) give 0 findings, down from 2. The bug lives in the window
 between writing the migration and editing the model, which is when Rerail steers. No historical drop of a column that a
 later revision adds back occurs in these repositories (an independent `ast` survey agrees); the descendant exemption is
 proven on the cases only. The first version reported jupyterhub's `api_tokens` reset (harmless: the hub is stopped for
@@ -377,58 +418,67 @@ that declares `__tablename__` or a `Table(...)`), because the shared corpus queu
 ### `alembic-practice-constraint-without-not-valid`
 
 Rerail's own rule, not a port. In an Alembic revision's `upgrade()` (or a module-level function of the same file that
-`upgrade()` calls), it reports a FOREIGN KEY or CHECK constraint added to a table that already holds rows without
-`postgresql_not_valid=True`:
+`upgrade()` calls), it reports a FOREIGN KEY or CHECK constraint added validated to a table that may hold rows (one
+`upgrade()` neither creates nor empties):
 
-- `op.create_foreign_key(...)` whose source table `upgrade()` does not create, with the table given positionally, as
-  `source_table=`, through `op.f("...")` or as a module constant, and `batch_op.create_foreign_key(...)` on the handle
-  of `with op.batch_alter_table("t") as batch_op:`. A source table that exists with a referent table the same
-  `upgrade()` creates is still reported: the existing rows are what the add checks.
-- `op.create_check_constraint(...)` and `batch_op.create_check_constraint(...)` on an existing table.
-- `postgresql_not_valid=False` counts as missing.
+- `op.create_foreign_key(...)` and `batch_op.create_foreign_key(...)`, with the table given positionally, as
+  `source_table=`, through `op.f("...")`, as a module constant, or from the batch. A source table that exists with a
+  referent table the same `upgrade()` creates is still reported: the existing rows are what the add checks.
+- `op.create_check_constraint(...)` and `batch_op.create_check_constraint(...)`.
+- `op.add_column(t, sa.Column(..., sa.ForeignKey(...)))` and an inline `sa.CheckConstraint(...)` in the added Column:
+  Alembic 1.20 renders them as a separate, validated `ALTER TABLE t ADD FOREIGN KEY` / `ADD CHECK` after the ADD COLUMN
+  (offline render). The constraint classes resolve through imports, so `ForeignKey as FK` counts and a project class
+  of the same name does not.
+- `postgresql_not_valid` is read by value: False, or a constant bound to False, counts as missing.
 
 Adding either constraint checks every existing row, and "other updates to the table are locked out until the ALTER
 TABLE ADD CONSTRAINT command is committed"; ADD FOREIGN KEY also takes a SHARE ROW EXCLUSIVE lock on the referenced
 table (PostgreSQL, ALTER TABLE). With NOT VALID the add skips the scan; a later VALIDATE CONSTRAINT scans under SHARE
-UPDATE EXCLUSIVE, which lets writes through. The message names both steps: pass `postgresql_not_valid=True`, then run
-`op.execute("ALTER TABLE <t> VALIDATE CONSTRAINT <name>")` once the add has committed, either inside
-`with op.get_context().autocommit_block():` (which commits the steps before it, polar's pattern in
-`server/migrations/versions/2026-10-15-1418_add_reducer_bucket_billed_at_and_order_id.py`) or in a revision deployed
-later. A later revision in the same `alembic upgrade` run does not help by itself: by default Alembic runs a whole
-upgrade in one transaction, so the ADD's lock would still be held. VALIDATE CONSTRAINT is PostgreSQL SQL, so the
-message says to run it on PostgreSQL only; `postgresql_not_valid` itself is ignored on SQLite and MySQL. The message
-names the constraint when the rule can read it (`<constraint name>` for `None` under a naming convention) and says
-when to leave the code alone: a table known to stay small.
+UPDATE EXCLUSIVE, which lets writes through. The messages name both steps: pass `postgresql_not_valid=True`, then
+VALIDATE the constraint once the add has committed, inside an autocommit block or in a later revision. A foreign key
+on a column the same `upgrade()` adds (dispatch's commonest shape), and a ForeignKey inside an added Column, get the
+cheaper fix: `add_column(..., inline_references=True)` renders the reference inside the ADD COLUMN, which PostgreSQL
+marks valid at once for a nullable column with no default (Alembic's `add_column` docs; not verified here on a
+database). Every message says when to leave the code alone: a table known to stay small.
 
-It leaves alone: constraints on a source table the same `upgrade()` creates (with `op.create_table` in any branch, or a
-project's own `create_table("t", ...)` wrapper, superset's); constraints declared inside `op.create_table(...)`
-(`sa.ForeignKey`, `sa.CheckConstraint`), which are part of CREATE TABLE; `postgresql_not_valid=True` or any expression
-other than a literal `False`; code in a branch that runs only on another database (lib/alembic `al_non_pg`: the else
-of a PostgreSQL test, the body of a SQLite/MySQL test, the else of `if not isinstance(bind.dialect, SQLiteDialect):`,
-code after `if not _is_mysql(): return`); `downgrade()`; revisions under `tests/`; files without module-level
-`revision` and `down_revision`; an `op` that is not `alembic.op`.
+It leaves alone: constraints on a source table the same `upgrade()` creates (with `op.create_table` in any branch, a
+project's own `create_table("t", ...)` wrapper, or `op.execute("CREATE TABLE t ...")`) or empties first; constraints
+declared inside `op.create_table(...)`; `postgresql_not_valid` on, an expression the rule cannot evaluate, or a
+`**kwargs` splat that may carry it; `add_column(..., inline_references=True)`; code in a branch that runs only on
+another database (lib/alembic's structural `al_non_pg`); `downgrade()`; revisions under `tests/`; files without
+module-level `revision` and `down_revision`; an `op` that is not `alembic.op`.
 
 **Gaps:** `downgrade()`; a table name the rule cannot resolve (a loop variable or a function parameter: jupyterhub
 `833da8570507_rbac.py`, superset `2017-10-03_14-37_4736ec66ce19_.py`, polar's `_ensure_foreign_key` helpers); a table
 created by an earlier revision of the same release counts as existing (dify's `knowledge_fs_*` tables, created by
 `2026_07_21_1300-b7f2a9d41c60` and constrained by three revisions the same day); constraints added through
-`op.execute("ALTER TABLE ... ADD CONSTRAINT ...")` or a helper in another module are not read; the size of a table is
+`op.execute("ALTER TABLE ... ADD CONSTRAINT ...")` or a helper in another module are not read; `inline_references=True`
+on a NOT NULL column or one with a default is left alone although PostgreSQL then validates; the size of a table is
 not known, so the message says when to leave it.
 
-**Corpus** (BRIEF commits; each repository's migration directory run with `rerail-engine logic`; a match is real when
-the revision adds that validated constraint to a table an earlier revision created):
+**Corpus** (BRIEF commits; polar, dify and superset on the review's trimmed copies; runs `alembic-fix-mine-*`; a match
+is code-real when the revision adds that validated constraint to a table an earlier revision created):
 
-| Repository | Commit | Matches | Real |
-|---|---|--:|--:|
-| fastapi/full-stack-fastapi-template | 77e550a | 2 FK | 2 |
-| jupyterhub/jupyterhub | 3ca3744 | 2 FK | 2 |
-| mealie-recipes/mealie | 8dbb928 | 10 FK | 10 |
-| open-webui/open-webui | 0666e59 | 2 (1 FK, 1 check) | 2 |
-| Netflix/dispatch | dd2837e | 163 FK | 163 |
-| polarsource/polar | 872272f | 5 FK | 5 |
-| langgenius/dify | 724ac15 | 17 (1 FK, 16 check) | 17 |
-| apache/superset | fdf6172 | 20 (16 FK, 4 check) | 20 |
-| Total | | 221 | 221 |
+| Repository | Commit | Before the review's fixes | After | Code-real (read) | Actionable (read) |
+|---|---|--:|--:|--:|--:|
+| fastapi/full-stack-fastapi-template | 77e550a | 2 FK | 2 | 2 of 2 | 2 |
+| jupyterhub/jupyterhub | 3ca3744 | 2 FK | 2 | 2 of 2 | 0 (Hub stopped for `upgrade-db`) |
+| mealie-recipes/mealie | 8dbb928 | 10 FK | 10 | 10 of 10 | 0 (migrates before serving) |
+| open-webui/open-webui | 0666e59 | 2 (1 FK, 1 check) | 4 | 4 of 4 | 4 |
+| Netflix/dispatch | dd2837e | 163 FK | 163 | 17 of 17 (every 10th) | 17 |
+| polarsource/polar | 872272f | 5 FK | 5 | 5 of 5 | 5 |
+| langgenius/dify | 724ac15 | 17 (1 FK, 16 check) | 17 | 17 of 17 | 4 |
+| apache/superset | fdf6172 | 20 (16 FK, 4 check) | 20 | 10 of 10 (every 2nd) | 10 |
+| Total | | 221 | 223 | 67 of 67 | 42 of 67 (63%) |
+
+The two new matches are open-webui's `add_column` with an inline `sa.ForeignKey(...)` in a batch
+(`81cc2ce44d79_update_channel_file_and_knowledge_table.py:30`, `channel_file.message_id`;
+`b8e4f0a3c752_add_group_hierarchy.py:18`, `group.parent_group_id`), which Alembic renders as a validated ADD FOREIGN
+KEY. Actionable precision is 63% overall and 76% (42 of 55) outside the two repositories that migrate with the app
+stopped, below the 90% bar: dify's 13 CHECKs on `knowledge_fs_*` tables created hours earlier in the same release are
+on empty tables. The rule still steers, as the review proposes: following the message costs little even on an empty
+table, and the commonest corpus shape (an FK on a column the same `upgrade()` adds, dispatch's) now gets the cheaper
+`inline_references=True` fix.
 
 Every match outside dispatch was read in its whole `upgrade()`; in dispatch, each of the 44 files was read for its
 `upgrade()`'s table creations, column additions and constraint operations (93 matches sit in one autogenerated
@@ -445,11 +495,10 @@ Real matches, for example: dispatch `src/dispatch/database/revisions/tenant/vers
 (FKs on `tab_state`); polar `server/migrations/versions/2026-09-14-0902_add_backoffice_users_and_nullable_actor_.py`
 (four FKs on support tables, while polar's later revisions use `postgresql_not_valid=True` plus VALIDATE); open-webui
 `backend/open_webui/migrations/versions/c92da83b017f_add_apps.py` (CHECK on `channel_member`); fastapi template
-`backend/app/alembic/versions/1a31ce608336_add_cascade_delete_relationships.py` (FK on `item`). Harmless in context,
-though real by this definition: dify's 13 checks on `knowledge_fs_*` tables created hours earlier in the same series
-(likely empty when the release deploys), mealie's foreign keys on new all-NULL columns of a self-hosted app's small
-tables, and polar's 5 under `SET LOCAL lock_timeout = '5s'`. Excluding dify's 13, 208 of 221 (94%) are worth the
-change; the message's "fine for a table that stays small" covers the rest.
+`backend/app/alembic/versions/1a31ce608336_add_cascade_delete_relationships.py` (FK on `item`). Code-real but not
+actionable: dify's 13 checks on `knowledge_fs_*` tables created hours earlier in the same series (likely empty when
+the release deploys), and mealie's and jupyterhub's, which migrate with the app stopped. polar's 5 run under
+`SET LOCAL lock_timeout = '5s'` and still scan; the message's "fine for a small table" covers the cheap ones.
 
 **Sources:** PostgreSQL, [ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html) (ADD
 table_constraint NOT VALID, VALIDATE CONSTRAINT's SHARE UPDATE EXCLUSIVE lock, ADD FOREIGN KEY's SHARE ROW EXCLUSIVE
@@ -479,31 +528,36 @@ is no binary coercion either: PostgreSQL re-reads every row against the limit un
   `sa.Float()`/`sa.Numeric()`, `sa.DateTime()` to `sa.BigInteger()` with `postgresql_using=`, `sa.Text()` to
   `sa.JSON()`/`sa.LargeBinary()`, `sa.BOOLEAN()` to `sa.String()`, `Numeric(10, 2)` to `Numeric(12, 4)`): add a new
   column of the new type, backfill it in batches, switch reads and writes, then drop the old column;
-- a length limit added or shrunk: keep the column's type and add `CHECK (char_length(c) <= n) NOT VALID`, then
-  `VALIDATE CONSTRAINT` later, or go through a new column.
+- a length limit added or shrunk: keep the column's type and add a NOT VALID length CHECK, validated in a later
+  revision, or go through a new column.
 
-Both say when to keep the change as written: a table that stays small (or a maintenance window).
+Both say when to keep the change as written: a table that stays small.
+
+Types are compared by the PostgreSQL type their class renders, not by spelling (lib/alembic's `al_pg_type`): the
+class is resolved through imports and aliases (`from sqlalchemy import Integer as Int`, `Int32 = sa.Integer` in
+another module), a project TypeDecorator's `impl` (dify's `StringUUID`), a project subclass of a SQLAlchemy type, and
+a project function that returns a type (superset's `MediumText()`, `Text().with_variant(MEDIUMTEXT(), "mysql")`, is
+TEXT on PostgreSQL). So the same type spelled two ways is no change: TIMESTAMP and DateTime (with or without a time
+zone on both sides), `postgresql.UUID` and `sa.Uuid`, INTEGER and Integer, BIGINT and BigInteger, BOOLEAN and Boolean,
+TEXT and Text, VARCHAR(255) and sqlmodel's `AutoString(length=255)`. Autogenerate restates the type next to a
+nullability change, so these come up in agent edits.
 
 It leaves alone the changes PostgreSQL makes without touching the rows (Squawk, strong_migrations): VARCHAR/String(n)
 to a length m >= n, to an unlimited `String()` or to `Text`/`UnicodeText`; `Text` to `String()` without a length;
 `Numeric(p, s)` to `Numeric(p2, s)` with p2 >= p, or to an unconstrained `Numeric()`; `LargeBinary` to
-`LargeBinary(length=...)` (both BYTEA); the same type text on both sides. `MediumText`/`LongText` count as TEXT: superset
-defines them as `Text().with_variant(MEDIUMTEXT(), "mysql")` (`superset/utils/core.py`), dify's `models.types.LongText`
-is a TypeDecorator that loads TEXT on PostgreSQL. Also left alone: a target from `sqlalchemy.dialects.mysql`
-(`mysql.LONGTEXT`); a length that is not an integer literal where it decides (superset's `sa.String(current_length)`);
-an `existing_type` that is not a type expression (a conditional); a call without `existing_type` whose target is a
-string, text or numeric type, which may be a widening the rule cannot judge (a call without `existing_type` and any
-other target is reported; the 80 corpus calls all pass `existing_type`); a table the same `upgrade()` creates; the
-branch of a dialect test that runs only on another database (`else:` of `if is_postgres():`, the body of `if
-isinstance(bind.dialect, MySQLDialect):`); a call in an `except` handler (superset's non-Postgres fallback after a
-`try:` that made the change); `alter_column` without `type_=`; `downgrade()`; test files; an `op` that is not
-`alembic.op`.
+`LargeBinary(length=...)` (both BYTEA); the same PostgreSQL type on both sides. Also left alone: a target from
+`sqlalchemy.dialects.mysql` (`mysql.LONGTEXT`); a length that is not an integer literal where it decides (superset's
+`sa.String(current_length)`); an `existing_type` that is not a type expression (a conditional); a call without
+`existing_type` whose target is a string, text or numeric type, which may be a widening the rule cannot judge; a table
+the same `upgrade()` creates or empties; the branch of a dialect test that runs only on another database; a call in an
+`except` handler (superset's non-Postgres fallback after a `try:` that made the change); `alter_column` without
+`type_=`; `downgrade()`; test files; an `op` that is not `alembic.op`.
 
-**Gaps:** types are judged by the last name of their callee, not resolved through imports, so a project type that
-shadows `String` or `Text` is read as SQLAlchemy's; a table named by a variable is not seen; `DateTime()` to
-`DateTime(timezone=True)` is reported although PostgreSQL 12+ skips that rewrite when the session time zone is UTC; a
-`postgresql_using=` on an otherwise safe widening is left alone with it; a table created by an earlier revision that
-no database has run yet is still empty, but is reported.
+**Gaps:** a class outside the run that is not SQLAlchemy's is read by its last name; a table named by a variable is
+not seen; `DateTime()` to `DateTime(timezone=True)` is reported although PostgreSQL 12+ skips that rewrite when the
+session time zone is UTC; an ARRAY of a widened VARCHAR is reported; a `postgresql_using=` on an otherwise safe
+widening is left alone with it; raw `op.execute("ALTER TABLE ... TYPE ...")` is not read; a table created by an
+earlier revision that no database has run yet is still empty, but is reported.
 
 **Sources:** PostgreSQL, [ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html) (notes on
 `SET DATA TYPE`); Squawk, [changing-column-type](https://squawkhq.com/docs/changing-column-type) (VARCHAR to TEXT and
@@ -514,8 +568,9 @@ changes: increasing or removing a string limit, string to text, increasing numer
 SQL exists, compares `type_=` with `existing_type=`, and leaves the safe widenings, the MySQL-only branches and the
 tables the same `upgrade()` creates alone. Nothing in Ruff or Bandit.
 
-**Corpus:** 34 matches in the 8 Alembic repositories, every one read; the engine was run directly on each
-repository's migration directory (the rule reads one revision at a time). An independent Python `ast` survey found 80
+**Corpus:** 34 matches in the 8 Alembic repositories before and after the review's fixes (runs `alembic-fix-mine-*`),
+every one read. None of the same-type spellings the rework leaves alone occurs in a corpus `upgrade()` (they occur in
+downgrades), so the count is unchanged; they come up in agent edits. An independent Python `ast` survey found 80
 `alter_column(type_=)` calls in `upgrade()`; the 46 left alone are 36 widenings (26 in dify, such as VARCHAR(40) to
 255; 10 in superset, such as VARCHAR(50) to 1000, Text to `MediumText`, `LargeBinary` to `LargeBinary(length=...)`), 9
 in MySQL or SQLite branches or superset's `except TypeError:` fallback, and superset's `x2s8ocx6rto6` with a computed
@@ -542,7 +597,8 @@ with use: dify `api/migrations/versions/2025_01_01_2000-a91b476a53de_change_work
 `postgresql_using`); dispatch `src/dispatch/database/revisions/tenant/versions/2024-11-04_928b725d64f6.py:29`
 (`entity.source` BOOLEAN to String). About 12 of the 34 are on configuration tables that stay small (superset's
 `clusters`, `datasources`, `dbs`; dify's `datasource_providers`, `tool_oauth_tenant_clients`), where the rewrite is
-short and the message's "keep it for a table that stays small" applies. Precision: 34 of 34 by the code.
+short and the message's "keep it for a table that stays small" applies. Precision: code 34 of 34; actionable 32 of 34
+(mealie's 2 migrate before it serves).
 
 ### `alembic-practice-set-not-null-scan`
 
@@ -564,23 +620,24 @@ just the same, but when every existing row gets one value (mealie's `on_hand = F
 `scope = 'multiple'`) the cheaper fix is one `add_column(..., server_default=..., nullable=False)`, which PostgreSQL 11+
 applies without a rewrite or a scan.
 
-It leaves alone: an `alter_column` the same `upgrade()` puts behind a validated check, that is, an `op.execute(...)`
-that runs `VALIDATE CONSTRAINT n` where `n` names the column (`ck_refunds_reason_not_null`) or where the same file adds
-`n` as `CHECK (c IS NOT NULL)` (polar's `ADD CONSTRAINT {NOT_NULL_CHECK} CHECK (c IS NOT NULL) NOT VALID` with
-`VALIDATE CONSTRAINT {NOT_NULL_CHECK}`, or a `create_check_constraint(N, "t", "c IS NOT NULL", postgresql_not_valid=True)`
-validated by name); a `create_check_constraint` on `t` whose condition says `c IS NOT NULL` added validated in the same
-file (its own scan is `alembic-practice-constraint-without-not-valid`'s concern); `existing_nullable=False` with
-`nullable=False` (the column is already NOT NULL; PostgreSQL does nothing); `nullable=True` or no `nullable=`; tables
-the same `upgrade()` creates; the branch of a dialect test that runs only on another database (dify's `else:` of
-`if _is_pg(conn):`); `downgrade()`; test files; files that are not Alembic revisions; an `op` that is not `alembic.op`.
-A VALIDATE of an unrelated constraint (a foreign key) does not exempt the column.
+It leaves alone: an `alter_column` whose column a VALIDATE in the same `upgrade()` proves NOT NULL, that is, an
+`op.execute(...)` running `VALIDATE CONSTRAINT n` where `n` is shown, anywhere in the run, to be a `c IS NOT NULL`
+check: added by SQL (polar's `ADD CONSTRAINT {NOT_NULL_CHECK} CHECK (c IS NOT NULL) NOT VALID` with
+`VALIDATE CONSTRAINT {NOT_NULL_CHECK}`) or by `create_check_constraint(N, "t", "c IS NOT NULL", ...)`, in this
+revision or an earlier one (the safe sequence's first revision); a `create_check_constraint` on `t` whose condition
+says `c IS NOT NULL` added validated in the same file (its own scan is `constraint-without-not-valid`'s concern);
+`existing_nullable=False` with `nullable=False` (the column is already NOT NULL; flags are read by value);
+`nullable=True` or no `nullable=`; tables the same `upgrade()` creates or empties; the branch of a dialect test that
+runs only on another database; `downgrade()`; test files; files that are not Alembic revisions; an `op` that is not
+`alembic.op`. A VALIDATE of another constraint exempts nothing, even one whose name contains the column's
+(`fk_users_email_domain` for `email`): the name is no longer read as evidence.
 
 **Gaps:** `op.execute("ALTER TABLE ... SET NOT NULL")` is not read; a table created by an earlier revision of the same
-release counts as existing; a column already NOT NULL that the call does not mark `existing_nullable=False` is reported
-(a no-op on PostgreSQL); a table that the same transaction already rewrites through raw SQL (dispatch's
-`ADD COLUMN id SERIAL PRIMARY KEY`) is reported, though the safe sequence does not shorten that lock; a VALIDATE of
-another constraint whose name contains the column's name exempts it. Whether a table stays small cannot be read from
-the migration, so the message says to leave a small table as it is.
+release counts as existing; a NOT NULL check added outside the run is not seen, so its column is reported; a column
+already NOT NULL that the call does not mark `existing_nullable=False` is reported (a no-op on PostgreSQL); a table
+that the same transaction already rewrites through raw SQL (dispatch's `ADD COLUMN id SERIAL PRIMARY KEY`) is
+reported, though the safe sequence does not shorten that lock. Whether a table stays small cannot be read from the
+migration, so the message says to leave a small table as it is.
 
 **Sources:** PostgreSQL, [ALTER TABLE](https://www.postgresql.org/docs/current/sql-altertable.html) (whether the
 column holds a NULL "is checked during the ALTER TABLE by scanning the entire table ...; however, if a valid CHECK
@@ -599,8 +656,8 @@ autocommit block, with the comment "A plain SET NOT NULL scans the whole table u
 migration before any SQL exists: which tables the same `upgrade()` creates, the dialect branch, the batch handle,
 whether a VALIDATE of the column's check runs first, and whether the column was added in the same revision.
 
-**Corpus:** 77 matches in the 8 Alembic repositories, every one read; run with `corpus-run` on each repository's
-migration directory (the rule reads one revision at a time). The engine's matches equal an independent Python `ast`
+**Corpus:** 77 matches in the 8 Alembic repositories before and after the review's fixes (runs `alembic-fix-mine-*`;
+the corpus has no VALIDATE whose name merely contains a column's). The engine's matches equal an independent Python `ast`
 survey of `alter_column(..., nullable=False)` in every `upgrade()` (89), less the 7 polar revisions behind a validated
 check, 4 dify calls in the MySQL `else:` branch, and 1 superset call with `existing_nullable=False`.
 
@@ -615,7 +672,8 @@ check, 4 dify calls in the MySQL `else:` branch, and 1 superset call with `exist
 | langgenius/dify | `724ac151` | 18 | 4 | 18 |
 | apache/superset | `fdf61721` | 19 | 5 | 19 |
 
-Precision: 74 of 77 (96%) are SET NOT NULL scans of an existing table that the safe sequence avoids. The 3 that are
+Precision, on the review's read sample of 56 (all of the template, mealie, dispatch and polar; every 3rd of superset;
+every 2nd of dify): code 53 of 56; actionable 50 of 56 (89%; mealie's 3 migrate before it serves). The 3 that are
 not: dispatch `src/dispatch/database/revisions/tenant/versions/2022-08-18_86ec96cd14f8.py:25,34,43`, where the same
 `upgrade()` runs `ALTER TABLE ... ADD COLUMN id SERIAL PRIMARY KEY` on each table, which rewrites it under the same
 lock anyway. Real matches on large, live tables: polar
@@ -631,90 +689,69 @@ applies; that, and a fix that spans two revisions, is why the rule starts in `lo
 
 ### `alembic-practice-missing-lock-timeout`
 
-Rerail's own rule, not a port. It reports an Alembic revision whose `upgrade()` (or a module-level function of the
-same file that `upgrade()` calls) takes a table lock on a table that already holds rows, when nothing sets
-PostgreSQL's `lock_timeout` for it. Once per revision, at the first such operation in the file:
+Rerail's own rule, not a port. A DDL statement waiting for its lock queues every later query on the table behind it,
+and `lock_timeout` defaults to 0, wait forever: one long transaction on the table turns the migration into an outage.
+Whether migrations run with a lock_timeout is decided once, for the connection env.py opens, so the rule judges the
+tree, not each revision. A tree is the revisions under one env.py's directory (the deepest one, so a nested tenant
+env.py owns its revisions; a revision under no env.py's directory belongs to every env.py of the run). Its locking
+revisions are those whose `upgrade()` (or a helper of the same file it calls) takes a write-blocking lock on a table
+it neither creates nor empties, on PostgreSQL: `add_column`, `drop_column`, `alter_column`, `create_foreign_key`,
+`create_check_constraint`, `create_unique_constraint`, `create_primary_key`, `drop_constraint`, `rename_table`,
+`drop_table`, and `create_index` / `drop_index` without `postgresql_concurrently` on.
 
-- `add_column`, `drop_column`, `alter_column`, `create_foreign_key`, `create_check_constraint`,
-  `create_unique_constraint`, `create_primary_key`, `drop_constraint`, `rename_table`, `drop_table`, and
-  `create_index` / `drop_index` without `postgresql_concurrently`, as `op.m(...)` or on the handle of
-  `with op.batch_alter_table("t") as batch_op:`.
-- A table "already holds rows" when the same `upgrade()` does not create it (`op.create_table` or a project's own
-  `create_table(...)` wrapper), as in the pack's other existing-table rules.
+- When neither env.py nor a module it reads settings from sets lock_timeout, and at most half the tree's locking
+  revisions set it themselves, the rule reports once, at env.py's `context.configure(connection=...)`, with the
+  tree's count ("0 of 178 revisions here set it"): set it once for the migration connection; leave it when no traffic
+  runs during migrations.
+- When more than half set it (a convention tree: polar, 110 of 113), a locking revision that does not set it before
+  its first lock is a slip, reported at that operation: set it first in `upgrade()`; leave it when the table gets no
+  traffic.
 
-A DDL statement waiting for its lock queues every later query on the table behind it, and `lock_timeout` defaults to
-0, wait forever: one long transaction on the table turns the migration into an outage. The message names the fix,
-`op.execute("SET LOCAL lock_timeout = '5s'")` as the first statement of `upgrade()` or `SET lock_timeout` once in
-env.py before `context.run_migrations()`, guarded to PostgreSQL for projects that also run on SQLite or MySQL (where
-the statement fails), and a retry of the deploy when it times out; and it says when to leave it: a database that
-serves no traffic while migrations run.
+A setting is read by what it means, not by a mention: a string that parses as `SET [LOCAL|SESSION] lock_timeout = v` /
+`TO v` (also among several statements, triple-quoted or in an f-string), `ALTER ROLE|USER|DATABASE ... SET
+lock_timeout`, `set_config('lock_timeout', v, ...)`, a libpq options string `-c lock_timeout=v` (or URL-encoded in a
+DSN), or the `lock_timeout` key of an asyncpg `server_settings` dict. A zero value in any unit (`0`, `'0s'`, `'0ms'`)
+and DEFAULT turn it off; RESET is no setting; a log call, a comment, a docstring or a redis lock's `{"lock_timeout":
+30}` set nothing. env.py's own settings count, and those of a module it reads them from (lib/alembic's
+`al_env_reads`: `from app.db import engine`, a re-export through a package `__init__`, a module imported whole, a
+`@event.listens_for(engine, "connect")` hook in the engine's module).
 
-Nothing is reported for a revision when lock_timeout is set:
-
-- in `upgrade()`, above the operation (a `SET` below it does not protect the operations before it, which are
-  reported), or anywhere in the file outside `upgrade()` and `downgrade()` (a module-level helper or constant);
-- through a call in `upgrade()` of a function of the run that sets it (`from migrations.shared.locks import
-  set_lock_timeout`), or a module constant of the run that holds it (`op.execute(locks.LOCK_TIMEOUT)`): the import is
-  followed by qualified name, without the call graph;
-- in env.py: the env.py whose directory holds the revision (a repository can hold several Alembic trees, as Netflix
-  dispatch's `core` and `tenant` do), or, for a revision under no env.py's directory (`version_locations`), any env.py
-  of the run. `SET lock_timeout`, `SET LOCAL lock_timeout` and `connect_args={"options": "-c lock_timeout=..."}` all
-  count.
-
-A setting is a string that mentions `lock_timeout`; one that sets it to 0 or resets it does not count, nor does a
-docstring. It leaves alone: operations on a table the same `upgrade()` creates; concurrent index builds; code in a
-branch that runs only on another database (lib/alembic's `al_non_pg`); revisions whose `upgrade()` runs only data
-statements (`op.execute("UPDATE ...")`, `bulk_insert`); `downgrade()` (and a lock_timeout set only there does not
+It leaves alone: operations on a table the same `upgrade()` creates or empties; concurrent index builds; code in a
+branch that runs only on another database; data statements; `downgrade()` (a lock_timeout set only there does not
 protect `upgrade()`); revisions under `tests/`; files without module-level `revision` and `down_revision`.
 
 **Gaps:** raw DDL in `op.execute("ALTER TABLE ...")` is not read; a foreign key from a new table also locks its
 existing referent (SHARE ROW EXCLUSIVE), which is not reported; a `SET LOCAL` at the top of `upgrade()` ends at the
 commit of a later `autocommit_block()`, so non-concurrent operations inside that block run without it, unseen; a
-lock_timeout set through a package outside the run, through a variable, or by the deploy (a role's or database's
-default, `PGOPTIONS`) is not seen, and the revision is reported; operations on a table named by a loop variable or
-parameter are not seen (jupyterhub's `4621fec11365`); project helpers in another module that wrap the operations
-(superset's `migrations.shared.utils.add_columns`, `drop_columns`, `create_index`) are not followed; a table created
-by an earlier revision of the same release counts as existing.
+setting two imports away from env.py, passed in a variable, split across adjacent literals, or made by the deploy (a
+role's or database's default, `PGOPTIONS`) is not seen; a setting the imported module makes for another engine
+counts; a run with revisions but no env.py reports nothing.
 
-**Mode: log.** Seven of the eight Alembic repositories in the corpus never set lock_timeout, so the rule matches
-nearly every revision that alters a table there: a repository convention, not a slip an agent made in one edit. In
-two of them (jupyterhub, mealie) migrations run with no other traffic by design, which the message's "leave it" covers
-but which the rule cannot see.
+**Mode: log.** The finding is one decision per tree, and two of the eight corpus repositories (jupyterhub, mealie)
+migrate with no other traffic by design, which the message's "leave it" covers but the rule cannot see. Steering the
+per-revision slips of convention trees is the next step once more convention trees than polar have been read.
 
-**Corpus** (BRIEF commits; `corpus-run` over the repository root, except polar and dify: `corpus-run` over a copy of
-`server/migrations` and `api/migrations`, env.py included, while the large-repository queue was full; neither tree
-imports a helper from outside it; a match is real when the revision takes that lock on a table that already exists, nothing sets lock_timeout for
-it, and the project's deployments can run the migration while other connections use the table):
+**Corpus** (BRIEF commits; polar, dify and superset on the review's trimmed copies; runs
+`alembic-fix-missing-lock-timeout-*`; every match read):
 
-| Repository | Commit | Matches | Real | Note |
-|---|---|--:|--:|---|
-| fastapi/full-stack-fastapi-template | 77e550a | 4 | 4 | `prestart` runs `alembic upgrade head` while the previous backend still serves |
-| jupyterhub/jupyterhub | 3ca3744 | 16 | 0 | its upgrade guide shuts the Hub down before `upgrade-db`; the Hub is the database's only client |
-| mealie-recipes/mealie | 8dbb928 | 48 | 0 | one self-hosted process runs `command.upgrade` in `init_db` before it serves |
-| open-webui/open-webui | 0666e59 | 49 | 49 | migrations run at startup; multi-replica PostgreSQL deployments roll over live replicas |
-| Netflix/dispatch | dd2837e | 128 | 32 of 32 read | both trees (`core`, `tenant`); neither env.py sets it |
-| polarsource/polar | 872272f | 3 | 2 | 182 of its 205 revision files mention lock_timeout; the not-real match drops `pledge_transactions`, which no code reads any more |
-| langgenius/dify | 724ac15 | 178 | 36 of 36 read | PostgreSQL branches only (`_is_pg`, `_is_mysql` guards honoured) |
-| apache/superset | fdf6172 | 153 | 32 of 32 read | `superset db upgrade` against a live metadata database; SQLite-only branches left alone |
-| Total | | 579 | 155 of 220 read | |
+| Repository | Before the review's fixes | After | Where | Code-real | Actionable |
+|---|--:|--:|---|--:|--:|
+| fastapi/full-stack-fastapi-template | 4 | 1 | `backend/app/alembic/env.py:75` (0 of 4 set it) | 1 | 1 |
+| jupyterhub/jupyterhub | 16 | 1 | `jupyterhub/alembic/env.py:101` (0 of 16) | 1 | 0 (Hub stopped for `upgrade-db`) |
+| mealie-recipes/mealie | 48 | 1 | `mealie/alembic/env.py:107` (0 of 48) | 1 | 0 (migrates before serving) |
+| open-webui/open-webui | 49 | 1 | `backend/open_webui/migrations/env.py:103` (0 of 49) | 1 | 1 |
+| Netflix/dispatch | 128 | 2 | `revisions/core/env.py:51` (0 of 5), `revisions/tenant/env.py:63` (0 of 123) | 2 | 2 |
+| polarsource/polar | 3 | 3 | per revision; the tree sets it in 110 of 113 | 3 | 2 |
+| langgenius/dify | 178 | 1 | `api/migrations/env.py:99` (0 of 178) | 1 | 1 |
+| apache/superset | 153 | 1 | `superset/migrations/env.py:123` (0 of 153) | 1 | 1 |
+| Total | 579 | 11 | | 11 of 11 | 8 of 11 (73%) |
 
-Read: every match in fastapi-template, jupyterhub, mealie, polar and open-webui; spread samples of 32 in dispatch and
-superset (every 4th and 5th match), and 36 in dify (every 5th match). Every match read is a correct reading of the
-code: the operation, the table, and no lock_timeout anywhere the rule looks; there were no matcher false positives to
-fix. The not-real matches are the two repositories whose deployment model takes the hazard away, and polar's drop of
-a table nothing queries. Precision over all read matches: 155 of 220 (70%); without jupyterhub and mealie, 155 of 156.
-
-Real matches, for example: polar
-`server/migrations/versions/2026-11-03-1201_make_subscription_started_at_non_nullable.py` (`alter_column(...,
-nullable=False)` on `subscriptions`, a full-table scan under ACCESS EXCLUSIVE, in a repository that sets lock_timeout
-everywhere else) and `2026-10-23-1000_add_agents_claim_polled_at.py` (`add_column` on `agents`); dispatch
-`src/dispatch/database/revisions/tenant/versions/2023-11-29b_580a18ec4c39.py` (`drop_column` on `signal_instance`) and
-`.../tenant/versions/2022-08-29_479024506e05.py` (`alter_column ... nullable=False` on `case`); open-webui
-`backend/open_webui/migrations/versions/9a1b2c3d4e5f_add_current_message_id_to_chat.py` (`add_column` on `chat`) and
-`374d2f66af06_add_prompt_history_table.py` (`drop_table("prompt")` before renaming the new table over it); superset
-`superset/migrations/versions/2020-12-03_16-21_811494c0cc23_remove_path_from_logs.py` (`drop_column` on `logs`);
-dify `api/migrations/versions/2024_11_28_0553-cf8f4fc45278_add_exceptions_count_field_to_.py` (`add_column` on
-`workflow_runs`) and `2024_08_20_0455-2dbe42621d96_rename_workflow__conversation_variables_.py` (`rename_table`).
+Each env.py-level count equals the repository's match count before the fixes, so every former restatement is now
+inside one finding. polar keeps its three slips: `2026-10-23-1000_add_agents_claim_polled_at.py:22` (`add_column` on
+`agents`) and `2026-11-03-1201_make_subscription_started_at_non_nullable.py:21` (`alter_column(nullable=False)` on
+`subscriptions`) are real; `2026-08-12-1000_drop_pledge_transactions_table.py:22` drops an index of a table nothing
+reads. Without jupyterhub and mealie, 8 of 9 are actionable. The review's counterexamples: the engine built in
+`app/db.py` with `-c lock_timeout=5000` is silent; the log call and the `'0s'` trees are reported once at their env.py.
 
 **Sources:** Squawk, [Safe migrations](https://squawkhq.com/docs/safe_migrations) and
 [require-lock-timeout](https://squawkhq.com/docs/require-lock-timeout) ("all other reads and writes sent after will
@@ -733,38 +770,41 @@ tree, a shared helper or constant the revision imports, the tables the same revi
 
 Rerail's own rule, not a port. It reads every Alembic revision file of the repository (module-level `revision = ...` and
 `down_revision = ...`, annotated or not, outside test code) as one graph. A revision's parents are the ids its
-`down_revision` names: one string, or each string of a merge revision's tuple or list. An id resolves first among the
-revisions of the same directory and only then elsewhere, so two version directories that reuse ids (`"0001"`,
-`"0002"`) stay apart while a tree spread over several `version_locations` still joins up. A head is a revision no
-other revision names in its `down_revision`. Two heads that share an ancestor make one tree with two heads, and
-`alembic upgrade head` refuses to run: "Multiple head revisions are present for given argument 'head'". The rule
-reports at each head's `down_revision = ...`, once per other head of its tree:
+`down_revision` names: a string, a name bound to one in the same file (`down_revision = PARENT`), or each element of a
+tuple or list; a tuple or list of one is a single parent, not a merge. An id resolves first among the revisions of the
+same directory and only then elsewhere, so two version directories that reuse ids (`"0001"`, `"0002"`) stay apart. A
+head is a revision no other revision names in its `down_revision` (`depends_on` orders an upgrade but joins nothing:
+Alembic's `RevisionMap` counts heads by `down_revision` alone). Two heads that share an ancestor, or that sit in one
+version directory (a second base, `down_revision = None`, next to the existing line), make `alembic upgrade head`
+refuse to run: "Multiple head revisions are present for given argument 'head'" (checked with Alembic 1.20.1 by the
+review). The rule reports at each head's `down_revision = ...`, once per other head:
 
 - two revisions written on the same parent, with no merge revision joining them: the usual result of two branches
   each adding a migration on the head they saw (both heads are reported, also when one line has grown further);
+- a fork whose one side only carries `depends_on`;
+- a second base in the same version directory, the shape an agent creates by writing `down_revision = None`;
 - a merge revision that is one head while a revision written on a pre-merge revision is the other;
 - two branches that each ran `alembic merge heads` on the same heads (two merge heads).
 
-The message names the other head and, for each head, the one-parent revision that starts its line: if that line is
-the newer one and the revision has not run on any shared database, point its `down_revision` at the other head;
-otherwise add a merge revision with `alembic merge heads`. For two merge heads it says to merge again or delete the
-merge that has not run. It says when to leave it: an intentional parallel branch, which should carry `branch_labels`.
+The message names the other head and the revision that starts each line: if it has not run on any shared database,
+point its `down_revision` at the other head; otherwise add a merge revision with `alembic merge heads`. For two merge
+heads it says to merge again or delete the merge that has not run. It says when to leave it: an intentional parallel
+branch, which should carry `branch_labels`.
 
 It leaves alone:
 
-- forks joined by a merge revision (`down_revision = ("b2", "b3")`, also as a list, also with no `from alembic import
-  op` and an empty `upgrade()`);
-- heads of trees that share no ancestor: independent migration trees in separate directories (Netflix/dispatch's
-  `core` and `tenant` trees), or with the same sequential ids;
-- a head whose own line (the revisions between the fork and the head) sets `branch_labels` or `depends_on`: an
-  intentional branch, migrated with `alembic upgrade heads` or `branch@head`. Labels on the shared base or trunk do
-  not silence a fork, since `alembic upgrade head` still fails there;
+- forks joined by a merge revision (`down_revision = ("b2", "b3")`, also as a list or through constants);
+- heads of trees in separate directories that share no ancestor (Netflix/dispatch's `core` and `tenant` trees, two
+  services that reuse sequential ids);
+- a head whose own line (between the fork, or its own base, and the head) sets `branch_labels`: an intentional branch,
+  migrated with `alembic upgrade heads` or `branch@head`. Labels on the shared base or trunk do not silence a fork;
+- a line holding a revision whose parent is unknown (an imported name, a call, or an id no revision of the run has: a
+  squashed history, a library's version location), which would otherwise look like a second base;
 - revisions in test trees.
 
-**Gaps:** a second base without `branch_labels` in the same version directory (two heads with no common ancestor) is
-left alone; a `revision` or `down_revision` that is not a string literal is unresolved, so its line looks like a
-separate tree; revisions outside the repository (a library's `version_locations`) are unseen. `depends_on` alone
-counts as an intentional branch, although Alembic still counts both heads for `upgrade head`.
+**Gaps:** a history spread over several directories (`version_locations`, recursive version directories) whose lines
+share no ancestor is read as separate trees, because which directories a script location reads is in `alembic.ini`;
+a parent imported from another module is unknown and its line is left alone.
 
 **Sources:** Alembic, "Working with Branches" (https://alembic.sqlalchemy.org/en/latest/branches.html): the multiple
 heads error, `alembic merge heads`, `branch_labels`; Alembic's `RevisionMap` (`alembic/script/revision.py`), whose
@@ -775,9 +815,9 @@ heads error, `alembic merge heads`, `branch_labels`; Alembic's `RevisionMap` (`a
 **Overlap:** pytest-alembic (an opt-in test) and Alembic's own error at deploy; no linter (Ruff, Bandit, Squawk) reads
 the revision graph. This rule's value is catching it while the revision is written, before the deploy fails.
 
-**Corpus** (8 Alembic repositories at the `MANIFEST.tsv` commits). "Engine" is the rule's own count; "heads" and
-"merges" come from an independent Python `ast` survey of every revision file (Python 3.15: an older parser skipped
-files using `match` or PEP 758 `except A, B:`, which made one phantom head each in mealie and dify):
+**Corpus** (8 Alembic repositories at the `MANIFEST.tsv` commits). "Engine" is the rule's own count before and after
+the review's fixes (runs `alembic-fix-multiple-heads-*`, polar, dify and superset on the review's trimmed copies);
+"heads" and "merges" come from an independent Python `ast` survey of every revision file:
 
 | Repository | Commit | Revisions | Trees | Heads | Merge revisions | Engine matches |
 |---|---|--:|--:|--:|--:|--:|
@@ -797,32 +837,39 @@ revisions are real past forks the rule sees as joined. Edit-window checks: a new
 migrations with `down_revision` on the head's parent (`f3238e76d766`) is reported together with the current head
 `3c1e7a9d52f4`, and adding `alembic merge heads`' revision silences both; deleting superset's merge revision
 `3740c7bcb2c6` from a copy reports the two heads it joined (`875472b9c016`, itself a merge, and `d623a0cb6bb0`).
-Counts: the five smaller repositories were also run whole with `corpus-run` (0 findings each); all eight were run with
-the final rule directly on their migration directories (the rule reads only revision files).
+After the rework, a text count of each version directory finds one base and one head in every tree, so the second-base
+and unknown-parent readings change nothing at release commits. The review's counterexamples: two bases and a
+`depends_on`-only fork are now reported (both lines each); `("r1",)` gets the rebase message; the review's
+`down_revision = PARENT` with `PARENT` bound after its use (a NameError at import, which Alembic cannot load either)
+is left alone, while a constant bound before its use is resolved. The review's edit-window copies: the fork is
+reported on both lines, the revision written on the head is silent.
 
 ### `alembic-practice-rename-as-drop-add`
 
-Rerail's own rule, not a port. Mode `log`. In an Alembic revision's `upgrade()` (or a module-level function of the
-same file that `upgrade()` calls), it reports `op.drop_column(t, "a")` and `batch_op.drop_column("a")` inside
+Rerail's own rule, not a port. Mode `log`, starts off. In an Alembic revision's `upgrade()` (or a module-level function
+of the same file that `upgrade()` calls), it reports `op.drop_column(t, "a")` and `batch_op.drop_column("a")` inside
 `with op.batch_alter_table(t) as batch_op:` when the same `upgrade()` adds a column `b` to the same existing table and
 the pair reads as a rename that loses the data:
 
 - `upgrade()` neither creates nor drops `t`, and adds as many columns to `t` as it drops;
 - the dropped column's type, read from `downgrade()`'s `add_column(t, Column("a", T))`, is the added column's type,
-  or `downgrade()` does not show it. Types compare by family, from the last name of the callee: `VARCHAR`, `String`
-  and `Unicode` are one family, `TIMESTAMP` and `DateTime` another, `INTEGER` and `Integer` another; two literal
-  lengths that differ (`VARCHAR(32)` and `String(64)`) are different types;
+  or `downgrade()` does not show it. Types compare by the PostgreSQL type their class renders (lib/alembic's
+  `al_pg_type`, through imports, aliases and project TypeDecorators): VARCHAR, String and sqlmodel's AutoString are
+  one, TIMESTAMP and DateTime one, INTEGER and Integer one. A widened length still pairs (`VARCHAR(40)` to
+  `String(80)`: a rename with a widening); a shorter one does not;
 - the pair is unique: no other add or drop on `t` in that `upgrade()` matches either side;
-- nothing in `upgrade()` (or the helpers it calls) moves data: no `.execute(...)` or `.exec_driver_sql(...)` on `op`,
-  a connection, a bind or a session, no `op.bulk_insert`, no `update(...)`/`insert(...)` call (`sa.update`,
-  `table.update()`), no string holding `UPDATE ` or `INSERT `, no `Session`/`sessionmaker`/`scoped_session`.
+- nothing in `upgrade()` (or the helpers it calls) moves rows. Data movement is read by what it resolves to: an UPDATE
+  or INSERT in SQL text (a literal, or a module constant the step names); SQLAlchemy's `update()`/`insert()` constructs
+  resolved through imports (`sa.update`, `sqlalchemy.dialects.postgresql.insert`); a table object's
+  `.update()`/`.insert()` (bound to `sa.table(...)`/`sa.Table(...)`, or a model's `__table__`); `op.bulk_insert`; an
+  ORM session resolved to `sqlalchemy.orm`. Any other `execute`, such as `op.execute("SET LOCAL lock_timeout =
+  '5s'")` (the line `missing-lock-timeout` asks for), moves nothing, nor does `dict.update(...)` or a project's own
+  `insert()`.
 
 Autogenerate cannot detect a rename: "Changes of column name ... are detected as a column add/drop pair, which is not
 at all the same as a name change" (Alembic, What does Autogenerate Detect). Run as generated, the migration deletes
-the column's data on the first deploy. The message names `op.alter_column(t, "a", new_column_name="b")` for a
-rename, with the expand/contract caveat (while running code still reads `a`: add `b`, copy, switch the code, drop `a`
-in a later release), or an UPDATE that copies the data before the drop; it says to keep the migration only when the
-old column's data is meant to be discarded.
+the column's data on the first deploy. The message names `alter_column(..., new_column_name=...)` for a rename, or
+copying the data first, and says to keep the migration only when the old column's data is meant to go.
 
 It leaves alone the copy pattern (add the new column, `UPDATE t SET b = a`, drop the old one) and any other data
 statement in the same `upgrade()`; types that differ (`JSON` dropped, `LargeBinary` added); a drop and an add of the
@@ -834,9 +881,9 @@ only on another database; `downgrade()`; test files; an `op` that is not `alembi
 
 **Gaps:** a replacement whose new column means something else but has the old one's type (langgenius/dify's
 `2e9819ca5b28_add_tenant_id_in_api_token.py`: `dataset_id` dropped, `tenant_id` added, both `StringUUID`) is
-reported, which is why the rule starts in `log`; the old type is read only from `downgrade()`'s `add_column`; a data
-copy in a function of another module is not seen; two renames of one type on one table are not reported; a table
-named by a variable is not seen.
+reported, which is why the rule starts in `log` and off; the old type is read only from `downgrade()`'s `add_column`;
+a data copy in a function of another module, or through SQL in a variable the rule cannot resolve, is not seen; two
+renames of one type on one table are not reported; a table named by a variable is not seen.
 
 **Sources:** Alembic, [What does Autogenerate Detect (and what does it not
 detect?)](https://alembic.sqlalchemy.org/en/latest/autogenerate.html#what-does-autogenerate-detect-and-what-does-it-not-detect);
@@ -846,8 +893,10 @@ Squawk, [renaming-column](https://squawkhq.com/docs/renaming-column).
 **Overlap:** none. Squawk sees `ADD COLUMN` and `DROP COLUMN` as two unrelated statements and its renaming-column rule
 sees only `RENAME COLUMN`; nothing in Ruff or Bandit.
 
-**Corpus:** the five smaller repositories ran with `corpus-run` over the repository root; dify, polar and superset
-ran with `rerail-engine logic` over their migration directory (the rule reads one migration file at a time).
+**Corpus:** before the review's fixes, the five smaller repositories ran with `corpus-run` over the repository root and
+dify, polar and superset with `rerail-engine logic` over their migration directory; after them, all 8 with
+`corpus-run` (polar, dify and superset on the review's trimmed copies; runs `alembic-fix-mine-*`), with the same
+matches.
 
 | Repository | Commit | Run over | Matches | Real |
 |---|---|---|--:|--:|
@@ -860,7 +909,7 @@ ran with `rerail-engine logic` over their migration directory (the rule reads on
 | langgenius/dify | `724ac15` | `api/migrations` (254 files) | 2 | 1 |
 | apache/superset | `fdf6172` | `superset/migrations` (425 files) | 0 | 0 |
 
-Precision 1 of 2 (50%), hence `log`. The real match: langgenius/dify
+Precision 1 of 2 (50%, code and actionable), hence `log`, off until a larger sample exists. The real match: langgenius/dify
 `api/migrations/versions/00bacef91f18_rename_api_provider_description.py`, titled "rename api provider description":
 the autogenerated batch adds `description` (`LongText`, `nullable=False`) and drops `description_str` (`LongText`),
 so every provider's description is deleted. The other: `2e9819ca5b28_add_tenant_id_in_api_token.py` swaps
@@ -880,14 +929,15 @@ test code (module level, `upgrade()`, `downgrade()` or a helper), it reports
 
 A mapped class is a class of the repository that declares `__tablename__`, is a sqlmodel `table=True` class,
 subclasses either (`al_mapped_class`), or subclasses a declarative base (`class Base(DeclarativeBase)`, a module-level
-`Base = declarative_base()`) without `__abstract__ = True`: Netflix/dispatch names every table with a `declared_attr` on
-its base, so its models declare no `__tablename__`. An import whose module sits in a namespace package (a directory
-without `__init__.py`, as dispatch's `dispatch/feedback/`) is matched to the class by file path. The message says why
-(the model follows today's schema, so an old revision's queries name columns that do not exist yet at that revision,
-and fresh installs and CI from an empty database fail, or write the wrong ones) and names the replacement: declare the
-table in the migration with `sa.table("name", sa.column("col"), ...)` and run it through `op.execute()` or the
-connection, or define a model class inside the migration. It says that column types, enums and constants from the same
-module may stay.
+`Base = declarative_base()`, or Flask-SQLAlchemy's `db.Model` for a module-level `db = SQLAlchemy(...)`, each resolved
+through imports) without `__abstract__ = True`: Netflix/dispatch names every table with a `declared_attr` on its base,
+so its models declare no `__tablename__`. A class of another library that merely has a `Model` attribute is no base.
+An import whose module sits in a namespace package (a directory without `__init__.py`, as dispatch's
+`dispatch/feedback/`) is matched to the class by file path. The message says why (the model follows today's schema,
+not this revision's) and names the replacement: declare the table in the migration with `sa.table()` and
+`sa.column()`; it says that enums, types and constants may stay. A model the migration uses only for its table name
+(`User.__tablename__`, `User.__table__.name`) gets its own message: nothing queries its columns, but the import still
+loads the application when the migration runs, so write the table name as a string.
 
 It leaves alone:
 
@@ -905,9 +955,9 @@ It leaves alone:
 - `env.py` (it imports `Base.metadata` on purpose), revisions in test trees, and test files.
 
 **Gaps:** a model module bound to a local name another way (`importlib.import_module(...)`); a base assigned from
-`declarative_base()` in the same module as its models (the base reference does not resolve there); Flask-SQLAlchemy's
-`db.Model` subclasses without `__tablename__` (the name is generated); models from an installed package; a class whose
-base chain crosses a namespace package (the path fallback covers only the imported name itself).
+`declarative_base()` in the same module as its models (the base reference does not resolve there); models from an
+installed package; a class whose base chain crosses a namespace package (the path fallback covers only the imported
+name itself).
 
 **Sources:** zzzeek on sqlalchemy/alembic#679 ("your ORM models may have changed so would no longer work in this
 migration once it's older", https://github.com/sqlalchemy/alembic/issues/679); the Alembic cookbook's data migrations,
@@ -921,10 +971,10 @@ display_name column isn't added until a subsequent db upgrade script runs".
 is the cross-file resolution: it follows the import (re-exports and namespace packages included) to a class and decides
 from the class's definition whether it is mapped, so it tells `Group` from `GUID` in the same models package.
 
-**Corpus** (8 Alembic repositories at the `MANIFEST.tsv` commits; every match read). Six were run whole through
-`corpus-run`; polar and dify, while the shared queue was full, were run with the engine directly on the files the rule
-needs (every non-test `__init__.py`, and every non-test file that mentions `sqlalchemy`, `sqlmodel`, `__tablename__` or
-a revision id: 828 and 1,262 files). superset gave the same single match both ways.
+**Corpus** (8 Alembic repositories at the `MANIFEST.tsv` commits; every match read). Before the review's fixes, six
+were run whole through `corpus-run` and polar and dify with the engine on the files the rule needs; after them, all 8
+through `corpus-run` (polar, dify and superset on the review's trimmed copies; runs `alembic-fix-mine-*`), with the
+same 13 matches, all with the query message (none uses a model only for its table name).
 
 | Repository | Commit | Matches | Real | Files |
 |---|---|--:|--:|---|
@@ -945,7 +995,7 @@ mealie's ten `GUID` imports, dify's `StringUUID`/`LongText` imports and jupyterh
 version missed dispatch's `Feedback`: `dispatch/feedback/` has no `__init__.py`, so the class's qualified name lacks the
 `dispatch.feedback` prefix the import names; the file-path fallback fixed it (a case covers it).
 
-Precision on the corpus: 13 of 13 matches real (100%). The 13 sit in 6 revisions, because projects that learned this
+Precision on the corpus: code and actionable 13 of 13 (100%). The 13 sit in 6 revisions, because projects that learned this
 moved to local models (mealie's revisions from 2024 on declare their own `SqlAlchemyBase` and model classes, which stay
 silent). Edit-window check: a new revision added to a copy of polar that imports `Organization` (through the
 `polar.models` re-export) and `polar.models.user.User` is reported on both lines and `polar.config.settings` is not; in
@@ -955,8 +1005,9 @@ a copy of dify, `from models.model import App` and `models.Account` (through `im
 ### `alembic-practice-empty-downgrade`
 
 Rerail's own rule, not a port. It reports, at `def downgrade():`, an Alembic revision whose `upgrade()` changes the
-schema while its `downgrade()` does nothing (`pass`, `...`, or both, with at most Alembic's autogenerate markers
-`# ### commands auto generated by Alembic - please adjust! ###`), in a migration tree that implements its downgrades.
+schema while its `downgrade()` does nothing (`pass`, `...`, a bare `return`, or those, with at most Alembic's
+autogenerate markers `# ### commands auto generated by Alembic - please adjust! ###`), in a migration tree that
+implements its downgrades.
 `alembic downgrade` runs the empty function, reports success and moves the version table back while the schema keeps
 the change: the database no longer matches the revision it records, the next `alembic upgrade` can fail on what is
 already there (a column that exists, a constraint already dropped), and the rollback path the team relies on is broken.
@@ -974,9 +1025,9 @@ is at 98% or more once the excused revisions are set aside (superset 169 of 171,
 the threshold only matters for small or young trees where empty downgrades are the habit. The message gives the tree's
 count ("136 of the 137 revisions ... implement theirs").
 
-The message says to write the reverse operations of `upgrade()`, or, when the change cannot be reversed, to raise
-(`raise NotImplementedError("irreversible: ...")`) so a rollback stops instead of leaving the schema behind; and to leave
-it in a project that never runs downgrades. No primary source prefers `raise` over `pass`; the message offers both.
+The message says to reverse `upgrade()` there, or raise when the change cannot be undone, so a rollback stops instead
+of leaving the schema behind; and to leave it in a project that never runs downgrades. No primary source prefers
+`raise` over `pass`; the message offers both.
 
 It leaves alone (and does not count):
 
@@ -989,14 +1040,16 @@ It leaves alone (and does not count):
   (polar's `restore_event_sequences`, open-webui's `add_missing_primary_keys_to_legacy_`);
 - an empty `downgrade()` with its author's own comment below the `def` line, or a docstring: a recorded decision, such
   as dify's "The corrected down revision already defines nullable columns". In these the advice to raise would break a
-  downgrade that is correct as it is;
+  downgrade that is correct as it is. A comment that starts `TODO`, `FIXME` or `XXX` records no decision and excuses
+  nothing;
 - revisions in test code.
 
 **Gaps:** schema changes made outside Alembic's `op` (raw DDL in `op.execute`, a project's own `add_columns` wrapper,
 sqlalchemy-searchable's `sync_trigger`) are not schema changes here, so such a revision is neither reported nor counted.
-A `downgrade()` made of other no-op statements (`return`, `print(...)`) counts as implemented. Any explaining comment
-silences the rule, whatever it says. The tree is a directory, not the revision graph, so one tree spread over several
-`version_locations` is judged per directory.
+A `downgrade()` made of other no-op statements (`print(...)`, a log call) counts as implemented. Any other explaining
+comment silences the rule, whatever it says. In a tree of fewer than 10 counted revisions, two empty downgrades put it
+under 80% and silence the rule for the whole tree (by design: the habit is then the tree's own). The tree is a
+directory, not the revision graph, so one tree spread over several `version_locations` is judged per directory.
 
 **Sources:** Alembic cookbook, which expects migrations to reach the finished schema "and back again"
 (https://alembic.sqlalchemy.org/en/latest/cookbook.html); pytest-alembic's `test_up_down_consistency`, which checks only
@@ -1047,10 +1100,11 @@ sessions or data SQL over chart and dashboard JSON; `a39867932713` and `07f9a902
 An edit-window check: a new revision added to a copy of polar's `server/migrations` (`op.add_column` with `pass` in
 `downgrade()`) is reported with "186 of the 187 revisions ... implement theirs".
 
-Counts: the five smaller repositories were run whole with `corpus-run`; polar, dify and superset were run with the
-engine directly on their migration directories (`server/migrations`, `api/migrations`, `superset/migrations`), as the
-rule reads only revision files. The per-tree figures come from the engine (a copy of the rule that also reports the
-tree counts and the excused revisions), run the same way on all eight.
+Counts: before the review's fixes, the five smaller repositories were run whole with `corpus-run` and polar, dify and
+superset with the engine on their migration directories; after them (a bare `return` is filler, a TODO comment excuses
+nothing), all 8 with `corpus-run` (polar, dify and superset on the review's trimmed copies; runs `alembic-fix-mine-*`):
+the same 3 matches. The per-tree figures come from the engine (a copy of the rule that also reports the tree counts
+and the excused revisions).
 
-Mode: `log`. The read matches are all real, but there are only 3, and the exemptions that remove the 13 deliberate
-no-ops are heuristics (a reflection call, a comment).
+Mode: `log`. The read matches are all real (code and actionable 3 of 3), but there are only 3, and the exemptions that
+remove the 13 deliberate no-ops are heuristics (a reflection call, a comment).

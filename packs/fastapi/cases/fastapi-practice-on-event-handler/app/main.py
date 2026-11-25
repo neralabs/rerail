@@ -23,6 +23,9 @@ app.on_event("shutdown")(close_pool)  # caught
 app.router.add_event_handler("startup", close_pool)  # caught
 app.add_event_handler(event_type="startup", func=close_pool)  # caught
 
+# Gap, not reported: appended to the router's list by hand.
+app.router.on_startup.append(close_pool)
+
 # Both at once: the on_startup list is ignored.
 both = FastAPI(
     lifespan=lifespan,

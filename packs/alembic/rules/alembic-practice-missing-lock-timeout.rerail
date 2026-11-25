@@ -1,5 +1,5 @@
 .policy "alembic-practice-missing-lock-timeout" revision 1
-.description "Set lock_timeout before Alembic migrations alter existing tables; a DDL statement waiting for its lock queues every later query on the table."
+.description "Set lock_timeout for Alembic migrations that alter existing PostgreSQL tables: once for the migration connection, or in each revision where the tree's revisions set their own."
 .language python
 .mode log
 .scope include "**/*.py"
@@ -7,50 +7,89 @@
 // table that conflicts with what a long transaction holds; while the statement waits for it, "all other reads and
 // writes sent after will wait for this statement too" (Squawk, require-lock-timeout). PostgreSQL's lock_timeout
 // defaults to 0, wait forever, so one slow query turns a migration into an outage (GoCardless, PostgresAI, Xata).
-// Squawk checks each SQL file and cannot see env.py; this rule reads the revision, the env.py that runs it, and a
-// helper the revision imports.
+// Squawk checks each SQL file and cannot see env.py; this rule reads the revisions of a tree, the env.py that runs them
+// and the modules env.py takes its engine from.
 //
-// Reported once per revision, at its first such operation (lowest position in the file), in `upgrade()` or a
-// module-level helper of the same file that `upgrade()` calls, on a table `upgrade()` does not create:
+// The decision is the tree's, so the rule reads it per tree (the revisions under one env.py's directory; a revision
+// under no env.py's directory belongs to every env.py of the run). A revision "locks" when its upgrade() (or a
+// module-level helper of the same file that upgrade() calls) runs, on a table upgrade() does not create:
 //   op.add_column / drop_column / alter_column / create_foreign_key / create_check_constraint /
 //   create_unique_constraint / create_primary_key / drop_constraint / rename_table / drop_table, and create_index /
-//   drop_index without postgresql_concurrently, with `op.` or a batch_alter_table handle       reported
-//   op.create_index("ix", "payments", ["state"])   # before op.execute("SET LOCAL lock_timeout = '5s'")   reported
-//   def upgrade(): op.drop_table("t")   # lock_timeout set only in downgrade()                  reported
-//   op.execute("SET lock_timeout = 0"); op.rename_table(...)   # 0 turns it off; RESET too      reported
-// Left alone:
-//   op.execute("SET LOCAL lock_timeout = '5s'") above the operations in upgrade(), or anywhere in the file outside
-//     downgrade() (a module-level helper, a constant)                                          protected
-//   from migrations.shared.locks import set_lock_timeout; set_lock_timeout()   (a function of the run that holds a
-//     lock_timeout setting), or op.execute(locks.LOCK_TIMEOUT) (a module constant of the run)    protected
-//   an env.py that sets lock_timeout (`SET lock_timeout`, `connect_args={"options": "-c lock_timeout=..."}`): the
-//     env.py whose directory holds the revision, or, for a revision under no env.py's directory (version_locations),
-//     any env.py of the run                                                                      protected
-//   operations on a table the same upgrade() creates; postgresql_concurrently=<anything but False>; branches that
-//     run only on another database (al_non_pg); data statements (op.execute("UPDATE ..."), bulk_insert); downgrade();
-//     revisions under tests/; files without revision/down_revision; a docstring that mentions lock_timeout.
+//   drop_index unless postgresql_concurrently is on (lib's al_kw_on), with `op.` or a batch_alter_table handle.
+// It "sets" lock_timeout when upgrade() sets it, or the file does outside downgrade(). Of a tree's locking revisions:
+//   - most set it (more than half: polar, 182 of 205 files): each one that runs a lock before any setting is a slip,
+//     reported at its first such operation (lowest position), with the tree's count       MissingLockTimeout
+//   - otherwise the omission is one decision: reported once, at env.py's `context.configure(...)` (the one passed
+//     `connection=`, else the first), with the count                                       NoMigrationLockTimeout
+// Nothing is reported for a tree whose env.py sets lock_timeout, or whose every locking revision sets it before its
+// first lock.
+// What sets lock_timeout is read as PostgreSQL reads it, not as any mention of the word: a string (not a docstring)
+// whose text, lowercased, is
+//   a SQL statement `SET [LOCAL|SESSION] lock_timeout = v` / `TO v`, possibly among other `;`-separated statements,
+//   `ALTER ROLE|USER|DATABASE ... SET lock_timeout ...`, or a `set_config('lock_timeout', v, ...)` call;
+//   a libpq options string `-c lock_timeout=v` (or `--lock_timeout=v`, or URL-encoded in a DSN's `options=`);
+//   or the key `"lock_timeout"` of a `server_settings` dict (asyncpg),
+// with v not zero in any unit (`0`, `'0s'`, `'0ms'`, `0 min`) and not DEFAULT. RESET sets nothing.
+// So `log.info("remember to set lock_timeout one day")`, a redis lock's `{"lock_timeout": 30}`, or a docstring that
+// mentions it protects nothing. f-strings count as set (`SET lock_timeout = '{t}'`).
+// Where a setting counts:
+//   in the revision: in upgrade() above the operation (any line protects the operations of its helpers), in the file
+//     outside both steps (a module-level helper, a constant), or through a call of a function of the run that holds a
+//     setting (`set_lock_timeout()`) or a module constant bound to one (`op.execute(locks.LOCK_TIMEOUT)`);
+//   for the tree: in env.py, or in a module of the run env.py imports a name from (`from app.db import engine` with
+//     `connect_args={"options": "-c lock_timeout=5000"}`, `from app import db` then `db.engine`, a re-export, an
+//     `event.listens_for(engine, "connect")` hook that runs SET); a revision under no env.py's directory is covered
+//     by any env.py of the run that sets it.
+// Left alone: operations on a table the same upgrade() creates; concurrent index builds; branches that run only on
+// another database (al_non_pg); data statements (op.execute("UPDATE ..."), bulk_insert); downgrade(); revisions and
+// env.py under tests/; files without revision/down_revision.
 // Gaps: raw DDL in op.execute("ALTER TABLE ...") is not read; a foreign key from a new table locks its existing
 // referent too (SHARE ROW EXCLUSIVE), not reported; a SET LOCAL before `autocommit_block()` ends at its commit, so
-// non-concurrent operations inside the block run without it, not seen; a lock_timeout set through a function of a
-// module outside the run, or passed in a variable, is not seen (reported); a table created by an earlier revision of
-// the same release counts as existing.
-// Corpus (8 Alembic repositories): 579 matches; of 220 read, 155 real (70%). The rest are jupyterhub's and mealie's,
-// whose migrations run with no other traffic by design, and one drop of a table nothing reads (polar). Log: seven of
-// the eight repositories never set lock_timeout, so every revision that alters a table matches there. See the
-// README's rule details.
+// non-concurrent operations inside the block run without it, not seen; a setting passed in a variable, made in a
+// module two imports away from env.py, or split across adjacent string literals is not seen; a setting the imported
+// module makes for another engine counts; a table created by an earlier revision of the same release counts as
+// existing; a run with revisions and no env.py reports nothing.
+// Corpus (8 Alembic repositories): 11 matches, all read, all real; 8 actionable. One per env.py in 7 repositories
+// (template, jupyterhub, mealie, open-webui, dispatch's core and tenant, superset, dify: 0 of 4 to 0 of 178 revisions
+// set it), and polar's 3 per-revision slips in a tree where 110 of 113 locking revisions set it. jupyterhub and mealie
+// migrate with the app stopped; one polar match drops an index of an unused table. Was 579 per revision.
 
 #include "lib/alembic.rerail"
 
-.violation MissingLockTimeout(at: node, m: symbol, table: symbol) "`{m}` on existing `{table}` waits for its table lock with no lock_timeout, and while it waits every later query on `{table}` queues behind it. Add `op.execute(\"SET LOCAL lock_timeout = '5s'\")` as the first statement of `upgrade()` (or set lock_timeout once in env.py before `context.run_migrations()`), PostgreSQL only: guard it on `op.get_bind().dialect.name == \"postgresql\"` if the project also runs on SQLite or MySQL. Retry the deploy if it times out. Leave it for a database that serves no traffic while migrations run."
+.violation MissingLockTimeout(at: node, m: symbol, table: symbol, k: number, n: number) "`{m}` on `{table}` lacks the lock_timeout {k} of {n} revisions here set; while it waits for its lock, later queries on `{table}` queue. Set it first in upgrade(), unless `{table}` gets no traffic."
+.violation NoMigrationLockTimeout(at: node, k: number, n: number) "No lock_timeout for these migrations ({k} of {n} table-locking revisions set it): a DDL waiting on a lock stalls later queries. Set it once on this connection, unless no traffic runs during them."
 
-// mlt_setting(s): string s turns lock_timeout on: it mentions lock_timeout, does not reset it or set it to 0, and is
-// not a bare string statement (a docstring).
-.decl mlt_setting(s: node)
-mlt_setting(s) :- kind(s, "string"), text(s, x), contains("lock_timeout", x), y = @lower(x), !contains("reset", y),
-    !contains("lock_timeout = 0", y), !contains("lock_timeout=0", y), !contains("lock_timeout to 0", y),
-    !contains("lock_timeout = '0'", y), !mlt_bare_string(s).
+// ---- what sets lock_timeout --------------------------------------------------------------------------------------
+// mlt_text(s, y): string s (not a docstring) reads y: its text lowercased, prefix and quotes off.
+.decl mlt_text(s: node, y: symbol)
+mlt_text(s, y) :- kind(s, "string"), !mlt_bare_string(s), text(s, x),
+    y = @lower(@replace_all(@replace_all(x, "^[a-zA-Z]*(\"\"\"|'''|\"|')", ""), "(\"\"\"|'''|\"|')$", "")).
 .decl mlt_bare_string(s: node)
 mlt_bare_string(s) :- kind(e, "expression_statement"), child(e, s, 0), !child(e, _, 1).
+// mlt_value(s, v): s sets lock_timeout to v (as written, lowercased).
+.decl mlt_value(s: node, v: symbol)
+mlt_value(s, v) :- mlt_text(s, y),
+    match("(?s)(.*;)?\\s*set\\s+(local\\s+|session\\s+)?lock_timeout\\s*(=|to)\\s*(?<v>[^;]*[^;\\s])\\s*(;.*)?", y).
+mlt_value(s, v) :- mlt_text(s, y),
+    match("(?s)(.*;)?\\s*alter\\s+(role|user|database)\\s[^;]*\\sset\\s+lock_timeout\\s*(=|to)\\s*(?<v>[^;]*[^;\\s])\\s*(;.*)?", y).
+mlt_value(s, v) :- mlt_text(s, y), match("(?s).*set_config\\s*\\(\\s*'lock_timeout'\\s*,\\s*(?<v>'[^']*'|[^,)]+).*", y).
+mlt_value(s, v) :- mlt_text(s, y), match("(?s)(.*\\s)?(-c\\s*|--)lock[_-]timeout\\s*=\\s*(?<v>[^\\s'\"]+)(\\s.*)?", y).
+mlt_value(s, v) :- mlt_text(s, y),
+    match("(?s).*options=[^&]*(-c|--)(%20|\\+|\\s)*lock[_-]timeout(%3d|=)(?<v>[^&%\\s]+).*", y).
+// asyncpg: `server_settings={"lock_timeout": "5s"}`, as a keyword or a dict key.
+mlt_value(k, v) :- kind(p, "pair"), field(p, "key", k), mlt_text(k, "lock_timeout"), field(p, "value", w), text(w, t),
+    v = @lower(t), kind(dd, "dictionary"), child(dd, p, _), mlt_server_settings(dd).
+.decl mlt_server_settings(dd: node)
+mlt_server_settings(dd) :- kind(a, "keyword_argument"), field(a, "name", nm), text(nm, "server_settings"),
+    field(a, "value", dd).
+mlt_server_settings(dd) :- kind(p, "pair"), field(p, "key", k), mlt_text(k, "server_settings"), field(p, "value", dd).
+// mlt_off(v): v turns lock_timeout off: zero in any unit, or DEFAULT.
+.decl mlt_off(v: symbol)
+mlt_off(v) :- mlt_value(_, v), match("['\"]?\\s*0+(\\.0*)?\\s*(us|ms|s|min|h|d)?\\s*['\"]?", v).
+mlt_off(v) :- mlt_value(_, v), match("['\"]?default['\"]?", v).
+// mlt_setting(s): s turns lock_timeout on.
+.decl mlt_setting(s: node)
+mlt_setting(s) :- mlt_value(s, v), !mlt_off(v).
 
 // mlt_setting_fn(q): a function of the run, qualified name q, whose body holds a lock_timeout setting.
 .decl mlt_setting_fn(q: symbol)
@@ -60,6 +99,7 @@ mlt_setting_fn(q) :- kind(g, "function_definition"), mlt_setting(s), within(s, g
 mlt_setting_const(q) :- al_top_assign(d, x, v), unparen(v, s), mlt_setting(s), modnode(d, m), modname(m, mq),
     q = @dot(mq, x).
 
+// ---- the revision ------------------------------------------------------------------------------------------------
 // mlt_set_at(f, l): upgrade step f sets lock_timeout at line l: a setting string, a call of a setting function, or a
 // setting constant, written in f's own body.
 .decl mlt_set_at(f: node, l: number)
@@ -67,21 +107,16 @@ mlt_set_at(f, l) :- al_step(f, "upgrade"), mlt_setting(s), within(s, f), line(s,
 mlt_set_at(f, l) :- al_step(f, "upgrade"), kind(c, "call"), within(c, f), field(c, "function", fn), sym_of(fn, q),
     mlt_setting_fn(q), line(c, l).
 mlt_set_at(f, l) :- al_step(f, "upgrade"), within(e, f), sym_of(e, q), mlt_setting_const(q), line(e, l).
-
 // mlt_file_sets(d): migration d sets lock_timeout outside both steps (a module-level helper or constant), which
 // protects every operation of upgrade().
 .decl mlt_file_sets(d: number)
 mlt_file_sets(d) :- al_migration_doc(d), mlt_setting(s), docof(s, d), !mlt_in_a_step(s).
 .decl mlt_in_a_step(n: node)
 mlt_in_a_step(n) :- al_step(f, _), within(n, f).
-
-// env.py: the one whose directory holds the revision; a revision under none falls back to any env.py of the run.
-.decl mlt_env_sets(e: number)
-mlt_env_sets(e) :- al_env_doc(e), mlt_setting(s), docof(s, e).
-.decl mlt_env_protects(d: number)
-// The tree is lib/alembic's al_env_tree; a revision under no env.py's directory falls back to any env.py of the run.
-mlt_env_protects(d) :- al_env_tree(d, e), mlt_env_sets(e).
-mlt_env_protects(d) :- al_migration_doc(d), !al_in_some_tree(d), mlt_env_sets(_).
+// mlt_rev_sets(d): revision d sets lock_timeout for its upgrade(), wherever in it.
+.decl mlt_rev_sets(d: number)
+mlt_rev_sets(d) :- mlt_file_sets(d).
+mlt_rev_sets(d) :- mlt_set_at(f, _), docof(f, d).
 
 // mlt_locking(m): operations that take a lock on an existing table that blocks its writes (ACCESS EXCLUSIVE for
 // ALTER/DROP TABLE and DROP INDEX, SHARE for CREATE INDEX, SHARE ROW EXCLUSIVE for ADD FOREIGN KEY).
@@ -90,33 +125,98 @@ mlt_locking("add_column"). mlt_locking("drop_column"). mlt_locking("alter_column
 mlt_locking("create_check_constraint"). mlt_locking("create_unique_constraint"). mlt_locking("create_primary_key").
 mlt_locking("drop_constraint"). mlt_locking("rename_table"). mlt_locking("drop_table"). mlt_locking("create_index").
 mlt_locking("drop_index").
-// mlt_concurrent(c): postgresql_concurrently= something other than a literal False.
-.decl mlt_concurrent(c: node)
-mlt_concurrent(c) :- al_kw(c, "postgresql_concurrently", v), unparen(v, u), !kind(u, "false").
-
-// mlt_cand(c, m, t, d): operation m (c) locks existing table t in migration d, and nothing set lock_timeout for it.
-.decl mlt_cand(c: node, m: symbol, t: symbol, d: number)
-mlt_cand(c, m, t, d) :- al_on_existing(c, m, t, f), mlt_locking(m), !mlt_concurrent(c), !al_non_pg(c), docof(c, d),
-    al_migration_doc(d), !al_test_doc(d), !mlt_file_sets(d), !mlt_env_protects(d), !mlt_set_before(f, c).
+// mlt_lock(c, m, t, f, d): operation m (c), in upgrade step f of revision d, locks existing table t on PostgreSQL.
+.decl mlt_lock(c: node, m: symbol, t: symbol, f: node, d: number)
+mlt_lock(c, m, t, f, d) :- al_on_existing(c, m, t, f), mlt_locking(m), !al_kw_on(c, "postgresql_concurrently"),
+    !al_non_pg(c), docof(c, d), al_migration_doc(d), !al_test_doc(d).
 // mlt_set_before(f, c): f sets lock_timeout on a line above c; c in a helper of f is protected by any setting in f.
 .decl mlt_set_before(f: node, c: node)
 mlt_set_before(f, c) :- mlt_set_at(f, l), within(c, f), line(c, k), l < k.
 mlt_set_before(f, c) :- mlt_set_at(f, _), al_in_step(c, f), !within(c, f).
 
-MissingLockTimeout(c, m, t) :- mlt_cand(c, m, t, d), node(d, c, _, s, _),
-    s = min x : { mlt_cand(b, _, _, d), node(d, b, _, x, _) }.
+// ---- the tree ----------------------------------------------------------------------------------------------------
+// mlt_env(e): an env.py outside test code.
+.decl mlt_env(e: number)
+mlt_env(e) :- al_env_doc(e), !al_test_doc(e).
+// mlt_tree(d, e): revision d belongs to env.py e: the deepest env.py whose directory holds it, else every env.py.
+.decl mlt_tree(d: number, e: number)
+mlt_tree(d, e) :- al_env_tree(d, e), mlt_env(e), !mlt_nested(d, e).
+mlt_tree(d, e) :- al_migration_doc(d), !al_in_some_tree(d), mlt_env(e).
+.decl mlt_nested(d: number, e: number)
+mlt_nested(d, e) :- al_env_tree(d, e), al_env_tree(d, e2), e2 != e, doc(e, p, _), doc(e2, p2, _),
+    prefix(@replace_all(p, "env\\.py$", ""), p2).
+// mlt_env_sets(e): env.py e sets lock_timeout, itself or in a module of the run it reads settings from (lib's
+// al_env_reads: `from app.db import engine`, a re-export, or a module imported whole, `from app import db`).
+.decl mlt_env_sets(e: number)
+mlt_env_sets(e) :- mlt_env(e), al_env_reads(e, m), mlt_setting(s), docof(s, m).
+// mlt_env_covers(d): an env.py that runs revision d sets lock_timeout.
+.decl mlt_env_covers(d: number)
+mlt_env_covers(d) :- mlt_tree(d, e), mlt_env_sets(e).
+mlt_env_covers(d) :- al_migration_doc(d), !al_in_some_tree(d), mlt_env_sets(_).
+// mlt_needs(d, e): locking revision d of tree e, which no env.py covers; mlt_gap(c, m, t, d, e): its operation c runs
+// before any setting of its own.
+.decl mlt_needs(d: number, e: number)
+mlt_needs(d, e) :- mlt_lock(_, _, _, _, d), mlt_tree(d, e), !mlt_env_covers(d).
+.decl mlt_gap(c: node, m: symbol, t: symbol, d: number, e: number)
+mlt_gap(c, m, t, d, e) :- mlt_lock(c, m, t, f, d), mlt_needs(d, e), !mlt_file_sets(d), !mlt_set_before(f, c).
+// mlt_count(e, k, n): tree e has n locking revisions, k of which set lock_timeout.
+.decl mlt_count(e: number, k: number, n: number)
+mlt_count(e, k, n) :- mlt_needs(_, e), n = count : { mlt_needs(_, e) }, k = count : { mlt_needs(x, e), mlt_rev_sets(x) }.
+.decl mlt_convention(e: number)
+mlt_convention(e) :- mlt_count(e, k, n), k * 2 > n.
+
+// ---- env.py's configure call -------------------------------------------------------------------------------------
+.decl mlt_configure(e: number, c: node, s: number)
+mlt_configure(e, c, s) :- al_env_configure(c), docof(c, e), mlt_env(e), node(e, c, _, s, _).
+.decl mlt_online(e: number, c: node, s: number)
+mlt_online(e, c, s) :- mlt_configure(e, c, s), al_kw(c, "connection", _).
+.decl mlt_has_online(e: number)
+mlt_has_online(e) :- mlt_online(e, _, _).
+.decl mlt_configure_at(e: number, c: node)
+mlt_configure_at(e, c) :- mlt_online(e, c, s), s = min x : { mlt_online(e, _, x) }.
+mlt_configure_at(e, c) :- mlt_configure(e, c, s), !mlt_has_online(e), s = min x : { mlt_configure(e, _, x) }.
+
+MissingLockTimeout(c, m, t, k, n) :- mlt_gap(c, m, t, d, e), mlt_convention(e), mlt_count(e, k, n), node(d, c, _, s, _),
+    s = min x : { mlt_gap(b, _, _, d, e), node(d, b, _, x, _) }.
+NoMigrationLockTimeout(c, k, n) :- mlt_gap(_, _, _, _, e), !mlt_convention(e), mlt_count(e, k, n),
+    mlt_configure_at(e, c).
 
 // The cases, `cases/alembic-practice-missing-lock-timeout/`, read as one repository: each line ending in `# caught`
-// is reported, and no other line.
+// is reported, and no other line. `migrations/` is a convention tree (13 of 25 locking revisions set lock_timeout), so
+// its slips are reported per revision; the other trees are reported at env.py (`qualified/` reaches it through
+// `import alembic.context`) or not at all.
 .test cases exactly
+    .fixture "app/__init__.py" from "../cases/alembic-practice-missing-lock-timeout/app/__init__.py"
+    .fixture "app/async_db.py" from "../cases/alembic-practice-missing-lock-timeout/app/async_db.py"
+    .fixture "app/db.py" from "../cases/alembic-practice-missing-lock-timeout/app/db.py"
+    .fixture "app/listener_db.py" from "../cases/alembic-practice-missing-lock-timeout/app/listener_db.py"
+    .fixture "app/redis_db.py" from "../cases/alembic-practice-missing-lock-timeout/app/redis_db.py"
     .fixture "app/schema.py" from "../cases/alembic-practice-missing-lock-timeout/app/schema.py"
+    .fixture "app/zero_db.py" from "../cases/alembic-practice-missing-lock-timeout/app/zero_db.py"
+    .fixture "engine_import/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/engine_import/migrations/env.py"
+    .fixture "engine_import/migrations/versions/e1_add.py" from "../cases/alembic-practice-missing-lock-timeout/engine_import/migrations/versions/e1_add.py"
     .fixture "fallback/alembic/env.py" from "../cases/alembic-practice-missing-lock-timeout/fallback/alembic/env.py"
     .fixture "fallback/versions/f1_orders.py" from "../cases/alembic-practice-missing-lock-timeout/fallback/versions/f1_orders.py"
+    .fixture "listener/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/listener/migrations/env.py"
+    .fixture "listener/migrations/versions/e3_add.py" from "../cases/alembic-practice-missing-lock-timeout/listener/migrations/versions/e3_add.py"
     .fixture "locked_env/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/locked_env/migrations/env.py"
     .fixture "locked_env/migrations/versions/l1_users.py" from "../cases/alembic-practice-missing-lock-timeout/locked_env/migrations/versions/l1_users.py"
+    .fixture "lookalike/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/lookalike/migrations/env.py"
+    .fixture "lookalike/migrations/versions/e5_add.py" from "../cases/alembic-practice-missing-lock-timeout/lookalike/migrations/versions/e5_add.py"
     .fixture "migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/env.py"
     .fixture "migrations/shared/locks.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/shared/locks.py"
+    .fixture "migrations/versions/c10_shared_helper.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c10_shared_helper.py"
+    .fixture "migrations/versions/c11_shared_constant.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c11_shared_constant.py"
+    .fixture "migrations/versions/c12_other_timeout.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c12_other_timeout.py"
+    .fixture "migrations/versions/c13_disabled.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c13_disabled.py"
+    .fixture "migrations/versions/c14_local_helper.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c14_local_helper.py"
+    .fixture "migrations/versions/c15_local_lock_helper.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c15_local_lock_helper.py"
+    .fixture "migrations/versions/c16_zero_seconds.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c16_zero_seconds.py"
+    .fixture "migrations/versions/c17_zero_ms.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c17_zero_ms.py"
+    .fixture "migrations/versions/c18_default.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c18_default.py"
+    .fixture "migrations/versions/c19_set_config_zero.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c19_set_config_zero.py"
     .fixture "migrations/versions/c1_users_columns.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c1_users_columns.py"
+    .fixture "migrations/versions/c20_log_mention.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c20_log_mention.py"
     .fixture "migrations/versions/c2_batch.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c2_batch.py"
     .fixture "migrations/versions/c3_set_local.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c3_set_local.py"
     .fixture "migrations/versions/c4_set_too_late.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c4_set_too_late.py"
@@ -125,21 +225,54 @@ MissingLockTimeout(c, m, t) :- mlt_cand(c, m, t, d), node(d, c, _, s, _),
     .fixture "migrations/versions/c7_dialects.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c7_dialects.py"
     .fixture "migrations/versions/c8_downgrade_only.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c8_downgrade_only.py"
     .fixture "migrations/versions/c9_lock_in_downgrade.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c9_lock_in_downgrade.py"
-    .fixture "migrations/versions/c10_shared_helper.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c10_shared_helper.py"
-    .fixture "migrations/versions/c11_shared_constant.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c11_shared_constant.py"
-    .fixture "migrations/versions/c12_other_timeout.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c12_other_timeout.py"
-    .fixture "migrations/versions/c13_disabled.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c13_disabled.py"
-    .fixture "migrations/versions/c14_local_helper.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c14_local_helper.py"
-    .fixture "migrations/versions/c15_local_lock_helper.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/c15_local_lock_helper.py"
+    .fixture "migrations/versions/set/s1_set_local.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s1_set_local.py"
+    .fixture "migrations/versions/set/s2_text_to.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s2_text_to.py"
+    .fixture "migrations/versions/set/s3_driver_sql.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s3_driver_sql.py"
+    .fixture "migrations/versions/set/s4_set_config.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s4_set_config.py"
+    .fixture "migrations/versions/set/s5_fstring.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s5_fstring.py"
+    .fixture "migrations/versions/set/s6_multi_statement.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s6_multi_statement.py"
+    .fixture "migrations/versions/set/s7_triple_quoted.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s7_triple_quoted.py"
+    .fixture "migrations/versions/set/s8_autocommit_gap.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/versions/set/s8_autocommit_gap.py"
+    .fixture "mixed/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/mixed/migrations/env.py"
+    .fixture "mixed/migrations/versions/x1_sets.py" from "../cases/alembic-practice-missing-lock-timeout/mixed/migrations/versions/x1_sets.py"
+    .fixture "mixed/migrations/versions/x2_unset.py" from "../cases/alembic-practice-missing-lock-timeout/mixed/migrations/versions/x2_unset.py"
+    .fixture "mixed/migrations/versions/x3_unset.py" from "../cases/alembic-practice-missing-lock-timeout/mixed/migrations/versions/x3_unset.py"
+    .fixture "module_attr/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/module_attr/migrations/env.py"
+    .fixture "module_attr/migrations/versions/e2_add.py" from "../cases/alembic-practice-missing-lock-timeout/module_attr/migrations/versions/e2_add.py"
+    .fixture "nested/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/nested/migrations/env.py"
+    .fixture "nested/migrations/tenant/env.py" from "../cases/alembic-practice-missing-lock-timeout/nested/migrations/tenant/env.py"
+    .fixture "nested/migrations/tenant/versions/n2_add.py" from "../cases/alembic-practice-missing-lock-timeout/nested/migrations/tenant/versions/n2_add.py"
+    .fixture "nested/migrations/versions/n1_add.py" from "../cases/alembic-practice-missing-lock-timeout/nested/migrations/versions/n1_add.py"
+    .fixture "plain/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/plain/migrations/env.py"
+    .fixture "plain/migrations/versions/p1_add_column.py" from "../cases/alembic-practice-missing-lock-timeout/plain/migrations/versions/p1_add_column.py"
+    .fixture "plain/migrations/versions/p2_reset.py" from "../cases/alembic-practice-missing-lock-timeout/plain/migrations/versions/p2_reset.py"
+    .fixture "plain/migrations/versions/p3_new_table.py" from "../cases/alembic-practice-missing-lock-timeout/plain/migrations/versions/p3_new_table.py"
+    .fixture "qualified/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/qualified/migrations/env.py"
+    .fixture "qualified/migrations/versions/q1_add.py" from "../cases/alembic-practice-missing-lock-timeout/qualified/migrations/versions/q1_add.py"
+    .fixture "reexport/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/reexport/migrations/env.py"
+    .fixture "reexport/migrations/versions/e4_add.py" from "../cases/alembic-practice-missing-lock-timeout/reexport/migrations/versions/e4_add.py"
     .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-missing-lock-timeout/tests/migrations/versions/t1_fixture.py"
+    .fixture "zero_env/migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/zero_env/migrations/env.py"
+    .fixture "zero_env/migrations/versions/e6_add.py" from "../cases/alembic-practice-missing-lock-timeout/zero_env/migrations/versions/e6_add.py"
+    .expect _ at "lookalike/migrations/env.py":9
+    .expect _ at "migrations/versions/c12_other_timeout.py":15
+    .expect _ at "migrations/versions/c13_disabled.py":14
+    .expect _ at "migrations/versions/c14_local_helper.py":12
+    .expect _ at "migrations/versions/c16_zero_seconds.py":13
+    .expect _ at "migrations/versions/c17_zero_ms.py":13
+    .expect _ at "migrations/versions/c18_default.py":13
+    .expect _ at "migrations/versions/c19_set_config_zero.py":13
     .expect _ at "migrations/versions/c1_users_columns.py":12
+    .expect _ at "migrations/versions/c20_log_mention.py":16
     .expect _ at "migrations/versions/c2_batch.py":15
     .expect _ at "migrations/versions/c4_set_too_late.py":12
     .expect _ at "migrations/versions/c7_dialects.py":17
     .expect _ at "migrations/versions/c9_lock_in_downgrade.py":12
-    .expect _ at "migrations/versions/c12_other_timeout.py":15
-    .expect _ at "migrations/versions/c13_disabled.py":14
-    .expect _ at "migrations/versions/c14_local_helper.py":12
+    .expect _ at "mixed/migrations/env.py":10
+    .expect _ at "nested/migrations/tenant/env.py":10
+    .expect _ at "plain/migrations/env.py":22
+    .expect _ at "qualified/migrations/env.py":10
+    .expect _ at "zero_env/migrations/env.py":9
 .end
 
 // Without the fallback, a revision outside every env.py's directory would ignore the env.py that sets lock_timeout.
@@ -148,11 +281,18 @@ MissingLockTimeout(c, m, t) :- mlt_cand(c, m, t, d), node(d, c, _, s, _),
     .fixture "versions/f1_orders.py" from "../cases/alembic-practice-missing-lock-timeout/fallback/versions/f1_orders.py"
 .end
 
-// The same revisions under an env.py that sets nothing: every one is reported.
+// The same revisions under an env.py that sets nothing, and no revision that does: one finding, at env.py's
+// configure call, however many revisions lock.
 .test unprotected exactly
     .fixture "migrations/env.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/env.py"
     .fixture "migrations/versions/l1_users.py" from "../cases/alembic-practice-missing-lock-timeout/locked_env/migrations/versions/l1_users.py"
     .fixture "migrations/versions/f1_orders.py" from "../cases/alembic-practice-missing-lock-timeout/fallback/versions/f1_orders.py"
-    .expect _ at "migrations/versions/l1_users.py":12
-    .expect _ at "migrations/versions/f1_orders.py":12
+    .expect _ at "migrations/env.py":13
+.end
+
+// A revision under no env.py's directory belongs to the env.py of the run that sets nothing: reported there.
+.test orphan exactly
+    .fixture "alembic/env.py" from "../cases/alembic-practice-missing-lock-timeout/migrations/env.py"
+    .fixture "versions/f1_orders.py" from "../cases/alembic-practice-missing-lock-timeout/fallback/versions/f1_orders.py"
+    .expect _ at "alembic/env.py":13
 .end

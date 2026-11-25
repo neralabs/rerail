@@ -1,54 +1,77 @@
 .policy "celery-practice-countdown-past-visibility-timeout" revision 1
-.description "Keep Celery countdowns, etas and retry delays under the broker's visibility timeout (one hour by default on Redis), or Redis and SQS hand the waiting task to a second worker."
+.description "Keep Celery countdowns, etas and retry delays under the broker's redelivery limit (one hour on Redis, 30 minutes on SQS and RabbitMQ by default), or the waiting task runs twice or fails."
 .language python
 .mode steer
 .scope include "**/*.py"
 // Rerail's own rule, not a port. A worker holds an eta or countdown task unacknowledged until it runs. Redis and SQS
 // hand an unacknowledged message to another worker once the visibility timeout passes (Redis: one hour by default,
-// SQS: 30 minutes), so a task delayed longer runs twice, or is redelivered again and again in a loop. Celery's Redis
-// and SQS caveats say so, and its calling guide keeps eta and countdown to minutes.
+// SQS: 30 minutes), so a task delayed longer runs twice, or is redelivered again and again in a loop; RabbitMQ (3.8.17
+// and later) closes the channel of a consumer holding a message past its consumer_timeout (30 minutes by default), and
+// the worker fails with PreconditionFailed. Celery's Redis and SQS caveats and its calling guide (eta and countdown)
+// say so.
 // Reported, at the delay, when its value is provably longer than the threshold:
-//   - `countdown=` on `.apply_async(...)` and `.send_task(...)`, and on `.retry(...)` called on a bound task's own
-//     first parameter (`self.retry`, `task.retry`) or on a task;
-//   - `eta=<now> + <timedelta>` on the same calls, `<now>` being `datetime.now()`, `datetime.utcnow()`,
-//     `datetime.today()`, Django's `timezone.now()`, or a name bound to one of them;
+//   - `countdown=` and `eta=` on calls resolved to a task, never by method name alone: `.apply_async(...)`, `.set(...)`
+//     and `.signature(...)` on a task or signature (the library's cel_task_ref, which takes a Celery wrapper package's
+//     `@task` imported in a module that imports celery), `.send_task(...)`,
+//     `celery.signature(...)`; `.retry(...)` on a bound task's own first parameter (`self.retry`, `task.retry`) or on
+//     a task;
+//   - `eta=` the current time plus a timedelta: `datetime.now()`, `utcnow()`, `today()`, Django's `timezone.now()` or
+//     `timezone.localtime()` (resolved through imports), `+`/`-` timedeltas in any order and chained, through names;
 //   - a task's `default_retry_delay=`, when the task retries with that delay: it calls `.retry()` without a
 //     countdown (in its body or a function it runs), or sets `autoretry_for` without `retry_backoff`;
 //   - a task's `retry_backoff_max=`, when it sets `autoretry_for` and `retry_backoff`, and its retries reach the cap:
 //     the backoff before the last retry (`retry_backoff * 2 ** (max_retries - 1)`, max_retries from `retry_kwargs`,
 //     else `max_retries=`, else Celery's 3; `None` is unbounded) is past the threshold.
-// Values it reads: int and float literals (a float's whole seconds), `+` and `*` of values, file-local constants and
-// module-level names, `timedelta(...)` with readable fields and its `.total_seconds()`, `min(a, b)` (its smallest
-// readable argument: `min(delay, 86_400)` can wait a day) and `max(a, b)` (any readable argument).
-// The threshold is the largest literal `visibility_timeout` the run sets outside tests (a `"visibility_timeout": N`
-// pair or keyword anywhere, `x["visibility_timeout"] = N`, `<x>.visibility_timeout = N`), else 3600 seconds.
-//   ship.apply_async((order_id,), countdown=60 * 60 * 2)         reported, at the countdown (no visibility_timeout set)
-//   raise self.retry(exc=exc, countdown=min(delay, 86_400))      reported
-//   ship.apply_async((order_id,), countdown=3600)                not reported: at the threshold, not past it
-// Left alone: values at or under the threshold, and values it cannot read (`countdown=delay`, `settings.X`, another
-// module's constant); a run that sets visibility_timeout to a value it cannot read, or whose broker_transport_options
-// is something other than a dict (read from configuration: the team chose a value); a run whose broker is known to
-// be RabbitMQ (every broker URL literal of the run's broker_url settings and `Celery(broker=...)` is amqp, amqps,
-// pyamqp or librabbitmq, as the literal or an environment default); test code and test settings files; `.retry()`
-// on other receivers (a client's own retry method); `default_retry_delay` on a task that never retries with it, and
+// Values it reads: int and float literals (a float's whole seconds), `+` and `*` of values, file-local constants,
+// `timedelta(...)` with readable fields and its `.total_seconds()`, `min(a, b)` (its smallest readable argument:
+// `min(delay, 86_400)` can wait a day) and `max(a, b)` (any readable argument); and names, resolved by scope (module,
+// enclosing function or own function), through every assignment the name may still hold (one not replaced by a later
+// unconditional one): each is a path the task can take. `TWO_HOURS = 2 * 60 * 60`, a local `later = timezone.now() +
+// timedelta(days=1)`, `step = 600` then `if urgent: step = 7200`, a decorator factory's `max_retries = 60`.
+// The threshold, by the run's broker (the schemes of every broker URL literal of its broker_url settings and
+// `Celery(broker=...)`, as the literal or an environment default). The schemes are Kombu's transport names, a fixed
+// list (nothing to resolve):
+//   - RabbitMQ (amqp, amqps, pyamqp, librabbitmq only): the largest `"x-consumer-timeout": ms` queue argument the run
+//     sets, else RabbitMQ's default consumer_timeout, 1800 seconds; reported with a RabbitMQ message;
+//   - otherwise the largest literal `visibility_timeout` the run sets outside tests (a `"visibility_timeout": N` pair
+//     or keyword anywhere, `x["visibility_timeout"] = N`, `<x>.visibility_timeout = N`), else 1800 seconds for SQS
+//     (sqs only) and 3600 for Redis, mixed brokers (past every named default) or a broker it cannot name.
+//   ship.apply_async((order_id,), countdown=60 * 60 * 2)         reported, at the countdown (Redis, no visibility_timeout)
+//   later = timezone.now() + timedelta(days=1)
+//   ship.apply_async((order_id,), eta=later)                     reported
+//   ship.apply_async((order_id,), countdown=45 * 60)             reported on SQS and RabbitMQ, not on Redis
+//   ship.apply_async((order_id,), countdown=3600)                not reported on Redis: at the threshold, not past it
+// Left alone: values at or under the threshold, and values it cannot read (`countdown=delay` of a parameter,
+// `settings.X`, another module's constant, a loop variable, a binding replaced before the end of its scope);
+// `.apply_async`, `.set` and `.retry` on receivers that are not Celery tasks (a pool's `apply_async`, a client's
+// `retry`); a run that sets the threshold's value (visibility_timeout, or x-consumer-timeout on RabbitMQ) to a value
+// it cannot read, or a non-RabbitMQ run whose broker_transport_options is not a dict (read from configuration: the
+// team chose a value);
+// test code and test settings files; `default_retry_delay` on a task that never retries with it, and
 // `retry_backoff_max` on a task whose retries never reach it.
-// Gaps: a broker chosen by an environment variable with no default is assumed to be Redis or SQS; on RabbitMQ the
-// limit is the server's consumer_timeout (30 minutes by default), which the rule does not read; SQS's default of
-// 30 minutes is not used, the rule takes Redis's hour; a countdown that grows over retries with no cap
-// (`countdown=30 * 2 ** self.request.retries`) is left alone; `.set(countdown=...)` and `options={...}` on
-// signatures, Task subclasses' class attributes, `self.retry` in a Task subclass's `run`, and `min()` or `max()`
-// inside arithmetic are not read.
+// Gaps: a broker chosen by an environment variable with no default is taken for Redis (one hour), so a delay between
+// 30 and 60 minutes on such a RabbitMQ or SQS run is missed; RabbitMQ's consumer_timeout raised in rabbitmq.conf or a
+// policy, outside the repository, is not seen (the message names it); a countdown that grows over retries with no cap
+// (`countdown=30 * 2 ** self.request.retries`) is left alone; `options={...}` on signatures, Task subclasses' class
+// attributes, `self.apply_async`/`self.retry` in a Task subclass's methods, `min()` or `max()` inside arithmetic, and
+// a constant built from another constant (`DAY = 24 * HOUR`) are not read; the `.retry()` that makes a task use its
+// default_retry_delay is matched by name in the task's own call graph.
 
 #include "lib/celery.rerail"
 
-.violation PastVisibility(at: node, secs: number, limit: number) "This task waits {secs} s before it runs, past the broker's visibility timeout of {limit} s: Redis and SQS then hand the unacknowledged message to another worker, so it runs twice or loops. Keep the delay under the timeout (store far-off work and let a periodic task send it), or raise visibility_timeout above it."
+.violation PastVisibility(at: node, secs: number, limit: number) "This task waits {secs} s, past the {limit} s visibility timeout: the broker redelivers it to a second worker. Schedule far-off work from the database; a longer timeout delays crashed-task recovery."
+.violation PastConsumerTimeout(at: node, secs: number, limit: number) "This task stays unacknowledged {secs} s, past RabbitMQ's {limit} s consumer_timeout: the channel closes. Schedule far-off work from the database, or raise consumer_timeout in rabbitmq.conf."
+PastVisibility(at, n, t) :- cv_past(at, n, t), !cv_rabbit().
+PastConsumerTimeout(at, n, t) :- cv_past(at, n, t), cv_rabbit().
+// cv_past(at, n, t): the delay at is n seconds, past the run's threshold t.
+.decl cv_past(at: node, n: number, t: number)
 // countdown= and eta= on a send or a task's retry.
-PastVisibility(at, n, t) :- cv_delay_site(c, at, n), cv_threshold(t), n > t, cv_live(c).
+cv_past(at, n, t) :- cv_delay_site(c, at, n), cv_threshold(t), n > t, cv_live(c).
 // A task's default_retry_delay, when the task retries with it.
-PastVisibility(at, n, t) :- cel_task_option(f, "default_retry_delay", at), cv_delay(at, n), cv_threshold(t), n > t,
+cv_past(at, n, t) :- cel_task_option(f, "default_retry_delay", at), cv_delay(at, n), cv_threshold(t), n > t,
     cv_retries_by_default(f), cv_live(f).
 // A task's retry_backoff_max, when its retries reach it.
-PastVisibility(at, n, t) :- cel_task_option(f, "retry_backoff_max", at), cv_delay(at, n), cv_threshold(t), n > t,
+cv_past(at, n, t) :- cel_task_option(f, "retry_backoff_max", at), cv_delay(at, n), cv_threshold(t), n > t,
     cv_backoff(f, _, d), d > t, cv_live(f).
 
 // ---- where a delay is given ---------------------------------------------------------------------------------------
@@ -56,29 +79,55 @@ PastVisibility(at, n, t) :- cel_task_option(f, "retry_backoff_max", at), cv_dela
 // timedelta.
 .decl cv_delay_site(c: node, v: node, n: number)
 cv_delay_site(c, v, n) :- cv_delay_call(c), call_arg(c, -1, "countdown", v), cv_delay(v, n).
-cv_delay_site(c, v, n) :- cv_delay_call(c), call_arg(c, -1, "eta", v), cv_eta(v, n).
-// cv_delay_call(c): `<x>.apply_async(...)`, `<x>.send_task(...)`, or a retry of a task.
+cv_delay_site(c, v, n) :- cv_delay_call(c), call_arg(c, -1, "eta", v), cv_time(v, n).
+// cv_delay_call(c): a call that takes a task's delay, on a receiver resolved to a task (a look-alike's `.apply_async`
+// or `.set` is not one): `.apply_async(...)` on a task or signature, `.send_task(...)` (cel_send),
+// `.set(...)`/`.signature(...)` on a task or signature, `celery.signature(...)`, or a retry of a task.
 .decl cv_delay_call(c: node)
-cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), (m = "apply_async" ; m = "send_task").
+cv_delay_call(c) :- cel_send(c, "send_task").
+cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    (m = "apply_async" ; m = "set" ; m = "signature"), unparen(o, t), cel_task_ref(t).
+cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, q),
+    (q = "celery.signature" ; q = "celery.canvas.signature" ; q = "celery.canvas.Signature" ; q = "celery.Signature").
 cv_delay_call(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "retry"), unparen(o, r), cv_task_handle(r).
-// cv_task_handle(r): r is a task: a bound task's first parameter, read in that task, or a name of a task def.
+// cv_task_handle(r): r is a task: a bound task's first parameter, read in that task, or a task (lib/celery's
+// cel_task_ref, which also takes a Celery wrapper package's `@task` in a module that imports celery).
 .decl cv_task_handle(r: node)
 cv_task_handle(r) :- kind(r, "identifier"), text(r, x), look(r, x, g), cel_task_bound(g), sig_param(g, _, nm, 0, _, _, _),
     text(nm, x).
-cv_task_handle(r) :- sym_of(r, q), qualname(g, q), cel_task(g).
-// cv_eta(v, n): v is now plus a timedelta of n seconds, either way round.
-.decl cv_eta(v: node, n: number)
-cv_eta(v, n) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), field(u, "left", l), field(u, "right", r),
-    ((cv_now(l), cv_td_value(r, n)) ; (cv_now(r), cv_td_value(l, n))).
-// cv_now(e): the current time: a call of a now function, or a name bound to one.
+cv_task_handle(r) :- cel_task_ref(r).
+
+// ---- names --------------------------------------------------------------------------------------------------------
+// cv_name(e, s, x, w): e reads name x, which resolves to scope s (any scope: module, enclosing function, own
+// function), where `x = w` is a binding that may still hold at the end of s (live_asg: a later unconditional rebinding
+// drops an earlier one). Each such value is one the name can hold on some path, so a value relation reads every one:
+// `step = 600` then `if urgent: step = 7200` can wait 7200 s. One level only (a name's value is read without
+// following further names, except `now`), so `t = t + timedelta(...)` cannot loop.
+.decl cv_name(e: node, s: node, x: symbol, w: node)
+cv_name(e, s, x, w) :- unparen(e, u), kind(u, "identifier"), text(u, x), look(u, x, s), live_asg(s, x, w).
+
+// ---- times --------------------------------------------------------------------------------------------------------
+// cv_time(e, n): e is the current time plus n seconds: a now call, a name bound to one, `+`/`-` of a timedelta
+// (either way round for `+`, chained), or a name bound to such an expression (`later = now + timedelta(days=1)`).
 .decl cv_now_fn(q: symbol)
 cv_now_fn("datetime.datetime.now"). cv_now_fn("datetime.datetime.utcnow"). cv_now_fn("datetime.datetime.today").
 cv_now_fn("django.utils.timezone.now").
 .decl cv_now_call(e: node)
 cv_now_call(e) :- unparen(e, u), kind(u, "call"), field(u, "function", f), sym_of(f, q), cv_now_fn(q).
+cv_now_call(e) :- unparen(e, u), kind(u, "call"), field(u, "function", f), sym_of(f, "django.utils.timezone.localtime"),
+    !call_arg(u, _, _, _).
 .decl cv_now(e: node)
 cv_now(e) :- cv_now_call(e).
-cv_now(e) :- unparen(e, u), kind(u, "identifier"), text(u, x), look(u, x, s), asg(s, x, v, _), cv_now_call(v).
+cv_now(e) :- cv_name(e, _, _, w), cv_now_call(w).
+.decl cv_time_expr(e: node, n: number)
+cv_time_expr(e, 0) :- cv_now(e).
+cv_time_expr(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "+"), field(u, "left", l), field(u, "right", r),
+    ((cv_time_expr(l, a), cv_td_value(r, b)) ; (cv_time_expr(r, a), cv_td_value(l, b))), n = a + b, n <= 100000000.
+cv_time_expr(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "-"), field(u, "left", l), field(u, "right", r),
+    cv_time_expr(l, a), cv_td_value(r, b), n = a - b, n >= -100000000.
+.decl cv_time(e: node, n: number)
+cv_time(e, n) :- cv_time_expr(e, n).
+cv_time(e, n) :- cv_name(e, _, _, w), cv_time_expr(w, n).
 
 // ---- task options -------------------------------------------------------------------------------------------------
 // cv_retries_by_default(f): task f retries with its default_retry_delay: a `.retry()` call without countdown or eta
@@ -127,11 +176,11 @@ cv_lit(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "+"), field(u, 
     cv_lit(l, a), cv_lit(r, b), n = a + b, n <= 100000000.
 cv_lit(e, n) :- unparen(e, u), kind(u, "binary_operator"), op(u, "*"), field(u, "left", l), field(u, "right", r),
     cv_lit(l, a), cv_lit(r, b), (b = 0 ; a <= 100000000 / b), n = a * b, n <= 100000000.
-// cv_leaf(e, n): cv_lit, or a module-level name bound to one (`TWO_HOURS = 2 * 60 * 60`).
+// cv_leaf(e, n): cv_lit, or a name (cv_name) with a binding that is one (`TWO_HOURS = 2 * 60 * 60`, a local
+// `delay = 7200`, an enclosing function's `max_retries = 60`).
 .decl cv_leaf(e: node, n: number)
 cv_leaf(e, n) :- cv_lit(e, n).
-cv_leaf(e, n) :- unparen(e, u), kind(u, "identifier"), !static_value(u, _), text(u, x), look(u, x, m), kind(m, "module"),
-    asg(m, x, v, _), cv_lit(v, n).
+cv_leaf(e, n) :- cv_name(e, _, _, w), unparen(e, u), !static_value(u, _), cv_lit(w, n).
 // cv_num(e, n): e is n whole seconds: `+` and `*` of cv_leaf values.
 .decl cv_num(e: node, n: number)
 cv_num(e, n) :- cv_leaf(e, n).
@@ -155,11 +204,10 @@ cv_td_open(c) :- cv_td_call(c), field(c, "arguments", al), child(al, a, _),
     (kind(a, "list_splat") ; kind(a, "dictionary_splat")).
 .decl cv_td(c: node, n: number)
 cv_td(c, n) :- cv_td_call(c), !cv_td_open(c), n = sum x : { cv_td_part(c, a, x) }.
-// cv_td_value(e, n): e is a timedelta of n seconds: a call, or a name bound to one (module-level or local).
+// cv_td_value(e, n): e is a timedelta of n seconds: a call, or a name (cv_name) with a binding that is one.
 .decl cv_td_value(e: node, n: number)
 cv_td_value(e, n) :- unparen(e, u), cv_td(u, n).
-cv_td_value(e, n) :- unparen(e, u), kind(u, "identifier"), text(u, x), look(u, x, s), asg(s, x, v, _), unparen(v, w),
-    cv_td(w, n).
+cv_td_value(e, n) :- cv_name(e, _, _, w), unparen(w, c), cv_td(c, n).
 // cv_secs(e, n): e is n seconds: a number (cv_num), a timedelta's `.total_seconds()`, or `+` and `*` of those.
 .decl cv_secs(e: node, n: number)
 cv_secs(e, n) :- cv_num(e, n).
@@ -199,20 +247,34 @@ cv_vt_value(v) :- cel_setting("visibility_timeout", v, s), cv_live(s).
 .decl cv_vt_open()
 cv_vt_open() :- cv_vt_value(v), !cv_secs(v, _).
 cv_vt_open() :- cel_setting("broker_transport_options", v, s), cv_live(s), !cv_dict(v).
-// cv_dict(v): a dict literal without `**` spread, or a module-level name bound to one.
+// cv_dict(v): a dict literal without `**` spread, or a name (cv_name) every live binding of which is one.
 .decl cv_dict(v: node)
 cv_dict(v) :- unparen(v, u), kind(u, "dictionary"), !cv_dict_spread(u).
-cv_dict(v) :- unparen(v, u), kind(u, "identifier"), text(u, x), look(u, x, m), kind(m, "module"), asg(m, x, w, _),
-    unparen(w, d), kind(d, "dictionary"), !cv_dict_spread(d).
+cv_dict(v) :- cv_name(v, s, x, _), !cv_dict_open(s, x).
+.decl cv_dict_open(s: node, x: symbol)
+cv_dict_open(s, x) :- cv_name(_, s, x, w), unparen(w, d), (!kind(d, "dictionary") ; cv_dict_spread(d)).
 .decl cv_dict_spread(d: node)
 cv_dict_spread(d) :- kind(d, "dictionary"), child(d, s, _), kind(s, "dictionary_splat").
 .decl cv_vt_known(n: number)
 cv_vt_known(n) :- cv_vt_value(v), cv_secs(v, n).
-// cv_threshold(t): the largest visibility_timeout the run sets, else Redis's default of one hour. No row when the
-// run's value is unreadable or its broker is RabbitMQ.
+// cv_threshold(t): on RabbitMQ, the largest `x-consumer-timeout` the run gives a queue (milliseconds), else its
+// default consumer_timeout of 30 minutes; elsewhere the largest visibility_timeout the run sets, else the broker's
+// default: 30 minutes on SQS, one hour on Redis or a broker the rule cannot name. No row when the value it would take
+// is unreadable.
 .decl cv_threshold(t: number)
-cv_threshold(t) :- !cv_vt_open(), !cv_rabbit(), cv_vt_known(_), t = max n : { cv_vt_known(n) }.
-cv_threshold(3600) :- !cv_vt_open(), !cv_rabbit(), !cv_vt_known(_).
+cv_threshold(1800) :- cv_rabbit(), !cv_ct_open(), !cv_ct_known(_).
+cv_threshold(t) :- cv_rabbit(), !cv_ct_open(), cv_ct_known(_), m = max n : { cv_ct_known(n) }, t = m / 1000.
+cv_threshold(t) :- !cv_rabbit(), !cv_vt_open(), cv_vt_known(_), t = max n : { cv_vt_known(n) }.
+cv_threshold(1800) :- cv_sqs(), !cv_vt_open(), !cv_vt_known(_).
+cv_threshold(3600) :- !cv_rabbit(), !cv_sqs(), !cv_vt_open(), !cv_vt_known(_).
+// cv_ct_value(v): the run gives a queue a consumer timeout of v milliseconds (`{"x-consumer-timeout": v}` in its
+// queue arguments), outside tests.
+.decl cv_ct_value(v: node)
+cv_ct_value(v) :- kind(p, "pair"), field(p, "key", k), str(k, "x-consumer-timeout"), field(p, "value", v), cv_live(p).
+.decl cv_ct_open()
+cv_ct_open() :- cv_ct_value(v), !cv_secs(v, _).
+.decl cv_ct_known(n: number)
+cv_ct_known(n) :- cv_ct_value(v), cv_secs(v, n).
 // cv_broker_value(v): the run's broker URL: a broker_url setting, or `Celery(..., broker=v)`.
 .decl cv_broker_value(v: node)
 cv_broker_value(v) :- cel_setting("broker_url", v, s), cv_live(s).
@@ -240,6 +302,11 @@ cv_rabbit_scheme("amqp"). cv_rabbit_scheme("amqps"). cv_rabbit_scheme("pyamqp").
 cv_rabbit() :- cv_broker_scheme(s), cv_rabbit_scheme(s), !cv_other_broker().
 .decl cv_other_broker()
 cv_other_broker() :- cv_broker_scheme(s), !cv_rabbit_scheme(s).
+// cv_sqs(): every broker scheme the run names is SQS's, and it names one.
+.decl cv_sqs()
+cv_sqs() :- cv_broker_scheme("sqs"), !cv_not_sqs().
+.decl cv_not_sqs()
+cv_not_sqs() :- cv_broker_scheme(s), s != "sqs".
 
 // ---- files --------------------------------------------------------------------------------------------------------
 // cv_live(n): n is outside test code and test settings files (`test*.py`, `*_test*.py`).
@@ -250,12 +317,17 @@ cv_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py"
 
 // The cases, `cases/celery-practice-countdown-past-visibility-timeout/`: `proj/` is a Redis run with no
 // visibility_timeout (threshold one hour), in which each line ending in `# caught` is reported and no other line;
-// `vt_set/` sets visibility_timeout to 12 hours; `vt_config/` sets it from the environment and `vt_options/` reads its
-// transport options from configuration (both silent); `rabbit/` uses RabbitMQ (silent); `env_broker/` picks RabbitMQ
-// or Redis from the environment, with scheme strings only in a replace() call (reported).
+// it holds delays read through names and signatures, and look-alike receivers. `vt_set/` sets visibility_timeout to
+// 12 hours; `vt_config/` sets it from the environment and `vt_options/` reads its transport options from
+// configuration (both silent); `rabbit/` uses RabbitMQ (30 minutes, its own message); `rabbit_queue_timeout/` gives
+// its queue a consumer timeout of three hours, `rabbit_queue_timeout_env/` one from configuration (silent); `sqs/`
+// uses SQS (30 minutes) and `sqs_vt/` raises its visibility timeout to four hours; `mixed/` names RabbitMQ and Redis
+// (one hour); `env_broker/` picks RabbitMQ or Redis from the environment, with scheme strings only in a replace()
+// call (one hour).
 .test cases exactly
     .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/__init__.py"
     .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/celery.py"
+    .fixture "proj/jobs.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/jobs.py"
     .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tasks.py"
     .fixture "proj/tests/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tests/__init__.py"
     .fixture "proj/tests/test_tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/proj/tests/test_tasks.py"
@@ -275,7 +347,19 @@ cv_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py"
     .expect _ at "proj/tasks.py":71
     .expect _ at "proj/tasks.py":79
     .expect _ at "proj/tasks.py":87
-    .expect _ at "proj/tasks.py":94
+    .expect PastVisibility at "proj/tasks.py":94
+    .expect PastVisibility at "proj/tasks.py":146
+    .expect PastVisibility at "proj/tasks.py":152
+    .expect PastVisibility at "proj/tasks.py":156
+    .expect PastVisibility at "proj/tasks.py":157
+    .expect PastVisibility at "proj/tasks.py":160
+    .expect PastVisibility at "proj/tasks.py":161
+    .expect PastVisibility at "proj/tasks.py":165
+    .expect PastVisibility at "proj/tasks.py":186
+    .expect PastVisibility at "proj/tasks.py":187
+    .expect PastVisibility at "proj/tasks.py":188
+    .expect PastVisibility at "proj/tasks.py":208
+    .expect PastVisibility at "proj/tasks.py":209
 .end
 
 .test vt_set exactly
@@ -303,6 +387,48 @@ cv_test_settings(d) :- file_name(d, s), (glob("test*.py", s) ; glob("*_test*.py"
     .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/celery.py"
     .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/settings.py"
     .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit/proj/tasks.py"
+    .expect PastConsumerTimeout at "proj/tasks.py":9
+    .expect PastConsumerTimeout at "proj/tasks.py":14
+    .expect PastConsumerTimeout at "proj/tasks.py":15
+    .expect PastConsumerTimeout at "proj/tasks.py":16
+    .expect PastConsumerTimeout at "proj/tasks.py":21
+    .expect PastConsumerTimeout at "proj/tasks.py":33
+.end
+
+.test rabbit_queue_timeout exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/celery.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout/proj/tasks.py"
+    .expect PastConsumerTimeout at "proj/tasks.py":11
+.end
+
+.test rabbit_queue_timeout_env exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/celery.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/rabbit_queue_timeout_env/proj/tasks.py"
+.end
+
+.test sqs_vt exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/__init__.py"
+    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/settings.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs_vt/proj/tasks.py"
+    .expect PastVisibility at "proj/tasks.py":12
+.end
+
+.test mixed exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/mixed/proj/__init__.py"
+    .fixture "proj/settings.py" from "../cases/celery-practice-countdown-past-visibility-timeout/mixed/proj/settings.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/mixed/proj/tasks.py"
+    .expect PastVisibility at "proj/tasks.py":11
+.end
+
+.test sqs exactly
+    .fixture "proj/__init__.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs/proj/__init__.py"
+    .fixture "proj/celery.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs/proj/celery.py"
+    .fixture "proj/tasks.py" from "../cases/celery-practice-countdown-past-visibility-timeout/sqs/proj/tasks.py"
+    .expect PastVisibility at "proj/tasks.py":14
+    .expect PastVisibility at "proj/tasks.py":15
+    .expect PastVisibility at "proj/tasks.py":16
 .end
 
 .test env_broker exactly

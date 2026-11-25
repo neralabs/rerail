@@ -183,8 +183,8 @@ def allow_listed(request):
     return FileResponse(open(os.path.join(MEDIA, name), "rb"))
 
 
-def get_doc_checked(request):
-    return FileResponse(open(storage.resolve_safe(request.GET["doc"]), "rb"))
+def get_doc_checked(request):  # resolve_safe tests startswith(BASE) without a separator: /srv/docs-x passes
+    return FileResponse(open(storage.resolve_safe(request.GET["doc"]), "rb"))  # caught
 
 
 def get_doc_located(request):

@@ -78,6 +78,11 @@ def due_in_two(start):
     return due_in_days(start, per_day=2)
 
 
+# The same guard, `per_day` passed by position.
+def due_in_three(start):
+    return due_in(start, 3)
+
+
 def make_named_shelf(name):
     shelf = Shelf(name=name)
     shelf.save()

@@ -11,3 +11,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def ping() -> int:
+    return httpx.get("https://example.com").status_code

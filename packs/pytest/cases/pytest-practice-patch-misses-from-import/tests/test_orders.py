@@ -89,7 +89,8 @@ def test_class_attribute(get):
     place(1)
 
 
-@patch("shop.mail.send_email", create=True)
+# create=True and raising=False change nothing when the module binds the name: the copy is still missed.
+@patch("shop.mail.send_email", create=True)  # caught
 def test_create(send):
     pass
 
@@ -105,7 +106,7 @@ def test_missing(missing):
 
 
 def test_raising_false(monkeypatch):
-    monkeypatch.setattr(mail, "send_email", lambda *a: None, raising=False)
+    monkeypatch.setattr(mail, "send_email", lambda *a: None, raising=False)  # caught
     monkeypatch.delattr("shop.mail.send_email")
 
 

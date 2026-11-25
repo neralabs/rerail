@@ -1,1 +1,5 @@
 OPERATION_TASK = "ops.execute"
+CLEANUP_TASK = "proj.cleanup"
+REBUILD_TASK = "proj.rebuild_index"
+WEEKLY_TASK = "proj.weekly_report"
+GONE_TASK = "proj.tasks.vanished"

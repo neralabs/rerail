@@ -136,12 +136,12 @@ class ProjectAdminSerializer(ReadOnlyFieldsMixin, serializers.ModelSerializer):
         read_only_fields = ["name"]
 
 
-# A plain Serializer has no read_only_fields at all: not this rule.
+# A plain Serializer ignores its whole Meta: `name` stays writable.
 class PlainSerializer(serializers.Serializer):
     name = serializers.CharField()
 
     class Meta:
-        read_only_fields = ["name"]
+        read_only_fields = ["name"]  # caught
 
 
 # Fields named in Meta but not declared: DRF honours both options.

@@ -31,3 +31,7 @@ class Flusher:
             await self.sink.flush()
         except asyncio.CancelledError:  # caught
             logger.info("flush cancelled")
+
+    async def flush_and_report(self):
+        await self.flush_now()
+        logger.info("flushed")

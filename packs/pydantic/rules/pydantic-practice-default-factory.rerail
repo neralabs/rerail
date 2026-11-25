@@ -21,13 +21,17 @@
 // table model or not, through the run's classes in any file), a private attribute of one (`_x: T = v`, or
 // `PrivateAttr(v)` / `PrivateAttr(default=v)`, annotated or not: Pydantic copies that default per instance too, the
 // same value), and a field of a `pydantic.dataclasses.dataclass` (`x: T = v`, `Field(v)`, `dataclasses.field(default=
-// v)`), which RUF009 does not treat as a dataclass. The default is `v` of `x: T = v` or the default of `Field(v)` /
-// `Field(default=v)` (pd_field_default). It is reported when the default is, or contains outside a lambda, a call
-// whose result differs per call, resolved through imports (`from datetime import datetime as dt; dt.now()`, `import
-// uuid; uuid.uuid4()`): datetime's now/utcnow/today and date.today, time.time/time_ns, uuid1/4/6/7, os.urandom, the
-// secrets and random functions, Django's timezone.now/localtime/localdate, pendulum's and arrow's now, shortuuid,
-// nanoid, uuid6/uuid_utils, ulid.new, and bson's ObjectId() with no argument. A function of the run (any file) is
-// followed one level: `utcnow()` is reported when one of utcnow's own `return` values contains such a call.
+// v)`), which RUF009 does not treat as a dataclass. The default is lib/pydantic's pd_field_default: `v` of `x: T = v`,
+// the default of `Field(v)` / `Field(default=v)`, or of a `Field(v)` / `Field(default=v)` in the field's
+// `Annotated[T, ...]` metadata, also through a module-level alias in any module. It is reported when the default is,
+// or contains outside a lambda, a call whose result differs per call, resolved through imports (`from datetime import
+// datetime as dt; dt.now()`, `import uuid; uuid.uuid4()`): datetime's now/utcnow/today and date.today,
+// time.time/time_ns/monotonic/perf_counter, uuid1/4/6/7, os.urandom, the secrets and random functions, Django's
+// timezone.now/localtime/localdate, pendulum's and arrow's now, shortuuid, nanoid, uuid6/uuid_utils, ulid.new, and
+// bson's ObjectId() with no argument. That list of library functions is a name list because nothing in the code says
+// a function returns a fresh value; everything else is resolved. A def of the run (any file, a module function or a
+// class's static or class method called through its class) is followed through the run's call graph to any depth:
+// `utcnow()` is reported when one of its own `return` values contains such a call or a call of another such def.
 // Left alone:
 //   - `default_factory=` of any form (`datetime.now`, `uuid4`, `lambda: ...`), and an uncalled function as a value;
 //   - a call meant to give a fixed value: `datetime(2020, 1, 1)`, `timedelta(days=1)`, `UUID("...")`, `uuid5(...)`,
@@ -45,13 +49,14 @@
 //     default=...)` (the sqlalchemy pack), `pydantic.v1` models (pd_model leaves them out), and function parameter
 //     defaults (Ruff B008);
 //   - test code (lib/pydantic's pd_test_doc): a model defined in a test is a fixture of that test.
-// Gaps: a default inside `Annotated[T, Field(default=...)]`; a field of a model whose Pydantic base is outside the run
-// and not a known base (a library's model subclass); a project helper followed more than one level, or a method
-// (`self.clock.now()`); a volatile call of a library not listed; `pydantic.v1` models, which have the same bug.
+// Gaps: a field of a model whose Pydantic base is outside the run and not a known base (a library's model subclass);
+// a method called on an instance (`self.clock.now()`), whose class is not resolved; a value returned through a
+// variable (`t = datetime.now(); return t`); a volatile call of a library not listed; `pydantic.v1` models, which
+// have the same bug.
 
 #include "lib/pydantic.rerail"
 
-.violation DefaultEvaluatedOnce(at: node, fn: symbol, maker: symbol) "{fn} runs once, when the class body runs at import, so every instance gets that one value (a stale timestamp, the same id on every row). Pass a callable so Pydantic calls it per instance: `{maker}(default_factory=...)`, e.g. `default_factory=uuid4` or `default_factory=lambda: datetime.now(timezone.utc)`. Keep the call only if every instance must share the import-time value."
+.violation DefaultEvaluatedOnce(at: node, fn: symbol, maker: symbol) "{fn} runs once at import, so every instance shares its value. Use `{maker}(default_factory=...)` (e.g. `uuid4`, `lambda: datetime.now(timezone.utc)`) unless all instances must share it."
 DefaultEvaluatedOnce(k, x, m) :- dfo_default(d, m), (k = d ; within_stop(k, d, dfo_stop)), dfo_called(k, x),
     docof(k, doc), !pd_test_doc(doc).
 
@@ -123,7 +128,8 @@ dfo_volatile_call(k, q) :- dfo_callee(k, q), (q = "bson.ObjectId" ; q = "bson.ob
 // The same list as the django pack's django-practice-default-called-once, plus the libraries Pydantic code uses.
 .decl dfo_once(q: symbol)
 dfo_once("uuid.uuid1"). dfo_once("uuid.uuid4"). dfo_once("uuid.uuid6"). dfo_once("uuid.uuid7").
-dfo_once("os.urandom"). dfo_once("time.time"). dfo_once("time.time_ns").
+dfo_once("os.urandom"). dfo_once("time.time"). dfo_once("time.time_ns"). dfo_once("time.monotonic").
+dfo_once("time.monotonic_ns"). dfo_once("time.perf_counter"). dfo_once("time.perf_counter_ns").
 dfo_once("datetime.datetime.now"). dfo_once("datetime.datetime.utcnow"). dfo_once("datetime.datetime.today").
 dfo_once("datetime.date.today").
 dfo_once("django.utils.timezone.now"). dfo_once("django.utils.timezone.localtime").
@@ -137,19 +143,26 @@ dfo_not_volatile("secrets.SystemRandom"). dfo_not_volatile("secrets.compare_dige
 dfo_not_volatile("random.Random"). dfo_not_volatile("random.SystemRandom"). dfo_not_volatile("random.seed").
 dfo_not_volatile("random.getstate"). dfo_not_volatile("random.setstate"). dfo_not_volatile("random.shuffle").
 
-// dfo_helper(q, q2): q is a def of the run with a `return` of its own whose value contains a call of q2, a per-call
-// value (not inside a lambda or a nested def): `def utcnow(): return datetime.now(timezone.utc)`.
+// dfo_helper(q, q2): q is a def of the run with a `return` of its own whose value contains (not inside a lambda or a
+// nested def) a call of q2, a per-call value, or a call of another such def of the run, to any depth:
+// `def utcnow(): return datetime.now(timezone.utc)`, `def stamp(): return utcnow().isoformat()`.
 .decl dfo_helper(q: symbol, q2: symbol)
-dfo_helper(q, q2) :- kind(g, "function_definition"), qualname(g, q), kind(r, "return_statement"), nearest(r, g, fdef),
-    within_stop(k, r, dfo_stop), dfo_volatile_call(k, q2).
+dfo_helper(q, q2) :- dfo_return_call(q, k), dfo_volatile_call(k, q2).
+dfo_helper(q, q2) :- dfo_return_call(q, k), dfo_callee(k, q1), q1 != q, dfo_helper(q1, q2).
+// dfo_return_call(q, k): call k sits in a `return` value of def q of the run.
+.decl dfo_return_call(q: symbol, k: node)
+dfo_return_call(q, k) :- kind(g, "function_definition"), qualname(g, q), kind(r, "return_statement"),
+    nearest(r, g, fdef), within_stop(k, r, dfo_stop), kind(k, "call").
 
 // The cases, `cases/pydantic-practice-default-factory/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.
 .test cases exactly
     .fixture "app/__init__.py" from "../cases/pydantic-practice-default-factory/app/__init__.py"
     .fixture "app/base.py" from "../cases/pydantic-practice-default-factory/app/base.py"
+    .fixture "app/clock.py" from "../cases/pydantic-practice-default-factory/app/clock.py"
     .fixture "app/dataclass_models.py" from "../cases/pydantic-practice-default-factory/app/dataclass_models.py"
     .fixture "app/events.py" from "../cases/pydantic-practice-default-factory/app/events.py"
+    .fixture "app/jobs.py" from "../cases/pydantic-practice-default-factory/app/jobs.py"
     .fixture "app/models.py" from "../cases/pydantic-practice-default-factory/app/models.py"
     .fixture "app/near_misses.py" from "../cases/pydantic-practice-default-factory/app/near_misses.py"
     .fixture "app/settings.py" from "../cases/pydantic-practice-default-factory/app/settings.py"
@@ -157,6 +170,8 @@ dfo_helper(q, q2) :- kind(g, "function_definition"), qualname(g, q), kind(r, "re
     .fixture "pyproject.toml" from "../cases/pydantic-practice-default-factory/pyproject.toml"
     .fixture "tests/__init__.py" from "../cases/pydantic-practice-default-factory/tests/__init__.py"
     .fixture "tests/test_models.py" from "../cases/pydantic-practice-default-factory/tests/test_models.py"
+    .expect _ at "app/clock.py":47
+    .expect _ at "app/clock.py":49
     .expect _ at "app/dataclass_models.py":12
     .expect _ at "app/dataclass_models.py":13
     .expect _ at "app/dataclass_models.py":14
@@ -165,6 +180,17 @@ dfo_helper(q, q2) :- kind(g, "function_definition"), qualname(g, q), kind(r, "re
     .expect _ at "app/events.py":12
     .expect _ at "app/events.py":13
     .expect _ at "app/events.py":14
+    .expect _ at "app/jobs.py":14
+    .expect _ at "app/jobs.py":18
+    .expect _ at "app/jobs.py":19
+    .expect _ at "app/jobs.py":20
+    .expect _ at "app/jobs.py":21
+    .expect _ at "app/jobs.py":22
+    .expect _ at "app/jobs.py":32
+    .expect _ at "app/jobs.py":33
+    .expect _ at "app/jobs.py":34
+    .expect _ at "app/jobs.py":35
+    .expect _ at "app/jobs.py":36
     .expect _ at "app/models.py":15
     .expect _ at "app/models.py":16
     .expect _ at "app/models.py":17

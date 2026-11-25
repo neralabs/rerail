@@ -59,8 +59,8 @@ class Address(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def legacy_keys(cls, data: dict[str, Any]) -> dict[str, Any]:
-        if "line1" in data:
-            data["street"] = data.pop("line1")  # caught
+        if "line1" in data:  # caught
+            data["street"] = data.pop("line1")
         return data
 
     # `data or {}` keeps any truthy non-dict.

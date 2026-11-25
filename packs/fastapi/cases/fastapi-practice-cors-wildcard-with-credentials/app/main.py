@@ -57,6 +57,26 @@ app.add_middleware(CORSMiddleware, allow_origins=get_settings().CORS_ORIGINS, al
 app.add_middleware(CORSMiddleware, allow_origin_regex=".*", allow_credentials=True)  # caught
 app.add_middleware(CORSMiddleware, allow_origin_regex=config.ANY_HTTPS, allow_credentials=True)  # caught
 
+# A raw-string regex, an `or` fallback, options passed as `**kwargs`, and a dev-only branch.
+app.add_middleware(CORSMiddleware, allow_origin_regex=r".*", allow_credentials=True)  # caught
+OR_ORIGINS = (os.getenv("ORIGINS") or "*").split(",")
+app.add_middleware(CORSMiddleware, allow_origins=OR_ORIGINS, allow_credentials=True)  # caught
+app.add_middleware(CORSMiddleware, allow_origins=os.getenv("ORIGINS") or ["*"], allow_credentials=True)  # caught
+cors_kwargs = dict(allow_origins=["*"], allow_credentials=True)
+app.add_middleware(CORSMiddleware, **cors_kwargs)  # caught
+app.add_middleware(CORSMiddleware, **{"allow_origins": ["*"], "allow_credentials": True})  # caught
+if os.getenv("ENV") == "dev":
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True)  # caught
+
+# Not settled or not listed: a dict lookup, a project's own broad regex, an `or` with a real origin, safe kwargs.
+cors_settings = {"origins": ["*"]}
+app.add_middleware(CORSMiddleware, allow_origins=cors_settings["origins"], allow_credentials=True)
+app.add_middleware(CORSMiddleware, allow_origin_regex="https?://.*\\..*", allow_credentials=True)
+app.add_middleware(CORSMiddleware, allow_origins=os.getenv("ORIGINS") or ["https://app.example.com"], allow_credentials=True)
+safe_kwargs = {"allow_origins": ["https://app.example.com"], "allow_credentials": True}
+app.add_middleware(CORSMiddleware, **safe_kwargs)
+app.add_middleware(CORSMiddleware, **dict(allow_origins=["*"]))
+
 # Explicit origins: left alone.
 app.add_middleware(CORSMiddleware, allow_origins=[settings.FRONTEND_HOST], allow_credentials=True)
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=True)

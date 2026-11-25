@@ -119,3 +119,29 @@ class PropertyCap(LimitOffsetPagination):
 class PlainPaginator:
     # Not a DRF pagination class.
     page_size_query_param = "page_size"
+
+
+# paginate_queryset() clamps the client's limit itself.
+class ClampedInPaginate(LimitOffsetPagination):
+    def paginate_queryset(self, queryset, request, view=None):
+        self.limit = min(self.get_limit(request) or 50, 500)
+        self.offset = self.get_offset(request)
+        self.count = self.get_count(queryset)
+        self.request = request
+        return list(queryset[self.offset:self.offset + self.limit])
+
+
+class RejectingPages(PageNumberPagination):
+    page_size_query_param = "size"
+
+    def paginate_queryset(self, queryset, request, view=None):
+        if int(request.query_params.get("size", 0)) > 200:
+            raise ValidationError("size too large")
+        return super().paginate_queryset(queryset, request, view)
+
+
+# A paginate_queryset() that only logs: the client's ?limit= still goes through.
+class LoggingLimitOffset(LimitOffsetPagination):  # caught
+    def paginate_queryset(self, queryset, request, view=None):
+        print("paginating")
+        return super().paginate_queryset(queryset, request, view)

@@ -17,19 +17,31 @@
   },
   "rules": [
     {
-      "id": "python-security-code-injection",
-      "document": "rules/python-security-code-injection.rerail",
-      "title": "Don't run request data as code: eval, pickle, unsafe YAML or template source",
+      "id": "python-security-sql-injection",
+      "document": "rules/python-security-sql-injection.rerail",
+      "title": "Don't build SQL from request data",
       "group": "Python security",
       "mode": "steer",
       "examples": {
         "caught": {
-          "path": "app/views.py",
-          "text": "import pickle\n\nfrom flask import Flask, render_template_string, request\n\napp = Flask(__name__)\n\n\n@app.route(\"/restore\", methods=[\"POST\"])\ndef restore():\n    state = pickle.loads(request.get_data())\n    return str(state)\n\n\n@app.route(\"/hello\")\ndef hello():\n    name = request.args.get(\"name\", \"\")\n    return render_template_string(\"<p>Hello \" + name + \"</p>\")\n"
+          "path": "shop/reports.py",
+          "text": "from django.db import connection\n\n\ndef run(term):\n    sql = f\"SELECT * FROM shop_report WHERE author = '{term}'\"\n    with connection.cursor() as cursor:\n        cursor.execute(sql)\n        return cursor.fetchall()\n",
+          "with": [
+            {
+              "path": "shop/views.py",
+              "text": "from django.http import JsonResponse\n\nfrom shop import reports\n\n\ndef report(request):\n    return JsonResponse({\"rows\": reports.run(request.GET[\"q\"])})\n"
+            }
+          ]
         },
         "passes": {
-          "path": "app/views.py",
-          "text": "import json\n\nfrom flask import Flask, render_template_string, request\n\napp = Flask(__name__)\n\n\n@app.route(\"/restore\", methods=[\"POST\"])\ndef restore():\n    state = json.loads(request.get_data())\n    return str(state)\n\n\n@app.route(\"/hello\")\ndef hello():\n    name = request.args.get(\"name\", \"\")\n    return render_template_string(\"<p>Hello {{ name }}</p>\", name=name)\n"
+          "path": "shop/reports.py",
+          "text": "from django.db import connection\n\n\ndef run(term):\n    sql = \"SELECT * FROM shop_report WHERE author = %s\"\n    with connection.cursor() as cursor:\n        cursor.execute(sql, [term])\n        return cursor.fetchall()\n",
+          "with": [
+            {
+              "path": "shop/views.py",
+              "text": "from django.http import JsonResponse\n\nfrom shop import reports\n\n\ndef report(request):\n    return JsonResponse({\"rows\": reports.run(request.GET[\"q\"])})\n"
+            }
+          ]
         }
       }
     },
@@ -63,6 +75,23 @@
       }
     },
     {
+      "id": "python-security-code-injection",
+      "document": "rules/python-security-code-injection.rerail",
+      "title": "Don't run request data as code: eval, pickle, unsafe YAML or template source",
+      "group": "Python security",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "app/views.py",
+          "text": "import pickle\n\nfrom flask import Flask, render_template_string, request\n\napp = Flask(__name__)\n\n\n@app.route(\"/restore\", methods=[\"POST\"])\ndef restore():\n    state = pickle.loads(request.get_data())\n    return str(state)\n\n\n@app.route(\"/hello\")\ndef hello():\n    name = request.args.get(\"name\", \"\")\n    return render_template_string(\"<p>Hello \" + name + \"</p>\")\n"
+        },
+        "passes": {
+          "path": "app/views.py",
+          "text": "import json\n\nfrom flask import Flask, render_template_string, request\n\napp = Flask(__name__)\n\n\n@app.route(\"/restore\", methods=[\"POST\"])\ndef restore():\n    state = json.loads(request.get_data())\n    return str(state)\n\n\n@app.route(\"/hello\")\ndef hello():\n    name = request.args.get(\"name\", \"\")\n    return render_template_string(\"<p>Hello {{ name }}</p>\", name=name)\n"
+        }
+      }
+    },
+    {
       "id": "python-security-jwt-unverified",
       "document": "rules/python-security-jwt-unverified.rerail",
       "title": "Don't trust a JWT you didn't verify",
@@ -76,23 +105,6 @@
         "passes": {
           "path": "app/authentication.py",
           "text": "import jwt\nfrom django.conf import settings\nfrom django.contrib.auth import get_user_model\nfrom rest_framework import authentication\n\nUser = get_user_model()\n\n\nclass BearerAuthentication(authentication.BaseAuthentication):\n    def authenticate(self, request):\n        token = request.headers.get(\"Authorization\", \"\").removeprefix(\"Bearer \")\n        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[\"HS256\"])\n        return (User.objects.get(pk=payload[\"user_id\"]), token)\n"
-        }
-      }
-    },
-    {
-      "id": "python-security-orm-lookup-injection",
-      "document": "rules/python-security-orm-lookup-injection.rerail",
-      "title": "Don't let the client choose ORM lookup names",
-      "group": "Python security",
-      "mode": "steer",
-      "examples": {
-        "caught": {
-          "path": "catalog/views.py",
-          "text": "from django.http import JsonResponse\n\nfrom catalog.models import Book\n\n\ndef search(request):\n    filters = {key: value for key, value in request.GET.items()}\n    books = Book.objects.filter(**filters)\n    return JsonResponse({\"titles\": list(books.values_list(\"title\", flat=True))})\n"
-        },
-        "passes": {
-          "path": "catalog/views.py",
-          "text": "from django.http import JsonResponse\n\nfrom catalog.models import Book\n\nALLOWED_FILTERS = {\"title__icontains\", \"year\", \"author__name\"}\n\n\ndef search(request):\n    filters = {key: value for key, value in request.GET.items() if key in ALLOWED_FILTERS}\n    books = Book.objects.filter(**filters)\n    return JsonResponse({\"titles\": list(books.values_list(\"title\", flat=True))})\n"
         }
       }
     },
@@ -126,35 +138,6 @@
       }
     },
     {
-      "id": "python-security-sql-injection",
-      "document": "rules/python-security-sql-injection.rerail",
-      "title": "Don't build SQL from request data",
-      "group": "Python security",
-      "mode": "steer",
-      "examples": {
-        "caught": {
-          "path": "shop/reports.py",
-          "text": "from django.db import connection\n\n\ndef run(term):\n    sql = f\"SELECT * FROM shop_report WHERE author = '{term}'\"\n    with connection.cursor() as cursor:\n        cursor.execute(sql)\n        return cursor.fetchall()\n",
-          "with": [
-            {
-              "path": "shop/views.py",
-              "text": "from django.http import JsonResponse\n\nfrom shop import reports\n\n\ndef report(request):\n    return JsonResponse({\"rows\": reports.run(request.GET[\"q\"])})\n"
-            }
-          ]
-        },
-        "passes": {
-          "path": "shop/reports.py",
-          "text": "from django.db import connection\n\n\ndef run(term):\n    sql = \"SELECT * FROM shop_report WHERE author = %s\"\n    with connection.cursor() as cursor:\n        cursor.execute(sql, [term])\n        return cursor.fetchall()\n",
-          "with": [
-            {
-              "path": "shop/views.py",
-              "text": "from django.http import JsonResponse\n\nfrom shop import reports\n\n\ndef report(request):\n    return JsonResponse({\"rows\": reports.run(request.GET[\"q\"])})\n"
-            }
-          ]
-        }
-      }
-    },
-    {
       "id": "python-security-ssrf",
       "document": "rules/python-security-ssrf.rerail",
       "title": "Don't let request data pick where the server sends HTTP requests",
@@ -180,6 +163,23 @@
               "text": "from django.http import HttpResponse\n\nfrom links import http_client\n\n\ndef preview(request):\n    return HttpResponse(http_client.fetch(request.GET[\"id\"]).text)\n"
             }
           ]
+        }
+      }
+    },
+    {
+      "id": "python-security-orm-lookup-injection",
+      "document": "rules/python-security-orm-lookup-injection.rerail",
+      "title": "Don't let the client choose ORM lookup names",
+      "group": "Python security",
+      "mode": "steer",
+      "examples": {
+        "caught": {
+          "path": "catalog/views.py",
+          "text": "from django.http import JsonResponse\n\nfrom catalog.models import Book\n\n\ndef search(request):\n    filters = {key: value for key, value in request.GET.items()}\n    books = Book.objects.filter(**filters)\n    return JsonResponse({\"titles\": list(books.values_list(\"title\", flat=True))})\n"
+        },
+        "passes": {
+          "path": "catalog/views.py",
+          "text": "from django.http import JsonResponse\n\nfrom catalog.models import Book\n\nALLOWED_FILTERS = {\"title__icontains\", \"year\", \"author__name\"}\n\n\ndef search(request):\n    filters = {key: value for key, value in request.GET.items() if key in ALLOWED_FILTERS}\n    books = Book.objects.filter(**filters)\n    return JsonResponse({\"titles\": list(books.values_list(\"title\", flat=True))})\n"
         }
       }
     }

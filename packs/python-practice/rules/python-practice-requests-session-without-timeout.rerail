@@ -1,5 +1,5 @@
 .policy "python-practice-requests-session-without-timeout" revision 1
-.description "Pass timeout= to every HTTP call on a requests Session; a Session has no default timeout, so a stalled server hangs the caller."
+.description "Pass a timeout to every HTTP call on a requests Session; a Session has no default timeout, so a stalled server hangs the caller."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -11,7 +11,8 @@
 // or with `timeout=None` (SessionCallTimeoutNone) on a receiver that holds a Session made by `requests.Session()`,
 // `requests.session()`, or a class of the run deriving from requests.Session. The receiver is bound through:
 //   - a local name: `s = requests.Session(); s.get(url)` (the last assignment before the read), `with
-//     requests.Session() as s: s.post(...)`, and a name copied from one (`other = s`);
+//     requests.Session() as s: s.post(...)`, and a name copied from one (`other = s`); in a lambda or nested def,
+//     a name of the enclosing function (`lambda u: s.get(u)`), through the bindings that survive to its end;
 //   - `self.x`, set in any method of the class or of a base class (`self.session = requests.Session()` in
 //     `__init__`, read in another method or a subclass's), or a class attribute `session = requests.Session()`;
 //   - a module global, read in its module or imported (`from .net import session`, `net.session`);
@@ -24,6 +25,10 @@
 // It leaves alone a call with any `timeout=` but None (a variable too), a call passing `*args` or `**kwargs` (a
 // timeout may be inside), `request()` with a ninth positional argument (the timeout); a Session of a class of the
 // run that overrides `request()` or `send()` with a body that names `timeout` (the TimeoutSession idiom); a Session
+// whose `request` or `send` attribute (or the verb's own) is replaced on the same instance by a value that sets a
+// timeout, in the scope that creates it, through the same local, or the same `self.x` (`self.session.request =
+// functools.partial(self.session.request, timeout=10)`, a lambda passing `timeout=`, a wrapper factory or def of
+// the run whose body names `timeout`); a Session
 // on which `mount()` installs an adapter of a class of the run deriving from HTTPAdapter whose `send()` names
 // `timeout` (TimeoutHTTPAdapter), when the mount call's receiver binds to the same Session (in the factory, the
 // function, or any method of the class); `httpx.Client` (5 s default timeout); `requests.get(...)` (B113's);
@@ -31,19 +36,22 @@
 // outside every def and class (a script run by hand, whose hang is in front of its operator: zenodo-rdm
 // `scripts/new_api_flow.py`); example and documentation code (an `examples`, `example` or `docs` directory:
 // jupyterhub `examples/server-api/start-stop-server.py`); test files.
+//   self.session.request = functools.partial(self.session.request, timeout=10); self.session.get(url)  not reported
+// "Names a timeout" is read from the text of the override, the replacement or the adapter's send(): whether the
+// value it sets is finite is not decidable here, so `timeout=None` there is taken as set.
 // Gaps: a Session subclass whose `__init__` sets `self.timeout` is reported, rightly: requests never reads that
 // attribute. A mount of a timeout adapter through a helper (`configure(session)`) is not seen, so that session is
-// reported. Sessions passed as parameters, stored in containers, or read through a property are not followed.
-// `session.send(prepared)` is not read.
+// reported. Sessions passed as parameters (also annotated `requests.Session`), stored in containers, or read through
+// a property are not followed. `session.send(prepared)` is not read.
 
 #include "lib/python_practice.rerail"
 
 .violation SessionCallWithoutTimeout(at: node, x: symbol, p: symbol, o: node)
-    "`{x}()` on a requests Session (created at {p}:{o.line}) has no `timeout=`; requests never times out by default, so a server that stops answering hangs this worker forever. Pass `timeout=(connect, read)` with a read timeout above the server's slowest normal wait before it answers, e.g. `timeout=(3.05, 30)`; a stream that may idle longer can use `(5, None)`, which still bounds the connect."
+    "Pass `timeout=(connect, read)` to `{x}()`, e.g. `(3.05, 30)`, with the read timeout above the server's slowest normal answer; the Session from {p}:{o.line} never times out."
 SessionCallWithoutTimeout(c, x, p, o) :- rst_bad(c, _), !pp_kwarg(c, "timeout", _), !pp_splat(c),
     !rst_pos_timeout(c), rst_report(c, x, p, o).
 .violation SessionCallTimeoutNone(at: node, x: symbol, p: symbol, o: node)
-    "`{x}(..., timeout=None)` on a requests Session (created at {p}:{o.line}) turns the timeout off, so a server that stops answering hangs this worker forever. Pass `timeout=(connect, read)` with a read timeout above the server's slowest normal wait before it answers, e.g. `timeout=(3.05, 30)`; a stream that may idle longer can use `(5, None)`, which still bounds the connect."
+    "Replace `timeout=None` in `{x}()` with `(connect, read)`, e.g. `(3.05, 30)`, the read timeout above the server's slowest normal answer; None never times out."
 SessionCallTimeoutNone(c, x, p, o) :- rst_bad(c, _), pp_kwarg(c, "timeout", v), kind(v, "none"),
     rst_report(c, x, p, o).
 // rst_report(c, x, p, o): call c's callee text x, and its first unsafe Session origin o in file p.
@@ -56,7 +64,8 @@ rst_report(c, x, p, o) :- rst_bad(c, _), field(c, "function", fn), text(fn, x), 
 // receiver holding Session o, which sets no timeout of its own (its class) and has no timeout adapter mounted.
 .decl rst_bad(c: node, o: node)
 rst_bad(c, o) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, r, v), pp_http_verb(v), pp_live(c),
-    docof(c, d), !rst_example_doc(d), pp_frame(c, _), rst_val(r, o), !rst_safe_origin(o), !rst_adapted(o).
+    docof(c, d), !rst_example_doc(d), pp_frame(c, _), rst_val(r, o), !rst_safe_origin(o), !rst_adapted(o),
+    !rst_patched_for(r, o, v).
 .decl rst_example_doc(d: number)
 rst_example_doc(d) :- doc(d, _, _), (path_part(d, "examples") ; path_part(d, "example") ; path_part(d, "docs")).
 // rst_pos_timeout(c): `request(method, url, params, data, headers, cookies, files, auth, timeout, ...)`.
@@ -91,9 +100,10 @@ rst_val(c, o) :- kind(c, "call"), call_target(c, g), rst_returns(g, o).
 rst_val(e, o) :- latest_assign(e, x, a), rasg(_, x, r, a), rst_val(r, o).
 rst_val(e, o) :- rst_with(w, x, o), within(e, w), ast_name(e, x), expr_ctx(e, "load"), scope_node(e, s),
     scope_node(w, s).
-// a module global, read in a function of its module, or imported from another
-rst_val(e, o) :- ast_name(e, x), expr_ctx(e, "load"), look(e, x, m), kind(m, "module"), scope_node(e, s), s != m,
-    live_asg(m, x, r), rst_val(r, o).
+// a module global, read in a function of its module, or imported from another; a name of an enclosing function,
+// read in a lambda or nested def (a closure)
+rst_val(e, o) :- ast_name(e, x), expr_ctx(e, "load"), look(e, x, m), (kind(m, "module") ;
+    kind(m, "function_definition")), scope_node(e, s), s != m, live_asg(m, x, r), rst_val(r, o).
 rst_val(e, o) :- (kind(e, "identifier") ; kind(e, "attribute")), sym_of(e, q), rst_global(q, o).
 // `self.x` in a method of class k
 rst_val(e, o) :- attr_of(e, s, a), kind(s, "identifier"), text(s, "self"), nearest(e, f, "function_definition"),
@@ -129,6 +139,36 @@ rst_adapter_val(e) :- latest_assign(e, x, a), rasg(_, x, r, a), unparen(r, m), r
 rst_adapted(o) :- kind(m, "call"), field(m, "function", fn), attr_of(fn, r, "mount"), rst_val(r, o),
     (posarg(m, 1, a0) ; pp_kwarg(m, "adapter", a0)), unparen(a0, a), rst_adapter_val(a).
 
+// rst_patch(o, m, pr): `<pr>.m = v`, with pr holding Session o, replaces o's method m on that instance with a value
+// that sets a timeout: a partial or other call passing `timeout=` other than None, a call of a def of the run whose
+// body names `timeout` (a wrapper factory), a lambda that names `timeout`, or a def of the run whose body names it
+// (`self.session.request = functools.partial(self.session.request, timeout=10)`).
+.decl rst_patch(o: node, m: symbol, pr: node)
+rst_patch(o, m, pr) :- kind(a, "assignment"), field(a, "left", l), attr_of(l, pr, m),
+    (m = "request" ; m = "send" ; pp_http_verb(m)), rst_val(pr, o), field(a, "right", v0), unparen(v0, v),
+    rst_sets_timeout(v).
+// rst_patched_for(r, o, v): a patch covers the call of verb v on receiver r holding Session o. Replacing `request`
+// or `send` covers every verb, since the verbs call them; replacing `get` covers `get` only. The patch must reach
+// this instance, not just the same origin (a factory's Session is a new one per call): it is in the scope that
+// creates o (the factory, or the module of a global), or its receiver is r's text in r's scope (a local), or both
+// are the same `self.x`.
+.decl rst_patched_for(r: node, o: node, v: symbol)
+rst_patched_for(r, o, v) :- pp_http_verb(v), rst_val(r, o), rst_patch(o, m, pr), (m = "request" ; m = "send" ;
+    m = v), rst_same_instance(r, o, pr).
+.decl rst_same_instance(r: node, o: node, pr: node)
+rst_same_instance(r, o, pr) :- rst_patch(o, _, pr), rst_val(r, o), scope_node(pr, s), scope_node(o, s).
+rst_same_instance(r, o, pr) :- rst_patch(o, _, pr), rst_val(r, o), text(pr, t), text(r, t), scope_node(pr, s),
+    scope_node(r, s).
+rst_same_instance(r, o, pr) :- rst_patch(o, _, pr), rst_val(r, o), attr_of(pr, ps, a), kind(ps, "identifier"),
+    text(ps, "self"), attr_of(r, rs, a), kind(rs, "identifier"), text(rs, "self").
+.decl rst_sets_timeout(v: node)
+rst_sets_timeout(v) :- pp_kwarg(v, "timeout", t), !kind(t, "none").
+rst_sets_timeout(v) :- kind(v, "call"), !pp_kwarg(v, "timeout", _), call_target(v, g), text(g, t),
+    contains("timeout", t).
+rst_sets_timeout(v) :- kind(v, "lambda"), text(v, t), contains("timeout", t).
+rst_sets_timeout(v) :- (kind(v, "identifier") ; kind(v, "attribute")), sym_of(v, q), qualname(g, q),
+    kind(g, "function_definition"), text(g, t), contains("timeout", t).
+
 // The cases, `cases/python-practice-requests-session-without-timeout/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.
 .test cases exactly
@@ -136,6 +176,7 @@ rst_adapted(o) :- kind(m, "call"), field(m, "function", fn), attr_of(fn, r, "mou
     .fixture "app/clients.py" from "../cases/python-practice-requests-session-without-timeout/app/clients.py"
     .fixture "app/locals.py" from "../cases/python-practice-requests-session-without-timeout/app/locals.py"
     .fixture "app/net.py" from "../cases/python-practice-requests-session-without-timeout/app/net.py"
+    .fixture "app/patched.py" from "../cases/python-practice-requests-session-without-timeout/app/patched.py"
     .fixture "examples/start_server.py" from "../cases/python-practice-requests-session-without-timeout/examples/start_server.py"
     .fixture "scripts/smoke.py" from "../cases/python-practice-requests-session-without-timeout/scripts/smoke.py"
     .fixture "tests/__init__.py" from "../cases/python-practice-requests-session-without-timeout/tests/__init__.py"
@@ -159,4 +200,11 @@ rst_adapted(o) :- kind(m, "call"), field(m, "function", fn), attr_of(fn, r, "mou
     .expect _ at "app/locals.py":72
     .expect _ at "app/locals.py":77
     .expect _ at "app/net.py":58
+    .expect _ at "app/patched.py":92
+    .expect _ at "app/patched.py":98
+    .expect _ at "app/patched.py":105
+    .expect _ at "app/patched.py":111
+    .expect _ at "app/patched.py":120
+    .expect _ at "app/patched.py":128
+    .expect _ at "app/patched.py":135
 .end

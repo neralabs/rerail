@@ -11,7 +11,13 @@
 //                                             rest_framework class b ("rest_framework.generics.ListAPIView"), or from a
 //                                             third-party class known to derive from b (drf_ext_base: rest_flex_fields,
 //                                             drf-writable-nested, rest_framework_gis, dynamic_rest, json_api)
+//                  drf_cls(q, c)              dotted name q names class c of the run: its qualname, else through the
+//                                             project's import root and package re-exports (`plane.app.views.X` for
+//                                             apps/api/plane/app/views/x.py re-exported by views/__init__.py); only
+//                                             for the names drf_cls_ask lists, which a rule extends with its own
+//                  drf_cls_q(q, cq)           the same, by the class's qualname
 //                  drf_base(c, q)             class c lists base q, plain or subscripted (`GenericAPIView[Any]`)
+//                  drf_sub(s, c)              class s of the run lists class c of the run as a base (through drf_cls)
 //                  drf_class(c, x)            class node c derives from a rest_framework class whose last name is x
 //                  drf_class_mod(c, m, x)     the same, with that class's module m ("rest_framework.viewsets")
 //                  drf_node(c)                class c derives from some rest_framework class
@@ -39,9 +45,11 @@
 //                  drf_view_queryset(v, e)    view v's (inherited) class attribute `queryset = e`
 //                  drf_view_model(v, mc)      view v's rows are model mc: its queryset chain starts at `mc.objects`,
 //                                             or its serializer's Meta.model is mc
-//   Querysets:     drf_related_load(c, s)     call c is `.select_related(...)`/`.prefetch_related(...)` loading
-//                                             lookup s (a string or `Prefetch("s", ...)`); `select_related()` with
-//                                             no argument gives "*"
+//   Querysets:     drf_qs_model(u, mc)        queryset chain u starts at `mc.objects` (mc resolved through drf_cls)
+//                  drf_related_load(c, s)     call c is `.select_related(...)`/`.prefetch_related(...)` loading
+//                                             lookup s (a string, `Prefetch("s", ...)`, or an element of a `*NAME`
+//                                             splat of a module-level list); `select_related()` with no argument
+//                                             gives "*"
 //   Serializers:   drf_serializer(c)          c derives from a rest_framework.serializers serializer class
 //                  drf_model_serializer(c)    c derives from ModelSerializer or HyperlinkedModelSerializer
 //                  drf_meta(c, m)             m is the `class Meta` written in serializer c's body
@@ -52,7 +60,11 @@
 //                  drf_meta_model_q(c, mq)    the same by qualified name, for a model outside the run too
 //                  drf_fields_all(c)          serializer c's Meta.fields is "__all__"
 //                  drf_str_elem(v, s)         expression v holds the string s: a literal, an element of a list or
-//                                             tuple of them, through `+`, `*splat` and `Other.Meta.<opt>` references
+//                                             tuple of them, through `+`, `*splat`, module-level constants
+//                                             (drf_const) and `Other.Meta.<opt>` references
+//                  drf_str_at(v, e, s)        the same, with e the string node itself
+//                  drf_const(n, v)            identifier n (a class-body value, a splat, a `+` operand, a list
+//                                             element) reads module-level constant v, of its module or imported
 //                  drf_declared_own(c, x, k)  serializer c's body declares field x as `x = k`, k a call
 //                  drf_declared(c, x, k)      serializer c has declared field x = k, its own or a run ancestor's that
 //                                             c does not reassign
@@ -60,8 +72,11 @@
 //                                             class b ("rest_framework.serializers.CharField")
 //                  drf_field_kind(k, x)       the same by b's last name ("CharField", "SerializerMethodField")
 //                  drf_nested(k, sc)          call k constructs serializer class sc of the run (a nested serializer)
-//                  drf_kw(k, key, v)          call k passes keyword argument key=v
+//                  drf_kw(k, key, v)          call k passes keyword argument key=v, written out or through
+//                                             `**NAME` of a module-level dict
 //                  drf_kw_true(k, key)        call k passes key=True
+//                  drf_dict_entry(d, k, v)    dict expression d (a literal, `dict(...)`, a constant) maps "k" to v
+//                  drf_extra_kw(sc, x, k, v)  serializer sc's (inherited) Meta.extra_kwargs gives field x option k=v
 //   Permissions:   drf_perm_elem(v, e)        e is one permission class named in expression v: an element of a list
 //                                             or tuple, an operand of `&`, `|`, `~`, through parentheses
 //                  drf_view_perm(v, q)        view v's (inherited) permission_classes names class q
@@ -113,12 +128,54 @@
 drf_base(c, q) :- class_base(c, q).
 drf_base(c, q) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), kind(e, "subscript"),
     field(e, "value", v), sym_of(v, q).
+// drf_cls(q, c): dotted name q names class node c of the run (drf_cls_ask lists the names asked about). Its exact
+// qualname; else, as the project imports it: a run's module names can carry a prefix the project's own imports do not
+// (plane's apps/api/plane/app/views/base.py is module "apps.api.plane.app.views.base", imported as
+// "plane.app.views.base"; label-studio's settings say "core.permissions.IsOwner" for label_studio/core/permissions.py),
+// so q also names the class whose qualname ends with "." + q, or the class a module ending with q's module exports
+// as q's last name, re-exports followed (`from plane.app.views import UserEndpoint`, which views/__init__.py
+// re-exports from views/user/base.py). Ambiguous suffixes give every candidate (may).
+.decl drf_cls(q: symbol, c: node)
+drf_cls(q, c) :- drf_cls_ask(q), class_def(c, q).
+drf_cls(q, c) :- drf_cls_ask(q), !drf_cls_exact(q), split_dot(q, _, x), kind(c, "class_definition"), def_name(c, x),
+    class_def(c, cq), suffix(cat(".", q), cq).
+drf_cls(q, c) :- drf_cls_ask(q), !drf_cls_exact(q), split_dot(q, m, x), exports(m2, x, r), class_def(c, r),
+    (m2 = m ; suffix(cat(".", m), m2)).
+.decl drf_cls_exact(q: symbol)
+drf_cls_exact(q) :- drf_cls_ask(q), class_def(_, q).
+// drf_cls_ask(q): the names drf_cls resolves, all read from syntax (so no DRF relation depends on itself through a
+// negation): class bases, the values of class-body assignments (`serializer_class = X`, `model = X`) and the classes
+// they call (`author = AuthorSerializer()`), the receivers of `X.objects`, `X.as_view`, `X.Meta`, the arguments of
+// `router.register(...)`, permission classes named in permission_classes, `@action(...)` and `@permission_classes`,
+// and the dotted strings of the REST_FRAMEWORK settings. A rule adds the names it asks about itself.
+.decl drf_cls_ask(q: symbol) extensible
+drf_cls_ask(q) :- drf_base(_, q).
+drf_cls_ask(q) :- drf_own_attr(_, _, v, _), unparen(v, u), sym_of(u, q).
+drf_cls_ask(q) :- drf_own_attr(_, _, v, _), unparen(v, u), kind(u, "call"), field(u, "function", fn), sym_of(fn, q).
+drf_cls_ask(q) :- attr_of(_, o, a), (a = "objects" ; a = "as_view" ; a = "Meta"), sym_of(o, q).
+drf_cls_ask(q) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, _, "register"), call_arg(k, _, _, a),
+    sym_of(a, q).
+drf_cls_ask(q) :- drf_own_attr(_, "permission_classes", val, _), drf_perm_elem(val, e), sym_of(e, q).
+drf_cls_ask(q) :- drf_action_perm(_, q).
+drf_cls_ask(q) :- drf_fn_perm(_, q).
+drf_cls_ask(q) :- drf_setting(_, v), unparen(v, u), str(u, q).
+drf_cls_ask(q) :- drf_setting(_, v), unparen(v, u), kind(u, k), drf_seq(k), child(u, e, _), str(e, q).
+drf_cls_ask(q) :- drf_setting(_, v), unparen(v, u), sym_of(u, q).
+drf_cls_ask(q) :- drf_setting(_, v), unparen(v, u), kind(u, k), drf_seq(k), child(u, e, _), sym_of(e, q).
+// drf_cls_q(q, cq): the same, by the class's qualname.
+.decl drf_cls_q(q: symbol, cq: symbol)
+drf_cls_q(q, cq) :- drf_cls(q, c), class_def(c, cq).
+// drf_sub(s, c): class s lists class c of the run as a base, by any name the project imports it under.
+.decl drf_sub(s: node, c: node)
+drf_sub(s, c) :- drf_base(s, q), drf_cls(q, c).
 // A linear closure seeded from the bases that are rest_framework classes, or third-party classes known to derive from
-// one (drf_ext_base), as lib/django's dj_model_q: names' subclass is quadratic over every class of the run.
+// one (drf_ext_base), as lib/django's dj_model_q: names' subclass is quadratic over every class of the run. A base of
+// the run is followed through drf_cls, so a base imported through the project's import root or a package re-export
+// still counts.
 .decl drf_lib_q(q: symbol, b: symbol)
 drf_lib_q(q, b) :- class_def(c, q), drf_base(c, b), prefix("rest_framework.", b).
 drf_lib_q(q, b) :- class_def(c, q), drf_base(c, e), drf_ext_base(e, b).
-drf_lib_q(q, b) :- class_def(c, q), drf_base(c, m), drf_lib_q(m, b).
+drf_lib_q(q, b) :- class_def(c, q), drf_base(c, m), drf_cls_q(m, mq), drf_lib_q(mq, b).
 // drf_ext_base(e, b): class e of a package outside the run derives from rest_framework class b (rest_flex_fields'
 // FlexFieldsModelSerializer in label-studio, drf-writable-nested's WritableNestedModelSerializer in Tandoor).
 .decl drf_ext_base(e: symbol, b: symbol)
@@ -136,8 +193,8 @@ drf_class(c, x) :- drf_class_mod(c, _, x).
 .decl drf_node(c: node)
 drf_node(c) :- drf_class_mod(c, _, _).
 .decl drf_ancestor(c: node, b: node)
-drf_ancestor(c, b) :- drf_node(c), drf_base(c, q), class_def(b, q).
-drf_ancestor(c, b) :- drf_ancestor(c, m), drf_base(m, q), class_def(b, q).
+drf_ancestor(c, b) :- drf_node(c), drf_base(c, q), drf_cls(q, b).
+drf_ancestor(c, b) :- drf_ancestor(c, m), drf_base(m, q), drf_cls(q, b).
 
 // ---- members -----------------------------------------------------------------------------------------------------
 .decl drf_own_method(c: node, x: symbol, f: node)
@@ -199,19 +256,34 @@ drf_api_view_fn(f) :- kind(f, "function_definition"), decorator(f, d), unparen(d
 // drf_view_serializer(v, sc): the class serializer_class names, or a class a return of get_serializer_class() names.
 .decl drf_view_serializer(v: node, sc: node)
 drf_view_serializer(v, sc) :- drf_view(v), drf_attr(v, "serializer_class", e), unparen(e, u), sym_of(u, q),
-    class_def(sc, q), drf_serializer(sc).
+    drf_cls(q, sc), drf_serializer(sc).
 drf_view_serializer(v, sc) :- drf_view(v), drf_method(v, "get_serializer_class", f), kind(r, "return_statement"),
-    def_frame(r, f), child(r, e, 0), unparen(e, u), sym_of(u, q), class_def(sc, q), drf_serializer(sc).
+    def_frame(r, f), child(r, e, 0), unparen(e, u), sym_of(u, q), drf_ret_ask(q), drf_cls(q, sc), drf_serializer(sc).
+// drf_ret_ask(q): a name a get_serializer_class() returns (syntax only, for drf_cls_ask).
+.decl drf_ret_ask(q: symbol)
+drf_ret_ask(q) :- kind(f, "function_definition"), def_name(f, "get_serializer_class"), kind(r, "return_statement"),
+    def_frame(r, f), child(r, e, 0), unparen(e, u), sym_of(u, q).
+drf_cls_ask(q) :- drf_ret_ask(q).
 .decl drf_view_queryset(v: node, e: node)
 drf_view_queryset(v, e) :- drf_view(v), drf_attr(v, "queryset", e).
+// drf_qs_model(u, mc): queryset chain u starts at `M.objects` with M model class mc of the run: lib/django's
+// dj_qs_model, or M named through the project's import root or a package re-export (drf_cls).
+.decl drf_qs_model(u: node, mc: node)
+drf_qs_model(u, mc) :- dj_qs_model(u, mc).
+drf_qs_model(u, mc) :- dj_qs_root(u, r), sym_of(r, q), !class_def(_, q), drf_cls(q, mc), dj_model(mc).
 .decl drf_view_model(v: node, mc: node)
-drf_view_model(v, mc) :- drf_view_queryset(v, e), unparen(e, u), dj_qs_model(u, mc).
+drf_view_model(v, mc) :- drf_view_queryset(v, e), unparen(e, u), drf_qs_model(u, mc).
 drf_view_model(v, mc) :- drf_view_serializer(v, sc), drf_meta_model(sc, mc).
 
 // ---- querysets ---------------------------------------------------------------------------------------------------
+// drf_related_load(c, s): call c is `.select_related(...)`/`.prefetch_related(...)` loading lookup s: a string, a
+// `Prefetch("s", ...)`, or an element of a `*NAME` splat of a module-level list or tuple (`select_related(*RELS)`).
 .decl drf_related_load(c: node, s: symbol)
 drf_related_load(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
     (m = "select_related" ; m = "prefetch_related"), call_arg(c, _, "", a), str(a, s).
+drf_related_load(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
+    (m = "select_related" ; m = "prefetch_related"), field(c, "arguments", al), child(al, sp, _),
+    kind(sp, "list_splat"), child(sp, x, 0), drf_str_elem(x, s).
 drf_related_load(c, s) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "prefetch_related"),
     call_arg(c, _, "", p), kind(p, "call"), field(p, "function", pf), sym_of(pf, "django.db.models.Prefetch"),
     (call_arg(p, 0, "", a) ; call_arg(p, -1, "lookup", a)), str(a, s).
@@ -232,28 +304,50 @@ drf_meta_sets(c, k) :- drf_meta(c, m), drf_own_attr_name(m, k).
 .decl drf_meta_opt(c: node, k: symbol, v: node)
 drf_meta_opt(c, k, v) :- drf_meta(c, m), drf_own_attr(m, k, v, _).
 // `class Meta(Base.Meta):` inherits Base.Meta's options it does not set.
-drf_meta_opt(c, k, v) :- drf_meta(c, m), drf_base(m, mq), class_def(mb, mq), drf_meta(b, mb), drf_meta_opt(b, k, v),
+drf_meta_opt(c, k, v) :- drf_meta(c, m), drf_base(m, mq), drf_cls(mq, mb), drf_meta(b, mb), drf_meta_opt(b, k, v),
     !drf_meta_sets(c, k).
 // No Meta of its own: `c.Meta` is its base serializer's.
-drf_meta_opt(c, k, v) :- drf_serializer(c), !drf_has_meta(c), drf_base(c, q), class_def(b, q), drf_meta_opt(b, k, v).
+drf_meta_opt(c, k, v) :- drf_serializer(c), !drf_has_meta(c), drf_base(c, q), drf_cls(q, b), drf_meta_opt(b, k, v).
 .decl drf_meta_model_q(c: node, mq: symbol)
 drf_meta_model_q(c, mq) :- drf_meta_opt(c, "model", v), unparen(v, u), sym_of(u, mq).
 .decl drf_meta_model(c: node, mc: node)
-drf_meta_model(c, mc) :- drf_meta_model_q(c, mq), class_def(mc, mq).
+drf_meta_model(c, mc) :- drf_meta_model_q(c, mq), drf_cls(mq, mc).
 .decl drf_fields_all(c: node)
 drf_fields_all(c) :- drf_meta_opt(c, "fields", v), unparen(v, u), str(u, "__all__").
 .decl drf_seq(k: symbol)
 drf_seq("list"). drf_seq("tuple"). drf_seq("set").
-.decl drf_str_elem(v: node, s: symbol)
-drf_str_elem(v, s) :- unparen(v, u), str(u, s).
-drf_str_elem(v, s) :- unparen(v, u), kind(u, k), drf_seq(k), child(u, e, _), str(e, s).
-drf_str_elem(v, s) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), (field(u, "left", x) ; field(u, "right", x)),
-    drf_str_elem(x, s).
-drf_str_elem(v, s) :- unparen(v, u), kind(u, k), drf_seq(k), child(u, sp, _), kind(sp, "list_splat"), child(sp, x, 0),
-    drf_str_elem(x, s).
+// drf_str_at(v, e, s): string node e in expression v holds s: v itself, an element of a list, tuple or set of them,
+// through `+`, `*splat`, a module-level constant (`read_only_fields = READONLY`, drf_const) and `Other.Meta.<opt>`
+// references. drf_str_elem(v, s): the same without the node.
+.decl drf_str_at(v: node, e: node, s: symbol)
+drf_str_at(v, u, s) :- unparen(v, u), str(u, s).
+drf_str_at(v, e, s) :- unparen(v, u), kind(u, k), drf_seq(k), child(u, x, _), unparen(x, e), str(e, s).
+drf_str_at(v, e, s) :- unparen(v, u), kind(u, "binary_operator"), op(u, "+"), (field(u, "left", x) ; field(u, "right", x)),
+    drf_str_at(x, e, s).
+drf_str_at(v, e, s) :- unparen(v, u), kind(u, k), drf_seq(k), child(u, sp, _), kind(sp, "list_splat"), child(sp, x, 0),
+    drf_str_at(x, e, s).
+drf_str_at(v, e, s) :- unparen(v, u), drf_const(u, w), drf_str_at(w, e, s).
 // `Base.Meta.fields`: the option of another serializer of the run.
-drf_str_elem(v, s) :- unparen(v, u), attr_of(u, o, k), attr_of(o, b, "Meta"), sym_of(b, bq), class_def(bc, bq),
-    drf_meta_opt(bc, k, w), drf_str_elem(w, s).
+drf_str_at(v, e, s) :- unparen(v, u), attr_of(u, o, k), attr_of(o, b, "Meta"), sym_of(b, bq), drf_cls(bq, bc),
+    drf_meta_opt(bc, k, w), drf_str_at(w, e, s).
+.decl drf_str_elem(v: node, s: symbol)
+drf_str_elem(v, s) :- drf_str_at(v, _, s).
+// drf_const(n, v): identifier n, where a list, tuple, dict or string is expected (drf_const_use), reads a module-level
+// constant whose value is v: assigned at the top of n's own module, or imported from a module of the run (through
+// the project's import root). Every top-level assignment counts (may).
+.decl drf_const(n: node, v: node)
+drf_const(n, v) :- drf_const_use(n), look(n, x, s), kind(s, "module"), asg(s, x, r, _), unparen(r, v).
+drf_const(n, v) :- drf_const_use(n), look(n, x, s), kind(s, "module"), !asg(s, x, _, _), sym_of(n, q),
+    split_dot(q, m, x), asg(s2, x, r, _), kind(s2, "module"), modname(s2, m2), (m2 = m ; suffix(cat(".", m), m2)),
+    unparen(r, v).
+// drf_const_use(n): identifier n stands where lib reads a value: the right side of a class-body assignment (Meta
+// options, `queryset = ...`), a `*`/`**` splat, an operand of `+`, an element of a list or tuple.
+.decl drf_const_use(n: node)
+drf_const_use(n) :- kind(n, "identifier"), kind(a, "assignment"), field(a, "right", n), nearest(a, c, scope),
+    kind(c, "class_definition").
+drf_const_use(n) :- kind(n, "identifier"), child(sp, n, 0), (kind(sp, "list_splat") ; kind(sp, "dictionary_splat")).
+drf_const_use(n) :- kind(n, "identifier"), kind(b, "binary_operator"), (field(b, "left", n) ; field(b, "right", n)).
+drf_const_use(n) :- kind(n, "identifier"), child(l, n, _), kind(l, k), drf_seq(k).
 .decl drf_declared_own(c: node, x: symbol, k: node)
 drf_declared_own(c, x, k) :- drf_serializer(c), drf_own_attr(c, x, v, _), unparen(v, k), kind(k, "call").
 .decl drf_declared(c: node, x: symbol, k: node)
@@ -265,11 +359,26 @@ drf_field_lib(k, b) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q),
 .decl drf_field_kind(k: node, x: symbol)
 drf_field_kind(k, x) :- drf_field_lib(k, b), split_dot(b, _, x).
 .decl drf_nested(k: node, sc: node)
-drf_nested(k, sc) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), class_def(sc, q), drf_serializer(sc).
+drf_nested(k, sc) :- kind(k, "call"), field(k, "function", fn), sym_of(fn, q), drf_cls(q, sc), drf_serializer(sc).
+// drf_kw(k, key, v): call k passes key=v, written out or through `**NAME` of a module-level dict literal
+// (`SlugField(**RO)` with `RO = {"read_only": True}`).
 .decl drf_kw(k: node, key: symbol, v: node)
 drf_kw(k, key, v) :- call_arg(k, -1, key, v).
+drf_kw(k, key, v) :- kind(k, "call"), field(k, "arguments", al), child(al, ds, _), kind(ds, "dictionary_splat"),
+    child(ds, n, 0), drf_const(n, d), drf_dict_entry(d, key, v).
 .decl drf_kw_true(k: node, key: symbol)
 drf_kw_true(k, key) :- drf_kw(k, key, v), kind(v, "true").
+// drf_dict_entry(d, key, v): dict expression d maps the string key to v: a dict literal, `dict(key=v)`, or a
+// module-level constant holding one.
+.decl drf_dict_entry(d: node, key: symbol, v: node)
+drf_dict_entry(d, key, v) :- unparen(d, u), kind(u, "dictionary"), child(u, p, _), kind(p, "pair"), field(p, "key", kn),
+    str(kn, key), field(p, "value", v).
+drf_dict_entry(d, key, v) :- unparen(d, u), kind(u, "call"), field(u, "function", f), sym_of(f, "builtins.dict"),
+    call_arg(u, -1, key, v).
+drf_dict_entry(d, key, v) :- unparen(d, u), drf_const(u, w), drf_dict_entry(w, key, v).
+// drf_extra_kw(sc, x, key, v): serializer sc's (inherited) Meta.extra_kwargs gives field x the option key = v.
+.decl drf_extra_kw(sc: node, x: symbol, key: symbol, v: node)
+drf_extra_kw(sc, x, key, v) :- drf_meta_opt(sc, "extra_kwargs", d), drf_dict_entry(d, x, o), drf_dict_entry(o, key, v).
 
 // ---- permissions -------------------------------------------------------------------------------------------------
 .decl drf_perm_elem(v: node, e: node)
@@ -297,9 +406,9 @@ drf_default_perm(q) :- drf_setting_class("DEFAULT_PERMISSION_CLASSES", q).
 .decl drf_effective_perm(v: node, q: symbol)
 drf_effective_perm(v, q) :- drf_view_perm(v, q).
 drf_effective_perm(v, q) :- drf_view(v), !drf_view_sets_perms(v), drf_default_perm(q).
+// drf_ref_class(q, c): a permission or settings reference q names class c of the run (drf_cls).
 .decl drf_ref_class(q: symbol, c: node)
-drf_ref_class(q, c) :- drf_ref(q), class_def(c, q).
-drf_ref_class(q, c) :- drf_ref(q), p = cat(".", q), class_def(c, cq), suffix(p, cq).
+drf_ref_class(q, c) :- drf_ref(q), drf_cls(q, c).
 // drf_ref(q): the dotted names the relations above resolve: permission references and settings classes.
 .decl drf_ref(q: symbol)
 drf_ref(q) :- drf_view_perm(_, q).
@@ -310,6 +419,7 @@ drf_ref(q) :- drf_setting_class(_, q).
 drf_obj_q("rest_framework.permissions.DjangoObjectPermissions").
 drf_obj_q(q) :- method(q, "has_object_permission", _).
 drf_obj_q(q) :- class_def(c, q), drf_base(c, b), drf_obj_q(b).
+drf_obj_q(q) :- class_def(c, q), drf_base(c, b), !class_def(_, b), drf_cls_q(b, bq), drf_obj_q(bq).
 .decl drf_object_perm(q: symbol)
 drf_object_perm(q) :- drf_ref(q), drf_obj_q(q).
 drf_object_perm(q) :- drf_ref_class(q, c), class_def(c, cq), drf_obj_q(cq).

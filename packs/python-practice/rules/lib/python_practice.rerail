@@ -15,7 +15,6 @@
 //               pp_sync_def(f)            f is a plain `def`, not offloaded to a thread by its decorator
 //               pp_offloaded(g)           def g is decorated so that calling it runs it in a worker thread
 //                                         (asgiref sync_to_async, channels database_sync_to_async)
-//   Calls:      pp_awaited(c)             call c is the operand of `await`, through parentheses
 //               pp_discarded(c)           call c is a statement of its own: its value is thrown away
 //               pp_sure_target(c, g)      call c surely calls def g: the call program's answer, and c is not open
 //               pp_kwarg(c, k, v)         call c passes keyword argument k with value v (parentheses taken off)
@@ -30,17 +29,28 @@
 //                                         what names it for a message ("time.sleep()")
 //               pp_loop_entry(c, h, what) call c, in h's own frame, starts an event loop in its thread and waits
 //                                         for it: asyncio.run(), <loop>.run_until_complete(), async_to_sync(f)(...)
-//   Reach:      pp_async_start(c, f, g)   call c, in async def f's own frame outside test code, surely calls the
-//                                         sync def g, which runs in the event loop's thread
+//               pp_loop_guarded(c)        loop start c runs only where no loop runs in its thread, so it cannot
+//                                         raise: in the `except` of a `try` that asks for the running loop, in the
+//                                         branch a loop-running test sends away from, or after nest_asyncio.apply()
+//   Reach:      pp_async_start(c, f, g)   call c, in async def f's own frame outside test code, runs the sync def
+//                                         g (pp_step_target), which runs in the event loop's thread
+//               pp_step_target(c, g)      call c surely runs def g in the caller's thread: a sure target; a def
+//                                         under outside decorators known to call it there (lru_cache, tenacity
+//                                         retry, backoff); the def a decorator of the run wraps, when the wrapper
+//                                         calls the decorator's parameter in its own frame
+//               pp_sync_step(x, c, h)     call c, in sync def x's own frame, runs sync def h (pp_step_target)
 //               pp_sync_reach(g, h)       from sync def g, sync def h runs in the same thread: g itself, or a
-//                                         chain of sure calls through sync defs, none offloaded; a call in a
-//                                         nested def or lambda runs later and is not followed
+//                                         chain of pp_sync_steps, none offloaded; a call in a nested def or lambda
+//                                         runs later and is not followed
+//               pp_decorator_name(e, q)   decorator expression e names q: `@retry`, `@retry(3)` give "tenacity.retry"
+//               pp_memoizer(q)            q is an outside decorator that caches its def's results (lru_cache, cache,
+//                                         cachetools): a def under it with no argument runs once per process
+//               pp_odd_decorator(g)       def g has a decorator not known to call it in the caller's thread
 //   Tasks:      pp_spawn_call(c, what)    call c schedules a coroutine as a task: asyncio.create_task,
 //                                         asyncio.ensure_future, <loop>.create_task; what names it
 //   Generators: pp_cm_def(f)              def f is decorated with contextlib.contextmanager or
 //                                         asynccontextmanager
 //               pp_cm_yield(y, f)         y is a `yield` in contextmanager f's own frame
-//   Logging:    pp_log_call(c)            call c is a logging or print call: `logger.info(...)`, `print(...)`
 //
 // Python background
 //   - A coroutine runs until its next await. A blocking call anywhere below it, also in a plain helper in another
@@ -83,8 +93,6 @@ pp_offload_decorator("asgiref.sync.sync_to_async"). pp_offload_decorator("channe
 pp_sync_def(f) :- kind(f, "function_definition"), !is_async(f), !pp_offloaded(f).
 
 // ---- calls -------------------------------------------------------------------------------------------------------
-.decl pp_awaited(c: node)
-pp_awaited(c) :- kind(c, "call"), kind(w, "await"), child(w, e, 0), unparen(e, c).
 // pp_discarded(c): `c` alone on its line (or `(c)`): an expression statement whose expression is the call.
 .decl pp_discarded(c: node)
 pp_discarded(c) :- kind(c, "call"), kind(s, "expression_statement"), child(s, e, 0), !child(s, _, 1), unparen(e, c).
@@ -111,6 +119,8 @@ pp_async_fn_ref(e, g) :- (kind(e, "identifier") ; kind(e, "attribute")), sym_of(
 // pp_blocking_q(q, what): functions that block their thread on the network, a child process or a timer. Module-level
 // `requests` and `httpx` calls are the sync clients (httpx's async client is a class, `httpx.AsyncClient`). Builtin
 // open() and file reads are left out: short local reads are common in async code and rarely what stalls a loop.
+// A name list, kept here: core python/misc2-async exposes no list of blocking calls to reuse (its ASYNC2xx rules each
+// name their own calls, and count open() among them), so the two can drift apart.
 .decl pp_blocking_q(q: symbol, what: symbol)
 pp_blocking_q("time.sleep", "time.sleep()").
 pp_blocking_q(cat("requests.", v), cat(cat("requests.", v), "()")) :- pp_http_verb(v).
@@ -139,12 +149,98 @@ pp_loop_entry(c, h, "run_until_complete()") :- kind(c, "call"), field(c, "functi
 pp_loop_entry(c, h, "async_to_sync(...)()") :- kind(c, "call"), field(c, "function", k), kind(k, "call"),
     field(k, "function", f), sym_of(f, "asgiref.sync.async_to_sync"), pp_frame(c, h).
 
+// pp_loop_guarded(c): loop start c sits where no loop runs in its thread, so it cannot raise RuntimeError:
+//   - in an `except` (RuntimeError, Exception, bare) of a `try` whose body, in c's frame, calls
+//     asyncio.get_running_loop() or asyncio.get_event_loop(): those raise only when no loop runs;
+//   - in the branch of an `if` that a loop-running test sends away from: `if loop is None:`, `if not loop:`,
+//     `if not loop.is_running():`, the `else:` of `if loop and loop.is_running():`, with `loop` a name c's frame
+//     binds from asyncio.get_running_loop() or asyncio._get_running_loop();
+//   - after nest_asyncio.apply() in c's frame, or at its module's top level: the patched loop may be re-entered.
+// e.g.  try: asyncio.get_running_loop()
+//       except RuntimeError: return asyncio.run(coro)          pp_loop_guarded(<asyncio.run(coro)>)
+.decl pp_loop_guarded(c: node)
+pp_loop_guarded(c) :- pp_loop_entry(c, h, _), kind(x, "except_clause"), within(c, x), child(t, x, _),
+    kind(t, "try_statement"), pp_frame(t, h), catches(x, q),
+    (q = "builtins.RuntimeError" ; q = "builtins.Exception" ; q = "builtins.BaseException"),
+    field(t, "body", tb), kind(g, "call"), within(g, tb), pp_frame(g, h), field(g, "function", gf), sym_of(gf, gq),
+    (gq = "asyncio.get_running_loop" ; gq = "asyncio.get_event_loop").
+pp_loop_guarded(c) :- pp_loop_entry(c, h, _), py_if(i, t, b), within(c, b), pp_frame(i, h),
+    pp_loop_test(t, h, "absent").
+pp_loop_guarded(c) :- pp_loop_entry(c, h, _), py_if(i, t, _), py_orelse(i, o), within(c, o), pp_frame(i, h),
+    pp_loop_test(t, h, "present").
+pp_loop_guarded(c) :- pp_loop_entry(c, h, _), pp_nest_apply(a), pp_frame(a, h), line(a, la), line(c, lc), la <= lc.
+pp_loop_guarded(c) :- pp_loop_entry(c, _, _), docof(c, d), pp_nest_apply(a), docof(a, d), !pp_frame(a, _).
+.decl pp_nest_apply(a: node)
+pp_nest_apply(a) :- kind(a, "call"), field(a, "function", f), sym_of(f, "nest_asyncio.apply").
+// pp_loop_test(t, h, s): condition t, in frame h, is true only when a loop runs in the thread (s "present") or only
+// when none runs (s "absent"). `not` swaps them; `a and b` is either operand's; `a or b` both operands' when they agree.
+.decl pp_loop_test(t: node, h: node, s: symbol)
+pp_loop_test(t, h, "present") :- unparen(t, m), kind(m, "call"), field(m, "function", f), attr_of(f, _, "is_running"),
+    pp_frame(m, h).
+pp_loop_test(t, h, "present") :- unparen(t, m), kind(m, "identifier"), text(m, v), pp_frame(m, h), pp_loop_var(h, v).
+pp_loop_test(t, h, "present") :- unparen(t, m), cmp(m, "is not", l, r), kind(r, "none"), kind(l, "identifier"),
+    text(l, v), pp_frame(m, h), pp_loop_var(h, v).
+pp_loop_test(t, h, "absent") :- unparen(t, m), cmp(m, "is", l, r), kind(r, "none"), kind(l, "identifier"),
+    text(l, v), pp_frame(m, h), pp_loop_var(h, v).
+pp_loop_test(t, h, s) :- unparen(t, m), kind(m, "not_operator"), field(m, "argument", a), pp_loop_test(a, h, s0),
+    ((s0 = "present", s = "absent") ; (s0 = "absent", s = "present")).
+pp_loop_test(t, h, s) :- unparen(t, m), kind(m, "boolean_operator"), op(m, "and"),
+    (field(m, "left", a) ; field(m, "right", a)), pp_loop_test(a, h, s).
+pp_loop_test(t, h, s) :- unparen(t, m), kind(m, "boolean_operator"), op(m, "or"),
+    field(m, "left", a), field(m, "right", b), pp_loop_test(a, h, s), pp_loop_test(b, h, s).
+// pp_loop_var(h, v): frame h binds name v from asyncio.get_running_loop() or asyncio._get_running_loop() (which
+// returns None when no loop runs).
+.decl pp_loop_var(h: node, v: symbol)
+pp_loop_var(h, v) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, v),
+    field(a, "right", r), kind(r, "call"), field(r, "function", f), sym_of(f, q), pp_frame(a, h),
+    (q = "asyncio.get_running_loop" ; q = "asyncio._get_running_loop" ; q = "asyncio.events._get_running_loop").
+
 // ---- reach -------------------------------------------------------------------------------------------------------
+// pp_same_thread_decorator(q): decorators imported from outside the run that call the def they wrap in the caller's
+// thread: memoizers and retry loops. The call program cannot read an outside decorator, so it leaves a call of the def
+// under one open; these are known to call it, so the reach follows them. A name list: their code is not in the run.
+// An offloading decorator (sync_to_async) is not here: pp_sync_def leaves its def out.
+.decl pp_same_thread_decorator(q: symbol)
+pp_same_thread_decorator(q) :- pp_memoizer(q).
+pp_same_thread_decorator("tenacity.retry"). pp_same_thread_decorator("backoff.on_exception").
+pp_same_thread_decorator("backoff.on_predicate"). pp_same_thread_decorator("retrying.retry").
+pp_same_thread_decorator("stamina.retry"). pp_same_thread_decorator("builtins.staticmethod").
+pp_same_thread_decorator("builtins.classmethod").
+.decl pp_memoizer(q: symbol)
+pp_memoizer("functools.lru_cache"). pp_memoizer("functools.cache"). pp_memoizer("cachetools.cached").
+pp_memoizer("cachetools.func.lru_cache"). pp_memoizer("cachetools.func.ttl_cache").
+pp_memoizer("cachetools.func.lfu_cache"). pp_memoizer("cachetools.func.fifo_cache").
+pp_memoizer("cachetools.func.rr_cache").
+.decl pp_decorator_name(e: node, q: symbol)
+pp_decorator_name(e, q) :- decorator(_, e), (unparen(e, m) ; (kind(e, "call"), field(e, "function", m))), sym_of(m, q).
+.decl pp_known_decorator(e: node)
+pp_known_decorator(e) :- pp_decorator_name(e, q), pp_same_thread_decorator(q).
+.decl pp_odd_decorator(g: node)
+pp_odd_decorator(g) :- decorator(g, e), !pp_known_decorator(e).
+// pp_same_thread_wrapped(g): def g has decorators, every one known to call it in the caller's thread.
+.decl pp_same_thread_wrapped(g: node)
+pp_same_thread_wrapped(g) :- kind(g, "function_definition"), decorator(g, _), !pp_odd_decorator(g).
+// pp_open_elsewhere(c): open call c may also run a def that is not such a wrapped def.
+.decl pp_open_elsewhere(c: node)
+pp_open_elsewhere(c) :- call_open(c), call_target(c, x), !pp_same_thread_wrapped(x).
+// pp_wrapper(w, dq): def w, nested in def p, calls one of p's parameters in its own frame, and p is the decorator
+// named dq or the def a decorator factory dq returns: `def logged(f): @wraps(f) def w(*a): return f(*a)`.
+.decl pp_wrapper(w: node, dq: symbol)
+pp_wrapper(w, dq) :- kind(w, "function_definition"), pp_frame(w, p), kind(p, "function_definition"), param(p, x, _),
+    kind(k, "call"), pp_frame(k, w), field(k, "function", fn), kind(fn, "identifier"), text(fn, x),
+    (qualname(p, dq) ; (pp_frame(p, d), kind(d, "function_definition"), qualname(d, dq))).
+.decl pp_step_target(c: node, g: node)
+pp_step_target(c, g) :- pp_sure_target(c, g).
+pp_step_target(c, g) :- call_open(c), call_target(c, g), pp_same_thread_wrapped(g), !pp_open_elsewhere(c).
+pp_step_target(c, g) :- pp_sure_target(c, w), pp_wrapper(w, dq), field(c, "function", fn), sym_of(fn, q),
+    qualname(g, q), kind(g, "function_definition"), decorator(g, e), pp_decorator_name(e, dq).
 .decl pp_async_start(c: node, f: node, g: node)
-pp_async_start(c, f, g) :- pp_sure_target(c, g), pp_sync_def(g), pp_frame(c, f), pp_async_def(f), pp_live(c).
+pp_async_start(c, f, g) :- pp_step_target(c, g), pp_sync_def(g), pp_frame(c, f), pp_async_def(f), pp_live(c).
+.decl pp_sync_step(x: node, c: node, h: node)
+pp_sync_step(x, c, h) :- pp_step_target(c, h), pp_sync_def(h), pp_frame(c, x), pp_sync_def(x).
 .decl pp_sync_reach(g: node, h: node)
 pp_sync_reach(g, g) :- pp_async_start(_, _, g).
-pp_sync_reach(g, h) :- pp_sync_reach(g, x), pp_frame(c, x), pp_sure_target(c, h), pp_sync_def(h).
+pp_sync_reach(g, h) :- pp_sync_reach(g, x), pp_sync_step(x, _, h).
 
 // ---- tasks -------------------------------------------------------------------------------------------------------
 .decl pp_spawn_call(c: node, what: symbol)
@@ -162,10 +258,3 @@ pp_cm_def(f) :- decorator(f, e), unparen(e, m), sym_of(m, q),
     (q = "contextlib.contextmanager" ; q = "contextlib.asynccontextmanager").
 .decl pp_cm_yield(y: node, f: node)
 pp_cm_yield(y, f) :- pp_cm_def(f), kind(y, "yield"), pp_frame(y, f).
-
-// ---- logging -----------------------------------------------------------------------------------------------------
-.decl pp_log_name(x: symbol)
-pp_log_name("debug"). pp_log_name("info"). pp_log_name("warning"). pp_log_name("warn"). pp_log_name("error").
-pp_log_name("exception"). pp_log_name("critical"). pp_log_name("log"). pp_log_name("print").
-.decl pp_log_call(c: node)
-pp_log_call(c) :- kind(c, "call"), call_name(c, x), pp_log_name(x).

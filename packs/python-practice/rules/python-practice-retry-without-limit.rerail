@@ -1,171 +1,96 @@
 .policy "python-practice-retry-without-limit" revision 1
-.description "A retry must give up: pass tenacity a stop=, backoff a max_tries= or max_time=, and bound a hand-written retry loop."
+.description "Give every tenacity, backoff, retrying or retry decorator a limit, an attempt count or a deadline; their defaults retry a permanent error forever."
 .language python
 .mode log
 .scope include "**/*.py"
 // Rerail's own rule, not a port. A retry that never gives up turns a permanent failure (bad credentials, a 4xx, a
 // deleted row, a schema error) into an endless loop: a hung request, a stuck worker, a hot loop hammering the
-// dependency. Outside test code it reports:
+// dependency. This rule reads the retry libraries, whose unbounded default is a documented fact;
+// python-practice-retry-loop-without-limit reads hand-written loops. Names resolve through imports (`tenacity.retry`,
+// `from tenacity import retry as r`, `import retrying`), so a function of the run called `retry`, urllib3's `Retry`
+// and celery's `self.retry` are other names. Outside test code it reports:
 //   - tenacity (TenacityWithoutStop): `@retry`, `@retry(...)`, `retry(...)(f)`, `Retrying(...)` and
-//     `AsyncRetrying(...)`, names resolved through imports (`tenacity.retry`, `from tenacity import retry as r`),
-//     with no `stop=`. Tenacity's default is `stop_never` with `wait_none`: it retries forever, without waiting, on
-//     any exception. A `retry=` predicate alone does not bound it: it picks which errors to retry, not how often.
+//     `AsyncRetrying(...)` with no `stop=`. Tenacity's default is `stop_never` with `wait_none`: it retries forever,
+//     without waiting, on any exception. A `retry=` predicate alone does not bound it: it picks which errors to
+//     retry, not how often.
 //   - backoff (BackoffWithoutLimit): `@backoff.on_exception(...)` and `@backoff.on_predicate(...)` with neither
 //     `max_tries=` nor `max_time=` (`max_value=` caps the wait, not the attempts).
-//   - a hand-written loop (RetryLoopWithoutLimit): `while True:` (or `while 1:`) with a `try` among its statements
-//     that leaves the loop once its work is done (a `return`, or a `break` of this loop, as a statement of the try
-//     body or its `else`, or of a `with` there), one of whose `except` clauses never raises, returns, breaks this
-//     loop or calls sys.exit()/os._exit(), and nothing else in the loop (a statement before or after the try, its
-//     `finally`) does either: no counter or deadline the loop checks. A nested def or lambda is its own frame: a
-//     raise there does not end the loop.
+//   - retrying (RetryingWithoutStop): `@retrying.retry`, `@retrying.retry(...)` and `retrying.Retrying(...)` with none
+//     of `stop_max_attempt_number=`, `stop_max_delay=`, `stop_func=` or `stop=`: its default never stops.
+//   - retry (RetryWithoutTries): the `retry` package's `@retry`, `@retry(...)` and `retry_call(...)` with no `tries`
+//     (keyword, or the second positional argument of retry(), the fifth of retry_call()): its default -1 is forever.
 //   @retry(wait=wait_exponential(max=10))                 reported: no stop
 //   @retry(stop=stop_after_attempt(3))                     not reported
 //   @backoff.on_exception(backoff.expo, IOError)           reported
 //   @backoff.on_exception(backoff.expo, IOError, max_time=60)   not reported
-//   while True:                                            reported
-//       try: conn = connect(); break
-//       except OSError: time.sleep(1)
-//   while True:                                            not reported: the handler gives up
-//       try: return fetch()
-//       except OSError:
-//           attempt += 1
-//           if attempt > 5: raise
-// It leaves alone a `stop` (any value, also `stop_never`, which says the forever is meant) or `max_tries`/`max_time`
-// (also None or a callable), keywords passed through `**kwargs` (they may hold the limit), Retrying's positional
-// form (`Retrying(sleep, stop)`), a `for attempt in range(n)` loop, a `while True` worker or polling loop whose only
-// exits are conditional (`if msg is None: break`, `if stop.is_set(): break`) or that has none (it is meant to run
-// until told to stop), a loop whose looping handler catches only a wait's timeout (`except queue.Empty`, a redis
-// `LockError` of `blocking_timeout`: it waits, it does not retry a failure), a handler of a name-conflict error
-// (`EntityExistsError`, `IntegrityError`, ...) that picks a new value the try reads (a search for a free name), a loop
-// that prompts the person at the terminal each turn (`input()`, `getpass()`, `click.prompt()`, `typer.prompt()`,
-// rich's `Prompt.ask()`), a `while` with a real condition, `retry` names of other libraries (urllib3's Retry,
-// celery's `self.retry`, a function of the run called retry), and test files.
-// Gaps: a loop whose bound sits in a helper the handler calls (`self._check_attempts()` that raises) is reported; a
-// poll-until-ready loop (`try: r = get(); if r.ok: break`) is not read, nor a loop whose try is nested in an `if` or
-// `with` of the loop body; the `retrying` and `retry` packages (also unbounded by default) are not read; a tenacity
-// `.retry_with(stop=...)` at the call site is not followed.
+//   @retrying.retry(wait_fixed=1000)                       reported
+// It leaves alone any limit argument, whatever its value (`stop=stop_never`, `max_tries=None`, `tries=-1` say the
+// forever is meant), keywords passed through `**kwargs` (they may hold the limit), tenacity Retrying's positional form
+// (`Retrying(sleep, stop)`), and test files.
+// Gaps: a tenacity `.retry_with(stop=...)` at the call site is not followed; a retry object built in one place and
+// configured in another is read where it is built.
 
 #include "lib/python_practice.rerail"
 #include "python/exceptions.rerail"
 
 .violation TenacityWithoutStop(at: node, what: symbol)
-    "`{what}` has no `stop=`, and tenacity then retries forever (without waiting, unless `wait=` is set): a permanent error such as bad credentials or a 4xx becomes an endless loop. Add a stop, e.g. `stop=stop_after_attempt(5)` or `stop_after_delay(30)`; keep the retry. If it must retry until it succeeds, pass `stop=stop_never` to say so."
+    "Add a `stop=` to `{what}`, e.g. `stop=stop_after_attempt(5)`; without one tenacity retries forever. Pass `stop=stop_never` if forever is meant."
 TenacityWithoutStop(e, what) :- prl_tenacity(e, what), pp_live(e).
 .violation BackoffWithoutLimit(at: node, what: symbol)
-    "`{what}` sets neither `max_tries=` nor `max_time=`, so backoff retries forever: a permanent error such as bad credentials or a 4xx becomes an endless loop. Add `max_tries=` or `max_time=`; keep the retry. If it must retry until it succeeds, pass `max_tries=None` to say so."
+    "Add `max_tries=` or `max_time=` to `{what}`, e.g. `max_tries=5`; without one backoff retries forever. Pass `max_tries=None` if forever is meant."
 BackoffWithoutLimit(c, what) :- prl_backoff(c, what), pp_live(c).
-.violation RetryLoopWithoutLimit(at: node, what: symbol, x: node)
-    "This `while True` loop retries until its `try` succeeds, and `{what}` at line {x.line} neither raises, returns nor breaks, nor does anything else in the loop: a permanent error such as bad credentials or a 4xx loops forever. Count the attempts or set a deadline and re-raise once exceeded (or use tenacity with a `stop=`); leave it if the loop must run until it succeeds, such as a long-lived background connection."
-RetryLoopWithoutLimit(w, what, x) :- prl_loop(w), x = min y : { prl_loop_handler(w, y) }, prl_what(x, what).
+.violation RetryingWithoutStop(at: node, what: symbol)
+    "Add `stop_max_attempt_number=` or `stop_max_delay=` to `{what}`; without one retrying retries forever. Leave it if retrying until success is meant."
+RetryingWithoutStop(e, what) :- prl_retrying(e, what), pp_live(e).
+.violation RetryWithoutTries(at: node, what: symbol)
+    "Pass `tries=` to `{what}`, e.g. `tries=5`; its default -1 retries forever. Pass `tries=-1` if forever is meant."
+RetryWithoutTries(e, what) :- prl_retry_pkg(e, what), pp_live(e).
 
-// ---- tenacity ----------------------------------------------------------------------------------------------------
-.decl prl_tenacity_q(q: symbol, what: symbol)
-prl_tenacity_q("tenacity.retry", "retry"). prl_tenacity_q("tenacity.Retrying", "Retrying").
-prl_tenacity_q("tenacity.AsyncRetrying", "AsyncRetrying").
-prl_tenacity_q("tenacity.asyncio.AsyncRetrying", "AsyncRetrying").
-// prl_tenacity(e, what): a call of retry/Retrying/AsyncRetrying with no stop, or a bare `@retry` decorator.
-.decl prl_tenacity(e: node, what: symbol)
-prl_tenacity(c, cat(p, cat(what, "(...)"))) :- kind(c, "call"), field(c, "function", f), sym_of(f, q),
-    prl_tenacity_q(q, what), !kwarg(c, "stop", _), !pp_splat(c), !exc_arg(c, 1, _), prl_at(c, p).
-prl_tenacity(m, "@retry") :- decorator(_, e), unparen(e, m), !kind(m, "call"), sym_of(m, "tenacity.retry").
 // prl_at(c, p): p is "@" when call c is a decorator, else "".
 .decl prl_deco(c: node)
 prl_deco(c) :- decorator(_, e), unparen(e, c), kind(c, "call").
 .decl prl_at(c: node, p: symbol)
 prl_at(c, "@") :- prl_deco(c).
 prl_at(c, "") :- kind(c, "call"), !prl_deco(c).
+// prl_bare(m, q): bare decorator m (not a call) names q.
+.decl prl_bare(m: node, q: symbol)
+prl_bare(m, q) :- decorator(_, e), unparen(e, m), !kind(m, "call"), sym_of(m, q).
+// prl_lib_call(c, q, what): call c calls q; what is its text for the message, `@` added for a decorator.
+.decl prl_lib_call(c: node, q: symbol, what: symbol)
+prl_lib_call(c, q, cat(p, cat(x, "(...)"))) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), prl_at(c, p),
+    text(f, x), !pp_splat(c).
+
+// ---- tenacity ----------------------------------------------------------------------------------------------------
+.decl prl_tenacity_q(q: symbol)
+prl_tenacity_q("tenacity.retry"). prl_tenacity_q("tenacity.Retrying"). prl_tenacity_q("tenacity.AsyncRetrying").
+prl_tenacity_q("tenacity.asyncio.AsyncRetrying").
+.decl prl_tenacity(e: node, what: symbol)
+prl_tenacity(c, what) :- prl_lib_call(c, q, what), prl_tenacity_q(q), !kwarg(c, "stop", _), !exc_arg(c, 1, _).
+prl_tenacity(m, cat("@", x)) :- prl_bare(m, "tenacity.retry"), text(m, x).
 
 // ---- backoff -----------------------------------------------------------------------------------------------------
 .decl prl_backoff(c: node, what: symbol)
-prl_backoff(c, cat(p, cat(cat("backoff.", m), "(...)"))) :- kind(c, "call"), field(c, "function", f), sym_of(f, q),
-    (m = "on_exception" ; m = "on_predicate"), q = cat("backoff.", m), !kwarg(c, "max_tries", _),
-    !kwarg(c, "max_time", _), !pp_splat(c), prl_at(c, p).
+prl_backoff(c, what) :- prl_lib_call(c, q, what), (q = "backoff.on_exception" ; q = "backoff.on_predicate"),
+    !kwarg(c, "max_tries", _), !kwarg(c, "max_time", _).
 
-// ---- hand-written loops ------------------------------------------------------------------------------------------
-// prl_forever(w): `while True:` or `while 1:`.
-.decl prl_forever(w: node)
-prl_forever(w) :- kind(w, "while_statement"), field(w, "condition", c0), unparen(c0, c),
-    (kind(c, "true") ; kind(c, "integer"), text(c, "1")).
-// prl_loop_try(w, t): try t is a statement of forever-loop w's body.
-.decl prl_loop_try(w: node, t: node)
-prl_loop_try(w, t) :- prl_forever(w), field(w, "body", b), child(b, t, _), kind(t, "try_statement"), pp_live(w).
-// prl_loopish(k): the nodes whose body a `break` cannot leave: loops and frames.
-.decl prl_loopish(k: symbol)
-prl_loopish("while_statement"). prl_loopish("for_statement"). prl_loopish("function_definition").
-prl_loopish("lambda"). prl_loopish("class_definition").
-// prl_exit(e, w): e, in loop w's own frame, leaves w: a return, a raise, a break whose loop is w, or a call of
-// sys.exit / os._exit / exit / quit.
-.decl prl_exit(e: node, w: node)
-prl_exit(e, w) :- prl_forever(w), (kind(e, "return_statement") ; kind(e, "raise_statement")),
-    within_stop(e, w, pp_stop).
-prl_exit(e, w) :- prl_forever(w), kind(e, "break_statement"), nearest(e, w, prl_loopish).
-prl_exit(e, w) :- prl_forever(w), kind(e, "call"), within_stop(e, w, pp_stop), field(e, "function", f), sym_of(f, q),
-    (q = "sys.exit" ; q = "os._exit" ; q = "builtins.exit" ; q = "builtins.quit").
-// prl_success(t, w): try t leaves w once its work is done: a `return` or a `break` of w that is a statement of the
-// try body or its else clause, or of a `with` there, so it runs whenever nothing raised. A conditional exit
-// (`if msg is None: break`, `if stop.is_set(): break`) is a worker's stop signal, not a retry's success.
-.decl prl_success(t: node, w: node)
-prl_success(t, w) :- prl_loop_try(w, t), field(t, "body", tb), prl_straight(tb, e), prl_leave(e, w).
-prl_success(t, w) :- prl_loop_try(w, t), child(t, ec, _), kind(ec, "else_clause"), field(ec, "body", eb),
-    prl_straight(eb, e), prl_leave(e, w).
-.decl prl_leave(e: node, w: node)
-prl_leave(e, w) :- prl_exit(e, w), (kind(e, "return_statement") ; kind(e, "break_statement")).
-// prl_straight(b, e): statement e runs whenever block b runs to its end: a statement of b, or of a `with` body in b.
-.decl prl_straight(b: node, e: node)
-prl_straight(b, e) :- prl_try_block(b), child(b, e, _).
-prl_straight(b, e) :- prl_straight(b, s), kind(s, "with_statement"), field(s, "body", wb), child(wb, e, _).
-.decl prl_try_block(b: node)
-prl_try_block(tb) :- prl_loop_try(_, t), field(t, "body", tb).
-prl_try_block(eb) :- prl_loop_try(_, t), child(t, ec, _), kind(ec, "else_clause"), field(ec, "body", eb).
-// prl_bounded(w, t): something in w outside try t (or in t's finally) leaves w: the counter or deadline check.
-.decl prl_bounded(w: node, t: node)
-prl_bounded(w, t) :- prl_loop_try(w, t), prl_exit(e, w), !within(e, t).
-prl_bounded(w, t) :- prl_loop_try(w, t), child(t, fc, _), kind(fc, "finally_clause"), prl_exit(e, w), within(e, fc).
-// An interactive prompt in the loop (`name = input(...)`, `click.prompt(...)`) asks again for new input: each turn
-// is a new attempt the person at the terminal ends, not the same call repeated.
-prl_bounded(w, t) :- prl_loop_try(w, t), kind(c, "call"), within_stop(c, w, pp_stop), field(c, "function", f),
-    sym_of(f, q), prl_prompt_q(q).
-.decl prl_prompt_q(q: symbol)
-prl_prompt_q("builtins.input"). prl_prompt_q("getpass.getpass"). prl_prompt_q("click.prompt").
-prl_prompt_q("click.confirm"). prl_prompt_q("typer.prompt"). prl_prompt_q("typer.confirm").
-prl_prompt_q("rich.prompt.Prompt.ask"). prl_prompt_q("rich.prompt.Confirm.ask").
-prl_prompt_q("rich.prompt.IntPrompt.ask").
-// prl_handler_exits(x, w): handler x has a path that leaves w.
-.decl prl_handler_exits(x: node, w: node)
-prl_handler_exits(x, w) :- prl_loop_try(w, t), exc_handler(t, x), prl_exit(e, w), within(e, x).
-// prl_loop_handler(w, x): handler x of a try in w retries: the try leaves w on success, x never leaves w, and
-// nothing else in w bounds it. A handler that catches only the timeout of a wait (prl_wait_type) waits, it does not
-// retry a failure: a consumer's `q.get(timeout=1)` then `except queue.Empty: continue`, or a redis lock taken with
-// `blocking_timeout` then `except LockError: ...`; every other error still leaves the loop. A handler of a
-// name-conflict error that picks a new value the try reads (`except EntityExistsError: name = f"{base}-{rand()}"`)
-// searches for a free name: each turn sends something new.
-.decl prl_loop_handler(w: node, x: node)
-prl_loop_handler(w, x) :- prl_loop_try(w, t), prl_success(t, w), !prl_bounded(w, t), exc_handler(t, x),
-    !prl_handler_exits(x, w), !prl_wait_only(x), !prl_new_name(x, t).
-.decl prl_new_name(x: node, t: node)
-prl_new_name(x, t) :- prl_loop_try(_, t), exc_handler(t, x), prl_conflict(x), exc_body(x, b), kind(a, "assignment"),
-    within(a, b), field(a, "left", l), prl_target_name(l, v), field(t, "body", tb), kind(r, "identifier"),
-    within(r, tb), text(r, v).
-.decl prl_conflict(x: node)
-prl_conflict(x) :- exc_type(x, e), text(e, s), (contains("Exist", s) ; contains("Duplicate", s) ;
-    contains("Integrity", s) ; contains("Conflict", s) ; contains("Unique", s)).
-// prl_target_name(l, v): assignment target l rebinds or updates the variable v: `v = ...`, `v[k] = ...`.
-.decl prl_target_name(l: node, v: symbol)
-prl_target_name(l, v) :- kind(l, "identifier"), text(l, v).
-prl_target_name(l, v) :- kind(l, "subscript"), field(l, "value", o), kind(o, "identifier"), text(o, v).
-.decl prl_wait_type(e: node)
-prl_wait_type(e) :- exc_type(_, e), exc_qual(e, q),
-    (q = "queue.Empty" ; q = "_queue.Empty" ; q = "asyncio.QueueEmpty" ; q = "multiprocessing.queues.Empty" ;
-    q = "redis.exceptions.LockError").
-.decl prl_other_type(x: node)
-prl_other_type(x) :- exc_type(x, e), !prl_wait_type(e).
-.decl prl_wait_only(x: node)
-prl_wait_only(x) :- exc_type(x, _), !prl_other_type(x).
-.decl prl_loop(w: node)
-prl_loop(w) :- prl_loop_handler(w, _).
-.decl prl_what(x: node, what: symbol)
-prl_what(x, "except:") :- kind(x, "except_clause"), !field(x, "value", _).
-prl_what(x, cat("except ", s)) :- field(x, "value", v), except_type(v, t), text(t, s).
+// ---- retrying ----------------------------------------------------------------------------------------------------
+.decl prl_retrying_stop(k: symbol)
+prl_retrying_stop("stop_max_attempt_number"). prl_retrying_stop("stop_max_delay"). prl_retrying_stop("stop_func").
+prl_retrying_stop("stop").
+.decl prl_retrying_bounded(c: node)
+prl_retrying_bounded(c) :- kwarg(c, k, _), prl_retrying_stop(k).
+.decl prl_retrying(e: node, what: symbol)
+prl_retrying(c, what) :- prl_lib_call(c, q, what), (q = "retrying.retry" ; q = "retrying.Retrying"),
+    !prl_retrying_bounded(c), !exc_arg(c, 0, _).
+prl_retrying(m, cat("@", x)) :- prl_bare(m, "retrying.retry"), text(m, x).
+
+// ---- retry -------------------------------------------------------------------------------------------------------
+.decl prl_retry_pkg(e: node, what: symbol)
+prl_retry_pkg(c, what) :- prl_lib_call(c, q, what), (q = "retry.retry" ; q = "retry.api.retry"),
+    !kwarg(c, "tries", _), !exc_arg(c, 1, _).
+prl_retry_pkg(c, what) :- prl_lib_call(c, q, what), (q = "retry.retry_call" ; q = "retry.api.retry_call"),
+    !kwarg(c, "tries", _), !exc_arg(c, 4, _).
+prl_retry_pkg(m, cat("@", x)) :- prl_bare(m, q), (q = "retry.retry" ; q = "retry.api.retry"), text(m, x).
 
 // The cases, `cases/python-practice-retry-without-limit/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.
@@ -173,11 +98,8 @@ prl_what(x, cat("except ", s)) :- field(x, "value", v), except_type(v, t), text(
     .fixture "app/__init__.py" from "../cases/python-practice-retry-without-limit/app/__init__.py"
     .fixture "app/backoffs.py" from "../cases/python-practice-retry-without-limit/app/backoffs.py"
     .fixture "app/clients.py" from "../cases/python-practice-retry-without-limit/app/clients.py"
-    .fixture "app/consumers.py" from "../cases/python-practice-retry-without-limit/app/consumers.py"
-    .fixture "app/loops.py" from "../cases/python-practice-retry-without-limit/app/loops.py"
-    .fixture "app/names.py" from "../cases/python-practice-retry-without-limit/app/names.py"
     .fixture "app/other_retries.py" from "../cases/python-practice-retry-without-limit/app/other_retries.py"
-    .fixture "app/prompts.py" from "../cases/python-practice-retry-without-limit/app/prompts.py"
+    .fixture "app/retry_packages.py" from "../cases/python-practice-retry-without-limit/app/retry_packages.py"
     .fixture "app/settings.py" from "../cases/python-practice-retry-without-limit/app/settings.py"
     .fixture "tests/__init__.py" from "../cases/python-practice-retry-without-limit/tests/__init__.py"
     .fixture "tests/test_clients.py" from "../cases/python-practice-retry-without-limit/tests/test_clients.py"
@@ -185,7 +107,6 @@ prl_what(x, cat("except ", s)) :- field(x, "value", v), except_type(v, t), text(
     .expect _ at "app/backoffs.py":13
     .expect _ at "app/backoffs.py":18
     .expect _ at "app/backoffs.py":27
-    .expect _ at "app/consumers.py":27
     .expect _ at "app/clients.py":14
     .expect _ at "app/clients.py":19
     .expect _ at "app/clients.py":24
@@ -195,13 +116,12 @@ prl_what(x, cat("except ", s)) :- field(x, "value", v), except_type(v, t), text(
     .expect _ at "app/clients.py":46
     .expect _ at "app/clients.py":51
     .expect _ at "app/clients.py":57
-    .expect _ at "app/loops.py":14
-    .expect _ at "app/loops.py":25
-    .expect _ at "app/loops.py":34
-    .expect _ at "app/loops.py":45
-    .expect _ at "app/loops.py":55
-    .expect _ at "app/loops.py":65
-    .expect _ at "app/loops.py":214
-    .expect _ at "app/names.py":36
-    .expect _ at "app/prompts.py":30
+    .expect _ at "app/retry_packages.py":12
+    .expect _ at "app/retry_packages.py":17
+    .expect _ at "app/retry_packages.py":22
+    .expect _ at "app/retry_packages.py":27
+    .expect _ at "app/retry_packages.py":48
+    .expect _ at "app/retry_packages.py":53
+    .expect _ at "app/retry_packages.py":59
+    .expect _ at "app/retry_packages.py":84
 .end

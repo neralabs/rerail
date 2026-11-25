@@ -21,11 +21,30 @@
   },
   "rules": [
     {
+      "id": "sqlalchemy-practice-session-reused-after-failed-commit",
+      "document": "rules/sqlalchemy-practice-session-reused-after-failed-commit.rerail",
+      "title": "SQLAlchemy practice: an except handler swallows a failed commit() or flush() and the session is used again without rollback()",
+      "group": "SQLAlchemy practice",
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/tags.py",
+          "text": "import logging\n\nfrom sqlalchemy.exc import IntegrityError\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Tag\n\nlog = logging.getLogger(__name__)\n\n\ndef import_tags(engine, names: list[str]) -> None:\n    with Session(engine) as session:\n        for name in names:\n            try:\n                session.add(Tag(name=name))\n                session.commit()\n            except IntegrityError:\n                log.warning(\"duplicate tag %s\", name)\n                continue\n"
+        },
+        "passes": {
+          "path": "app/tags.py",
+          "text": "import logging\n\nfrom sqlalchemy.exc import IntegrityError\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Tag\n\nlog = logging.getLogger(__name__)\n\n\ndef import_tags(engine, names: list[str]) -> None:\n    with Session(engine) as session:\n        for name in names:\n            try:\n                session.add(Tag(name=name))\n                session.commit()\n            except IntegrityError:\n                session.rollback()\n                log.warning(\"duplicate tag %s\", name)\n"
+        }
+      }
+    },
+    {
       "id": "sqlalchemy-practice-bulk-write-skips-hooks",
       "document": "rules/sqlalchemy-practice-bulk-write-skips-hooks.rerail",
       "title": "SQLAlchemy practice: a bulk UPDATE, DELETE or INSERT on a model whose mapper events, attribute events or validators it skips",
       "group": "SQLAlchemy practice",
-      "mode": "steer",
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "app/services.py",
@@ -58,28 +77,42 @@
       }
     },
     {
-      "id": "sqlalchemy-practice-connect-without-commit",
-      "document": "rules/sqlalchemy-practice-connect-without-commit.rerail",
-      "title": "SQLAlchemy practice: writes on a connection from engine.connect() are committed, or the connection comes from engine.begin()",
+      "id": "sqlalchemy-practice-lazy-load-in-loop",
+      "document": "rules/sqlalchemy-practice-lazy-load-in-loop.rerail",
+      "title": "SQLAlchemy practice: a loop over ORM rows that reads a lazily loaded collection of every row",
       "group": "SQLAlchemy practice",
-      "mode": "log",
+      "mode": "steer",
+      "on": true,
       "examples": {
         "caught": {
-          "path": "app/users.py",
-          "text": "from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, insert\n\nengine = create_engine(\"postgresql+psycopg://app@db/app\")\nmetadata = MetaData()\nusers = Table(\"users\", metadata, Column(\"id\", Integer, primary_key=True), Column(\"name\", String(80)))\n\n\ndef add_user(name: str) -> None:\n    with engine.connect() as conn:\n        conn.execute(insert(users).values(name=name))\n"
+          "path": "app/reports.py",
+          "text": "from sqlalchemy import select\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Order\n\n\ndef line_counts(session: Session) -> list[int]:\n    counts = []\n    for order in session.scalars(select(Order)):\n        counts.append(len(order.lines))\n    return counts\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy import ForeignKey\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass Order(Base):\n    __tablename__ = \"orders\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    lines: Mapped[list[\"Line\"]] = relationship(back_populates=\"order\")\n\n\nclass Line(Base):\n    __tablename__ = \"lines\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    order_id: Mapped[int] = mapped_column(ForeignKey(\"orders.id\"))\n    order: Mapped[Order] = relationship(back_populates=\"lines\")\n"
+            }
+          ]
         },
         "passes": {
-          "path": "app/users.py",
-          "text": "from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, insert\n\nengine = create_engine(\"postgresql+psycopg://app@db/app\")\nmetadata = MetaData()\nusers = Table(\"users\", metadata, Column(\"id\", Integer, primary_key=True), Column(\"name\", String(80)))\n\n\ndef add_user(name: str) -> None:\n    with engine.connect() as conn:\n        conn.execute(insert(users).values(name=name))\n        conn.commit()\n"
+          "path": "app/reports.py",
+          "text": "from sqlalchemy import select\nfrom sqlalchemy.orm import Session, selectinload\n\nfrom app.models import Order\n\n\ndef line_counts(session: Session) -> list[int]:\n    counts = []\n    for order in session.scalars(select(Order).options(selectinload(Order.lines))):\n        counts.append(len(order.lines))\n    return counts\n",
+          "with": [
+            {
+              "path": "app/models.py",
+              "text": "from sqlalchemy import ForeignKey\nfrom sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship\n\n\nclass Base(DeclarativeBase):\n    pass\n\n\nclass Order(Base):\n    __tablename__ = \"orders\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    lines: Mapped[list[\"Line\"]] = relationship(back_populates=\"order\")\n\n\nclass Line(Base):\n    __tablename__ = \"lines\"\n    id: Mapped[int] = mapped_column(primary_key=True)\n    order_id: Mapped[int] = mapped_column(ForeignKey(\"orders.id\"))\n    order: Mapped[Order] = relationship(back_populates=\"lines\")\n"
+            }
+          ]
         }
       }
     },
     {
-      "id": "sqlalchemy-practice-lazy-load-in-loop",
-      "document": "rules/sqlalchemy-practice-lazy-load-in-loop.rerail",
-      "title": "SQLAlchemy practice: a loop over ORM rows that reads a lazily loaded relationship of every row",
+      "id": "sqlalchemy-practice-lazy-many-to-one-in-loop",
+      "document": "rules/sqlalchemy-practice-lazy-many-to-one-in-loop.rerail",
+      "title": "SQLAlchemy practice: a loop over ORM rows that reads a lazily loaded many-to-one relationship of every row",
       "group": "SQLAlchemy practice",
-      "mode": "steer",
+      "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
           "path": "app/reports.py",
@@ -104,36 +137,20 @@
       }
     },
     {
-      "id": "sqlalchemy-practice-session-reused-after-failed-commit",
-      "document": "rules/sqlalchemy-practice-session-reused-after-failed-commit.rerail",
-      "title": "SQLAlchemy practice: an except handler swallows a failed commit() or flush() and the session is used again without rollback()",
-      "group": "SQLAlchemy practice",
-      "mode": "steer",
-      "examples": {
-        "caught": {
-          "path": "app/tags.py",
-          "text": "import logging\n\nfrom sqlalchemy.exc import IntegrityError\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Tag\n\nlog = logging.getLogger(__name__)\n\n\ndef import_tags(engine, names: list[str]) -> None:\n    with Session(engine) as session:\n        for name in names:\n            try:\n                session.add(Tag(name=name))\n                session.commit()\n            except IntegrityError:\n                log.warning(\"duplicate tag %s\", name)\n                continue\n"
-        },
-        "passes": {
-          "path": "app/tags.py",
-          "text": "import logging\n\nfrom sqlalchemy.exc import IntegrityError\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Tag\n\nlog = logging.getLogger(__name__)\n\n\ndef import_tags(engine, names: list[str]) -> None:\n    with Session(engine) as session:\n        for name in names:\n            try:\n                session.add(Tag(name=name))\n                session.commit()\n            except IntegrityError:\n                session.rollback()\n                log.warning(\"duplicate tag %s\", name)\n"
-        }
-      }
-    },
-    {
-      "id": "sqlalchemy-practice-text-interpolation",
-      "document": "rules/sqlalchemy-practice-text-interpolation.rerail",
-      "title": "SQLAlchemy practice: a text() SQL string built by interpolating values instead of binding them",
+      "id": "sqlalchemy-practice-connect-without-commit",
+      "document": "rules/sqlalchemy-practice-connect-without-commit.rerail",
+      "title": "SQLAlchemy practice: writes on a connection from engine.connect() are committed, or the connection comes from engine.begin()",
       "group": "SQLAlchemy practice",
       "mode": "log",
+      "on": true,
       "examples": {
         "caught": {
-          "path": "app/repo.py",
-          "text": "from sqlalchemy import select, text\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Recipe\n\n\ndef by_name(session: Session, name: str):\n    return session.execute(text(f\"SELECT * FROM recipe WHERE name = '{name}'\")).all()\n\n\ndef sorted_recipes(session: Session, col: str, direction: str):\n    return session.scalars(select(Recipe).order_by(text(f\"{col} {direction}\"))).all()\n"
+          "path": "app/users.py",
+          "text": "from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, insert\n\nengine = create_engine(\"postgresql+psycopg://app@db/app\")\nmetadata = MetaData()\nusers = Table(\"users\", metadata, Column(\"id\", Integer, primary_key=True), Column(\"name\", String(80)))\n\n\ndef add_user(name: str) -> None:\n    with engine.connect() as conn:\n        conn.execute(insert(users).values(name=name))\n"
         },
         "passes": {
-          "path": "app/repo.py",
-          "text": "from sqlalchemy import select, text\nfrom sqlalchemy.orm import Session\n\nfrom app.models import Recipe\n\nSORTABLE = {\"name\": Recipe.name, \"created\": Recipe.created_at}\n\n\ndef by_name(session: Session, name: str):\n    return session.execute(text(\"SELECT * FROM recipe WHERE name = :name\"), {\"name\": name}).all()\n\n\ndef sorted_recipes(session: Session, col: str, descending: bool):\n    column = SORTABLE[col]\n    return session.scalars(select(Recipe).order_by(column.desc() if descending else column.asc())).all()\n"
+          "path": "app/users.py",
+          "text": "from sqlalchemy import Column, Integer, MetaData, String, Table, create_engine, insert\n\nengine = create_engine(\"postgresql+psycopg://app@db/app\")\nmetadata = MetaData()\nusers = Table(\"users\", metadata, Column(\"id\", Integer, primary_key=True), Column(\"name\", String(80)))\n\n\ndef add_user(name: str) -> None:\n    with engine.connect() as conn:\n        conn.execute(insert(users).values(name=name))\n        conn.commit()\n"
         }
       }
     }

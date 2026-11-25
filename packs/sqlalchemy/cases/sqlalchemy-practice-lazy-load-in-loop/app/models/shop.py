@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -66,3 +66,58 @@ class Product(Base):
 class GiftOrder(Order):
     # inherits Order.customer and Order.tags
     message: Mapped[str] = mapped_column(String(200))
+
+
+# Legacy declarations with no annotation: the direction comes from the foreign keys.
+class Warehouse(Base):
+    __tablename__ = "warehouses"
+    id = mapped_column(Integer, primary_key=True)
+    region_id = mapped_column(ForeignKey("regions.id"))
+    manager_id = mapped_column(ForeignKey("staff.id"))
+    # Bin.warehouse_id points here: one-to-many
+    bins = relationship("Bin")
+    # the key is on this table: many-to-one, and its backref gives Region a `warehouses` collection
+    region = relationship("Region", backref="warehouses")
+    # both tables point at each other, so foreign_keys decides
+    manager = relationship("Staff", foreign_keys=[manager_id])
+    staff = relationship("Staff", foreign_keys="Staff.warehouse_id")
+    # one-to-one: a single object though the key is on the other table
+    keeper = relationship("Keeper", uselist=False)
+    # declared collections
+    docks = relationship("Dock", uselist=True)
+    labels = relationship("Label", secondary="warehouse_labels")
+    zones = relationship("Label", "warehouse_zones")
+
+
+class Bin(Base):
+    __tablename__ = "bins"
+    id = mapped_column(Integer, primary_key=True)
+    warehouse_id = mapped_column(ForeignKey("warehouses.id"))
+
+
+class Region(Base):
+    __tablename__ = "regions"
+    id = mapped_column(Integer, primary_key=True)
+
+
+class Staff(Base):
+    __tablename__ = "staff"
+    id = mapped_column(Integer, primary_key=True)
+    warehouse_id = mapped_column(ForeignKey("warehouses.id"))
+
+
+class Keeper(Base):
+    __tablename__ = "keepers"
+    id = mapped_column(Integer, primary_key=True)
+    warehouse_id = mapped_column(ForeignKey("warehouses.id"))
+
+
+class Dock(Base):
+    __tablename__ = "docks"
+    id = mapped_column(Integer, primary_key=True)
+    warehouse_id = mapped_column(Integer)
+
+
+class Label(Base):
+    __tablename__ = "labels"
+    id = mapped_column(Integer, primary_key=True)

@@ -26,8 +26,9 @@
 //                                                    code: `mail.confirm()` then `send.assert_not_called()`)
 //   a name a Django management command imports: not reported (call_command imports it inside the patch)
 //   an importer imported in the patching test's body, or a file that reloads modules with importlib: not reported
-//   a copy read only in type annotations does not count; patch(..., create=True), raising=False, patch.dict,
-//   monkeypatch.delattr: not reported
+//   a copy read only in type annotations does not count; patch.dict and monkeypatch.delattr: not reported.
+//   `create=True` / `raising=False` change nothing here: the rule reads only names the module binds, and the copy is
+//   missed all the same
 // Gaps: tests that reach the importer only through a test client or a fixture (no import of it in the test file)
 // are not reported; a test module that imports the name itself and calls it misses the patch the same way, but tests
 // are not read as importers; when any module reads `mod.name`, the rule is silent even if the test runs another
@@ -36,22 +37,16 @@
 
 #include "lib/pytest.rerail"
 
-.violation PatchMissesFromImport(at: node, target: symbol, importer: symbol, fix: symbol) "`{importer}` holds its own copy of this name from a from-import, so patching `{target}` leaves its code on the real object. Patch `{fix}` instead, and each other module that imports it."
+.violation PatchMissesFromImport(at: node, target: symbol, importer: symbol, fix: symbol) "`{importer}` holds its own copy of this name, so patching `{target}` leaves its code on the real object. Patch `{fix}` instead, or drop the patch if this test never runs `{importer}`."
 PatchMissesFromImport(at, t, qi, @dot(qi, l)) :- pmi_site(at, q, x, t), pmi_pick(at, q, x, mi), pmi_open(at, q, x, mi, l),
     modname(mi, qi).
 
 // pmi_site(at, q, x, t): a patch reported at `at` replaces name x of workspace module q (t = "q.x"): a target string
 // whose module part is a workspace module, or patch.object / monkeypatch.setattr on an expression naming one.
 .decl pmi_site(at: node, q: symbol, x: symbol, t: symbol)
-pmi_site(a, q, x, t) :- pt_patch_name(c, t, a), !pt_mp_call(c, "delattr"), pmi_keeps(c), q = @pkg_up(t, 1), q != "",
+pmi_site(a, q, x, t) :- pt_patch_name(c, t, a), !pt_mp_call(c, "delattr"), q = @pkg_up(t, 1), q != "",
     x = @replace_all(t, "^.*\\.", ""), workspace_module(q), !workspace_module(t).
-pmi_site(c, q, x, @dot(q, x)) :- pt_patch_attr(c, o, x), !pt_mp_call(c, "delattr"), pmi_keeps(c), pmi_modref(o, q).
-// pmi_keeps(c): the patch does not create a missing attribute (`create=True`, `raising=False`).
-.decl pmi_keeps(c: node)
-pmi_keeps(c) :- kind(c, "call"), !pmi_creates(c).
-.decl pmi_creates(c: node)
-pmi_creates(c) :- call_arg(c, -1, "create", v), !text(v, "False").
-pmi_creates(c) :- call_arg(c, -1, "raising", v), !text(v, "True").
+pmi_site(c, q, x, @dot(q, x)) :- pt_patch_attr(c, o, x), !pt_mp_call(c, "delattr"), pmi_modref(o, q).
 // pmi_modref(o, q): expression o names workspace module q (`mail` after `from shop import mail`, `shop.http`).
 .decl pmi_modref(o: node, q: symbol)
 pmi_modref(o, q) :- qn(o, q), workspace_module(q).
@@ -165,5 +160,7 @@ pmi_pick(at, q, x, mi) :- pmi_near(at, q, x, _), !pmi_pref(at, q, x, _), mi = mi
     .expect _ at "tests/test_orders.py":41
     .expect _ at "tests/test_orders.py":47
     .expect _ at "tests/test_orders.py":52
+    .expect _ at "tests/test_orders.py":93
+    .expect _ at "tests/test_orders.py":109
     .expect _ at "tests/test_worker.py":18
 .end

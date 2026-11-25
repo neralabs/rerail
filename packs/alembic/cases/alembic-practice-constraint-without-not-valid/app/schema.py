@@ -14,3 +14,10 @@ class FakeOps:
 def upgrade():
     op2 = FakeOps()
     op2.create_foreign_key("fk", "orders", "users", ["user_id"], ["id"])
+
+
+class ForeignKey:
+    """A project's own reference marker that shares SQLAlchemy's class name."""
+
+    def __init__(self, target):
+        self.target = target

@@ -49,7 +49,7 @@
 
 #include "lib/sqlalchemy.rerail"
 
-.violation SessionReusedAfterFailedCommit(at: node, s: symbol, m: symbol, why: symbol) "This handler swallows a failed `{s}.{m}()` without `{s}.rollback()`, and {why}: a session whose commit or flush failed stays unusable until it is rolled back, so the next use raises PendingRollbackError. Call `{s}.rollback()` in the handler (or re-raise); leave it as is only when nothing uses the session again."
+.violation SessionReusedAfterFailedCommit(at: node, s: symbol, m: symbol, why: symbol) "Call `{s}.rollback()` in this handler, or re-raise: after a failed `{s}.{m}()` the session raises PendingRollbackError until rolled back, and {why}."
 SessionReusedAfterFailedCommit(x, st, m, why) :- srf_candidate(t, x, s, m), srf_why(t, x, s, why), text(s, st).
 // srf_why(t, x, s, why): the one reason given for a handler, the first that holds.
 .decl srf_why(t: node, x: node, s: node, why: symbol)
@@ -294,6 +294,7 @@ srf_command_deco(e) :- attr_of(e, _, n), srf_entry_deco(n).
     .fixture "app/commands.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/commands.py"
     .fixture "app/db.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/db.py"
     .fixture "app/extensions.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/extensions.py"
+    .fixture "app/importers.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/importers.py"
     .fixture "app/jobs.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/jobs.py"
     .fixture "app/models.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/models.py"
     .fixture "app/services.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/services.py"
@@ -302,6 +303,8 @@ srf_command_deco(e) :- attr_of(e, _, n), srf_entry_deco(n).
     .fixture "app/tests/test_services.py" from "../cases/sqlalchemy-practice-session-reused-after-failed-commit/app/tests/test_services.py"
     .expect _ at "app/api.py":31
     .expect _ at "app/commands.py":26
+    .expect _ at "app/importers.py":24
+    .expect _ at "app/importers.py":43
     .expect _ at "app/services.py":26
     .expect _ at "app/services.py":38
     .expect _ at "app/services.py":50

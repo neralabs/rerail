@@ -1,188 +1,82 @@
 .policy "sqlalchemy-practice-lazy-load-in-loop" revision 1
-.description "Eager-load the relationships a loop reads on each ORM row, with a loader option on the statement the rows come from."
+.description "Eager-load the collections a loop reads on each ORM row, with a loader option on the statement the rows come from."
 .language python
 .mode steer
 .scope include "**/*.py"
 // Rerail's own rule, not a port. A loop (a for statement or a comprehension) over ORM rows of model M that reads a
-// relationship `x.rel` of each row, where rel loads lazily (lazy="select", the default; declared on M in another
-// file, on a base class of the run, or as a `backref=` on another model's relationship), emits one SELECT per row:
-// the N+1 problem of the Relationship Loading Techniques docs. The rows come from:
-//   - a statement in the same function: `for o in session.scalars(select(M)…)`, `session.execute(select(M)).scalars()`,
-//     `orders = session.query(M).filter(...).all(); for o in orders`, `(await s.scalars(select(M))).all()`, and
-//     the same over a statement held in a name (`stmt = select(M).where(...); session.scalars(stmt)`), and a legacy
-//     query over `cls` in a classmethod of M (`db.session.query(cls)`, `cls.query`);
-//   - a function of the run the loop calls, one hop (resolved through imports with sym_of, or through the call graph
-//     of python/calls), that returns such rows or the legacy query itself:
-//     `for incident in incident_service.get_all(db_session=db_session)` where get_all returns
-//     `db_session.query(Incident).all()`. The loader check is made on the statement inside that function.
-// A read is `x.rel` evaluated in the loop's own per-row code, outside nested defs, lambdas and classes, and outside
-// the comprehension's first iterable; `x.rel = v` stores and `x.rel_id` (the key column) are no reads. One finding per
-// loop and relationship, at its first read.
-//   for o in session.scalars(select(Order)): o.customer.name          reported
-//   for o in order_service.get_all(db_session=s): o.customer.name      reported (get_all returns query(Order).all())
-//   [u.orders for u in session.scalars(select(User))]                  reported
-//   for o in session.scalars(select(Order).options(selectinload(Order.customer))): o.customer    not reported
-//   for o in session.scalars(select(Order)): o.lines                   not reported: lines is lazy="selectin"
-//   for o in session.scalars(select(Order)): o.customer_id             not reported: a column
-//   o = session.scalars(select(Order)).first(); o.customer             not reported: one row
-//   for o in session.scalars(select(Order)).yield_per(500): o.customer not reported: streamed
-//   for o in orders: o.customer   (orders a parameter)                 not reported: where the rows come from is unknown
-// Left alone too: loader options naming the relationship anywhere in a chain (`selectinload(M.a).joinedload(A.b)`,
-// `Load(M).joinedload(M.x)`, `joinedload("x")`) or a wildcard (`selectinload("*")`), and an `.options(...)` naming it
-// on any statement of the function that builds the rows (`query = query.options(selectinload(M.x))`); `lazy=` other
-// than "select"; `yield_per` iterations (`.yield_per(n)`, `execution_options(yield_per=n)` on the statement or in the
-// function that builds it), whose batches restrict eager loading and are written to stream; tests (lib's
-// sa_test_doc) and Alembic revisions and env.py (lil_migration_doc).
-// Gaps: a many-to-one whose target is already in the session's identity map emits no SELECT, so when most rows share
-// a few parents the N+1 is small; loop targets that unpack (`for i, o in enumerate(rows)`), callees more than one
-// call away, generic repositories (`self.model`) and models of other packages (flask_appbuilder's) are not followed;
-// an `.options(...)` naming the relationship on another statement of the same function is taken as covering it; a
-// loop that stops after the first row or two is reported.
+// lazily loaded collection `x.rel` of each row (one-to-many or many-to-many; lazy="select", the default) emits one
+// SELECT per row: the N+1 problem of the Relationship Loading Techniques docs. Many-to-one reads are
+// sqlalchemy-practice-lazy-many-to-one-in-loop's: the identity map answers a parent it has seen, so their cost depends
+// on how many rows share one.
+// The relationship and its direction are read from the models, across files (lib's sa_lazy_rel and sa_rel_dir): a
+// collection is `Mapped[list[...]]` (or set, Sequence, ...), `uselist=True`, `secondary=`, a relationship whose
+// foreign key sits on the target (`foreign_keys=[B.a_id]`, or only B has a ForeignKey to this table), or the backref
+// of a many-to-one. A relationship whose direction cannot be decided is left to the many-to-one rule.
+// The loops and rows are lib/sqlalchemy_loops' sl_hit: `for o in session.scalars(select(M)…)`, `….all()`, a legacy
+// query, rows or a statement held in a name, `for i, o in enumerate(rows)`, `for o, l in session.execute(select(M,
+// L))`, rows a function of the run returns (one hop: `for o in order_service.get_all(db_session=s)`), and reads made
+// by a function of the run the loop hands the row to (`[describe(o) for o in rows]`, describe reading `o.lines`).
+//   for o in session.scalars(select(Order)): len(o.lines)            reported
+//   [describe(o) for o in session.scalars(select(Order))]             reported when describe reads o.lines
+//   for o in session.scalars(select(Order).options(*OPTS)): o.lines   not reported: OPTS = [selectinload(Order.lines)]
+//   for o in session.scalars(select(Order)): o.customer               not reported: a many-to-one (the other rule)
+//   for o in session.scalars(select(Order)): o.tags                   not reported when tags is lazy="selectin"
+// Left alone: loader options naming the relationship anywhere in a chain, through a name, or a wildcard; an option
+// list it cannot read (`.options(*opts)` with opts a parameter); `lazy=` other than "select"; `yield_per` streams;
+// one row (`.first()`, `session.get`); rows from a parameter; tests and Alembic revisions.
+// Gaps: a loop that stops after its first rows is still reported (the message says to leave it); callees more than
+// one call away, rows of a generic repository (`select(self.model)`), and models of other packages are not followed;
+// an `.options(...)` naming the relationship on another statement of the same function is taken as covering it.
 
 #include "lib/sqlalchemy.rerail"
+#include "lib/sqlalchemy_loops.rerail"
 
-.violation LazyLoadInLoop(at: node, var: symbol, rel: symbol, model: symbol, src: symbol) "The loop reads {var}.{rel} on every {model} row and {model}.{rel} loads lazily, one SELECT per row; add .options(selectinload({model}.{rel})) to {src} so they load in one query (leave it when the loop stops after a row or two)."
+.violation LazyLoadInLoop(at: node, model: symbol, rel: symbol, src: symbol) "Add .options(selectinload({model}.{rel})) to {src}: the loop reads this lazy collection on every row, one SELECT each. Leave it when the loop stops after a row or two."
+.violation LazyLoadInLoopShared(at: node, model: symbol, rel: symbol, src: symbol) "Add .options(selectinload({model}.{rel})) to {src}, one SELECT per row now; that changes its other callers' query too, so pass the option in when they differ."
 
-// lil_loop(x, b, r, bs): a loop binds name x, in scope bs, to each item of iterable r; b holds the code that runs per
-// item: a for statement's body, or the comprehension (its first iterable r is excluded where reads are taken).
-.decl lil_loop(x: symbol, b: node, r: node, bs: node)
-lil_loop(x, b, r, bs) :- (kind(st, "for_statement") ; kind(st, "async_for_statement")), field(st, "left", l),
-    kind(l, "identifier"), text(l, x), field(st, "right", r), field(st, "body", b), nearest(st, bs, lfscope).
-lil_loop(x, c, r, c) :- kind(fc, "for_in_clause"), field(fc, "left", l), kind(l, "identifier"), text(l, x),
-    field(fc, "right", r), child(c, fc, _),
-    (kind(c, "list_comprehension") ; kind(c, "set_comprehension") ; kind(c, "dictionary_comprehension") ;
-     kind(c, "generator_expression")).
-// lil_read(b, r, x, u, rel): u is `x.rel` read per item of the loop: in its own code, x the loop's name (not one a
-// nested comprehension rebinds), and not the target of an assignment.
-.decl lil_read(b: node, r: node, x: symbol, u: node, rel: symbol)
-lil_read(b, r, x, u, rel) :- lil_loop(x, b, r, bs), attr_of(u, o, rel), kind(o, "identifier"), text(o, x),
-    within_stop(u, b, sa_region_stop), !within(u, r), look(o, x, bs), !lil_stored(u).
-.decl lil_stored(u: node)
-lil_stored(u) :- kind(a, "assignment"), field(a, "left", u).
-lil_stored(u) :- kind(a, "assignment"), field(a, "left", l), (kind(l, "pattern_list") ; kind(l, "tuple_pattern")),
-    child(l, u, _).
-// lil_src(r, e, s, mq, src): loop iterable r yields instances of mq from statement s; e is the rows expression
-// (r itself, or what the callee returns); src names the statement in the message.
-.decl lil_src(r: node, e: node, s: node, mq: symbol, src: symbol)
-lil_src(r, r, s, mq, "the statement the loop iterates") :- lil_iterable(r), lil_rows(r, s, mq).
-lil_src(r, v, s, mq, @replace_all("the statement F() returns", "F", fname)) :- lil_iter_call(r, c), lil_callee(c, g),
-    lil_returns(g, v, s, mq), def_name(g, fname).
-// lil_rows(e, s, mq): lib's sa_rows, and the same shapes over a statement held in a name the scope binds to
-// `select(M)…` (`stmt = select(M).where(...); for o in session.scalars(stmt)`, `session.execute(stmt).scalars()`),
-// and a model's classmethod querying `cls` (lil_query_of).
-.decl lil_rows(e: node, s: node, mq: symbol)
-lil_rows(e, s, mq) :- sa_rows(e, s, mq).
-lil_rows(e, s, mq) :- unparen(e, s), lil_query_of(s, mq), !sa_query_of(s, _).
-lil_rows(e, s, mq) :- unparen(e, c), kind(c, "call"), field(c, "function", f), attr_of(f, _, "scalars"), posarg(c, 0, n),
-    lil_stmt_name(n, s, mq).
-lil_rows(e, s, mq) :- unparen(e, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, "scalars"),
-    py_no_call_args(c), unparen(o, x), sa_awaited_or(x, xc), kind(xc, "call"), field(xc, "function", xf),
-    attr_of(xf, _, "execute"), posarg(xc, 0, n), lil_stmt_name(n, s, mq).
-lil_rows(e, s, mq) :- unparen(e, c), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), sa_rows_method(m),
-    unparen(o, x), sa_awaited_or(x, y), lil_rows(y, s, mq).
-lil_rows(e, s, mq) :- unparen(e, w), kind(w, "await"), child(w, c, 0), lil_rows(c, s, mq).
-lil_rows(e, s, mq) :- unparen(e, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _),
-    lil_rows(v, s, mq).
-// lil_stmt_name(n, s, mq): n is a name the same scope binds to statement s, `select(M)` or a chain from it.
-.decl lil_stmt_name(n: node, s: node, mq: symbol)
-lil_stmt_name(n, s, mq) :- unparen(n, i), kind(i, "identifier"), text(i, x), look(i, x, sc), asg(sc, x, s, _),
-    sa_select_of(s, mq).
-// lil_query_of(q, mq): lib's sa_query_of, and a legacy query over `cls` in a classmethod of model mq:
-// `db.session.query(cls)`, `cls.query`, and chains from them (superset's `SqlaTable.get_all_datasources`).
-.decl lil_query_of(q: node, mq: symbol)
-lil_query_of(q, mq) :- sa_query_of(q, mq).
-lil_query_of(q, mq) :- unparen(q, e), attr_of(e, o, "query"), lil_cls_model(o, mq).
-lil_query_of(q, mq) :- unparen(q, e), kind(e, "call"), field(e, "function", f), attr_of(f, _, "query"),
-    posarg(e, 0, r), lil_cls_model(r, mq).
-lil_query_of(q, mq) :- unparen(q, e), kind(e, "call"), field(e, "function", f), attr_of(f, o, m), sa_chain_method(m),
-    lil_query_of(o, mq).
-// lil_cls_model(e, mq): e is `cls`, the first parameter of a method of model class mq.
-.decl lil_cls_model(e: node, mq: symbol)
-lil_cls_model(e, mq) :- unparen(e, i), kind(i, "identifier"), text(i, "cls"), look(i, "cls", f), param(f, "cls", 0),
-    nearest(f, c, scope), kind(c, "class_definition"), class_def(c, mq), sa_model_q(mq).
-.decl lil_iterable(r: node)
-lil_iterable(r) :- lil_loop(_, _, r, _).
-// lil_iter_call(r, c): loop iterable r is call c (maybe awaited), or a name the same scope binds to one.
-.decl lil_iter_call(r: node, c: node)
-lil_iter_call(r, c) :- lil_iterable(r), unparen(r, e), sa_awaited_or(e, c), kind(c, "call").
-lil_iter_call(r, c) :- lil_iterable(r), unparen(r, n), kind(n, "identifier"), text(n, x), look(n, x, sc),
-    asg(sc, x, v, _), unparen(v, e), sa_awaited_or(e, c), kind(c, "call").
-// lil_callee(c, g): call c runs def g of the run: by the name it resolves to, or by the call graph.
-.decl lil_callee(c: node, g: node)
-lil_callee(c, g) :- field(c, "function", f), sym_of(f, q), qualname(g, q), kind(g, "function_definition").
-lil_callee(c, g) :- call_target(c, g), kind(g, "function_definition").
-// lil_returns(g, v, s, mq): def g returns v, rows of mq from statement s (a legacy query counts as its rows).
-.decl lil_returns(g: node, v: node, s: node, mq: symbol)
-lil_returns(g, v, s, mq) :- kind(ret, "return_statement"), nearest(ret, g, fdef), child(ret, v, _), !kind(v, "comment"),
-    lil_rows(v, s, mq).
-// lil_loaded(s, rel): the statement loads rel with the rows: a loader option naming it (or a wildcard) on its chain,
-// or on an `.options(...)` call in the same function (a query built over several assignments).
-.decl lil_loaded(s: node, rel: symbol)
-lil_loaded(s, rel) :- lil_sought(s, rel), sa_options_arg(s, a), (lil_loader_names(a, rel) ; lil_loader_names(a, "*")).
-lil_loaded(s, rel) :- lil_sought(s, rel), nearest(s, f, scope), kind(oc, "call"), field(oc, "function", of),
-    attr_of(of, _, "options"), nearest(oc, f, scope), call_arg(oc, _, _, a),
-    (lil_loader_names(a, rel) ; lil_loader_names(a, "*")).
-// lil_loader_names(o, x): lib's sa_loader_names, with the option o itself counted: sa_loader_names looks only
-// below o (`within` is strict), so `.options(selectinload(M.x))`, whose argument is the loader call, names nothing
-// there.
-.decl lil_loader_names(o: node, x: symbol)
-lil_loader_names(o, x) :- sa_loader_names(o, x).
-lil_loader_names(o, x) :- unparen(o, c), kind(c, "call"), call_name(c, fn), sa_loader_fn(fn), call_arg(c, _, _, a),
-    unparen(a, aa), attr_of(aa, _, x).
-lil_loader_names(o, x) :- unparen(o, c), kind(c, "call"), call_name(c, fn), sa_loader_fn(fn), call_arg(c, _, _, a),
-    str(a, x).
-.decl lil_sought(s: node, rel: symbol)
-lil_sought(s, rel) :- lil_read(_, r, _, _, rel), lil_src(r, _, s, _, _).
-// lil_streamed(e): expression e asks for yield_per batches: `.yield_per(n)`, `execution_options(yield_per=n)`,
-// `{"yield_per": n}`, or is a name bound to one.
-.decl lil_streamed(e: node)
-lil_streamed(e) :- lil_yield_node(e).
-lil_streamed(e) :- within(n, e), lil_yield_node(n).
-lil_streamed(e) :- unparen(e, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, v, _), lil_streamed(v).
-// lil_streamed_fn(s): the function that builds statement s asks for yield_per somewhere (`stmt =
-// stmt.execution_options(yield_per=500)`).
-.decl lil_streamed_fn(s: node)
-lil_streamed_fn(s) :- lil_sought(s, _), nearest(s, f, scope), lil_yield_node(n), nearest(n, f, scope).
-.decl lil_yield_node(n: node)
-lil_yield_node(n) :- kind(n, "identifier"), text(n, "yield_per").
-lil_yield_node(n) :- str(n, "yield_per").
-// lil_hit(b, u, x, rel, mq, src): u reads lazy relationship rel per row of mq in loop b.
-.decl lil_hit(b: node, u: node, x: symbol, rel: symbol, mq: symbol, src: symbol)
-lil_hit(b, u, x, rel, mq, src) :- lil_read(b, r, x, u, rel), lil_src(r, e, s, mq, src), class_def(c, mq),
-    sa_lazy_rel(c, rel), !lil_loaded(s, rel), !lil_streamed(r), !lil_streamed(e), !lil_streamed_fn(s), docof(u, d),
-    !sa_test_doc(d), !lil_migration_doc(d).
-// lil_migration_doc(d): lib's sa_migration_doc narrowed to Alembic's migration code: a revision or env.py
-// (`from alembic import op` / `context`), or a file under migrations/versions. sa_migration_doc takes any file that
-// imports alembic, so a CLI that runs `alembic.command.upgrade` (dispatch's cli.py) is skipped whole.
-.decl lil_migration_doc(d: number)
-lil_migration_doc(d) :- ifrom(s, _, "alembic", y), (y = "op" ; y = "context"), docof(s, d).
-lil_migration_doc(d) :- doc(d, _, _), path_part(d, "versions"), (path_part(d, "migrations") ; path_part(d, "alembic") ;
-    path_part(d, "revisions")).
+LazyLoadInLoop(u, n, rel, src) :- lil_hit(u, rel, mq, src, "loop"), split_dot(mq, _, n).
+LazyLoadInLoopShared(u, n, rel, src) :- lil_hit(u, rel, mq, src, "callee"), split_dot(mq, _, n).
 
-LazyLoadInLoop(u, x, rel, n, src) :- lil_hit(b, u, x, rel, mq, src), split_dot(mq, _, n),
-    count : { lil_hit(b, u2, _, rel, _, _), u2 < u } = 0.
+// lil_hit(u, rel, mq, src, how): the first read of collection rel in its loop.
+.decl lil_hit(u: node, rel: symbol, mq: symbol, src: symbol, how: symbol)
+lil_hit(u, rel, mq, src, how) :- sl_hit(u, _, rel, mq, _, src, how), sl_first(u, rel), class_def(c, mq),
+    sa_rel_dir(c, rel, "many"), !sa_rel_dir(c, rel, "one").
 
 // The cases, `cases/sqlalchemy-practice-lazy-load-in-loop/`, read as one repository: each line ending in `# caught`
 // is reported, and no other line.
 .test cases exactly
     .fixture "app/cli.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/cli.py"
     .fixture "app/models/base.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/models/base.py"
+    .fixture "app/models/catalog.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/models/catalog.py"
     .fixture "app/models/shop.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/models/shop.py"
     .fixture "app/services/order_service.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/services/order_service.py"
     .fixture "app/services/reports.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/app/services/reports.py"
-    .fixture "tests/test_reports.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/tests/test_reports.py"
     .fixture "migrations/versions/0002_backfill.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/migrations/versions/0002_backfill.py"
+    .fixture "tests/test_reports.py" from "../cases/sqlalchemy-practice-lazy-load-in-loop/tests/test_reports.py"
     .expect _ at "app/cli.py":15
-    .expect _ at "app/services/reports.py":13
-    .expect _ at "app/services/reports.py":20
-    .expect _ at "app/services/reports.py":21
-    .expect _ at "app/services/reports.py":28
-    .expect _ at "app/services/reports.py":33
-    .expect _ at "app/services/reports.py":38
-    .expect _ at "app/services/reports.py":43
-    .expect _ at "app/services/reports.py":48
+    .expect _ at "app/services/reports.py":15
+    .expect _ at "app/services/reports.py":22
+    .expect _ at "app/services/reports.py":30
+    .expect _ at "app/services/reports.py":35
+    .expect _ at "app/services/reports.py":40
+    .expect _ at "app/services/reports.py":45
     .expect _ at "app/services/reports.py":50
     .expect _ at "app/services/reports.py":52
-    .expect _ at "app/services/reports.py":58
-    .expect _ at "app/services/reports.py":63
+    .expect _ at "app/services/reports.py":54
+    .expect _ at "app/services/reports.py":60
+    .expect _ at "app/services/reports.py":65
+    .expect _ at "app/services/reports.py":69
+    .expect _ at "app/services/reports.py":74
+    .expect _ at "app/services/reports.py":78
+    .expect _ at "app/services/reports.py":84
+    .expect _ at "app/services/reports.py":92
+    .expect _ at "app/services/reports.py":97
+    .expect _ at "app/services/reports.py":103
+    .expect _ at "app/services/reports.py":110
+    .expect _ at "app/services/reports.py":111
+    .expect _ at "app/services/reports.py":112
+    .expect _ at "app/services/reports.py":113
+    .expect _ at "app/services/reports.py":114
+    .expect _ at "app/services/reports.py":116
+    .expect _ at "app/services/reports.py":121
 .end

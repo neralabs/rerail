@@ -1,64 +1,109 @@
 .policy "python-practice-cancellation-swallowed" revision 1
-.description "An async def must re-raise asyncio.CancelledError on every path of a handler that catches it, or cancel() and timeouts stop working."
+.description "Re-raise asyncio.CancelledError wherever an async def catches or suppresses it; swallowing it breaks cancel(), timeouts and task groups."
 .language python
 .mode steer
 .scope include "**/*.py"
 // Rerail's own rule, not a port. asyncio implements Task.cancel(), asyncio.timeout(), wait_for() and TaskGroup by
-// throwing CancelledError into the coroutine; one that catches it and goes on keeps running after it was cancelled:
-// a timeout no longer fires, a TaskGroup waits for it, shutdown hangs, and the awaiting caller resumes as if the work
-// had finished. It reports, in an `async def`'s own frame (a nested sync def or lambda is its own frame) and outside
-// test code, an `except` clause that catches cancellation, `asyncio.CancelledError` (also through
-// `asyncio.exceptions`, an alias or a tuple), `BaseException`, or a bare `except:`, of a try whose body awaits
-// (`await`, `async with`, `async for`) in the same frame, when some path through the handler ends without re-raising:
-// it falls through, returns, breaks, continues, or raises another exception first.
+// throwing CancelledError into the coroutine. A coroutine that catches it and goes on keeps running after it was
+// cancelled, and the coroutine that awaits it resumes as if the work had finished: a timeout no longer fires, a
+// TaskGroup waits for it, shutdown hangs.
+// It reports, in an `async def`'s own frame (a nested sync def or lambda is its own frame) and outside test code:
+//   - an `except` clause that catches cancellation, `asyncio.CancelledError` (also through `asyncio.exceptions`, an
+//     alias or a tuple), `BaseException`, or a bare `except:`, of a try whose body awaits (`await`, `async with`,
+//     `async for`) in the same frame, when some path through the handler ends without re-raising: it falls through,
+//     returns, breaks, continues, or raises another exception first;
+//   - a `with contextlib.suppress(...)` naming one of those classes whose body awaits, when more of the function runs
+//     after it (a later statement, or the next turn of a loop around it).
 //   async def poll(c):
 //       try: await c.get()
 //       except asyncio.CancelledError: log.info("stopped")          reported: falls through
 //       except asyncio.CancelledError: break                         reported
 //       except asyncio.CancelledError: raise ConnectionError()       reported: another exception
 //       except asyncio.CancelledError: await c.close(); raise        not reported
+//       with contextlib.suppress(asyncio.CancelledError): await c.get()
+//       log.info("go on")                                            the `with` is reported
 // A handler re-raises on a path when it ends in a bare `raise`, `raise <the caught name>`, `raise CancelledError()`,
-// an `if` whose every branch (with an `else`) re-raises or tests `isinstance(e, T)` with T a class a cancellation is
-// not (`if isinstance(e, OSError): ... else: raise`), a `with` whose body does, a nested `try` whose `finally`
-// does, `if isinstance(e, CancelledError): raise` (the handler also catches Exception), or a call of a function of
-// the run whose body always raises (a helper that surfaces the exception it is given); and no statement before that
-// returns, breaks, continues or raises something else.
+// a raise of a BaseExceptionGroup (or a subclass, through imports and aliases; the `exceptiongroup` backport too)
+// whose arguments carry the caught name, directly, in a list or tuple, or through a name the handler binds to them
+// (`errors = [exc, other]`, `errors.append(exc)`), an `if` whose every branch (with an `else`) re-raises or tests
+// `isinstance(e, T)` with T a class a cancellation is not (`if isinstance(e, OSError): ... else: raise`), a `with`
+// whose body does, a nested `try` whose `finally` does, `if isinstance(e, CancelledError): raise` (the handler also
+// catches Exception), or a call of a function of the run whose body always raises (a helper that surfaces the
+// exception it is given); and no statement before that returns, breaks, continues or raises something else.
+// `raise ExceptionGroup("...", [exc])` is no re-raise: an ExceptionGroup refuses a BaseException such as
+// CancelledError and raises TypeError instead.
 // It leaves alone the idioms a reviewer accepts:
-//   - the drain: `t.cancel()` (or `for t in ts: t.cancel()`) earlier in the same function, and the try body awaits
-//     `t`, `asyncio.gather(*ts)`, `asyncio.wait_for(t, ...)` or `asyncio.shield(t)`: the CancelledError is the
-//     child's. `asyncio.wait(ts)` is not a drain: it never raises a child's CancelledError, so the one caught there is
-//     the function's own;
+//   - the drain: `t.cancel()` (or `for t in ts: t.cancel()`) earlier in the same function, or in a helper of the same
+//     class (or a base) or module that the call graph resolves (`self._stop()`, whose body, or a helper it calls,
+//     cancels `self._task`), and the try body (or the suppress body) awaits `t`, `asyncio.gather(*ts)`,
+//     `asyncio.wait_for(t, ...)` or `asyncio.shield(t)`: the CancelledError is the child's. t is compared by its
+//     text: a dotted name (`self._task`) or a subscript (`self.tasks[k]`). `asyncio.wait(ts)` is not a drain: it
+//     never raises a child's CancelledError, so the one caught there is the function's own;
 //   - a handler that reads `asyncio.current_task().cancelling()` (or calls `uncancel()`) and has a `raise`;
-//   - the coroutine an event-loop runner starts (`asyncio.run(main())`, `loop.run_until_complete(main())`,
-//     `asyncio.run_coroutine_threadsafe(main(), loop)`): cancelling it is the shutdown, and asyncio.run() itself
-//     turns a cancelled main back into KeyboardInterrupt;
-//   - a coroutine the run only ever starts as a task (`asyncio.create_task(pump())`, `loop.create_task(...)`,
-//     `ensure_future`, or a helper of the run that spawns its first argument, `safe_create_task(pump())`), never
-//     awaits directly, when the handler ends the task: its try is a statement of the body, or of a top-level loop
-//     the handler leaves with `break`/`return`, followed by nothing but a `return`;
+//   - the coroutine an event-loop runner starts, also at module level: `asyncio.run(main())`, `uvloop.run(main())`,
+//     `loop.run_until_complete(main())`, `asyncio.run_coroutine_threadsafe(main(), loop)`, `.run(main())` on an
+//     `asyncio.Runner(...)` (built in the call, or bound in the same frame by `with asyncio.Runner() as r` or
+//     `r = asyncio.Runner()`), and the function `anyio.run(main)` / `trio.run(main)` take (also inside
+//     `functools.partial(main, ...)`): cancelling it is the shutdown. The runners are a list of library entry
+//     points resolved through imports; nothing in the code says that a call starts a loop otherwise;
+//   - a handler that ends its function, when no code of the run resumes after it: the try is a statement of the body
+//     (or of a `with`/`async with` that is), or of a top-level loop the handler leaves with `break`/`return`, and
+//     nothing follows but a `return` without a value (or `return None`), and the handler returns no value either:
+//     the function hands its awaiter no partial result as a success, and an async generator yields nothing more;
+//     and either the function only ever runs as a task
+//     (`asyncio.create_task(pump())`, `loop.create_task(...)`, `ensure_future`, or a helper of the run that spawns
+//     its first argument, `safe_create_task(pump())`), or no code of the run awaits it: every call of it is handed
+//     to a call that is not awaited, not an asyncio function and not a def of the run that awaits a parameter
+//     (`StreamingResponse(events(q))`), it is passed uncalled (`scheduler.add_job(self.refresh)`), or it is
+//     registered by a decorator called on an object (`@router.websocket("/ws")`), and the handler only records or
+//     logs (no await, yield or raise). An async generator that yields after the handler, or whose handler yields, is
+//     not this case:
+//       async def events(q):                 return StreamingResponse(events(q))
+//           try: async for e in q: yield e
+//           except asyncio.CancelledError: log.info("client went away")     not reported
+//       async def download(c):               ... await download(c) elsewhere in the run
+//           while True:
+//               try: pages.append(await c.next())
+//               except asyncio.CancelledError: break                        reported: the caller resumes
+//           return pages
 //   - a deferred re-raise: the handler sets a flag (`cancelled = True`), and a later `if cancelled: raise
 //     asyncio.CancelledError` in the same function raises it after the bookkeeping;
-//   - a handler inside a cancellation handler that re-raises on every path (`except CancelledError: try: await
-//     shield(close()) except CancelledError: pass; raise`): the outer `raise` carries the cancellation on;
+//   - a handler or suppress inside a cancellation handler that re-raises on every path (`except CancelledError: try:
+//     await shield(close()) except CancelledError: pass; raise`): the outer `raise` carries the cancellation on;
+//   - anyio and trio code: a handler that catches cancellation only as `BaseException` or a bare `except:` (or a
+//     `suppress(BaseException)`), in a function whose own frame uses anyio or trio (a name that resolves into
+//     `anyio` or `trio`: `anyio.CancelScope`, `move_on_after`, a task group). anyio and trio cancel scopes are
+//     level-triggered: a swallowed cancellation is delivered again at the next checkpoint, so nothing hangs. An
+//     explicit `except asyncio.CancelledError` there is still reported;
 //   - `except Exception` (CancelledError is a BaseException since Python 3.8), a sync def, a try body that does not
 //     await (`fut.result()` raises the future's own cancellation), an application class named CancelledError, and
 //     `concurrent.futures.CancelledError`;
 //   - test files.
 // Gaps: a drain whose task travels through another name (`t = self._task; self._task.cancel(); await t`) is
-// reported; a handler that sets a flag a loop reads and then exits cleanly is reported; a CancelledError that an
-// async generator or a library hands up from a child it cancelled (not this function's own) is reported when the
-// function does not cancel it by name; `contextlib.suppress(asyncio.CancelledError)` is not a handler and is not
-// read; anyio and trio cancellation are not read.
+// reported, and so is a cancel in a helper the call graph cannot resolve; a handler that sets a flag a loop reads
+// and then exits cleanly is reported; a CancelledError that an async generator or a library hands up from a child it
+// cancelled (not this function's own) is reported when the function does not cancel it by name; a function that only
+// code outside the run awaits (a library's public coroutine handed to nothing) is reported, while one handed to an
+// outside API that awaits it and resumes (`await lib.retry(self.fetch)` is awaited and counts; a bare
+// `lib.schedule(fetch())` does not) is taken as ended; a suppress that ends its function is left alone; an exception
+// group class bound by an assignment (`Group = BaseExceptionGroup`) is not resolved; anyio is decided per function,
+// so a function that uses no anyio name but runs inside an anyio scope is read as asyncio code; a handler inside an
+// anyio shielded scope that names asyncio.CancelledError is reported.
 
 #include "lib/python_practice.rerail"
 #include "python/exceptions.rerail"
 #include "python/flow.rerail"
 
-.violation CancellationSwallowed(at: node, what: symbol, fx: symbol)
-    "`{what}` in `async def {fx}` can end without re-raising CancelledError, so the coroutine keeps running after it was cancelled and cancel(), asyncio.timeout() and TaskGroup stop working. Re-raise it (`raise` after the cleanup); if the cancellation comes from a task this function cancelled itself, re-raise when `asyncio.current_task().cancelling()` is set."
-CancellationSwallowed(x, what, fx) :- pcs_handler(x, t, f), pcs_awaits(t, f), exc_body(x, b), !pcs_reraises(x, b),
+.violation CancellationSwallowed(at: node)
+    "Re-raise the CancelledError at the end of this handler (`raise` after cleanup); swallowing it breaks cancel(), asyncio.timeout() and TaskGroup. Leave it if this function cancelled the task it awaits."
+CancellationSwallowed(x) :- pcs_handler(x, t, f), pcs_awaits(t, f), exc_body(x, b), !pcs_reraises(x, b),
     !pcs_drain(t, f), !pcs_checks_cancelling(x), !pcs_runner_entry(f), !pcs_task_end(x, f), !pcs_deferred(x, f),
-    !pcs_inside_reraising(x), pp_live(x), def_name(f, fx), pcs_what(x, what).
+    !pcs_inside_reraising(x), !pcs_anyio_handler(x, f), pp_live(x).
+
+.violation CancellationSuppressed(at: node)
+    "Use try/except with a final `raise` instead of suppress() for CancelledError: the code after this block runs on after a cancel. Leave it if this function cancelled the task it awaits."
+CancellationSuppressed(w) :- pcs_suppress(w, f), pcs_awaits(w, f), !pcs_drain(w, f), !pcs_runner_entry(f),
+    !pcs_end_pos(w, f), !pcs_inside_reraising(w), !pcs_anyio_suppress(w, f), pp_live(w).
 
 // pcs_handler(x, t, f): except clause x of try t, in async def f's own frame, catches cancellation.
 .decl pcs_handler(x: node, t: node, f: node)
@@ -69,13 +114,29 @@ pcs_catches(x) :- exc_type(x, e), exc_qual(e, q), pcs_cancel_q(q).
 pcs_catches(x) :- exc_type(x, e), exc_qual(e, "builtins.BaseException").
 .decl pcs_cancel_q(q: symbol)
 pcs_cancel_q("asyncio.CancelledError"). pcs_cancel_q("asyncio.exceptions.CancelledError").
-.decl pcs_what(x: node, what: symbol)
-pcs_what(x, "except:") :- kind(x, "except_clause"), !field(x, "value", _).
-pcs_what(x, cat("except ", s)) :- field(x, "value", v), except_type(v, t), text(t, s).
+// pcs_names_asyncio(x): handler x names asyncio's CancelledError itself, not only BaseException or nothing.
+.decl pcs_names_asyncio(x: node)
+pcs_names_asyncio(x) :- exc_type(x, e), exc_qual(e, q), pcs_cancel_q(q).
 
-// pcs_awaits(t, f): try t's body suspends in f's own frame: an await, `async with` or `async for`.
+// pcs_suppress(w, f): `with contextlib.suppress(...)` w, in async def f's own frame, suppresses cancellation.
+.decl pcs_suppress(w: node, f: node)
+pcs_suppress(w, f) :- pcs_suppress_arg(w, a), (pcs_names_cancel(a) ; exc_qual(a, "builtins.BaseException")),
+    pp_frame(w, f), pp_async_def(f).
+// pcs_suppress_arg(w, a): a is an argument of a `contextlib.suppress(...)` item of with statement w.
+.decl pcs_suppress_arg(w: node, a: node)
+pcs_suppress_arg(w, a) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, it, _),
+    kind(it, "with_item"), field(it, "value", v0), (kind(v0, "as_pattern"), child(v0, v1, 0) ;
+    !kind(v0, "as_pattern"), v1 = v0), unparen(v1, c), exc_call(c, "contextlib.suppress"), exc_arg(c, _, a).
+.decl pcs_suppress_names_asyncio(w: node)
+pcs_suppress_names_asyncio(w) :- pcs_suppress_arg(w, a), pcs_names_cancel(a).
+
+// pcs_guard(t, f): try t of a cancellation handler, or suppress-with t, in async def f.
+.decl pcs_guard(t: node, f: node)
+pcs_guard(t, f) :- pcs_handler(_, t, f).
+pcs_guard(w, f) :- pcs_suppress(w, f).
+// pcs_awaits(t, f): guard t's body suspends in f's own frame: an await, `async with` or `async for`.
 .decl pcs_awaits(t: node, f: node)
-pcs_awaits(t, f) :- pcs_handler(_, t, f), field(t, "body", tb), pcs_suspend(w), within(w, tb), pp_frame(w, f).
+pcs_awaits(t, f) :- pcs_guard(t, f), field(t, "body", tb), pcs_suspend(w), within(w, tb), pp_frame(w, f).
 .decl pcs_suspend(w: node)
 pcs_suspend(w) :- kind(w, "await").
 pcs_suspend(w) :- (kind(w, "with_statement") ; kind(w, "for_statement") ; kind(w, "for_in_clause")), op(w, "async").
@@ -110,12 +171,40 @@ pcs_always(x, s) :- pcs_block_of(x, b), child(b, s, _), kind(s, "expression_stat
 pcs_tail(x, y) :- kind(y, "else_clause"), field(y, "body", b), pcs_reraises(x, b).
 pcs_tail(x, y) :- kind(y, "elif_clause"), field(y, "consequence", b), field(y, "condition", k),
     (pcs_reraises(x, b) ; pcs_other_test(x, k)), alt_next(y, z), pcs_tail(x, z).
-// pcs_reraise_stmt(x, r): a bare `raise`, `raise <the name x binds>`, or a raise of a new CancelledError.
+// pcs_reraise_stmt(x, r): a bare `raise`, `raise <the name x binds>`, a raise of a new CancelledError, or a raise of
+// an exception group that carries the caught exception.
 .decl pcs_reraise_stmt(x: node, r: node)
 pcs_reraise_stmt(x, r) :- pcs_handler(x, _, _), kind(r, "raise_statement"), !exc_raise(r, _), within(r, x).
 pcs_reraise_stmt(x, r) :- exc_alias(x, a), exc_raise(r, e), kind(e, "identifier"), text(e, a), within(r, x).
 pcs_reraise_stmt(x, r) :- pcs_handler(x, _, _), exc_raise(r, e), exc_class(e, c), exc_qual(c, q), pcs_cancel_q(q),
     within(r, x).
+pcs_reraise_stmt(x, r) :- pcs_handler(x, _, _), exc_raise(r, e), within(r, x), kind(e, "call"),
+    field(e, "function", fn), exc_qual(fn, q), pcs_group_q(q), pcs_call_value(e, v), pcs_carries(x, v).
+// pcs_group_q(q): q is BaseExceptionGroup (builtin or the exceptiongroup backport) or a class of the run built on it.
+// ExceptionGroup is left out: it refuses a BaseException and raises TypeError.
+.decl pcs_group_q(q: symbol)
+pcs_group_q("builtins.BaseExceptionGroup"). pcs_group_q("exceptiongroup.BaseExceptionGroup").
+pcs_group_q(q) :- subclass(q, "builtins.BaseExceptionGroup").
+pcs_group_q(q) :- subclass(q, "exceptiongroup.BaseExceptionGroup").
+// pcs_call_value(e, v): v is a positional or keyword argument of call e, parentheses off.
+.decl pcs_call_value(e: node, v: node)
+pcs_call_value(e, v) :- kind(e, "call"), field(e, "arguments", l), kind(l, "argument_list"), child(l, a0, _),
+    !kind(a0, "comment"), (kind(a0, "keyword_argument"), field(a0, "value", a1) ;
+    !kind(a0, "keyword_argument"), a1 = a0), unparen(a1, v).
+// pcs_carries(x, v): expression v, in handler x, holds the exception x caught: its name, a name x binds to a value
+// that holds it, or a list or tuple with such an element.
+.decl pcs_carries(x: node, v: node)
+pcs_carries(x, v) :- exc_alias(x, a), kind(v, "identifier"), within(v, x), text(v, a).
+pcs_carries(x, v) :- pcs_carrier(x, c), kind(v, "identifier"), within(v, x), text(v, c).
+pcs_carries(x, v) :- (kind(v, "list") ; kind(v, "tuple")), within(v, x), child(v, e0, _), unparen(e0, e),
+    pcs_carries(x, e).
+// pcs_carrier(x, c): handler x binds name c to a value holding the caught exception (`c = [exc, other]`), or
+// appends one to it (`c.append(exc)`).
+.decl pcs_carrier(x: node, c: symbol)
+pcs_carrier(x, c) :- exc_alias(x, _), kind(a, "assignment"), within(a, x), field(a, "left", l),
+    kind(l, "identifier"), text(l, c), field(a, "right", r0), unparen(r0, r), pcs_carries(x, r).
+pcs_carrier(x, c) :- exc_alias(x, _), kind(k, "call"), within(k, x), field(k, "function", fn),
+    attr_of(fn, o, "append"), kind(o, "identifier"), text(o, c), exc_arg(k, 0, v), pcs_carries(x, v).
 // pcs_is_cancel_test(x, k): k is `isinstance(<the name x binds>, T)` with T CancelledError or a tuple holding it.
 .decl pcs_is_cancel_test(x: node, k: node)
 pcs_is_cancel_test(x, k) :- exc_alias(x, a), unparen(k, c), exc_call(c, "builtins.isinstance"), exc_arg(c, 0, v),
@@ -147,27 +236,43 @@ pcs_exit(x, e) :- pcs_handler(x, _, _), within(e, x), kind(e, "raise_statement")
 pcs_loop_between(e, s) :- (kind(e, "break_statement") ; kind(e, "continue_statement")),
     (kind(l, "for_statement") ; kind(l, "while_statement")), within(e, l), (l = s ; within(l, s)).
 
-// ---- accepted idioms ---------------------------------------------------------------------------------------------
-// pcs_drain(t, f): try t's body awaits a task or future that f cancelled before: `D` itself, or `D`/`*D` handed to
+// ---- drains ------------------------------------------------------------------------------------------------------
+// pcs_drain(t, f): guard t's body awaits a task or future that f cancelled before: `D` itself, or `D`/`*D` handed to
 // asyncio.gather, wait_for or shield, where `D.cancel()` (or `v.cancel()` in a loop or comprehension over D) comes
-// earlier in f's own frame. D is compared by its dotted text: `task`, `self._task`.
+// earlier in f's own frame, or in a helper f calls earlier. D is compared by its text: `task`, `self._task`,
+// `self.tasks[k]`.
 .decl pcs_drain(t: node, f: node)
 pcs_drain(t, f) :- pcs_awaits(t, f), field(t, "body", tb), kind(w, "await"), within(w, tb), pp_frame(w, f),
     child(w, e0, 0), unparen(e0, e), pcs_drained(e, d), pcs_cancelled(f, d, cc), earlier(cc, w).
-// pcs_drained(e, d): the awaited expression e waits for D, by D's dotted text d.
+// pcs_key(e, d): e's text as a drain compares it: a dotted name, or a subscript as written.
+.decl pcs_key(e: node, d: symbol)
+pcs_key(e, d) :- dotted_expr(e, d).
+pcs_key(e, d) :- kind(e, "subscript"), text(e, d).
+// pcs_drained(e, d): the awaited expression e waits for D, by D's text d.
 .decl pcs_drained(e: node, d: symbol)
-pcs_drained(e, d) :- dotted_expr(e, d).
+pcs_drained(e, d) :- pcs_key(e, d).
 pcs_drained(e, d) :- exc_call(e, q), (q = "asyncio.gather" ; q = "asyncio.wait_for" ; q = "asyncio.shield"),
     field(e, "arguments", l), child(l, a0, _), (kind(a0, "list_splat"), child(a0, a, 0) ; !kind(a0, "list_splat"),
-    a = a0), dotted_expr(a, d).
-// pcs_cancelled(f, d, cc): call cc, in f's own frame, cancels D or each item of D.
+    a = a0), pcs_key(a, d).
+// pcs_cancelled(f, d, cc): call cc, in f's own frame, cancels D or each item of D, or calls a helper that does.
 .decl pcs_cancelled(f: node, d: symbol, cc: node)
-pcs_cancelled(f, d, cc) :- pcs_cancel_call(cc, r), dotted_expr(r, d), pp_frame(cc, f).
+pcs_cancelled(f, d, cc) :- pcs_cancel_call(cc, r), pcs_key(r, d), pp_frame(cc, f).
 pcs_cancelled(f, d, cc) :- pcs_cancel_call(cc, r), kind(r, "identifier"), text(r, v),
     (kind(l, "for_statement") ; kind(l, "for_in_clause")), field(l, "left", lv), text(lv, v), field(l, "right", it),
-    dotted_expr(it, d), pcs_loop_holds(l, cc), pp_frame(cc, f).
+    pcs_key(it, d), pcs_loop_holds(l, cc), pp_frame(cc, f).
+pcs_cancelled(f, d, s) :- pcs_helper_call(s, f, g), pcs_cancelled(g, d, _).
 .decl pcs_cancel_call(cc: node, r: node)
 pcs_cancel_call(cc, r) :- kind(cc, "call"), field(cc, "function", fn), attr_of(fn, r, "cancel").
+// pcs_helper_call(s, f, g): call s, in f's own frame, surely calls g, a method of f's class or of a base of it, or,
+// for a module-level f, a module-level def of the same module: `self.x` and a global name mean the same there.
+.decl pcs_helper_call(s: node, f: node, g: node)
+pcs_helper_call(s, f, g) :- kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f), pp_frame(f, c),
+    kind(c, "class_definition"), pp_frame(g, c).
+pcs_helper_call(s, f, g) :- kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f), pp_frame(f, c),
+    kind(c, "class_definition"), pp_frame(g, cg), kind(cg, "class_definition"), class_def(c, q), class_def(cg, qg),
+    subclass(q, qg).
+pcs_helper_call(s, f, g) :- kind(s, "call"), pp_sure_target(s, g), pp_frame(s, f), kind(f, "function_definition"),
+    !pp_frame(f, _), !pp_frame(g, _), docof(f, d), docof(g, d).
 // pcs_loop_holds(l, cc): cc runs once per item of loop l: in a for statement's body, or in the body of l's
 // comprehension.
 .decl pcs_loop_holds(l: node, cc: node)
@@ -179,28 +284,81 @@ pcs_loop_holds(l, cc) :- kind(l, "for_in_clause"), child(m, l, _), field(m, "bod
 pcs_checks_cancelling(x) :- exc_body(x, b), kind(c, "call"), within(c, b), field(c, "function", fn),
     (attr_of(fn, _, "cancelling") ; attr_of(fn, _, "uncancel")), kind(r, "raise_statement"), within(r, b).
 
-// pcs_runner_entry(f): f is the coroutine an event-loop runner starts, also at module level (pp_loop_entry wants a
-// frame): `asyncio.run(f())`, `loop.run_until_complete(f())`, `asyncio.run_coroutine_threadsafe(f(), loop)`.
+// ---- runners -----------------------------------------------------------------------------------------------------
+// pcs_runner_entry(f): f is the coroutine an event-loop runner starts, also at module level: handed as a coroutine
+// (`asyncio.run(f())`) or, to anyio and trio, as the function (`anyio.run(f)`).
 .decl pcs_runner_entry(f: node)
-pcs_runner_entry(f) :- kind(c, "call"), field(c, "function", fn), (sym_of(fn, "asyncio.run") ;
-    sym_of(fn, "asyncio.run_coroutine_threadsafe") ; attr_of(fn, _, "run_until_complete")), exc_arg(c, 0, a),
-    kind(a, "call"), call_target(a, f).
+pcs_runner_entry(f) :- pcs_coro_runner(c), exc_arg(c, 0, a), kind(a, "call"), call_target(a, f).
+pcs_runner_entry(f) :- exc_call(c, q), (q = "anyio.run" ; q = "trio.run"), exc_arg(c, 0, a), pcs_ref_of(a, f).
+// pcs_coro_runner(c): call c runs the coroutine it is given on an event loop and returns its result.
+.decl pcs_coro_runner(c: node)
+pcs_coro_runner(c) :- exc_call(c, q), (q = "asyncio.run" ; q = "uvloop.run" ; q = "asyncio.run_coroutine_threadsafe").
+pcs_coro_runner(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "run_until_complete").
+pcs_coro_runner(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "run"), pcs_runner_obj(o).
+// pcs_runner_obj(o): o is an asyncio.Runner: built in place, or a name bound to one in the same frame.
+.decl pcs_runner_obj(o: node)
+pcs_runner_obj(o) :- attr_of(_, o, "run"), unparen(o, m), exc_call(m, "asyncio.Runner").
+pcs_runner_obj(o) :- attr_of(_, o, "run"), kind(o, "identifier"), text(o, v), pcs_runner_bind(b, v),
+    pp_frame(o, h), pp_frame(b, h).
+pcs_runner_obj(o) :- attr_of(_, o, "run"), kind(o, "identifier"), text(o, v), !pp_frame(o, _), docof(o, d),
+    pcs_runner_bind(b, v), !pp_frame(b, _), docof(b, d).
+// pcs_runner_bind(b, v): `with asyncio.Runner() as v` (b the as-pattern) or `v = asyncio.Runner()` (b the
+// assignment).
+.decl pcs_runner_bind(b: node, v: symbol)
+pcs_runner_bind(b, v) :- kind(b, "as_pattern"), child(b, m0, 0), unparen(m0, m), exc_call(m, "asyncio.Runner"),
+    field(b, "alias", t), child(t, n, 0), kind(n, "identifier"), text(n, v).
+pcs_runner_bind(b, v) :- kind(b, "assignment"), field(b, "left", l), kind(l, "identifier"), text(l, v),
+    field(b, "right", r0), unparen(r0, r), exc_call(r, "asyncio.Runner").
 
-// pcs_task_end(x, f): f only ever runs as a task's top coroutine (every call of f is the coroutine handed to a
-// spawn call), and handler x ends the task: its try is a statement of f's body, or of the body of a loop that is,
-// when x then ends in `break` or `return`; and only returns that do not await follow in f's body.
+// ---- the handler ends the function -------------------------------------------------------------------------------
+// pcs_task_end(x, f): handler x ends f, and no code of the run resumes after f: f only ever runs as a task's top
+// coroutine, or no code of the run awaits f and x only records or logs.
 .decl pcs_task_end(x: node, f: node)
-pcs_task_end(x, f) :- pcs_task_stmt(x, f, fb, i), pcs_spawned(f), !pcs_called_otherwise(f), !pcs_runs_after(fb, i).
-// pcs_task_stmt(x, f, fb, i): the statement at position i of f's body fb holds handler x's try as above.
-.decl pcs_task_stmt(x: node, f: node, fb: node, i: number)
-pcs_task_stmt(x, f, fb, i) :- pcs_handler(x, t, f), field(f, "body", fb), child(fb, t, i).
-pcs_task_stmt(x, f, fb, i) :- pcs_handler(x, t, f), field(f, "body", fb), child(fb, l, i),
-    (kind(l, "while_statement") ; kind(l, "for_statement")), field(l, "body", lb), child(lb, t, _), pcs_leaves(x).
+pcs_task_end(x, f) :- pcs_ends(x, f), pcs_spawned(f), !pcs_called_otherwise(f), !pcs_handler_returns(x).
+pcs_task_end(x, f) :- pcs_ends(x, f), pcs_handed_off(f), !pcs_consumed(f), !pcs_handler_acts(x),
+    !pcs_handler_returns(x).
+// pcs_ends(x, f): handler x's try is a statement of a tail block of f, or of the body of a loop that is, when x then
+// ends in `break` or `return`; and only a `return` without a value follows.
+.decl pcs_ends(x: node, f: node)
+pcs_ends(x, f) :- pcs_handler(x, t, f), pcs_end_pos(t, f).
+pcs_ends(x, f) :- pcs_handler(x, t, f), pcs_end_pos(l, f), (kind(l, "while_statement") ; kind(l, "for_statement")),
+    field(l, "body", lb), child(lb, t, _), pcs_leaves(x).
+// pcs_end_pos(n, f): statement n of a tail block of f is followed by nothing but returns without a value.
+.decl pcs_end_pos(n: node, f: node)
+pcs_end_pos(n, f) :- pcs_tail_block(f, b), child(b, n, i), !kind(n, "comment"), !pcs_runs_after(b, i).
+// pcs_tail_block(f, b): b is async def f's body, or the body of a `with`/`async with` at an end position of one.
+.decl pcs_tail_block(f: node, b: node)
+pcs_tail_block(f, b) :- pp_async_def(f), field(f, "body", b).
+pcs_tail_block(f, wb) :- pcs_tail_block(f, b), child(b, s, k), kind(s, "with_statement"), !pcs_runs_after(b, k),
+    field(s, "body", wb).
+// pcs_runs_after(b, i): a statement of block b after position i does more than `return` or `return None`.
+.decl pcs_seq(b: node)
+pcs_seq(b) :- pp_async_def(f), field(f, "body", b).
+pcs_seq(b) :- kind(s, "with_statement"), field(s, "body", b), pp_frame(s, f), pp_async_def(f).
+.decl pcs_last_live(b: node, j: number)
+pcs_last_live(b, j) :- pcs_seq(b), j = max k : { child(b, s, k), !kind(s, "comment"), !pcs_empty_return(s) }.
+.decl pcs_runs_after(b: node, i: number)
+pcs_runs_after(b, i) :- pcs_last_live(b, j), child(b, _, i), i < j.
+// pcs_empty_return(s): `return` or `return None`.
+.decl pcs_empty_return(s: node)
+pcs_empty_return(s) :- kind(s, "return_statement"), !pcs_return_value(s, _).
+pcs_empty_return(s) :- kind(s, "return_statement"), pcs_return_value(s, v), kind(v, "none").
+.decl pcs_return_value(s: node, v: node)
+pcs_return_value(s, v) :- kind(s, "return_statement"), child(s, v0, _), !kind(v0, "comment"), unparen(v0, v).
+// pcs_handler_returns(x): handler x returns a value other than None in its function's frame.
+.decl pcs_handler_returns(x: node)
+pcs_handler_returns(x) :- pcs_handler(x, _, f), exc_body(x, b), kind(s, "return_statement"), within(s, b),
+    pp_frame(s, f), !pcs_empty_return(s).
 // pcs_leaves(x): the last statement of handler x's body is a `break` or a `return`.
 .decl pcs_leaves(x: node)
 pcs_leaves(x) :- pcs_handler(x, _, _), exc_body(x, b), j = max k : { child(b, s2, k), !kind(s2, "comment") },
     child(b, s, j), (kind(s, "break_statement") ; kind(s, "return_statement")).
-// pcs_spawn_arg(c): c is the coroutine handed to a spawn call, or to a helper of the run that spawns its first
+// pcs_handler_acts(x): handler x does more than record or log: it awaits, yields or raises in its function's frame.
+.decl pcs_handler_acts(x: node)
+pcs_handler_acts(x) :- pcs_handler(x, _, f), exc_body(x, b), within(n, b), pp_frame(n, f),
+    (pcs_suspend(n) ; kind(n, "yield") ; kind(n, "raise_statement")).
+
+// Tasks. pcs_spawn_arg(c): c is the coroutine handed to a spawn call, or to a helper of the run that spawns its first
 // parameter (`def safe_create_task(coro): ... asyncio.create_task(wrapper())` with `await coro` in wrapper). The
 // helper is the def the callee names through imports, not the call program's target: a tracing decorator on the
 // helper (letta's `@trace_method`) makes the call program answer with the decorator's wrapper.
@@ -220,15 +378,43 @@ pcs_param_spawned(g, sc, p) :- pp_spawn_call(sc, _), within(sc, g), kind(w, "awa
 pcs_spawned(f) :- pcs_spawn_arg(c), kind(c, "call"), call_target(c, f).
 .decl pcs_called_otherwise(f: node)
 pcs_called_otherwise(f) :- pcs_spawned(f), call_target(c, f), !pcs_spawn_arg(c).
-// pcs_runs_after(fb, i): a statement of block fb after position i does more than return a value without awaiting.
-.decl pcs_runs_after(fb: node, i: number)
-pcs_runs_after(fb, i) :- pcs_task_body(fb, i), child(fb, s, k), k > i, !kind(s, "comment"), !pcs_plain_return(s).
-.decl pcs_task_body(fb: node, i: number)
-pcs_task_body(fb, i) :- pcs_task_stmt(_, f, fb, i), pcs_spawned(f).
-.decl pcs_plain_return(s: node)
-pcs_plain_return(s) :- kind(s, "return_statement"), !pcs_await_in(s).
-.decl pcs_await_in(s: node)
-pcs_await_in(s) :- kind(s, "return_statement"), kind(w, "await"), within(w, s).
+
+// Hand-offs. pcs_arg_of(a, cc): a is a positional or keyword argument of call cc, parentheses off.
+.decl pcs_arg_of(a: node, cc: node)
+pcs_arg_of(a, cc) :- kind(cc, "call"), pcs_call_value(cc, a).
+// pcs_consumer_call(cc): a coroutine handed to call cc is awaited for the caller: cc is awaited or iterated with
+// `async for`, is an asyncio function other than a spawn or a runner (gather, wait_for, shield, wait), or calls a def
+// of the run that awaits one of its parameters.
+.decl pcs_consumer_call(cc: node)
+pcs_consumer_call(cc) :- kind(cc, "call"), child(w, cc0, 0), kind(w, "await"), unparen(cc0, cc).
+pcs_consumer_call(cc) :- kind(l, "for_statement"), op(l, "async"), field(l, "right", r), unparen(r, cc),
+    kind(cc, "call").
+pcs_consumer_call(cc) :- exc_call(cc, q), prefix("asyncio.", q), !pp_spawn_call(cc, _), !pcs_coro_runner(cc).
+pcs_consumer_call(cc) :- kind(cc, "call"), call_target(cc, g), pcs_awaits_param(g).
+.decl pcs_awaits_param(g: node)
+pcs_awaits_param(g) :- kind(w, "await"), child(w, e0, 0), unparen(e0, e), kind(e, "identifier"), text(e, p),
+    pp_frame(w, g), param_named(g, p, _).
+// pcs_handoff_call(c): call c is handed, unawaited, to a call that does not await it for the caller.
+.decl pcs_handoff_call(c: node)
+pcs_handoff_call(c) :- kind(c, "call"), pcs_arg_of(c, cc), !pcs_consumer_call(cc).
+// pcs_handed_off(f): f runs for someone other than an awaiting caller of the run: one of its calls is handed off,
+// it is passed uncalled to such a call, or a decorator called on an object registers it (`@router.websocket("/ws")`).
+.decl pcs_handed_off(f: node)
+pcs_handed_off(f) :- pcs_handoff_call(c), call_target(c, f).
+pcs_handed_off(f) :- pcs_arg_of(e, cc), pcs_ref_of(e, f), !pcs_consumer_call(cc), !exc_call(cc, "functools.partial").
+pcs_handed_off(f) :- pp_async_def(f), dexpr(f, e), kind(e, "call"), field(e, "function", fn), kind(fn, "attribute"),
+    !sym_of(fn, _), !call_target(e, _).
+// pcs_ref_of(e, f): e names async def f without calling it: through imports, `self.m` for a method of the class, or
+// `functools.partial(<one of those>, ...)`.
+.decl pcs_ref_of(e: node, f: node)
+pcs_ref_of(e, f) :- pp_async_fn_ref(e, f).
+pcs_ref_of(e, f) :- attr_of(e, o, m), kind(o, "identifier"), text(o, "self"), !field(_, "function", e),
+    pp_frame(e, h), pp_frame(h, c), kind(c, "class_definition"), class_def(c, cq), mro_method(cq, m, f),
+    pp_async_def(f).
+pcs_ref_of(e, f) :- exc_call(e, "functools.partial"), exc_arg(e, 0, r), pcs_ref_of(r, f).
+// pcs_consumed(f): a call of f outside test code is awaited by its caller (anything but a spawn or a hand-off).
+.decl pcs_consumed(f: node)
+pcs_consumed(f) :- pcs_handed_off(f), call_target(c, f), pp_live(c), !pcs_spawn_arg(c), !pcs_handoff_call(c).
 
 // pcs_deferred(x, f): handler x sets a flag `v = True`, and later in f's own frame an `if` that tests v raises
 // CancelledError (a bare `raise` there would raise nothing caught, so only a raise of the class counts).
@@ -239,27 +425,70 @@ pcs_deferred(x, f) :- pcs_handler(x, _, f), exc_body(x, b), kind(a, "assignment"
     kind(k, "identifier"), text(k, v), field(i, "consequence", c), kind(rs, "raise_statement"), within(rs, c),
     exc_raise(rs, e), exc_class(e, cl), exc_qual(cl, q), pcs_cancel_q(q).
 
-// pcs_inside_reraising(x): handler x sits in the body of another cancellation handler of the same function that
-// re-raises on every path.
-.decl pcs_inside_reraising(x: node)
-pcs_inside_reraising(x) :- pcs_handler(x, _, f), pcs_handler(y, _, f), y != x, exc_body(y, yb), within(x, yb),
+// pcs_inside_reraising(n): handler or suppress n sits in the body of a cancellation handler of the same function
+// that re-raises on every path.
+.decl pcs_inside_reraising(n: node)
+pcs_inside_reraising(n) :- pcs_handler(n, _, f), pcs_handler(y, _, f), y != n, exc_body(y, yb), within(n, yb),
     pcs_reraises(y, yb).
+pcs_inside_reraising(n) :- pcs_suppress(n, f), pcs_handler(y, _, f), exc_body(y, yb), within(n, yb),
+    pcs_reraises(y, yb).
+
+// ---- anyio and trio ----------------------------------------------------------------------------------------------
+// pcs_anyio_handler(x, f) / pcs_anyio_suppress(w, f): x (w) catches cancellation only as BaseException or bare, in
+// a function whose own frame uses anyio or trio.
+.decl pcs_anyio_handler(x: node, f: node)
+pcs_anyio_handler(x, f) :- pcs_handler(x, _, f), !pcs_names_asyncio(x), pcs_anyio(f).
+.decl pcs_anyio_suppress(w: node, f: node)
+pcs_anyio_suppress(w, f) :- pcs_suppress(w, f), !pcs_suppress_names_asyncio(w), pcs_anyio(f).
+.decl pcs_broad_fn(f: node)
+pcs_broad_fn(f) :- pcs_handler(x, _, f), !pcs_names_asyncio(x).
+pcs_broad_fn(f) :- pcs_suppress(w, f), !pcs_suppress_names_asyncio(w).
+// pcs_anyio(f): a name in f's own frame resolves into anyio or trio.
+.decl pcs_anyio(f: node)
+pcs_anyio(f) :- pcs_broad_fn(f), kind(n, "identifier"), within(n, f), pp_frame(n, f), sym_of(n, q),
+    (q = "anyio" ; q = "trio" ; prefix("anyio.", q) ; prefix("trio.", q)).
 
 // The cases, `cases/python-practice-cancellation-swallowed/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.
 .test cases exactly
     .fixture "app/__init__.py" from "../cases/python-practice-cancellation-swallowed/app/__init__.py"
+    .fixture "app/anyio_worker.py" from "../cases/python-practice-cancellation-swallowed/app/anyio_worker.py"
     .fixture "app/background.py" from "../cases/python-practice-cancellation-swallowed/app/background.py"
     .fixture "app/consumer.py" from "../cases/python-practice-cancellation-swallowed/app/consumer.py"
+    .fixture "app/drains.py" from "../cases/python-practice-cancellation-swallowed/app/drains.py"
+    .fixture "app/endings.py" from "../cases/python-practice-cancellation-swallowed/app/endings.py"
     .fixture "app/flusher.py" from "../cases/python-practice-cancellation-swallowed/app/flusher.py"
+    .fixture "app/groups.py" from "../cases/python-practice-cancellation-swallowed/app/groups.py"
     .fixture "app/jobs.py" from "../cases/python-practice-cancellation-swallowed/app/jobs.py"
     .fixture "app/main.py" from "../cases/python-practice-cancellation-swallowed/app/main.py"
+    .fixture "app/runners.py" from "../cases/python-practice-cancellation-swallowed/app/runners.py"
     .fixture "app/safe.py" from "../cases/python-practice-cancellation-swallowed/app/safe.py"
     .fixture "app/stream.py" from "../cases/python-practice-cancellation-swallowed/app/stream.py"
+    .fixture "app/suppressing.py" from "../cases/python-practice-cancellation-swallowed/app/suppressing.py"
     .fixture "tests/__init__.py" from "../cases/python-practice-cancellation-swallowed/tests/__init__.py"
     .fixture "tests/test_stream.py" from "../cases/python-practice-cancellation-swallowed/tests/test_stream.py"
+    .expect _ at "app/anyio_worker.py":50
+    .expect _ at "app/anyio_worker.py":67
     .expect _ at "app/consumer.py":59
+    .expect _ at "app/consumer.py":68
+    .expect _ at "app/drains.py":69
+    .expect _ at "app/drains.py":78
+    .expect _ at "app/drains.py":86
+    .expect _ at "app/endings.py":25
+    .expect _ at "app/endings.py":34
+    .expect _ at "app/endings.py":64
+    .expect _ at "app/endings.py":89
+    .expect _ at "app/endings.py":103
+    .expect _ at "app/endings.py":118
+    .expect _ at "app/endings.py":138
+    .expect _ at "app/endings.py":151
+    .expect _ at "app/endings.py":161
     .expect _ at "app/flusher.py":32
+    .expect _ at "app/groups.py":69
+    .expect _ at "app/groups.py":77
+    .expect _ at "app/groups.py":84
+    .expect _ at "app/runners.py":66
+    .expect _ at "app/runners.py":74
     .expect _ at "app/stream.py":17
     .expect _ at "app/stream.py":27
     .expect _ at "app/stream.py":36
@@ -274,4 +503,8 @@ pcs_inside_reraising(x) :- pcs_handler(x, _, f), pcs_handler(y, _, f), y != x, e
     .expect _ at "app/stream.py":114
     .expect _ at "app/stream.py":127
     .expect _ at "app/stream.py":142
+    .expect _ at "app/suppressing.py":11
+    .expect _ at "app/suppressing.py":17
+    .expect _ at "app/suppressing.py":23
+    .expect _ at "app/suppressing.py":31
 .end

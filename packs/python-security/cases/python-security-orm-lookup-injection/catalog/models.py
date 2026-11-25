@@ -11,3 +11,17 @@ class Book(models.Model):
     year = models.IntegerField()
     published = models.DateTimeField()
     author = models.ForeignKey(Author, on_delete=models.CASCADE)
+
+
+class Tag(models.Model):
+    name = models.CharField(max_length=50)
+
+
+class Review(models.Model):
+    book = models.ForeignKey(Book, related_name="reviews", on_delete=models.CASCADE)
+    text = models.TextField()
+
+
+class Shelf(models.Model):
+    owner = models.ForeignKey(Author, on_delete=models.CASCADE)
+    books = models.ManyToManyField(Book)

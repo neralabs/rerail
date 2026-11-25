@@ -1,0 +1,150 @@
+.policy "django-practice-settings-in-test" revision 1
+.description "Use override_settings or pytest-django's settings fixture to change Django settings in tests, so each change is undone when the test ends."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Rerail's own rule, not a port. Django does not put back a value a test writes on django.conf.settings, and sends no
+// setting_changed signal for it: the value leaks into the tests after it, and caches built from the setting go stale
+// (Django docs, "Overriding settings": "Don't manipulate django.conf.settings directly as Django won't restore the
+// original values"). pytest-django's `settings` fixture, `override_settings`, `modify_settings` and a TestCase's
+// `self.settings()` revert their changes after the test.
+//
+// It matches a write to an upper-case attribute of django.conf.settings (dj_settings, through imports) in a test
+// document, made inside a test (djt_runs_in_test: a test, a fixture, a set-up hook, or a helper of a test document that
+// one of them calls, through the call graph): the library's djt_loc writes, so an assignment, augmented assignment or
+// `del` of the setting or of an item or attribute inside it, a list/dict/set mutator called on it, and setattr/delattr
+// on settings with a literal name. One def reports each setting once, at its first write: a restore by hand at the
+// end of the test is not reported again (the first write is: a failing assert skips that restore).
+//   from django.conf import settings
+//   def test_x(): settings.DEBUG = True               reported
+//   def test_x(): settings.CACHES["default"] = {}     reported: changes the shared value in place
+//   def test_x(): settings.MIDDLEWARE.append("m")     reported
+//   @pytest.fixture def sentry(): settings.SENTRY_DSN = "x"
+//                                                     reported
+//   def test_x(): enable_beta()  # a helper in the test module: settings.BETA = True
+//                                                     reported in the helper
+//   old = settings.X; settings.X = 1; ...; settings.X = old
+//                                                     reported at the first write: a failing assert skips the restore
+// Left alone:
+//   def test_x(settings): settings.DEBUG = True       pytest-django's fixture: a parameter, not django.conf.settings
+//   with override_settings(DEBUG=True): ...           the fix (also @override_settings, modify_settings,
+//                                                     self.settings(), on the def or its class, and an override the
+//                                                     def starts with `.enable()`)
+//   with override_settings(A=1): settings.B = 2       a plain write inside an override lands on the override's copy,
+//                                                     which is dropped with it (an item write is not, unless the
+//                                                     override replaces that setting)
+//   settings.X = 1; try: ... finally: settings.X = old
+//                                                     undone (the library's djt_undo): in a finally, after a fixture's
+//                                                     or @contextmanager's yield, in a tearDown/tearDownClass of the
+//                                                     class or a base class, teardown_module, an addCleanup /
+//                                                     addfinalizer callback (a lambda, a def, a bound method,
+//                                                     `self.addCleanup(setattr, settings, "X", old)`), a def that undo
+//                                                     code calls, or the teardown of a fixture the test requests; the
+//                                                     undo itself is never reported
+//   module level: settings.X = 1                      runs once at import, before the first test: every test sees one
+//                                                     value (the same answer as for os.environ)
+//   def pytest_configure(): settings.X = 1            session-wide set-up: a pytest hook or a helper only hooks call,
+//                                                     an autouse session fixture, pytest-django's django_db_setup
+//   tests/runtests.py: def main(): settings.X = 1     a def no test calls: a runner script
+//   settings._wrapped = None; settings.configure()    lower-case attributes and calls are not settings
+//   shop/views.py: settings.DEBUG = True              not a test document: django-practice-settings-runtime-assignment
+//                                                     reports it, and both rules read the same test-document set, so
+//                                                     a write is reported by exactly one of them
+//   from shop.conf import settings (Dynaconf)         another library's `settings`
+// Gaps: an alias (`apps = settings.INSTALLED_APPS; apps.append(x)`) is not followed; a computed setattr name is not
+// read.
+
+#include "lib/django_tests.rerail"
+
+.violation DjangoSettingsInTest(at: node, name: symbol) "`settings.{name}` set directly stays changed for every later test. Use override_settings or pytest-django's settings fixture; keep it only if code this rule cannot see restores it."
+DjangoSettingsInTest(n, x) :- dst_hit(n, x, u), !dst_later(n, x, u).
+
+// dst_setting(a, x): a is `settings.X`, X upper-case, settings being django.conf.settings.
+.decl dst_setting(a: node, x: symbol)
+dst_setting(a, x) :- attr_of(a, o, x), match("[A-Z][A-Z0-9_]*", x), dj_settings(o).
+
+// dst_write(n, x, how): n writes setting x: "attr" replaces or deletes the setting itself (a store, `del`,
+// setattr/delattr), "item" changes its value in place (an item or attribute store inside it, a mutator call).
+.decl dst_write(n: node, x: symbol, how: symbol)
+dst_write(n, x, "attr") :- djt_change(n), djt_at(n, a, "", _), dst_setting(a, x).
+dst_write(n, x, "item") :- djt_change(n), djt_chain(n, a), dst_setting(a, x), !djt_at(n, a, "", _).
+dst_write(c, x, "attr") :- djt_change(c), djt_setattr_call(c, _), posarg(c, 0, s), dj_settings(s), posarg(c, 1, k),
+    str(k, x), match("[A-Z][A-Z0-9_]*", x).
+
+// dst_override(e): call e is override_settings / modify_settings, or a TestCase's self.settings / self.modify_settings.
+.decl dst_override_q(q: symbol)
+dst_override_q("django.test.override_settings"). dst_override_q("django.test.utils.override_settings").
+dst_override_q("django.test.modify_settings"). dst_override_q("django.test.utils.modify_settings").
+.decl dst_override(e: node)
+dst_override(e) :- kind(e, "call"), field(e, "function", f), sym_of(f, q), dst_override_q(q).
+dst_override(e) :- kind(e, "call"), field(e, "function", f), attr_of(f, o, m), text(o, "self"),
+    (m = "settings" ; m = "modify_settings").
+// dst_override_around(n, e): override e is active where n runs: a with-item of a with around n, a decorator of a
+// def or class around n, or an override the def of n binds to a name and starts with `.enable()`.
+.decl dst_override_around(n: node, e: node)
+dst_override_around(n, e) :- dst_write(n, _, _), kind(wi, "with_item"), field(wi, "value", v),
+    (unparen(v, e) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, e)), dst_override(e),
+    nearest(wi, ws, "with_statement"), field(ws, "body", b), within(n, b).
+dst_override_around(n, e) :- dst_write(n, _, _), within(n, g), (kind(g, "function_definition") ;
+    kind(g, "class_definition")), decorator(g, e0), unparen(e0, e), dst_override(e).
+dst_override_around(n, e) :- dst_write(n, _, _), def_frame(n, u), dst_override(e), kind(a, "assignment"),
+    field(a, "right", e), field(a, "left", v), text(v, y), def_frame(a, u), kind(c, "call"), field(c, "function", f),
+    attr_of(f, o, "enable"), text(o, y), def_frame(c, u).
+// dst_overridden(n, x, how): a plain write inside an override lands on the override's copy and is dropped with it;
+// an item write changes the shared value unless the override replaces that setting.
+.decl dst_overridden(n: node, x: symbol, how: symbol)
+dst_overridden(n, x, "attr") :- dst_write(n, x, "attr"), dst_override_around(n, _).
+dst_overridden(n, x, how) :- dst_write(n, x, how), dst_override_around(n, e), call_arg(e, -1, x, _).
+
+// dst_restored(n): an undo or patch the library sees puts n's write back (djt_restore, matched by djt_covers).
+.decl dst_restored(n: node)
+dst_restored(n) :- dst_write(n, _, _), djt_loc(n, e, p, _), dj_settings(e), djt_restore(n, e2, a), dj_settings(e2),
+    djt_covers(n, e, p, a).
+
+// dst_hit(n, x, u): a write of x in u, a def of a test document that runs inside a test, outside an override, that
+// is not itself undo code and that nothing restores; dst_later(n, x, u): another one comes before it.
+.decl dst_hit(n: node, x: symbol, u: node)
+dst_hit(n, x, u) :- dst_write(n, x, how), def_frame(n, u), djt_runs_in_test(u), docof(n, d), dj_test_doc(d),
+    !dst_overridden(n, x, how), !djt_undo(n, _), !dst_restored(n).
+.decl dst_later(n: node, x: symbol, u: node)
+dst_later(n, x, u) :- dst_hit(n, x, u), dst_hit(m, x, u), earlier(m, n).
+
+// The cases, `cases/django-practice-settings-in-test/`, read as one repository: each line ending in
+// `# caught` is reported, and no other line.
+.test cases exactly
+    .fixture "conftest.py" from "../cases/django-practice-settings-in-test/conftest.py"
+    .fixture "shop/__init__.py" from "../cases/django-practice-settings-in-test/shop/__init__.py"
+    .fixture "shop/conf.py" from "../cases/django-practice-settings-in-test/shop/conf.py"
+    .fixture "shop/testutils/__init__.py" from "../cases/django-practice-settings-in-test/shop/testutils/__init__.py"
+    .fixture "shop/testutils/base.py" from "../cases/django-practice-settings-in-test/shop/testutils/base.py"
+    .fixture "shop/views.py" from "../cases/django-practice-settings-in-test/shop/views.py"
+    .fixture "tests/__init__.py" from "../cases/django-practice-settings-in-test/tests/__init__.py"
+    .fixture "tests/helpers.py" from "../cases/django-practice-settings-in-test/tests/helpers.py"
+    .fixture "tests/runtests.py" from "../cases/django-practice-settings-in-test/tests/runtests.py"
+    .fixture "tests/test_views.py" from "../cases/django-practice-settings-in-test/tests/test_views.py"
+    .fixture "tests/unit/__init__.py" from "../cases/django-practice-settings-in-test/tests/unit/__init__.py"
+    .fixture "tests/unit/test_case.py" from "../cases/django-practice-settings-in-test/tests/unit/test_case.py"
+    .expect _ at "conftest.py":14
+    .expect _ at "conftest.py":15
+    .expect _ at "conftest.py":38
+    .expect _ at "conftest.py":73
+    .expect _ at "tests/helpers.py":12
+    .expect _ at "tests/test_views.py":9
+    .expect _ at "tests/test_views.py":13
+    .expect _ at "tests/test_views.py":17
+    .expect _ at "tests/test_views.py":21
+    .expect _ at "tests/test_views.py":25
+    .expect _ at "tests/test_views.py":29
+    .expect _ at "tests/test_views.py":33
+    .expect _ at "tests/test_views.py":37
+    .expect _ at "tests/test_views.py":41
+    .expect _ at "tests/test_views.py":42
+    .expect _ at "tests/test_views.py":48
+    .expect _ at "tests/test_views.py":66
+    .expect _ at "tests/test_views.py":109
+    .expect _ at "tests/test_views.py":130
+    .expect _ at "tests/test_views.py":166
+    .expect _ at "tests/unit/test_case.py":24
+    .expect _ at "tests/unit/test_case.py":30
+    .expect _ at "tests/unit/test_case.py":72
+.end

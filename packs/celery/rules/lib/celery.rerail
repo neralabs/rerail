@@ -10,11 +10,15 @@
 //                  cel_module_var(q, v)         a module-level `x = v` binds module attribute q
 //   Apps:          cel_app_q(q)                 q is the qualified name of a module-level Celery app: `app =
 //                                               Celery(...)` (or a subclass of Celery), in any module of the run
-//                  cel_app_ref(e)               expression e is a Celery app: a cel_app_q name, celery.current_app,
-//                                               or a name spelled `app`, `celery_app`, `celery`
-//   Tasks:         cel_task(f)                  def f is a Celery task: decorated `@shared_task`, `@app.task`,
-//                                               `@<app>.task(...)` (app a cel_app_ref), or `@task`/`@shared_task`
-//                                               imported from celery or defined in the run (a project wrapper)
+//                  cel_app_ref(e)               expression e is a Celery app: a cel_app_q name, celery.current_app, a
+//                                               local bound to an app value (`Celery(...)`, a run factory returning
+//                                               one); by spelling (`app`, `celery_app`, `celery`) only for a name
+//                                               that resolves to nothing, and for attributes (`self.app`)
+//                  cel_task(f)                  def f is a Celery task: decorated by a cel_task_fn, bare or called:
+//                                               `<app>.task` (app a cel_app_ref), celery's `shared_task`/`task`, a
+//                                               run function that applies one of those (a wrapper), a module name
+//                                               bound to one (`task = app.task`), or `@<x>.task` with x resolving to
+//                                               nothing in a document that imports celery
 //                  cel_task_decorator(f, m)     m is f's task decorator expression, bare or called
 //                  cel_task_option(f, k, v)     task f's decorator passes option k=v (`bind`, `autoretry_for`, ...)
 //                  cel_task_flag(f, k)          task f's option k is the literal True (`acks_late=True`)
@@ -26,9 +30,11 @@
 //                  cel_task_body(f, n)          n runs in task f's own body: no nested def, lambda or class between
 //                  cel_task_runs(f, g)          task f runs function g: g is f, or f reaches g through the run's call
 //                                               graph (python/calls' reach; known calls only)
-//   Dispatch:      cel_task_ref(t)              t can be a task: a name resolving through an import or a module
-//                                               attribute other than a plain undecorated def of the run, a task
-//                                               def, or a call on one (`t.s(1)`, `t.signature(...)`)
+//   Dispatch:      cel_task_ref(t)              t is a Celery task: a name resolving to a cel_task def of the run, a
+//                                               module name bound to a task object (`app.task(fn)`, a signature, an
+//                                               instance of a Task subclass), `<app>.tasks[...]`, or a signature call
+//                                               on one (`t.s(1)`, `t.signature(...)`, `t.set(...)`); any other
+//                                               name (RQ's `@job`, a thread pool) is not
 //                  cel_send(c, m)               call c enqueues a task now: `t.delay(...)`/`t.apply_async(...)` on a
 //                                               cel_task_ref, or `<x>.send_task(...)`; m is the method name
 //                  cel_task_call(c, f, m)       call c is `t.m(...)` with t resolving to task def f, m one of
@@ -54,9 +60,16 @@
 //                                               ...)`, `M.query.get/first/one(...)`, `session.query(M)....first()`,
 //                                               a name bound to one of those, a parameter annotated `M`, or a value
 //                                               the type program proves is a model
-//                  sa_session(e)                e is a SQLAlchemy session: `db.session`, a name or attribute whose
-//                                               last name contains "session", or a name annotated Session or
-//                                               AsyncSession
+//                  sa_session(e)                e is a SQLAlchemy session: sa_session_proven, else sa_session_guess
+//                  sa_session_proven(e)         proven by what binds it: a session class's constructor (through
+//                                               imports and subclasses), a sessionmaker/scoped_session factory's call,
+//                                               Flask-SQLAlchemy's `db.session`, a run function returning or yielding
+//                                               one, a name or with-alias bound to one, a parameter annotated with a
+//                                               session class (also inside Annotated, or through an alias of one)
+//                  sa_session_guess(e)          the fallback by name, in a run that imports SQLAlchemy: a name or
+//                                               attribute ending in "session" whose binding the engine cannot follow
+//                                               (an unannotated parameter, an unresolved call, `self.session`)
+//                  sa_with_alias(e, v)          name e is the alias of `with v as e`, read in its body
 //                  sa_session_call(c, s, m)     call c is `s.m(...)` on a session s
 //                  sa_write(c)                  c stages a write in a session: add, add_all, delete, merge, flush,
 //                                               bulk_*, or execute of insert/update/delete
@@ -67,6 +80,7 @@
 //   Files:         cel_test_doc(d)              document d is test code (tests/test/testing/unittests directories,
 //                                               test_*.py, *_test.py, *_tests.py, tests.py, conftest.py)
 //                  cel_django_doc(d)            document d imports django (the django pack owns its dispatch rules)
+//                  cel_celery_doc(d)            document d imports celery
 //
 // Celery background
 //   - A task's registered name is `name=` when given, else `<module>.<function>` as the worker imports the module;
@@ -110,26 +124,70 @@ cel_module_var(@dot(mq, x), v) :- modnode(_, m), modname(m, mq), asg(m, x, v, _)
 .decl cel_app_class(q: symbol)
 cel_app_class("celery.Celery"). cel_app_class("celery.app.Celery"). cel_app_class("celery.app.base.Celery").
 cel_app_class(q) :- class_def(c, q), class_base(c, b), cel_app_class(b).
+// cel_app_value(v): v evaluates to a Celery app: `Celery(...)` (or a subclass's constructor), `celery.current_app`, a
+// call of a run function that returns one (a factory: `def make_celery(): app = Celery(...); return app`), or a
+// name bound to one of those.
+.decl cel_app_value(v: node)
+cel_app_value(v) :- cel_app_call(v).
+cel_app_value(v) :- unparen(v, u), sym_of(u, "celery.current_app").
+cel_app_value(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), cel_sym(f, fq), qualname(g, fq),
+    cel_app_factory(g).
+.decl cel_app_call(v: node)
+cel_app_call(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), sym_of(f, cq), cel_app_class(cq).
+// cel_app_factory(g): run function g returns a Celery app (directly, or a local name bound to one).
+.decl cel_app_factory(g: node)
+cel_app_factory(g) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), cel_app_value(v).
+cel_app_factory(g) :- kind(r, "return_statement"), child(r, v, 0), unparen(v, u), kind(u, "identifier"), text(u, x),
+    nearest(r, g, fdef), asg(g, x, w, _), cel_app_value(w).
 .decl cel_app_q(q: symbol)
-cel_app_q(q) :- cel_module_var(q, v), unparen(v, k), kind(k, "call"), field(k, "function", f), sym_of(f, cq),
-    cel_app_class(cq).
+cel_app_q(q) :- cel_module_var(q, v), cel_app_value(v).
+// cel_run_bound(e): name e resolves to a definition of the run (a def, class or module variable, through imports),
+// or to an assignment in its own function: what it holds is known, so its spelling says nothing.
+.decl cel_run_bound(e: node)
+cel_run_bound(e) :- cel_sym(e, q), qualname(_, q).
+cel_run_bound(e) :- cel_sym(e, q), cel_module_var(q, _).
+cel_run_bound(e) :- kind(e, "identifier"), text(e, x), look(e, x, s), !kind(s, "module"), asg(s, x, _, _).
+// cel_app_name(x): the spellings an app goes by. Used only for a name that resolves to nothing in the run (a
+// parameter, an import from outside the run) and for attributes (`flask_app.celery`), whose value the engine cannot
+// follow.
 .decl cel_app_name(x: symbol)
 cel_app_name("app"). cel_app_name("celery_app"). cel_app_name("celery").
 .decl cel_app_ref(e: node)
 cel_app_ref(e) :- cel_sym(e, q), cel_app_q(q).
 cel_app_ref(e) :- sym_of(e, "celery.current_app").
-cel_app_ref(e) :- kind(e, "identifier"), text(e, x), cel_app_name(x).
+// A local name bound to an app in its own function.
+cel_app_ref(e) :- kind(e, "identifier"), text(e, x), look(e, x, s), !kind(s, "module"), asg(s, x, v, _),
+    cel_app_value(v).
+// Fallbacks by spelling, where nothing resolves: a name bound nowhere the engine sees (a parameter, a global set
+// elsewhere), and an attribute (`self.app` on a task, `flask_app.celery`), whose value the engine cannot follow.
+cel_app_ref(e) :- kind(e, "identifier"), text(e, x), cel_app_name(x), !cel_run_bound(e), !sym_of(e, _).
 cel_app_ref(e) :- attr_of(e, _, x), cel_app_name(x).
 
 // ---- tasks -------------------------------------------------------------------------------------------------------
-// cel_task_fn(e): the decorator's callee: `<app>.task`, or a `task`/`shared_task` from celery or defined in the run.
-// A `@task` from elsewhere (invoke, prefect, airflow) is not Celery's.
+// cel_task_fn(e): a Celery task decorator: `<app>.task`, celery's `shared_task`/`task`, or a project wrapper of one
+// (a run function that applies one, or a module name bound to one: `task = app.task`). A `@task` from elsewhere
+// (invoke, prefect, airflow) is not Celery's, unless the module also imports celery (below).
 .decl cel_task_fn(e: node)
 cel_task_fn(e) :- attr_of(e, o, "task"), unparen(o, u), cel_app_ref(u).
+// `@<x>.task` where x resolves to nothing in the run, in a document that imports celery (an app built elsewhere).
+cel_task_fn(e) :- attr_of(e, o, "task"), unparen(o, u), !cel_run_bound(u), decorator(_, d), unparen(d, w),
+    (w = e ; kind(w, "call"), field(w, "function", e)), docof(e, doc), cel_celery_doc(doc).
 cel_task_fn(e) :- attr_of(e, o, "shared_task"), unparen(o, u), sym_of(u, "celery").
 cel_task_fn(e) :- sym_of(e, q), prefix("celery.", q), (split_dot(q, _, "task") ; split_dot(q, _, "shared_task")).
-cel_task_fn(e) :- sym_of(e, q), (split_dot(q, _, "task") ; split_dot(q, _, "shared_task")), qualname(g, q),
-    kind(g, "function_definition").
+cel_task_fn(e) :- cel_sym(e, q), qualname(g, q), kind(g, "function_definition"), cel_task_wrapper(g).
+cel_task_fn(e) :- cel_sym(e, q), cel_module_var(q, v), unparen(v, u), cel_task_fn(u).
+// A `task`/`shared_task` imported from an installed package (outside the run), in a document that imports celery: a
+// Celery wrapper package (breatheco-de/apiv2's `task_manager.django.decorators.task`). Its body cannot be read, so the
+// name and the celery import are all the engine has.
+cel_task_fn(e) :- sym_of(e, q), !qualname(_, q), !cel_module_var(q, _), !prefix("celery.", q),
+    (split_dot(q, _, "task") ; split_dot(q, _, "shared_task")), docof(e, d), cel_celery_doc(d).
+// cel_task_wrapper(g): run function g applies a Celery task decorator in its body (`def task(**kw): return
+// app.task(**kw)`), so `@task(...)` registers a Celery task.
+.decl cel_task_wrapper(g: node)
+cel_task_wrapper(g) :- kind(g, "function_definition"), field(g, "body", b), within(n, b), kind(n, "call"),
+    field(n, "function", f), cel_task_fn(f).
+cel_task_wrapper(g) :- kind(g, "function_definition"), field(g, "body", b), within(n, b), kind(n, "call"),
+    field(n, "function", c), kind(c, "call"), field(c, "function", f), cel_task_fn(f).
 .decl cel_task_decorator(f: node, m: node)
 cel_task_decorator(f, m) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), cel_task_fn(m).
 cel_task_decorator(f, m) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), kind(m, "call"),
@@ -160,12 +218,35 @@ cel_task_runs(f, f) :- cel_task(f).
 cel_task_runs(f, g) :- cel_task(f), reach(f, g).
 
 // ---- dispatch ----------------------------------------------------------------------------------------------------
-.decl cel_plain_def(q: symbol)
-cel_plain_def(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g, _).
+// cel_task_ref(t): a Celery task, by what the run declares, never by spelling alone: RQ's `@job`, dramatiq's
+// `@actor` and a module-level ThreadPool all have `.delay`/`.apply_async` too.
 .decl cel_task_ref(t: node)
-cel_task_ref(t) :- sym_of(t, q), !cel_plain_def(q).
-cel_task_ref(t) :- attr_of(t, o, _), unparen(o, u), cel_task_ref(u).
-cel_task_ref(t) :- kind(t, "call"), field(t, "function", f), attr_of(f, o, _), unparen(o, u), cel_task_ref(u).
+cel_task_ref(t) :- cel_sym(t, q), qualname(g, q), cel_task(g).
+cel_task_ref(t) :- cel_sym(t, q), cel_module_var(q, v), cel_task_obj(v).
+cel_task_ref(t) :- unparen(t, u), kind(u, "subscript"), field(u, "value", o), attr_of(o, a, "tasks"), unparen(a, p),
+    cel_app_ref(p).
+cel_task_ref(t) :- kind(t, "call"), field(t, "function", f), attr_of(f, o, m), cel_sig_method(m), unparen(o, u),
+    cel_task_ref(u).
+// A task object built inline (`signature("shop.tasks.notify").delay()`) or bound to a local of its own function
+// (`sig = ship.s(1)`; `sig.delay()`).
+cel_task_ref(t) :- unparen(t, u), kind(u, "call"), cel_task_obj(u).
+cel_task_ref(t) :- kind(t, "identifier"), text(t, x), look(t, x, s), !kind(s, "module"), asg(s, x, v, _),
+    cel_task_obj(v).
+.decl cel_sig_method(m: symbol)
+cel_sig_method("s"). cel_sig_method("si"). cel_sig_method("signature"). cel_sig_method("set").
+cel_sig_method("clone").
+// cel_task_obj(v): a task object: `<app>.task(fn)`/`shared_task(fn)` called as a function, a signature
+// (`signature("name")`, `t.s(...)`), or an instance of a Task subclass.
+.decl cel_task_obj(v: node)
+cel_task_obj(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), cel_task_fn(f), posarg(k, 0, _).
+cel_task_obj(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), sym_of(f, q),
+    (q = "celery.signature" ; q = "celery.canvas.signature" ; q = "celery.canvas.Signature" ; q = "celery.Signature").
+cel_task_obj(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), cel_sym(f, q), cel_task_class_q(q).
+cel_task_obj(v) :- unparen(v, k), cel_task_ref(k), kind(k, "call").
+// cel_task_class_q(q): celery's Task, or a class of the run deriving from it.
+.decl cel_task_class_q(q: symbol)
+cel_task_class_q("celery.Task"). cel_task_class_q("celery.app.task.Task").
+cel_task_class_q(q) :- class_def(c, q), cel_class_base(c, b), cel_task_class_q(b).
 .decl cel_send_method(m: symbol)
 cel_send_method("delay"). cel_send_method("apply_async").
 .decl cel_send(c: node, m: symbol)
@@ -177,16 +258,25 @@ cel_call_method("delay"). cel_call_method("apply_async"). cel_call_method("s"). 
 cel_call_method("signature").
 .decl cel_task_call(c: node, f: node, m: symbol)
 cel_task_call(c, g, m) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m), cel_call_method(m),
-    unparen(o, t), sym_of(t, q), qualname(g, q), cel_task(g).
-// cel_task_arg(c, a): what the task receives. delay/s/si pass their arguments through; apply_async and send_task
-// take `args` (a list or tuple, positionally after send_task's name) and `kwargs` (a dict literal).
+    unparen(o, t), cel_sym(t, q), qualname(g, q), cel_task(g).
+// cel_task_arg(c, a): what the task receives. delay/s/si pass their arguments through, also through `*[...]` and
+// `**{...}` spreads of literals; apply_async and send_task take `args` (a list or tuple, positionally after
+// send_task's name) and `kwargs` (a dict literal or a `dict(...)` call).
 .decl cel_task_arg(c: node, a: node)
-cel_task_arg(c, a) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, m),
-    (m = "delay" ; m = "s" ; m = "si"), call_arg(c, _, _, a).
+cel_task_arg(c, a) :- cel_pass_through(c), call_arg(c, _, _, a).
+cel_task_arg(c, a) :- cel_pass_through(c), field(c, "arguments", al), child(al, sp, _), kind(sp, "list_splat"),
+    child(sp, l, 0), unparen(l, s), (kind(s, "list") ; kind(s, "tuple")), child(s, a, _), !kind(a, "comment").
+cel_task_arg(c, a) :- cel_pass_through(c), field(c, "arguments", al), child(al, sp, _), kind(sp, "dictionary_splat"),
+    child(sp, d, 0), unparen(d, m), cel_dict_value(m, a).
 cel_task_arg(c, a) :- cel_args_list(c, l), unparen(l, s), (kind(s, "list") ; kind(s, "tuple")), child(s, a, _),
     !kind(a, "comment").
-cel_task_arg(c, a) :- cel_kwargs_dict(c, m), kind(m, "dictionary"), child(m, p, _), kind(p, "pair"),
-    field(p, "value", a).
+cel_task_arg(c, a) :- cel_kwargs_dict(c, m), cel_dict_value(m, a).
+.decl cel_pass_through(c: node)
+cel_pass_through(c) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, m), (m = "delay" ; m = "s" ; m = "si").
+// cel_dict_value(m, a): a is a value of dict m: a `{k: a}` literal's pair, or a `dict(k=a)` call's keyword.
+.decl cel_dict_value(m: node, a: node)
+cel_dict_value(m, a) :- kind(m, "dictionary"), child(m, p, _), kind(p, "pair"), field(p, "value", a).
+cel_dict_value(m, a) :- kind(m, "call"), field(m, "function", f), sym_of(f, "builtins.dict"), call_arg(m, -1, _, a).
 .decl cel_args_list(c: node, l: node)
 cel_args_list(c, l) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "apply_async"),
     (posarg(c, 0, l) ; call_arg(c, -1, "args", l)).
@@ -307,16 +397,136 @@ sa_abstract(c) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b,
 .decl sa_model_ref(e: node)
 sa_model_ref(e) :- sym_of(e, q), class_def(c, q), sa_model(c).
 
-// sa_session(e)
+// sa_session(e): e is a SQLAlchemy session, proven (sa_session_proven) or, where nothing about e resolves, by its
+// name (sa_session_guess).
 .decl sa_session(e: node)
-sa_session(e) :- kind(e, "identifier"), text(e, x), icontains("session", x).
-sa_session(e) :- attr_of(e, _, x), icontains("session", x).
-sa_session(e) :- kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _), text(nm, x),
-    (m = t ; child(t, m, 0)), sym_of(m, q), sa_session_class(q).
+sa_session(e) :- sa_session_proven(e).
+sa_session(e) :- sa_session_guess(e).
+// sa_session_cls_q(q): a session class: SQLAlchemy's and SQLModel's, and a class of the run deriving from one.
+.decl sa_session_cls_q(q: symbol)
+sa_session_cls_q(q) :- sa_session_class(q).
+sa_session_cls_q(q) :- class_def(c, q), cel_class_base(c, b), sa_session_cls_q(b).
 .decl sa_session_class(q: symbol)
 sa_session_class("sqlalchemy.orm.Session"). sa_session_class("sqlalchemy.orm.session.Session").
 sa_session_class("sqlalchemy.ext.asyncio.AsyncSession"). sa_session_class("sqlalchemy.orm.scoped_session").
 sa_session_class("sqlmodel.Session"). sa_session_class("sqlalchemy.ext.asyncio.async_scoped_session").
+sa_session_class("sqlalchemy.ext.asyncio.session.AsyncSession"). sa_session_class("sqlmodel.ext.asyncio.session.AsyncSession").
+sa_session_class("sqlalchemy.orm.scoping.scoped_session").
+// sa_maker_fn(q): functions returning a session factory, whose call (or, for scoped_session, the registry itself)
+// gives a session.
+.decl sa_maker_fn(q: symbol)
+sa_maker_fn("sqlalchemy.orm.sessionmaker"). sa_maker_fn("sqlalchemy.orm.session.sessionmaker").
+sa_maker_fn("sqlalchemy.ext.asyncio.async_sessionmaker"). sa_maker_fn("sqlalchemy.orm.scoped_session").
+sa_maker_fn("sqlalchemy.ext.asyncio.async_scoped_session").
+// sa_maker_value(v): v is a session factory: `sessionmaker(...)`, `async_sessionmaker(...)`, `scoped_session(...)`.
+.decl sa_maker_value(v: node)
+sa_maker_value(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), sym_of(f, q), sa_maker_fn(q).
+// sa_maker_ref(e): e names a session factory: a module variable or a local bound to one.
+.decl sa_maker_ref(e: node)
+sa_maker_ref(e) :- cel_sym(e, q), cel_module_var(q, v), sa_maker_value(v).
+sa_maker_ref(e) :- kind(e, "identifier"), text(e, x), look(e, x, s), !kind(s, "module"), asg(s, x, v, _),
+    sa_maker_value(v).
+// sa_session_value(v): v evaluates to a session: a session class's constructor, a session factory's call, a
+// scoped_session registry, Flask-SQLAlchemy's `db.session`, `<factory>.begin()` (a session in a transaction), `await`
+// of one, or a call of a run function that returns or yields one (a FastAPI dependency `get_db`).
+.decl sa_session_value(v: node)
+sa_session_value(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), cel_sym(f, q), sa_session_cls_q(q).
+sa_session_value(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), unparen(f, u), sa_maker_ref(u).
+sa_session_value(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, "begin"), unparen(o, u),
+    sa_maker_ref(u).
+sa_session_value(v) :- unparen(v, u), sa_maker_ref(u), cel_sym(u, q), cel_module_var(q, w), unparen(w, k),
+    field(k, "function", f), sym_of(f, fq), (fq = "sqlalchemy.orm.scoped_session" ;
+    fq = "sqlalchemy.ext.asyncio.async_scoped_session").
+sa_session_value(v) :- unparen(v, k), attr_of(k, o, "session"), unparen(o, u), cel_sym(u, q), sa_flask_db_q(q).
+sa_session_value(v) :- unparen(v, k), kind(k, "await"), child(k, c, 0), sa_session_value(c).
+sa_session_value(v) :- unparen(v, k), kind(k, "call"), field(k, "function", f), cel_sym(f, q), qualname(g, q),
+    sa_session_fn(g).
+// sa_session_fn(g): run function g returns or yields a session.
+.decl sa_session_fn(g: node)
+sa_session_fn(g) :- (kind(r, "return_statement") ; kind(r, "yield")), child(r, v, 0), nearest(r, g, fdef),
+    sa_session_expr_in(v, g).
+.decl sa_session_expr_in(v: node, g: node)
+sa_session_expr_in(v, g) :- kind(g, "function_definition"), sa_session_value(v).
+sa_session_expr_in(v, g) :- kind(g, "function_definition"), unparen(v, u), kind(u, "identifier"), text(u, x),
+    asg(g, x, w, _), sa_session_value(w).
+// sa_session_proven(e): e is a session by what binds it: a session value; a name its own scope binds to one (an
+// assignment, or `with <value> as name`); a module variable bound to one; a parameter annotated with a session
+// class, directly, inside the annotation (`Annotated[Session, Depends(...)]`) or through a module alias of one
+// (`SessionDep = Annotated[Session, ...]`).
+.decl sa_session_proven(e: node)
+sa_session_proven(e) :- sa_session_value(e).
+sa_session_proven(e) :- kind(e, "identifier"), text(e, x), look(e, x, s), asg(s, x, v, _), sa_session_value(v).
+sa_session_proven(e) :- kind(e, "identifier"), sa_with_alias(e, v), sa_session_value(v).
+sa_session_proven(e) :- kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _), text(nm, x),
+    !unset(t), sa_session_ann(t).
+// An imported module variable bound to one (`from app.db import db_session`).
+sa_session_proven(e) :- cel_sym(e, q), cel_module_var(q, v), sa_session_value(v).
+// `self.x`, where a method of the class assigns `self.x = v` and v is a proven session (an annotated `__init__`
+// parameter, a factory call).
+sa_session_proven(e) :- attr_of(e, o, x), unparen(o, s), text(s, "self"), nearest(e, f, fdef), nearest(f, c, scope),
+    kind(c, "class_definition"), within(a, c), kind(a, "assignment"), field(a, "left", l), attr_of(l, so, x),
+    text(so, "self"), field(a, "right", v), unparen(v, u), u != e, sa_session_proven(u).
+.decl sa_session_ann(t: node)
+sa_session_ann(t) :- (m = t ; within(m, t)), sym_of(m, q), sa_session_cls_q(q).
+sa_session_ann(t) :- (m = t ; within(m, t)), cel_sym(m, q), cel_module_var(q, v), (n = v ; within(n, v)), sym_of(n, sq),
+    sa_session_cls_q(sq).
+// sa_with_alias(e, v): name e is the alias of `with v as e` and is read in that with-statement's body.
+.decl sa_with_alias(e: node, v: node)
+sa_with_alias(e, v) :- kind(e, "identifier"), text(e, x), kind(wi, "with_item"), field(wi, "value", ap),
+    kind(ap, "as_pattern"), child(ap, v, 0), field(ap, "alias", al), text(al, x), nearest(wi, ws, "with_statement"),
+    field(ws, "body", b), within(e, b).
+// sa_session_guess(e): the fallback by name, for a value the engine cannot follow, in a run that imports SQLAlchemy
+// (or SQLModel, Flask-SQLAlchemy): a name ending in "session"/"Session" (`session`, `db_session`; not `session_id`)
+// that its scope binds to nothing known (an unannotated parameter, a call of something that does not resolve), or
+// such an attribute (`self.session`), unless what binds it is known not to be a session. A name is all the engine
+// has here.
+.decl sa_session_guess(e: node)
+sa_session_guess(e) :- sa_run(), kind(e, "identifier"), text(e, x), sa_session_word(x), !sa_session_proven(e),
+    !sa_not_session(e).
+sa_session_guess(e) :- sa_run(), attr_of(e, _, x), sa_session_word(x), !sa_session_proven(e), !sa_not_session(e).
+.decl sa_session_word(x: symbol)
+sa_session_word(x) :- kind(e, "identifier"), text(e, x), (suffix("session", x) ; suffix("Session", x)).
+// sa_run(): some document of the run imports SQLAlchemy, SQLModel or Flask-SQLAlchemy (sa_lib_module, by import).
+.decl sa_run()
+sa_run() :- sa_lib_module(_).
+.decl sa_lib_module(m: symbol)
+sa_lib_module(m) :- import_alias(_, _, m, _, _), (m = "sqlalchemy" ; prefix("sqlalchemy.", m) ; m = "sqlmodel" ;
+    prefix("sqlmodel.", m) ; m = "flask_sqlalchemy" ; prefix("flask_sqlalchemy.", m)).
+sa_lib_module(m) :- kind(i, "import_from_statement"), module_text(i, m), (m = "sqlalchemy" ;
+    prefix("sqlalchemy.", m) ; m = "sqlmodel" ; prefix("sqlmodel.", m) ; m = "flask_sqlalchemy" ;
+    prefix("flask_sqlalchemy.", m)).
+// sa_not_session(e): what binds e is known and is not a session: a parameter annotated with a type that resolves
+// to no session class, a local or `self.x` assignment, or a with-alias, whose value is not a session (sa_other).
+.decl sa_not_session(e: node)
+sa_not_session(e) :- kind(e, "identifier"), text(e, x), look(e, x, s), asg(s, x, v, _), sa_other(v).
+sa_not_session(e) :- kind(e, "identifier"), sa_with_alias(e, v), sa_other(v).
+sa_not_session(e) :- kind(e, "identifier"), text(e, x), look(e, x, f), sig_param(f, _, nm, _, _, t, _), text(nm, x),
+    !unset(t), !sa_session_ann(t), !sa_ann_opaque(t).
+sa_not_session(e) :- attr_of(e, o, x), unparen(o, s), text(s, "self"), nearest(e, f, fdef), nearest(f, c, scope),
+    kind(c, "class_definition"), within(a, c), kind(a, "assignment"), field(a, "left", l), attr_of(l, so, x),
+    text(so, "self"), field(a, "right", v), sa_self_other(v).
+// sa_self_other(v): a `self.x = v` value known not to be a session: sa_other, or a parameter known not to be one.
+.decl sa_self_other(v: node)
+sa_self_other(v) :- sa_other(v).
+sa_self_other(v) :- unparen(v, u), kind(u, "identifier"), sa_not_session(u).
+// sa_ann_opaque(t): an annotation that resolves to nothing (a string, an unresolved name): it says nothing.
+.decl sa_ann_opaque(t: node)
+sa_ann_opaque(t) :- kind(t, "type"), child(t, m, 0), kind(m, "string").
+sa_ann_opaque(t) :- kind(t, "type"), child(t, m, 0), kind(m, "identifier"), !sym_of(m, _), !cel_sym(m, _).
+// sa_other(v): v is known not to be a session: a literal, container, comprehension, subscript or arithmetic, or a
+// call of something that resolves outside the run (a library function or class) and is no session class, session
+// factory or SQLAlchemy call returning a session.
+.decl sa_other(v: node)
+sa_other(v) :- unparen(v, u), kind(u, k), sa_value_kind(k).
+sa_other(v) :- unparen(v, u), kind(u, "call"), field(u, "function", f), sym_of(f, q), !qualname(_, q),
+    !cel_module_var(q, _), !sa_session_cls_q(q), !sa_maker_fn(q), !prefix("sqlalchemy.", q), !prefix("sqlmodel.", q),
+    !prefix("flask_sqlalchemy.", q).
+.decl sa_value_kind(k: symbol)
+sa_value_kind("string"). sa_value_kind("concatenated_string"). sa_value_kind("integer"). sa_value_kind("float").
+sa_value_kind("dictionary"). sa_value_kind("list"). sa_value_kind("tuple"). sa_value_kind("set").
+sa_value_kind("subscript"). sa_value_kind("dictionary_comprehension"). sa_value_kind("list_comprehension").
+sa_value_kind("set_comprehension"). sa_value_kind("true"). sa_value_kind("false"). sa_value_kind("none").
+sa_value_kind("binary_operator"). sa_value_kind("lambda").
 .decl sa_session_call(c: node, s: node, m: symbol)
 sa_session_call(c, s, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), unparen(o, s), sa_session(s).
 // sa_session_call through `await`: `await session.flush()` is the call itself; nothing to add.
@@ -405,4 +615,8 @@ cel_test_doc(d) :- file_name(d, s), (glob("test_*.py", s) ; glob("*_tests.py", s
 .decl cel_django_doc(d: number)
 cel_django_doc(d) :- import_alias(i, _, m, _, _), (m = "django" ; prefix("django.", m)), docof(i, d).
 cel_django_doc(d) :- kind(i, "import_from_statement"), module_text(i, m), (m = "django" ; prefix("django.", m)),
+    docof(i, d).
+.decl cel_celery_doc(d: number)
+cel_celery_doc(d) :- import_alias(i, _, m, _, _), (m = "celery" ; prefix("celery.", m)), docof(i, d).
+cel_celery_doc(d) :- kind(i, "import_from_statement"), module_text(i, m), (m = "celery" ; prefix("celery.", m)),
     docof(i, d).

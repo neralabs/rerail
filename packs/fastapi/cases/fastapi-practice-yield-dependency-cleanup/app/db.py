@@ -223,6 +223,48 @@ def get_db_narrow() -> Iterator[Session]:
         db.close()
 
 
+def abort(code: int) -> None:
+    raise HTTPException(status_code=code)
+
+
+# The handler ends in a call of a helper that always raises: the error still leaves the dependency.
+def get_db_abort() -> Iterator[Session]:
+    db = SessionLocal()
+    try:
+        yield db
+    except SQLAlchemyError:
+        db.rollback()
+        abort(500)
+    finally:
+        db.close()
+
+
+class AppError(Exception):
+    pass
+
+
+# Gap, not reported: a project's own exception class swallowed around the yield.
+def get_db_app_error() -> Iterator[Session]:
+    db = SessionLocal()
+    try:
+        yield db
+    except AppError:
+        pass
+    finally:
+        db.close()
+
+
+def _release(db: Session) -> None:
+    db.close()
+
+
+# Gap, not reported: the release sits in a helper the generator calls after the yield.
+def get_db_helper_release() -> Iterator[Session]:
+    db = SessionLocal()
+    yield db
+    _release(db)
+
+
 # Not a dependency: a contextmanager helper with the same shape (no Depends names it).
 @contextmanager
 def session_scope() -> Iterator[Session]:
@@ -236,3 +278,14 @@ def iter_sessions() -> Iterator[Session]:
     db = SessionLocal()
     yield db
     db.close()
+
+
+# A class dependency whose instance another module binds and passes to Depends.
+class ScopedSession:
+    def __call__(self):
+        db = SessionLocal()
+        yield db
+        db.close()  # caught
+
+
+scoped_session = ScopedSession()

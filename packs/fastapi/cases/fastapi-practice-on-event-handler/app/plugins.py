@@ -18,6 +18,6 @@ def start_tracing() -> None: ...
 
 
 def install_unused(app):
-    # Never called: an unannotated parameter with a literal event is still FastAPI's registration (deprecated).
-    @app.on_event("startup")  # caught
+    # Never called: the handler is not dead (fastapi-practice-lifecycle-event-handler's case), so not reported here.
+    @app.on_event("startup")
     async def start() -> None: ...

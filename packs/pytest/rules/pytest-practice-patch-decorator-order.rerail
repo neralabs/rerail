@@ -1,5 +1,5 @@
 .policy "pytest-practice-patch-decorator-order" revision 1
-.description "Name stacked @patch mock parameters bottom-up: the decorator nearest the def passes the first mock, so names in decorator order hold each other's mocks."
+.description "Name the mock parameters of stacked patch decorators bottom-up; the decorator nearest the def passes the first mock."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -14,9 +14,10 @@
 //   def test_notify(m1, m2):                      not reported: the names say nothing
 // Only decorators that pass a mock count (patch and patch.object without `new`), in their order; marks, patch.dict,
 // patch.multiple and patches with a replacement between them are skipped. A target's name is the last dotted part of
-// the patch string, or patch.object's attribute, lower-cased with leading underscores stripped; a parameter matches a
-// target when its lower-cased name contains it. The first N positional parameters after self/cls (N mocks) are read,
-// and the rule reports when every one contains its top-down target and one does not contain its bottom-up target.
+// the patch string, or patch.object's attribute; a parameter matches a target when its name contains it, both
+// lower-cased with underscores removed (`mock_assert_true` matches `assertTrue`, `mock_email_client` matches
+// `EmailClient`). The first N positional parameters after self/cls (N mocks) are read, and the rule reports when every
+// one contains its top-down target and one does not contain its bottom-up target.
 // Left alone: two targets with the same name; a parameter that contains both of its candidate targets
 // (`mock_user` / `mock_user_email` over `user` and `user_email`); fewer positional parameters than mocks; a target
 // given as a variable; defs that are not tests (pt_test: test documents only).
@@ -25,7 +26,7 @@
 
 #include "lib/pytest.rerail"
 
-.violation PatchDecoratorOrder(at: node, x: symbol, real: symbol, claimed: symbol, y: symbol) "`{x}` receives the mock of `{real}`, not of `{claimed}` (`{y}` gets that one): stacked patch decorators pass their mocks bottom-up, the decorator nearest the def first, so set-ups and asserts on these parameters go to the other mock. Order the mock parameters from the bottom decorator up, then rerun the test: its asserts were checking the wrong mock."
+.violation PatchDecoratorOrder(at: node, x: symbol, real: symbol, claimed: symbol, y: symbol) "`{x}` receives the mock of `{real}`, not `{claimed}`: stacked patches pass mocks bottom-up. Reorder the mock parameters bottom-up and rerun the test."
 
 // pdo_inj(f, c, i): test f's i-th decorator from the top is a patch that passes a mock; pdo_rank(f, c, r): it is the
 // r-th of those (0 the top one); pdo_n(f, n): f has n of them.
@@ -39,9 +40,9 @@ pdo_n(f, n) :- pdo_inj(f, _, _), n = count : { pdo_inj(f, c2, i2) }.
 // pdo_name(c, t, full): patch c replaces `full`, whose name t is matched against parameter names.
 .decl pdo_name(c: node, t: symbol, full: symbol)
 pdo_name(c, t, full) :- pdo_rank(_, c, _), pt_patch_name(c, full, _),
-    t = @replace_all(@replace_all(@lower(full), "^.*\\.", ""), "^_+", "").
+    t = @replace_all(@replace_all(@lower(full), "^.*\\.", ""), "_", "").
 pdo_name(c, t, full) :- pdo_rank(_, c, _), pt_patch_attr(c, o, x), text(o, ot), full = @dot(ot, x),
-    t = @replace_all(@lower(x), "^_+", "").
+    t = @replace_all(@lower(x), "_", "").
 .decl pdo_tgt(f: node, r: number, t: symbol, full: symbol)
 pdo_tgt(f, r, t, full) :- pdo_rank(f, c, r), pdo_name(c, t, full), t != "".
 .decl pdo_untargeted(f: node)
@@ -61,7 +62,7 @@ pdo_short(f) :- pdo_n(f, n), m = count : { pdo_param(f, j, p, x), j < n }, m < n
 // pdo_slot(f, k, p, lx, t, b): the k-th mock parameter p (lower-cased name lx) is named in top-down order when it
 // contains t, the k-th target from the top, and in the right order when it contains b, the k-th from the bottom.
 .decl pdo_slot(f: node, k: number, p: node, lx: symbol, t: symbol, b: symbol)
-pdo_slot(f, k, p, lx, t, b) :- pdo_n(f, n), n >= 2, pdo_param(f, k, p, x), k < n, lx = @lower(x),
+pdo_slot(f, k, p, lx, t, b) :- pdo_n(f, n), n >= 2, pdo_param(f, k, p, x), k < n, lx = @replace_all(@lower(x), "_", ""),
     pdo_tgt(f, k, t, _), bk = n - 1 - k, pdo_tgt(f, bk, b, _).
 .decl pdo_not_top(f: node)
 pdo_not_top(f) :- pdo_slot(f, _, _, lx, t, _), !contains(t, lx).
@@ -91,6 +92,8 @@ PatchDecoratorOrder(p, x, real, claimed, y) :- pdo_n(f, n), n >= 2, !pdo_untarge
     .expect _ at "shop/tests/test_mail.py":66
     .expect _ at "shop/tests/test_mail.py":80
     .expect _ at "shop/tests/test_mail.py":127
+    .expect _ at "shop/tests/test_mail.py":135
+    .expect _ at "shop/tests/test_mail.py":145
     .expect _ at "shop/tests/test_tasks.py":11
     .expect _ at "shop/tests/test_tasks.py":25
     .expect _ at "shop/tests/test_tasks.py":31

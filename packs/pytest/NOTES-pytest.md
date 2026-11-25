@@ -14,7 +14,7 @@ in the repository. They size a candidate; the rule writers' corpus runs of the f
 
 | # | Title | URL | What it contributed |
 |---|---|---|---|
-| S1 | unittest.mock: Where to patch | https://docs.python.org/3/library/unittest.mock.html#where-to-patch | "patch the name used by the system under test": a `from a import f` copy is not changed by patching `a.f`. |
+| S1 | unittest.mock: Where to patch | https://docs.python.org/3/library/unittest.mock.html#where-to-patch | "patch where an object is looked up, which is not necessarily the same place as where it is defined": a `from a import f` copy is not changed by patching `a.f`. |
 | S2 | unittest.mock: Nesting patch decorators | https://docs.python.org/3/library/unittest.mock.html#nesting-patch-decorators | Stacked `@patch` decorators pass their mocks bottom-up; the order of the parameters is the reverse of the decorators. |
 | S3 | unittest.mock: patch methods start and stop; patch.stopall | https://docs.python.org/3/library/unittest.mock.html#patch-methods-start-and-stop | A started patcher stays active until stopped; `addCleanup(p.stop)` is the documented pairing. |
 | S4 | Ned Batchelder, "Why your mock doesn't work" | https://nedbatchelder.com/blog/201908/why_your_mock_doesnt_work.html | `from mod import val` is an assignment; later changes to `mod.val`, a mock included, don't reach the copy. |
@@ -69,8 +69,8 @@ Ruff 0.16.9 and Bandit 1.9.4 ports, flake8-pytest-style, pylint, mypy, pytest's 
    e-mail, real HTTP, `assert_not_called` always passes); cross-file.
 2. `pytest-practice-patch-decorator-order`: silent wrong result (asserts on the wrong mock); 4/4 real in the corpus.
 3. `pytest-practice-scoped-fixture-mutated`: test pollution through a shared fixture value; cross-file (conftest).
-4. `pytest-practice-django-settings-in-test`: Django settings leaking between tests, stale caches; framework-aware,
-   the test-side half of `django-practice-settings-runtime-assignment`.
+4. `django-settings-in-test` (moved to the django pack as `django-practice-settings-in-test`): Django settings leaking
+   between tests, stale caches; framework-aware, the test-side half of `django-practice-settings-runtime-assignment`.
 5. `pytest-practice-environ-without-monkeypatch`: environment leaking between tests (and into subprocesses).
 6. `pytest-practice-module-state-without-monkeypatch`: module globals and class attributes leaking between tests;
    cross-file.

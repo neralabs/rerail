@@ -1,4 +1,4 @@
-from unittest import mock
+from unittest import TestCase, mock
 from unittest.mock import PropertyMock, patch
 
 import pytest
@@ -126,3 +126,21 @@ def helper(mock_send, mock_render):
 @patch.object(Mailer, "_send")
 async def test_async_object(mock_connect, mock_send):  # caught
     await Mailer().deliver()
+
+
+# camelCase targets: names compared without underscores, so `mock_assert_true` is the mock of `assertTrue`.
+class TestCamelCase(TestCase):
+    @mock.patch.object(TestCase, "assertTrue")
+    @mock.patch("shop.mail.redis")
+    def test_swapped(self, mock_assert_true, mock_redis):  # caught
+        mail.notify("a@example.com")
+
+    @mock.patch("shop.mail.EmailClient")
+    @mock.patch("shop.mail.render")
+    def test_class_target(self, mock_render, mock_email_client):
+        mail.notify("a@example.com")
+
+    @mock.patch("shop.mail.EmailClient")
+    @mock.patch("shop.mail.render")
+    def test_class_target_swapped(self, mock_email_client, mock_render):  # caught
+        mail.notify("a@example.com")

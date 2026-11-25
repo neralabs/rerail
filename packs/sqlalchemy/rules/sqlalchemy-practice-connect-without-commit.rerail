@@ -1,5 +1,5 @@
 .policy "sqlalchemy-practice-connect-without-commit" revision 1
-.description "Commit writes made on a connection from engine.connect(), or open it with engine.begin(); SQLAlchemy 2.0 rolls back an uncommitted connection when it closes."
+.description "Commit writes made on a connection from engine.connect(), or open it with engine.begin(); an uncommitted connection is rolled back when it closes."
 .language python
 .mode log
 .scope include "**/*.py"
@@ -15,7 +15,8 @@
 //   - `conn.exec_driver_sql(sql)`;
 //   where sql is a string literal (an f-string, `"…" % x`, `"…".format(...)`, or a name the scope binds to one) whose
 //   statement starts with INSERT, UPDATE, DELETE, MERGE, UPSERT, REPLACE, CREATE, ALTER, DROP, TRUNCATE, GRANT or
-//   REVOKE;
+//   REVOKE, or starts with WITH and holds a data-modifying statement (`WITH old AS (…) DELETE FROM …`, `WITH gone AS
+//   (DELETE FROM … RETURNING id) SELECT …`);
 //   - `metadata.create_all(conn)` / `metadata.drop_all(bind=conn)`;
 //   - a call that hands the connection to a function of the run (resolved through the call graph, across files) that
 //     makes such a write on that parameter and neither commits nor begins on it: reported at the call.
@@ -30,9 +31,11 @@
 // `conn.commit()` (or `conn.connection.commit()`); a connection on which the block or function opens a transaction
 // (`conn.begin()`, `with conn.begin():`, `with E.connect() as conn, conn.begin():`, `begin_nested()`, `trans =
 // conn.begin()`); autocommit isolation, on the connection (`conn.execution_options(isolation_level="AUTOCOMMIT")`,
-// `E.connect().execution_options(...)`, a DBAPI `.autocommit = True`) or on the engine (a name, module variable,
-// imported module variable or `self.<attr>` the run assigns a `create_engine(...)`/`.execution_options(...)` with
-// `isolation_level="AUTOCOMMIT"`, or an isolation level that is not a literal, or `connect_args={"isolation_level":
+// `E.connect().execution_options(...)`, a DBAPI `.autocommit = True`) or on the engine: what the engine expression
+// evaluates to, followed through a name, module variable, imported module variable, `self.<attr>` the run assigns,
+// and the return value of a function of the run that makes it (`get_engine().connect()`, `eng = get_engine()`, an
+// `lru_cache` factory, through further calls), being a `create_engine(...)`/`.execution_options(...)` with
+// `isolation_level="AUTOCOMMIT"`, an isolation level that is not a literal, or `connect_args={"isolation_level":
 // None}`); DDL text on an engine whose URL literal is SQLite (pysqlite runs DDL outside a transaction); a connection
 // passed to a function of the run that commits or begins on one of its parameters; a statement name whose last
 // assignment before the call is a read (`query = insert(...)` run elsewhere, then `query = select(...)`);
@@ -40,14 +43,16 @@
 // owns the transaction); sessions; `sqlite3.connect(path)`; test files and Alembic revisions (`op.get_bind()` runs in
 // the migration's transaction).
 // Gaps: the rule assumes SQLAlchemy 2.0 (or 1.4 with `future=True`): a 1.x engine autocommitted DML, so in a project
-// pinned below 2.0 the premise fails, which the rule cannot see. SQL it cannot read (a string built elsewhere, a file's
-// contents, `str(ddl_object)`) is not a write; the connection stored on `self` or returned is not followed; an engine
-// made autocommit by settings it cannot read (Flask-SQLAlchemy's SQLALCHEMY_ENGINE_OPTIONS, an event listener) is
-// treated as transactional; a helper is followed one call deep.
+// pinned below 2.0 the premise fails, which the rule cannot see; the message leads with `engine.begin()`, which is
+// right on every version, and offers `commit()` only where connections have it. SQL it cannot read (a parameter, a
+// string built elsewhere, a file's contents, `str(ddl_object)`) is not a write; any later commit counts, even on one
+// branch; the connection stored on `self` or returned is not followed; an engine made autocommit by settings it
+// cannot read (Flask-SQLAlchemy's SQLALCHEMY_ENGINE_OPTIONS, an event listener) is treated as transactional; a helper
+// is followed one call deep.
 
 #include "lib/sqlalchemy.rerail"
 
-.violation ConnectWithoutCommit(at: node, c: symbol, e: symbol, what: symbol) "{what} on `{c}`, a connection from `{e}.connect()` that is never committed: SQLAlchemy 2.0 rolls it back when the connection closes, so the write is lost. Call `{c}.commit()` after the writes, or open it with `{e}.begin()`; leave it only if the engine or connection already autocommits in a way this code does not show."
+.violation ConnectWithoutCommit(at: node, c: symbol, e: symbol, what: symbol) "{what}: open `{c}` with `{e}.begin()`, or call `{c}.commit()` after the writes where connections have commit(), as an uncommitted connection rolls back on close. Leave it if the engine autocommits."
 ConnectWithoutCommit(w, x, et, "This write") :- cwc_report(w, x, e, "direct"), text(e, et).
 ConnectWithoutCommit(w, x, et, "This call writes through its connection argument") :- cwc_report(w, x, e, "helper"),
     text(e, et).
@@ -107,11 +112,15 @@ cwc_write_stmt(s) :- unparen(s, n), cwc_name_value(n, v), cwc_write_stmt(v).
 .decl cwc_ddl_class(q: symbol)
 cwc_ddl_class(q) :- sym_of(_, q), match("sqlalchemy(?:\\.schema|\\.sql\\.ddl)?\\.(?:Create|Drop)[A-Z]\\w*", q).
 // cwc_sql(a, verb): a is a SQL string literal (or a name its scope binds to one, a `%` or `.format()` on one)
-// whose first statement word is the write verb.
+// whose first statement word is the write verb, or that starts with WITH and holds a data-modifying statement
+// (verb: the first one's).
 .decl cwc_sql(a: node, verb: symbol)
 cwc_sql(a, verb) :- unparen(a, s), (kind(s, "string") ; kind(s, "concatenated_string")), text(s, t),
     match("(?is)[rbuf]*(?:\"\"\"|'''|\"|')\\s*(?:--[^\\n]*\\n\\s*)*(?:INSERT|UPDATE|DELETE|MERGE|UPSERT|REPLACE|CREATE|ALTER|DROP|TRUNCATE|GRANT|REVOKE)\\b.*", t),
     verb = @lower(@replace_all(t, "(?is)^[rbuf]*(?:\"\"\"|'''|\"|')\\s*(?:--[^\\n]*\\n\\s*)*(\\w+)\\b.*$", "$1")).
+cwc_sql(a, verb) :- unparen(a, s), (kind(s, "string") ; kind(s, "concatenated_string")), text(s, t),
+    match("(?is)[rbuf]*(?:\"\"\"|'''|\"|')\\s*(?:--[^\\n]*\\n\\s*)*WITH\\b.*\\b(?:INSERT\\s+INTO|UPDATE\\s+\\S+\\s+SET|DELETE\\s+FROM|MERGE\\s+INTO)\\b.*", t),
+    verb = @lower(@replace_all(t, "(?is)^.*?\\b(INSERT|UPDATE|DELETE|MERGE)\\s+(?:INTO|FROM|\\S+\\s+SET)\\b.*$", "${1}")).
 cwc_sql(a, verb) :- unparen(a, b), kind(b, "binary_operator"), field(b, "left", l), cwc_sql(l, verb).
 cwc_sql(a, verb) :- unparen(a, k), kind(k, "call"), field(k, "function", f), attr_of(f, o, "format"), cwc_sql(o, verb).
 cwc_sql(a, verb) :- unparen(a, n), cwc_name_value(n, v), cwc_sql(v, verb).
@@ -214,11 +223,20 @@ cwc_engine_value(e, v) :- cwc_open(_, _, _, _, e), unparen(e, n), attr_of(n, o, 
 cwc_self(o) :- kind(o, "identifier"), (text(o, "self") ; text(o, "cls")).
 .decl cwc_class(k: symbol)
 cwc_class("class_definition").
+// cwc_engine_src(e, v): engine expression e evaluates to v: cwc_engine_value, the expression itself when it is a
+// call, and what a function of the run that such a value calls returns (`get_engine()`, `eng = get_engine()`),
+// directly or through a name or module variable it returns, through further calls.
+.decl cwc_engine_src(e: node, v: node)
+cwc_engine_src(e, v) :- cwc_engine_value(e, v).
+cwc_engine_src(e, k) :- cwc_open(_, _, _, _, e), unparen(e, k), kind(k, "call").
+cwc_engine_src(e, r) :- cwc_engine_src(e, v), unparen(v, k), kind(k, "call"), sa_callee(k, g), sa_returns(g, r).
+cwc_engine_src(e, w) :- cwc_engine_src(e, v), unparen(v, k), kind(k, "call"), sa_callee(k, g), sa_returns(g, r),
+    unparen(r, n), kind(n, "identifier"), text(n, x), look(n, x, sc), asg(sc, x, w, _).
 .decl cwc_autocommit_engine(e: node)
-cwc_autocommit_engine(e) :- cwc_engine_value(e, v), kind(c, "call"), (c = v ; within(c, v)), cwc_autocommit_call(c).
+cwc_autocommit_engine(e) :- cwc_engine_src(e, v), kind(c, "call"), (c = v ; within(c, v)), cwc_autocommit_call(c).
 // cwc_sqlite_ddl(e, w): w is DDL text and e's engine was made from a `sqlite…` URL literal.
 .decl cwc_sqlite_ddl(e: node, w: node)
-cwc_sqlite_ddl(e, w) :- cwc_ddl_write(w), cwc_engine_value(e, v), kind(c, "call"), (c = v ; within(c, v)),
+cwc_sqlite_ddl(e, w) :- cwc_ddl_write(w), cwc_engine_src(e, v), kind(c, "call"), (c = v ; within(c, v)),
     call_arg(c, i, k, u), (i = 0 ; k = "url"), str(u, url), match("(?i)sqlite.*", url).
 
 // The cases, `cases/sqlalchemy-practice-connect-without-commit/`, read as one repository: each line ending in `# caught`
@@ -226,7 +244,9 @@ cwc_sqlite_ddl(e, w) :- cwc_ddl_write(w), cwc_engine_value(e, v), kind(c, "call"
 .test cases exactly
     .fixture "app/__init__.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/__init__.py"
     .fixture "app/async_jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/async_jobs.py"
+    .fixture "app/batch.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/batch.py"
     .fixture "app/db.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/db.py"
+    .fixture "app/factories.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/factories.py"
     .fixture "app/jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/jobs.py"
     .fixture "app/migrations/versions/0002_backfill.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/migrations/versions/0002_backfill.py"
     .fixture "app/models.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/models.py"
@@ -236,6 +256,10 @@ cwc_sqlite_ddl(e, w) :- cwc_ddl_write(w), cwc_engine_value(e, v), kind(c, "call"
     .fixture "app/tests/test_jobs.py" from "../cases/sqlalchemy-practice-connect-without-commit/app/tests/test_jobs.py"
     .expect _ at "app/async_jobs.py":9
     .expect _ at "app/async_jobs.py":14
+    .expect _ at "app/batch.py":31
+    .expect _ at "app/batch.py":36
+    .expect _ at "app/batch.py":41
+    .expect _ at "app/batch.py":46
     .expect _ at "app/jobs.py":13
     .expect _ at "app/jobs.py":18
     .expect _ at "app/jobs.py":23

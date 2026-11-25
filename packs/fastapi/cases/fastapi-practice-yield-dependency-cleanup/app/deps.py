@@ -11,10 +11,13 @@ from .db import (
     get_async_db_with,
     get_conn,
     get_db,
+    get_db_abort,
+    get_db_app_error,
     get_db_autocommit,
     get_db_branches,
     get_db_commit,
     get_db_finally,
+    get_db_helper_release,
     get_db_in_body,
     get_db_late_finally,
     get_db_logged,
@@ -46,6 +49,10 @@ SAFE = [
     Depends(get_db_branches),
     Depends(get_db_logged),
     Depends(get_db_narrow),
+    Depends(get_db_abort),
+    # Gaps: a project's exception class, a release in a helper.
+    Depends(get_db_app_error),
+    Depends(get_db_helper_release),
 ]
 UNSAFE = [
     Depends(get_db_commit),

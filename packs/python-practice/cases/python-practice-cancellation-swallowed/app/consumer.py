@@ -65,8 +65,8 @@ async def process_request(handler, request, send):
     response = await handler.get_response(request)
     try:
         await handler.send_response(response, send)
-    except asyncio.CancelledError:
-        # Client disconnected during send_response.
+    except asyncio.CancelledError:  # caught
+        # A task, but it then returns the response: whoever reads the task's result gets it as a success.
         pass
     return response
 

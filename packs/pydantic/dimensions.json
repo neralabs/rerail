@@ -1,15 +1,9 @@
 {
-  "pydantic-practice-before-validator-raw-input": {
+  "pydantic-practice-v1-api-in-v2": {
     "risk": "availability",
     "layer": "code",
-    "severity": "medium",
-    "hazard": "validation.unchecked-raw-input"
-  },
-  "pydantic-practice-default-factory": {
-    "risk": "data-safety",
-    "layer": "code",
     "severity": "high",
-    "hazard": "model.default-evaluated-once"
+    "hazard": "deps.removed-api"
   },
   "pydantic-practice-dump-mode-json": {
     "risk": "availability",
@@ -17,22 +11,34 @@
     "severity": "high",
     "hazard": "serialization.non-json-dump"
   },
+  "pydantic-practice-validator-returns-value": {
+    "risk": "correctness",
+    "layer": "code",
+    "severity": "high",
+    "hazard": "validation.validator-returns-none"
+  },
+  "pydantic-practice-default-factory": {
+    "risk": "data-safety",
+    "layer": "code",
+    "severity": "high",
+    "hazard": "model.default-evaluated-once"
+  },
+  "pydantic-practice-before-validator-raw-input": {
+    "risk": "availability",
+    "layer": "code",
+    "severity": "medium",
+    "hazard": "validation.unchecked-raw-input"
+  },
   "pydantic-practice-secret-settings-str": {
     "risk": "security",
     "layer": "config",
     "severity": "medium",
     "hazard": "secrets.plaintext-setting"
   },
-  "pydantic-practice-v1-api-in-v2": {
+  "pydantic-practice-deprecated-v1-api": {
     "risk": "maintainability",
     "layer": "code",
-    "severity": "medium",
+    "severity": "low",
     "hazard": "deps.deprecated-api"
-  },
-  "pydantic-practice-validator-returns-value": {
-    "risk": "correctness",
-    "layer": "code",
-    "severity": "high",
-    "hazard": "validation.validator-returns-none"
   }
 }

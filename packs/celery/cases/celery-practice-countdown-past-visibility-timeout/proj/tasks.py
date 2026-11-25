@@ -1,7 +1,7 @@
 import datetime
 from datetime import timedelta, timezone
 
-from celery import shared_task
+from celery import shared_task, signature
 
 from proj.celery import app
 
@@ -138,3 +138,74 @@ class Client:
 
 def other_retry(client: Client):
     client.retry(countdown=7200)
+
+
+# Delays held in names: each value a name may hold when it is read is a path the task can take.
+def schedule_named(order_id, when, urgent):
+    later = datetime.datetime.now(timezone.utc) + timedelta(days=1)
+    ship.apply_async((order_id,), eta=later)  # caught
+    soon = datetime.datetime.now(timezone.utc) + timedelta(minutes=20)
+    ship.apply_async((order_id,), eta=soon)
+    target = datetime.datetime.now(timezone.utc) + timedelta(hours=5)
+    if urgent:
+        target = when
+    ship.apply_async((order_id,), eta=target)  # caught
+    start = datetime.datetime.utcnow()
+    wait = timedelta(hours=3)
+    deadline = start + wait
+    ship.apply_async((order_id,), eta=deadline)  # caught
+    ship.apply_async((order_id,), eta=start + wait - timedelta(hours=1))  # caught
+    ship.apply_async((order_id,), eta=start + wait - timedelta(hours=2, minutes=30))
+    pause = 2 * 60 * 60
+    ship.apply_async((order_id,), countdown=pause)  # caught
+    ship.apply_async((order_id,), countdown=wait.total_seconds())  # caught
+    step = 600
+    if urgent:
+        step = 7200
+    ship.apply_async((order_id,), countdown=step)  # caught
+    for backoff in (600, 7200):
+        ship.apply_async((order_id,), countdown=backoff)
+    ship.apply_async((order_id,), countdown=3000)
+    ship.apply_async((order_id,), expires=7200)
+    retry_in = 7200
+    retry_in = 600
+    ship.apply_async((order_id,), countdown=retry_in)
+    # Gap: a loop variable (`for backoff in (600, 7200)`) is not read.
+
+
+# Signatures carry a delay too; a look-alike's apply_async or set is not Celery's.
+class Pool:
+    def apply_async(self, fn, args=(), countdown=0):
+        return fn, args, countdown
+
+    def set(self, countdown=0):
+        return countdown
+
+
+def schedule_signatures(order_id, pool: Pool):
+    ship.s(order_id).set(countdown=7200).delay()  # caught
+    ship.signature((order_id,), countdown=TWO_HOURS).delay()  # caught
+    signature("proj.tasks.ship", args=(order_id,), countdown=7200).delay()  # caught
+    ship.s(order_id).set(countdown=600).delay()
+    pool.apply_async(ship, (order_id,), countdown=7200)
+    pool.set(countdown=7200)
+    Pool().apply_async(ship, countdown=7200)
+
+
+# A task made by a Celery wrapper package (its decorator comes from outside the run; this module imports celery),
+# and an invoke task in a module that does not import celery (not a Celery task).
+from task_manager.django.decorators import task  # noqa: E402
+
+from proj.jobs import deploy  # noqa: E402
+
+
+@task(priority=3)
+def revoke_seat(user_id):
+    return user_id
+
+
+def on_revoked(user_id):
+    revoke_seat.apply_async(args=[user_id], countdown=7200)  # caught
+    revoke_seat.s(user_id).set(countdown=2 * 3600).delay()  # caught
+    revoke_seat.apply_async(args=[user_id], countdown=600)
+    deploy.apply_async(countdown=7200)

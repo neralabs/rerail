@@ -1,102 +1,176 @@
 .policy "celery-practice-unknown-task-name" revision 1
-.description "Name a task by a string only when a task of the run is registered under it: a worker discards a message for an unregistered name, and such a beat entry never runs."
+.description "Name Celery tasks by strings that match a registered task; a worker discards messages for unknown names, so a mistyped beat entry never runs."
 .language python
-.mode steer
+.mode log
 .scope include "**/*.py"
 // Rerail's own rule, not a port. Celery sends only a task's name; the worker looks it up in its registry, and for a
 // name no task registered it logs "Received unregistered task of type ..." and discards the message
 // (celery/worker/consumer/consumer.py, UNKNOWN_TASK_ERROR). A beat entry whose "task" has a typo, or names a task that
 // was renamed or moved to another module, is sent on schedule and dropped every time: the job silently never runs.
-// Reported, at the string (or at a constant of the same file holding it), when no task of the run is registered under
-// it and the run owns the name:
-//   - the first argument (or `name=`) of `<x>.send_task(...)`, of celery's `signature(...)` and of `<app>.signature(...)`;
-//   - the "task" of a beat schedule entry (a dict with a "task" key and a "schedule" or "options" key).
-// A task is registered under its `name=` (a literal, or a module constant of the run), else under <module>.<def>,
-// which a string matches also by a dotted tail (lib/celery's cel_task_named); a class deriving from celery's Task is
-// registered under its `name = "..."` attribute, else <module>.<Class>. The run owns a name n when n's module part
-// (before the last dot) is a module of the run (a document whose module name is it or ends with "." + it), or when the
-// run registers tasks under explicit dotted names that share n's first segment (`name="reports.scheduler"`). When a
-// task with n's last segment as its def name exists elsewhere (a moved task), the message names it.
+// Reported, at the naming site, when no task of the run is registered under the name and the run owns it:
+//   - the first argument (or `name=`) of `send_task(...)` on a Celery app (lib/celery's cel_app_ref or cel_app_value:
+//     a resolved app, a factory's result, current_app, `self.app`), of celery's `signature(...)` and of
+//     `<app>.signature(...)`;
+//   - the "task" of a beat schedule entry: a dict (a literal or `dict(...)`) with a "task" and a "schedule" key
+//     (Celery's documented entry shape), or with a "task" and an "options" key when its value reaches the beat
+//     setting: it lies in a beat_schedule setting's value (lib/celery's cel_setting), in an item assigned to or an
+//     `.update(...)` of that setting, in a module constant one of those reads (through imports, `**` splats
+//     included), or in a run function such a value calls, or one it reaches through the call graph (paperless-ngx
+//     lists its entries with "options" in `parse_beat_schedule()` and adds each cron from the environment).
+// The name is a string literal, or a constant the engine resolves: a module constant of the run (through imports,
+// re-exports and module aliases), a class attribute (`ExportTask.name`) or a local of its function, each bound once.
+// A task is registered under its `name=` (such a value), else under <module>.<def>, which a string matches also by a
+// dotted tail; `app.task(fn)` and `shared_task(name=...)(fn)` called as functions register the same way. A class
+// deriving from celery's Task (through the run's classes, or `<app>.Task`) is registered under its `name = ...`
+// attribute (such a value), else <module>.<Class>; a class whose `name` does not resolve registers nothing. The run
+// owns a name n when n's module part (before the last dot) is exactly a module of the run, or when the run registers
+// tasks under explicit dotted names that share n's first segment (`name="reports.scheduler"`). When a task with n's
+// last segment as its def name exists elsewhere (a moved task), the message names it.
 //   "task": "proj.tasks.shipp"          reported (proj/tasks.py defines `ship`)
 //   app.send_task("proj.tasks.ship")    not reported (`@shared_task def ship` in proj/tasks.py)
 //   app.send_task("billing.charge")     not reported (no module `billing` in the run: another service's task)
-// Left alone: Celery's own and library tasks (`celery.*`, `django_celery_beat.*`, `django_celery_results.*`, ...);
-// names whose module part is not a module of the run and whose first segment no explicit task name shares (another
-// service's tasks: send_task is often used exactly for that); names built at runtime (f-strings, variables, parameters)
-// and constants imported from another module; commented-out entries; test code (cel_test_doc).
-// Gaps: tasks registered by a decorator wrapper that computes the name, or by `app.task(fn)` called as a function;
-// task modules autodiscovered from outside the run (an installed package); whether the worker actually imports the
-// module that defines the task (`include`/`imports`/autodiscover) is not checked.
+//   remote.send_task("tasks.upload")    not reported (the run has `proj/tasks.py`, but no module `tasks`)
+//   ML_JOBS = [{"task": "proj.x.y", "options": {...}}]   not reported (never reaches the beat setting)
+// Left alone: Celery's own tasks (`celery.*`, the names celery/app/builtins.py registers; the one name list kept,
+// since a run module named `celery` would otherwise own them); a library's tasks (`django_celery_beat.*`), unowned
+// unless the library is part of the run, where its tasks are registered; names whose module part is not a module of
+// the run and whose first segment no explicit task name shares (another service's tasks: send_task is often used
+// exactly for that); `send_task` on an object that is no Celery app; names built at runtime (f-strings, parameters,
+// constants bound more than once); commented-out entries; test code (cel_test_doc).
+// Gaps: tasks registered by a decorator wrapper that computes the name; a task name held by a constant outside the run;
+// task modules autodiscovered from outside the run (an installed package); a run whose module names carry an extra
+// leading package the worker does not (`api.tasks.x`, which the worker imports as `tasks.x`) does not own `tasks.*`;
+// beat entries an app builds at runtime (`add_periodic_task`, django_celery_beat's PeriodicTask rows); whether the
+// worker actually imports the module that defines the task (`include`/`imports`/autodiscover) is not checked.
 
 #include "lib/celery.rerail"
 
-.violation UnknownTaskName(at: node, n: symbol, hint: symbol) "No task of this run is registered as \"{n}\": a worker discards a message with that name as unregistered, and a beat entry with it never runs.{hint} Use the task's registered name (its name=, else module.function). If another service's worker registers this name, leave it."
-UnknownTaskName(at, n, hint) :- uk_unknown(at, n), uk_moved(n, q), hint = cat(" A task with that function name is registered as \"", cat(q, "\"; it may have moved or been renamed.")).
-UnknownTaskName(at, n, "") :- uk_unknown(at, n), !uk_moved(n, _).
+.violation UnknownTaskName(at: node, n: symbol) "No task in this code registers \"{n}\", so a worker would discard it. Check it against the worker's registered tasks; leave it if another service or an installed package registers it."
+UnknownTaskName(at, n) :- uk_unknown(at, n), !uk_moved(n, _).
+.violation MovedTaskName(at: node, n: symbol, q: symbol) "No task registers \"{n}\"; a task \"{q}\" has its function name, so it may have moved. Check the worker's registered tasks; leave it if another service or a package registers it."
+MovedTaskName(at, n, q) :- uk_unknown(at, n), uk_moved(n, q).
 
 .decl uk_unknown(at: node, n: symbol)
-uk_unknown(at, n) :- uk_ref(at, n), !uk_known(n), uk_owned(n), !uk_lib(n), docof(at, d), !cel_test_doc(d).
+uk_unknown(at, n) :- uk_ref(at, n), !uk_known(n), uk_owned(n), !uk_celery_own(n), docof(at, d), !cel_test_doc(d).
+
+// ---- values ------------------------------------------------------------------------------------------------------
+// uk_str_value(v, n): v is the string n, or a name or attribute resolving to a constant bound once to it: a module
+// constant of the run (cel_sym follows imports, re-exports and module aliases), a class attribute (`Cls.name`), or a
+// local name of its own function.
+.decl uk_str_value(v: node, n: symbol)
+uk_str_value(v, n) :- str(v, n).
+uk_str_value(v, n) :- unparen(v, u), (kind(u, "identifier") ; kind(u, "attribute")), cel_sym(u, q), uk_const(q, n).
+uk_str_value(v, n) :- unparen(v, u), kind(u, "identifier"), text(u, x), look(u, x, s), !kind(s, "module"),
+    asg(s, x, w, _), str(w, n), count : { asg(s, x, _, _) } = 1.
+.decl uk_const(q: symbol, n: symbol)
+uk_const(q, n) :- cel_module_var(q, w), str(w, n), count : { cel_module_var(q, _) } = 1.
+uk_const(q, n) :- split_dot(q, cq, x), class_def(c, cq), asg(c, x, w, _), str(w, n), count : { asg(c, x, _, _) } = 1.
 
 // ---- the names the run uses --------------------------------------------------------------------------------------
 // uk_site(e, how): expression e is where a task is named: send_task's first argument or `name=`, signature's first
 // argument, a beat entry's "task".
 .decl uk_site(e: node, how: symbol)
-uk_site(e, "send_task") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, "send_task"),
-    (posarg(c, 0, e) ; call_arg(c, -1, "name", e)).
+uk_site(e, "send_task") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "send_task"), unparen(o, u),
+    (cel_app_ref(u) ; cel_app_value(u)), (posarg(c, 0, e) ; call_arg(c, -1, "name", e)).
 uk_site(e, "signature") :- kind(c, "call"), field(c, "function", fn), sym_of(fn, q),
-    (q = "celery.signature" ; q = "celery.canvas.signature" ; q = "celery.canvas.Signature" ; q = "celery.Signature"),
+    (q = "celery.signature" ; q = "celery.canvas.signature" ; q = "celery.canvas.Signature" ; q = "celery.Signature" ;
+    q = "celery.subtask" ; q = "celery.canvas.subtask"),
     posarg(c, 0, e).
 uk_site(e, "signature") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, "signature"), unparen(o, u),
-    cel_app_ref(u), posarg(c, 0, e).
-uk_site(e, "beat") :- kind(p, "pair"), field(p, "key", k), str(k, "task"), field(p, "value", e), child(m, p, _),
-    kind(m, "dictionary"), child(m, p2, _), kind(p2, "pair"), field(p2, "key", k2), uk_beat_key(k2).
-// uk_beat_key(k): a beat entry's own keys: "schedule", or "options" (its execution options), which also marks the
-// entries a run lists before it adds their schedules (paperless-ngx reads each cron from the environment).
-.decl uk_beat_key(k: node)
-uk_beat_key(k) :- str(k, "schedule").
-uk_beat_key(k) :- str(k, "options").
-// uk_ref(e, n): site e names the task n: a string literal, or a name bound once at module level in its own file to one.
+    (cel_app_ref(u) ; cel_app_value(u)), posarg(c, 0, e).
+uk_site(e, "beat") :- uk_entry_key(m, "task", e), uk_entry_key(m, "schedule", _).
+uk_site(e, "beat") :- uk_entry_key(m, "task", e), uk_entry_key(m, "options", _), uk_beat_part(m).
+// uk_entry_key(m, k, v): m is a dict literal with the string key k, or a `dict(...)` call with the keyword k; v its
+// value.
+.decl uk_entry_key(m: node, k: symbol, v: node)
+uk_entry_key(m, k, v) :- kind(m, "dictionary"), child(m, p, _), kind(p, "pair"), field(p, "key", kn), str(kn, k),
+    field(p, "value", v).
+uk_entry_key(m, k, v) :- kind(m, "call"), field(m, "function", f), builtin_ref(f, "dict"), call_arg(m, -1, k, v).
+// ---- what reaches the beat setting -------------------------------------------------------------------------------
+// uk_beat_expr(e): e's value reaches the beat setting: a beat_schedule setting's value, the value of an item assigned
+// to the setting or of its `.update(...)`, a module constant read in a beat expression or in a beat function.
+.decl uk_beat_expr(e: node)
+uk_beat_expr(u) :- cel_setting("beat_schedule", v, _), unparen(v, u).
+uk_beat_expr(u) :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"), field(l, "value", t),
+    uk_beat_target(t), field(a, "right", v), unparen(v, u).
+uk_beat_expr(u) :- kind(c, "call"), field(c, "function", f), attr_of(f, t, "update"), uk_beat_target(t),
+    call_arg(c, _, _, v), unparen(v, u).
+uk_beat_expr(u) :- uk_beat_read(r), (kind(r, "identifier") ; kind(r, "attribute")), cel_sym(r, q),
+    cel_module_var(q, w), unparen(w, u).
+// uk_beat_read(r): r is a beat expression or lies in one, or lies in a beat function.
+.decl uk_beat_read(r: node)
+uk_beat_read(e) :- uk_beat_expr(e).
+uk_beat_read(r) :- uk_beat_expr(e), within(r, e).
+uk_beat_read(r) :- uk_beat_fn(g), within(r, g).
+// uk_beat_fn(g): a run function whose result reaches the beat setting: called in a beat expression
+// (`CELERY_BEAT_SCHEDULE = parse_beat_schedule()`), or reached from one through the call graph.
+.decl uk_beat_fn(g: node)
+uk_beat_fn(g) :- uk_beat_expr(e), uk_beat_call(e, g).
+uk_beat_fn(g) :- uk_beat_expr(e), within(c, e), uk_beat_call(c, g).
+uk_beat_fn(h) :- uk_beat_fn(g), reach(g, h).
+.decl uk_beat_call(c: node, g: node)
+uk_beat_call(c, g) :- kind(c, "call"), field(c, "function", f), cel_sym(f, q), qualname(g, q),
+    kind(g, "function_definition").
+// uk_beat_target(t): t is the beat setting: `<x>.conf.beat_schedule`, or a name bound to a beat expression
+// (`CELERY_BEAT_SCHEDULE`, a celeryconfig's `beat_schedule`).
+.decl uk_beat_target(t: node)
+uk_beat_target(t) :- attr_of(t, o, "beat_schedule"), attr_of(o, _, "conf").
+uk_beat_target(t) :- (kind(t, "identifier") ; kind(t, "attribute")), cel_sym(t, q), cel_module_var(q, w),
+    unparen(w, u), uk_beat_expr(u).
+// uk_beat_part(m): dict m reaches the beat setting.
+.decl uk_beat_part(m: node)
+uk_beat_part(m) :- uk_entry_key(m, "options", _), uk_beat_read(m).
+// uk_ref(e, n): site e names the task n.
 .decl uk_ref(e: node, n: symbol)
-uk_ref(e, n) :- uk_site(e, _), str(e, n).
-uk_ref(e, n) :- uk_site(e, _), kind(e, "identifier"), text(e, x), look(e, x, m), kind(m, "module"), asg(m, x, v, _),
-    str(v, n), count : { asg(m, x, _, _) } = 1.
+uk_ref(e, n) :- uk_site(e, _), uk_str_value(e, n).
 
 // ---- the names the run registers ---------------------------------------------------------------------------------
 // uk_reg(n, how): a task of the run is registered as n, "explicit" (a name= or a class's name attribute) or "implicit"
 // (<module>.<def>, <module>.<Class>).
 .decl uk_reg(n: symbol, how: symbol)
-uk_reg(n, "explicit") :- cel_task_option(_, "name", v), str(v, n).
-uk_reg(n, "explicit") :- cel_task_option(_, "name", v), unparen(v, u), (kind(u, "identifier") ; kind(u, "attribute")),
-    cel_sym(u, q), cel_module_var(q, w), str(w, n).
+uk_reg(n, "explicit") :- cel_task_option(_, "name", v), uk_str_value(v, n).
 uk_reg(n, "implicit") :- cel_task_name(f, n), !cel_task_option(f, "name", _).
-uk_reg(n, "explicit") :- uk_task_class(c), uk_class_name_attr(c, n).
+// `app.task(fn)`, `app.task(fn, name=...)`, `shared_task(name=...)(fn)` called as functions.
+uk_reg(n, "explicit") :- uk_wrap_call(c, _), uk_wrap_name(c, v), uk_str_value(v, n).
+uk_reg(q, "implicit") :- uk_wrap_call(c, g), !uk_wrap_name(c, _), qualname(g, q).
+.decl uk_wrap_call(c: node, g: node)
+uk_wrap_call(c, g) :- kind(c, "call"), field(c, "function", fn), cel_task_fn(fn), posarg(c, 0, a), cel_sym(a, q),
+    qualname(g, q), kind(g, "function_definition").
+uk_wrap_call(c, g) :- kind(c, "call"), field(c, "function", k), kind(k, "call"), field(k, "function", fn),
+    cel_task_fn(fn), posarg(c, 0, a), cel_sym(a, q), qualname(g, q), kind(g, "function_definition").
+.decl uk_wrap_name(c: node, v: node)
+uk_wrap_name(c, v) :- uk_wrap_call(c, _), call_arg(c, -1, "name", v).
+uk_wrap_name(c, v) :- uk_wrap_call(c, _), field(c, "function", k), kind(k, "call"), call_arg(k, -1, "name", v).
+uk_reg(n, "explicit") :- uk_task_class(c), uk_class_name_attr(c, v), uk_str_value(v, n).
 uk_reg(@dot(mq, x), "implicit") :- uk_task_class(c), !uk_class_name_attr(c, _), def_name(c, x), docof(c, d),
     doc(d, _, mq), mq != "", nearest(c, m, scope), kind(m, "module").
 .decl uk_known(n: symbol)
 uk_known(n) :- uk_ref(_, n), uk_reg(n, _).
 uk_known(n) :- uk_ref(_, n), uk_reg(q, "implicit"), suffix(cat(".", n), q).
-// uk_task_class(c): c derives from celery's Task, through the run's classes.
+// uk_task_class(c): c derives from celery's Task, directly, through `<app>.Task`, or through the run's classes.
 .decl uk_task_class_q(q: symbol)
 uk_task_class_q("celery.Task"). uk_task_class_q("celery.app.task.Task").
-uk_task_class_q(q) :- class_def(c, q), cel_class_base(c, b), uk_task_class_q(b).
+uk_task_class_q(q) :- uk_task_class(c), class_def(c, q).
 .decl uk_task_class(c: node)
 uk_task_class(c) :- kind(c, "class_definition"), cel_class_base(c, b), uk_task_class_q(b).
-// uk_class_name_attr(c, n): `name = "n"` in c's body.
-.decl uk_class_name_attr(c: node, n: symbol)
-uk_class_name_attr(c, n) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
+uk_task_class(c) :- kind(c, "class_definition"), field(c, "superclasses", al), child(al, e, _), attr_of(e, o, "Task"),
+    unparen(o, u), (cel_app_ref(u) ; cel_app_value(u)).
+// uk_class_name_attr(c, v): `name = v` in c's body (any value: one that does not resolve registers no implicit name).
+.decl uk_class_name_attr(c: node, v: node)
+uk_class_name_attr(c, v) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
     kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "name"),
-    field(a, "right", v), str(v, n).
+    field(a, "right", v).
 
 // ---- ownership ---------------------------------------------------------------------------------------------------
-// uk_owned(n): n's module part is a module of the run, or n's first segment is shared by an explicit dotted name.
+// uk_owned(n): n's module part is exactly a module of the run, or n's first segment is shared by an explicit dotted
+// name. A module that merely ends with n's module part (`app.tasks` for `tasks.x`) does not own it: another service's
+// worker may well have a top-level `tasks` module.
 .decl uk_owned(n: symbol)
 uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", doc(_, _, m).
-uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", doc(_, _, q), suffix(cat(".", m), q).
 uk_owned(n) :- uk_ref(_, n), split_dot(n, m, _), m != "", h = @head(n), uk_reg(x, "explicit"), x != h, @head(x) = h.
-// uk_lib(n): Celery's own tasks and those of libraries around it.
-.decl uk_lib(n: symbol)
-uk_lib(n) :- uk_ref(_, n), h = @head(n), (h = "celery" ; prefix("celery_", h) ; prefix("django_celery", h) ;
-    h = "djcelery" ; h = "kombu" ; h = "flower" ; h = "redbeat").
+// uk_celery_own(n): Celery's own tasks (celery/app/builtins.py registers them as `celery.*`).
+.decl uk_celery_own(n: symbol)
+uk_celery_own(n) :- uk_ref(_, n), @head(n) = "celery".
 // uk_moved(n, q): a task whose def is named for n's last segment is registered as q.
 .decl uk_moved(n: symbol, q: symbol)
 uk_moved(n, q) :- uk_ref(_, n), split_dot(n, _, x), cel_task(f), def_name(f, x), cel_task_name(f, q), q != n.
@@ -106,20 +180,42 @@ uk_moved(n, q) :- uk_ref(_, n), split_dot(n, _, x), cel_task(f), def_name(f, x),
 .test cases exactly
     .fixture "proj/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/__init__.py"
     .fixture "proj/celery.py" from "../cases/celery-practice-unknown-task-name/proj/celery.py"
+    .fixture "proj/classes.py" from "../cases/celery-practice-unknown-task-name/proj/classes.py"
+    .fixture "proj/client.py" from "../cases/celery-practice-unknown-task-name/proj/client.py"
     .fixture "proj/contract.py" from "../cases/celery-practice-unknown-task-name/proj/contract.py"
+    .fixture "proj/factory.py" from "../cases/celery-practice-unknown-task-name/proj/factory.py"
+    .fixture "proj/jobs.py" from "../cases/celery-practice-unknown-task-name/proj/jobs.py"
     .fixture "proj/maintenance.py" from "../cases/celery-practice-unknown-task-name/proj/maintenance.py"
+    .fixture "proj/metrics.py" from "../cases/celery-practice-unknown-task-name/proj/metrics.py"
+    .fixture "proj/schedule.py" from "../cases/celery-practice-unknown-task-name/proj/schedule.py"
+    .fixture "proj/settings.py" from "../cases/celery-practice-unknown-task-name/proj/settings.py"
     .fixture "proj/tasks.py" from "../cases/celery-practice-unknown-task-name/proj/tasks.py"
     .fixture "proj/tests/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/tests/__init__.py"
     .fixture "proj/tests/test_beat.py" from "../cases/celery-practice-unknown-task-name/proj/tests/test_beat.py"
     .fixture "proj/web/__init__.py" from "../cases/celery-practice-unknown-task-name/proj/web/__init__.py"
     .fixture "proj/web/views.py" from "../cases/celery-practice-unknown-task-name/proj/web/views.py"
-    .expect _ at "proj/celery.py":15
-    .expect _ at "proj/celery.py":74
+    .fixture "proj/worker.py" from "../cases/celery-practice-unknown-task-name/proj/worker.py"
+    .expect _ at "proj/celery.py":10
+    .expect _ at "proj/celery.py":11
     .expect _ at "proj/celery.py":19
-    .expect _ at "proj/celery.py":31
-    .expect _ at "proj/web/views.py":11
-    .expect _ at "proj/web/views.py":12
-    .expect _ at "proj/web/views.py":13
-    .expect _ at "proj/web/views.py":19
-    .expect _ at "proj/web/views.py":21
+    .expect _ at "proj/celery.py":23
+    .expect _ at "proj/celery.py":35
+    .expect _ at "proj/celery.py":73
+    .expect _ at "proj/celery.py":80
+    .expect _ at "proj/celery.py":91
+    .expect _ at "proj/celery.py":94
+    .expect _ at "proj/classes.py":14
+    .expect _ at "proj/client.py":23
+    .expect _ at "proj/client.py":24
+    .expect _ at "proj/schedule.py":8
+    .expect _ at "proj/schedule.py":16
+    .expect _ at "proj/settings.py":4
+    .expect _ at "proj/web/views.py":14
+    .expect _ at "proj/web/views.py":15
+    .expect _ at "proj/web/views.py":16
+    .expect _ at "proj/web/views.py":22
+    .expect _ at "proj/web/views.py":24
+    .expect _ at "proj/web/views.py":28
+    .expect _ at "proj/web/views.py":29
+    .expect _ at "proj/web/views.py":33
 .end

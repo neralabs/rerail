@@ -10,3 +10,9 @@ class Exporter:
 def export(cache, value):
     cache.set("k", value, serializer="pickle")
     return {"serializer": "pickle"}
+
+
+# Not Celery sends: a multiprocessing pool's apply_async and a kombu producer.
+def offload(pool, fn, producer, body):
+    pool.apply_async(fn, serializer="pickle")
+    producer.publish(body, serializer="pickle")

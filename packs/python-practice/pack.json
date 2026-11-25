@@ -3,7 +3,7 @@
   "id": "python-practice",
   "name": "Python practice",
   "category": "language",
-  "covers": "Rerail's own Python rules, from the Python docs and core developers' review advice, for correct async code, exceptions, typing and packaging.",
+  "covers": "Rerail's own Python rules for async code, cancellation, timeouts, retries and resource cleanup.",
   "reason": "matches Python practice",
   "match": {
     "any": [
@@ -17,11 +17,30 @@
   },
   "rules": [
     {
+      "id": "python-practice-cancellation-swallowed",
+      "document": "rules/python-practice-cancellation-swallowed.rerail",
+      "title": "Python practice: asyncio.CancelledError caught or suppressed in an async def and not re-raised",
+      "group": "Async",
+      "mode": "steer",
+      "on": true,
+      "examples": {
+        "caught": {
+          "path": "app/downloads.py",
+          "text": "import asyncio\nimport logging\n\nlogger = logging.getLogger(__name__)\n\n\nasync def download_all(client, urls):\n    pages = []\n    for url in urls:\n        try:\n            pages.append(await client.get(url))\n        except asyncio.CancelledError:\n            logger.debug(\"interrupted, returning what we have\")\n            break\n    return pages\n"
+        },
+        "passes": {
+          "path": "app/downloads.py",
+          "text": "import asyncio\nimport logging\n\nlogger = logging.getLogger(__name__)\n\n\nasync def download_all(client, urls):\n    pages = []\n    for url in urls:\n        try:\n            pages.append(await client.get(url))\n        except asyncio.CancelledError:\n            logger.debug(\"interrupted after %d pages\", len(pages))\n            raise\n    return pages\n\n\nasync def stop(task):\n    task.cancel()\n    try:\n        await task\n    except asyncio.CancelledError:\n        pass\n"
+        }
+      }
+    },
+    {
       "id": "python-practice-blocking-call-reached-from-async",
       "document": "rules/python-practice-blocking-call-reached-from-async.rerail",
       "title": "Python practice: an async def calls a sync helper, in any module, that sleeps, does network I/O, runs a subprocess or starts an event loop",
       "group": "Async",
       "mode": "log",
+      "on": true,
       "examples": {
         "caught": {
           "path": "app/routes.py",
@@ -62,36 +81,56 @@
       }
     },
     {
-      "id": "python-practice-cancellation-swallowed",
-      "document": "rules/python-practice-cancellation-swallowed.rerail",
-      "title": "Python practice: asyncio.CancelledError caught in an async def and not re-raised",
-      "group": "Python practice",
+      "id": "python-practice-requests-session-without-timeout",
+      "document": "rules/python-practice-requests-session-without-timeout.rerail",
+      "title": "Python practice: an HTTP call on a requests Session without a timeout",
+      "group": "Timeouts and retries",
       "mode": "steer",
+      "on": true,
       "examples": {
         "caught": {
-          "path": "app/downloads.py",
-          "text": "import asyncio\nimport logging\n\nlogger = logging.getLogger(__name__)\n\n\nasync def download_all(client, urls):\n    pages = []\n    for url in urls:\n        try:\n            pages.append(await client.get(url))\n        except asyncio.CancelledError:\n            logger.debug(\"interrupted, returning what we have\")\n            break\n    return pages\n"
+          "path": "app/clients.py",
+          "text": "import requests\n\n\nclass ApiClient:\n    def __init__(self, base):\n        self.base = base\n        self.session = requests.Session()\n\n    def get_item(self, pk):\n        return self.session.get(f\"{self.base}/items/{pk}\")\n"
         },
         "passes": {
-          "path": "app/downloads.py",
-          "text": "import asyncio\nimport logging\n\nlogger = logging.getLogger(__name__)\n\n\nasync def download_all(client, urls):\n    pages = []\n    for url in urls:\n        try:\n            pages.append(await client.get(url))\n        except asyncio.CancelledError:\n            logger.debug(\"interrupted after %d pages\", len(pages))\n            raise\n    return pages\n\n\nasync def stop(task):\n    task.cancel()\n    try:\n        await task\n    except asyncio.CancelledError:\n        pass\n"
+          "path": "app/clients.py",
+          "text": "import requests\n\n\nclass ApiClient:\n    def __init__(self, base):\n        self.base = base\n        self.session = requests.Session()\n\n    def get_item(self, pk):\n        return self.session.get(f\"{self.base}/items/{pk}\", timeout=(3.05, 30))\n"
         }
       }
     },
     {
-      "id": "python-practice-contextmanager-cleanup-skipped",
-      "document": "rules/python-practice-contextmanager-cleanup-skipped.rerail",
-      "title": "Python practice: release after an unguarded yield in a @contextmanager is skipped on error",
-      "group": "Python practice",
+      "id": "python-practice-retry-without-limit",
+      "document": "rules/python-practice-retry-without-limit.rerail",
+      "title": "Python practice: a tenacity, backoff, retrying or retry decorator without a limit",
+      "group": "Timeouts and retries",
       "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
-          "path": "app/locks.py",
-          "text": "import threading\nfrom contextlib import contextmanager\n\n_lock = threading.Lock()\n\n\n@contextmanager\ndef exclusive():\n    _lock.acquire()\n    yield\n    _lock.release()\n"
+          "path": "app/drive.py",
+          "text": "from googleapiclient.errors import HttpError\nfrom tenacity import retry, retry_if_exception_type, wait_exponential\n\n\n@retry(wait=wait_exponential(multiplier=1, max=10), retry=retry_if_exception_type(HttpError))\ndef make_call(client, file_id):\n    return client.files().get(fileId=file_id).execute()\n"
         },
         "passes": {
-          "path": "app/locks.py",
-          "text": "import threading\nfrom contextlib import contextmanager\n\n_lock = threading.Lock()\n\n\n@contextmanager\ndef exclusive():\n    _lock.acquire()\n    try:\n        yield\n    finally:\n        _lock.release()\n\n\n@contextmanager\ndef transaction(conn):\n    try:\n        yield conn\n    except Exception:\n        conn.rollback()\n        raise\n    conn.commit()\n"
+          "path": "app/drive.py",
+          "text": "from googleapiclient.errors import HttpError\nfrom tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential\n\n\n@retry(\n    stop=stop_after_attempt(5),\n    wait=wait_exponential(multiplier=1, max=10),\n    retry=retry_if_exception_type(HttpError),\n)\ndef make_call(client, file_id):\n    return client.files().get(fileId=file_id).execute()\n"
+        }
+      }
+    },
+    {
+      "id": "python-practice-retry-loop-without-limit",
+      "document": "rules/python-practice-retry-loop-without-limit.rerail",
+      "title": "Python practice: a hand-written retry loop that never gives up",
+      "group": "Timeouts and retries",
+      "mode": "log",
+      "on": false,
+      "examples": {
+        "caught": {
+          "path": "app/db.py",
+          "text": "import time\n\n\ndef connect(db, dsn):\n    while True:\n        try:\n            conn = db.connect(dsn)\n            break\n        except ConnectionError:\n            time.sleep(1)\n    return conn\n"
+        },
+        "passes": {
+          "path": "app/db.py",
+          "text": "import time\n\n\ndef connect(db, dsn, attempts=5):\n    for attempt in range(attempts):\n        try:\n            return db.connect(dsn)\n        except ConnectionError:\n            if attempt == attempts - 1:\n                raise\n            time.sleep(2**attempt)\n"
         }
       }
     },
@@ -101,6 +140,7 @@
       "title": "Python practice: coroutine of an async def created and never run",
       "group": "Async",
       "mode": "steer",
+      "on": true,
       "examples": {
         "caught": {
           "path": "shop/orders.py",
@@ -125,36 +165,20 @@
       }
     },
     {
-      "id": "python-practice-requests-session-without-timeout",
-      "document": "rules/python-practice-requests-session-without-timeout.rerail",
-      "title": "Python practice: an HTTP call on a requests Session without a timeout",
-      "group": "Python practice",
-      "mode": "steer",
-      "examples": {
-        "caught": {
-          "path": "app/clients.py",
-          "text": "import requests\n\n\nclass ApiClient:\n    def __init__(self, base):\n        self.base = base\n        self.session = requests.Session()\n\n    def get_item(self, pk):\n        return self.session.get(f\"{self.base}/items/{pk}\")\n"
-        },
-        "passes": {
-          "path": "app/clients.py",
-          "text": "import requests\n\n\nclass ApiClient:\n    def __init__(self, base):\n        self.base = base\n        self.session = requests.Session()\n\n    def get_item(self, pk):\n        return self.session.get(f\"{self.base}/items/{pk}\", timeout=(3.05, 30))\n"
-        }
-      }
-    },
-    {
-      "id": "python-practice-retry-without-limit",
-      "document": "rules/python-practice-retry-without-limit.rerail",
-      "title": "Python practice: a retry that never gives up",
-      "group": "Python practice",
+      "id": "python-practice-contextmanager-cleanup-skipped",
+      "document": "rules/python-practice-contextmanager-cleanup-skipped.rerail",
+      "title": "Python practice: release after an unguarded yield in a @contextmanager is skipped on error",
+      "group": "Resources",
       "mode": "log",
+      "on": false,
       "examples": {
         "caught": {
-          "path": "app/drive.py",
-          "text": "from googleapiclient.errors import HttpError\nfrom tenacity import retry, retry_if_exception_type, wait_exponential\n\n\n@retry(wait=wait_exponential(multiplier=1, max=10), retry=retry_if_exception_type(HttpError))\ndef make_call(client, file_id):\n    return client.files().get(fileId=file_id).execute()\n"
+          "path": "app/locks.py",
+          "text": "import threading\nfrom contextlib import contextmanager\n\n_lock = threading.Lock()\n\n\n@contextmanager\ndef exclusive():\n    _lock.acquire()\n    yield\n    _lock.release()\n"
         },
         "passes": {
-          "path": "app/drive.py",
-          "text": "from googleapiclient.errors import HttpError\nfrom tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential\n\n\n@retry(\n    stop=stop_after_attempt(5),\n    wait=wait_exponential(multiplier=1, max=10),\n    retry=retry_if_exception_type(HttpError),\n)\ndef make_call(client, file_id):\n    return client.files().get(fileId=file_id).execute()\n"
+          "path": "app/locks.py",
+          "text": "import threading\nfrom contextlib import contextmanager\n\n_lock = threading.Lock()\n\n\n@contextmanager\ndef exclusive():\n    _lock.acquire()\n    try:\n        yield\n    finally:\n        _lock.release()\n\n\n@contextmanager\ndef transaction(conn):\n    try:\n        yield conn\n    except Exception:\n        conn.rollback()\n        raise\n    conn.commit()\n"
         }
       }
     }

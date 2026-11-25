@@ -30,44 +30,38 @@
 //   subprocess.run(["git", "log", request.GET["ref"]])                 not reported: fixed program, no shell
 //   subprocess.run(f"ls {shlex.quote(p)}", shell=True)                 not reported: quoted
 // Sanitisers it trusts: shlex.quote() and shlex.join() (POSIX shells only; Windows `cmd.exe` quoting differs), int()
-// and every other library call (lib/security stops at them), a dict lookup by the value (`TOOLS[op]`,
-// `TOOLS.get(op)`: the value is the key, not the result), and a name its function checks: passes to a call named
-// like a validator (`is_valid_host(host)`) or tests with `in`/`not in` (`if zone not in ALLOWED_ZONES`), or a
-// function named like a validator returning it. Unlike lib/security's sec_checked, `subprocess.check_output` and
-// `check_call` are not validators here. It leaves alone request data only in `env=`, `cwd=` or `input=`, fully
+// and every other library call (lib/security stops at them), a value its framework already reduced to a number or
+// a fixed choice (sec_typed: a serializer's `ChoiceField`, a pydantic `Literal`/`Enum` field), a dict lookup by the
+// value (`TOOLS[op]`, `TOOLS.get(op)`: the value is the key, not the result), and a name its function checks
+// (lib/security's sec_checked: passed to a call whose name starts with a checking verb, `is_valid_host(host)`, or
+// tested as an allow-list with `in`/`not in`, `if zone not in ALLOWED_ZONES`), or a function named so returning it.
+// A function that itself runs a command (directly or through the run's calls) is never a check, whatever its name
+// (`check_disk(path)`, `run_healthcheck(host)`): this rule's sinks are lib/security's sec_sink_fn. A block list
+// (`if host in BLOCKED: raise`) is no check. It leaves alone request data only in `env=`, `cwd=` or `input=`, fully
 // literal commands, test files, and code with no request source (management commands, `sys.argv`).
 // Gaps: argument injection into a fixed program (`["git", "fetch", ref]` with `ref = "--upload-pack=…"`, GitPython's
 // GHSA-rpm5-65cw-6hj4) is out of scope. A check is flow-insensitive: a name checked anywhere in its function is
-// trusted everywhere in it, and a blocklist test (`if host in BLOCKED: raise`) counts as a check. Values stored on
-// objects or in the database (second-order: OctoPrint's stored filename) are not followed; nor are calls the call
-// graph cannot resolve, `**kw` dicts built or passed further than one step, `loop.subprocess_shell`, or a
-// parameter's shell flag per call site (one caller passing `shell=True` turns the shell on for every call).
+// trusted everywhere in it. Values stored on objects, in the session or in the database (second-order: OctoPrint's
+// stored filename) are not followed; nor are calls the call graph cannot resolve, `**kw` dicts built or passed
+// further than one step, `loop.subprocess_shell`, or a parameter's shell flag per call site (one caller passing
+// `shell=True` turns the shell on for every call).
 
 #include "lib/security.rerail"
 
-.violation ShellCommand(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) reaches this shell command: a client can run any command. Pass an argument list without a shell, or shlex.quote() the value, unless a check elsewhere fixes it."
-.violation ClientProgram(at: node, what: symbol, p: symbol, l: number) "Client data from `{what}` ({p}:{l}) picks the program this call runs: a client can run any executable. Look the program up in a fixed mapping, unless a check elsewhere fixes the value."
+.violation ShellCommand(at: node, what: symbol, p: symbol, l: number) "Client data from {what} ({p}:{l}) reaches this shell command. Pass an argument list without a shell, or shlex.quote() the value, unless it was checked against a fixed allow-list first."
+.violation ClientProgram(at: node, what: symbol, p: symbol, l: number) "Client data from {what} ({p}:{l}) picks the program this call runs. Look the program up in a fixed mapping, unless the value was checked against a fixed allow-list first."
+// The functions that run a command are this rule's sinks: a validator-named one is no check.
+sec_sink_fn(g) :- ci_sink(c, _, _), nearest(c, g, fdef).
 
 // ---- checks ------------------------------------------------------------------------------------------------------
-// ci_check_arg(h, a): a is what scope h checks: an argument of a validator-named call that does not run a command
-// (`check_output` and `check_call` run one), or the left of `in` / `not in`.
-.decl ci_runner_name(n: symbol)
-ci_runner_name("check_output"). ci_runner_name("check_call"). ci_runner_name("check_returncode").
-.decl ci_check_arg(h: node, a: node)
-ci_check_arg(h, a) :- kind(c, "call"), call_name(c, n), sec_validator_name(n), !ci_runner_name(n),
-    call_arg(c, _, _, a), nearest(c, h, fscope).
-ci_check_arg(h, a) :- kind(c, "comparison_operator"), op(c, o), (o = "in" ; o = "not in"), child(c, a, 0),
-    nearest(c, h, fscope).
 // ci_quoted(c): c quotes for a POSIX shell. lib/security's `.join()` step would read `shlex.join(…)` as `str.join`.
 .decl ci_quoted(c: node)
 ci_quoted(c) :- sec_call_q(c, "shlex.join"). ci_quoted(c) :- sec_call_q(c, "shlex.quote").
 ci_quoted(c) :- sec_call_q(c, "pipes.quote").
 .decl ci_checked(h: node, x: symbol)
-ci_checked(h, x) :- ci_check_arg(h, a), sec_reads(a, x), x != "self", x != "cls", x != "request".
+ci_checked(h, x) :- sec_checked(h, x).
 .decl ci_checked_expr(e: node)
-ci_checked_expr(e) :- sec_value_site(e), sec_reads(e, x), nearest(e, h, fscope), ci_checked(h, x).
-ci_checked_expr(e) :- sec_value_site(e), text(e, t), nearest(e, h, fscope), ci_check_arg(h, a), text(a, t).
-
+ci_checked_expr(e) :- sec_checked_expr(e).
 // ---- client text, check-aware ------------------------------------------------------------------------------------
 // ci_val(e, s): e's value holds client text from source s: lib/security's propagation (sec_step), with a name its
 // function checks (ci_checked) cut, across files through ci_param and ci_returns.
@@ -235,6 +229,8 @@ ClientProgram(c, what, p, l) :- ci_live(c, "program"), s = min s2 : { ci_hit(c, 
     .fixture "api/__init__.py" from "../cases/python-security-command-injection/api/__init__.py"
     .fixture "api/routes.py" from "../cases/python-security-command-injection/api/routes.py"
     .fixture "netops/__init__.py" from "../cases/python-security-command-injection/netops/__init__.py"
+    .fixture "netops/checks.py" from "../cases/python-security-command-injection/netops/checks.py"
+    .fixture "netops/kwviews.py" from "../cases/python-security-command-injection/netops/kwviews.py"
     .fixture "netops/management/__init__.py" from "../cases/python-security-command-injection/netops/management/__init__.py"
     .fixture "netops/management/commands/__init__.py" from "../cases/python-security-command-injection/netops/management/commands/__init__.py"
     .fixture "netops/management/commands/runcmd.py" from "../cases/python-security-command-injection/netops/management/commands/runcmd.py"
@@ -242,6 +238,8 @@ ClientProgram(c, what, p, l) :- ci_live(c, "program"), s = min s2 : { ci_hit(c, 
     .fixture "netops/sysutils.py" from "../cases/python-security-command-injection/netops/sysutils.py"
     .fixture "netops/tests/__init__.py" from "../cases/python-security-command-injection/netops/tests/__init__.py"
     .fixture "netops/tests/test_views.py" from "../cases/python-security-command-injection/netops/tests/test_views.py"
+    .fixture "netops/typed.py" from "../cases/python-security-command-injection/netops/typed.py"
+    .fixture "netops/urls.py" from "../cases/python-security-command-injection/netops/urls.py"
     .fixture "netops/utils.py" from "../cases/python-security-command-injection/netops/utils.py"
     .fixture "netops/views.py" from "../cases/python-security-command-injection/netops/views.py"
     .fixture "webapp/__init__.py" from "../cases/python-security-command-injection/webapp/__init__.py"
@@ -252,9 +250,17 @@ ClientProgram(c, what, p, l) :- ci_live(c, "program"), s = min s2 : { ci_hit(c, 
     .expect _ at "api/routes.py":43
     .expect _ at "api/routes.py":48
     .expect _ at "api/routes.py":54
+    .expect _ at "netops/checks.py":11
+    .expect _ at "netops/checks.py":16
+    .expect _ at "netops/checks.py":20
+    .expect _ at "netops/checks.py":39
+    .expect _ at "netops/checks.py":58
+    .expect _ at "netops/kwviews.py":7
     .expect _ at "netops/net.py":5
     .expect _ at "netops/sysutils.py":9
     .expect _ at "netops/sysutils.py":15
+    .expect _ at "netops/typed.py":24
+    .expect _ at "netops/typed.py":31
     .expect _ at "netops/utils.py":5
     .expect _ at "netops/utils.py":9
     .expect _ at "netops/views.py":18

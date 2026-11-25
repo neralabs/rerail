@@ -1,5 +1,5 @@
 .policy "drf-practice-validate-returns-value" revision 1
-.description "A DRF serializer's validate_<field>() and validate() must return the validated value on every path that does not raise."
+.description "Return the validated value from every path of a DRF serializer's validate_<field>() and validate() that does not raise."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -18,9 +18,13 @@
 //     serializer, the hook of a `many=True` nested serializer field is left alone: the library saves that field from
 //     the request's initial data, not from the hook's return value;
 //   - `validate(self, attrs)`, exactly two positional parameters.
-// A path that raises is not a way out: a method whose every path returns or raises is fine. `return None` is a
-// value written on purpose and is left alone; so are a validate_<x> that the class or a run base calls itself
-// (`self.validate_x(...)`: a hook of its own, not DRF's).
+// A path that raises is not a way out: a method whose every path returns or raises is fine. A statement that only
+// calls something that always raises ends its path too: `self.fail("key")` (DRF's Field.fail raises
+// ValidationError; unless the class or a run base defines its own fail), and a call of a function or method of the
+// run whose every path raises (`reject("bad")`, `self._reject(...)`, resolved through imports and the class's
+// methods). In a validate_<x>, `return None` is a value written on purpose and is left alone; in validate() DRF
+// rejects it every time (`assert value is not None`), so it is reported. Also left alone: a validate_<x> that the
+// class or a run base calls itself (`self.validate_x(...)`: a hook of its own, not DRF's).
 //   class SignupSerializer(serializers.Serializer):
 //       email = serializers.EmailField()
 //       def validate_email(self, value):               reported: falls off the end
@@ -33,23 +37,26 @@
 //           ...
 // Gaps: fields added at run time (`self.fields["x"] = ...` in __init__), Meta.exclude, and `"__all__"` with a model
 // outside the run are not read, so their hooks are not checked; a serializer whose to_internal_value or
-// run_validation skips the hooks is still checked; `return None` in validate() fails DRF's assertion too, but is left
-// alone as written on purpose; a hook on a mixin that derives from no serializer is not checked.
+// run_validation skips the hooks is still checked; a hook on a mixin that derives from no serializer is not checked;
+// a helper that raises only through another helper, or only on some paths, is not followed.
 
 #include "lib/drf.rerail"
 #include "python/flow-return.rerail"   // fn_return, bare_return
 
-.violation ValidateFieldFallsOff(at: node, m: symbol, x: symbol) "`{m}()` can reach its end without returning: DRF stores its return value as the validated value of `{x}`, so on that path the field becomes None and is saved as None. Return the value (`return value`, or the normalised one) on every path that does not raise ValidationError; write `return None` only if None is the value you mean."
+.violation ValidateFieldFallsOff(at: node, m: symbol, x: symbol) "`{m}()` can end without returning, so DRF saves `{x}` as None on that path. Return the value (or the normalised one) on every path that does not raise; return None only if you mean it."
 ValidateFieldFallsOff(n, m, x) :- vrv_hook(f, m, x), field(f, "body", b), vrv_open(b), field(f, "name", n).
 
-.violation ValidateFieldBareReturn(at: node, m: symbol, x: symbol) "This bare `return` in `{m}()` makes the validated value of `{x}` None: DRF stores the method's return value as the field's value. Return the value instead (`return value`), or raise ValidationError; write `return None` only if None is the value you mean."
+.violation ValidateFieldBareReturn(at: node, m: symbol, x: symbol) "This bare `return` in `{m}()` makes DRF save `{x}` as None. Return the value instead, or raise ValidationError; write `return None` only if None is the value you mean."
 ValidateFieldBareReturn(r, m, x) :- vrv_hook(f, m, x), fn_return(f, r), bare_return(r).
 
-.violation ValidateFallsOff(at: node) "`validate()` can reach its end without returning, and DRF asserts it returns the validated data, so every request that takes that path fails with an AssertionError. Return `attrs` (or the dict you built) on every path that does not raise ValidationError."
+.violation ValidateFallsOff(at: node) "`validate()` can end without returning, and DRF asserts it returns data, so that path fails with an AssertionError. Return attrs (or the dict you built) on every path that does not raise."
 ValidateFallsOff(n) :- vrv_validate(f), field(f, "body", b), vrv_open(b), field(f, "name", n).
 
-.violation ValidateBareReturn(at: node) "This bare `return` makes `validate()` return None, and DRF asserts it returns the validated data, so every request that reaches it fails with an AssertionError. Return `attrs` (or the dict you built) here, or raise ValidationError."
+.violation ValidateBareReturn(at: node) "This bare `return` makes `validate()` return None, which DRF's assertion rejects, so the request fails. Return attrs (or the dict you built) here, or raise ValidationError."
 ValidateBareReturn(r) :- vrv_validate(f), fn_return(f, r), bare_return(r).
+
+.violation ValidateReturnsNone(at: node) "`return None` in `validate()` fails DRF's assertion that it returns data, so every request reaching it errors. Return attrs here, or raise ValidationError to reject the input."
+ValidateReturnsNone(r) :- vrv_validate(f), fn_return(f, r), child(r, e, 0), unparen(e, u), kind(u, "none").
 
 // vrv_method(c, f, m): f is method m(self, <one more>) written directly in serializer class c, outside test code.
 .decl vrv_method(c: node, f: node, m: symbol)
@@ -70,7 +77,7 @@ vrv_discarded(c, x) :- class_def(c, q), vrv_writable_nested_q(q), drf_declared(c
     call_name(k, t), suffix("Serializer", t).
 .decl vrv_writable_nested_q(q: symbol)
 vrv_writable_nested_q(q) :- class_def(c, q), drf_base(c, b), prefix("drf_writable_nested.", b).
-vrv_writable_nested_q(q) :- class_def(c, q), drf_base(c, m), vrv_writable_nested_q(m).
+vrv_writable_nested_q(q) :- class_def(c, q), drf_base(c, m), drf_cls_q(m, mq), vrv_writable_nested_q(mq).
 // vrv_field(c, x): x is a field of serializer c: declared, named in Meta.fields, or (`"__all__"`) a Meta.model field.
 .decl vrv_field(c: node, x: symbol)
 vrv_field(c, x) :- drf_declared(c, x, _).
@@ -110,7 +117,20 @@ vrv_compound("return_statement"). vrv_compound("raise_statement"). vrv_compound(
 vrv_compound("try_statement"). vrv_compound("with_statement"). vrv_compound("while_statement").
 vrv_compound("for_statement"). vrv_compound("match_statement").
 .decl vrv_s_open(s: node)
-vrv_s_open(s) :- vrv_stmt(s), kind(s, k), !vrv_compound(k).
+vrv_s_open(s) :- vrv_stmt(s), kind(s, k), !vrv_compound(k), !vrv_raising_call(s).
+// vrv_raising_call(s): expression statement s is a call that always raises: `self.fail(...)` in a serializer that
+// keeps DRF's fail, or a call of a run function or method whose body always raises (python/flow's always_raises).
+.decl vrv_raising_call(s: node)
+vrv_raising_call(s) :- vrv_stmt(s), kind(s, "expression_statement"), child(s, k, 0), kind(k, "call"),
+    field(k, "function", fn), attr_of(fn, o, "fail"), kind(o, "identifier"), text(o, "self"),
+    nearest(s, c, "class_definition"), drf_serializer(c), !drf_method(c, "fail", _).
+vrv_raising_call(s) :- vrv_stmt(s), kind(s, "expression_statement"), child(s, k, 0), kind(k, "call"),
+    field(k, "function", fn), sym_of(fn, q), qualname(g, q), kind(g, "function_definition"), vrv_raises_always(g).
+vrv_raising_call(s) :- vrv_stmt(s), kind(s, "expression_statement"), child(s, k, 0), kind(k, "call"),
+    field(k, "function", fn), attr_of(fn, o, m), kind(o, "identifier"), text(o, "self"),
+    nearest(s, c, "class_definition"), drf_method(c, m, g), vrv_raises_always(g).
+.decl vrv_raises_always(g: node)
+vrv_raises_always(g) :- kind(g, "function_definition"), field(g, "body", b), always_raises(b).
 vrv_s_open(s) :- vrv_stmt(s), kind(s, "if_statement"), field(s, "consequence", b), vrv_open(b).
 vrv_s_open(s) :- vrv_stmt(s), kind(s, "if_statement"), !vrv_has_else(s).
 vrv_s_open(s) :- vrv_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "elif_clause"),
@@ -158,6 +178,9 @@ vrv_loop("while_statement"). vrv_loop("for_statement"). vrv_loop("function_defin
 // The cases, `cases/drf-practice-validate-returns-value/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.
 .test cases exactly
+    .fixture "accounts/__init__.py" from "../cases/drf-practice-validate-returns-value/accounts/__init__.py"
+    .fixture "accounts/serializers.py" from "../cases/drf-practice-validate-returns-value/accounts/serializers.py"
+    .fixture "core/errors.py" from "../cases/drf-practice-validate-returns-value/core/errors.py"
     .fixture "core/__init__.py" from "../cases/drf-practice-validate-returns-value/core/__init__.py"
     .fixture "core/serializers.py" from "../cases/drf-practice-validate-returns-value/core/serializers.py"
     .fixture "shop/__init__.py" from "../cases/drf-practice-validate-returns-value/shop/__init__.py"
@@ -165,6 +188,9 @@ vrv_loop("while_statement"). vrv_loop("for_statement"). vrv_loop("function_defin
     .fixture "shop/serializers.py" from "../cases/drf-practice-validate-returns-value/shop/serializers.py"
     .fixture "shop/tests/__init__.py" from "../cases/drf-practice-validate-returns-value/shop/tests/__init__.py"
     .fixture "shop/tests/test_serializers.py" from "../cases/drf-practice-validate-returns-value/shop/tests/test_serializers.py"
+    .expect _ at "accounts/serializers.py":59
+    .expect _ at "accounts/serializers.py":70
+    .expect _ at "accounts/serializers.py":81
     .expect _ at "core/serializers.py":13
     .expect _ at "shop/serializers.py":25
     .expect _ at "shop/serializers.py":31

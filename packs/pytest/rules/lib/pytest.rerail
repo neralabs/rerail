@@ -1,8 +1,8 @@
-// lib/pytest: test code as the pytest-practice rules read it: which functions are tests, fixtures and set-up hooks,
-// which fixture a test's parameter resolves to through the conftest.py files, what a mock patch replaces, and which
-// code undoes a change after the test. Names resolve through imports (python/names' sym_of), so `from unittest
-// import mock` and `from unittest.mock import patch` both reach "unittest.mock.patch", and `import pytest as pt`
-// still makes `@pt.fixture` a fixture.
+// lib/pytest: test code as the pytest-practice rules read it: which functions are tests, fixtures, set-up hooks and
+// the helpers they call, which fixture a test's parameter resolves to through the conftest.py files, what a mock patch
+// replaces, and one definition, shared by the three leak rules, of a change to state and of the code that undoes it.
+// Names resolve through imports (python/names' sym_of), so `from unittest import mock` and `from unittest.mock import
+// patch` both reach "unittest.mock.patch", and `import pytest as pt` still makes `@pt.fixture` a fixture.
 //
 // Interface
 //   Files:         pt_test_doc(d)              document d is test code: a tests/test/testing/unittests directory,
@@ -14,7 +14,7 @@
 //                  pt_fixture_name(f, x)       fixture f is requested as x: its `name=`, else its def name
 //                  pt_fixture_scope(f, s)      fixture f's scope: "function" unless `scope=` gives a literal
 //                                              ("class", "module", "package", "session"); "dynamic" for a callable
-//                  pt_yield(f, y)              y is a `yield` of fixture f's own body (not of a nested def)
+//                  pt_yield(f, y)              y is a `yield` of fixture f's body (not of a nested def)
 //                  pt_test(f)                  def f is a test: named test*, in a test document, not a fixture, at
 //                                              module level or a method of a class (pytest's and unittest's)
 //                  pt_setup_hook(f)            f is a per-test or per-class set-up hook: setUp, setUpClass,
@@ -24,27 +24,60 @@
 //                                              teardown_method, teardown_class, teardown_function, teardown_module
 //                  pt_test_code(f, k)          f runs around one test: k "test", "fixture" or "setup"; in a test
 //                                              document for tests and hooks, anywhere for fixtures
+//                  pt_helper(g)                def g of a test document is called (through the call graph) by test
+//                                              code that is not session set-up: `login_as(user)` in tests/helpers.py
+//                  pt_runs_in_test(u)          u is test code or a helper, and not session set-up: its changes
+//                                              happen inside a test. Module-level code never is (it runs once, at
+//                                              import, before the first test), nor is a runner script's main()
+//                  pt_session_def(u)           u is session-wide set-up that every test sees the same: an autouse
+//                                              session fixture, a session fixture an autouse fixture requests,
+//                                              pytest-django's django_db_setup / django_db_modify_db_settings*
 //                  pt_own(n, f)                n runs in f's own body: no nested def, lambda or class between
-//   Undoing:       pt_undo_ask(n)              (input) a rule adds the nodes it asks pt_undo about: a write, a call
-//                  pt_undo(n, f)               asked node n is code that runs after test code f to undo its
-//                                              changes: after a fixture's yield, in a `finally` of f, in a teardown
-//                                              hook of f's class or module, or in a callback f passes to addCleanup /
-//                                              request.addfinalizer (a lambda, or a def of f's own body)
+//                  pt_hook(g)                  def g is a pytest hook (`pytest_configure`, `pytest_sessionstart`, ...)
+//                  pt_autouse(f)               fixture f is `autouse=True`
+//   Changes:       pt_loc(n, e, p, how)        change n (in test code, a fixture or undo code) writes path p below
+//                                              expression e: "" for e itself, then `.attr` and `['key']` segments
+//                                              (`[=text]` for a computed key, `[*]` for every item, `.*` for any
+//                                              attribute); a row for every expression of the written chain:
+//                                              `app.config["X"] = 1` gives (app.config["X"], ""), (app.config,
+//                                              "['X']"), (app, ".config['X']"). how: "set", "remove" (del, pop,
+//                                              clear, popitem, remove, discard, delattr), "reset" (clear, discard,
+//                                              pop with a default, del: a removal that tolerates a missing entry),
+//                                              "restore" (a cleanup registration or a patch: never a change)
+//                  pt_change(n)                n is a change: a store, `del` or augmented assignment of an attribute
+//                                              or item, a list/dict/set mutator call (pt_mutator), setattr/delattr
+//                  pt_covers(n, e, p, a)       a restore of path a below e puts back n's change of path p below e:
+//                                              a is p, a chain p runs through (`.config` for `.config['X']`), or a
+//                                              whole-container form (`.config[*]`, `.*`) of one
+//   Undoing:       pt_undo(n, u)               n is code that runs after u to undo u's changes (asked for every
+//                                              pt_loc node): after the yield of a fixture or @contextmanager u; in a
+//                                              finally of u; in a teardown hook or `__exit__` of u's class or a base
+//                                              class; in teardown_module/teardown_function of u's module; in a
+//                                              callback u registers with addCleanup/addfinalizer (a lambda, a def
+//                                              by name, a bound method `self._restore`); in a def that undo code
+//                                              calls; in the undo code of a function-scoped fixture u requests or
+//                                              an autouse one that covers u; in the undo code of a test that calls
+//                                              helper u. Code in a teardown hook or `__exit__` is undo code of its
+//                                              own def too, so a rule never reports the undo itself
+//                  pt_restore(n, e, a)         something puts back path a below e after change n: a pt_loc of undo
+//                                              code of n's def, a cleanup registration (`addCleanup(setattr, o,
+//                                              "x", old)`, `addCleanup(os.environ.pop, "K")`, `addCleanup(d.clear)`)
+//                                              or a patch active where n runs (pt_guarded)
+//                  pt_guarded(n, c)            patch c is active where change n runs and puts its target back when
+//                                              it ends: in n's def, a decorator of that def or its class, a with
+//                                              around n, a set-up hook of the class (a started patcher), or a
+//                                              function-scoped fixture the def requests
 //                  pt_cleanup_call(c, f)       call c in f's own body registers a cleanup: addCleanup,
 //                                              addClassCleanup, addAsyncCleanup, addfinalizer
-//   Session:       pt_hook(g)                  def g is a pytest hook (`pytest_configure`, `pytest_sessionstart`, ...)
-//                  pt_autouse(f)               fixture f is `autouse=True`
-//                  pt_session_ask(n)           (input) a rule adds the nodes it asks pt_session_code about
-//                  pt_session_code(n)          asked node n is session-wide set-up, run once on purpose: inside a
-//                                              pytest hook, in an autouse session-scoped fixture, or module-level
-//                                              code of a conftest.py
 //   Fixtures:      pt_requests(t, x, p)        test or fixture t requests fixture x by its parameter p (positional
 //                                              without a default, or keyword-only; not self, cls or request)
 //                  pt_resolves(t, x, g)        t's request for x resolves to fixture def g: the nearest visible
 //                                              definition (t's class, then t's module, then the conftest.py files
-//                                              from t's directory up to the root), as pytest picks it
-//                  pt_param_value(r, g)        identifier r reads a parameter of the def it runs in whose fixture
-//                                              resolves to g
+//                                              from t's directory up to the root), as pytest picks it; also a
+//                                              `request.getfixturevalue("x")` call in t
+//                  pt_param_value(r, g)        identifier r reads a value of fixture g in the def it runs in: a
+//                                              parameter whose fixture resolves to g, or a name bound to
+//                                              `request.getfixturevalue("x")`
 //   Mocks:         pt_patch(c, k)              call c is a mock patch: k "patch" (`mock.patch`, `mocker.patch`),
 //                                              "object", "dict" or "multiple" (`patch.object`, `mocker.patch.dict`)
 //                  pt_patch_name(c, s, a)      c replaces the dotted name s (string node a): `patch("a.b.f")`,
@@ -60,16 +93,12 @@
 //                                              session_mocker) fixture parameter of an enclosing def
 //                  pt_monkeypatch(e)           identifier e is pytest's `monkeypatch` fixture parameter of an
 //                                              enclosing def
+//                  pt_mp_call(c, m)            c calls monkeypatch's method m
 //   State:         pt_environ(e)               e is os.environ
-//                  pt_settings(e)              e is django.conf.settings (pytest-django's `settings` fixture
-//                                              parameter is not: it resolves to no import)
 //                  pt_store(t)                 t is written or deleted: an assignment, augmented assignment, `del`
 //                                              or for/with target
-//                  pt_through(t, o)            t is an attribute or subscript chain over o: `o.a`, `o[k]`, `o.a[k].b`
 //                  pt_mutator(m)               m is a method that changes a list, dict or set in place (append,
 //                                              update, pop, ...)
-//                  pt_mutates(n, o)            n changes the object o names: a store target through o, or a
-//                                              mutator call whose receiver is o or a chain over o
 //
 // pytest background
 //   - A fixture's value is made once per scope: a `scope="module"` fixture's object is the same object in every test
@@ -86,10 +115,14 @@
 //         @mock.patch("shop.mail.send")               pt_patch(_, "patch"), pt_patch_name(_, "shop.mail.send", _),
 //         def test_order(send, app):                  pt_patch_deco(<test_order>, _, 0), pt_injects
 //             app.config["X"] = 1                     pt_test, pt_requests(_, "app", _), pt_resolves(_, "app", <app>),
-//                                                     pt_param_value(<app>, <app def>), pt_mutates(<app.config["X"]>, <app>)
+//                                                     pt_param_value(<app>, <app def>),
+//                                                     pt_loc(<app.config["X"]>, <app>, ".config['X']", "set")
+//             try: ... finally: app.config.pop("X", None)
+//                                                     pt_undo(<pop call>, <test_order>),
+//                                                     pt_restore(<app.config["X"]>, <app>, ".config['X']")
 //             os.environ["K"] = "v"                   pt_environ(<os.environ>)
 #include "python/ast.rerail"
-#include "python/calls.rerail"   // call_arg, posarg, callee: syntax helpers only
+#include "python/calls.rerail"   // call_arg, posarg, callee; calls/call_target: the call graph to helpers
 
 // ---- files -------------------------------------------------------------------------------------------------------
 .decl pt_test_doc(d: number)
@@ -124,6 +157,8 @@ pt_fixture_scope(f, s) :- pt_scope_given(f, s).
 pt_fixture_scope(f, "function") :- pt_fixture(f), !pt_scope_given(f, _).
 .decl pt_yield(f: node, y: node)
 pt_yield(f, y) :- pt_fixture(f), kind(y, "yield"), def_frame(y, f).
+.decl pt_autouse(f: node)
+pt_autouse(f) :- pt_fixture_deco(f, e), kind(e, "call"), call_arg(e, -1, "autouse", v), kind(v, "true").
 
 // ---- tests and hooks ---------------------------------------------------------------------------------------------
 // pt_level(f): def f sits in a module body or directly in a class body (a method), not inside another def.
@@ -157,50 +192,267 @@ pt_test_code(f, "setup") :- pt_setup_hook(f).
 pt_stop("function_definition"). pt_stop("lambda"). pt_stop("class_definition").
 .decl pt_own(n: node, f: node)
 pt_own(n, f) :- kind(f, "function_definition"), field(f, "body", b), within_stop(n, b, pt_stop).
-
-// ---- undoing -----------------------------------------------------------------------------------------------------
+.decl pt_hook(g: node)
+pt_hook(g) :- kind(g, "function_definition"), def_name(g, s), prefix("pytest_", s).
 // pt_class_of(f, c): def f is a method of class c.
 .decl pt_class_of(f: node, c: node)
 pt_class_of(f, c) :- kind(f, "function_definition"), nearest(f, c, scope), kind(c, "class_definition").
-// pt_undo is asked on demand (pt_undo_ask): asked for every node, its after-the-yield clause would order every pair of
-// nodes in a fixture, which does not finish on a large repository.
-.decl pt_undo_ask(n: node)
-.decl pt_undo(n: node, f: node)
-// After a fixture's yield, in its own body: `yield x` then `x.close()`; `with a: yield; b()`.
-pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, f), pt_yield(f, y), pt_own(n, f), earlier(y, n).
-// In a finally clause of f's own body (the try around a yield included).
-pt_undo(n, f) :- pt_undo_ask(n), inside(n, fc, "finally_clause"), pt_own(fc, f).
-// In a teardown hook of the class of a method f (a test, a set-up hook or a helper the tests call).
-pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, h), pt_teardown_hook(h), pt_own(n, h), pt_class_of(h, c),
-    pt_class_of(f, c), f != h, !pt_fixture(f).
-// teardown_module / teardown_function at module level undo the defs of their module.
-pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, h), pt_teardown_hook(h), pt_own(n, h), nearest(h, m, scope),
-    kind(m, "module"), docof(h, d), kind(f, "function_definition"), docof(f, d), f != h, !pt_fixture(f).
-// In a callback registered with addCleanup / addfinalizer: a lambda argument, or a def of f's own body passed by name.
-pt_undo(n, f) :- pt_undo_ask(n), inside(n, a, "lambda"), posarg(c, 0, a), pt_cleanup_call(c, f).
-pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, g), pt_own(n, g), defn(f, x, g), pt_cleanup_call(c, f), posarg(c, 0, a),
-    kind(a, "identifier"), text(a, x).
-.decl pt_cleanup_call(c: node, f: node)
-pt_cleanup_call(c, f) :- pt_test_code(f, _), kind(c, "call"), pt_own(c, f), field(c, "function", fn),
-    attr_of(fn, _, m), (m = "addCleanup" ; m = "addClassCleanup" ; m = "addfinalizer" ; m = "addAsyncCleanup").
+// pt_class_chain(f, c): c is f's class or one of its base classes in the run (through imports: class_base resolves).
+.decl pt_class_chain(f: node, c: node)
+pt_class_chain(f, c) :- pt_class_of(f, c).
+pt_class_chain(f, b) :- pt_class_of(f, c), class_def(c, cq), subclass(cq, bq), class_def(b, bq).
 
 // ---- session set-up ----------------------------------------------------------------------------------------------
-.decl pt_hook(g: node)
-pt_hook(g) :- kind(g, "function_definition"), def_name(g, s), prefix("pytest_", s).
-.decl pt_autouse(f: node)
-pt_autouse(f) :- pt_fixture_deco(f, e), kind(e, "call"), call_arg(e, -1, "autouse", v), kind(v, "true").
-.decl pt_session_ask(n: node)
-.decl pt_session_code(n: node)
-pt_session_code(n) :- pt_session_ask(n), inside(n, g, "function_definition"), pt_hook(g).
-pt_session_code(n) :- pt_session_ask(n), def_frame(n, g), pt_autouse(g), pt_fixture_scope(g, "session").
-pt_session_code(n) :- pt_session_ask(n), docof(n, d), file_name(d, "conftest.py"), !def_frame(n, _),
-    !inside(n, _, "class_definition").
+// pt_session_def(u): set-up that runs once for the whole run, before the tests that depend on it, so every test sees
+// one value: an autouse session fixture, a session fixture an autouse fixture requests, and pytest-django's database
+// set-up fixtures, which it runs once before the first database test (`django_db_setup`,
+// `django_db_modify_db_settings*`: fixture names are pytest-django's interface, so the name is the identity).
+.decl pt_session_def(u: node)
+pt_session_def(u) :- pt_autouse(u), pt_fixture_scope(u, "session").
+pt_session_def(u) :- pt_fixture_scope(u, "session"), pt_resolves(a, _, u), pt_autouse(a).
+pt_session_def(u) :- pt_fixture_name(u, x), (x = "django_db_setup" ; prefix("django_db_modify_db_settings", x)).
+
+// ---- where test code runs ----------------------------------------------------------------------------------------
+// pt_undo_def(g): every line of g is undo code: a teardown hook, a tearDown-style method of any class (a base test
+// class may live outside test documents: `shop/testutils/base.py`), or `__exit__` / `__aexit__` of a class.
+.decl pt_undo_def(g: node)
+pt_undo_def(g) :- pt_teardown_hook(g).
+pt_undo_def(g) :- pt_level(g), def_name(g, x), pt_teardown_name(x), pt_class_of(g, _).
+pt_undo_def(g) :- kind(g, "function_definition"), def_name(g, x), (x = "__exit__" ; x = "__aexit__"), pt_class_of(g, _).
+// pt_helper(g): a def of a test document that test code calls, directly or through other such helpers (python/calls,
+// so `self.helper()`, imported helpers and constructors resolve). Not test code itself, a pytest hook or undo code.
+// A def no test calls (a runner script's main(), a check script under tests/) is not one.
+.decl pt_helper_cand(g: node)
+pt_helper_cand(g) :- kind(g, "function_definition"), docof(g, d), pt_test_doc(d), !pt_test_code(g, _), !pt_hook(g),
+    !pt_undo_def(g).
+.decl pt_helper(g: node)
+pt_helper(g) :- pt_test_code(t, _), !pt_session_def(t), calls(t, g), pt_helper_cand(g).
+pt_helper(g) :- pt_helper(h), calls(h, g), pt_helper_cand(g).
+.decl pt_runs_in_test(u: node)
+pt_runs_in_test(u) :- pt_test_code(u, _), !pt_session_def(u).
+pt_runs_in_test(u) :- pt_helper(u).
+// pt_cm_def(f): f is a @contextmanager / @asynccontextmanager def: the code after its yield restores what it set.
+.decl pt_cm_def(f: node)
+pt_cm_def(f) :- decorator(f, e0), unparen(e0, e), sym_of(e, q),
+    (q = "contextlib.contextmanager" ; q = "contextlib.asynccontextmanager").
+// pt_split(f, y): y is a yield of f's body, f a fixture or a context manager: what follows y is f's teardown.
+.decl pt_split(f: node, y: node)
+pt_split(f, y) :- pt_yield(f, y).
+pt_split(f, y) :- pt_cm_def(f), kind(y, "yield"), def_frame(y, f).
+
+// ---- changes -----------------------------------------------------------------------------------------------------
+.decl pt_store(t: node)
+pt_store(t) :- expr_ctx(t, "store").
+pt_store(t) :- expr_ctx(t, "del").
+pt_store(t) :- kind(a, "augmented_assignment"), field(a, "left", t).
+.decl pt_mutator(m: symbol)
+pt_mutator("append"). pt_mutator("extend"). pt_mutator("insert"). pt_mutator("remove"). pt_mutator("pop").
+pt_mutator("clear"). pt_mutator("update"). pt_mutator("setdefault"). pt_mutator("popitem"). pt_mutator("add").
+pt_mutator("discard"). pt_mutator("sort"). pt_mutator("reverse"). pt_mutator("__setitem__").
+pt_mutator("__delitem__").
+// pt_scope_def(u): a def the leak rules read changes in: a def of a test document (a test, fixture, hook, helper,
+// teardown or callback), a fixture anywhere, and the undo code of base classes and cleanup callbacks anywhere.
+// Module-level code is in none: it runs once, at import.
+.decl pt_scope_def(u: node)
+pt_scope_def(u) :- kind(u, "function_definition"), docof(u, d), pt_test_doc(d).
+pt_scope_def(u) :- pt_fixture(u), docof(u, d), !pt_test_doc(d).
+pt_scope_def(u) :- pt_undo_def(u), docof(u, d), !pt_test_doc(d).
+pt_scope_def(u) :- pt_callback(_, u), docof(u, d), !pt_test_doc(d).
+// pt_key(n, i, k): key node i of n's write as a path segment's key: 'K' for a literal, =text for an expression; in a
+// for loop, an expression key stands for every key ([*]): `for k in saved: os.environ[k] = saved[k]`. Asked
+// (pt_key_ask) for the subscripts of written chains and the key arguments of mutator calls and patches.
+// pt_base(n, e): the expression n writes below, before any path is built (nodes only, so the key lookup below does not
+// depend on the paths it helps build); pt_chain(n, m): m is on the chain from there to its root.
+.decl pt_base(n: node, e: node)
+pt_base(t, t) :- pt_target(t).
+pt_base(c, r) :- pt_mcall(c, r, _).
+pt_base(c, o) :- pt_setattr_call(c, _), posarg(c, 0, o).
+pt_base(c, o) :- pt_cleanup_call(c, _), posarg(c, 0, f), pt_setattr_fn(f), posarg(c, 1, o).
+pt_base(c, r) :- pt_cleanup_call(c, _), posarg(c, 0, f), attr_of(f, r, m), pt_mutator(m).
+pt_base(c, o) :- pt_patch_attr(c, o, _).
+pt_base(c, o) :- pt_patch(c, k), (k = "multiple" ; k = "dict"), (posarg(c, 0, o) ; call_arg(c, -1, "in_dict", o)),
+    !str(o, _).
+pt_base(c, o) :- pt_mp_call(c, m), (m = "setitem" ; m = "delitem"), posarg(c, 0, o).
+.decl pt_chain(n: node, m: node)
+pt_chain(n, e) :- pt_base(n, e).
+pt_chain(n, o) :- pt_chain(n, m), attr_of(m, o, _).
+pt_chain(n, o) :- pt_chain(n, m), kind(m, "subscript"), field(m, "value", o).
+.decl pt_key_ask(n: node, i: node)
+pt_key_ask(n, i) :- pt_chain(n, m), kind(m, "subscript"), field(m, "subscript", i).
+pt_key_ask(c, a) :- pt_mcall(c, _, m), (m = "setdefault" ; m = "__setitem__" ; m = "pop" ; m = "__delitem__"),
+    posarg(c, 0, a).
+pt_key_ask(c, a) :- pt_cleanup_call(c, _), posarg(c, 1, a).
+pt_key_ask(c, a) :- pt_mp_call(c, m), (m = "setitem" ; m = "delitem"), posarg(c, 1, a).
+.decl pt_key(n: node, i: node, k: symbol)
+pt_key(n, i, cat("'", s, "'")) :- pt_key_ask(n, i), str(i, s).
+pt_key(n, i, cat("=", t)) :- pt_key_ask(n, i), !str(i, _), text(i, t), !inside(n, _, "for_statement").
+pt_key(n, i, "*") :- pt_key_ask(n, i), !str(i, _), inside(n, _, "for_statement").
+// pt_bare_annotation(t): `x.y: T` with no value, a declaration and no write.
+.decl pt_bare_annotation(t: node)
+pt_bare_annotation(t) :- kind(a, "assignment"), field(a, "left", t), !field(a, "right", _).
+// pt_target(t): an attribute or item written in a def the rules read.
+.decl pt_target(t: node)
+pt_target(t) :- pt_store(t), (kind(t, "attribute") ; kind(t, "subscript")), def_frame(t, u), pt_scope_def(u).
+
+// pt_at(n, e, p, how): the change's own row: what n writes, below expression e.
+.decl pt_at(n: node, e: node, p: symbol, how: symbol)
+// A store, `del` or augmented assignment of an attribute or item: the target itself.
+pt_at(t, t, "", "set") :- pt_target(t), !expr_ctx(t, "del"), !pt_bare_annotation(t).
+pt_at(t, t, "", "remove") :- pt_target(t), expr_ctx(t, "del").
+pt_at(t, t, "", "reset") :- pt_target(t), expr_ctx(t, "del").
+// A mutator call on a receiver r: keyed ones write r's item, the others every item of r.
+pt_at(c, r, cat("[", k, "]"), "set") :- pt_mcall(c, r, m), (m = "setdefault" ; m = "__setitem__"), posarg(c, 0, a),
+    pt_key(c, a, k).
+pt_at(c, r, cat("[", k, "]"), "remove") :- pt_mcall(c, r, m), (m = "pop" ; m = "__delitem__"), posarg(c, 0, a),
+    pt_key(c, a, k).
+pt_at(c, r, cat("[", k, "]"), "reset") :- pt_mcall(c, r, "pop"), posarg(c, 0, a), posarg(c, 1, _), pt_key(c, a, k).
+pt_at(c, r, "[*]", "remove") :- pt_mcall(c, r, m), (m = "clear" ; m = "popitem" ; m = "remove" ; m = "discard").
+pt_at(c, r, "[*]", "remove") :- pt_mcall(c, r, "pop"), !posarg(c, 0, _).
+pt_at(c, r, "[*]", "reset") :- pt_mcall(c, r, m), (m = "clear" ; m = "discard").
+pt_at(c, r, "[*]", "set") :- pt_mcall(c, r, m), (m = "append" ; m = "extend" ; m = "insert" ; m = "add" ; m = "sort" ;
+    m = "reverse").
+pt_at(c, r, cat("['", k, "']"), "set") :- pt_update_dict(c, r, d), child(d, p, _), kind(p, "pair"),
+    field(p, "key", a), str(a, k).
+pt_at(c, r, "[*]", "set") :- pt_mcall(c, r, "update"), posarg(c, 0, d0), unparen(d0, d), !kind(d, "dictionary").
+pt_at(c, r, "[*]", "set") :- pt_update_dict(c, r, d), child(d, s, _), kind(s, "dictionary_splat").
+pt_at(c, r, "[*]", "set") :- pt_update_dict(c, r, d), child(d, p, _), kind(p, "pair"), field(p, "key", a), !str(a, _).
+pt_at(c, r, cat("['", k, "']"), "set") :- pt_mcall(c, r, "update"), call_arg(c, -1, k, _), k != "".
+pt_at(c, r, "[*]", "set") :- pt_mcall(c, r, "update"), field(c, "arguments", al), child(al, s, _),
+    kind(s, "dictionary_splat").
+// setattr / delattr with a literal name write that attribute; with a computed one, any attribute.
+pt_at(c, o, cat(".", x), how) :- pt_setattr_call(c, how), posarg(c, 0, o), posarg(c, 1, s), str(s, x).
+pt_at(c, o, ".*", how) :- pt_setattr_call(c, how), posarg(c, 0, o), posarg(c, 1, s), !str(s, _).
+// Restores that are no change: what a cleanup registration puts back (`addCleanup(setattr, o, "x", old)`,
+// `addCleanup(os.environ.pop, "K")`, `addCleanup(d.clear)`) and what a patch puts back when it ends.
+pt_at(c, o, cat(".", x), "restore") :- pt_cleanup_call(c, _), posarg(c, 0, f), pt_setattr_fn(f), posarg(c, 1, o),
+    posarg(c, 2, s), str(s, x).
+pt_at(c, r, cat("[", k, "]"), "restore") :- pt_cleanup_call(c, _), posarg(c, 0, f), attr_of(f, r, m), pt_mutator(m),
+    posarg(c, 1, a), pt_key(c, a, k).
+pt_at(c, r, "[*]", "restore") :- pt_cleanup_call(c, _), posarg(c, 0, f), attr_of(f, r, m), pt_mutator(m),
+    !posarg(c, 1, _).
+pt_at(c, o, cat(".", x), "restore") :- pt_patch_attr(c, o, x).
+pt_at(c, o, cat(".", x), "restore") :- pt_patch(c, "multiple"), posarg(c, 0, o), call_arg(c, -1, x, _), x != "",
+    !str(o, _).
+pt_at(c, o, "[*]", "restore") :- pt_patch(c, "dict"), (posarg(c, 0, o) ; call_arg(c, -1, "in_dict", o)), !str(o, _).
+pt_at(c, o, cat("[", k, "]"), "restore") :- pt_mp_call(c, m), (m = "setitem" ; m = "delitem"), posarg(c, 0, o),
+    posarg(c, 1, a), pt_key(c, a, k).
+.decl pt_update_dict(c: node, r: node, d: node)  // `r.update({...})`: the dict display
+pt_update_dict(c, r, d) :- pt_mcall(c, r, "update"), posarg(c, 0, d0), unparen(d0, d), kind(d, "dictionary").
+.decl pt_mcall(c: node, r: node, m: symbol)
+pt_mcall(c, r, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, r, m), pt_mutator(m), def_frame(c, u),
+    pt_scope_def(u).
+.decl pt_setattr_fn(f: node)
+pt_setattr_fn(f) :- sym_of(f, "builtins.setattr").
+pt_setattr_fn(f) :- sym_of(f, "builtins.delattr").
+.decl pt_setattr_call(c: node, how: symbol)
+pt_setattr_call(c, "set") :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.setattr"), def_frame(c, u),
+    pt_scope_def(u).
+pt_setattr_call(c, "remove") :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.delattr"),
+    def_frame(c, u), pt_scope_def(u).
+
+// pt_step(n, m, o, s): the written chain of n runs from m to o, one segment s up: `o.a` or `o[k]`.
+.decl pt_step(n: node, m: node, o: node, s: symbol)
+pt_step(n, m, o, cat(".", a)) :- pt_chain(n, m), attr_of(m, o, a).
+pt_step(n, m, o, cat("[", k, "]")) :- pt_chain(n, m), kind(m, "subscript"), field(m, "value", o),
+    field(m, "subscript", i), pt_key(n, i, k).
+.decl pt_loc(n: node, e: node, p: symbol, how: symbol)
+pt_loc(n, e, p, how) :- pt_at(n, e, p, how).
+pt_loc(n, o, cat(s, p), how) :- pt_loc(n, m, p, how), pt_step(n, m, o, s).
+.decl pt_change(n: node)
+pt_change(n) :- pt_at(n, _, _, how), how != "restore".
+// pt_covers(n, e, p, a): restoring a below e puts back n's change of p below e. At the change's own row, a is p, ""
+// (e itself put back), and p's whole-container form; each step up the chain prefixes the segment, and adds the
+// forms that restore e as a whole ("", `[*]` over an item, `.*` over an attribute).
+.decl pt_covers(n: node, e: node, p: symbol, a: symbol)
+pt_covers(n, e, p, p) :- pt_at(n, e, p, how), how != "restore".
+pt_covers(n, e, p, "") :- pt_loc(n, e, p, how), how != "restore".
+pt_covers(n, e, p, "[*]") :- pt_loc(n, e, p, how), how != "restore", prefix("[", p).
+pt_covers(n, e, p, ".*") :- pt_loc(n, e, p, how), how != "restore", prefix(".", p).
+pt_covers(n, o, cat(s, p), cat(s, a)) :- pt_covers(n, m, p, a), pt_step(n, m, o, s).
+
+// ---- undoing -----------------------------------------------------------------------------------------------------
+// pt_undo is asked on demand (pt_undo_ask): asked for every node, its after-the-yield clause would order every pair of
+// nodes in a fixture, which does not finish on a large repository. The library asks it for every pt_loc node and
+// for the calls that may reach one.
+.decl pt_undo_ask(n: node)
+pt_undo_ask(n) :- pt_loc(n, _, _, _).
+pt_undo_ask(c) :- pt_loc(n, _, _, _), def_frame(n, g), call_target(c, g).
+.decl pt_undo(n: node, f: node)
+// After the yield of a fixture or context manager, in its own body: `yield x` then `x.close()`; `with a: yield; b()`.
+// The yielded expression itself runs before: `yield await make_service(app)` is set-up.
+pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, f), pt_split(f, y), pt_own(n, f), earlier(y, n), !within(n, y).
+// In a finally clause of f's own body (the try around a yield included).
+pt_undo(n, f) :- pt_undo_ask(n), inside(n, fc, "finally_clause"), pt_own(fc, f).
+// A teardown hook or __exit__ is undo code of its own, and of every method of its class and of the subclasses.
+pt_undo(n, h) :- pt_undo_ask(n), def_frame(n, h), pt_undo_def(h).
+pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, h), pt_undo_def(h), pt_class_of(h, c), pt_class_chain(f, c), f != h,
+    !pt_fixture(f).
+// teardown_module / teardown_function at module level undo the defs of their module.
+pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, h), pt_teardown_hook(h), nearest(h, m, scope), kind(m, "module"),
+    docof(h, d), kind(f, "function_definition"), docof(f, d), f != h, !pt_fixture(f).
+// A callback f registers with addCleanup / addfinalizer: a lambda argument, a def by name, or a bound method.
+pt_undo(n, f) :- pt_undo_ask(n), inside(n, a, "lambda"), posarg(c, 0, a), pt_cleanup_call(c, f).
+pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, g), pt_callback(c, g), pt_cleanup_call(c, f).
+// The registration itself (`addCleanup(setattr, o, "x", old)`).
+pt_undo(c, f) :- pt_undo_ask(c), pt_cleanup_call(c, f).
+// A def that undo code of f calls: `finally: self._restore()`.
+pt_undo(n, f) :- pt_undo_ask(n), def_frame(n, g), call_target(c, g), pt_undo(c, f).
+// The undo code of a function-scoped fixture f requests, or of an autouse one that covers f, runs after f's test.
+pt_undo(n, f) :- pt_undo(n, g), pt_fixture_scope(g, "function"), (pt_resolves(f, _, g) ; pt_autouse_for(f, g)), f != g.
+// A helper's changes are undone by the undo code of the test that calls it.
+pt_undo(n, f) :- pt_helper(f), calls(t, f), pt_undo(n, t), pt_undo_ask(n).
+.decl pt_cleanup_call(c: node, f: node)
+pt_cleanup_call(c, f) :- kind(c, "call"), pt_own(c, f), field(c, "function", fn), attr_of(fn, _, m),
+    (m = "addCleanup" ; m = "addClassCleanup" ; m = "addfinalizer" ; m = "addAsyncCleanup").
+// pt_callback(c, g): cleanup registration c names def g: `addfinalizer(restore)` (a local or module def),
+// `addCleanup(self._restore)` (a method of the registering def's class or a base).
+.decl pt_callback(c: node, g: node)
+pt_callback(c, g) :- pt_cleanup_call(c, _), posarg(c, 0, a), kind(a, "identifier"), text(a, x), look(a, x, s),
+    defn(s, x, g), kind(g, "function_definition").
+pt_callback(c, g) :- pt_cleanup_call(c, f), posarg(c, 0, a), attr_of(a, o, x), (text(o, "self") ; text(o, "cls")),
+    pt_class_of(f, k), class_def(k, kq), mro_method(kq, x, g).
+// pt_autouse_for(f, g): autouse function-scoped fixture g runs around f: offered by f's class, f's module, or a
+// conftest.py of f's directory or above.
+.decl pt_autouse_for(f: node, g: node)
+pt_autouse_for(f, g) :- pt_autouse(g), pt_fixture_scope(g, "function"), pt_offers(s, _, g), kind(s, "class_definition"),
+    pt_class_of(f, s), kind(f, "function_definition").
+pt_autouse_for(f, g) :- pt_autouse(g), pt_fixture_scope(g, "function"), pt_offers(m, _, g), kind(m, "module"),
+    docof(g, d), modnode(d, m), docof(f, d), pt_runs_in_test(f).
+pt_autouse_for(f, g) :- pt_autouse(g), pt_fixture_scope(g, "function"), pt_offers(m, _, g), pt_conftest(dir, m),
+    pt_runs_in_test(f), docof(f, d), doc(d, p, _), prefix(dir, p).
+
+// pt_guarded(n, c): a patch c (pt_at "restore" rows) is active where change n runs, and puts its target back after:
+// in n's own def, as a decorator of a def or class around n, a with-item around n, a started patcher in a set-up
+// hook of n's class, or in a function-scoped fixture n's def requests.
+.decl pt_guard_call(c: node)
+pt_guard_call(c) :- pt_patch(c, _).
+pt_guard_call(c) :- pt_mp_call(c, _).
+.decl pt_guarded(n: node, c: node)
+pt_guarded(n, c) :- pt_change(n), def_frame(n, u), pt_guard_call(c), def_frame(c, u).
+pt_guarded(n, c) :- pt_guard_call(c), decorator(g, e0), unparen(e0, c), docof(c, d), pt_change(n), docof(n, d),
+    within(n, g).
+pt_guarded(n, c) :- pt_guard_call(c), kind(wi, "with_item"), field(wi, "value", v),
+    (unparen(v, c) ; kind(v, "as_pattern"), child(v, v0, 0), unparen(v0, c)), nearest(wi, ws, "with_statement"),
+    field(ws, "body", b), docof(c, d), pt_change(n), docof(n, d), within(n, b).
+pt_guarded(n, c) :- pt_change(n), def_frame(n, u), pt_class_of(u, k), pt_setup_hook(h), pt_class_of(h, k), u != h,
+    pt_guard_call(c), def_frame(c, h).
+pt_guarded(n, c) :- pt_change(n), def_frame(n, u), pt_resolves(u, _, g), pt_fixture_scope(g, "function"),
+    pt_guard_call(c), def_frame(c, g).
+// pt_restore(n, e, a): path a below e is put back after change n.
+.decl pt_restore(n: node, e: node, a: symbol)
+pt_restore(n, e, a) :- pt_change(n), def_frame(n, u), pt_undo(m, u), pt_loc(m, e, a, _).
+pt_restore(n, e, a) :- pt_guarded(n, c), pt_loc(c, e, a, "restore").
 
 // ---- fixture lookup ----------------------------------------------------------------------------------------------
 .decl pt_requests(t: node, x: symbol, p: node)
 pt_requests(t, x, p) :- pt_test_code(t, k), k != "setup", sig_param(t, p, nm, _, k2, _, dv),
     (k2 = "pos", unset(dv) ; k2 = "posonly", unset(dv) ; k2 = "kwonly"), text(nm, x),
     x != "self", x != "cls", x != "request".
+// `v = request.getfixturevalue("x")` requests x too, the call standing for the parameter.
+pt_requests(t, x, c) :- pt_test_code(t, _), pt_getfixturevalue(c, x), def_frame(c, t).
+.decl pt_getfixturevalue(c: node, x: symbol)
+pt_getfixturevalue(c, x) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "getfixturevalue"), posarg(c, 0, a),
+    str(a, x).
 // pt_offers(s, x, g): scope s (a module or class node) offers fixture x by def g: a fixture def in its body, or, in a
 // module, a fixture of the run it imports (`from .fixtures import db`).
 .decl pt_offers(s: node, x: symbol, g: node)
@@ -215,9 +467,14 @@ pt_sees(t, x, g, strlen(dir)) :- pt_requests(t, x, _), docof(t, d), doc(d, p, _)
     pt_offers(m, x, g), g != t.
 .decl pt_resolves(t: node, x: symbol, g: node)
 pt_resolves(t, x, g) :- pt_sees(t, x, g, r), r = max r2 : { pt_sees(t, x, _, r2) }.
-// pt_param_value(r, g): r reads a parameter whose fixture resolves to g.
+// pt_param_value(r, g): r reads a parameter whose fixture resolves to g, or a name the def binds to
+// `request.getfixturevalue("x")` with x resolving to g.
 .decl pt_param_value(r: node, g: node)
-pt_param_value(r, g) :- pt_resolves(t, x, g), kind(r, "identifier"), text(r, x), look(r, x, t), !bind_only(r).
+pt_param_value(r, g) :- pt_resolves(t, x, g), kind(r, "identifier"), text(r, x), look(r, x, t), !bind_only(r),
+    sig_param(t, _, nm, _, _, _, _), text(nm, x).
+pt_param_value(r, g) :- pt_resolves(t, x, g), pt_getfixturevalue(c, x), def_frame(c, t), kind(a, "assignment"),
+    field(a, "right", c), field(a, "left", v), kind(v, "identifier"), text(v, y), kind(r, "identifier"), text(r, y),
+    look(r, y, t), !bind_only(r).
 
 // ---- mocks -------------------------------------------------------------------------------------------------------
 .decl pt_patch_q(q: symbol)
@@ -265,22 +522,3 @@ pt_injects(c) :- pt_patch(c, "object"), !posarg(c, 2, _), !call_arg(c, -1, "new"
 // ---- state -------------------------------------------------------------------------------------------------------
 .decl pt_environ(e: node)
 pt_environ(e) :- sym_of(e, "os.environ").
-.decl pt_settings(e: node)
-pt_settings(e) :- sym_of(e, "django.conf.settings").
-.decl pt_store(t: node)
-pt_store(t) :- expr_ctx(t, "store").
-pt_store(t) :- expr_ctx(t, "del").
-pt_store(t) :- kind(a, "augmented_assignment"), field(a, "left", t).
-.decl pt_through(t: node, o: node)
-pt_through(t, o) :- attr_of(t, o, _).
-pt_through(t, o) :- kind(t, "subscript"), field(t, "value", o).
-pt_through(t, o) :- attr_of(t, m, _), pt_through(m, o).
-pt_through(t, o) :- kind(t, "subscript"), field(t, "value", m), pt_through(m, o).
-.decl pt_mutator(m: symbol)
-pt_mutator("append"). pt_mutator("extend"). pt_mutator("insert"). pt_mutator("remove"). pt_mutator("pop").
-pt_mutator("clear"). pt_mutator("update"). pt_mutator("setdefault"). pt_mutator("popitem"). pt_mutator("add").
-pt_mutator("discard"). pt_mutator("sort"). pt_mutator("reverse"). pt_mutator("__setitem__").
-pt_mutator("__delitem__").
-.decl pt_mutates(n: node, o: node)
-pt_mutates(t, o) :- pt_store(t), pt_through(t, o).
-pt_mutates(c, o) :- kind(c, "call"), field(c, "function", f), attr_of(f, r, m), pt_mutator(m), (r = o ; pt_through(r, o)).

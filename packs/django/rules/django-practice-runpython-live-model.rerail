@@ -19,8 +19,9 @@
 // `reverse_code` is itself such a helper is reported at that argument. Imports written from an import root inside
 // the repository (`from tasks.functions import x` for label_studio/tasks/functions.py) resolve by the end of the
 // qualified name when the call program finds no target. A call or use in an `if p is None:` body, p a parameter of
-// its def, is not followed when the call into that def passes `p=` (not None) by keyword: the query only computes
-// a default the caller supplied (`get_review_due_date` passes `target_per_day=1` to skip a config lookup).
+// its def, is not followed when the call into that def passes p (not None), by keyword or by position (counted
+// after `self`/`cls` for a method called on an object): the query only computes a default the caller supplied
+// (`get_review_due_date` passes `target_per_day=1` to skip a config lookup; `due_in(start, 3)` likewise).
 //   helpers.py:  def recount(): for a in Author.objects.all(): ...
 //   0002_x.py:   def forwards(apps, se): recount()                       reported at recount()
 //   0003_x.py:   operations = [RunPython(recount, RunPython.noop)]       reported at recount
@@ -36,7 +37,7 @@
 // Gaps: a call whose target the call program does not know (call_open, `getattr`, a method on an instance), a
 // management command run with call_command, operations a factory builds at import (`make_sql_migration(...)`), the
 // global `django.apps.apps.get_model`, and related managers or instance methods reached from a live row a historical
-// query returned are not followed. A guard passed by position, or a None test other than `p is None`, is not read.
+// query returned are not followed. A None test other than `p is None` (`if not p:`, `p or …`) is not read.
 
 #include "lib/django.rerail"
 #include "python/calls.rerail"
@@ -44,7 +45,7 @@
 .violation RunPythonLiveModel(at: node, x: symbol, m: symbol, p: symbol, u: node)
     "`{x}` uses the live model `{m}` ({p}:{u.line}), with today's fields, not this migration's. Pass it the model from `apps.get_model()`, or copy the code here; historical models lack custom methods."
 RunPythonLiveModel(c, x, m, p, u) :- rpl_exit(c, _), t = min s : { rpl_hit(c, s) }, def_name(t, x),
-    u = min y : { rpl_at(t, h, e), rpl_use(h, y, _), !rpl_blocked(e, y) }, rpl_use(_, u, k), def_name(k, m), docof(u, d),
+    u = min y : { rpl_at(c, t, h, e), rpl_use(h, y, _), !rpl_blocked(e, y) }, rpl_use(_, u, k), def_name(k, m), docof(u, d),
     doc(d, p, _).
 
 // rpl_code(e, g): e is a RunPython's `code` or `reverse_code` argument, in a migration outside test code, naming the
@@ -101,17 +102,18 @@ rpl_runs(g) :- rpl_runs(f), rpl_edge(f, _, g), rpl_mig_def(g).
 .decl rpl_exit(c: node, t: node)
 rpl_exit(c, t) :- rpl_runs(f), rpl_edge(f, c, t), rpl_other_def(t).
 rpl_exit(e, t) :- rpl_code(e, t), rpl_other_def(t).
-// rpl_at(t, h, e): helper t runs h, entered through call e: t itself (e the exit), or a def of a non-migration,
-// non-test module it reaches. A call in h that runs only when e passes no value for a parameter is not followed
-// (rpl_blocked). rpl_live(t, h): the same, any entry.
-.decl rpl_at(t: node, h: node, e: node)
-rpl_at(t, t, e) :- rpl_exit(e, t).
-rpl_at(t, h, c) :- rpl_at(t, g, e), rpl_edge(g, c, h), rpl_other_def(h), !rpl_blocked(e, c).
-.decl rpl_live(t: node, h: node)
-rpl_live(t, h) :- rpl_at(t, h, _).
+// rpl_at(x, t, h, e): exit x's helper t runs h, entered through call e: t itself (e the exit), or a def of a
+// non-migration, non-test module it reaches. A call in h that runs only when e passes no value for a parameter is not
+// followed (rpl_blocked). The walk is kept per exit, so one exit's arguments never unblock another's.
+// rpl_live(x, h): the same, any entry.
+.decl rpl_at(x: node, t: node, h: node, e: node)
+rpl_at(x, t, t, x) :- rpl_exit(x, t).
+rpl_at(x, t, h, c) :- rpl_at(x, t, g, e), rpl_edge(g, c, h), rpl_other_def(h), !rpl_blocked(e, c).
+.decl rpl_live(x: node, h: node)
+rpl_live(x, h) :- rpl_at(x, _, h, _).
 // rpl_hit(c, t): exit c's helper t reaches a live model use.
 .decl rpl_hit(c: node, t: node)
-rpl_hit(c, t) :- rpl_exit(c, t), rpl_at(t, h, e), rpl_use(h, u, _), !rpl_blocked(e, u).
+rpl_hit(c, t) :- rpl_at(c, t, h, e), rpl_use(h, u, _), !rpl_blocked(e, u).
 // rpl_use(h, u, k): u, in helper h's frame, uses model class k of the run (defined outside migrations and tests): its
 // manager `M.objects` (or _default_manager, _base_manager), or a saved constructor call `M(...)`.
 .decl rpl_use(h: node, u: node, k: node)
@@ -124,9 +126,17 @@ rpl_use(h, u, k) :- rpl_model_site(h, u, q), rpl_model(k, q).
 rpl_none_guard(n, x) :- kind(s, "if_statement"), field(s, "condition", cn), unparen(cn, k), cmp_pair(k, 0, "is", l, r),
     !op_at(k, 1, _), kind(l, "identifier"), text(l, x), kind(r, "none"), nearest(s, h, fdef), param(h, x, _),
     field(s, "consequence", b), within(n, b), (kind(n, "call") ; dj_manager(n)), nearest(n, h, fdef).
-// rpl_blocked(e, n): call e passes parameter x by keyword, not as None, and n runs only when x is None.
+// rpl_blocked(e, n): call e passes parameter x, by keyword or by position, not as None, and n runs only when x is
+// None. A position counts against the def's parameter list, after `self`/`cls` when e calls a method on an object.
 .decl rpl_blocked(e: node, n: node)
 rpl_blocked(e, n) :- rpl_none_guard(n, x), call_arg(e, -1, x, v), !kind(v, "none").
+rpl_blocked(e, n) :- rpl_none_guard(n, x), nearest(n, h, fdef), param(h, x, k), field(e, "function", f),
+    (kind(f, "identifier") ; kind(f, "attribute"), !rpl_bound_first(h)), posarg(e, k, v), !kind(v, "none").
+.decl rpl_bound_first(h: node)
+rpl_bound_first(h) :- param(h, s, 0), (s = "self" ; s = "cls").
+rpl_blocked(e, n) :- rpl_none_guard(n, x), nearest(n, h, fdef), param(h, x, k), param(h, s, 0),
+    (s = "self" ; s = "cls"), field(e, "function", f), kind(f, "attribute"), posarg(e, j, v), k = j + 1,
+    !kind(v, "none").
 // rpl_model_site(h, u, q): u, in helper h's frame, names q as a model would be used against the database: the
 // receiver of a manager (`q.objects`), or a constructor call `q(...)` whose instance is saved in the same frame
 // (rpl_saved). An unsaved instance (`Endpoint(host=...)` built to parse a URL) runs no query.
@@ -172,6 +182,7 @@ rpl_live_model(k) :- dj_model(k), docof(k, d), !dj_migration_doc(d), !dj_test_do
     .fixture "shop/migrations/0009_due_dates.py" from "../cases/django-practice-runpython-live-model/shop/migrations/0009_due_dates.py"
     .fixture "shop/migrations/0010_shelves.py" from "../cases/django-practice-runpython-live-model/shop/migrations/0010_shelves.py"
     .fixture "shop/migrations/0011_after_migrate.py" from "../cases/django-practice-runpython-live-model/shop/migrations/0011_after_migrate.py"
+    .fixture "shop/migrations/0012_positional_guard.py" from "../cases/django-practice-runpython-live-model/shop/migrations/0012_positional_guard.py"
     .fixture "shop/migrations/__init__.py" from "../cases/django-practice-runpython-live-model/shop/migrations/__init__.py"
     .fixture "shop/models.py" from "../cases/django-practice-runpython-live-model/shop/models.py"
     .fixture "shop/tests/__init__.py" from "../cases/django-practice-runpython-live-model/shop/tests/__init__.py"
@@ -193,5 +204,6 @@ rpl_live_model(k) :- dj_model(k), docof(k, d), !dj_migration_doc(d), !dj_test_do
     .expect _ at "shop/migrations/0006_through_local_def.py":7
     .expect _ at "shop/migrations/0009_due_dates.py":16
     .expect _ at "shop/migrations/0010_shelves.py":11
+    .expect _ at "shop/migrations/0012_positional_guard.py":21
     .expect _ at "studio/tasks/migrations/0002_fill_project.py":7
 .end

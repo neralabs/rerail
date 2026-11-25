@@ -15,52 +15,56 @@
 //   op.alter_column("tools", "name", existing_type=sa.VARCHAR(256), type_=sa.String(255))        reported (limit)
 //   op.alter_column("user", "email", existing_type=sa.String(), type_=sa.String(255))            reported (limit)
 //   op.alter_column("tools", "name", existing_type=sa.VARCHAR(40), type_=sa.String(255))         not reported
-// Left alone, as PostgreSQL makes them without touching the rows: VARCHAR/String(n) to a length m >= n, to an
-// unlimited String() or to Text/UnicodeText; Text to String() without a length; Numeric(p, s) to Numeric(p2, s) with
-// p2 >= p, or to an unconstrained Numeric(); LargeBinary to LargeBinary (both BYTEA); the same type text on both sides.
-// `MediumText`/`LongText` (superset's `Text().with_variant(MEDIUMTEXT(), "mysql")`, dify's TypeDecorator that loads
-// TEXT on PostgreSQL) count as TEXT by name; a target from `sqlalchemy.dialects.mysql` (`mysql.LONGTEXT`) is
-// MySQL-only. Also left alone: a length that is no integer literal (`sa.String(current_length)`) where it decides; an
+// Left alone, as PostgreSQL makes them without touching the rows: VARCHAR/String/AutoString(n) to a length m >= n, to
+// an unlimited String() or to Text/UnicodeText; Text to String() without a length; Numeric(p, s) to Numeric(p2, s) with
+// p2 >= p, or to an unconstrained Numeric(); LargeBinary to LargeBinary (both BYTEA); the same type text on both sides;
+// the same PostgreSQL type spelled two ways (TIMESTAMP and DateTime without a time zone, either with one; UUID and
+// Uuid; INTEGER and Integer; BIGINT and BigInteger; BOOLEAN and Boolean; TEXT and Text; JSON, JSONB, DATE), which
+// autogenerate restates next to a nullability change.
+// Types are read by the class they resolve to (lib/alembic's al_type_class and al_pg_type), through imports and
+// aliases, a project's TypeDecorator (`impl = TEXT`), a subclass of a SQLAlchemy type, and a project function that
+// returns a type (superset's `MediumText()`, `Text().with_variant(MEDIUMTEXT(), "mysql")`, is TEXT on PostgreSQL); a
+// target from `sqlalchemy.dialects.mysql` (`mysql.LONGTEXT`) is MySQL-only. Also left alone: a length that is no
+// integer literal (`sa.String(current_length)`) where it decides; an
 // `existing_type` that is no type expression (a conditional); a call without `existing_type` whose target is a
 // string, text or numeric type (it may be a widening; the rule cannot tell); a table the same upgrade() creates; the
 // branch of a dialect test that runs only on another database; a call in an `except` handler (superset's non-Postgres
 // fallback after a `try:` that already made the change); downgrade(); tests; an `op` that is not `alembic.op`.
 // Gaps: types are judged by their names (the last part of the callee), not resolved; a table named by a variable is
 // not seen; `DateTime()` to `DateTime(timezone=True)` is reported although PostgreSQL 12+ skips the rewrite when the
-// session time zone is UTC; a `postgresql_using=` that is a plain relabel of a widening is left alone with it.
+// session time zone is UTC; a `postgresql_using=` that is a plain relabel of a widening is left alone with it; an array
+// of a widened VARCHAR is reported; raw `op.execute("ALTER TABLE ... TYPE ...")` is not read.
+// Corpus (8 Alembic repositories): 34 matches, all read, all real type changes; 32 actionable (mealie migrates before
+// it serves). See the README's rule details.
 
 #include "lib/alembic.rerail"
 
-.violation TypeChangeRewrites(at: node, col: symbol, table: symbol, change: symbol) "Changing column `{col}` of existing table `{table}` {change} makes PostgreSQL rewrite the table and its indexes under an ACCESS EXCLUSIVE lock, which blocks every read and write until it finishes. Add a new column of the new type, backfill it in batches, switch reads and writes to it, then drop the old column. Keep the change as written only for a table that stays small, or in a maintenance window."
-.violation LengthLimitScan(at: node, col: symbol, table: symbol, change: symbol, limit: number) "Changing column `{col}` of existing table `{table}` {change} adds or shrinks a length limit: PostgreSQL re-reads and rewrites every row against it under an ACCESS EXCLUSIVE lock, which blocks every read and write. Keep the column's type and add `CHECK (char_length({col}) <= {limit}) NOT VALID`, then `VALIDATE CONSTRAINT` in a later migration, or go through a new column and a batched backfill. Keep it as written only for a table that stays small."
+.violation TypeChangeRewrites(at: node, col: symbol, table: symbol, change: symbol) "Changing `{col}` of existing `{table}` {change} rewrites the table under an exclusive lock. Add a new column, backfill it in batches, switch to it, then drop the old one. Keep it for a small table."
+.violation LengthLimitScan(at: node, col: symbol, table: symbol, change: symbol, limit: number) "Changing `{col}` of existing `{table}` {change} checks every row under an exclusive lock. Keep the type and add a NOT VALID length CHECK, validated in a later revision. Keep it for a small table."
 
 // ---- type expressions --------------------------------------------------------------------------------------------
-// ct_last(x, n): the last name of identifier or attribute x, lowercased (`sa.VARCHAR` -> "varchar").
-.decl ct_last(x: node, n: symbol)
-ct_last(x, n) :- kind(x, "identifier"), text(x, s), n = @lower(s).
-ct_last(x, n) :- kind(x, "attribute"), field(x, "attribute", a), text(a, s), n = @lower(s).
-// ct_head(e, h): h is type expression e's callee (`sa.String(255)` -> `sa.String`), or e itself when it is a bare name.
+// ct_arg(e): e is alter_column's type_ or existing_type.
 .decl ct_arg(e: node)
 ct_arg(e) :- al_kw(c, "type_", v), al_call(c, "alter_column", _), unparen(v, e).
 ct_arg(e) :- al_kw(c, "existing_type", v), al_call(c, "alter_column", _), unparen(v, e).
-.decl ct_head(e: node, h: node)
-ct_head(e, h) :- ct_arg(e), kind(e, "call"), field(e, "function", h).
-ct_head(e, e) :- ct_arg(e), (kind(e, "identifier") ; kind(e, "attribute")).
+// ct_name(e, n): the class type e resolves to, lowercased (lib/alembic's al_type_class).
 .decl ct_name(e: node, n: symbol)
-ct_name(e, n) :- ct_head(e, h), ct_last(h, n).
-// ct_mysql(e): a type of `sqlalchemy.dialects.mysql`, which only MySQL runs.
+ct_name(e, n) :- ct_arg(e), al_type_class(e, n).
 .decl ct_mysql(e: node)
-ct_mysql(e) :- ct_head(e, h), text(h, s), prefix("mysql.", s).
-ct_mysql(e) :- ct_head(e, h), sym_of(h, q), prefix("sqlalchemy.dialects.mysql", q).
-
+ct_mysql(e) :- ct_arg(e), al_mysql_type(e).
+// The families PostgreSQL treats alike for a type change.
 .decl ct_string(e: node)
-ct_string(e) :- ct_name(e, n), (n = "string" ; n = "varchar" ; n = "unicode" ; n = "nvarchar").
+ct_string(e) :- ct_arg(e), al_pg_type(e, "varchar").
 .decl ct_text(e: node)
-ct_text(e) :- ct_name(e, n), (n = "text" ; n = "unicodetext" ; n = "mediumtext" ; n = "longtext").
+ct_text(e) :- ct_arg(e), al_pg_type(e, "text").
 .decl ct_numeric(e: node)
-ct_numeric(e) :- ct_name(e, n), (n = "numeric" ; n = "decimal").
+ct_numeric(e) :- ct_arg(e), al_pg_type(e, "numeric").
 .decl ct_binary(e: node)
-ct_binary(e) :- ct_name(e, n), (n = "largebinary" ; n = "bytea").
+ct_binary(e) :- ct_arg(e), al_pg_type(e, "bytea").
+// ct_canon(e, k): the PostgreSQL type k that e renders, when k carries no parameter the rule must compare (so
+// `sa.TIMESTAMP()` and `sa.DateTime()`, `postgresql.UUID()` and `sa.Uuid()`, `sa.INTEGER()` and `sa.Integer()` are one).
+.decl ct_canon(e: node, k: symbol)
+ct_canon(e, k) :- ct_arg(e), al_pg_type(e, k), k != "varchar", k != "numeric", k != "char".
 
 // ct_int(e, i, k, v): call e passes the integer literal v positionally at i or as keyword k (the keyword of position i).
 .decl ct_int_slot(i: number, k: symbol)
@@ -99,6 +103,7 @@ ct_old(c, o) :- ct_change(c, _, _, _), al_kw(c, "existing_type", v), unparen(v, 
 // ct_safe(o, n): PostgreSQL changes type o to n in the catalog only (binary coercible, or a widened limit).
 .decl ct_safe(o: node, n: node)
 ct_safe(o, n) :- ct_old(_, o), ct_change(_, _, _, n), text(o, s), text(n, s).
+ct_safe(o, n) :- ct_old(_, o), ct_canon(o, k), ct_change(_, _, _, n), ct_canon(n, k).
 ct_safe(o, n) :- ct_old(_, o), ct_len(o, a), ct_change(_, _, _, n), ct_len(n, b), b >= a.
 ct_safe(o, n) :- ct_old(_, o), ct_string(o), ct_change(_, _, _, n), ct_unlimited(n).
 ct_safe(o, n) :- ct_old(_, o), (ct_string(o) ; ct_text(o)), ct_change(_, _, _, n), ct_text(n).
@@ -136,6 +141,8 @@ LengthLimitScan(c, x, t, ch, m) :- ct_hit(c, x, t, _, ch), ct_limit(c, m).
     .fixture "app/types.py" from "../cases/alembic-practice-column-type-rewrite/app/types.py"
     .fixture "migrations/versions/b1_type_changes.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b1_type_changes.py"
     .fixture "migrations/versions/b2_dialects.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b2_dialects.py"
+    .fixture "migrations/versions/b3_spellings.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b3_spellings.py"
+    .fixture "migrations/versions/b4_project_types.py" from "../cases/alembic-practice-column-type-rewrite/migrations/versions/b4_project_types.py"
     .fixture "tests/test_migration_shapes.py" from "../cases/alembic-practice-column-type-rewrite/tests/test_migration_shapes.py"
     .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":20
     .expect TypeChangeRewrites at "migrations/versions/b1_type_changes.py":21
@@ -155,4 +162,11 @@ LengthLimitScan(c, x, t, ch, m) :- ct_hit(c, x, t, _, ch), ct_limit(c, m).
     .expect LengthLimitScan at "migrations/versions/b2_dialects.py":30
     .expect TypeChangeRewrites at "migrations/versions/b2_dialects.py":32
     .expect TypeChangeRewrites at "migrations/versions/b2_dialects.py":48
+    .expect TypeChangeRewrites at "migrations/versions/b3_spellings.py":25
+    .expect TypeChangeRewrites at "migrations/versions/b3_spellings.py":26
+    .expect LengthLimitScan at "migrations/versions/b3_spellings.py":27
+    .expect TypeChangeRewrites at "migrations/versions/b3_spellings.py":28
+    .expect TypeChangeRewrites at "migrations/versions/b4_project_types.py":26
+    .expect TypeChangeRewrites at "migrations/versions/b4_project_types.py":27
+    .expect LengthLimitScan at "migrations/versions/b4_project_types.py":28
 .end

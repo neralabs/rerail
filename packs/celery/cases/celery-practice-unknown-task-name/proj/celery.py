@@ -6,6 +6,10 @@ from proj.contract import OPERATION_TASK
 app = Celery("proj")
 app.config_from_object("django.conf:settings", namespace="CELERY")
 
+# Entries kept in module constants that the beat setting reads.
+NIGHTLY_ENTRY = {"task": "proj.tasks.nightly_typo", "options": {"expires": 60}}  # caught
+EXTRA_ENTRIES = {"extra": {"task": "proj.tasks.extra_typo", "options": {"expires": 60}}}  # caught
+
 app.conf.beat_schedule = {
     "ship-every-hour": {
         "task": "proj.tasks.ship",
@@ -61,6 +65,21 @@ app.conf.beat_schedule = {
         "task": "billing.tasks.charge",
         "schedule": crontab(hour=6),
     },
+    # A factory-built app's task (`cel = make_celery()`, `@cel.task def ping` in proj/worker.py).
+    "ping": {"task": "proj.worker.ping", "schedule": 60.0},
+    # A Task subclass whose `name` is a module constant (proj/classes.py).
+    "cleanup-class": {"task": "proj.cleanup", "schedule": crontab(minute=20)},
+    # An entry given only its execution options, inside the beat setting.
+    "options-only": {"task": "proj.tasks.shipx", "options": {"expires": 60}},  # caught
+    "rebuild-class": {"task": "proj.rebuild_index", "schedule": crontab(minute=25)},
+    "weekly-class": {"task": "proj.weekly_report", "schedule": crontab(minute=30)},
+    "nightly-class": {"task": "proj.nightly_report", "schedule": crontab(minute=35)},
+    "nightly-factory": {"task": "proj.worker.nightly", "schedule": crontab(minute=40)},
+    "purge": {"task": "proj.jobs.purge", "schedule": crontab(minute=45)},
+    "rotate": {"task": "ops.rotate", "schedule": crontab(minute=50)},
+    "rotate-typo": {"task": "ops.rotat", "schedule": crontab(minute=55)},  # caught
+    "nightly-entry": NIGHTLY_ENTRY,
+    **EXTRA_ENTRIES,
     # Commented out, so never scheduled:
     # "old": {
     #     "task": "proj.tasks.gone",
@@ -68,11 +87,11 @@ app.conf.beat_schedule = {
     # },
 }
 
-# Entries listed before their schedules are added (the cron comes from the environment).
-BEAT_TASKS = [
-    {"env_key": "SHIP_CRON", "task": "proj.tasks.ship", "options": {"expires": 60}},
-    {"env_key": "CLEAN_CRON", "task": "proj.tasks.clean", "options": {"expires": 60}},  # caught
-]
+# An item added to the beat setting, in dict() form.
+app.conf.beat_schedule["other"] = dict(task="proj.tasks.missing", schedule=30.0)  # caught
+app.conf.beat_schedule["ship-nightly"] = dict(task="proj.tasks.ship", schedule=crontab(hour=0))
+
+app.conf.beat_schedule.update({"updated": {"task": "proj.tasks.update_typo", "options": {}}})  # caught
 
 # A dict with a "task" key that is no beat entry.
 AUDIT_EVENT = {"task": "proj.tasks.gone", "user": "admin"}

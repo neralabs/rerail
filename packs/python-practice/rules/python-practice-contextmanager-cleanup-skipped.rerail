@@ -1,15 +1,20 @@
 .policy "python-practice-contextmanager-cleanup-skipped" revision 1
-.description "A @contextmanager generator must release what it acquired in a try/finally around its yield, or an exception in the with-block skips the release."
+.description "Release what a @contextmanager generator acquired in a try/finally around its yield; an exception in the with-block skips code after the yield."
 .language python
 .mode log
 .scope include "**/*.py"
 // Rerail's own rule, not a port. contextlib runs a generator context manager up to its `yield`, runs the with-block,
-// and, when the block raises, throws the exception in at the `yield`. Code after a yield that no try/finally (or
-// with) guards then never runs: the lock stays held, the file, cursor or connection leaks, the temp dir stays, the
-// patched attribute, environment variable, signal handler or working directory stays changed for every later caller.
+// and, when the block raises, throws the exception in at the `yield`. Code after the yield then runs only if a
+// handler around the yield catches the exception and goes on: the lock stays held, the file, cursor or connection
+// leaks, the temp dir stays, the patched attribute, thread-local, environment variable, signal handler, alarm,
+// sys.path entry or working directory stays changed for every later caller.
 // It reports, outside test code, a `yield` in the own frame of a def decorated with contextlib.contextmanager or
-// asynccontextmanager (resolved through imports, aliases included), that sits in the body of no `try` with an except
-// or finally clause and of no `with` of that def, when a release follows it on the normal path:
+// asynccontextmanager (resolved through imports, aliases included) when a release follows it on the normal path: in
+// a later statement of a block that holds the yield, with no `return` or `raise` between them, and no handler
+// between them that swallows the exception. Only two things swallow it: an `except` that catches everything
+// (bare, Exception, BaseException) and neither re-raises nor returns, and `with contextlib.suppress(Exception)`. A
+// `finally` runs its own body and re-raises, a narrow or re-raising `except` and any other `with` let the exception
+// through: code after them is skipped. A release is:
 //   - a call `X.m(...)` with m one of close, aclose, release, unlock, shutdown, stop, terminate, kill, disconnect,
 //     dispose, rollback, cleanup, unlink; not `X.cleanup()` of a tempfile.TemporaryDirectory, whose finalizer
 //     removes the directory as soon as the generator's frame is dropped;
@@ -18,60 +23,75 @@
 //     argument it passes (`token = var.set(v); yield; var.reset(token)`);
 //   - `T = old` (T an attribute or subscript) when, before the yield, the def saved `old = T`, by T's text:
 //     `orig = engines["jinja2"].env.autoescape; ...; yield; engines["jinja2"].env.autoescape = orig`;
-//   - `T = False` when, before the yield, the def set `T = True` (True, False, None either way round): a flag
-//     raised for the block, `self.suppress = True; yield; self.suppress = False`;
+//   - `T = False` when, before the yield, the def set `T = True` (True, False, None either way round);
+//   - `del T` or `delattr(o, "a")` of an attribute or subscript the def set before the yield:
+//     `_context.call = Call(); yield; del _context.call`, `sys.modules[n] = m; yield; del sys.modules[n]`;
 //   - a write to os.environ: `os.environ[k] = old`, `del os.environ[k]`, os.environ.pop(), os.environ.update();
-//   - a call that puts back a saved value: the def called the same function before the yield, and passes it a
-//     name bound before the yield: `old = get_user(); set_user(u); yield; set_user(old)`, `os.chdir(old)`,
-//     `signal.signal(sig, old)`.
-// A release follows the yield when it sits in a later statement of a block that holds the yield (`for r in cur:
-// yield r` then `cur.close()` follows), and no `return` or `raise` comes between them.
+//   - a removal from a container the def added to before the yield, on the same receiver by its text: an add verb
+//     (append, appendleft, insert, add, extend, push, register, subscribe, attach, install, or a name starting
+//     with one: addHandler, add_listener) before, a remove verb (remove, pop, popleft, discard, clear, unregister,
+//     unsubscribe, detach, uninstall, or a name starting with one: removeHandler) after:
+//     `sys.path.insert(0, p); yield; sys.path.remove(p)`; and `X.pop(k)` after `X[k] = v`;
+//   - a paired call: a call statement after the yield to the same function as a call before it (by sym_of, else
+//     by its dotted text) with as many positional arguments, where the call before is a statement of its own or
+//     the whole value of an assignment, and the function is neither a builtin nor a class of the run (a builtin
+//     or a constructor computes a value, it does not set state). Either
+//       restore: the call after passes, at one position, a name that holds the state read before the set (bound,
+//       before the call before, to a call that is not a builtin or a class, an attribute or a subscript), where
+//       the call before passed something else, and the other positions are the same text:
+//       `old = get_user(); set_user(u); yield; set_user(old)`, `old = signal.signal(s, h); ...; signal.signal(s,
+//       old)`, `old = os.getcwd(); os.chdir(p); yield; os.chdir(old)`;
+//       reset: every argument of the call after is a neutral constant (0, None, False, or a named constant such
+//       as logging.NOTSET or signal.SIG_DFL) and the arguments differ from the call before:
+//       `signal.alarm(n); yield; signal.alarm(0)`, `logging.disable(CRITICAL); yield; logging.disable(NOTSET)`.
 //   @contextmanager
 //   def held(lock):
 //       lock.acquire(); yield lock; lock.release()               reported at the yield
 //       lock.acquire(); try: yield lock finally: lock.release()  not reported
-//       with lock: yield lock                                    not reported
-//       try: yield c except Exception: c.rollback(); raise       not reported: the yield is guarded; the
-//       c.commit()                                                 commit is meant to run only on success
+//       try: yield c except Exception: c.rollback(); raise       not reported: commit is not a release, it is
+//       c.commit()                                                 meant to run only on success
+//       try: yield except ValueError: raise                      reported: a narrow except lets the error through
+//       lock.release()
 //       if lock is None: yield; return                           not reported: the release is unreachable from it
-// Left alone: code after the yield that commits, flushes, enqueues, logs or records success (not a release: it is
-// meant to run only when the block succeeds); `X.reset()` of something the def did not touch before the yield;
-// lifespan functions (named `*lifespan*`, or passed as `lifespan=` anywhere in the run), whose shutdown is the
-// server's; pytest fixtures (pytest runs the code after a fixture's yield also when the test fails); a yield in a
-// nested def or lambda; a `contextmanager` decorator that is not contextlib's; test files.
-// Gaps: a yield guarded by a try whose handler catches only some exceptions (`except ValueError: ...`) counts as
-// guarded; a release in a helper the def calls after the yield (`self._teardown()`) is not followed; a release
-// written after the try of a guarded yield (`try: yield except E: raise` then `conn.close()`) is not reported; a
-// release that is meant to be skipped on error (a marker file left behind on purpose so the next run retries) is
-// reported, and the message says to leave it.
+// Left alone: code after the yield that commits, flushes, enqueues, logs or records success (not a release);
+// `X.reset()` or `del T` of something the def did not touch before the yield; a call computed before and after the
+// yield (`label = str(key); yield label; log.info("%s", str(key))`: a builtin, and its value is used); a paired call
+// whose arguments are the same, or whose later argument is no saved state (`notify("start"); yield;
+// notify("end")`, `bar.update(0); yield; bar.update(100)`); lifespan functions (named `*lifespan*`, or passed as
+// `lifespan=` anywhere in the run), whose shutdown is the server's; pytest fixtures (pytest runs the code after a
+// fixture's yield also when the test fails); a yield in a nested def or lambda; a `contextmanager` decorator that is
+// not contextlib's; test files.
+// Name lists: the release methods and the add/remove verbs are names because a library container or resource
+// type is not decidable from the call; everything else is by resolution or by the def's own writes.
+// Gaps: a release in a helper the def calls after the yield (`self._teardown()`) is not followed; a release that
+// is meant to be skipped on error (a marker file left behind on purpose so the next run retries) is reported, and
+// the message says to leave it; a paired call whose later argument is a named constant used as an event, not a
+// state (`emit(EVENT_START); yield; emit(EVENT_END)`), reads as a reset; a logging call that logs a saved value at
+// the position where the call before logged another (`log.info(new); yield; log.info(old)`) reads as a restore;
+// a with-statement whose own exit swallows exceptions (other than contextlib.suppress) is not known to.
 
 #include "lib/python_practice.rerail"
 
 .violation CleanupSkipped(at: node, fx: symbol, what: symbol, r: node)
-    "`{what}` at line {r.line} runs only when the with-block of contextmanager `{fx}` succeeds: an exception in the block is thrown in at this `yield` and skips it, so what it releases or restores stays held or changed. Wrap the yield in `try: yield ... finally: {what}`; leave it when the release must run only on success (a marker left behind on purpose)."
+    "`{what}` (line {r.line}) is skipped when the with-block of `{fx}` raises, so what it releases stays held or changed. Move it into a finally around the yield, unless it must run only on success."
 CleanupSkipped(y, fx, what, r) :- ccs_yield(y, f), r = min o : { ccs_after(y, f, o) }, ccs_release(r, f, what),
     def_name(f, fx).
 
-// ccs_yield(y, f): y is an unguarded yield of contextmanager f, outside test code, and f is not a lifespan.
+// ccs_yield(y, f): y is a yield of contextmanager f, outside test code, and f is not a lifespan.
 .decl ccs_yield(y: node, f: node)
-ccs_yield(y, f) :- pp_cm_yield(y, f), pp_live(y), !ccs_guarded(y, f), !ccs_lifespan(f).
-// ccs_guarded(y, f): y is in the body of a try with an except or finally clause, or of a with, in f's own frame.
-.decl ccs_guarded(y: node, f: node)
-ccs_guarded(y, f) :- pp_cm_yield(y, f), within(y, tb), field(t, "body", tb), kind(t, "try_statement"), pp_frame(t, f),
-    child(t, c, _), (kind(c, "except_clause") ; kind(c, "finally_clause") ; kind(c, "except_group_clause")).
-ccs_guarded(y, f) :- pp_cm_yield(y, f), within(y, wb), field(w, "body", wb), kind(w, "with_statement"),
-    pp_frame(w, f).
+ccs_yield(y, f) :- pp_cm_yield(y, f), pp_live(y), !ccs_lifespan(f).
 // ccs_lifespan(f): an ASGI lifespan: its shutdown is the server's, judged elsewhere.
 .decl ccs_lifespan(f: node)
 ccs_lifespan(f) :- pp_cm_def(f), def_name(f, x), contains("lifespan", x).
 ccs_lifespan(f) :- kind(ka, "keyword_argument"), field(ka, "name", n), text(n, "lifespan"), field(ka, "value", v0),
     unparen(v0, v), sym_of(v, q), qualname(f, q), pp_cm_def(f).
 
-// ccs_after(y, f, r): release r, in f's own frame, runs after the unguarded yield y on the normal path: a later
-// statement of a block that holds y, with no return or raise between them.
+// ccs_after(y, f, r): release r, in f's own frame, runs after the yield y on the normal path only: a later
+// statement of a block that holds y, with no return or raise between them and no handler between them that
+// swallows the exception thrown in at y.
 .decl ccs_after(y: node, f: node, r: node)
 ccs_after(y, f, r) :- ccs_yield(y, f), ccs_release(r, f, _), ccs_stmt(y, sy, b), ccs_stmt(r, sr, b), child(b, sy, i),
-    child(b, sr, j), i < j, !ccs_exit_between(y, b, j).
+    child(b, sr, j), i < j, !ccs_exit_between(y, b, j), !ccs_swallowed_in(y, sy).
 // ccs_stmt(n, st, b): python/flow's stmt_of, for yields and releases only: st is the statement of block b that
 // holds n (or is n).
 .decl ccs_point(n: node)
@@ -91,6 +111,31 @@ ccs_exit_between(y, b, j) :- ccs_yield(y, _), ccs_stmt(y, _, b), ccs_stmt(y, sy2
 ccs_exit(s) :- kind(s, "return_statement").
 ccs_exit(s) :- kind(s, "raise_statement").
 
+// ---- handlers that swallow ---------------------------------------------------------------------------------------
+// ccs_swallowed_in(y, sy): inside statement sy (or at it), a handler around y swallows the exception thrown in at
+// y, so code after sy runs on error too.
+.decl ccs_swallowed_in(y: node, sy: node)
+ccs_swallowed_in(y, sy) :- ccs_stmt(y, sy, _), ccs_swallow(y, t), (t = sy ; within(t, sy)).
+// ccs_swallow(y, t): t, in y's frame, holds y in its body and swallows what y raises: a try with an except that
+// catches everything and neither re-raises nor returns, or `with contextlib.suppress(Exception)`.
+.decl ccs_swallow(y: node, t: node)
+ccs_swallow(y, t) :- ccs_yield(y, f), kind(t, "try_statement"), field(t, "body", tb), within(y, tb), pp_frame(t, f),
+    child(t, x, _), ccs_catches_all(x), !ccs_handler_exits(x).
+ccs_swallow(y, w) :- ccs_yield(y, f), kind(w, "with_statement"), field(w, "body", wb), within(y, wb), pp_frame(w, f),
+    within(c, w), !within(c, wb), kind(c, "call"), field(c, "function", fn), sym_of(fn, "contextlib.suppress"),
+    posarg(c, _, e), caught(e, q), ccs_catch_all(q).
+.decl ccs_catch_all(q: symbol)
+ccs_catch_all("builtins.BaseException"). ccs_catch_all("builtins.Exception").
+// ccs_catches_all(x): except clause x catches everything: bare (a comment beside it, `except:  # noqa`, still
+// bare), or naming Exception or BaseException.
+.decl ccs_catches_all(x: node)
+ccs_catches_all(x) :- kind(x, "except_clause"), count : { child(x, e, _), !kind(e, "block"), !kind(e, "comment") } = 0.
+ccs_catches_all(x) :- catches(x, q), ccs_catch_all(q).
+// ccs_handler_exits(x): except clause x re-raises or returns somewhere in it, so the code after its try is skipped
+// on that path.
+.decl ccs_handler_exits(x: node)
+ccs_handler_exits(x) :- kind(x, "except_clause"), within(s, x), ccs_exit(s).
+
 // ---- releases ----------------------------------------------------------------------------------------------------
 // ccs_release(r, f, what): r, in contextmanager f's own frame, undoes something; what names it for the message.
 .decl ccs_release(r: node, f: node, what: symbol)
@@ -102,8 +147,10 @@ ccs_release(c, f, x) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn,
 ccs_release(a, f, s) :- ccs_attr_restore(a, f), text(a, s).
 ccs_release(s, f, t) :- ccs_environ_write(s, f), text(s, t).
 ccs_release(a, f, s) :- ccs_flag_reset(a, f), text(a, s).
-ccs_release(c, f, t) :- ccs_pre_callee(f, x, y), ccs_callee(f, c, x), earlier(y, c), ccs_arg_name(c, v),
-    ccs_pre_name(f, v, y2), earlier(y2, c), text(c, t).
+ccs_release(d, f, t) :- ccs_unset(d, f), text(d, t).
+ccs_release(c, f, t) :- ccs_unregister(c, f), text(c, t).
+ccs_release(c, f, t) :- ccs_restore_call(c, f), text(c, t).
+ccs_release(c, f, t) :- ccs_reset_call(c, f), text(c, t).
 .decl ccs_call_in(c: node, f: node)
 ccs_call_in(c, f) :- kind(c, "call"), pp_frame(c, f), pp_cm_def(f).
 .decl ccs_release_method(m: symbol)
@@ -127,12 +174,6 @@ ccs_post_assign(f, a, l, r) :- ccs_assign(f, a, l, r), pp_cm_yield(y, f), earlie
 // ccs_pre_name(f, v, y): name v is bound in f before yield y.
 .decl ccs_pre_name(f: node, v: symbol, y: node)
 ccs_pre_name(f, v, y) :- ccs_assign(f, a, l, _), kind(l, "identifier"), text(l, v), pp_cm_yield(y, f), earlier(a, y).
-// ccs_callee(f, c, x): call c in f's own frame calls the function written x. ccs_pre_callee(f, x, y): f calls x
-// before yield y.
-.decl ccs_callee(f: node, c: node, x: symbol)
-ccs_callee(f, c, x) :- ccs_call_in(c, f), field(c, "function", fn), text(fn, x).
-.decl ccs_pre_callee(f: node, x: symbol, y: node)
-ccs_pre_callee(f, x, y) :- ccs_callee(f, c, x), pp_cm_yield(y, f), earlier(c, y).
 // ccs_arg_name(c, v): call c passes the name v.
 .decl ccs_arg_name(c: node, v: symbol)
 ccs_arg_name(c, v) :- ccs_call_in(c, _), field(c, "arguments", l), child(l, a, _), kind(a, "identifier"), text(a, v).
@@ -181,18 +222,150 @@ ccs_environ_write(d, f) :- kind(d, "delete_statement"), pp_frame(d, f), pp_cm_de
 ccs_environ_write(c, f) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, e, m), (m = "pop" ; m = "update"),
     sym_of(e, "os.environ").
 
+// ---- del of what the def set -------------------------------------------------------------------------------------
+// ccs_unset(d, f): `del T` (T an attribute or subscript) or `delattr(o, "a")` in f's own frame, after a yield of f
+// before which f set T (`T = v`, also as one target of `T, x = v, w`, or `setattr(o, "a", v)`), compared by text.
+.decl ccs_unset(d: node, f: node)
+ccs_unset(d, f) :- kind(d, "delete_statement"), pp_frame(d, f), pp_cm_def(f), ccs_del_target(d, n),
+    (kind(n, "attribute") ; kind(n, "subscript")), text(n, x), ccs_pre_target(f, x, y), earlier(y, d).
+ccs_unset(c, f) :- ccs_call_in(c, f), field(c, "function", fn), sym_of(fn, "builtins.delattr"), ccs_attr_key(c, x),
+    ccs_pre_target(f, x, y), earlier(y, c).
+.decl ccs_del_target(d: node, n: node)
+ccs_del_target(d, n) :- kind(d, "delete_statement"), child(d, n, _), !kind(n, "expression_list").
+ccs_del_target(d, n) :- kind(d, "delete_statement"), child(d, l, _), kind(l, "expression_list"), child(l, n, _).
+// ccs_pre_target(f, x, y): before yield y, f set the attribute or subscript written x.
+.decl ccs_pre_target(f: node, x: symbol, y: node)
+ccs_pre_target(f, x, y) :- ccs_assign(f, a, l, _), (n = l ; child(l, n, _)), (kind(n, "attribute") ; kind(n, "subscript")),
+    text(n, x), pp_cm_yield(y, f), earlier(a, y).
+ccs_pre_target(f, x, y) :- ccs_call_in(c, f), field(c, "function", fn), sym_of(fn, "builtins.setattr"),
+    ccs_attr_key(c, x), pp_cm_yield(y, f), earlier(c, y).
+// ccs_attr_key(c, x): `setattr(o, "a", ...)` or `delattr(o, "a")` names the attribute written x, `o.a`.
+.decl ccs_attr_key(c: node, x: symbol)
+ccs_attr_key(c, cat(cat(ot, "."), an)) :- ccs_call_in(c, _), posarg(c, 0, o), posarg(c, 1, s), text(o, ot),
+    str_const(s, an).
+
+// ---- removal from a container the def added to -------------------------------------------------------------------
+// ccs_unregister(c, f): `X.remove(...)` and the other remove verbs after a yield of f, before which f called an add
+// verb on X (by X's text); or `X.pop(k)` after f set `X[k]` before the yield.
+.decl ccs_unregister(c: node, f: node)
+ccs_unregister(c, f) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, m), ccs_remove_verb(m), text(o, d),
+    ccs_pre_add(f, d, y), earlier(y, c).
+ccs_unregister(c, f) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, "pop"), text(o, d), posarg(c, 0, k),
+    text(k, kt), ccs_pre_item(f, d, kt, y), earlier(y, c).
+.decl ccs_pre_add(f: node, d: symbol, y: node)
+ccs_pre_add(f, d, y) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(fn, o, m), ccs_add_verb(m), text(o, d),
+    pp_cm_yield(y, f), earlier(c, y).
+.decl ccs_pre_item(f: node, d: symbol, k: symbol, y: node)
+ccs_pre_item(f, d, k, y) :- ccs_assign(f, a, l, _), (n = l ; child(l, n, _)), kind(n, "subscript"), field(n, "value", v),
+    text(v, d), field(n, "subscript", s), text(s, k), pp_cm_yield(y, f), earlier(a, y).
+.decl ccs_method_name(m: symbol)
+ccs_method_name(m) :- ccs_call_in(c, _), field(c, "function", fn), attr_of(fn, _, m).
+.decl ccs_add_verb(m: symbol)
+ccs_add_verb(m) :- ccs_method_name(m),
+    match("(append|appendleft|insert|add|extend|push|register|subscribe|attach|install)([A-Z_].*)?", m).
+.decl ccs_remove_verb(m: symbol)
+ccs_remove_verb(m) :- ccs_method_name(m),
+    match("(remove|pop|popleft|discard|clear|unregister|unsubscribe|detach|uninstall)([A-Z_].*)?", m).
+
+// ---- paired calls ------------------------------------------------------------------------------------------------
+// ccs_effect(c): call c is a statement of its own (or `await c` is): it is made for its effect, its value dropped.
+.decl ccs_effect(c: node)
+ccs_effect(c) :- ccs_call_in(c, _), pp_discarded(c).
+ccs_effect(c) :- ccs_call_in(c, _), kind(w, "await"), child(w, c, 0), kind(s, "expression_statement"), child(s, e, 0),
+    !child(s, _, 1), unparen(e, w).
+// ccs_set_call(c, f, y): call c sets something before yield y of f: a statement of its own, or the whole value of
+// an assignment (`old = signal.signal(s, h)`, which sets and returns the old state).
+.decl ccs_set_call(c: node, f: node, y: node)
+ccs_set_call(c, f, y) :- ccs_effect(c), ccs_call_in(c, f), pp_cm_yield(y, f), earlier(c, y).
+ccs_set_call(c, f, y) :- ccs_assign(f, _, _, r), unparen(r, c), kind(c, "call"), pp_cm_yield(y, f), earlier(c, y).
+ccs_set_call(c, f, y) :- ccs_assign(f, _, _, r), unparen(r, w), kind(w, "await"), child(w, c, 0), kind(c, "call"),
+    pp_cm_yield(y, f), earlier(c, y).
+// ccs_key(c, k): the function call c calls, by its resolved name, else by its dotted text (`self.set_level`).
+.decl ccs_key(c: node, k: symbol)
+ccs_key(c, q) :- ccs_call_in(c, _), field(c, "function", fn), sym_of(fn, q).
+ccs_key(c, d) :- ccs_call_in(c, _), field(c, "function", fn), !sym_of(fn, _), dotted_expr(fn, d).
+// ccs_computes(c): call c computes a value: it calls a builtin (str, int, len, print, ...) or a class of the run.
+.decl ccs_computes(c: node)
+ccs_computes(c) :- ccs_key(c, q), prefix("builtins.", q).
+ccs_computes(c) :- ccs_key(c, q), class_def(_, q).
+.decl ccs_nargs(c: node, n: number)
+ccs_nargs(c, n) :- ccs_call_in(c, _), n = count : { posarg(c, _, _) }.
+// ccs_pair(c0, c, f): c0 sets something before a yield of f, and c, a statement after that yield, calls the same
+// function with as many positional arguments.
+.decl ccs_pair(c0: node, c: node, f: node)
+ccs_pair(c0, c, f) :- ccs_effect(c), ccs_call_in(c, f), ccs_key(c, k), !ccs_computes(c), ccs_set_call(c0, f, y),
+    earlier(y, c), ccs_key(c0, k), ccs_nargs(c0, n), ccs_nargs(c, n).
+// ccs_restore_call(c, f): the restore form: c passes, at one position, a name holding the state read before the
+// set, where c0 passed something else, and the other positions are the same text.
+.decl ccs_restore_call(c: node, f: node)
+ccs_restore_call(c, f) :- ccs_pair(c0, c, f), posarg(c, i, a), kind(a, "identifier"), text(a, v), posarg(c0, i, a0),
+    text(a0, t0), t0 != v, !ccs_other_differs(c0, c, i), ccs_saved_state(f, v, c0).
+.decl ccs_other_differs(c0: node, c: node, i: number)
+ccs_other_differs(c0, c, i) :- ccs_pair(c0, c, _), posarg(c, i, _), posarg(c, j, a), j != i, posarg(c0, j, a0),
+    text(a, t), text(a0, t0), t != t0.
+// ccs_saved_state(f, v, c0): name v is bound, before the set call c0 (or by it), to a read of state: a call that
+// does not compute (a getter, or the setter returning the old value), an attribute or a subscript.
+.decl ccs_saved_state(f: node, v: symbol, c0: node)
+ccs_saved_state(f, v, c0) :- ccs_set_call(c0, f, _), ccs_assign(f, a, l, r0), kind(l, "identifier"), text(l, v),
+    unparen(r0, r), ccs_read(r), (earlier(a, c0) ; within(c0, a)).
+.decl ccs_read(r: node)
+ccs_read(r) :- kind(r, "attribute").
+ccs_read(r) :- kind(r, "subscript").
+ccs_read(r) :- kind(r, "call"), !ccs_computed(r).
+ccs_read(r) :- kind(r, "await"), child(r, c, 0), kind(c, "call").
+// ccs_computed(r): call r computes a value rather than reading state: a builtin other than getattr, or a class of
+// the run.
+.decl ccs_computed(r: node)
+ccs_computed(r) :- kind(r, "call"), field(r, "function", fn), sym_of(fn, q), prefix("builtins.", q),
+    q != "builtins.getattr".
+ccs_computed(r) :- kind(r, "call"), field(r, "function", fn), sym_of(fn, q), class_def(_, q).
+// ccs_reset_call(c, f): the reset form: every argument of c is a neutral constant, and c0 passed other arguments.
+.decl ccs_reset_call(c: node, f: node)
+ccs_reset_call(c, f) :- ccs_pair(c0, c, f), posarg(c, _, _), !ccs_live_arg(c), field(c, "arguments", l),
+    field(c0, "arguments", l0), text(l, t), text(l0, t0), t != t0.
+// ccs_live_arg(c): c passes an argument that is not a neutral constant (a keyword argument counts as one).
+.decl ccs_live_arg(c: node)
+ccs_live_arg(c) :- ccs_effect(c), field(c, "arguments", l), child(l, a, _), !kind(a, "comment"), !ccs_neutral(a).
+// ccs_neutral(a): 0, None, False, or a named constant (a name or attribute whose last name is in capitals:
+// logging.NOTSET, signal.SIG_DFL).
+.decl ccs_neutral(a: node)
+ccs_neutral(a) :- kind(a, "integer"), text(a, "0").
+ccs_neutral(a) :- kind(a, "none").
+ccs_neutral(a) :- kind(a, "false").
+ccs_neutral(a) :- (kind(a, "identifier") ; kind(a, "attribute")), leaf_name(a, x), match("[A-Z][A-Z0-9_]+", x).
+
 // The cases, `cases/python-practice-contextmanager-cleanup-skipped/`, read as one repository: each line ending in
 // `# caught` is reported, and no other line.
 .test cases exactly
     .fixture "app/__init__.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/__init__.py"
+    .fixture "app/context.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/context.py"
     .fixture "app/decorators.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/decorators.py"
     .fixture "app/other.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/other.py"
+    .fixture "app/release_near_misses.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/release_near_misses.py"
+    .fixture "app/releases.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/releases.py"
     .fixture "app/resources.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/resources.py"
+    .fixture "app/restores.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/restores.py"
     .fixture "app/safe.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/safe.py"
     .fixture "app/state.py" from "../cases/python-practice-contextmanager-cleanup-skipped/app/state.py"
     .fixture "tests/__init__.py" from "../cases/python-practice-contextmanager-cleanup-skipped/tests/__init__.py"
     .fixture "tests/conftest.py" from "../cases/python-practice-contextmanager-cleanup-skipped/tests/conftest.py"
     .fixture "tests/test_resources.py" from "../cases/python-practice-contextmanager-cleanup-skipped/tests/test_resources.py"
+    .expect _ at "app/releases.py":20
+    .expect _ at "app/releases.py":28
+    .expect _ at "app/releases.py":35
+    .expect _ at "app/releases.py":43
+    .expect _ at "app/releases.py":50
+    .expect _ at "app/releases.py":57
+    .expect _ at "app/releases.py":64
+    .expect _ at "app/releases.py":71
+    .expect _ at "app/releases.py":78
+    .expect _ at "app/releases.py":85
+    .expect _ at "app/releases.py":92
+    .expect _ at "app/releases.py":99
+    .expect _ at "app/releases.py":107
+    .expect _ at "app/releases.py":117
+    .expect _ at "app/releases.py":126
+    .expect _ at "app/releases.py":134
     .expect _ at "app/resources.py":11
     .expect _ at "app/resources.py":18
     .expect _ at "app/resources.py":25
@@ -201,6 +374,12 @@ ccs_environ_write(c, f) :- ccs_call_in(c, f), field(c, "function", fn), attr_of(
     .expect _ at "app/resources.py":49
     .expect _ at "app/resources.py":57
     .expect _ at "app/resources.py":64
+    .expect _ at "app/restores.py":19
+    .expect _ at "app/restores.py":27
+    .expect _ at "app/restores.py":34
+    .expect _ at "app/restores.py":42
+    .expect _ at "app/restores.py":51
+    .expect _ at "app/restores.py":59
     .expect _ at "app/state.py":14
     .expect _ at "app/state.py":22
     .expect _ at "app/state.py":30

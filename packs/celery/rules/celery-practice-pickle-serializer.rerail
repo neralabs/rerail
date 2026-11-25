@@ -1,5 +1,5 @@
 .policy "celery-practice-pickle-serializer" revision 1
-.description "Keep Celery on JSON: never set task_serializer, result_serializer, event_serializer or a task's serializer to pickle, nor put pickle in accept_content."
+.description "Keep Celery off pickle for task messages and results; a worker that accepts pickle runs code from any message on the broker."
 .language python
 .mode steer
 .scope include "**/*.py"
@@ -23,15 +23,15 @@
 // `"application/x-signed-pickle"`, paperless-ngx's HMAC-signed serializer); json, msgpack and yaml; every run that
 // calls `app.setup_security(...)` outside tests (message signing: only signed messages are accepted); test code and
 // test settings files (cel_test_doc, and settings files named `test*.py` or `*_test*.py`); a bare `task_serializer =`
-// outside a class or module named for Celery; `serializer="pickle"` on calls other than apply_async and send_task
-// (cache clients, other libraries).
+// outside a class or module named for Celery; `serializer="pickle"` on calls other than a Celery task's apply_async
+// and send_task (cache clients, a multiprocessing pool's apply_async, other libraries).
 // Gaps: values read from the environment or another module's constant; a serializer registered under another name
-// that wraps pickle (kombu's register()); `options={"serializer": ...}`, `.set(serializer=...)` on a signature, and
-// a config dict passed to config_from_object.
+// that wraps pickle (kombu's register()); `options={"serializer": ...}`, `.set(serializer=...)` on a signature, a
+// config dict passed to config_from_object, and `app.conf.update(**{...})`.
 
 #include "lib/celery.rerail"
 
-.violation PickleSerializer(at: node, k: symbol) "Celery's `{k}` names pickle: a worker that accepts pickle runs code from any message written to the broker (a shared Redis, a leaked URL). Use \"json\" (the default) and keep pickle out of accept_content; pass ids, not objects. If pickle must stay, sign messages with app.setup_security() first."
+.violation PickleSerializer(at: node, k: symbol) "`{k}` enables pickle, so anyone who can write to the broker runs code in the worker. Use json; if pickle must stay, sign messages with `app.setup_security()`."
 // Settings that name one serializer.
 PickleSerializer(at, k) :- cel_setting(k, v, s), ps_one_key(k), ps_pickle(v, at), ps_live(s).
 // Settings that list accepted content types.
@@ -42,9 +42,8 @@ PickleSerializer(at, "serializer") :- cel_task_option(f, "serializer", v), ps_pi
 PickleSerializer(at, "serializer") :- ps_task_class(c), field(c, "body", b), body_stmt(b, st, _),
     kind(st, "expression_statement"), child(st, a, 0), kind(a, "assignment"), field(a, "left", l), text(l, "serializer"),
     field(a, "right", v), ps_pickle(v, at), ps_live(a).
-// A send's execution option.
-PickleSerializer(at, "serializer") :- kind(c, "call"), field(c, "function", fn), attr_of(fn, _, m),
-    (m = "apply_async" ; m = "send_task"), call_arg(c, -1, "serializer", v), ps_pickle(v, at), ps_live(c).
+// A send's execution option: `apply_async` on a Celery task (lib/celery's cel_send) or any `send_task`.
+PickleSerializer(at, "serializer") :- cel_send(c, _), call_arg(c, -1, "serializer", v), ps_pickle(v, at), ps_live(c).
 
 .decl ps_one_key(k: symbol)
 ps_one_key("task_serializer"). ps_one_key("result_serializer"). ps_one_key("event_serializer").

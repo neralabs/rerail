@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pydantic import SecretStr
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Boolean, Column, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlmodel import Field, SQLModel
 
@@ -85,3 +85,66 @@ class Webhook(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     url: str
     secret: SecretStr
+
+
+# Other spellings of a password hash, and stored secrets and keys by suffix: a row sent as it is.
+class Login(Base):
+    __tablename__ = "login"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    password_digest: Mapped[str] = mapped_column(String(255))
+
+
+class LegacyLogin(Base):
+    __tablename__ = "legacy_login"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    hashed_pw: Mapped[str] = mapped_column(String(255))
+
+
+class Hook(Base):
+    __tablename__ = "hook"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    webhook_secret: Mapped[str] = mapped_column(String(64))
+    is_secret: Mapped[bool] = mapped_column(default=False)
+
+
+class Provider(Base):
+    __tablename__ = "provider"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    openai_api_key: Mapped[str] = mapped_column(String(128))
+
+
+# Flags, not values: left alone.
+class Flagged(Base):
+    __tablename__ = "flagged"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    is_secret: Mapped[bool] = mapped_column(default=False)
+    has_api_key: Mapped[bool] = mapped_column(default=False)
+
+
+# Words, not a list: a prefixed hash, a stored plain password, and flags typed bool.
+class Mailer(Base):
+    __tablename__ = "mailer"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    smtp_password: Mapped[str] = mapped_column(String(255))
+
+
+class Operator(Base):
+    __tablename__ = "operator"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_pwd_hash = Column(String(255))
+
+
+class Toggles(Base):
+    __tablename__ = "toggles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    has_password: Mapped[bool] = mapped_column(default=False)
+    uses_api_key = Column(Boolean, default=False)
+    show_secret = Column(Boolean)

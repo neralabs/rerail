@@ -1,5 +1,5 @@
 .policy "alembic-practice-set-not-null-scan" revision 1
-.description "Make a column of an existing table NOT NULL behind a validated CHECK (c IS NOT NULL) NOT VALID constraint, so SET NOT NULL does not scan the table under an exclusive lock."
+.description "Make an existing column NOT NULL in Alembic migrations behind a CHECK constraint validated beforehand; a plain SET NOT NULL scans the table under an exclusive lock."
 .language python
 .mode log
 .scope include "**/*.py"
@@ -36,22 +36,27 @@
 //   nullable=True, no nullable=; a table the same upgrade() creates; the branch of a dialect test that runs only on
 //   another database (lib/alembic al_non_pg); downgrade(); revisions under tests/; files without
 //   `revision`/`down_revision`; an `op` that is not alembic.op.
+// A VALIDATE exempts the column only when the constraint it names is shown to be a NOT NULL check of that column:
+// added by SQL (`ADD CONSTRAINT {NOT_NULL_CHECK} CHECK (x IS NOT NULL) NOT VALID`) or by create_check_constraint whose
+// condition spells `x IS NOT NULL`, in this revision or an earlier one of the run. A VALIDATE of another constraint
+// whose name merely contains the column's (`fk_users_email_domain` for `email`) exempts nothing. Flags are read by
+// value (lib/alembic's al_bool).
 // Gaps: `op.execute("ALTER TABLE ... SET NOT NULL")` is not read; a table created by an earlier revision of the same
-// release counts as existing; a column name the rule cannot resolve is reported as `<column>`; a VALIDATE of another
-// constraint whose SQL happens to name the column exempts it; a column already NOT NULL without
-// `existing_nullable=False` (a no-op) is reported; a table the same transaction already rewrites (raw
+// release counts as existing; a column name the rule cannot resolve is reported as `<column>`; a NOT NULL check added
+// outside the run (another repository, a manual step) is not seen, so its column is reported; a column already NOT
+// NULL without `existing_nullable=False` (a no-op) is reported; a table the same transaction already rewrites (raw
 // `ADD COLUMN id SERIAL`) is reported though the fix does not shorten the lock; a table that stays small cannot be
 // told apart, so the message says when to leave it.
-// Corpus (8 Alembic repositories): 77 matches, 74 real; see the README's rule details.
+// Corpus (8 Alembic repositories): see the README's rule details.
 
 #include "lib/alembic.rerail"
 
-.violation SetNotNullScan(at: node, table: symbol, col: symbol) "SET NOT NULL on `{table}`.`{col}` scans every row while ALTER TABLE holds ACCESS EXCLUSIVE, blocking reads and writes. On PostgreSQL 12+ add `op.create_check_constraint(\"ck_{table}_{col}_not_null\", \"{table}\", \"{col} IS NOT NULL\", postgresql_not_valid=True)`, run `VALIDATE CONSTRAINT` once that has committed (a later revision, or an autocommit_block), then set nullable=False (no scan) and drop the check. Fine for a table that stays small."
-.violation SetNotNullAfterAdd(at: node, table: symbol, col: symbol) "`{col}` is added to existing `{table}` earlier in this upgrade, and SET NOT NULL then scans every row under ACCESS EXCLUSIVE, blocking reads and writes. If every existing row gets the same value, add the column with `server_default=` and nullable=False in one step instead (no rewrite or scan on PostgreSQL 11+); otherwise add `CHECK ({col} IS NOT NULL) NOT VALID`, VALIDATE it, then set nullable=False (PostgreSQL 12+). Fine for a table that stays small."
+.violation SetNotNullScan(at: node, table: symbol, col: symbol) "SET NOT NULL on `{table}`.`{col}` scans every row under ACCESS EXCLUSIVE. Add a NOT VALID `{col} IS NOT NULL` check, validate it after a commit, then set NOT NULL. Fine for a small table."
+.violation SetNotNullAfterAdd(at: node, table: symbol, col: symbol) "`{col}` was just added to `{table}`, and SET NOT NULL scans every row under ACCESS EXCLUSIVE. Add it with `server_default=` and nullable=False in one step instead. Fine for a small table."
 
-// snn_false(e): e is a literal False.
+// snn_false(e): e is False by value (a literal or a module constant: lib/alembic's al_bool).
 .decl snn_false(e: node)
-snn_false(e) :- unparen(e, u), kind(u, "false").
+snn_false(e) :- al_bool(e, "false").
 
 // snn_col(c, x): alter_column c's column, as its name or a placeholder when the rule cannot read it.
 .decl snn_known_col(c: node, x: symbol)
@@ -81,24 +86,23 @@ snn_sql(n, y) :- kind(n, "string"), !snn_in_concat(n), text(n, s), y = @lower(s)
 .decl snn_validates(f: node, nm: symbol)
 snn_validates(f, nm) :- snn_set(_, _, _, f, _), snn_sql(n, s), al_in_step(n, f),
     match("(?s).*validate constraint\\s+(?<nm>[^\\s\"';]+).*", s).
-// snn_validated(f, x): upgrade step f validates a constraint that is a NOT NULL check of column x: its name holds the
-// column's (`ck_refunds_reason_not_null`), or the same file adds it with SQL (`ADD CONSTRAINT {NOT_NULL_CHECK} CHECK
-// (x IS NOT NULL) NOT VALID`) or with create_check_constraint whose condition spells `x IS NOT NULL`.
+// snn_validated(f, x): upgrade step f validates a constraint that is a NOT NULL check of column x, added by SQL
+// (`ADD CONSTRAINT {NOT_NULL_CHECK} CHECK (x IS NOT NULL) NOT VALID`, a string that names the constraint and spells the
+// check) or by create_check_constraint whose condition spells `x IS NOT NULL`, anywhere in the run.
 .decl snn_validated(f: node, x: symbol)
-snn_validated(f, x) :- snn_set(_, _, x, f, _), snn_validates(f, nm), contains(@lower(x), nm).
-snn_validated(f, x) :- snn_set(_, _, x, f, d), snn_validates(f, nm), snn_sql(n, s), docof(n, d), contains(nm, s),
+snn_validated(f, x) :- snn_set(_, _, x, f, _), snn_validates(f, nm), snn_sql(n, s), contains(nm, s),
     lx = @lower(x), (contains(cat(lx, " is not null"), s) ; contains(cat(cat("\"", lx), "\" is not null"), s)).
-snn_validated(f, x) :- snn_set(_, t, x, f, d), snn_validates(f, nm), snn_check_says(k, t, x, d), al_role(k, "name", e),
+snn_validated(f, x) :- snn_set(_, t, x, f, _), snn_validates(f, nm), snn_check_says(k, t, x, _), al_role(k, "name", e),
     unparen(e, u), (al_name_value(u, en), nm = @lower(en) ; kind(u, "identifier"), text(u, en), contains(@lower(en), nm)).
 // snn_check_says(k, t, x, d): create_check_constraint k in document d, on table t, has a condition that spells
 // `x IS NOT NULL` (bare or double-quoted name).
 .decl snn_check_says(k: node, t: symbol, x: symbol, d: number)
-snn_check_says(k, t, x, d) :- snn_set(_, t, x, _, d), al_call(k, "create_check_constraint", fm), al_table(k, t),
+snn_check_says(k, t, x, d) :- snn_set(_, t, x, _, _), al_call(k, "create_check_constraint", fm), al_table(k, t),
     docof(k, d), snn_condition(k, fm, s), lx = @lower(x), (contains(cat(lx, " is not null"), s) ;
     contains(cat(cat("\"", lx), "\" is not null"), s)).
-// snn_check_added(d, t, x): ... and adds it validated: no postgresql_not_valid, or a literal False.
+// snn_check_added(d, t, x): revision d itself adds that check validated: no postgresql_not_valid, or False.
 .decl snn_check_added(d: number, t: symbol, x: symbol)
-snn_check_added(d, t, x) :- snn_check_says(k, t, x, d), !snn_not_valid(k).
+snn_check_added(d, t, x) :- snn_set(_, t, x, _, d), snn_check_says(k, t, x, d), !snn_not_valid(k).
 .decl snn_not_valid(k: node)
 snn_not_valid(k) :- al_kw(k, "postgresql_not_valid", v), !snn_false(v).
 // snn_condition(k, fm, s): create_check_constraint k's condition, lowercased: its text, or a module constant's value.
@@ -141,6 +145,7 @@ SetNotNullAfterAdd(c, t, x) :- snn_set(c, t, x, _, _), !snn_safe(c), snn_added_b
     .fixture "migrations/versions/s4_checked_first.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s4_checked_first.py"
     .fixture "migrations/versions/s5_validate_later.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s5_validate_later.py"
     .fixture "migrations/versions/s6_other_op.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s6_other_op.py"
+    .fixture "migrations/versions/s7_refunds_checks.py" from "../cases/alembic-practice-set-not-null-scan/migrations/versions/s7_refunds_checks.py"
     .fixture "tests/migrations/versions/t1_fixture.py" from "../cases/alembic-practice-set-not-null-scan/tests/migrations/versions/t1_fixture.py"
     .expect _ at "migrations/versions/s1_set_not_null.py":14
     .expect _ at "migrations/versions/s1_set_not_null.py":15
@@ -155,5 +160,6 @@ SetNotNullAfterAdd(c, t, x) :- snn_set(c, t, x, _, _), !snn_safe(c), snn_added_b
     .expect _ at "migrations/versions/s3_added_then_tightened.py":22
     .expect _ at "migrations/versions/s3_added_then_tightened.py":27
     .expect _ at "migrations/versions/s4_checked_first.py":31
-    .expect _ at "migrations/versions/s5_validate_later.py":18
+    .expect _ at "migrations/versions/s5_validate_later.py":21
+    .expect _ at "migrations/versions/s5_validate_later.py":24
 .end

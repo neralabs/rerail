@@ -7,58 +7,85 @@
 // just the values, in the same function or through the project's helpers in other files:
 //   - a mapping whose keys come from the request expanded with `**` into `filter`, `exclude`, `get`,
 //     `get_or_create`, `update_or_create`, `annotate`, `alias`, `aggregate`, `values`, `order_by` (any receiver:
-//     the method name and the request-keyed splat are enough), into `update` on a queryset-looking receiver (a
-//     plain dict's `update(**…)` is common), or into `django.db.models.Q(**…)`. Request-keyed: the request mapping
-//     itself (`request.GET`, `.dict()`, `.copy()`, `request.data`, `request.data["filters"]`), a dict literal or
+//     the method name and the request-keyed splat are enough), into `update` on a queryset receiver (a plain
+//     dict's `update(**…)` is common), or into `django.db.models.Q(**…)`. Request-keyed: the request mapping itself
+//     (`request.GET`, `.dict()`, `.copy()`, `request.data`, `request.data["filters"]`), a dict literal or
 //     comprehension with a request-derived key (`{f"{field}__icontains": v}`, `{k: v for k, v in
 //     request.GET.items()}`), a name filled by `d[key] = …` with such a key or by `d.update(<request mapping>)`;
 //   - a request string passed as a field name to `order_by`, `values`, `values_list`, `only`, `defer` (positional or
-//     `*`-splatted) on a queryset-looking receiver (a chain from `.objects`/`_default_manager`, `get_queryset()`,
-//     `filter_queryset()`, `.queryset`, a name like `qs`/`*_qs`/`*queryset*`, or a name bound to one), or to
-//     `F(name)`, `Trunc(…, kind)`, `Extract(…, lookup_name)` (Django CVE-2021-35042, CVE-2022-34265,
-//     CVE-2024-42005).
+//     `*`-splatted) on a queryset receiver, or to `F(name)`, `Trunc(…, kind)`, `Extract(…, lookup_name)` (Django
+//     CVE-2021-35042, CVE-2022-34265, CVE-2024-42005). A free-text value of a form's `cleaned_data` or a
+//     serializer's `validated_data` (`CharField`, `ListField(child=CharField())`) counts as request text.
+// Queryset receivers are resolved, not guessed from names: a chain from `.objects`/`_default_manager`,
+// `get_queryset()`, `filter_queryset()`, `.queryset`; a related manager of a model of the run (a ForeignKey's or
+// ManyToManyField's `related_name`, `<model>_set`, a ManyToManyField's own name); a name bound to one; the return of
+// a function of the run that returns one; a parameter that some call of the run passes one to (any name: `items`,
+// `objects`, `books`); the queryset parameter of a DRF or django-filter hook (`filter_queryset`,
+// `paginate_queryset`) in a subclass of the framework's class.
 //   def search(request):
 //       Book.objects.filter(**request.GET.dict())                          reported
 //       Book.objects.filter(title__icontains=request.GET["q"])            not reported: the value is a parameter
-//   (views.py) queries.apply_sort(Book.objects.all(), request.GET["sort"])
-//   (queries.py) def apply_sort(qs, sort): return qs.order_by(sort)      reported, naming views.py's line
+//   (views.py) helpers.apply_sort(Book.objects.all(), request.GET["sort"])
+//   (helpers.py) def apply_sort(items, sort): return items.order_by(sort)  reported, naming views.py's line
 // Sanitisers it trusts: a name its function tests with `in` / `not in` or passes to a validator-named call
 // (lib/security's sec_checked: `if sort not in ALLOWED: …`, `{k: v for k, v in request.GET.items() if k in
 // ALLOWED}`, `sort = sanitize_order_by(sort, …)`), the same expression text checked in the function
 // (sec_checked_expr), a name passed to `Model._meta.get_field(name)`, a field-name sink inside an `if`/`elif`
 // that tests the name, or one derived from it, with `in` or `==` (`order_field = ordering.lstrip("-")`; `elif
 // order_field in (…): qs.order_by(ordering)`), a dict lookup (`SORTS[request.GET["sort"]]`, `SORTS.get(…)`), a
-// validator-named helper's return, a form's `cleaned_data` and a serializer's `validated_data` (their keys are
-// the declared fields).
+// validator-named helper's return, a typed validated value (lib/security's sec_typed: a choice, number, boolean,
+// UUID or date field); for a `**` splat, a form's `cleaned_data` or a serializer's `validated_data` (its keys are
+// the declared fields), and a check of every key of the same request mapping in the same function (`for k in
+// request.GET: if k not in ALLOWED: raise`, also over `.keys()`/`.items()`, `set(request.GET) - ALLOWED`,
+// `set(request.GET) <= ALLOWED`, `.issubset(ALLOWED)`).
 // Left alone: keyword lookups with request values (`filter(title__icontains=q)`) and dicts with fixed keys and
-// request values (`filter(**{"title__icontains": q})`): Django parameterises values; `**kwargs` of URLconf captures;
-// server-built dicts; `create(**request.data)` (mass assignment: the drf pack); `order_by(x)` on a receiver that does
-// not look like a queryset; test files.
+// request values (`filter(**{"title__icontains": q})`): Django parameterises values; `**kwargs` and the keys of
+// `self.kwargs` (the URLconf's capture names); server-built dicts; `create(**request.data)` (mass assignment: the drf
+// pack); `order_by(x)` on a receiver not resolved to a queryset (`Table().order_by(x)`, a parameter only ever given
+// a table); a field name under `if "<text>" in name:` (only names holding that text pass); test files; staff-only
+// code, where the client is staff who already see and sort the admin's data: lib/security's sec_admin_only (a
+// function that rejects when `not request.user.is_staff`/`is_superuser`, `@staff_member_required`,
+// `@user_passes_test(lambda u: u.is_staff)`, `@permission_required(…)`, DRF `@permission_classes([IsAdminUser])`,
+// `method_decorator` of a staff decorator, ModelAdmin/AdminSite methods, a DRF view with IsAdminUser, methods of a
+// class with an admin-only `dispatch`, a staff-only `test_func`, `PermissionRequiredMixin`, an InlineModelAdmin or
+// list filter, resolved through bases), a call under `if request.user.is_staff:`, and a helper every call of which
+// comes from such a function (two levels deep).
 // Overlap: none in Ruff or Bandit; Semgrep's `django/security/injection/mass-assignment` covers only
 // `objects.create(**request.X)` and `update(**request.X)` followed by `save()`, not lookups or ordering.
-// Gaps: lib/security's (Django URL kwargs and `self.kwargs` are not sources; values stored on objects or read back
-// from the database, such as a saved view's filters, are not followed; calls the call graph cannot resolve); a check
-// of the whole mapping's keys in a loop (`for k in request.GET: if k not in ALLOWED: raise`) is not seen, so that
-// shape is reported; a check in a caller clears a helper's parameter only when it checks the argument it passes;
-// the `in` / validator checks are flow-insensitive (a test anywhere in the function counts); related managers
-// (`author.book_set.order_by(x)`) and querysets under other names are not receivers; `QuerySet.extra(order_by=…)`
-// is the sql-injection rule's.
+// Gaps: lib/security's (values stored on objects or read back from the database, such as a saved view's filters,
+// are not followed; calls the call graph cannot resolve); a check in a caller clears a helper's parameter only when
+// it checks the argument it passes; the `in` / validator / key-loop checks are flow-insensitive (a test anywhere in
+// the function counts); a queryset reached only through an unresolved call or an attribute of an object that is not
+// a related manager's name (`self.items`) is not a receiver; the library admin and staff bases outside the run are a
+// name list (Django's own, `braces`' `StaffuserRequiredMixin`/`SuperuserRequiredMixin`, and any base from an `admin`
+// module named `…Admin`/`…Inline`/`…ListFilter`); a helper is staff-only only when the call graph sees every call
+// of it; `QuerySet.extra(order_by=…)` is the sql-injection rule's.
 
 #include "lib/security.rerail"
 
-.violation LookupKeys(at: node, what: symbol, p: symbol, l: number) "ORM lookup names chosen by {what} ({p}:{l}): keep only allow-listed keys, or pass request values to fixed lookups. Not needed when every key is fixed in code."
+.violation LookupKeys(at: node, what: symbol, p: symbol, l: number) "ORM lookup names chosen by {what} ({p}:{l}): keep only allow-listed keys, or pass request values to fixed lookups. Leave it if the keys were checked against an allow-list in another function."
 LookupKeys(c, what, p, l) :- olk_splat(c, a), s = min s2 : { olk_keys(a, s2) }, sec_origin(s, what, p, l),
-    docof(c, d), !sec_test_doc(d).
-.violation FieldName(at: node, what: symbol, p: symbol, l: number) "Field name from {what} ({p}:{l}) reaches the ORM: map it through a dict of fixed names or check it against an allow-list. Not needed for a name already checked."
+    docof(c, d), !sec_test_doc(d), !olk_keys_cleared(c, a), !olk_staff_at(c), !olk_staff_at(s).
+.violation FieldName(at: node, what: symbol, p: symbol, l: number) "Field name from {what} ({p}:{l}) reaches the ORM: map it through a dict of fixed names or an allow-list (DRF: OrderingFilter with ordering_fields). Leave it if the name was already checked."
 FieldName(c, what, p, l) :- olk_name_arg(c, v), !sec_checked_expr(v), !olk_guarded(c, v),
-    s = min s2 : { olk_str(v, s2) }, sec_origin(s, what, p, l), docof(c, d), !sec_test_doc(d).
+    s = min s2 : { olk_str(v, s2) }, sec_origin(s, what, p, l), docof(c, d), !sec_test_doc(d), !olk_staff_at(c),
+    !olk_staff_at(s).
 
 // olk_guarded(c, v): call c sits in the body of an `if`/`elif` whose test compares, with `in` or `==`, a name that
 // sink value v reads or a name derived from one (`order_field = ordering.lstrip("-")` then `elif order_field in
-// ("name", "owner__username"): qs.order_by(ordering)`).
+// ("name", "owner__username"): qs.order_by(ordering)`), or tests that the name contains fixed text (`if
+// "date_created" in orderby:`: only names holding that text get through).
 .decl olk_guarded(c: node, v: node)
-olk_guarded(c, v) :- olk_name_arg(c, v), py_if(_, t, b), within(c, b), olk_test_left(t, a), sec_reads(a, y),
+olk_guarded(c, v) :- olk_name_arg(c, v), py_if(_, t, b), within(c, b), olk_test_name(t, y),
     nearest(c, h, fscope), olk_derived(h, y, x), olk_val_reads(v, x).
+.decl olk_test_name(t: node, y: symbol)
+olk_test_name(t, y) :- olk_test_left(t, a), sec_reads(a, y).
+olk_test_name(t, y) :- unparen(t, k), olk_has_test(k, y).
+olk_test_name(t, y) :- has(t, k, "comparison_operator"), olk_has_test(k, y).
+// olk_has_test(k, y): comparison k is `"<text>" in y`.
+.decl olk_has_test(k: node, y: symbol)
+olk_has_test(k, y) :- kind(k, "comparison_operator"), op(k, "in"), child(k, l, 0), kind(l, "string"), child(k, r0, i),
+    i > 0, unparen(r0, r), kind(r, "identifier"), text(r, y).
 .decl olk_test_left(t: node, a: node)
 olk_test_left(t, a) :- unparen(t, k), olk_eq_test(k, a).
 olk_test_left(t, a) :- has(t, k, "comparison_operator"), olk_eq_test(k, a).
@@ -71,8 +98,7 @@ olk_derived(h, y, x) :- olk_guard_name(h, y), sec_bind(h, y, e), has(e, i, "iden
     !field(_, "attribute", i).
 olk_derived(h, y, x) :- olk_guard_name(h, y), sec_bind(h, y, e), kind(e, "identifier"), text(e, x).
 .decl olk_guard_name(h: node, y: symbol)
-olk_guard_name(h, y) :- olk_name_arg(c, _), py_if(_, t, b), within(c, b), olk_test_left(t, a), sec_reads(a, y),
-    nearest(c, h, fscope).
+olk_guard_name(h, y) :- olk_name_arg(c, _), py_if(_, t, b), within(c, b), olk_test_name(t, y), nearest(c, h, fscope).
 .decl olk_val_reads(v: node, x: symbol)
 olk_val_reads(v, x) :- olk_name_arg(_, v), kind(v, "identifier"), text(v, x).
 olk_val_reads(v, x) :- olk_name_arg(_, v), has(v, i, "identifier"), text(i, x), !field(_, "attribute", i).
@@ -110,16 +136,121 @@ olk_pos_item(c, v) :- sec_arg(c, i, "", v), i >= 0.
 olk_pos_item(c, v) :- kind(c, "call"), field(c, "arguments", al), child(al, sp, _), kind(sp, "list_splat"),
     child(sp, v0, 0), unparen(v0, v).
 
-// olk_qs(r): receiver r looks like a Django queryset or manager.
+// olk_qs(r): receiver r is a Django queryset or manager, or a chain from one.
 .decl olk_qs(r: node)
 olk_qs(r) :- olk_qs_head(r).
 olk_qs(r) :- chain_below(r, p), olk_qs_head(p).
 .decl olk_qs_head(p: node)
 olk_qs_head(p) :- attr_of(p, _, a), (a = "objects" ; a = "all_objects" ; a = "_default_manager" ;
     a = "_base_manager" ; a = "queryset").
+olk_qs_head(p) :- attr_of(p, _, a), olk_related(a).
 olk_qs_head(p) :- kind(p, "call"), call_name(p, m), (m = "get_queryset" ; m = "filter_queryset").
-olk_qs_head(p) :- kind(p, "identifier"), text(p, x), match("(?i)(qs|.*_qs|.*queryset.*)", x).
 olk_qs_head(p) :- kind(p, "identifier"), text(p, x), look(p, x, h), sec_bind(h, x, v), unparen(v, w), w != p, olk_qs(w).
+olk_qs_head(p) :- kind(p, "identifier"), text(p, x), look(p, x, g), olk_qs_param(g, x).
+olk_qs_head(p) :- kind(p, "call"), call_target(p, g), olk_qs_returns(g).
+// olk_qs_param(g, x): parameter x of function g receives a queryset: a call of the run passes one, or g is a DRF or
+// django-filter hook the framework calls with one.
+.decl olk_qs_param(g: node, x: symbol)
+olk_qs_param(g, x) :- sec_param_at(_, g, a, x), unparen(a, w), olk_qs(w).
+olk_qs_param(g, x) :- def_name(g, m), nearest(g, k, scope), class_def(k, cq), subclass(cq, b), olk_qs_hook(b, m, i),
+    param(g, x, i).
+// olk_qs_returns(g): function g of the run returns a queryset.
+.decl olk_qs_returns(g: node)
+olk_qs_returns(g) :- kind(r, "return_statement"), child(r, v, 0), nearest(r, g, fdef), unparen(v, w), olk_qs(w).
+// olk_qs_hook(b, m, i): a subclass of framework class b overrides method m, whose parameter i (self is 0) is the
+// queryset the framework passes: a filter backend's `filter_queryset(self, request, queryset, view)`, a generic
+// view's, a pagination class's or a FilterSet's `filter_queryset(self, queryset)` / `paginate_queryset(self,
+// queryset, …)`.
+.decl olk_qs_hook(b: symbol, m: symbol, i: number)
+olk_qs_hook(b, "filter_queryset", 2) :- olk_filter_backend(b).
+olk_qs_hook(b, m, 1) :- subclass(_, b), (prefix("rest_framework.", b) ; prefix("django_filters.", b) ;
+    prefix("django.views.", b)), !olk_filter_backend(b), (m = "filter_queryset" ; m = "paginate_queryset").
+.decl olk_filter_backend(b: symbol)
+olk_filter_backend("rest_framework.filters.BaseFilterBackend"). olk_filter_backend("rest_framework.filters.OrderingFilter").
+olk_filter_backend("rest_framework.filters.SearchFilter").
+olk_filter_backend("django_filters.rest_framework.DjangoFilterBackend").
+olk_filter_backend("django_filters.rest_framework.backends.DjangoFilterBackend").
+// olk_related(a): attribute a is a related manager of a model of the run: the `related_name` of a ForeignKey or
+// ManyToManyField, `<model>_set` for a model with one and no related_name, or a ManyToManyField's own name.
+.decl olk_related(a: symbol)
+olk_related(a) :- olk_rel_field(_, _, v, _), call_arg(v, -1, "related_name", r), str(r, a), a != "+",
+    !contains("%(", a).
+olk_related(a) :- olk_rel_field(k, _, v, _), !call_arg(v, -1, "related_name", _), field(k, "name", nn), text(nn, n),
+    a = cat(@lower(n), "_set").
+olk_related(a) :- olk_rel_field(_, a, _, "m2m").
+// olk_rel_field(k, x, v, how): model class k of the run declares relation x = v, a ForeignKey ("fk") or a
+// ManyToManyField ("m2m").
+.decl olk_rel_field(k: node, x: symbol, v: node, how: symbol)
+olk_rel_field(k, x, v, how) :- class_def(k, cq), olk_model(cq), asg(k, x, v0, _), unparen(v0, v), kind(v, "call"),
+    field(v, "function", f), sym_of(f, q), olk_rel_q(q, how).
+.decl olk_rel_q(q: symbol, how: symbol)
+olk_rel_q("django.db.models.ForeignKey", "fk"). olk_rel_q("django.db.models.fields.related.ForeignKey", "fk").
+olk_rel_q("django.db.models.ManyToManyField", "m2m").
+olk_rel_q("django.db.models.fields.related.ManyToManyField", "m2m").
+.decl olk_model(cq: symbol)
+olk_model(cq) :- subclass(cq, b), (b = "django.db.models.Model" ; b = "django.db.models.base.Model").
+
+// ---- staff-only code -------------------------------------------------------------------------------------------------
+// olk_staff_at(n): n sits in a function only staff reach, or under `if <user>.is_staff:`.
+.decl olk_staff_at(n: node)
+olk_staff_at(n) :- nearest(n, g, fdef), olk_staff_fn(g).
+olk_staff_at(n) :- py_if(_, t, b), within(n, b), olk_reads_staff(t), !olk_negated_staff(t).
+// olk_staff_fn(g): g is admin-only (lib/security's sec_admin_only), or every call of it
+// the call graph sees comes from such a function, two levels deep.
+.decl olk_staff_fn(g: node)
+olk_staff_fn(g) :- olk_staff_fn1(g).
+olk_staff_fn(g) :- calls(_, g), !olk_open_caller1(g).
+.decl olk_open_caller1(g: node)
+olk_open_caller1(g) :- calls(f, g), !olk_staff_fn1(f).
+.decl olk_staff_fn1(g: node)
+olk_staff_fn1(g) :- sec_admin_only(g).
+olk_staff_fn1(g) :- calls(_, g), !olk_open_caller0(g).
+.decl olk_open_caller0(g: node)
+olk_open_caller0(g) :- calls(f, g), !sec_admin_only(f).
+.decl olk_staff_attr(a: symbol)
+olk_staff_attr("is_staff"). olk_staff_attr("is_superuser").
+// olk_reads_staff(e): e is or contains `<x>.is_staff` / `<x>.is_superuser`.
+.decl olk_reads_staff(e: node)
+olk_reads_staff(e) :- attr_of(e, _, a), olk_staff_attr(a).
+olk_reads_staff(e) :- has(e, x, "attribute"), attr_of(x, _, a), olk_staff_attr(a).
+// olk_negated_staff(t): test t negates a staff read (`not request.user.is_staff`, `not (u.is_staff or …)`).
+.decl olk_negated_staff(t: node)
+olk_negated_staff(t) :- unparen(t, n), kind(n, "not_operator"), olk_reads_staff(n).
+olk_negated_staff(t) :- py_if(_, t, _), has(t, n, "not_operator"), olk_reads_staff(n).
+
+// ---- keys checked against an allow-list ------------------------------------------------------------------------------
+// olk_keys_cleared(c, a): splat a of call c expands a request mapping whose every key the function reading it
+// checks against an allow-list (olk_keys_checked), the same mapping by its text (`request.GET`).
+.decl olk_keys_cleared(c: node, a: node)
+olk_keys_cleared(c, a) :- olk_splat(c, a), olk_keys(a, s2), text(s2, t), nearest(s2, h, fscope),
+    olk_keys_checked(h, m), olk_keys(m, s1), text(s1, t), nearest(s1, h, fscope).
+// olk_keys_checked(h, m): scope h checks every key of mapping m: `for k in m: if k not in ALLOWED: raise` (also
+// `m.keys()`, `for k, v in m.items()`, a return instead of the raise), `set(m) - ALLOWED`, `set(m) <= ALLOWED`,
+// `set(m).issubset(ALLOWED)`, the same on `m.keys()`.
+.decl olk_keys_checked(h: node, m: node)
+olk_keys_checked(h, m) :- kind(f, "for_statement"), field(f, "left", l), olk_loop_key(l, k), field(f, "right", r0),
+    unparen(r0, r), olk_key_iter(r, m), field(f, "body", b), py_if(i, t, ib), within(i, b), unparen(t, ct),
+    kind(ct, "comparison_operator"), op(ct, "not in"), child(ct, a, 0), sec_reads(a, k),
+    (has(ib, _, "raise_statement") ; has(ib, _, "return_statement")), nearest(f, h, fscope).
+olk_keys_checked(h, m) :- olk_key_set(e, m), kind(b, "binary_operator"), op(b, "-"), field(b, "left", e0),
+    unparen(e0, e), nearest(b, h, fscope).
+olk_keys_checked(h, m) :- olk_key_set(e, m), kind(c, "comparison_operator"), (op(c, "<=") ; op(c, "<")),
+    child(c, e0, 0), unparen(e0, e), nearest(c, h, fscope).
+olk_keys_checked(h, m) :- olk_key_set(e, m), kind(c, "call"), field(c, "function", f), attr_of(f, e0, "issubset"),
+    unparen(e0, e), nearest(c, h, fscope).
+.decl olk_loop_key(l: node, k: symbol)
+olk_loop_key(l, k) :- kind(l, "identifier"), text(l, k).
+olk_loop_key(l, k) :- (kind(l, "pattern_list") ; kind(l, "tuple_pattern")), child(l, i, 0), kind(i, "identifier"),
+    text(i, k).
+// olk_key_iter(r, m): iterating r walks the keys of mapping m: m itself, `m.keys()`, `m.items()`.
+.decl olk_key_iter(r: node, m: node)
+olk_key_iter(r, m) :- olk_keys(r, _), !kind(r, "call"), m = r.
+olk_key_iter(r, m) :- kind(r, "call"), field(r, "function", f), attr_of(f, m0, n), (n = "keys" ; n = "items"),
+    unparen(m0, m).
+// olk_key_set(e, m): e is the set of mapping m's keys: `set(m)`, `set(m.keys())`, `m.keys()`.
+.decl olk_key_set(e: node, m: node)
+olk_key_set(e, m) :- kind(e, "call"), sec_call_q(e, "builtins.set"), sec_arg(e, 0, "", a), olk_key_iter(a, m).
+olk_key_set(e, m) :- kind(e, "call"), field(e, "function", f), attr_of(f, m0, "keys"), unparen(m0, m).
 
 // ---- names from the request -----------------------------------------------------------------------------------------
 // olk_checked_ref(r): name r is read in a function that checks it (sec_checked: an `in` test or a validator-named
@@ -130,17 +261,23 @@ olk_checked_ref(r) :- kind(r, "identifier"), text(r, x), nearest(r, h, fscope), 
 olk_checked_ref(r) :- kind(r, "identifier"), text(r, x), nearest(r, h, fscope), call_name(c, "get_field"),
     sec_arg(c, 0, "", a), unparen(a, i), kind(i, "identifier"), text(i, x), nearest(c, h, fscope).
 
-// olk_str(e, s): e may hold text from source s that no check stopped: lib/security's taint steps, minus the names
-// their function checks, minus `cleaned_data`/`validated_data`, and across calls only through arguments the caller
-// did not check.
+// olk_str(e, s): e may hold text from source s that no check stopped: lib/security's taint steps (which stop at a
+// typed validated value, sec_typed), a form's `cleaned_data` or a serializer's `validated_data` built from request
+// data (a free-text field's value is the client's text), minus the names their function checks, and across calls
+// only through arguments the caller did not check.
 .decl olk_str(e: node, s: node)
 olk_str(e, e) :- sec_source(e, _).
 olk_str(e, s) :- sec_step(e, a), olk_str(a, s).
+olk_str(e, s) :- attr_of(e, o, a), sec_validated_attr(a), kind(o, "identifier"), text(o, x), look(o, x, h),
+    sec_holder_call(h, x, c), call_arg(c, _, _, v), olk_str(v, s).
 olk_str(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, h), sec_bind(h, x, v), r != v, olk_str(v, s),
     !olk_checked_ref(r).
 olk_str(r, s) :- kind(r, "identifier"), text(r, x), look(r, x, g), olk_param(g, x, s), !olk_checked_ref(r).
 olk_str(c, s) :- call_target(c, g), olk_returns(g, s), !sec_validator_def(g), call_arg(c, _, _, a), olk_str(a, s).
 olk_str(c, s) :- call_target(c, g), olk_returns(g, s), !sec_validator_def(g), olk_own(g, s).
+// The functions holding this rule's sinks: a validator-named helper that itself filters or orders is no check.
+sec_sink_fn(g) :- olk_name_arg(c, _), nearest(c, g, fdef).
+sec_sink_fn(g) :- olk_splat(c, _), nearest(c, g, fdef).
 .decl olk_param(g: node, x: symbol, s: node)
 olk_param(g, x, s) :- sec_param_at(_, g, a, x), olk_str(a, s), !sec_checked_expr(a).
 olk_param(g, x, p) :- sec_route_param(g, x, p).
@@ -152,9 +289,10 @@ olk_own(g, s) :- olk_returns(g, s), within(s, g).
 olk_own(g, s) :- olk_returns(g, s), calls(g, h), within(s, h).
 
 // olk_keys(e, s): e is a mapping whose keys the client chose, from source s: the request's own mappings and what is
-// read off them, a dict or comprehension with a request-derived key, a name filled with such keys.
+// read off them, a dict or comprehension with a request-derived key, a name filled with such keys. Not `self.kwargs`:
+// its keys are the URLconf's capture names (its values are text, olk_str).
 .decl olk_keys(e: node, s: node)
-olk_keys(e, e) :- sec_source(e, _).
+olk_keys(e, e) :- sec_source(e, w), w != "self.kwargs".
 olk_keys(e, s) :- sec_step(e, a), olk_key_step(e), olk_keys(a, s).
 olk_keys(t, s) :- kind(t, "dictionary"), child(t, p, _), kind(p, "pair"), field(p, "key", k), olk_str(k, s).
 olk_keys(t, s) :- kind(t, "dictionary"), child(t, sp, _), kind(sp, "dictionary_splat"), child(sp, a, 0),
@@ -197,20 +335,47 @@ olk_kown(g, s) :- olk_kreturns(g, s), calls(g, h), within(s, h).
 // is reported, and no other line.
 .test cases exactly
     .fixture "catalog/__init__.py" from "../cases/python-security-orm-lookup-injection/catalog/__init__.py"
+    .fixture "catalog/admin_views.py" from "../cases/python-security-orm-lookup-injection/catalog/admin_views.py"
     .fixture "catalog/api.py" from "../cases/python-security-orm-lookup-injection/catalog/api.py"
+    .fixture "catalog/browse.py" from "../cases/python-security-orm-lookup-injection/catalog/browse.py"
+    .fixture "catalog/helpers.py" from "../cases/python-security-orm-lookup-injection/catalog/helpers.py"
+    .fixture "catalog/keys.py" from "../cases/python-security-orm-lookup-injection/catalog/keys.py"
     .fixture "catalog/models.py" from "../cases/python-security-orm-lookup-injection/catalog/models.py"
     .fixture "catalog/queries.py" from "../cases/python-security-orm-lookup-injection/catalog/queries.py"
+    .fixture "catalog/routed.py" from "../cases/python-security-orm-lookup-injection/catalog/routed.py"
     .fixture "catalog/tests/__init__.py" from "../cases/python-security-orm-lookup-injection/catalog/tests/__init__.py"
     .fixture "catalog/tests/test_views.py" from "../cases/python-security-orm-lookup-injection/catalog/tests/test_views.py"
+    .fixture "catalog/urls.py" from "../cases/python-security-orm-lookup-injection/catalog/urls.py"
+    .fixture "catalog/validated.py" from "../cases/python-security-orm-lookup-injection/catalog/validated.py"
     .fixture "catalog/views.py" from "../cases/python-security-orm-lookup-injection/catalog/views.py"
+    .expect _ at "catalog/admin_views.py":95
+    .expect _ at "catalog/admin_views.py":100
+    .expect _ at "catalog/admin_views.py":107
     .expect _ at "catalog/api.py":23
     .expect _ at "catalog/api.py":30
     .expect _ at "catalog/api.py":32
     .expect _ at "catalog/api.py":33
     .expect _ at "catalog/api.py":40
+    .expect _ at "catalog/browse.py":19
+    .expect _ at "catalog/browse.py":25
+    .expect _ at "catalog/browse.py":26
+    .expect _ at "catalog/browse.py":27
+    .expect _ at "catalog/browse.py":28
+    .expect _ at "catalog/helpers.py":5
+    .expect _ at "catalog/helpers.py":9
+    .expect _ at "catalog/helpers.py":13
+    .expect _ at "catalog/helpers.py":32
+    .expect _ at "catalog/keys.py":55
+    .expect _ at "catalog/keys.py":62
     .expect _ at "catalog/queries.py":5
     .expect _ at "catalog/queries.py":9
     .expect _ at "catalog/queries.py":13
+    .expect _ at "catalog/routed.py":8
+    .expect _ at "catalog/routed.py":18
+    .expect _ at "catalog/validated.py":27
+    .expect _ at "catalog/validated.py":28
+    .expect _ at "catalog/validated.py":29
+    .expect _ at "catalog/validated.py":40
     .expect _ at "catalog/views.py":22
     .expect _ at "catalog/views.py":23
     .expect _ at "catalog/views.py":29

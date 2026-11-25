@@ -12,4 +12,4 @@ def upgrade_database():
 
 def report(session: Session):
     for order in session.query(Order).all():
-        print(order.customer.name)  # caught
+        print(order.tags)  # caught
