@@ -422,6 +422,309 @@ pub fn check(before: Option<Vec<Vec<i64>>>, after: Vec<Vec<i64>>, change: Vec<(S
     assert_eq!(out, after, "the output before, less what is gone, plus what is added, is the output after");
 }
 
+/// A value a part's column is matched with (`body`): a variable, a constant, or any value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Term {
+    Var(usize),
+    Const(i64),
+    Any,
+}
+
+/// A comparison of two values (`Part::Test`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cmp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+impl Cmp {
+    pub fn holds(self, a: i64, b: i64) -> bool {
+        match self {
+            Cmp::Eq => a == b,
+            Cmp::Ne => a != b,
+            Cmp::Lt => a < b,
+            Cmp::Le => a <= b,
+            Cmp::Gt => a > b,
+            Cmp::Ge => a >= b,
+        }
+    }
+}
+
+/// One part of a conjunctive body (`body`).
+pub enum Part<'a, T> {
+    /// The rows of a relation whose columns match the terms: a join on the variables bound before it, binding the
+    /// rest.
+    Join(&'a Bistate<T>, &'a [Term]),
+    /// No row of a relation matches the terms (each variable bound before it, `Any` matching anything): an anti-join.
+    Not(&'a Bistate<T>, &'a [Term]),
+    /// Two bound values compared: a filter.
+    Test(Term, Cmp, Term),
+}
+
+/// Which state a body's parts read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Side {
+    Before,
+    After,
+}
+
+/// How `body` reads its parts: every part on one side (a cold run's derivations, `All(After)`), or the term of part
+/// `i`'s change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Body {
+    All(Side),
+    Term(usize),
+}
+
+/// A derivation of a body (`body`): each part's row, and each variable's value, read through the row that bound it
+/// where that row lies.
+pub struct Tuple<'t, 'a, T> {
+    rows: &'t [Option<(&'a T, RowId)>],
+    binder: &'t [Option<(usize, ColumnIndex)>],
+}
+
+impl<T: Read> Tuple<'_, '_, T> {
+    /// Part `p`'s row: a join's; a negation's whose change bound its variables (`Term`); none for the others.
+    pub fn row(&self, p: usize) -> Option<RowId> {
+        self.rows[p].map(|r| r.1)
+    }
+
+    /// Variable `v`'s value.
+    pub fn var(&self, v: usize) -> i64 {
+        let (p, c) = self.binder[v].expect("a bound variable");
+        let (t, id) = self.rows[p].expect("a bound part");
+        t.get(id, c)
+    }
+
+    /// A term's value; `None` for `Any`.
+    pub fn value(&self, t: Term) -> Option<i64> {
+        match t {
+            Term::Var(v) => Some(self.var(v)),
+            Term::Const(c) => Some(c),
+            Term::Any => None,
+        }
+    }
+}
+
+/// The change of a conjunctive body of `k` parts over `vars` variables (decision 0686: 0678 step 5's join, from two
+/// inputs to `k`). Its derivations are the tuples of rows, one a join part, that agree on every variable and pass
+/// every negation and test. `how` says which are given to `each`, with a sign:
+///
+/// - `All(side)`: every derivation with every part read on `side` (a cold run's: `All(After)`), each added;
+/// - `Term(i)`: part `i`'s term of the change. With `f_j` part `j`'s factor for a binding (a join's match, a
+///   negation's absence of one), the body's change telescopes:
+///
+///   Π f_j(after) − Π f_j(before) = Σ_i [Π_{j<i} f_j(after)] · (f_i(after) − f_i(before)) · [Π_{j>i} f_j(before)]
+///
+///   so term `i` reads part `i`'s change, the parts before it after and the parts after it before. A join's change is
+///   its rows gone (read before, sign gone) and added (read after, sign added); a negation's is each key its
+///   relation's change touches, once, where the key's absence changed; a test never changes and has no term. The
+///   terms' sum over the parts whose input changed is the body's change: each derivation gone or added, a derivation
+///   counted once a term it is in (L1, by the identity above). A part whose input did not change has no term (L4).
+///
+/// Term `i` reads part `i` first and the others in order after it; each variable is bound by its first occurrence
+/// in that order and tested at the rest. A negation or test reached before one of its variables is bound is a
+/// misuse (the caller refuses such a body), except part `i` itself, whose change binds them.
+pub fn body<T: Table>(parts: &[Part<'_, T>], vars: usize, how: Body, each: &mut dyn FnMut(Sign, &Tuple<'_, '_, T>)) {
+    let order: Vec<usize> = match how {
+        Body::All(_) => (0..parts.len()).collect(),
+        Body::Term(i) => std::iter::once(i).chain((0..parts.len()).filter(|&j| j != i)).collect(),
+    };
+    if let Body::Term(i) = how {
+        if matches!(parts[i], Part::Test(..)) {
+            return;
+        }
+    }
+    let mut w = Walk { parts, how, order, rows: vec![None; parts.len()], binder: vec![None; vars], each };
+    w.at(0, 1);
+}
+
+struct Walk<'p, 'a, 'e, T> {
+    parts: &'p [Part<'a, T>],
+    how: Body,
+    order: Vec<usize>,
+    rows: Vec<Option<(&'a T, RowId)>>,
+    binder: Vec<Option<(usize, ColumnIndex)>>,
+    each: &'e mut dyn FnMut(Sign, &Tuple<'_, 'a, T>),
+}
+
+impl<'a, T: Table> Walk<'_, 'a, '_, T> {
+    /// A term's value now: a constant's, a bound variable's; `None` for `Any` and an unbound variable.
+    fn value(&self, t: Term) -> Option<i64> {
+        match t {
+            Term::Const(c) => Some(c),
+            Term::Any => None,
+            Term::Var(v) => self.binder[v].map(|(p, c)| {
+                let (t, id) = self.rows[p].expect("a bound part");
+                t.get(id, c)
+            }),
+        }
+    }
+
+    /// The state part `p` reads, when it is not the term's changed part: after before the changed part, before after
+    /// it (`None`: a cold relation's before, no rows).
+    fn state(&self, p: usize, b: &'a Bistate<T>) -> Option<&'a T> {
+        let after = match self.how {
+            Body::All(s) => s == Side::After,
+            Body::Term(i) => p < i,
+        };
+        if after { Some(b.after()) } else { b.before() }
+    }
+
+    /// Whether row `id` of `t` agrees with `args` given what is bound; the variables it binds (first occurrences in
+    /// it, each with its column) are pushed to `binds`.
+    fn agrees(&self, t: &T, id: RowId, args: &[Term], binds: &mut Vec<(usize, ColumnIndex)>) -> bool {
+        binds.clear();
+        for (c, &a) in args.iter().enumerate() {
+            let c = ColumnIndex::new(c as u16);
+            let v = t.get(id, c);
+            match a {
+                Term::Any => {}
+                Term::Const(k) => {
+                    if v != k {
+                        return false;
+                    }
+                }
+                Term::Var(x) => {
+                    if let Some(b) = self.value(a) {
+                        if b != v {
+                            return false;
+                        }
+                    } else if let Some(&(_, first)) = binds.iter().find(|b| b.0 == x) {
+                        if t.get(id, first) != v {
+                            return false;
+                        }
+                    } else {
+                        binds.push((x, c));
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// Row `id` of `t` as part `p`'s, its variables bound, then the parts after it.
+    fn take(&mut self, pos: usize, sign: i64, p: usize, t: &'a T, id: RowId, args: &[Term]) {
+        let mut binds = Vec::new();
+        if !self.agrees(t, id, args, &mut binds) {
+            return;
+        }
+        self.rows[p] = Some((t, id));
+        for &(x, c) in &binds {
+            self.binder[x] = Some((p, c));
+        }
+        self.at(pos + 1, sign);
+        for &(x, _) in &binds {
+            self.binder[x] = None;
+        }
+        self.rows[p] = None;
+    }
+
+    /// The bound columns of `args` and their values.
+    fn key(&self, args: &[Term]) -> (Vec<ColumnIndex>, Vec<i64>) {
+        args.iter().enumerate().filter_map(|(c, &a)| self.value(a).map(|v| (ColumnIndex::new(c as u16), v))).unzip()
+    }
+
+    /// Whether `t` (`None`: no rows) has no live row whose `cols` are `key`.
+    fn none(t: Option<&T>, cols: &[ColumnIndex], key: &[i64]) -> bool {
+        t.is_none_or(|t| t.probe(cols, key, &mut |_| false))
+    }
+
+    /// A negation's term: each key of `ids` (rows of `t`, a side of `b`'s change) not in `seen`, where the key's
+    /// absence from `b` changed, bound through its row; the parts after it run with the absence's change as sign.
+    #[allow(clippy::too_many_arguments)]
+    fn touched(&mut self, pos: usize, sign: i64, p: usize, b: &'a Bistate<T>, t: &'a T, ids: impl Iterator<Item = RowId>, args: &[Term], seen: &mut FxHashSet<Vec<i64>>) {
+        let cols: Vec<ColumnIndex> = args.iter().enumerate().filter(|(_, a)| **a != Term::Any).map(|(c, _)| ColumnIndex::new(c as u16)).collect();
+        let mut key = vec![0i64; cols.len()];
+        let mut binds = Vec::new();
+        for id in ids {
+            if !self.agrees(t, id, args, &mut binds) {
+                continue;
+            }
+            read_key(t, id, &cols, &mut key);
+            // copy: not block data (a touched key, held once to read it once, as `touched`'s)
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let f = i64::from(Self::none(Some(b.after()), &cols, &key)) - i64::from(Self::none(b.before(), &cols, &key));
+            if f == 0 {
+                continue;
+            }
+            self.rows[p] = Some((t, id));
+            for &(x, c) in &binds {
+                self.binder[x] = Some((p, c));
+            }
+            self.at(pos + 1, sign * f);
+            for &(x, _) in &binds {
+                self.binder[x] = None;
+            }
+            self.rows[p] = None;
+        }
+    }
+
+    fn at(&mut self, pos: usize, sign: i64) {
+        let Some(&p) = self.order.get(pos) else {
+            let tuple = Tuple { rows: &self.rows, binder: &self.binder };
+            (self.each)(if sign > 0 { Sign::Added } else { Sign::Gone }, &tuple);
+            return;
+        };
+        let changed = self.how == Body::Term(p);
+        match self.parts[p] {
+            Part::Join(b, args) => {
+                if changed {
+                    if let Some(before) = b.before() {
+                        for id in b.gone() {
+                            self.take(pos, -sign, p, before, id, args);
+                        }
+                    }
+                    for id in b.added() {
+                        self.take(pos, sign, p, b.after(), id, args);
+                    }
+                    return;
+                }
+                let Some(t) = self.state(p, b) else { return };
+                let (cols, key) = self.key(args);
+                if cols.is_empty() {
+                    for id in t.live_ids() {
+                        self.take(pos, sign, p, t, id, args);
+                    }
+                } else {
+                    t.probe(&cols, &key, &mut |id| {
+                        self.take(pos, sign, p, t, id, args);
+                        true
+                    });
+                }
+            }
+            Part::Not(b, args) => {
+                if !changed {
+                    let (cols, key) = self.key(args);
+                    assert!(args.iter().all(|&a| a == Term::Any || self.value(a).is_some()), "a negation's variables bound before it");
+                    if Self::none(self.state(p, b), &cols, &key) {
+                        self.at(pos + 1, sign);
+                    }
+                    return;
+                }
+                // Each key the change touches, once, bound through a row of the change that has it.
+                let mut seen: FxHashSet<Vec<i64>> = FxHashSet::default();
+                if let Some(before) = b.before() {
+                    self.touched(pos, sign, p, b, before, b.gone(), args, &mut seen);
+                }
+                self.touched(pos, sign, p, b, b.after(), b.added(), args, &mut seen);
+            }
+            Part::Test(a, op, b) => {
+                let (x, y) = (self.value(a).expect("a test's terms bound"), self.value(b).expect("a test's terms bound"));
+                if op.holds(x, y) {
+                    self.at(pos + 1, sign);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -816,5 +1119,121 @@ mod tests {
             n += 1;
         });
         assert_eq!(n, 3);
+    }
+
+    /// A body's derivations on one side, by brute force: every live row of every join part, in order, kept where it
+    /// agrees; each derivation's variables' values, counted.
+    fn brute<T: Table>(parts: &[Part<'_, T>], vars: usize, side: Side) -> std::collections::BTreeMap<Vec<i64>, i64> {
+        fn go<T: Table>(parts: &[Part<'_, T>], side: Side, vals: &mut Vec<Option<i64>>, out: &mut std::collections::BTreeMap<Vec<i64>, i64>) {
+            let Some((first, rest)) = parts.split_first() else {
+                *out.entry(vals.iter().map(|v| v.expect("bound")).collect()).or_default() += 1;
+                return;
+            };
+            let state = |b: &Bistate<T>| -> Option<*const T> { if side == Side::After { Some(b.after() as *const T) } else { b.before().map(|t| t as *const T) } };
+            let fits = |t: &T, id: RowId, args: &[Term], vals: &mut Vec<Option<i64>>| -> bool {
+                for (c, &a) in args.iter().enumerate() {
+                    let v = t.get(id, ColumnIndex::new(c as u16));
+                    match a {
+                        Term::Any => {}
+                        Term::Const(k) if k != v => return false,
+                        Term::Const(_) => {}
+                        Term::Var(x) => match vals[x] {
+                            Some(b) if b != v => return false,
+                            Some(_) => {}
+                            None => vals[x] = Some(v),
+                        },
+                    }
+                }
+                true
+            };
+            match first {
+                Part::Join(b, args) => {
+                    let Some(t) = state(b) else { return };
+                    // SAFETY: a state of `b`, alive while `parts` is.
+                    let t = unsafe { &*t };
+                    for id in t.live_ids() {
+                        let saved = vals.clone();
+                        if fits(t, id, args, vals) {
+                            go(rest, side, vals, out);
+                        }
+                        *vals = saved;
+                    }
+                }
+                Part::Not(b, args) => {
+                    let mut any = false;
+                    if let Some(t) = state(b) {
+                        // SAFETY: as above.
+                        let t = unsafe { &*t };
+                        for id in t.live_ids() {
+                            let saved = vals.clone();
+                            any |= fits(t, id, args, vals);
+                            *vals = saved;
+                        }
+                    }
+                    if !any {
+                        go(rest, side, vals, out);
+                    }
+                }
+                Part::Test(a, op, b) => {
+                    let v = |t: Term| match t {
+                        Term::Var(x) => vals[x].expect("bound"),
+                        Term::Const(k) => k,
+                        Term::Any => unreachable!(),
+                    };
+                    if op.holds(v(*a), v(*b)) {
+                        go(rest, side, vals, out);
+                    }
+                }
+            }
+        }
+        let mut out = std::collections::BTreeMap::new();
+        go(parts, side, &mut vec![None; vars], &mut out);
+        out
+    }
+
+    /// A body's change, the sum of its parts' terms, keeps L1 at every state of two relations' chains, on bodies of
+    /// joins, negations and tests, with constants, wildcards and a variable twice in one part; and its cold run is
+    /// its derivations after.
+    #[test]
+    fn a_bodys_change_is_the_sum_of_its_terms() {
+        use Term::{Any, Const, Var};
+        let shapes: Vec<(usize, Vec<(u8, usize, Vec<Term>)>)> = vec![
+            // (kind: 0 join, 1 not, 2 test; relation 0 = a, 1 = b, or for a test the op; terms)
+            (3, vec![(0, 0, vec![Var(0), Var(1)]), (0, 1, vec![Var(1), Var(2)]), (1, 0, vec![Var(2), Any]), (2, 1, vec![Var(0), Var(2)])]),
+            (3, vec![(0, 0, vec![Var(0), Var(1)]), (1, 1, vec![Var(0), Var(1)]), (0, 1, vec![Var(0), Var(2)])]),
+            (2, vec![(0, 0, vec![Var(0), Var(1)]), (0, 0, vec![Var(1), Var(0)])]),
+            (1, vec![(0, 1, vec![Var(0), Var(0)])]),
+            (2, vec![(0, 1, vec![Var(0), Const(3)]), (0, 0, vec![Var(0), Var(1)]), (2, 3, vec![Var(1), Const(4)]), (1, 1, vec![Var(1), Any])]),
+        ];
+        let ops = [Cmp::Eq, Cmp::Ne, Cmp::Lt, Cmp::Le, Cmp::Gt, Cmp::Ge];
+        for (n, (vars, shape)) in shapes.iter().enumerate() {
+            each_state(0, 1, 12, |k, a, b| {
+                let rels = [a, b];
+                let parts: Vec<Part<'_, View<'_>>> = shape
+                    .iter()
+                    .map(|(kind, r, t)| match kind {
+                        0 => Part::Join(rels[*r], t),
+                        1 => Part::Not(rels[*r], t),
+                        _ => Part::Test(t[0], ops[*r], t[1]),
+                    })
+                    .collect();
+                let (before, after) = (brute(&parts, *vars, Side::Before), brute(&parts, *vars, Side::After));
+                let mut applied = before.clone();
+                for i in 0..parts.len() {
+                    body(&parts, *vars, Body::Term(i), &mut |s, t| {
+                        let row: Vec<i64> = (0..*vars).map(|v| t.var(v)).collect();
+                        *applied.entry(row).or_default() += if s == Sign::Added { 1 } else { -1 };
+                    });
+                }
+                applied.retain(|_, n| *n != 0);
+                assert_eq!(applied, after, "shape {n}, state {k}: the terms' sum is the change");
+                let mut cold = std::collections::BTreeMap::new();
+                body(&parts, *vars, Body::All(Side::After), &mut |s, t| {
+                    assert_eq!(s, Sign::Added);
+                    *cold.entry((0..*vars).map(|v| t.var(v)).collect::<Vec<i64>>()).or_default() += 1;
+                });
+                assert_eq!(cold, after, "shape {n}, state {k}: the cold run");
+            });
+        }
     }
 }
