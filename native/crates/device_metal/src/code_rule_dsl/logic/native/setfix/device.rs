@@ -1610,7 +1610,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
                 None => rel.table_name().unwrap_or("?").to_owned(),
             };
             let what: String = what.chars().take(60).collect();
-            crate::code_rule_dsl::prof::count_named(format!("device.not_in_place ({why}): {what}"), n);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("device.not_in_place ({why}): {what}"), n);
             return Err(format!("a relation not read in place ({why}: {what}) has no device form"));
         }
     };
