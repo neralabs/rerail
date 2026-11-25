@@ -238,32 +238,58 @@ interface AuditReads {
   readonly rows: number;
   /** The UTF-8 bytes of the text those rows held: each audit's id and provenance text a read returned. */
   readonly textBytes: number;
-  /** Each statement whose program can read an audit row it does not return (`returnsEachRowItReads`). */
-  readonly unreturned: readonly string[];
+  /** Each statement whose program `returnsEachRowItReads` does not vet, with that program's steps as it read them. */
+  readonly unvetted: readonly { readonly source: string; readonly program: readonly string[] }[];
 }
 
-/** One step of the program SQLite compiles for a statement (`EXPLAIN`): its address, opcode and P2, a test's jump. */
+/** One step of the program SQLite compiles for a statement (`EXPLAIN`): its address, opcode and P2, a jump's target. */
 interface ProgramStep {
   readonly addr: number;
   readonly opcode: string;
   readonly p2: number;
 }
 
-/** The opcodes that test a value and jump to their P2 by the result. */
-const TESTS = new Set(["Eq", "Ne", "Lt", "Le", "Gt", "Ge", "If", "IfNot", "IsNull", "NotNull", "IsType"]);
+/**
+ * The operations the programs of the move's three reads of audits hold under SQLite 3.53.4 (the case that lists
+ * unvetted reads prints each program), by where a step of each, inside a loop before the row the loop returns, may
+ * jump. `steps` never jump: their P2 names no step. `branches` land only within the loop, at or before the row, where
+ * its values are worked out: in the move's loops, the `CASE` of `takes` and `takenAfter` (`IsNull` and `Gt` test the
+ * start, `IfNot` and `Eq` the JSON, `Goto` passes the other arm). `ends` land only past the loop, and only from its
+ * first step: in the move's loops, the range test on `audits_rule_provenance` (`IdxGT`, `IdxLT`), which ends the loop
+ * at the first index entry past the range, before the audit's row is sought. The other jumps (`Init`, `MustBeInt`, the
+ * seeks, `DecrJumpZero`, `Next`, `Prev`) come outside the loops or after their row in these programs.
+ */
+const VETTED = new Map<string, "steps" | "branches" | "ends">([
+  ...["Noop", "OpenRead", "Null", "Affinity", "Variable", "DeferredSeek", "IdxRowid", "Column", "Function", "Integer",
+    "ZeroOrNull", "String8", "ResultRow", "Halt", "Transaction"].map(opcode => [opcode, "steps"] as const),
+  ...["IsNull", "Gt", "IfNot", "Eq", "Goto", "Init", "MustBeInt", "DecrJumpZero", "Next", "Prev"].map(opcode => [opcode, "branches"] as const),
+  ...["IdxGT", "IdxLT", "SeekGE", "SeekGT", "SeekLE"].map(opcode => [opcode, "ends"] as const),
+]);
 
 /**
- * Whether a statement's program returns each row it reads: each of its loops (a `Next` or `Prev`, which jumps back to
- * the loop's first step) returns a row inside it (`ResultRow`), and no test before that step jumps past it to the next
- * row. A sort through a temporary b-tree and an aggregate such as `MAX` return after the loop that read the rows, and a
- * WHERE term the index search does not answer is tested on each row it gives, skipping those that fail.
+ * Whether a statement's program has the shape of the move's reads of audits: it holds only `VETTED` operations and at
+ * least one loop (a `Next` or `Prev`, which jumps back to the loop's first step), and each loop returns a row
+ * (`ResultRow`) that no step before it in the loop jumps past (`returnsInLoop`), so each audit row such a loop reads,
+ * it returns. A sort, an aggregate, a count, an OFFSET, a DISTINCT and an IN each need an operation outside `VETTED`;
+ * a lookup with no loop fails for that, and a WHERE term the index search does not answer for its jump past the row.
  */
 function returnsEachRowItReads(program: readonly ProgramStep[]): boolean {
-  const row = program.find(step => step.opcode === "ResultRow")?.addr ?? -1;
-  const skips = (loop: ProgramStep): boolean => program.some(step => TESTS.has(step.opcode) && step.addr >= loop.p2
-    && step.addr < row && step.p2 > row && step.p2 <= loop.addr);
-  return program.filter(step => step.opcode === "Next" || step.opcode === "Prev")
-    .every(loop => loop.p2 <= row && row < loop.addr && !skips(loop));
+  const loops = program.filter(step => step.opcode === "Next" || step.opcode === "Prev");
+  return program.every(step => VETTED.has(step.opcode)) && loops.length > 0 && loops.every(loop => returnsInLoop(program, loop));
+}
+
+/** Whether `loop` returns a row, and each of its steps before that row lands as its kind allows (`landsBeforeRow`). */
+function returnsInLoop(program: readonly ProgramStep[], loop: ProgramStep): boolean {
+  const steps = program.filter(step => step.addr >= loop.p2 && step.addr < loop.addr);
+  const row = steps.find(step => step.opcode === "ResultRow")?.addr;
+  return row !== undefined && steps.every(step => step.addr > row || landsBeforeRow(step, loop, row));
+}
+
+/** Whether `step`, before `loop`'s row at `row`, jumps only as its kind in `VETTED` allows. */
+function landsBeforeRow(step: ProgramStep, loop: ProgramStep, row: number): boolean {
+  const kind = VETTED.get(step.opcode);
+  if (kind === "branches") return step.p2 >= loop.p2 && step.p2 <= row;
+  return kind !== "ends" || (step.addr === loop.p2 && step.p2 > loop.addr);
 }
 
 /** The UTF-8 bytes of the text one returned row holds, a plucked value or each of a row's columns. */
@@ -278,13 +304,14 @@ function textBytesOf(row: unknown): number {
  * `get` or `all` gives and each row `iterate` gives, and the text they hold (`AuditReads`). better-sqlite3 gives no
  * count of the rows SQLite reads to answer a statement, so this counts the rows each one returns, a count no load
  * changes, and reads the program SQLite compiles for each call (`EXPLAIN`, with the call's values): a statement whose
- * program can read a row it does not return is listed in `unreturned`, so the count is every audit row it read. Puts
- * `prepare` back on `restore`. A move's thread prepares its own statements, which this does not see.
+ * program `returnsEachRowItReads` does not vet is listed in `unvetted`, so where none is, the count is every audit row
+ * their loops read. Puts `prepare` back on `restore`. A move's thread prepares its own statements, which this does not
+ * see.
  */
 function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
   let rows = 0;
   let textBytes = 0;
-  const unreturned = new Set<string>();
+  const unvetted = new Map<string, readonly string[]>();
   const returned = (row: unknown): void => {
     rows += 1;
     textBytes += textBytesOf(row);
@@ -296,7 +323,8 @@ function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
     const explain = prepare.call(this, `EXPLAIN ${source}`);
     const program = explain.all.bind(explain) as (...values: unknown[]) => ProgramStep[];
     const read = (values: unknown[]): void => {
-      if (!returnsEachRowItReads(program(...values))) unreturned.add(source);
+      const steps = program(...values);
+      if (!returnsEachRowItReads(steps)) unvetted.set(source, steps.map(({ addr, opcode, p2 }) => `${addr} ${opcode} ${p2}`));
     };
     const get = statement.get.bind(statement) as (...values: unknown[]) => unknown;
     const all = statement.all.bind(statement) as (...values: unknown[]) => unknown[];
@@ -332,7 +360,8 @@ function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
     });
     return statement;
   });
-  return { reads: () => ({ rows, textBytes, unreturned: [...unreturned] }), restore: () => spy.mockRestore() };
+  const listed = (): AuditReads["unvetted"] => [...unvetted].map(([source, program]) => ({ source, program }));
+  return { reads: () => ({ rows, textBytes, unvetted: listed() }), restore: () => spy.mockRestore() };
 }
 
 /**
@@ -1113,6 +1142,56 @@ describe("audit rule provenance", () => {
     expect(readOutcome(() => readAsOlder(path, [damaged])[0]?.ruleProvenance)).toBe(before);
   }, 60_000);
 
+  it("lists as unvetted each read of audits that sorts, aggregates, counts, skips by OFFSET, DISTINCT, IN or a start tested in WHERE, or has no loop, and none of the move's", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 2)));
+    openRerailDatabase(path).$client.close();
+    // The move's three reads of audits compile to these programs under SQLite 3.53.4: each step's address and operation,
+    // with its P2 where it jumps, and the loop in brackets. Each passes `returnsEachRowItReads`, and none reads an audit
+    // row outside its loop.
+    // `takes`: 0 Init 30, 1 Noop, 2 OpenRead, 3 OpenRead, 4 Null, 5 Affinity, 6 SeekGE 29, 7 Variable, 8 IsNull 29,
+    //   9 Affinity, [10 IdxGT 29, 11 DeferredSeek, 12 IsNull 15, 13 Column, 14 Gt 26, 15 Column, 16 Function,
+    //   17 IfNot 24, 18 Column, 19 Function, 20 Integer, 21 Eq 23, 22 ZeroOrNull, 23 Goto 25, 24 Integer, 25 Goto 27,
+    //   26 Null, 27 ResultRow, 28 Next 10], 29 Halt, 30 Transaction, 31 Variable, 32 String8, 33 Goto 1.
+    // `lastOlderWrite`: 0 Init 15, 1 Noop, 2 Integer, 3 OpenRead, 4 OpenRead, 5 Null, 6 Affinity, 7 SeekLE 14,
+    //   [8 IdxLT 14, 9 DeferredSeek, 10 Column, 11 ResultRow, 12 DecrJumpZero 14, 13 Prev 8], 14 Halt, 15 Transaction,
+    //   16 Goto 1.
+    // `takenAfter`: 0 Init 29, 1 Noop, 2 Variable, 3 MustBeInt, 4 IfNot 28, 5 OpenRead, 6 OpenRead, 7 Null, 8 Variable,
+    //   9 IsNull 28, 10 Affinity, 11 SeekGT 28, 12 Variable, 13 IsNull 28, 14 Affinity, [15 IdxGT 28, 16 DeferredSeek,
+    //   17 IdxRowid, 18 Column, 19 IsNull 22, 20 Column, 21 Gt 24, 22 Column, 23 Goto 25, 24 Null, 25 ResultRow,
+    //   26 DecrJumpZero 28, 27 Next 15], 28 Halt, 29 Transaction, 30 Variable, 31 Goto 1.
+    // Each read below can read an audit row it does not return, and each is listed.
+    const unvettedReads: [string, unknown[]][] = [
+      // A sort through a temporary b-tree (OpenEphemeral, IdxInsert, Sort), outside `VETTED`.
+      ["SELECT started_at FROM audits ORDER BY started_at LIMIT 1", []],
+      // A start tested in WHERE, which the index search does not answer: every step is in `VETTED`, and its `Gt` jumps
+      // from before the row to `Next`.
+      ["SELECT audit_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL AND started_at <= ? ORDER BY rowid", [0]],
+      // An aggregate (AggStep, AggFinal) and a count (Count, with no loop), outside `VETTED`.
+      ["SELECT max(started_at) FROM audits", []],
+      ["SELECT count(*) FROM audits", []],
+      // An OFFSET (OffsetLimit, IfPos), a DISTINCT (OpenEphemeral, Found) and an IN (Once, OpenEphemeral, NotFound).
+      ["SELECT audit_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL ORDER BY rowid LIMIT 1 OFFSET 5", []],
+      ["SELECT DISTINCT session_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL", []],
+      ["SELECT audit_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL AND session_id IN ('a', 'b', 'c')", []],
+      // A lookup by id that tests the audit's start: every step is in `VETTED`, and it has no loop.
+      ["SELECT audit_id FROM audits WHERE audit_id = ? AND started_at <= ?", ["older-0", 0]],
+    ];
+    const counted = countAuditReads();
+    try {
+      expect(await move(path, { clock: () => Date.now() + 8 * 24 * 3_600_000 })).toBe(20);
+      const database = new Database(path, { readonly: true });
+      try {
+        for (const [source, values] of unvettedReads) database.prepare(source).all(...values);
+      } finally {
+        database.close();
+      }
+    } finally {
+      counted.restore();
+    }
+    expect(counted.reads().unvetted.map(({ source }) => source)).toEqual(unvettedReads.map(([source]) => source));
+  }, 60_000);
+
   it("reads no row of the audits an older Rerail recorded after the step, in its last batch or on its calling thread once nothing is left", async () => {
     const path = await fileOfTheBuildBefore();
     const written = writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
@@ -1139,7 +1218,7 @@ describe("audit rule provenance", () => {
     // that names no stored copy, the older Rerail's 2,000th, which says whether that Rerail still records. The check
     // before a third batch finds no audit left, and that batch returns none: 26 rows, and no text of the 2,000.
     const taken = written.reduce((sum, { auditId, text: json }) => sum + Buffer.byteLength(auditId) + Buffer.byteLength(json), 0);
-    expect({ moved, reads: moving.reads() }).toEqual({ moved: 20, reads: { rows: 26, textBytes: taken, unreturned: [] } });
+    expect({ moved, reads: moving.reads() }).toEqual({ moved: 20, reads: { rows: 26, textBytes: taken, unvetted: [] } });
     expect(inlineAudits(path)).toBe(2_000);
 
     // The older Rerail goes on recording: its next audit begins an hour before the clock reads, so a start that found an
@@ -1152,7 +1231,7 @@ describe("audit rule provenance", () => {
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unreturned: [] });
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unvetted: [] });
   }, 120_000);
 
   it("reads two audit rows on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
@@ -1183,9 +1262,10 @@ describe("audit rule provenance", () => {
     // Reading the start of every audit in the week, and the row of each that began after the older Rerail's, took
     // 69 ms on Linux and 195 ms on Windows. The check returns two rows: the first audit left to take, and the start of
     // the older Rerail's audit, the last recorded that names no stored copy; none of their text. Its statements'
-    // programs return each row they read, so it reads those two alone: one that sorted, summed or tested a start on
-    // each audit, as that reading did, is listed in `unreturned`.
-    expect(counted.reads()).toEqual({ rows: 2, textBytes: 0, unreturned: [] });
+    // programs pass `returnsEachRowItReads` and, as the case that lists them shows, read audit rows only in their loops,
+    // so it reads those two alone: one that sorted, summed or tested a start on each audit, as that reading did, is
+    // listed in `unvetted`.
+    expect(counted.reads()).toEqual({ rows: 2, textBytes: 0, unvetted: [] });
     expect(inlineAudits(path)).toBe(21);
   }, 60_000);
 
@@ -1217,7 +1297,7 @@ describe("audit rule provenance", () => {
     }
     // The start's check returns the first audit left to take and the start of the last that names no stored copy, the
     // older Rerail's 2,000th; the check once the thread ends returns none.
-    expect(moving.reads()).toEqual({ rows: 2, textBytes: 0, unreturned: [] });
+    expect(moving.reads()).toEqual({ rows: 2, textBytes: 0, unvetted: [] });
     // Every audit recorded before the step reads as written. The older Rerail's stay in their rows, where it reads
     // them, the one its clock dated before the step included.
     expect(inlineAudits(path)).toBe(2_001);
@@ -1238,7 +1318,7 @@ describe("audit rule provenance", () => {
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unreturned: [] });
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unvetted: [] });
   }, 120_000);
 
   it.each([
