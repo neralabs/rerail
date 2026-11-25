@@ -573,6 +573,14 @@ pub fn is_grammar(name: &str) -> bool {
             .any(|d| d.embeds().iter().any(|(via, _)| via.id() == name))
 }
 
+/// The one dialect an embedding of id `via` gives (`compiled-view`: PHP); `None` for another name, or an embedding of
+/// several (`script-block`: TypeScript or JavaScript).
+pub fn embedding_dialect(via: &str) -> Option<GrammarDialect> {
+    let mut of = GrammarDialect::ALL.iter().flat_map(|d| d.embeds()).filter(|(v, _)| v.id() == via).map(|&(_, d)| d);
+    let first = of.next()?;
+    of.all(|d| d == first).then_some(first)
+}
+
 /// A dialect by its label. A grammar named as main's rules name theirs, in camel case (`percentFormat`), is the
 /// dialect whose label is its dashed form (`percent-format`, decision 0176): a label is lowercase and dashes.
 pub fn dialect_by_label(label: &str) -> Option<GrammarDialect> {

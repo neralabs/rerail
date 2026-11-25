@@ -67,9 +67,11 @@ impl GuestRows {
             }
         }
         self.guest.push([key, i64::from(g.host), g.at, grammar]);
-        self.sub_tape.push([g.at, grammar, tape]);
+        // A program is asked for by its embedding as well as its grammar (`compiled-view`, `php`).
+        let names: [Option<i64>; 2] = [Some(grammar), g.embedding.map(|e| string(e) as i64)];
+        self.sub_tape.extend(names.iter().flatten().map(|&n| [g.at, n, tape]));
         let Some(r) = root else { return };
-        self.parsed.push([g.at, grammar, r]);
+        self.parsed.extend(names.iter().flatten().map(|&n| [g.at, n, r]));
         // A decoded value stands at its node as a whole: its nodes have no host node of their own.
         if !host_nodes || matches!(g.place, Placement::At(_)) {
             return;

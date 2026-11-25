@@ -390,7 +390,7 @@ impl Guests {
             core: format!("{}#guest:{grammar_name}:{at}", host.core),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), embedding: None, role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             tape: None,
         }))
@@ -398,9 +398,13 @@ impl Guests {
 
     /// The program host file `host` embeds through `via` (decision 0222): the embedder main registered for it
     /// (`embed::Embedder`; a Vue component's view, `vue::view`) writes its text and its segments from the host's
-    /// tape, read in place, and the text is parsed in the dialect the embedder chose (a `<script lang="ts">`'s TypeScript). The
-    /// guest's grammar is that dialect's label, as `guest` names what a document is parsed as; its nodes are placed
-    /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
+    /// tape, read in place, and the text is parsed in the dialect the embedder chose (a `<script lang="ts">`'s
+    /// TypeScript). A program no embedder builds from the tape (Blade's compiled view, which the template's parse
+    /// compiles from Forte's tree) is the one the host's parse derived, read off its own tape: PHP's statements, which
+    /// parsed again as a file are inline HTML. The guest's grammar is that dialect's label, as `guest` names what a
+    /// document is parsed as, and its `parsed` and `sub_tape` rows name the embedding too, as a rule asks for it
+    /// (`parsed(r, "compiled-view", p)`); its nodes are placed through the segments (`Placement::Segments`). `None`
+    /// where the host embeds no program (no script, `lang="coffee"`).
     fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str, cache: Option<&ContentStore>) -> Result<Option<Document>, String> {
         let host_key = (at >> 32) as u32;
         let Some(dialect) = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts)) else { return Ok(None) };
@@ -408,11 +412,19 @@ impl Guests {
         // The host's tape, read in place by the embedder (whichever parser wrote it, the same tape).
         let Ok(grammar) = crate::code_rule_dsl::tape::Grammar::new(dialect) else { return Ok(None) };
         let Some(Ok(image)) = crate::code_rule_dsl::tape::TapeImage::parse(&grammar, source, &|| false) else { return Ok(None) };
-        let Some(root) = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root() else { return Ok(None) };
-        let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false) else { return Ok(None) };
-        let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
-        let place = Placement::Segments(Arc::new(program.segments));
-        let Some(((facts, root, digest), tape)) = taped(&host.path, label, program.text, cache)? else { return Ok(None) };
+        let built = crate::code_rule_dsl::embed::host::Host::new(&image.primary, &grammar).root().and_then(|root| crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false));
+        let (label, place, parsed) = match built {
+            Some(program) => {
+                let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
+                (label, Placement::Segments(Arc::new(program.segments)), taped(&host.path, label, program.text, cache)?)
+            }
+            None => {
+                let Some(derived) = image.derived.into_iter().find(|d| d.via == via && d.parent == 0) else { return Ok(None) };
+                let Some(label) = crate::code_rule_dsl::language::label(derived.dialect()) else { return Ok(None) };
+                (label, Placement::Segments(Arc::clone(derived.segments())), Some(derived_taped(&host.path, label, derived)?))
+            }
+        };
+        let Some(((facts, root, digest), tape)) = parsed else { return Ok(None) };
         let range = if label == self.run { Range::Code } else { Range::Hidden };
         let key = key(&[host.path.as_bytes(), &at.to_le_bytes(), via.id().as_bytes()], range, &mut self.taken);
         self.host_of.insert(i64::from(key), self.host_of.get(&i64::from(host_key)).copied().unwrap_or(i64::from(host_key)));
@@ -423,7 +435,7 @@ impl Guests {
             core: format!("{}#guest:{}:{at}", host.core, via.id()),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: host_key, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            guest: Some(Arc::new(Guest { host: host_key, at, grammar: label.to_owned(), embedding: Some(via.id()), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             tape,
         }))
@@ -452,7 +464,7 @@ impl Guests {
             core: format!("#value:{grammar_name}:{key}"),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
+            guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), embedding: None, role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
             tape: None,
@@ -573,6 +585,22 @@ fn taped(path: &str, label: &str, text: String, cache: Option<&ContentStore>) ->
     let digest = core::digest(&facts);
     let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
     Ok(Some(((Arc::new(facts), 0, digest), tape)))
+}
+
+/// A program the host's parse derived (`tape::DerivedImage`), read off its own tape as `taped` reads a parsed one: its
+/// text is not parsed again, which in its dialect's file grammar may read as something else (a Blade view's PHP
+/// statements, with no `<?php`, as inline HTML).
+fn derived_taped(path: &str, label: &str, derived: crate::code_rule_dsl::tape::DerivedImage) -> Result<(Parsed, Tape), String> {
+    use crate::code_rule_dsl::{lines::{LineTable, Terminators}, tape::{FileImage, Grammar, TapeDoc}};
+    let dialect = derived.dialect();
+    let grammar = Grammar::embedded(dialect).map_err(|e| format!("{path}: {e}"))?;
+    let lines = Arc::new(LineTable::new(&derived.text, Terminators::of(dialect)));
+    let image = FileImage { primary: derived.tape, derived: Vec::new() };
+    let doc = TapeDoc::restore_with_lines(Arc::clone(&derived.text), grammar, &image, Arc::clone(&lines), &|| false).map_err(|e| format!("{path}: {e}"))?;
+    let facts = core::from_tape(&doc, lines).map_err(|e| format!("{path}: {e}"))?;
+    let digest = core::digest(&facts);
+    let file = core::Source { language: label.to_owned(), source: derived.text };
+    Ok(((Arc::new(facts), 0, digest), Some((doc, Arc::new(file) as Arc<dyn core::SourceFile>))))
 }
 
 /// A document's tape in its file's context (`Document::tape`).

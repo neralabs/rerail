@@ -47,9 +47,13 @@ const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
 /// Views of base relations the lowering writes as rules.
 const VIEWS: [&str; 3] = ["kind", "docof", "precedes"];
 
-/// The grammar a guest's kinds are named in: a dialect label (`annotation` is Python's expression).
+/// The grammar a guest's kinds are named in: a dialect's label. A fragment's are its dialect's (`annotation`: Python's
+/// expression), an embedding's those of the one dialect it gives (`compiled-view`: a Blade template's PHP), and any
+/// other name's its own. Named by the embedding's id, a kind was no dialect's (`compiled-view:return_statement`):
+/// it matched nothing, and every rule over a Blade template's compiled program found nothing.
 pub(super) fn dialect_label(grammar: &str) -> &str {
-    if grammar == "annotation" { "python" } else { grammar }
+    use crate::code_rule_dsl::language::{embedding_dialect, fragment, label};
+    fragment(grammar).map(|(d, _)| d).or_else(|| embedding_dialect(grammar)).and_then(label).unwrap_or(grammar)
 }
 
 /// The bound of `prog`'s shown documents: files, and the run language's guests unless `.guests off`.
