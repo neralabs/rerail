@@ -6,7 +6,7 @@
 .scope exclude "**/generated/**", "**/generated-sources/**", "**/generated-test-sources/**", "**/generated-src/**", "**/src/test/**", "**/src/*Test/**", "**/src/testFixtures/**", "**/*Test.java", "**/*Tests.java", "**/*TestCase.java", "**/*IT.java", "**/*ITCase.java"
 
 #include "complexity/cyclomatic.rerail"
-//   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
+//   cc_report(f, msg)   function f has cyclomatic complexity over the `ceiling` option, default 6 (nested ones apart)
 
 // The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, for, for-each, while, do, catch, ternary,
 // && and ||, and a switch once when it has a `case` (only `default`: 0). A method, constructor or record's compact
