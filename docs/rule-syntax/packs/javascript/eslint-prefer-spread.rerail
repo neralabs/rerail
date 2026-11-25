@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-objects.rerail"
-//   forwarding, natural_this, call_arg_count, call_arg, deparen
+#include "tsx/javascript-03.rerail"
+//   same_this; through tsx/eslint-b-objects: forwarding, call_arg_count, call_arg, deparen
 
 // ESLint's prefer-spread: `f.apply(t, args)` where t is the `this` f gets anyway, so `f(...args)` is the same.
 //   foo.apply(undefined, args)    foo.apply(null, args)    obj.foo.apply(obj, args)    → reported
@@ -15,5 +15,5 @@
     suppress eslint "prefer-spread"
     suppress oxlint "prefer-spread"
     suppress biome "lint/style/useSpreadOverApply"
-prefer_spread(c) :- forwarding(c, _, "apply", _), natural_this(c), call_arg_count(c, 2), call_arg(c, l, 1), deparen(l, r),
+prefer_spread(c) :- forwarding(c, _, "apply", _), same_this(c), call_arg_count(c, 2), call_arg(c, l, 1), deparen(l, r),
     !kind(r, "array"), !kind(r, "spread_element").

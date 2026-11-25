@@ -4,7 +4,8 @@
 .mode steer
 .scope include "**/*"
 #include "tsx/eslint-b-objects.rerail"
-//   global_member, call_arg, call_arg_count, precedence, touching, cannot_touch, deparen, estree_parent, tagged
+//   global_member, global_named, call_arg, call_arg_count, precedence, touching, cannot_touch, deparen, estree_parent,
+//   tagged; tsx/values' const_str
 
 // ESLint's prefer-exponentiation-operator: a call of the global Math.pow. ES2016's `**` says the same.
 //   Math.pow(a, b)    Math["pow"](a, b)    globalThis.Math.pow(a, b)    → reported; fix a**b
@@ -21,8 +22,15 @@
     suppress biome "lint/style/useExponentiationOperator"
     fix to_operator "Replace with the '**' operator."
 prefer_exponentiation_operator(c) :- kind(c, "call_expression"), field(c, "function", f), deparen(f, m),
-    global_member(m, "Math", "pow"), !tagged(c).
+    math_pow(m), !tagged(c).
 // tagged(c) is tsx/values': Math.pow`x` is a tagged template, which tree-sitter writes as a call.
+// math_pow(m): ReferenceTracker reads a computed member's name with getStaticValue, which folds constant strings:
+//   Math[`${"pow"}`](a, b)    Math["p" + "o" + "w"](a, b)    Math[true ? "pow" : "max"](a, b)    → reported
+// (const_str). It does not follow a variable here: `const p = "pow"; Math[p](a, b)` is not reported.
+.decl math_pow(m: node)
+math_pow(m) :- global_member(m, "Math", "pow").
+math_pow(m) :- kind(m, "subscript_expression"), field(m, "index", i), deparen(i, s), const_str(s, "pow"),
+    field(m, "object", w), deparen(w, o), global_named(o, "Math").
 
 // ---- the fix -------------------------------------------------------------------------------------------------------
 .decl pow(c: node, b: node, x: node)  // a fixable call: Math.pow(b, x)

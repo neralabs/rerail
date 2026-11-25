@@ -1,0 +1,22 @@
+// tsx/javascript-03: the receiver test that no-useless-call and prefer-spread share, on top of eslint-b-objects'
+// natural_this.
+//
+// What a rule gets from this library:
+//   same_this(c)   call c is `f.call(t, …)` or `f.apply(t, …)` (forwarding) and t is the `this` f gets anyway:
+//                  natural_this, or the receiver and t are both empty array literals or both empty object literals
+//
+// Rules that use it: no-useless-call, prefer-spread.
+// Builds on tsx/eslint-b-objects (forwarding, receiver, natural_this).
+#include "tsx/eslint-b-objects.rerail"
+
+// ESLint compares the receiver and t with equalTokens, token by token: `[ ]` and `[/* none */]` are the tokens `[`
+// `]`, as `[]` is. token_text reads an empty literal as its text, spacing kept (the tape stores no `[` or `]` token,
+// so a literal with no children is a leaf), and `[]` and `[ ]` differ there. Empty literals are compared by kind.
+//   [].concat.apply([ ], args)          [].concat.call([⏎/* none */⏎], 1)          ({}).f.call({ }, 1)      same
+//   [].concat.apply({}, args)                                                                                not
+.decl same_this(c: node)
+same_this(c) :- natural_this(c).
+same_this(c) :- forwarding(c, f, _, t), receiver(f, o), empty_literal(o, k), empty_literal(t, k).
+.decl empty_literal(n: node, k: symbol)  // n, a receiver or a this argument, is `[]` or `{}`, comments aside
+empty_literal(n, k) :- forwarding(_, f, _, t), receiver(f, o), (n = o ; n = t), kind(n, k), (k = "array" ; k = "object"),
+    count : { child(n, e, _), !kind(e, "comment") } = 0.

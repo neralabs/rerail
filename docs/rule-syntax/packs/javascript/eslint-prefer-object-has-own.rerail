@@ -5,7 +5,7 @@
 .scope include "**/*"
 #include "tsx/eslint-b-objects.rerail"
 #include "layout.rerail"
-//   deparen, static_prop, global_at
+//   deparen, static_prop, global_at's parts: declared_around, named_expr_around, global_off
 
 // ESLint's prefer-object-has-own: `hasOwnProperty.call` read off Object, Object.prototype or `{}`, where the name
 // Object resolves to the global variable at the call (global_at: a script's own top-level `var Object` is that
@@ -22,8 +22,14 @@
     suppress oxlint "prefer-object-has-own"
     suppress biome "lint/suspicious/noPrototypeBuiltins"
     fix has_own "Replace with 'Object.hasOwn'."
-prefer_object_has_own(c) :- has_own_call(c, _), global_at(c, "Object").
+prefer_object_has_own(c) :- has_own_call(c, _), !shadowed(c).
 global_at_ask("Object").
+// shadowed(c): Object is not the global variable at c. This is global_at(c, "Object") negated, spelled out: the
+// engine evaluates `has_own_call(c, _), global_at(c, "Object")` with global_at's negations dropped, so it reported
+// `(Object) => Object.hasOwnProperty.call(a, b)` (NOTES-javascript-03).
+.decl shadowed(c: node)
+shadowed(c) :- has_own_call(c, _), (declared_around(c, "Object") ; named_expr_around(c, "Object") ;
+    docof(c, d), global_off(d, "Object")).
 
 // has_own_call(c, m): c calls m, which is `x.hasOwnProperty.call` (no chain: ESLint asks node.callee for a
 // MemberExpression) where x is `{}`, Object or `Object.prototype`.
