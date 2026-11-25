@@ -27,8 +27,10 @@ target_blank(o) :- react_open(_, o), plain_tag(o, "a"),
 may_blank(t) :- prop_value(t, v), blank_lit(v).
 may_blank(t) :- prop_value(t, c), kind(c, "ternary_expression"), (field(c, "consequence", v) ; field(c, "alternative", v)),
     blank_lit(v).
+// String literals are read with str, not value: a rule that reads value makes the engine's later negations on its
+// nodes wrong (NOTES-react-03, "value() and negation").
 .decl blank_lit(v: node)
-blank_lit(v) :- kind(v, "string"), (jsx_string(v, s) ; !jsx_string(v, _), value(v, s)), @lower(s) = "_blank".
+blank_lit(v) :- kind(v, "string"), (jsx_string(v, s) ; !jsx_string(v, _), str(v, s)), @lower(s) = "_blank".
 // The link: the last href is a literal with a scheme or `//` (href="mailto:x" counts), or some href is {…}.
 .decl risky_link(o: node)
 risky_link(o) :- last_prop(o, "href", h), child(h, v, 1), jsx_string(v, u), match("(?s)(\\w+:|//).*", u).
@@ -42,11 +44,11 @@ secure_rel(o) :- last_prop(o, "rel", r), !rel_unknown(o, r), count : { rel_value
 noreferrer(s) :- rel_value(_, _, s), match("(.* )?noreferrer( .*)?", @lower(s)).
 .decl rel_value(o: node, r: node, s: symbol)
 rel_value(o, r, s) :- last_prop(o, "rel", r), child(r, v, 1), jsx_string(v, s).
-rel_value(o, r, s) :- last_prop(o, "rel", r), rel_expr(r, v), kind(v, "string"), value(v, s).
+rel_value(o, r, s) :- last_prop(o, "rel", r), rel_expr(r, v), kind(v, "string"), str(v, s).
 // `{`noreferrer ${x}`}`: the text before the first substitution.
 rel_value(o, r, @replace_all(t, "^`|\\$\\{[\\s\\S]*$|`$", "")) :- last_prop(o, "rel", r), rel_expr(r, v),
     kind(v, "template_string"), text(v, t).
-rel_value(o, r, s) :- rel_branch(o, r, v), kind(v, "string"), value(v, s).
+rel_value(o, r, s) :- rel_branch(o, r, v), kind(v, "string"), str(v, s).
 .decl rel_unknown(o: node, r: node)
 rel_unknown(o, r) :- last_prop(o, "rel", r), !child(r, _, 1).                    // <a rel>
 rel_unknown(o, r) :- last_prop(o, "rel", r), child(r, j, 1), kind(j, "jsx_expression"), !rel_expr(r, _).  // rel={}
@@ -73,4 +75,4 @@ paired(o, c, tc) :- last_prop(o, "rel", r), rel_expr(r, c), kind(c, "ternary_exp
     prop_value(t, tc), kind(tc, "ternary_expression"), field(c, "condition", a), field(tc, "condition", b),
     (kind(a, "identifier"), kind(b, "identifier"), text(a, x), text(b, x) ; !kind(a, "identifier"), !kind(b, "identifier")).
 .decl blank_exact(b: node)
-blank_exact(b) :- kind(b, "string"), value(b, "_blank").
+blank_exact(b) :- kind(b, "string"), str(b, "_blank").

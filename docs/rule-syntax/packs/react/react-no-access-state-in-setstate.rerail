@@ -11,10 +11,13 @@
 //   const { state } = this; this.setState({ value: state.value + 1 });     through `state` destructured from this
 //   getNext() { return this.state.value; }  …  this.setState(getNext());    through a method, called by bare name
 // The plugin walks the file once, in order, so a variable or method counts only once its this.state read has
-// been seen; and only a bare call `getNext()` is matched to a method, `this.getNext()` is not.
+// been seen (src_before: core's earlier has no rows on JavaScript and TypeScript yet); and only a bare call
+// `getNext()` is matched to a method, `this.getNext()` is not.
 //   this.setState(s => ({ value: s.value + 1 }));                           not reported
 #include "tsx/react-class.rerail"
 //   comp_owner(n, k)  n is in class component or spec k;  this_call(c, x, f): c calls this.x(…)
+#include "tsx/next-01.rerail"
+//   src_before(m, n)  m starts before n in the same document
 
 .violation direct(at: node)
     code "react/no-access-state-in-setstate"
@@ -50,10 +53,12 @@ direct(m) :- read(m, c), kind(c, "call_expression").
 // Through a variable: `next` read as an object (next.x) or a property value ({ value: next }), maybe inside
 // a binary expression, in a setState's first argument, in the scope the read was in.
 variable(m, x) :- read(m, v), kind(v, "variable_declarator"), field(v, "name", n), kind(n, "identifier"), text(n, x),
-    use_in_set_state(u, x), same_scope(m, u), earlier(m, u).
+    use_in_set_state(u, x), same_scope(m, u), src_before(m, u).
+// `const { state } = this` counts anywhere, in a component or not: the plugin's ObjectPattern visitor asks for none
+// (React.createClass({ onClick() { var { state } = this; this.setState({ v: state.v }); } }) is reported).
 destructured_state(k) :- kind(o, "object_pattern"), estree_parent(o, v), kind(v, "variable_declarator"),
-    field(v, "value", t), kind(t, "this"), comp_owner(o, _), child(o, p, _), state_key(p, k), docof(o, d), react_doc(d),
-    use_in_set_state(u, "state"), same_scope(o, u), earlier(o, u).
+    field(v, "value", t), kind(t, "this"), child(o, p, _), state_key(p, k), docof(o, d), react_doc(d),
+    use_in_set_state(u, "state"), same_scope(o, u), src_before(o, u).
 .decl state_key(p: node, k: node)  // { state }, { state: s }, { state = x }: the key named state
 state_key(p, p) :- kind(p, "shorthand_property_identifier_pattern"), text(p, "state").
 state_key(p, k) :- kind(p, "pair_pattern"), field(p, "key", k), estree_name(k, "state").
@@ -72,12 +77,12 @@ above_binary(u, b) :- above_binary(u, t), estree_parent(t, b), kind(b, "binary_e
 // Through a method: a method whose this.state read was seen, called by its bare name inside a setState's first
 // argument; and a method that calls such a method (by bare name) inherits it.
 method_call(m, x) :- holds_read(x, m, t), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
-    text(f, x), comp_owner(c, _), this_call(sc, "setState", _), in_first_arg(c, sc), earlier(t, c).
+    text(f, x), comp_owner(c, _), this_call(sc, "setState", _), in_first_arg(c, sc), src_before(t, c).
 .decl holds_read(x: symbol, m: node, t: node)  // method x holds this.state read m, known from node t on
 holds_read(x, m, m) :- read(m, s), (kind(s, "method_definition") ; kind(s, "function_expression")), method_name_of(s,
     x).
 holds_read(y, m, c) :- holds_read(x, m, t), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
-    text(f, x), comp_owner(c, _), earlier(t, c), inside(c, g, "method_definition"), child(b, g, _),
+    text(f, x), comp_owner(c, _), src_before(t, c), inside(c, g, "method_definition"), child(b, g, _),
     kind(b, "class_body"), method_key(g, y).
 .decl method_name_of(s: node, x: symbol)  // the key of method s, or of the property or field holding function s
 method_name_of(s, x) :- kind(s, "method_definition"), method_key(s, x).
