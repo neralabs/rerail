@@ -12,6 +12,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
+import { ENGINE_READER_ANSWER_MS, ENTRY_POINTS, PACKAGE_ROOT } from "../../src/engine/index.js";
 import type * as DaemonWaits from "../../src/runtime/daemon/daemon-waits.js";
 import {
   type DaemonHealth,
@@ -64,7 +65,7 @@ import {
   stopFoundDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
-import { ENGINE_READER_ANSWER_MS, ENTRY_POINTS, LOCKS_DIR, PACKAGE_ROOT, processStartedAt } from "../../src/engine/index.js";
+import { LOCKS_DIR, processStartedAt } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer, type PipeServer } from "../../src/runtime/daemon/engine-pipe.js";
 import { HOOK_DAEMON_WAIT_MS } from "../../src/runtime/daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "../../src/runtime/daemon/engine-proof.js";
