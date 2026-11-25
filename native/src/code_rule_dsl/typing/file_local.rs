@@ -235,7 +235,9 @@ pub fn setting_input(rel: &str) -> bool {
 /// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`), target (`tsx_names__target_at(path, spec, t)`) or
 /// module (`py_names__reads_at(path, m)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder,
 /// target or module, in column 0.
-pub const SETTINGS_BY_PATH: [(&str, usize); 4] = [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2), ("py_names__reads_at", 1)];
+// `npm_ignored(path)` is keyed by its path alone: its column 0 is the path read, own or a target's.
+pub const SETTINGS_BY_PATH: [(&str, usize); 5] =
+    [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2), ("py_names__reads_at", 1), ("npm_ignored", 0)];
 pub const SETTINGS_BY_FOLDER: [&str; 27] = [
     "package",
     "package_field",

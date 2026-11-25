@@ -260,6 +260,16 @@ Found on the way and fixed:
    - Lists: split 40 → 35, node 418 → 394 (Django 179 → 155). Added: Django's `sora_async_call` and `sora_hit`. The
      rule's text is the branch's: the crossing `sora_query` and `sora_model_instance` named is now named where its
      node enters the cross part. On the branch, the points-to phase (b754ec6c93) moves it.
+10. **`npm_ignored` is made** (new on main; the branch binds it empty).
+   - The repository makes `npm_ignored(path)` for each file of the tree under a package.json that npm leaves out of
+     its nearest package. The reader is `package_manifest`'s (`files` and `main`, else `.npmignore`, else
+     `.gitignore`), the one `ImportTarget::published` reads. The facts crate lies below it, so the engine registers it
+     at load (`install_npm_publication`); without it, no rows.
+   - A setting by path (`SETTINGS_BY_PATH`, keyed by column 0): a file reads its own row, or a target file's.
+   - `n-no-unpublished-bin`'s finding states that it lies in its document (`docof(at, d)`). With `npm_ignored` empty,
+     the rule had been simplified away; with rows, the split saw two documents, `d` and `at`'s.
+   - Tests: the repository asks each file's nearest package (a stand-in publication, in the facts crate), and a
+     program reads what npm leaves out (`files`, `.npmignore`, no package), with the real reader.
 
 ## Consequences
 
@@ -272,5 +282,5 @@ Found on the way and fixed:
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
 - A lowering's value view (`match_all`'s `rr_ctx`/`rr_mall`) is not covered by its readers (React's `sandbox_token`).
-- Producers for `spec_resolved` (from main's `import_target` resolver) and `npm_ignored` (package.json `files`,
-  `.npmignore`, `.gitignore`).
+- A producer for `spec_resolved` (main's `import_target` resolver). Resolution reads other files, so it is the
+  cross part's, keyed by symbols, and read back per file by path; see fix 10's neighbour in the commit that adds it.

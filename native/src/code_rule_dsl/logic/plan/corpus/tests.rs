@@ -2512,3 +2512,37 @@ other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+
+/// `npm_ignored`, the repository input (`facts::repository`), as `package_manifest` reads a package: its `files` list
+/// decides where it has one (package.json always published); else its `.npmignore`; and a file under no package.json
+/// has no row. Read at each file's own path, it is a per-file setting (`SETTINGS_BY_PATH`).
+#[test]
+fn a_files_npm_leaves_out_are_npm_ignored() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("npm-ignored");
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in [
+        ("lib/package.json", r#"{"name": "lib", "files": ["dist"]}"#),
+        ("lib/dist/a.js", "export const a = 1;\n"),
+        ("lib/test/a.test.js", "export const t = 1;\n"),
+        ("cli/package.json", r#"{"name": "cli"}"#),
+        ("cli/.npmignore", "scripts/\n"),
+        ("cli/index.js", "export const c = 1;\n"),
+        ("cli/scripts/build.js", "export const b = 1;\n"),
+        ("tools/x.js", "export const x = 1;\n"),
+    ] {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, ".language javascript\n.decl npm_ignored(path: symbol)\n.input npm_ignored\n.decl left_out(p: symbol)\nleft_out(p) :- doc(_, p, _), npm_ignored(p).\n.output left_out\n").unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let mut rows: Vec<Vec<String>> = outputs.get("left_out").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    assert_eq!(rows, [vec!["cli/scripts/build.js".to_owned()], vec!["lib/test/a.test.js".to_owned()]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

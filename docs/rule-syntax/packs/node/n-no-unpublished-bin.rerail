@@ -14,4 +14,5 @@
 .violation unpublished_bin(at: loc) code "n/no-unpublished-bin"
     "npm ignores this bin file, so the published package lacks the executable; list it in package.json's files field and keep .npmignore from ignoring it."
     suppress eslint "n/no-unpublished-bin"
-unpublished_bin(at) :- pkg_bin_file(d), doc(d, f, _), npm_ignored(f), program_start(d, at).
+// at lies in d (docof): a file's own finding, not a join of two files.
+unpublished_bin(at) :- pkg_bin_file(d), doc(d, f, _), npm_ignored(f), program_start(d, at), docof(at, d).

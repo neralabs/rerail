@@ -322,7 +322,7 @@ impl Manifest {
     /// This manifest with the texts of its folder's `.npmignore` and `.gitignore` (`None` where
     /// absent), which decide with its `files` and `main` which of its files npm publishes. A
     /// host's manifest, which carries each file's own fact, is returned as it is.
-    pub(crate) fn with_ignore_files(
+    pub fn with_ignore_files(
         mut self,
         npmignore: Option<String>,
         gitignore: Option<String>,

@@ -6,7 +6,7 @@
 //                            path rel from there (the plugin skips a file no package.json governs)
 //   pkg_bin_file(d)          package.json's `bin` (a string, or an object's values) names d, as the plugin's
 //                            isBinFile resolves it: the path itself, without `.js`, or a directory for its index.js
-//   npm_ignored(path)        PROPOSED core input: npm leaves the file out of its package (see below)
+//   npm_ignored(path)        core input: npm leaves the file out of its package (see below)
 //   pkg_listed(d, opt)       the rule option opt (a list of gitignore patterns, as the `ignore` package reads them)
 //                            matches d's path in its package: hashbang's additionalExecutables
 //   src_shebang(d, t)        d starts with a `#!` line t (after a byte order mark, if any); t keeps a trailing \r
@@ -24,8 +24,8 @@
 // npm_ignored(path) is the plugin's getNpmignore(path).match: with a `files` list in package.json, a file it does
 // not list (README, LICENSE, CHANGELOG, package.json and `main` are always published); else the patterns of the
 // package's .npmignore, else of its .gitignore; and any path outside the package. npm's pattern language is
-// gitignore's, read from those files, so it is native, like the package.json reader; no Datalog here. Until core
-// has it, it is declared here and has no rows (every file counts as published).
+// gitignore's, read from those files, so it is native, like the package.json reader; no Datalog here. The
+// repository makes it (`facts::repository`), for each file of the tree under a package.json.
 //
 // Builds on core only: doc, package_for, package_field, kind, text, col, first_token, @join, @place.
 

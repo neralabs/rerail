@@ -39,6 +39,7 @@ pub struct Rows {
     pub(crate) tsconfig: Vec<(String, String)>,
     pub(crate) tsconfig_for: Vec<(String, String)>,
     pub(crate) tsconfig_path: Vec<(String, String, String)>,
+    pub(crate) npm_ignored: Vec<String>,
 }
 
 fn scalar(v: &Value) -> String {
@@ -142,6 +143,54 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
     package_rows(&packages, rows);
     package_for_rows(docs, &packages, rows);
     tsconfig_rows(root, docs, rows);
+    npm_ignored_rows(root, &packages, rows);
+}
+
+/// What npm publishes of a package: given its folder (workspace-relative), its package.json's bytes and its folder's
+/// `.npmignore` and `.gitignore`, whether npm publishes a file (workspace-relative; `None` outside the folder). The
+/// reader is `package_manifest`'s, a crate above this one; registered at load (`install_npm_publication`). Without
+/// it, `npm_ignored` has no rows.
+pub type NpmPublication = fn(folder: &str, package_json: &[u8], npmignore: Option<String>, gitignore: Option<String>) -> Box<dyn Fn(&str) -> Option<bool>>;
+
+static PUBLICATION: std::sync::OnceLock<NpmPublication> = std::sync::OnceLock::new();
+
+/// Registers what reads a package's publication (once, at load).
+pub fn install_npm_publication(publication: NpmPublication) {
+    let _ = PUBLICATION.set(publication);
+}
+
+/// `npm_ignored` of each file of the tree under a `package.json` (its nearest) that npm leaves out of that package:
+/// eslint-plugin-n's `getNpmignore(path).match`, as `package_manifest::Manifest::publishes` reads the package's
+/// `files` and `main`, else its folder's `.npmignore`, else its `.gitignore`. A file under no package has no row.
+fn npm_ignored_rows(root: &Path, packages: &BTreeMap<String, Option<Value>>, rows: &mut Rows) {
+    let Some(publication) = PUBLICATION.get() else { return };
+    let read = |dir: &str, name: &str| std::fs::read_to_string(root.join(dir).join(name)).ok();
+    let mut manifests: BTreeMap<&str, Box<dyn Fn(&str) -> Option<bool>>> = BTreeMap::new();
+    for (dir, json) in packages {
+        if !matches!(json, Some(Value::Object(_))) {
+            continue;
+        }
+        let bytes = std::fs::read(root.join(dir).join("package.json")).unwrap_or_default();
+        manifests.insert(dir.as_str(), publication(dir, &bytes, read(dir, ".npmignore"), read(dir, ".gitignore")));
+    }
+    if manifests.is_empty() {
+        return;
+    }
+    for path in &rows.file {
+        let mut d = path.rsplit_once('/').map_or("", |(d, _)| d);
+        let manifest = loop {
+            if let Some(m) = manifests.get(d) {
+                break Some(m);
+            }
+            if d.is_empty() {
+                break None;
+            }
+            d = d.rsplit_once('/').map_or("", |(p, _)| p);
+        };
+        if manifest.and_then(|publishes| publishes(path)) == Some(false) {
+            rows.npm_ignored.push(path.clone());
+        }
+    }
 }
 
 /// The names a project configuration has, the first found in a folder governing it.
@@ -348,7 +397,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
     }
-    if ["file", "package", "package_field", "package_for", "tsconfig", "tsconfig_for", "tsconfig_path"].iter().any(|r| reads(r)) {
+    if ["file", "package", "package_field", "package_for", "tsconfig", "tsconfig_for", "tsconfig_path", "npm_ignored"].iter().any(|r| reads(r)) {
         tree(root, docs, &mut rows);
     }
     let mut texts: Vec<&str> = Vec::new();
@@ -360,6 +409,7 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     rows.package_for.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.tsconfig.iter().chain(&rows.tsconfig_for).for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.tsconfig_path.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
+    texts.extend(rows.npm_ignored.iter().map(String::as_str));
     let atoms = store.intern_atoms(&texts)?;
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
@@ -391,6 +441,8 @@ pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Valu
     make("tsconfig_for", &["path", "dir"], tfor);
     let tpath: Vec<Vec<i64>> = rows.tsconfig_path.iter().map(|_| vec![sym(), sym(), sym()]).collect();
     make("tsconfig_path", &["dir", "pattern", "target"], tpath);
+    let ignored: Vec<Vec<i64>> = rows.npm_ignored.iter().map(|_| vec![sym()]).collect();
+    make("npm_ignored", &["path"], ignored);
     Ok(out)
 }
 
@@ -424,6 +476,28 @@ pub mod tests {
         assert!(rows.package_field.contains(&("web".to_owned(), "engines/node".to_owned(), ">=18".to_owned())));
         assert!(!rows.package_field.iter().any(|(_, k, _)| k == "n"));
         assert_eq!(rows.package_for, [("web/src/a.ts".to_owned(), "web".to_owned())]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// `npm_ignored`: each file under a package.json is asked of its nearest package's publication (here a stand-in
+    /// that leaves out `test/`; the real reader, `package_manifest`'s, is the engine's, tested by its corpus test
+    /// `a_files_npm_leaves_out_are_npm_ignored`), and a file under no package has no row.
+    #[test]
+    fn the_tree_asks_each_files_package_what_npm_leaves_out() {
+        install_npm_publication(|folder, _, _, _| {
+            let folder = folder.to_owned();
+            Box::new(move |path| path.strip_prefix(&format!("{folder}/")).map(|rel| !rel.starts_with("test/")))
+        });
+        let root = std::env::temp_dir().join(format!("rerail-npm-{}-{:?}", std::process::id(), std::thread::current().id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (p, t) in [("lib/package.json", "{}"), ("lib/test/a.js", ""), ("lib/a.js", ""), ("lib/sub/package.json", "{}"), ("lib/sub/test/b.js", ""), ("tools/test/x.js", "")] {
+            let p = root.join(p);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, t).unwrap();
+        }
+        let mut rows = Rows::default();
+        tree(&root, &[], &mut rows);
+        assert_eq!(rows.npm_ignored, ["lib/sub/test/b.js", "lib/test/a.js"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }
