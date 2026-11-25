@@ -42,6 +42,31 @@ export type RulePackCategory = (typeof RULE_PACK_CATEGORIES)[number];
 
 const nonEmpty = z.string().refine(value => value.trim().length > 0, "must be a non-empty string");
 
+/**
+ * A pack rule's dimensions (`docs/rule-dimensions.md`): what goes wrong when it is broken (`risk`), where the code it
+ * reads lives (`layer`), the worst realistic outcome (`severity`) and, optionally, the hazard it guards against, an id
+ * several packs share when they catch the same thing in different stacks (`pg.index-blocks-writes` for SQL, Alembic and
+ * Django migrations alike). A pack is one stack; dimensions slice the rules across stacks. The dashboard names the risks
+ * in the same order (`RISK_LABELS` in ui/derive.js).
+ */
+export const RULE_RISKS = ["security", "data-safety", "availability", "correctness", "performance", "maintainability", "test-quality"] as const;
+const RULE_LAYERS = ["ui", "server", "data-access", "jobs", "migrations", "tests", "config", "code"] as const;
+const RULE_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+
+/** A hazard id: an area, a dot, then the hazard, each lowercase words joined by dashes (`tx.side-effect-before-commit`). */
+const HAZARD_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*\.[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+
+/** `dimensions` on a `pack.json` rule: all three axes together, and a hazard when the rule names one. */
+export const ruleDimensionsSchema = z
+  .object({
+    risk: z.enum(RULE_RISKS),
+    layer: z.enum(RULE_LAYERS),
+    severity: z.enum(RULE_SEVERITIES),
+    hazard: z.string().regex(HAZARD_ID, "must be <area>.<hazard>, lowercase words joined by dashes").optional(),
+  })
+  .strict();
+type RuleDimensions = Readonly<z.infer<typeof ruleDimensionsSchema>>;
+
 /** Why `path`, a file of an example's repository, cannot be one: it must be relative and stay inside that repository. */
 function examplePathProblem(path: string): string | undefined {
   const normalized = posix.normalize(path.replaceAll("\\", "/"));
@@ -118,6 +143,8 @@ const packRuleFields = {
   heldOff: nonEmpty.optional(),
   /** One example the rule catches and one it lets pass, for the rule panel; tests prove both. */
   examples: z.object({ caught: exampleSchema, passes: exampleSchema }).strict().optional(),
+  /** What goes wrong when the rule is broken, where its code lives and how badly: slices rules across packs. */
+  dimensions: ruleDimensionsSchema.optional(),
 };
 
 const signalSchema: z.ZodType<RulePackSignal> = z.union([
@@ -244,6 +271,8 @@ export interface RulePackRule {
   readonly heldOff?: string;
   /** One example the rule catches and one it lets pass, where the pack has them; tests prove both. */
   readonly examples?: { readonly caught: RuleExample; readonly passes: RuleExample };
+  /** The rule's risk, layer, severity and hazard, where the pack gives them (`docs/rule-dimensions.md`). */
+  readonly dimensions?: RuleDimensions;
 }
 
 /** Where a pack installed from disk came from: a folder, or a tarball, by its absolute path. */
@@ -352,6 +381,7 @@ function packRuleOf(rule: RulePackFile["rules"][number], document: RuleDocument)
     id: rule.id, kind: ruleKindOf(document), title: rule.title, group: rule.group, mode: rule.mode ?? document.rule.mode, on: rule.on ?? true,
     ...(rule.heldOff === undefined ? {} : { heldOff: rule.heldOff }),
     ...(rule.examples === undefined ? {} : { examples: rule.examples }),
+    ...(rule.dimensions === undefined ? {} : { dimensions: rule.dimensions }),
   };
 }
 

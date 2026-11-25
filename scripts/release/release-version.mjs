@@ -29,7 +29,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, rerailRules, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
+import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, dimensionedRules, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, rerailRules, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog, rerailRuleHeader } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -206,7 +206,7 @@ function packFloor(id) {
   if (packFloors.has(id)) return packFloors.get(id);
   const directory = `packs/${id}`;
   const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
-  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)), rerailRules(packJson));
+  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)), rerailRules(packJson), dimensionedRules(packJson));
   const byVersion = coreRefusalsByVersion();
   const checked = acceptedFloor([...byVersion.keys()], (version) => byVersion.get(version)[id] ?? [], JSON.parse(readText("package.json")).version);
   for (const { version, rules } of checked.refusals) console.log(`${id}: core ${version} refuses ${rules.length} rule(s): ${rules.join(", ")}`);
