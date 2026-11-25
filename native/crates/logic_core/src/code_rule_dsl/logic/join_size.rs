@@ -76,6 +76,32 @@ impl Counts {
         c.store(c.load(Relaxed) + s, Relaxed);
     }
 
+    /// Takes a row of the key whose hash is `h` out of its counter: `count`'s inverse (the counters are linear, so a
+    /// removed row leaves them as if it was never added). Its one writer only.
+    #[inline(always)]
+    pub fn uncount(&self, h: u64) {
+        let (b, s) = bucket(h);
+        let c = self.counter(b);
+        c.store(c.load(Relaxed) - s, Relaxed);
+    }
+
+    /// Takes a row of value `v` out of the exact counts, while they are kept: its rows left, or `None` where they
+    /// are not kept or hold no row of `v`. A value left with no rows keeps its entry, at 0: a reader may be reading
+    /// the entries as the column's keys, and keys may hold more than the column, never fewer. Its one writer only.
+    pub fn remove_few(&self, v: i64) -> Option<i64> {
+        let n = self.len.load(Relaxed);
+        if n == PAST {
+            return None;
+        }
+        let e = (0..n as usize).map(|i| self.few_cell(i)).find(|e| e[0].load(Relaxed) == v)?;
+        let rows = e[1].load(Relaxed);
+        if rows <= 0 {
+            return None;
+        }
+        e[1].store(rows - 1, Relaxed);
+        Some(rows - 1)
+    }
+
     /// Adds a row of value `v` to the exact counts, while they are kept: false when `v` would be value `EXACT + 1`
     /// (nothing changed: the writer then ends them, `end_few`, once it has read them). Its one writer only.
     pub fn add_few(&self, v: i64) -> bool {
@@ -123,6 +149,11 @@ impl Counts {
     pub fn few(&self) -> Option<impl Iterator<Item = [i64; 2]> + '_> {
         let n = self.len.load(std::sync::atomic::Ordering::Acquire);
         (n != PAST).then(|| (0..n as usize).map(|i| self.few_cell(i)).map(|e| [e[0].load(Relaxed), e[1].load(Relaxed)]))
+    }
+
+    /// Its values with rows while it keeps them: how many (`few_len` less those `remove_few` left at none).
+    pub fn few_live(&self) -> Option<usize> {
+        Some(self.few()?.filter(|e| e[1] > 0).count())
     }
 
     /// Its values while it keeps them: how many.
@@ -361,7 +392,7 @@ mod tests {
         let keys = super::super::bloom::Keys::of((100..200).filter(|d| d % 50 != 0));
         let held = mine.rows_held(&keys).expect("counted by value");
         // Each held value's rows, and a large value's only where the filter's false positive takes one in.
-        assert!(held >= 98.0 * 40.0 && held <= 98.0 * 40.0 + 2.0 * 20_000.0, "{held}");
+        assert!((98.0 * 40.0..=98.0 * 40.0 + 2.0 * 20_000.0).contains(&held), "{held}");
         assert!(JoinCounts::of([1, 2]).rows_held(&keys).is_none(), "counted by rows, not by value");
     }
 }

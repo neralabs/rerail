@@ -6,6 +6,11 @@
 //! Past `SMALL` values it keeps its column's keys in a blocked Bloom filter too (`bloom::Kept`, decision 0488), set
 //! from the same hash as each row is counted, and made again larger from the column where its keys outgrow it.
 //! The screens test probes against it, and the planner counts the keys two columns share by it.
+//!
+//! A row is taken out as it was put in (`remove`, decision 0678 step 7: a statistic follows a delta in the delta's
+//! size): its counter and exact count are decremented, and past its few values each HyperLogLog register is the
+//! highest rank whose rows are not all gone (`ranks`), so its distinct values are the live rows' own. Its keys'
+//! filter keeps a removed key: keys may hold more than the column, never fewer.
 
 use crate::code_rule_dsl::logic::bloom::{self, Keys, Kept, Reading, Sample, Words};
 use crate::code_rule_dsl::logic::join_size::Counts;
@@ -15,6 +20,9 @@ use std::sync::Arc;
 /// The values whose rows it counts exactly: `join_size::Counts`' few.
 const SMALL: usize = crate::code_rule_dsl::logic::join_size::EXACT;
 const REGISTERS: usize = 256;
+/// The ranks a register's rows are counted at (`Sketch::ranks`); a rank past it is counted at it (a value's chance
+/// of one is 2^-32).
+const RANKS: usize = 32;
 const DENSE_WIDTH: usize = 4096;
 
 /// `n` zeros in a block (decision 0478 step 6c: a sketch's arrays are block arrays, not the heap's).
@@ -35,6 +43,14 @@ impl Dense {
         *n+=1;
         true
     }
+    fn remove(&mut self, v:i64) {
+        let Some(i)=v.checked_sub(self.base).and_then(|n|usize::try_from(n).ok()).filter(|&i|i<DENSE_WIDTH) else {return};
+        let n=&mut self.counts[i];
+        if *n==0 {return;}
+        self.sq-=2*u64::from(*n)-1;
+        *n-=1;
+        if *n==0 {self.ndv-=1;}
+    }
 }
 
 const LABEL_LIMIT:i64=1_i64<<32;
@@ -47,7 +63,7 @@ const SPARSE_FIRST:usize=128;
 const NO_VALUE:i64=-1;
 /// A label set's exact counts, open addressing in a block: each slot `[value, rows]`, `[NO_VALUE, 0]` for none.
 #[derive(Clone)]
-struct Sparse { slots:rerail_blocks::vector::Vector<[i64;2]>, len:usize, sq:u64 }
+struct Sparse { slots:rerail_blocks::vector::Vector<[i64;2]>, len:usize, sq:u64, zero:usize }
 impl Sparse {
     fn slot(&self, v:i64)->usize {
         let m=self.slots.len()-1;
@@ -58,7 +74,7 @@ impl Sparse {
     /// Room for one more value: its slots doubled, each entry placed again, while its values pass half of them.
     fn room(&mut self) {
         if 2*(self.len+1)<=self.slots.len() || self.slots.len()>=SPARSE_SLOTS {return;}
-        let mut grown=Self {slots:crate::code_rule_dsl::facts::rows::vector_in(None, 0),len:0,sq:self.sq};
+        let mut grown=Self {slots:crate::code_rule_dsl::facts::rows::vector_in(None, 0),len:0,sq:self.sq,zero:self.zero};
         grown.slots.resize(self.slots.len()*2,[NO_VALUE,0]);
         for e in self.slots.iter().filter(|e| e[0]!=NO_VALUE) {
             let at=grown.slot(e[0]);
@@ -68,9 +84,9 @@ impl Sparse {
         *self=grown;
     }
     fn from_counts(values:impl IntoIterator<Item=(i64,u32)>)->Self {
-        let mut s=Self {slots:crate::code_rule_dsl::facts::rows::vector_in(None, 0),len:0,sq:0};
+        let mut s=Self {slots:crate::code_rule_dsl::facts::rows::vector_in(None, 0),len:0,sq:0,zero:0};
         s.slots.resize(SPARSE_FIRST,[NO_VALUE,0]);
-        for (v,n) in values {
+        for (v,n) in values.into_iter().filter(|&(_,n)| n>0) {
             s.room();
             let at=s.slot(v);
             if s.slots[at][0]==NO_VALUE {s.len+=1;}
@@ -87,14 +103,29 @@ impl Sparse {
         if self.slots[at][0]==NO_VALUE {
             self.slots[at]=[v,0];
             self.len+=1;
+        } else if self.slots[at][1]==0 {
+            // A value whose rows were all removed, back.
+            self.zero-=1;
         }
         let n=self.slots[at][1] as u64;
         self.sq+=2*n+1;
         self.slots[at][1]+=1;
         true
     }
+    /// A row of `v` out: a value left with none keeps its slot at 0 (`zero` of them), as a removal from open
+    /// addressing would break the probes past it.
+    fn remove(&mut self, v:i64) {
+        if !(0..LABEL_LIMIT).contains(&v) {return;}
+        let at=self.slot(v);
+        let n=self.slots[at][1] as u64;
+        if self.slots[at][0]!=v || n==0 {return;}
+        self.sq-=2*n-1;
+        self.slots[at][1]-=1;
+        if n==1 {self.zero+=1;}
+    }
+    fn ndv(&self)->usize {self.len-self.zero}
     fn counts(&self)->impl Iterator<Item=(i64,u32)>+'_ {
-        self.slots.iter().filter(|e| e[0]!=NO_VALUE).map(|e|(e[0],e[1] as u32))
+        self.slots.iter().filter(|e| e[0]!=NO_VALUE && e[1]>0).map(|e|(e[0],e[1] as u32))
     }
 }
 
@@ -118,11 +149,17 @@ pub(super) struct Sketch {
     own_keys: bool,
     /// A sample of its distinct keys (`bloom::Sample`), offered each key its filter takes as new.
     sample: Sample,
+    /// Once it keeps no exact counts, each register's rows at each rank (`REGISTERS` × `RANKS`, in a block, made
+    /// from its last exact counts): a register is the highest rank with rows, so a value whose rows are all removed
+    /// leaves it (`remove`). Its few values need none: their registers are made again from them. While it keeps a
+    /// page or a label set, its distinct values are exact and a removed value stays in its registers, which only
+    /// `overlap` reads then: as its keys' filter, they may hold a key that is gone, never miss one that is there.
+    ranks: Option<rerail_blocks::vector::Vector<u32>>,
 }
 
 impl Default for Sketch {
     fn default() -> Sketch {
-        Sketch { registers: zeros(REGISTERS), counts: Arc::new(Counts::new()), sharing: Arc::new(()), rows: 0, dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
+        Sketch { registers: zeros(REGISTERS), counts: Arc::new(Counts::new()), sharing: Arc::new(()), rows: 0, dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default(), ranks: None }
     }
 }
 
@@ -132,7 +169,7 @@ impl Default for Sketch {
 impl Clone for Sketch {
     fn clone(&self) -> Sketch {
         Sketch { registers: self.registers.clone(), counts: Arc::clone(&self.counts), sharing: Arc::clone(&self.sharing), rows: self.rows, dense: self.dense.clone(),
-                 sparse: self.sparse.clone(), keys: self.keys.clone(), own_keys: false, sample: self.sample.clone() }
+                 sparse: self.sparse.clone(), keys: self.keys.clone(), own_keys: false, sample: self.sample.clone(), ranks: self.ranks.clone() }
     }
 }
 
@@ -143,17 +180,36 @@ pub(super) fn mix(v: i64) -> u64 {
 }
 
 impl Sketch {
-    pub(super) fn add(&mut self, v: i64) {
-        let h = mix(v);
-        let r = (h >> 56) as usize;
-        let rho = ((h << 8) | 0x80).leading_zeros() as u8 + 1;
-        if rho > self.registers[r] {
-            self.registers[r] = rho;
-        }
+    /// A key's register and rank, from its hash.
+    #[inline]
+    fn place(h: u64) -> (usize, u8) {
+        ((h >> 56) as usize, ((h << 8) | 0x80).leading_zeros() as u8 + 1)
+    }
+
+    /// Its rank counts' cell for a register and rank.
+    #[inline]
+    fn cell(r: usize, rho: u8) -> usize {
+        r * RANKS + usize::from(rho).min(RANKS) - 1
+    }
+
+    /// Counts of its own to write, where a clone shares them (`sharing`).
+    fn own_counts(&mut self) {
         if Arc::strong_count(&self.sharing) > 1 {
             self.counts = Arc::new(Counts::clone(&self.counts));
             self.sharing = Arc::new(());
         }
+    }
+
+    pub(super) fn add(&mut self, v: i64) {
+        let h = mix(v);
+        let (r, rho) = Self::place(h);
+        if rho > self.registers[r] {
+            self.registers[r] = rho;
+        }
+        if let Some(ranks) = &mut self.ranks {
+            ranks[Self::cell(r, rho)] += 1;
+        }
+        self.own_counts();
         self.counts.count(h);
         self.rows += 1;
         if let Some(keys) = &mut self.keys {
@@ -166,12 +222,19 @@ impl Sketch {
             }
         }
         if let Some(sparse)=&mut self.sparse {
-            if !sparse.add(v) {self.sparse=None;}
+            if !sparse.add(v) {
+                let all: Vec<(i64,u64)> = sparse.counts().map(|(x,n)|(x,u64::from(n))).chain([(v,1)]).collect();
+                self.start_ranks(all);
+                self.sparse=None;
+            }
         } else if let Some(dense) = &mut self.dense {
             if !dense.add(v) {
                 if (0..LABEL_LIMIT).contains(&v) && dense.ndv<SPARSE_LIMIT {
                     let mut sparse=Sparse::from_counts(dense.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(dense.base+i as i64,n)));
                     sparse.add(v);self.sparse=Some(sparse);
+                } else {
+                    let all: Vec<(i64,u64)> = dense.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|(dense.base+i as i64,u64::from(n))).chain([(v,1)]).collect();
+                    self.start_ranks(all);
                 }
                 self.dense=None;
             }
@@ -184,12 +247,20 @@ impl Sketch {
             // Large identity columns retain the fixed-size sketch fallback.
             let base=v & !((DENSE_WIDTH as i64)-1);
             if (0..LABEL_LIMIT).contains(&v) && small().all(|e| e[0]>=base && e[0]-base<DENSE_WIDTH as i64) {
-                let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:counts.few_len().unwrap_or(0),sq:0};
+                let mut dense=Dense {base,counts:zeros(DENSE_WIDTH),ndv:counts.few_live().unwrap_or(0),sq:0};
                 for [x,n] in small() {dense.counts[(x-base) as usize]=n as u32;dense.sq+=(n as u64).pow(2);}
                 dense.add(v);
                 self.dense=Some(dense);
             } else if (0..LABEL_LIMIT).contains(&v) && small().all(|e|(0..LABEL_LIMIT).contains(&e[0])) {
                 let mut sparse=Sparse::from_counts(small().map(|e|(e[0],e[1] as u32)));sparse.add(v);self.sparse=Some(sparse);
+            }
+            // No exact counts left: its rows' ranks from here on, from the values it held and this one.
+            if self.dense.is_none() && self.sparse.is_none() {
+                let ranks = Self::ranks_of(small().map(|e| (e[0], e[1] as u64)).chain([(v, 1)]));
+                for r in 0..REGISTERS {
+                    self.registers[r] = Self::register(&ranks, r);
+                }
+                self.ranks = Some(ranks);
             }
             // Its keys from here on in a filter, from the values it held and this one.
             let keys = Kept::new(bloom::kept_words_for(4 * SMALL));
@@ -203,11 +274,69 @@ impl Sketch {
         }
     }
 
+    /// A row of value `v` taken out, as `add` put it in: in O(1), its few values' registers aside (made again from
+    /// at most `SMALL` values when one has no rows left). The row must be one it was given.
+    pub(super) fn remove(&mut self, v: i64) {
+        if self.rows == 0 {
+            return;
+        }
+        let h = mix(v);
+        let (r, rho) = Self::place(h);
+        self.own_counts();
+        self.counts.uncount(h);
+        self.rows -= 1;
+        if let Some(sparse) = &mut self.sparse {
+            sparse.remove(v);
+        } else if let Some(dense) = &mut self.dense {
+            dense.remove(v);
+        } else if self.counts.remove_few(v) == Some(0) && self.ranks.is_none() {
+            // A value with no rows left: its few values' registers made again from those with rows.
+            self.registers.iter_mut().for_each(|x| *x = 0);
+            let live: Vec<i64> = self.counts.few().into_iter().flatten().filter(|e| e[1] > 0).map(|e| e[0]).collect();
+            for x in live {
+                let (r, rho) = Self::place(mix(x));
+                self.registers[r] = self.registers[r].max(rho);
+            }
+        }
+        if let Some(ranks) = &mut self.ranks {
+            let at = Self::cell(r, rho);
+            ranks[at] = ranks[at].saturating_sub(1);
+            if ranks[at] == 0 && usize::from(rho).min(RANKS) >= usize::from(self.registers[r]) {
+                self.registers[r] = Self::register(ranks, r);
+            }
+        }
+    }
+
+    /// The rank counts of `values` (each with its rows).
+    fn ranks_of(values: impl Iterator<Item = (i64, u64)>) -> rerail_blocks::vector::Vector<u32> {
+        let mut ranks: rerail_blocks::vector::Vector<u32> = zeros(REGISTERS * RANKS);
+        for (x, n) in values {
+            let (r, rho) = Self::place(mix(x));
+            ranks[Self::cell(r, rho)] += n as u32;
+        }
+        ranks
+    }
+
+    /// Its rank counts made as it ends its last exact counts, from them (`values`: each with its rows, the row being
+    /// added among them), and its registers from those.
+    fn start_ranks(&mut self, values: Vec<(i64, u64)>) {
+        let ranks = Self::ranks_of(values.into_iter());
+        for r in 0..REGISTERS {
+            self.registers[r] = Self::register(&ranks, r);
+        }
+        self.ranks = Some(ranks);
+    }
+
+    /// Register `r` from its rank counts: its highest rank with rows, 0 for none.
+    fn register(ranks: &[u32], r: usize) -> u8 {
+        ranks[r * RANKS..(r + 1) * RANKS].iter().rposition(|&n| n > 0).map_or(0, |i| i as u8 + 1)
+    }
+
     /// Distinct values.
     pub(super) fn ndv(&self) -> usize {
-        if let Some(s)=&self.sparse {return s.len;}
+        if let Some(s)=&self.sparse {return s.ndv();}
         if let Some(d)=&self.dense {return d.ndv;}
-        if let Some(n) = self.counts.few_len() {
+        if let Some(n) = self.counts.few_live() {
             return n;
         }
         Self::estimate(self.registers.iter().copied(), self.rows)
@@ -255,7 +384,7 @@ impl Sketch {
 
     /// Each value's rows, while they are exact: read from the sketch's arrays.
     pub(super) fn exact_counts(&self) -> Option<rerail_blocks::vector::Vector<[i64; 2]>> {
-        if let Some(s)=self.counts.few() {return Some(s.map(|e|[e[0],e[1] as u32 as i64]).collect());}
+        if let Some(s)=self.counts.few() {return Some(s.filter(|e| e[1]>0).map(|e|[e[0],e[1] as u32 as i64]).collect());}
         if let Some(s)=&self.sparse {return Some(s.counts().map(|(v,n)|[v,i64::from(n)]).collect());}
         self.dense.as_ref().map(|d|d.counts.iter().enumerate().filter(|(_,n)| **n>0).map(|(i,&n)|[d.base+i as i64,i64::from(n)]).collect())
     }
@@ -296,7 +425,7 @@ impl Sketch {
     }
 
     pub(super) fn bytes(&self) -> usize {
-        self.keys.as_ref().map_or(0, |k| k.bytes()) + self.sample.hashes().len() * 8 + self.sparse.as_ref().map_or(0,|s|s.slots.len()*16) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS + self.counts.bytes()
+        self.keys.as_ref().map_or(0, |k| k.bytes()) + self.sample.hashes().len() * 8 + self.sparse.as_ref().map_or(0,|s|s.slots.len()*16) + self.dense.as_ref().map_or(0,|_|DENSE_WIDTH*4) + REGISTERS + self.ranks.as_ref().map_or(0, |r| r.len() * 4) + self.counts.bytes()
     }
 }
 
@@ -445,6 +574,55 @@ pub mod tests {
         let mut copy = sk.clone();
         copy.add(absent);
         assert!(copy.keys().may_hold(absent) && !sk.keys().may_hold(absent), "a clone's key is in its own filter only");
+    }
+
+    /// Decision 0678 step 7: a row removed leaves the sketch as if it was never added, in each of its forms (few
+    /// values, a page of counts, a label set, and past them the rank counts behind its registers), so its distinct
+    /// values, squares and join counts are the live rows'. Each removal is O(1).
+    #[test]
+    fn a_removed_row_leaves_the_sketch_as_if_never_added() {
+        let same = |a: &Sketch, b: &Sketch, what: &str| {
+            assert_eq!((a.rows, a.ndv(), a.sq()), (b.rows, b.ndv(), b.sq()), "{what}: rows, distinct values, squares");
+            if a.dense.is_none() && a.sparse.is_none() {
+                assert_eq!(a.registers.to_vec(), b.registers.to_vec(), "{what}: registers");
+            }
+            assert_eq!(a.counts.counters().collect::<Vec<_>>(), b.counts.counters().collect::<Vec<_>>(), "{what}: join counters");
+            let exact = |s: &Sketch| s.exact_counts().map(|v| { let mut v: Vec<[i64; 2]> = v.to_vec(); v.sort(); v });
+            assert_eq!(exact(a), exact(b), "{what}: exact counts");
+        };
+        // (all rows, rows removed, what is left), for each form.
+        let few: Vec<i64> = (0..30).map(|i| i % 10).collect();
+        let page: Vec<i64> = (0..600).map(|i| i % 200).collect();
+        let labels: Vec<i64> = (0..600).map(|i| (i % 200) * 293).collect();
+        let many: Vec<i64> = (0..60_000i64).map(|i| (i % 20_000) * 7_919 + (1 << 40)).collect();
+        for (what, all) in [("few values", few), ("a page", page), ("labels", labels), ("many", many)] {
+            // Every third row gone, and one value's every row.
+            let gone = |i: usize, v: i64| i.is_multiple_of(3) || v == all[1];
+            let mut s = Sketch::default();
+            for &v in &all {
+                s.add(v);
+            }
+            for (_, &v) in all.iter().enumerate().filter(|&(i, &v)| gone(i, v)) {
+                s.remove(v);
+            }
+            let mut fresh = Sketch::default();
+            for (_, &v) in all.iter().enumerate().filter(|&(i, &v)| !gone(i, v)) {
+                fresh.add(v);
+            }
+            if what == "many" {
+                // Its few values ended with other values than the fresh one's: the registers and counters are the
+                // live rows' all the same.
+                assert!(s.ranks.is_some());
+                assert_eq!((s.rows, s.registers.to_vec(), s.counts.counters().collect::<Vec<_>>()), (fresh.rows, fresh.registers.to_vec(), fresh.counts.counters().collect::<Vec<_>>()));
+                assert_eq!((s.ndv(), s.sq()), (fresh.ndv(), fresh.sq()));
+            } else {
+                same(&s, &fresh, what);
+            }
+            // A value removed whole and added again counts again.
+            s.add(all[1]);
+            fresh.add(all[1]);
+            assert_eq!((s.ndv(), s.sq()), (fresh.ndv(), fresh.sq()), "{what}: a value back");
+        }
     }
 
     // Bounded histograms (were the integration test `bounded_histograms`, which included this file alone: it reads

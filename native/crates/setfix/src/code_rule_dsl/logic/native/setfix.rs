@@ -550,8 +550,8 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              /// bytes a row they are not held for the others.
              leveled: bool,
              /// Its statistics kept as its rows come (`kept_stats`), the planner's form of them kept by delta
-             /// (decision 0096): rows `..indexed` counted in, and those `stats_dead` marks counted out.
-             stats: Option<KeptStats>, stats_dead: rerail_blocks::vector::Vector<u64>,
+             /// (decision 0096): its live rows `..indexed`, each kill taken out as it is made (`uncount_row`).
+             stats: Option<KeptStats>,
              /// A lattice relation's key and join (`lattice` lines): one live row a key, its value the join of all the
              /// key's values derived (`Lat::fold`). `None`: a set.
              lat: Option<Box<Lat>>,
@@ -756,7 +756,25 @@ impl Rel {
         if let Some(o) = &mut self.from {
             o.killed().push(id);
         }
+        self.uncount_row(id);
         true
+    }
+
+    /// Row `id`, just killed, taken out of its sketches and kept statistics where they counted it (decision 0678
+    /// step 7: a statistic follows a delta in the delta's size): a row below `indexed`. One not yet counted never
+    /// will be (`indexed_to_n` counts live rows only).
+    fn uncount_row(&mut self, id: u32) {
+        if id as usize >= self.indexed {
+            return;
+        }
+        let (data, k) = (&self.data, self.k);
+        for (c, sk) in self.sketches.iter_mut().enumerate() {
+            sk.remove(data.value(id, k, c));
+        }
+        if let Some(stats) = &mut self.stats {
+            let row: Vec<i64> = (0..k).map(|c| data.value(id, k, c)).collect();
+            stats.0.delta(&[], &row, k);
+        }
     }
 
     pub fn new(table: &str, types: &[u8]) -> Rel {
@@ -765,7 +783,7 @@ impl Rel {
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: keys::RowSet::default(),
               sketches: vec![Sketch::default(); k], dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
-              level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), lbase: 0, leveled: true, stats: None, stats_dead: crate::code_rule_dsl::facts::rows::vector_in(None, 0), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new(), room: std::sync::OnceLock::new() }
+              level: crate::code_rule_dsl::facts::rows::vector_in(None, 0), lbase: 0, leveled: true, stats: None, lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new(), room: std::sync::OnceLock::new() }
     }
     /// Makes this relation a lattice's (its `lattice` line): the rows it holds so far fold by key, as a wave's do.
     fn set_lattice(&mut self, name: &str, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
@@ -939,12 +957,24 @@ impl Rel {
             ix.restamp(1);
         }
         let serves = if made.is_none() && old.serves.len() == whole.len() { old.serves.iter().zip(&whole).filter(|(_, w)| **w).map(|(s, _)| s.clone()).collect() } else { idx.iter().map(|_| Vec::new()).collect() };
-        let sketches = match made { Some((_, sketches)) => sketches, None => old.sketches.clone() };
+        let mut sketches = match made { Some((_, sketches)) => sketches, None => old.sketches.clone() };
+        // The rows `gone` killed, taken out of its sketches and statistics (counted over `old`'s live rows): the
+        // change's rows, not the relation's (decision 0678 step 7).
+        let mut stats = old.stats.clone();
+        for &id in killed.iter() {
+            for (c, sk) in sketches.iter_mut().enumerate() {
+                sk.remove(old.rows.value(id, k, c));
+            }
+            if let Some(stats) = &mut stats {
+                let row: Vec<i64> = (0..k).map(|c| old.rows.value(id, k, c)).collect();
+                stats.0.delta(&[], &row, k);
+            }
+        }
         let level = if old.has_levels() { old.level.clone() } else { crate::code_rule_dsl::facts::rows::vector_in(None, 0) };
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.clone()), killed });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: old.rows.shared(old.n), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: keys::RowSet::default(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
-                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new(), room: std::sync::OnceLock::new() })
+                   lbase: 0, leveled: true, stats, lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new(), room: std::sync::OnceLock::new() })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -1285,12 +1315,16 @@ impl Rel {
     /// Rows `indexed..n` counted in the sketches; `pending` emptied (they are in the orders now).
     fn indexed_to_n(&mut self) {
         let _s = (self.n - self.indexed >= SPANNED_ROWS).then(|| crate::code_rule_dsl::logic::profile::span(|| "rows sketched and counted (indexed_to_n)".into()));
-        let (data, k, lo, hi) = (&self.data, self.k, self.indexed, self.n);
+        // Its live rows only: one killed before it is counted is never counted (`uncount_row`).
+        let (data, dead, k, lo, hi) = (&self.data, &self.dead, self.k, self.indexed, self.n);
         let sketch = |c: usize, sk: &mut Sketch| {
-            for id in lo..hi { sk.add(data.value(id as u32, k, c)); }
+            for id in (lo..hi).filter(|&id| !is_dead(dead, id as u32)) { sk.add(data.value(id as u32, k, c)); }
             sk.grow(|| (0..hi).map(|id| data.value(id as u32, k, c)));
         };
-        let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(&data.to_vec(lo, hi, k), &[], k); };
+        let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats {
+            let live: Vec<i64> = (lo..hi).filter(|&id| !is_dead(dead, id as u32)).flat_map(|id| (0..k).map(move |c| data.value(id as u32, k, c))).collect();
+            stats.0.delta(&live, &[], k);
+        };
         // Many rows: each column's sketch, and the statistics, a job of its own (decision 0294). A sketch takes its
         // column's values in the rows' order, as one thread gives them (its exact counts give way in that order).
         if hi - lo >= SPANNED_ROWS && crate::threads::max() > 1 {
@@ -1309,30 +1343,6 @@ impl Rel {
         }
         self.indexed = self.n;
         self.pending = keys::RowSet::default();
-    }
-    /// The rows dead now and not when the statistics last counted them out taken out of them, and those revived
-    /// put back: a word of the dead marks at a time, so a relation with
-    /// none changed costs its marks' words.
-    fn count_dead(&mut self) {
-        let Some(stats) = &mut self.stats else { return };
-        let (k, words) = (self.k, self.dead.len().max(self.stats_dead.len()));
-        let (mut plus, mut minus) = (Vec::new(), Vec::new());
-        for w in 0..words {
-            let (now, was) = (self.dead.get(w).copied().unwrap_or(0), self.stats_dead.get(w).copied().unwrap_or(0));
-            let mut changed = now ^ was;
-            while changed != 0 {
-                let id = w * 64 + changed.trailing_zeros() as usize;
-                changed &= changed - 1;
-                if id < self.indexed {
-                    let row = self.data.row(id as u32, k);
-                    if now >> (id % 64) & 1 == 1 { minus.extend_from_slice(&row) } else { plus.extend_from_slice(&row) }
-                }
-            }
-        }
-        if !plus.is_empty() || !minus.is_empty() {
-            stats.0.delta(&plus, &minus, k);
-        }
-        self.stats_dead.clone_from(&self.dead);
     }
     /// The next wave: its delta is rows `lo..hi`. The rows pushed since the last wave become each order's runs: those
     /// before `lo` as of the wave ending, the rest as the new wave's (its delta). First, each order's older runs merge
@@ -6482,8 +6492,11 @@ unsafe impl VTabCursor for DerivedCursor {
 pub struct KeptStats(crate::code_rule_dsl::logic::plan::statkeep::RelStats);
 /// A relation as `InRel::mark` saw it: enough to find its change later (`delta_since_mark`). A view's mark holds its
 /// source's allocation (`src`, weakly: none of its rows), so a view made later at the same address is not taken for it.
+/// `uid`: the relation's own (`level::Uid`, one a relation in the process), so the same relation is told from one
+/// made later at its address without a copy of its dead bits (an `InRel` never changes its rows or marks: decision
+/// 0678 step 7).
 #[derive(Clone, Debug)]
-pub struct RelMark { at: usize, n: usize, k: usize, dead: rerail_blocks::vector::Vector<u64>, src: Option<std::sync::Weak<dyn crate::code_rule_dsl::facts::vtab::Source>> }
+pub struct RelMark { at: usize, n: usize, k: usize, uid: u64, src: Option<std::sync::Weak<dyn crate::code_rule_dsl::facts::vtab::Source>> }
 
 impl KeptStats {
     fn of(k: usize) -> KeptStats {
@@ -6508,7 +6521,6 @@ impl InRel {
     /// A component's relation at its fixpoint, its rows and indexes moved.
     pub fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
-        rel.count_dead();
         if let Some(o) = &mut rel.from {
             let killed = o.killed();
             killed.sort_unstable();
@@ -6731,7 +6743,7 @@ impl InRel {
     }
 
     pub fn mark(&self) -> RelMark {
-        RelMark { at: self as *const InRel as usize, n: self.len(), k: self.k, dead: self.dead.clone(), src: self.view.as_ref().map(|v| Arc::downgrade(&v.src)) }
+        RelMark { at: self as *const InRel as usize, n: self.len(), k: self.k, uid: self.uid.0, src: self.view.as_ref().map(|v| Arc::downgrade(&v.src)) }
     }
     /// Its rows' change from `old`, the kept relation it started as (`Rel::based`), as `(added, removed)` row-major:
     /// the rows it added after `old`'s, and `old`'s live rows it marked dead. A row deleted and derived again is in
@@ -6833,7 +6845,7 @@ impl InRel {
         if self.k != old.k {
             return None;
         }
-        if self as *const InRel as usize == old.at && self.n == old.n && self.dead[..] == old.dead[..] {
+        if self.uid.0 == old.uid {
             return Some(DeltaIds { rel: self, gone: Gone::Ids(rerail_blocks::vector::Vector::new()), added: rerail_blocks::vector::Vector::new() });
         }
         self.ids_from(old.at, old.n)
@@ -10340,6 +10352,41 @@ pub mod posted_tests {
             let mut ch = Vec::new();
             change::group(&va, &[c(0)], agg, &mut |s, k, v| ch.push((s, vec![k[0], v])));
             change::check(Some(cold(va.before().unwrap())), cold(va.after()), ch);
+        }
+    }
+
+    /// Decision 0678 step 7: a maintained relation's sketches follow its change in the change's size. Its rows gone,
+    /// its rows added and those of them killed again leave each column's sketch as one made from its live rows alone.
+    #[test]
+    fn a_maintained_relations_sketches_are_its_live_rows() {
+        let mut r = Rel::new("s", b"ii");
+        for i in 0..400 {
+            r.push(&[i % 50, i]);
+        }
+        let kept = Arc::new(InRel::moved(r));
+        let mut gone = Rel::new("g", b"ii");
+        for i in (0..400).filter(|i| i % 9 == 0) {
+            gone.push(&[i % 50, i]);
+        }
+        let mut new = Rel::based("s", b"ii", &kept, Some(&InRel::moved(gone))).expect("few dead");
+        for i in 400..430 {
+            new.push(&[i % 7, i]);
+        }
+        new.index_rest();
+        // Two of the rows it added, and one it kept, killed after they were counted.
+        for id in [401u32, 420, 5] {
+            assert!(new.kill_row(id));
+        }
+        let new = InRel::moved(new);
+        let mut fresh = Rel::new("f", b"ii");
+        for id in (0..new.len()).filter(|&id| !is_dead(&new.dead, id as u32)) {
+            fresh.push(&[new.value(id, 0), new.value(id, 1)]);
+        }
+        let fresh = InRel::moved(fresh);
+        assert_eq!(new.len() - new.ndead, fresh.len());
+        for c in 0..2 {
+            let (a, b) = (&new.sketches[c], &fresh.sketches[c]);
+            assert_eq!((a.ndv(), a.sq()), (b.ndv(), b.sq()), "column {c}: distinct values and squares are the live rows'");
         }
     }
 

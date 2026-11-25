@@ -360,7 +360,7 @@ impl Keys {
     /// The distinct keys: exact, or the reading's estimate.
     pub fn distinct(&self) -> f64 {
         match self {
-            Keys::Few(c) => c.few_len().unwrap_or(0) as f64,
+            Keys::Few(c) => c.few_live().unwrap_or(0) as f64,
             Keys::Filter(r) => r.distinct(),
         }
     }

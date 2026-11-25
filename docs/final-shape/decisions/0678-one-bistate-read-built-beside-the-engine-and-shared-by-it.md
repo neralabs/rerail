@@ -1,6 +1,6 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Steps 1, 3, 4, 5 and 6 done. Step 2 cut down by the user's constraints (below) to the reads of a column
+Status: in progress. Steps 1, 3, 4, 5, 6 and 7 done. Step 2 cut down by the user's constraints (below) to the reads of a column
 and of a chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
@@ -312,6 +312,53 @@ Tests:
 Not done, held back by Claude: SQL's `Derived::lookup` through `InState`. It was written and tested, then taken
 out when the user asked what SQL had to do with this work. The saved change is in the worktree's
 `tmp/planner-stats/sql-derived-lookup-through-table.txt`.
+
+## Step 7: statistics follow a delta in the delta's size
+
+The user, 2026-11-24, after the planner-statistics survey: "the important thing for statistics is that we have a
+way of updating them as the delta happens, in a way which is proportional to the size of the delta. It can be an
+approximation."
+
+Before this step, an engine relation's statistics followed its added rows that way, but not its killed ones:
+
+- its column sketches (`setfix::sketch`: the exact counts, the join counters, the HyperLogLog, the keys' filter)
+  were only ever added to, so they went on counting killed rows;
+- its kept statistics (decision 0096) found its kills by comparing every word of its dead bits with a second copy
+  of them (`count_dead`, `stats_dead`): the relation's size, not the change's.
+
+What was built (Claude's choices):
+
+- **A kill is taken out as it is made.** `Rel::kill_row`, and `Rel::based` for the rows `gone` kills, take the
+  row's values out of each column's sketch and out of the kept statistics (`uncount_row`): O(columns) a kill. A row
+  killed before it is counted is never counted: `indexed_to_n` counts live rows only. `count_dead` and `stats_dead`
+  are gone.
+- **`Sketch::remove`**, O(1) a row:
+  - the join counters are linear, so a row is subtracted (`Counts::uncount`);
+  - the exact counts are decremented: few values (`Counts::remove_few`), a page, a label set. A value left with no
+    rows keeps its entry at 0, so a reader reading the entries never misses a key, and `few_live` counts those
+    with rows;
+  - the distinct values: once a column keeps no exact counts, each HyperLogLog register keeps its rows at each rank
+    (`ranks`, 256 × 32 counts, made from the last exact counts as they end). A register is its highest rank with
+    rows, so the registers are exactly a fresh sketch's of the live rows. While a column keeps a page or a label
+    set, its distinct values are exact, and a removed value stays in the registers. Only `overlap` reads them
+    then, and it may count a key that is gone, as the keys' filter may;
+  - the keys' filter keeps a removed key: keys may hold more than the column, never fewer. This is the
+    approximation, and it is on the safe side for the screens.
+
+- **Heavy values merge in the change's size.** They follow a relation from its mark (`InRel::mark`,
+  `delta_ids_since_mark`), and the change is read through the version (step 4). The mark held a copy of the dead
+  bits and compared them whole to tell the same relation from one made later at its address. It now holds the
+  relation's `uid`, one a relation in the process; an `InRel` never changes its rows or marks.
+
+Tests:
+
+- `sketch::tests::a_removed_row_leaves_the_sketch_as_if_never_added`: for few values, a page, a label set and
+  many values, a third of the rows and one value's every row removed. The rows, distinct values, squares, join
+  counters, exact counts and (past the exact forms) registers equal those of a sketch made from the live rows; a
+  value removed whole and added again counts again.
+- `a_maintained_relations_sketches_are_its_live_rows`: a relation based on a kept one, with rows gone, rows added
+  and some killed after they were counted, has each column's distinct values and squares of a relation made from
+  its live rows.
 
 ## Next steps, proposed (Claude's, not agreed)
 
