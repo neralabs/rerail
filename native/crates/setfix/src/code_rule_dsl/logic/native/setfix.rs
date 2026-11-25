@@ -1117,6 +1117,7 @@ impl Rel {
         // (decision 0384 step 3), or their relation made its tail. Beside rows derived here, those a rule here
         // repeats are dropped; into a lattice (which folds each), they are read where they lie.
         let placed = std::mem::take(&mut f.placed);
+        let in_order = std::mem::take(&mut f.in_order);
         let k = self.k;
         // A lattice relation's rows the device folded, with its key map (decision 0384 step 5): taken as they lie,
         // the map its own, into a relation with none yet (a device fixpoint's heads start empty).
@@ -1207,7 +1208,8 @@ impl Rel {
         }
         debug_assert!(room.is_some() || f.n == 0, "a wave's rows with no room");
         drop(f);
-        let lots: Vec<(Placed, Option<Vector<u32>>)> = placed.into_iter().filter(|(p, _)| !matches!(p, Placed::Wave { .. })).collect();
+        // Each lot by its place in `placed` (`in_order` names them so).
+        let lots: Vec<(usize, (Placed, Option<Vector<u32>>))> = placed.into_iter().enumerate().filter(|(_, (p, _))| !matches!(p, Placed::Wave { .. })).collect();
         if let Some(room) = room {
             let room = Arc::try_unwrap(room).unwrap_or_else(|_| panic!("{}: a wave's room still held past its end", self.table));
             // SAFETY: every writer of the room is done (its last holder is this), and wrote the slots `src` names.
@@ -1216,7 +1218,9 @@ impl Rel {
                 room.finish(&mut self.data, src.len() as u32);
             }
         }
-        for (p, r) in lots {
+        // The lots' rows come after the room's, in the lots' order.
+        let mut at = from + src.len();
+        for (l, (p, r)) in lots {
             let m = p.len();
             match p {
                 Placed::Part(p) => self.data.append_part(p),
@@ -1225,6 +1229,11 @@ impl Rel {
                 Placed::Wave { .. } => unreachable!("taken with the room"),
             }
             rounds.extend((0..m as usize).map(|i| r.as_ref().map_or(u32::MAX, |r| r[i])));
+            // Written in the first order (t58 increment A): known sorted, its orders take it in place.
+            if in_order.contains(&l) {
+                self.sorted.note(&self.data, k, &self.idx[0].cols, at as u32, (at + m as usize) as u32);
+            }
+            at += m as usize;
         }
         // The CPU's rows come sorted by the first order (`Fresh::settle`): known so, their runs take them in place.
         if cpu > 0 {
@@ -1554,6 +1563,9 @@ pub struct Fresh { room: Option<Arc<rows::WaveRoom>>, spans: Vec<(u8, u32)>, end
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
                    /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
                    placed: Vec<(Placed, Option<Vector<u32>>)>,
+                   /// The lots of `placed` written in the relation's first order (t58 increment A): taken as rows known
+                   /// sorted (`Sorted::note`), so no order of them is sorted on the host.
+                   in_order: Vec<usize>,
                    /// A lattice relation's key map the device folded its placed rows through (decision 0384 step 5):
                    /// the relation takes it as its own with them.
                    map: Option<keys::KeyMap> }
@@ -1665,6 +1677,14 @@ impl RowData for Slots<'_> {
 impl Fresh {
     /// Rows another writer wrote in place (`placed`): distinct, none held by the relation; with `rounds`, each row's
     /// round of the device's fixpoint (its level, as `add_leveled`'s).
+    /// `place`'s, the rows written in the relation's first order (t58 increment A, the device's sorted dedup): the
+    /// relation notes them so, and sorts nothing of them.
+    pub fn place_in_order(&mut self, placed: Placed) {
+        if placed.len() > 0 {
+            self.in_order.push(self.placed.len());
+            self.placed.push((placed, None));
+        }
+    }
     pub fn place(&mut self, placed: Placed, rounds: Option<Vector<u32>>) {
         debug_assert!(rounds.as_ref().is_none_or(|r| r.len() == placed.len() as usize), "a round per row");
         if placed.len() > 0 {
