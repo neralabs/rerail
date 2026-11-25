@@ -1599,6 +1599,29 @@ mod settings_tests {
         assert_eq!(super::with_reuse(&json!({"reuse": false})), json!({"reuse": false}));
     }
 
+    /// `nearest` over a node of a Blade template's compiled program reads the kind set's copy in that guest's grammar,
+    /// `compiled-view`: the copy's name is a native table's, so the label's `-` is not in it (`rr_in_compiled_view_…`).
+    /// It was, and SQLite refused the table: the run failed with "invalid native table name", and
+    /// bladestan-if-always-true, bladestan-identical-always-true and complexity-cyclomatic-blade never ran.
+    #[test]
+    fn run_policies_runs_nearest_over_a_blade_templates_compiled_program() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str| dir.path().join(name).display().to_string();
+        std::fs::create_dir_all(at("root")).unwrap();
+        std::fs::write(at("root/a.blade.php"), "@php $f = function ($v) { return $v; }; @endphp\n@php return 1; @endphp\n").unwrap();
+        std::fs::write(
+            at("p.rerail"),
+            ".policy \"t:blade-nearest\" revision 1\n.language blade\n.decl fn_kind(k: symbol)\nfn_kind(\"anonymous_function\"). fn_kind(\"program\").\n\
+             .violation Ret(at: node) code \"ret\" \"a return in a closure\"\n\
+             Ret(n) :- kind(r, \"document\"), parsed(r, \"compiled-view\", p), within(n, p), kind(n, \"return_statement\"), nearest(n, f, fn_kind), kind(f, \"anonymous_function\").\n",
+        )
+        .unwrap();
+        let args = ["run-policies", &at("root"), &at("out"), &at("p.rerail")].map(str::to_owned);
+        let out = super::cli_in(&args, &mut Default::default()).unwrap_or_else(|e| panic!("the policy runs: {e}"));
+        let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(report["runs"][0]["files"], 1, "{report:#}");
+    }
+
     /// `run-policies --tool-calls <calls.json>` gives the run its tool calls (`docs/rule-syntax/tool-calls.md`): a
     /// `.scope tool_calls` policy's finding is at the call. A file not of their shape, or no policy, is an error, and
     /// the form with no calls runs as before.

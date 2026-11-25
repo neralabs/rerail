@@ -239,7 +239,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     if let Some(g) = grammar_of(n)
                         && !kindset.starts_with("rr_in_")
                     {
-                        let name = format!("rr_in_{g}_{kindset}");
+                        // The label as a name's part, as every other copy's (`compiled-view`: a table name).
+                        let name = format!("rr_in_{}_{kindset}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
                         if made.insert(name.clone()) {
                             let label = dialect_label(&g);
                             let kinds = prog.kindsets.get(kindset.as_str()).cloned().unwrap_or_default();
