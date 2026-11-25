@@ -39,3 +39,7 @@ declared_at(n, x) :- tag_root(_, n), text(n, x), (inside(n, s, block_scope) ; in
     nearest(d, s, block_scope).
 declared_at(n, x) :- tag_root(_, n), text(n, x), kind(p, "type_parameter"), field(p, "name", m), text(m, x),
     child(ps, p, _), field(o, "type_parameters", ps), within(n, o).
+// `import { default as Form } from "./form"`: the tape keeps no node for `default`, so the specifier has an alias and
+// no name, and names.rerail's import_binding (which reads the name) binds nothing. The alias is the binding.
+declared_at(n, x) :- tag_root(_, n), text(n, x), kind(sp, "import_specifier"), !field(sp, "name", _),
+    field(sp, "alias", a), text(a, x), docof(sp, d), docof(n, d).
