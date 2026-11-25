@@ -889,7 +889,9 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
 }
 
 /// The file-local joins of cross-file rules are pushed on a version: helpers named from their content
-/// (`fl<h>_<head>`), each derived by the chunks and read in place of the join.
+/// (`fl<h>_<head>`), each derived by the chunks and read in place of the join. One atom with its nodes' attributes
+/// (`ATTRIBUTES`: `node`, `text`, ...) is read in the cross part by its key, and is no join (t50 item 3): `named`'s
+/// two `child` atoms are.
 #[test]
 fn local_joins_are_pushed_on_a_version() {
     let text = r#"
@@ -912,7 +914,7 @@ bound(p, x) :- node(_, p, "block", _, _), child(p, c, _), node(_, c, "assignment
 outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
 .decl named(f: node, s: symbol)
 .output named
-named(f, s) :- uses(f, _), child(p, f, _), text(p, s), !bound(p, s).
+named(f, s) :- uses(f, _), child(p, f, _), child(g, p, _), text(g, s), !bound(p, s).
 .decl at(f: node, l: number)
 .output at
 at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
@@ -924,6 +926,34 @@ at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
         assert!(m.starts_with("fl") && local.contains(m), "{m}: a file-local helper, {made:?}");
         assert!(out.rules().any(|r| reads(&out, r).contains(m)), "{m} is read:\n{}", out.show());
     }
+}
+
+/// A test of a node's text (`text(s, "k")`, read since `text` is a view as `"k" = @rr_node_text_any(s)`) goes with the
+/// component that binds the node, and makes it a file-local helper: left in the cross part, the component's relation
+/// (an AST matcher's, `rr_ast_32_1(o, s)` in `rf_ref`) was scanned over every file to test its nodes, which made every
+/// document's rows (2026-11-24).
+#[test]
+fn a_test_of_a_nodes_text_is_pushed_with_its_node() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl lit(o: node, s: node)
+.input node, text, lit
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), text(n, s).
+.decl named(o: node, x: symbol)
+named(o, x) :- node(_, o, "identifier", _, _), text(o, x), defined(x).
+.decl tagged(o: node, x: symbol)
+.output tagged
+tagged(o, x) :- lit(o, s), "Literal" = @rr_node_text_any(s), named(o, x).
+"#;
+    let (out, made) = pushed(read(text));
+    let helpers: Vec<&String> = made.iter().filter(|m| m.ends_with("_tagged")).collect();
+    assert_eq!(helpers.len(), 1, "tagged's component is a helper: {made:?}\n{}", out.show());
+    let shown = out.show();
+    let rule = shown.lines().find(|l| l.starts_with(&format!("{}(", helpers[0]))).unwrap_or_default();
+    assert!(rule.contains("lit(") && rule.contains("rr_node_text_any"), "the helper holds the atom and the test of its node: {rule}");
+    assert!(split_of(&out).local.contains(helpers[0]), "{}: file-local", helpers[0]);
 }
 
 #[test]

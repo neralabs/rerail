@@ -185,13 +185,15 @@ struct Pushed<'v> {
     candidate: Arc<Version>,
 }
 
-/// A node's text or value read, `x = @rr_node_text(v)` (either side, `syntax::NODE_READS`): `(x, v)`.
-fn node_read(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> Option<(String, String)> {
+/// A node's text or value read, `x = @rr_node_text(v)` or a test of it, `"k" = @rr_node_text_any(v)` (either side,
+/// `syntax::NODE_READS`; `text(v, "k")` reads so since `text` is a view, decision 0656 step 4): `(x, v)`, `x` none for
+/// a test.
+fn node_read(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> Option<(Option<String>, String)> {
     let L::Cmp { l, op: CmpOp::Eq, r } = l.view() else { return None };
     let read = |x: TermRef<'_>, c: TermRef<'_>| match (x, c) {
-        (TermRef::Var(x), TermRef::Call(f, mut args)) if crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) => {
+        (TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_), TermRef::Call(f, mut args)) if crate::code_rule_dsl::facts::vtab::syntax::NODE_READS.contains(&v.text(f)) => {
             match (args.next(), args.next()) {
-                (Some(TermRef::Var(n)), None) => Some((name(v, rule, x), name(v, rule, n))),
+                (Some(TermRef::Var(n)), None) => Some((x.var().map(|x| name(v, rule, x)), name(v, rule, n))),
                 _ => None,
             }
         }
@@ -292,8 +294,10 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 // twin's, decision 0109) goes with it: only the chunk's batch holds the node's text, so the read is
                 // answered there and its value handed on. Such a component is pushed whatever else would leave it
                 // (decision 0292 §3).
-                let node_reads: Vec<String> = body.iter().filter_map(|l| node_read(v, rule, *l)).filter(|(_, n)| vars.contains(n)).map(|(x, _)| x).collect();
-                vars.extend(node_reads.iter().cloned());
+                // A test of one (`text(v, "k")`'s, a view's read) goes with it as well: the cross part would scan the
+                // component's relation over every file to test its nodes (`rf_ref`'s matcher rows, 2026-11-24).
+                let node_reads: Vec<Option<String>> = body.iter().filter_map(|l| node_read(v, rule, *l)).filter(|(_, n)| vars.contains(n)).map(|(x, _)| x).collect();
+                vars.extend(node_reads.iter().flatten().cloned());
                 let must = !node_reads.is_empty();
                 if !must && !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
                     continue;
@@ -379,7 +383,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     .iter()
                     .map(|x| {
                         let column_type = |var: &str| {
-                            if node_reads.iter().any(|read| read == var) {
+                            if node_reads.iter().flatten().any(|read| read == var) {
                                 return Some("sym".to_owned());
                             }
                             atoms.iter().find_map(|a| {
