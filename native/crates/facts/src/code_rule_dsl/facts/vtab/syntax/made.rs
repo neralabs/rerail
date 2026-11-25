@@ -747,11 +747,12 @@ pub(super) struct Group {
     index: Box<[std::sync::OnceLock<Box<ColIndex>>]>,
     /// The strings its rows used (`Made::used`), where its batch keeps them: a renewed batch's vocabulary is its
     /// groups' (decision 0616).
-    strings: Option<Arc<[u32]>>,
+    /// The list as made (`Made::used`), shared, not copied into a slice (1.18 M copies on cold PostHog).
+    strings: Option<Arc<Vec<u32>>>,
 }
 
 impl Group {
-    fn new(docs: rerail_blocks::vector::Vector<usize>, ranges: Vec<Range<usize>>, strings: Option<Arc<[u32]>>) -> Self {
+    fn new(docs: rerail_blocks::vector::Vector<usize>, ranges: Vec<Range<usize>>, strings: Option<Arc<Vec<u32>>>) -> Self {
         let index = (0..ranges.len() * INDEXED).map(|_| std::sync::OnceLock::new()).collect();
         Group { docs, ranges, index, strings }
     }
@@ -1234,7 +1235,7 @@ impl Batch {
                 // The make's own span: the reading step that asked for it is not charged it (t56 step 1).
                 let _made = profile::span(|| "batch: rows made".to_owned());
                 self.make_rows(&need, self.rows.first(), &[]).and_then(|mut m| {
-                    let used: Option<Arc<[u32]>> = m.used.take().map(Arc::from);
+                    let used: Option<Arc<Vec<u32>>> = m.used.take().map(Arc::new);
                     self.group_rels(m, &need).map(|r| (r, used))
                 })
             };
@@ -1255,7 +1256,7 @@ impl Batch {
                 Err(why) => {
                     // Its documents have no rows, and every source of the batch reports why.
                     self.docs.fail(why.to_string());
-                    (self.rows.template.iter().map(|t| Relation::new(&Source::columns(t.as_ref()).iter().map(String::as_str).collect::<Vec<_>>())).collect(), Some(Arc::from(Vec::new())))
+                    (self.rows.template.iter().map(|t| Relation::new(&Source::columns(t.as_ref()).iter().map(String::as_str).collect::<Vec<_>>())).collect(), Some(Arc::new(Vec::new())))
                 }
             };
             let mut ranges = Vec::with_capacity(rels.len());
