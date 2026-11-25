@@ -55,7 +55,24 @@ crossing too.
 Two records of one id (two files of one module name and qualname) are one to the walks, as they are in the linter,
 whose dict keeps the last: a seed or a boundary in either holds for both, where the linter reads the last one's.
 
-### 3. A flag's choice reads a document's id as it is
+### 3. PLP-007's resolution through re-exports is over names too
+
+PLP-007 resolves what a `data_layer/*.py` module exports, following re-exports, to the def (`plp_xq`, `plp_xres`). It
+gave a node in another file. Now:
+
+- Each file gives names at its own document: `plp_fqin(s, t, d)`, the record of id `t` has `module.name` `s` in a
+  file scan_paths reads; `plp_reexp(s, q, d)`, module file `d` re-exports `s`'s name from `q`; `plp_xseed(s, d)`, data
+  layer module `d` exports `s`.
+- The step is `plp_xstep(s, q)`: no file scan_paths reads defines `s`, and its module re-exports the name from `q`. A
+  module's import joined to every file's records, declared `cross_file`.
+- `plp_xq(s)` and `plp_xres(s, t)` walk names, and the finding is read back at the record's own node
+  (`plp_xres(_, t), pc_sid(t, g)`).
+
+With the findings per-file, the plugin's allowlist reads them across files: `plp_list_error`, an entry no finding in
+any file matches, compares the whole list with every file's findings. It is declared `cross_file` (a join product
+demand pushed into the files' part for it was refused by 0665's check, its rows read back from their located form).
+
+### 4. A flag's choice reads a document's id as it is
 
 A cone's relation read outside it is chosen by the flag at its location column: through `docof` when the column is a
 node, and as it is when the column is a document's id (0686). Flags-last told the two apart by the column type
@@ -63,7 +80,7 @@ node, and as it is when the column is a document's id (0686). Flags-last told th
 matches one: `plp_id_in` was empty under the flag, and the walks reached nothing. A location column that is not a
 node is a document's id now, in the cone's check and in the rewrite.
 
-### 4. The split reads the outputs
+### 5. The split reads the outputs
 
 An output is never covered, staged or a guard's to hold, so the split depends on which relations are outputs. Its
 `READS` did not name them, nor did its keys (0385): an edit that set the outputs alone (a part's fields,
@@ -77,19 +94,20 @@ file-local split carried over part's fields's edit (Reads(16)) is not what it co
 |---|---|
 | pure-lazy finds what its linter finds over a closure across files: a seed through an imported helper (PLP-003), through `self.` to a base class's method in a file that names a trigger (PLP-001), stopping at `@legacy_sync`, and a def nothing reaches unanalysed | `pack_split_tests::pure_lazy_closes_over_the_calls_and_analyses_each_file_on_its_own` |
 | Its analysis (`plp_an`, `plp_in`, `plp_tnt_at`, `plp_opq_before`, `plp_bfs`) is per-file in every split | same test |
+| PLP-007: a public `*_lazy` def a data-layer module exports, directly or through a module that re-exports it, is reported at its def, and `plp_find` and `plp_kept` are per-file | `pack_split_tests::pure_lazy_closes_over_the_calls_and_analyses_each_file_on_its_own` |
 | A cone's relation placed by a document's id and read across files at an open location is chosen at that id: a run's rows are the original program's, and an edit turning the flag over gives a fresh run's | `corpus::tests::a_flag_over_every_file_is_applied_last` (`named_in`, `both`) |
 | A split is not carried over an edit of the outputs | the debug build's check of every carried analysis, on the first test |
 
 ## Results
 
 - The position report (every data-layer policy over the 334-file corpus, every pack over a small corpus, one Linux
-  host, every run completed): 23 flagged rules after 0692, 20 now, none newly flagged. pure-lazy-runtime-purity's
-  `plp_bfs`, `plp_opq_before` and `plp_tnt_at` are per-file. Its flag `plp_docin` is applied last as in 0686:
-  `rr_agg52` stays per-file.
-- pure-lazy over 120 files of the 9,010-file tree, old text and new, one Linux host: the same 6 findings. Cold, 12.9 s
-  and 11.6 s wall, 37.6 s and 36.2 s CPU. The new run's own work is smaller (local 1.35 s to 0.31 s, cross 1.29 s to
-  0.27 s), its preparation larger (combine 0.7 s to 3.2 s: the stage and the flag's copies). A warm run takes 0.17 s
-  either way. Over all 1,560 files both texts pass the run's 4 GB cap.
+  host, every run completed): 23 flagged rules after 0692, 16 now, none newly flagged. pure-lazy-runtime-purity has
+  none: its cross-file part reads no position. `plp_bfs`, `plp_opq_before`, `plp_tnt_at`, `plp_found`, `plp_report`,
+  `rr_ctx58` and `rr_demand_agg_rr_agg57` are per-file, and its flag `plp_docin` is applied last as in 0686 (12
+  relations under each value; `rr_agg52` stays per-file).
+- pure-lazy over 120 files of the 9,010-file tree, old text and new, one Linux host: the same 6 findings (PLP-005,
+  PLP-006, and the allowlist's absence). Cold, 11.7 s and 9.2 s wall, 35.4 s and 30.1 s CPU; warm, 0.16 s either way.
+  Over all 1,560 files both texts pass the run's 4 GB cap.
 - The 36 pack split tests, the deferred and split tests, and `rerail-logic`, `rerail-typing`, `rerail-rr-root`,
   `rerail-corpus-prep`, `tests_logic`, `tests_corpus`, `tests_rr`, `tests_lang`, `tests_findings` and the device
   crate's tests pass (1,499). The device crate's two GPU tests that fail on a Linux host fail as in 0686.
@@ -98,8 +116,6 @@ file-local split carried over part's fields's edit (Reads(16)) is not what it co
 
 ## Left open
 
-- PLP-007's `plp_xq`, its resolution through re-exports, still reads `plp_fq` with no location, and with it
-  `plp_found`, `plp_report`, `rr_ctx58` and `rr_demand_agg_rr_agg57`: the next of step 4, keyed by name as this.
 - `pc_mans`, `pc_fqlen`, `pc_first` and `pc_sedge` are not staged on their own: a number column (`via`, a base's index)
   under rules that read positions may be one. They are inside the walks' stage, and nothing per-file reads them.
 - A memory cap for pure-lazy over 1,560 files: both texts pass 4 GB.

@@ -482,8 +482,8 @@ plp_find(f, n, "PLP-009", cat("pure-lazy global cache/state access requires sign
     ") via '", a, "'"), cat("global=", g, " category=", k, " access=", a)) :-
     plp_access(f, n, g, a), !plp_exempt(f, g, a), docof(f, d), plp_gcat(d, g, k).
 plp_find(g, g, "PLP-007", "exported public *_lazy functions must be decorated with @pure_lazy", "-") :-
-    !plp_src_mode(), plp_xres(_, g), pc_sym(_, q, g), !contains(".", q), suffix("_lazy", q), !prefix("_", q),
-    !plp_explicit(g).
+    !plp_src_mode(), plp_xres(_, t), pc_sid(t, g), pc_sym(_, q, g), !contains(".", q), suffix("_lazy", q),
+    !prefix("_", q), !plp_explicit(g).
 // plp_kept(f, c): owner-only defs keep PLP-001…005 only.
 .decl plp_kept(f: node, c: symbol)
 plp_kept(f, c) :- plp_find(f, _, c, _, _), plp_an(f, _, 0).
@@ -508,18 +508,29 @@ plp_all_first(d, v) :- plp_all_asg(d, a), count : { plp_all_asg(d, a2), earlier(
 plp_export(d, x) :- plp_all_first(d, v), child(v, e, _), str_const(e, x), !prefix("_", x).
 plp_export(d, x) :- plp_dl_doc(d, _), !plp_all_first(d, _), modnode(d, mn), pc_imp(mn, x, _, "sym"), !prefix("_", x).
 plp_export(d, x) :- plp_dl_doc(d, _), !plp_all_first(d, _), pc_sym(d, x, _), !contains(".", x), !prefix("_", x).
-// plp_xq(s) asks where "module.name" s is defined, following re-exports; plp_xres answers.
-.decl plp_fq(s: symbol, f: node)
-plp_fq(s, f) :- pc_fq(s, f), plp_in_rec(f).
+// plp_xq(s) asks where "module.name" s is defined, following re-exports; plp_xres(s, t) answers with the record's
+// id, as the linter's resolution does, and the finding is read back at the record (decision 0693). What each file
+// gives the resolution is names, each at its own document: plp_fqin(s, t, d), the record of id t has "module.name" s
+// in file d, which scan_paths reads; plp_reexp(s, q, d), module file d re-exports s's name from q. Each is placed
+// at its document, where the cross-file part reads the flag (decision 0686).
+.decl plp_fqin(s: symbol, t: symbol, d: number)
+plp_fqin(cat(m, ".", q), cat(m, "::", q), d) :- pc_sym(d, q, f), doc(d, _, m), m != "", plp_in_rec(f).
+.decl plp_reexp(s: symbol, q: symbol, d: number)
+plp_reexp(cat(pm, ".", nm), q, d) :- doc(d, _, pm), plp_docin(d), modnode(d, mn), pc_imp(mn, nm, q, "sym").
+// plp_xseed(s, d): data_layer module file d exports "module.name" s.
+.decl plp_xseed(s: symbol, d: number)
+plp_xseed(q, d) :- plp_export(d, x), modnode(d, mn), pc_imp(mn, x, q, "sym").
+plp_xseed(cat(m, ".", x), d) :- plp_export(d, x), modnode(d, mn), !pc_imp(mn, x, _, "sym"), doc(d, _, m).
 .decl plp_xq(s: symbol)
-plp_xq(q) :- plp_export(d, x), modnode(d, mn), pc_imp(mn, x, q, "sym").
-plp_xq(cat(m, ".", x)) :- plp_export(d, x), modnode(d, mn), !pc_imp(mn, x, _, "sym"), doc(d, _, m).
-plp_xq(q2) :- plp_xq(s), !plp_fq(s, _), split_dot(s, pm, nm), doc(d, _, pm), plp_docin(d), modnode(d, mn),
-    pc_imp(mn, nm, q2, "sym").
-.decl plp_xres(s: symbol, g: node)
-plp_xres(s, g) :- plp_xq(s), plp_fq(s, g).
-plp_xres(s, g) :- plp_xq(s), !plp_fq(s, _), split_dot(s, pm, nm), doc(d, _, pm), plp_docin(d), modnode(d, mn),
-    pc_imp(mn, nm, q2, "sym"), plp_xres(q2, g).
+plp_xq(s) :- plp_xseed(s, _).
+plp_xq(q2) :- plp_xq(s), plp_xstep(s, q2).
+// plp_xstep(s, q): no file scan_paths reads defines s, and s's module re-exports its name from q. A module's import
+// joined to every file's records: a crossing meant (decision 0652).
+.decl plp_xstep(s: symbol, q: symbol) cross_file
+plp_xstep(s, q) :- plp_reexp(s, q, _), !plp_fqin(s, _, _).
+.decl plp_xres(s: symbol, t: symbol)
+plp_xres(s, t) :- plp_xq(s), plp_fqin(s, t, _).
+plp_xres(s, t) :- plp_xq(s), plp_xstep(s, q2), plp_xres(q2, t).
 
 // ==== 5. the plugin's grandfathered allowlist =====================================================================
 // One fragment per source file under the directory, `path<TAB>id<TAB>code<TAB>qualname<TAB>scope<TAB>message` per
@@ -550,8 +561,8 @@ plp_report(n) :- plp_payload(n, _, _, _, _, _), !plp_plugin().
 plp_report(n) :- plp_payload(n, p, c, q, s, m), plp_plugin(), !plp_approved(p, c, q, s, m, _).
 plp_report(n) :- plp_payload(n, p, c, q, s, m), plp_plugin(), plp_approved(p, c, q, s, m, a), plp_found_n(p, c, q, s, m, k),
     line(n, l), r = count : { plp_found(p, c, q, s, m, l2), l2 < l }, r < k - a.
-// The list's own errors.
-.decl plp_list_error(m: symbol)
+// The list's own errors: the whole list against every file's findings, a crossing meant (decision 0693).
+.decl plp_list_error(m: symbol) cross_file
 plp_list_error(cat("spurious allowlist entry: ", e)) :- plp_entry(e, p, c, q, s, m), plp_approved(p, c, q, s, m, a),
     !plp_found(p, c, q, s, m, _).
 plp_list_error(cat("spurious allowlist entry: ", e)) :- plp_entry(e, p, c, q, s, m), plp_approved(p, c, q, s, m, a),

@@ -2675,7 +2675,9 @@ mod pack_split_tests {
     /// pure-lazy-runtime-purity closes over the calls as its linter does (scripts/lint_pure_lazy_runtime_purity.py,
     /// `_pure_lazy_closure`, `_runtime_owner_closure`, decision 0693): from a `@pure_lazy` def through an imported
     /// helper in another file, through `self.` to a base class's method in a third, stopping at a `@legacy_*` def, and
-    /// a def nothing reaches is not analysed. The third and fourth files name a trigger (`scan_paths` reads a file a
+    /// a def nothing reaches is not analysed. PLP-007: a public `*_lazy` def `data_layer/api.py` exports, named in its
+    /// `__all__` and imported, directly or through a module that re-exports it, is reported at its def. The third and
+    /// fourth files name a trigger (`scan_paths` reads a file a
     /// seed reaches only through a base class when its text names one). Each analysed def's findings are its own file's, and the split derives
     /// the analysis per file: only the walk over the records' ids crosses files.
     #[test]
@@ -2690,11 +2692,15 @@ mod pack_split_tests {
                 ("impl/b.py", "def helper(txn):\n    return txn._conn\n\n\ndef unreached(txn):\n    return txn._conn\n"),
                 ("impl/c.py", "from impl.d import old\n\n\nclass Base:\n    def step(self, txn):\n        y = txn._conn\n        return old(txn)\n# pure_lazy: scanned\n"),
                 ("impl/d.py", "@legacy_sync\ndef old(txn):\n    return txn._conn\n# pure_lazy: scanned\n"),
+                ("data_layer/api.py", "from impl.e import fetch_lazy\n\n__all__ = [\"fetch_lazy\", \"go_lazy\"]\nfrom impl.f import go_lazy\n"),
+                ("impl/e.py", "def fetch_lazy(x):\n    return x\n"),
+                ("impl/f.py", "from impl.g import go_lazy\n"),
+                ("impl/g.py", "def go_lazy():\n    return 1\n"),
             ],
         );
         // The plugin's grandfathered list is not in the tree (PLP-ALLOWLIST).
         let keys: Vec<(&str, &str, i64)> = found.iter().filter(|f| f.0 != "PLP-ALLOWLIST").map(|(c, p, l, _)| (c.as_str(), p.as_str(), *l)).collect();
-        assert_eq!(keys, [("PLP-001", "impl/c.py", 6), ("PLP-003", "impl/b.py", 2)], "{found:#?}");
+        assert_eq!(keys, [("PLP-001", "impl/c.py", 6), ("PLP-003", "impl/b.py", 2), ("PLP-007", "impl/e.py", 1), ("PLP-007", "impl/g.py", 1)], "{found:#?}");
         let causes: String = std::fs::read_dir(tmp.path())
             .unwrap()
             .map(|e| e.unwrap().path())
@@ -2702,7 +2708,7 @@ mod pack_split_tests {
             .map(|p| std::fs::read_to_string(p).unwrap())
             .collect();
         assert!(!causes.is_empty(), "no split dumped");
-        for r in ["plp_an", "plp_in", "plp_tnt_at", "plp_opq_before", "plp_bfs"] {
+        for r in ["plp_an", "plp_in", "plp_tnt_at", "plp_opq_before", "plp_bfs", "plp_find", "plp_kept"] {
             let named: Vec<&str> = causes.lines().filter(|l| l.split('\t').next() == Some(r)).collect();
             assert!(named.is_empty(), "{r} is cross-file: {named:?}");
         }
