@@ -1468,7 +1468,11 @@ impl Cands<'_> {
             Cands::Runs(found) => found.ids().any(f),
             Cands::Pending(found, lo, hi) => found.ids().any(&mut f) || (lo..hi).any(f),
             Cands::Read(rows) => rows.rows().iter().any(|&(id, _)| f(id)),
-            Cands::Stream(s) => s.view.find_keyed(s.cols, &s.key[..s.len], s.lead).into_iter().any(f),
+            Cands::Stream(s) => {
+                let mut hit = false;
+                s.view.each_keyed(s.cols, &s.key[..s.len], s.lead, &mut |r| hit = hit || f(r));
+                hit
+            }
         }
     }
 }
@@ -4777,20 +4781,25 @@ impl View {
     /// `find_keyed`'s rows, written into `out` (emptied first): the caller's list, which a step's probes fill in turn.
     fn find_keyed_into(&self, cols: &[usize], key: &[i64], lead: usize, out: &mut Vector<u32>) {
         out.clear();
+        self.each_keyed(cols, key, lead, &mut |r| out.push(r));
+    }
+    /// `find_keyed`'s rows, each given to `each` in order, no list made of them: a probe that walks its rows once
+    /// (a test, a fold's read) made a list a probe (2.7 M on cold PostHog, `find_into`'s).
+    fn each_keyed(&self, cols: &[usize], key: &[i64], lead: usize, each: &mut dyn FnMut(u32)) {
         if self.eqs.is_empty()
             && let Some(dc) = self.src.doc_column()
             && let Some(j) = cols.iter().position(|&k| self.cols[k] == dc)
             && let Some(i) = cols.iter().position(|&k| self.src.kept_to_doc(self.cols[k]))
             && let Some(rows) = self.src.lookup_in(self.cols[cols[i]], &[key[i]], key[j])
         {
-            out.extend(rows.iter().map(|&r| r as u32));
+            rows.iter().for_each(|&r| each(r as u32));
             return;
         }
         if let Some(rows) = self.find_columns(cols, key) {
-            out.extend_from_slice(&rows);
+            rows.iter().for_each(|&r| each(r));
             return;
         }
-        self.find_into(cols[lead], key[lead], out)
+        self.each_one(cols[lead], key[lead], each)
     }
     /// The rows of a probe binding several key columns, where the source keeps it to the rows they name together
     /// (`Source::lookup_columns`: a made relation's documents every column routes to, none made for the others).
@@ -4986,14 +4995,18 @@ impl View {
     }
     /// `find`'s rows, added to `out`: the source's rows given as it finds them (`Source::lookup_each`), no list of its own.
     fn find_into(&self, c: usize, v: i64, out: &mut Vector<u32>) {
+        self.each_one(c, v, &mut |r| out.push(r));
+    }
+    /// `find_into`'s rows, each given to `each`.
+    fn each_one(&self, c: usize, v: i64, each: &mut dyn FnMut(u32)) {
         if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
-            out.extend(rows.iter().map(|&r| r as u32));
+            rows.iter().for_each(|&r| each(r as u32));
             return;
         }
         let eqs = &self.eqs;
         self.src.lookup_each(self.cols[c], &[v], &mut |r| {
             if eqs.iter().all(|&(c, v)| self.src.value(r, c) == v) {
-                out.push(r as u32);
+                each(r as u32);
             }
         });
     }
@@ -6567,7 +6580,7 @@ impl InRel {
                 None => for &r in v.src.sorted_rows(c, k).unwrap_or(&[]) { give(RowRef::Source(v, r as usize).read()) },
             }
         } else if ix.source && let Some(v) = &self.view {
-            for r in v.find_keyed(&ix.cols, key, ix.lead) { give(RowRef::Source(v, r as usize).read()) }
+            v.each_keyed(&ix.cols, key, ix.lead, &mut |r| give(RowRef::Source(v, r as usize).read()));
         } else {
             let exact = ix.exact();
             for &id in ix.get(self, key) {

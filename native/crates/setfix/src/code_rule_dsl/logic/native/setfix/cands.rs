@@ -203,7 +203,9 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                 // Only a join's step or a test asks so (`stream`): a fold's or a string join's need of 0 reads its rows.
                 if stream && need == 0 && v.keys_tested(&ix.cols) {
                     let found = v.tests_keys(&ix.cols, key, ix.lead, &mut last.cursor).unwrap_or_else(|| {
-                        v.find_keyed(&ix.cols, key, ix.lead).into_iter().any(|r| ix.cols.iter().zip(key).all(|(&c, &k)| v.src.value(r as usize, v.cols[c]) == k))
+                        let mut hit = false;
+                        v.each_keyed(&ix.cols, key, ix.lead, &mut |r| hit = hit || ix.cols.iter().zip(key).all(|(&c, &k)| v.src.value(r as usize, v.cols[c]) == k));
+                        hit
                     });
                     return (Rows::Source(v), Cands::Range(0, u32::from(found)));
                 }
