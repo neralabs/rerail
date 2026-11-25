@@ -3824,12 +3824,13 @@ impl Viewed {
     }
     /// What column `column` holds, its documents made or not (`value_of`, `loc_value`): a document's key, a node of
     /// the batch's (`node_order`'s key is one: `key << 32 | order`), or a `u32` (a kind, a field, a position, a
-    /// line, a column, a depth, a size, a child's place, a tape id). Not known: `tape`'s parent (its root's is `-1`)
-    /// and the report's columns (`col + 1`, past a `u32` at its greatest).
+    /// line, a column, a depth, a size, a child's place, a tape id; the report's columns, `col + 1`, are too: a
+    /// position is a `u32` offset in a text of at most `u32::MAX` bytes, so a column is at most `u32::MAX - 1`). Not
+    /// known: `tape`'s parent (its root's is `-1`).
     pub(super) fn col_kind(&self, column: usize) -> Option<made::ColKind> {
         use made::ColKind;
         match (self.view, *Self::columns(self.view).get(column)?) {
-            (View::Tape, "par") | (View::Loc(Place::Report), "column" | "end_column") => None,
+            (View::Tape, "par") => None,
             (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
             (View::Loc(Place::Col), "c") => Some(ColKind::U32),
             (View::Order, "k") | (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
@@ -3840,7 +3841,7 @@ impl Viewed {
             | (View::Core, "t")
             | (View::Depth, "k")
             | (View::Line | View::Loc(Place::Line | Place::EndLine), "l")
-            | (View::Loc(Place::Report), "line" | "end_line") => Some(ColKind::U32),
+            | (View::Loc(Place::Report), "line" | "column" | "end_line" | "end_column") => Some(ColKind::U32),
             _ => None,
         }
     }

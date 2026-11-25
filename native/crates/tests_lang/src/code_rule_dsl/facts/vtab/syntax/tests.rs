@@ -394,9 +394,9 @@ fn a_syntax_sources_column_bounds_hold_its_rows() {
     check(&t, keys, &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "field.p", "field.f", "field.c", "core_node.d", "core_node.n", "doc.d", "doc.path", "doc.module", "text.n"]);
     let src = "import os\ndef f(a, b):\n    x = a not in b\n    return g(x, [a, b])\n";
     let docs = vec![document(5, "m.py", "python", src), document(1000, "n.py", "python", "class C:\n    def m(self):\n        return self.v\n")];
-    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "str", "child", "line", "col", "name"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "str", "child", "line", "col", "name", "rr_report_location"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let core = shaped(&store, docs, &projection).unwrap();
-    check(&core, [5, 1000], &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "text.n", "text.s", "str.n", "str.s", "line.n", "line.l", "col.n", "col.c", "name.n", "name.s"]);
+    check(&core, [5, 1000], &["node.d", "node.n", "node.kind", "node.start", "node.end_", "child.p", "child.c", "child.idx", "text.n", "text.s", "str.n", "str.s", "line.n", "line.l", "col.n", "col.c", "name.n", "name.s", "rr_report_location.n", "rr_report_location.line", "rr_report_location.column", "rr_report_location.end_line", "rr_report_location.end_column"]);
     // A file's own tree alone (`Made::File`, decision 0512), under a hidden key: its document column is its file's
     // (decision 0431 §4), a key the batch does not hold.
     let mut tree = document(HIDDEN_KEYS + 5, "t.py", "python", src);
