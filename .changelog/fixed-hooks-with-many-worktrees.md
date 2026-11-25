@@ -1,0 +1,1 @@
+With many worktrees and several sessions, hooks no longer wait seconds as sessions start together or as the daemon's first pass over the worktrees ends, and the daemon uses less CPU and memory after it: each start reads Git's worktree list once, each worktree's changes are checked in a turn of their own, and checkouts share their rules.
