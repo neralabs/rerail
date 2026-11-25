@@ -4,13 +4,29 @@
 use std::collections::HashSet;
 use std::fmt::Write;
 
-/// A test at the token.
+/// A test at the token, as the lean parser asks it: the word at a place, the token's kind, a mark, a flag, and `!`,
+/// `&&` and `||` of tests.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Cond {
     /// A test the moves do not model yet: its text.
     Text(String),
+    /// The word of the token `at` places on is one of `ws` (`w::…`): the lean parser's `is_p` and `is_p_at`.
+    Word { at: usize, ws: Vec<String> },
+    /// The token is of kind `kind` (the grammar's name): its test (`G::kind_test`), the lean parser's `kind() == STR`.
+    Kind { kind: String, test: String },
+    /// Mark `mark` (its first definition) holds at the token: its peek's tests of the tokens (`G::peek`), or its
+    /// function's call.
+    Mark { mark: usize, test: Box<Cond> },
+    /// Flag `FLAG_…` is clear.
+    Flag(String),
+    /// A bracket's scan (`G::scan_fn`) from the token `at` finds its close, and the tokens after it pass `tail`: the lean
+    /// parser's scan to the `)`. `held`: asked once before the decision, its answer the local of its name (`G::decide`).
+    Scan { f: String, at: String, tail: String, held: bool },
     Not(Box<Cond>),
+    And(Vec<Cond>),
     Or(Vec<Cond>),
+    /// One test of a mark's definitions, in parentheses among the others.
+    Group(Box<Cond>),
 }
 
 impl Cond {
@@ -18,22 +34,159 @@ impl Cond {
         Cond::Text(s.into())
     }
 
+    /// The word at the token is `w`.
+    pub(crate) fn word(w: impl Into<String>) -> Self {
+        Cond::Word { at: 0, ws: vec![w.into()] }
+    }
+
     /// The test as Rust.
     pub(crate) fn print(&self) -> String {
         match self {
             Cond::Text(s) => s.clone(),
-            Cond::Not(c) => format!("!({})", c.print()),
+            Cond::Word { at, ws } => {
+                let s = if *at == 0 { "self.word()".to_owned() } else { format!("self.word_at(self.i + {at})") };
+                match ws.as_slice() {
+                    [w] => format!("{s} == {w}"),
+                    ws => format!("matches!({s}, {})", ws.join(" | ")),
+                }
+            }
+            Cond::Kind { test, .. } => test.clone(),
+            Cond::Mark { test, .. } => test.print(),
+            Cond::Flag(f) => format!("self.flags & {f} == 0"),
+            Cond::Scan { f, at, tail, held } => {
+                let call = if *held { f.clone() } else { format!("self.{f}({at})") };
+                if tail.is_empty() { format!("{call}.is_some()") } else { format!("{call}.is_some_and(|e| {tail})") }
+            }
+            Cond::Not(c) => {
+                let t = c.print();
+                if one_group(&t) || (t.starts_with("self.") && !t.contains(' ')) { format!("!{t}") } else { format!("!({t})") }
+            }
+            Cond::And(cs) => cs.iter().map(|c| if matches!(c, Cond::Or(_)) { format!("({})", c.print()) } else { c.print() }).collect::<Vec<_>>().join(" && "),
             Cond::Or(cs) => cs.iter().map(Cond::print).collect::<Vec<_>>().join(" || "),
+            Cond::Group(c) => format!("({})", c.print()),
         }
     }
 
-    /// The test with each `a` in its text `b`.
-    pub(crate) fn replace(&mut self, a: &str, b: &str) {
+    /// Its tests, each.
+    fn each(&mut self, f: &mut dyn FnMut(&mut Cond)) {
         match self {
-            Cond::Text(s) => *s = s.replace(a, b),
-            Cond::Not(c) => c.replace(a, b),
-            Cond::Or(cs) => cs.iter_mut().for_each(|c| c.replace(a, b)),
+            Cond::Mark { test: c, .. } | Cond::Not(c) | Cond::Group(c) => c.each(f),
+            Cond::And(cs) | Cond::Or(cs) => cs.iter_mut().for_each(|c| c.each(f)),
+            _ => {}
         }
+        f(self);
+    }
+
+    /// How often it asks scan `name` at the token.
+    pub(crate) fn scans(&mut self, name: &str) -> usize {
+        let mut n = 0;
+        self.each(&mut |c| n += usize::from(matches!(c, Cond::Scan { f, at, held: false, .. } if f == name && at == "self.i")));
+        n
+    }
+
+    /// It with scan `name` at the token asked before it: its answer held (`G::decide`).
+    pub(crate) fn hold_scan(&mut self, name: &str) {
+        self.each(&mut |c| {
+            if let Cond::Scan { f, at, held, .. } = c
+                && f == name
+                && at == "self.i"
+            {
+                *held = true;
+            }
+        });
+    }
+
+    /// The test itself: an `||` of one test that test, a group its test.
+    pub(crate) fn core(&self) -> &Cond {
+        match self {
+            Cond::Or(cs) if cs.len() == 1 => cs[0].core(),
+            Cond::Group(c) => c.core(),
+            c => c,
+        }
+    }
+
+    /// Its tests that must all hold: an `&&`'s, a mark's peek's, flattened.
+    fn conjuncts(&self) -> Vec<&Cond> {
+        match self.core() {
+            Cond::And(cs) => cs.iter().flat_map(Cond::conjuncts).collect(),
+            Cond::Mark { test, .. } if matches!(test.core(), Cond::And(_)) => test.conjuncts(),
+            c => vec![c],
+        }
+    }
+
+    /// Whether it holds where one of two tests does (an `||` in it, its text's too).
+    pub(crate) fn has_or(&self) -> bool {
+        match self {
+            Cond::Text(s) | Cond::Kind { test: s, .. } | Cond::Scan { tail: s, .. } => s.contains("||"),
+            Cond::Or(cs) => cs.len() > 1 || cs.iter().any(Cond::has_or),
+            Cond::And(cs) => cs.iter().any(Cond::has_or),
+            Cond::Mark { test: c, .. } | Cond::Not(c) | Cond::Group(c) => c.has_or(),
+            Cond::Word { .. } | Cond::Flag(_) => false,
+        }
+    }
+
+    /// The test a take of this block's first move asks, where it is one (`G::decide`'s scans).
+    pub(crate) fn first_test(b: &mut Block) -> Option<&mut Cond> {
+        match b.first_mut()? {
+            Op::If { arms, .. } => arms.first_mut().map(|a| &mut a.0),
+            Op::Take { take, .. } => take.test_mut(),
+            _ => None,
+        }
+    }
+
+    /// `a`, then `b`: one `||`.
+    fn or(a: Cond, b: Cond) -> Cond {
+        let mut cs = match a {
+            Cond::Or(cs) => cs,
+            a => vec![a],
+        };
+        match b {
+            Cond::Or(bs) => cs.extend(bs),
+            b => cs.push(b),
+        }
+        Cond::Or(cs)
+    }
+}
+
+/// A `match` arm's pattern: its words (none: `_`), and a guard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Pat {
+    pub words: Vec<String>,
+    pub guard: Option<Cond>,
+}
+
+impl Pat {
+    pub(crate) fn words(ws: Vec<String>) -> Self {
+        Pat { words: ws, guard: None }
+    }
+
+    /// `_ if c`.
+    pub(crate) fn guard(c: Cond) -> Self {
+        Pat { words: Vec::new(), guard: Some(c) }
+    }
+
+    fn print(&self) -> String {
+        let ws = if self.words.is_empty() { "_".to_owned() } else { self.words.join(" | ") };
+        match &self.guard {
+            Some(g) => format!("{ws} if {}", g.print()),
+            None => ws,
+        }
+    }
+
+    /// The test the pattern is of the word: its words', its guard after them.
+    fn cond(&self) -> Cond {
+        let ws = (!self.words.is_empty()).then(|| Cond::Word { at: 0, ws: self.words.clone() });
+        match (ws, &self.guard) {
+            (Some(w), Some(g)) => Cond::And(vec![w, g.clone()]),
+            (Some(w), None) => w,
+            (None, Some(g)) => g.clone(),
+            (None, None) => Cond::text("true"),
+        }
+    }
+
+    /// One word alone, no guard.
+    fn one_word(&self) -> bool {
+        self.words.len() == 1 && self.guard.is_none()
     }
 }
 
@@ -62,13 +215,15 @@ pub(crate) enum Take {
 pub(crate) enum Op {
     /// Statements the moves do not model yet: their lines.
     Line(String),
+    /// The field `f::…` set on the node made last (the lean parser's `field`).
+    Field(String),
     /// A take of the token. `nf`: in a rule that runs with no mark refused (`records::no_refusing`); `m`: whether a mark
     /// no rule takes may hold at its token (`takes`), once asked.
     Take { take: Take, nf: bool, m: Option<bool> },
     /// An `if` chain: each test and its block, then the `else`.
     If { arms: Vec<(Cond, Block)>, els: Option<Block> },
     /// A `match` on `subject`: each pattern and its block, then `_`'s.
-    Match { subject: String, arms: Vec<(String, Block)>, default: Block },
+    Match { subject: String, arms: Vec<(Pat, Block)>, default: Block },
     Loop(Block),
     While(Cond, Block),
     Break,
@@ -102,6 +257,21 @@ impl Take {
             Take::Merge { .. } => "merge",
             Take::Pass { .. } => "pass",
             Take::WordPass { .. } => "word_pass",
+        }
+    }
+
+    /// Its test, or none for a take of a word.
+    fn test(&self) -> Option<&Cond> {
+        match self {
+            Take::Leaf { test, .. } | Take::Skip { test } | Take::Merge { test, .. } | Take::Pass { test } => Some(test),
+            Take::WordLeaf { .. } | Take::WordSkip { .. } | Take::WordPass { .. } => None,
+        }
+    }
+
+    fn test_mut(&mut self) -> Option<&mut Cond> {
+        match self {
+            Take::Leaf { test, .. } | Take::Skip { test } | Take::Merge { test, .. } | Take::Pass { test } => Some(test),
+            Take::WordLeaf { .. } | Take::WordSkip { .. } | Take::WordPass { .. } => None,
         }
     }
 
@@ -145,6 +315,9 @@ fn print_into(b: &[Op], pad: &str, out: &mut String) {
                     out.push('\n');
                 }
             }
+            Op::Field(f) => {
+                let _ = writeln!(out, "{pad}self.field_made({f});");
+            }
             Op::Take { take, nf, m } => {
                 let _ = writeln!(out, "{pad}{}", take.print(*nf, *m));
             }
@@ -172,7 +345,7 @@ fn print_into(b: &[Op], pad: &str, out: &mut String) {
                 let r = format!("{q}    ");
                 let _ = writeln!(out, "{pad}match {subject} {{");
                 for (pat, body) in arms {
-                    let _ = writeln!(out, "{q}{pat} => {{");
+                    let _ = writeln!(out, "{q}{} => {{", pat.print());
                     print_into(body, &r, out);
                     let _ = writeln!(out, "{q}}}");
                 }
@@ -243,7 +416,8 @@ pub(crate) fn no_refusing(b: &mut Block) {
 
 /// What the rewrites read of the grammar.
 pub(crate) struct Cx<'a> {
-    /// Where a mark no rule takes may hold (`G::mark_words`): the words, and the kinds none of whose tokens it can be.
+    /// Where a mark no rule takes may hold (`G::open_mark_words`): the words, and the kinds none of whose tokens it can
+    /// be (by `ident`).
     pub marks: Option<&'a (HashSet<String>, HashSet<String>)>,
     /// Whether a decision reads `marked` (`!self.marked`, `G::after_mark`): where none does, nothing writes it.
     pub marked: bool,
@@ -266,6 +440,193 @@ pub(crate) fn rewrite(b: &mut Block, cx: &Cx<'_>) {
     blocks(b, &mut no_outer_parens);
     blocks(b, &mut loops_as_whiles);
     blocks(b, &mut no_retest_after_while);
+}
+
+/// A leaf of no field and then the field set on the node made last, which is that leaf: one take of the field, as the
+/// lean parser writes a token's field with it.
+fn leaf_fields(b: &mut Block) {
+    blocks(b, &mut |x| {
+        let mut i = 0;
+        while i + 1 < x.len() {
+            let field = match &x[i + 1] {
+                Op::Field(f) if f != "0" => Some(f.clone()),
+                _ => None,
+            };
+            if let (Some(f), Op::Take { take, .. }) = (field, &mut x[i]) {
+                let leaf = match take {
+                    Take::Leaf { test, kind, field } if field == "0" => Some(Take::Leaf { test: test.clone(), kind: kind.clone(), field: f }),
+                    Take::WordLeaf { word, kind } => Some(Take::Leaf { test: Cond::word(word.clone()), kind: kind.clone(), field: f }),
+                    _ => None,
+                };
+                if let Some(l) = leaf {
+                    *take = l;
+                    x.remove(i + 1);
+                }
+            }
+            i += 1;
+        }
+    });
+}
+
+/// Each take with the tests its token needs, as the lean parser asks at a token only what can hold there: `m`, the
+/// marks no rule takes (`open_mark`), only where its token may be one of their words.
+fn takes(b: &mut Block, cx: &Cx<'_>) {
+    fn may(c: &Cond, words: &HashSet<String>, free: &HashSet<String>) -> bool {
+        match c {
+            Cond::Word { at: 0, ws } => ws.iter().any(|w| words.contains(w)),
+            Cond::Kind { kind, .. } => !free.contains(&super::ident(kind)),
+            Cond::And(cs) => cs.first().is_none_or(|c| may(c, words, free)),
+            Cond::Mark { test, .. } | Cond::Group(test) => may(test, words, free),
+            _ => true,
+        }
+    }
+    takes_in(b, &mut |t, _, m| {
+        *m = Some(match (cx.marks, t) {
+            (None, _) => true,
+            (Some((words, _)), Take::WordLeaf { word, .. } | Take::WordSkip { word } | Take::WordPass { word }) => words.contains(word),
+            (Some((words, free)), t) => {
+                let c = t.test().expect("a take's test");
+                c.has_or() || may(c, words, free)
+            }
+        });
+    });
+}
+
+/// A `match self.word()`'s arms as the lean parser takes a class of tokens (`raw_line`'s loop, `is_p`): an arm whose
+/// take tests the very token its pattern matched takes it with no test, and the arms whose code is then the same are
+/// one arm, `w::A | w::B` (a kind's guards `_ if a || b`).
+fn one_arm_a_take(b: &mut Block) {
+    for op in b.iter_mut() {
+        let Op::Match { subject, arms, .. } = op else { continue };
+        if subject != "self.word()" {
+            continue;
+        }
+        let mut out: Vec<(Pat, Block)> = Vec::new();
+        for (pat, mut body) in std::mem::take(arms) {
+            // The test the pattern made: its word, or a kind's guard of one test.
+            if pat.one_word() {
+                untested(&mut body, &pat.cond(), Some(&pat.words[0]));
+            } else if pat.words.is_empty()
+                && let Some(g) = &pat.guard
+                && !g.has_or()
+                && !matches!(g.core(), Cond::And(_))
+            {
+                untested(&mut body, g.core(), None);
+            }
+            let same = |a: &Block| *a == body;
+            if pat.one_word()
+                && let Some(a) = out.iter_mut().find(|a| same(&a.1) && !a.0.words.is_empty() && a.0.guard.is_none())
+            {
+                a.0.words.push(pat.words[0].clone());
+                continue;
+            }
+            // A word under a guard: with the arm of the same guard and code, where no arm before names the word.
+            if pat.words.len() == 1
+                && pat.guard.is_some()
+                && !out.iter().any(|a| a.0.words.contains(&pat.words[0]))
+                && let Some(a) = out.iter_mut().find(|a| same(&a.1) && !a.0.words.is_empty() && a.0.guard == pat.guard)
+            {
+                a.0.words.push(pat.words[0].clone());
+                continue;
+            }
+            if pat.words.is_empty()
+                && let Some(g) = &pat.guard
+                && let Some(last) = out.last_mut()
+                && same(&last.1)
+                && last.0.words.is_empty()
+                && let Some(lg) = last.0.guard.take()
+            {
+                last.0.guard = Some(Cond::or(lg, g.clone()));
+                continue;
+            }
+            out.push((pat, body));
+        }
+        *arms = out;
+    }
+}
+
+/// `body` whose first move takes the token `cond` tests (or word `word`'s): that test `true`, the arm's pattern having
+/// made it.
+fn untested(body: &mut Block, cond: &Cond, word: Option<&str>) {
+    let Some(Op::Take { take, .. }) = body.first_mut() else { return };
+    let yes = Cond::text("true");
+    let new = match (&*take, word) {
+        (Take::WordLeaf { word: x, kind }, Some(w)) => (x == w).then(|| Take::Leaf { test: yes, kind: kind.clone(), field: "0".into() }),
+        (Take::WordSkip { word: x }, Some(w)) => (x == w).then_some(Take::Skip { test: yes }),
+        (Take::WordPass { word: x }, Some(w)) => (x == w).then_some(Take::Pass { test: yes }),
+        (Take::WordLeaf { .. } | Take::WordSkip { .. } | Take::WordPass { .. }, _) => None,
+        (t, _) => (t.test().map(Cond::core) == Some(cond.core())).then(|| {
+            let mut t = t.clone();
+            *t.test_mut().expect("a test") = yes;
+            t
+        }),
+    };
+    if let Some(n) = new {
+        *take = n;
+    }
+}
+
+/// Whether test `c` passed means `x` holds: `x` is `c`, or `c`'s last conjunct, no `||` before it.
+fn implies(c: &Cond, x: &Cond) -> bool {
+    let (c, x) = (c.core(), x.core());
+    c == x || matches!(c, Cond::And(cs) if cs.last().map(Cond::core) == Some(x) && !cs[..cs.len() - 1].iter().any(Cond::has_or))
+}
+
+/// A peek's must-hold (`if !(X) { return self.refuse(); }`) first in an arm that tested it: none, as the lean parser
+/// takes the token it peeked at.
+fn no_retests(b: &mut Block) {
+    let retest = |body: &Block, c: &Cond| -> bool {
+        matches!(body.first(), Some(Op::If { arms, els: None }) if matches!(arms.as_slice(), [(Cond::Not(x), r)] if matches!(r.as_slice(), [Op::Refuse]) && implies(c, x)))
+    };
+    for op in b.iter_mut() {
+        match op {
+            Op::If { arms, .. } => {
+                for (c, body) in arms {
+                    if retest(body, c) {
+                        body.remove(0);
+                    }
+                }
+            }
+            Op::Match { arms, .. } => {
+                for (pat, body) in arms {
+                    if pat.words.is_empty()
+                        && let Some(g) = &pat.guard
+                        && retest(body, g)
+                    {
+                        body.remove(0);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A decision of one arm in the lean parser's form (decision 0668 step 1): a `match self.word()` of one arm and an empty
+/// `_` is an `if`, as lean's `if self.is_p(X)`; a `loop` around one whose `_` breaks is a `while`.
+fn ifs_and_whiles(b: &mut Block) {
+    let one = |op: &Op| -> Option<(Cond, Block, Block)> {
+        let Op::Match { subject, arms, default } = op else { return None };
+        match arms.as_slice() {
+            [(pat, body)] if subject == "self.word()" && (!pat.words.is_empty() || pat.guard.is_some()) => Some((pat.cond(), body.clone(), default.clone())),
+            _ => None,
+        }
+    };
+    for op in b.iter_mut() {
+        if let Op::Loop(body) = op
+            && let [m] = body.as_slice()
+            && let Some((c, arm, default)) = one(m)
+            && matches!(default.as_slice(), [Op::Break])
+        {
+            *op = Op::While(c, arm);
+            continue;
+        }
+        if let Some((c, arm, default)) = one(op)
+            && default.is_empty()
+        {
+            *op = Op::If { arms: vec![(c, arm)], els: None };
+        }
+    }
 }
 
 /// No `else` that does nothing, as the lean parser writes none: one whose moves all went (`marked`).
@@ -292,34 +653,28 @@ fn no_code_after_return(b: &mut Block) {
     }
 }
 
-/// The test a take's first argument is: its test, or none for a take of a word.
-fn take_test(t: &mut Take) -> Option<&mut Cond> {
-    match t {
-        Take::Leaf { test, .. } | Take::Skip { test } | Take::Merge { test, .. } | Take::Pass { test } => Some(test),
-        Take::WordLeaf { .. } | Take::WordSkip { .. } | Take::WordPass { .. } => None,
-    }
-}
-
 /// No take testing again what the test right before it tested: where an `if`, `else if`, `while` or arm's guard tests
 /// `C` and the block's first move takes the token if `C`, the take tests `true`, as the lean parser takes a token it
 /// has tested with no test (decision 0673 step 9).
 fn no_taken_retests(b: &mut Block) {
-    let untest = |c: &str, body: &mut Block| {
+    let untest = |c: &Cond, body: &mut Block| {
         if let Some(Op::Take { take, .. }) = body.first_mut()
-            && let Some(t) = take_test(take)
-            && t.print() == c
+            && let Some(t) = take.test_mut()
+            && t.core() == c.core()
         {
             *t = Cond::text("true");
         }
     };
     for op in b.iter_mut() {
         match op {
-            Op::If { arms, .. } => arms.iter_mut().for_each(|(c, body)| untest(&c.print(), body)),
-            Op::While(c, body) => untest(&c.print(), body),
+            Op::If { arms, .. } => arms.iter_mut().for_each(|(c, body)| untest(c, body)),
+            Op::While(c, body) => untest(c, body),
             Op::Match { arms, .. } => {
                 for (pat, body) in arms {
-                    if let Some(c) = pat.strip_prefix("_ if ") {
-                        untest(c, body);
+                    if pat.words.is_empty()
+                        && let Some(g) = &pat.guard
+                    {
+                        untest(g, body);
                     }
                 }
             }
@@ -328,45 +683,44 @@ fn no_taken_retests(b: &mut Block) {
     }
 }
 
-/// An `if … else if …` chain whose tests each begin with one test `P` and then ask the next token's word, its `else`
-/// the match of `P`'s word alone: `if P { match self.word_at(self.i + 1) { … } }`, as the lean parser asks `.` once and
-/// matches the directive's word (`statement`).
+/// An `if … else if …` chain whose tests each begin with one test `P` of the word and then ask the next token's word,
+/// its `else` the match of `P`'s word alone: `if P { match self.word_at(self.i + 1) { … } }`, as the lean parser asks
+/// `.` once and matches the directive's word (`statement`).
 fn shared_test_as_match(b: &mut Block) {
-    let next = "self.word_at(self.i + 1) == ";
-    // A test's words after `P`, as a pattern: `w::X`, `w::X if R` or `w::X | w::Y`.
-    let pattern = |q: &str| -> Option<String> {
-        if let Some(inner) = q.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
-            let ws: Option<Vec<&str>> = inner.split(" || ").map(|t| t.strip_prefix(next).filter(|w| !w.contains(' '))).collect();
-            return ws.filter(|v| v.len() > 1).map(|v| v.join(" | "));
-        }
-        let r = q.strip_prefix(next)?;
-        match r.split_once(" && ") {
-            Some((w, rest)) if !w.contains(' ') && !rest.contains("||") => Some(format!("{w} if {rest}")),
-            None if !r.contains(' ') => Some(r.to_owned()),
-            _ => None,
-        }
-    };
     for op in b.iter_mut() {
         let Op::If { arms, els: Some(e) } = op else { continue };
         let found = (|| {
-            let c = arms.first()?.0.print();
-            let (shared, _) = c.split_once(" && ")?;
-            let w = shared.strip_prefix("self.word() == ")?;
-            let word = w.split_once(' ').map_or(w, |x| x.0);
-            let pats: Vec<String> = arms.iter().map(|(t, _)| pattern(t.print().strip_prefix(shared)?.strip_prefix(" && ")?)).collect::<Option<_>>()?;
+            let first = arms.first()?.0.conjuncts();
+            let shared = (*first.first()?).clone();
+            let Cond::Word { at: 0, ws } = &shared else { return None };
+            let [word] = ws.as_slice() else { return None };
+            // Each arm: `P`, then the next token's words, then tests that are no choice: its pattern.
+            let pats: Vec<Pat> = arms
+                .iter()
+                .map(|(t, _)| {
+                    let cs = t.conjuncts();
+                    let (p, rest) = cs.split_first()?;
+                    let (Cond::Word { at: 1, ws }, guard) = (rest.first()?, &rest[1..]) else { return None };
+                    if **p != shared || guard.iter().any(|g| g.has_or()) || (guard.is_empty() && ws.is_empty()) {
+                        return None;
+                    }
+                    let guard = match guard {
+                        [] => None,
+                        [g] if ws.len() == 1 => Some((*g).clone()),
+                        gs if ws.len() == 1 => Some(Cond::And(gs.iter().map(|g| (*g).clone()).collect())),
+                        _ => return None,
+                    };
+                    Some(Pat { words: ws.clone(), guard })
+                })
+                .collect::<Option<_>>()?;
             let [Op::Match { subject, arms: m, default }] = e.as_slice() else { return None };
             let [(p, d)] = m.as_slice() else { return None };
-            (subject == "self.word()" && p == word && matches!(default.as_slice(), [Op::Refuse])).then(|| (shared.to_owned(), pats, d.clone()))
+            (subject == "self.word()" && p.one_word() && p.words[0] == *word && matches!(default.as_slice(), [Op::Refuse])).then(|| (shared.clone(), pats, d.clone()))
         })();
         let Some((shared, pats, d)) = found else { continue };
         let arms = std::mem::take(arms).into_iter().zip(pats).map(|((_, body), p)| (p, body)).collect();
-        *op = Op::If { arms: vec![(Cond::text(shared), vec![Op::Match { subject: "self.word_at(self.i + 1)".into(), arms, default: d }])], els: Some(vec![Op::Refuse]) };
+        *op = Op::If { arms: vec![(shared, vec![Op::Match { subject: "self.word_at(self.i + 1)".into(), arms, default: d }])], els: Some(vec![Op::Refuse]) };
     }
-}
-
-/// `!c`: with no second parentheses where `c` is one call or one parenthesised test.
-fn negate(c: &str) -> String {
-    if one_group(c) || (c.starts_with("self.") && !c.contains(' ')) { format!("!{c}") } else { format!("!({c})") }
 }
 
 /// Whether `c` is one parenthesised test.
@@ -380,26 +734,20 @@ fn one_group(c: &str) -> bool {
     }
 }
 
-/// The test `!c` negates, its outer parentheses gone: `!((a || b))` and `!(a || b)` the same.
-fn negated(c: &str) -> Option<&str> {
-    let mut c = c.strip_prefix('!')?;
-    while one_group(c) {
-        c = &c[1..c.len() - 1];
-    }
-    Some(c)
-}
-
 /// `c` with no outer parentheses where it is one parenthesised test, as an `if`'s test.
 pub(crate) fn bare(c: &str) -> &str {
     if one_group(c) { &c[1..c.len() - 1] } else { c }
 }
 
-/// `if (C)` and `while (C)`, `C` one parenthesised test: `if C`.
+/// `if (C)` and `while (C)`, `C` one test in parentheses: `if C`.
 fn no_outer_parens(b: &mut Block) {
     let bare = |c: &mut Cond| {
-        let t = c.print();
-        if one_group(&t) {
-            *c = Cond::text(bare(&t));
+        if let Cond::Group(g) = c {
+            *c = (**g).clone();
+        } else if let Cond::Text(t) = c
+            && one_group(t)
+        {
+            *c = Cond::text(bare(t));
         }
     };
     for op in b.iter_mut() {
@@ -419,16 +767,16 @@ fn loops_as_whiles(b: &mut Block) {
         let Op::Loop(body) = op else { continue };
         let Some(Op::If { arms, els }) = body.first() else { continue };
         let (c, first) = &arms[0];
-        let c = c.print();
+        let not = || Cond::Not(Box::new(c.clone()));
         let new = match (arms.len(), els.as_deref(), body.len()) {
-            (1, Some([Op::Break]), 1) => Some(Op::While(Cond::text(c), first.clone())),
+            (1, Some([Op::Break]), 1) => Some(Op::While(c.clone(), first.clone())),
             (n, _, _) if n > 1 && matches!(first.as_slice(), [Op::Break]) => {
                 let mut rest = body.clone();
                 let Op::If { arms, .. } = &mut rest[0] else { unreachable!() };
                 arms.remove(0);
-                Some(Op::While(Cond::text(negate(&c)), rest))
+                Some(Op::While(not(), rest))
             }
-            (1, Some(e), 1) if matches!(first.as_slice(), [Op::Break]) => Some(Op::While(Cond::text(negate(&c)), e.to_vec())),
+            (1, Some(e), 1) if matches!(first.as_slice(), [Op::Break]) => Some(Op::While(not(), e.to_vec())),
             _ => None,
         };
         if let Some(n) = new {
@@ -441,14 +789,25 @@ fn loops_as_whiles(b: &mut Block) {
 /// where `C` holds or at its `break`, where it does not, at the token the loop's test read; so the `break` refuses and
 /// the test after goes, as the lean parser's `while … on_line { word()? }`.
 fn no_retest_after_while(b: &mut Block) {
-    let has_break = |b: &Block| print(b, "").lines().any(|l| l.trim().starts_with("break"));
+    fn breaks(b: &Block) -> bool {
+        b.iter().any(|op| match op {
+            Op::Break => true,
+            Op::If { arms, els } => arms.iter().any(|(_, x)| breaks(x)) || els.as_ref().is_some_and(breaks),
+            Op::Match { arms, default, .. } => arms.iter().any(|(_, x)| breaks(x)) || breaks(default),
+            Op::At(_, x) => breaks(x),
+            _ => false,
+        })
+    }
+    let negated = |c: &Cond| match c.core() {
+        Cond::Not(x) => Some(x.core().clone()),
+        _ => None,
+    };
     let mut i = 0;
     while i + 1 < b.len() {
         let found = match (&b[i], &b[i + 1]) {
             (Op::While(c, body), Op::If { arms, els: None }) => {
-                let c = c.print();
-                matches!(body.as_slice(), [Op::If { arms: chain, els: Some(e) }] if matches!(e.as_slice(), [Op::Break]) && chain.iter().all(|(_, x)| !has_break(x)))
-                    && matches!(arms.as_slice(), [(a, r)] if matches!(r.as_slice(), [Op::Refuse]) && negated(&a.print()).is_some() && negated(&a.print()) == negated(&c))
+                matches!(body.as_slice(), [Op::If { arms: chain, els: Some(e) }] if matches!(e.as_slice(), [Op::Break]) && chain.iter().all(|(_, x)| !breaks(x)))
+                    && matches!(arms.as_slice(), [(a, r)] if matches!(r.as_slice(), [Op::Refuse]) && negated(a).is_some() && negated(a) == negated(c))
             }
             _ => false,
         };
@@ -461,205 +820,5 @@ fn no_retest_after_while(b: &mut Block) {
             b.remove(i + 1);
         }
         i += 1;
-    }
-}
-
-/// A leaf of no field and then the field set on the node made last, which is that leaf: one take of the field, as the
-/// lean parser writes a token's field with it.
-fn leaf_fields(b: &mut Block) {
-    blocks(b, &mut |x| {
-        let mut i = 0;
-        while i + 1 < x.len() {
-            let field = match &x[i + 1] {
-                Op::Line(s) => s.strip_prefix("self.field_made(").and_then(|r| r.strip_suffix(");")).filter(|f| f.starts_with("f::") && !f.contains(' ')).map(str::to_owned),
-                _ => None,
-            };
-            if let (Some(f), Op::Take { take, .. }) = (field, &mut x[i]) {
-                let leaf = match take {
-                    Take::Leaf { test, kind, field } if field == "0" => Some(Take::Leaf { test: test.clone(), kind: kind.clone(), field: f }),
-                    Take::WordLeaf { word, kind } => Some(Take::Leaf { test: Cond::text(format!("self.word() == {word}")), kind: kind.clone(), field: f }),
-                    _ => None,
-                };
-                if let Some(l) = leaf {
-                    *take = l;
-                    x.remove(i + 1);
-                }
-            }
-            i += 1;
-        }
-    });
-}
-
-/// Each take with the tests its token needs, as the lean parser asks at a token only what can hold there: `m`, the
-/// marks no rule takes (`open_mark`), only where its token may be one of their words.
-fn takes(b: &mut Block, cx: &Cx<'_>) {
-    let may = |a: &str| -> bool {
-        let Some((words, free)) = cx.marks else { return true };
-        if a.contains("||") {
-            return true;
-        }
-        let first = a.split(" && ").next().unwrap_or(a).trim();
-        if let Some(ws) = first.strip_prefix("matches!(self.word(), ").and_then(|r| r.strip_suffix(')')) {
-            return ws.split(" | ").any(|w| words.contains(w.trim()));
-        }
-        let w = first.strip_prefix("self.word() == ").unwrap_or(first);
-        if w.starts_with("w::") && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':') {
-            return words.contains(w);
-        }
-        let k = first.strip_prefix("self.kind() == t::").or_else(|| first.strip_prefix("matches!(self.kind(), t::")).map(|r| r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or(r));
-        match k {
-            Some(k) if !k.is_empty() => !free.contains(&k.to_ascii_lowercase()),
-            _ => true,
-        }
-    };
-    takes_in(b, &mut |t, _, m| *m = Some(may(&t.args()[0])));
-}
-
-fn is_word(p: &str) -> bool {
-    p.starts_with("w::") && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
-}
-
-/// A `match self.word()`'s arms as the lean parser takes a class of tokens (`raw_line`'s loop, `is_p`): an arm whose
-/// take tests the very token its pattern matched takes it with no test, and the arms whose code is then the same are
-/// one arm, `w::A | w::B` (a kind's guards `_ if a || b`).
-fn one_arm_a_take(b: &mut Block) {
-    for op in b.iter_mut() {
-        let Op::Match { subject, arms, .. } = op else { continue };
-        if subject != "self.word()" {
-            continue;
-        }
-        let mut out: Vec<(String, Block)> = Vec::new();
-        for (pat, mut body) in std::mem::take(arms) {
-            let cond = if is_word(&pat) { Some(format!("self.word() == {pat}")) } else { pat.strip_prefix("_ if ").filter(|c| !c.contains("||") && !c.contains(" && ")).map(str::to_owned) };
-            if let Some(c) = &cond {
-                untested(&mut body, c, is_word(&pat).then_some(pat.as_str()));
-            }
-            let same = |a: &Block| print(a, "") == print(&body, "");
-            if is_word(&pat)
-                && let Some(a) = out.iter_mut().find(|a| same(&a.1) && a.0.split(" | ").all(is_word))
-            {
-                a.0 = format!("{} | {pat}", a.0);
-                continue;
-            }
-            // A word under a guard: with the arm of the same guard and code, where no arm before names the word.
-            if let Some((w, g)) = pat.split_once(" if ").filter(|(w, _)| is_word(w))
-                && !out.iter().any(|a| a.0.split(" if ").next().is_some_and(|ws| ws.split(" | ").any(|x| x == w)))
-                && let Some(a) = out.iter_mut().find(|a| same(&a.1) && a.0.split_once(" if ").is_some_and(|(ws, h)| h == g && ws.split(" | ").all(is_word)))
-            {
-                let (ws, _) = a.0.split_once(" if ").expect("a guard");
-                a.0 = format!("{ws} | {w} if {g}");
-                continue;
-            }
-            if let Some(c) = pat.strip_prefix("_ if ")
-                && let Some(last) = out.last_mut()
-                && same(&last.1)
-                && last.0.starts_with("_ if ")
-            {
-                last.0 = format!("{} || {c}", last.0);
-                continue;
-            }
-            out.push((pat, body));
-        }
-        *arms = out;
-    }
-}
-
-/// `body` whose first move takes the token `cond` tests (or word `word`'s): that test `true`, the arm's pattern having
-/// made it.
-fn untested(body: &mut Block, cond: &str, word: Option<&str>) {
-    let Some(Op::Take { take, .. }) = body.first_mut() else { return };
-    let new = match (&*take, word) {
-        (Take::WordLeaf { word: x, kind }, Some(w)) => (x == w).then(|| Take::Leaf { test: Cond::text("true"), kind: kind.clone(), field: "0".into() }),
-        (Take::WordSkip { word: x }, Some(w)) => (x == w).then(|| Take::Skip { test: Cond::text("true") }),
-        (Take::WordPass { word: x }, Some(w)) => (x == w).then(|| Take::Pass { test: Cond::text("true") }),
-        (Take::WordLeaf { .. } | Take::WordSkip { .. } | Take::WordPass { .. }, _) => None,
-        (Take::Leaf { test, kind, field }, _) => (test.print() == cond).then(|| Take::Leaf { test: Cond::text("true"), kind: kind.clone(), field: field.clone() }),
-        (Take::Merge { test, kind }, _) => (test.print() == cond).then(|| Take::Merge { test: Cond::text("true"), kind: kind.clone() }),
-        (Take::Skip { test }, _) => (test.print() == cond).then(|| Take::Skip { test: Cond::text("true") }),
-        (Take::Pass { test }, _) => (test.print() == cond).then(|| Take::Pass { test: Cond::text("true") }),
-    };
-    if let Some(n) = new {
-        *take = n;
-    }
-}
-
-/// Whether test `c` passed means `x` holds: `x` is `c`, or `c`'s last conjunct, no `||` before it.
-fn implies(c: &str, x: &str) -> bool {
-    c == x || c.strip_suffix(x).and_then(|h| h.strip_suffix(" && ")).is_some_and(|h| !h.contains("||"))
-}
-
-/// A peek's must-hold (`if !(X) { return self.refuse(); }`) first in an arm that tested it: none, as the lean parser
-/// takes the token it peeked at.
-fn no_retests(b: &mut Block) {
-    let retest = |body: &Block, c: &str| -> bool {
-        let Some(first) = body.first() else { return false };
-        let text = print(std::slice::from_ref(first), "");
-        let mut ls = text.lines();
-        matches!((ls.next(), ls.next(), ls.next(), ls.next()), (Some(a), Some(r), Some("}"), None) if r.trim() == "return self.refuse();" && a.strip_prefix("if !(").and_then(|x| x.strip_suffix(") {")).is_some_and(|x| implies(c, x)))
-    };
-    for op in b.iter_mut() {
-        match op {
-            Op::If { arms, .. } => {
-                for (c, body) in arms {
-                    if retest(body, &c.print()) {
-                        body.remove(0);
-                    }
-                }
-            }
-            Op::Match { arms, .. } => {
-                for (pat, body) in arms {
-                    if let Some(c) = pat.strip_prefix("_ if ")
-                        && retest(body, c)
-                    {
-                        body.remove(0);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// A `match self.word()` arm's pattern as a test: `self.word() == w::A`, `matches!(self.word(), w::A | w::B)`, a guard
-/// joined by `&&`; a kind's guard (`_ if c`) its test.
-fn pattern_cond(pat: &str) -> String {
-    if let Some(c) = pat.strip_prefix("_ if ") {
-        return c.to_owned();
-    }
-    let (words, guard) = match pat.split_once(" if ") {
-        Some((w, g)) => (w, Some(g)),
-        None => (pat, None),
-    };
-    let test = if words.contains(" | ") { format!("matches!(self.word(), {words})") } else { format!("self.word() == {words}") };
-    match guard {
-        Some(g) => format!("{test} && {g}"),
-        None => test,
-    }
-}
-
-/// A decision of one arm in the lean parser's form (decision 0668 step 1): a `match self.word()` of one arm and an empty
-/// `_` is an `if`, as lean's `if self.is_p(X)`; a `loop` around one whose `_` breaks is a `while`.
-fn ifs_and_whiles(b: &mut Block) {
-    let one = |op: &Op| -> Option<(String, Block, String)> {
-        let Op::Match { subject, arms, default } = op else { return None };
-        match arms.as_slice() {
-            [(pat, body)] if subject == "self.word()" && !pat.starts_with(' ') && pat != "_" && print(default, "").lines().count() <= 1 => Some((pat.clone(), body.clone(), print(default, ""))),
-            _ => None,
-        }
-    };
-    for op in b.iter_mut() {
-        if let Op::Loop(body) = op
-            && let [m] = body.as_slice()
-            && let Some((pat, arm, default)) = one(m)
-            && default.trim() == "break;"
-        {
-            *op = Op::While(Cond::text(pattern_cond(&pat)), arm);
-            continue;
-        }
-        if let Some((pat, arm, default)) = one(op)
-            && default.trim().is_empty()
-        {
-            *op = Op::If { arms: vec![(Cond::text(pattern_cond(&pat)), arm)], els: None };
-        }
     }
 }

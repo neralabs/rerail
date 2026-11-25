@@ -24,7 +24,7 @@ mod moves;
 #[path = "bitlex_rust/one_loop.rs"]
 mod one_loop;
 
-use moves::{Block, Cond, Op, Take, line};
+use moves::{Block, Cond, Op, Pat, Take, line};
 pub use one_loop::{tier2_calls_reads, tier2_loop, tier2_loop_reads};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -97,6 +97,9 @@ enum Test {
 
 /// A test, and the flag that must be clear for it (`unless F`).
 type First = (Test, Option<String>);
+
+/// Where a test may hold (`G::holds`): at a token that is one of `.0`'s words or of one of `.1`'s kinds; None, anywhere.
+type Holds = Option<(Vec<String>, Vec<String>)>;
 
 struct G<'a> {
     x: &'a Input<'a>,
@@ -483,18 +486,21 @@ impl<'a> G<'a> {
     }
 
     /// A test as a condition on the token.
-    fn cond(&self, t: &First) -> String {
+    fn cond(&self, t: &First) -> Cond {
         let base = match &t.0 {
             Test::Mark(m) => self.mark_test(*m),
-            Test::Word(w) => format!("self.word() == w::{}", self.word_const(*w)),
-            Test::Kind(k) => {
-                self.kind_test(k, "self.kind()", "self.word()")
-            }
+            Test::Word(w) => Cond::word(format!("w::{}", self.word_const(*w))),
+            Test::Kind(k) => self.kind_cond(k),
         };
         match &t.1 {
-            Some(f) => format!("(self.flags & FLAG_{} == 0 && {base})", upper(f)),
+            Some(f) => Cond::Group(Box::new(Cond::And(vec![Cond::Flag(format!("FLAG_{}", upper(f))), base]))),
             None => base,
         }
+    }
+
+    /// The token is of kind `k` (`kind_test`).
+    fn kind_cond(&self, k: &str) -> Cond {
+        Cond::Kind { kind: k.to_owned(), test: self.kind_test(k, "self.kind()", "self.word()") }
     }
 
     fn word_const(&self, w: u8) -> String {
@@ -518,24 +524,21 @@ impl<'a> G<'a> {
         // parser scans to the `)` once and asks what follows (decision 0673 step 11).
         let mut lets = Block::new();
         for (_, f) in self.scans.borrow().iter() {
-            let call = format!("self.{f}(self.i)");
-            let asked: usize = code.iter().map(|op| match op {
-                Op::If { arms, .. } => arms.iter().map(|(c, _)| c.print().matches(call.as_str()).count()).sum(),
+            let asked: usize = code.iter_mut().map(|op| match op {
+                Op::If { arms, .. } => arms.iter_mut().map(|(c, _)| c.scans(f)).sum(),
                 _ => 0,
             }).sum();
             if asked < 2 {
                 continue;
             }
-            lets.push(line(format!("let {f} = {call};")));
+            lets.push(line(format!("let {f} = self.{f}(self.i);")));
             // The move right after one of its tests is at the same token: a peek's test there (`no_retests`) reads it too.
             for op in &mut code {
                 if let Op::If { arms, .. } = op {
                     for (c, body) in arms {
-                        c.replace(&call, f);
-                        match body.first_mut() {
-                            Some(Op::If { arms, .. }) => arms[0].0.replace(&call, f),
-                            Some(Op::Take { take: Take::Leaf { test, .. } | Take::Skip { test } | Take::Merge { test, .. } | Take::Pass { test }, .. }) => test.replace(&call, f),
-                            _ => {}
+                        c.hold_scan(f);
+                        if let Some(t) = Cond::first_test(body) {
+                            t.hold_scan(f);
                         }
                     }
                 }
@@ -604,25 +607,22 @@ impl<'a> G<'a> {
             }
         }
         marks.sort_by_key(|x| x.0);
-        let guard = |f: &Option<String>, c: String| match f {
-            Some(f) => format!("self.flags & FLAG_{} == 0 && {c}", upper(f)),
+        let guard = |f: &Option<String>, c: Cond| match f {
+            Some(f) => Cond::And(vec![Cond::Flag(format!("FLAG_{}", upper(f))), c]),
             None => c,
         };
-        let mut mg: Vec<(Vec<String>, usize)> = Vec::new();
+        let mut mg: Vec<(Vec<Cond>, usize)> = Vec::new();
         // The marks of the last run of marks, by arm.
         let mut last_marks: Vec<usize> = Vec::new();
-        // Each mark's test, by the mark: the words it may hold at (`decide_tests`' runs).
-        let mut mark_conds: Vec<(String, usize)> = Vec::new();
         for (m, f, t) in &marks {
             let c = guard(f, self.mark_test(*m));
             let c = if *t == n && unmarked.contains(m) {
                 self.marked_read.set(true);
-                format!("!self.marked && {c}")
+                Cond::And(vec![Cond::text("!self.marked"), c])
             } else {
                 c
             };
-            let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
-            mark_conds.push((c.clone(), *m));
+            let c = if *t == n && gated.contains(m) { Cond::And(vec![Cond::text(format!("self.asks >> {m} & 1 != 0")), c]) } else { c };
             match mg.last_mut() {
                 Some((cs, tt)) if tt == t => {
                     cs.push(c);
@@ -634,7 +634,7 @@ impl<'a> G<'a> {
                 }
             }
         }
-        let mut wg: Vec<(String, usize)> = Vec::new();
+        let mut wg: Vec<(Pat, usize)> = Vec::new();
         let mut order: Vec<usize> = Vec::new();
         for (_, f, t) in &words {
             if f.is_none() && !order.contains(t) {
@@ -643,14 +643,14 @@ impl<'a> G<'a> {
         }
         for t in order {
             let pats: Vec<String> = words.iter().filter(|x| x.1.is_none() && x.2 == t).map(|x| format!("w::{}", self.word_const(x.0))).collect();
-            wg.push((pats.join(" | "), t));
+            wg.push((Pat::words(pats), t));
         }
         for (w, f, t) in words.iter().filter(|x| x.1.is_some()) {
-            wg.push((format!("w::{} if self.flags & FLAG_{} == 0", self.word_const(*w), upper(f.as_deref().unwrap_or_default())), *t));
+            wg.push((Pat { words: vec![format!("w::{}", self.word_const(*w))], guard: Some(Cond::Flag(format!("FLAG_{}", upper(f.as_deref().unwrap_or_default())))) }, *t));
         }
-        let mut kg: Vec<(Vec<String>, usize)> = Vec::new();
+        let mut kg: Vec<(Vec<Cond>, usize)> = Vec::new();
         for (k, f, t) in &kinds {
-            let c = guard(f, self.kind_test(k, "self.kind()", "self.word()"));
+            let c = guard(f, self.kind_cond(k));
             match kg.last_mut() {
                 Some((cs, tt)) if tt == t => cs.push(c),
                 _ => kg.push((vec![c], *t)),
@@ -667,39 +667,38 @@ impl<'a> G<'a> {
         // arm there is no order among arms to keep, so the tests need no numbering.
         let targets: Vec<usize> = (0..n).filter(|&t| uses[t] > 0).collect();
         if numbered && mg.is_empty() && uses[n] == 0 && targets.len() == 1 && words.iter().all(|w| w.1.is_none()) && kinds.iter().all(|k| k.1.is_none()) {
-            let all: Vec<String> = wg.iter().map(|g| g.0.clone()).collect();
-            let all = all.join(" | ");
+            let all: Vec<String> = wg.iter().flat_map(|g| g.0.words.iter().cloned()).collect();
             let mut cs = Vec::new();
             if !all.is_empty() {
-                cs.push(if all.contains(" | ") { format!("matches!(self.word(), {all})") } else { format!("self.word() == {all}") });
+                cs.push(Cond::Word { at: 0, ws: all });
             }
             cs.extend(kg.iter().flat_map(|g| g.0.iter().cloned()));
-            return vec![Op::If { arms: vec![(Cond::Or(cs.iter().map(Cond::text).collect()), body_of(targets[0]))], els: (!none_empty).then(|| none.clone()) }];
+            return vec![Op::If { arms: vec![(Cond::Or(cs), body_of(targets[0]))], els: (!none_empty).then(|| none.clone()) }];
         }
         // Each arm's tests one run in the order they are asked (the marks', then the words', of which no two hold at
         // once, then the kinds'): an `if` chain of one condition an arm, as the lean parser's (decision 0673 step 3).
         if numbered && words.iter().all(|w| w.1.is_none()) {
-            let push = |c: String, t: usize, runs: &mut Vec<(Vec<String>, usize)>| match runs.last_mut() {
+            let push = |c: Cond, t: usize, runs: &mut Vec<(Vec<Cond>, usize)>| match runs.last_mut() {
                 Some((cs, tt)) if *tt == t => cs.push(c),
                 _ => runs.push((vec![c], t)),
             };
-            let mut runs: Vec<(Vec<String>, usize)> = Vec::new();
-            let word_test = |pat: &String| if pat.contains(" | ") { format!("matches!(self.word(), {pat})") } else { format!("self.word() == {pat}") };
+            let mut runs: Vec<(Vec<Cond>, usize)> = Vec::new();
+            let word_test = |pat: &Pat| Cond::Word { at: 0, ws: pat.words.clone() };
             // A word another arm than the last marks' takes goes before those marks where none of them can hold at it:
             // the marks' arm and its words are then one run.
             let (last, next) = (mg.last().map(|g| g.1), kg.first().map(|g| g.1));
-            let held_at = |pat: &String| last_marks.iter().any(|&m| firsts(m).is_none_or(|ws| pat.split(" | ").any(|w| ws.contains(&w.to_owned()))));
-            let early: Vec<&(String, usize)> = wg.iter().filter(|g| last.is_some_and(|l| l != g.1) && !held_at(&g.0)).collect();
+            let held_at = |pat: &Pat| last_marks.iter().any(|&m| firsts(m).is_none_or(|ws| pat.words.iter().any(|w| ws.contains(w))));
+            let early: Vec<&(Pat, usize)> = wg.iter().filter(|g| last.is_some_and(|l| l != g.1) && !held_at(&g.0)).collect();
             // So does a kind another arm takes, where none of those marks, and none of the words after, can be its
             // token: a token of a kind is one of its keywords rows' words, or no word.
-            let late_words: Vec<String> = wg.iter().filter(|g| !early.contains(g)).flat_map(|g| g.0.split(" | ").map(str::to_owned)).collect();
+            let late_words: Vec<String> = wg.iter().filter(|g| !early.contains(g)).flat_map(|g| g.0.words.iter().cloned()).collect();
             let mark_words: Option<Vec<String>> = last_marks.iter().map(|&m| firsts(m)).collect::<Option<Vec<_>>>().map(|v| v.concat());
-            let early_kinds: Vec<(String, usize)> = match &mark_words {
+            let early_kinds: Vec<(Cond, usize)> = match &mark_words {
                 Some(mw) => kinds
                     .iter()
                     .filter(|(_, f, t)| f.is_none() && last.is_some_and(|l| l != *t) && kinds.iter().filter(|x| x.2 == *t).count() == 1)
                     .filter(|(k, _, _)| !mw.iter().chain(&late_words).any(|w| self.kind_words(k).contains(w)))
-                    .map(|(k, f, t)| (guard(f, self.kind_test(k, "self.kind()", "self.word()")), *t))
+                    .map(|(k, f, t)| (guard(f, self.kind_cond(k)), *t))
                     .collect(),
                 None => vec![],
             };
@@ -715,7 +714,7 @@ impl<'a> G<'a> {
                 cs.iter().for_each(|c| push(c.clone(), *t, &mut runs));
             }
             // The other words in any order: the one the last mark's arm takes first, the first kind's last.
-            let mut ws: Vec<&(String, usize)> = wg.iter().filter(|g| !early.contains(g)).collect();
+            let mut ws: Vec<&(Pat, usize)> = wg.iter().filter(|g| !early.contains(g)).collect();
             ws.sort_by_key(|g| if Some(g.1) == last { 0 } else if Some(g.1) == next { 2 } else { 1 });
             for (pat, t) in ws {
                 push(word_test(pat), *t, &mut runs);
@@ -726,34 +725,8 @@ impl<'a> G<'a> {
             // A run joins an earlier run of its arm where no run between can hold at a token it holds at: their tests
             // ask apart words, a word none of a kind's tokens is, or kinds of apart tokens (a token is of one kind). The
             // lean parser tests an arm's tokens together (decision 0673 steps 8 and 11).
-            // Where a test may hold: at a token that is one of `.0`'s words or of one of `.1`'s kinds; None, anywhere.
-            type Holds = Option<(Vec<String>, Vec<String>)>;
             let tokens_of = |k: &str| -> Vec<&str> { self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| n.as_str()).collect() };
-            let holds = |c: &str| -> Holds {
-                if let Some(p) = c.strip_prefix("matches!(self.word(), ").and_then(|r| r.strip_suffix(')')).filter(|p| !p.contains('(')) {
-                    return Some((p.split(" | ").map(str::to_owned).collect(), vec![]));
-                }
-                if let Some(w) = c.strip_prefix("self.word() == ").filter(|w| w.starts_with("w::") && !w.contains(' ')) {
-                    return Some((vec![w.to_owned()], vec![]));
-                }
-                if let Some(o) = kinds.iter().find(|o| guard(&o.1, self.kind_test(&o.0, "self.kind()", "self.word()")) == c) {
-                    return Some((vec![], vec![o.0.clone()]));
-                }
-                let &(_, m) = mark_conds.iter().find(|x| x.0 == c)?;
-                // A mark: each definition's first token, a choice of words and kinds.
-                let (mut ws, mut ks) = (Vec::new(), Vec::new());
-                for d in self.x.marks.iter().filter(|x| x.name == self.x.marks[m].name) {
-                    for x in d.tokens.and_then(|(_, seq)| seq.first())? {
-                        match x {
-                            TokenElem::Kind(k) => ks.push(k.clone()),
-                            TokenElem::Word(w) => ws.push(format!("w::{}", self.word_const(self.word_of(&String::from_utf8_lossy(w))?))),
-                            TokenElem::With(_) | TokenElem::Without(_) => {}
-                            _ => return None,
-                        }
-                    }
-                }
-                Some((ws, ks))
-            };
+            let holds = |c: &Cond| self.holds(c);
             let apart = |a: &Holds, b: &Holds| {
                 let (Some((aw, ak)), Some((bw, bk))) = (a, b) else { return false };
                 let word_kind = |ws: &[String], ks: &[String]| ks.iter().all(|k| {
@@ -765,14 +738,14 @@ impl<'a> G<'a> {
             let mut j = 1;
             while j < runs.len() {
                 let t = runs[j].1;
-                let mine: Vec<Holds> = runs[j].0.iter().map(|c| holds(c)).collect();
+                let mine: Vec<Holds> = runs[j].0.iter().map(holds).collect();
                 let earlier = runs[..j].iter().rposition(|r| r.1 == t);
                 let clear = |i: usize, of: &[Holds]| runs[i + 1..j].iter().all(|r| r.0.iter().all(|c| of.iter().all(|m| apart(m, &holds(c)))));
                 let join = earlier.filter(|&i| clear(i, &mine));
                 // Else the earlier run goes down to this one, where the runs between are apart from it.
                 if join.is_none()
                     && let Some(i) = earlier
-                    && clear(i, &runs[i].0.iter().map(|c| holds(c)).collect::<Vec<_>>())
+                    && clear(i, &runs[i].0.iter().map(holds).collect::<Vec<_>>())
                 {
                     let mut cs = runs.remove(i).0;
                     cs.extend(std::mem::take(&mut runs[j - 1].0));
@@ -806,9 +779,9 @@ impl<'a> G<'a> {
                 if !short(t)
                     && let Some(i) = runs[..j].iter().rposition(|r| r.1 == t)
                 {
-                    let between: Vec<String> = runs[i + 1..j].iter().flat_map(|r| r.0.iter().cloned()).collect();
+                    let between: Vec<Cond> = runs[i + 1..j].iter().flat_map(|r| r.0.iter().cloned()).collect();
                     let mine = runs.remove(j).0;
-                    runs[i].0.push(format!("!({}) && ({})", between.join(" || "), mine.join(" || ")));
+                    runs[i].0.push(Cond::And(vec![Cond::Not(Box::new(Cond::Or(between))), Cond::Or(mine)]));
                     continue;
                 }
                 j += 1;
@@ -817,18 +790,18 @@ impl<'a> G<'a> {
             // An arm the runs reach apart: its code in each, where it is one call or take (with the saves around it), as
             // the lean parser writes a call twice (decision 0673 step 11); else the arms are numbered.
             if runs.iter().all(|r| seen.insert(r.1) || short(r.1)) {
-                let arms = runs.iter().map(|(cs, t)| (Cond::Or(cs.iter().map(Cond::text).collect()), body_of(*t))).collect();
+                let arms = runs.into_iter().map(|(cs, t)| (Cond::Or(cs), body_of(t))).collect();
                 return vec![Op::If { arms, els: (!none_empty).then(|| none.clone()) }];
             }
         }
         const NONE_ARM: usize = usize::MAX;
         let leaf = |t: usize| -> Block { if numbered { vec![line(format!("arm = {};", if t == NONE_ARM { "usize::MAX".to_owned() } else { t.to_string() }))] } else if t == NONE_ARM { none.clone() } else { body_of(t) } };
-        let kind_arms = || -> Vec<(Cond, Block)> { kg.iter().map(|(cs, t)| (Cond::Or(cs.iter().map(Cond::text).collect()), leaf(*t))).collect() };
+        let kind_arms = || -> Vec<(Cond, Block)> { kg.iter().map(|(cs, t)| (Cond::Or(cs.clone()), leaf(*t))).collect() };
         // The word's match and the kinds' tests.
         let rest = || -> Block {
             if !wg.is_empty() {
-                let mut arms: Vec<(String, Block)> = wg.iter().map(|(pat, t)| (pat.clone(), leaf(*t))).collect();
-                arms.extend(kg.iter().map(|(cs, t)| (format!("_ if {}", cs.join(" || ")), leaf(*t))));
+                let mut arms: Vec<(Pat, Block)> = wg.iter().map(|(pat, t)| (pat.clone(), leaf(*t))).collect();
+                arms.extend(kg.iter().map(|(cs, t)| (Pat::guard(Cond::Or(cs.clone())), leaf(*t))));
                 vec![Op::Match { subject: "self.word()".into(), arms, default: leaf(NONE_ARM) }]
             } else if !kg.is_empty() {
                 vec![Op::If { arms: kind_arms(), els: Some(leaf(NONE_ARM)) }]
@@ -839,7 +812,7 @@ impl<'a> G<'a> {
         let sel = if mg.is_empty() {
             rest()
         } else {
-            let mut arms: Vec<(Cond, Block)> = mg.iter().map(|(cs, t)| (Cond::Or(cs.iter().map(Cond::text).collect()), leaf(*t))).collect();
+            let mut arms: Vec<(Cond, Block)> = mg.iter().map(|(cs, t)| (Cond::Or(cs.clone()), leaf(*t))).collect();
             // The kinds' tests after the marks', one `if` chain: `else if`, as the lean parser writes it.
             if wg.is_empty() && !kg.is_empty() {
                 arms.extend(kind_arms());
@@ -853,9 +826,36 @@ impl<'a> G<'a> {
         }
         let mut out = vec![line("let arm: usize;")];
         out.extend(sel);
-        let arms = uses.iter().enumerate().filter(|&(_, &u)| u > 0).map(|(t, _)| (t.to_string(), body_of(t))).collect();
+        let arms = uses.iter().enumerate().filter(|&(_, &u)| u > 0).map(|(t, _)| (Pat::words(vec![t.to_string()]), body_of(t))).collect();
         out.push(Op::Match { subject: "arm".into(), arms, default: none.clone() });
         out
+    }
+
+    /// Where test `c` may hold, as `decide_tests` joins runs: at a token that is one of `.0`'s words or of one of `.1`'s
+    /// kinds; None, anywhere. A word's test its words, a kind's its kind, a mark's its definitions' first tokens; a test
+    /// under others (a flag, `marked`) where its last does.
+    fn holds(&self, c: &Cond) -> Holds {
+        match c.core() {
+            Cond::Word { at: 0, ws } => Some((ws.clone(), vec![])),
+            Cond::Kind { kind, .. } => Some((vec![], vec![kind.clone()])),
+            Cond::And(cs) if cs.last().is_some_and(|l| matches!(l.core(), Cond::Kind { .. } | Cond::Mark { .. } | Cond::And(_))) => self.holds(cs.last().expect("a test")),
+            Cond::Mark { mark, .. } => {
+                // A mark: each definition's first token, a choice of words and kinds.
+                let (mut ws, mut ks) = (Vec::new(), Vec::new());
+                for d in self.x.marks.iter().filter(|x| x.name == self.x.marks[*mark].name) {
+                    for x in d.tokens.and_then(|(_, seq)| seq.first())? {
+                        match x {
+                            TokenElem::Kind(k) => ks.push(k.clone()),
+                            TokenElem::Word(w) => ws.push(format!("w::{}", self.word_const(self.word_of(&String::from_utf8_lossy(w))?))),
+                            TokenElem::With(_) | TokenElem::Without(_) => {}
+                            _ => return None,
+                        }
+                    }
+                }
+                Some((ws, ks))
+            }
+            _ => None,
+        }
     }
 
     /// Whether an arm's tests are words and kinds alone, no flag's: a mark only where it holds at one kind's tokens
@@ -1114,7 +1114,7 @@ impl<'a> G<'a> {
                 let t = self.token_of(g).or_else(|| if let Gram::As(_, a) | Gram::Merge(_, a) = g { self.token_of(a) } else { None }).expect("a token");
                 let take = match t.0 {
                     Test::Word(w) => Take::WordPass { word: format!("w::{}", self.word_const(w)) },
-                    test => Take::Pass { test: Cond::text(self.token_cond(&test)) },
+                    test => Take::Pass { test: self.token_cond(&test) },
                 };
                 vec![moves::take(take)]
             }
@@ -1149,7 +1149,7 @@ impl<'a> G<'a> {
                 let o = self.mark_of(n).expect("a mark");
                 if self.peeks() >> o & 1 == 1 {
                     // A peek where the rule takes it: it must hold (none where the decision before tested it, `no_retests`).
-                    vec![Op::If { arms: vec![(Cond::Not(Box::new(Cond::text(self.peek(o)?))), vec![Op::Refuse])], els: None }]
+                    vec![Op::If { arms: vec![(Cond::Not(Box::new(Cond::Mark { mark: o, test: Box::new(self.peek(o)?) })), vec![Op::Refuse])], els: None }]
                 } else {
                     vec![line(format!("self.mark_{}()?;", ident(&self.x.marks[o].name)))]
                 }
@@ -1186,18 +1186,18 @@ impl<'a> G<'a> {
             // A choice of tokens, each its own word's leaf: one take where it is used, as the lean parser's `anon()`.
             Gram::Sym(n) if let Some((ws, Some((k, x)))) = self.anon_choice(n) => {
                 let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                let (test, kind) = if let [(w, t)] = ws.as_slice() {
-                    (format!("self.word() == w::{}", self.word_const(*w)), self.kind_const(t)?)
+                let kind = if let [(_, t)] = ws.as_slice() {
+                    self.kind_const(t)?
                 } else {
                     for (w, t) in &ws {
                         let k = self.kind_const(t)?;
                         self.anon.borrow_mut().insert(*w, k);
                     }
-                    (format!("matches!(self.word(), {})", words.join(" | ")), "ANON[self.word() as usize]".to_owned())
+                    "ANON[self.word() as usize]".to_owned()
                 };
-                let other = self.kind_test(&k, "self.kind()", "self.word()");
-                let take = |test: String, kind: String| vec![moves::take(Take::Leaf { test: Cond::text(test), kind, field: "0".into() })];
-                vec![Op::If { arms: vec![(Cond::text(test.clone()), take(test, kind))], els: Some(take(other, self.kind_const(&x)?)) }]
+                let test = Cond::Word { at: 0, ws: words };
+                let take = |test: Cond, kind: String| vec![moves::take(Take::Leaf { test, kind, field: "0".into() })];
+                vec![Op::If { arms: vec![(test.clone(), take(test, kind))], els: Some(take(self.kind_cond(&k), self.kind_const(&x)?)) }]
             }
             Gram::Sym(n) if let Some((ws, None)) = self.anon_choice(n) => match ws.as_slice() {
                 [(w, t)] => self.take_token(&Test::Word(*w), Some(t))?,
@@ -1207,7 +1207,7 @@ impl<'a> G<'a> {
                         self.anon.borrow_mut().insert(*w, k);
                     }
                     let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                    vec![moves::take(Take::Leaf { test: Cond::text(format!("matches!(self.word(), {})", words.join(" | "))), kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
+                    vec![moves::take(Take::Leaf { test: Cond::Word { at: 0, ws: words.clone() }, kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
                 }
             },
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) => vec![line(format!("self.{}()?;", rule_fn(n)))],
@@ -1264,7 +1264,7 @@ impl<'a> G<'a> {
                     self.anon.borrow_mut().insert(*w, k);
                 }
                 let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                vec![moves::take(Take::Leaf { test: Cond::text(format!("matches!(self.word(), {})", words.join(" | "))), kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
+                vec![moves::take(Take::Leaf { test: Cond::Word { at: 0, ws: words.clone() }, kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
             }
             Gram::Alt(_) => {
                 let mut arms = self.arms(g, rest, rule)?;
@@ -1295,7 +1295,7 @@ impl<'a> G<'a> {
             }
             Gram::Field(f, a) => {
                 let mut out = self.code(a, rest, rule)?;
-                out.push(line(format!("self.field_made({});", self.field_const(f)?)));
+                out.push(Op::Field(self.field_const(f)?));
                 out
             }
             Gram::Retag(k, a) => {
@@ -1337,7 +1337,7 @@ impl<'a> G<'a> {
             }
             Gram::Merge(k, a) => {
                 let (test, _) = self.token_of(a).ok_or_else(|| format!("rule {rule}: a merge of no token"))?;
-                vec![moves::take(Take::Merge { test: Cond::text(self.token_cond(&test)), kind: self.kind_const(k)? })]
+                vec![moves::take(Take::Merge { test: self.token_cond(&test), kind: self.kind_const(k)? })]
             }
             Gram::Flag { flag, set, body } => {
                 let f = format!("FLAG_{}", upper(flag));
@@ -1347,7 +1347,7 @@ impl<'a> G<'a> {
                 out.push(line("self.flags = flags;"));
                 out
             }
-            Gram::Unless { flag, body } => vec![Op::If { arms: vec![(Cond::text(format!("self.flags & FLAG_{} == 0", upper(flag))), self.code(body, rest, rule)?)], els: None }],
+            Gram::Unless { flag, body } => vec![Op::If { arms: vec![(Cond::Flag(format!("FLAG_{}", upper(flag))), self.code(body, rest, rule)?)], els: None }],
             Gram::Reread { reading, body } => {
                 if !self.readings.contains_key(reading.as_str()) {
                     return Err(format!("rule {rule}: no reading `{reading}`"));
@@ -1400,10 +1400,11 @@ impl<'a> G<'a> {
             if let Some(tests) = tests {
                 let words: Option<Vec<String>> = tests.iter().map(|t| if let Test::Word(w) = t { Some(format!("w::{}", self.word_const(*w))) } else { None }).collect();
                 let cond = match words {
-                    Some(ws) if ws.len() > 1 => format!("matches!(self.word(), {})", ws.join(" | ")),
-                    _ => tests.iter().map(|t| self.token_cond(t)).collect::<Vec<_>>().join(" || "),
+                    Some(ws) if ws.len() > 1 => Cond::Word { at: 0, ws },
+                    _ if tests.len() == 1 => self.token_cond(&tests[0]),
+                    _ => Cond::Or(tests.iter().map(|t| self.token_cond(t)).collect()),
                 };
-                return Ok(vec![moves::take(Take::Leaf { test: Cond::text(cond), kind: self.kind_const(k)?, field: "0".into() })]);
+                return Ok(vec![moves::take(Take::Leaf { test: cond, kind: self.kind_const(k)?, field: "0".into() })]);
             }
         }
         let mut arms = Vec::new();
@@ -1490,13 +1491,13 @@ impl<'a> G<'a> {
         let take = match (t, kind) {
             (Test::Word(w), Some(k)) => Take::WordLeaf { word: format!("w::{}", self.word_const(*w)), kind: self.kind_const(k)? },
             (Test::Word(w), None) => Take::WordSkip { word: format!("w::{}", self.word_const(*w)) },
-            (_, Some(k)) => Take::Leaf { test: Cond::text(self.token_cond(t)), kind: self.kind_const(k)?, field: "0".into() },
-            (_, None) => Take::Skip { test: Cond::text(self.token_cond(t)) },
+            (_, Some(k)) => Take::Leaf { test: self.token_cond(t), kind: self.kind_const(k)?, field: "0".into() },
+            (_, None) => Take::Skip { test: self.token_cond(t) },
         };
         Ok(vec![moves::take(take)])
     }
 
-    fn token_cond(&self, t: &Test) -> String {
+    fn token_cond(&self, t: &Test) -> Cond {
         self.cond(&(t.clone(), None))
     }
 
@@ -1967,14 +1968,13 @@ impl<'a> G<'a> {
     }
 
     /// A mark's test as a condition on the token: a peek's tokens (`peek`), else its function's (`m_NAME`).
-    fn mark_test(&self, m: usize) -> String {
+    fn mark_test(&self, m: usize) -> Cond {
         let o = self.mark_of(&self.x.marks[m].name).unwrap_or(m);
-        if self.peeks() >> o & 1 == 1
-            && let Ok(c) = self.peek(o)
-        {
-            return c;
-        }
-        format!("self.m_{}()", ident(&self.x.marks[m].name))
+        let test = match self.peek(o) {
+            Ok(c) if self.peeks() >> o & 1 == 1 => c,
+            _ => Cond::text(format!("self.m_{}()", ident(&self.x.marks[m].name))),
+        };
+        Cond::Mark { mark: o, test: Box::new(test) }
     }
 
     /// The marks the code tests by looking at the tokens, as the lean parser's `is_p_at` and `kind_at`, a bit each by
@@ -2131,9 +2131,10 @@ impl<'a> G<'a> {
     }
 
     /// A peek mark's test of the tokens from the token, as the lean parser's: `self.word() == w::A && self.at_K_at(self.i + 1)`.
-    fn peek(&self, o: usize) -> Result<String, String> {
+    fn peek(&self, o: usize) -> Result<Cond, String> {
         let name = &self.x.marks[o].name;
-        let mut ors = Vec::new();
+        let mut ors: Vec<Cond> = Vec::new();
+        let all = |c: Vec<Cond>| if c.len() == 1 { c.into_iter().next().expect("a test") } else { Cond::And(c) };
         for (d, def) in self.x.marks.iter().filter(|x| &x.name == name).enumerate() {
             // A gap's bit: the lean parser's `on_line`, asked of the token.
             if def.tokens.is_none()
@@ -2142,50 +2143,62 @@ impl<'a> G<'a> {
                 self.read_bit(u32::from(b));
                 let mut c = Vec::new();
                 if def.word != 0 {
-                    c.push(format!("self.word() == w::{}", self.word_const(def.word as u8)));
+                    c.push(Cond::word(format!("w::{}", self.word_const(def.word as u8))));
                 }
-                c.push(if def.end { format!("(self.i >= self.n || self.bit_at(self.i, {b}))") } else { format!("self.bit_at(self.i, {b})") });
+                let bit = Cond::text(format!("self.bit_at(self.i, {b})"));
+                c.push(if def.end { Cond::Or(vec![Cond::text("self.i >= self.n"), bit]) } else { bit });
                 for w in def.unless_after {
                     if let Some(id) = self.word_of(&String::from_utf8_lossy(w)) {
-                        c.push(format!("{{ let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::{} }}", self.word_const(id)));
+                        c.push(Cond::text(format!("{{ let p = self.prev_tok(self.i); p >= self.n || self.word_at(p) != w::{} }}", self.word_const(id))));
                     }
                 }
-                ors.push(c.join(" && "));
+                ors.push(all(c));
                 continue;
             }
             let Some((before, seq)) = def.tokens else { return Err(format!("mark {name}: a peek of no tokens")) };
             let mut c = Vec::new();
             if !before.is_empty() {
                 let p = self.elem(before, "self.i - 1")?;
-                c.push(if matches!(before, [TokenElem::Not(_)]) { format!("(self.i == 0 || {p})") } else { format!("self.i > 0 && {p}") });
+                c.push(if matches!(before, [TokenElem::Not(_)]) { Cond::Or(vec![Cond::text("self.i == 0"), Cond::text(p)]) } else { Cond::And(vec![Cond::text("self.i > 0"), Cond::text(p)]) });
             }
             // A run that scans (a repetition, a token with or without a mark): its function (`marks` writes it), as the
             // lean parser's `literal` scans to the `)` where it decides.
             if let Some(h) = Self::bracket(seq) {
                 for (k, e) in seq[..h].iter().enumerate() {
-                    let t = self.elem(e, &if k == 0 { "self.i".to_owned() } else { format!("self.i + {k}") })?;
-                    c.push(if k == 0 { t.replace("self.word_at(self.i)", "self.word()") } else { t });
+                    c.push(self.elem_cond(e, k)?);
                 }
                 let (f, _) = self.scan_fn(seq, h)?;
                 let at = if h == 0 { "self.i".to_owned() } else { format!("self.i + {h}") };
                 let tail: Vec<String> = seq[h + 3..].iter().enumerate().map(|(k, e)| self.elem(e, &if k == 0 { "e".to_owned() } else { format!("e + {k}") })).collect::<Result<_, _>>()?;
-                c.push(if tail.is_empty() { format!("self.{f}({at}).is_some()") } else { format!("self.{f}({at}).is_some_and(|e| {})", tail.join(" && ")) });
-                ors.push(c.join(" && "));
+                c.push(Cond::Scan { f, at, tail: tail.join(" && "), held: false });
+                ors.push(all(c));
                 continue;
             }
             if !Self::fixed(seq) {
-                c.push(format!("self.pat_{}_{d}_0(self.i, {})", ident(name), Self::run_prev(seq)));
-                ors.push(c.join(" && "));
+                c.push(Cond::text(format!("self.pat_{}_{d}_0(self.i, {})", ident(name), Self::run_prev(seq))));
+                ors.push(all(c));
                 continue;
             }
             for (k, e) in seq.iter().enumerate() {
-                let j = if k == 0 { "self.i".to_owned() } else { format!("self.i + {k}") };
-                let t = self.elem(e, &j)?;
-                c.push(if k == 0 { t.replace("self.word_at(self.i)", "self.word()") } else { t });
+                c.push(self.elem_cond(e, k)?);
             }
-            ors.push(c.join(" && "));
+            ors.push(all(c));
         }
-        Ok(if ors.len() == 1 { ors.remove(0) } else { ors.iter().map(|x| format!("({x})")).collect::<Vec<_>>().join(" || ") })
+        Ok(if ors.len() == 1 { ors.remove(0) } else { Cond::Or(ors.into_iter().map(|x| Cond::Group(Box::new(x))).collect()) })
+    }
+
+    /// A peek's test of the token `k` places on: the words it is one of (the lean parser's `is_p_at`), else its
+    /// element's test (`elem`).
+    fn elem_cond(&self, e: &[TokenElem], k: usize) -> Result<Cond, String> {
+        let ws: Option<Vec<String>> = e.iter().map(|x| match x {
+            TokenElem::Word(w) => self.word_of(&String::from_utf8_lossy(w)).map(|id| format!("w::{}", self.word_const(id))),
+            _ => None,
+        }).collect();
+        if let Some(ws) = ws.filter(|ws| !ws.is_empty()) {
+            return Ok(Cond::Word { at: k, ws });
+        }
+        let t = self.elem(e, &if k == 0 { "self.i".to_owned() } else { format!("self.i + {k}") })?;
+        Ok(Cond::text(if k == 0 { t.replace("self.word_at(self.i)", "self.word()") } else { t }))
     }
 
     /// Each mark's test, `m_NAME`: it holds at the token and is not taken there.

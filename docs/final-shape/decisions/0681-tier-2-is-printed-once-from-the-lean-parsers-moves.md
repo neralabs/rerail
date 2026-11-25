@@ -1,6 +1,6 @@
 # 0681: Tier 2 is printed once from the lean parser's moves
 
-Status: steps 1 and 2 done but the names (the user, 2026-11-24: "what are the BIG FUCKING ROCKS?", then "so do 1"). Follows 0673. The bar is
+Status: done but the names (step 2) (the user, 2026-11-24: "what are the BIG FUCKING ROCKS?", then "so do 1"). Follows 0673. The bar is
 0673's: is the generated code the lean parser's (`rr_syntax/src/lean.rs`) shape?
 
 ## Intro
@@ -79,7 +79,17 @@ place one more move, and the same rewrites run on each place.
    without outer parentheses itself, which the text `no_outer_parens` had taken off. Not yet: `lean_names` still
    renames the takes in the whole text, the runtime's definitions with them, and `no_marked` still takes `marked`
    out of the runtime and the methods' ends.)
-3. `decide` reads tests, not strings.
+3. `decide` reads tests, not strings. (Done: a test is a `moves::Cond`: the word at a place one of some words
+   (`Word`), the token's kind (`Kind`), a mark holding with its peek's tests (`Mark`, from `G::peek`), a bracket's scan
+   (`Scan`), a clear flag (`Flag`), and `!`, `&&`, `||` of tests; a `match` arm's pattern is its words and a guard
+   (`Pat`); a field set on the node made last is a move (`Field`). `decide_tests` builds its runs of tests and reads
+   where each may hold of the test (`G::holds`); its scans are asked once by finding the `Scan` tests; and the
+   rewrites compare tests, not their text. A part of a test the moves do not model, an element of a mark's run that
+   is no word, stays its text. The changes: a peek's choice of words is one `matches!` (`matches!(self.word(), w::MUST
+   | w::MAY)`, not `(… || …)`); a take whose arm's guard is a kind with hard words (`self.kind() == t::HASH_WORD &&
+   self.word() != w::…`) takes its token untested, so the arms of one take are one arm (`_ if a || b && c || d`),
+   their jumps in the loop form one; a negated call is `!self.m_x()`, and a negated group has one pair of
+   parentheses.)
 
 The passes over the runtime's text (`one_take`, `no_field`, `no_dead_methods`, `plain_writer`, the runtime's
 replacements in `assemble`) are not rule code and are not part of this decision.

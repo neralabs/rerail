@@ -285,7 +285,7 @@ impl Rl<'_, '_> {
                 };
                 self.decision(arms, rest, rule, &none, &none, empty.is_some())?
             }
-            Gram::Field(f, a) => self.walk(a, rest, rule, then(vec![line(format!("self.field_made({});", self.g.field_const(f)?))], k))?,
+            Gram::Field(f, a) => self.walk(a, rest, rule, then(vec![Op::Field(self.g.field_const(f)?)], k))?,
             Gram::Retag(kind, a) => then(vec![line(format!("self.retag({});", self.g.kind_const(kind)?))], self.walk(a, rest, rule, k)?),
             Gram::Wrap { kind, field, moved, body } => {
                 let f = match field {
@@ -321,7 +321,7 @@ impl Rl<'_, '_> {
             }
             Gram::Unless { flag, body } => {
                 let after = go(self.to_place(k));
-                then(vec![Op::If { arms: vec![(Cond::text(format!("self.flags & FLAG_{} == 0", upper(flag))), self.walk(body, rest, rule, after.clone())?)], els: None }], after)
+                then(vec![Op::If { arms: vec![(Cond::Flag(format!("FLAG_{}", upper(flag))), self.walk(body, rest, rule, after.clone())?)], els: None }], after)
             }
             Gram::Reread { reading, body } => {
                 if !self.g.readings.contains_key(reading.as_str()) {
