@@ -33,7 +33,7 @@
     suppress eslint "react/no-access-state-in-setstate"
 .violation method_call(at: node, callee: symbol)
     code "react/no-access-state-in-setstate"
-    "This this.state read reaches a setState call through {callee}(); pass setState an updater function and read the previous state from its argument."
+    "This this.state read reaches a setState call through {callee}; pass setState an updater function and read the previous state from its argument."
     suppress eslint "react/no-access-state-in-setstate"
 
 // read(m, s): this.state m in a component, and s the first of these above it: a setState call whose first argument
@@ -65,25 +65,92 @@ state_key(p, k) :- kind(p, "pair_pattern"), field(p, "key", k), estree_name(k, "
 state_key(p, l) :- kind(p, "object_assignment_pattern"), field(p, "left", l), text(l, "state").
 .decl use_in_set_state(u: node, x: symbol)
 use_in_set_state(u, x) :- used_as_value(u, x), this_call(c, "setState", _), in_first_arg(u, c).
+// The plugin's Identifier visitor: the name is a property's value ({ v: next }) or a member's object (next.x,
+// next[0]), maybe first climbing BinaryExpressions. ESTree makes &&, || and ?? a LogicalExpression, which it does not
+// climb, so { v: next || 0 } is no use; tree-sitter makes them binary_expressions too.
 .decl used_as_value(u: node, x: symbol)
 used_as_value(u, x) :- kind(u, "identifier"), text(u, x), above_binary(u, t), estree_parent(t, p),
-    (kind(p, "pair"), field(p, "value", v), deparen(v, t) ; kind(p, "member_expression"), field(p, "object", o),
-    deparen(o, t)).
+    (kind(p, "pair"), field(p, "value", v), deparen(v, t) ;
+    (kind(p, "member_expression") ; kind(p, "subscript_expression")), field(p, "object", o), deparen(o, t)).
 used_as_value(u, x) :- kind(u, "shorthand_property_identifier"), text(u, x).
 .decl above_binary(u: node, t: node)  // t is u or a binary expression u sits in (through binary expressions only)
 above_binary(u, u) :- kind(u, "identifier").
-above_binary(u, b) :- above_binary(u, t), estree_parent(t, b), kind(b, "binary_expression").
+above_binary(u, b) :- above_binary(u, t), estree_parent(t, b), kind(b, "binary_expression"), !op(b, "&&"),
+    !op(b, "||"), !op(b, "??").
 
-// Through a method: a method whose this.state read was seen, called by its bare name inside a setState's first
-// argument; and a method that calls such a method (by bare name) inherits it.
-method_call(m, x) :- holds_read(x, m, t), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
-    text(f, x), comp_owner(c, _), this_call(sc, "setState", _), in_first_arg(c, sc), src_before(t, c).
+// Through a method: a method whose this.state read was seen, called inside a setState's first argument; and a
+// class method that calls such a method by its bare name inherits it. The plugin matches names with `===`, and a
+// method whose key has no `.name` (['compute']() {}, 'compute'() {}) is recorded as undefined, as is a call whose
+// callee is no identifier (Object.assign(…), this.helper()): those match each other. "" stands for undefined.
+method_call(m, s) :- holds_read(x, m, t), callee_name(c, x), comp_owner(c, _), this_call(sc, "setState", _),
+    in_first_arg(c, sc), src_before(t, c), (x != "", s = cat(x, "()") ; x = "", s = "a method whose key has no name").
+.decl callee_name(c: node, x: symbol)  // ESTree's callee.name of call c: an identifier's text, else undefined ("")
+callee_name(c, x) :- called(c, f), kind(f, "identifier"), text(f, x).
+callee_name(c, "") :- called(c, f), !kind(f, "identifier"), !kind(f, "import").
 .decl holds_read(x: symbol, m: node, t: node)  // method x holds this.state read m, known from node t on
 holds_read(x, m, m) :- read(m, s), (kind(s, "method_definition") ; kind(s, "function_expression")), method_name_of(s,
     x).
-holds_read(y, m, c) :- holds_read(x, m, t), kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
-    text(f, x), comp_owner(c, _), src_before(t, c), inside(c, g, "method_definition"), child(b, g, _),
-    kind(b, "class_body"), method_key(g, y).
+// The caller is the nearest class method around the call (an object literal's method is a Property, not one).
+holds_read(y, m, c) :- holds_read(x, m, t), x != "", callee_name(c, x), comp_owner(c, _), src_before(t, c),
+    nearest(c, g, class_method), key_name(g, y).
+.decl class_method(g: node)
+class_method(g) :- kind(g, "method_definition"), child(b, g, _), kind(b, "class_body").
 .decl method_name_of(s: node, x: symbol)  // the key of method s, or of the property or field holding function s
-method_name_of(s, x) :- kind(s, "method_definition"), method_key(s, x).
-method_name_of(s, x) :- kind(s, "function_expression"), estree_parent(s, p), method_key(p, x).
+method_name_of(s, x) :- kind(s, "method_definition"), key_name(s, x).
+method_name_of(s, x) :- kind(s, "function_expression"), estree_parent(s, p), key_name(p, x).
+.decl key_name(m: node, x: symbol)  // keyed node m's key.name, or "" when its key has none
+key_name(m, x) :- method_key(m, x).
+key_name(m, "") :- kind(m, k), keyed_kind(k), (field(m, "name", n) ; field(m, "property", n) ; field(m, "key", n)),
+    !estree_name(n, _).
+
+// The review's counterexamples (react-03.review.md) and a few more, each checked against ESLint 9.39.5 and
+// eslint-plugin-react 7.37.5: &&, || and ?? are no use of a variable, x[i] is, parentheses are no nodes, and a
+// method whose key has no name is matched to any call whose callee has none.
+.test review_cases exactly
+    .fixture "as-logical.jsx" ```
+        class A extends React.Component {
+          f() { const next = this.state.n; this.setState({ n: next || 0 }); }
+          g() { const q = this.state.q; this.setState({ q: q && 1 }); }
+          h() { const r = this.state.r; this.setState({ r: r ?? 1 }); }
+        }
+        ```
+    .fixture "as-subscript.jsx" ```
+        class A extends React.Component {
+          g() { const list = this.state.list; this.setState({ first: list[0] }); }
+        }
+        ```
+    .fixture "as-paren.jsx" ```
+        class A extends React.Component {
+          a() { (this.setState)({ x: this.state.x }); }
+          b() { this.setState({ x: (this).state.x }); }
+        }
+        ```
+    .fixture "as-unnamed.jsx" ```
+        class A extends React.Component {
+          ['compute']() { return this.state.x; }
+          onClick() { this.setState({ x: Object.assign({}, this.props) }); }
+        }
+        ```
+    .fixture "as-extra.jsx" ```
+        class A extends React.Component {
+          a() { const n = this.state.n; this.setState({ v: (n) + 1 }); }
+          b() { const m = this.state.m; this.setState({ v: m + 1 || 2 }); }
+          c() { const k = this.state.k; this.setState({ v: (k)[0] }); }
+          d() { const p = this.state.p; this.setState({ v: p.q && 1 }); }
+          'quoted'() { return this.state.y; }
+          e() { this.setState({ v: quoted() }); }
+          f() { this.setState({ v: this.helper() }); }
+          [computedKey]() { return this.state.z; }
+          g() { this.setState({ v: computedKey() }); }
+        }
+        ```
+    .expect "react/no-access-state-in-setstate" at "as-subscript.jsx":2
+    .expect "react/no-access-state-in-setstate" at "as-paren.jsx":2
+    .expect "react/no-access-state-in-setstate" at "as-paren.jsx":3
+    .expect "react/no-access-state-in-setstate" at "as-unnamed.jsx":2
+    .expect "react/no-access-state-in-setstate" at "as-extra.jsx":2
+    .expect "react/no-access-state-in-setstate" at "as-extra.jsx":4
+    .expect "react/no-access-state-in-setstate" at "as-extra.jsx":5
+    .expect "react/no-access-state-in-setstate" at "as-extra.jsx":6
+    .expect "react/no-access-state-in-setstate" at "as-extra.jsx":9
+.end
