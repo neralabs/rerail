@@ -1,1 +1,0 @@
-Shell results read only files Rerail's watch reported changed: at 100,000 files on Linux, 0.19 s instead of 1.33 s. Unreported writes (an outside hard link, on Linux a held memory map, or on Windows a same-size write to an open file) are found at the first shell result 10 minutes after the last full read, or at turn end.

@@ -1,1 +1,0 @@
-When several sessions start together in a repository with worktrees, the daemon answers sooner: in checkouts you own, it learns each clone's remote, the worktree list and each checkout's submodules without waiting on Git, and keeps them until the files Git read for them change. A daemon started with `GIT_DIR`, `GIT_WORK_TREE` or another such variable asks Git as before.

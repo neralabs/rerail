@@ -1,1 +1,0 @@
-On Windows, Rerail no longer loses a daemon of 0.1.4 or earlier still running after an upgrade: its first lookup, such as `rerail status`, deleted its record, and the next start ran a second daemon beside it. Now `rerail status` names it, `rerail daemon stop` ends it, and `rerail daemon start`, set-up or a session's start replaces it.

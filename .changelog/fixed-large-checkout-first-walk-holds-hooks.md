@@ -1,1 +1,0 @@
-A session that opens in a checkout of about 100,000 tracked files no longer holds every hook of every session for 30 seconds or more at its first walk, which grouped the files by checkout with a copy of the group for each file. On Linux the daemon's longest pause there fell from 38 seconds to under 1.

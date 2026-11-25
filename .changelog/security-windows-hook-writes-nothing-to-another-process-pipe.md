@@ -1,1 +1,0 @@
-On Windows, with `RERAIL_ENGINE_SOCKET` set, a hook no longer writes to that pipe when Windows names another process as its server. Such a process holding `SeImpersonatePrivilege`, as service accounts do, could act as your Windows account once it read the write. A hook's start check still writes to the pipe `daemon.json` names while its process id is in use.

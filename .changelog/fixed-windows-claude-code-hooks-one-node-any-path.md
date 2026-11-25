@@ -1,1 +1,0 @@
-On Windows, each Claude Code hook event starts one Node through `cmd.exe`, whatever `PATH` Claude Code has. Before, where its `PATH` found another Node than set-up's, every hook started two; where both find the same, `cmd.exe` adds 9 to 17 ms. Where `cmd.exe` runs no command, hooks start `node` from `PATH`. `rerail update` replaces the old entry.

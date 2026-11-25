@@ -1,1 +1,0 @@
-Rerail no longer looks for its engine file on disk at every call into the engine; each process keeps the engine it found. On Windows, a daemon busy with file walks across about 180 linked worktrees spent about a quarter of its CPU time on those looks.

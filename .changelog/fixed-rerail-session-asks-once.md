@@ -1,1 +1,0 @@
-`/rerail` in Claude Code and Cursor, `$rerail` in Codex and `rerail session` in a terminal now say a busy daemon is not answering after 2 seconds instead of about 4, and ask a daemon that answers once instead of three times. `rerail session --open` still asks a busy daemon once more for the page.
