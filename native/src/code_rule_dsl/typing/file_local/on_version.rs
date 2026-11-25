@@ -36,6 +36,10 @@ pub struct FileLocal {
     /// cross-file relation (it follows that relation), or read no document's rows, or one document's rows plainly (a
     /// union of each file's rows).
     pub crossings: BTreeMap<String, String>,
+    /// Each derived relation's nullable location columns (decision 0649): not its `locations`, but filled in every
+    /// rule by a location or by `unset` (-1, no node). A rule joins through one only where the same rule places its
+    /// variable by a location column too, which -1 never is; a row's document is never read off one.
+    pub nullable: BTreeMap<String, Vec<usize>>,
     pub no_document: bool,
     keys: Keys,
 }
@@ -53,6 +57,7 @@ impl PartialEq for FileLocal {
             && self.causes.keys().eq(o.causes.keys())
             && self.same_doc == o.same_doc
             && self.crossings.keys().eq(o.crossings.keys())
+            && self.nullable == o.nullable
             && self.no_document == o.no_document
             && self.keys == o.keys
     }
@@ -323,8 +328,39 @@ impl<'v> Program<'v> {
             }
             round = next;
         }
+        // Nullable location columns (decision 0649): those every rule fills from a location (a location column, or a
+        // nullable one read) or with `unset`, past the location columns.
+        let mut nulls: Vec<Vec<usize>> = (0..n)
+            .map(|r| {
+                if !rels.is_derived(r as u32) {
+                    return Vec::new();
+                }
+                match was(r) {
+                    Some(p) => p.nullable.get(self.name(r as u32)).cloned().unwrap_or_default(),
+                    None => (0..self.f.width(self.name(r as u32))).filter(|c| !locs[r].contains(c)).collect(),
+                }
+            })
+            .collect();
+        let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && !nulls[r as usize].is_empty()).collect();
+        while !round.is_empty() {
+            let changed: Vec<(u32, Vec<usize>)> = round
+                .iter()
+                .filter_map(|&r| {
+                    let rules = &rels.rules[r as usize];
+                    let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_or_null(rels, &locs, &nulls)).collect();
+                    let kept: Vec<usize> = nulls[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed_or_unset(self.rules[k], c, p))).collect();
+                    (kept != nulls[r as usize]).then_some((r, kept))
+                })
+                .collect();
+            let next = rels.heads_reading(changed.iter().map(|(r, _)| *r), |_| true);
+            for (r, kept) in changed {
+                nulls[r as usize] = kept;
+            }
+            round = next;
+        }
         let derived = || (0..n as u32).filter(|&r| rels.is_derived(r));
         let locations: BTreeMap<String, Vec<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
+        let nullable: BTreeMap<String, Vec<usize>> = derived().filter(|&r| !nulls[r as usize].is_empty()).map(|r| (self.name(r).to_owned(), nulls[r as usize].clone())).collect();
         // String filters (decision 0037).
         let mut filtering: Vec<bool> = (0..n).map(|r| rels.is_derived(r as u32) && was(r).is_none_or(|p| p.filters.contains(self.name(r as u32)))).collect();
         let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && filtering[r as usize]).collect();
@@ -374,10 +410,10 @@ impl<'v> Program<'v> {
             .collect();
         let mut dirty: Option<Vec<usize>> = None;
         loop {
-            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &filters, &locations);
+            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &filters, &locations, &nullable);
             let check = |k: usize| -> Option<(u32, String)> {
                 let head = rels.head[k];
-                if forms.get(k).one_document(head, rels, &placeless, &local_now, &filtering, &locs) {
+                if forms.get(k).one_document(head, rels, &placeless, &local_now, &filtering, &locs, &nulls) {
                     debug_assert!(explain(k, &local_now).is_none(), "the numbered check and the text's agree on {}", self.name(head));
                     return None;
                 }
@@ -442,22 +478,37 @@ impl<'v> Program<'v> {
                     })
                     .collect();
                 let union = matches!(documents.as_slice(), [] | [Lit::Read { neg: false, plain: true, .. }]);
-                if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &locs) {
+                if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &locs, &nulls) {
                     continue;
                 }
-                let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &locations).unwrap_or_else(|| "places more than one document".to_owned());
+                let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &locations, &nullable).unwrap_or_else(|| "places more than one document".to_owned());
                 crossings.insert(rel.to_owned(), format!("{why}\n      {}", self.v.show_rule(self.rules[k]).chars().take(400).collect::<String>()));
                 break;
             }
         }
         // The same-document columns (`file_local::split_explained`) and the rest: `finish`.
-        self.finish(FileLocal { local, constants, locations, filters, causes, crossings, ..Default::default() }, self.keys())
+        self.finish(FileLocal { local, constants, locations, filters, causes, crossings, nullable, ..Default::default() }, self.keys())
     }
 
     /// Why `rule` places more than one document, from its text (`split_in`'s `rule_local`): `None` where it does
     /// not. Asked only of a rule the numbered check fails (and, in a debug build, of each it passes).
-    fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vec<usize>>) -> Option<String> {
+    fn why_not_local(&self, rule: RuleRef<'v>, local_now: &[bool], constants: &BTreeSet<String>, filters: &BTreeSet<String>, locations: &BTreeMap<String, Vec<usize>>, nullable: &BTreeMap<String, Vec<usize>>) -> Option<String> {
         let v = self.v;
+        let equal_names: Vec<(String, String)> = super::var_equalities_in(v, rule).into_iter().map(|(a, b)| (v.text(rule.var(a)).to_owned(), v.text(rule.var(b)).to_owned())).collect();
+        // The variables a location column of a positive read places (`one_document`'s `strict`): a nullable
+        // column's variable among them is no -1.
+        let mut strict: BTreeSet<String> = BTreeSet::new();
+        for l in rule.body() {
+            if let L::Atom(a) | L::Agg { atom: a, .. } = l.view()
+                && !a.neg()
+            {
+                let rel = v.rel_name(a.rel());
+                let columns = if self.f.derives(rel) { locations.get(rel).cloned().unwrap_or_default() } else { self.base_locations(rel) };
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                strict.extend(columns.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(|s| v.text(rule.var(s)).to_owned()));
+            }
+        }
+        super::close_under(&mut strict, &equal_names);
         let head = v.rel_name(rule.head().rel());
         let var = |s: Slot| v.text(rule.var(s)).to_owned();
         let local = |rel: &str| v.rel(rel).is_some_and(|r| local_now[r.0 as usize]);
@@ -491,6 +542,9 @@ impl<'v> Program<'v> {
             let columns = if derived { locations[rel].clone() } else { self.base_locations(rel) };
             let args: Vec<TermRef<'_>> = atom.args().collect();
             let mut vars: BTreeSet<String> = columns.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(var).collect();
+            if derived && let Some(nc) = nullable.get(rel) {
+                vars.extend(nc.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(var).filter(|x| strict.contains(x)));
+            }
             let binder = plain && placed.by_binder.values().any(|b| *b == index);
             if vars.is_empty() && binder && !columns.is_empty() {
                 vars.insert(format!("rr_value_binder:{index}"));
@@ -861,6 +915,28 @@ impl Form {
         out
     }
 
+    /// `placed_classes` with the classes nullable location columns place too (decision 0649).
+    fn placed_or_null(&self, rels: &Rels<'_>, locs: &[Vec<usize>], nulls: &[Vec<usize>]) -> Bits {
+        let mut out = self.placed_classes(rels, locs);
+        for l in &self.lits {
+            if let Lit::Read { neg: false, rel, args, .. } = l
+                && rels.is_derived(*rel)
+            {
+                for &c in &nulls[*rel as usize] {
+                    if let Some(Some(v)) = args.get(c) {
+                        out.set(self.class[*v as usize]);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Head column `c` is a placed variable, or `unset`'s -1.
+    fn head_placed_or_unset(&self, rule: RuleRef<'_>, c: usize, placed: &Bits) -> bool {
+        matches!(rule.head().args().nth(c), Some(TermRef::Int(crate::code_rule_dsl::logic::rr::lower::UNSET))) || self.head_placed(rule, c, placed)
+    }
+
     fn head_placed(&self, rule: RuleRef<'_>, c: usize, placed: &Bits) -> bool {
         rule.head().args().nth(c).and_then(|t| self.var(t)).is_some_and(|v| placed.has(self.class[v as usize]))
     }
@@ -885,8 +961,11 @@ impl Form {
         reads_only_text && rule.head().args().all(|t| self.var(t).is_some_and(|v| strings.has(v)))
     }
 
-    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], locs: &[Vec<usize>]) -> bool {
+    fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], locs: &[Vec<usize>], nulls: &[Vec<usize>]) -> bool {
         let head_filter = filters[head as usize];
+        // A nullable column joins its row's group only where a location column of this rule places its variable
+        // (decision 0649): then it is no -1.
+        let strict = self.placed_classes(rels, locs);
         let mut root: Vec<u32> = (0..self.ids as u32).collect();
         let mut firsts: Vec<u32> = Vec::new();
         for &(n, t) in &self.splices {
@@ -908,6 +987,9 @@ impl Form {
                     let columns = if derived { &locs[r as usize] } else { &rels.base_locs[r as usize] };
                     group.clear();
                     group.extend(columns.iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])));
+                    if derived {
+                        group.extend(nulls[r as usize].iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])).filter(|&k| strict.has(k)));
+                    }
                     if group.is_empty() && *plain && *binder && !columns.is_empty() {
                         group.push(self.binders + index as u32);
                     }
