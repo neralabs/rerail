@@ -298,13 +298,17 @@ rayon collects.
 - First candidate: `rows::radix`, already shaped for the device. Then the join step.
 - Metal runs wait until the hold on them is lifted. Until then this step is built and tested on the CPU backends.
 
-## 7. Questions for the user
+## 7. Choices the plan makes
 
-1. **Operation memory and `std::Vec`.** Inside an operation, is `Vec` allowed, since "what happens inside is
-   unimportant", or does all operation memory go through the frame so that one mechanism counts it?
-2. **A frame vec below the top that grows.** It moves within the frame, and the space it leaves is reclaimed only
-   when the frame ends. The alternative is a list of segments, which has no move but its reads are not one slice.
-3. **The interim.** Until step 7, roomless arrays still take the run room. Should they take the heap meanwhile
-   (reverting 8f4fdb7293's default), or stay where they are?
-4. **The probe.** Keep it, off by default, as the tool that measures each step, or remove it once step 0's baseline
-   is taken.
+1. **No `std::Vec` in the operations we write.** Everything an operation makes goes through the frame (or `Inline`).
+   That gives one mechanism, measured by one count. It is the faster path, since a bump replaces `malloc`. And its
+   layout is the one the device form of the operation declares. Third-party code keeps its own allocations.
+2. **A frame vec that grows while it is not at the top moves within the frame.** The space it leaves comes back
+   when the frame ends, so the waste is bounded by one operation. A list of segments would avoid the move, but its
+   reads would no longer be one slice, and one slice is what the GPU-shaped code and the UKL layouts need. A
+   reserve from a bound (§3) makes such moves rare.
+3. **No interim change.** Until step 7, roomless arrays stay in the run room, as 8f4fdb7293 put them. Steps 2 and 3
+   come first because they remove most of the arrays (class A, about 80%). With them gone, the run room's measured
+   cost (0.18 T) shrinks before the room itself goes.
+4. **The probe stays, off by default.** It measures each step, and it is committed with step 1. When it is off, its
+   cost is one empty `Option` per region and one test in `default_room`, and step 7 removes that test.
