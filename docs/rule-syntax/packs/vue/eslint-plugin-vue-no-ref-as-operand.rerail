@@ -1,10 +1,11 @@
-.policy "eslint-plugin-vue-no-ref-as-operand" revision 2
+.policy "eslint-plugin-vue-no-ref-as-operand" revision 3
 .description "Use .value when reading or writing a Vue ref or computed in script code; using the ref object itself as an operand acts on the wrapper, not its value."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
+#include "vue/vue-01.rerail"
 //   vvue_import_call(c, x), vmacro(c, x), vsetup(o, f), estree_parent(x, p), static_prop(n, o, x), ref_site(r, s)
+//   vjs(n), vts(n), vin_script(n)
 
 // eslint-plugin-vue's no-ref-as-operand: a variable that holds a ref, used where its value is meant. A ref variable
 // is declared with ref(), computed(), toRef(), customRef(), shallowRef() (imported from Vue) or defineModel()
@@ -17,7 +18,10 @@
 .violation ref_operand(at: node, m: symbol) code "vue/no-ref-as-operand"
     "Must use `.value` to read or write the value wrapped by `{m}()`."
     suppress eslint "vue/no-ref-as-operand"
-ref_operand(r, m) :- ref_read(r, s, m), operand(r, s).
+// Once per view grammar (vue/vue-01). The view holds the template's code too, whose names resolve to the scripts'
+// (`{{ n + 1 }}` reads n); the plugin reads the scripts alone, and a template unwraps refs.
+ref_operand(r, m) :- ref_read(r, s, m), vjs(r), vin_script(r), operand(r, s).
+ref_operand(r, m) :- ref_read(r, s, m), vts(r), vin_script(r), operand(r, s).
 
 // ref_var(s, m, decl): declaration site s holds a ref made by m; decl is "const", "let" or "var".
 .decl ref_var(s: node, m: symbol, decl: symbol)
