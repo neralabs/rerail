@@ -31,11 +31,17 @@ import { untakenFor } from "../engine/storage/untaken-events.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf, pipeServer, type PipeServer, type PipeServerAnswer } from "./daemon/engine-pipe.js";
 import {
   endProcessStartedBy,
+  endProcessStartedByInChild,
   endProcessStartedByPowerShell,
+  ENGINE_READER_ANSWER_MS,
+  type EngineReader,
   processStartedAt,
+  processStartedAtInChild,
   processStartedAtThroughEngine,
   processState,
   START_CLOCK_SLACK_MS,
+  START_UNANSWERED,
+  type StartRead,
   startNamesProcess,
   type ProcessEnd,
   type ProcessSignal,
@@ -774,9 +780,9 @@ export interface DaemonMachine {
   homeDaemonLockHeld(home: string): boolean | undefined;
   /**
    * When the process holding `pid` started, in epoch ms, or undefined where it cannot be read within `timeoutMs`
-   * (`processStartedAt`).
+   * (`processStartedAt`); `START_UNANSWERED` where the read was ended at its own bound before it answered.
    */
-  processStartedAt(pid: number, timeoutMs: number): number | undefined;
+  processStartedAt(pid: number, timeoutMs: number): StartRead;
   /**
    * Windows: ends the process holding `pid` if it started no later than `startedAt` (epoch ms), its start read and its
    * end made through one handle, and waits up to `waitMs` for it to exit (`endProcessStartedBy`).
@@ -818,19 +824,37 @@ const THIS_MACHINE: DaemonMachine = {
   spawnShown,
 };
 
+/** The child the uninstall reads through: the Node that runs Rerail, and the process reader of the running package. */
+function engineReader(): EngineReader {
+  return { node: nodeExecutable(), entry: join(PACKAGE_ROOT, ENTRY_POINTS.processReader) };
+}
+
 /**
  * This machine as a process that must not load the engine reads it: one that deletes the engine's folder after it
  * stops the daemon, as the uninstall deletes `versions/`, since Windows keeps a loaded DLL from being deleted. It reads
- * a process's start, and ends a daemon of a release before the engine's proof, through Windows PowerShell
- * (`processStartedAt`, `endProcessStartedByPowerShell`), which takes about a second each time. PowerShell starts before
- * it can end the process, so its end gets the time a stop gives a daemon to end, {@link STOP_TIMEOUT_MS}, before the
- * wait for the exit it is given.
+ * a process's start, and ends a daemon of a release before the engine's proof, through the engine in a child Node
+ * process that has exited before the read returns (`processStartedAtInChild`, `endProcessStartedByInChild`), so how
+ * fast the machine starts Windows PowerShell plays no part. Where the child gives no answer, as when the running
+ * package's engine is missing or does not load, it reads and ends through Windows PowerShell as before
+ * (`processStartedAt`, `endProcessStartedByPowerShell`): that read keeps to what is left of `timeoutMs`, and that end
+ * gets the time a stop gives a daemon to end, {@link STOP_TIMEOUT_MS}, for PowerShell's own start, before the wait for
+ * the exit it is given. A test names the `platform` whose reads it checks.
  */
-export const MACHINE_WITHOUT_ENGINE: DaemonMachine = {
-  ...THIS_MACHINE,
-  processStartedAt,
-  endProcessStartedBy: (pid, startedAt, waitMs) => endProcessStartedByPowerShell(pid, startedAt, STOP_TIMEOUT_MS + waitMs),
-};
+export function machineWithoutEngine(platform: NodeJS.Platform = process.platform): DaemonMachine {
+  return {
+    ...THIS_MACHINE,
+    platform,
+    processStartedAt: (pid, timeoutMs) => {
+      const deadline = Date.now() + timeoutMs;
+      return processStartedAtInChild(pid, engineReader(), () => processStartedAt(pid, deadline - Date.now(), platform), platform);
+    },
+    endProcessStartedBy: (pid, startedAt, waitMs) =>
+      endProcessStartedByInChild({ pid, startedAt, waitMs }, engineReader(), () => endProcessStartedByPowerShell(pid, startedAt, STOP_TIMEOUT_MS + waitMs)),
+  };
+}
+
+/** {@link machineWithoutEngine} for this machine: the uninstall's. */
+export const MACHINE_WITHOUT_ENGINE: DaemonMachine = machineWithoutEngine();
 
 /**
  * Whether the engine pipe `state` records exists. Windows ends a daemon without its shutdown handler (logoff, reboot,
@@ -975,14 +999,15 @@ function predatesProof(version: string): boolean {
  * is the daemon that wrote it: `older`, which is sent nothing ({@link OlderDaemon}). A process that took a gone
  * daemon's pid, one that started later than `startedAt` by more than {@link START_CLOCK_SLACK_MS}, is `gone`, and the
  * record is dropped. A start not read, or within the slack, proves neither, nor does a `startedAt` past the reader's
- * clock by more than the slack: `silent`, so the record is kept and nothing is sent, as for a busy daemon.
+ * clock by more than the slack, nor a read that did not answer: `silent`, so the record is kept and nothing is sent, as
+ * for a busy daemon.
  */
 function olderDaemon(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedEngine {
   return START_VERDICT_ENGINE[startVerdict(state, machine, deadline)];
 }
 
 /** What {@link olderDaemon} makes of each {@link RecordedProcess}. */
-const START_VERDICT_ENGINE: Readonly<Record<RecordedProcess, RecordedEngine>> = { ours: "older", "not-ours": "gone", unknown: "silent" };
+const START_VERDICT_ENGINE: Readonly<Record<RecordedProcess, RecordedEngine>> = { ours: "older", "not-ours": "gone", unknown: "silent", unanswered: "silent" };
 
 /**
  * What may be made now of the daemon `state` records ({@link recordedDaemon}), for a reader that tells a busy daemon
@@ -1027,8 +1052,15 @@ export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMac
  *   it, a start time that cannot be read or falls within the slack, and a `startedAt` past the reader's clock by more
  *   than the slack, which names no start ({@link startVerdict}); a daemon of a release before the home's lock
  *   holds none.
+ * - `unanswered`: as `unknown`, where the read of the start that would have decided was ended at its own bound before
+ *   it answered (`START_UNANSWERED`), so a stop says that, apart from facts that leave the process open.
  */
-type RecordedProcess = "ours" | "not-ours" | "unknown";
+type RecordedProcess = "ours" | "not-ours" | "unknown" | "unanswered";
+
+/** Whether `verdict` leaves the process open: no fact decided, or the read that would have was not answered. */
+function undecided(verdict: SignalVerdict): verdict is "unknown" | "unanswered" {
+  return verdict === "unknown" || verdict === "unanswered";
+}
 
 /**
  * {@link RecordedProcess} for the process daemon.json in `home` names (`state`), its start times read by `deadline`
@@ -1041,8 +1073,8 @@ function recordedProcess(home: string, state: DaemonState, machine: DaemonMachin
   const byLock = lockVerdict(home, state.pid, machine);
   if (byLock === "ours") return "ours";
   const byStart = startVerdict(state, machine, deadline);
-  if (byStart !== "unknown" || byLock === "unknown") return byStart;
-  return holderWroteRecord(home, machine, deadline) ? "not-ours" : "unknown";
+  if (!undecided(byStart) || byLock === "unknown") return byStart;
+  return holderWroteRecord(home, machine, deadline) ? "not-ours" : byStart;
 }
 
 /**
@@ -1055,7 +1087,7 @@ function holderWroteRecord(home: string, machine: DaemonMachine, deadline: numbe
   const written = homeDaemonHolderWrittenAt(home);
   if (holder === undefined || written === undefined) return false;
   const started = machine.processStartedAt(holder, deadline - Date.now());
-  return started !== undefined && started <= written;
+  return typeof started === "number" && started <= written;
 }
 
 /**
@@ -1087,6 +1119,7 @@ function recordedHolderRuns(home: string, machine: DaemonMachine): boolean {
 function startVerdict(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedProcess {
   if (!startNamesProcess(state.startedAt)) return "unknown";
   const started = machine.processStartedAt(state.pid, deadline - Date.now());
+  if (started === START_UNANSWERED) return "unanswered";
   if (started === undefined) return "unknown";
   if (started <= state.startedAt) return "ours";
   return started > state.startedAt + START_CLOCK_SLACK_MS ? "not-ours" : "unknown";
@@ -2292,7 +2325,7 @@ async function askDaemonToStop(state: DaemonState, check: () => SignalVerdict, h
  * alone, with the record, and the stop says so ({@link unprovenDaemonMessage}).
  */
 async function signalWhenProven(state: DaemonState, verdict: SignalVerdict, home: string, machine: DaemonMachine): Promise<StopAsk> {
-  if (verdict === "unknown") throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
+  if (undecided(verdict)) throw new Error(undecidedMessage(home, state.pid, verdict, machine.platform));
   if (verdict === "ours") signalDaemon(state.pid, "SIGTERM", machine);
   if (verdict !== "not-ours") return "asked";
   return (await forgetRecordOf(home, state.pid)) ? "not-daemon" : "record-changed";
@@ -2356,14 +2389,14 @@ function signalCheck(home: string, found: Exclude<FoundDaemon, OlderDaemon>, mac
  * ({@link lockOfAnother}), as when a start beside the stop launched a daemon; otherwise what {@link provenBy} said. A
  * daemon that held the lock when the stop began ({@link LOCK_PROOFS}), whether it answered or was too busy to, and that
  * neither the lock nor its start decides by now, is `ours` while it runs: its exit can run on after it let go of the
- * lock, and on macOS, or on Windows when PowerShell does not answer, no start is read.
+ * lock, and on macOS, or on Windows when the read of its start does not answer, no start is read.
  */
 function provenNow(home: string, state: DaemonState, proof: StopProof, machine: DaemonMachine): SignalVerdict {
   const verdict = provenBy(home, state, proof, machine);
   if (verdict === "ours") return "ours";
   if (!processAlive(state.pid, machine.kill)) return "ending";
   if (lockOfAnother(home, state.pid, machine)) return "not-ours";
-  return verdict === "unknown" && LOCK_PROOFS.has(proof) ? "ours" : verdict;
+  return undecided(verdict) && LOCK_PROOFS.has(proof) ? "ours" : verdict;
 }
 
 /**
@@ -2399,8 +2432,45 @@ function lockOfAnother(home: string, pid: number, machine: DaemonMachine): boole
  */
 function unprovenDaemonMessage(home: string, pid: number, platform: NodeJS.Platform = process.platform, outcome = "so it ended nothing"): string {
   const record = join(home, DAEMON_STATE_FILE);
-  return `Rerail could not prove that pid ${pid}, which ${record} names, is this home's daemon, ${outcome}. `
-    + `See its command line with ${commandLineCheck(pid, platform)}: if it runs Rerail's daemon-entry.js for this home, `
+  return `Rerail could not prove that pid ${pid}, which ${record} names, is this home's daemon, ${outcome}. ${commandLineAdvice(pid, record, platform)}`;
+}
+
+/** A read that did not answer: the bound it was ended at, in seconds, and what came of it. */
+interface UnansweredRead {
+  readonly seconds: number;
+  readonly outcome: string;
+}
+
+/** A stop's read of a start, ended at the child's bound: the stop ended nothing. */
+const UNANSWERED_START_READ: UnansweredRead = {
+  seconds: ENGINE_READER_ANSWER_MS / 1_000,
+  outcome: "so Rerail could not tell whether it is this home's daemon and ended nothing",
+};
+
+/** The end of a daemon of a release before the proof, ended at the child's bound and the engine's wait for the exit. */
+const UNANSWERED_OLDER_END: UnansweredRead = {
+  seconds: (ENGINE_READER_ANSWER_MS + KILL_TIMEOUT_MS) / 1_000,
+  outcome: "so Rerail could not tell whether it is this home's daemon, or whether it ended it",
+};
+
+/**
+ * What to tell the person when a stop's read of when the process daemon.json in `home` names (`pid`) started was ended
+ * at its bound before it answered (`unanswered`): the read, not the facts, left the process open.
+ */
+function unansweredReadMessage(home: string, pid: number, platform: NodeJS.Platform, unanswered: UnansweredRead = UNANSWERED_START_READ): string {
+  const record = join(home, DAEMON_STATE_FILE);
+  return `Rerail's read of when pid ${pid}, which ${record} names, started did not answer within ${unanswered.seconds} s, ${unanswered.outcome}. `
+    + commandLineAdvice(pid, record, platform);
+}
+
+/** {@link unprovenDaemonMessage}, or {@link unansweredReadMessage} when the read that would have decided did not answer. */
+function undecidedMessage(home: string, pid: number, verdict: "unknown" | "unanswered", platform: NodeJS.Platform): string {
+  return verdict === "unanswered" ? unansweredReadMessage(home, pid, platform) : unprovenDaemonMessage(home, pid, platform);
+}
+
+/** How to see what the process holding `pid` is, and what to do with it or with `record` either way. */
+function commandLineAdvice(pid: number, record: string, platform: NodeJS.Platform): string {
+  return `See its command line with ${commandLineCheck(pid, platform)}: if it runs Rerail's daemon-entry.js for this home, `
     + `end it; if not, delete ${record}. Then run rerail daemon start.`;
 }
 
@@ -2420,9 +2490,9 @@ function commandLineCheck(pid: number, platform: NodeJS.Platform): string {
  * run. A missing lock file is no lock let go ({@link homeDaemonLockHeld}).
  */
 function killable(home: string, pid: number, verdict: SignalVerdict, machine: DaemonMachine): boolean {
-  if (verdict !== "unknown") return verdict === "ours";
+  if (!undecided(verdict)) return verdict === "ours";
   if (homeDaemonHolder(home) === pid && machine.homeDaemonLockHeld(home) === false) return false;
-  throw new Error(unprovenDaemonMessage(home, pid, machine.platform));
+  throw new Error(undecidedMessage(home, pid, verdict, machine.platform));
 }
 
 /**
@@ -2492,10 +2562,16 @@ async function endOlderDaemon(home: string, state: DaemonState, machine: DaemonM
   if (end === "running") throw new Error(stillRunningMessage(state.pid, machine.platform));
   if (end === "later") return (await forgetRecordOf(home, state.pid)) ? "not-daemon" : "record-changed";
   if (end === "ended") return "asked";
-  // Not opened, its start not read, or its exit not waited on once the end was asked, so it may have been ended: a pid
-  // that still runs is let alone, and a free one had exited, by itself or by that end.
-  if (processAlive(state.pid, machine.kill)) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform, UNREAD_END));
+  // Not opened, its start not read, or its exit not waited on once the end was asked, or no answer within the child's
+  // bound, so it may have been ended: a pid that still runs is let alone, and a free one had exited, by itself or by
+  // that end.
+  if (processAlive(state.pid, machine.kill)) throw new Error(olderEndMessage(home, state.pid, end, machine.platform));
   return "exited";
+}
+
+/** What to tell the person when the end of a daemon of a release before the proof came to `end` while its pid runs. */
+function olderEndMessage(home: string, pid: number, end: "unread" | "unanswered", platform: NodeJS.Platform): string {
+  return end === "unread" ? unprovenDaemonMessage(home, pid, platform, UNREAD_END) : unansweredReadMessage(home, pid, platform, UNANSWERED_OLDER_END);
 }
 
 /**
