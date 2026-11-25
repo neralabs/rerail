@@ -1,19 +1,21 @@
-.policy "typescript-eslint-prefer-for-of" revision 2
+.policy "typescript-eslint-prefer-for-of" revision 3
 .description "Use a for-of loop instead of an indexed for loop that only reads each element of one array."
 .language typescript
 .mode steer
 .scope include "**/*"
 
 #include "tsx/ts-b-scope.rerail"
-//   resolves, var_decl, deparen, estree_parent
+//   variable, resolves, initialised, var_decl, deparen, estree_parent
 
 // typescript-eslint's prefer-for-of: a counting loop `for (let i = 0; i < a.length; i++)` whose body uses i
 // only to read `a[i]` (the same source text as the array before `.length`) could be `for (const x of a)`.
 //   for (let i = 0; i < xs.length; i++) { use(xs[i]); }               → reported at the loop
 //   for (let i = 0; i < xs.length; i += 1) { xs[i] = 0; }             fine: writes the element
 //   for (let i = 0; i < xs.length; i++) { use(i, xs[i]); }            fine: uses i itself
-// The loop must declare one non-const index set to 0, test `i < <array>.length` (no `?.` in it) and step by one:
-// `i++`, `++i`, `i += 1`, `i = i + 1` or `i = 1 + i`. Uses of i outside the body (its head) don't matter.
+// The loop must declare one non-const index set to the number 0 (not `0n`), test `i < <array>.length` or
+// `i < <array>[length]` (no `?.` chain running up to the length) and step by one: `i++`, `++i`, `i += 1`,
+// `i = i + 1` or `i = 1 + i`. Uses of i outside the body (its head) don't matter; a `var i = …` or `for (var i in …)`
+// redeclaring a `var` index in the body is a write to it, as eslint-scope records it.
 .violation prefer_for_of(at: node) code "@typescript-eslint/prefer-for-of" "Rewrite this loop as a `for-of` loop over the array; its index is only used to read the elements."
     suppress eslint "@typescript-eslint/prefer-for-of"
     suppress biome "lint/style/useForOf"
@@ -23,9 +25,22 @@ prefer_for_of(f) :- counting(f, s, x, a), !other_use(f, s, x, a).
 .decl counting(f: node, s: node, x: symbol, a: symbol)
 counting(f, s, x, a) :- kind(f, "for_statement"), field(f, "initializer", d), index_decl(d, id, x), variable(s, x, id, _),
     field(f, "condition", c), deparen(c, b), kind(b, "binary_expression"), op(b, "<"), field(b, "left", l),
-    named(l, x), field(b, "right", r), deparen(r, m), kind(m, "member_expression"), field(m, "property", p),
-    text(p, "length"), !has(m, _, "optional_chain"), field(m, "object", o), deparen(o, ao), text(ao, a),
+    named(l, x), field(b, "right", r), deparen(r, m), length_of(m, o), !in_chain(m), deparen(o, ao), text(ao, a),
     field(f, "increment", i), step(i, x).
+// length_of(m, o): m reads the `length` of o: `o.length`, or `o[length]` (the rule tests the property's name, not
+// whether it is computed).
+.decl length_of(m: node, o: node)
+length_of(m, o) :- kind(m, "member_expression"), field(m, "property", p), text(p, "length"), field(m, "object", o).
+length_of(m, o) :- kind(m, "subscript_expression"), field(m, "index", i), named(i, "length"), field(m, "object", o).
+// in_chain(e): e is in an optional chain that runs up to it, so ESTree wraps it in a ChainExpression: `a?.length`,
+// `a?.b.length`, `a?.b!.length`, `f?.().length`. Parentheses close a chain: `(a?.b).length` and `f(a?.b).length`
+// are plain members.
+.decl in_chain(e: node)
+in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression") ; kind(e, "call_expression")),
+    child(e, q, _), kind(q, "optional_chain").
+in_chain(e) :- (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", o), in_chain(o).
+in_chain(e) :- kind(e, "call_expression"), field(e, "function", o), in_chain(o).
+in_chain(e) :- kind(e, "non_null_expression"), child(e, o, 0), in_chain(o).
 // index_decl(d, id, x): `let i = 0` or `var i = 0`, one declarator, a plain name.
 .decl index_decl(d: node, id: node, x: symbol)
 index_decl(d, id, x) :- (kind(d, "variable_declaration") ; kind(d, "lexical_declaration"), var_decl(d, k), k != "const"),
@@ -33,8 +48,8 @@ index_decl(d, id, x) :- (kind(d, "variable_declaration") ; kind(d, "lexical_decl
     field(v, "name", id), kind(id, "identifier"), text(id, x), field(v, "value", z), literal(z, "0").
 .decl named(e: node, x: symbol)  // e is the identifier x, parentheses aside
 named(e, x) :- deparen(e, i), kind(i, "identifier"), text(i, x).
-.decl literal(e: node, v: symbol)  // the number literal v, parentheses aside
-literal(e, v) :- deparen(e, n), kind(n, "number"), value(n, v).
+.decl literal(e: node, v: symbol)  // the number literal v, parentheses aside; a BigInt (`0n`) is no number
+literal(e, v) :- deparen(e, n), kind(n, "number"), value(n, v), text(n, t), !suffix("n", t).
 .decl step(e: node, x: symbol)  // e adds one to x
 step(e, x) :- deparen(e, u), kind(u, "update_expression"), op(u, "++"), field(u, "argument", a), named(a, x).
 step(e, x) :- deparen(e, u), kind(u, "augmented_assignment_expression"), op(u, "+="), field(u, "left", l), named(l, x),
@@ -46,6 +61,7 @@ step(e, x) :- deparen(e, u), kind(u, "assignment_expression"), field(u, "left", 
 // other_use(f, s, x, a): the body uses x other than to read `a[x]`.
 .decl other_use(f: node, s: node, x: symbol, a: symbol)
 other_use(f, s, x, a) :- counting(f, s, x, a), field(f, "body", b), resolves(r, s, x), within(r, b), !element_read(r, a).
+other_use(f, s, x, a) :- counting(f, s, x, a), field(f, "body", b), variable(s, x, id, "var"), within(id, b), initialised(id).
 .decl element_read(r: node, a: symbol)  // r is the index of `a[r]`, not written to (and a is not `this`)
 element_read(r, a) :- resolves(r, _, _), estree_parent(r, m), kind(m, "subscript_expression"), field(m, "index", ix),
     deparen(ix, r), field(m, "object", o), deparen(o, ao), !kind(ao, "this"), text(ao, a), !assignee(m).
@@ -71,3 +87,58 @@ written_by(p, u) :- kind(p, "unary_expression"), op(p, "delete"), field(p, "argu
 written_by(p, u) :- kind(p, "update_expression"), field(p, "argument", u).
 written_by(p, u) :- (kind(p, "array_pattern") ; kind(p, "rest_pattern")), child(p, u, _).
 written_by(p, u) :- kind(p, "pair"), field(p, "value", v), deparen(v, u), child(o, p, _), kind(o, "object"), assignee(o).
+
+// Tests (decision 0130). The review of batch typescript-04 found each of these; typescript-eslint 8.70 reports
+// at the loops named here and nowhere else.
+.test a_computed_length_counts exactly
+    .fixture "p1.ts" ```
+        declare const a: number[];
+        declare const length: number;
+        declare function use(x: unknown): void;
+        for (let i = 0; i < a[length]; i++) { use(a[i]); }
+        ```
+    .expect "@typescript-eslint/prefer-for-of" at "p1.ts":4
+.end
+
+.test parentheses_and_calls_close_an_optional_chain exactly
+    .fixture "p2.ts" ```
+        declare const ob: { b: number[] } | undefined;
+        declare function f(x?: unknown): number[];
+        declare const g: (() => number[]) | undefined;
+        declare function use(x: unknown): void;
+        for (let i = 0; i < (ob?.b).length; i++) { use((ob?.b)[i]); }
+        for (let i = 0; i < f(ob?.b).length; i++) { use(f(ob?.b)[i]); }
+        for (let i = 0; i < ob?.b.length; i++) { use(ob?.b[i]); }
+        for (let i = 0; i < ob?.b!.length; i++) { use(ob?.b![i]); }
+        for (let i = 0; i < g?.().length; i++) { use(g?.()[i]); }
+        ```
+    .expect "@typescript-eslint/prefer-for-of" at "p2.ts":5
+    .expect "@typescript-eslint/prefer-for-of" at "p2.ts":6
+.end
+
+.test a_var_index_redeclared_with_a_value_is_written exactly
+    .fixture "p3.ts" ```
+        declare const a: number[];
+        declare const o: object;
+        declare function use(x: unknown): void;
+        export function g() {
+          for (var i = 0; i < a.length; i++) { var i = 0; use(a[i]); }
+          for (var i = 0; i < a.length; i++) { for (var i in o) use(a[i]); }
+          for (var i = 0; i < a.length; i++) { for (var i of a) use(a[i]); }
+          for (var i = 0; i < a.length; i++) { var [i] = a; use(a[i]); }
+          for (var i = 0; i < a.length; i++) { var i; use(a[i]); }
+          for (var i = 0; i < a.length; i++) { (function () { var i = 0; use(i); })(); use(a[i]); }
+        }
+        ```
+    .expect "@typescript-eslint/prefer-for-of" at "p3.ts":9
+    .expect "@typescript-eslint/prefer-for-of" at "p3.ts":10
+.end
+
+.test a_bigint_zero_is_no_zero exactly
+    .fixture "p4.ts" ```
+        declare const a: number[];
+        declare function use(x: unknown): void;
+        for (let i = 0n; i < a.length; i++) { use(a[i]); }
+        for (let i = 0; i < a.length; i += 1n) { use(a[i]); }
+        ```
+.end

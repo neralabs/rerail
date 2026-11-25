@@ -1,29 +1,212 @@
-// tsx/typescript-04: a Vitest test's mode option as @vitest/eslint-plugin (1.6) reads it, for no-disabled-tests
-// and no-focused-tests of batch typescript-04.
+// tsx/typescript-04: a Vitest call as @vitest/eslint-plugin (1.6) parses it (parseVitestFnCall), for
+// no-disabled-tests and no-focused-tests of batch typescript-04.
 //
 // What a rule gets from this library:
-//   set_mode_option(c, x, k)  test or suite c's options object (its second argument) sets mode x (only, skip):
-//                             its last `x` property is `x: true`, k that property's key
+//   vitest_fn(c, x, h)        call c is one the plugin takes for a Vitest function's (not expect's): x its name,
+//                             h its head identifier. The name is a global's own, an import's imported name, or a
+//                             test context's local name: `test("t", (ctx) => ctx.skip())` has ctx
+//   vitest_type(x, t)         the plugin's type of name x: "describe" (describe, fdescribe, xdescribe) or "test"
+//                             (it, test, fit, xit, xtest, bench); other names have none here
+//   first_member(c, x, p)     p is the first property named x in c's chain, from the head: `it.concurrent.only`
+//   member_named(c, x)        c's chain has a property named x
+//   arg_count(c, n)           c has n arguments
+//   mode_key(c, x, k)         c's second argument is an object whose last property keyed x (only, skip) is
+//                             `x: true`, k that key
 //
 // Examples:
-//   no-focused-tests:   test("t", { only: true }, fn)                  set_mode_option(c, "only", only)
-//                       test("t", { only: true, only() {} }, fn)       none: the method is the last only
-//   no-disabled-tests:  test("t", { skip: true }, fn)                  set_mode_option(c, "skip", skip)
-//                       test("t", { skip: true, get skip() {…} }, fn)  none: the getter is the last skip
+//   import { test } from "vitest"; test.skip("t", fn)     vitest_fn(c, "test", test), first_member(c, "skip", skip)
+//   test("t", (context) => { context.skip(); })            vitest_fn(c, "context", context): a test context
+//   test("t", ({ it }) => { it.concurrent.only("i", fn) }) vitest_fn(c, "it", it), first_member(c, "only", only)
+//   suite.skip("s", fn)   bench.skip("b", fn)   fit("t")   vitest_fn: suite, bench, fit are Vitest's too
+//   xit.skip("x", fn)   it.each([1]).only("t", fn)          none: chains Vitest does not have
+//   it.only("t", fn).then(f)   wrap(describe.skip("s", fn))  none: a call the plugin leaves alone
+//   test("t", { only: (true) }, fn)   test("q", { [only]: true }, fn)    mode_key(c, "only", k)
+//   test("t", { only: true, only() {} }, fn)               none: the method is the last `only`
 //
-// The plugin's findVitestModeProperty takes the last Property whose key is the mode's name (`x: v`, `x() {}`,
-// `get x() {}`, `set x(v) {}`, the shorthand `{ x }`; a spread is no Property) and wants its value the literal
-// true. tsx/ts-b-vitest's mode_option says the same, but finds "last" by `earlier`, which has no rows under
-// run-policies: there every `x: true` counted. The properties of one object are siblings, so "last" here is: no
-// later sibling has the name, by `precedes`.
+// The plugin, in short (parseVitestFnCallWithReasonInner, resolveScope, findVitestModeProperty):
+// - The chain. The callee read down through members' objects and calls' functions (a tagged template is a call
+//   here) to an identifier, the head; each member a plain name, a computed identifier or a static string. When the
+//   chain has members, the head is not itself called (`it(x).only`). A chain ending in `each` must be called on a
+//   call or tagged template (`it.each([1])(…)`); a tagged template's must end in `each`.
+// - The call. Not the callee or an argument of a call, nor the object or index of a member: there the outer call
+//   or nothing is the Vitest call (`it.each([1])` of `it.each([1])("t", fn)` is none).
+// - The head. Looked up as eslint-scope does. Nothing declares it: a global, named by itself. A function's
+//   parameter (or a function expression's name), where that function's first object-pattern parameter has a first
+//   property keyed by the name (`({ it, expect })`, whatever function it is), or that function has a plain-named
+//   parameter and is an argument of a call to an identifier named it, test, fit, xit, xtest or bench: a test
+//   context, named by its local name and its chain never checked. An import from "vitest" (`import { it as t }`,
+//   a property of `require("vitest")` or `await import("vitest")`): named by the imported name. A `const` bound to
+//   `<root>.extend(…)` whose root is such an import of a test function: named as the root. Anything else is local.
+// - The chain's validity (ValidVitestFnCallChains, 1386 chains, as this grammar): it and test take an optional
+//   condition first (skipIf, runIf), then distinct modifiers (skip, only, concurrent, sequential, todo, fails), then
+//   an optional table last (each, for), at most three in all, or `extend` or `scoped` alone; describe and suite the
+//   same with shuffle for fails; bench a condition and skip, only, todo, no table; xit, xtest, xdescribe nothing or
+//   `each`; fit and fdescribe nothing. vi and vitest are never checked. expect and expectTypeOf are left to
+//   tsx/ts-b-vitest's vitest_call.
+// - The mode option: the second argument, parentheses aside, an object; its last Property (a pair, a method, a
+//   getter or setter, a shorthand) whose key is the name (`x`, `"x"`, `[x]`, `["x"]`), with the literal `true`.
 //
-// Builds on tsx/ts-b-vitest (mode_option, option_entry) and core.
+// Builds on tsx/ts-b-scope (resolves, unresolved, variable, fexpr_name, declarator_name, estree_parent, deparen),
+// tsx/ts-b-vitest (vitest_module, pattern_key) and core.
 #include "tsx/ts-b-vitest.rerail"
 
-.decl set_mode_option(c: node, x: symbol, k: node)
-set_mode_option(c, x, k) :- mode_option(c, x, k), child(e, k, _), child(o, e, _), !later_mode_key(o, e, x).
-// later_mode_key(o, e, x): a property of o after e is named x.
-.decl later_mode_key(o: node, e: node, x: symbol)
-later_mode_key(o, e, x) :- mode_option(_, x, k), child(e, k, _), child(o, e, _), option_entry(o, f, x, _), precedes(e, f).
-later_mode_key(o, e, x) :- mode_option(_, x, k), child(e, k, _), child(o, e, _), child(o, f, _),
-    kind(f, "shorthand_property_identifier"), text(f, x), precedes(e, f).
+// ---- the chain ----
+.decl vcall(c: node)  // a CallExpression: not a tagged template
+vcall(c) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "arguments").
+.decl tagged(c: node)
+tagged(c) :- kind(c, "call_expression"), field(c, "arguments", a), kind(a, "template_string").
+// vlink(c, e): e is in the callee chain of call c, from its function down to the head.
+.decl vlink(c: node, e: node)
+vlink(c, e) :- vcall(c), field(c, "function", f), deparen(f, e).
+vlink(c, o) :- vlink(c, e), (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", x),
+    deparen(x, o).
+vlink(c, g) :- vlink(c, e), kind(e, "call_expression"), field(e, "function", f), deparen(f, g).
+.decl vroot(c: node, h: node)
+vroot(c, h) :- vlink(c, h), kind(h, "identifier").
+.decl vstep(c: node, m: node)
+vstep(c, m) :- vlink(c, m), (kind(m, "member_expression") ; kind(m, "subscript_expression")).
+// vname(m, x, p): member m's property is named x (getAccessorValue), p the property: `.x`, `[x]`, `["x"]`, `[`x`]`.
+.decl vname(m: node, x: symbol, p: node)
+vname(m, x, p) :- kind(m, "member_expression"), field(m, "property", p), kind(p, "property_identifier"), text(p, x).
+vname(m, x, p) :- kind(m, "subscript_expression"), field(m, "index", i), deparen(i, p), kind(p, "identifier"), text(p, x).
+vname(m, x, p) :- kind(m, "subscript_expression"), field(m, "index", i), deparen(i, p), static_string(p, x),
+    (kind(p, "string") ; kind(p, "template_string")).
+.decl vmember(c: node, p: node, x: symbol, i: number)  // the i-th member from the head (0), named x
+vmember(c, p, x, i) :- vroot(c, _), vstep(c, m), vname(m, x, p), i = count : { vstep(c, o), within(o, m) }.
+.decl vsteps(c: node, n: number)
+vsteps(c, n) :- vroot(c, _), n = count : { vstep(c, _) }.
+.decl last_link(c: node, x: symbol)
+last_link(c, x) :- vsteps(c, n), n > 0, vmember(c, _, x, n - 1).
+last_link(c, x) :- vsteps(c, 0), vroot(c, h), text(h, x).
+// vbad(c): a chain or a place the plugin does not take.
+.decl vbad(c: node)
+vbad(c) :- vstep(c, m), !vname(m, _, _).
+vbad(c) :- vroot(c, h), vstep(c, _), estree_parent(h, p), kind(p, "call_expression").
+vbad(c) :- last_link(c, "each"), field(c, "function", f), deparen(f, g), !kind(g, "call_expression").
+vbad(c) :- vroot(c, _), field(c, "function", f), deparen(f, g), tagged(g), !last_link(c, "each").
+vbad(c) :- vroot(c, _), estree_parent(c, p), (kind(p, "member_expression") ; kind(p, "subscript_expression") ; vcall(p)).
+vbad(c) :- vroot(c, _), estree_parent(c, a), kind(a, "arguments"), child(p, a, _), kind(p, "call_expression").
+
+// ---- the head ----
+// vhead(h, x, k): head h is named x, k "context" (a test context) or "vitest" (a global or an import).
+.decl vhead(h: node, x: symbol, k: symbol)
+vhead(h, x, "vitest") :- vroot(_, h), unresolved(h, x).
+vhead(h, y, "vitest") :- vroot(_, h), resolves(h, s, x), variable(s, x, id, _), vitest_import(id, y).
+vhead(h, x, "context") :- vroot(_, h), resolves(h, s, x), variable(s, x, id, _), def_fn(id, f),
+    (object_context(f, x) ; named_context(f)).
+// vitest_import(id, y): binding id is Vitest's y: imported, required, or `.extend`ed from a test function.
+.decl vitest_import(id: node, y: symbol)
+vitest_import(id, y) :- variable(_, _, id, "import"), child(sp, id, _), kind(sp, "import_specifier"),
+    field(sp, "name", n), kind(n, "identifier"), text(n, y), nearest(sp, i, "import_statement"), field(i, "source", s),
+    value(s, "vitest").
+vitest_import(id, y) :- variable(_, _, id, k), (k = "const" ; k = "let" ; k = "var" ; k = "using"), declarator_name(d, id, _),
+    field(d, "value", v), vitest_module(v), (pattern_key(id, id, y) ; estree_parent(id, p), pattern_key(p, id, y)).
+vitest_import(id, y) :- variable(_, x, id, _), declarator_name(d, id, _), field(d, "name", id), field(d, "value", v),
+    deparen(v, c), kind(c, "call_expression"), field(c, "function", f), deparen(f, m), kind(m, "member_expression"),
+    field(m, "property", p), text(p, "extend"), field(m, "object", o), extend_root(o, b), text(b, r), r != x,
+    resolves(b, s, r), variable(s, r, bid, _), vitest_import(bid, y), test_case_name(y).
+.decl extend_root(o: node, b: node)  // the identifier getNodeName starts o's name with
+extend_root(o, b) :- deparen(o, b), kind(b, "identifier").
+extend_root(o, b) :- deparen(o, e), (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", x),
+    extend_root(x, b).
+extend_root(o, b) :- deparen(o, e), (kind(e, "call_expression"), field(e, "function", x) ;
+    kind(e, "new_expression"), field(e, "constructor", x)), extend_root(x, b).
+.decl test_case_name(x: symbol)
+test_case_name("it"). test_case_name("test"). test_case_name("fit"). test_case_name("xit"). test_case_name("xtest").
+test_case_name("bench").
+// def_fn(id, f): the scope manager's definition of binding id is function f (a function expression, an arrow
+// function or a method's function): one of its parameters, or a function expression's name.
+.decl def_fn(id: node, f: node)
+def_fn(id, f) :- variable(f, _, id, "param"), (kind(f, "function_expression") ; kind(f, "generator_function") ;
+    kind(f, "arrow_function") ; kind(f, "method_definition")).
+def_fn(n, f) :- variable(n, _, n, "function-name"), fexpr_name(f, n).
+// object_context(f, x): f's first object-pattern parameter (no default) has a first property keyed x.
+.decl object_param(f: node, p: node, o: node)
+object_param(f, p, o) :- def_fn(_, f), field(f, "parameters", ps), child(ps, p, _),
+    (kind(p, "required_parameter") ; kind(p, "optional_parameter")), !field(p, "value", _), field(p, "pattern", o),
+    kind(o, "object_pattern").
+.decl object_context(f: node, x: symbol)
+object_context(f, x) :- object_param(f, p, o), !earlier_object_param(f, p), child(o, e, _), pattern_prop(e),
+    !earlier_pattern_prop(o, e), prop_key_name(e, x).
+.decl earlier_object_param(f: node, p: node)
+earlier_object_param(f, p) :- object_param(f, p, _), object_param(f, q, _), precedes(q, p).
+.decl pattern_prop(e: node)  // an ESTree Property of an object pattern (not its rest element)
+pattern_prop(e) :- kind(e, "shorthand_property_identifier_pattern") ; kind(e, "object_assignment_pattern") ;
+    kind(e, "pair_pattern").
+.decl earlier_pattern_prop(o: node, e: node)
+earlier_pattern_prop(o, e) :- object_param(_, _, o), child(o, e, _), pattern_prop(e), child(o, d, _), pattern_prop(d),
+    precedes(d, e).
+.decl prop_key_name(e: node, x: symbol)  // the property's key is the identifier x
+prop_key_name(e, x) :- kind(e, "shorthand_property_identifier_pattern"), text(e, x).
+prop_key_name(e, x) :- kind(e, "object_assignment_pattern"), field(e, "left", l), kind(l, "shorthand_property_identifier_pattern"),
+    text(l, x).
+prop_key_name(e, x) :- kind(e, "pair_pattern"), field(e, "key", k), kind(k, "property_identifier"), text(k, x).
+prop_key_name(e, x) :- kind(e, "pair_pattern"), field(e, "key", k), kind(k, "computed_property_name"), child(k, i, 0),
+    deparen(i, n), kind(n, "identifier"), text(n, x).
+// named_context(f): f has a plain-named parameter and is an argument of `test(…)` (an identifier named a test).
+.decl named_context(f: node)
+named_context(f) :- def_fn(_, f), named_param(f), estree_parent(f, a), kind(a, "arguments"), child(c, a, _),
+    kind(c, "call_expression"), field(c, "function", g), deparen(g, i), kind(i, "identifier"), text(i, y), test_case_name(y).
+.decl named_param(f: node)
+named_param(f) :- def_fn(_, f), field(f, "parameters", ps), child(ps, p, _), (kind(p, "required_parameter") ;
+    kind(p, "optional_parameter")), !field(p, "value", _), field(p, "pattern", n), (kind(n, "identifier") ; kind(n, "this")).
+named_param(f) :- def_fn(_, f), kind(f, "arrow_function"), field(f, "parameter", p), kind(p, "identifier").
+
+// ---- valid chains ----
+// family(x, f): the chains name x takes.
+.decl family(x: symbol, f: symbol)
+family("it", "test"). family("test", "test"). family("describe", "describe"). family("suite", "describe").
+family("bench", "bench"). family("xit", "x"). family("xtest", "x"). family("xdescribe", "x"). family("fit", "bare").
+family("fdescribe", "bare").
+.decl allowed(f: symbol, y: symbol, w: symbol)  // member y in family f, where: "first", "any", "last", "alone"
+allowed(f, y, "first") :- (f = "test" ; f = "describe" ; f = "bench"), (y = "skipIf" ; y = "runIf").
+allowed("test", y, "any") :- y = "skip" ; y = "only" ; y = "concurrent" ; y = "sequential" ; y = "todo" ; y = "fails".
+allowed("describe", y, "any") :- y = "skip" ; y = "only" ; y = "concurrent" ; y = "sequential" ; y = "todo" ; y = "shuffle".
+allowed("bench", y, "any") :- y = "skip" ; y = "only" ; y = "todo".
+allowed(f, y, "last") :- (f = "test" ; f = "describe"), (y = "each" ; y = "for").
+allowed("x", "each", "last").
+allowed("test", y, "alone") :- y = "extend" ; y = "scoped".
+.decl member_off(c: node, f: symbol)  // a member family f does not take where it stands
+member_off(c, f) :- family(x, f), vroot(c, h), text(h, x), vsteps(c, n), vmember(c, _, y, i),
+    !(allowed(f, y, "first"), i = 0), !allowed(f, y, "any"), !(allowed(f, y, "last"), i = n - 1),
+    !(allowed(f, y, "alone"), n = 1).
+member_off(c, f) :- family(_, f), vmember(c, _, y, i), vmember(c, _, y, j), i < j.
+.decl valid_chain(c: node, x: symbol)
+valid_chain(c, x) :- vhead(h, x, "vitest"), vroot(c, h), family(x, f), vsteps(c, n), n <= 3, !member_off(c, f).
+valid_chain(c, x) :- vhead(h, x, "vitest"), vroot(c, h), (x = "vi" ; x = "vitest").
+
+// ---- the calls ----
+.decl vitest_fn(c: node, x: symbol, h: node)
+vitest_fn(c, x, h) :- vroot(c, h), vhead(h, x, "vitest"), valid_chain(c, x), !vbad(c).
+vitest_fn(c, x, h) :- vroot(c, h), vhead(h, x, "context"), x != "expect", x != "expectTypeOf", !vbad(c).
+.decl vitest_type(x: symbol, t: symbol)
+vitest_type("describe", "describe"). vitest_type("fdescribe", "describe"). vitest_type("xdescribe", "describe").
+vitest_type(x, "test") :- test_case_name(x).
+.decl member_named(c: node, x: symbol)
+member_named(c, x) :- vitest_fn(c, _, _), vmember(c, _, x, _).
+.decl first_member(c: node, x: symbol, p: node)
+first_member(c, x, p) :- vitest_fn(c, _, _), vmember(c, p, x, i), i = min j : { vmember(c, _, x, j) }.
+.decl arg_count(c: node, n: number)
+arg_count(c, n) :- vitest_fn(c, _, _), field(c, "arguments", a), n = count : { child(a, e, _), !kind(e, "comment") }.
+
+// ---- the mode option ----
+.decl options_object(c: node, o: node)  // c's second argument, parentheses aside, an object
+options_object(c, o) :- vitest_fn(c, _, _), field(c, "arguments", a), child(a, e, _), !kind(e, "comment"),
+    count : { child(a, d, _), !kind(d, "comment"), precedes(d, e) } = 1, deparen(e, o), kind(o, "object").
+// mode_prop(o, e, x, k): property e of o is keyed x (isSupportedAccessor), k its key.
+.decl mode_prop(o: node, e: node, x: symbol, k: node)
+mode_prop(o, e, x, k) :- options_object(_, o), child(o, e, _), kind(e, "pair"), field(e, "key", k), accessor_key(k, x).
+mode_prop(o, e, x, k) :- options_object(_, o), child(o, e, _), kind(e, "method_definition"), field(e, "name", k),
+    accessor_key(k, x).
+mode_prop(o, e, x, e) :- options_object(_, o), child(o, e, _), kind(e, "shorthand_property_identifier"), text(e, x).
+.decl accessor_key(k: node, x: symbol)
+accessor_key(k, x) :- kind(k, "property_identifier"), text(k, x).
+accessor_key(k, x) :- kind(k, "string"), value(k, x).
+accessor_key(k, x) :- kind(k, "computed_property_name"), child(k, e, 0), deparen(e, i), kind(i, "identifier"), text(i, x).
+accessor_key(k, x) :- kind(k, "computed_property_name"), child(k, e, 0), deparen(e, s), static_string(s, x),
+    (kind(s, "string") ; kind(s, "template_string")).
+.decl mode_key(c: node, x: symbol, k: node)
+mode_key(c, x, k) :- options_object(c, o), mode_prop(o, e, x, k), (x = "only" ; x = "skip"), !later_mode_prop(o, e, x),
+    kind(e, "pair"), field(e, "value", v), deparen(v, t), kind(t, "true").
+.decl later_mode_prop(o: node, e: node, x: symbol)
+later_mode_prop(o, e, x) :- mode_prop(o, e, x, _), mode_prop(o, f, x, _), precedes(e, f).

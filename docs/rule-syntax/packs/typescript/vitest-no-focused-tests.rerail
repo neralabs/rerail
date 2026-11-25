@@ -1,25 +1,85 @@
-.policy "vitest-no-focused-tests" revision 3
+.policy "vitest-no-focused-tests" revision 4
 .description "A focused test (`.only`), which makes Vitest skip every other test in the file."
 .language typescript
 .mode steer
 .scope include "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx"
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
 
-#include "tsx/ts-b-vitest.rerail"
-//   vitest_call, vitest_member, context_head
 #include "tsx/typescript-04.rerail"
-//   set_mode_option
+//   vitest_fn, first_member, member_named, mode_key
 
 // @vitest/eslint-plugin's no-focused-tests: `.only` on a Vitest describe, it or test, or `only: true` in its
 // options, reported at `only`.
-//   it.only("t", fn)   describe.only.each([])("t", fn)   test("t", { only: true }, fn)        → at only
+//   it.only("t", fn)   describe.only.each([])("t", fn)   test("t", { only: (true) }, fn)      → at only
+//   test("t", ({ it }) => { it.concurrent.only("i", fn); })                                 → at only
+//   const helper = ({ it }) => { it.only("h", fn); }                                       → at only
 //   import { it } from "node:test"; it.only("t", fn)     fine: not Vitest's it
-// For a test context's own `it` (`test("t", ({ it }) => { it.only(…) })`) the first property counts, whatever
-// follows it. The fix option (default "suggest") only decides how the plugin offers removing `.only`; not
-// offered here.
+//   test("t", ({ expect, it }) => { it.only("i", fn); })  fine: `it` is not the pattern's first property
+//   it.each([1]).only("t", fn)   it.only("t", fn).then(f) fine: no Vitest calls
+// Which calls are Vitest's, and their names: tsx/typescript-04. The name must be it, test or describe (the
+// imported name, or a test context's own); the first `only` member, else an `only: true` option, is reported.
+// The `fixable` option only decides whether the plugin offers removing `.only`; not offered here.
 .violation no_focused_tests(at: node) code "vitest/no-focused-tests" "Remove .only: a focused test makes Vitest skip every other test."
     suppress eslint "vitest/no-focused-tests"
     suppress oxlint "no-focused-tests"
-no_focused_tests(m) :- vitest_call(c, g, _), (g = "describe" ; g = "test"), vitest_member(c, m, "only", i),
-    (!context_head(c) ; i = 0).
-no_focused_tests(k) :- set_mode_option(c, "only", k), !context_head(c).
+no_focused_tests(p) :- vitest_fn(c, x, _), focus_name(x), first_member(c, "only", p).
+no_focused_tests(k) :- vitest_fn(c, x, _), focus_name(x), !member_named(c, "only"), mode_key(c, "only", k).
+.decl focus_name(x: symbol)
+focus_name("it"). focus_name("test"). focus_name("describe").
+
+// Tests (decision 0130). The review of batch typescript-04 found each of these; @vitest/eslint-plugin 1.6.27
+// reports at the lines named here and nowhere else.
+.test a_context_it_must_be_the_first_property exactly
+    .fixture "f1.test.ts" ```
+        test("t", ({ expect, it }) => {
+          it.only("inner", () => {});
+        });
+        ```
+.end
+
+.test a_context_only_after_another_member exactly
+    .fixture "f2.test.ts" ```
+        test("t", ({ it }) => {
+          it.concurrent.only("inner", () => {});
+        });
+        ```
+    .expect "vitest/no-focused-tests" at "f2.test.ts":2
+.end
+
+.test a_context_outside_a_test exactly
+    .fixture "f3.test.ts" ```
+        export const helper = ({ it }) => {
+          it.only("h", () => {});
+        };
+        ```
+    .expect "vitest/no-focused-tests" at "f3.test.ts":2
+.end
+
+.test chains_vitest_lacks_are_no_calls exactly
+    .fixture "f4.test.ts" ```
+        it.each([1]).only("t", () => {});
+        it.only.runIf(true)("t", () => {});
+        it.skipIf(true).only("t", () => {});
+        ```
+    .expect "vitest/no-focused-tests" at "f4.test.ts":3
+.end
+
+.test a_call_used_as_an_object_or_argument_is_none exactly
+    .fixture "f5.test.ts" ```
+        it.only("t", () => {}).then(() => {});
+        wrap(describe.only("s", () => {}));
+        await it.only("u", () => {});
+        ```
+    .expect "vitest/no-focused-tests" at "f5.test.ts":3
+.end
+
+.test only_option_forms exactly
+    .fixture "f6.test.ts" ```
+        const only = "only";
+        test("p", { only: (true) }, () => {});
+        test("q", { [only]: true }, () => {});
+        test("r", { only: true, only() {} }, () => {});
+        ```
+    .expect "vitest/no-focused-tests" at "f6.test.ts":2
+    .expect "vitest/no-focused-tests" at "f6.test.ts":3
+.end

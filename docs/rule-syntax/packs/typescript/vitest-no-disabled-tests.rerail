@@ -1,33 +1,120 @@
-.policy "vitest-no-disabled-tests" revision 3
+.policy "vitest-no-disabled-tests" revision 4
 .description "A disabled test: `.skip`, `xit`, `xtest`, `xdescribe`, a test with no function, or `pending()`."
 .language typescript
 .mode steer
 .scope include "**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx", "**/*.test.mts", "**/*.spec.mts", "**/__tests__/**/*.ts", "**/__tests__/**/*.tsx"
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
 
-#include "tsx/ts-b-vitest.rerail"
-//   vitest_call, vitest_member, unresolved
 #include "tsx/typescript-04.rerail"
-//   set_mode_option
+//   vitest_fn, vitest_type, first_member, member_named, arg_count, mode_key, vcall; and from tsx/ts-b-vitest
+//   vitest_call, vitest_member (expect chains), unresolved, deparen
 
 // @vitest/eslint-plugin's no-disabled-tests: a test or suite that will not run.
-//   describe.skip("s", fn)   test("t", { skip: true }, fn)      → at skip
-//   xit("t", fn)   xdescribe("s", fn)                          → at the call
-//   it("has a title but no function")                          → at the call (`it.todo("…")` is fine)
-//   pending()                                                  → at the call, when pending is the global
-// The plugin also takes `.skip` on vi and on an expect modifier chain (`expect.not.skip(…)`); so does this.
+//   describe.skip("s", fn)   suite.skip("s", fn)   test("t", { skip: true }, fn)   → at skip
+//   test("t", (ctx) => { ctx.skip(); })                                          → at skip: a test context's
+//   xit("t", fn)   xdescribe("s", fn)                                             → at the head
+//   it("has a title but no function")   fit("t")   it.skip("t")                 → at the call
+//   pending()   (pending)()                                                       → at the call, when pending is the global
+//   it.only("t")   it.todo("t")   xit.skip("t", fn)   it.skip("t", fn).then(f)  fine: no function is only missing
+//                                                     with no member but skip; the other two are no Vitest calls
+// Which calls are Vitest's, and their names: tsx/typescript-04. A name starting with x (xit, xdescribe, an
+// imported `xtest`, even a test context named `xctx`) is disabled; the first `skip` member, else a `skip: true`
+// option of a test or suite, is where. The plugin also takes `.skip` on vi and on an expect modifier chain
+// (`expect.not.skip(…)`); so does this.
 .violation disabled_test(at: node) code "vitest/no-disabled-tests" "This test is disabled. Fix it or delete it."
     suppress eslint "vitest/no-disabled-tests"
     suppress oxlint "no-disabled-tests"
-disabled_test(m) :- vitest_call(c, _, _), vitest_member(c, m, "skip", _).
-disabled_test(k) :- set_mode_option(_, "skip", k).
-disabled_test(c) :- vitest_call(c, g, _), (g = "xtest" ; g = "xdescribe").
-disabled_test(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, "pending"),
-    unresolved(f, "pending").
+disabled_test(p) :- first_member(c, "skip", p).
+disabled_test(k) :- vitest_fn(c, x, _), vitest_type(x, _), !member_named(c, "skip"), mode_key(c, "skip", k).
+disabled_test(h) :- vitest_fn(c, x, h), prefix("x", x), !member_named(c, "skip"), !typed_skip_option(c).
+disabled_test(m) :- vitest_call(c, "expect", _), vitest_member(c, m, "skip", _).
+disabled_test(c) :- vcall(c), field(c, "function", f), deparen(f, i), kind(i, "identifier"), text(i, "pending"),
+    unresolved(i, "pending").
+.decl typed_skip_option(c: node)  // a test's or suite's `skip: true` option
+typed_skip_option(c) :- vitest_fn(c, x, _), vitest_type(x, _), mode_key(c, "skip", _).
 .violation missing_function(at: node) code "vitest/no-disabled-tests" "This test has no function, so it never runs."
     suppress eslint "vitest/no-disabled-tests"
     suppress oxlint "no-disabled-tests"
-missing_function(c) :- vitest_call(c, g, _), (g = "test" ; g = "xtest"), !fixture_call(c),
-    field(c, "arguments", a), count : { child(a, e, _), !kind(e, "comment") } < 2.
-.decl fixture_call(c: node)  // `it.todo("t")`, and `it.extend({…})`, `it.scoped({…})`, which make no test
-fixture_call(c) :- vitest_member(c, _, x, _), (x = "todo" ; x = "extend" ; x = "scoped").
+missing_function(c) :- vitest_fn(c, x, _), vitest_type(x, "test"), arg_count(c, n), n < 2, !other_member(c).
+.decl other_member(c: node)  // c's chain has a member other than skip
+other_member(c) :- vitest_fn(c, _, _), vmember(c, _, x, _), x != "skip".
+
+// Tests (decision 0130). The review of batch typescript-04 found each of these; @vitest/eslint-plugin 1.6.27
+// reports at the lines named here and nowhere else.
+.test a_test_contexts_skip_is_reported exactly
+    .fixture "d1.test.ts" ```
+        import { test } from "vitest";
+        test("needs a link", (context) => {
+          if (Math.random() > 2) context.skip();
+        });
+        test("named", function named(c) { named.skip(); });
+        test("x-named", (xctx) => { xctx.foo(); });
+        ```
+    .expect "vitest/no-disabled-tests" at "d1.test.ts":3
+    .expect "vitest/no-disabled-tests" at "d1.test.ts":5
+    .expect "vitest/no-disabled-tests" at "d1.test.ts":6
+.end
+
+.test only_skip_may_stand_beside_a_missing_function exactly
+    .fixture "d2.test.ts" ```
+        it.only("no function");
+        it.concurrent("no function");
+        test.each([1])("no function");
+        it.todo("no function");
+        it.skip("no function");
+        ```
+    .expect "vitest/no-disabled-tests" at "d2.test.ts":5
+.end
+
+.test suite_bench_and_fit_are_vitests exactly
+    .fixture "d3.test.ts" ```
+        suite.skip("s", () => {});
+        bench.skip("b", () => {});
+        fit("no function");
+        ```
+    .expect "vitest/no-disabled-tests" at "d3.test.ts":1
+    .expect "vitest/no-disabled-tests" at "d3.test.ts":2
+    .expect "vitest/no-disabled-tests" at "d3.test.ts":3
+.end
+
+.test chains_vitest_lacks_are_no_calls exactly
+    .fixture "d4.test.ts" ```
+        xit.skip("x", () => {});
+        it.skip("t", () => {}).then(() => {});
+        wrap(describe.skip("s", () => {}));
+        it.each([1]).skip("t", () => {});
+        xit.each([1])("e", () => {});
+        ```
+    .expect "vitest/no-disabled-tests" at "d4.test.ts":5
+.end
+
+.test an_x_tests_skip_option_is_where exactly
+    .fixture "d5.test.ts" ```
+        xit("r",
+          { skip: true },
+          () => {});
+        xdescribe("s",
+          () => {});
+        ```
+    .expect "vitest/no-disabled-tests" at "d5.test.ts":2
+    .expect "vitest/no-disabled-tests" at "d5.test.ts":4
+.end
+
+.test a_parenthesised_pending_is_called exactly
+    .fixture "d6.test.ts" ```
+        (pending)();
+        ```
+    .expect "vitest/no-disabled-tests" at "d6.test.ts":1
+.end
+
+.test skip_option_forms exactly
+    .fixture "d7.test.ts" ```
+        const skip = "skip";
+        test("a", { skip: (true) }, () => {});
+        test("b", { [skip]: true }, () => {});
+        test("c", { skip: true, ["skip"]: false }, () => {});
+        test("d", { skip: true, get skip() { return false; } }, () => {});
+        ```
+    .expect "vitest/no-disabled-tests" at "d7.test.ts":2
+    .expect "vitest/no-disabled-tests" at "d7.test.ts":3
+.end
