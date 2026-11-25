@@ -2656,6 +2656,81 @@ unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A reader's demand guarding a per-file relation all of whose readers are per-file is each file's own (decision 0690):
+/// versioned-merged-identity's shape, `callee(f, x)` asked for at the constructor's name and at each alias of it. The
+/// guard's rows are names from every file's aliases, but each file's readers ask only for their own: a run's rows are
+/// a whole run's, the guard is derived in the files' part, and an edit dropping a file's alias gives a fresh run's rows.
+#[test]
+fn a_readers_demand_over_per_file_readers_is_each_files_own() {
+    const PROGRAM: &str = r#"
+.decl alias(i: node, x: symbol)
+alias(i, x) :- kind(i, "aliased_import"), field(i, "alias", a), text(a, x).
+.decl rr_reader_demand_callee(x: symbol)
+rr_reader_demand_callee("Target").
+rr_reader_demand_callee(x) :- alias(_, x).
+.decl callee(f: node, x: symbol)
+callee(f, x) :- rr_reader_demand_callee(x), kind(f, "identifier"), text(f, x).
+.decl ctor(c: node, x: symbol)
+ctor(c, "Target") :- kind(c, "call"), field(c, "function", f), callee(f, "Target").
+ctor(c, x) :- kind(c, "call"), field(c, "function", f), callee(f, x), alias(i, x), docof(c, d), docof(i, d).
+.decl found(c: node, p: symbol, x: symbol)
+found(c, p, x) :- ctor(c, x), docof(c, d), doc(d, p, _).
+.output found
+"#;
+    let files = [
+        ("a.py", "from m import Target as T\nT()\nTarget()\n"),
+        ("b.py", "from m import Target as U\nU()\nT()\n"),
+        ("c.py", "T()\nU()\n"),
+    ];
+    let edit = ("b.py", "U()\nT()\n");
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let run = |dir: &std::path::Path| -> Vec<Vec<String>> {
+        crate::install_store_functions();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        // SAFETY: nextest runs each test in a process of its own.
+        unsafe { std::env::set_var("RERAIL_SPLIT_DUMP", dir.join("split.txt")) };
+        super::run(PROGRAM, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+        let mut rows: Vec<Vec<String>> = outputs.get("found").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[1..].to_vec()).collect();
+        rows.sort();
+        rows
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let dir = make("reader-demand", &[]);
+    let rows = run(&dir);
+    assert_eq!(rows, [row("a.py", "T"), row("a.py", "Target"), row("b.py", "U")], "{rows:?}");
+    let read = |suffix: &str| -> String {
+        std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.to_string_lossy().ends_with(suffix))
+            .map(|p| std::fs::read_to_string(&p).unwrap().lines().map(|l| format!("{}\t{l}\n", p.file_name().unwrap().to_string_lossy())).collect::<String>())
+            .collect()
+    };
+    let (causes, local) = (read(".causes.txt"), read(".local.rerail"));
+    assert!(local.contains("rr_reader_demand_callee("), "the guard is derived in the files' part:\n{local}");
+    for r in ["rr_reader_demand_callee", "callee", "ctor", "found"] {
+        let named: Vec<&str> = causes.lines().filter(|l| l.split('\t').nth(1) == Some(r)).collect();
+        assert!(named.is_empty(), "{r} is cross-file: {named:?}");
+    }
+    std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
+    let rows = run(&dir);
+    assert_eq!(rows, [row("a.py", "T"), row("a.py", "Target")], "b.py's alias is gone: {rows:?}");
+    let fresh = make("reader-demand-fresh", &[edit]);
+    assert_eq!(rows, run(&fresh), "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A declared input nothing gives (`node-resolve.rerail`'s `spec_resolved`, a proposed core input) is empty: a
 /// file-local rule reads it so, positive and negated, as the cross-file part does (decision 0675: the Node pack's
 /// readers of it are per-file once the names they read are staged).

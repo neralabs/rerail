@@ -1090,6 +1090,33 @@ impl<'v> Program<'v> {
             let view = |x: u32| covered_now[x as usize] && local_now[x as usize] && rels.is_derived(x) && locs[x as usize].is_empty();
             local_now[r as usize] && { let inputs = self.native_inputs(r); !inputs.is_empty() && inputs.iter().all(|(i, ..)| view(*i)) }
         };
+        // A reader's demand (`READER_DEMAND`, decision 0690): the optional guard product demand installs on a relation's
+        // producers, its rules its relation's readers' prefixes. It is each file's own, as a covered view of values is,
+        // where its rules are each on one document and the relation it guards, and every reader of that, is per-file:
+        // the keys a file's readers ask for are made from the file's rows, so in each file it holds them. A reader
+        // across files may join one file's prefix with another's rows, and then it is every file's, as before.
+        // A relation of values read by guards alone (a projection the preparation made of a guard's open read,
+        // `rr_any_alias_1(x) :- alias(_, x)`) is part of them: the greatest such set.
+        let mut reader_demand: Vec<bool> = valueless.clone();
+        loop {
+            let leaving: Vec<usize> = (0..n)
+                .filter(|&r| reader_demand[r] && !self.name(r as u32).starts_with(crate::code_rule_dsl::logic::plan::body::READER_DEMAND))
+                .filter(|&r| rels.reading(r as u32).is_empty() || rels.reading(r as u32).iter().any(|&k| !reader_demand[rels.head[k] as usize]))
+                .collect();
+            if leaving.is_empty() {
+                break;
+            }
+            leaving.into_iter().for_each(|r| reader_demand[r] = false);
+        }
+        let guard_holds = |g: u32, local_now: &[bool], covered_now: &[bool]| -> bool {
+            let skip: Vec<bool> = (0..n).map(|x| (covered_now[x] && local_now[x] && locs[x].is_empty()) || native_view(x as u32, local_now, covered_now)).collect();
+            let guarded = rels.heads_reading(std::iter::once(g), |h| h != g && !reader_demand[h as usize]);
+            local_now[g as usize]
+                && guarded.iter().all(|&r| {
+                    local_now[r as usize] && !rels.output[r as usize] && rels.heads_reading(std::iter::once(r), |h| !reader_demand[h as usize]).iter().all(|&h| local_now[h as usize])
+                })
+                && rels.rules[g as usize].iter().all(|&k| forms.get(k).one_document_each(g, rels, &placeless, local_now, &filtering, &skip, &locs, &nulls))
+        };
         let mut dirty: Option<Vec<usize>> = None;
         loop {
             // A covered view whose readers changed is asked again; one no longer covered is read as any relation, by
@@ -1111,7 +1138,8 @@ impl<'v> Program<'v> {
                     continue;
                 }
                 anchoring.memo.borrow_mut().clear();
-                if self.covers(r, &local_now, &covered_now, &valueless, &placeless, &locs, &anchoring).is_err() {
+                let held = self.covers(r, &local_now, &covered_now, &valueless, &placeless, &locs, &anchoring).is_ok() || (reader_demand[r as usize] && guard_holds(r, &local_now, &covered_now));
+                if !held {
                     covered_now[r as usize] = false;
                     also.extend(rels.rules[r as usize].iter().copied());
                     also.extend(rels.reading(r).iter().copied());
@@ -2950,6 +2978,17 @@ impl Form {
     }
 
     fn one_document(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], covered: &[bool], locs: &[Vec<usize>], nulls: &[Vec<usize>]) -> bool {
+        self.documents(head, rels, placeless, local, filters, covered, locs, nulls, false)
+    }
+
+    /// Whether each derivation of the rule reads one document's rows at most, a positive read whose location columns are
+    /// left open (`alias(_, x)`) on a document of its own: a reader's demand (decision 0690), whose rows may name none.
+    fn one_document_each(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], covered: &[bool], locs: &[Vec<usize>], nulls: &[Vec<usize>]) -> bool {
+        self.documents(head, rels, placeless, local, filters, covered, locs, nulls, true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn documents(&self, head: u32, rels: &Rels<'_>, placeless: &[bool], local: &[bool], filters: &[bool], covered: &[bool], locs: &[Vec<usize>], nulls: &[Vec<usize>], open_own: bool) -> bool {
         let head_filter = filters[head as usize];
         // A nullable column joins its row's group only where a location column of this rule places its variable
         // (decision 0649): then it is no -1.
@@ -3010,7 +3049,7 @@ impl Form {
                     if derived {
                         group.extend(nulls[r as usize].iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])).filter(|&k| strict.has(k)));
                     }
-                    if group.is_empty() && *plain && *binder && !columns.is_empty() {
+                    if group.is_empty() && *plain && (*binder || (open_own && !*neg)) && !columns.is_empty() {
                         group.push(self.binders + index as u32);
                     }
                     if !group.is_empty() {
@@ -3034,7 +3073,7 @@ impl Form {
         let mut roots: Vec<u32> = firsts.iter().map(|&f| find(&mut root, f)).collect();
         roots.sort_unstable();
         roots.dedup();
-        roots.len() == 1 || (roots.is_empty() && head_filter)
+        roots.len() == 1 || (roots.is_empty() && (head_filter || open_own))
     }
 }
 

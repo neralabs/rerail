@@ -153,6 +153,41 @@ fn void_request(v: &Version, rel: &str, cols: &[usize], proof: &upstream::Proof)
     keyed
 }
 
+/// Whether a reader's request (`proof`, of a read at the key columns `cols`) reaches the key only through its document
+/// and its order: every atom of it naming a key's variable is `node(d, k, _, _, _)` or `docof(k, d)`, the key's
+/// document and nothing else of it, or `visit_index(k, o)`, its place in the order (`earlier(i, c)` as the lowering
+/// writes it). It asks for
+/// every node of a document before or after some point, which restricts nothing the producer does not, and costs a
+/// join of the document's nodes with the other side: versioned-merged-identity's `rr_deferred_pairs_vmi_alias(i)`,
+/// every node before a call, nodes × calls in each file (decision 0690). A join left as written is always right.
+fn order_only(v: &Version, cols: &[usize], proof: &upstream::Proof) -> bool {
+    use super::Part;
+    let Some(reader) = v.rule(proof.rule) else { return false };
+    let Some(read) = reader.body().nth(proof.read).and_then(|l| l.atom()) else { return false };
+    let key: Vec<_> = cols.iter().filter_map(|&c| read.args().nth(c).and_then(|t| t.var())).collect();
+    let is_key = |t: &TermRef<'_>| t.var().is_some_and(|s| key.contains(&s));
+    let mut naming = false;
+    for part in &proof.parts {
+        let Part::Lit(j) = *part else { continue };
+        let Some(a) = reader.body().nth(j).and_then(|l| l.atom()) else { continue };
+        let args: Vec<TermRef<'_>> = a.args().collect();
+        if !args.iter().any(is_key) {
+            continue;
+        }
+        let placed_only = !a.neg()
+            && match (v.rel_name(a.rel()), args.as_slice()) {
+                ("node", [d, n, rest @ ..]) => !is_key(d) && is_key(n) && rest.iter().all(|t| matches!(t, TermRef::Wild)),
+                ("visit_index", [n, o]) | ("docof", [n, o]) => is_key(n) && !is_key(o),
+                _ => false,
+            };
+        if !placed_only {
+            return false;
+        }
+        naming = true;
+    }
+    naming
+}
+
 /// Whether a reader's request (`proof`) of `rel`, a context's instance (decision 0597), reads a relation no rule derives:
 /// a scan of the batch, which lists no tape value's nodes (decision 0431 §8: a value's nodes are reached by lookup),
 /// so the request holds none of the context's nodes and the join it guards finds nothing. A join left as written is
@@ -303,7 +338,7 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
     };
     // The requests installed, once every read is classified: in rounds, each one derivation of the program.
     let requests: Vec<(String, &[usize])> = pairs.iter().map(|(rel, cols, _)| (rel.clone(), *cols)).collect();
-    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || blind_in_a_context(v, rel, r)))?;
+    let installed = upstream::install_requests(p, &requests, DEFERRED_PAIRS, &same_doc, &|rel, cols, v, proofs| !proofs.iter().any(|r| void_request(v, rel, cols, r) || order_only(v, cols, r) || blind_in_a_context(v, rel, r)))?;
     let mut no_inline = Vec::new();
     for ((rel, cols, positive), installed) in pairs.into_iter().zip(installed) {
         if !installed {

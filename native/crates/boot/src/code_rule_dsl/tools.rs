@@ -2620,6 +2620,91 @@ mod pack_split_tests {
         assert!(errors.is_empty(), "{dir}: {} policies, {} distinct errors:\n{}", policies.len(), errors.len(), errors.join("\n\n"));
     }
 
+    /// `policy`'s findings over `files` (path, text), each as (code, path, line, message), sorted.
+    fn findings_of(policy: &str, files: &[(&str, &str)]) -> Vec<(String, String, i64, String)> {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        for (path, text) in files {
+            let to = root.join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        let policy = crate::source_tree::native().join("../docs/rule-syntax").join(policy);
+        let report = super::run_policies(&[policy], &root, &tmp.path().join("out"), &serde_json::Value::Null).unwrap();
+        let errors: Vec<&str> = report["runs"].as_array().unwrap().iter().filter_map(|r| r["error"].as_str()).collect();
+        assert!(errors.is_empty(), "{errors:?}");
+        let mut found: Vec<(String, String, i64, String)> = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| (d["code"].as_str().unwrap_or("").to_owned(), d["path"].as_str().unwrap_or("").to_owned(), d["line"].as_i64().unwrap_or(0), d["message"].as_str().unwrap_or("").to_owned()))
+            .collect();
+        found.sort();
+        found
+    }
+
+    /// plan-helpers-allowlist finds what its linter finds (scripts/lint_plan_helpers_allowlist.py, decision 0690): a
+    /// name's helper is the latest write in its own file (the linter's map is one per file: `a.py` and `b.py` write `h`
+    /// at the same visit index, each a helper of its own, and neither's `fetch` takes the other's), and a private or
+    /// eager-sounding name is one by its spelling alone.
+    #[test]
+    fn plan_helpers_allowlist_finds_what_its_linter_finds() {
+        let found = findings_of(
+            "data-layer/plan-helpers-allowlist.rerail",
+            &[
+                ("impl/a.py", "h = grammar_row_lazy\nfetch = h\n"),
+                ("impl/b.py", "h = execute_via_plan\nfetch = h\n"),
+                ("impl/c.py", "from impl.common.l2070_server_plan.plan_helpers import _x_via_plan\nfrom impl.common.l2070_server_plan import plan_helpers as ph\nph._y_via_plan()\n"),
+                ("impl/d.py", "from impl.common.l2070_server_plan.plan_helpers import grammar_row_lazy as execute_rows\n"),
+            ],
+        );
+        let want = |path: &str, line: i64, message: &str| ("PHA001".to_owned(), path.to_owned(), line, message.to_owned());
+        assert_eq!(
+            found,
+            [
+                want("impl/a.py", 2, "lazy terminal grammar_row_lazy assigned to eager alias"),
+                want("impl/b.py", 1, "old or private execute_via_plan alias is forbidden"),
+                want("impl/b.py", 2, "old or private execute_via_plan alias is forbidden"),
+                want("impl/c.py", 1, "old or private _x_via_plan import is forbidden"),
+                want("impl/c.py", 3, "old or private _y_via_plan() call is forbidden"),
+                want("impl/d.py", 1, "lazy terminal grammar_row_lazy imported under eager alias"),
+            ]
+        );
+    }
+
+    /// versioned-merged-identity finds what its checker finds (scripts/check_versioned_merged_identity.py, decision
+    /// 0690): an unreviewed caller (VMI002), a reviewed one whose projection is assigned only after the call, through
+    /// an imported alias (VMI003), one backed through `b = a` (nothing), each reviewed caller absent (VMI001, at the
+    /// steps directory), and a caller two files share (`b.py:go`, under both roots) reported at the last path the
+    /// plugin recorded for it, the graph query's, each at its own line.
+    #[test]
+    fn versioned_merged_identity_finds_what_its_checker_finds() {
+        let steps = "impl/common/l2070_server_plan/steps";
+        let graph = "impl/common/l9700_sql_graph_query";
+        let found = findings_of(
+            "data-layer/versioned-merged-identity.rerail",
+            &[
+                (&format!("{steps}/a.py"), "from m import SqlVersionedMergedCte\n\nclass Foo:\n    def compile(self):\n        return SqlVersionedMergedCte(read_projection=p)\n"),
+                (&format!("{steps}/b.py"), "from m import SqlVersionedMergedCte\n\ndef go():\n    return SqlVersionedMergedCte()\n"),
+                (&format!("{graph}/b.py"), "from m import SqlVersionedMergedCte\n\n\ndef go():\n    x = 1\n    return SqlVersionedMergedCte()\n"),
+                (&format!("{steps}/versioned_query_steps.py"), "from m import SqlVersionedMergedCte as Cte\n\n\nclass VersionedSelectManyRawStep:\n    def compile(self):\n        out = Cte(read_projection=a)\n        a = catalog_versioned_merged_projection(M, cols)\n        return out\n"),
+                (&format!("{steps}/fk_cascade_step.py"), "from m import SqlVersionedMergedCte\n\n\nclass RestrictCheckStep:\n    def compile(self):\n        a = catalog_versioned_merged_projection(M, cols)\n        b = a\n        return SqlVersionedMergedCte(read_projection=b)\n"),
+            ],
+        );
+        let keys: Vec<(&str, &str, i64)> = found.iter().map(|(c, p, l, _)| (c.as_str(), p.as_str(), *l)).collect();
+        let mut want: Vec<(&str, String, i64)> = vec![
+            ("VMI002", format!("{steps}/a.py"), 5),
+            ("VMI002", format!("{graph}/b.py"), 4),
+            ("VMI002", format!("{graph}/b.py"), 6),
+            ("VMI003", format!("{steps}/versioned_query_steps.py"), 6),
+        ];
+        want.extend(std::iter::repeat_n(("VMI001", steps.to_owned(), 1), 10));
+        want.sort();
+        let want: Vec<(&str, &str, i64)> = want.iter().map(|(c, p, l)| (*c, p.as_str(), *l)).collect();
+        assert_eq!(keys, want, "{found:#?}");
+        assert!(found.iter().filter(|(c, p, ..)| c == "VMI002" && p.starts_with(graph)).all(|(.., m)| m.ends_with("Caller: b.py:go.")), "{found:#?}");
+    }
+
     /// The policies reading pyflakes-format's `str.format` family (F521, F522, F524, UP030, UP032) as one pack, with a
     /// policy of another scope (PYI021, stubs only: each rule then tests its documents' scope, `s_rr_scope_not`), through
     /// the whole preparation (their counts below a bound made ranks, decision 0361 step 7): no relation is cross-file

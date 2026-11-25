@@ -335,6 +335,50 @@ far(f, k) :- node(_, f, "call", _, _), text(f, x), node(_, k, "class", _, _), te
     crossings_checked(&p).unwrap();
 }
 
+/// A reader's demand (`rr_reader_demand_…`, the restriction product demand installs on a relation's producers) whose
+/// rules are each on one document, guarding a per-file relation every reader of which is per-file, is each file's own
+/// (decision 0690): its rules are its readers' prefixes, so in each file it holds every key the file's readers ask for.
+/// Read as a test, it leaves `callee` and its readers per-file, though its rows (`alias`'s names) name no document.
+/// One guarding a relation a cross-file rule reads (`far`, through `callee2`) is every file's, as before: that reader
+/// may join one file's prefix with another's rows.
+#[test]
+fn a_readers_demand_guarding_per_file_readers_is_each_files_own() {
+    let text = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl alias(i: node, x: symbol)
+alias(i, x) :- node(_, i, "alias", _, _), text(i, x).
+.decl rr_reader_demand_callee(x: symbol)
+rr_reader_demand_callee("Target").
+rr_reader_demand_callee(x) :- alias(_, x).
+.decl callee(f: node, x: symbol)
+callee(f, x) :- rr_reader_demand_callee(x), node(_, f, "name", _, _), text(f, x).
+.decl ctor(c: node)
+ctor(c) :- node(_, c, "call", _, _), child(c, f, 0), callee(f, "Target").
+ctor(c) :- node(d, c, "call", _, _), child(c, f, 0), alias(i, x), node(d, i, _, _, _), callee(f, x).
+.decl rr_reader_demand_callee2(x: symbol)
+rr_reader_demand_callee2(x) :- alias(_, x).
+.decl callee2(f: node, x: symbol)
+callee2(f, x) :- rr_reader_demand_callee2(x), node(_, f, "name", _, _), text(f, x).
+.decl far(c: node) cross_file
+far(c) :- node(_, c, "call", _, _), child(c, f, 0), alias(_, x), callee2(f, x).
+.output ctor, far
+"#;
+    let v = read(text);
+    let split = split_of(&v);
+    for rel in ["alias", "rr_reader_demand_callee", "callee", "ctor"] {
+        assert!(split.local.contains(rel), "{rel}: {:?}", split.causes);
+    }
+    for rel in ["rr_reader_demand_callee2", "callee2"] {
+        assert!(!split.local.contains(rel), "{rel} is every file's: {:?}", split.local);
+    }
+    let p = programs_of(v).unwrap();
+    assert!(!p.exports.iter().any(|x| x == "rr_reader_demand_callee"), "each file's own: {:?}", p.exports);
+    crossings_checked(&p).unwrap();
+}
+
 /// A cross-file relation of names a per-file rule reads is staged before the program (decision 0675): `exported(m, x)`,
 /// each module's defined names, is made from every file's rows, and `uses` reads it at its own import's module and
 /// name. Staged, it is placeless to the split and `uses` is per-file. One holding a node (`exported_at`) or a value

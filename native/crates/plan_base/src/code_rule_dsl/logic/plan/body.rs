@@ -13,6 +13,9 @@ use std::sync::Arc;
 /// The prefix of the demand relations product demand makes (`corpus::product_demand`): a demanded relation's own
 /// demand, which bounds what its rule reads.
 pub const PRODUCT_DEMAND: &str = "rr_product_demand_";
+/// The prefix of the restrictions product demand installs on a relation's producers (`product_demand::upstream`): an
+/// optional guard whose rules are its relation's readers' prefixes, so it holds every key they ask for (decision 0690).
+pub const READER_DEMAND: &str = "rr_reader_demand_";
 /// The prefix of the pair relations a deferred join's reader reads (decision 0488).
 pub const DEFERRED_PAIRS: &str = "rr_deferred_pairs_";
 

@@ -34,20 +34,20 @@
 // pha_tracked: every helper name the linter follows. pha_private: names it calls private.
 .decl pha_tracked(x: symbol)
 pha_tracked(x) :- pha_public(x) ; pha_private_terminal(x) ; pha_lazy(x) ; pha_legacy_private(x).
-// pha_private(x): one of the names in the file (identifiers and imported names) that the linter calls private.
+// pha_private(x): a name the linter calls private (`_is_private_plan_helper_name`, a test of the name alone). A test
+// of text, read where its reader holds the name (a string filter, decision 0037), not a set gathered from every file.
 .decl pha_private(x: symbol)
 pha_private(x) :- pha_legacy_private(x).
-pha_private(x) :- kind(n, "identifier"), text(n, x), prefix("_", x), contains("via_plan", x).
+pha_private(x) :- text(_, x), prefix("_", x), contains("via_plan", x).
 // pha_forbidden(x): imported or aliased, x is reported outright (lazy terminals only under an eager alias).
 .decl pha_forbidden(x: symbol)
 pha_forbidden(x) :- pha_public(x) ; pha_private(x).
-// pha_eager_alias(l): a local name that reads as eager (any case): execute, fetch, scalar, ddl.
+// pha_eager_alias(l): a name that reads as eager (any case): execute, fetch, scalar, ddl (`_is_eager_alias`, a test
+// of the name alone, as pha_private).
 .decl pha_eager_word(w: symbol)
 pha_eager_word("execute"). pha_eager_word("fetch"). pha_eager_word("scalar"). pha_eager_word("ddl").
 .decl pha_eager_alias(l: symbol)
-pha_eager_alias(l) :- pha_local(l), pha_eager_word(w), icontains(w, l).
-.decl pha_local(l: symbol)
-pha_local(l) :- pha_write(_, l, _, _).
+pha_eager_alias(l) :- text(_, l), pha_eager_word(w), icontains(w, l).
 
 // ---- 1. what each name holds -------------------------------------------------------------------------------------
 // pha_import(i, a, y, l): `from impl.common.l2070_server_plan.plan_helpers import y as l` (alias node a), y a helper
@@ -107,10 +107,11 @@ pha_stores(a) :- pha_import(_, a, _, _).
 pha_stores(v) :- pha_write(_, _, v, _), pha_attr_helper(v, _).
 pha_stores(v) :- pha_write(_, _, v, _), kind(v, "identifier"), text(v, y),
     (pha_tracked(y) ; pha_write(_, y, v2, _), pha_stores(v2), earlier(v2, v)).
+// The write at that index in e's own file: a visit index is a document's (the linter's map is one per file).
 .decl pha_latest(e: node, v: node)
 pha_latest(e, v) :- pha_asked(e), kind(e, "identifier"), text(e, x),
     k = max j : { pha_write(_, x, v2, _), pha_stores(v2), earlier(v2, e), visit_index(v2, j) },
-    visit_index(v, k), pha_write(_, x, v, _).
+    docof(e, d), visit_index(v, k), docof(v, d), pha_write(_, x, v, _).
 
 // ---- 2. callsites -----------------------------------------------------------------------------------------------
 // pha_module(d, m): the linter's module name for a path: from the first `impl` directory on, else after the first

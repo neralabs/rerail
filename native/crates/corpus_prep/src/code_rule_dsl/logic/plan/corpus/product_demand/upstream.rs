@@ -9,7 +9,7 @@ use crate::code_rule_dsl::logic::program_facts::Field;
 use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Lit, RuleId, RuleRef, Slot, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub(super) const PREFIX: &str = "rr_reader_demand_";
+pub(super) const PREFIX: &str = crate::code_rule_dsl::logic::plan::body::READER_DEMAND;
 
 fn is_demand(rel: &str) -> bool {
     rel.starts_with(PREFIX) || rel.starts_with(PRODUCT)

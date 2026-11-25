@@ -249,6 +249,37 @@ other_jsx(d) :- doc(d, p, _), package_for(p, dir), deps_on(dir, "other").
         let _ = driven;
     }
 
+    /// A reader that reaches the key only through its document and its order (`earlier(i, c)` as the lowering writes
+    /// it: `node(d, i, _, _, _), visit_index(i, a), …, a < b`) asks for every node of the document before some point:
+    /// the request restricts nothing the producer does not, and costs a join of the document's nodes with the other
+    /// side (versioned-merged-identity's alias before its call, nodes × calls in each file). The join is left as
+    /// written. A reader that narrows the key otherwise still drives it.
+    #[test]
+    fn a_reader_reaching_the_key_by_order_alone_leaves_the_join_as_written() {
+        let requested = |narrow: &str| {
+            let v = parse(&format!(r#"
+.decl node(d: number, n: node, k: symbol, s: number, e: number)
+.decl visit_index(n: node, i: number)
+.decl kind(n: node, k: symbol)
+.decl field(n: node, f: symbol, c: node)
+.decl text(n: node, x: symbol)
+.decl marked(n: node)
+.decl docof(n: node, d: number)
+.input node, visit_index, kind, field, text, marked, docof
+.decl alias(i: node, x: symbol)
+alias(i, x) :- kind(i, "import"), field(i, "alias", a), text(a, x).
+.decl ctor(c: node)
+ctor(c) :- kind(c, "call"), field(c, "function", f), node(d, c, _, _, _), visit_index(c, b), node(d, i, _, _, _), visit_index(i, a), a < b{narrow}, alias(i, x), text(f, x).
+.output ctor
+"#));
+            let (made, _) = rewritten(&v);
+            F::columns_of(&*made, &format!("{DEFERRED_PAIRS}alias")).is_some()
+        };
+        assert!(!requested(""), "the reader reaches the alias by order alone");
+        assert!(!requested(", docof(i, e), docof(c, e)"), "and by its document");
+        assert!(requested(", marked(i)"), "marked narrows the aliases");
+    }
+
     /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
     /// request, a union over the readers, restrict nothing: the join is left as written. Readers that each narrow
     /// the keys still drive it.

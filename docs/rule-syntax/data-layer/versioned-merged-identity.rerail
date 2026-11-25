@@ -101,9 +101,14 @@ vmi_projection(c, e) :- vmi_ctor(c), field(c, "arguments", al), child(al, k, _),
 .violation VMI001(at: loc, caller: symbol) "Expected merged constructor is absent. Caller: {caller}."
 // The linter reports it at line 0 of the steps directory; the recording puts it at line 1.
 VMI001(@place("impl/common/l2070_server_plan/steps", 1), s) :- vmi_expected(s), !vmi_caller(_, s, _).
+// vmi_finding(c, k, s): constructor c, of caller s, is found by VMI00k, in its own file. Only where the plugin reports
+// it (vmi_report_path, a path of another file where two files' callers are one) is across files.
+.decl vmi_finding(c: node, k: number, s: symbol)
+vmi_finding(c, 2, s) :- vmi_caller(c, s, _), !vmi_expected(s).
+vmi_finding(c, 3, s) :- vmi_caller(c, s, _), vmi_expected(s), !vmi_backed_ctor(c).
 .violation VMI002(at: loc, caller: symbol) "Unreviewed merged constructor requires catalog identity audit. Caller: {caller}."
-VMI002(@place(p, l), s) :- vmi_caller(c, s, _), !vmi_expected(s), vmi_report_path(s, p), line(c, l).
+VMI002(@place(p, l), s) :- vmi_finding(c, 2, s), vmi_report_path(s, p), line(c, l).
 .violation VMI003(at: loc, caller: symbol) "Merged constructor must use a catalog-backed projection builder. Caller: {caller}."
-VMI003(@place(p, l), s) :- vmi_caller(c, s, _), vmi_expected(s), !vmi_backed_ctor(c), vmi_report_path(s, p), line(c, l).
+VMI003(@place(p, l), s) :- vmi_finding(c, 3, s), vmi_report_path(s, p), line(c, l).
 .decl vmi_backed_ctor(c: node)
 vmi_backed_ctor(c) :- vmi_projection(c, e), vmi_backed(c, e).
