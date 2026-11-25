@@ -35,7 +35,7 @@ report(c, f, "Pass a callback to this hook; without one React throws when it run
 report(c, f, "Pass a dependency array to this hook; with only a callback it recomputes on every render and memoizes nothing.") :-
     deps_cb(c, _), deps_hook(c, x, f, _), (x = "useMemo" ; x = "useCallback"), !deps_list(c, _).
 report(c, f, "Pass an inline function to this hook, so the values it reads can be checked against its dependencies.") :-
-    checked(c, f), deps_cb(c, cb), !deps_fn(cb), !kind(cb, "identifier").
+    checked(c, f), deps_cb(c, cb), !deps_fn(cb), !kind(cb, "identifier"), !kind(cb, "generator_function").
 report(c, f, "Pass an inline function to this hook, so the values it reads can be checked against its dependencies.") :-
     deps_named_cb(c, site), site_form(site, "param"), deps_hook(c, _, f, _).
 report(c, f, cat("Add `", x, "` to this hook's dependency array, or pass an inline function; the value passed as its callback can change between renders.")) :-
@@ -69,12 +69,13 @@ current_assigned(site) :- (kind(a, "assignment_expression") ; kind(a, "augmented
 // The plugin meets references scope by scope (the callback's own, then each nested block or function in order),
 // so the first assignment is the earliest in the outermost scope that has one:
 //   if (a) { v = {}; }  v = 43;      reported at 43
+// Order is the start offset (`node`): `visit_index` has no rows for TypeScript under run-policies (NOTES-react-01).
 report(c, w, cat("Keep `", x, "` in a useRef and assign its `.current` instead, or declare it inside the callback; this assignment is lost after each render.")) :-
     stale(c, x, w, i, j), i = min i2 : { stale(c, x, _, i2, _) }, j = min j2 : { stale(c, x, _, i, j2) }.
 .decl stale(c: node, x: symbol, w: node, scope: number, at: number)
 stale(c, k, w, i, j) :- deps_visit(c, v), deps_component(v, _), deps_ref(v, r, _), deps_key(r, k),
     (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", r),
-    field(a, "right", w), nearest(r, sc, block_scope), visit_index(sc, i), visit_index(r, j).
+    field(a, "right", w), nearest(r, sc, block_scope), node(_, sc, _, i, _), node(_, r, _, j, _).
 .decl analysed(c: node)  // the dependency check proper runs: a component scope, and no lost assignment
 analysed(c) :- deps_visit(c, v), deps_component(v, _), !stale(c, _, _, _, _).
 
