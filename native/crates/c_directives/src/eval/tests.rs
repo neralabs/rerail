@@ -1146,6 +1146,34 @@ fn object_like_expansion_is_the_serial_passes() {
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
 }
 
+/// t51 §4: an argument's pre-expansion is one request for every argument spelled alike, whichever parameter of
+/// whichever call made it: each use reads its own call's argument at its own parameter. `x` is `S`'s fourth argument
+/// and then `S4`'s fifth (libtiff's `SKEW(r, g, b, fromskew)` then `SKEW4(r, g, b, a, fromskew)`), and `y` the first
+/// of one call and the second of the next.
+#[test]
+fn an_arguments_expansion_is_read_at_its_own_parameter() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define S(r, g, b, s) { r += s; g += s; }\n#define S4(r, g, b, a, s) { r += s; a += s; }\nS(r, g, b, x) S4(r, g, b, a, x)\n")],
+        &[("main.c", "#define F(p, q) [p q]\n#define G(p, q) <q p>\nF(y, z) G(z, y) F(z, y)\n")],
+        &[("main.c", "#define ID(v) v\n#define F(p, q) ID(q) p\n#define G(p, q, r) ID(r) q\nF(1, 2) G(0, 1, 2) G(2, 1, 0)\n")],
+    ];
+    shapes_agree(shapes);
+}
+
+/// A paste's right operand from the body is a token of its own, and the body after it goes on: `a##_y z w` (libuv's
+/// `uv_##name##_init(uv_loop_t* loop, ...)`, OpenSSL's `kdf_##funcname##_newctx(void *provctx) { ... }`).
+#[test]
+fn the_body_after_a_paste_is_kept() {
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", "#define P(a) x a##_y z w\nP(q)\n")],
+        &[("main.c", "#define P(a) x a##_y ( z ) w\nP(q) P()\n")],
+        &[("main.c", "#define W(name, NAME) int uv_##name##_init(uv_loop_t* loop, uv_##name##_t* handle) { init(loop, (uv_handle_t*) handle, UV_##NAME); return 0; }\nW(prepare, PREPARE)\nW(check, CHECK)\n")],
+        &[("main.c", "#define K(f, k) static void *kdf_##f##_newctx(void *p) { return n(k, p); }\nK(tls1_prf, \"TLS1-PRF\")\nK(hkdf, \"HKDF\")\n")],
+        &[("main.c", "#define B(a) pre a ## b ## c post more\n#define C(a) x ## a y z\nB(1) C(2) C()\n")],
+    ];
+    shapes_agree(shapes);
+}
+
 /// The shapes of `shapes`, each in C and C++, expanded on the device, against the serial pass.
 fn shapes_agree(shapes: &[&[(&str, &str)]]) -> (usize, usize) {
     let (mut tokens, mut launches) = (0, 0);
@@ -3085,6 +3113,12 @@ fn line_and_file_are_the_serial_passes() {
         &[("main.c", "__DATE__ __TIME__ __TIMESTAMP__\n#define D __DATE__ x\nD __has_include __has_include(<a.h>) __has_embed(\"e\") __has_include_next\n")],
         // An empty file included: its root has no children (its text map's owner is itself).
         &[("main.c", "#include \"e.h\"\n__FILE__ __LINE__\n#include \"e.h\"\nx __LINE__\n"), ("e.h", "")],
+        // `#` and `##` of a built-in whose place a call made (t51 §4): spelled at each occurrence. doctest's anonymous
+        // variable, pandas' `XSTR(__LINE__)`; a paste on either side; one memoized result at three lines.
+        &[("main.c", "#define CAT_(a, b) a##b\n#define CAT(a, b) CAT_(a, b)\n#define ANON CAT(anon, __LINE__)\nint ANON;\nint ANON;\n\nint ANON;\n")],
+        &[("main.c", "#define STR(x) #x\n#define XSTR(x) STR(x)\n#define AT \"at \" __FILE__ \":\" XSTR(__LINE__)\nAT\n\nAT AT\n")],
+        &[("main.c", "#define CAT_(a, b) a##b\n#define CAT(a, b) CAT_(a, b)\n#define L CAT(__LINE__, u) CAT(v, __LINE__) CAT(__FILE__, )\nL\nL\n")],
+        &[("main.c", "#define STR(x) #x\n#define XSTR(x) STR(x)\n#define S(y) XSTR(y __LINE__ y)\nS(\"q\")\nS(z)\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);

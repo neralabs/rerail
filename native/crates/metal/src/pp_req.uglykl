@@ -73,6 +73,16 @@ UKL_INLINE uint32_t rx_alloc(Ar a, uint32_t n) {
 #define EK_JOIN (7u)
 #define RX_BI_CODE(m) (0xffffffffu - (m))
 #define RX_BI_M(x) (0xffffffffu - ((x) & 15u))
+// A built-in spelled by `#` or `##` where a call made its place (t51 §4: its value is its occurrence's, so its
+// spelling is made there too): `x`'s bits 4-5 the operation (`RX_BI_STR`: parameter `p`'s argument stringized;
+// `RX_BI_PL`, `RX_BI_PR`: its token `off` the left or right operand of a paste whose other is the token `from`),
+// bits 6-13 the parameter, 14-23 the token's place in its argument; `y` a scratch token spelled for its key only.
+// (A `__COUNTER__`'s entry holds its rank there instead: never spelled so.)
+#define RX_BI_OP(x) (RX_BI_M(x) == L_COUNTER ? 0u : (((x) >> 4) & 3u))
+#define RX_BI_STR (1u)
+#define RX_BI_PL (2u)
+#define RX_BI_PR (3u)
+#define RX_BI_SPELL(m, op, p, off) (RX_BI_CODE(m) | ((op) << 4) | ((p) << 6) | ((off) << 14))
 #define EF_NOEXP (1u << 24)
 #define EF_SPSET (1u << 25)
 #define EF_SP (1u << 26)
@@ -384,6 +394,8 @@ typedef struct Tok {
     // definition (a body item's); flags (`T_NOEXP`, `T_SPACE`); the request (or occurrence) whose list holds it as a
     // leaf: its producer.
     uint32_t ref, kind, at, def, flags, owner;
+    // A built-in's (`EK_BI`): whether `owner` is an occurrence (read at one), not a request.
+    bool occ;
 } Tok;
 
 // An occurrence (decision 0613 §6): a use of a request's result in the tree, made top down (`rx_occ_make`).
@@ -410,9 +422,10 @@ UKL_INLINE bool rx_binding(Ar a, uint32_t r, uint32_t o, uint32_t p, UKL_PRIVATE
         r = h[r + RQ_UP];
         if (o != RX_NONE) o = h[o + OC_UP];
     }
-    // An argument's pre-expansion: its call's parameter.
+    // An argument's pre-expansion: its call's parameter. Its record is every argument's spelled alike (the memo's),
+    // so at an occurrence the parameter is the occurrence's (`OC_CS`), and only where none is (its run) its maker's.
     if (h[r + RQ_KIND] == RK_ARG) {
-        p = h[r + RQ_DEF];
+        p = o != RX_NONE ? h[o + OC_CS] : h[r + RQ_DEF];
         if (o != RX_NONE) o = h[o + OC_UP];
         r = h[r + RQ_CS];
     }
@@ -524,7 +537,8 @@ UKL_INLINE uint32_t rx_tok_e(Ux u, Ar a, uint32_t r, uint32_t o, Ent e, uint32_t
         uint32_t y = e.from + x, kind = e_kind(e);
         if (kind == EK_BI) {
             // Its value is its occurrence's: read here as its name, painted.
-            Tok q; q.kind = EK_BI; q.def = RX_BI_M(e_x(e)); q.owner = o != RX_NONE ? o : r; q.at = e.from; q.ref = e.y;
+            Tok q; q.kind = EK_BI; q.def = RX_BI_M(e_x(e)); q.owner = o != RX_NONE ? o : r; q.ref = e.y;
+            q.at = RX_BI_OP(e_x(e)) == 0u ? e.from : RX_NONE; q.occ = o != RX_NONE;
             q.flags = flags | T_NOEXP;
             *out = q;
             return SK_OK;
@@ -868,18 +882,54 @@ UKL_INLINE uint32_t rx_bi_spelled(Ux u, Ar a, Tok t) {
     if (t.def == L_PRAGMA || t.at == RX_NONE || (t.at & 0x80000000u) != 0u) { px_refuse(a.ctl, X_BUILTIN); return SCRATCH; }
     return rx_bi_value(u, a, t.def, t.at, t.at);
 }
+// Whether a built-in's token is spelled at its occurrences (`RX_BI_OP`): its place a call made, and its value no
+// rank's (`__COUNTER__`) or effect's (`_Pragma`).
+UKL_INLINE bool rx_bi_later(Tok t) {
+    return t.kind == EK_BI && t.def != L_COUNTER && t.def != L_PRAGMA && t.at != RX_NONE && (t.at & 0x80000000u) != 0u;
+}
+// A scratch token spelled `l`, `hashes` `#`s, `r` (`l` none: `PLACEMARKER`): a spelled built-in's key (`RX_BI_OP`).
+UKL_INLINE uint32_t rx_scratch_join(Ux u, Ar a, uint32_t l, uint32_t hashes, uint32_t r) {
+    Span x = ref_span(u, r);
+    uint32_t ll = 0u;
+    PP_GLOBAL const uint8_t* lp = x.p;
+    if (l != PLACEMARKER) { Span y = ref_span(u, l); lp = y.p; ll = y.len; }
+    uint32_t n = ll + hashes + x.len;
+    uint32_t base = ukl_atomic_add(&a.ctl[4], n), id = ukl_atomic_add(&a.ctl[5], 1u);
+    if (base + n > a.sb_cap || id >= a.st_cap) { px_refuse(a.ctl, X_ROOM); return PLACEMARKER; }
+    uint32_t w = base;
+    for (uint32_t b = 0u; b < ll; b++) a.sbytes[w++] = lp[b];
+    for (uint32_t b = 0u; b < hashes; b++) a.sbytes[w++] = ((uint8_t)('#'));
+    for (uint32_t b = 0u; b < x.len; b++) a.sbytes[w++] = x.p[b];
+    a.stoks[id].start = base; a.stoks[id].end = w; a.stoks[id].kind = K_IDENTIFIER;
+    return SCRATCH | id;
+}
 
-// `#`'s string of call `q`'s parameter `p`'s raw tokens (`stringize`): a blank where there was white space, `"` and
-// `\` escaped in a literal; a string literal of the scratch's.
-UKL_INLINE uint32_t rx_stringize(Ux u, Ar a, uint32_t q, uint32_t p) {
-    uint32_t owner, oo, k0, o0, k1, o1;
-    if (!rx_binding(a, q, RX_NONE, p, &owner, &oo, &k0, &o0, &k1, &o1)) return PLACEMARKER;
-    uint32_t len = rx_span_len(a, owner, k0, o0, k1, o1), n = 2u;
+UKL_INLINE uint32_t rx_bi_loc(Ux u, Ar a, uint32_t req, uint32_t o, uint32_t from);
+UKL_INLINE uint32_t rx_rank_loc(Ux u, Ar a, uint32_t req, uint32_t o, uint32_t from);
+// A token as `#` or `##` spells it: a built-in's value (at occurrence-level reads, `o` set: its occurrence's; else
+// where its place is its own name's, `rx_bi_spelled`), else itself. `SCRATCH` where it has none (refused).
+UKL_INLINE uint32_t rx_spelled(Ux u, Ar a, Tok t, bool at_occ) {
+    if (t.kind != EK_BI) return t.ref;
+    if (!at_occ || !rx_bi_later(t)) return rx_bi_spelled(u, a, t);
+    // Read at an occurrence but held by a request's own list: no occurrence to place it (refused).
+    if (!t.occ) { px_refuse(a.ctl, X_BUILTIN); return SCRATCH; }
+    uint32_t lo = t.owner, lreq = rx_h(a)[lo + OC_REQ];
+    return rx_bi_value(u, a, t.def, rx_bi_loc(u, a, lreq, lo, t.at), rx_rank_loc(u, a, lreq, lo, t.at));
+}
+// `#`'s string of the raw tokens of request `owner`'s list from place (`k0`, `o0`), `len` of them (read at
+// occurrence `oo`, or none: the request's own reading): a blank where there was white space, `"` and `\` escaped
+// in a literal; a string literal of the scratch's. `RX_SPELL_LATER` where a built-in among them is its
+// occurrence's (`rx_bi_later`, read with no occurrence): the string is made at each occurrence (`RX_BI_STR`).
+#define RX_SPELL_LATER (0xfffffffdu)
+UKL_INLINE uint32_t rx_stringize_at(Ux u, Ar a, uint32_t owner, uint32_t oo, uint32_t k0, uint32_t o0, uint32_t len) {
+    uint32_t n = 2u;
+    bool at_occ = oo != RX_NONE;
     for (uint32_t j = 0u; j < len; j++) {
         Tok t; uint32_t pend = 0u;
-        if (rx_tok_s(u, a, owner, RX_NONE, k0, o0 + j, &t, &pend) != SK_OK) { rx_qref(a, 103u); return PLACEMARKER; }
-        // A built-in's value spelled.
-        if (t.kind == EK_BI) { t.ref = rx_bi_spelled(u, a, t); if (t.ref == SCRATCH) return PLACEMARKER; }
+        if (rx_tok_s(u, a, owner, oo, k0, o0 + j, &t, &pend) != SK_OK) { rx_qref(a, 103u); return PLACEMARKER; }
+        if (!at_occ && rx_bi_later(t)) return RX_SPELL_LATER;
+        t.ref = rx_spelled(u, a, t, at_occ);
+        if (t.ref == SCRATCH) return PLACEMARKER;
         if (px_is_counter(a, t.ref)) px_refuse(a.ctl, X_COUNTER_SPELLED);
         Span x = ref_span(u, t.ref);
         if (has_splice(x.p, x.len)) px_refuse(a.ctl, X_SPLICE);
@@ -892,8 +942,8 @@ UKL_INLINE uint32_t rx_stringize(Ux u, Ar a, uint32_t q, uint32_t p) {
     a.sbytes[w++] = ((uint8_t)('"'));
     for (uint32_t j = 0u; j < len; j++) {
         Tok t; uint32_t pend = 0u;
-        if (rx_tok_s(u, a, owner, RX_NONE, k0, o0 + j, &t, &pend) != SK_OK) return PLACEMARKER;
-        if (t.kind == EK_BI) t.ref = rx_bi_spelled(u, a, t);
+        if (rx_tok_s(u, a, owner, oo, k0, o0 + j, &t, &pend) != SK_OK) return PLACEMARKER;
+        t.ref = rx_spelled(u, a, t, at_occ);
         Span x = ref_span(u, t.ref);
         if (j > 0u && (t.flags & T_SPACE) != 0u) a.sbytes[w++] = ((uint8_t)(' '));
         for (uint32_t b = 0u; b < x.len; b++) {
@@ -905,6 +955,12 @@ UKL_INLINE uint32_t rx_stringize(Ux u, Ar a, uint32_t q, uint32_t p) {
     a.sbytes[w++] = ((uint8_t)('"'));
     a.stoks[id].start = base; a.stoks[id].end = w; a.stoks[id].kind = K_LITERAL;
     return SCRATCH | id;
+}
+// `#`'s string of call `q`'s parameter `p`'s raw tokens (`stringize`), in the call's own reading.
+UKL_INLINE uint32_t rx_stringize(Ux u, Ar a, uint32_t q, uint32_t p) {
+    uint32_t owner, oo, k0, o0, k1, o1;
+    if (!rx_binding(a, q, RX_NONE, p, &owner, &oo, &k0, &o0, &k1, &o1)) return PLACEMARKER;
+    return rx_stringize_at(u, a, owner, RX_NONE, k0, o0, rx_span_len(a, owner, k0, o0, k1, o1));
 }
 
 // Call `q`'s substituted list (`RQ_S`). `RX_SUB_WAIT` where its `__VA_OPT__` waits for the variadic argument's
@@ -948,7 +1004,8 @@ UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend)
         bool on = false;
         if (i > 0u && !pasted && (!vo || (u.vai[d.ifirst + i] & ~VA_OFF) == 0u)) {
             uint32_t pt = u.items[d.ifirst + i - 1u], pp = pt & 0xffffu;
-            on = (pp == NO_PARAM || pp >= nargs) && (pt & (I_PASTE | I_HASH)) == 0u && (!vo || (u.vai[d.ifirst + i - 1u] & ~VA_OFF) == 0u);
+            on = (pp == NO_PARAM || pp >= nargs) && (pt & (I_PASTE | I_HASH)) == 0u && (!vo || (u.vai[d.ifirst + i - 1u] & ~VA_OFF) == 0u) &&
+                 !(i > 1u && (u.items[d.ifirst + i - 2u] & I_PASTE) != 0u);
         }
         if (!on) need++;
     }
@@ -981,7 +1038,14 @@ UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend)
             if (p1 != NO_PARAM && p1 < nargs) {
                 uint32_t g = rx_stringize(u, a, q, p1);
                 if (g == PLACEMARKER) return RX_SUB_STOP;
-                rx_put(a, s, w++, e_make(EK_TOK, 0u, g, 0u, 1u, EF_SPSET | (sp ? EF_SP : 0u)));
+                if (g == RX_SPELL_LATER) {
+                    // Made at each occurrence (`rx_emit`): keyed by a scratch token `#` and the operator's spelling.
+                    uint32_t key = rx_scratch_join(u, a, PLACEMARKER, 1u, d.body + i);
+                    if (key == PLACEMARKER || p1 >= 256u) { px_refuse(a.ctl, X_BUILTIN); return RX_SUB_STOP; }
+                    rx_put(a, s, w++, e_make(EK_BI, RX_BI_SPELL(L_LINE, RX_BI_STR, p1, 0u), key, 0u, 1u, EF_SPSET | (sp ? EF_SP : 0u)));
+                } else {
+                    rx_put(a, s, w++, e_make(EK_TOK, 0u, g, 0u, 1u, EF_SPSET | (sp ? EF_SP : 0u)));
+                }
                 i++;
                 continue;
             }
@@ -1017,7 +1081,9 @@ UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend)
         bool alone = (it & I_PASTE) != 0u || (i > 0u && (u.items[d.ifirst + i - 1u] & I_PASTE) != 0u) || (i + 1u < d.n_body && (u.items[d.ifirst + i + 1u] & I_PASTE) != 0u);
         if (!alone && w > 0u && vw != w) {
             Ent l = rx_ent(a, s, w - 1u);
+            // Never onto a `##`'s operand: the paste takes that entry whole (`paste_all` below).
             if (e_kind(l) == EK_BODY && e_x(l) == def && l.from + l.len == i && !rx_is_paste(u, l) &&
+                !(l.from > 0u && (u.items[d.ifirst + l.from - 1u] & I_PASTE) != 0u) &&
                 !(l.from + l.len - 1u + 1u < d.n_body && (u.items[d.ifirst + l.from + l.len - 1u + 1u] & I_PASTE) != 0u)) {
                 l.len++;
                 rx_put(a, s, w - 1u, l);
@@ -1039,10 +1105,24 @@ UKL_INLINE uint32_t rx_subst(Ux u, Ar a, uint32_t q, UKL_PRIVATE uint32_t* pend)
             tr.ref = PLACEMARKER; tr.flags = (rt.w & EF_SP) != 0u ? T_SPACE : 0u;
             if (!lpm && rx_tok_e(u, a, q, RX_NONE, lt, 0u, lt.len - 1u, &tl, &pd) != SK_OK) { rx_qref(a, 104u); return RX_SUB_STOP; }
             if (!rpm && rx_tok_e(u, a, q, RX_NONE, rt, 0u, 0u, &tr, &pd) != SK_OK) { rx_qref(a, 105u); return RX_SUB_STOP; }
-            // A built-in's value pasted: not read by the requests (its value is its occurrence's).
-            if (!lpm && tl.kind == EK_BI) { tl.ref = rx_bi_spelled(u, a, tl); if (tl.ref == SCRATCH) return RX_SUB_STOP; }
-            if (!rpm && tr.kind == EK_BI) { tr.ref = rx_bi_spelled(u, a, tr); if (tr.ref == SCRATCH) return RX_SUB_STOP; }
             uint32_t lf = tl.flags & (T_SPACE | T_NOEXP), rf = tr.flags & (T_SPACE | T_NOEXP), of = 0u;
+            // A built-in pasted to a token where a call made its place: the paste made at each occurrence (`rx_emit`),
+            // keyed by a scratch token spelled `l##r`. One whose place is its own name's: its value pasted here.
+            bool ll = !lpm && !rpm && rx_bi_later(tl) && !(tr.kind == EK_BI) && e_kind(lt) == EK_PARAM;
+            bool rl = !lpm && !rpm && rx_bi_later(tr) && !(tl.kind == EK_BI) && e_kind(rt) == EK_PARAM;
+            if (ll || rl) {
+                uint32_t pp = ll ? e_x(lt) : e_x(rt), off = ll ? lt.from + lt.len - 1u : rt.from;
+                uint32_t key = rx_scratch_join(u, a, ll ? tr.ref : tl.ref, 2u, ll ? tl.ref : tr.ref);
+                if (key == PLACEMARKER || pp >= 256u || off >= 1024u) { px_refuse(a.ctl, X_BUILTIN); return RX_SUB_STOP; }
+                uint32_t m = ll ? tl.def : tr.def;
+                rx_put(a, s, o - 1u, e_make(EK_BI, RX_BI_SPELL(m, ll ? RX_BI_PL : RX_BI_PR, pp, off), key, ll ? tr.ref : tl.ref, 1u,
+                                            EF_SPSET | ((lf & T_SPACE) != 0u ? EF_SP : 0u)));
+                k++;
+                continue;
+            }
+            // A built-in's value pasted where its place is its own name's (the same at every occurrence).
+            if (!lpm && !rpm && tl.kind == EK_BI) { tl.ref = rx_bi_spelled(u, a, tl); if (tl.ref == SCRATCH) return RX_SUB_STOP; }
+            if (!lpm && !rpm && tr.kind == EK_BI) { tr.ref = rx_bi_spelled(u, a, tr); if (tr.ref == SCRATCH) return RX_SUB_STOP; }
             bool ok = true;
             uint32_t g = px_paste(u, a, lpm ? PLACEMARKER : tl.ref, lf, rpm ? PLACEMARKER : tr.ref, rf, slot, &of, &ok);
             if (ok) {
@@ -2558,6 +2638,26 @@ UKL_INLINE void rx_emit(Ux u, Ar a, RxIn in, uint32_t m) {
                 rx_piece(a, P_BODY | e_x(e), y, take, at, f2);
             } else if (kind == EK_TOK) {
                 rx_piece(a, P_REF, e.y, 1u, at, f2);
+            } else if (kind == EK_BI && RX_BI_OP(e_x(e)) != 0u) {
+                // A built-in spelled at its occurrence: its parameter's argument read here (`rx_binding`).
+                uint32_t op = RX_BI_OP(e_x(e)), pp = (e_x(e) >> 6) & 0xffu, off = (e_x(e) >> 14) & 0x3ffu, g = SCRATCH;
+                uint32_t owner, oo, k0, o0, k1, o1;
+                if (!rx_binding(a, req, occ, pp, &owner, &oo, &k0, &o0, &k1, &o1)) { rx_qref(a, 141u); return; }
+                if (op == RX_BI_STR) {
+                    g = rx_stringize_at(u, a, owner, oo, k0, o0, rx_span_len(a, owner, k0, o0, k1, o1));
+                    if (g == PLACEMARKER || g == RX_SPELL_LATER) g = SCRATCH;
+                } else {
+                    Tok bt; uint32_t pz = 0u;
+                    uint32_t v = rx_tok_s(u, a, owner, oo, k0, o0 + off, &bt, &pz) == SK_OK && rx_bi_later(bt) ? rx_spelled(u, a, bt, true) : SCRATCH;
+                    bool ok = v != SCRATCH;
+                    uint32_t of = 0u;
+                    if (ok) g = px_paste(u, a, op == RX_BI_PL ? v : e.from, 0u, op == RX_BI_PL ? e.from : v, 0u, rq(a, req, RQ_SLOT), &of, &ok);
+                    // A paste that names a token of the unit's might name a macro, which the rescan would have
+                    // expanded: refused, as one that makes no token.
+                    if (!ok || (g & SCRATCH) == 0u) { px_refuse(a.ctl, X_BUILTIN); g = SCRATCH; }
+                }
+                if (g == SCRATCH) { px_refuse(a.ctl, X_BUILTIN); return; }
+                rx_piece(a, P_REF, g, 1u, at, f2);
             } else if (kind == EK_BI) {
                 uint32_t m = RX_BI_M(e_x(e)), g = SCRATCH;
                 uint32_t loc = rx_bi_loc(u, a, req, occ, e.from);

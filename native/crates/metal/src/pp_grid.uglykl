@@ -342,6 +342,10 @@ UKL_ONCE bool rx_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         if (c_[26] > W(XROWS_CAP)) px_refuse(c_, X_ROOM);
     }
     BARRIER();
+    // Every counted row empty until its occurrence makes it: a run cut short (a refusal, a heap past its room) leaves
+    // rows unmade, and `rx_row` reads only the made ones, never an earlier run's.
+    EACH(r, ukl_min(AT(const uint32_t, CTL)[26], W(XROWS_CAP))) AT(uint32_t, XROWS)[3u * r] = 0u;
+    BARRIER();
     // The occurrences, top down, and their rows.
     RX_QUEUE_RESET();
     {
