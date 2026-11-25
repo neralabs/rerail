@@ -31,6 +31,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
+import { appendToGroup } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutCodeRuleCatalog, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
 import type { SteerShell } from "./rerail-steer.js";
@@ -347,10 +348,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * `acceptsPath` and `ignoresPath` for one walk. A path's full lookup (`#owner`) resolves its real path and looks for
-   * `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file. A file the walk found is
-   * no link, so its checkout is its folder's: each folder gets the full lookup once, for itself and its files. A
-   * checkout recorded while the walk runs owns its files from the next walk.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk. A path's full lookup (`#owner`) resolves its real path
+   * and looks for `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file, and the
+   * grouping of what it found by checkout a third. A file the walk found is no link, so its checkout is its folder's:
+   * each folder gets the full lookup once, for itself and its files. A checkout recorded while the walk runs owns its
+   * files from the next walk.
    */
   walkView(root?: string): Required<WalkView> {
     const folders = new Map<string, CheckoutOwner | undefined>();
@@ -368,6 +370,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return {
       acceptsPath: path => this.#accepts(fileOwner(path)),
       ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory),
+      sourceRoot: path => fileOwner(path)?.checkoutRoot,
     };
   }
 
@@ -666,8 +669,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const partitioned = new Map<Lane, CodeRuleEdit[]>();
     for (const edit of batch.edits) {
       const routed = this.#route(edit.path);
-      if (routed === undefined) continue;
-      partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), { ...edit, path: routed.path }]);
+      if (routed !== undefined) appendToGroup(partitioned, routed.lane, { ...edit, path: routed.path });
     }
     const responses: CodeRuleResponse[] = [];
     for (const lane of [...this.#lanes.values()]) {

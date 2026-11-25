@@ -14,9 +14,9 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { dimensionsRangeFailure, heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, rerailRangeFailure, ruleKeyRangeFailure, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
-import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
+import { coreFloor, dimensionedRules, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, RERAIL_DOCUMENTS_SINCE, rerailRules, RULE_KEY_SINCE, shippedLanguages, shippedRuleKeys } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
@@ -1146,13 +1146,14 @@ describe("the core range the release writes", () => {
     const languages = shippedLanguages(directory);
     const ruleKeys = shippedRuleKeys(directory);
     const rerail = rerailRules(packJson);
-    const floor = coreFloor(heldOff, languages, ruleKeys, rerail);
-    return floor === undefined ? [] : [{ id, heldOff, languages, ruleKeys, rerail, floor }];
+    const dimensioned = dimensionedRules(packJson);
+    const floor = coreFloor(heldOff, languages, ruleKeys, rerail, dimensioned);
+    return floor === undefined ? [] : [{ id, heldOff, languages, ruleKeys, rerail, dimensioned, floor }];
   });
 
   // react ships a utility named `stored`, which is no rule key: its range stays.
-  it("is due for the packs holding a rule off, shipping a rule in a language or with an ast rule key added since, or shipping a .rerail rule", () => {
-    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "javascript", "python", "typescript"]);
+  it("is due for the packs holding a rule off, shipping a rule in a language or with an ast rule key added since, shipping a .rerail rule, or giving rules dimensions", () => {
+    expect(floors.map(({ id }) => id)).toEqual(["complexity", "django", "javascript", "python", "rerail", "typescript"]);
     expect(floors.filter(({ ruleKeys }) => ruleKeys.length > 0).map(({ id, ruleKeys }) => [id, ruleKeys])).toEqual([
       ["javascript", ["stored"]],
       ["python", ["stored"]],
@@ -1160,15 +1161,16 @@ describe("the core range the release writes", () => {
     ]);
   });
 
-  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, ruleKeys, rerail, floor }) => {
+  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, ruleKeys, rerail, dimensioned, floor }) => {
     const failures = (range: string): (string | undefined)[] => [
       heldOffRangeFailure(range, heldOff, floor),
       languageRangeFailure(range, languages, floor),
       ruleKeyRangeFailure(range, ruleKeys, floor),
       rerailRangeFailure(range, rerail, floor),
+      dimensionsRangeFailure(range, dimensioned, floor),
     ];
     expect(failures(">=0.1.0-0").some(failure => failure !== undefined)).toBe(true);
-    expect(failures(raisedCoreRange(floor))).toEqual([undefined, undefined, undefined, undefined]);
+    expect(failures(raisedCoreRange(floor))).toEqual([undefined, undefined, undefined, undefined, undefined]);
   });
 });
 

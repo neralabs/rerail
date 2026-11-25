@@ -1590,7 +1590,17 @@ export interface IgnoredEditMatch {
 }
 
 /** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
-export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath">;
+export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath" | "sourceRoot">;
+
+/**
+ * Puts `item` last in the list `groups` holds for `key`, starting one for a new key. The list grows in place, so
+ * grouping n items costs n steps; a copy of the list for each item would cost n * n / 2 element copies.
+ */
+export function appendToGroup<K, V>(groups: Map<K, V[]>, key: K, item: V): void {
+  const group = groups.get(key);
+  if (group === undefined) groups.set(key, [item]);
+  else group.push(item);
+}
 
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
@@ -1620,10 +1630,10 @@ export interface CodeRuleAuditor {
    */
   ignoresPath?(path: string, directory: boolean): boolean;
   /**
-   * `acceptsPath` and `ignoresPath` for one walk, which asks them only of the files and folders it found, never of a
-   * link, reaching each through folders from `root` (absolute), where it starts. It may keep what it learns of a folder
-   * for the rest of the walk, so a walk costs a lookup per folder where the auditor would make one per file. Absent:
-   * the walk asks the auditor itself.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk, which asks them only of the files and folders it found,
+   * never of a link, reaching each through folders from `root` (absolute), where it starts. It may keep what it learns
+   * of a folder for the rest of the walk, so a walk costs a lookup per folder where the auditor would make one per
+   * file. Absent: the walk asks the auditor itself.
    */
   walkView?(root?: string): WalkView;
   /**
