@@ -30,9 +30,11 @@ describe("rerail status", () => {
       cwd: folder,
       encoding: "utf8",
       env: { ...process.env, RERAIL_HOME: home, HOME: home, RERAIL_AUTOSTART: "0" },
+      // The test's own timeout cannot end a synchronous spawn, so a hung child is ended here, before it.
+      timeout: 50_000,
     });
 
-    expect(run.stdout.split("\n")[0]).toBe(
+    expect(run.stdout.split("\n")[0], run.stderr).toBe(
       `No Git repository here (${folder}). Rerail works in a Git repository: run rerail status inside one, or start Rerail in one with rerail start --repo <folder>.`,
     );
   }, 60_000);
