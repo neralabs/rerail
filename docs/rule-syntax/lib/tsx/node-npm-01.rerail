@@ -1,0 +1,345 @@
+// tsx/node-npm-01: what eslint-plugin-n's import rules read from the files on disk, written over the engine's
+// `file`, `dir_entry` and `file_line` until core gives it natively (node-resolve.rerail's spec_resolved and
+// node-package.rerail's npm_ignored are declared there with no rows): the file a module specifier resolves to, and
+// which files npm publishes. For n/no-missing-import, n/no-missing-require, n/no-unpublished-import,
+// n/no-unpublished-require, n/no-unpublished-bin and n/no-top-level-await.
+//
+// What a rule gets from this library:
+//   npm01_resolved(n, file)     string n (node_target) resolves to file (from the root), as the plugin's resolver
+//                               finds it (below)
+//   npm01_failed(n)             resolution fails (the plugin's resolveError): no file, no installed package, not a
+//                               data: or http(s): import, and no Node built-in the resolver's fallback takes
+//   npm01_lit(n, x, style)      a number, boolean, null or regex literal is the first argument of require() or
+//                               import(), naming the module String() of it ("42"), which never resolves
+//   npm01_leaves_out(dir, rel)  npm leaves the file at rel (a path from dir) out of the package dir/package.json
+//                               describes: getNpmignore(...).match
+//   npm01_published(d)          document d belongs to a package (node-package's pkg_file) and npm publishes it
+//   npm01_unpublished(n, style, msg)  the plugin's checkPublish (node-resolve's spec_unpublished, over the two above)
+//
+// Examples:
+//   n/no-missing-import       import "./util.js" in a .ts file:   resolves when util.ts exists (the .js -> .ts map)
+//   n/no-missing-require      require("./lib"):                   lib.js, lib.json, …, lib/package.json's main, lib/index.js
+//   n/no-unpublished-require  package.json { "files": ["lib"] }:  src/a.js is not published; lib/a.js is
+//   n/no-unpublished-bin      .npmignore `bin/`:                  bin/cli.js is not published
+//   n/no-top-level-await      `await f()` in a file npm publishes
+//
+// Resolution follows the plugin's enhanced-resolve options (import-target.js): try extensions .js .json .node .mjs
+// .cjs (in a TypeScript file whose tsconfig.json sets allowImportingTsExtensions: .js .ts .mjs .mts .cjs .cts .json
+// .node); for require() and package names, a folder's package.json `main`, then its `index`; in a TypeScript file the
+// tsconfig `paths` aliases and the extension map: `./a.js` is `./a.ts` only (with `jsx` react*: `./a.ts`, then
+// `./a.tsx`), `.cjs` `.cts`, `.mjs` `.mts`, `.jsx` `.tsx`; the file named with the JavaScript extension is not tried.
+// A package name resolves where `node_modules/<name>` is a folder in the importing file's folder or one above it, up
+// to the root; its subpath and `exports` are not read. A specifier that starts with `#` resolves where the nearest
+// package.json's `imports` maps it (under node, require or import, types, default) to a Node built-in or a file.
+// Not read: a tsconfig's `extends` for these two flags, a package's self-reference through `exports`, symlinks.
+//
+// What npm publishes is the plugin's getNpmignore: with a `files` list in package.json, the files it lists (entries as
+// node-ignore reads `/entry` and `/entry/**`; `!entry` leaves out at any depth) and none other; the patterns of the
+// package folder's .npmignore, else, with no `files`, of its .gitignore (gitignore's rules, without case); package.json,
+// its `main`, and a top-level README, LICENSE/LICENCE, CHANGES, CHANGELOG or HISTORY are always published. A package
+// with none of these publishes everything; a file outside the package is never published.
+//
+// The engine answers file system reads (`dir_entry`, `file_line`) only for paths the rules compute from constants (a
+// document's facts cannot drive a request), so the package folders' ignore files, package.json and tsconfig.json
+// files, node_modules listings and the files resolution may find are read by walking the folders from the root. The
+// walk skips the version-control, cache and dependency folders of git_workspace.rs's ignored_directories, and enters
+// the build-output ones the resolver reads too (dist, build, vendor): `import "./build/x.js"` finds a file there,
+// which `file` (the repository walk) does not list.
+//
+// Builds on tsx/node-resolve (node_target, spec_kind, spec_package, pkg_dep, pkg_runtime_dep, pkg_private_skip,
+// allow_module), tsx/node-package (pkg_file), tsx/node (builtin_spec, node_builtin) and tsx/values (api_use, first_arg).
+
+#include "tsx/node-resolve.rerail"
+
+// ---- the folders on disk -------------------------------------------------------------------------------------
+// npm01_dir(d): a folder below the root ("" the root itself) that the walk enters; npm01_disk(f): a file in one.
+.decl npm01_dir(d: symbol)
+npm01_dir("").
+npm01_dir(c) :- npm01_dir(p), dir_entry(p, x, 1), !npm01_skip(x), c = @join(p, x).
+.decl npm01_skip(x: symbol)
+npm01_skip(".git"). npm01_skip(".hg"). npm01_skip(".svn"). npm01_skip(".rerail"). npm01_skip(".venv").
+npm01_skip("__pycache__"). npm01_skip("node_modules"). npm01_skip(".next"). npm01_skip(".turbo"). npm01_skip("coverage").
+npm01_skip("target").
+.decl npm01_disk(f: symbol)
+npm01_disk(f) :- npm01_dir(d), dir_entry(d, x, 0), f = @join(d, x).
+
+// npm01_private(d): d/package.json says "private": true (package_field gives no row for a boolean, so its lines are
+// read: a `"private": true` member on any line).
+.decl npm01_private(d: symbol)
+npm01_private(d) :- npm01_dir(d), dir_entry(d, "package.json", 0), f = @join(d, "package.json"), file_line(f, _, t),
+    match(".*\"private\"\\s*:\\s*true\\b.*", t).
+
+// npm01_ignore_file(d, k): folder d has a .npmignore (k "npm") or a .gitignore (k "git"); npm01_ignore_line its lines.
+.decl npm01_ignore_file(d: symbol, k: symbol)
+npm01_ignore_file(d, "npm") :- npm01_dir(d), dir_entry(d, ".npmignore", 0).
+npm01_ignore_file(d, "git") :- npm01_dir(d), dir_entry(d, ".gitignore", 0).
+.decl npm01_ignore_line(d: symbol, k: symbol, i: number, t: symbol)
+npm01_ignore_line(d, "npm", i, t) :- npm01_ignore_file(d, "npm"), f = @join(d, ".npmignore"), file_line(f, i, t).
+npm01_ignore_line(d, "git", i, t) :- npm01_ignore_file(d, "git"), f = @join(d, ".gitignore"), file_line(f, i, t).
+
+// npm01_tsc_line(d, t): a line of d/tsconfig.json.
+.decl npm01_tsc_line(d: symbol, t: symbol)
+npm01_tsc_line(d, t) :- npm01_dir(d), dir_entry(d, "tsconfig.json", 0), f = @join(d, "tsconfig.json"), file_line(f, _, t).
+
+// npm01_installed(d, m): d/node_modules has package m ("@scope/name" from its scope's folder).
+.decl npm01_installed(d: symbol, m: symbol)
+npm01_installed(d, m) :- npm01_dir(d), dir_entry(d, "node_modules", 1), x = @join(d, "node_modules"), dir_entry(x, m, _),
+    !prefix("@", m), !prefix(".", m).
+npm01_installed(d, cat(s, "/", m)) :- npm01_dir(d), dir_entry(d, "node_modules", 1), x = @join(d, "node_modules"),
+    dir_entry(x, s, 1), prefix("@", s), y = @join(x, s), dir_entry(y, m, _).
+
+// npm01_fdir(d): a folder on disk: one the walk enters, or one above a file the repository walk reads.
+.decl npm01_fdir(d: symbol)
+npm01_fdir(d) :- npm01_dir(d).
+npm01_fdir(@dir(f)) :- file(f).
+npm01_fdir(@dir(d)) :- npm01_fdir(d), d != "".
+
+// ---- the importing file's options -----------------------------------------------------------------------------
+// npm01_req(n, x, style, p): string n names x in that style, in the document at path p.
+.decl npm01_req(n: node, x: symbol, style: symbol, p: symbol)
+npm01_req(n, x, st, p) :- node_target(n, x, st), docof(n, d), doc(d, p, _).
+// npm01_lit(n, x, style): a number, boolean, null or regex literal n is the first argument of require() (or
+// require.resolve()) or import(); the plugin names the module String() of it: `require(42)` asks for a package "42",
+// which no folder has, so it fails to resolve (a regex, `/x/`, is an absolute path that fails too).
+.decl npm01_lit(n: node, x: symbol, style: symbol)
+npm01_lit(s, x, "require") :- (api_use(c, "require", "call") ; api_use(c, "require.resolve", "call")), first_arg(c, s),
+    npm01_lit_text(s, x).
+npm01_lit(s, x, "import") :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), first_arg(c, s),
+    npm01_lit_text(s, x).
+.decl npm01_lit_text(s: node, x: symbol)
+npm01_lit_text(s, t) :- kind(s, "number"), text(s, t), match("0|[1-9][0-9]*", t).
+npm01_lit_text(s, t) :- (kind(s, "true") ; kind(s, "false") ; kind(s, "null") ; kind(s, "regex")), text(s, t).
+.decl npm01_ts(p: symbol)  // a TypeScript file (isTypescript)
+npm01_ts(p) :- npm01_req(_, _, _, p), (suffix(".ts", p) ; suffix(".tsx", p) ; suffix(".cts", p) ; suffix(".mts", p)).
+.decl npm01_tsc_allow(d: symbol)
+npm01_tsc_allow(d) :- npm01_tsc_line(d, t), match(".*\"allowImportingTsExtensions\"\\s*:\\s*true.*", t).
+.decl npm01_tsc_react(d: symbol)
+npm01_tsc_react(d) :- npm01_tsc_line(d, t), match(".*\"jsx\"\\s*:\\s*\"react(-jsx|-jsxdev|-native)?\".*", t).
+// npm01_map(p, m): the TypeScript extension map of file p: "explicit" (allowImportingTsExtensions: none), "default"
+// (jsx react*) or "preserve".
+.decl npm01_map(p: symbol, m: symbol)
+npm01_map(p, "explicit") :- npm01_ts(p), tsconfig_for(p, t), npm01_tsc_allow(t).
+npm01_map(p, "default") :- npm01_ts(p), tsconfig_for(p, t), !npm01_tsc_allow(t), npm01_tsc_react(t).
+npm01_map(p, "preserve") :- npm01_ts(p), !npm01_map_read(p).
+.decl npm01_map_read(p: symbol)
+npm01_map_read(p) :- npm01_ts(p), tsconfig_for(p, t), (npm01_tsc_allow(t) ; npm01_tsc_react(t)).
+// npm01_ext_alias(m, e, a, i): under map m, a request ending in e is tried as ending in a, i-th.
+.decl npm01_ext_alias(m: symbol, e: symbol, a: symbol, i: number)
+npm01_ext_alias("preserve", ".js", ".ts", 0). npm01_ext_alias("preserve", ".cjs", ".cts", 0).
+npm01_ext_alias("preserve", ".mjs", ".mts", 0). npm01_ext_alias("preserve", ".jsx", ".tsx", 0).
+npm01_ext_alias("default", ".js", ".ts", 0). npm01_ext_alias("default", ".js", ".tsx", 1).
+npm01_ext_alias("default", ".cjs", ".cts", 0). npm01_ext_alias("default", ".mjs", ".mts", 0).
+// npm01_ext(s, e, i): the try extensions, i-th; "ts" for a TypeScript file under allowImportingTsExtensions.
+.decl npm01_ext(s: symbol, e: symbol, i: number)
+npm01_ext("js", ".js", 0). npm01_ext("js", ".json", 1). npm01_ext("js", ".node", 2). npm01_ext("js", ".mjs", 3).
+npm01_ext("js", ".cjs", 4).
+npm01_ext("ts", ".js", 0). npm01_ext("ts", ".ts", 1). npm01_ext("ts", ".mjs", 2). npm01_ext("ts", ".mts", 3).
+npm01_ext("ts", ".cjs", 4). npm01_ext("ts", ".cts", 5). npm01_ext("ts", ".json", 6). npm01_ext("ts", ".node", 7).
+.decl npm01_extset(p: symbol, s: symbol)
+npm01_extset(p, "ts") :- npm01_map(p, "explicit").
+npm01_extset(p, "js") :- npm01_req(_, _, _, p), !npm01_map(p, "explicit").
+// npm01_mains(n): a folder n names resolves through its package.json's main and its index (require, package names).
+.decl npm01_mains(n: node)
+npm01_mains(n) :- npm01_req(n, x, st, _), (st = "require" ; spec_kind(x, "npm") ; spec_kind(x, "node")).
+
+// ---- the paths a request tries ----------------------------------------------------------------------------------
+// npm01_raw(n, q, slash): n's request as the path q from the root; slash 1 for a trailing `/` (a folder only). A
+// relative name that climbs above the root (npm01_escapes) names no file here.
+.decl npm01_raw(n: node, q: symbol, slash: number)
+npm01_raw(n, @join(@dir(p), x), s) :- npm01_req(n, x, _, p), spec_kind(x, "relative"), !npm01_escapes(n),
+    (suffix("/", x), s = 1 ; !suffix("/", x), s = 0).
+npm01_raw(n, q, s) :- npm01_alias_rw(n, q, s).
+.decl npm01_escapes(n: node)
+npm01_escapes(n) :- npm01_req(n, x, _, p), spec_kind(x, "relative"), d = @dir(p), npm01_depth(d, k),
+    u = @replace_all(cat(x, "/"), "^(\\./)?((\\.\\./)*).*$", "${2}"), strlen(u) / 3 > k.
+.decl npm01_depth(d: symbol, k: number)  // how many folders deep d is
+npm01_depth(d, strlen(d) - strlen(@replace_all(d, "/", "")) + 1) :- npm01_req(_, _, _, p), d = @dir(p), d != "".
+npm01_depth("", 0).
+// npm01_alias_rw(n, q, slash): in a TypeScript file, a `paths` key (its trailing `/*` trimmed) is n's name or the start
+// of it before a `/`: the name is that key's target, from the tsconfig's folder, and the rest. A matched alias is the
+// only way such a name resolves (npm01_alias_hit): node_modules is not tried.
+.decl npm01_alias_rw(n: node, q: symbol, slash: number)
+npm01_alias_rw(n, q, s) :- npm01_req(n, x, _, p), !spec_kind(x, "relative"), npm01_ts(p), tsconfig_for(p, t),
+    tsconfig_path(t, pat, to), k = @replace_all(pat, "[/\\\\*]+$", ""), k != "",
+    (x = k, rest = "" ; prefix(cat(k, "/"), x), rest = substr(x, strlen(k), strlen(x) - strlen(k))),
+    q = cat(@join(t, @replace_all(to, "[/\\\\*]+$", "")), rest), (suffix("/", x), s = 1 ; !suffix("/", x), s = 0).
+.decl npm01_alias_hit(n: node)
+npm01_alias_hit(n) :- npm01_alias_rw(n, _, _).
+
+// npm01_q(n, q, how): q is tried "fully" (an extension alias: q itself only), as a "file" (q, q with each try
+// extension, then as a folder) or as a "dir" (a folder only).
+.decl npm01_q(n: node, q: symbol, how: symbol)
+npm01_q(n, cat(substr(q, 0, strlen(q) - strlen(e)), a), "fully") :- npm01_raw(n, q, 0), npm01_req(n, _, _, p),
+    npm01_map(p, m), npm01_ext_alias(m, e, a, _), suffix(e, q).
+npm01_q(n, q, "file") :- npm01_raw(n, q, 0), !npm01_ext_aliased(n, q).
+npm01_q(n, q, "dir") :- npm01_raw(n, q, 1).
+.decl npm01_ext_aliased(n: node, q: symbol)
+npm01_ext_aliased(n, q) :- npm01_raw(n, q, 0), npm01_req(n, _, _, p), npm01_map(p, m), npm01_ext_alias(m, e, _, _), suffix(e, q).
+
+// npm01_cand(n, f, r): n may resolve to file f, tried r-th: aliases 0…, the path 0, with an extension 1…, the folder's
+// main 20… (as a file, with an extension, its index), the folder's index 40….
+.decl npm01_cand(n: node, f: symbol, r: number)
+npm01_cand(n, f, i) :- npm01_q(n, f, "fully"), npm01_req(n, _, _, p), npm01_map(p, m), npm01_ext_alias(m, _, a, i), suffix(a, f).
+npm01_cand(n, q, 0) :- npm01_q(n, q, "file").
+npm01_cand(n, cat(q, e), 1 + i) :- npm01_q(n, q, "file"), npm01_req(n, _, _, p), npm01_extset(p, s), npm01_ext(s, e, i).
+.decl npm01_folder(n: node, q: symbol)  // n is tried as the folder q
+npm01_folder(n, q) :- npm01_q(n, q, how), how != "fully", npm01_mains(n), npm01_fdir(q).
+.decl npm01_main(n: node, q: symbol, mq: symbol)  // q/package.json's main, from the root
+npm01_main(n, q, @join(q, raw)) :- npm01_folder(n, q), package_field(q, "main", raw), raw != "", raw != ".", raw != "./".
+npm01_cand(n, mq, 20) :- npm01_main(n, _, mq).
+npm01_cand(n, cat(mq, e), 21 + i) :- npm01_main(n, _, mq), npm01_req(n, _, _, p), npm01_extset(p, s), npm01_ext(s, e, i).
+npm01_cand(n, cat(mq, "/index", e), 31 + i) :- npm01_main(n, _, mq), npm01_req(n, _, _, p), npm01_extset(p, s),
+    npm01_ext(s, e, i).
+npm01_cand(n, @join(q, "index"), 40) :- npm01_folder(n, q).
+npm01_cand(n, cat(@join(q, "index"), e), 41 + i) :- npm01_folder(n, q), npm01_req(n, _, _, p), npm01_extset(p, s),
+    npm01_ext(s, e, i).
+
+.decl npm01_hit(n: node, f: symbol, r: number)
+npm01_hit(n, f, r) :- npm01_cand(n, f, r), (file(f) ; npm01_disk(f)).
+.decl npm01_resolved(n: node, f: symbol)
+npm01_resolved(n, f) :- npm01_hit(n, f, r), r = min r2 : { npm01_hit(n, _, r2) }.
+
+// ---- what else counts as found ----------------------------------------------------------------------------------
+// npm01_anc(p, d): d is the folder of document p or one above it, up to the root "".
+.decl npm01_anc(p: symbol, d: symbol)
+npm01_anc(p, @dir(p)) :- npm01_req(_, _, _, p).
+npm01_anc(p, @dir(d)) :- npm01_anc(p, d), d != "".
+// An installed package: node_modules/<m> in a folder at or above the file. In a TypeScript file a subpath ending in
+// an aliased extension (`pkg/x.js`) is tried as `pkg/x.ts` only, which a published package does not ship.
+.decl npm01_installed_for(n: node)
+npm01_installed_for(n) :- npm01_req(n, x, _, p), spec_kind(x, "npm"), !npm01_alias_hit(n), spec_package(x, m),
+    npm01_anc(p, d), npm01_installed(d, m), !npm01_pkg_ext_stop(n).
+.decl npm01_pkg_ext_stop(n: node)
+npm01_pkg_ext_stop(n) :- npm01_req(n, x, _, p), spec_kind(x, "npm"), npm01_map(p, m), npm01_ext_alias(m, e, _, _), suffix(e, x).
+// `#name`: the nearest package.json's imports maps it to a built-in or to a file of the package.
+.decl npm01_imports_for(n: node)
+npm01_imports_for(n) :- npm01_req(n, x, st, p), prefix("#", x), package_for(p, pd), package_field(pd, k, to),
+    (k = cat("imports/", x) ; npm01_cond(st, c), k = cat("imports/", x, "/", c)),
+    (builtin_spec(to) ; prefix("./", to), f = @join(pd, to), (file(f) ; npm01_disk(f))).
+.decl npm01_cond(style: symbol, c: symbol)
+npm01_cond(st, "node") :- npm01_req(_, _, st, _). npm01_cond(st, "default") :- npm01_req(_, _, st, _).
+npm01_cond("require", "require"). npm01_cond("import", "import"). npm01_cond("type", "import"). npm01_cond("type", "types").
+// The resolver's fallback: a Node built-in's name, or a path inside one (`fs/x`), resolves to nothing, not to an error.
+.decl npm01_builtin_path(n: node)
+npm01_builtin_path(n) :- npm01_req(n, x, _, _), match("(node:)?(?<b>[^/]+)/.*", x), node_builtin(b).
+
+.decl npm01_failed(n: node)
+npm01_failed(n) :- npm01_req(n, x, st, _), !npm01_resolved(n, _), !npm01_installed_for(n), !npm01_imports_for(n),
+    !builtin_spec(x), !npm01_builtin_path(n), !npm01_as_is(x, st).
+.decl npm01_as_is(x: symbol, style: symbol)  // a data: or http(s): import, whose name is its file
+npm01_as_is(x, "import") :- npm01_req(_, x, "import", _), (spec_kind(x, "data") ; spec_kind(x, "http")).
+
+// ---- what npm publishes -----------------------------------------------------------------------------------------
+// npm01_target(n, f): the plugin's target.filePath for a name that is no package: the resolved file; a relative name
+// that does not resolve, the path it names ("<outside>" above the root); an absolute one, outside; any other, the
+// root ("").
+.decl npm01_target(n: node, f: symbol)
+npm01_target(n, f) :- npm01_req(n, x, _, _), !spec_package(x, _), npm01_resolved(n, f).
+npm01_target(n, @join(@dir(p), x)) :- npm01_req(n, x, _, p), spec_kind(x, "relative"), !npm01_escapes(n), !npm01_resolved(n, _).
+npm01_target(n, "<outside>") :- npm01_req(n, x, _, _), spec_kind(x, "relative"), npm01_escapes(n).
+npm01_target(n, "<outside>") :- npm01_req(n, x, _, _), spec_kind(x, "absolute"), !npm01_resolved(n, _).
+npm01_target(n, "") :- npm01_req(n, x, st, _), !spec_package(x, _), !spec_kind(x, "relative"), !spec_kind(x, "absolute"),
+    !npm01_as_is(x, st), !npm01_resolved(n, _).
+// npm01_trel(dir, f, rel): f is inside the package of folder dir, at rel; npm01_tout(dir, f): it is outside.
+.decl npm01_tpair(dir: symbol, f: symbol)
+npm01_tpair(dir, f) :- npm01_target(n, f), docof(n, d), pkg_file(d, dir, _).
+.decl npm01_trel(dir: symbol, f: symbol, rel: symbol)
+npm01_trel("", f, f) :- npm01_tpair("", f), f != "", f != "<outside>".
+npm01_trel(dir, f, substr(f, strlen(dir) + 1, strlen(f) - strlen(dir) - 1)) :- npm01_tpair(dir, f), dir != "",
+    prefix(cat(dir, "/"), f).
+.decl npm01_tout(dir: symbol, f: symbol)
+npm01_tout(dir, f) :- npm01_tpair(dir, f), f != dir, !npm01_trel(dir, f, _).
+
+// npm01_ask(dir, rel): a path whose publication is asked: a document's, or a target's; npm01_part its folders and
+// itself (isdir 0), as node-ignore tests each folder above a path first.
+.decl npm01_ask(dir: symbol, rel: symbol)
+npm01_ask(dir, rel) :- pkg_file(_, dir, rel).
+npm01_ask(dir, rel) :- npm01_trel(dir, _, rel).
+.decl npm01_part(dir: symbol, rel: symbol, a: symbol, isdir: number)
+npm01_part(dir, rel, rel, 0) :- npm01_ask(dir, rel).
+npm01_part(dir, rel, a, 1) :- npm01_part(dir, rel, p, _), match("(?<a>.+)/[^/]+", p).
+
+.decl npm01_pkg(dir: symbol)
+npm01_pkg(dir) :- pkg_file(_, dir, _).
+// npm01_files(dir, neg, body, but): an entry of the `files` list: `!` for neg, one leading `!` or `/` and `./` dropped,
+// no trailing `/`, as a glob: a numeric brace sequence `{1..3}` expanded (the plugin's expandSequenceBraces, one per
+// entry), `@(a|b)` read as `{a,b}`, the extglobs `*(…)`, `+(…)`, `?(…)` as `*`, and `!(p)` as `*` but the paths
+// matching the glob with p in its place (`but`; "" for none): `{bin,src}/**/!(*.test).js` takes src/a.js, not
+// src/a.test.js.
+.decl npm01_files(dir: symbol, neg: number, body: symbol, but: symbol)
+npm01_files(dir, n, @replace_all(@replace_all(@replace_all(b, "@\\(([^)]*)\\)", "{${1}}"), "\\|", ","), "[!*+?]\\([^)]*\\)", "*"),
+    x) :- npm01_whole(dir, n, b),
+    (!contains("!(", b), x = "" ;
+     contains("!(", b), c = @replace_all(b, "!\\(([^)]*)\\)", "${1}"),
+     x = @replace_all(@replace_all(@replace_all(c, "@\\(([^)]*)\\)", "{${1}}"), "\\|", ","), "[!*+?]\\([^)]*\\)", "*")).
+.decl npm01_whole(dir: symbol, neg: number, body: symbol)  // an entry with its sequence expanded
+npm01_whole(dir, n, b) :- npm01_entry(dir, n, b), !npm01_seq(b, _, _, _, _).
+npm01_whole(dir, n, cat(pre, to_string(i), post)) :- npm01_entry(dir, n, b), npm01_seq_at(b, i), npm01_seq(b, pre, _, _, post).
+.decl npm01_entry(dir: symbol, neg: number, body: symbol)
+npm01_entry(dir, n, b) :- npm01_pkg(dir), package_field(dir, k, raw), match("files/[0-9]+", k), raw != "",
+    (prefix("!", raw), n = 1 ; !prefix("!", raw), n = 0), r = @replace_all(raw, "^[!/]", ""),
+    b = @replace_all(@replace_all(r, "^(\\./)+", ""), "/+$", ""), b != "".
+.decl npm01_seq(b: symbol, pre: symbol, lo: number, hi: number, post: symbol)
+npm01_seq(b, pre, to_number(l), to_number(h), post) :- npm01_entry(_, _, b),
+    match("(?<pre>[^{]*)\\{(?<l>[0-9]+)\\.\\.(?<h>[0-9]+)\\}(?<post>.*)", b).
+.decl npm01_seq_at(b: symbol, i: number)
+npm01_seq_at(b, lo) :- npm01_seq(b, _, lo, hi, _), lo <= hi.
+npm01_seq_at(b, i + 1) :- npm01_seq_at(b, i), npm01_seq(b, _, _, hi, _), i < hi.
+.decl npm01_has_files(dir: symbol)
+npm01_has_files(dir) :- npm01_files(dir, _, _, _).
+.decl npm01_files_in(dir: symbol, rel: symbol)  // a `files` entry takes rel or a folder above it
+npm01_files_in(dir, rel) :- npm01_files(dir, 0, b, x), npm01_part(dir, rel, a, _), iglob(b, a), (x = "" ; !iglob(x, a)).
+.decl npm01_files_ex(dir: symbol, rel: symbol)  // a `!` entry takes it (one without `/` at any depth)
+npm01_files_ex(dir, rel) :- npm01_files(dir, 1, b, x), npm01_part(dir, rel, a, _),
+    (iglob(b, a) ; !contains("/", b), iglob(cat("**/", b), a)), (x = "" ; !iglob(x, a), !iglob(cat("**/", x), a)).
+
+// npm01_ign(dir, k): the ignore file npm reads for package dir: its .npmignore, else (no `files`) its .gitignore.
+.decl npm01_ign(dir: symbol, k: symbol)
+npm01_ign(dir, "npm") :- npm01_pkg(dir), npm01_ignore_file(dir, "npm").
+npm01_ign(dir, "git") :- npm01_pkg(dir), !npm01_ignore_file(dir, "npm"), !npm01_has_files(dir), npm01_ignore_file(dir, "git").
+// npm01_pat(dir, i, neg, body, anchored, dir_only): line i of that file as a pattern (node-ignore's checkPattern and
+// makeRegex): blank lines, `#` comments and a trailing lone `\` are none; `!` negates; `\!` and `\#` are literal; trailing
+// blanks go; a trailing `/` matches folders only; a leading `/`, or a `/` inside, anchors at the package folder.
+.decl npm01_pat(dir: symbol, i: number, neg: number, body: symbol, anchored: number, dir_only: number)
+npm01_pat(dir, i, n, b, an, dn) :- npm01_ign(dir, k), npm01_ignore_line(dir, k, i, raw), t = @replace_all(raw, "\\s+$", ""),
+    t != "", !prefix("#", t), !match("(.*[^\\\\])?\\\\", t),
+    (prefix("!", t), n = 1, t1 = substr(t, 1, strlen(t) - 1) ; !prefix("!", t), n = 0, t1 = t),
+    t2 = @replace_all(t1, "^\\\\([!#])", "$1"),
+    (suffix("/", t2), dn = 1, t3 = @replace_all(t2, "/+$", "") ; !suffix("/", t2), dn = 0, t3 = t2),
+    (prefix("/", t3), an = 1, b = substr(t3, 1, strlen(t3) - 1) ; !prefix("/", t3), contains("/", t3), an = 1, b = t3 ;
+     !contains("/", t3), an = 0, b = t3), b != "".
+.decl npm01_ign_hit(dir: symbol, rel: symbol, a: symbol, i: number, neg: number)
+npm01_ign_hit(dir, rel, a, i, n) :- npm01_part(dir, rel, a, isd), npm01_pat(dir, i, n, b, an, dn), (dn = 0 ; isd = 1),
+    (iglob(b, a) ; an = 0, iglob(cat("**/", b), a)).
+.decl npm01_ign_out(dir: symbol, rel: symbol)  // the last pattern matching rel or a folder above it is no `!`
+npm01_ign_out(dir, rel) :- npm01_ign_hit(dir, rel, a, i, 0), i = max j : { npm01_ign_hit(dir, rel, a, j, _) }.
+
+// npm01_never(dir, rel): published whatever the lists say.
+.decl npm01_never(dir: symbol, rel: symbol)
+npm01_never(dir, "package.json") :- npm01_ask(dir, "package.json").
+npm01_never(dir, rel) :- npm01_ask(dir, rel),
+    match("(?i)(readme\\.[^.]*|(licen[cs]e|changes|changelog|history)(\\.[^.]*)?)", rel).
+npm01_never(dir, rel) :- npm01_ask(dir, rel), package_field(dir, "main", raw), !suffix("/", raw),
+    rel = @replace_all(@replace_all(raw, "^/+", ""), "^(\\./)+", "").
+
+.decl npm01_leaves_out(dir: symbol, rel: symbol)
+npm01_leaves_out(dir, rel) :- npm01_ask(dir, rel), npm01_has_files(dir), !npm01_files_in(dir, rel), !npm01_never(dir, rel).
+npm01_leaves_out(dir, rel) :- npm01_files_ex(dir, rel), !npm01_never(dir, rel).
+npm01_leaves_out(dir, rel) :- npm01_ign_out(dir, rel), !npm01_never(dir, rel).
+
+.decl npm01_published(d: number)
+npm01_published(d) :- pkg_file(d, dir, rel), !npm01_leaves_out(dir, rel).
+
+// ---- checkPublish -------------------------------------------------------------------------------------------------
+// npm01_checked(d, dir): a published file of package dir that ignorePrivate does not skip.
+.decl npm01_checked(d: number, dir: symbol)
+npm01_checked(d, dir) :- pkg_file(d, dir, _), npm01_published(d), !pkg_private_skip(dir), !npm01_private_skip(dir).
+.decl npm01_private_skip(dir: symbol)
+npm01_private_skip(dir) :- npm01_private(dir), !option("ignorePrivate", "false").
+.decl npm01_unpublished(n: node, style: symbol, msg: symbol)
+npm01_unpublished(n, st, "npm does not publish this file, so the published package cannot load it.") :-
+    npm01_req(n, x, st, _), docof(n, d), npm01_checked(d, dir), !builtin_spec(x), npm01_target(n, f),
+    (npm01_tout(dir, f) ; npm01_trel(dir, f, rel), npm01_leaves_out(dir, rel)).
+npm01_unpublished(n, st, "This package is only a devDependency, so the published package cannot load it.") :-
+    npm01_req(n, x, st, _), docof(n, d), npm01_checked(d, dir), !builtin_spec(x), spec_package(x, m),
+    pkg_dep(dir, "devDependencies", m), !pkg_runtime_dep(dir, m), !allow_module(m).

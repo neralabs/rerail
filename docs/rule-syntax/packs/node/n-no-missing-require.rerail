@@ -1,4 +1,4 @@
-.policy "n-no-missing-require" revision 2
+.policy "n-no-missing-require" revision 3
 .description "Require only modules that exist: each require() target must resolve, as Node.js resolves it, to an installed package or a file in the repository."
 .language typescript
 .mode steer
@@ -9,12 +9,13 @@
 //   require("lodash")       reported when node_modules has no lodash
 //   require("fs")  require(name)                        not: a built-in;  not a constant
 // The require is the CommonJS global (aliases followed: `const r = require; r("x")`). Option allowModules lists
-// packages never reported. Resolution is node-resolve.rerail's proposed native input; its other options
+// packages never reported. Resolution is node-npm-01.rerail's, over the files on disk; its other options
 // (tryExtensions, resolvePaths, resolverConfig, typescriptExtensionMap, tsconfigPath) belong to the resolver.
 
-#include "tsx/node-resolve.rerail"   // node_target, builtin_spec, spec_failed, spec_allowed
+#include "tsx/node-npm-01.rerail"   // npm01_failed; node-resolve's node_target, builtin_spec, spec_allowed
 
 .violation missing_require(at: node) code "n/no-missing-require"
     "This module cannot be resolved: no installed package or file in the repository provides it."
     suppress eslint "n/no-missing-require"
-missing_require(n) :- node_target(n, x, "require"), !builtin_spec(x), spec_failed(n), !spec_allowed(x).
+missing_require(n) :- node_target(n, x, "require"), !builtin_spec(x), npm01_failed(n), !spec_allowed(x).
+missing_require(n) :- npm01_lit(n, x, "require"), !allow_module(x).
