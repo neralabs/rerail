@@ -70,13 +70,31 @@ tws_receiver(t, o) :- field(t, "function", m), field(m, "object", o).
 .decl tws_dep_kind(k: symbol)
 tws_dep_kind("identifier"). tws_dep_kind("member_expression"). tws_dep_kind("shorthand_property_identifier").
 // tws_dep_ref(n): n is written as an element of an enclosing effect's dependency array, one that may change: not a
-// setter, dispatch, a ref, `.current`, or an API client.
+// setter, dispatch, a ref, `.current`, or an API client. Written as the original's `pattern: "$D"` compares trees:
+// white space between tokens aside (`session.user\n  .id` is `session.user.id`), comments and strings as written
+// (`session.user/* c */.id` is not).
 .decl tws_dep_ref(n: node)
-tws_dep_ref(n) :- tws_deps(l, a), child(a, e, _), text(e, x), !tws_stable_dep(x), within(n, l), kind(n, k), tws_dep_kind(k),
-    text(n, x).
+tws_dep_ref(n) :- tws_deps(l, a), child(a, e, _), text(e, r), !tws_stable_dep(r), tws_flat(e, x), within(n, l),
+    tws_flat(n, x), !tws_differ(e, n).
 .decl tws_stable_dep(x: symbol)
 tws_stable_dep(x) :- tws_deps(_, a), child(a, e, _), text(e, x),
     match("set[A-Z][A-Za-z0-9_$]*|dispatch|[\\s\\S]*Ref|[\\s\\S]*\\.current|api|client|storage|supabase|sdk|db|http|[\\s\\S]*(Api|Client|Manager|Service|Storage|Sdk)", x).
+// tws_flat(n, x): n, a dependency's kind inside an effect's arguments, as text with each run of white space left out,
+// or one space where it parts two word characters (`await x`, `a in b`).
+.decl tws_flat(n: node, x: symbol)
+tws_flat(n, x) :- tws_effect_args(l), within(n, l), kind(n, k), tws_dep_kind(k), text(n, t),
+    (k != "member_expression", x = t ; k = "member_expression", x = @replace_all(@replace_all(t, "\\s+", " "), " ?([^\\w$ ]) ?", "${1}")).
+// tws_differ(e, n): equal once flat but written differently, e and n still differ as trees: a kind, a child count or
+// a leaf's text (a string's or a comment's white space: `a["x  y"]` is not `a["x y"]`). Asked of those pairs only.
+.decl tws_ask(a: node, b: node)
+tws_ask(e, n) :- tws_deps(_, a), child(a, e, _), tws_flat(e, x), tws_flat(n, x), text(e, r), !text(n, r).
+tws_ask(a, b) :- tws_ask(p, q), child(p, a, i), child(q, b, i).
+.decl tws_differ(a: node, b: node)
+tws_differ(a, b) :- tws_ask(a, b), kind(a, k), !kind(b, k).
+tws_differ(a, b) :- tws_ask(a, b), child(a, _, i), !child(b, _, i).
+tws_differ(a, b) :- tws_ask(a, b), child(b, _, i), !child(a, _, i).
+tws_differ(a, b) :- tws_ask(a, b), !child(a, _, _), text(a, s), !text(b, s).
+tws_differ(p, q) :- tws_ask(p, q), child(p, a, i), child(q, b, i), tws_differ(a, b).
 // tws_dep_arg(x): x, not a callee, is a dependency, or an effect-local variable whose value reads one.
 .decl tws_dep_arg(x: node)
 tws_dep_arg(x) :- tws_dep_ref(x), !tws_callee(x).
@@ -155,3 +173,75 @@ tws_keyed(t, s) :- tws_writes(t, s), field(t, "arguments", l), has(l, c, "call_e
 tws_keyed_arg(ca) :- has(ca, k, "computed_property_name"), has(k, y, tws_dep_kind), tws_dep_ref(y).
 tws_keyed_arg(ca) :- has(ca, c, "call_expression"), field(c, "function", g), kind(g, "member_expression"), field(g, "property", p),
     text(p, "set"), call_arg(c, a, 0), tws_dep_ref(a).
+
+// Review (react-practice-b): a dependency split across lines in the request or in the array is still the
+// dependency; a comment inside it makes it another tree, as in the original.
+.test a_dependency_split_across_lines_is_still_read exactly
+    .fixture "src/tws-multiline-dep.tsx" ```
+        import { useEffect, useState } from "react";
+        export function Profile({ session }: { session: Session }) {
+          const [user, setUser] = useState(null);
+          useEffect(() => {
+            load(session.user.id).then(setUser);
+          }, [session.user.id]);
+          useEffect(() => {
+            load(session.user
+              .id).then(setUser);
+          }, [session.user.id]);
+          useEffect(() => {
+            load(session.user.id).then(setUser);
+          }, [session.user
+            .id]);
+          useEffect(() => {
+            load(session.user/* the account */.id).then(setUser);
+          }, [session.user.id]);
+          return <div>{String(user)}</div>;
+        }
+        ```
+    .expect THEN_WITHOUT_STALE_GUARD at "src/tws-multiline-dep.tsx":5
+    .expect THEN_WITHOUT_STALE_GUARD at "src/tws-multiline-dep.tsx":8
+    .expect THEN_WITHOUT_STALE_GUARD at "src/tws-multiline-dep.tsx":12
+.end
+
+.test a_key_split_across_lines_is_still_keyed exactly
+    .fixture "src/tws-multiline-keyed.tsx" ```
+        import { useEffect, useState } from "react";
+        export function Pages({ session }: { session: Session }) {
+          const [cache, setCache] = useState({});
+          useEffect(() => {
+            load(session.user.id).then((r) => setCache((c) => ({ ...c, [session.user.id]: r })));
+          }, [session.user.id]);
+          useEffect(() => {
+            load(session.user.id).then((r) => setCache((c) => ({ ...c, [session.user
+              .id]: r })));
+          }, [session.user.id]);
+          return <div>{String(cache)}</div>;
+        }
+        ```
+.end
+
+// Only the white space between tokens drops out: parentheses, `?.`, quotes, and the white space inside a string or
+// a comment still make another tree (the original reports lines 5 and 11 only).
+.test only_white_space_between_tokens_drops_out exactly
+    .fixture "src/tws-ws.tsx" ```
+        import { useEffect, useState } from "react";
+        export function W({ s, a }: { s: any; a: any }) {
+          const [user, setUser] = useState(null);
+          useEffect(() => {
+            load(s . user . id).then(setUser);
+          }, [s.user.id]);
+          useEffect(() => { load((s.user).id).then(setUser); }, [s.user.id]);
+          useEffect(() => { load(s?.user.id).then(setUser); }, [s.user.id]);
+          useEffect(() => { load(a['x'].id).then(setUser); }, [a["x"].id]);
+          useEffect(() => {
+            load(a["x"]
+              .id).then(setUser);
+          }, [a["x"].id]);
+          useEffect(() => { load(a["x  y"].id).then(setUser); }, [a["x y"].id]);
+          useEffect(() => { load(a/* p  q */.id).then(setUser); }, [a/* p q */.id]);
+          return <div>{String(user)}</div>;
+        }
+        ```
+    .expect THEN_WITHOUT_STALE_GUARD at "src/tws-ws.tsx":5
+    .expect THEN_WITHOUT_STALE_GUARD at "src/tws-ws.tsx":11
+.end
