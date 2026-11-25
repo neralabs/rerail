@@ -450,9 +450,12 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vector<i64>>
         by.entry(p).or_default().extend(got);
     }
     if let Some(log) = log {
-        for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
-            log.entry(p.clone()).or_default().extend(rows.iter().cloned());
-        }
+        // The log lives the run: its rows made in the thread's long room (decision 0342, amended 2026-11-24).
+        rerail_blocks::maps::long(|| {
+            for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
+                log.entry(p.clone()).or_default().extend(rows.iter().cloned());
+            }
+        });
     }
     for (p, rows) in by {
         if let Some(req) = p.strip_prefix(super::answers::HELD_BACK) {

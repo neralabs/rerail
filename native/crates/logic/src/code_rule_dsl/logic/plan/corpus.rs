@@ -8292,7 +8292,7 @@ fn run_observed_within(
                     // The nodes the chunks walked, their rows counted as they walked them (`chunk_held_rows`, in
                     // the same column order): not walked again.
                     if let Some(chunks) = chunk_counts.held(&c.rel).filter(|_| !walk.is_empty()) {
-                        for row in chunks.rows.chunks(at.len()) {
+                        for row in chunks.segments.iter().flat_map(|s| s.chunks(at.len())) {
                             if walk.contains(&row[n_at]) && counts.row(row[n_at], n_at, row) {
                                 rows.extend_from_slice(row);
                             }
@@ -10610,10 +10610,11 @@ struct ChunkCounts {
     held: HashMap<String, ChunkHeld>,
 }
 /// A semi-join's rows the chunks walked at their held nodes: in its input's column order, as `for_rows_keyed` hands
-/// them, and the nodes walked.
+/// them, and the nodes walked. Each chunk's rows stay where the chunk wrote them (in its thread's long room,
+/// `chunk_held_rows`), one segment a chunk: none is copied into a run-long array grown by each chunk.
 #[derive(Default)]
 struct ChunkHeld {
-    rows: Vector<i64>,
+    segments: Vec<Vector<i64>>,
     walked: rustc_hash::FxHashSet<i64>,
 }
 /// One chunk's counts (`Evaluated::base_counts`).
@@ -10634,8 +10635,8 @@ impl ChunkCounts {
         let Some(ChunkCounted { files, counts, unions, held }) = counts else { return };
         for (rel, (rows, walked)) in held {
             let have = self.held.entry(rel).or_default();
-            have.rows.extend_from_slice(&rows);
             have.walked.extend(walked.iter().copied());
+            have.segments.push(rows);
         }
         for (rel, values) in unions {
             let (n, have) = self.unions.entry(rel).or_insert_with(|| (0, Some(Default::default())));
@@ -10739,15 +10740,19 @@ fn chunk_held_rows(rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::So
     if columns.first().map(String::as_str) != input.first().copied() {
         return None;
     }
-    let (mut flat, mut seen): (Vector<i64>, rustc_hash::FxHashSet<i64>) = Default::default();
-    source
-        .for_rows_keyed(at[n_at], held_nodes, &at, &mut |_, row| {
-            if seen.insert(row[n_at]) {
-                flat.extend_from_slice(row);
-            }
-            true
-        })
-        .then_some(())?;
+    // The rows live the run (`ChunkCounts::held`): made in the thread's long room, not on its stack, where they would
+    // hold the stack under them (decision 0342, amended 2026-11-24).
+    let flat = rerail_blocks::maps::long(|| {
+        let (mut flat, mut seen): (Vector<i64>, rustc_hash::FxHashSet<i64>) = Default::default();
+        source
+            .for_rows_keyed(at[n_at], held_nodes, &at, &mut |_, row| {
+                if seen.insert(row[n_at]) {
+                    flat.extend_from_slice(row);
+                }
+                true
+            })
+            .then_some(flat)
+    })?;
     Some((flat, held_nodes.iter().copied().collect()))
 }
 
