@@ -7108,6 +7108,15 @@ impl InRel {
     pub fn value(&self, id: usize, c: usize) -> i64 {
         match &self.view { None => self.rows.value(id as u32, self.k, c), Some(_) => self.at(id).at(c) }
     }
+    /// Column `c`'s values at ids `from..from + out.len()` into `out`, read where they lie a chunk at a time
+    /// (`Rows::read_range`); false for a view, whose rows are its source's.
+    pub fn read_range(&self, c: usize, from: usize, out: &mut [i64]) -> bool {
+        if self.view.is_some() {
+            return false;
+        }
+        self.rows.read_range(c, from as u32, out);
+        true
+    }
     /// The row whose `keyed` column is `v`, by the source's key (its rows are the view's). None or one.
     fn keyed_rows(&self, v: i64) -> std::ops::Range<u32> {
         let ky = self.keyed.as_ref().expect("a keyed relation");

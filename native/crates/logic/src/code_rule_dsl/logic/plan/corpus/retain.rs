@@ -3713,6 +3713,24 @@ impl rerail_blocks::packed::RowsIn for LiveRows {
     fn get(&self, r: usize, c: usize) -> i64 {
         self.rel.value(self.ids.as_ref().map_or(r, |ids| ids[r] as usize), c)
     }
+    /// Rows from a position on, every row live: a range of the relation's column, read where it lies
+    /// (`InRel::read_range`); else a row at a time.
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        use rerail_blocks::packed::At;
+        match at {
+            At::From(r) if self.ids.is_none() && self.rel.read_range(c, r, out) => {}
+            At::From(r) => {
+                for (j, o) in out.iter_mut().enumerate() {
+                    *o = self.get(r + j, c);
+                }
+            }
+            At::Rows(rows) => {
+                for (o, &r) in out.iter_mut().zip(rows) {
+                    *o = self.get(r as usize, c);
+                }
+            }
+        }
+    }
 }
 
 /// Rows not held as a relation, as an entry of their own (an input's granule or documents, statistics' words): `n`
