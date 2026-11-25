@@ -33,6 +33,7 @@ import { HTTPException } from "hono/http-exception";
 import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
 import type { RerailApiStores } from "../api/operation.js";
+import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { eventAnswerFacts } from "../api/event-answer.js";
@@ -134,6 +135,12 @@ export interface RerailDaemonOptions {
   enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * The rule packs published on npm that `GET /api/rule-packs/published` lists; the daemon's entry point passes
+   * set-up's (`publishedPackReader`) in a managed install, which reads npm only when a person asks. Omitted, as for a
+   * checkout's daemon and in tests, it answers 503.
+   */
+  publishedRulePacks?: PublishedRulePackReader;
   /**
    * Hears of each pass over the events hooks left untaken while the daemon did not read, once their checks ended: the
    * daemon's entry point writes it to the hook failure log, where `rerail status` reads it.
@@ -634,6 +641,7 @@ export class RerailDaemon {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
+      publishedRulePacks: options.publishedRulePacks,
       // The server listens only once the engine service runs, so a scan request always finds it. The engine service
       // reports a failure itself, and its close waits for the open.
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
@@ -1444,7 +1452,7 @@ async function packageVersion(): Promise<string> {
  */
 type RerailDaemonServices = Pick<
   RerailDaemonOptions,
-  "codingAgents" | "lateChecked" | "updateChecks" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
+  "codingAgents" | "publishedRulePacks" | "lateChecked" | "updateChecks" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
 >;
 
 /**

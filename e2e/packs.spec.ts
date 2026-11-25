@@ -162,6 +162,48 @@ test.describe("rule pack pages and the catalog over mature", () => {
     await expect(row.getByRole("button", { name: "Add pack" })).toBeVisible();
   });
 
+  test("the catalog lists the packs published on npm and not installed, a fitting one with the suggested, the rest under Other rule packs, each with its install command", async ({ page, rerail }) => {
+    const url = await rerail.dashboard("mature", { hash: "packs" });
+    const published = (id: string, name: string, fields: Record<string, unknown>) => ({
+      id, name, category: "framework", covers: `${name} rules.`, publisher: "rerail", packageName: `@neralabs/rerail-pack-${id}`, installedVersion: null, ...fields,
+    });
+    // A checkout's daemon reads no npm: the published packs are the daemon's answer as a managed install gives it.
+    const read = {
+      repositoryKey: "unused", checkoutPath: "/unused", readAt: 1,
+      packs: [
+        published("react", "React", { version: "0.1.12", ruleCount: 32, reason: "matches the react dependency in package.json", folder: "" }),
+        published("django", "Django", { version: "0.2.0", ruleCount: 25 }),
+      ],
+    };
+    let answer: object = read;
+    await page.route("**/api/rule-packs/published?**", async route => { await route.fulfill({ json: answer }); });
+    await page.goto(url);
+
+    const group = (title: string) => page.locator("#content .groups > .ghead.grp", { hasText: title }).locator("xpath=following-sibling::div[1]");
+    const django = group("Other rule packs").locator(".prow2.pub").filter({ has: page.locator("b", { hasText: /^Django$/u }) });
+    await expect(django.locator(".pstate")).toHaveText("v0.2.0Not installed");
+    await expect(django).toContainText("25 rules");
+    await expect(django).toContainText("Install it with rerail packs add django@0.2.0, then add it here.");
+    await expect(django.getByRole("button", { name: "Copy command" })).toHaveAttribute("data-i", "rerail packs add django@0.2.0");
+    const react = group("Suggested for").locator(".prow2.pub").filter({ has: page.locator("b", { hasText: /^React$/u }) });
+    await expect(react.locator(".whybox")).toContainText("matches the react dependency in package.json");
+    // Not installed, so no sheet: its rules are read once it is.
+    await react.locator("b", { hasText: /^React$/u }).click();
+    await expect(page.locator("#panel")).not.toBeVisible();
+
+    answer = { repositoryKey: "unused", checkoutPath: "/unused", readAt: null, unread: "could not reach the npm registry (ENOTFOUND)", packs: [] };
+    await page.reload();
+    await expect(page.locator("#content .pubnote")).toHaveText("Couldn’t read the other rule packs published on npm. Could not reach the npm registry (ENOTFOUND).");
+    await expect(page.locator("#content .prow2.pub")).toHaveCount(0);
+
+    // A read that failed is tried again on the next visit.
+    answer = read;
+    await page.locator('#sidenav [data-i="overview"]').click();
+    await page.locator('#sidenav [data-i="packs"]').click();
+    await expect(django).toBeVisible();
+    await expect(page.locator("#content .pubnote")).toHaveCount(0);
+  });
+
   test("a catalog row asks on a line of its own, then reads Removed with Undo until the page is left", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature", { hash: "packs" });
     await page.goto(url);
@@ -207,4 +249,32 @@ test("multi-repo: the whole-pack switch writes to the repository the page shows,
   expect((await packRulesAt(rerail, storefrontUrl, "typescript")).map(entry => [entry.rule.id, entry.on])).toEqual(storefrontBefore);
   await page.reload();
   await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", "true");
+});
+
+test("multi-repo: switching repository while the published packs are read asks again for the repository shown", async ({ page, rerail }) => {
+  const { manifest } = await rerail.scenario("multi-repo");
+  const billing = manifest.repositories.find(repo => repo.repositoryKey !== manifest.primary.repositoryKey)!;
+  const django = {
+    id: "django", name: "Django", category: "framework", covers: "Django rules.", publisher: "rerail", packageName: "@neralabs/rerail-pack-django",
+    installedVersion: null, version: "0.2.0", ruleCount: 25,
+  };
+  // The first repository's read stays out, as a first read of npm does, until the test ends.
+  let release = (): void => undefined;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/rule-packs/published?**", async route => {
+    const repository = new URL(route.request().url()).searchParams.get("repository");
+    if (repository !== billing.repositoryKey) await held;
+    await route.fulfill({ json: { repositoryKey: repository, checkoutPath: "/unused", readAt: 1, packs: [django] } }).catch(() => undefined);
+  });
+  await page.goto(await rerail.dashboard("multi-repo", { hash: "packs" }));
+  await expect(page.locator("#content .pubnote")).toHaveText("Reading the other rule packs published on npm…");
+
+  const pill = page.locator("#repopick .repopill");
+  await expect(pill).toHaveText(manifest.primary.displayName);
+  await pill.click();
+  await page.locator(`#repolayer .repomenu [role="option"][data-i="${billing.repositoryKey}"]`).click();
+  await page.locator('#sidenav [data-i="packs"]').click();
+  await expect(page.locator("#content .prow2.pub").filter({ has: page.locator("b", { hasText: /^Django$/u }) })).toBeVisible();
+  await expect(page.locator("#content .pubnote")).toHaveCount(0);
+  release();
 });

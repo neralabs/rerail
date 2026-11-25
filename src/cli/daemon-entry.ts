@@ -15,6 +15,7 @@ import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
+import { publishedPackReader } from "../setup/published-packs.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { recordLateCheck } from "../harness/hook-failures.js";
 import { stampLines } from "./daemon-log.js";
@@ -49,6 +50,9 @@ try {
     ...(isMainRerailBuild() && updateCheckApplies(defaultRerailHome()) ? {
       updateChecks: () => startUpdateChecks({ home: defaultRerailHome() }),
     } : {}),
+    // A managed install's Add rule packs lists the packs published on npm, read when a person opens it; a checkout's
+    // build, which the dashboard's browser tests run, never reads npm.
+    ...(isMainRerailBuild() ? { publishedRulePacks: publishedPackReader({ home: defaultRerailHome() }) } : {}),
     ...(process.platform === "win32" ? {} : {
       statusLines: (stores: RerailApiStores) => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
     }),
