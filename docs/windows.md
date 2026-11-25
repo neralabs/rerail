@@ -647,8 +647,8 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   and to run `rerail daemon start`. `rerail daemon stop`, `rerail daemon start`, a hook's start, set-up and `rerail
   install --remove` end it through its process: one call opens the process, reads its creation time, ends it through
   that handle and waits on it for the exit, so a pid Windows gives to another process meanwhile is never ended. The
-  wait is bounded at the stop's 5 s kill wait, and for `rerail install --remove` at 15 s with PowerShell's own start
-  (below), only so that an end that hangs cannot hold the command for good.
+  wait is bounded at the stop's 5 s kill wait, and for `rerail install --remove` at 35 s with the start of the child
+  process it ends through (below), only so that an end that hangs cannot hold the command for good.
   `rerail daemon start` then starts this release's daemon and says, in one line, which daemon it ended. A hook's
   start and set-up replace it whatever package it ran from, since it predates the fields hooks send; a hook that may
   not replace it (`RERAIL_AUTOSTART=0`, or a daemon found only after the start looked) sends it nothing and logs each
@@ -668,16 +668,21 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through the
   engine (`GetProcessTimes`), which starts no process, however little of the lookup's limit is left: a process this
   user may not query, or an engine that does not load (the first such failure goes to stderr), leaves it unread, and
-  the record is kept. `rerail install --remove` reads it, and ends a daemon of 0.1.4 or earlier, through Windows
-  PowerShell instead, since it deletes the folder the engine loads from next and Windows keeps a loaded DLL from being
-  deleted. The read's PowerShell is ended at what is left of the lookup's limit, and one ended there, or one that
-  cannot run, reads nothing; the end's PowerShell is ended at the stop's 10 s wait and its 5 s kill wait, 15 s with its
-  own start, and one ended after it ended the process reads as still running. The lookup's limit counts from its start
-  and bounds this read for a busy daemon and for one whose engine has no proof alike: 2 s, which the proof shares, for
-  `rerail status`, set-up's look for a daemon to keep and a hook's start of the daemon; the stop's 10 s wait for
-  `rerail daemon stop`, set-up's stop of a daemon it replaces and both stops of `rerail install --remove`. So on a
-  machine whose policy blocks `powershell.exe` itself, a busy daemon of 0.1.4 or earlier is not shown to be this
-  home's in `rerail install --remove`, which stops with that error, having already taken Rerail out of the coding
+  the record is kept. `rerail install --remove` deletes the folder the engine loads from next, and Windows keeps a
+  loaded DLL from being deleted, so it reads the start, and ends a daemon of 0.1.4 or earlier, through the engine in a
+  child Node process that has exited before the read returns (`src/engine/process-reader.ts`): how fast the machine
+  starts Windows PowerShell plays no part. The child is ended only when it has not answered within 30 s, 35 s for an
+  end with its 5 s wait for the exit; the stop then ends nothing, keeps the record and says that the read of the
+  daemon's start did not answer. Where the child gives no answer, as when the running package's engine is missing or
+  does not load, the read and the end go through Windows PowerShell: the read's PowerShell is ended at what is left of
+  the lookup's limit, and one ended there, or one that cannot run, reads nothing; the end's PowerShell is ended at the
+  stop's 10 s wait and its 5 s kill wait, 15 s with its own start, and one ended after it ended the process reads as
+  still running. The lookup's limit counts from its start and bounds the read through PowerShell for a busy daemon and
+  for one whose engine has no proof alike: 2 s, which the proof shares, for `rerail status`, set-up's look for a daemon
+  to keep and a hook's start of the daemon; the stop's 10 s wait for `rerail daemon stop`, set-up's stop of a daemon it
+  replaces and both stops of `rerail install --remove`. So on a machine whose policy blocks `powershell.exe` itself and
+  where the running package's engine does not load, a busy daemon of 0.1.4 or earlier is not shown to be this home's
+  in `rerail install --remove`, which stops with that error, having already taken Rerail out of the coding
   agents. The command that message gives runs PowerShell too, so there open Task Manager's Details tab, show its
   Command line column, end the process with the pid the message names if its command line runs Rerail's
   `daemon-entry.js` for this home, and run the command again. The proof's limit counts
