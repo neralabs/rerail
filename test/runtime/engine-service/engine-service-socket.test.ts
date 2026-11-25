@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENGINE_ANSWER_WAIT_MS, engineEndpointAt } from "../../../src/runtime/daemon-control.js";
 import { engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
-import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer, type PipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
+import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf, pipeServer } from "../../../src/runtime/daemon/engine-pipe.js";
 import {
   chooseEngineSocketPath, ingestEngineEvent, ingestEngineEventAnswer, listenBesideHeldPipe, preparePrivateDirectory, startEngineService,
 } from "../../../src/runtime/engine-service.js";
@@ -613,7 +613,8 @@ describe("the holder of a Windows named pipe", () => {
     try {
       const holder = await pipeServer(pipe, 1_000);
       expect(holder).toMatchObject({ pid: process.pid });
-      const { startedAt } = holder as PipeServer;
+      if (typeof holder === "string") throw new Error(`no holder: ${holder}`);
+      const { startedAt } = holder;
       // Node starts a moment after Windows creates its process.
       const nodeStarted = Date.now() - process.uptime() * 1_000;
       expect(startedAt).toBeLessThanOrEqual(nodeStarted + 1_000);
