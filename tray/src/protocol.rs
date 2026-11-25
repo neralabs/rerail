@@ -51,13 +51,21 @@ pub enum Incoming {
 /// and sends `Closed` once at end of input or on a read error.
 pub fn read_states(input: impl BufRead, mut send: impl FnMut(Incoming)) {
     for line in input.lines() {
-        let Ok(line) = line else { break };
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                eprintln!("rerail-tray: stopped reading menu states: {error}");
+                break;
+            }
+        };
         if line.trim().is_empty() {
             continue;
         }
         match serde_json::from_str::<MenuState>(&line) {
             Ok(state) => send(Incoming::State(state)),
-            Err(error) => eprintln!("rerail-tray: skipped a menu state that did not parse: {error}"),
+            Err(error) => {
+                eprintln!("rerail-tray: skipped a menu state that did not parse: {error}")
+            }
         }
     }
     send(Incoming::Closed);
@@ -86,7 +94,10 @@ mod tests {
                 version: "Version 0.2.2".into(),
                 dashboard: "Dashboard at 127.0.0.1:4737".into(),
                 home: None,
-                update: Some(UpdateItem { label: "Update to 0.2.3".into(), enabled: true }),
+                update: Some(UpdateItem {
+                    label: "Update to 0.2.3".into(),
+                    enabled: true
+                }),
                 attention: true,
             }
         );
@@ -119,6 +130,21 @@ mod tests {
         assert!(matches!(seen[0], Incoming::State(_)));
         assert!(matches!(seen[1], Incoming::State(_)));
         assert_eq!(seen[2], Incoming::Closed);
+    }
+
+    #[test]
+    fn read_states_closed_on_read_error() {
+        struct Failing;
+        impl std::io::Read for Failing {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("pipe broke"))
+            }
+        }
+        let mut seen = Vec::new();
+        read_states(std::io::BufReader::new(Failing), |incoming| {
+            seen.push(incoming)
+        });
+        assert_eq!(seen, [Incoming::Closed]);
     }
 
     #[test]

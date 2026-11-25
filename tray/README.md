@@ -10,4 +10,8 @@ outlives the daemon. It reads nothing from the Rerail home and makes no network 
 | Path | What it holds |
 |---|---|
 | `src/protocol.rs` | the menu state, the action encoder and the stdin reader |
+| `src/art.rs` | the status circle and the badge drawn onto the icon |
+| `src/desktop.rs` | the macOS menu bar item and the Windows notification-area icon |
 | `src/main.rs` | the program's entry point |
+| `assets/icon-template.png` | the Nera "n" alone, black on transparent, 44×44: the macOS template icon |
+| `assets/icon.png` | the full-colour Nera square, 32×32: the Windows icon |
