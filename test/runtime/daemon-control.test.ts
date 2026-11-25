@@ -3303,6 +3303,8 @@ describe("a record whose live pid is not the home's daemon", () => {
       return await stopDaemon(home, machine);
     } finally {
       vi.useRealTimers();
+      // A read that throws, as at the guard, leaves the other stand-in queued, and the next case's first read would run it.
+      vi.mocked(childProcess.spawnSync).mockReset();
     }
   }
 
