@@ -194,6 +194,13 @@ impl Entries {
     /// when either does), behind the run (the store's writer): its relations' rows, in place of what it kept before.
     /// Nothing when the store refuses its strings (the next run makes it again).
     pub fn put(&self, store: &ContentStore, part: i64, holder: [u8; 32], plan: Option<[u8; 32]>, facts: &Facts) {
+        self.put_with(store, part, holder, plan, facts, &[]);
+    }
+
+    /// `put`, and relations of one integer a row (`ints`: each its name and its values in order), written into their
+    /// blocks from where they lie: the same relations, rows and digests as rows of `Value::Int` in `facts` make, but
+    /// no row made of each value first (a frame's image was a row a word: 2.7 M on cold PostHog).
+    pub fn put_with(&self, store: &ContentStore, part: i64, holder: [u8; 32], plan: Option<[u8; 32]>, facts: &Facts, ints: &[(&str, &[i64])]) {
         let strings: Vec<&str> = facts.values().flatten().flat_map(|r| r.iter()).filter_map(|v| if let Value::Str(s) = v { Some(s.as_ref()) } else { None }).collect();
         let Ok(atoms) = store.intern_atoms(&strings) else { return };
         let mut atoms = atoms.into_iter();
@@ -201,17 +208,37 @@ impl Entries {
         for (rel, rows) in facts {
             // The relation's rows by shape: each shape a kept relation, each row led by its place. Counted first, so
             // each shape's rows are written into a block of their size as they are found (`BlockFlat`).
-            let mut shapes: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
-            let mut row_kinds = Vec::with_capacity(rows.len());
+            // Each shape's kinds made once (a row's are read into one list, and found by it): a list a row and its
+            // clone into the map were 2 x 2.37 M arrays on cold PostHog. Each row is its shape's number.
+            let mut shapes: BTreeMap<Vec<u8>, u32> = BTreeMap::new();
+            let mut counts: Vec<usize> = Vec::new();
+            let mut row_shape: Vec<u32> = Vec::with_capacity(rows.len());
+            let mut kinds: Vec<u8> = Vec::new();
             for row in rows {
-                let Some(kinds) = row.iter().map(kind).collect::<Option<Vec<u8>>>() else { return };
-                *shapes.entry(kinds.clone()).or_default() += 1;
-                row_kinds.push(kinds);
+                kinds.clear();
+                for v in row.iter() {
+                    let Some(k) = kind(v) else { return };
+                    kinds.push(k);
+                }
+                let id = match shapes.get(kinds.as_slice()) {
+                    Some(&id) => id,
+                    None => {
+                        let id = counts.len() as u32;
+                        shapes.insert(kinds.clone(), id);
+                        counts.push(0);
+                        id
+                    }
+                };
+                counts[id as usize] += 1;
+                row_shape.push(id);
             }
-            let mut blocks: BTreeMap<Vec<u8>, (BlockFlat, usize, Sha256)> =
-                shapes.into_iter().map(|(kinds, n)| { let w = 1 + kinds.len(); (kinds, (BlockFlat::new(n, w, true), 0, Sha256::new())) }).collect();
-            for (at, (row, kinds)) in rows.iter().zip(&row_kinds).enumerate() {
-                let (block, r, h) = blocks.get_mut(kinds).expect("a shape counted");
+            let mut widths = vec![0usize; counts.len()];
+            for (k, &id) in &shapes {
+                widths[id as usize] = 1 + k.len();
+            }
+            let mut blocks: Vec<Option<(BlockFlat, usize, Sha256)>> = counts.iter().zip(&widths).map(|(&n, &w)| Some((BlockFlat::new(n, w, true), 0, Sha256::new()))).collect();
+            for (at, (row, &id)) in rows.iter().zip(&row_shape).enumerate() {
+                let (block, r, h) = blocks[id as usize].as_mut().expect("a shape counted");
                 let values = std::iter::once(at as i64).chain(row.iter().map(|v| match v {
                     Value::Int(i) => *i,
                     Value::Str(_) => i64::from(atoms.next().expect("an atom a string")),
@@ -223,12 +250,27 @@ impl Entries {
                 }
                 *r += 1;
             }
-            for (kinds, (block, _, h)) in blocks {
+            // In the shapes' order, as before.
+            for (kinds, id) in shapes {
+                let (block, _, h) = blocks[id as usize].take().expect("each shape once");
                 let digest = u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"));
                 let types: Vec<u8> = std::iter::once(b'i').chain(kinds.iter().map(|&k| if k == b'i' { b'i' } else { b's' })).collect();
                 let name = format!("{rel}#{}", String::from_utf8(kinds).expect("ascii"));
                 puts.push(KeptPut { ident: self.ident(&name), rel: name, part, digest, reads: Vec::new(), types, what: KeptWhat::Picked(Box::new(block)) });
             }
+        }
+        for &(rel, values) in ints.iter().filter(|(_, v)| !v.is_empty()) {
+            // As `facts`' rows of one `Value::Int` each: shape `i`, each row its place and its value.
+            let (mut block, mut h) = (BlockFlat::new(values.len(), 2, true), Sha256::new());
+            for (at, &v) in values.iter().enumerate() {
+                for (c, x) in [at as i64, v].into_iter().enumerate() {
+                    block.put(at, c, x);
+                    h.update(x.to_le_bytes());
+                }
+            }
+            let digest = u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"));
+            let name = format!("{rel}#i");
+            puts.push(KeptPut { ident: self.ident(&name), rel: name, part, digest, reads: Vec::new(), types: b"ii".to_vec(), what: KeptWhat::Picked(Box::new(block)) });
         }
         // Put whole with its holder: what the partition kept before that this entry has no rows of goes with it, by
         // the writer (`HOLDER`), so a run writes an entry inside its waves with no read of the store.
