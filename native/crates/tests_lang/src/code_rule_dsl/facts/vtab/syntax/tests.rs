@@ -1735,7 +1735,8 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
 /// Decision 0353 step 3: a `text` atom of a node a base or file-local relation binds reads the node's text
 /// (`@rr_node_text_any`), so no rule asks for `text`'s rows of it. Kept as rows: a node only a cross-file relation
 /// binds (read in the cross part, where a warm edit's retraction would read the edited file's document), a lookup by
-/// text (`text(n, "x")` binding `n`), a span's text, and any `text` outside `core.rerail`'s shape.
+/// text (`text(n, "x")` binding `n`), a match's span's text, and any `text` outside `core.rerail`'s shape. A
+/// document's `source` and `src_line` spans are read too (`LongTexts::text_any`, 0353 row 7).
 #[test]
 fn text_of_a_bound_node_is_read_in_place() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
@@ -1746,7 +1747,11 @@ fn text_of_a_bound_node_is_read_in_place() {
         (".decl t_name(x: symbol)\nt_name(x) :- kind(n, \"identifier\"), text(n, x).\n.decl t_used(n: node)\nt_used(n) :- kind(n, \"call\"), field(n, \"function\", f), text(f, x), t_name(x).\nout(t) :- t_used(n), text(n, t).", 2),
         ("out(\"x\") :- text(n, \"x\"), kind(n, \"identifier\").", 1),
         ("out(t) :- text(n, t).", 0),
-        ("out(t) :- src_line(_, _, s), text(s, t).", 0),
+        // A document's source and its lines are read off the source too (row 7); a match's span is not.
+        ("out(t) :- src_line(_, _, s), text(s, t).", 1),
+        ("out(t) :- source(_, s), text(s, t).", 1),
+        (".decl t_line(s: span)\nt_line(s) :- src_line(_, l, s), l > 1.\nout(t) :- t_line(s), text(s, t).", 1),
+        ("out(t) :- src_line(_, _, s), match_all(\"x+\", s, m), text(m, t).", 0),
     ] {
         let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}\n.decl out(t: symbol)\n{rules}\n.output out\n")).unwrap();
         let (program, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::text_by_node(program, Default::default()).unwrap();
@@ -1819,6 +1824,30 @@ fn t_shape_node_reads_answer_the_rows_node_rows_makes() {
             }
         }
         assert!(checked > 100, "{checked} reads");
+    }
+}
+
+/// Decision 0353 row 7: a document's `source` span's and its `src_line` spans' text, read off the source
+/// (`LongTexts::text_any`, as `@rr_node_text_any` reads it), is the text `Extra` makes their `text` rows with: every
+/// line, an empty one, a CRLF one and a last one with no terminator among them.
+#[test]
+fn a_line_spans_text_is_read_off_the_source_as_its_rows_give_it() {
+    let store = ContentStore::open(&temp("line-span-text")).unwrap();
+    let reads: BTreeSet<String> = ["source", "src_line", "text", crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES].map(str::to_owned).into_iter().collect();
+    use crate::code_rule_dsl::logic::front::ast::SpanIn;
+    let projection = Projection { reads: Some(reads), text_spans: Some([SpanIn::Source, SpanIn::Line].into_iter().collect()), ..Projection::core() };
+    let docs = vec![document(1, "m.py", "python", "import os\n\nx = 1\r\ny = 'z'"), document(2, "e.py", "python", ""), document(3, "n.py", "python", "a\n")];
+    let sources = shaped(&store, docs, &projection).unwrap();
+    let source = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let (text, long) = (source("text"), source(crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES));
+    let rows: HashMap<i64, String> = (0..text.len()).map(|r| (text.value(r, 0), store.atom_value(text.value(r, 1) as u32).unwrap().unwrap())).collect();
+    let mut spans: Vec<i64> = Vec::new();
+    let (src, lines) = (source("source"), source("src_line"));
+    spans.extend((0..src.len()).map(|r| src.value(r, 1)));
+    spans.extend((0..lines.len()).map(|r| lines.value(r, 2)));
+    assert!(spans.len() >= 9, "{} spans", spans.len());
+    for sp in spans {
+        assert_eq!(long.node_read("rr_node_text_any", sp, &[]), rows.get(&sp).cloned(), "span {sp}");
     }
 }
 

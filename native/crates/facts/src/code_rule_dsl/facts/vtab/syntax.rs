@@ -411,13 +411,24 @@ impl LongTexts {
         (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
     }
 
-    /// Node `n`'s exact source text at any length, or a comment span's (a comment no node is: `Extra`'s `node_text`
-    /// rows); none for another span or a node of a document not in the batch. It answers `node_text`'s requests
-    /// (decision 0174): only the nodes a rule asks for are read and interned.
+    /// Node `n`'s exact source text at any length, a comment span's (a comment no node is: `Extra`'s `node_text`
+    /// rows), or a `source` or `src_line` span's (its document's source, or line `l`'s text, as `Extra::document`
+    /// makes their `text` rows: read off the source where it lies, decision 0353 row 7); none for a match's span or a
+    /// node of a document not in the batch. It answers `node_text`'s requests (decision 0174): only the nodes a rule
+    /// asks for are read and interned.
     pub fn text_any(&self, n: i64) -> Option<String> {
         let (key, low) = ((n >> 32) as u32, n as u32);
         let p = &self.batch.docs[*self.docs.get(&key)?];
         let f = p.f();
+        if let Some(l) = granules::line_of(low) {
+            let source = f.source.as_str();
+            let l = l as usize;
+            if l == 0 {
+                return Some(source.to_owned());
+            }
+            let [a, b] = (l <= f.lines.count()).then(|| f.lines.text_of(l, source.as_bytes()))?;
+            return source.get(a as usize..b as usize).map(str::to_owned);
+        }
         if let Some(k) = granules::comment_of(low) {
             // The k-th comment kind's node not inside another that no node is, as `Extra::nodes` numbers them.
             use crate::code_rule_dsl::language::is_comment_kind;

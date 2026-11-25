@@ -2914,10 +2914,16 @@ fn run_observed_within(
             }
             super::kept_analyses::kept_value(source, "text kinds demanded", 3, &[&given], || super::text_demand::text_kind_demand(source, matchers), super::text_demand::demand_rows, super::text_demand::demand_of_rows)
         };
-        // The spans whose text a rule reads, a function of the program, kept with it as the text kinds are (t33 K4).
+        // The spans whose text a rule reads as rows, a function of the split's parts, kept with them as the text kinds
+        // are (t33 K4): of the parts, where a `source` or `src_line` span's `text` a file-local rule binds is read off
+        // the source (`@rr_node_text_any`, decision 0353 row 7), so no row of its text is made for it.
         let spans = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into());
-            super::kept_analyses::kept_value(source, "spans whose text is read", 1, &[], || super::text_demand::span_text_demand(source), super::text_demand::span_rows, super::text_demand::span_of_rows)
+            let of = |v: &crate::code_rule_dsl::logic::program_image::Version| super::kept_analyses::kept_value(v, "spans whose text is read", 2, &[], || super::text_demand::span_text_demand(v), super::text_demand::span_rows, super::text_demand::span_of_rows);
+            let ((mut spans, mut tokens), (cross, cross_tokens)) = (of(&*local_v), of(&*cross_version));
+            spans.extend(cross);
+            tokens |= cross_tokens;
+            (spans, tokens)
         };
         super::text_demand::projection_with(source, read.clone(), matchers, demand, spans)
     };

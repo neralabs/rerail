@@ -114,6 +114,12 @@ pub fn is_extra(low: u32) -> bool {
     (EXTRA_FIRST..SPAN_FIRST).contains(&(low >> INDEX_BITS))
 }
 
+/// The line (from 1; 0 the whole source) of a `Line` span's low bits, as `extra_low(ExtraSpan::Line, l)` made them.
+pub fn line_of(low: u32) -> Option<u32> {
+    let first = EXTRA_FIRST + ExtraSpan::Line.first();
+    (low >> INDEX_BITS == first).then_some(low % INDEX)
+}
+
 /// The comment number (from 1) of a `Comment` span's low bits, as `extra_low(ExtraSpan::Comment, i)` made them.
 pub fn comment_of(low: u32) -> Option<u32> {
     let first = EXTRA_FIRST + ExtraSpan::Comment.first();

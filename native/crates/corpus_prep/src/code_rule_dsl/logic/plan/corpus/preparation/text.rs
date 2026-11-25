@@ -42,7 +42,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     let text = p.current()?.decl_of("text").is_some();
     if text {
         p.rules(&mut NodeSubjects);
-        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() });
+        p.rules(&mut NodeReads { matchers: matchers.iter().map(|(rel, _, _)| rel.clone()).collect(), nodes: HashMap::new(), spans: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() });
         p.rules(&mut Twins { matchers: matchers.clone(), by_rule: HashMap::new(), made: 0 });
         // Again, on the twins.
         p.rules(&mut NodeSubjects);
@@ -85,7 +85,7 @@ pub fn long_text_twins(v: Arc<Version>, matchers: &Matchers) -> Result<(Arc<Vers
 /// step 3), `matchers` its matchers' relations: that version and the number of atoms read so.
 pub fn text_by_node(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<(Arc<Version>, usize)> {
     let mut p = Pipeline::new("text by node", v);
-    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), spans: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
     p.rules(&mut pass);
     Ok((p.finish()?.0, pass.made))
 }
@@ -533,6 +533,9 @@ struct NodeReads {
     /// Each relation's columns that hold nodes alone; empty outside `core.rerail`'s shape. Without the per-node
     /// relations themselves: their atoms are what is read, and bind no node (`r(v, "x")` alone is a lookup by value).
     nodes: HashMap<String, BTreeSet<usize>>,
+    /// `nodes`, and the columns that hold a document's `source` span or its `src_line` spans (or nodes): `text`'s read
+    /// answers those spans too (`LongTexts::text_any`, decision 0353 row 7), the other per-node reads do not.
+    spans: HashMap<String, BTreeSet<usize>>,
     made: usize,
     /// By relation, the heads of the rules whose atoms of it stay (their node not known to be bound), each with why
     /// (`why_unbound`), for the decision.
@@ -601,17 +604,23 @@ fn node_tests(v: &Version, of: &[(&'static str, &'static str)]) -> HashMap<Strin
     tests
 }
 
-/// The columns of `v`'s relations that hold nodes alone: a base relation's, `core.rerail`'s declared `node`
+/// core.rerail's base columns of the spans `text_any` reads off the source: a document's `source` and its lines.
+const LINE_SPANS: [(&str, usize); 2] = [("source", 1), ("src_line", 2)];
+
+/// The columns of `v`'s relations that hold nodes alone (and, with `more`, those base columns too): a base relation's, `core.rerail`'s declared `node`
 /// (`facts::core::core_node_columns`) and a matcher's (`matchers`: its root and captures); and a file-local derived
 /// relation's (`local`, the split's), each column every rule of it fills with a variable its body binds in such a
 /// column: the greatest such set, so a recursive relation keeps a column its base cases fill with nodes. Not a
 /// cross-file relation's: a node it binds is read in the cross part, where an edit's old document is not the batch's,
 /// so the read of a node a maintained rule retracts would read the edited file's (`NodeReads`).
-fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<String>) -> HashMap<String, BTreeSet<usize>> {
-    let core = crate::code_rule_dsl::facts::core::core_node_columns();
+fn node_columns(v: &Version, matchers: &BTreeSet<String>, local: &BTreeSet<String>, more: &[(&str, usize)]) -> HashMap<String, BTreeSet<usize>> {
+    let mut core = crate::code_rule_dsl::facts::core::core_node_columns().clone();
+    for &(rel, c) in more {
+        core.entry(rel.to_owned()).or_default().push(c);
+    }
     let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
     let mut cols: HashMap<String, BTreeSet<usize>> = HashMap::new();
-    for (rel, c) in core {
+    for (rel, c) in &core {
         if !derived.contains(rel.as_str()) && v.declares(rel) {
             cols.insert(rel.clone(), c.iter().copied().collect());
         }
@@ -750,7 +759,7 @@ impl Known<'_> {
 /// per-node relation, the heads whose atoms of it stay rows, each with why its node is not known to be one.
 pub fn text_rows_kept(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<BTreeMap<String, BTreeMap<String, String>>> {
     let mut p = Pipeline::new("text by node", v);
-    let mut pass = NodeReads { matchers, nodes: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
+    let mut pass = NodeReads { matchers, nodes: HashMap::new(), spans: HashMap::new(), made: 0, kept: BTreeMap::new(), local: BTreeSet::new(), causes: BTreeMap::new(), reported: BTreeMap::new(), tests: HashMap::new(), of: Vec::new() };
     p.rules(&mut pass);
     p.finish()?;
     Ok(pass.reported.into_iter().map(|(rel, heads)| (rel.to_owned(), heads)).collect())
@@ -766,10 +775,14 @@ impl RulePass for NodeReads {
             return Ok(Select::Rules(crate::code_rule_dsl::logic::program_image::manager::RuleSet::new()));
         }
         let split = cx.get::<crate::code_rule_dsl::typing::file_local::FileLocal>()?;
-        self.nodes = node_columns(v, &self.matchers, &split.local);
+        self.nodes = node_columns(v, &self.matchers, &split.local, &[]);
+        // Only core.rerail's read of a text answers a line's span (`LongTexts::text_any`); T's (`t_value`) a node's alone.
+        let spans_read = self.of.iter().any(|&(rel, read)| rel == "text" && read == "rr_node_text_any");
+        self.spans = if spans_read { node_columns(v, &self.matchers, &split.local, &LINE_SPANS) } else { self.nodes.clone() };
         (self.local, self.causes) = (split.local.clone(), split.causes.iter().map(|(r, c)| (r.clone(), c.clone())).collect());
         let of = &self.of;
         self.nodes.retain(|rel, _| !of.iter().any(|(r, _)| r == rel));
+        self.spans.retain(|rel, _| !of.iter().any(|(r, _)| r == rel));
         self.tests = node_tests(v, &self.of);
         Ok(Select::All)
     }
@@ -781,6 +794,7 @@ impl RulePass for NodeReads {
         }
         let body: Vec<LitRef<'_>> = r.body().collect();
         let bound = node_bound(v, r, &self.nodes);
+        let spans_bound = node_bound(v, r, &self.spans);
         // Each body atom of a per-node relation, or of a node test (`h(v)`, read as `r(v, _)`): its relation, its read,
         // and whether its node is bound.
         let of = |l: &LitRef<'_>| match l.view() {
@@ -790,6 +804,7 @@ impl RulePass for NodeReads {
                 let read = self.of.iter().find(|(x, _)| *x == rel).expect("a per-node relation").1;
                 let a = args(a);
                 let arity = if self.tests.contains_key(name) { 1 } else { 2 };
+                let bound = if rel == "text" { &spans_bound } else { &bound };
                 Some((rel, read, a.len() == arity && matches!(a[0], TermRef::Var(x) if bound.contains(&x))))
             }
             _ => None,
