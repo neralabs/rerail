@@ -2752,8 +2752,15 @@ impl Batch {
     ///
     /// A level launches its copies first, then its indexes, then the rest (`JobKind::phase`): a job of a later phase
     /// than a queued one sees its writes in the same level, and copies into one table's rows apart are one launch.
+    ///
+    /// A sorted dedup whose key, ranked with those of the level's queued ones, passes 64 bits (`flush`'s wide sort)
+    /// ends the level too: each group's keys sort apart, every one's under its rank.
     fn queue(&mut self, job: Job) -> Result<(), Error> {
-        let after = self.queued.iter().any(|q| {
+        let wider = job.wide > 0 && {
+            let (n, bits) = self.queued.iter().filter(|q| q.wide > 0).fold((1, job.key_bits), |(n, b), q| (n + 1, b.max(q.key_bits)));
+            bits + rank_bits(n) > 64
+        };
+        let after = wider || self.queued.iter().any(|q| {
             if q.kind.phase() < job.kind.phase() {
                 return false;
             }
@@ -2785,10 +2792,9 @@ impl Batch {
         // the level, above the widest key's bits (`HeadKeyP::rank_shift`, `rank`).
         let wide_jobs: Vec<usize> = (0..jobs.len()).filter(|&i| jobs[i].wide > 0).collect();
         let wide_bits = wide_jobs.iter().map(|&i| jobs[i].key_bits).max().unwrap_or(0);
-        let rank_bits = usize::BITS - wide_jobs.len().saturating_sub(1).leading_zeros();
-        if wide_bits + rank_bits > 64 {
-            return Err(Error::BackendCapacity);
-        }
+        let rank_bits = rank_bits(wide_jobs.len());
+        // `queue` ends a level before it would.
+        assert!(wide_bits + rank_bits <= 64, "a level's wide sort past 64 bits: {wide_bits} and {rank_bits} of rank");
         // None where every one's rows come sorted (`SortKey::presorted`): their keys lie in their order already.
         let wide_passes = if wide_jobs.iter().all(|&i| jobs[i].presorted) { 0 } else { (wide_bits + rank_bits).div_ceil(8).max(1) as usize };
         for (rank, &i) in wide_jobs.iter().enumerate() {
@@ -4031,6 +4037,11 @@ const PK_DEDUP_KEY: u32 = 31;
 /// `HeadKeyP`'s level's keys and its passes' parity (its size script's, `flush`'s).
 const HK_TOTAL: WordAt = WordAt::word(68);
 const HK_ODD: WordAt = WordAt::word(69);
+
+/// The bits that rank `n` sorted dedups in one wide sort (`Batch::flush`): none for one.
+fn rank_bits(n: usize) -> u32 {
+    usize::BITS - n.saturating_sub(1).leading_zeros()
+}
 
 /// A sorted dedup's key (t58 increment A, `join_stages.uglykl`'s `HeadKeyP`): the order's leading column's 16-bit
 /// tag where `tagged`, then each part, most significant first: (column of the dedup's `cols`, bits, least).

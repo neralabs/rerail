@@ -112,6 +112,71 @@
         }
     }
 
+    /// Heads whose sorted dedups' keys are each a full 64 bits (a 16-bit tag and two columns of 24 bits each), four in
+    /// one stratum: each sorts its keys in a level of its own, for no rank fits above them (t58 increment A's wide
+    /// sort), and the stratum runs on the device, in one program, its rows the CPU's.
+    #[test]
+    fn heads_whose_sort_keys_are_64_bits_sort_apart_in_one_program() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 5u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        db.execute_batch("CREATE TEMP TABLE a (c0, c1);").unwrap();
+        // Each column's least 0 and greatest 2^24 - 1: 24 bits each.
+        db.execute("INSERT INTO a VALUES (0, 0), (16777215, 16777215)", []).unwrap();
+        for _ in 0..2000 {
+            db.execute("INSERT INTO a VALUES (?1, ?2)", [next(1 << 24), next(1 << 24)]).unwrap();
+        }
+        let a = format!("t:x:{}:{}:ii", hex("temp.a"), hex("c0, c1"));
+        // hN(x, y) :- a(x, y), and the next ones of fewer rows: each head's key its source's bounds'.
+        let rules = [
+            format!("pos {a} v0 v1\nhead v0 v1"),
+            format!("pos {a} v0 v1\nlt v1 v0\nhead v0 v1"),
+            format!("pos {a} v0 v1\nlt v0 v1\nhead v0 v1"),
+            format!("pos {a} v0 v1\nne v0 i:7\nhead v0 v1"),
+        ];
+        let mut got = Vec::new();
+        for device in [false, true] {
+            let mut spec = vec!["name dev_wide".to_owned()];
+            if device {
+                spec.push("device".into());
+            }
+            for (h, r) in rules.iter().enumerate() {
+                db.execute_batch(&format!("DROP TABLE IF EXISTS temp.h{h}; CREATE TEMP TABLE h{h} (c0, c1);")).unwrap();
+                spec.push(format!("rel h{h} ii empty"));
+                spec.push(format!("seed {h} {}", hex(r)));
+            }
+            super::super::open(&db, &spec.join("\n")).unwrap();
+            super::super::run(&db, "dev_wide", 0).unwrap();
+            let report = super::take_report();
+            if device {
+                let r = report.expect("a device report");
+                assert!(r.refused.is_none(), "four 64-bit keys, sorted apart: {r:?}");
+                assert_eq!(r.programs, 1, "one program: {r:?}");
+            }
+            super::super::close(&db, "dev_wide").unwrap();
+            let rows: Vec<Vec<(i64, i64)>> = (0..rules.len())
+                .map(|h| {
+                    let mut rows: Vec<(i64, i64)> = db.prepare(&format!("SELECT c0, c1 FROM temp.h{h}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+                    rows.sort_unstable();
+                    rows
+                })
+                .collect();
+            got.push(rows);
+        }
+        assert!(got[0][0].len() > 1000, "{} rows", got[0][0].len());
+        assert_eq!(got[0], got[1], "the device's rows are the CPU's");
+    }
+
     /// Whether the CPU's counts per step (`step_counts`) are the device's, by rule: the same at each step, but where
     /// the CPU's probe read a range of its index that a later comparison bounds (`ranged`, `step_ranged`; Q245 item
     /// 5). There the probe yields only the rows in it (fewer, from the same bindings), and each step after it reads
