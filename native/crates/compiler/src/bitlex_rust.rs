@@ -128,10 +128,12 @@ struct G<'a> {
     fields: std::cell::RefCell<std::collections::BTreeMap<String, u16>>,
     /// Each rule's follow (`follow`), once found.
     follows: std::cell::RefCell<Option<HashMap<String, Vec<usize>>>>,
-    /// Where `open_mark` can hold (`marks`), for the token takes that need not ask it (`takes`): the words a mark no
+    /// Where `open_mark` can hold (`open_mark_words`), for the token takes that need not ask it (`moves::takes`): the words a mark no
     /// rule takes may hold at, and the token kinds whose test (`at_K`) passes at none of them. None: a mark may hold at
     /// any token.
-    mark_words: std::cell::RefCell<Option<(HashSet<String>, HashSet<String>)>>,
+    /// Whether a decision reads `marked` (`!self.marked`, `after_mark`): where none does, nothing writes it.
+    marked_read: std::cell::Cell<bool>,
+    mark_words: std::cell::OnceCell<Option<(HashSet<String>, HashSet<String>)>>,
     /// What a level's call saves of its caller's, where only some levels change it (`records`' calls form): the levels
     /// that may refuse a mark or that a rule refusing one calls, and those whose code may set the level's word. None:
     /// every call saves both.
@@ -311,7 +313,7 @@ impl<'a> G<'a> {
                 refusing.clear();
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -613,7 +615,12 @@ impl<'a> G<'a> {
         let mut mark_conds: Vec<(String, usize)> = Vec::new();
         for (m, f, t) in &marks {
             let c = guard(f, self.mark_test(*m));
-            let c = if *t == n && unmarked.contains(m) { format!("!self.marked && {c}") } else { c };
+            let c = if *t == n && unmarked.contains(m) {
+                self.marked_read.set(true);
+                format!("!self.marked && {c}")
+            } else {
+                c
+            };
             let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
             mark_conds.push((c.clone(), *m));
             match mg.last_mut() {
@@ -1109,7 +1116,7 @@ impl<'a> G<'a> {
                     Test::Word(w) => Take::WordPass { word: format!("w::{}", self.word_const(w)) },
                     test => Take::Pass { test: Cond::text(self.token_cond(&test)) },
                 };
-                vec![Op::Take { take, nf: false }]
+                vec![moves::take(take)]
             }
             Gram::Field(_, a) if self.recognizers.contains(rule) => self.code(a, rest, rule)?,
             // `leaf K R`: `R` reads the tokens, then one leaf of `K` over them, as the lean parser's `json` reads the
@@ -1189,7 +1196,7 @@ impl<'a> G<'a> {
                     (format!("matches!(self.word(), {})", words.join(" | ")), "ANON[self.word() as usize]".to_owned())
                 };
                 let other = self.kind_test(&k, "self.kind()", "self.word()");
-                let take = |test: String, kind: String| vec![Op::Take { take: Take::Leaf { test: Cond::text(test), kind, field: "0".into() }, nf: false }];
+                let take = |test: String, kind: String| vec![moves::take(Take::Leaf { test: Cond::text(test), kind, field: "0".into() })];
                 vec![Op::If { arms: vec![(Cond::text(test.clone()), take(test, kind))], els: Some(take(other, self.kind_const(&x)?)) }]
             }
             Gram::Sym(n) if let Some((ws, None)) = self.anon_choice(n) => match ws.as_slice() {
@@ -1200,7 +1207,7 @@ impl<'a> G<'a> {
                         self.anon.borrow_mut().insert(*w, k);
                     }
                     let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                    vec![Op::Take { take: Take::Leaf { test: Cond::text(format!("matches!(self.word(), {})", words.join(" | "))), kind: "ANON[self.word() as usize]".into(), field: "0".into() }, nf: false }]
+                    vec![moves::take(Take::Leaf { test: Cond::text(format!("matches!(self.word(), {})", words.join(" | "))), kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
                 }
             },
             Gram::Sym(n) if self.rules.contains_key(n.as_str()) => vec![line(format!("self.{}()?;", rule_fn(n)))],
@@ -1257,7 +1264,7 @@ impl<'a> G<'a> {
                     self.anon.borrow_mut().insert(*w, k);
                 }
                 let words: Vec<String> = ws.iter().map(|(w, _)| format!("w::{}", self.word_const(*w))).collect();
-                vec![Op::Take { take: Take::Leaf { test: Cond::text(format!("matches!(self.word(), {})", words.join(" | "))), kind: "ANON[self.word() as usize]".into(), field: "0".into() }, nf: false }]
+                vec![moves::take(Take::Leaf { test: Cond::text(format!("matches!(self.word(), {})", words.join(" | "))), kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
             }
             Gram::Alt(_) => {
                 let mut arms = self.arms(g, rest, rule)?;
@@ -1330,7 +1337,7 @@ impl<'a> G<'a> {
             }
             Gram::Merge(k, a) => {
                 let (test, _) = self.token_of(a).ok_or_else(|| format!("rule {rule}: a merge of no token"))?;
-                vec![Op::Take { take: Take::Merge { test: Cond::text(self.token_cond(&test)), kind: self.kind_const(k)? }, nf: false }]
+                vec![moves::take(Take::Merge { test: Cond::text(self.token_cond(&test)), kind: self.kind_const(k)? })]
             }
             Gram::Flag { flag, set, body } => {
                 let f = format!("FLAG_{}", upper(flag));
@@ -1396,7 +1403,7 @@ impl<'a> G<'a> {
                     Some(ws) if ws.len() > 1 => format!("matches!(self.word(), {})", ws.join(" | ")),
                     _ => tests.iter().map(|t| self.token_cond(t)).collect::<Vec<_>>().join(" || "),
                 };
-                return Ok(vec![Op::Take { take: Take::Leaf { test: Cond::text(cond), kind: self.kind_const(k)?, field: "0".into() }, nf: false }]);
+                return Ok(vec![moves::take(Take::Leaf { test: Cond::text(cond), kind: self.kind_const(k)?, field: "0".into() })]);
             }
         }
         let mut arms = Vec::new();
@@ -1486,7 +1493,7 @@ impl<'a> G<'a> {
             (_, Some(k)) => Take::Leaf { test: Cond::text(self.token_cond(t)), kind: self.kind_const(k)?, field: "0".into() },
             (_, None) => Take::Skip { test: Cond::text(self.token_cond(t)) },
         };
-        Ok(vec![Op::Take { take, nf: false }])
+        Ok(vec![moves::take(take)])
     }
 
     fn token_cond(&self, t: &Test) -> String {
@@ -1525,10 +1532,21 @@ impl<'a> G<'a> {
         Ok(out)
     }
 
-    fn rule(&self, name: &str) -> Result<String, String> {
+    /// Rule `name`'s method, as moves: its code, and the method's lines around it. Printed once every rule's moves are
+    /// made (`printed`), as the rewrites read what all of them hold (`marked_read`).
+    fn rule(&self, name: &str, nf: bool) -> Result<Block, String> {
+        // `nf`: a rule that runs with no mark refused, its takes without the refused marks' test (`records::refusers`).
+        let mut blk = Block::new();
+        let mut code = |out: &mut String, mut b: Block| {
+            if nf {
+                moves::no_refusing(&mut b);
+            }
+            blk.push(Op::Line(std::mem::take(out)));
+            blk.push(Op::At("        ".into(), b));
+        };
         // Taken where it is used (`anon_choice`): no function.
         if self.anon_choice(name).is_some() {
-            return Ok(String::new());
+            return Ok(Block::new());
         }
         let (body, node, nested, whole, padded) = match self.rules[name] {
             Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
@@ -1549,11 +1567,11 @@ impl<'a> G<'a> {
         if let Some(one) = self.statements(name, body)? {
             let _ = writeln!(out, "{}    }}\n", self.statement_loop(name, "self.statement()", "")?);
             let _ = write!(out, "    /// A statement of `{name}`: one of its repetition, as the lean parser's `statement`.\n    fn statement(&mut self) -> R {{\n");
-            out.push_str(&moves::print(&self.code(one, &[], name)?, "        "));
+            code(&mut out, self.code(one, &[], name)?);
             out.push_str("        Ok(())\n");
         } else if root {
             let _ = writeln!(out, "        self.open_root({});", self.kind_const(name)?);
-            out.push_str(&moves::print(&self.code(body, &[], name)?, "        "));
+            code(&mut out, self.code(body, &[], name)?);
             let _ = writeln!(out, "        self.close_root({whole}, {padded})");
         } else {
             if node {
@@ -1565,8 +1583,9 @@ impl<'a> G<'a> {
                     let _ = writeln!(out, "        self.open({});", self.kind_const(name)?);
                 }
             }
-            out.push_str(&moves::print(&self.code(body, &[], name)?, "        "));
-            out.push_str(&moves::print(&self.ending_code(name)?, "        "));
+            let mut c = self.code(body, &[], name)?;
+            c.extend(self.ending_code(name)?);
+            code(&mut out, c);
             if node {
                 out.push_str("        self.close()?;\n");
             }
@@ -1579,7 +1598,8 @@ impl<'a> G<'a> {
             out.push_str("        self.marked = false;\n        Ok(())\n");
         }
         out.push_str("    }\n\n");
-        Ok(out)
+        blk.push(Op::Line(out));
+        Ok(blk)
     }
 
     /// The root `name`'s one statement where it recovers (`recover`, decision 0650): its body is one repetition, the
@@ -1800,7 +1820,7 @@ impl<'a> G<'a> {
                     return None;
                 }}
                 depth[{d}] -= 1;
-            }}", self.elem(&n.open, "j")?, self.elem(&n.close, "j")?);
+            }}", moves::bare(&self.elem(&n.open, "j")?), moves::bare(&self.elem(&n.close, "j")?));
         }
         b.push_str("            j += 1;
         }
@@ -1840,7 +1860,7 @@ impl<'a> G<'a> {
                 let c = self.elem(choices, "j")?;
                 let _ = writeln!(b, "            if j >= self.n || !({c}) {{\n                return false;\n            }}");
                 for (d, n) in nests.iter().enumerate() {
-                    let _ = writeln!(b, "            if {} {{\n                depth[{d}] += 1;\n            }} else if {} {{\n                if depth[{d}] == 0 {{\n                    return false;\n                }}\n                depth[{d}] -= 1;\n            }}", self.elem(&n.open, "j")?, self.elem(&n.close, "j")?);
+                    let _ = writeln!(b, "            if {} {{\n                depth[{d}] += 1;\n            }} else if {} {{\n                if depth[{d}] == 0 {{\n                    return false;\n                }}\n                depth[{d}] -= 1;\n            }}", moves::bare(&self.elem(&n.open, "j")?), moves::bare(&self.elem(&n.close, "j")?));
                 }
                 b.push_str("            prev = j;\n            j += 1;\n        }\n");
                 b
@@ -2169,6 +2189,48 @@ impl<'a> G<'a> {
     }
 
     /// Each mark's test, `m_NAME`: it holds at the token and is not taken there.
+    /// Where a mark no rule takes (`open_mark`) may hold: at its marks' words alone, where each such mark starts with
+    /// words (its guard, `first_words`); then the token kinds none of whose tokens is such a word (`word_in`'s, the lean
+    /// lexer's). None where one may hold at any token.
+    fn open_mark_words(&self) -> Option<(HashSet<String>, HashSet<String>)> {
+        let peeks = self.peeks();
+        let mut guards: HashMap<String, Option<Vec<String>>> = HashMap::new();
+        for (order, m) in self.x.marks.iter().enumerate() {
+            if peeks >> order & 1 == 1 || guards.contains_key(&ident(&m.name)) {
+                continue;
+            }
+            let mut firsts: Option<Vec<String>> = Some(Vec::new());
+            for def in self.x.marks.iter().filter(|x| x.name == m.name) {
+                match (def.tokens.and_then(|(_, seq)| self.first_words(seq)), firsts.as_mut()) {
+                    (Some(ws), Some(all)) => all.extend(ws),
+                    _ => firsts = None,
+                }
+            }
+            guards.insert(ident(&m.name), firsts);
+        }
+        let open: HashSet<String> = self.x.marks.iter().filter(|m| !m.hidden).map(|m| ident(&m.name)).collect();
+        if !open.iter().all(|n| matches!(guards.get(n), Some(Some(_)))) {
+            return None;
+        }
+        let words: HashSet<String> = open.iter().filter_map(|n| guards.get(n).cloned().flatten()).flatten().collect();
+        let kinds_of = |w: &str| -> Vec<u8> {
+            self.x.tokens.iter().filter(|(_, name)| {
+                let mut ws = self.x.keywords.iter().filter(|r| r.0 == *name).flat_map(|r| r.1.iter().map(|(t, _)| t)).chain(self.x.soft.iter().filter(|r| r.0 == *name).flat_map(|r| r.1.iter()));
+                ws.any(|t| self.word_of(&String::from_utf8_lossy(t)).is_some_and(|id| format!("w::{}", self.word_const(id)) == w))
+            }).map(|(b, _)| *b).collect()
+        };
+        let marked: HashSet<u8> = words.iter().flat_map(|w| kinds_of(w)).collect();
+        let free: HashSet<String> = self.x.tokens.iter().map(|(_, n)| n.strip_suffix("_close").unwrap_or(n)).filter(|k| self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(*k)).all(|(b, _)| !marked.contains(b))).map(ident).collect();
+        Some((words, free))
+    }
+
+    /// `b`'s moves in the lean parser's forms (`moves::rewrite`), printed at `pad`.
+    pub(crate) fn printed(&self, mut b: Block, pad: &str) -> String {
+        let marks = self.mark_words.get_or_init(|| self.open_mark_words());
+        moves::rewrite(&mut b, &moves::Cx { marks: marks.as_ref(), marked: self.marked_read.get() });
+        moves::print(&b, pad)
+    }
+
     fn marks(&self, out: &mut String) -> Result<(), String> {
         if self.x.marks.len() > 64 {
             return Err(format!("{} marks: a token's marks are one u64", self.x.marks.len()));
@@ -2330,20 +2392,6 @@ impl<'a> G<'a> {
                     by_word.entry(w.clone()).or_default().push(call(n));
                 }
             }
-        }
-        // Where it can hold: at its marks' words alone, where every one has words; then the token kinds no such word
-        // is a word of (`word_in`'s, the lean lexer's).
-        if always.is_empty() {
-            let words: HashSet<String> = by_word.keys().cloned().collect();
-            let kinds_of = |w: &str| -> Vec<u8> {
-                self.x.tokens.iter().filter(|(_, name)| {
-                    let mut ws = self.x.keywords.iter().filter(|r| r.0 == *name).flat_map(|r| r.1.iter().map(|(t, _)| t)).chain(self.x.soft.iter().filter(|r| r.0 == *name).flat_map(|r| r.1.iter()));
-                    ws.any(|t| self.word_of(&String::from_utf8_lossy(t)).is_some_and(|id| format!("w::{}", self.word_const(id)) == w))
-                }).map(|(b, _)| *b).collect()
-            };
-            let marked: HashSet<u8> = words.iter().flat_map(|w| kinds_of(w)).collect();
-            let free: HashSet<String> = self.x.tokens.iter().map(|(_, n)| n.strip_suffix("_close").unwrap_or(n)).filter(|k| self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(*k)).all(|(b, _)| !marked.contains(b))).map(ident).collect();
-            *self.mark_words.borrow_mut() = Some((words, free));
         }
         let any = |cs: Vec<String>| if cs.is_empty() { "false".to_owned() } else { cs.join(" || ") };
         let body = if by_word.is_empty() {
@@ -2539,10 +2587,9 @@ impl<'a> G<'a> {
     }
 
     fn source(&self) -> Result<String, String> {
-        let mut rules = String::new();
-        for name in &self.order {
-            rules.push_str(&self.rule(name)?);
-        }
+        // Every rule's moves, then each printed (`rule`).
+        let made = self.order.iter().map(|name| self.rule(name, false)).collect::<Result<Vec<_>, _>>()?;
+        let rules: String = made.into_iter().map(|b| self.printed(b, "")).collect();
         let entry = rule_fn(self.order.first().ok_or("no rule")?);
         self.assemble(&rules, &entry, "// Generated by native/crates/compiler/src/bitlex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's tree rules.\n\n", false)
     }
@@ -2720,25 +2767,12 @@ impl<'a> G<'a> {
                 out = out.replace(a, b);
             }
         }
-        // The leaves' fields, then each take's tests (`takes`), before the helpers no code calls are dropped.
-        out = one_arm_a_take(&takes(&leaf_fields(&out), self.mark_words.borrow().as_ref()));
-        // A peek a decision tested is not tested again where the arm takes it (decision 0673 step 1).
-        out = no_retests(&out);
-        // The calls form in the lean parser's forms (decision 0668 step 1): a decision of one arm an `if`, a loop of one a
-        // `while`; and no `marked` where no decision reads it.
-        // The loop form's places too (decision 0673 step 8): a place's code is a rule's, in the same forms.
+        // The rules' and places' moves are in the lean parser's forms already (`printed`, decision 0681); no `marked`
+        // where no decision reads it.
         let _ = stack;
-        out = ifs_and_whiles(&out);
         if !out.contains("!self.marked") {
             out = no_marked(&out);
         }
-        out = no_empty_elses(&out);
-        out = no_code_after_return(&out);
-        out = no_taken_retests(&out);
-        out = shared_test_as_match(&out);
-        out = no_outer_parens(&out);
-        out = loops_as_whiles(&out);
-        out = no_retest_after_while(&out);
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
         // record, and writes only the helpers its code calls.
         if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
@@ -2893,537 +2927,6 @@ fn plain_writer(code: &str) -> String {
     .fold(code.to_owned(), |c, (a, b)| c.replace(a, b))
 }
 
-/// `code`'s token takes (`tk`, `word_leaf`, `word_skip`, `skip`, `merge`) each with the tests its token needs, as the
-/// lean parser asks at a token only what can hold there (`take`'s `M` and `F`): the marks no rule takes (`open_mark`)
-/// only where its token may be one of their words (`marks`: `w` none of them, or a kind no such word is of), and the
-/// marks the level refuses only in a rule a refusing level reaches (a take that is not `_nf`, `records::no_refusing`).
-fn takes(code: &str, marks: Option<&(HashSet<String>, HashSet<String>)>) -> String {
-    const NAMES: [&str; 7] = ["tk", "word_leaf", "word_skip", "skip", "merge", "pass", "word_pass"];
-    // Whether a mark no rule takes may hold at the token a take's first argument `a` says it is.
-    let may = |a: &str| -> bool {
-        let Some((words, free)) = marks else { return true };
-        // The test the token passes, if `a` implies it: `a`'s first conjunct, none of its alternatives.
-        if a.contains("||") {
-            return true;
-        }
-        let first = a.split(" && ").next().unwrap_or(a).trim();
-        // A choice of tokens' take (`anon_choice`): its words.
-        if let Some(ws) = first.strip_prefix("matches!(self.word(), ").and_then(|r| r.strip_suffix(')')) {
-            return ws.split(" | ").any(|w| words.contains(w.trim()));
-        }
-        let w = first.strip_prefix("self.word() == ").unwrap_or(first);
-        if w.starts_with("w::") && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':') {
-            return words.contains(w);
-        }
-        // A kind's test (`kind_test`): its first record kind's, by its token's name.
-        let k = first.strip_prefix("self.kind() == t::").or_else(|| first.strip_prefix("matches!(self.kind(), t::")).map(|r| r.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).next().unwrap_or(r));
-        match k {
-            Some(k) if !k.is_empty() => !free.contains(&k.to_ascii_lowercase()),
-            _ => true,
-        }
-    };
-    let mut out = String::with_capacity(code.len() + code.len() / 8);
-    let mut rest = code;
-    while let Some(at) = rest.find("self.") {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + 5..];
-        let id_len = after.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(after.len());
-        let (id, tail) = after.split_at(id_len);
-        let (name, nf) = match id.strip_suffix("_nf") {
-            Some(n) => (n, true),
-            None => (id, false),
-        };
-        if !NAMES.contains(&name) || !tail.starts_with('(') {
-            out.push_str("self.");
-            rest = after;
-            continue;
-        }
-        // The first argument: to the comma or the parenthesis that ends it.
-        let args = &tail[1..];
-        let (mut depth, mut end) = (0i32, args.len());
-        for (i, c) in args.char_indices() {
-            match c {
-                '(' | '[' | '{' => depth += 1,
-                ')' | ']' | '}' if depth == 0 => {
-                    end = i;
-                    break;
-                }
-                ')' | ']' | '}' => depth -= 1,
-                ',' if depth == 0 => {
-                    end = i;
-                    break;
-                }
-                _ => {}
-            }
-        }
-        let _ = write!(out, "self.{name}_as::<{}, {}>(", may(&args[..end]), !nf);
-        rest = args;
-    }
-    out.push_str(rest);
-    out
-}
-
-/// `code` with a decision's tokens taken as the lean parser takes a class of them (`raw_line`'s loop, `is_p`): an arm
-/// whose take tests the very token its pattern matched takes it with no test (`true`), and the arms whose code is then
-/// the same are one arm, `w::A | w::B` (a kind's guards `_ if a || b`). A choice of tokens (`any`, `punctuation`) is
-/// one arm a leaf kind, not one a token.
-fn one_arm_a_take(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out = String::with_capacity(code.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let l = lines[i];
-        if l.trim_start() == "match self.word() {"
-            && let Some((arms, next)) = word_arms(&lines, i)
-        {
-            let p = &l[..l.len() - l.trim_start().len()];
-            let q = format!("{p}    ");
-            let _ = writeln!(out, "{l}");
-            for (pat, body) in merged_arms(arms) {
-                let _ = writeln!(out, "{q}{pat} => {{\n{body}{q}}}");
-            }
-            let _ = writeln!(out, "{p}}}");
-            i = next;
-            continue;
-        }
-        out.push_str(l);
-        out.push('\n');
-        i += 1;
-    }
-    if !code.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
-/// A `match self.word()` arm's pattern as a condition: `self.word() == w::A`, `matches!(self.word(), w::A | w::B)`, a
-/// guard joined by `&&`; a kind's guard (`_ if c`) its condition.
-fn pattern_cond(pat: &str) -> String {
-    if let Some(c) = pat.strip_prefix("_ if ") {
-        return c.to_owned();
-    }
-    let (words, guard) = match pat.split_once(" if ") {
-        Some((w, g)) => (w, Some(g)),
-        None => (pat, None),
-    };
-    let test = if words.contains(" | ") { format!("matches!(self.word(), {words})") } else { format!("self.word() == {words}") };
-    match guard {
-        Some(g) => format!("{test} && {g}"),
-        None => test,
-    }
-}
-
-/// `lines[from..to]` four spaces a level to the left `levels` times (an empty line stays empty).
-fn dedented(lines: &[&str], levels: usize) -> String {
-    let cut = " ".repeat(4 * levels);
-    lines.iter().map(|l| format!("{}\n", l.strip_prefix(cut.as_str()).unwrap_or(l.trim_start()))).collect()
-}
-
-/// `code` with each decision of one arm in the lean parser's form (decision 0668 step 1): a `match self.word()` of one
-/// arm and an empty `_` is an `if`, as lean's `if self.is_p(X)`; a `loop` around one whose `_` breaks is a `while`.
-/// A peek's must-hold (`if !(X) { return self.refuse(); }`) right after a decision that tested it (`if X {`,
-/// `} else if X {`, `_ if X => {`, `X` alone or after `&&`s): none, as the lean parser takes the token it peeked at.
-fn no_retests(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out = String::with_capacity(code.len());
-    let implies = |c: &str, x: &str| c == x || c.strip_suffix(x).and_then(|h| h.strip_suffix(" && ")).is_some_and(|h| !h.contains("||"));
-    let mut i = 0;
-    while i < lines.len() {
-        out.push_str(lines[i]);
-        out.push('\n');
-        let t = lines[i].trim_start();
-        let tested = t.strip_prefix("} else if ").or_else(|| t.strip_prefix("if ")).and_then(|c| c.strip_suffix(" {")).or_else(|| t.strip_prefix("_ if ").and_then(|c| c.strip_suffix(" => {")));
-        if let Some(c) = tested
-            && i + 3 < lines.len()
-            && let Some(x) = lines[i + 1].trim_start().strip_prefix("if !(").and_then(|r| r.strip_suffix(") {"))
-            && lines[i + 2].trim() == "return self.refuse();"
-            && lines[i + 3].trim() == "}"
-            && implies(c, x)
-        {
-            i += 4;
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
-
-fn ifs_and_whiles(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out = String::with_capacity(code.len());
-    let mut i = 0;
-    // The one arm of the `match self.word()` at line `m`: its pattern, its body's lines, and the line of its `_`'s body
-    // and the line after the match. None where it has more arms.
-    let one_arm = |m: usize| -> Option<(String, usize, usize, usize)> {
-        let l = lines[m];
-        if l.trim_start() != "match self.word() {" {
-            return None;
-        }
-        let p = &l[..l.len() - l.trim_start().len()];
-        let q = format!("{p}    ");
-        let pat = lines.get(m + 1)?.strip_prefix(q.as_str())?.strip_suffix(" => {")?;
-        if pat.starts_with(' ') || pat == "_" {
-            return None;
-        }
-        let close_a = format!("{q}}}");
-        let mut j = m + 2;
-        while *lines.get(j)? != close_a {
-            j += 1;
-        }
-        // The `_`: one line of its body, then the match's end.
-        if *lines.get(j + 1)? != format!("{q}_ => {{") || *lines.get(j + 3)? != close_a || *lines.get(j + 4)? != format!("{p}}}") {
-            return None;
-        }
-        Some((pat.to_owned(), j, j + 2, j + 5))
-    };
-    while i < lines.len() {
-        let l = lines[i];
-        let p = &l[..l.len() - l.trim_start().len()];
-        // `loop { match self.word() { P => {…} _ => { break; } } }`: `while`.
-        if l.trim_start() == "loop {"
-            && let Some((pat, close, default, after)) = one_arm(i + 1)
-            && lines[default].trim() == "break;"
-            && lines.get(after) == Some(&format!("{p}}}").as_str())
-        {
-            let _ = write!(out, "{p}while {} {{\n{}{p}}}\n", pattern_cond(&pat), ifs_and_whiles(&dedented(&lines[i + 3..close], 2)));
-            i = after + 1;
-            continue;
-        }
-        // `match self.word() { P => {…} _ => {} }`: `if`.
-        if let Some((pat, close, default, after)) = one_arm(i)
-            && lines[default].trim().is_empty()
-        {
-            let _ = write!(out, "{p}if {} {{\n{}{p}}}\n", pattern_cond(&pat), ifs_and_whiles(&dedented(&lines[i + 2..close], 1)));
-            i = after;
-            continue;
-        }
-        out.push_str(l);
-        out.push('\n');
-        i += 1;
-    }
-    if !code.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
-/// `code` with each `loop { if C { … } else { break; } }` a `while C { … }`, as the lean parser writes a repetition
-/// (decision 0673 step 9).
-/// An `if … else if …` chain whose tests each begin with one test `P` and then ask the next token's word, its `else`
-/// the match of `P`'s word alone: `if P { match self.word_at(self.i + 1) { … } }`, as the lean parser asks `.` once and
-/// matches the directive's word (`statement`).
-fn shared_test_as_match(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    let next = "self.word_at(self.i + 1) == ";
-    // A test's words after `P`, as a pattern: `w::X`, `w::X if R` or `w::X | w::Y`.
-    let pattern = |q: &str| -> Option<String> {
-        if let Some(inner) = q.strip_prefix('(').and_then(|r| r.strip_suffix(')')) {
-            let ws: Option<Vec<&str>> = inner.split(" || ").map(|t| t.strip_prefix(next).filter(|w| !w.contains(' '))).collect();
-            return ws.filter(|v| v.len() > 1).map(|v| v.join(" | "));
-        }
-        let r = q.strip_prefix(next)?;
-        match r.split_once(" && ") {
-            Some((w, rest)) if !w.contains(' ') && !rest.contains("||") => Some(format!("{w} if {rest}")),
-            None if !r.contains(' ') => Some(r.to_owned()),
-            _ => None,
-        }
-    };
-    let mut i = 0;
-    while i < lines.len() {
-        let l = lines[i];
-        let p = &l[..l.len() - l.trim_start().len()];
-        let found = (|| {
-            let c = l.strip_prefix(p)?.strip_prefix("if ")?.strip_suffix(" {")?;
-            let (shared, _) = c.split_once(" && ")?;
-            let (word, _) = shared.strip_prefix("self.word() == ")?.split_once(' ').map_or(Some((shared.strip_prefix("self.word() == ")?, "")), Some)?;
-            // The arms: each its pattern and its body's lines.
-            let mut arms: Vec<(String, usize, usize)> = Vec::new();
-            let mut test = c;
-            let mut j = i + 1;
-            loop {
-                let q = test.strip_prefix(shared)?.strip_prefix(" && ")?;
-                let start = j;
-                while lines.get(j)?.len() - lines[j].trim_start().len() > p.len() {
-                    j += 1;
-                }
-                arms.push((pattern(q)?, start, j));
-                let t = lines[j].strip_prefix(p)?;
-                if let Some(n) = t.strip_prefix("} else if ").and_then(|r| r.strip_suffix(" {")) {
-                    test = n;
-                    j += 1;
-                    continue;
-                }
-                if t != "} else {" {
-                    return None;
-                }
-                break;
-            }
-            // The `else`: `match self.word() { WORD => { … } _ => { return self.refuse(); } }`.
-            let q = format!("{p}    ");
-            let r = format!("{q}    ");
-            if lines.get(j + 1)? != &format!("{q}match self.word() {{") || lines.get(j + 2)? != &format!("{r}{word} => {{") {
-                return None;
-            }
-            let start = j + 3;
-            let mut k = start;
-            while lines.get(k)?.len() - lines[k].trim_start().len() > r.len() {
-                k += 1;
-            }
-            let tail = [format!("{r}}}"), format!("{r}_ => {{"), format!("{r}    return self.refuse();"), format!("{r}}}"), format!("{q}}}"), format!("{p}}}")];
-            if (0..6).any(|d| lines.get(k + d) != Some(&tail[d].as_str())) {
-                return None;
-            }
-            Some((shared, arms, (start, k), k + 6))
-        })();
-        let Some((shared, arms, (ds, de), end)) = found else {
-            out.push(l.to_owned());
-            i += 1;
-            continue;
-        };
-        out.push(format!("{p}if {shared} {{"));
-        out.push(format!("{p}    match self.word_at(self.i + 1) {{"));
-        for (pat, s, e) in arms {
-            out.push(format!("{p}        {pat} => {{"));
-            out.extend(lines[s..e].iter().map(|b| format!("        {b}")));
-            out.push(format!("{p}        }}"));
-        }
-        out.push(format!("{p}        _ => {{"));
-        out.extend(lines[ds..de].iter().map(|b| (*b).to_owned()));
-        out.push(format!("{p}        }}"));
-        out.push(format!("{p}    }}"));
-        out.push(format!("{p}}} else {{"));
-        out.push(format!("{p}    return self.refuse();"));
-        out.push(format!("{p}}}"));
-        i = end;
-    }
-    out.join("\n") + "\n"
-}
-
-/// `if (C) {` and `} else if (C) {`, `C` one parenthesised test: `if C {`.
-fn no_outer_parens(code: &str) -> String {
-    let mut out = String::with_capacity(code.len());
-    for l in code.lines() {
-        let t = l.trim_start();
-        let p = &l[..l.len() - t.len()];
-        let head = ["if ", "} else if ", "while "].into_iter().find(|h| t.starts_with(h));
-        match head.and_then(|h| Some((h, t.strip_prefix(h)?.strip_suffix(" {")?))) {
-            Some((h, c)) if negate(c).len() == c.len() + 1 && c.starts_with('(') => {
-                let _ = writeln!(out, "{p}{h}{} {{", &c[1..c.len() - 1]);
-            }
-            _ => {
-                out.push_str(l);
-                out.push('\n');
-            }
-        }
-    }
-    out
-}
-
-/// `!c`: with no second parentheses where `c` is one call or one parenthesised test.
-fn negate(c: &str) -> String {
-    let one = c.starts_with('(') && c.ends_with(')') && {
-        let mut depth = 0i32;
-        c.char_indices().all(|(i, ch)| {
-            depth += i32::from(ch == '(') - i32::from(ch == ')');
-            depth > 0 || i == c.len() - 1
-        })
-    };
-    if one || (c.starts_with("self.") && !c.contains(' ')) { format!("!{c}") } else { format!("!({c})") }
-}
-
-/// The test `!c` negates, its outer parentheses gone: `!((a || b))` and `!(a || b)` the same.
-fn negated(c: &str) -> Option<&str> {
-    let mut c = c.strip_prefix('!')?;
-    while c.starts_with('(') && c.ends_with(')') && negate(c).len() == c.len() + 1 {
-        c = &c[1..c.len() - 1];
-    }
-    Some(c)
-}
-
-/// `while !C { if … {…} else if … {…} else { break; } }` then `if !C { return self.refuse(); }`: the loop ends only
-/// where `C` holds or at its `break`, where it does not, at the token the loop's test read; so the `break` refuses and
-/// the test after goes, as the lean parser's `while … on_line { word()? }`.
-fn no_retest_after_while(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out: Vec<String> = Vec::with_capacity(lines.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let l = lines[i];
-        let p = &l[..l.len() - l.trim_start().len()];
-        let q = format!("{p}    ");
-        let found = l.trim_start().strip_prefix("while ").and_then(|c| c.strip_suffix(" {")).and_then(|c| {
-            let close = (i + 1..lines.len()).find(|&j| lines[j] == format!("{p}}}"))?;
-            let body = &lines[i + 1..close];
-            // The body: one `if` chain at `q`, its last arm `} else {` / `break;` / `}`; no other `break`.
-            let n = body.len();
-            let chain = n >= 4
-                && body[0].strip_prefix(q.as_str()).is_some_and(|b| b.starts_with("if "))
-                && body[n - 3] == format!("{q}}} else {{")
-                && body[n - 2].trim() == "break;"
-                && body[n - 1] == format!("{q}}}")
-                && body[..n - 3].iter().all(|b| !b.trim().starts_with("break") && (b.len() - b.trim_start().len() > q.len() || b.starts_with(&format!("{q}if ")) || b.starts_with(&format!("{q}}} else if "))));
-            let after = lines.get(close + 1)?.strip_prefix(p)?.strip_prefix("if ")?.strip_suffix(" {")?;
-            (chain && negated(after).is_some() && negated(after) == negated(c) && lines.get(close + 2)?.trim() == "return self.refuse();" && *lines.get(close + 3)? == format!("{p}}}")).then_some(close)
-        });
-        if let Some(close) = found {
-            for (j, b) in lines.iter().enumerate().take(close + 1).skip(i) {
-                out.push(if j == close - 2 { b.replace("break;", "return self.refuse();") } else { (*b).to_owned() });
-            }
-            i = close + 4;
-            continue;
-        }
-        out.push(l.to_owned());
-        i += 1;
-    }
-    out.join("\n") + "\n"
-}
-
-fn loops_as_whiles(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out = String::with_capacity(code.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let l = lines[i];
-        let p = &l[..l.len() - l.trim_start().len()];
-        let q = format!("{p}    ");
-        let cond = (l.trim_start() == "loop {").then(|| lines.get(i + 1)).flatten().and_then(|n| n.strip_prefix(q.as_str())?.strip_prefix("if ")?.strip_suffix(" {"));
-        // The `if`'s body to its `} else {`, then `break;` and the ends.
-        let found = cond.and_then(|c| {
-            let close = (i + 2..lines.len()).find(|&j| lines[j].len() - lines[j].trim_start().len() <= q.len())?;
-            (lines[close] == format!("{q}}} else {{") && lines.get(close + 1)?.trim() == "break;" && *lines.get(close + 2)? == format!("{q}}}") && *lines.get(close + 3)? == format!("{p}}}")).then_some((c, close))
-        });
-        // `loop { if C { break; } else if D { … } … }`: `while !C { if D { … } … }`, the loop's end its condition, as the
-        // lean parser's `while self.on_line(…)`.
-        let ends = cond.filter(|_| found.is_none()).filter(|_| lines.get(i + 2).is_some_and(|b| b.trim() == "break;")).and_then(|c| {
-            let d = lines.get(i + 3)?.strip_prefix(q.as_str())?.strip_prefix("} else if ")?;
-            Some((c, d))
-        });
-        // `loop { if C { break; } else { … } }`: `while !C { … }`.
-        let plain = cond.filter(|_| found.is_none() && ends.is_none()).filter(|_| lines.get(i + 2).is_some_and(|b| b.trim() == "break;") && lines.get(i + 3) == Some(&format!("{q}}} else {{").as_str())).and_then(|c| {
-            let close = (i + 4..lines.len()).find(|&j| lines[j].len() - lines[j].trim_start().len() <= q.len())?;
-            (lines[close] == format!("{q}}}") && *lines.get(close + 1)? == format!("{p}}}")).then_some((c, close))
-        });
-        if let Some((c, close)) = plain {
-            let not = negate(c);
-            let _ = writeln!(out, "{p}while {not} {{");
-            for b in &lines[i + 4..close] {
-                out.push_str(b.strip_prefix("    ").unwrap_or(b));
-                out.push('\n');
-            }
-            let _ = writeln!(out, "{p}}}");
-            i = close + 2;
-            continue;
-        }
-        if let Some((c, d)) = ends {
-            let not = negate(c);
-            let _ = writeln!(out, "{p}while {not} {{\n{q}if {d}");
-            i += 4;
-            continue;
-        }
-        if let Some((c, close)) = found {
-            let _ = writeln!(out, "{p}while {c} {{");
-            for b in &lines[i + 2..close] {
-                out.push_str(b.strip_prefix("    ").unwrap_or(b));
-                out.push('\n');
-            }
-            let _ = writeln!(out, "{p}}}");
-            i = close + 4;
-            continue;
-        }
-        out.push_str(l);
-        out.push('\n');
-        i += 1;
-    }
-    if !code.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
-/// `code` with no take testing again what the test right before it tested: where an `if`, `else if`, `while` or arm's
-/// guard tests `C` and the line after takes the token if `C`, the take passes `true`, as the lean parser takes a token
-/// it has tested with no test (decision 0673 step 9).
-fn no_taken_retests(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out = String::with_capacity(code.len());
-    for (i, l) in lines.iter().enumerate() {
-        let prev = if i > 0 { lines[i - 1].trim() } else { "" };
-        let cond = prev
-            .strip_suffix(" {")
-            .and_then(|p| p.strip_prefix("if ").or_else(|| p.strip_prefix("} else if ")).or_else(|| p.strip_prefix("while ")))
-            .or_else(|| prev.strip_prefix("_ if ").and_then(|p| p.strip_suffix(" => {")));
-        let t = l.trim_start();
-        let taken = cond.and_then(|c| {
-            // The take's first argument: past `_as(`, or `_as::<M, F>(` before `one_take`.
-            let at = t.find('(')? + 1;
-            if !t[..at].contains("_as") {
-                return None;
-            }
-            let rest = &t[at..];
-            let tail = rest.strip_prefix(c)?;
-            (t.starts_with("self.") && (tail.starts_with(", ") || tail.starts_with(")?;"))).then(|| format!("{}{}true{tail}", &l[..l.len() - t.len()], &t[..at]))
-        });
-        out.push_str(taken.as_deref().unwrap_or(l));
-        out.push('\n');
-    }
-    if !code.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
-/// `code` with nothing after a `return` in its block, as the lean parser writes none: a refusal a place's arm ends with
-/// leaves no jump after it (the loop form's `return self.refuse();` then `st = …;`).
-fn no_code_after_return(code: &str) -> String {
-    let indent = |l: &str| l.len() - l.trim_start().len();
-    let mut out = String::with_capacity(code.len());
-    let mut lines = code.lines().peekable();
-    while let Some(l) = lines.next() {
-        out.push_str(l);
-        out.push('\n');
-        let t = l.trim();
-        if t.starts_with("return ") && t.ends_with(';') {
-            let p = indent(l);
-            while let Some(n) = lines.peek() {
-                if n.trim().is_empty() || indent(n) > p || (indent(n) == p && !n.trim_start().starts_with('}')) {
-                    lines.next();
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-    if !code.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
-/// `code` with no `else` that does nothing, as the lean parser writes none: one whose lines all went (`no_marked`).
-fn no_empty_elses(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out = String::with_capacity(code.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let l = lines[i];
-        let p = &l[..l.len() - l.trim_start().len()];
-        if l.trim() == "} else {" && lines.get(i + 1).is_some_and(|n| n.len() == p.len() + 1 && n.ends_with('}') && n.starts_with(p)) {
-            out.push_str(p);
-            out.push_str("}\n");
-            i += 2;
-            continue;
-        }
-        out.push_str(l);
-        out.push('\n');
-        i += 1;
-    }
-    if !code.ends_with('\n') {
-        out.pop();
-    }
-    out
-}
-
 /// `code` with no `marked` (decision 0668 step 1): no decision reads it (`!self.marked`, `after_mark`), so its writes,
 /// its field and its place in a statement's mark go.
 /// `code` without field `f` of the parser (a `u64` no code reads): its declaration and the comment above it, its
@@ -3532,139 +3035,6 @@ fn no_marked(code: &str) -> String {
         out.pop();
     }
     out.replace("marked: false, ", "").replace("marked: self.marked, ", "")
-}
-
-/// The arms of the `match self.word()` at line `i`: each its pattern and its code (its lines, each ended, the nested
-/// decisions in it made one arm a take too); and the line after the match. None where a line is not an arm's.
-fn word_arms(lines: &[&str], i: usize) -> Option<(Vec<(String, String)>, usize)> {
-    let l = lines[i];
-    let p = &l[..l.len() - l.trim_start().len()];
-    let (q, close_m) = (format!("{p}    "), format!("{p}}}"));
-    let close_a = format!("{q}}}");
-    let mut arms = Vec::new();
-    let mut j = i + 1;
-    while *lines.get(j)? != close_m {
-        let pat = lines[j].strip_prefix(q.as_str())?.strip_suffix(" => {")?;
-        if pat.starts_with(' ') {
-            return None;
-        }
-        let from = j + 1;
-        j = from;
-        while *lines.get(j)? != close_a {
-            j += 1;
-        }
-        let body = one_arm_a_take(&(lines[from..j].join("\n") + "\n"));
-        arms.push((pat.to_owned(), body));
-        j += 1;
-    }
-    Some((arms, j + 1))
-}
-
-/// `arms` with each take of its own pattern's token untested, and the word arms of the same code one arm (at the first's
-/// place: the words are distinct, so their order is free), the words under one guard of the same code one arm,
-/// consecutive guards of the same code one guard.
-fn merged_arms(arms: Vec<(String, String)>) -> Vec<(String, String)> {
-    let is_word = |p: &str| p.starts_with("w::") && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':');
-    let mut out: Vec<(String, String)> = Vec::new();
-    for (pat, body) in arms {
-        let cond = if is_word(&pat) {
-            Some(format!("self.word() == {pat}"))
-        } else {
-            pat.strip_prefix("_ if ").filter(|c| !c.contains("||") && !c.contains(" && ")).map(str::to_owned)
-        };
-        let body = match &cond {
-            Some(c) => untested(&body, c, is_word(&pat).then_some(pat.as_str())),
-            None => body,
-        };
-        if is_word(&pat)
-            && let Some(a) = out.iter_mut().find(|a| a.1 == body && a.0.split(" | ").all(is_word))
-        {
-            a.0 = format!("{} | {pat}", a.0);
-            continue;
-        }
-        // A word under a guard: with the arm of the same guard and code, where no arm before names the word (then its
-        // place is free too), as the lean parser's `!negated && is_comparison(k)`.
-        if let Some((w, g)) = pat.split_once(" if ").filter(|(w, _)| is_word(w))
-            && !out.iter().any(|a| a.0.split(" if ").next().is_some_and(|ws| ws.split(" | ").any(|x| x == w)))
-            && let Some(a) = out.iter_mut().find(|a| a.1 == body && a.0.split_once(" if ").is_some_and(|(ws, h)| h == g && ws.split(" | ").all(is_word)))
-        {
-            let (ws, _) = a.0.split_once(" if ").expect("a guard");
-            a.0 = format!("{ws} | {w} if {g}");
-            continue;
-        }
-        if let Some(c) = pat.strip_prefix("_ if ")
-            && let Some(last) = out.last_mut()
-            && last.1 == body
-            && last.0.starts_with("_ if ")
-        {
-            last.0 = format!("{} || {c}", last.0);
-            continue;
-        }
-        out.push((pat, body));
-    }
-    out
-}
-
-/// `body` whose first line takes the token `cond` tests (or word `word`'s): that test `true`, the arm's pattern having
-/// made it.
-fn untested(body: &str, cond: &str, word: Option<&str>) -> String {
-    let Some((first, rest)) = body.split_once('\n') else { return body.to_owned() };
-    let pad = &first[..first.len() - first.trim_start().len()];
-    let t = first.trim_start();
-    let Some(after) = t.strip_prefix("self.") else { return body.to_owned() };
-    let Some((name, args)) = after.split_once("_as::<") else { return body.to_owned() };
-    let Some((generics, args)) = args.split_once(">(") else { return body.to_owned() };
-    let new = match (name, word) {
-        ("word_leaf", Some(w)) => args.strip_prefix(&format!("{w}, ")).map(|k| format!("self.tk_as::<{generics}>(true, {}", k.replacen(")?;", ", 0)?;", 1))),
-        ("word_skip", Some(w)) => args.strip_prefix(&format!("{w})?;")).map(|_| format!("self.skip_as::<{generics}>(true)?;")),
-        ("word_pass", Some(w)) => args.strip_prefix(&format!("{w})?;")).map(|_| format!("self.pass_as::<{generics}>(true)?;")),
-        _ => args.strip_prefix(&format!("{cond}, ")).or_else(|| args.strip_prefix(&format!("{cond})"))).map(|r| {
-            if args.starts_with(&format!("{cond})")) { format!("self.{name}_as::<{generics}>(true){r}") } else { format!("self.{name}_as::<{generics}>(true, {r}") }
-        }),
-    };
-    match new {
-        Some(n) => format!("{pad}{n}\n{rest}"),
-        None => body.to_owned(),
-    }
-}
-
-/// `code` with each leaf given its field as it is written: a leaf (`tk`, `word_leaf`) of no field, then the field set
-/// on the node made last (`field_made`), which is that leaf, is one `tk` of the field, as the lean parser writes a
-/// token's field with it.
-fn leaf_fields(code: &str) -> String {
-    let lines: Vec<&str> = code.lines().collect();
-    let mut out = String::with_capacity(code.len());
-    let mut i = 0;
-    while i < lines.len() {
-        let l = lines[i];
-        let pad = &l[..l.len() - l.trim_start().len()];
-        let field = lines.get(i + 1).and_then(|n| n.strip_prefix(pad)).and_then(|n| n.strip_prefix("self.field_made(")).and_then(|n| n.strip_suffix(");"));
-        // A rule's take with no mark refused is `tk_nf` (`records::no_refusing`), and stays one.
-        let leaf = ["", "_nf"].iter().find_map(|x| Some((*x, l.trim_start().strip_suffix(", 0)?;")?.strip_prefix(&format!("self.tk{x}("))?.to_owned())));
-        // `word_leaf(w, k)` is `tk(self.word() == w, k, 0)`.
-        let leaf = leaf.or_else(|| {
-            ["", "_nf"].iter().find_map(|x| {
-                let a = l.trim_start().strip_prefix(&format!("self.word_leaf{x}("))?.strip_suffix(")?;")?;
-                let (w, k) = a.split_once(", ")?;
-                Some((*x, format!("self.word() == {w}, {k}")))
-            })
-        });
-        match (leaf, field) {
-            (Some((x, a)), Some(f)) if f.starts_with("f::") && !f.contains(' ') => {
-                let _ = writeln!(out, "{pad}self.tk{x}({a}, {f})?;");
-                i += 2;
-            }
-            _ => {
-                out.push_str(l);
-                out.push('\n');
-                i += 1;
-            }
-        }
-    }
-    if !code.ends_with('\n') {
-        out.pop();
-    }
-    out
 }
 
 /// The parser's helpers that only some grammars' rules call (`relabel`, `drop`), by name: each written into a parser

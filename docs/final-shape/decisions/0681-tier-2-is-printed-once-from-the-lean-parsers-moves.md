@@ -1,6 +1,6 @@
 # 0681: Tier 2 is printed once from the lean parser's moves
 
-Status: step 1 done (the user, 2026-11-24: "what are the BIG FUCKING ROCKS?", then "so do 1"). Follows 0673. The bar is
+Status: steps 1 and 2 done but the names (the user, 2026-11-24: "what are the BIG FUCKING ROCKS?", then "so do 1"). Follows 0673. The bar is
 0673's: is the generated code the lean parser's (`rr_syntax/src/lean.rs`) shape?
 
 ## Intro
@@ -69,7 +69,16 @@ place one more move, and the same rewrites run on each place.
    `records::no_refusing` on them is a field of each take. rr's, Kotlin's and JSON's generated files are byte for
    byte the same.)
 2. Each text pass on the rules' code becomes a rewrite of moves, and is removed. The generated files do not change,
-   or each change is named.
+   or each change is named. (Done for all but the names: `moves::rewrite` runs `leaf_fields`, `takes`,
+   `one_arm_a_take`, `no_retests`, `ifs_and_whiles`, `marked`'s writes, `no_empty_elses`, `no_code_after_return`,
+   `no_taken_retests`, `shared_test_as_match`, `no_outer_parens`, `loops_as_whiles` and `no_retest_after_while` on
+   each rule's and each place's moves, and their text forms are gone. A take's `M` is a field of the take, from
+   `G::open_mark_words`. `G::rule` gives moves, and each form prints its rules once all of them are made, as whether
+   any decision reads `marked` is known only then (`G::marked_read`). The changes: Kotlin's two `_ => {}` arms lose
+   the empty line the text `one_arm_a_take` wrote in them; and a bracket's scan (`scan_fn`) writes its nest's tests
+   without outer parentheses itself, which the text `no_outer_parens` had taken off. Not yet: `lean_names` still
+   renames the takes in the whole text, the runtime's definitions with them, and `no_marked` still takes `marked`
+   out of the runtime and the methods' ends.)
 3. `decide` reads tests, not strings.
 
 The passes over the runtime's text (`one_take`, `no_field`, `no_dead_methods`, `plain_writer`, the runtime's

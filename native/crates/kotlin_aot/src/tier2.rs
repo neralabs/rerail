@@ -1668,7 +1668,6 @@ impl<L: Layout> P<'_, L> {
                     self.control_structure_body()?;
                 }
                 _ => {
-
                 }
             }
         }
@@ -2801,7 +2800,6 @@ impl<L: Layout> P<'_, L> {
                     self.type_name()?;
                 }
                 _ => {
-
                 }
             }
         }
