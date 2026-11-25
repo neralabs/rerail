@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { fstatSync, readFileSync, readSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
@@ -16,9 +16,21 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
+// The walk's reads of an index file, seen as the cases count them and cut short.
+vi.mock("node:fs", async importOriginal => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return { ...fs, fstatSync: vi.fn(fs.fstatSync), readFileSync: vi.fn(fs.readFileSync), readSync: vi.fn(fs.readSync) };
+});
+
+const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  vi.useRealTimers();
+  vi.mocked(fstatSync).mockReset().mockImplementation(realFs.fstatSync);
+  vi.mocked(readFileSync).mockReset().mockImplementation(realFs.readFileSync);
+  vi.mocked(readSync).mockReset().mockImplementation(realFs.readSync);
 });
 
 function git(cwd: string, ...args: string[]): void {
@@ -114,13 +126,29 @@ const FOUR_LEARNT = ["folder .git", "folder scratch", "folder api", "folder .git
 const indexOf = (root: string): string => join(root, ".git", "index");
 
 /**
- * Puts zero bytes in place of the SHA-1 checksum at the end of `root`'s index, as Git 2.40 and later write it where
- * `index.skipHash` is set; Git from 2.13 reads such an index. An older Git writes the checksum whatever the setting.
+ * Puts zero bytes in place of the SHA-1 checksum at the end of the index file `index`, as Git 2.40 and later write it
+ * where `index.skipHash` is set; Git from 2.13 reads such an index. An older Git writes the checksum whatever the setting.
  */
-function withoutChecksum(root: string): void {
-  const bytes = readFileSync(indexOf(root));
+function withoutChecksum(index: string): void {
+  const bytes = readFileSync(index);
   bytes.fill(0, bytes.length - 20);
-  writeFileSync(indexOf(root), bytes);
+  writeFileSync(index, bytes);
+}
+
+/**
+ * Sets the clock `Date.now` reads, until the case ends, to `ms` past the later of the modification and change times of
+ * `file`: a walk keeps the stamp of an index with no checksum only where the clock had left both by 2 s and a tick.
+ */
+async function clockAfter(file: string, ms: number): Promise<void> {
+  const { mtimeNs, ctimeNs } = await stat(file, { bigint: true });
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(Number((mtimeNs > ctimeNs ? mtimeNs : ctimeNs) / 1_000_000n) + ms);
+}
+
+/** How many times the whole of an open file was read from this call on: a walk reads an index with no checksum so. */
+function wholeReads(): () => number {
+  const from = vi.mocked(readFileSync).mock.calls.length;
+  return () => vi.mocked(readFileSync).mock.calls.slice(from).filter(([file]) => typeof file === "number").length;
 }
 
 describe("Git's ignore answers kept per checkout", () => {
@@ -171,6 +199,48 @@ describe("Git's ignore answers kept per checkout", () => {
       expect([view.ignoresPath(file, false), view.acceptsPath(file)]).toEqual([false, true]);
     }
     expect(asked).toEqual(["folder .git", "file api/x.py"]);
+  });
+
+  // Where Git writes no checksum (`index.skipHash`, which `feature.manyFiles` turns on), a walk tells the index by the
+  // digest of its bytes, kept while the file keeps its stamp: reading and hashing 100,000 entries takes 8.4 ms.
+  it("reads the whole of an index with no checksum once for two walks, and again, keeping every answer, once its times moved", async () => {
+    const { session, databasePath } = await checkout();
+    git(session, "config", "index.skipHash", "true");
+    await writeFile(join(session, ".gitignore"), "*.log\n");
+    withoutChecksum(indexOf(session));
+    startTestRepository(session, databasePath);
+    const asked = countedIgnoreQuestions();
+    const auditor = await opened(session, databasePath, new GitIgnoreMatchers());
+    await clockAfter(indexOf(session), 3_000);
+    const reads = wholeReads();
+    expect(walk(auditor, "run.log", "api/x.py")).toEqual([true, false]);
+    asked.length = 0;
+    expect([walk(auditor, "run.log", "api/x.py"), reads()]).toEqual([[true, false], 1]);
+
+    const earlier = new Date(Date.now() - 60_000);
+    await utimes(indexOf(session), earlier, earlier);
+    expect([walk(auditor, "run.log", "api/x.py"), asked, reads()]).toEqual([[true, false], [], 2]);
+  });
+
+  it("reads the whole of a linked worktree's index with no checksum once for two walks, and answers by the files it tracks once it changed", async () => {
+    const { root, session, databasePath } = await checkout();
+    setUpTestRepository(session, { library: [{ kind: "code", rule: needle() }] }, databasePath);
+    git(session, "config", "index.skipHash", "true");
+    const worktree = join(root, "elsewhere", "w");
+    git(session, "worktree", "add", "--quiet", "-b", "linked", worktree);
+    await writeFile(join(worktree, ".gitignore"), "*.log\n");
+    const index = join(session, ".git", "worktrees", "w", "index");
+    withoutChecksum(index);
+    const auditor = await opened(session, databasePath, new GitIgnoreMatchers());
+    const log = relative(session, join(await realpath(worktree), "run.log")).split(sep).join("/");
+    await clockAfter(index, 3_000);
+    const reads = wholeReads();
+    expect([walk(auditor, log), walk(auditor, log), reads()]).toEqual([[true], [true], 1]);
+
+    await writeFile(join(worktree, "run.log"), "kept\n");
+    git(worktree, "add", "--force", "--", "run.log");
+    withoutChecksum(index);
+    expect([walk(auditor, log), reads()]).toEqual([[false], 2]);
   });
 
   describe("what ends an answer", () => {
@@ -231,6 +301,22 @@ describe("Git's ignore answers kept per checkout", () => {
       expect([walk(auditor, "run.log", "api/x.py"), asked]).toEqual([[true, false], []]);
     });
 
+    // A read of the index's end that comes short (the file cut after its stat) leaves the walk nothing to tell it by.
+    it("keeps no answer at a walk whose read of the index's end came short, and keeps them again at the next walk", async () => {
+      const { session, databasePath } = await checkout();
+      await writeFile(join(session, ".gitignore"), "*.log\n");
+      startTestRepository(session, databasePath);
+      const asked = countedIgnoreQuestions();
+      const auditor = await opened(session, databasePath, new GitIgnoreMatchers());
+      expect(walk(auditor, "run.log", "api/x.py")).toEqual([true, false]);
+      asked.length = 0;
+
+      vi.mocked(readSync).mockImplementationOnce(() => 0);
+      expect([walk(auditor, "run.log", "api/x.py"), asked.splice(0)]).toEqual([[true, false], ["file run.log", "file api/x.py"]]);
+      expect([walk(auditor, "run.log", "api/x.py"), walk(auditor, "run.log", "api/x.py"), asked])
+        .toEqual([[true, false], [true, false], ["folder .git", "file run.log", "folder .git", "file api/x.py"]]);
+    });
+
     // `index.skipHash`, which `feature.manyFiles` turns on, has Git write zero bytes where its checksum would be.
     it("answers by the files an index with no checksum tracks now, though it kept its size", async () => {
       const { session, databasePath } = await checkout();
@@ -239,7 +325,7 @@ describe("Git's ignore answers kept per checkout", () => {
       await writeFile(join(session, "a.log"), "kept\n");
       await writeFile(join(session, "b.log"), "kept\n");
       git(session, "add", "--force", "--", ".gitignore", "a.log");
-      withoutChecksum(session);
+      withoutChecksum(indexOf(session));
       const size = (await stat(indexOf(session))).size;
       startTestRepository(session, databasePath);
       const auditor = await opened(session, databasePath, new GitIgnoreMatchers());
@@ -247,9 +333,56 @@ describe("Git's ignore answers kept per checkout", () => {
 
       git(session, "rm", "--cached", "--quiet", "--", "a.log");
       git(session, "add", "--force", "--", "b.log");
-      withoutChecksum(session);
+      withoutChecksum(indexOf(session));
       expect((await stat(indexOf(session))).size).toBe(size);
       expect(walk(auditor, "a.log", "b.log")).toEqual([true, false]);
+    });
+
+    // A stamp taken inside a tick of the clock that gave the file's times cannot tell a later write: ext4 gives a freed
+    // inode number to the next new file at once, and a write of one size inside that tick keeps the times too.
+    it("answers by the files an index with no checksum tracks now, though it was rewritten at its size inside a tick of its times and its stat is as it was", async () => {
+      const { session, databasePath } = await checkout();
+      git(session, "config", "index.skipHash", "true");
+      await writeFile(join(session, ".gitignore"), "*.log\n");
+      await writeFile(join(session, "a.log"), "kept\n");
+      await writeFile(join(session, "b.log"), "kept\n");
+      git(session, "add", "--force", "--", ".gitignore", "a.log");
+      withoutChecksum(indexOf(session));
+      const stats = realFs.statSync(indexOf(session), { bigint: true });
+      startTestRepository(session, databasePath);
+      const auditor = await opened(session, databasePath, new GitIgnoreMatchers());
+      await clockAfter(indexOf(session), 1_000);
+      vi.mocked(fstatSync).mockImplementation((descriptor, options) => (options?.bigint === true ? stats : realFs.fstatSync(descriptor, options)));
+      expect(walk(auditor, "a.log", "b.log")).toEqual([false, true]);
+
+      git(session, "rm", "--cached", "--quiet", "--", "a.log");
+      git(session, "add", "--force", "--", "b.log");
+      withoutChecksum(indexOf(session));
+      expect((await stat(indexOf(session), { bigint: true })).size).toBe(stats.size);
+      expect(walk(auditor, "a.log", "b.log")).toEqual([true, false]);
+    });
+
+    it("answers by the files the index tracks as index.skipHash is turned on and off between walks, reading it whole only while Git writes no checksum", async () => {
+      const { session, databasePath } = await checkout();
+      await writeFile(join(session, ".gitignore"), "*.log\n");
+      await writeFile(join(session, "a.log"), "kept\n");
+      await writeFile(join(session, "b.log"), "kept\n");
+      git(session, "add", "--force", "--", ".gitignore", "a.log");
+      startTestRepository(session, databasePath);
+      const auditor = await opened(session, databasePath, new GitIgnoreMatchers());
+      const reads = wholeReads();
+      expect(walk(auditor, "a.log", "b.log")).toEqual([false, true]);
+
+      git(session, "config", "index.skipHash", "true");
+      git(session, "rm", "--cached", "--quiet", "--", "a.log");
+      git(session, "add", "--force", "--", "b.log");
+      withoutChecksum(indexOf(session));
+      expect(walk(auditor, "a.log", "b.log")).toEqual([true, false]);
+
+      git(session, "config", "index.skipHash", "false");
+      git(session, "rm", "--cached", "--quiet", "--", "b.log");
+      git(session, "add", "--force", "--", "a.log");
+      expect([walk(auditor, "a.log", "b.log"), reads()]).toEqual([[false, true], 1]);
     });
 
     // The engine reads a folder's `.gitignore` as a question enters the folder, and keeps it while questions stay there.
