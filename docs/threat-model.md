@@ -375,6 +375,10 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600 (ex
 - A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
   beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
   (`keepReceipt` in `src/runtime/session-store.ts`).
+- An event a hook left while the daemon ran but did not read (a prompt, a reply or a tool's input, its recognized
+  secrets redacted and a tool's output left out) waits in `untaken-events/` in the home, 0700 with files 0600, until
+  the daemon takes it (`src/engine/storage/untaken-events.ts`). A process that can write there can already read
+  `daemon.json`'s capability and send events itself.
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
