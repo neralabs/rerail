@@ -431,13 +431,15 @@ Set-up backs up each startup file it changes to `<file>.rerail.bak`, one backup 
 
 </details>
 
-### `rerail status` says `No repo found here` or `Rerail is not installed`
+### `rerail status` says `No Git repository here` or `Rerail is not installed`
 
 ```text
-No repo found here (/home/me). Run rerail status inside your project.
+No Git repository here (/home/me). Rerail works in a Git repository: run rerail status inside one, or start Rerail in one with rerail start --repo <folder>.
 ```
 
-`rerail status` reports on the repository you run it in. Run it inside your project.
+Rerail works per Git repository, and `rerail status` reports on the one you run it in. Run it inside your project, or
+start Rerail in your project from where you are with `rerail start --repo <folder>`, `<folder>` being the project's
+folder.
 
 ```text
 Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.

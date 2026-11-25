@@ -736,7 +736,7 @@ describe("E1 coding agent can't install", () => {
 describe("E3 no repo here", () => {
   it.each(LANES)("asks which project to start with, folder first (%s)", lane => {
     const text = stripAnsi(renderNoRepoQuestion({}, lane));
-    expect(text).toContain("△ No repo found here.  Rerail needs one project to read.");
+    expect(text).toContain("△ No Git repository here.  Rerail needs one project to read.");
     expect(text).toContain("Which project do you want to start with?");
     expect(text).toContain("Rerail reads it on this computer only, to suggest rule packs.");
     expect(text).toMatch(/1\. Type the folder… +for example “~\/code\/acme-web”/);
