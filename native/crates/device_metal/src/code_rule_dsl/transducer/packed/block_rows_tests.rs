@@ -125,6 +125,10 @@ fn row_programs_are_verified_and_digested() {
 #[test]
 fn a_row_program_scans_rows_on_metal_in_the_16_bit_layout() {
     use super::metal_rows::{Form, Input, Resident, scan};
+    // A machine with no device (an x86-64 Linux host without a GPU) has nowhere to hold the columns.
+    if rerail_accel::gpu::shared::layer().is_none() {
+        return;
+    }
     let text = "  block 0 rows 4 3 0
   block 0 %0 = cmp lt c0 c1 64
   block 0 %1 = cmp le c0 p0 64
