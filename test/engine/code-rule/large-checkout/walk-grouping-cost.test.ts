@@ -259,4 +259,41 @@ describe("a walk of a large checkout costs in proportion to its files", () => {
 
     expect(audited.flat()).toEqual(["b/3.py", "y/7.py", "a/1.py", "n/4.py", "z/6.py", "m/2.py", "m/sub/5.py"]);
   }, 60_000);
+
+  it("groups a walk's changes under the session folder, as a path it is named, for an auditor that judges one folder whatever its view says", async () => {
+    const root = await temporaryRoot();
+    await writeFile(join(root, "seed.txt"), "seed\n");
+    git(root, "init", "--quiet");
+    git(root, "add", "-A");
+    git(root, "commit", "--quiet", "-m", "seed");
+    // The auditor has no `sourceRoot`, so a path it is named belongs to the session folder; its walk view says files
+    // under b/ and y/ belong to no checkout, which would group them apart, first.
+    const audited: string[][] = [];
+    const auditor: CodeRuleAuditor = {
+      openWorkspace: async () => undefined,
+      acceptsPath: path => path.endsWith(".py"),
+      walkView: () => ({
+        acceptsPath: path => path.endsWith(".py"),
+        sourceRoot: path => (path.startsWith("b/") || path.startsWith("y/") ? undefined : root),
+      }),
+      auditGeneratedEdits: async (_sessionId, batch) => {
+        audited.push(batch.edits.map(edit => edit.path));
+        return response(batch);
+      },
+      close: async () => undefined,
+    };
+    const bridge = new CodeRuleBridge(root, auditor, { discoveryWaitMs: Infinity });
+    cleanups.push(() => bridge.close());
+    await bridge.openWorkspace("one-folder");
+    await bridge.settleWalk();
+
+    await shellCommand(bridge, async () => {
+      for (const path of ["z/6.py", "a/1.py", "y/7.py", "n/4.py", "b/3.py"]) {
+        await mkdir(join(root, path, ".."), { recursive: true });
+        await writeFile(join(root, path), `value = "${path}"\n`);
+      }
+    });
+
+    expect(audited.flat()).toEqual(["a/1.py", "b/3.py", "n/4.py", "y/7.py", "z/6.py"]);
+  }, 60_000);
 });

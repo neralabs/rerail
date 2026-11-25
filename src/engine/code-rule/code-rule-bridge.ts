@@ -5144,8 +5144,13 @@ export class CodeRuleBridge {
     return { owned, unowned };
   }
 
-  /** `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. */
+  /**
+   * `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. An
+   * auditor that judges one folder owns every path at the session folder, whatever its view says, as it does a path it
+   * is named.
+   */
   #walkedCheckoutOf(root: string): (path: string) => string | undefined {
+    if (this.#auditor.sourceRoot === undefined) return () => root;
     const view = this.#auditor.walkView?.();
     return view?.sourceRoot === undefined ? path => this.#owningCheckout(root, path) : path => view.sourceRoot?.(path);
   }
