@@ -328,7 +328,8 @@ const nextCursorSchema = z.string().nullable().describe("Pass as `cursor` for th
  * What the catalog knows about one rule's effect over a time range. Conversation rules never write an
  * audit, so they carry no evidence either way: `measured: false` says so rather than
  * reporting a zero that reads as "never triggered". A code rule kept
- * inactive (`inactive`) is not measured either: it is never evaluated.
+ * inactive (`inactive`) is not measured either: it is never evaluated. A conversation rule is inactive while the daemon
+ * runs without conversation rules.
  */
 const ruleActivitySchema = z.object({
   measured: z.boolean(),
@@ -355,7 +356,7 @@ interface RuleActivityCounts {
 
 /**
  * A catalog rule's activity. Every rule is reported, so a caller never has to infer absence from a missing key; a
- * conversation rule writes no audit (so nothing of it is steered or declined) and an inactive code rule is never
+ * conversation rule writes no audit (so nothing of it is steered or declined) and an inactive rule is never
  * evaluated, so neither is measured.
  */
 function catalogRuleActivity(
