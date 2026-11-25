@@ -35,7 +35,15 @@ No existing library is changed. No engine change is needed.
   is the first child: `(/* c */ useRouter()).push("/x")` is not reported by either side.
 - **then-without-stale-guard**: follows the JSON. A cleanup named by a function declaration
   (`function stop() { alive = false } … return stop`) is not followed: a declaration has no binding value on either
-  side, so that effect is reported.
+  side, so that effect is reported. A dependency is matched to the request's argument (and to a keyed write's key)
+  as the JSON's `pattern: "$D"` matches trees: by text with the white space between tokens left out (`tws_flat`),
+  one space kept between two word characters, and, where two texts differ only in white space, by their trees'
+  kinds, child counts and leaf texts (`tws_differ`, so white space inside a string or a comment still counts). So
+  `session.user\n  .id` and `session . user . id` are `session.user.id`; `session.user/* c */.id`,
+  `(session.user).id`, `session?.user.id`, `a['x'].id` against `a["x"].id`, and `a["x  y"].id` against
+  `a["x y"].id` are not, on both sides. Until the review, the text was compared as written, so a dependency split
+  across lines was not found (review react-practice-b; its two cases are the rule's first two `.test`s, the third
+  holds the cases above).
 
 ## Engine gaps
 
