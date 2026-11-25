@@ -200,6 +200,8 @@ typedef struct Csat {
     // as a reason (`cb`, `CNF`); `r`; the long clauses' words (`st`, in the state, the first `cwn` in threadgroup
     // memory, `cw`); the bitmap (`bm` in the state, its first `sbw` words in threadgroup memory, `sv`); serial.
     uint32_t cl[3], lb[3], cb[3], r, longs, serial, st, cwn, bm, sbw;
+    // Each index's occurrence starts and entries (word offsets) and its slots (0: none).
+    uint32_t os[3], oc[3], sl[3];
     UKL_LOCAL uint32_t* cw;
     // Threadgroup memory: the header (`h`, the state's first `HEADER` words while the slot runs it) and the
     // bitmap's first words (`sv`).
@@ -381,6 +383,8 @@ UKL_INLINE void cs_emit(UKL_PRIVATE Csat* c, uint32_t buf, UKL_PRIVATE uint32_t*
 // An occurrence's first word: a binary clause's other literal's index, with this bit; else its long clause's
 // number among its index's long ones.
 #define BIN 0x80000000u
+// The occurrence entries a lane takes in a step (`cs_round`).
+#define EPL 4u
 
 UKL_INLINE int32_t cs_of_code(uint32_t u)
 {
@@ -439,39 +443,52 @@ UKL_INLINE void cs_bm_unset(UKL_PRIVATE Csat* c, uint32_t u)
     }
 }
 
-// A literal's negated occurrence list (the clauses holding its negation) in index `k`'s (0 the window's gates', 1
-// a solve's own, 2 the plain and carried clauses): its entries (`part` 2), or its long clauses' (`part` 1, first).
-UKL_INLINE uint32_t cs_ol_n(UKL_PRIVATE Csat* c, uint32_t k, uint32_t x, uint32_t part)
+// `a[k]` of a 3-word array, `k` known only at run time, by selects: an array indexed so stays in registers, where
+// a run-time index would put it in the stack (local memory, a memory access in every chain that reads it).
+UKL_INLINE uint32_t cs_sel3(UKL_PRIVATE const uint32_t* a, uint32_t k)
 {
-    uint32_t h = c->cl[k];
-    if (h == NONE || x >= c->b[h + CL_SLOTS])
-        return 0u;
-    uint32_t os = c->b[h + CL_OSTARTS] + 2u * x;
-    return c->b[os + part] - c->b[os];
+    return k == 0u ? a[0] : (k == 1u ? a[1] : a[2]);
 }
-UKL_INLINE uint32_t cs_ol_count(UKL_PRIVATE Csat* c, uint32_t x, uint32_t part)
+
+// A literal's negated occurrence lists (the clauses holding its negation), one an index (0 the window's gates', 1
+// a solve's own, 2 the plain and carried clauses): each one's first entry (`ls`) and its entries (`ln`; `part` 2),
+// or its long clauses' (`part` 1, first in it). Six loads, none waiting on another: the indexes' words are the
+// slot's registers (`os`, `oc`, `sl`, from `cs_setup`).
+UKL_INLINE void cs_lists(UKL_PRIVATE Csat* c, uint32_t x, uint32_t part, UKL_PRIVATE uint32_t* ls, UKL_PRIVATE uint32_t* ln)
 {
-    return cs_ol_n(c, 0u, x, part) + cs_ol_n(c, 1u, x, part) + cs_ol_n(c, 2u, x, part);
-}
-// Its `j`th entry (of `part`'s): the entry's word, and its index (`*k`). The three lists concatenated.
-UKL_INLINE uint32_t cs_ol_entry(UKL_PRIVATE Csat* c, uint32_t x, uint32_t j, uint32_t part, UKL_PRIVATE uint32_t* k)
-{
-    for (uint32_t i = 0u; i < 2u; i++) {
-        uint32_t n = cs_ol_n(c, i, x, part);
-        if (j < n) {
-            *k = i;
-            return c->b[c->cl[i] + CL_OCC] + 2u * (c->b[c->b[c->cl[i] + CL_OSTARTS] + 2u * x] + j);
-        }
-        j -= n;
+#define CS_LIST(k) \
+    { \
+        bool in = x < c->sl[k]; \
+        uint32_t at = in ? c->os[k] + 2u * x : 0u; \
+        uint32_t a = in ? c->b[at] : 0u, e = in ? c->b[at + part] : 0u; \
+        ls[k] = a; \
+        ln[k] = e - a; \
     }
-    *k = 2u;
-    return c->b[c->cl[2] + CL_OCC] + 2u * (c->b[c->b[c->cl[2] + CL_OSTARTS] + 2u * x] + j);
+    CS_LIST(0)
+    CS_LIST(1)
+    CS_LIST(2)
+#undef CS_LIST
+}
+// Entry `j` of the three lists concatenated: its word offset, and its index (`*k`).
+UKL_INLINE uint32_t cs_list_entry(UKL_PRIVATE Csat* c, uint32_t j, UKL_PRIVATE const uint32_t* ls, UKL_PRIVATE const uint32_t* ln, UKL_PRIVATE uint32_t* k)
+{
+    uint32_t i = 0u;
+    if (j >= ln[0]) {
+        j -= ln[0];
+        i = 1u;
+        if (j >= ln[1]) {
+            j -= ln[1];
+            i = 2u;
+        }
+    }
+    *k = i;
+    return cs_sel3(c->oc, i) + 2u * (cs_sel3(ls, i) + j);
 }
 // The clause an entry names, as a reason: a plain or carried clause's number, or a gate clause's (`CNF`).
 UKL_INLINE uint32_t cs_ol_clause(UKL_PRIVATE Csat* c, uint32_t e, uint32_t k)
 {
     uint32_t id = c->b[e + 1u];
-    return k == 2u ? id : (CNF | (c->cb[k] + id));
+    return k == 2u ? id : (CNF | (cs_sel3(c->cb, k) + id));
 }
 
 // Pushes literal `u` (its index) on the trail, implied by clause `why` at this level: the trail's tail taken by
@@ -498,7 +515,7 @@ UKL_INLINE uint32_t cs_wave(UKL_PRIVATE Csat* c, uint32_t e, uint32_t k, uint32_
         u = w0 & ~BIN;
     } else {
         // 4: old <- AtomicAdd(st[c], -(1 + (~l << r)))
-        uint32_t old = cs_st_add(c, c->lb[k] + w0, 0u - (1u + (nx << c->r)));
+        uint32_t old = cs_st_add(c, cs_sel3(c->lb, k) + w0, 0u - (1u + (nx << c->r)));
         uint32_t cnt = old & ((1u << c->r) - 1u);
         // 5-6: old.cnt = 1: a conflict.
         if (cnt == 1u)
@@ -528,28 +545,59 @@ UKL_INLINE void cs_wave_count(UKL_PRIVATE Csat* c, uint32_t e, uint32_t k, uint3
 {
     uint32_t w0 = c->b[e];
     if ((w0 & BIN) == 0u)
-        cs_st_add(c, c->lb[k] + w0, 0u - (1u + ((x ^ 1u) << c->r)));
+        cs_st_add(c, cs_sel3(c->lb, k) + w0, 0u - (1u + ((x ^ 1u) << c->r)));
 }
 
 // Every lane: the trail's literals from `from` to `to` taken back from the clause words (a jump back; "solvers that
 // backtrack must undo these updates", §2.1), each popped literal's long clauses, a lane an entry.
 UKL_INLINE void cs_uncount(UKL_PRIVATE Csat* c, uint32_t from, uint32_t to __UKL_PARAMS)
 {
-    for (uint32_t i0 = from; i0 < to; i0 += UKL_SIMD_WIDTH) {
-        uint32_t i = i0 + c->lane, f = to - i0 < UKL_SIMD_WIDTH ? to - i0 : UKL_SIMD_WIDTH;
-        uint32_t x = i < to ? cs_code((int32_t)c->s[c->trail + i]) : 0u;
-        uint32_t mine = i < to ? cs_ol_count(c, x, 1u) : 0u;
-        uint32_t off = ukl_sg_exclusive_sum(mine, c->lane __UKL_ARGS), total = ukl_sg_sum(mine __UKL_ARGS);
-        for (uint32_t t0 = 0u; t0 < total; t0 += UKL_SIMD_WIDTH) {
-            uint32_t t = t0 + c->lane, owner = cs_owner(off, f, t __UKL_ARGS);
-            uint32_t ox = ukl_sg_shuffle(x, owner __UKL_ARGS), oo = ukl_sg_shuffle(off, owner __UKL_ARGS);
-            if (t < total) {
-                uint32_t k = 0u, e = cs_ol_entry(c, ox, t - oo, 1u, &k);
-                uint32_t d = 1u + ((ox ^ 1u) << c->r);
-                if (c->lb[k] + c->b[e] < c->cwn)
-                    ukl_atomic_add_local(c->cw + c->lb[k] + c->b[e], d);
-                else
-                    ukl_atomic_add(c->s + c->st + c->lb[k] + c->b[e], d);
+    // `EPL` chunks of 32 literals at once: every chunk's trail reads, then every literal's list bounds, in flight
+    // together; then each chunk's entries.
+    for (uint32_t g0 = from; g0 < to; g0 += EPL * UKL_SIMD_WIDTH) {
+        uint32_t xs[EPL], lss[EPL][3], lns[EPL][3];
+        for (uint32_t p = 0u; p < EPL; p++) {
+            uint32_t i = g0 + p * UKL_SIMD_WIDTH + c->lane;
+            xs[p] = i < to ? cs_code((int32_t)c->s[c->trail + i]) : NONE;
+        }
+        for (uint32_t p = 0u; p < EPL; p++)
+            cs_lists(c, xs[p], 1u, lss[p], lns[p]);
+        for (uint32_t p = 0u; p < EPL; p++) {
+            // A chunk past `to` has no literals (its lists empty, `total` 0).
+            uint32_t i0 = g0 + p * UKL_SIMD_WIDTH;
+            uint32_t f = i0 >= to ? 0u : (to - i0 < UKL_SIMD_WIDTH ? to - i0 : UKL_SIMD_WIDTH), x = xs[p];
+            uint32_t ls[3], ln[3];
+            for (uint32_t j = 0u; j < 3u; j++) {
+                ls[j] = lss[p][j];
+                ln[j] = lns[p][j];
+            }
+            uint32_t mine = ln[0] + ln[1] + ln[2];
+            uint32_t off = ukl_sg_exclusive_sum(mine, c->lane __UKL_ARGS), total = ukl_sg_sum(mine __UKL_ARGS);
+            // `EPL` entries a lane a step: their loads together, then their adds (whose words are not read back).
+            for (uint32_t t0 = 0u; t0 < total; t0 += EPL * UKL_SIMD_WIDTH) {
+                uint32_t e[EPL], k[EPL], ox[EPL], w0[EPL];
+                for (uint32_t q = 0u; q < EPL; q++) {
+                    uint32_t t = t0 + q * UKL_SIMD_WIDTH + c->lane, owner = cs_owner(off, f, t __UKL_ARGS);
+                    uint32_t oo = ukl_sg_shuffle(off, owner __UKL_ARGS), os_[3], on_[3];
+                    ox[q] = ukl_sg_shuffle(x, owner __UKL_ARGS);
+                    for (uint32_t j = 0u; j < 3u; j++) {
+                        os_[j] = ukl_sg_shuffle(ls[j], owner __UKL_ARGS);
+                        on_[j] = ukl_sg_shuffle(ln[j], owner __UKL_ARGS);
+                    }
+                    k[q] = 0u;
+                    e[q] = t < total ? cs_list_entry(c, t - oo, os_, on_, &k[q]) : NONE;
+                }
+                for (uint32_t q = 0u; q < EPL; q++)
+                    w0[q] = e[q] != NONE ? c->b[e[q]] : 0u;
+                for (uint32_t q = 0u; q < EPL; q++) {
+                    if (e[q] == NONE)
+                        continue;
+                    uint32_t at = cs_sel3(c->lb, k[q]) + w0[q], d = 1u + ((ox[q] ^ 1u) << c->r);
+                    if (at < c->cwn)
+                        ukl_atomic_add_local(c->cw + at, d);
+                    else
+                        ukl_atomic_add(c->s + c->st + at, d);
+                }
             }
         }
     }
@@ -653,6 +701,9 @@ UKL_INLINE bool cs_round(UKL_PRIVATE Csat* c __UKL_PARAMS)
     uint32_t f = tl - hd < UKL_SIMD_WIDTH ? tl - hd : UKL_SIMD_WIDTH;
     // Each lane its literal; the group visits the watch lists that are not empty, in trail order.
     int32_t lit = c->lane < f ? (int32_t)c->s[c->trail + hd + c->lane] : 0;
+    // Its negated occurrence lists' bounds, read now: their loads are in flight while the watches are visited.
+    uint32_t x = c->lane < f ? cs_code(lit) : 0u, ls[3], ln[3];
+    cs_lists(c, c->lane < f ? x : NONE, 2u, ls, ln);
     bool watched = lit != 0 && c->s[cs_wh(c, cs_lslot(-lit))] != NONE;
     ukl_mask_t lists = ukl_sg_ballot(watched __UKL_ARGS);
     for (uint32_t i = 0u; i < f; i++)
@@ -679,15 +730,17 @@ UKL_INLINE bool cs_round(UKL_PRIVATE Csat* c __UKL_PARAMS)
     // negated occurrence lists concatenated, taken W entries a step, one a lane (§4.3). A conflict stops the job;
     // the popped literals' entries left after it only counted (line 4), so that the words hold exactly the popped
     // literals.
-    uint32_t x = c->lane < f ? cs_code(lit) : 0u, bad = NONE;
+    uint32_t bad = NONE;
     if (c->serial != 0u) {
         // §4.5: the job serially within its group (lane 0), plain loads and stores.
         if (c->lane == 0u) {
             for (uint32_t i = 0u; i < f; i++) {
-                uint32_t xi = cs_code((int32_t)c->s[c->trail + hd + i]), m = cs_ol_count(c, xi, 2u);
+                uint32_t xi = cs_code((int32_t)c->s[c->trail + hd + i]), sls[3], sln[3];
+                cs_lists(c, xi, 2u, sls, sln);
+                uint32_t m = sln[0] + sln[1] + sln[2];
                 c->h[H_ITEMS] += m;
                 for (uint32_t j = 0u; j < m; j++) {
-                    uint32_t k = 0u, e = cs_ol_entry(c, xi, j, 2u, &k);
+                    uint32_t k = 0u, e = cs_list_entry(c, j, sls, sln, &k);
                     if (bad == NONE)
                         bad = cs_wave(c, e, k, xi);
                     else
@@ -697,23 +750,68 @@ UKL_INLINE bool cs_round(UKL_PRIVATE Csat* c __UKL_PARAMS)
         }
         bad = ukl_sg_shuffle(bad, 0u __UKL_ARGS);
     } else {
-        uint32_t mine = c->lane < f ? cs_ol_count(c, x, 2u) : 0u;
+        uint32_t mine = ln[0] + ln[1] + ln[2];
         uint32_t off = ukl_sg_exclusive_sum(mine, c->lane __UKL_ARGS);
         uint32_t total = ukl_sg_sum(mine __UKL_ARGS);
         if (c->lane == 0u)
             c->h[H_ITEMS] += total;
-        for (uint32_t t0 = 0u; t0 < total; t0 += UKL_SIMD_WIDTH) {
-            uint32_t t = t0 + c->lane;
-            // The popped literal whose list holds entry `t`.
-            uint32_t owner = cs_owner(off, f, t __UKL_ARGS);
-            uint32_t ox = ukl_sg_shuffle(x, owner __UKL_ARGS), oo = ukl_sg_shuffle(off, owner __UKL_ARGS);
+        // A step: `EPL` entries a lane (entry `t0 + 32 q + lane`), taken in stages so that their memory operations
+        // are in flight together: every entry's load, then every long one's add (line 4), then every forced
+        // literal's OR (line 9) and push. Each entry is the paper's lines 4-13 as written; the stages only order
+        // independent entries' operations.
+        for (uint32_t t0 = 0u; t0 < total; t0 += EPL * UKL_SIMD_WIDTH) {
+            uint32_t e[EPL], k[EPL], ox[EPL], w0[EPL], u[EPL], why[EPL];
+            for (uint32_t q = 0u; q < EPL; q++) {
+                uint32_t t = t0 + q * UKL_SIMD_WIDTH + c->lane;
+                // The popped literal whose list holds entry `t`, and the entry in its three lists.
+                uint32_t owner = cs_owner(off, f, t __UKL_ARGS);
+                uint32_t oo = ukl_sg_shuffle(off, owner __UKL_ARGS), os_[3], on_[3];
+                ox[q] = ukl_sg_shuffle(x, owner __UKL_ARGS);
+                for (uint32_t i = 0u; i < 3u; i++) {
+                    os_[i] = ukl_sg_shuffle(ls[i], owner __UKL_ARGS);
+                    on_[i] = ukl_sg_shuffle(ln[i], owner __UKL_ARGS);
+                }
+                k[q] = 0u;
+                e[q] = t < total ? cs_list_entry(c, t - oo, os_, on_, &k[q]) : NONE;
+            }
+            for (uint32_t q = 0u; q < EPL; q++)
+                w0[q] = e[q] != NONE ? c->b[e[q]] : BIN;
+            // 4-8: each long entry's add; its returned word a conflict (cnt 1) or a forced literal (cnt 2).
             uint32_t mine_bad = NONE;
-            if (t < total) {
-                uint32_t k = 0u, e = cs_ol_entry(c, ox, t - oo, 2u, &k);
-                if (bad == NONE)
-                    mine_bad = cs_wave(c, e, k, ox);
-                else
-                    cs_wave_count(c, e, k, ox);
+            for (uint32_t q = 0u; q < EPL; q++) {
+                u[q] = NONE;
+                if (e[q] == NONE)
+                    continue;
+                uint32_t nx = ox[q] ^ 1u;
+                if ((w0[q] & BIN) != 0u) {
+                    u[q] = bad == NONE ? w0[q] & ~BIN : NONE;
+                    continue;
+                }
+                uint32_t old = cs_st_add(c, cs_sel3(c->lb, k[q]) + w0[q], 0u - (1u + (nx << c->r)));
+                if (bad != NONE)
+                    continue;
+                uint32_t cnt = old & ((1u << c->r) - 1u);
+                if (cnt == 1u && mine_bad == NONE)
+                    mine_bad = cs_ol_clause(c, e[q], k[q]);
+                else if (cnt == 2u)
+                    u[q] = ((old >> c->r) - nx) & (0xFFFFFFFFu >> c->r);
+            }
+            // 9-13: each forced literal's OR; a conflict, or a push.
+            for (uint32_t q = 0u; q < EPL; q++)
+                why[q] = u[q] != NONE ? cs_ol_clause(c, e[q], k[q]) : NONE;
+            for (uint32_t q = 0u; q < EPL; q++) {
+                if (u[q] == NONE)
+                    continue;
+                uint32_t prev = cs_bm_or(c, u[q]);
+                bool had = ((prev >> (u[q] & 31u)) & 1u) != 0u;
+                if (((prev >> ((u[q] ^ 1u) & 31u)) & 1u) != 0u) {
+                    if (!had)
+                        cs_bm_unset(c, u[q]);
+                    if (mine_bad == NONE)
+                        mine_bad = why[q];
+                } else if (!had) {
+                    cs_push(c, u[q], why[q]);
+                }
             }
             // "report conflict; stop this job": the first lane's clause.
             if (bad == NONE) {
@@ -1466,16 +1564,16 @@ UKL_INLINE void cs_decide(UKL_PRIVATE Csat* c __UKL_PARAMS)
 UKL_INLINE bool cs_units(UKL_PRIVATE Csat* c)
 {
     for (uint32_t k = 0u; k < 3u; k++) {
-        uint32_t h = c->cl[k];
+        uint32_t h = cs_sel3(c->cl, k);
         if (h == NONE)
             continue;
         uint32_t empty = c->b[h + CL_EMPTY];
         if (empty != NONE) {
-            c->h[H_CONFLICT] = k == 2u ? empty : (CNF | (c->cb[k] + empty));
+            c->h[H_CONFLICT] = k == 2u ? empty : (CNF | (cs_sel3(c->cb, k) + empty));
             return false;
         }
         for (uint32_t i = 0u, n = c->b[h + CL_NUNITS]; i < n; i++) {
-            uint32_t id = c->b[c->b[h + CL_UNITS] + 2u * i], why = k == 2u ? id : (CNF | (c->cb[k] + id));
+            uint32_t id = c->b[c->b[h + CL_UNITS] + 2u * i], why = k == 2u ? id : (CNF | (cs_sel3(c->cb, k) + id));
             int32_t l = (int32_t)c->b[c->b[h + CL_UNITS] + 2u * i + 1u], v = cs_value(c, l);
             if (v == -1) {
                 c->h[H_CONFLICT] = why;
@@ -1531,12 +1629,12 @@ UKL_INLINE void cs_start(UKL_PRIVATE Csat* c __UKL_PARAMS)
             c->s[c->bm + w] = 0u;
     }
     for (uint32_t k = 0u; k < 3u; k++) {
-        uint32_t h = c->cl[k];
+        uint32_t h = cs_sel3(c->cl, k);
         if (h == NONE)
             continue;
         uint32_t init = c->b[h + CL_INIT];
         for (uint32_t i = c->lane, m = c->b[h + CL_LONGS]; i < m; i += UKL_SIMD_WIDTH) {
-            uint32_t st = (c->b[init + 2u * i + 1u] << c->r) + c->b[init + 2u * i], s = c->lb[k] + i;
+            uint32_t st = (c->b[init + 2u * i + 1u] << c->r) + c->b[init + 2u * i], s = cs_sel3(c->lb, k) + i;
             if (s < c->cwn)
                 c->cw[s] = st;
             else
@@ -1587,6 +1685,14 @@ UKL_INLINE void cs_setup(UKL_PRIVATE Csat* c, UKL_GLOBAL const uint32_t* d, UKL_
     c->cb[0] = 0u;
     c->cb[1] = c->b[c->cl[0] + CL_CLAUSES];
     c->cb[2] = 0u;
+#define CS_INDEX_WORDS(k) \
+    c->os[k] = c->cl[k] != NONE ? c->b[c->cl[k] + CL_OSTARTS] : 0u; \
+    c->oc[k] = c->cl[k] != NONE ? c->b[c->cl[k] + CL_OCC] : 0u; \
+    c->sl[k] = c->cl[k] != NONE ? c->b[c->cl[k] + CL_SLOTS] : 0u;
+    CS_INDEX_WORDS(0)
+    CS_INDEX_WORDS(1)
+    CS_INDEX_WORDS(2)
+#undef CS_INDEX_WORDS
     c->fvars = d[D_FVARS];
     c->base = d[D_BASE];
     c->rec = d[D_REC];

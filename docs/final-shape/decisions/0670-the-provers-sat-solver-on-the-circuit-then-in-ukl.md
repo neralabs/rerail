@@ -664,3 +664,26 @@ formula").
   paths; cold Kotlin with the device alone, the shipped bytes, its 10,491 solves 298 ms each from handed in to
   answered (815 ms in the run before the cap, other minutes); its 36 searches of over 100 ms at once 8.0 s (under
   the cap, unchanged).
+- **A step's memory operations in flight together** (the user, 2026-11-25: "I want you to be competent"). The
+  kernel's own clocks put a round of one copy of the hard dump at about 10,000 cycles for two or three steps. Its
+  costs, found and removed:
+  - **The list walk**: every entry found its list through every index's head, slot count and starts, about eight
+    loads each waiting on the last. Now each popped literal's three lists' bounds are read once a round (six loads
+    at once, issued before the watch visits so that they are in flight meanwhile), the indexes' words are the
+    slot's registers, and an entry is one load.
+  - **The stack**: small arrays indexed at run time (`c->lb[k]` and the like) put 336 bytes of the slot's state in
+    local memory, a memory access in each chain that read them (`cuobjdump -res-usage`: `STACK:336`). They are read
+    by selects (`cs_sel3`) and written by constant indices: `STACK:0`, 135 registers.
+  - **One entry a lane a step**: each entry is a load, an add and an OR, each waiting on the one before. A lane now
+    takes `EPL` = 4 entries a step in stages: all their loads, then all their adds (lines 4-8), then all their ORs
+    and pushes (lines 9-13). Each entry is still lines 4-13; the stages only order independent entries'
+    operations. A jump back takes back 4 chunks of 32 literals at once (their trail reads and list bounds
+    together), then 4 entries a lane a step.
+- Measured (the Spark; the watch visits, which none of this changed, are the check that no other work shared the
+  GPU in a run): one copy of the hard dump 1.70 s (2.5 s), its parts' cycles 2,342 M (5,858 M at the commit
+  before); 256 copies 5.2 s (6.3 s); 512 copies in the cap's 222 slots 9.05 s (32.9–33.9 s). The search's path
+  changed with the order of pushes: 1,233 conflicts, 151,506 rounds. A jump back still takes back about 2,900
+  literals a conflict, as many atomics as their propagation counted. Cold Kotlin with the device alone: the shipped
+  bytes, its solves 215 ms each from handed in (298 ms). Its 36 searches of over 100 ms: 90,261 M cycles in all
+  (117,400 M), but 9.4 s at once (8.0 s): the batch ends with its longest search, whose path changed, 14,829 M
+  cycles (12,709 M).
