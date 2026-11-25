@@ -25,15 +25,11 @@
 #pragma once
 #include <ukl/bits.h>
 
-// The offset of byte `a` of `t` in its aligned 8-byte word. A base need not be aligned: a format 16 tape's line index
-// lies where its checkpoints end (`Tape16Z::lines_at`), at any byte. So where an unaligned load faults (CUDA, HIP,
-// OpenCL), the offset is the address's own. On Apple's GPUs a load at any address is allowed, and the offset is
-// the base's (`a`'s): a word through an unaligned base is read there as it lies.
-#if defined(UKL_METAL)
-#define __UKL_OFF(t, a) ((uint32_t)((a) & 7u))
-#else
+// The offset of byte `a` of `t` in its aligned 8-byte word: the address's own, on every backend. A base need not be
+// aligned: a format 16 tape's line index lies where its checkpoints end (`Tape16Z::lines_at`), at any byte. Metal
+// took the base's (`a`'s) and read a word through an unaligned base as it lay, which Apple's GPUs were said to
+// allow: an M1 Max read the wrong bytes (`rerail-gpu`'s `the_device_hashes_texts_as_the_crate_does`, decision 0656).
 #define __UKL_OFF(t, a) ((uint32_t)(((uint64_t)(t) + (uint64_t)(a)) & 7u))
-#endif
 
 #if defined(UKL_COHERENT_LOAD64)
 #define __UKL_STC_DIRECT 0

@@ -1443,11 +1443,11 @@ pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], fac
 
 /// Whether the pattern kernels of `sources` (`pattern_sources`) are at hand without a compile (decision 0395):
 /// otherwise the wave runs on the CPU, and the kernels are compiled as the mode says
-/// (`rerail_accel::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
+/// (`rerail_accel_gpu::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
 /// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
 pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
     // Each asked, so every one missing is recorded, not only the first.
-    sources.iter().map(|source| rerail_accel::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_none()).filter(|&missing| missing).count() == 0
+    sources.iter().map(|source| rerail_accel_gpu::gpu::kernels::ready_function(source, patterns::KERNEL, Some(format)).is_none()).filter(|&missing| missing).count() == 0
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
@@ -3967,6 +3967,21 @@ mod lanes_tests {
         // Room for the fixed part and one lane: one lane.
         assert_eq!(lanes_in(one, two, (11 << 20) * 4 / 3 + 4, 1024).unwrap(), 1);
         assert_eq!(lanes_in(one, two, 12 << 20, 1024), Err(Error::BackendBudget), "not even one lane");
+    }
+}
+
+#[cfg(test)]
+mod rust_tests {
+    /// The label source a run's batch compiles (its format's, `run_format`) is the one `label_parents`' Rust was
+    /// written from (`rerail_ukl_rust::LABEL_PASSES_16`, its digest with the format's define): the CPU device runs
+    /// that Rust in place of its compiler's build (decision 0567 step 3). A change to the passes or their pieces
+    /// writes it again: `UKL_RS_WRITE=1 cargo test -p rerail-ukl-vec the_label_parents`.
+    #[test]
+    fn the_label_source_is_the_one_its_rust_was_written_from() {
+        let format = super::run_format();
+        let source = &super::SOURCES[usize::from(super::super::metal_program_backend::reads_z(format))];
+        let d = rerail_ukl_rust::digest(source, &[("UKL_CONSTANT_0", &format.to_string())]);
+        assert_eq!(d, rerail_ukl_rust::LABEL_PASSES_16, "the label source is not label_parents' Rust's: write it again (UKL_RS_WRITE=1 cargo test -p rerail-ukl-vec the_label_parents)");
     }
 }
 

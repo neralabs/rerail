@@ -234,7 +234,7 @@ impl Docs {
                 0 => std::ptr::null(),
                 k => (*homes.add(k as usize - 1)).host as *const u8,
             };
-            Some(Doc { entry, tape: Tape::new(tape, &row.view, cache), lines, source: self[i].facts.source.as_bytes() })
+            Some(Doc::new(entry, Tape::new(tape, &row.view, cache), lines, self[i].facts.source.as_bytes()))
         }
     }
 }

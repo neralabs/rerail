@@ -28,8 +28,12 @@ pub enum Format {
 /// in the header; 16z holds it raw after the checkpoints). Layout 2 (0336: region starts in the header; 16z's blocks
 /// one piece an array, raw, LZ4 or a repeat) had keys 216 and 1216; layout 1, 16 and 1016. Layout 5 (decision 0434
 /// §4, step 6): the tape's presence stored after it, in its home. Layout 6: a MISSING node sets the presence's
-/// fault bit (`ERROR_CODE`'s) beside its kind's, so a presence says which blocks hold a syntax error.
-const F16_LAYOUT: u32 = 7;
+/// fault bit (`ERROR_CODE`'s) beside its kind's, so a presence says which blocks hold a syntax error. Layout 8
+/// (decision 0656 step 3): the tape's auxiliary index after its presence, in its home (`lay_aux`). Layout 9: its
+/// SIBLINGS of named children (version 2) and its NAMED section. Layout 10: its COUNTS' strays (version 2). Layout 11:
+/// its COMMENTS section, and every home with its index (a home without one is refused, `TapeImage::sixteen`). Its
+/// format 16 key (1116) is a 16z home's of layout 1, which holds no index: refused, so read cold.
+const F16_LAYOUT: u32 = 11;
 
 impl Format {
     pub const ALL: [Format; 2] = [Format::F16, Format::F16Z];
@@ -63,6 +67,13 @@ impl Format {
             Format::F16 => "16",
             Format::F16Z => "16z",
         }
+    }
+}
+
+impl Drop for TreeOps {
+    fn drop(&mut self) {
+        // SAFETY: taken once, here, and not used after.
+        unsafe { std::mem::ManuallyDrop::take(&mut self.w) }.give_back();
     }
 }
 
@@ -128,7 +139,8 @@ pub fn run_16(language: GrammarDialect) -> Result<(&'static Lang, u8, bool), Str
 /// table lacks, or a node past format 16's bounds, makes `finish` an error.
 pub(super) struct TreeOps {
     lang: &'static Lang,
-    w: f16::Writer,
+    /// The thread's writer (`SPARE`), its parts' buffers kept from the documents before: given back when done.
+    w: std::mem::ManuallyDrop<f16::Writer>,
     /// The open nodes' ends.
     ends: Vec<u32>,
     numbers: rustc_hash::FxHashMap<Code, u32>,
@@ -148,9 +160,11 @@ impl TreeOps {
     pub(super) fn of_run_as(language: GrammarDialect, source: &[u8], nodes: usize, packed: bool) -> Result<Self, String> {
         let (lang, tag, z) = run_16(language)?;
         let z = z && packed;
-        let mut w = f16::Writer::placing(super::placed::rooms());
-        w.begin(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
-        Ok(TreeOps { lang, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
+        // The thread's writer, used again: its parts are a document's working memory (about 20 buffers), and a new
+        // writer a document made them each again (1.14 M arrays, 14,091 GB·s on cold PostHog). Its tape is the
+        // document's own (`finish` takes it out), written in the run's rooms (decision 0353 row 17).
+        let w = f16::Writer::reused_in(super::placed::rooms(), lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
+        Ok(TreeOps { lang, w: std::mem::ManuallyDrop::new(w), ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
 
     /// `v`'s number in the language's table, a member of `classes`: `Err` names a code the table lacks.
@@ -189,7 +203,7 @@ impl TreeOps {
 
     /// The tape, or why the nodes are not a format 16 tape.
     pub(super) fn finish(mut self) -> Result<f16::Finished, String> {
-        match self.bad {
+        match self.bad.take() {
             Some(why) => Err(why),
             None => self.w.finish(),
         }
@@ -273,11 +287,14 @@ impl TapeImage {
             Some(d) => d,
             None => super::source_digest(source, &budget)?,
         };
+        let mut written = written;
+        lay_aux(&mut written.tape, language, source, &digest)?;
         let held = match written.tape {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
         };
-        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest) })
+        let index_at = Self::index_at(&held)?;
+        Ok(TapeImage { held, language, source_len: source.len(), source_digest: Some(digest), index_at })
     }
 
     /// The language's table.
@@ -287,6 +304,72 @@ impl TapeImage {
             Held::F16Z(t) => f16::lang(t.tag()),
         }
     }
+}
+
+/// Lays `tape`'s auxiliary index in its home after its presence (decision 0656 step 3): every section, built once
+/// here, where the tape is written, and stored, placed and loaded with it, so every reader (the host's and the
+/// device's) reads it where the tape lies. Keyed by the tape's content: its header holds the source digest's first
+/// eight bytes, and the store keys the home by its layout (`F16_LAYOUT`). A tape without a presence (one no
+/// producer of the engine writes) is refused: its index lies after it.
+fn lay_aux(tape: &mut f16::Written, language: GrammarDialect, source: &str, digest: &[u8; 32]) -> Result<(), String> {
+    if tape.presence_bytes().is_none() {
+        return Err("a written tape without its presence".into());
+    }
+    let key = u64::from_le_bytes(digest[..8].try_into().expect("8 bytes"));
+    let tag = match &*tape {
+        f16::Written::F16(t) => t.tag(),
+        f16::Written::F16Z(t) => t.tag(),
+    };
+    let lang = f16::lang(tag).ok_or("a format 16 tape of a language without its table")?;
+    // The dialect's code sets, made once with its grammar (`Grammar::aux_codes`); a tape of another tag's, here.
+    let grammar = super::Grammar::embedded(language).ok();
+    let made;
+    let named = match grammar.as_deref().and_then(|g| g.aux_codes(tag)) {
+        Some(codes) => codes,
+        None => {
+            made = code_sets(lang.table(), language);
+            &made
+        }
+    };
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "auxiliary index built".into());
+    let aux = match &*tape {
+        f16::Written::F16(t) => rerail_tape_format::aux_index::build(&t.reader(lang)?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL)?,
+        f16::Written::F16Z(t) => {
+            let cache = f16::ZCache::of([t]);
+            rerail_tape_format::aux_index::build(&t.reader(lang, Some(&cache))?, source.as_bytes(), key, named, rerail_tape_format::aux_index::Sections::ALL)?
+        }
+    };
+    tape.lay_aux(&aux)
+}
+
+/// The named codes of a tape's table, a bit a code (`aux_index::named_codes`): as a node's flags say it is named
+/// (`Facts::flags`), its alias's word where it has one, else its grammar's for its kind (ERROR's for an error code).
+/// What an auxiliary index is built with, by the writer (`lay_aux`) and where a home holds none (`Facts::index`).
+pub fn named_codes(table: &rerail_tape_format::tape::CodeTable, language: GrammarDialect) -> Vec<u64> {
+    let kinds = language.kinds();
+    rerail_tape_format::aux_index::named_codes(table.len(), |c| {
+        let e = table.entry(c);
+        match &e.alias {
+            Some(alias) => alias.1,
+            None => kinds.kind_is_named(if e.flags & rerail_tape_format::CODE_ERROR != 0 { super::ERROR_SYMBOL } else { e.kind }),
+        }
+    })
+}
+
+/// The code sets a tape's index is built with (`aux_index::CodeSets`): its named codes (`named_codes`), and its
+/// comments, the codes whose kind is named `comment` (its alias's name where it has one), which T's shape numbers no
+/// place of (`syntax::Class::Comment`, by the same name).
+pub fn code_sets(table: &rerail_tape_format::tape::CodeTable, language: GrammarDialect) -> rerail_tape_format::aux_index::CodeSets {
+    let comments = rerail_tape_format::aux_index::named_codes(table.len(), |c| {
+        let e = table.entry(c);
+        let name = match &e.alias {
+            Some(alias) => Some(alias.0),
+            None if e.flags & rerail_tape_format::CODE_ERROR != 0 => None,
+            None => language.kind_name(e.kind),
+        };
+        name == Some("comment")
+    });
+    rerail_tape_format::aux_index::CodeSets { named: named_codes(table, language), comments }
 }
 
 /// `source`'s tape from the `.rerail` parser, in the run's format: the parser's own sink (`lean::Sink16`, its keys
@@ -360,18 +443,15 @@ impl DocTape {
     }
 
     /// The tape as the reads written once take it (decision 0310): the bytes every offset of its view counts
-    /// from, and the view. Format 16's arrays as held; a 16z tape's blocks as stored, which a reader reads through its
-    /// batch's cache (`ZCache::view_for`: a block decoded where a read falls, 0353
-    /// step 4b).
+    /// from, and the view. Its home's bytes (`extent`): the tape, its presence and its auxiliary index, which its view
+    /// names (`presence`) and its reads read in place (`tape_has_kind`, `tape_place`). Format 16's arrays as held; a
+    /// 16z tape's blocks as stored, which a reader reads through its batch's cache (`ZCache::view_for`: a block
+    /// decoded where a read falls, 0353 step 4b).
     pub fn in_place(&self) -> Result<(&[u8], rerail_clif::view::TapeView), String> {
-        fn sixteen<'a>(t: &'a f16::Tape16, lang: Option<&Lang>) -> Result<(&'a [u8], rerail_clif::view::TapeView), String> {
-            let lang = lang.ok_or("a format 16 tape of a language without its table")?;
-            Ok((t.as_bytes(), f16::placement(t.as_bytes())?.view(lang, 0)?))
-        }
         let lang = self.image.lang();
         match self.image.held() {
-            Held::F16(t) => sixteen(t, lang),
-            Held::F16Z(z) => Ok((z.as_bytes(), z.view(lang.ok_or("a 16z tape of a language without its table")?)?)),
+            Held::F16(t) => Ok((t.extent(), t.placement().view(lang.ok_or("a format 16 tape of a language without its table")?, 0)?)),
+            Held::F16Z(z) => Ok((z.extent(), z.view(lang.ok_or("a 16z tape of a language without its table")?)?)),
         }
     }
 

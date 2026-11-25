@@ -74,6 +74,11 @@ impl Arena {
     pub fn zeroed<T>(&self, count: usize) -> Result<Buf, Error> {
         assert!(self.0.leased.get().is_none(), "a store declared after its arena was leased");
         let len = count.max(1).checked_mul(size_of::<T>()).ok_or(Error::BackendCapacity)?;
+        // The kernels read a store by its 32-bit offset (`Lay`): an arena past 4 GiB is refused, and the caller runs
+        // a smaller batch.
+        if self.0.end.get().saturating_add(len) > u32::MAX as usize {
+            return Err(capacity(concat!(file!(), ":", line!())));
+        }
         Ok(self.place(len))
     }
 
@@ -226,6 +231,17 @@ pub const TG: u64 = 256;
 pub fn tg() -> u64 {
     static T: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *T.get_or_init(|| if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG })
+}
+
+/// A SIMD group's run's slot in a unit's runs (`pp_grid.uglykl`'s `LP_RUN_BYTES`), and a tile's slots (`LP_SLOTS`:
+/// `TG` threads of 32-wide SIMD groups).
+pub const RUN_BYTES: usize = 4096;
+pub const RUN_SLOTS: usize = (TG / 32) as usize;
+
+/// A unit's runs (`LPRUN`) for a loop's phase of `tiles` tiles at most (its `TMAX`): each SIMD group's piece's run,
+/// by its tile, in device memory (the M3's back end lost its writes in the group's memory: decision 0613 §4's notes).
+pub fn runs(arena: &Arena, tiles: u32) -> Result<Buf, Error> {
+    arena.zeroed::<u32>(tiles.max(1) as usize * RUN_SLOTS * RUN_BYTES / 4)
 }
 
 /// A probe's scalars (`pp_probes.uglykl`'s `PpProbeArgs`).
@@ -410,7 +426,7 @@ pub const SLOTS: &[&str] = &[
     "RSTART", "RUNX", "RUNTOT", "RUN_END", "CNT", "CNT_CAP", "TR_SK", "TR_NK", "TR_TY", "TO_F", "TO_S", "CU_SLOT", "CU_SUB", "CU_UNIT", "TRN", "LREAD", "LB_CAP", "LDELTA", "LKEY", "LVAL", "LVALN", "LHEAD", "LATEST", "LATESTN", "ILINE", "ILINEN", "SLINE", "SLINEN", "LCTL", "IF_COUNT", "IF_FIRST", "IF_KIND", "IF_INST", "SINST", "P1_RNAMES", "P1_RNTOP", "RNC", "RQC", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
     "THEADS", "DELTA", "DEPTH", "STATE", "OFLAG", "CTL", "XFLAG", "XAT", "XTOTAL", "XPOS", "V", "OBASE", "LOB", "PLAST", "VTOTAL", "OPV", "OPBASE",
     "OPTOTAL", "OUT", "SC_DEPTH", "SC_CLOSE", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CKEYS", "SC_KB", "SC_VA", "SC_VB", "SC_HIST",
-    "SC_CAP", "TOKENS", "WORDS", "SCRATCH", "OUT_CAP", "LPQ", "LPQ_TOP", "XROWS", "XROWS_CAP",
+    "SC_CAP", "TOKENS", "WORDS", "SCRATCH", "OUT_CAP", "LPRUN", "LPQ", "LPQ_TOP", "XROWS", "XROWS_CAP",
 ];
 
 fn slot(name: &str) -> usize {

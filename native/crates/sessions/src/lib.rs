@@ -21,6 +21,9 @@ extern crate self as rerail_sessions;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_sessions_base::code_rule_dsl::*;
+    // The logic language with its rr root and corpus (rerail-rr-root), which the executor reads (`rr::parse_version`,
+    // `plan::corpus::preparation`); the parts below read the planner's (rerail-corpus-memo).
+    pub use rerail_rr_root::code_rule_dsl::logic;
     #[path = "sql_executor"]
     pub mod sql_executor {
         pub use rerail_sessions_base::code_rule_dsl::sql_executor::*;

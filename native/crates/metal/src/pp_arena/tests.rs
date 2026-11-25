@@ -233,8 +233,40 @@ fn the_setup_is_a_program_on_a_queue() {
     assert!(2 * PP_LAUNCHES <= crate::launch::KERNEL_LAUNCH_LIMIT, "a command's launches within the limit");
 }
 
-/// The setup's Metal source splits one unit a barriered phase function (decision 0571): the program's phases
-/// (`pp_step`, decision 0653), the stages it calls and `pp_advance`, which calls it, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and
+/// A unit's runs (`runs`, `LPRUN`) are laid out as the kernel reads them: a tile's `RUN_SLOTS` slots of `RUN_BYTES`
+/// each (`pp_grid.uglykl`'s `LP_SLOTS`, `LP_RUN_BYTES`), by the loop's phase's tile, and the run fits its slot (the
+/// source's static assertion: it compiles).
+#[test]
+fn a_units_runs_are_the_kernels_slots() {
+    let src = source();
+    assert!(src.contains(&format!("#define LP_RUN_BYTES ({}u)", RUN_BYTES)), "LP_RUN_BYTES is RUN_BYTES");
+    assert!(src.contains(&format!("#define LP_SLOTS ({}u / UKL_SIMD_WIDTH)", TG)), "LP_SLOTS is TG's SIMD groups");
+    assert_eq!(RUN_SLOTS as u64, TG / 32);
+    assert!(src.contains("UKL_STATIC_ASSERT(sizeof(LpRun) <= LP_RUN_BYTES"), "the run's size is checked");
+    assert!(src.contains("lp_run_slot(AT(uint8_t, LPRUN), g.tile, g.lid)"), "a SIMD group's run by its tile");
+}
+
+/// The expansion's loops are bounded by the unit's work (`LP_UNIT_WORK`, `lp_spend`): a run that does not progress
+/// (a write lost, a piece posted again and again) is refused for work, never a launch that holds the GPU. One held
+/// for minutes restarted a Mac (2026-11-24). The two loops with no count in their heads count in their bodies: a
+/// piece's rounds, and the queue's items, each spending work.
+#[test]
+fn the_expansions_loops_are_bounded_by_the_units_work() {
+    let src = source();
+    assert!(src.contains("#define LP_UNIT_WORK ("), "the unit's work bound");
+    let forever = src.matches("for (;;)").count() + src.matches("while (true)").count() + src.matches("while (1)").count();
+    assert_eq!(forever, 2, "two loops with no count in their heads: a piece's rounds and the queue's");
+    let queue = src.split("for (;;)").nth(2).expect("the queue's loop");
+    let body = &queue[..queue.find("\n    }\n").expect("its end")];
+    assert!(body.contains("lp_spend(a, trn, LP_ITEM_WORK)"), "the queue's loop spends work per item");
+    assert!(src.contains("if ((step & 15u) == 0u && ukl_atomic_load(&a.ctl[2]) != 0u)"), "a refused unit's pieces stop at their first step");
+    assert!(src.contains("for (uint32_t turn = 0u; ; turn++)") && src.contains("if (turn == LP_WORK)"), "lp_lex's turns are bounded");
+    assert!(src.contains("if (++rounds >= LP_WORK"), "a piece's rounds are bounded");
+}
+
+/// The setup's Metal source splits one unit a barriered phase function (decision 0571), and one a large body called at
+/// several sites (decision 0672): the program's phases (`pp_step`, decision 0653), the stages it calls and
+/// `pp_advance`, which calls it, calls 5 deep: a tape read is two calls, `clif_tape_<name>` and
 /// 16z's block (`clif_z_block`; decision 0576 checks 16z in the public read, with no `_z` read between); the small
 /// tape reads stay in their callers. The loop's look for a `(` (`lp_next_is_lparen`) is called, never inlined
 /// (inlined, it crashed the M3's back end); small, it is kept in its callers' units.
@@ -253,10 +285,20 @@ fn the_setup_splits_one_unit_a_barriered_function() {
     assert!(split.units.iter().any(|u| u.name == "lp_next_is_lparen") || split.local.iter().any(|n| n == "lp_next_is_lparen"), "the look for a `(` is called");
     // The loop's phase is a unit of its own (`lp_loop_run`): inlined into `pp_step`, the M3's back end miscompiled it.
     assert!(split.units.iter().any(|u| u.name == "lp_loop_run"), "the loop's phase is a unit");
-    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), the loop's phase,
-    // `pp_step` and `pp_advance`, which runs the afters.
-    assert_eq!(split.units.len(), 14);
-    assert_eq!(split.depth, 6);
+    // Compiled once and called, each its own unit (decision 0672): inlined at their several sites, their loop exits
+    // counted past 255 in `lp_piece` and `pp_step`, which the M1's back end miscompiles. The rare cases those
+    // reached inlined (a region's growth, a line splice's end) are calls kept in their callers' units.
+    for once in ["lp_substitute", "lp_call_next", "p1_if_line", "p1_find_header"] {
+        assert!(split.units.iter().any(|u| u.name == once), "{once} is a unit");
+    }
+    for rare in ["lp_grow", "splice_end"] {
+        assert!(split.local.iter().any(|n| n == rare), "{rare} is called in its callers' units");
+    }
+    // The stages (`ukl/stages.h`: 4 of the scans, 3 of the segmented scans, 4 of the sort), the loop's phase and the
+    // four above, `pp_step` and `pp_advance`, which runs the afters: `pp_advance`, `pp_step`, `lp_loop_run`,
+    // `lp_call_next`, `lp_substitute` and its stage calls 7 deep.
+    assert_eq!(split.units.len(), 18);
+    assert_eq!(split.depth, 7);
     assert!(split.kernel.contains("kernel void pp_run") && split.units.iter().all(|u| !u.source.contains("kernel void")));
 }
 

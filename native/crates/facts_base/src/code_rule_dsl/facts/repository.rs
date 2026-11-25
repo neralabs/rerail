@@ -20,7 +20,7 @@
 
 use rerail_blocks::vector::Vector;
 use super::vtab::Relation;
-use crate::content_store::{ContentStore, StoreResult};
+use crate::content_store::{FactStore, StoreResult};
 use rerail_lang::code_rule_dsl::tsconfig;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -251,24 +251,29 @@ fn settings_key(root: &Path, packages: &BTreeMap<String, String>, configs: &BTre
 }
 
 /// The kept settings rows (`KEPT_SETTINGS`, atoms) under `key` in `space`, where the disk answers each question their
-/// reading asked (`Probe`) as it did: then no configuration file is read.
-fn kept_settings(store: &ContentStore, space: &[u8; 32], key: &[u8; 32], disk: &Disk<'_>) -> StoreResult<Option<Vec<Vec<Vec<i64>>>>> {
-    let Some(kept) = store.kept_space(space)? else { return Ok(None) };
-    let view = kept.view();
-    let mut out = Vec::new();
-    for (k, (rel, _)) in KEPT_SETTINGS.iter().enumerate() {
-        let Some(entry) = view.entry(&rerail_blocks::kept::FactKey { rel, ident: key, part: 0 }) else { return Ok(None) };
-        if k == 0 && !entry.reads().all(|r| Probe::holds(r, disk)) {
-            return Ok(None);
+/// reading asked (`Probe`) as it did: then no configuration file is read. Read through the store's hook
+/// (`observer_store::base::STORE`): this crate holds the store as a `FactStore`.
+fn kept_settings(store: &dyn FactStore, space: &[u8; 32], key: &[u8; 32], disk: &Disk<'_>) -> StoreResult<Option<Vec<Vec<Vec<i64>>>>> {
+    let Some(kept) = rerail_observe::content_store::observer_store::base::STORE.try_get().and_then(|s| s.open(store.database_path())) else { return Ok(None) };
+    let mut out = None;
+    kept.read(space, &mut |view| {
+        let Some(view) = view else { return };
+        let mut rels = Vec::new();
+        for (k, (rel, _)) in KEPT_SETTINGS.iter().enumerate() {
+            let Some(entry) = view.get(&rerail_blocks::kept::FactKey { rel, ident: key, part: 0 }) else { return };
+            if k == 0 && !entry.reads().all(|r| Probe::holds(r, disk)) {
+                return;
+            }
+            rels.push((0..entry.rows.len()).map(|i| entry.row(i)).collect());
         }
-        out.push((0..entry.rows.len()).map(|i| entry.row(i)).collect());
-    }
-    Ok(Some(out))
+        out = Some(rels);
+    });
+    Ok(out)
 }
 
 /// Keeps `rows` (`KEPT_SETTINGS`' relations, atoms) under `key` in `space`, with the questions their reading asked.
-fn keep_settings(store: &ContentStore, space: [u8; 32], key: [u8; 32], rows: &[Vec<Vec<i64>>], probes: &[Probe]) {
-    use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptWhat};
+fn keep_settings(store: &dyn FactStore, space: [u8; 32], key: [u8; 32], rows: &[Vec<Vec<i64>>], probes: &[Probe]) {
+    use rerail_observe::content_store::kept_facts::base::{BlockFlat, KeptPut, KeptWhat};
     use sha2::Digest as _;
     let reads: Vec<(String, u64)> = probes.iter().map(Probe::read).collect();
     let puts = KEPT_SETTINGS
@@ -290,7 +295,9 @@ fn keep_settings(store: &ContentStore, space: [u8; 32], key: [u8; 32], rows: &[V
             KeptPut { rel: rel.to_owned(), ident: key, part: 0, digest, reads: reads.clone(), types: vec![b's'; width], what: KeptWhat::Picked(Box::new(flat)) }
         })
         .collect();
-    store.queue_kept(space, puts);
+    if let Some(kept) = rerail_observe::content_store::observer_store::base::STORE.try_get().and_then(|s| s.open(store.database_path())) {
+        kept.queue(space, puts, "the settings kept");
+    }
 }
 
 /// The names a project configuration has, the first found in a folder governing it.
@@ -526,7 +533,7 @@ fn package_for_rows(docs: &[String], packages: &BTreeMap<String, String>, rows: 
 }
 
 /// The repository inputs a program reads (`reads`), interned in `store`, by relation.
-pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool, files: &mut dyn Files) -> StoreResult<Vec<(&'static str, Relation)>> {
+pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool, files: &mut dyn Files) -> StoreResult<Vec<(&'static str, Relation)>> {
     let mut rows = Rows::default();
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
@@ -661,7 +668,7 @@ pub mod tests {
         write("web/src/a.ts", "");
         // The store's folder is the user's alone, whatever the umask (decision 0574).
         rerail_blocks::mapped::make_folder(&tmp.path().join("store")).unwrap();
-        let store = ContentStore::open(&tmp.path().join("store").join("store.db")).unwrap();
+        let store = rerail_store::content_store::ContentStore::open(&tmp.path().join("store").join("store.db")).unwrap();
         let docs = ["web/src/a.ts".to_owned()];
         let all = |_: &str| true;
         // The settings relations a run binds, by name, each as its sorted rows.

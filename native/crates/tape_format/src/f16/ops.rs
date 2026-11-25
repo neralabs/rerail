@@ -105,14 +105,55 @@ pub struct Writer {
     pub(super) jit: Option<&'static Jit>,
 }
 
+thread_local! {
+    /// This thread's writer between documents (`Writer::reused`, `give_back`): its parts' buffers kept.
+    static SPARE: std::cell::Cell<Option<Writer>> = const { std::cell::Cell::new(None) };
+}
+
 impl Writer {
     /// A writer of a document of `source` in `lang`, of about `nodes` nodes, in 16z where `z`, with each block's
     /// presence where `blocks`. Its parts' room is reserved for `nodes` nodes, their side lists' usual share and the
     /// source's newline index: more nodes grow them.
     pub fn new(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        // (`reused` takes the thread's writer between documents instead.)
         let mut w = Writer::empty();
         w.begin(lang, source, terminators, tag, z, blocks, nodes);
         w
+    }
+
+    /// This thread's writer begun on the next document (as `new`): the one a document before gave back
+    /// (`give_back`), its parts' buffers kept, else a new one. Its parts are a document's working memory (about 20
+    /// buffers): a writer made a document made them each again (1.14 M arrays on cold PostHog).
+    pub fn reused(lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        let mut w = SPARE.try_with(|s| s.take()).ok().flatten().unwrap_or_else(Writer::empty);
+        w.begin(lang, source, terminators, tag, z, blocks, nodes);
+        w
+    }
+
+    /// `reused`, its tapes going to `rooms` (decision 0353 step 4a, row 17; `placing`): the thread's writer keeps its
+    /// parts' buffers, and takes this document's rooms. A region left from other rooms is not this document's.
+    pub fn reused_in(rooms: Option<std::sync::Arc<dyn crate::home::Rooms>>, lang: &Lang, source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool, blocks: bool, nodes: usize) -> Self {
+        let mut w = SPARE.try_with(|s| s.take()).ok().flatten().unwrap_or_else(Writer::empty);
+        let same = match (&w.rooms, &rooms) {
+            (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            w.region = None;
+        }
+        w.rooms = rooms;
+        w.begin(lang, source, terminators, tag, z, blocks, nodes);
+        w
+    }
+
+    /// Gives this writer to its thread's next document (`reused`). Its tape, once finished, is the document's own:
+    /// `finish` took it out. Its rooms and their region stay with their run: a thread's spare writer holds no run's
+    /// memory.
+    pub fn give_back(mut self) {
+        self.region = None;
+        self.rooms = None;
+        let _ = SPARE.try_with(|s| s.set(Some(self)));
     }
 
     /// A writer of no document yet, its parts empty: `begin` starts each.
@@ -168,7 +209,11 @@ impl Writer {
             ..State::default()
         });
         debug_assert_eq!(state.stride, w::stride_of(w3, cw as u32));
-        let kinds: crate::Vector<u8> = lang.table().entries().flat_map(|e| super::presence::kind_word(e.kind, e.field, e.flags).to_le_bytes()).collect();
+        // The language's kinds' part, made once with it (`Lang::kinds_part`), into this part's own buffer: built from
+        // the code table at each document, it was a third of a small document's writer (a rule file's).
+        let mut kinds = std::mem::take(&mut self.parts[part::KINDS as usize]);
+        kinds.clear();
+        kinds.extend_from_slice(lang.kinds_part());
         let words = 8 * (kind_words + field_words);
         let count = nodes.div_ceil(Z).max(1);
         let buckets = (4 * count).next_power_of_two().max(64);
@@ -192,7 +237,9 @@ impl Writer {
             count * TABLE as usize,
             2 * SIDE_AREA as usize,
             64,
-            LAID_MAX,
+            // A block's laid parts, and the 8 bytes past them `reserve` keeps: the first node's `reserve_final` asks
+            // for that much, and a part held at `LAID_MAX` was moved to twice it at once.
+            LAID_MAX + 8,
             count * LAID_AT as usize,
             words * (1 + if blocks { count + 1 } else { 0 }) + 8,
             lines.len() + 8,
@@ -202,8 +249,8 @@ impl Writer {
             if z { 4 * buckets + 8 } else { 8 },
             if z { count * (Z / K) * cw + 8 } else { 8 },
             if z { w::LZ_TABLES as usize + 8 } else { 8 },
-            // The faults: a few a document, grown as blocks are made final (`reserve_final`).
-            64,
+            // The faults: room for a block's (each node may be one), as the first node's `reserve_final` asks.
+            4 * Z + 8,
         ];
         // The kinds' table and the newline index are their parts, made where they are computed.
         self.parts[part::KINDS as usize] = kinds;

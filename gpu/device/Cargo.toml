@@ -7,6 +7,8 @@ description = "The device layer (decision 0440): one interface over Metal (macOS
 
 [dependencies]
 libc = "0.2.189"
+# The kernels whose Rust of a library's very source runs in place of the compiler's build (decision 0567 step 3).
+rerail-ukl-rust = { path = "../../native/crates/ukl_rust" }
 
 [dev-dependencies]
 # The runtimes' tests preprocess their kernels (the crate itself takes preprocessed source).

@@ -14,7 +14,7 @@ use rerail_blocks::vector::Vector;
 pub trait Runner: Send + Sync {
     /// `programs`' run over `root` (`corpus::run_handed`): its report, and its outputs' image into `image`.
     #[allow(clippy::too_many_arguments)]
-    fn run_handed(&self, programs: &[&str], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report>;
+    fn run_handed(&self, programs: &[&str], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report>;
 }
 
 /// The registered corpus runner (`Runner`).
@@ -23,8 +23,14 @@ pub static RUNNER: rerail_registry::Slot<&'static dyn Runner> = rerail_registry:
 /// `programs`' run through the registered runner (`RUNNER`).
 #[allow(clippy::too_many_arguments)]
 pub fn run_handed(programs: &[&str], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report> {
+    run_handed_parsed(programs, &[], read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
+}
+
+/// `run_handed`, each text's parse in `parsed` where its read made one (`settings::program_texts_parsed`).
+#[allow(clippy::too_many_arguments)]
+pub fn run_handed_parsed(programs: &[&str], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report> {
     let runner = RUNNER.get().unwrap_or_else(|missing| panic!("{missing}: no program registered the corpus runner"));
-    runner.run_handed(programs, read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
+    runner.run_handed(programs, parsed, read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
 }
 
 /// The switches that change the combined program (`combine_tail`, with the `.rerail` lowering its `rr::parse` runs): its
@@ -49,6 +55,13 @@ pub const COMBINING: &[&str] = &[
     // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
     "RERAIL_ASOF",
     "RERAIL_FIRST",
+    // The passes combining replays to judge an answer as preparation's own demand leaves it (`demanded`), and runs
+    // again in preparing: `simplify` and the reach index.
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE_FILTERS",
+    "RERAIL_JOIN_KEYS",
+    "RERAIL_PROJECT_COLUMNS",
+    "RERAIL_REACH_INDEX",
 ];
 
 pub fn text(v: &SqlValue) -> String {
@@ -203,8 +216,9 @@ pub struct Summary {
 
 impl Summary {
     /// The summary of the program `programs` combine to, as `changes` combines them (the root's settings in each).
-    pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
-        Ok(Self::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?))
+    /// `files`: the texts' parses, the run's (`Texts::files`), or none.
+    pub(crate) fn of(programs: &[&str], files: &[Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
+        Ok(Self::from_fields(&*combined_with_settings(programs, files, graphs, read, root, options)?))
     }
 
     fn from_fields(p: &crate::code_rule_dsl::logic::program_image::Version) -> Summary {
@@ -333,12 +347,12 @@ pub fn run_settings(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32
 /// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
 /// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
 /// (`texts_digest`, decision 0225 §3).
-pub fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+pub fn combined_with_settings(programs: &[&str], files: &[Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     // As the run reads them: a snapshot's settings file that does not read is none, for a program that reads Git's
     // metadata alone (any other's run fails on it).
     let (settings, _) = crate::code_rule_dsl::logic::settings::settings_as_read(root, &flags).map_err(Error::Plan)?;
-    let masked = masked(programs);
+    let masked = masked_of(programs, files);
     Ok(combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), graphs, &added::Added::of(&settings, options), read)?.0)
 }
 
@@ -357,7 +371,7 @@ pub fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&
     }
     let prog = match summary {
         Some(summary) => summary,
-        None => Summary::from_fields(&*combined_with_settings(programs, graphs, read, root, options)?),
+        None => Summary::from_fields(&*combined_with_settings(programs, &[], graphs, read, root, options)?),
     };
     let metadata_only = prog.git_metadata_only;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
@@ -421,6 +435,9 @@ pub struct Texts<'a> {
     pub sources: Option<&'a texts::Sources>,
     pub phase: FactPhase<'a>,
     pub reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
+    /// Each text's parse, kept past `names` (which takes the reads): what its masking and its message templates read,
+    /// each of which parsed every text again (`rr::message_masked_of`). Empty for a program handed already read.
+    pub files: Vec<Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>>,
     pub names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
 
@@ -430,17 +447,23 @@ impl<'a> Texts<'a> {
     pub fn of_read(key: &'a [&'a str], read: &'a Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
         let names = std::cell::OnceCell::new();
         let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(&**read)]);
-        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, phase: Default::default(), reads: std::cell::RefCell::new(Vec::new()), names }
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, phase: Default::default(), reads: std::cell::RefCell::new(Vec::new()), files: Vec::new(), names }
     }
 
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
     pub fn of(programs: &'a [&'a str]) -> Result<Self> {
-        let reads: Vec<crate::code_rule_dsl::logic::rr::TextRead> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::read_seed(t)).collect::<std::result::Result<_, _>>()?;
+        Self::of_parsed(programs, &[])
+    }
+
+    /// `of`, off each text's parse in `parsed` where it has one (`settings::program_texts_parsed`).
+    pub fn of_parsed(programs: &'a [&'a str], parsed: &[crate::code_rule_dsl::logic::settings::Parsed]) -> Result<Self> {
+        let reads: Vec<crate::code_rule_dsl::logic::rr::TextRead> = programs.iter().enumerate().map(|(i, t)| crate::code_rule_dsl::logic::rr::read_seed_of(t, parsed.get(i).and_then(Option::as_ref))).collect::<std::result::Result<_, _>>()?;
         let seeds: Vec<phase0::Seed> = reads.iter().filter_map(|r| r.seed.clone()).collect();
         let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
         let mut at = derived.iter();
         let graphs = reads.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
-        Ok(Texts { programs, graphs, derived, read: None, sources: None, phase: Default::default(), reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
+        let files = reads.iter().map(crate::code_rule_dsl::logic::rr::TextRead::file).collect();
+        Ok(Texts { programs, graphs, derived, read: None, sources: None, phase: Default::default(), reads: std::cell::RefCell::new(reads), files, names: std::cell::OnceCell::new() })
     }
 
     /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
@@ -843,6 +866,11 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
         if last.delta.touched != Reads::RULES || !Arc::ptr_eq(last.input, last.output) {
             return Ok(false);
         }
+        // Where the program's own demand can change an answer (`demanded`), what places it is more than what the answers
+        // read: judged again whole.
+        if demand_reaches_an_answer(cx.v()) {
+            return Ok(false);
+        }
         // The split places a relation from its rules and what they read, down: where the edit defines none of the
         // answers' relations nor what they read, it places them as it did, file-local, and is not asked for.
         let v = cx.v();
@@ -882,7 +910,8 @@ impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for Answer
 /// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
 /// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
 /// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
-/// cross-file reader asks for is eager. Each round whose function's answer a cross-file reader asks for is undone
+/// cross-file reader asks for is eager, and so is one whose answer the program's own demand puts in the cross-file part
+/// (`demanded`): preparation applies that demand after combining, so it is judged here as it will run. Each round whose function's answer a cross-file reader asks for is undone
 /// (`rr::lower::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
 /// (decision 0281's path, step 7b).
 pub fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
@@ -890,12 +919,104 @@ pub fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logi
     loop {
         let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&v).map_err(Error::Plan)?;
         let declared = |rel: &str| v.declares(rel);
-        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))) else {
+        let written = ON_REQUEST.iter().find_map(|round| round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && declared(a.req) && !split.local.contains(a.rel)).map(|a| (*round, a.rel))).map(|(round, rel)| (round, rel, "a cross-file reader asks"));
+        let found = match written {
+            Some(found) => Some(found),
+            None => demanded_answer(&v)?.map(|(round, rel)| (round, rel, "the program's demand reads across files for its request")),
+        };
+        let Some((round, rel, why)) = found else {
             return Ok(v);
         };
-        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local ({why}), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
         v = crate::code_rule_dsl::logic::rr::lower::undone_with(&v, |head, rules| undo_round(head, rules, round)).map_err(Error::Plan)?;
     }
+}
+
+/// One round of the attributes answered on request (`rr::lower::ON_REQUEST`).
+type OnRequestRound = &'static [crate::code_rule_dsl::logic::rr::lower::OnRequest];
+
+/// The first round with an attribute answered by a function of the node's document that `v` declares, whose answer
+/// is cross-file in `v` as preparation makes it with its own demand (`demanded`), where the attribute is still
+/// answered as preparation's check asks; and that attribute. None where the demand cannot change an answer.
+fn demanded_answer(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Option<(OnRequestRound, &'static str)>> {
+    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
+    let Some(d) = demanded(v) else { return Ok(None) };
+    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&d).map_err(Error::Plan)?;
+    let derived = |rel: &str| d.rel(rel).is_some_and(|id| d.heads(id).next().is_some());
+    Ok(ON_REQUEST.iter().find_map(|round| {
+        round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && v.declares(a.req) && !split.local.contains(a.rel) && derived(a.rel)).map(|a| (*round, a.rel))
+    }))
+}
+
+/// `v` as preparation makes it up to its own demand (`.pragma "magic-transform"`, decision 0145), demand included,
+/// when that demand can change an attribute's answer by a function (`demand_reaches_an_answer`). The transform leaves
+/// a derived literal out of a demand rule where keeping it would close a negative cycle, and a request reading the
+/// demanded relation can close one through the attribute's readers. RUF034 alone: `rr_value_req` reads `unparen`, whose
+/// demand comes from `same_pair`, which negates `same_leaf`, which reads `value`; without `same_pair`, `unparen`'s
+/// demand joined the two compared nodes by a child's position only, so it, `value`'s request and its answer were
+/// cross-file, and preparation refused the program. The passes are `preparation::front`'s before the demand, in its
+/// order (the combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the
+/// demand, the prune after it, and the closures the demand put in cycles made rows again (`demand::UndoInCycles`). Not
+/// `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not know (the prepared key
+/// names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make an answer eager, so the
+/// combined program is not a function of it. None when the demand cannot change an answer, or when a pass fails or the
+/// demand is not applied (preparation then fails, or leaves the demand out).
+fn demanded(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Option<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::{demand, magic, prune, simplify};
+    if !demand_reaches_an_answer(v) {
+        return None;
+    }
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("demanded", Arc::clone(v));
+    p.program(&mut simplify::CpythonFunctors);
+    p.program(&mut simplify::BaseInputs);
+    p.program(&mut prune::Prune::default());
+    simplify::passes(&mut p).ok()?;
+    p.program(&mut prune::Prune::default());
+    p.program(&mut demand::ReachForm::default());
+    p.program(&mut demand::NegatedDemand::default());
+    let mut own = magic::ProgramDemand::default();
+    p.program(&mut own);
+    if !matches!(own.outcome, Some(Ok(_))) {
+        return None;
+    }
+    p.program(&mut prune::Prune::default());
+    p.program(&mut demand::UndoInCycles::default());
+    p.current().ok().cloned()
+}
+
+/// Whether `v` has its own demand, and an attribute answered by a function whose answer reads a demanded relation: the
+/// demand can change only what reads what it demands.
+fn demand_reaches_an_answer(v: &crate::code_rule_dsl::logic::program_image::Version) -> bool {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
+    let demand = v.demand();
+    if demand.is_empty() {
+        return false;
+    }
+    let reading = reading_demanded(v, &demand);
+    ON_REQUEST.iter().flat_map(|r| r.iter()).any(|a| matches!(a.answer, Answer::Function(_)) && v.declares(a.req) && reading.contains(a.rel))
+}
+
+/// The relations `demand` lists and those whose rules in `v` read one, directly or through others: what its demand can
+/// change.
+fn reading_demanded(v: &crate::code_rule_dsl::logic::program_image::Version, demand: &[String]) -> std::collections::BTreeSet<String> {
+    let mut readers: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
+    for rule in v.rules() {
+        let head = v.rel_name(rule.head().rel());
+        for read in rule.body().filter_map(|l| l.atom()) {
+            readers.entry(v.rel_name(read.rel())).or_default().push(head);
+        }
+    }
+    let mut seen: std::collections::BTreeSet<String> = demand.iter().cloned().collect();
+    let mut todo: Vec<String> = seen.iter().cloned().collect();
+    while let Some(rel) = todo.pop() {
+        for h in readers.get(rel.as_str()).into_iter().flatten() {
+            if seen.insert((*h).to_owned()) {
+                todo.push((*h).to_owned());
+            }
+        }
+    }
+    seen
 }
 
 /// The programs `programs` linked into one (`link::Part`: versions, `link::Versioned`, decision 0281's path, step
@@ -1982,7 +2103,12 @@ pub fn runs_under_way() -> usize {
 
 /// `programs` with their messages masked (`rr::message_masked`), as the keys read them.
 pub fn masked<'a>(programs: &[&'a str]) -> Vec<std::borrow::Cow<'a, str>> {
-    programs.iter().map(|t| crate::code_rule_dsl::logic::rr::message_masked(t)).collect()
+    masked_of(programs, &[])
+}
+
+/// `masked`, off each text's parse in `files` (`Texts::files`) where it has one.
+pub fn masked_of<'a>(programs: &[&'a str], files: &[Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>]) -> Vec<std::borrow::Cow<'a, str>> {
+    programs.iter().enumerate().map(|(i, t)| crate::code_rule_dsl::logic::rr::message_masked_of(t, files.get(i).and_then(Option::as_ref))).collect()
 }
 
 /// A corpus's files by language: Python's, Rust's and `.rerail` rule files, and the text-only documents.
@@ -2159,9 +2285,27 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    run_with_parsed(programs, &[], root, t_facts, out, modes, binding, chunk_nodes, typing, options)
+}
+
+/// `run_with_options`, each text's parse in `parsed` where its read made one (`settings::program_texts_parsed`): the
+/// run reads, masks and takes the templates of each text off it.
+#[allow(clippy::too_many_arguments)]
+pub fn run_with_parsed(
+    programs: &[&str],
+    parsed: &[crate::code_rule_dsl::logic::settings::Parsed],
+    root: &Path,
+    t_facts: Option<&Path>,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
     // The run's options as it is first given them: a `toolCalls` option not of its shape is an error here (`added`).
     added::check_tool_calls(options).map_err(Error::Plan)?;
-    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
+    run_handed_parsed(programs, parsed, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, Default::default())
 }
 
 pub fn install_git_inventory() {

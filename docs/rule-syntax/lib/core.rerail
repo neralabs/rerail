@@ -236,7 +236,7 @@
 // is not all known.
 .decl reference_open(n: node) extensible  // as reference_edge
 // Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
-// file that derives them.
+// file that derives them, and the one file that may add to them (`rr::DERIVED_BY`, decision 0263's exception).
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog

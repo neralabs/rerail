@@ -50,8 +50,8 @@ ruf018_in_sc_past_class(n, SC) :- ruf018_demand_in_sc_past_class(n, SC), within_
 .decl ruf018_earlier_read(n: node, name: loc, sc: loc, w: loc)
 ruf018_earlier_read(n, NAME, SC, W) :- ruf018_demand_earlier_read(n, NAME, SC, W),
     text(n, t_name2), text(NAME, t_name2), node(_, n, _, _, _), R = n, t2 = W, node(_, n, _, s5, e6),
-    node(_, W, _, s7, e8), s7 >= e6, @doc(n) = @doc(W), end_line(n, l3), line(t2, l4),
-    k1 = l4 - l3, k1 >= 0,
+    node(_, W, _, s7, e8), s7 >= e6, @doc(n) = @doc(W), end_line(n, l3), line(t2, l4), k1 = l4 - l3,
+    k1 >= 0,
     ( ruf018_in_sc(n, SC)
     ; ruf018_in_sc_past_class(n, SC)
     ; within_stop(n, p1, ruf018_stop_1), (kind(p1, "parameters") ; kind(p1, "lambda_parameters")), child(p2, p1, _), ruf018_in_sc(p2, SC)

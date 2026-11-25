@@ -661,8 +661,17 @@ pub fn crossings_checked(p: &Programs) -> Result<(), String> {
     // deferred join's factor of a relation declared `cross_file`. A `@place` finding's relation (`rr_place_…`, a path
     // and a line) is about the corpus by what `@place` says, as 0290 moves it.
     let declared = |rel: &str| f.qualified(rel, CROSS_FILE) && !f.qualified(rel, MOVED_CROSS_FILE);
+    // A demand set (`magic_…`, the keys' demand, under a program's prefix too) is the engine's: the transform leaves
+    // a derived literal out of it to keep the program stratified, which only widens the demand, and can leave it
+    // joining documents its source rule joined through that literal (RUF034's `magic_unparen_bf`, `same_pair` left
+    // out). The author cannot declare it; it is cross-file as the engine made it, and an answer reading it is eager
+    // (#932, d7ec54c12f).
+    let demand = |rel: &str| {
+        let r = rel.split_once('_').filter(|(p, _)| p.len() > 1 && p.starts_with(['p', 'q']) && p[1..].bytes().all(|b| b.is_ascii_digit())).map_or(rel, |(_, r)| r);
+        r.starts_with("magic_")
+    };
     let meant = |rel: &str| {
-        (rel.starts_with("rr_place_") && placement_only(v, &f, rel)) || declared(rel) || lowering_source(v, rel).is_some_and(|s| declared(&s))
+        (rel.starts_with("rr_place_") && placement_only(v, &f, rel)) || declared(rel) || demand(rel) || lowering_source(v, rel).is_some_and(|s| declared(&s))
     };
     let mut refused: Vec<String> = p.crossings.iter().filter(|(rel, _)| !meant(rel)).map(|(rel, why)| crossing_shown(v, rel, why)).collect();
     for rel in moved_in(&f) {

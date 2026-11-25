@@ -13,9 +13,8 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+// The store's base (its keys, ids and errors): lang reads no store and no git.
+pub use rerail_store_base::content_store;
 extern crate self as rerail_lang;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {

@@ -49,6 +49,7 @@ const REL_INDEXES: i32 = offset_of!(Relation, indexes) as i32;
 const INDEX_MASK: i32 = offset_of!(Index, mask) as i32;
 const INDEX_OFFS: i32 = offset_of!(Index, offs) as i32;
 const INDEX_ROWS: i32 = offset_of!(Index, rows) as i32;
+const INDEX_MARKS: i32 = offset_of!(Index, marks) as i32;
 const INDEX_SIZE: i64 = size_of::<Index>() as i64;
 const BLOOM_WORDS: i32 = offset_of!(Bloom, words) as i32;
 // A sealed chunk's frozen column (`col::IntCol`, decision 0622).
@@ -614,6 +615,16 @@ pub fn rel_group_row(b: &mut B<'_, '_>) -> Value {
     b.word_at(I32, p, 0)
 }
 
+/// `rel_group_mark(rel, idx, k)`: entry `k` of index `idx`'s marks (decision 0671): the tag of its row's key, and
+/// `MARK_SAME` (bit 0) where its key is its bucket's head's for its tag.
+pub fn rel_group_mark(b: &mut B<'_, '_>) -> Value {
+    let (idx, k) = (b.arg(0), b.arg(1));
+    let ix = index(b, idx);
+    let marks = b.follow(ix, INDEX_MARKS);
+    let p = b.item(marks, k, 4);
+    b.word_at(I32, p, 0)
+}
+
 /// `rel_key_mix(rel, h, v)`: a key's hash `h` with its next value `v` mixed in (`rerail_blocks::mix`; a key's
 /// hash is its values mixed in order into `rerail_blocks::SEED`). The one hash of a key: the host's index builder,
 /// the device's and every probe's (decision 0325 step 5). It reads nothing of the relation.
@@ -1051,6 +1062,36 @@ mod tests {
             let n = len(dir.root(), id);
             let jit = (n != u32::MAX).then(|| unsafe { std::slice::from_raw_parts(at(dir.root(), id) as *const u8, n as usize) });
             assert_eq!(jit, host, "id {id}");
+        }
+        // A string by its hash (decision 0666): the JIT's candidates, each compared as the kernels compare them,
+        // find what the host's `find_in` finds. Every word, a word under another's hash (a tag that differs), one of
+        // a length no atom of its tag has, one in no run, and a block of one hash for every atom (each a candidate).
+        type Find = extern "C" fn(*const u8, u64, u32, u32) -> u32;
+        // SAFETY: the read's signature: the directory's address, the hash, the length, the candidate's number.
+        let find: Find = unsafe { std::mem::transmute::<*const u8, Find>(reads.function("atoms_find")) };
+        let by_jit = |dir: &AtomsDir, s: &[u8], h: u64| -> Option<u32> {
+            if s.is_empty() {
+                return Some(0);
+            }
+            (0..).map(|k| find(dir.root(), h, s.len() as u32, k)).take_while(|&id| id != u32::MAX).find(|&id| {
+                // SAFETY: an id the read gives is one a run holds.
+                (unsafe { str_in(dir.root(), id) }) == Some(s)
+            })
+        };
+        let mut asked: Vec<(Vec<u8>, u64)> = words.iter().map(|w| (w.as_bytes().to_vec(), k_hash(w))).collect();
+        asked.extend([(b"w1".to_vec(), k_hash("w2z")), (b"w1zz".to_vec(), k_hash("w1z")), (b"absent".to_vec(), k_hash("absent")), (Vec::new(), 0)]);
+        for (s, h) in &asked {
+            // SAFETY: a host directory over blocks that live here.
+            let host = unsafe { rerail_blocks::atoms::find_in(dir.root(), s, *h) };
+            assert_eq!(by_jit(&dir, s, *h), host, "{}", String::from_utf8_lossy(s));
+        }
+        let mut same = AtomsW::anon(1, 32, 1024);
+        for w in &words {
+            same.append(w, 7 << 32).unwrap();
+        }
+        let one = AtomsDir::host(&[same.run_from(1)]);
+        for (k, w) in words.iter().enumerate() {
+            assert_eq!(by_jit(&one, w.as_bytes(), 7 << 32), Some(k as u32 + 1), "{w}: a candidate of many");
         }
     }
 }

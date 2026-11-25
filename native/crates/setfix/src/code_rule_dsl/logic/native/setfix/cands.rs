@@ -51,12 +51,13 @@ impl<'a> Rows<'a> {
                 }
             } else {
                 last.spare = list;
-                let ids = s.view.find_keyed(s.cols, &s.key[..s.len], s.lead);
+                let mut ids = last.ids();
+                s.view.find_keyed_into(s.cols, &s.key[..s.len], s.lead, Arc::get_mut(&mut ids).expect("the step's own list"));
                 hit = ids.iter().any(|&id| f(id, self.row_need(id, need)));
-                if let Some((_, q)) = &mut last.memo { *q = Probed::Ids(ids); }
+                if let Some((_, q)) = &mut last.memo { Probed::put(q, Probed::Ids(ids), &mut last.spare_ids); }
                 return hit;
             };
-            if let Some((_, q)) = &mut last.memo { *q = Probed::Read(answer, need); }
+            if let Some((_, q)) = &mut last.memo { Probed::put(q, Probed::Read(answer, need), &mut last.spare_ids); }
             return hit;
         }
         if let (Rows::In(r), &Cands::Range(lo, hi)) = (self, &cands)
@@ -108,11 +109,39 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
             mk.clear();
             // copy: not block data (a probe key's values, kept to compare the next probe with)
             mk.extend_from_slice(key);
-            *q = Probed::Pending;
+            Probed::put(q, Probed::Pending, &mut last.spare_ids);
         }
         None => last.memo = Some((key.iter().copied().collect(), Probed::Pending)),
     }
     Cands::Stream(Stream { view: v, cols, lead, key: k, len: key.len() })
+}
+
+/// The key columns a probe of `src` (by its key columns, all bound) matches exactly, which its rows need not be read
+/// or checked for:
+/// - a view's: the sorted index's column, a lookup on one key column, every column of a composite lookup. A view's
+///   column may be a search on the tape (decision 0353 step 2: a node's parent). Where the probe is a membership test
+///   (`membership`: the caller reads nothing else), a view's test by several columns (`View::tests_keys`) compares
+///   every key there.
+/// - an order's (a derived input's own, or a kept chain, `Csr::runs`): its leading columns that are key columns. Its
+///   search compared each row it finds on them (`Index::find_at`), and the step read and compared them again: a
+///   sealed chunk's decode a column a candidate (t56 step 7).
+pub(super) fn exact_cols(j: &JoinRule, src: &Src, membership: bool) -> u64 {
+    let Src::In(rel, ix) = src else { return 0 };
+    let (rel, ix) = j.src_in(rel, ix);
+    if let Some(index) = ix.runs(rel) {
+        return index.cols.iter().take_while(|c| ix.cols.contains(c)).fold(0, |m, &c| m | 1 << c);
+    }
+    if rel.view.is_none() {
+        0
+    } else if ix.composite {
+        ix.cols.iter().fold(0, |m, &c| m | 1 << c)
+    } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
+        1 << ix.cols[ix.lead]
+    } else if ix.source && membership && rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) {
+        ix.cols.iter().fold(0, |m, &c| m | 1 << c)
+    } else {
+        0
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -187,7 +216,8 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                         // The memo's list, which the probe before's candidates no longer hold, is this probe's.
                         // (Its answer alone is taken: its key's buffer is kept for the next.)
                         if let Some((_, q)) = &mut last.memo
-                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Ids(rerail_blocks::vector::Vector::new()))
+                            && matches!(&*q, Probed::Read(Found::Many(_), _))
+                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Pending)
                         {
                             last.spare = Some(rows);
                         }
@@ -198,14 +228,18 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                         let read = v.find_read(&ix.cols, key, ix.lead, need, &mut last.cursor, &mut last.spare);
                         let p = match read {
                             Some(rows) => Probed::Read(rows, need),
-                            None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),
+                            None => {
+                                let mut ids = last.ids();
+                                v.find_keyed_into(&ix.cols, key, ix.lead, Arc::get_mut(&mut ids).expect("the step's own list"));
+                                Probed::Ids(ids)
+                            }
                         };
                         match &mut last.memo {
                             Some((k, q)) => {
                                 k.clear();
                                 // copy: not block data (a probe key's values, kept to compare the next probe with)
                                 k.extend_from_slice(key);
-                                *q = p.clone();
+                                Probed::put(q, p.clone(), &mut last.spare_ids);
                             }
                             None => last.memo = Some((key.iter().copied().collect(), p.clone())),
                         }
@@ -213,7 +247,7 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                     }
                 };
                 match probed {
-                    Probed::Ids(ids) => (Rows::Source(v), Cands::Owned(ids)),
+                    Probed::Ids(ids) => (Rows::Source(v), Cands::Shared(ids)),
                     Probed::Read(rows, _) => (Rows::Source(v), Cands::Read(rows)),
                     Probed::Pending => unreachable!("a pending probe is no memo's answer"),
                 }
@@ -251,8 +285,8 @@ pub(super) fn scan_within<'a>(rows: Rows<'a>, lo: u32, hi: u32, within: Within) 
     }
     if r.sorted.within(&[c], r.k, lo, hi) == [(lo, hi)] {
         let at = |p: usize| rows.row(p as u32).at(c);
-        let s = a.map_or(lo as usize, |(x, eq)| runs::split_at_pos(lo as usize, hi as usize, |p| if eq { at(p) < x } else { at(p) <= x }));
-        let e = b.map_or(hi as usize, |(x, eq)| runs::split_at_pos(s, hi as usize, |p| if eq { at(p) <= x } else { at(p) < x }));
+        let s = a.map_or(lo as usize, |(x, eq)| rerail_blocks::order::split_at_pos(lo as usize, hi as usize, |p| if eq { at(p) < x } else { at(p) <= x }));
+        let e = b.map_or(hi as usize, |(x, eq)| rerail_blocks::order::split_at_pos(s, hi as usize, |p| if eq { at(p) <= x } else { at(p) < x }));
         return (rows, Cands::Range(s as u32, e.max(s) as u32));
     }
     if (lo, hi) == (0, r.len() as u32)
@@ -287,24 +321,8 @@ pub(super) fn holds(j: &JoinRule, step: &Step, store: &Store, slots: &[i64], ask
     };
     asked.key.clear();
     asked.key.extend(keys.iter().map(|&(_, k)| val(k)));
-    // As the join's step: the key columns a view's probe matched exactly, which its rows need not be checked for.
-    let exact: u64 = match src {
-        _ if keys.is_empty() => 0,
-        Src::In(rel, ix) if { let (rel, ix) = j.src_in(rel, ix); rel.view.is_some() && ix.runs(rel).is_none() } => {
-            let (in_rel, ix) = j.src_in(rel, ix);
-            if ix.composite {
-                ix.cols.iter().fold(0, |m, &c| m | 1 << c)
-            } else if ix.sorted || (ix.source && ix.cols.len() == 1) {
-                1 << ix.cols[ix.lead]
-            } else if ix.source && tests.is_empty() && in_rel.view.as_ref().is_some_and(|v| v.keys_tested(&ix.cols)) {
-                // A view's test by several columns: the source's (`View::tests_keys`), every key compared there.
-                ix.cols.iter().fold(0, |m, &c| m | 1 << c)
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    };
+    // As the join's step: the key columns the probe matched exactly, which its rows need not be checked for.
+    let exact: u64 = if keys.is_empty() { 0 } else { exact_cols(j, src, tests.is_empty()) };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
     // A whole key of a derived input's index: its sorted hash's candidates (t50 step 5), each checked against its row.
     if let Src::In(rel, ix) = src

@@ -347,8 +347,251 @@ impl Replacer {
     }
 }
 
+/// The most states a capture group's program holds (its scratch is a group's, about 32 bytes a state).
+pub const GROUP_MAX_STATES: usize = 2048;
+
+/// A regex's capture group on the device (`rx_group`, decision 0688): the regex's Thompson NFA, the very one
+/// `regex_automata` compiles for Rust's `regex` (whose captures the CPU reads), as a program the device's Pike VM
+/// walks (`rx_group_range` in `join_stages.uglykl`), as `regex_automata`'s `PikeVM` walks it: leftmost-first, its
+/// threads in priority order. `bytes`: a header of eight words (states, the group's start slot, the start state, the
+/// stack's entries at most, the states' word offset, 0, 0, 0), then four words a state (`GROUP_*` kind, then its
+/// words), then the sparse states' ranges (start, end, next) and the unions' alternates.
+#[derive(Clone, Copy, Debug)]
+pub struct GroupProgram {
+    /// Where the automata block holds its bytes (decision 0478 step 2c).
+    pub automaton: super::automata::Automaton,
+    /// Its scratch, in units of a SIMD group's two rows of bytes a lane (64 bytes, a group of 32 lanes or more).
+    pub scratch: u32,
+}
+
+/// A program's states' kinds.
+pub const GROUP_FAIL: u32 = 0;
+/// A byte in [a, b], then state c.
+pub const GROUP_RANGE: u32 = 1;
+/// a ranges at word b, each (start, end, next).
+pub const GROUP_SPARSE: u32 = 2;
+/// a alternates at word b, in priority order.
+pub const GROUP_UNION: u32 = 3;
+/// The group's start (a = 0) or end (a = 1) slot, or another's (a = 2), then state b.
+pub const GROUP_CAPTURE: u32 = 4;
+/// The text's start (a = 0) or end (a = 1), then state b.
+pub const GROUP_LOOK: u32 = 5;
+pub const GROUP_MATCH: u32 = 6;
+
+/// The program of group `name` of regex `pattern`, made once per pattern and group. Refused (the group is the CPU's):
+/// a regex not anchored at the text's start (the device runs from the start alone), a look other than the text's
+/// start and end, a group it does not name, a program past `GROUP_MAX_STATES`.
+pub fn group_program(pattern: &str, name: &str) -> Result<Arc<GroupProgram>, String> {
+    let a = super::automata::get_or_make(&format!("group:{pattern}\u{0}{name}"), || {
+        build_group(pattern, name).map(|(bytes, scratch)| (bytes, [scratch, 0, 0, 0]))
+    })?;
+    Ok(Arc::new(GroupProgram { automaton: a, scratch: a.words[0] }))
+}
+
+fn build_group(pattern: &str, name: &str) -> Result<(Vec<u8>, u32), String> {
+    use regex_automata::util::look::Look as LookKind;
+    use regex_automata::util::primitives::PatternID;
+    let hir = regex_syntax::ParserBuilder::new().build().parse(pattern).map_err(|e| format!("its regex: {e}"))?;
+    if !hir.properties().look_set_prefix().contains(regex_syntax::hir::Look::Start) {
+        return Err("a regex not anchored at the text's start".into());
+    }
+    let nfa = thompson::Compiler::new().build_from_hir(&hir).map_err(|e| format!("its automaton: {e}"))?;
+    let index = nfa.group_info().to_index(PatternID::ZERO, name).ok_or_else(|| format!("a group it does not name ({name})"))?;
+    let slot = 2 * index;
+    let states = nfa.states();
+    if states.len() > GROUP_MAX_STATES {
+        return Err(format!("a program of {} states (at most {GROUP_MAX_STATES})", states.len()));
+    }
+    const HEAD: usize = 8;
+    let mut words = vec![0u32; HEAD + 4 * states.len()];
+    let mut lists: Vec<u32> = Vec::new();
+    let base = words.len() as u32;
+    // The stack's entries at most: the start's, and each state's pushes when it is explored (once a closure).
+    let mut stack = 1u32;
+    for (i, st) in states.iter().enumerate() {
+        use thompson::State::*;
+        let mut ranges = |ts: &mut dyn Iterator<Item = (u8, u8, u32)>| {
+            let at = base + lists.len() as u32;
+            let mut count = 0;
+            for (s, e, n) in ts {
+                lists.extend([s as u32, e as u32, n]);
+                count += 1;
+            }
+            [GROUP_SPARSE, count, at, 0]
+        };
+        let w: [u32; 4] = match st {
+            ByteRange { trans } => [GROUP_RANGE, trans.start as u32, trans.end as u32, trans.next.as_u32()],
+            Sparse(s) => ranges(&mut s.transitions.iter().map(|t| (t.start, t.end, t.next.as_u32()))),
+            Dense(d) => {
+                // Runs of bytes to one state, as ranges (a byte to state 0, the fail state, has none).
+                let mut runs: Vec<(u8, u8, u32)> = Vec::new();
+                for (b, n) in d.transitions.iter().enumerate() {
+                    let (b, n) = (b as u8, n.as_u32());
+                    match runs.last_mut() {
+                        Some(r) if r.2 == n && r.1 as usize + 1 == b as usize => r.1 = b,
+                        _ => runs.push((b, b, n)),
+                    }
+                }
+                ranges(&mut runs.into_iter().filter(|r| r.2 != 0))
+            }
+            Look { look, next } => {
+                let which = match look {
+                    LookKind::Start => 0,
+                    LookKind::End => 1,
+                    other => return Err(format!("a regex with a look other than the text's start and end ({other:?})")),
+                };
+                stack += 1;
+                [GROUP_LOOK, which, next.as_u32(), 0]
+            }
+            Union { alternates } => {
+                let at = base + lists.len() as u32;
+                lists.extend(alternates.iter().map(|s| s.as_u32()));
+                stack += alternates.len() as u32;
+                [GROUP_UNION, alternates.len() as u32, at, 0]
+            }
+            BinaryUnion { alt1, alt2 } => {
+                let at = base + lists.len() as u32;
+                lists.extend([alt1.as_u32(), alt2.as_u32()]);
+                stack += 2;
+                [GROUP_UNION, 2, at, 0]
+            }
+            Capture { next, slot: s, .. } => {
+                let which = if s.as_usize() == slot { 0 } else if s.as_usize() == slot + 1 { 1 } else { 2 };
+                stack += 2;
+                [GROUP_CAPTURE, which, next.as_u32(), 0]
+            }
+            Fail => [GROUP_FAIL, 0, 0, 0],
+            Match { .. } => [GROUP_MATCH, 0, 0, 0],
+        };
+        words[HEAD + 4 * i..HEAD + 4 * i + 4].copy_from_slice(&w);
+    }
+    let n = states.len() as u32;
+    words[..HEAD].copy_from_slice(&[n, slot as u32, nfa.start_anchored().as_u32(), stack, HEAD as u32, 0, 0, 0]);
+    words.extend(lists);
+    // Its scratch: two thread lists (each state's place, its slot in the order, the group's two slots) and the stack
+    // (two words an entry), in u32s, as rows of 64 bytes.
+    let scratch = (8 * n + 2 * stack + 4) * 4;
+    Ok((words.iter().flat_map(|w| w.to_le_bytes()).collect(), scratch.div_ceil(64)))
+}
+
+impl GroupProgram {
+    /// Group's range of `text`, walking the program as the device's Pike VM does (tests only).
+    #[cfg(test)]
+    pub fn range(&self, text: &str) -> Option<(usize, usize)> {
+        let b = self.automaton.bytes();
+        let w: Vec<u32> = b.chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+        group_range(&w, text.as_bytes())
+    }
+}
+
+/// The device's Pike VM (`rx_group_range`) in Rust, over a program's words (tests only).
+#[cfg(test)]
+fn group_range(w: &[u32], x: &[u8]) -> Option<(usize, usize)> {
+    const NONE: u32 = u32::MAX;
+    let (n, start, at) = (w[0] as usize, w[2], w[4] as usize);
+    let st = |s: u32| &w[at + 4 * s as usize..at + 4 * s as usize + 4];
+    struct List {
+        dense: Vec<u32>,
+        sparse: Vec<u32>,
+        slots: Vec<[u32; 2]>,
+    }
+    let closure = |l: &mut List, sid: u32, pos: usize, mut cur: [u32; 2]| {
+        let mut stack: Vec<(bool, u32, u32)> = vec![(false, sid, 0)];
+        while let Some((restore, a, old)) = stack.pop() {
+            if restore {
+                cur[a as usize] = old;
+                continue;
+            }
+            let i = l.sparse[a as usize] as usize;
+            if i < l.dense.len() && l.dense[i] == a {
+                continue;
+            }
+            l.sparse[a as usize] = l.dense.len() as u32;
+            l.dense.push(a);
+            l.slots.push(cur);
+            let s = st(a);
+            match s[0] {
+                GROUP_UNION => {
+                    for k in (0..s[1]).rev() {
+                        stack.push((false, w[(s[2] + k) as usize], 0));
+                    }
+                }
+                GROUP_CAPTURE if s[1] < 2 => {
+                    stack.push((true, s[1], cur[s[1] as usize]));
+                    cur[s[1] as usize] = pos as u32;
+                    stack.push((false, s[2], 0));
+                }
+                GROUP_CAPTURE => stack.push((false, s[2], 0)),
+                GROUP_LOOK if (s[1] == 0 && pos == 0) || (s[1] == 1 && pos == x.len()) => stack.push((false, s[2], 0)),
+                _ => {}
+            }
+        }
+    };
+    let new = || List { dense: Vec::new(), sparse: vec![0; n], slots: Vec::new() };
+    let mut cl = new();
+    closure(&mut cl, start, 0, [NONE, NONE]);
+    let mut found = None;
+    for pos in 0..=x.len() {
+        let mut nl = new();
+        for i in 0..cl.dense.len() {
+            let s = st(cl.dense[i]);
+            if s[0] == GROUP_MATCH {
+                found = Some(cl.slots[i]);
+                break;
+            }
+            if pos == x.len() {
+                continue;
+            }
+            let b = x[pos] as u32;
+            let next = match s[0] {
+                GROUP_RANGE if s[1] <= b && b <= s[2] => s[3],
+                GROUP_SPARSE => (0..s[1]).map(|k| (s[2] + 3 * k) as usize).find(|&r| w[r] <= b && b <= w[r + 1]).map_or(NONE, |r| w[r + 2]),
+                _ => NONE,
+            };
+            if next != NONE {
+                closure(&mut nl, next, pos + 1, cl.slots[i]);
+            }
+        }
+        cl = nl;
+    }
+    found.filter(|s| s[0] != NONE && s[1] != NONE).map(|s| (s[0] as usize, s[1] as usize))
+}
+
 #[cfg(test)]
 mod tests {
+    /// A capture group's program, walked as the device's Pike VM walks it, gives Rust's `regex`'s group: the C
+    /// includes' splits, greedy and lazy repeats, alternations of overlapping arms, a group in a repeat (its last
+    /// iteration), a group that takes no part, multi-byte classes. Patterns not anchored at the start, with other
+    /// looks, or naming no such group are refused.
+    #[test]
+    fn a_groups_program_captures_as_regex_does() {
+        let cases: &[(&str, &[&str])] = &[
+            ("^(?:(?<d>.*)/[^/]*)$", &["d"]),
+            ("^(?:(?<dd>.*)/(?<bb>[^/]*))$", &["dd", "bb"]),
+            ("^(?:(?<fw>[^/]+)/(?<rest>.+))$", &["fw", "rest"]),
+            ("^(?:(?<a>a*?)(?<b>a*))$", &["a", "b"]),
+            ("^(?:(?<x>ab|a)(?<y>c|bcd))$", &["x", "y"]),
+            ("^(?:(?:(?<p>[a-z])\\.)+(?<q>.*))$", &["p", "q"]),
+            ("^(?:(?<u>x)|(?<v>[^x].*))$", &["u", "v"]),
+            ("^(?:(?<g>[αβ]+)é?(?<h>\\w*))$", &["g", "h"]),
+            ("^(?<s>\\s*)(?<t>.*?)(?<e>\\s*)$", &["s", "t", "e"]),
+        ];
+        let texts = ["", "a", "aa", "a/b", "a/b/c", "/x", "x/", "A.framework/b.h", "abcd", "abc", "a.b.c.rest", "x", "xy", "y", "αβé", "αβαx_1", "  pad  ", "a//b", "é/ü/ö"];
+        for &(p, names) in cases {
+            let re = regex::Regex::new(p).unwrap();
+            for &name in names {
+                let g = super::group_program(p, name).unwrap_or_else(|e| panic!("{p} {name}: {e}"));
+                for t in texts {
+                    let want = re.captures(t).and_then(|c| c.name(name)).map(|m| (m.start(), m.end()));
+                    assert_eq!(g.range(t), want, "group {name} of {p:?} in {t:?}");
+                }
+            }
+        }
+        for (p, name) in [("(?<d>a)/", "d"), ("^(?<d>a)\\b", "d"), ("^(?m)(?<d>a)$", "d"), ("^(?<d>a)$", "e")] {
+            assert!(super::group_program(p, name).is_err(), "{p} {name}");
+        }
+    }
+
     /// The replacement automaton replaces as Rust's `regex` does, over the packs' patterns; the empty-matching and
     /// word-boundary ones are refused.
     #[test]

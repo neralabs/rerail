@@ -1587,7 +1587,7 @@ fn expand_sized_once(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<Exp
         let arena = Arena::new();
         let m = match r.make(&arena) {
             Ok(m) => m,
-            Err(done) => return done,
+            Err(done) => return *done,
         };
         match arena.lease() {
             Ok(()) => {}
@@ -1633,7 +1633,7 @@ pub fn expand_batch(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
             }
             match runs[k].make(&arena) {
                 Ok(m) => made.push((k, m)),
-                Err(done) => out[k] = Some(done),
+                Err(done) => out[k] = Some(*done),
             }
         }
         if made.is_empty() {
@@ -1715,6 +1715,8 @@ struct Made {
     vis: Vis,
     exp: Exp,
     l: Lay,
+    /// Its runs (`LPRUN`, `pp_arena::runs`), kept while it is read.
+    _runs: Buf,
 }
 
 impl<'u> Runs<'u> {
@@ -1723,21 +1725,23 @@ impl<'u> Runs<'u> {
     }
 
     /// The next run's stores in `arena`; or the unit's answer, where they are past the device's room.
-    fn make(&mut self, arena: &Arena) -> Result<Made, Result<Expanded, Error>> {
+    fn make(&mut self, arena: &Arena) -> Result<Made, Box<Result<Expanded, Error>>> {
         let (unit, lay) = (self.unit, self.lay);
         self.x = self.x.fit(self.p1.top);
         let rung = self.x.rung;
+        let tiles = crate::pp_arena::tiles_for(unit.node_bound.max(self.x.tok));
         let made = (|| -> Result<_, Error> {
             let front = Front::new(arena, unit, false)?;
             let defs = Defs::new(arena, unit, self.def_rung)?;
             let vis = Vis::new(arena, unit, lay, self.p1, rung)?;
             let exp = Exp::new(arena, unit, lay, self.x, self.p1)?;
-            Ok((front, defs, vis, exp))
+            let runs = crate::pp_arena::runs(arena, tiles)?;
+            Ok((front, defs, vis, exp, runs))
         })();
-        let (front, defs, vis, exp) = match made {
+        let (front, defs, vis, exp, runs) = match made {
             Ok(m) => m,
-            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Ok(self.short.take().unwrap())),
-            Err(e) => return Err(Err(e)),
+            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Box::new(Ok(self.short.take().unwrap()))),
+            Err(e) => return Err(Box::new(Err(e))),
         };
         let mut l = Lay::new();
         front.lay(&mut l, TO_ALL);
@@ -1745,9 +1749,10 @@ impl<'u> Runs<'u> {
         vis.lay(&mut l);
         exp.lay(&mut l);
         // A phase's tiles at most: the unit's nodes, or its expansion's tokens, whose room each refused run grows.
-        l.word("TMAX", crate::pp_arena::tiles_for(unit.node_bound.max(self.x.tok)));
+        l.word("TMAX", tiles);
+        l.at("LPRUN", &runs);
         arena_log(arena, &l, format_args!("expansion at rung {rung}, p1 rung {}, defs rung {}", self.p1.rung, self.def_rung));
-        Ok(Made { front, defs, vis, exp, l })
+        Ok(Made { front, defs, vis, exp, l, _runs: runs })
     }
 
     /// The run `m` read (its command's `launches` and GPU time): the unit's answer, or `None` where it runs again (a
@@ -1883,11 +1888,13 @@ fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<(crate::pp
         let vis = Vis::new(&arena, unit, lay, p1, x_rung)?;
         // The expansion's stores: the tests' lines are expanded in P1 (decision 0467 §4).
         let exp = Exp::new(&arena, unit, lay, x, p1)?;
+        let runs = crate::pp_arena::runs(&arena, front.tiles)?;
         let mut l = Lay::new();
         front.lay(&mut l, TO_VIS);
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
+        l.at("LPRUN", &runs);
         arena_log(&arena, &l, format_args!("lookups at rung {x_rung}, p1 rung {}, defs rung {rung}", p1.rung));
         arena.lease()?;
         on_unit(&arena, unit, &front, &l)?;
@@ -1978,13 +1985,16 @@ fn stage_front(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), 
     let defs = Defs::new(&arena, unit, def_rung)?;
     let vis = Vis::new(&arena, unit, lay, caps, xcaps.rung)?;
     let exp = Exp::new(&arena, unit, lay, xcaps, caps)?;
+    let tiles = crate::pp_arena::tiles_for(unit.node_bound.max(xcaps.tok));
+    let runs = crate::pp_arena::runs(&arena, tiles)?;
     arena.lease()?;
     let mut l = Lay::new();
     front.lay(&mut l, last);
     defs.lay(&mut l);
     vis.lay(&mut l);
     exp.lay(&mut l);
-    l.word("TMAX", crate::pp_arena::tiles_for(unit.node_bound.max(xcaps.tok)));
+    l.word("TMAX", tiles);
+    l.at("LPRUN", &runs);
     l.word("STOP", stop);
     if iters != 0 {
         l.word("P1_ITERS", iters);

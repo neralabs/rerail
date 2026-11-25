@@ -212,10 +212,12 @@ csa_owner(d, c, cx, f, x) :- csa_class(d, c, cx), csa_surface(d), !csa_carrier(c
 .violation CONN300(at: node, x: symbol) "{x} has multiple non-delegate owners in one connection surface"
 CONN300(f, x) :- csa_owner(d, _, cx, f, x), !suffix("Service", cx), count : { csa_owner(d, _, _, _, x) } > 1.
 .violation CONN301(at: node, x: symbol) "{x} has multiple non-delegate owners across connection surface"
-CONN301(f, x) :- csa_owner(_, _, cx, f, x), !suffix("Service", cx), count : { csa_owner_key(_, _, x) } > 1.
-// Cross-file: CONN301 counts x's owners over every file of the surface (decision 0652).
-.decl csa_owner_key(d: number, cx: symbol, x: symbol) cross_file  // distinct (file, class) owners of x
+CONN301(f, x) :- csa_owner(_, _, cx, f, x), !suffix("Service", cx), csa_owners(x, n), n > 1.
+.decl csa_owner_key(d: number, cx: symbol, x: symbol)  // distinct (file, class) owners of x
 csa_owner_key(d, cx, x) :- csa_owner(d, _, cx, _, x).
+// Cross-file: x's owners counted over every file of the surface (decision 0652).
+.decl csa_owners(x: symbol, n: number) cross_file
+csa_owners(x, n) :- csa_owner_key(_, _, x), n = count : { csa_owner_key(_, _, x) }.
 
 // ---- CONN400, CONN401, CONN402: legacy delegate triples -----------------------------------------------------------
 // csa_legacy(c, cx, f, x, dec): the last def named x in non-carrier class c is decorated legacy_sync or legacy_async.

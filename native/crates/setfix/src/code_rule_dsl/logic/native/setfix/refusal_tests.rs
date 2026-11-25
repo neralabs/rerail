@@ -10,7 +10,7 @@ use super::*;
 #[test]
 fn a_refused_seed_reads_the_relations_it_was_parsed_with() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     hold_rows(&db, "r", vec![b'i'], rerail_blocks::vector![1, 2, 3], 3);
@@ -45,7 +45,7 @@ fn a_refused_seed_reads_the_relations_it_was_parsed_with() {
 #[test]
 fn a_refused_seeds_count_reads_its_inputs_index() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     hold_rows(&db, "t", vec![b'i', b'i'], rerail_blocks::vector![1, 10, 2, 20], 2);
@@ -88,7 +88,7 @@ fn a_refused_seeds_count_reads_its_inputs_index() {
 #[test]
 fn a_refused_seeds_aggregate_gets_its_index() {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     // (key, j): key 1's least j is 3, key 2's is 7.

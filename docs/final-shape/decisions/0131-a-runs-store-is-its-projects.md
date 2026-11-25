@@ -77,3 +77,11 @@ its life and released by the OS however it ends; `<store>-owner.json` names the 
 
 Sharing one store between concurrent processes stays unsupported: that is the lease's design question (decisions
 0049, 0160, 0170), not the store's choice.
+
+## Amended (2026-11-24): another build's store goes with its folders
+
+The cleanup removed an unused store's files with `remove_file`, which fails on a folder, so a store's folders stayed:
+its objects, kept facts, atoms and memo, most of its bytes. On this Mac `$TMPDIR/rerail-images` held 6.9 GB, and 474
+of its 607 folders were stores whose file was long gone. `remove_store` now removes a folder whole
+(`remove_dir_all`), and the next new build's first run removes those left over. Test:
+`a_cleanup_leaves_a_store_another_process_owns`, now with each store's folders.

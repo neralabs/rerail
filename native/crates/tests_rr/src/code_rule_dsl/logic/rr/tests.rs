@@ -1138,22 +1138,16 @@ fn sum_and_join_lower() {
     assert!(lit.contains(" by ($n, $i) sep \"\" : "), "{lit}");
     let types: Vec<String> = p.columns_of(&rel).unwrap().into_iter().map(|(_, t)| t).collect();
     assert_eq!(types, ["node", "int", "int", "sym"], "{atom}");
-    let (lit, over, _, rel) = agg(&p, "g");
+    let (lit, over, atom, rel) = agg(&p, "g");
     let over = over.unwrap();
     assert!(lit.contains(" = sum $") && over.starts_with("rr_val"), "{lit}");
     let cols = p.columns_of(&rel).unwrap();
     assert_eq!(cols.len(), 4, "c, t, the named `_` and the value: {cols:?}");
-    // The value's column, at its variable's place in the atom: a helper named by its content names its columns by
-    // their places (decision 0639 §3), not by the walk's variables.
-    let r = rules_of(&p, |h| h == "g")[0];
-    let at = r
-        .body()
-        .find_map(|l| match l.view() {
-            Lit::Agg { atom, .. } => atom.args().position(|t| matches!(t, TermRef::Var(x) if p.text(r.var(x)) == over)),
-            _ => None,
-        })
-        .expect("the value's place in the aggregate's atom");
-    assert_eq!(cols[at].1, "int", "the value, typed by what computes it: {cols:?}");
+    // The helper is named by its content, its columns by their places (`rr_c<i>`, decision 0639 §3): the value is
+    // the atom's argument at an `int` column.
+    let args: Vec<&str> = atom.split_once('(').and_then(|(_, a)| a.strip_suffix(')')).unwrap_or_default().split(", ").collect();
+    let at = args.iter().position(|a| *a == format!("${over}")).unwrap_or_else(|| panic!("{over} in {atom}"));
+    assert_eq!(cols[at].1, "int", "{atom}: {cols:?}");
     let (_, _, _, rel) = agg(&p, "r");
     assert_ne!(rel, "arg", "arg(c, t, t) tests t = t: a helper relation");
     let e = ".decl a(x: number)\na(x) :- a(y), x = sum z sep \",\" : { a(z) }.";
@@ -3824,7 +3818,7 @@ Call(c) :- kind(c, "call").
     let roots = || -> std::collections::BTreeSet<String> {
         let store = crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().expect("the test's store");
         let c = rusqlite::Connection::open_with_flags(&store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
-        crate::content_store::atoms::install_kept_tables(&c).unwrap();
+        crate::content_store::install_kept_tables(&c).unwrap();
         let mut st = c.prepare("SELECT path FROM corpus_roots").unwrap();
         st.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap()
     };
@@ -4641,6 +4635,26 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Decision 0263 against decision 0483: `python/references.rerail` derives `core.rerail`'s `reference_edge`
+/// (`DERIVED_BY`), so its module passes the check phase 0's lowering of a module makes against the files its scope
+/// reaches (`module_statements`, `lower_planned_module`'s). It was refused there, while the whole program's check
+/// (`check_names`) allowed it: a run of a program file reading the reference graph (`all`'s) failed before it began.
+/// Another file deriving it is still refused. (Ported from the hub's e292486a32.)
+#[test]
+fn a_module_derives_the_core_relation_its_file_is_named_for() {
+    let lib = super::library();
+    let path = |f: &str| lib.join(f).canonical().unwrap().to_string_lossy().into_owned();
+    let (references, core) = (path("python/references.rerail"), path("core.rerail"));
+    let checked = super::module_statements(&references, &core);
+    assert!(checked.is_ok(), "{:?}", checked.err());
+    let dir = tempfile::tempdir().unwrap();
+    let other = dir.path().join("other.rerail");
+    std::fs::write(&other, "reference_edge(a, a, \"x\") :- kind(a, \"call\").\n").unwrap();
+    let other = other.canonical().unwrap().to_string_lossy().into_owned();
+    let refused = super::module_statements(&other, &core).map(|_| ()).expect_err("another file derives no reference_edge");
+    assert!(refused.to_string().contains("`reference_edge` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
+}
+
 /// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
 /// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rerail`).
 #[test]
@@ -5039,6 +5053,45 @@ fn finishs_rewrites_run_on_the_version() {
     let owner = rules.iter().find(|x| x.starts_with("owner(")).expect("owner's rule");
     let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
     assert!(v.input_names().iter().any(|i| i == axis) && v.declares(axis), "the axis {axis} an input: {:?}", v.input_names());
+}
+
+/// A recursive rule whose recursion binds a `nearest`'s far end reads it from its near end (t57 §8, E1,
+/// `lowering_tail::NearEnds`, run as a program is prepared, not in the lowering, which stays T's front end's): the
+/// `nearest` and the atoms that bind its near end are a helper made once
+/// (`rr_near0`), read by the far end; two rules with the same part read one helper, and a rule with no recursion, or
+/// whose recursion binds the near end, is left as it was.
+#[test]
+fn a_recursions_nearest_is_read_from_its_near_end() {
+    let src = concat!(
+        "#include \"python/compare.rerail\"\n",
+        ".decl dk(k: symbol)\ndk(\"function_definition\"). dk(\"class_definition\").\n",
+        ".decl def(f: node, x: symbol)\n.decl qn(f: node, q: symbol)\n.decl top(f: node)\n.decl up(f: node, s: node)\n",
+        ".output qn, top, up\n",
+        "def(f, x) :- kind(f, k), dk(k), field(f, \"name\", n), text(n, x).\n",
+        "qn(f, x) :- def(f, x), !nearest(f, _, dk).\n",
+        "qn(f, q) :- def(f, x), nearest(f, s, dk), kind(s, \"class_definition\"), qn(s, p), q = @concat(p, \".\", x).\n",
+        "qn(f, q) :- def(f, x), nearest(f, s, dk), kind(s, \"function_definition\"), qn(s, p), q = @concat(p, \"/\", x).\n",
+        "top(f) :- def(f, _), nearest(f, s, dk), kind(s, \"module\").\n",
+        "up(f, s) :- def(f, _), nearest(f, s, dk).\n",
+        "up(f, s) :- up(f, t), nearest(t, s, dk).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let lowered = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    assert!(lowered.rules().all(|x| !lowered.show_rule(x).contains("rr_near")), "the lowered program is T's");
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("near ends", lowered);
+    p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::NearEnds);
+    let (v, _) = p.finish().unwrap();
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let helpers: Vec<&String> = rules.iter().filter(|x| x.starts_with("rr_near")).collect();
+    assert_eq!(helpers.len(), 1, "one helper for qn's two rules: {rules:#?}");
+    assert!(helpers[0].contains("def(") && helpers[0].contains("nearest"), "the part: {}", helpers[0]);
+    let recursive: Vec<&String> = rules.iter().filter(|x| x.starts_with("qn(") && x.contains("qn($s")).collect();
+    assert_eq!(recursive.len(), 2, "{rules:#?}");
+    assert!(recursive.iter().all(|x| x.contains("rr_near0(") && !x.contains("nearest") && !x.contains("def(")), "the recursion reads the helper: {recursive:#?}");
+    // No recursion, and a recursion that binds the near end (`up(f, t)` binds `t`): as written.
+    assert!(rules.iter().filter(|x| x.starts_with("top(") || x.starts_with("up(")).all(|x| !x.contains("rr_near")), "{rules:#?}");
 }
 
 /// `whole()`'s last passes before `front::finish_checks_on` run on a modular text's version (decision 0281's path, step 7b): a
@@ -6620,6 +6673,28 @@ fn every_module_lowers_alike_against_its_scopes_headers() {
     }
     assert!(compared > 50, "{compared} modules compared");
     assert!(differ.is_empty(), "{} of {compared} modules differ against their scope's headers:\n{}", differ.len(), differ.join("\n"));
+}
+
+/// Decision 0639 §2: every library file a pack's program includes is in a module of the library's plan, the packs'
+/// tables beside the library (`#include "../packs/python/….stdlib.rerail"`) too. Planned as file seeds, which outside
+/// the library are a program's own text, they were in no module, and a run of RUF013 with any other program lowered
+/// it in a scope without its table ("relation stdlib_module is read by the rule for stdlib_known and not declared").
+#[test]
+fn every_library_file_a_pack_includes_is_a_planned_module() {
+    let lib = crate::code_rule_dsl::logic::rr::library();
+    let mut paths: BTreeSet<PathBuf> = BTreeSet::new();
+    for path in walk_rr(&lib.join("../packs/python")) {
+        let Ok(src) = std::fs::read_to_string(&path) else { continue };
+        if let Ok(Some(m)) = super::modules(&src) {
+            paths.extend(m.files.into_iter().map(|(p, _, _)| p));
+        }
+    }
+    assert!(paths.iter().any(|p| p.to_string_lossy().ends_with(".stdlib.rerail")), "a pack's table among the library files: {paths:?}");
+    let plan = super::planned_library(&paths.iter().cloned().collect::<Vec<_>>()).unwrap();
+    let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let planned: BTreeSet<PathBuf> = plan.iter().flat_map(|m| m.files.lines().filter(|f| !f.is_empty()).map(|f| canonical(Path::new(f))).collect::<Vec<_>>()).collect();
+    let missing: Vec<&PathBuf> = paths.iter().filter(|p| !planned.contains(&canonical(p))).collect();
+    assert!(missing.is_empty(), "library files in no planned module: {missing:?}");
 }
 
 /// T8 (decision 0639 §4): the link is a union with nothing to decide, so two modules that give one relation two

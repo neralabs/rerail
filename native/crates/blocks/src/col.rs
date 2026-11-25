@@ -419,19 +419,86 @@ fn dict_limit(n: usize, bits: u32, best: usize) -> usize {
 }
 
 /// `v`'s distinct values, sorted, where there are `limit` or fewer (`None` past it: the count stops there).
-fn distinct_upto<V: Vals + ?Sized>(v: &V, limit: usize) -> Option<Vec<i64>> {
+/// `v`'s distinct values while there are at most `limit` of them, in an open table of frame `fr` (`Distinct`).
+fn distinct_upto<'f, V: Vals + ?Sized>(fr: &'f crate::frame::Frame, v: &V, limit: usize) -> Option<Distinct<'f>> {
     if limit < 2 {
         return None;
     }
-    let mut seen = rustc_hash::FxHashSet::default();
+    let cap = (2 * limit + 2).next_power_of_two();
+    let mut d = Distinct { slots: fr.zeroed(cap), full: fr.zeroed(cap), values: fr.vec_with(limit + 1), mask: cap - 1 };
     for x in (0..v.len()).map(|i| v.at(i)) {
-        if seen.insert(x) && seen.len() > limit {
+        if d.insert(x) && d.values.len() > limit {
             return None;
         }
     }
-    let mut d: Vec<i64> = seen.into_iter().collect();
-    d.sort_unstable();
     Some(d)
+}
+
+/// A column's distinct values, each once, in an open table of a frame: each slot a value's place in `values` (as
+/// found), `full` marking a slot taken.
+struct Distinct<'f> {
+    slots: &'f mut [u32],
+    full: &'f mut [u8],
+    values: crate::frame::FrameVec<'f, i64>,
+    mask: usize,
+}
+impl Distinct<'_> {
+    fn hash(x: i64) -> usize {
+        ((x as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize
+    }
+    /// Whether `x` is new.
+    fn insert(&mut self, x: i64) -> bool {
+        let mut i = Self::hash(x) & self.mask;
+        while self.full[i] != 0 {
+            if self.values[self.slots[i] as usize] == x {
+                return false;
+            }
+            i = (i + 1) & self.mask;
+        }
+        self.full[i] = 1;
+        self.slots[i] = self.values.len() as u32;
+        self.values.push(x);
+        true
+    }
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+    /// The values sorted, each slot then its value's rank among them (`code`).
+    fn sort(&mut self, fr: &crate::frame::Frame) {
+        let mut order = fr.collect(0..self.values.len() as u32);
+        order.sort_unstable_by_key(|&k| self.values[k as usize]);
+        let rank = fr.zeroed::<u32>(order.len());
+        for (r, &k) in order.iter().enumerate() {
+            rank[k as usize] = r as u32;
+        }
+        for (s, &f) in self.slots.iter_mut().zip(self.full.iter()) {
+            if f != 0 {
+                *s = rank[*s as usize];
+            }
+        }
+        self.values.sort_unstable();
+    }
+    /// Once sorted, its codes: plain slices, read by the pieces in parallel.
+    fn codes(&self) -> Codes<'_> {
+        Codes { slots: self.slots, values: &self.values, mask: self.mask }
+    }
+}
+
+/// A sorted `Distinct`'s table, read: each value's rank among the values.
+#[derive(Clone, Copy)]
+struct Codes<'a> {
+    slots: &'a [u32],
+    values: &'a [i64],
+    mask: usize,
+}
+impl Codes<'_> {
+    fn code(&self, x: i64) -> u64 {
+        let mut i = Distinct::hash(x) & self.mask;
+        while self.values[self.slots[i] as usize] != x {
+            i = (i + 1) & self.mask;
+        }
+        u64::from(self.slots[i])
+    }
 }
 
 fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
@@ -478,11 +545,13 @@ fn choose_with<V: Vals + ?Sized>(v: &V, max_runs: usize, dict: bool) -> Choice {
     let runs = if nruns > max_runs { (usize::MAX / 4, usize::MAX / 4) } else { runs };
     let best = pack_words.min(runs.0 + runs.1).min(line_words).min(groups.0 + groups.1);
     // `DICT`, counted only up to the values past which it could not be smaller than `best`.
-    if dict && let Some(d) = distinct_upto(v, dict_limit(n, bits, best)) {
-        let cb = bits_for(d.len() as u64 - 1);
-        let (dw, vw) = (words(n, cb), words(d.len(), bits));
+    // The count alone, its values in a frame of their own.
+    let distinct = if dict { crate::frame::op(|fr| distinct_upto(fr, v, dict_limit(n, bits, best)).map(|d| d.len())) } else { None };
+    if let Some(d) = distinct {
+        let cb = bits_for(d as u64 - 1);
+        let (dw, vw) = (words(n, cb), words(d, bits));
         if dw + vw < best {
-            return Choice { tag: DICT, bits, rbits: cb, nruns: d.len() as u32, base: lo, slope: 0, rmin: 0, n, data_words: dw, runs_words: vw };
+            return Choice { tag: DICT, bits, rbits: cb, nruns: d as u32, base: lo, slope: 0, rmin: 0, n, data_words: dw, runs_words: vw };
         }
     }
     if best == groups.0 + groups.1 && best < pack_words.min(runs.0 + runs.1).min(line_words) {
@@ -658,17 +727,20 @@ pub fn write<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [
 /// `DICT`'s words: the distinct values, sorted, less `base` into `runs`; then in pieces in parallel each row's index
 /// among them into `data` (a piece is `PIECE` values, so its codes start on a word of their own).
 fn write_dict<V: Vals + ?Sized>(c: &Choice, v: &V, data: &mut [u64], runs: &mut [u64]) {
-    let d = distinct_upto(v, c.nruns as usize).expect("as chosen");
-    let vals: Vec<u64> = d.iter().map(|&x| x.wrapping_sub(c.base) as u64).collect();
-    pack_into(runs, &vals, c.bits);
-    let code: rustc_hash::FxHashMap<i64, u64> = d.iter().enumerate().map(|(k, &x)| (x, k as u64)).collect();
-    let out = atomics(data);
-    over_pieces(v.len(), |r| {
-        let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
-        for i in r {
-            w.push(code[&v.at(i)]);
-        }
-        w.flush();
+    crate::frame::op(|fr| {
+        let mut d = distinct_upto(fr, v, c.nruns as usize).expect("as chosen");
+        d.sort(fr);
+        let vals = fr.collect(d.values.iter().map(|&x| x.wrapping_sub(c.base) as u64));
+        pack_into(runs, &vals, c.bits);
+        let out = atomics(data);
+        let d = d.codes();
+        over_pieces(v.len(), |r| {
+            let mut w = BitW::new(out, r.start * c.rbits as usize, c.rbits);
+            for i in r {
+                w.push(d.code(v.at(i)));
+            }
+            w.flush();
+        });
     });
 }
 

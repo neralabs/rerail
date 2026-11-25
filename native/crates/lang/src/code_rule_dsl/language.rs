@@ -1585,7 +1585,7 @@ pub mod tests {
         use sha2::{Digest, Sha256};
         let rows: Vec<_> = source_grammar_suffixes().collect();
         let version = Sha256::digest(serde_json::to_vec(&rows).unwrap());
-        assert_eq!(SOURCE_GRAMMAR_REGISTRY, crate::content_store::observe::hex(&version.into()));
+        assert_eq!(SOURCE_GRAMMAR_REGISTRY, rerail_observe::content_store::observe::hex(&version.into()));
     }
 
     /// The host reads the registry through `src/engine/code-rule/code-rule-language-registry.generated.ts`, which a script

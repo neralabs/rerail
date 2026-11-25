@@ -1323,7 +1323,7 @@ pub enum Learnt {
 /// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, its work over its body's
 /// cheapest start (`SEED`) when searched, its last price with the sizes it was priced at (`Priced`), and the work
 /// its rule's line did in the engine when it last ran (`ran`, decision 0122), if it has run.
-pub type Kept = (Arc<[Step]>, f64, Option<super::super::profile::RulePlan>, f64, Option<Arc<Priced>>, Option<f64>);
+pub type Kept = (Arc<[Step]>, f64, Option<Arc<super::super::profile::RulePlan>>, f64, Option<Arc<Priced>>, Option<f64>);
 
 /// Decision 0122: planning costs no more than running. A search costs about as much as this many rows of the
 /// engine's join work (O125 step 07: 0.16 ms a search, 0.74 µs a row of work), so a rule whose line did less work
@@ -1522,7 +1522,8 @@ const NOT_RAN: u64 = u64::MAX;
 /// What a kept plan's search found of it (`Entry::found`).
 struct Found {
     per_node: f64,
-    explain: Option<super::super::profile::RulePlan>,
+    /// The profile's account of its search, shared: every lookup of the plan hands it on (3.65 M on cold PostHog).
+    explain: Option<Arc<super::super::profile::RulePlan>>,
     gap: f64,
 }
 
@@ -1756,7 +1757,8 @@ impl RunPlans {
         }
         let mut pending = self.pending.lock();
         if let Some(read) = pending.take() {
-            let (plans, ready) = read();
+            // The store's plans live through the run: read into the thread's long-lived room (decision 0342 amended).
+            let (plans, ready) = rerail_blocks::maps::long(read);
             self.stored.store(Arc::new(plans));
             self.prepared.store(Arc::new(ready));
             self.pending_any.store(false, std::sync::atomic::Ordering::Release);
@@ -2800,7 +2802,7 @@ impl Model {
                 // The search's EXPLAIN (its steps' rows as the search priced them), with this pricing's work, rows and
                 // steps priced: not built again per chunk.
                 self.plan_inner(pf, b, first, Some(&order), false).map(|(got, _)| {
-                    let x = searched.map(|x| super::super::profile::RulePlan { work: got.1, rows: got.2, subsets: 0, candidates: order.len() as u64, ..x });
+                    let x = searched.map(|x| super::super::profile::RulePlan { work: got.1, rows: got.2, subsets: 0, candidates: order.len() as u64, ..Arc::unwrap_or_clone(x) });
                     (got, x)
                 })
             };
@@ -2888,7 +2890,7 @@ impl Model {
             if let Some(p) = p.as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
                 let ran = if mispriced { None } else { plans_get(&key).and_then(|k| k.5) };
-                plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
+                plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone().map(Arc::new), gap, None, ran));
             }
         });
         // A lead-free line's order is not its delta-led line's (`line_key` is the body and the delta).
@@ -2908,7 +2910,7 @@ impl Model {
             if let Some(p) = p.as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
                 let ran = plans_get(&key).and_then(|k| k.5);
-                plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
+                plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone().map(Arc::new), gap, None, ran));
             }
         });
         // A lead-free line's order is not its delta-led line's (`line_key` is the body and the delta).
@@ -3058,7 +3060,9 @@ impl Model {
     /// `live_sizes` with the line's `delta_misses` (`plan_key_at`'s). Each atom's relation is found once, and its
     /// columns read by its number (decision 0209 §3), not by name a column at a time.
     fn live_sizes_at(&self, b: &Body<'_>, first: Option<usize>, misses: &[usize]) -> Vector<f64> {
-        let mut sizes = rerail_blocks::vector::Vector::with_capacity(2 + 4 * b.len());
+        // Kept with the plan it prices (`Priced`) for the run: made in the thread's long-lived room (decision 0342
+        // amended 2026-11-24); a clone of it is made where it was. On the stack it held everything taken after it.
+        let mut sizes = rerail_blocks::maps::long(|| rerail_blocks::vector::Vector::with_capacity(2 + 4 * b.len()));
         sizes.extend(self.read_sizes(b));
         if let Some(a) = first.and_then(|f| b.atom(f)) {
             sizes.push(self.stats.delta_rows.get(b.rel(a)).copied().unwrap_or(-1.0));
@@ -3163,7 +3167,7 @@ impl Model {
                     // The work its line did when it last ran (decision 0122), kept with the plan.
                     let ran = then.as_ref().and_then(|k| k.5);
                     // A search's order, at its work; or the kept order re-priced, as it was kept.
-                    let entry: (Arc<[Step]>, f64, Option<super::super::profile::RulePlan>, f64) = match (searched, &then) {
+                    let entry: (Arc<[Step]>, f64, Option<Arc<super::super::profile::RulePlan>>, f64) = match (searched, &then) {
                         (Some(work), _) => (got.0.0.clone().into(), work, None, 0.0),
                         (None, Some(k)) => (k.0.clone(), k.1, k.2.clone(), k.3),
                         (None, None) => return,
@@ -3612,8 +3616,27 @@ impl Model {
         self.plan_inner_in(pf, b, first, fixed, explain, &mut joins::SearchCx::default())
     }
 
-    /// `plan_inner` under `cx` (decisions 0203, 0104): how wide the search is, and its runners-up, handed back.
+    /// `plan_inner` under `cx` (decisions 0203, 0104): how wide the search is, and its runners-up, handed back. Its
+    /// order's runs of tests in the order they cut rows soonest (`tests_ordered`).
     fn plan_inner_in(
+        &self,
+        pf: Fields<'_>,
+        b: &Body<'_>,
+        first: Option<usize>,
+        fixed: Option<&[Step]>,
+        explain: bool,
+        cx: &mut joins::SearchCx,
+    ) -> Result<(Plan, Option<super::super::profile::RulePlan>)> {
+        let (mut plan, explained) = self.plan_inner_searched(pf, b, first, fixed, explain, cx)?;
+        if !tests_ordered(b, &mut plan.0) {
+            return Ok((plan, explained));
+        }
+        let explained = if explain { self.explain_order(pf, b, first, &plan.0) } else { explained };
+        Ok((plan, explained))
+    }
+
+    /// The search `plan_inner_in` makes, its order as the search placed each filter: as soon as it is ready.
+    fn plan_inner_searched(
         &self,
         pf: Fields<'_>,
         b: &Body<'_>,
@@ -6112,5 +6135,47 @@ pub struct Left {
 /// What the runs on `db` left with it (`Left`).
 pub fn left_on(db: &Connection) -> std::sync::Arc<parking_lot::Mutex<Left>> {
     crate::code_rule_dsl::facts::vtab::connection_data(db).get::<parking_lot::Mutex<Left>>()
+}
+
+
+/// t57 §8, E6 and E10: a run of steps that bind nothing (each reads only variables bound before the run) is a run of
+/// tests, which may run in any order, and runs best in the order that drops rows soonest for least: comparisons of
+/// bound values first, then memberships (a positive atom every variable of which is bound: it passes at most the rows
+/// it is given, often few), then negations (an anti-join passes most of its rows), then tests that call a function.
+/// The search places each filter as soon as it is ready, so a negation ran on every row a membership after it dropped:
+/// `cls_late`'s 192,165 rows went through three anti-joins before `bound_in` kept 15,521 of them, and `rf_builtin`'s
+/// 628,398 through `!rf_after_310` before `builtin` kept 44,635. The first step (a seed's or a delta's driver) stays
+/// first. Whether the order changed.
+pub(in crate::code_rule_dsl) fn tests_ordered(b: &Body<'_>, order: &mut [Step]) -> bool {
+    let rank = |at: usize| -> Option<u8> {
+        match b.view(at) {
+            Lit::Cmp { l, r, .. } => Some(if matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..)) { 3 } else { 0 }),
+            Lit::Atom(a) => Some(if a.neg() { 2 } else { 1 }),
+            _ => None,
+        }
+    };
+    let mut bound = VarSet::new();
+    let mut changed = false;
+    let mut k = 0;
+    while k < order.len() {
+        let mut end = k;
+        while k > 0 && end < order.len() && rank(order[end].at).is_some() && b.vars(order[end].at).is_subset(&bound) {
+            end += 1;
+        }
+        if end > k + 1 {
+            let run = &mut order[k..end];
+            if run.windows(2).any(|w| rank(w[0].at) > rank(w[1].at)) {
+                run.sort_by_key(|s| rank(s.at));
+                changed = true;
+            }
+        }
+        if end > k {
+            k = end;
+            continue;
+        }
+        bound.extend(b.vars(order[k].at));
+        k += 1;
+    }
+    changed
 }
 

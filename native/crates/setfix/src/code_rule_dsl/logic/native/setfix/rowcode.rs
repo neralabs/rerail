@@ -17,6 +17,7 @@
 //! The steps' observed fanouts (`JoinRule::counts`) stay exact: the program outputs each fused
 //! step's running mask, and its popcount is the rows that step passed on.
 
+use rerail_blocks::frame::InlineVec;
 use rerail_blocks::vector::Vector;
 use super::{Key, ScalarKind, Step};
 use rerail_compiler::block::{BlockOp, BlockProgram, CmpOp, Rhs, RowBatch, RowShape};
@@ -290,10 +291,11 @@ impl Fused {
                 dst.extend(src.iter().map(|&x| x >> 32));
             }
         }
-        let cols: Vec<&[i64]> = s.columns.iter().map(|v| v.as_slice()).collect();
+        // On the stack (decision 0687): a fused chunk's columns and outputs are few.
+        let cols: InlineVec<&[i64], 8> = s.columns.iter().map(|v| v.as_slice()).collect();
         let batch = RowBatch { columns: &cols, params: &s.params, sets: &[], len: n };
         s.values.resize(self.program.row_words(n), 0);
-        let outputs: Vec<&'s [u64]> = self.program.interpret_rows(&batch, &mut s.values[..]).collect();
+        let outputs: InlineVec<&'s [u64], 8> = self.program.interpret_rows(&batch, &mut s.values[..]).collect();
         for (m, p) in self.passed.iter().enumerate() {
             each(m, p.map_or(n as u64, |k| outputs[k].iter().map(|w| u64::from(w.count_ones())).sum()));
         }

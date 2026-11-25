@@ -1,5 +1,4 @@
 use super::super::*;
-use std::sync::atomic::Ordering;
 
 /// A test database's path, in a directory of its own that goes with it: the store's side files (WAL, locks, the
 /// files database) too. Bound before the stores opened on it, so it is dropped after them.
@@ -29,13 +28,13 @@ fn path(label: &str) -> TestPath {
 /// The store's atoms, by id, as its blocks hold them on its rows (read on a connection of its own): what any process
 /// opening it reads.
 fn stored(path: &std::path::Path) -> Vec<String> {
-    super::stored::every_stored(&rusqlite::Connection::open(path).unwrap()).unwrap()
+    super::super::atoms::stored::every_stored(&rusqlite::Connection::open(path).unwrap()).unwrap()
 }
 
 /// Appends `strings` at the store's end, as another process (giving out provisional ids, decision 0160) would.
 fn another(path: &std::path::Path, strings: &[&str]) {
     let strings: Vec<String> = strings.iter().map(|s| (*s).to_owned()).collect();
-    super::stored::append_as_another(&rusqlite::Connection::open(path).unwrap(), &strings).unwrap();
+    super::super::atoms::stored::append_as_another(&rusqlite::Connection::open(path).unwrap(), &strings).unwrap();
 }
 
 #[test]
@@ -108,7 +107,7 @@ fn a_commit_without_the_pending_atoms_is_refused() {
     connection.execute_batch("ATTACH ':memory:' AS scratch; CREATE TABLE scratch.t(a); BEGIN; INSERT INTO scratch.t VALUES (1); COMMIT; DETACH scratch;").unwrap();
     assert!(store.atoms.pending());
     connection.execute_batch(write).unwrap();
-    super::commit(&connection).unwrap();
+    super::super::atoms::commit(&connection).unwrap();
     assert!(!store.atoms.pending());
     assert_eq!(stored(&path), ["", "p"]);
     assert_eq!(p, 1);
@@ -140,7 +139,7 @@ fn shared_scratch_flushes_atoms_to_their_owning_store() {
     let store = ContentStore::open(&owner).unwrap();
     let mut scratch = rusqlite::Connection::open(&scratch_path).unwrap();
     store.share_atoms_with(&scratch_path);
-    let arena = super::Atoms::install(&mut scratch).unwrap();
+    let arena = super::super::atoms::Atoms::install(&mut scratch).unwrap();
     assert!(std::sync::Arc::ptr_eq(&arena, &store.atoms));
     let ids = store.intern_atoms(&["borrowed"]).unwrap();
     arena.flush(&scratch).unwrap();
@@ -158,7 +157,7 @@ fn shared_scratch_writes_do_not_use_the_owner_commit_guard() {
     let scratch_path = path("scratch-guard");
     let mut scratch = rusqlite::Connection::open(&scratch_path).unwrap();
     store.share_atoms_with(&scratch_path);
-    let arena = super::Atoms::install(&mut scratch).unwrap();
+    let arena = super::super::atoms::Atoms::install(&mut scratch).unwrap();
     store.intern_atoms(&["pending"]).unwrap();
     scratch.execute_batch("CREATE TABLE work(x INTEGER); INSERT INTO work VALUES (1);").unwrap();
     assert!(arena.pending(), "scratch SQL does not commit the durable store");
@@ -179,7 +178,7 @@ fn a_store_created_again_at_its_path_has_its_own_atoms() {
         assert_eq!(other.intern_atoms(&["new", "old"]).unwrap(), [1, 2]);
     }
     for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(super::suffixed(&at, suffix));
+        let _ = std::fs::remove_file(super::super::atoms::suffixed(&at, suffix));
     }
     copy_store(&elsewhere, &at);
     let store = ContentStore::open(&at).unwrap();
@@ -261,7 +260,7 @@ fn crash_child() {
 fn a_crash_loses_only_pending_atoms_and_leaves_the_store_consistent() {
     let path = path("crash");
     drop(ContentStore::open(&path).unwrap());
-    let status = child("content_store::atoms::tests::crash_child", "crash", &path).wait().unwrap();
+    let status = child("content_store::atoms_store::tests::crash_child", "crash", &path).wait().unwrap();
     assert!(!status.success(), "the child aborted");
     let store = ContentStore::open(&path).unwrap();
     // The row the child committed names an atom that is stored; the pending one is gone.
@@ -298,7 +297,7 @@ fn lease_child() {
 fn a_process_waiting_for_the_lease_gets_it_after_a_flush() {
     let path = path("lease");
     drop(ContentStore::open(&path).unwrap());
-    let mut holder = child("content_store::atoms::tests::lease_child", "lease", &path);
+    let mut holder = child("content_store::atoms_store::tests::lease_child", "lease", &path);
     let ready = path.with_extension("ready");
     let started = std::time::Instant::now();
     while !ready.exists() {
@@ -321,7 +320,7 @@ fn a_process_waiting_for_the_lease_gets_it_after_a_flush() {
 /// its files (unlinked, not truncated).
 fn copy_store(from: &std::path::Path, to: &std::path::Path) {
     rusqlite::Connection::open(from).unwrap().execute("VACUUM INTO ?1", [to.to_str().unwrap()]).unwrap();
-    super::copy_blocks(from, to).unwrap();
+    super::super::atoms::copy_blocks(from, to).unwrap();
 }
 
 /// The store at `path`, copied to a path of its own: opened there, it is a new process's (its atoms are mapped from
@@ -350,7 +349,7 @@ fn the_stores_atoms_are_mapped_not_read() {
         assert_eq!(handle.with_str(id, str::to_owned).as_deref(), Some(w.as_str()));
     }
     assert!(handle.bytes() < 1 << 20, "{} heap bytes over a mapped store", handle.bytes());
-    assert!(handle.in_memory(super::Interner::mapped) > 1 << 20, "the blocks are mapped");
+    assert!(handle.in_memory(super::super::atoms::Interner::mapped) > 1 << 20, "the blocks are mapped");
     handle.run_over();
     assert_eq!(store.intern_atoms(&["word-7", "new"]).unwrap(), [ids[7], 100_001]);
 }
@@ -392,7 +391,7 @@ fn another_process_commit_is_seen_by_catching_up() {
 
 /// The store's rows: each block's file name, first id and end.
 fn blocks(path: &std::path::Path) -> Vec<(String, u32, u32)> {
-    super::stored::rows(&rusqlite::Connection::open(path).unwrap()).unwrap().into_iter().map(|r| (r.name, r.first, r.upto)).collect()
+    super::super::atoms::stored::rows(&rusqlite::Connection::open(path).unwrap()).unwrap().into_iter().map(|r| (r.name, r.first, r.upto)).collect()
 }
 
 /// A commit past a block's room starts the next, twice as large; past four deltas they are rolled into one base (A5).
@@ -401,7 +400,7 @@ fn blocks(path: &std::path::Path) -> Vec<(String, u32, u32)> {
 fn a_commit_past_a_blocks_room_starts_the_next() {
     let path = path("next-block");
     let store = ContentStore::open(&path).unwrap();
-    let cap = super::stored::FIRST_CAP;
+    let cap = super::super::atoms::stored::first_cap();
     let first: Vec<String> = (0..=cap).map(|i| format!("v{i}")).collect();
     store.intern_atoms(&first.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     store.immediate_transaction(|_| Ok(())).unwrap();
@@ -410,7 +409,7 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     let ids = store.intern_atoms(&words.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     store.immediate_transaction(|_| Ok(())).unwrap();
     assert!(!store.atoms.pending());
-    assert!(store.atoms.state.read().atoms.pending.is_empty(), "the pending atoms' blocks, wholly stored, let go (decision 0478 step 2a)");
+    assert!(store.atoms.with_interner(|i| i.pending_blocks() == 0), "the pending atoms' blocks, wholly stored, let go (decision 0478 step 2a)");
     let rows = blocks(&path);
     assert!(rows.len() == 1 && rows[0].0.starts_with('b') && (rows[0].1, rows[0].2) == (1, 70_002 + cap), "one base: {rows:?}");
     for i in [0, 69_999] {
@@ -421,16 +420,17 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     let more: Vec<String> = (0..300).map(|i| format!("x{i}")).collect();
     let more_ids = store.intern_atoms(&more.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     {
-        let state = store.atoms.state.read();
-        let dir = state.atoms.dir();
+        store.atoms.with_interner(|atoms| {
+        let dir = atoms.dir();
         let last = *more_ids.last().unwrap();
         for id in (0..=last).step_by(97).chain([1, cap, cap + 1, 70_001 + cap, more_ids[0], last]) {
             // SAFETY: a host directory over blocks this process maps.
             let got = unsafe { rerail_blocks::atoms::str_in(dir.root(), id) };
-            assert_eq!(got, state.atoms.str(id).map(str::as_bytes), "id {id}");
+            assert_eq!(got, atoms.str(id).map(str::as_bytes), "id {id}");
         }
         // SAFETY: as above.
         assert_eq!(unsafe { rerail_blocks::atoms::str_in(dir.root(), last + 1) }, None, "past every atom");
+        });
     }
     drop(store);
     let copy = elsewhere(&path, "next-block-again");
@@ -460,10 +460,10 @@ fn a_roll_up_keeps_every_id() {
     assert!(blocks(&path).iter().all(|(name, _, _)| name.starts_with('d')), "deltas yet");
     // A reader of the deltas as they are now.
     let connection = rusqlite::Connection::open(&path).unwrap();
-    let rows = super::stored::rows(&connection).unwrap();
-    let mut old = super::stored::Stored::new(Some(&path));
+    let rows = super::super::atoms::stored::rows(&connection).unwrap();
+    let mut old = super::super::atoms::stored::Stored::new(Some(&path));
     old.learn(&rows);
-    old.view_to(super::stored::end_of(&rows)).unwrap();
+    old.view_to(super::super::atoms::stored::end_of(&rows)).unwrap();
     for _ in 0..8 {
         batch(60, &store);
     }
@@ -477,7 +477,7 @@ fn a_roll_up_keeps_every_id() {
         }
     }
     let named: std::collections::BTreeSet<String> = blocks(&path).into_iter().map(|(name, _, _)| name).collect();
-    let files: std::collections::BTreeSet<String> = std::fs::read_dir(super::stored::atoms_dir(&path)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    let files: std::collections::BTreeSet<String> = std::fs::read_dir(super::super::atoms::stored::atoms_dir(&path)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     assert_eq!(files, named, "only the blocks the rows name are left");
     for (w, &id) in words.iter().zip(&ids).take(40) {
         assert_eq!(old.str(id), Some(w.as_str()), "the old files still read");
@@ -510,7 +510,7 @@ fn an_older_floor_store_is_refused() {
 #[ignore = "a measurement on a store named by RERAIL_ATOMS_PROBE"]
 fn probe_a_store() {
     let Some(path) = std::env::var_os("RERAIL_ATOMS_PROBE").map(std::path::PathBuf::from) else { return };
-    let atoms = super::Atoms::for_path(&path);
+    let atoms = super::super::atoms::Atoms::of_path(&path);
     let t = std::time::Instant::now();
     let found = atoms.lookup("node").unwrap();
     eprintln!("first lookup: {found:?} in {:.3} s; heap {:.1} MB", t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6);
@@ -520,7 +520,7 @@ fn probe_a_store() {
     let t = std::time::Instant::now();
     let fresh = format!("probe-{}", std::process::id());
     let id = atoms.intern(&fresh).unwrap();
-    eprintln!("a new atom: {id} of {} in {:.3} s; heap {:.1} MB, mapped {:.1} MB", atoms.len(), t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6, atoms.in_memory(super::Interner::mapped) as f64 / 1e6);
+    eprintln!("a new atom: {id} of {} in {:.3} s; heap {:.1} MB, mapped {:.1} MB", atoms.len(), t.elapsed().as_secs_f64(), atoms.bytes() as f64 / 1e6, atoms.in_memory(super::super::atoms::Interner::mapped) as f64 / 1e6);
 }
 
 /// Decision 0114 §4: atoms a component makes ahead of the run's order are reserved, not counted by the commit
@@ -533,7 +533,7 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     // Made on another thread inside a reservation: held there, not pending to a commit here.
     let reserved = std::thread::scope(|s| {
         s.spawn(|| {
-            let r = super::reserving(&arena);
+            let r = super::super::atoms::reserving(&arena);
             assert_eq!(arena.intern_all(&["r1", "r2"]).unwrap(), [1, 2]);
             r.end()
         })
@@ -551,12 +551,12 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     connection.execute_batch("BEGIN; INSERT OR REPLACE INTO push_pending(pending) VALUES (1);").unwrap();
     assert!(connection.execute_batch("COMMIT").is_err());
     connection.execute_batch("BEGIN; INSERT OR REPLACE INTO push_pending(pending) VALUES (1);").unwrap();
-    super::commit(&connection).unwrap();
+    super::super::atoms::commit(&connection).unwrap();
     assert!(!store.atoms.pending());
     // Another arena's atoms are not this reservation's.
     let other_path = self::path("reserved-other");
     let other = ContentStore::open(&other_path).unwrap();
-    let r = super::reserving(&arena);
+    let r = super::super::atoms::reserving(&arena);
     other.intern_atoms(&["o"]).unwrap();
     assert!(other.atoms.pending(), "made in another arena: pending as usual");
     assert_eq!(r.end().len(), 0);
@@ -574,10 +574,10 @@ fn a_second_run_still_holds_every_atom() {
     atoms.run_over();
     // The first run's end: its atoms written, the lease given back.
     store.flush_atoms().unwrap();
-    assert!(!atoms.leased.load(Ordering::Acquire));
+    assert!(!atoms.leased_now());
     // A new string before the next run's `ready_for_run` takes the lease again: still complete.
     assert_eq!(store.intern_atoms(&["c"]).unwrap(), [3]);
-    assert!(atoms.complete.load(Ordering::Acquire));
+    assert!(atoms.complete_now());
     assert!(atoms.ready_for_run().unwrap());
     assert_eq!(store.intern_atoms(&["a", "d"]).unwrap(), [1, 4]);
 }
@@ -589,9 +589,9 @@ fn a_reservation_inside_another_holds_its_own_atoms() {
     let path = path("nested");
     let store = ContentStore::open(&path).unwrap();
     let arena = std::sync::Arc::clone(&store.atoms);
-    let outer = super::reserving(&arena);
+    let outer = super::super::atoms::reserving(&arena);
     arena.intern_all(&["outer-1"]).unwrap();
-    let inner = super::reserving(&arena);
+    let inner = super::super::atoms::reserving(&arena);
     arena.intern_all(&["inner-1", "inner-2"]).unwrap();
     let inner = inner.end();
     arena.intern_all(&["outer-2"]).unwrap();
@@ -631,7 +631,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
         types: vec![b's', b'i'],
         what: crate::content_store::kept_facts::KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&[2, 2, 3, 3, 1, 1], 2, false))),
     };
-    super::mapped(|| store.queue_kept(space, vec![put]));
+    super::super::atoms::mapped(|| store.queue_kept(space, vec![put]));
     let row = store.kept_row(&space).unwrap().expect("written");
     let (_, kept) = store.open_kept(&space, row).unwrap().expect("kept");
     let view = kept.view();
@@ -646,7 +646,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     // A write that does not declare its symbols mapped is refused after the fork.
     store.intern_atoms(&["c"]).unwrap();
     let refused = store.immediate_transaction(|_| Ok(()));
-    assert!(refused.as_ref().is_err_and(|e| e.to_string().contains(super::DIVERGED_TEXT)), "{refused:?}");
+    assert!(refused.as_ref().is_err_and(|e| e.to_string().contains(super::super::atoms::DIVERGED_TEXT)), "{refused:?}");
 }
 
 /// Decision 0170: a write transaction that finds another process's atoms past this one's end, with none pending here,
@@ -694,7 +694,7 @@ fn a_forked_processs_derivations_name_the_stores_atoms() {
     store.bind_names(&[crate::content_store::Binding { name: "y".into(), digest: digest(2) }]).unwrap();
     // The store holds `b` as 4 and `y` as 3 (the other process's).
     let connection = rusqlite::Connection::open(&path).unwrap();
-    super::install_kept_tables(&connection).unwrap();
+    crate::content_store::install_kept_tables(&connection).unwrap();
     let bound: Vec<(i64, Vec<u8>)> = connection.prepare("SELECT name_atom, digest FROM name_bindings ORDER BY name_atom").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
     assert_eq!(bound, [(3, digest(2).to_vec()), (4, digest(3).to_vec())]);
     let input: i64 = connection.query_row("SELECT name_atom FROM derivation_inputs WHERE output_atom = 4", [], |r| r.get(0)).unwrap();
@@ -759,8 +759,8 @@ fn every_stored_column_is_classified() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    let atoms: std::collections::HashSet<(&str, &str)> = super::map::ATOM_COLUMNS.iter().map(|(t, c, _)| (*t, *c)).collect();
-    let not: std::collections::HashSet<(&str, &str)> = super::map::NOT_ATOMS.iter().flat_map(|(t, cs)| cs.iter().map(move |c| (*t, *c))).collect();
+    let atoms: std::collections::HashSet<(&str, &str)> = super::super::atoms::map::ATOM_COLUMNS.iter().map(|(t, c, _)| (*t, *c)).collect();
+    let not: std::collections::HashSet<(&str, &str)> = super::super::atoms::map::NOT_ATOMS.iter().flat_map(|(t, cs)| cs.iter().map(move |c| (*t, *c))).collect();
     let both: Vec<_> = atoms.intersection(&not).collect();
     assert!(both.is_empty(), "classified both ways: {both:?}");
     let unclassified: Vec<String> = columns
@@ -797,30 +797,4 @@ fn a_forked_processs_unnamed_atoms_queue_no_write() {
     drop(store);
     drop(handle);
     assert_eq!(stored(&path), ["", "a", "b", "c"], "nothing stored at the close");
-}
-
-/// Decision 0478 step 2a: the run's pending atoms are in atoms blocks, the stored chain's format, each string where
-/// a block holds it (a device reads it there): none in a heap buffer. The chain grows past its first block, every
-/// atom is found by its string and read by its id, and the blocks of atoms stored since are let go.
-#[test]
-fn pending_atoms_live_in_atoms_blocks() {
-    use super::{Interner, PENDING_FIRST_CAP, hash_str};
-    let mut i = Interner::default();
-    let n = 3 * PENDING_FIRST_CAP as usize;
-    let strings: Vec<String> = (0..n).map(|k| format!("atom-{k}-{}", "x".repeat(k % 37))).collect();
-    let ids: Vec<Sym> = strings.iter().map(|s| i.intern(s)).collect();
-    assert_eq!(ids, (1..=n as Sym).collect::<Vec<_>>(), "dense ids from the first");
-    let blocks = i.pending_regions();
-    assert!(blocks.len() >= 2, "the chain grew past its first block: {blocks:?}");
-    for (s, &id) in strings.iter().zip(&ids) {
-        let got = i.str(id).expect("a pending atom's string");
-        assert_eq!(got, s);
-        let at = got.as_ptr() as usize;
-        assert!(blocks.iter().any(|&(lo, hi)| at >= lo && at + got.len() <= hi), "{s}: read where an atoms block holds it");
-        assert_eq!(i.get(s), Some(id));
-        assert_eq!(i.hash_of(id), Some(hash_str(s)));
-    }
-    assert_eq!(i.intern(&strings[5]), ids[5], "interned again: the same id");
-    assert_eq!(i.pending(), (n, strings.iter().map(String::len).sum()));
-    assert_eq!(i.len(), n + 1);
 }

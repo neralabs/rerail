@@ -1,10 +1,15 @@
+import * as childProcess from "node:child_process";
 import { mkdir, mkdtemp, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { deviceSecretStore, FileDeviceSecretStore, SystemDeviceSecretStore } from "../../src/activation/device-keystore.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
+import { cmdletsWithoutModule, commandScript, MODULE_QUALIFIED_ONLY, withCommandPrefix } from "../support/platform/powershell-commands.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+// A spy that calls through, so a case can change the command the Credential Manager store starts.
+vi.mock("node:child_process", { spy: true });
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -62,6 +67,37 @@ describe("Windows Credential Manager", () => {
     expect(commands).toHaveLength(3);
     for (const command of commands) expect(command).toMatch(/^[A-Za-z]:\\.*\\System32\\WindowsPowerShell\\v1\.0\\powershell\.exe$/u);
   });
+
+  it("names the module of each cmdlet its script runs, so PowerShell reads no other installed module first", async () => {
+    const scripts: Array<string | undefined> = [];
+    const store = new SystemDeviceSecretStore("win32", async (_command, args) => {
+      scripts.push(commandScript(args));
+      return { code: 0, stdout: JSON.stringify({ found: false }), stderr: "" };
+    });
+    expect(await store.read("profile-a")).toBeUndefined();
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toMatch(/\\Add-Type /u);
+    expect(cmdletsWithoutModule(scripts[0] ?? "")).toEqual([]);
+  });
+
+  // The case above reads the script's text: a wrong module (Microsoft.PowerShell.Management\Add-Type) passes it. The real
+  // PowerShell finds no cmdlet under a wrong module, and under this setting none named alone either. The read calls
+  // CredRead only after Add-Type and ConvertFrom-Json have run; over SSH, whose logon session Windows gives no
+  // credential store, CredRead then fails with ERROR_NO_SUCH_LOGON_SESSION, a Win32Exception. ConvertTo-Json writes a
+  // secret that was found, so a read of an absent target never runs it.
+  it.runIf(process.platform === "win32")("runs its script's read of an absent target while PowerShell loads only the modules a command names", async () => {
+    const scripts: Array<string | undefined> = [];
+    const { spawn: realSpawn } = await vi.importActual<typeof childProcess>("node:child_process");
+    vi.mocked(childProcess.spawn).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnOptions) => {
+      scripts.push(commandScript(args));
+      return realSpawn(program, withCommandPrefix(args, MODULE_QUALIFIED_ONLY), options);
+    }) as unknown as typeof childProcess.spawn);
+    const read = await new SystemDeviceSecretStore("win32").read(`absent-${process.pid}`)
+      .then(value => `read ${String(value)}`, (error: unknown) => String(error));
+    expect(scripts).toHaveLength(1);
+    expect(read).toMatch(/^read undefined$|FullyQualifiedErrorId\s*:\s*Win32Exception/u);
+    expect(read).not.toMatch(/CommandNotFoundException/u);
+  }, 60_000);
 });
 
 describe("macOS Keychain writes", () => {

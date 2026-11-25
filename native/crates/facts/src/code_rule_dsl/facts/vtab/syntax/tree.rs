@@ -128,16 +128,16 @@ impl Tree {
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64, relation: super::Make) -> Vec<(&'static str, Relation)> {
         let mut out = Vec::new();
         if self.op_at {
-            out.push(("op_at", relation(&["n", "i", "s"], &mut self.op_ats.iter().map(|&[n, i, s]| rerail_blocks::vector![n, i, atom(s)]))));
+            out.push(("op_at", relation(&["n", "i", "s"], &mut self.op_ats.iter().map(|&[n, i, s]| rerail_facts_base::row![n, i, atom(s)]))));
         }
         if self.prev_token {
-            out.push(("prev_token", relation(&["n", "s"], &mut self.prev_tokens.iter().map(|&[n, s]| rerail_blocks::vector![n, atom(s)]))));
+            out.push(("prev_token", relation(&["n", "s"], &mut self.prev_tokens.iter().map(|&[n, s]| rerail_facts_base::row![n, atom(s)]))));
         }
         if self.token {
-            out.push(("token", relation(&["p", "i", "s", "start", "end_"], &mut self.tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
+            out.push(("token", relation(&["p", "i", "s", "start", "end_"], &mut self.tokens.iter().map(|&[p, i, s, a, b]| rerail_facts_base::row![p, i, atom(s), a, b]))));
         }
         if self.token_parts {
-            out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| rerail_blocks::vector![p, i, atom(s), a, b]))));
+            out.push(("rr_token_anon", relation(&["p", "i", "s", "start", "end_"], &mut self.anon_tokens.iter().map(|&[p, i, s, a, b]| rerail_facts_base::row![p, i, atom(s), a, b]))));
         }
         out
     }

@@ -173,7 +173,7 @@ fn bare(k: &str) -> String {
 }
 
 /// A matcher's root kind: its rule's own `kind`, or one of its top-level `all`'s.
-fn root_kind(text: &str) -> Option<String> {
+pub fn root_kind(text: &str) -> Option<String> {
     let rule = serde_json::from_str::<serde_json::Value>(text).ok()?.get("rule")?.clone();
     if let Some(k) = rule.get("kind").and_then(|k| k.as_str()) {
         return Some(k.to_owned());

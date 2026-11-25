@@ -1,6 +1,7 @@
 # 0689. The cross part's `text` is read by node, and a relation made on lookup is read by the columns it is probed by
 
-Status: decided (2026-11-25). It follows 0353 row 7 (a node's and a line's text read, not made a row each) and 0676
+Status: decided (2026-11-25); §1 superseded the same day by 0656 step 4, which the merge of the final-shape hub brought
+(below). It follows 0353 row 7 (a node's and a line's text read, not made a row each) and 0676
 (the 4 re-export heads that cross files for real). It amends 0458 (the corpus batch's `text`) and 0364's recheck
 pricing (Q208).
 
@@ -23,6 +24,14 @@ its string gives a row or two, so the planner led with it. A probe of `text` has
 built one by reading every row, which read every file's tape on a warm run. With `text` priced right, the next
 choice was `line` by its line number, an index of every row of a view of the batch, with the same result. The planner
 did not know which columns a relation can be looked up by.
+
+## Superseded: §1, by 0656 step 4 (2026-11-25, the hub's merge)
+
+The hub made `text` a view (0656 step 4: `View::Text`, `Item::Text`): no document's `text` rows are made anywhere,
+the per-file part's and the cross part's alike, and an atom is interned where it is read (`text_atom`). That is §1's
+aim for every reader, not only the cross part's, so the merge removed `ProbedText`, `Projection::text_probed`,
+`cross_text_by_node` and their two `tests_lang` tests. §2 (`Stats::probed_by`) stays: the planner still prices a step
+that binds none of a made relation's lookup columns as reading every row.
 
 ## Decision
 

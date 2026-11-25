@@ -8,41 +8,41 @@ publish = false
 description = "The GPU, as the logic's and the transducer's device, on the device layer's backends (macOS and Linux; registered by the engine)."
 
 [features]
-default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-clif/default", "rerail-facts/default", "rerail-lang/default", "rerail-logic/default", "rerail-rr/default", "rerail-transducer/default", "rerail-rules/default"]
-all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-kotlin", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-scala", "lang-sql", "lang-swift", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages", "rerail-logic/all-languages", "rerail-rr/all-languages", "rerail-transducer/all-languages"]
-lang-blade = ["rerail-facts/lang-blade", "rerail-lang/lang-blade", "rerail-logic/lang-blade", "rerail-rr/lang-blade", "rerail-transducer/lang-blade"]
-lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-facts/lang-csharp", "rerail-lang/lang-csharp", "rerail-logic/lang-csharp", "rerail-rr/lang-csharp", "rerail-transducer/lang-csharp"]
-lang-css = ["ast-grep-language/tree-sitter-css", "rerail-facts/lang-css", "rerail-lang/lang-css", "rerail-logic/lang-css", "rerail-rr/lang-css", "rerail-transducer/lang-css"]
-lang-html = ["ast-grep-language/tree-sitter-html", "rerail-facts/lang-html", "rerail-lang/lang-html", "rerail-logic/lang-html", "rerail-rr/lang-html", "rerail-transducer/lang-html"]
-lang-java = ["ast-grep-language/tree-sitter-java", "rerail-facts/lang-java", "rerail-lang/lang-java", "rerail-logic/lang-java", "rerail-rr/lang-java", "rerail-transducer/lang-java"]
-lang-go = ["ast-grep-language/tree-sitter-go", "rerail-facts/lang-go", "rerail-lang/lang-go", "rerail-logic/lang-go", "rerail-rr/lang-go", "rerail-transducer/lang-go"]
-lang-c = ["ast-grep-language/tree-sitter-c", "rerail-facts/lang-c", "rerail-lang/lang-c", "rerail-logic/lang-c", "rerail-rr/lang-c", "rerail-transducer/lang-c"]
-lang-cpp = ["ast-grep-language/tree-sitter-cpp", "rerail-facts/lang-cpp", "rerail-lang/lang-cpp", "rerail-logic/lang-cpp", "rerail-rr/lang-cpp", "rerail-transducer/lang-cpp"]
-lang-javascript = ["rerail-facts/lang-javascript", "rerail-lang/lang-javascript", "rerail-logic/lang-javascript", "rerail-rr/lang-javascript", "rerail-transducer/lang-javascript"]
-lang-json = ["ast-grep-language/tree-sitter-json", "rerail-facts/lang-json", "rerail-lang/lang-json", "rerail-logic/lang-json", "rerail-rr/lang-json", "rerail-transducer/lang-json"]
-lang-kotlin = ["ast-grep-language/tree-sitter-kotlin", "rerail-facts/lang-kotlin", "rerail-lang/lang-kotlin", "rerail-logic/lang-kotlin", "rerail-rr/lang-kotlin", "rerail-transducer/lang-kotlin"]
-lang-markdown = ["rerail-facts/lang-markdown", "rerail-lang/lang-markdown", "rerail-logic/lang-markdown", "rerail-rr/lang-markdown", "rerail-transducer/lang-markdown"]
-lang-php = ["ast-grep-language/tree-sitter-php", "rerail-facts/lang-php", "rerail-lang/lang-php", "rerail-logic/lang-php", "rerail-rr/lang-php", "rerail-transducer/lang-php"]
-lang-python = ["rerail-facts/lang-python", "rerail-lang/lang-python", "rerail-logic/lang-python", "rerail-rr/lang-python", "rerail-transducer/lang-python"]
-lang-rr = ["rerail-facts/lang-rr", "rerail-lang/lang-rr", "rerail-logic/lang-rr", "rerail-rr/lang-rr", "rerail-transducer/lang-rr"]
-lang-rust = ["ast-grep-language/tree-sitter-rust", "rerail-facts/lang-rust", "rerail-lang/lang-rust", "rerail-logic/lang-rust", "rerail-rr/lang-rust", "rerail-transducer/lang-rust"]
-lang-scala = ["ast-grep-language/tree-sitter-scala", "rerail-facts/lang-scala", "rerail-lang/lang-scala", "rerail-logic/lang-scala", "rerail-rr/lang-scala", "rerail-transducer/lang-scala"]
-lang-sql = ["rerail-facts/lang-sql", "rerail-lang/lang-sql", "rerail-logic/lang-sql", "rerail-rr/lang-sql", "rerail-transducer/lang-sql"]
-lang-swift = ["ast-grep-language/tree-sitter-swift", "rerail-facts/lang-swift", "rerail-lang/lang-swift", "rerail-logic/lang-swift", "rerail-rr/lang-swift", "rerail-transducer/lang-swift"]
-lang-typescript = ["rerail-facts/lang-typescript", "rerail-lang/lang-typescript", "rerail-logic/lang-typescript", "rerail-rr/lang-typescript", "rerail-transducer/lang-typescript"]
-lang-vue = ["rerail-facts/lang-vue", "rerail-lang/lang-vue", "rerail-logic/lang-vue", "rerail-rr/lang-vue", "rerail-transducer/lang-vue"]
-headless = ["napi-derive/noop", "rerail-facts/headless", "rerail-lang/headless", "rerail-logic/headless", "rerail-rr/headless", "rerail-transducer/headless", "rerail-rules/headless"]
-dump-cli = ["rerail-facts/dump-cli", "rerail-lang/dump-cli", "rerail-logic/dump-cli", "rerail-rr/dump-cli", "rerail-transducer/dump-cli"]
-python-syntax-error = ["rerail-facts/python-syntax-error", "rerail-lang/python-syntax-error", "rerail-logic/python-syntax-error", "rerail-rr/python-syntax-error", "rerail-transducer/python-syntax-error"]
-tape-cache = ["rerail-facts/tape-cache", "rerail-lang/tape-cache", "rerail-logic/tape-cache", "rerail-rr/tape-cache", "rerail-transducer/tape-cache"]
-system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocator", "rerail-logic/system-allocator", "rerail-rr/system-allocator", "rerail-transducer/system-allocator"]
-code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-logic/code-rule-profile", "rerail-rr/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-rules/code-rule-profile"]
-p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-logic/p-anchor-corpus", "rerail-rr/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-rules/p-anchor-corpus"]
-metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-logic/metal-tests", "rerail-rr/metal-tests", "rerail-transducer/metal-tests"]
-test-hooks = ["rerail-blocks/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-transducer/test-hooks", "rerail-compiler/test-hooks", "rerail-cpu-block/test-hooks", "rerail-store/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-metal/test-hooks", "rerail-metal-programs/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
+default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-clif/default", "rerail-facts/default", "rerail-lang/default", "rerail-rr-root/default", "rerail-rr/default", "rerail-transducer/default", "rerail-rules/default"]
+all-languages = ["lang-blade", "lang-c", "lang-cpp", "lang-csharp", "lang-css", "lang-go", "lang-html", "lang-java", "lang-javascript", "lang-json", "lang-kotlin", "lang-markdown", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-scala", "lang-sql", "lang-swift", "lang-typescript", "lang-vue", "rerail-facts/all-languages", "rerail-lang/all-languages", "rerail-rr-root/all-languages", "rerail-rr/all-languages", "rerail-transducer/all-languages"]
+lang-blade = ["rerail-facts/lang-blade", "rerail-lang/lang-blade", "rerail-rr-root/lang-blade", "rerail-rr/lang-blade", "rerail-transducer/lang-blade"]
+lang-csharp = ["ast-grep-language/tree-sitter-c-sharp", "rerail-facts/lang-csharp", "rerail-lang/lang-csharp", "rerail-rr-root/lang-csharp", "rerail-rr/lang-csharp", "rerail-transducer/lang-csharp"]
+lang-css = ["ast-grep-language/tree-sitter-css", "rerail-facts/lang-css", "rerail-lang/lang-css", "rerail-rr-root/lang-css", "rerail-rr/lang-css", "rerail-transducer/lang-css"]
+lang-html = ["ast-grep-language/tree-sitter-html", "rerail-facts/lang-html", "rerail-lang/lang-html", "rerail-rr-root/lang-html", "rerail-rr/lang-html", "rerail-transducer/lang-html"]
+lang-java = ["ast-grep-language/tree-sitter-java", "rerail-facts/lang-java", "rerail-lang/lang-java", "rerail-rr-root/lang-java", "rerail-rr/lang-java", "rerail-transducer/lang-java"]
+lang-go = ["ast-grep-language/tree-sitter-go", "rerail-facts/lang-go", "rerail-lang/lang-go", "rerail-rr-root/lang-go", "rerail-rr/lang-go", "rerail-transducer/lang-go"]
+lang-c = ["ast-grep-language/tree-sitter-c", "rerail-facts/lang-c", "rerail-lang/lang-c", "rerail-rr-root/lang-c", "rerail-rr/lang-c", "rerail-transducer/lang-c"]
+lang-cpp = ["ast-grep-language/tree-sitter-cpp", "rerail-facts/lang-cpp", "rerail-lang/lang-cpp", "rerail-rr-root/lang-cpp", "rerail-rr/lang-cpp", "rerail-transducer/lang-cpp"]
+lang-javascript = ["rerail-facts/lang-javascript", "rerail-lang/lang-javascript", "rerail-rr-root/lang-javascript", "rerail-rr/lang-javascript", "rerail-transducer/lang-javascript"]
+lang-json = ["ast-grep-language/tree-sitter-json", "rerail-facts/lang-json", "rerail-lang/lang-json", "rerail-rr-root/lang-json", "rerail-rr/lang-json", "rerail-transducer/lang-json"]
+lang-kotlin = ["ast-grep-language/tree-sitter-kotlin", "rerail-facts/lang-kotlin", "rerail-lang/lang-kotlin", "rerail-rr-root/lang-kotlin", "rerail-rr/lang-kotlin", "rerail-transducer/lang-kotlin"]
+lang-markdown = ["rerail-facts/lang-markdown", "rerail-lang/lang-markdown", "rerail-rr-root/lang-markdown", "rerail-rr/lang-markdown", "rerail-transducer/lang-markdown"]
+lang-php = ["ast-grep-language/tree-sitter-php", "rerail-facts/lang-php", "rerail-lang/lang-php", "rerail-rr-root/lang-php", "rerail-rr/lang-php", "rerail-transducer/lang-php"]
+lang-python = ["rerail-facts/lang-python", "rerail-lang/lang-python", "rerail-rr-root/lang-python", "rerail-rr/lang-python", "rerail-transducer/lang-python"]
+lang-rr = ["rerail-facts/lang-rr", "rerail-lang/lang-rr", "rerail-rr-root/lang-rr", "rerail-rr/lang-rr", "rerail-transducer/lang-rr"]
+lang-rust = ["ast-grep-language/tree-sitter-rust", "rerail-facts/lang-rust", "rerail-lang/lang-rust", "rerail-rr-root/lang-rust", "rerail-rr/lang-rust", "rerail-transducer/lang-rust"]
+lang-scala = ["ast-grep-language/tree-sitter-scala", "rerail-facts/lang-scala", "rerail-lang/lang-scala", "rerail-rr-root/lang-scala", "rerail-rr/lang-scala", "rerail-transducer/lang-scala"]
+lang-sql = ["rerail-facts/lang-sql", "rerail-lang/lang-sql", "rerail-rr-root/lang-sql", "rerail-rr/lang-sql", "rerail-transducer/lang-sql"]
+lang-swift = ["ast-grep-language/tree-sitter-swift", "rerail-facts/lang-swift", "rerail-lang/lang-swift", "rerail-rr-root/lang-swift", "rerail-rr/lang-swift", "rerail-transducer/lang-swift"]
+lang-typescript = ["rerail-facts/lang-typescript", "rerail-lang/lang-typescript", "rerail-rr-root/lang-typescript", "rerail-rr/lang-typescript", "rerail-transducer/lang-typescript"]
+lang-vue = ["rerail-facts/lang-vue", "rerail-lang/lang-vue", "rerail-rr-root/lang-vue", "rerail-rr/lang-vue", "rerail-transducer/lang-vue"]
+headless = ["napi-derive/noop", "rerail-facts/headless", "rerail-lang/headless", "rerail-rr-root/headless", "rerail-rr/headless", "rerail-transducer/headless", "rerail-rules/headless"]
+dump-cli = ["rerail-facts/dump-cli", "rerail-lang/dump-cli", "rerail-rr-root/dump-cli", "rerail-rr/dump-cli", "rerail-transducer/dump-cli"]
+python-syntax-error = ["rerail-facts/python-syntax-error", "rerail-lang/python-syntax-error", "rerail-rr-root/python-syntax-error", "rerail-rr/python-syntax-error", "rerail-transducer/python-syntax-error"]
+tape-cache = ["rerail-facts/tape-cache", "rerail-lang/tape-cache", "rerail-rr-root/tape-cache", "rerail-rr/tape-cache", "rerail-transducer/tape-cache"]
+system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocator", "rerail-rr-root/system-allocator", "rerail-rr/system-allocator", "rerail-transducer/system-allocator"]
+code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rr-root/code-rule-profile", "rerail-rr/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-rules/code-rule-profile"]
+p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rr-root/p-anchor-corpus", "rerail-rr/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-rules/p-anchor-corpus"]
+metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-rr-root/metal-tests", "rerail-rr/metal-tests", "rerail-transducer/metal-tests"]
+test-hooks = ["rerail-accel-gpu/test-hooks", "rerail-blocks/test-hooks", "rerail-clif/test-hooks", "rerail-tape-format/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-rr-root/test-hooks", "rerail-rr/test-hooks", "rerail-transducer/test-hooks", "rerail-compiler/test-hooks", "rerail-cpu-block/test-hooks", "rerail-store/test-hooks", "rerail-rules/test-hooks", "dep:tempfile", "rerail-metal/test-hooks", "rerail-metal-programs/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
 
 [dependencies]
-# Blocks (decision 0266): a batch's chunk block (decision 0289), and the `BlockVec`s every platform holds rows in.
+# Blocks (decision 0266): a batch's chunk block (decision 0289), and the block `Vector`s every platform holds rows in.
 rerail-blocks = { path = "../blocks" }
 rerail-section = { path = "../section" }
 base64 = "=0.22.1"
@@ -87,13 +87,12 @@ tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-
 tree-sitter = "=0.27.1"
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-clif = { path = "../clif", default-features = false }
 rerail-tape-format = { path = "../tape_format" }
 rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
-rerail-logic = { path = "../logic", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-rr = { path = "../rr", default-features = false }
 rerail-rr-syntax = { path = "../rr_syntax" }
@@ -101,11 +100,14 @@ rerail-store = { path = "../store" }
 rerail-transducer = { path = "../transducer", default-features = false }
 rerail-rules = { path = "../rules", default-features = false }
 rerail-accel = { path = "../../../accel" }
+# The GPU lane: its kernels and device joins (crate split 10d-3).
+rerail-accel-gpu = { path = "../../../accel/gpu" }
 # The device layer's buffers and host-memory wraps, which the joins' and row programs' kernels bind (decision 0440).
 rerail-device = { path = "../../../gpu/device" }
 rerail-compiler = { path = "../compiler" }
 rerail-cpu-block = { path = "../cpu_block" }
 rerail-rr-parser = { path = "../rr_parser" }
+rerail-rr-root = { path = "../rr_root", default-features = false }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
@@ -141,10 +143,13 @@ metal = "0.33.0"
 rerail-lang-python = { path = "../lang_python" }
 
 [dev-dependencies]
+rerail-logic = { path = "../logic", default-features = false, features = ["test-hooks"] }
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-device-metal = { path = ".", features = ["test-hooks"] }
 # The device tests read the store's cache by its reads (`rerail_clif::view::cache`: the text folds' test its
 # kept texts, `text_find`).
 rerail-clif = { path = "../clif" }
+# The digest of the label source `label_parents`' Rust was written from (`rust_tests`).
+rerail-ukl-rust = { path = "../ukl_rust" }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

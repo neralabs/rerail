@@ -1047,16 +1047,17 @@ pub struct LogicRun<'a> {
 /// findings. T's facts reproduce one program's run only.
 /// `run`'s settings are `--env key=value`s ([`settings`]).
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, String> {
-    logic_checked(programs, root, t_facts, out, run).map_err(|error| error.to_string())
+    logic_checked(programs, &[], root, t_facts, out, run).map_err(|error| error.to_string())
 }
 
-fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
-    logic_framed(programs, root, t_facts, out, run).map(|(text, _)| text)
+/// `parsed`: each text's parse where its read made one (`settings::program_texts_parsed`), which the run takes.
+fn logic_checked(programs: &[String], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<String, ProgramRunError> {
+    logic_framed(programs, parsed, root, t_facts, out, run).map(|(text, _)| text)
 }
 
 /// `logic_checked`, with the run's frame (`Report::frame`) where the command is one run whatever its corpus holds: no
 /// program names a language of several dialects, so a command's frame may lead to it (`reuse::command`).
-fn logic_framed(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<(String, Option<[u8; 32]>), ProgramRunError> {
+fn logic_framed(programs: &[String], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, run: &LogicRun<'_>) -> Result<(String, Option<[u8; 32]>), ProgramRunError> {
     let LogicRun { modes, metal, chunk_nodes, settings } = *run;
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
@@ -1080,7 +1081,7 @@ fn logic_framed(programs: &[String], root: &std::path::Path, t_facts: Option<&st
         if let Some(label) = label {
             options["dialect"] = serde_json::json!(label);
         }
-        let each = super::logic::plan::corpus::run_with_options(&texts, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)?;
+        let each = super::logic::plan::corpus::run_with_parsed(&texts, parsed, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)?;
         match &mut report {
             None => report = Some(each),
             Some(first) => {
@@ -1212,7 +1213,7 @@ pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -
     let shared = crate::code_rule_dsl::logic::profile::Shared::on(machine);
     #[cfg(target_os = "macos")]
     if args.first().is_none_or(|c| c != "kernels") {
-        rerail_accel::gpu::kernels::set_mode(shared.machine(), rerail_accel::gpu::kernels::Mode::Defer);
+        rerail_accel_gpu::gpu::kernels::set_mode(shared.machine(), rerail_accel_gpu::gpu::kernels::Mode::Defer);
     }
     let (out, incomplete) = cli_in(args, &mut Default::default(), &shared);
     // The kernels this run went without (its machine's), compiled after it by the engine in a process of its own, at
@@ -1220,7 +1221,7 @@ pub fn cli(args: &[String], machine: &std::sync::Arc<crate::threads::Machine>) -
     #[cfg(target_os = "macos")]
     if let Ok(engine) = std::env::current_exe() {
         let _on = crate::code_rule_dsl::logic::profile::within(std::sync::Arc::clone(&shared));
-        rerail_accel::gpu::kernels::spawn_maintenance(&engine);
+        rerail_accel_gpu::gpu::kernels::spawn_maintenance(&engine);
     }
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
     // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
@@ -1720,9 +1721,9 @@ fn logic_command(args: &[String]) -> Result<String, String> {
         .transpose()?;
     // A directory: every `.rerail` in it, run as one program (each file parsed once for all of them); each file's
     // `#include`s are read in.
-    let read_programs = || -> Result<(Vec<String>, _), String> {
+    let read_programs = || -> Result<(Vec<String>, Vec<crate::code_rule_dsl::logic::settings::Parsed>, _), String> {
         let _reading = crate::code_rule_dsl::logic::profile::span(|| "read the rule files".into());
-        let (programs, sources) = if is_dir {
+        let (programs, parsed, sources) = if is_dir {
             let files = listed.clone();
             // A file another one `#include`s is a library of it (`…confusables.rerail`), not a program of its own: alone
             // it has neither the declarations it reads nor the rules that fill its inputs.
@@ -1741,37 +1742,37 @@ fn logic_command(args: &[String]) -> Result<String, String> {
                 .collect();
             let (files, read): (Vec<_>, Vec<_>) = files.into_iter().zip(read).filter(|(path, _)| !path.file_name().is_some_and(|n| included.contains(n))).unzip();
             timeline_mark("the program files listed");
-            let texts = crate::tools::program_texts_read(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
+            let (texts, parsed) = crate::code_rule_dsl::logic::settings::program_texts_parsed(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>(), read.into_iter().map(Result::ok).collect())?;
             let sources = super::logic::rr::profile_join_sources(&files.iter().map(|p| p.as_path()).collect::<Vec<_>>());
             timeline_mark("the program texts read");
-            (texts, sources)
+            (texts, parsed, sources)
         } else {
             let path = Path::new(program.as_str());
             let text = crate::tools::program_text(path)?;
-            (vec![text], super::logic::rr::profile_join_sources(&[path]))
+            (vec![text], vec![None], super::logic::rr::profile_join_sources(&[path]))
         };
         if programs.is_empty() {
             return Err(format!("{program} has no .rerail programs"));
         }
-        Ok((programs, sources))
+        Ok((programs, parsed, sources))
     };
     // Without a command's frame, read before the run begins, as ever.
     let early = if command.is_none() { Some(read_programs()?) } else { None };
     let eval = |root: &Path| -> Result<String, ProgramRunError> {
         let logic_run = crate::tools::LogicRun { modes: &modes, metal, chunk_nodes: chunk, settings: &env };
         let Some((key, dir, files)) = &command else {
-            let (programs, _sources) = early.as_ref().expect("read early");
-            let run = || logic_checked(programs, root, facts, Path::new(out), &logic_run);
+            let (programs, parsed, _sources) = early.as_ref().expect("read early");
+            let run = || logic_checked(programs, parsed, root, facts, Path::new(out), &logic_run);
             return if full { crate::code_rule_dsl::logic::plan::corpus::session::full(run) } else { run() };
         };
         let binding = if metal { super::typing::file_local::Binding::Metal } else { super::typing::file_local::Binding::Cpu };
         if let Some((report, programs)) = reuse::command::reused(key, root, Path::new(out), &Typing::default(), &options)? {
             return Ok(report_text(programs, &report, &modes, binding, None));
         }
-        let (programs, _sources) = read_programs()?;
+        let (programs, parsed, _sources) = read_programs()?;
         // The run's manifest names the command's frame, kept once the run ends.
         let _naming = reuse::Naming::enter(*key);
-        let (text, frame) = logic_framed(&programs, root, facts, Path::new(out), &logic_run)?;
+        let (text, frame) = logic_framed(&programs, &parsed, root, facts, Path::new(out), &logic_run)?;
         if let Some(then) = frame {
             reuse::command::record(key, dir.as_deref(), files, &then, programs.len());
         }
@@ -1875,16 +1876,16 @@ fn gc_command(args: &[String]) -> Result<String, String> {
 }
 
 /// Every fixed kernel of the engine (a kernel whose source is the same for every rule set), to compile ahead of its
-/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel::gpu::kernels_ahead`), the GPU
+/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel_gpu::gpu::kernels_ahead`), the GPU
 /// runtime's (`rerail_metal::kernels_ahead`), the device's (`MatcherDevice::kernels_ahead`) and, in a build with the
 /// tests' hooks, the tape format's tests' (`rerail_tape_format::f16::kernels`). Each entry asks for its kernel
 /// as its use does, so its use finds it: in this process, in the store, or shipped.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
-    let mut v = rerail_accel::gpu::kernels_ahead();
+    let mut v = rerail_accel_gpu::gpu::kernels_ahead();
     v.extend(rerail_metal::kernels_ahead());
     if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
-        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel::gpu::ahead(name, make)));
+        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel_gpu::gpu::ahead(name, make)));
     }
     #[cfg(feature = "test-hooks")]
     v.extend(rerail_tape_format::f16::kernels().into_iter().map(|(name, text)| {
@@ -1895,7 +1896,7 @@ pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
 
 /// `rerail-engine kernels` (decision 0395): the compiled kernels, on every backend. The device layer's store
 /// (`rerail_device::store`: CUDA's cubins, OpenCL's binaries, the CPU's shared objects) and, on macOS, Metal's
-/// archive store (`rerail_accel::gpu::kernels`).
+/// archive store (`rerail_accel_gpu::gpu::kernels`).
 ///
 /// ```text
 /// kernels [list]                   the stores, the shipped kernels, the device, and (Metal) the kernels runs went
@@ -1986,7 +1987,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             }
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let s = k::size();
                 out += &format!("metal store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
                 out += &format!("metal shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
@@ -2023,7 +2024,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             let made = compile(&mut out);
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
                 let started = std::time::Instant::now();
                 // Past `--within`, none (the next run's step compiles them).
@@ -2101,14 +2102,14 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             for (target, made, there) in &counts {
                 out += &format!("{target:>16}: {made} programs compiled ahead of time, {there} shipped already\n");
             }
-            // The engine's Metal kernels (`rerail_accel::gpu::kernels`): their archives are a Metal device's, and their
+            // The engine's Metal kernels (`rerail_accel_gpu::gpu::kernels`): their archives are a Metal device's, and their
             // manifest a Metal run's. Without one (`RERAIL_GPU=cpu`, a build machine without a GPU), the device layer's
             // programs above are what ships for Metal's tiers.
             #[cfg(target_os = "macos")]
             if rerail_gpu::device::backend() != "Metal" {
                 out += "the engine's Metal kernels (accel): no Metal device, not shipped\n";
             } else {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 let from = match args.iter().position(|a| a == "--from") {
                     Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
                     None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
@@ -2133,7 +2134,7 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
             out += &format!("{} device-layer kernels removed\n", store::prune(mb.unwrap_or_else(store::max_bytes)));
             #[cfg(target_os = "macos")]
             {
-                use rerail_accel::gpu::kernels as k;
+                use rerail_accel_gpu::gpu::kernels as k;
                 out += &format!("{} archives removed\n", k::prune(mb.unwrap_or_else(k::max_bytes)));
             }
             Ok(out)
@@ -2670,7 +2671,7 @@ mod settings_tests {
 /// fails the test, every one shown.
 #[cfg(test)]
 mod pack_split_tests {
-    /// Every policy of `dir`.
+    /// Every policy of `dir` (from the repository's root) run over one file of each language, its scope's paths dropped.
     fn pack_runs(dir: &str) {
         pack_shard_runs(dir, None)
     }
@@ -2692,7 +2693,7 @@ mod pack_split_tests {
     fn pack_runs_as(dir: &str, shard: Option<(usize, usize)>, batch: &str) {
         // SAFETY: nextest runs each test in a process of its own.
         unsafe { std::env::set_var("RERAIL_BATCH_PACK", batch) };
-        let from = crate::source_tree::native().join("../docs/rule-syntax").join(dir);
+        let from = crate::source_tree::native().join("..").join(dir);
         let tmp = tempfile::tempdir().unwrap();
         let rules = tmp.path().join("rules").join(dir);
         let mut policies = Vec::new();
@@ -2760,25 +2761,25 @@ mod pack_split_tests {
     }
 
     packs! {
-        the_data_layer_is_split_with_its_crossings_declared: "data-layer",
-        the_blade_pack_is_split_with_its_crossings_declared: "packs/blade",
-        the_complexity_pack_is_split_with_its_crossings_declared: "packs/complexity",
-        the_django_pack_is_split_with_its_crossings_declared: "packs/django",
-        the_next_pack_is_split_with_its_crossings_declared: "packs/next",
-        the_node_pack_is_split_with_its_crossings_declared: "packs/node",
-        the_php_pack_is_split_with_its_crossings_declared: "packs/php",
-        the_react_pack_is_split_with_its_crossings_declared: "packs/react",
-        the_rerail_pack_is_split_with_its_crossings_declared: "packs/rerail",
-        the_rr_pack_is_split_with_its_crossings_declared: "packs/rr",
-        the_rust_pack_is_split_with_its_crossings_declared: "packs/rust",
-        the_sql_pack_is_split_with_its_crossings_declared: "packs/sql",
-        the_typescript_pack_is_split_with_its_crossings_declared: "packs/typescript",
-        the_vue_pack_is_split_with_its_crossings_declared: "packs/vue",
+        the_data_layer_is_split_with_its_crossings_declared: "docs/rule-syntax/data-layer",
+        the_blade_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/blade",
+        the_complexity_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/complexity",
+        the_django_pack_is_split_with_its_crossings_declared: "packs/django/rules",
+        the_next_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/next",
+        the_node_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/node",
+        the_php_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/php",
+        the_react_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/react",
+        the_rerail_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rerail",
+        the_rr_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rr",
+        the_rust_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/rust",
+        the_sql_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/sql",
+        the_typescript_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/typescript",
+        the_vue_pack_is_split_with_its_crossings_declared: "docs/rule-syntax/packs/vue",
     }
 
     #[test]
     fn the_data_layer_is_split_with_its_crossings_declared_policy_by_policy() {
-        pack_alone_runs("data-layer")
+        pack_alone_runs("docs/rule-syntax/data-layer")
     }
 
     macro_rules! shards {
@@ -2788,7 +2789,7 @@ mod pack_split_tests {
     }
 
     shards! {
-        "packs/python-main", 12,
+        "docs/rule-syntax/packs/python-main", 12,
         the_python_main_pack_is_split_with_its_crossings_declared_0: 0,
         the_python_main_pack_is_split_with_its_crossings_declared_1: 1,
         the_python_main_pack_is_split_with_its_crossings_declared_2: 2,
@@ -2804,13 +2805,13 @@ mod pack_split_tests {
     }
 
     shards! {
-        "packs/python", 2,
+        "docs/rule-syntax/packs/python", 2,
         the_python_pack_is_split_with_its_crossings_declared_0: 0,
         the_python_pack_is_split_with_its_crossings_declared_1: 1,
     }
 
     shards! {
-        "packs/javascript", 3,
+        "docs/rule-syntax/packs/javascript", 3,
         the_javascript_pack_is_split_with_its_crossings_declared_0: 0,
         the_javascript_pack_is_split_with_its_crossings_declared_1: 1,
         the_javascript_pack_is_split_with_its_crossings_declared_2: 2,

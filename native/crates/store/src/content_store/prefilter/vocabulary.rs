@@ -19,10 +19,8 @@ use super::kept;
 use rerail_blocks::kept::{FactKey, Kept, KeptRead};
 use sha2::{Digest as _, Sha256};
 
-/// A regex's terms (the prefilter's).
-pub const REGEX: i64 = 0;
-/// A text plan's terms (the text layer's).
-pub const TEXT: i64 = 1;
+/// A regex's terms (the prefilter's) and a text plan's (the text layer's): store-base's, which the facts name too.
+pub use rerail_store_base::content_store::prefilter::{VOCABULARY_REGEX as REGEX, VOCABULARY_TEXT as TEXT};
 
 const HEAD: &str = "voc_head";
 const KEY: &str = "voc_key";
@@ -118,7 +116,7 @@ fn key_puts(kind: i64, lang: i64, key: &str, upto: i64, terms: &[i64]) -> StoreR
 
 /// What tests terms for a group of keys: given the keys (their indices) and the terms' texts, each key's matching
 /// texts (their indices).
-pub type Test<'a> = &'a (dyn Fn(&[usize], &[&str]) -> Vec<Vec<u32>> + Sync);
+pub use rerail_store_base::content_store::prefilter::VocabularyTest as Test;
 
 /// Each key's terms where they need no test: a kept key's tested up to the counts' last publication, or a literal
 /// set's; for every other key, where its test starts (`None`: every term) and its terms so far; and the literal sets

@@ -174,3 +174,5 @@ of 2026-11-20 (fa09c9c761). Item 7 above is that model for one region and two sp
 5. **Kernels' rows bind their arguments** (done): the device layer gives each kernel's arguments with their access
    (`ROBUFFER` read, `RWBUFFER` / `WOBUFFER` write), and a launch pins each bound buffer's block by it
    (`join::Pipe::writes`, `region::bind_address`). A UKL library call's binds are held as written.
+
+**2026-11-23:** `BlockVec` is folded into `Vector` (decision 0628 §8). A relation's arrays are `Vector`s in its home's room (`Home::room`, `rows::vector_in`); the ledger check, borrowed rows (`rows::shared`) and the chunk hand-off (`InRelations::into_chunk`, `rows::from_chunk`) are `Vector`'s and its region's. Where this record says `BlockVec`, read that.

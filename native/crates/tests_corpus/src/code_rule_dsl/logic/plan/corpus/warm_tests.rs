@@ -266,7 +266,8 @@ fn a_warm_edits_own_batch_makes_the_changed_document_alone() {
 }
 
 /// A JavaScript run over the scripts HTML files hold (`.embedded on`, decision 0470 step 2): each name a script calls
-/// that `d.js` defines, at its line. `used` is cross-file (a call joined with another file's definition: declared, decision 0652). A node's
+/// that `d.js` defines, at its line. `used` is cross-file (a call joined with another file's definition), declared so
+/// (decision 0652). A node's
 /// `text` and `line` go with it into its file's chunk (the push's attributes, 7ff884a7aa; decision 0353 step 3), so
 /// `named` reads no base relation in the cross part. Its `finding` does, as a pack's does: a finding's node and file
 /// are decoded off the corpus batch (`node`, `doc`), the host files' documents among them.

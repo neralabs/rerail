@@ -686,6 +686,9 @@ pub mod heap {
             if on() {
                 alloc(p as usize, layout.size());
             }
+            if rerail_vector::probe::heap_on() && !p.is_null() {
+                rerail_vector::probe::heap_alloc(p as usize, layout.size());
+            }
             p
         }
         #[inline]
@@ -694,12 +697,18 @@ pub mod heap {
             if on() {
                 alloc(p as usize, layout.size());
             }
+            if rerail_vector::probe::heap_on() && !p.is_null() {
+                rerail_vector::probe::heap_alloc(p as usize, layout.size());
+            }
             p
         }
         #[inline]
         unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
             if on() {
                 free(ptr as usize);
+            }
+            if rerail_vector::probe::heap_on() {
+                rerail_vector::probe::heap_free(ptr as usize);
             }
             unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
         }
@@ -709,6 +718,9 @@ pub mod heap {
             if on() && !q.is_null() {
                 free(ptr as usize);
                 alloc(q as usize, new_size);
+            }
+            if rerail_vector::probe::heap_on() && !q.is_null() {
+                rerail_vector::probe::heap_realloc(ptr as usize, q as usize, new_size);
             }
             q
         }
@@ -927,22 +939,11 @@ extern crate self as rerail_prof;
 pub mod code_rule_dsl {
     #[path = "logic"]
     pub mod logic {
-        pub mod front {
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-            #[allow(unused_imports)]
-            use std::fmt;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
-        }
         pub mod profile;
     }
     pub mod phase_clock;
     pub mod prof;
+    pub mod sql_frame;
     #[allow(unused_imports)]
     use napi::Result;
     #[allow(unused_imports)]

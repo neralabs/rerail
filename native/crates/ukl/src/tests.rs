@@ -101,6 +101,48 @@ fn every_library_header_is_opencl_c_1_2() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+/// The library's functions, preprocessed for each C++ GPU backend, are each defined once: a name and its parameters'
+/// tokens at file scope before a body. Two merged branches each gave CUDA the coherent word's atomics, in its section
+/// and after the sections; NVRTC refused every kernel, and preprocessing alone passed.
+#[test]
+fn each_library_function_is_defined_once_on_every_backend() {
+    let k = "#include <ukl/backend.h>\n#include <ukl/memory.h>\n#include <ukl/simd.h>\n#include <ukl/group.h>\n";
+    for backend in [Backend::Metal { version: 310 }, Backend::Cuda { sm: 121 }, Backend::Cuda { sm: 70 }, Backend::Hip { wave: 32 }, Backend::Hip { wave: 64 }] {
+        let t = tokens(&Preprocess::new(backend).file("/mem/k", k).run("/mem/k").unwrap_or_else(|e| panic!("{backend:?}: {e}")));
+        let mut seen = std::collections::HashSet::new();
+        let (mut depth, mut i) = (0usize, 0);
+        while i < t.len() {
+            match t[i].as_str() {
+                "{" => depth += 1,
+                "}" => depth = depth.saturating_sub(1),
+                "(" if depth == 0 && i > 0 && t[i - 1].starts_with("ukl_") => {
+                    let (from, mut paren, mut j) = (i - 1, 0usize, i);
+                    while j < t.len() {
+                        paren = match t[j].as_str() {
+                            "(" => paren + 1,
+                            ")" => paren - 1,
+                            _ => paren,
+                        };
+                        j += 1;
+                        if paren == 0 {
+                            break;
+                        }
+                    }
+                    if t.get(j).is_some_and(|b| b == "{") {
+                        let sig = t[from..j].join(" ");
+                        assert!(seen.insert(sig.clone()), "{backend:?}: {sig} is defined twice");
+                    }
+                    i = j;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        assert!(seen.iter().any(|s| s.starts_with("ukl_atomic_add (")), "{backend:?}: the atomics were found");
+    }
+}
+
 /// A kernel reaches the library by `<ukl/...>`, from memory as from disk: the carried copy.
 #[test]
 fn a_kernel_includes_the_library() {
@@ -207,6 +249,9 @@ fn targets_are_their_names() {
     assert_eq!(m5.backend, Backend::Metal { version: 400 });
     assert_eq!(m5.defines, [("UKL_HAS_MATMUL2D".to_string(), "1".to_string())]);
     assert_eq!(Target::named("apple7").unwrap().defines, []);
+    // The M1s' tier (decision 0672): apple7's version, its large bodies called.
+    let g13 = Target::named("apple7-g13").unwrap();
+    assert_eq!((g13.backend, g13.defines), (Backend::Metal { version: 310 }, vec![("UKL_METAL_G13".to_string(), "1".to_string())]));
     assert_eq!(Target::named("sm_121").unwrap().backend, Backend::Cuda { sm: 121 });
     assert_eq!(Target::named("gfx90a").unwrap().backend, Backend::Hip { wave: 64 });
     let rdna2 = Target::named("gfx1035").unwrap();
@@ -225,6 +270,8 @@ fn a_target_runs_its_own_and_its_compatible_targets_code() {
     let runs = |n: &str| Target::named(n).unwrap().runs();
     assert_eq!(runs("apple10"), ["apple10", "apple7"]);
     assert_eq!(runs("apple7"), ["apple7"]);
+    // A G13's text is its own: it runs no other tier's code, and no other tier runs its.
+    assert_eq!(runs("apple7-g13"), ["apple7-g13"]);
     assert_eq!(runs("sm_86"), ["sm_86", "sm_80", "compute_80", "compute_70"]);
     assert_eq!(runs("sm_121"), ["sm_121", "sm_120", "compute_80", "compute_70"]);
     assert_eq!(runs("sm_70"), ["sm_70", "compute_70"]);

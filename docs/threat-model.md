@@ -155,7 +155,11 @@ a secret token sent as `x-rerail-access`, on every request.
     agent sandbox. Otherwise a process that reaches the socket but cannot read the Rerail home could make the daemon
     write anywhere.
   - Hooks take the capability from the daemon's state with the socket path (`daemonEngineEndpoint`). For a socket in
-    `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`).
+    `RERAIL_ENGINE_SOCKET`, they use the home's `daemon.json` if it names the same socket (`engineEndpointAt`). On
+    Windows they send neither the capability nor the event until Windows names the process holding the pipe's server
+    end as the daemon `daemon.json` records (its pid, started no later than it recorded itself), which wrote that
+    capability itself, or else the engine on that pipe gives the proof T2 describes for the capability `daemon.json`
+    records.
 - **Cross-site requests.** The capability is a header, not a cookie, so a browser cannot send it cross-origin without
   a preflight, which the daemon never answers. Defence in depth: a foreign `Origin` on an `/api` write gets `403`;
   `/native/session` and `/native/shutdown` refuse any `Origin`.
@@ -231,9 +235,41 @@ without hooks or network.
   - Skips relative `PATH` entries, entries in a `node_modules` folder, and entries in the repository it runs in (the
     nearest folder above its working folder with a `.git`). This stops a repository's `bin/` or `node_modules/.bin`
     going first, but not every route (T11).
-  - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, `GIT_TERMINAL_PROMPT=0` and
-    `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
-  - No network commands; `cat-file --batch` runs no textconv.
+  - Every call sets `core.fsmonitor=false`, `core.hooksPath=/dev/null` and `log.showSignature=false` (a `git reflog`
+    or `git log` then starts no `gpg.program`), `GIT_TERMINAL_PROMPT=0` and `GIT_NO_LAZY_FETCH=1` where relevant, and
+    a 10 s time limit, which every Git process a guarded call or a read that does not block starts shares: one asked
+    once it is spent is not started, and the call fails as a Git that ran out of time.
+  - A call through `runGit`, or a read that does not block, that reads worktree files (the audit's and the scan's
+    `git diff`, the session walk's `git ls-files --modified`) first reads the repository's `config` and
+    `config.worktree` in process: where each is absent or holds neither `filter` nor `include` in any case, the
+    repository defines no driver, and the call runs as it is. Else it lists the config with its scopes, and sets each
+    filter driver a repository's own config defines (its `config`, `config.worktree` and the files they include) as
+    the person's own config (system, global, command line) defines it, or to no program
+    (`src/engine/git-guard/filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
+    driver only a repository defines is compared as it is on disk: its stat changing alone lists it as changed where
+    that program would have mapped it to the index's bytes. The audit's and the scan's `git diff --name-only` run
+    through `runGitWithoutBlocking`, with `--ignore-submodules=dirty`, so Git starts no Git in a submodule for it,
+    and Rerail asks each checked-out submodule Git's diff looks into (none marked assume-unchanged or skip-worktree)
+    through the same guard, all of them at once (at most one Git per processor in each call; a limit shared between
+    calls would let one call's queue spend another's time limit), in the Git folder its `.git` named
+    when Rerail read it. Another `runGit` call that would look into
+    submodules runs as it is, Git looking into them with their own drivers; Rerail makes none. Rerail
+    first reads that folder in process as Git does before it starts a status there (a `HEAD` Git takes, `objects`
+    and `refs` in its common directory): a `.git` that names no repository, or a `.git` file that holds more than
+    Git's 1 MiB or no path, fails the diff with Git's message, as Git's own diff fails; one Git cannot open fails
+    Rerail's diff in Git, before Rerail reads it, as it fails Git's own; and one that is neither a folder nor a regular
+    file is a submodule not checked out, as Git takes it, and is never opened, as Git opens none.
+    When the listing shows no config of the repository's own, Rerail reads the folder again in process and lists that
+    one config file with Git (`git config --list --file`): a repository whose config file is absent or holds no entry
+    to Git is asked, and any other submodule is listed as changed with no Git started in it, so a Git folder that held
+    no config at the listing and holds some by then is never opened (`src/engine/git-guard/submodule-state.ts`).
+    A call whose config Git cannot list is not made. With a Git older than 2.31 every call runs as it would without
+    these overrides, and the process says so once. `runGitAsync` and `streamGit` set no filter drivers: of their calls,
+    only two of Merge Assist's ([internal testing](internal-testing.md), off by default) read worktree files, and each
+    can start a clean filter a repository's config names: its diff of its base against the working files, and its
+    `git blame --contents` of a working file. The listing and the call are two Git processes (T11).
+  - No network commands; `cat-file --batch` runs no textconv, and a `--name-only` diff runs no textconv or external
+    diff.
 - **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
   It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
@@ -810,6 +846,11 @@ should not widen it.
   call, and the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
   `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
   hook's or a command's Git gets both homes' `bin`, the share's first.
+- A Git call that reads worktree files reads or lists the repository's config, then runs as a Git process that reads
+  the config again: a writer that changes the config, or a file it includes, between the two can have its filter
+  driver started, as the person's own `git status` would start it (`src/engine/git.ts`). The person's own Git LFS
+  runs the programs a repository's config names under `lfs.extension`. A Git older than 2.31 runs a repository's
+  filter drivers in Rerail's calls, as it runs them for the person.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
   Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
   System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
@@ -937,6 +978,16 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - `openInBrowser` puts the capability link in `argv` (`open`, `xdg-open`), readable by other users via `ps` while the
   process runs. Accepted: the window is short.
 - The enforcer's spool in `tmpdir()` survives a crash.
+- On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
+  names the process serving the pipe, or the engine there proves it holds the capability) and sends the event, with
+  the capability, on another. The time between the two is not short. A Claude Code or Codex hook checks before it
+  waits for its session's lock, up to 30 s (`LOCK_WAIT_MS`); so does a Cursor hook, and one that reads its transcript
+  then sends each new line, and its own event, on that one check. A proof the hook's start check got counts for up to
+  12 s (`HOOK_DAEMON_WAIT_MS`). After Windows has answered, the event's own connection can wait up to 30 s for a free
+  instance of a busy pipe, as Node's connect does (the check's own wait for an instance, `ENGINE_ANSWER_WAIT_MS`, is
+  as long). If the daemon ends in that time and another user creates a pipe of that name, that user gets the event and
+  the capability. The other user cannot end the daemon to open that window. What would close it: the same check on
+  the connection that carries the event.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
   `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no
@@ -945,8 +996,12 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
   an agent, which can run `git worktree add` itself, as it can declare a submodule (`declaredSubmodules`). What it gains
   is another checkout of the same repository, judged by the repository's rules at the same paths within it, its own
   `.rerail/rules` in Log until approved. A `.git` file it writes without registering a worktree takes no files from the
-  checkout around it. Each session walks and reads the files of every such worktree of its repository and records
-  what it finds there, but another session's work never steers it.
+  checkout around it. One walk, shared by the repository's sessions, reads the files of every such worktree. A change
+  there steers only a session whose tool call ran in that worktree as it was written, by the folder the host's hook
+  names; a change no session made is recorded once, in Log, as the repository's. An agent that writes into another
+  worktree from a call running elsewhere is therefore not steered on it, though the write is recorded; and one whose
+  call runs in that worktree at the same moment as another's write takes it too, which only steers it on code it did
+  not write.
 
 </details>
 

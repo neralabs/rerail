@@ -434,6 +434,19 @@ impl RelStats {
         self.rows_of(flat, width, sign, Some(at), None)
     }
 
+    /// `rows_by` of the rows `skip` does not take: a file's rows less those of the value documents another file holds
+    /// (`keptstats::Keeper::count_where`), read where they lie by their indices, not copied.
+    pub fn rows_by_except(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<usize>, skip: &dyn Fn(&[i64]) -> bool) {
+        if width == 0 || flat.is_empty() {
+            return;
+        }
+        let rows: Vec<usize> = (0..flat.len() / width).filter(|&r| !skip(&flat[r * width..(r + 1) * width])).collect();
+        if rows.len() == flat.len() / width {
+            return self.rows_by(flat, width, sign, at);
+        }
+        self.count(rows.len(), width, &mut |c, each| rows.iter().enumerate().for_each(|(i, &r)| each(i, flat[r * width + c])), sign, Some(at), None)
+    }
+
     /// `documents_at` over `n` rows read where they lie (`value(row, column)`, a source's), not a flat copy of them:
     /// a base relation's documents counted off the corpus batch (decision 0458).
     pub fn documents_read(&mut self, n: usize, width: usize, value: &dyn Fn(usize, usize) -> i64, from: &[usize], sign: i64) {

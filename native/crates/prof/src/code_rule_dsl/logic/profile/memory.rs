@@ -134,12 +134,13 @@ pub(super) struct Sample {
     pub(super) threads: usize,
     /// What else holds memory then, beside the heap (MB): the Metal driver's allocations, the device buffer pool's
     /// reservations, relational work's leases (live, idle), SQLite's heap, the host blocks (used, and of it free
-    /// on their lists; decision 0342).
-    pub(super) holders: [usize; 7],
+    /// on their lists, and of that what is still resident: a free chunk's pages may have gone to the OS; decision
+    /// 0342), and the threads' stacks and long rooms (blocks of their own, which no allocator counts).
+    pub(super) holders: [usize; 10],
 }
 
 /// The holders a sample reads (`Sample::holders`), in MB.
-fn holders() -> [usize; 7] {
+fn holders() -> [usize; 10] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -148,7 +149,9 @@ fn holders() -> [usize; 7] {
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     let (host, host_free) = rerail_accel::blocks::host_held();
-    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20]
+    let host_free_resident = rerail_accel::blocks::host_free_resident();
+    let (stacks, long) = (rerail_blocks::scratch::resident(), rerail_blocks::long::resident());
+    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20, host_free_resident >> 20, stacks >> 20, long >> 20]
 }
 
 /// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
@@ -372,11 +375,13 @@ pub(super) fn sampled_report(r: &mut String) {
     // allocators). The driver's count (`current_allocated_size`) is shown apart: it counts every no-copy wrap of host
     // memory (the blocks, the heap) again, so it is no holder of its own (ab145: 2,709 MB of it at a 3,051 MB
     // footprint whose IOAccelerator regions were 971 MB).
-    let [driver, reserved, leased, idle, sqlite, host, host_free] = t.holders;
+    let [driver, reserved, leased, idle, sqlite, host, host_free, host_free_resident, stacks, long] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
-    let accounted = heap_mb(t.resident) + reserved + leased + idle + host;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted), driver);
+    // The blocks' bytes in memory: those used, less their free chunks' pages the OS has taken back.
+    let host_resident = host.saturating_sub(host_free.saturating_sub(host_free_resident));
+    let accounted = heap_mb(t.resident) + reserved + leased + idle + host_resident + stacks + long;
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} used, {} of them in memory ({} live, {} free on their lists; {} more free given back to the OS); the threads' stacks {}, their long rooms {}; the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, sqlite, host, host_resident, host_resident.saturating_sub(host_free_resident), host_free_resident, host_free.saturating_sub(host_free_resident), stacks, long, heap_mb(t.footprint).saturating_sub(accounted), driver);
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
@@ -467,10 +472,10 @@ pub fn heap_frames_tsv() -> String {
 pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\tthreads\topen\n");
+    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\thost_free_resident_mb\tstacks_mb\tlong_rooms_mb\tthreads\topen\n");
     for r in &s.rows {
-        let [d, p, l, i, q, h, f] = r.holders;
-        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
+        let [d, p, l, i, q, h, f, fr, st, lo] = r.holders;
+        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{fr}\t{st}\t{lo}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
 }

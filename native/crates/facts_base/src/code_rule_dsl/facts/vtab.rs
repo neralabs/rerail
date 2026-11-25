@@ -129,7 +129,7 @@ impl ViewInPlace {
 /// ended (`hint`: a view of the tape's document and granule), and the source's plan of what a match reads (`plan`),
 /// made on the step's first probe. A hint is checked, never trusted; a plan is kept only for the column and columns
 /// it was made for.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ProbeCursor {
     pub hint: [u32; 2],
     pub plan: ReadPlan,
@@ -139,6 +139,25 @@ pub struct ProbeCursor {
     /// Where the last probe's id was found in its document (a view of the tape): its slot's entry in the granule
     /// table, and its select's group. Hints, checked before use; any value gives the same rows.
     pub near: [u32; 2],
+    /// The read's memo of the node id a probe last found, where the source reads nodes (`NodeMemo`): one cell the
+    /// join gives each of its steps' cursors, as a rule's body probes several views by the same node in turn, each
+    /// from inside the step before's read. None: the probe's own (a lookup alone).
+    pub node: Option<std::rc::Rc<std::cell::Cell<NodeMemo>>>,
+}
+
+/// A source's memo of the node id it last found (`Batch::node_hint`): its documents (their address), the id, its
+/// document, local id and tape node (`u32::MAX` until read), and the document's projection (its address). Checked
+/// against all of these, never trusted: a probe of `kind(n, k)` then `text(n, s)` then `docof(n, d)` by the same `n`
+/// searches the id's granule and selects its tape node once, where each searched and selected again. The default
+/// matches no documents.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NodeMemo {
+    pub docs: usize,
+    pub id: i64,
+    pub doc: u32,
+    pub local: u32,
+    pub x: u32,
+    pub at: usize,
 }
 
 /// A source's plan of a probe's reads (`ProbeCursor::plan`): for the key column and output columns it was made for, one
@@ -179,9 +198,26 @@ pub const NO_MEMO: u32 = rerail_clif::view_reads::NO_DOC;
 /// (the syntax table's `LongTexts`).
 pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 
-/// The functions that read a node's text or value from the run's batch (`Source::node_read`): their values are the run's,
-/// so `functions::eval` gives none.
-pub const NODE_READS: [&str; 11] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text"];
+/// The functions that read a node's text, value or order from the run's batch (`Source::node_read`): their values are
+/// the run's, so `functions::eval` gives none. `rr_node_order` is a node's preorder key, `node_order`'s `k`: what a
+/// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join. `name`, `comment`, `strprefix`, `op_at`
+/// and T's `text`, `intval` and `op` are core.rerail's and T's per-node values, read where a rule binds the node
+/// (decision 0353 step 3).
+pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "rr_node_order"];
+
+/// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
+/// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
+pub type Row = rerail_blocks::frame::InlineVec<i64, 8>;
+
+/// A `Row` of its values: `row![a, b]`.
+#[macro_export]
+macro_rules! row {
+    ($($v:expr),* $(,)?) => {{
+        let mut r = $crate::code_rule_dsl::facts::vtab::Row::new();
+        $(r.push($v);)*
+        r
+    }};
+}
 
 /// A lookup's rows read by position (`Source::lookup_seq`): how many, and the `i`th, where they lie (a list the source
 /// holds, its runs of rows), or a list made of them.
@@ -232,13 +268,23 @@ impl<'a> Seq<'a> {
     }
 }
 
+/// A node read (`Source::node_read_ref`): a text the source lends, or a value made.
+pub enum NodeRead<'a> {
+    Text(&'a str),
+    Value(rusqlite::types::Value),
+}
+
 pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> { None }
-    /// Node `n`'s text or value as the function `name` reads it (`NODE_READS`), its further arguments `more` (`op_at`'s
-    /// place), for a binding of `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
-    fn node_read(&self, _name: &str, _n: i64, _more: &[i64]) -> Option<String> { None }
+    /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), its further arguments `more`
+    /// (`op_at`'s place), for a binding of `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source
+    /// or function.
+    fn node_read(&self, _name: &str, _n: i64, _more: &[i64]) -> Option<rusqlite::types::Value> { None }
+    /// `node_read`, a text lent where the source holds it, with none made: what a join's walk reads
+    /// (`NodeRead::Text`).
+    fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<NodeRead<'_>> { self.node_read(name, n, more).map(NodeRead::Value) }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -512,6 +558,18 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>>;
+    /// `lookup`'s rows, each given to `each` as it is found, in `lookup`'s order, with no list made (decision 0687: a
+    /// probe's rows are the caller's to keep, in its own memory); false where it scans (`lookup`'s `None`). The
+    /// default reads `lookup`'s list; a source probed often gives its rows as it finds them.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        match self.lookup(column, values) {
+            Some(rows) => {
+                rows.iter().for_each(|&r| each(r));
+                true
+            }
+            None => false,
+        }
+    }
     /// `lookup`'s rows for `value`, read by position (`Seq`), in its order; `None` where it scans. A source whose
     /// lookups are runs of rows (a view's document) or a list it holds (a kind's nodes) gives them made into no list
     /// of its own: what a probe's candidates number (`setfix::InRel::probe_size`) and are drawn from (`probe_sample`)
@@ -1494,7 +1552,7 @@ impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
         self.binding.current().write(Some(arg.as_i64()?),None,None,false,false).map(|_|())
     }
     fn insert(&mut self,args:&rusqlite::vtab::Inserts<'_>)->Result<i64> {
-        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Insert,1);
+        crate::code_rule_dsl::sql_frame::frame(crate::code_rule_dsl::sql_frame::FrameEvent::Insert,1);
         use rusqlite::vtab::ConflictMode;
         let conflict=unsafe {args.on_conflict(self.connection)};
         let values=(2..args.len()).map(|i|args.get::<Option<i64>>(i)).collect::<Result<Vec<_>>>()?;
@@ -1510,7 +1568,7 @@ impl<'vtab> rusqlite::vtab::UpdateVTab<'vtab> for Table {
 // SAFETY: SQLite's cursor base is first. No borrowed SQLite value escapes filter.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, index: c_int, list: Option<&str>, args: &Filters<'_>) -> Result<()> {
-        use crate::code_rule_dsl::sql_profile::{frame,FrameEvent};
+        use crate::code_rule_dsl::sql_frame::{frame,FrameEvent};
         frame(if index==0 {FrameEvent::Scan} else {FrameEvent::Lookup},1);
         let stats = &self.binding.stats;
         stats.scans.fetch_add(1, Ordering::Relaxed);
@@ -1663,7 +1721,7 @@ unsafe impl VTabCursor for Cursor {
     }
     fn next(&mut self) -> Result<()> {
         if let Some(stream)=&mut self.stream {self.stream_row=stream.next();}
-        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Next,1);
+        crate::code_rule_dsl::sql_frame::frame(crate::code_rule_dsl::sql_frame::FrameEvent::Next,1);
         if self.selected.is_some()||self.direct.is_some() {
             self.position += 1;
         } else {
@@ -1676,7 +1734,7 @@ unsafe impl VTabCursor for Cursor {
         self.direct.as_ref().map_or_else(||self.selected.as_ref().map_or(self.range.is_empty(), |r| self.position >= r.len()),|r|self.position>=r.len())
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
-        crate::code_rule_dsl::sql_profile::frame(crate::code_rule_dsl::sql_profile::FrameEvent::Column,1);
+        crate::code_rule_dsl::sql_frame::frame(crate::code_rule_dsl::sql_frame::FrameEvent::Column,1);
         self.binding.stats.columns.fetch_add(1, Ordering::Relaxed);
         let value=if let Some(row)=&self.stream_row {row.cells.cell(col as usize)} else if let Some(rows)=&self.direct {rows[self.position].cells.cell(col as usize)} else if self.cache_rows {self.with_cells(|_,cells|cells.cell(col as usize))} else {self.source.cell(self.row(),col as usize)};
         ctx.set_result(&value)
@@ -1694,14 +1752,14 @@ unsafe impl VTabCursor for Cursor {
 /// A column whose values were pushed in order (a document's lines, columns and texts, by node) is its own index:
 /// searched in the cells, with no sort and no row list. Its distinct values are counted as it is pushed.
 pub struct Relation {
-    columns: Vec<String>,
+    /// Its columns' names, interned once a schema (`column_names`): a relation makes none of its own.
+    columns: &'static [&'static str],
     /// Rows pushed and not yet read, row-major: the first read moves them into `cells`.
     staged: std::sync::Mutex<Vector<i64>>,
     rows: usize,
     cells: OnceLock<super::rows::Rows>,
-    indexes: Box<[OnceLock<ColumnIndex>]>,
-    /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
-    ordered: Box<[Option<usize>]>,
+    /// Per column, its index and its order, in one list.
+    cols: Box<[Col]>,
     /// Every row's id in order, made when a column pushed in order is first probed for a slice of its rows
     /// (`sorted_rows`): such a column's rows of one value are consecutive, and need no index of their own.
     identity: OnceLock<Vector<u32>>,
@@ -1709,15 +1767,72 @@ pub struct Relation {
     /// so that one takes their writer and its rows follow these in the same block relation.
     grows: bool,
 }
-struct ColumnIndex {
-    rows: Vector<u32>,
-    distinct: usize,
-    /// Every `FENCE`th row's value, in order: a search reads these, contiguous, before the rows they bound, whose
-    /// values it reads one random access each (a search of 100 k rows was 34 of them a probe, two bounds).
-    fence: Vector<i64>,
+/// A column's sorted order, in the relation's block (t56 step 3), searched by the orders' one search
+/// (`rerail_blocks::order`): its rows in value order (then row), the value at every `FENCE`th, and each row's print of
+/// its value. A probe of one value reads the fences, then its span's prints, eight a word, and only the rows whose
+/// print is the value's: about one row read where a bisection read eight, each a decode of its sealed chunk.
+/// A relation's column: its index (made when it is first probed), and its distinct values while its values have come
+/// in nondecreasing order, else `None`.
+struct Col {
+    index: OnceLock<ColumnIndex>,
+    ordered: Option<usize>,
 }
-/// Rows a fence entry stands for (0.125 bytes a row).
-const FENCE: usize = 64;
+impl Col {
+    fn of(ordered: Option<usize>) -> Self {
+        Col { index: OnceLock::new(), ordered }
+    }
+}
+
+/// `columns` interned: one list a schema, made once in the process and never freed (an append-only interner of the
+/// engine's own names, as its atoms' are). A relation's columns were a `Vec` of a `String` each, `1 + k` allocations
+/// a relation, and a chunk makes millions of relations.
+fn column_names<S: AsRef<str>>(columns: &[S]) -> &'static [&'static str] {
+    use std::hash::{BuildHasher, Hasher};
+    type Names = &'static [&'static str];
+    thread_local! { static NEAR: std::cell::RefCell<rustc_hash::FxHashMap<u64, Names>> = Default::default(); }
+    static ALL: std::sync::Mutex<Option<rustc_hash::FxHashMap<u64, Vec<Names>>>> = std::sync::Mutex::new(None);
+    let same = |n: Names| n.len() == columns.len() && n.iter().zip(columns).all(|(a, b)| *a == b.as_ref());
+    let mut h = rustc_hash::FxBuildHasher.build_hasher();
+    for c in columns {
+        h.write(c.as_ref().as_bytes());
+        h.write_u8(0xff);
+    }
+    let key = h.finish();
+    // The thread's list of the names' hash, else the process's (a hash two lists share: the process's alone).
+    if let Ok(Some(n)) = NEAR.try_with(|m| m.borrow().get(&key).copied().filter(|&n| same(n))) {
+        return n;
+    }
+    let n = {
+        let mut all = ALL.lock().unwrap_or_else(|e| e.into_inner());
+        let lists = all.get_or_insert_with(Default::default).entry(key).or_default();
+        match lists.iter().copied().find(|&n| same(n)) {
+            Some(n) => n,
+            None => {
+                let n: Names = Box::leak(columns.iter().map(|c| &*Box::leak(Box::<str>::from(c.as_ref()))).collect::<Vec<&'static str>>().into_boxed_slice());
+                lists.push(n);
+                n
+            }
+        }
+    };
+    let _ = NEAR.try_with(|m| m.borrow_mut().insert(key, n));
+    n
+}
+
+struct ColumnIndex {
+    /// The rows in value order; empty for a column pushed in order (`Relation::ordered`): its rows are their order.
+    ids: Vector<u32>,
+    distinct: usize,
+    fences: Vector<i64>,
+    prints: Vector<u8>,
+}
+impl ColumnIndex {
+    /// The row at position `p` of the order.
+    #[inline(always)]
+    fn row(&self, p: usize) -> u32 {
+        if self.ids.is_empty() { p as u32 } else { self.ids[p] }
+    }
+}
+use rerail_blocks::order::FENCE;
 impl Relation {
     /// The bytes its rows' chunks hold in their block (none before its first read writes them there).
     pub fn block_bytes(&self) -> usize {
@@ -1727,12 +1842,11 @@ impl Relation {
     pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
         Self {
-            columns: columns.iter().map(|c| (*c).to_owned()).collect(),
+            columns: column_names(columns),
             staged: Default::default(),
             rows: 0,
             cells: OnceLock::new(),
-            indexes: columns.iter().map(|_| OnceLock::new()).collect(),
-            ordered: columns.iter().map(|_| Some(0)).collect(),
+            cols: columns.iter().map(|_| Col::of(Some(0))).collect(),
             identity: OnceLock::new(),
             grows: false,
         }
@@ -1774,18 +1888,17 @@ impl Relation {
         let k = columns.len();
         let mut parts = Vec::new();
         for (r, range) in runs {
-            assert_eq!(&r.columns, columns, "a run of a relation of other columns");
+            assert!(r.columns.len() == columns.len() && r.columns.iter().zip(columns).all(|(a, b)| a == b), "a run of a relation of other columns");
             parts.extend(r.cells().runs(range.start as u32, range.end as u32));
         }
         let cells = super::rows::Rows::of_parts(k, super::rows::Life::Source, parts);
         let rows = cells.rows();
         Relation {
-            columns: columns.to_vec(),
+            columns: column_names(columns),
             staged: Default::default(),
             rows,
             cells: OnceLock::from(cells),
-            indexes: columns.iter().map(|_| OnceLock::new()).collect(),
-            ordered: columns.iter().map(|_| None).collect(),
+            cols: columns.iter().map(|_| Col::of(None)).collect(),
             identity: OnceLock::new(),
             grows: true,
         }
@@ -1800,12 +1913,11 @@ impl Relation {
         let k = self.columns.len();
         let base = self.cells();
         let mut r = Relation {
-            columns: self.columns.clone(),
+            columns: self.columns,
             staged: Default::default(),
             rows: self.rows,
             cells: OnceLock::from(base.shared(self.rows)),
-            indexes: self.columns.iter().map(|_| OnceLock::new()).collect(),
-            ordered: self.ordered.clone(),
+            cols: self.cols.iter().map(|c| Col::of(c.ordered)).collect(),
             identity: OnceLock::new(),
             grows: true,
         };
@@ -1826,14 +1938,14 @@ impl Relation {
     }
     /// A relation of `rows`, staged (`push`), not yet written into a block: rows a relation that goes on from another
     /// writes once, past that one's (`grown`: a tape value's rows admitted inside a chunk's fixpoint, decision 0431 §8).
-    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
+    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Row>) -> Self {
         let mut r = Relation::new(columns);
         rows.for_each(|row| r.push(&row));
         r
     }
     /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
     /// (no staging, no growth or move); else staged, as `push` stages them.
-    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
+    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Row>) -> Self {
         let mut r = Relation::new(columns);
         if let (n, Some(m)) = rows.size_hint()
             && n == m
@@ -1854,7 +1966,7 @@ impl Relation {
         // The last row read where it is: staged, or (pushed after a read) in the block.
         let staged = self.staged.get_mut().unwrap_or_else(|e| e.into_inner());
         let cells = self.cells.get();
-        for (c, o) in self.ordered.iter_mut().enumerate() {
+        for (c, o) in self.cols.iter_mut().map(|c| &mut c.ordered).enumerate() {
             let prev = last.map(|l| cells.map_or_else(|| staged[l * k + c], |r| r.get(l as u32, c)));
             *o = match (*o, prev) {
                 (Some(d), None) => Some(d + 1),
@@ -1868,7 +1980,7 @@ impl Relation {
             None => staged.extend_from_slice(row),
         }
         self.rows += 1;
-        self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
+        self.cols.iter_mut().for_each(|c| c.index = OnceLock::new());
         self.identity = OnceLock::new();
     }
     /// Column `c` of rows `range`, resolved once where they lie in one part (`Rows::range_reader`).
@@ -1879,7 +1991,7 @@ impl Relation {
     /// The rows in their block: the staged ones written there at the first read, in one relation of their size.
     #[inline]
     fn cells(&self) -> &super::rows::Rows {
-        self.cells.get_or_init(|| {
+        crate::code_rule_dsl::logic::profile::once(&self.cells, "relation: staged rows written", || {
             let staged = std::mem::take(&mut *self.staged.lock().unwrap_or_else(|e| e.into_inner()));
             let mut cells = super::rows::Rows::living(self.columns.len(), super::rows::Life::Source);
             cells.reserve(staged.len());
@@ -1888,55 +2000,55 @@ impl Relation {
         })
     }
     fn index(&self, column: usize) -> &ColumnIndex {
-        self.indexes[column].get_or_init(|| {
+        crate::code_rule_dsl::logic::profile::once(&self.cols[column].index, "relation: a column's index built", || {
+            use super::rows::collect_in;
+            use rerail_blocks::order::print_vals;
+            let home = self.cells().home();
+            let print = |v: i64| print_vals(std::iter::once(v));
+            if let Some(distinct) = self.cols[column].ordered {
+                // Its rows are its order: the fences and prints of its values as they lie, each read once.
+                let vals = (0..self.len()).map(|r| self.value(r, column));
+                let prints = collect_in(home.as_ref(), vals.map(print));
+                let fences = collect_in(home.as_ref(), (0..self.len()).step_by(FENCE).map(|r| self.value(r, column)));
+                return ColumnIndex { ids: collect_in(home.as_ref(), std::iter::empty()), distinct, fences, prints };
+            }
             // Each value read once, and the pairs sorted (ties by row, as a stable sort by value): a sort reading the
             // rows' values at every comparison read each of them about 2 log n times.
             let mut pairs: Vec<(i64, u32)> = (0..self.len()).map(|r| (self.value(r, column), r as u32)).collect();
             pairs.sort_unstable();
             let distinct = 1 + pairs.windows(2).filter(|w| w[0].0 != w[1].0).count();
-            let fence = pairs.iter().step_by(FENCE).map(|p| p.0).collect();
-            let rows = pairs.into_iter().map(|p| p.1).collect();
-            ColumnIndex { rows, distinct, fence }
+            let fences = collect_in(home.as_ref(), pairs.iter().step_by(FENCE).map(|p| p.0));
+            let prints = collect_in(home.as_ref(), pairs.iter().map(|p| print(p.0)));
+            let ids = collect_in(home.as_ref(), pairs.into_iter().map(|p| p.1));
+            ColumnIndex { ids, distinct, fences, prints }
         })
     }
     /// Whether `column`'s values were pushed in order, so that it is its own index.
     pub fn ordered(&self, column: usize) -> bool {
-        self.ordered[column].is_some()
+        self.cols[column].ordered.is_some()
     }
-    /// The rows with values in `lo..=hi` of a column pushed in order (`ordered`): the start by the cells' own search
-    /// (`Rows::lower_bound`: its parts, its chunks, then the chunk's encoding), then the end galloped from it. A probe
-    /// of one value (a key's, `text(n, s)`'s) reads a row or two past the start where a second bisection read about
-    /// log n, each through a segment search and a decode. (A gallop of the start from this thread's last probe was
-    /// measured too, on `all`: the probes are not near each other, and it cost 23 G instructions more.)
-    fn ordered_between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
-        let n = self.len();
-        let start = (self.cells().lower_bound(column, lo) as usize).min(n);
-        start..first_from(n, start, |m| self.value(m, column) <= hi).max(start)
+    /// The positions in `column`'s order of the rows holding `value` (`rerail_blocks::order::find`: the fences, then
+    /// the span's prints, then the rows whose print is the value's).
+    fn equal(&self, column: usize, value: i64) -> Range<usize> {
+        let ix = self.index(column);
+        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, 1, &[value], |p, _| self.value(ix.row(p) as usize, column).cmp(&value));
+        s..e
     }
     /// The rows with values in `lo..=hi`, in value order.
     fn rows_between(&self, column: usize, lo: i64, hi: i64) -> rerail_blocks::vector::Vector<usize> {
-        if self.ordered[column].is_some() {
-            return self.ordered_between(column, lo, hi).collect();
-        }
-        self.index(column).rows[self.between(column, lo, hi)].iter().map(|&r| r as usize).collect()
+        let ix = self.index(column);
+        self.between(column, lo, hi).map(|p| ix.row(p) as usize).collect()
     }
     /// The positions in `column`'s index of the rows with values in `lo..=hi`.
     fn between(&self, column: usize, lo: i64, hi: i64) -> Range<usize> {
         let index = self.index(column);
-        // The first position whose value is not `below` (ascending): the fence's entry past it bounds the rows to
-        // search to one fence's span.
-        // `RERAIL_FENCE=off`: every row searched, as before (to measure the fence).
-        let first = |below: &dyn Fn(i64) -> bool| -> usize {
-            if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_FENCE").is_ok_and(|v| v == "off")) {
-                return index.rows.partition_point(|&r| below(self.value(r as usize, column)));
-            }
-            let j = index.fence.partition_point(|&k| below(k));
-            let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(index.rows.len()));
-            from + index.rows[from..to].partition_point(|&r| below(self.value(r as usize, column)))
-        };
-        let start = first(&|v| v < lo);
+        let (n, at) = (self.len(), |p: usize| self.value(index.row(p) as usize, column));
+        // The first position not below `lo`: the fence's entry past it bounds the rows to search to one fence's span.
+        let j = index.fences.partition_point(|&k| k < lo);
+        let (from, to) = (j.saturating_sub(1) * FENCE, (j * FENCE).min(n));
+        let start = rerail_blocks::order::split_at_pos(from, to, |p| at(p) < lo);
         // The end from the start (`first_from`): no second search of the fence and its span.
-        start..first_from(index.rows.len(), start, |m| self.value(index.rows[m] as usize, column) <= hi).max(start)
+        start..first_from(n, start, |m| at(m) <= hi).max(start)
     }
 }
 
@@ -1970,7 +2082,7 @@ fn first_from(n: usize, from: usize, below: impl Fn(usize) -> bool) -> usize {
 impl Source for Relation {
     fn revision(&self)->Option<u64> {Some(0)}
     fn columns(&self) -> Vec<String> {
-        self.columns.clone()
+        self.columns.iter().map(|c| (*c).to_owned()).collect()
     }
     fn len(&self) -> usize {
         self.rows
@@ -1979,7 +2091,7 @@ impl Source for Relation {
         self.cells().in_block()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let distinct = self.ordered[column].unwrap_or_else(|| self.index(column).distinct);
+        let distinct = self.cols[column].ordered.unwrap_or_else(|| self.index(column).distinct);
         let one = self.len().div_ceil(distinct.max(1));
         if batch { one * 8 } else { one }
     }
@@ -2011,21 +2123,19 @@ impl Source for Relation {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
         #[cfg(any(test, feature = "test-hooks"))]
         if let Some(rows) = lookup_spike::selected(self, column, values) { return Some(rows); }
-        if self.ordered[column].is_some() {
-            return Some(values.iter().flat_map(|&v| self.ordered_between(column, v, v)).collect());
-        }
-        let rows = &self.index(column).rows;
-        Some(values.iter().flat_map(|&v| rows[self.between(column, v, v)].iter().map(|&r| r as usize)).collect())
+        let ix = self.index(column);
+        Some(values.iter().flat_map(|&v| self.equal(column, v).map(|p| ix.row(p) as usize)).collect())
     }
     /// A slice of the column's sorted index, or for a column pushed in order of the rows' ids: a probe makes no list.
     /// Through `lookup`, each probe of a relation built for a chunk (the scopes' `rr_nearest_*`, the texts)
     /// collected its rows into a list, and the join copied it into another: 6,400 samples of a cold PostHog run.
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
-        if self.ordered[column].is_some() {
+        let range = self.equal(column, value);
+        if self.cols[column].ordered.is_some() {
             let ids = self.identity.get_or_init(|| (0..self.len() as u32).collect());
-            return Some(&ids[self.ordered_between(column, value, value)]);
+            return Some(&ids[range]);
         }
-        Some(&self.index(column).rows[self.between(column, value, value)])
+        Some(&self.index(column).ids[range])
     }
     /// The rows of `value` with their values of `columns`, read from the column's order where they lie: no list of
     /// ids made a probe (`lookup`'s), which the join's view probe made for every relation a chunk binds (t50 step 6).
@@ -2041,17 +2151,14 @@ impl Source for Relation {
             }
             each(r, &row[..columns.len()]);
         };
-        if self.ordered[column].is_some() {
-            self.ordered_between(column, value, value).for_each(&mut give);
-        } else {
-            self.index(column).rows[self.between(column, value, value)].iter().for_each(|&r| give(r as usize));
-        }
+        let ix = self.index(column);
+        self.equal(column, value).for_each(|p| give(ix.row(p) as usize));
         true
     }
     /// A column pushed in order of the rows' ids: its rows a range, no identity list made.
     fn sorted_range(&self, column: usize, value: i64) -> Option<Range<u32>> {
-        self.ordered[column].is_some().then(|| {
-            let r = self.ordered_between(column, value, value);
+        self.cols[column].ordered.is_some().then(|| {
+            let r = self.equal(column, value);
             r.start as u32..r.end as u32
         })
     }
@@ -2061,12 +2168,12 @@ impl Source for Relation {
     /// A column pushed in order whose values are each one row (`ordered`: as many distinct values as rows) is a key:
     /// a view of the relation's rows probes it here (`setfix::hold_view_in_place`), with no index of its own.
     fn keys_rows(&self, column: usize) -> bool {
-        self.ordered[column] == Some(self.len())
+        self.cols[column].ordered == Some(self.len())
     }
     /// The row of `value` in a key column (`keys_rows`): a search of the cells, as `lookup`'s.
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
         debug_assert!(self.keys_rows(column));
-        self.ordered_between(column, value, value).next()
+        self.equal(column, value).next()
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.cells().get(row as u32, column)

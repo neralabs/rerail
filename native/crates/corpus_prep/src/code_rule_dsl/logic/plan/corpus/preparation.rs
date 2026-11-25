@@ -308,6 +308,9 @@ pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::lan
     let simplified = simplify::passes(&mut p)?;
     simplify::decide(&simplified);
     p.program(&mut prune::Prune::default());
+    // A recursion's `nearest` read from its near end, through a helper made once (t57 §8, E1). The engine's, not T's
+    // front end's: the lowered program stays T's.
+    p.program(&mut lowering_tail::NearEnds);
     if whole {
         p.program(&mut super::product_demand::BoundProducts::Whole);
     }

@@ -13,8 +13,14 @@ rerail-device = { path = "device" }
 rerail-ukl = { path = "../native/crates/ukl" }
 # The CPU's kernels interpreted from their kernel tape, with `RERAIL_CPU_EXEC=vec` (decision 0567).
 rerail-ukl-vec = { path = "../native/crates/ukl_vec" }
+# The reads written once in CLIF, compiled for the CPU: what a kernel's Rust calls (decision 0567 step 3).
+rerail-clif = { path = "../native/crates/clif" }
+# The kernels as Rust, and the compiled reads' table they call (`rerail_ukl_rust::Reads`).
+rerail-ukl-rust = { path = "../native/crates/ukl_rust" }
 
 [dev-dependencies]
+# The auxiliary index's builder is held to the crate's (`aux_index::build`), over its sample document (decision 0656).
+rerail-tape-format = { path = "../native/crates/tape_format", features = ["test-hooks"] }
 # A block's device buffer read and written in place by a kernel, on each backend (decision 0440 step B).
 rerail-blocks = { path = "../native/crates/blocks" }
 # The LZ4 block compressor the tapes' 16z pieces are made with: the library's decoder is tested on its blocks.

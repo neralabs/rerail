@@ -532,8 +532,11 @@ mod tests {
 
     #[test]
     fn an_underestimated_batch_grows_segment_directories() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut writer = SegmentWriter::new(dir.path(), 1, ALIGN);
+        let tmp = tempfile::tempdir().unwrap();
+        // A mapped file's folder is the user's alone (decision 0574); a temporary folder is made at the umask.
+        let dir = tmp.path().join("private");
+        rerail_blocks::mapped::make_folder(&dir).unwrap();
+        let mut writer = SegmentWriter::new(&dir, 1, ALIGN);
         for value in 0..32u64 {
             let bytes = value.to_le_bytes();
             writer.put(bytes.len(), value as i64, &[0; 32], |out| out.copy_from_slice(&bytes)).unwrap();

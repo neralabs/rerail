@@ -19,7 +19,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -148,7 +148,7 @@ use rerail_blocks::vector::Vector;
     /// CPU's.
     fn closure(sizes: &[(&str, &str)]) -> super::Report {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -259,7 +259,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -341,7 +341,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -419,7 +419,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -490,7 +490,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -623,7 +623,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -776,7 +776,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -885,7 +885,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -924,7 +924,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -995,7 +995,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1034,7 +1034,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1107,7 +1107,7 @@ use rerail_blocks::vector::Vector;
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1247,7 +1247,7 @@ use rerail_blocks::vector::Vector;
     /// A store with `temp.n` of `rows` rows (`s<k % 37>`, k), the native module registered: the wave tests' input.
     fn wave_db(rows: i64) -> Connection {
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1280,7 +1280,7 @@ use rerail_blocks::vector::Vector;
         }
         use crate::code_rule_dsl::logic::lanes::wave;
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1348,7 +1348,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1363,6 +1363,11 @@ use rerail_blocks::vector::Vector;
             let len = 1 + next(if k % 50 == 0 { 30 } else { 6 });
             let name: String = (0..len).map(|_| parts[next(parts.len() as u64) as usize]).collect();
             db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![if k == 7 { String::new() } else { name }, k]).unwrap();
+        }
+        // Long names, for each of the store hash's paths on the device (past 16, 128 and 256 bytes: decision 0666).
+        for (k, parts_n) in [(2000, 40), (2001, 60), (2002, 90), (2003, 140), (2004, 200)] {
+            let name: String = (0..parts_n).map(|_| parts[next(parts.len() as u64) as usize]).collect();
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![name, k]).unwrap();
         }
         for k in 0..80 {
             let len = 1 + next(3);
@@ -1409,15 +1414,38 @@ use rerail_blocks::vector::Vector;
             // `literal_key` does) a made text, the function's text made of it.
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v1\nfunc str_between v0 v3 {} {}\nhead v1 v2", sym("<"), sym("<"), sym("")),
             format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v3 {} v2\nfunc str_concat v4 v3 {}\nfunc str_between v2 v4 {} {}\nhead v4 v1", sym("("), sym(",)"), sym("("), sym(",)")),
+            // A regex's capture groups (decision 0688), as `match("(?<d>…)", s)` lowers them: a path's directory and
+            // its first part's rest (the C includes' splits), a lazy repeat before a greedy one, a group in a repeat
+            // (its last part), a group of a multi-byte class; no row where the regex does not match or the group
+            // took no part. One made into a cat after it.
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<d>.*)/[^/]*)$"), sym("d")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<fw>[^/]+)/(?<rest>.+))$"), sym("rest")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<a>[a-z]*?)(?<b>[a-z_]*)\\..*)$"), sym("b")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?:(?<p>[A-Za-z]+)_)+.*)$"), sym("p")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nhead v2 v1", sym("^(?:(?<u>x9)|(?<g>[αβé]+).*)$"), sym("g")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\nfunc str_concat v3 v2 {}\nhead v3 v1", sym("^(?:(?<d>.*)/[^/]*)$"), sym("d"), sym("/x.h")),
+            // `str_between` of made texts, as a cat compared with a bound text inverts to (`n = str_between(c,
+            // cat(l, "/"), "")`): a prefix that is a cat of a name, of a constant, a text function's value; a suffix
+            // that is a cat.
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("/"), sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\ncat v3 v0 {}\nfunc str_between v4 v1 v3 {}\nhead v4 v2", sym("b"), sym("")),
+            format!("pos {n} v0 v1\nfunc head v2 v0\nfunc str_between v3 v0 v2 {}\nhead v3 v1", sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v0\nfunc str_between v4 v1 {} v3\nhead v4 v2", sym("_"), sym("")),
         ];
         let lowered = [format!("pos {n} v0 v1\nfunc lower v2 v0\nhead v2 v1")];
         // A made text as one of an atom's keys (as `ann_private` looks a name up): the names already lower case, and
-        // a range of a name that is a name. The CPU drops a row at the function whose text is no symbol yet, which no
-        // atom could match (`PROBE_OUT`); the device, which does not read the host's interner, drops it at the atom.
-        // So their counts agree from the atom on.
+        // a range of a name that is a name. Its value is the atom the text is, found by the store's hash in the atoms
+        // directory (`ROW_FIND`, decision 0666), and the row is dropped at the function where none is, as the CPU drops
+        // it (`PROBE_OUT`): every step's count agrees.
         let keyed = [
             format!("pos {n} v0 v1\nfunc sql_lower v2 v0\npos {n} v2 v1\nhead v0 v1"),
+            // Every name found (the empty one too), of every length.
+            format!("pos {n} v0 v1\nfunc str_concat v2 v0 {}\npos {n} v2 v1\nhead v0 v1", sym("")),
             format!("pos {n} v0 v1\nlt v1 i:900\nfunc rr_substr v2 v0 i:0 i:4\nfunc str_concat v3 v2 {}\npos {n} v3 v1\nhead v2 v1", sym("")),
+            // A capture group as an atom's key (`c_inc_found`'s `dir_entry(dd, bb, 0)`): the whole name, and a first
+            // part that may be a name.
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v1\nhead v0 v1", sym("^(?:(?<h>.*))$"), sym("h")),
+            format!("pos {n} v0 v1\nfunc rx_group v2 v0 {} {}\npos {n} v2 v3\nhead v0 v3", sym("^(?:(?<h>foo|Bar|SRC|x9).*)$"), sym("h")),
         ];
         for (case, rules, on_device) in [("arena", &rules[..], true), ("past ASCII", &lowered[..], false), ("made keys", &keyed[..], true)] {
             let mut got = Vec::new();
@@ -1442,12 +1470,7 @@ use rerail_blocks::vector::Vector;
                         assert_eq!(r.per_symbol, 0, "{case}: symbols read in place: {r:?}");
                     }
                 }
-                let mut counts = super::super::step_counts(&db, "dev_fn").unwrap();
-                if case == "made keys" {
-                    for c in &mut counts {
-                        c.drain(..c.len() - 1);
-                    }
-                }
+                let counts = super::super::step_counts(&db, "dev_fn").unwrap();
                 super::super::close(&db, "dev_fn").unwrap();
                 let mut rows: Vec<(String, i64)> = db
                     .prepare("SELECT sym_text(c0), c1 FROM temp.h0")
@@ -1597,7 +1620,7 @@ use rerail_blocks::vector::Vector;
             return;
         }
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -1713,7 +1736,7 @@ use rerail_blocks::vector::Vector;
         use crate::code_rule_dsl::model::FileInput;
         use crate::code_rule_dsl::transducer::packed::metal_join as mj;
         use std::sync::Arc;
-        if !mj::available() || !rerail_accel::gpu::join::device().is_ok_and(|d| d.has_addresses()) {
+        if !mj::available() || !rerail_accel_gpu::gpu::join::device().is_ok_and(|d| d.has_addresses()) {
             return;
         }
         crate::test_languages();
@@ -1825,7 +1848,7 @@ use rerail_blocks::vector::Vector;
         let store_path = std::env::temp_dir().join(format!("rerail-chunk-views-{}-{nonce}.sqlite", std::process::id()));
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
-        let device = rerail_accel::gpu::join::device().expect("the device");
+        let device = rerail_accel_gpu::gpu::join::device().expect("the device");
         let (mut seen, mut in_place) = (0, 0);
         // `line` (`View::Line`, decision 0325 step 3): the view, not a relation of that name. `tape`, `ast_depth` and
         // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
@@ -2143,7 +2166,7 @@ use rerail_blocks::vector::Vector;
             rows
         };
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2228,7 +2251,7 @@ use rerail_blocks::vector::Vector;
         assert!(nodes.node_view().is_some(), "the batch's sources are read in place");
         let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).chain(line_ids.iter().copied()).collect();
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2241,7 +2264,7 @@ use rerail_blocks::vector::Vector;
         modules.bind(&db, LONG_TEXT_NODES, Arc::clone(&nodes)).unwrap();
         let q = format!("t:x:{}:{}:i", hex("temp.q"), hex("c0"));
         for f in ["rr_node_text_any", "rr_node_text"] {
-            let mut want: Vec<(String, i64)> = ids.iter().filter_map(|&id| nodes.node_read(f, id, &[]).map(|t| (t, id))).collect();
+            let mut want: Vec<(String, i64)> = ids.iter().filter_map(|&id| nodes.node_read(f, id, &[]).and_then(|v| match v { rusqlite::types::Value::Text(t) => Some((t, id)), _ => None })).collect();
             want.sort_unstable();
             assert!(want.len() > if f == "rr_node_text" { 0 } else { 50 }, "{f}: {} texts", want.len());
             // The lines' texts among the any-length read's, none among the long-text twin's.
@@ -2309,7 +2332,7 @@ use rerail_blocks::vector::Vector;
         let (sources, mut grower) = Grower::start(&content, chunk, &[], &Matchers::default(), &tests, Binding::Cpu, &projection, &HashMap::new()).unwrap();
         let values = Arc::new(Values::default());
         // A tape value whose key is below the chunk's: its rows past theirs, its document before theirs by key.
-        let admitted = grower.admit(&content, doc(5, "def v(p, q=[1, 2]):\n    return h(p, *q)\n"), &[], &tests, Binding::Cpu, &projection).unwrap();
+        let admitted = grower.admit(&content, vec![doc(5, "def v(p, q=[1, 2]):\n    return h(p, *q)\n")], &[], &tests, Binding::Cpu, &projection).unwrap();
         values.add(&[5], &[], admitted);
         let base = sources.iter().find(|(n, _)| n == "child").expect("the chunk's child view").1.clone();
         let child: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(Layered::new("child", base, Arc::clone(&values)));
@@ -2322,7 +2345,7 @@ use rerail_blocks::vector::Vector;
         want.sort_unstable();
         assert!(want.iter().filter(|r| r.0 >> 32 == 5).count() > 5, "the value's children: {want:x?}");
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2389,7 +2412,7 @@ use rerail_blocks::vector::Vector;
         want.sort_unstable();
         assert!(want.len() > 20 && want.len() < child.len(), "{} of {} rows", want.len(), child.len());
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2475,7 +2498,7 @@ use rerail_blocks::vector::Vector;
         }
         let runs: usize = std::env::var("RERAIL_MEASURE_RUNS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
         let store = crate::code_rule_dsl::fixtures::temp();
-        drop(crate::code_rule_dsl::fixtures::open(&store));
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2585,5 +2608,122 @@ use rerail_blocks::vector::Vector;
             let [wall, gpu, encode, wait] = m.map(median);
             eprintln!("MEASURE {name:<20} wall {wall:8.2} ms  gpu {gpu:8.2} ms  encode {encode:7.2} ms  wait {wait:8.2} ms  launches {:4}  submissions {:3}  rows {}", counts.0, counts.1, counts.2);
             eprintln!("MEASURE {name:<20} rounds {}, stacks after the first {}, remaps {}", rounds.0, rounds.1, rounds.2);
+        }
+    }
+
+    /// The same strata on the engine's CPU joins (scalar Rust) and on the device's join program, warm: wall and the
+    /// process's CPU time of each, the best of three (a measure: `--ignored`). On the CPU device (`RERAIL_GPU=cpu`) a
+    /// kernel with Rust of its source (`rerail_ukl_rust::kernels`) runs as it; `RERAIL_CPU_RUST=0` makes each the c++ build.
+    #[test]
+    #[ignore]
+    fn joins_timed_on_the_cpu_and_the_device() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let cpu_seconds = || {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+            let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
+            s(u.ru_utime) + s(u.ru_stime)
+        };
+        let faults = || {
+            let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+            unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+            u.ru_minflt as i64
+        };
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        let mut x = 5u64;
+        let mut next = |m: i64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) as i64).rem_euclid(m)
+        };
+        db.execute_batch("CREATE TEMP TABLE a (c0, c1); CREATE TEMP TABLE b (c0, c1); CREATE TEMP TABLE e (c0, c1);").unwrap();
+        {
+            let tx = db.unchecked_transaction().unwrap();
+            for _ in 0..100_000 {
+                tx.execute("INSERT INTO a VALUES (?1, ?2)", [next(1_000_000), next(20_000)]).unwrap();
+                tx.execute("INSERT INTO b VALUES (?1, ?2)", [next(20_000), next(1_000_000)]).unwrap();
+            }
+            // Chains with shortcuts: a closure of many rounds.
+            for v in 0..400 {
+                tx.execute("INSERT INTO e VALUES (?1, ?2)", [v, v + 1]).unwrap();
+                if next(4) == 0 {
+                    tx.execute("INSERT INTO e VALUES (?1, ?2)", [v, next(400)]).unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+        let src = |t: &str| format!("t:x:{}:{}:ii", hex(&format!("temp.{t}")), hex("c0, c1"));
+        let (a, b, e) = (src("a"), src("b"), src("e"));
+        let strata: [(&str, Vec<String>); 2] = [
+            // h0(x, z) :- a(x, y), b(y, z), z < x.
+            ("keyed join, 100 K x 100 K", vec![format!("seed 0 {}", hex(&format!("pos {a} v0 v1\npos {b} v1 v2\nlt v2 v0\nhead v0 v2")))]),
+            // h0(x, y) :- e(x, y).   h0(x, z) :- h0(x, y), e(y, z).
+            (
+                "closure, 400 nodes",
+                vec![format!("seed 0 {}", hex(&format!("pos {e} v0 v1\nhead v0 v1"))), format!("join 0 0 {}", hex(&format!("pos d0 v0 v1\npos {e} v1 v2\nhead v0 v2")))],
+            ),
+        ];
+        // `RERAIL_TIMED_REPEAT=n`: each run n times (a profile's samples), `RERAIL_TIMED_ONLY=device|cpu` one side,
+        // `RERAIL_TIMED_STRATUM=text` the strata whose name has it.
+        let repeat = std::env::var("RERAIL_TIMED_REPEAT").ok().and_then(|v| v.parse().ok()).unwrap_or(4usize).max(2);
+        let only = std::env::var("RERAIL_TIMED_ONLY").ok();
+        let stratum = std::env::var("RERAIL_TIMED_STRATUM").ok();
+        for (what, rules) in &strata {
+            if stratum.as_deref().is_some_and(|w| !what.contains(w)) {
+                continue;
+            }
+            let mut rows = Vec::new();
+            for device in [false, true] {
+                if only.as_deref().is_some_and(|o| o != if device { "device" } else { "cpu" }) {
+                    rows.push(-1);
+                    continue;
+                }
+                let mut best = (f64::MAX, f64::MAX);
+                // The device's: the program's time (its wait on it) and its encoding's, the best of the others.
+                let mut prog = (f64::MAX, f64::MAX);
+                let mut faulted = i64::MAX;
+                for k in 0..repeat {
+                    db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
+                    let mut spec = vec!["name timed".to_owned()];
+                    if device {
+                        spec.push("device".into());
+                    }
+                    spec.push("rel h0 ii empty".into());
+                    spec.extend(rules.iter().cloned());
+                    super::super::open(&db, &spec.join("\n")).unwrap();
+                    let (t, c, f) = (std::time::Instant::now(), cpu_seconds(), faults());
+                    super::super::run(&db, "timed", 0).unwrap();
+                    let (wall, cpu) = (t.elapsed().as_secs_f64(), cpu_seconds() - c);
+                    if k > 0 {
+                        faulted = faulted.min(faults() - f);
+                    }
+                    if device {
+                        let r = super::take_report().filter(|r| r.refused.is_none());
+                        assert!(r.is_some(), "{what}: run on the device");
+                        if let Some(r) = r.filter(|_| k > 0) {
+                            prog = (prog.0.min(r.wait_wall), prog.1.min(r.encode_cpu));
+                        }
+                    }
+                    super::super::close(&db, "timed").unwrap();
+                    // The first run warms (compiles, sizes); the best of the others.
+                    if k > 0 {
+                        best = (best.0.min(wall), best.1.min(cpu));
+                    }
+                }
+                let n: i64 = db.query_row("SELECT count(*) FROM temp.h0", [], |r| r.get(0)).unwrap();
+                rows.push(n);
+                eprintln!("{what}: {}: {n} rows, {:.1} ms wall, {:.1} ms CPU, {faulted} page faults", if device { "device" } else { "CPU joins" }, best.0 * 1e3, best.1 * 1e3);
+                if device {
+                    eprintln!("{what}: device: its program {:.1} ms (waited on), its encoding {:.1} ms CPU", prog.0 * 1e3, prog.1 * 1e3);
+                }
+            }
+            if !rows.contains(&-1) {
+                assert_eq!(rows[0], rows[1], "{what}: the same rows");
+            }
         }
     }

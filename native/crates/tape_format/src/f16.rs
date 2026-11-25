@@ -41,6 +41,9 @@ pub struct Lang {
     words: (usize, usize),
     /// The grammar's names of its ids (`Names`): what a parser without the grammar numbers its nodes by.
     names: Names,
+    /// Its kinds' part, each code's presence word by number (`presence::kind_word`), made once from the table: every
+    /// tape of the language starts with it (`ops::Writer::begin_with`).
+    kinds: Box<[u8]>,
 }
 
 /// A language's names, as its grammar has them (decision 0631): each kind id a node can have (a public symbol) with
@@ -153,7 +156,8 @@ impl Lang {
         let kinds = table.entries().map(|e| usize::from(e.kind) + 1).max().unwrap_or(0);
         let fields = table.entries().map(|e| usize::from(e.field) + 1).max().unwrap_or(0);
         let words = (kinds.div_ceil(64), fields.div_ceil(64));
-        Ok(Lang { table, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, words, names: Names::default() })
+        let kinds: Box<[u8]> = table.entries().flat_map(|e| presence::kind_word(e.kind, e.field, e.flags).to_le_bytes()).collect();
+        Ok(Lang { table, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, words, names: Names::default(), kinds })
     }
 
     /// The language with its grammar's names (`Names`).
@@ -182,6 +186,10 @@ impl Lang {
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
         self.words
+    }
+    /// Its kinds' part (`kinds`): each code's presence word, by number.
+    pub fn kinds_part(&self) -> &[u8] {
+        &self.kinds
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -398,9 +406,13 @@ impl Tape16 {
     pub fn extent(&self) -> &[u8] {
         &self.buf
     }
-    /// Its presence's bytes in its home (`presence`), if it has one.
+    /// Its presence's bytes in its home (`presence`), if it has one: up to its auxiliary index, where it has one.
     pub fn presence_bytes(&self) -> Option<&[u8]> {
-        (self.p.presence != 0).then(|| &self.buf[self.p.presence..])
+        self.p.presence_in(&self.buf)
+    }
+    /// Its auxiliary index's bytes in its home (decision 0656), if it has one: read in place (`AuxIndex::read`).
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        (self.p.aux != 0).then(|| &self.buf[self.p.aux..])
     }
     /// Its ERROR and MISSING nodes, in preorder, as its writer listed them (`presence::faults`), read in its home;
     /// `None` where its home holds no presence.
@@ -490,14 +502,23 @@ pub struct Placement {
     /// Where the tape's presence lies in its home, after the tape (`presence::at`); 0 where the home holds the tape
     /// alone. Not the tape's layout: `fits` compares the layout without it.
     pub presence: usize,
+    /// Where the tape's auxiliary index lies in its home, after its presence (`presence::aux_at`, decision 0656); 0
+    /// where the home holds none. Not the tape's layout either.
+    pub aux: usize,
 }
 
 impl Placement {
+    /// The presence's bytes in the home `buf` this places, if it holds one: up to its auxiliary index, where it holds
+    /// one (the padding before it included).
+    fn presence_in<'a>(&self, buf: &'a [u8]) -> Option<&'a [u8]> {
+        (self.presence != 0).then(|| &buf[self.presence..if self.aux == 0 { buf.len() } else { self.aux }])
+    }
+
     /// The placement of a tape of `n` nodes whose block 0 starts at `blocks`, with these widths, side lists `sides`
     /// bytes long and a newline index `lines` bytes long of `newlines`, of a source `source_len` long.
     #[allow(clippy::too_many_arguments)]
     fn of(blocks: usize, n: usize, cw: usize, widths: [usize; 3], vw: [usize; 4], sides: [usize; 4], lines: usize, newlines: u32, source_len: u64) -> Self {
-        let mut p = Placement { n, source_len, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0, presence: 0 };
+        let mut p = Placement { n, source_len, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0, presence: 0, aux: 0 };
         let count = p.block_count();
         let mut at = p.blocks_end() + 8;
         for (k, len) in sides.iter().enumerate() {
@@ -646,6 +667,7 @@ fn header(buf: &[u8]) -> Result<Placement, String> {
         lines: tail[8],
         end: tail[9],
         presence: 0,
+        aux: 0,
     };
     if p.blocks != HEAD16 || p.stride != stride_of(widths, cw) || p.end < p.lines + 8 {
         return Err("a format 16 header that does not fit itself".into());
@@ -674,7 +696,7 @@ fn side_lengths(buf: &[u8], parts: [usize; 4], count: usize) -> Result<[usize; 4
 fn fits(p: &Placement, buf: &[u8], parts: [usize; 4]) -> Result<[usize; 4], String> {
     let sides = side_lengths(buf, parts, p.block_count())?;
     let mut laid = Placement::of(p.blocks, p.n, p.cw, p.widths, p.vw, sides, p.end - 8 - p.lines, p.newlines, p.source_len);
-    laid.presence = p.presence;
+    (laid.presence, laid.aux) = (p.presence, p.aux);
     if laid != *p {
         return Err("a format 16 header that does not fit its parts".into());
     }
@@ -691,7 +713,7 @@ pub fn placement(buf: &[u8]) -> Result<Placement, String> {
     if buf.len() < p.end {
         return Err(format!("a format 16 tape of {} bytes, its header says {}", buf.len(), p.end));
     }
-    p.presence = presence::find(buf, p.end, p.block_count())?;
+    (p.presence, p.aux) = presence::find(buf, p.end, p.block_count())?;
     if buf[head::Z..HEAD16].iter().any(|&b| b != 0) {
         return Err("a format 16 tape with a 16z tape's fields".into());
     }
@@ -738,7 +760,7 @@ UKL_REFLECT_STRUCT(ReadArgs, n, pad)
 DEFINE_KERNEL2(tests, t_reads,
                ARGS,     ReadArgs, args,      ,
                RWBUFFER, uint8_t,  tape,      "[bytes]",
-               ROBUFFER, uint32_t, view,      "[29]",
+               ROBUFFER, uint32_t, view,      "[32]",
                ROBUFFER, uint32_t, parentEnd, "[n]",
                RWBUFFER, uint32_t, out,       "[n * 23]",
                GID0,     uint32_t, i,         )
@@ -774,7 +796,7 @@ UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
 DEFINE_KERNEL2(tests, t_random,
                ARGS,     RandomArgs, args,  ,
                RWBUFFER, uint8_t,    tape,  "[bytes]",
-               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   view,  "[32]",
                ROBUFFER, uint32_t,   want,  "[n * 4]",
                RWBUFFER, uint32_t,   out,   "[threads * 2]",
                GID0,     uint32_t,   i,     )
@@ -863,7 +885,7 @@ impl<'a> StoredPresence<'a> {
         if end > buf.len() {
             return None;
         }
-        let at = presence::find(buf, end, p.block_count()).ok().filter(|&at| at != 0)?;
+        let at = presence::find(buf, end, p.block_count()).ok().map(|(at, _)| at).filter(|&at| at != 0)?;
         presence::of_lang(Some(&buf[at..]), lang).ok()?;
         Some(StoredPresence { buf, view: TapeView { presence: u32::try_from(at).ok()?, ..Default::default() } })
     }
@@ -952,6 +974,32 @@ impl Written {
     pub fn presence(&self) -> Presence {
         self.presence_bytes().map(presence::read).unwrap_or_default()
     }
+    /// Its auxiliary index's bytes in its home (decision 0656), if it has one.
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Written::F16(t) => t.aux_bytes(),
+            Written::F16Z(t) => t.aux_bytes(),
+        }
+    }
+    /// Lays the auxiliary index `aux` (`aux_index::build`'s bytes of this tape) in its home, after its presence
+    /// (`presence::aux_at`): written once where it is computed, stored, placed and loaded with the tape (decision 0656
+    /// step 3). A home without a presence, or with an auxiliary index already, or placed, is refused.
+    pub fn lay_aux(&mut self, aux: &[u8]) -> Result<(), String> {
+        let (buf, p) = match self {
+            Written::F16(t) => (&mut t.buf, &mut t.p),
+            Written::F16Z(t) => (&mut t.buf, &mut t.p),
+        };
+        if p.presence == 0 || p.aux != 0 || buf.placed() {
+            return Err("an auxiliary index is laid once, after a presence, in a tape's own home".into());
+        }
+        crate::aux_index::AuxIndex::read(aux)?;
+        let v = buf.own_mut();
+        let at = presence::aux_at(p.presence, v.len());
+        v.resize(at, 0);
+        v.extend_from_slice(aux);
+        p.aux = at;
+        Ok(())
+    }
 }
 
 /// A tape's presence in its home (decision 0434 §4, step 6): after the tape, at its end rounded up to 8 bytes, a
@@ -1028,12 +1076,26 @@ pub mod presence {
         (head.is_empty() && tail.is_empty()).then_some(ids)
     }
 
-    /// Where the presence in the home `buf` of a tape `end` bytes long and of `blocks` blocks lies, checked to fill
-    /// the home past the tape: 0 where the home holds the tape alone. One presence, the document's, or one more than
-    /// the blocks.
-    pub(super) fn find(buf: &[u8], end: usize, blocks: usize) -> Result<usize, String> {
+    /// The bytes of the presence at `at` in the home `buf`, from its header (`HEAD`, its words, its faults).
+    fn len_at(buf: &[u8], at: usize) -> u64 {
+        let w = |k: usize| u64::from(u32_at(buf, at + 4 * k));
+        HEAD as u64 + 8 * (w(0) + w(1)) * w(2) + 4 * w(3)
+    }
+
+    /// Where a home's auxiliary index lies after the presence at `at` that ends at `end` (decision 0656): its bytes
+    /// rounded up to 16, counted from the presence (a view's presence counts from its batch's block, not its home), as
+    /// `<ukl/reads/aux_index_tape.h>`'s `ukl_aux_in_home` finds it.
+    pub fn aux_at(at: usize, end: usize) -> usize {
+        at + (end - at).next_multiple_of(16)
+    }
+
+    /// Where the presence and the auxiliary index in the home `buf` of a tape `end` bytes long and of `blocks` blocks
+    /// lie, checked to fill the home past the tape: 0 for each the home does not hold. One presence, the document's,
+    /// or one more than the blocks, then, where the home holds one, its auxiliary index (`aux_at`), whose header and
+    /// directory are checked (`AuxIndex::read`). An auxiliary index is laid only after a presence.
+    pub(super) fn find(buf: &[u8], end: usize, blocks: usize) -> Result<(usize, usize), String> {
         if buf.len() == end {
-            return Ok(0);
+            return Ok((0, 0));
         }
         let at = at(end);
         let bad = || "a tape's presence does not fit its home".to_owned();
@@ -1041,11 +1103,24 @@ pub mod presence {
             return Err(bad());
         }
         let w = |k: usize| u32_at(buf, at + 4 * k) as usize;
-        let (words, count, faults) = (w(0) + w(1), w(2), w(3));
-        if words == 0 || (count != 1 && count != 1 + blocks) || (buf.len() - at - HEAD) as u64 != 8 * words as u64 * count as u64 + 4 * faults as u64 {
+        let (words, count) = (w(0) + w(1), w(2));
+        let past = at as u64 + len_at(buf, at);
+        if words == 0 || (count != 1 && count != 1 + blocks) || past > buf.len() as u64 {
             return Err(bad());
         }
-        Ok(at)
+        let past = past as usize;
+        if past == buf.len() {
+            return Ok((at, 0));
+        }
+        let aux = aux_at(at, past);
+        if aux >= buf.len() || buf[past..aux].iter().any(|&b| b != 0) {
+            return Err(bad());
+        }
+        let index = crate::aux_index::AuxIndex::read(&buf[aux..]).map_err(|e| format!("a tape's auxiliary index in its home: {e}"))?;
+        if aux + index.extent() != buf.len() {
+            return Err("a tape's home with bytes past its auxiliary index".into());
+        }
+        Ok((at, aux))
     }
 
     /// The presence `bytes` (`find`'s) holds `lang`'s kinds' and fields' words (`Lang::presence_words`).
@@ -1216,9 +1291,30 @@ pub(crate) fn write_with(mut w: impl WriterOps, n: usize, mut node: impl FnMut(u
 
 const NONE: u32 = u32::MAX;
 
+/// Format 16 (or 16z where `z`) written from the tree `t`, each node's code mapped to the language's number
+/// (`number`, by `t`'s code), in one pass (`write`): the tests' tapes (f16's, the auxiliary index's; other crates'
+/// tests' too, `test-hooks`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
+    write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
+}
+
+/// `write_from`, with each block's presence after the tape (`write_present`); other crates' tests' too (`test-hooks`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn write_from_present<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
+    write_present(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
+}
+
+/// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tree's codes with; other crates' tests' too
+/// (`test-hooks`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
+    table.entries().map(|e| lang.number(e).ok_or_else(|| format!("code {e:?} is not in the language's table"))).collect()
+}
+
 /// `t`'s nodes in preorder, as `write` takes them, each code mapped to the language's number (`number`, by `t`'s
 /// code): a tree written in format 16 by a test or the reference writer.
-#[cfg(any(test, feature = "reference"))]
+#[cfg(any(test, feature = "reference", feature = "test-hooks"))]
 pub(crate) fn nodes_of<'t, T: Tape>(t: &'t T, number: &'t [u32]) -> impl FnMut(usize) -> Node + 't {
     let mut s = 0;
     move |i| {
@@ -1544,9 +1640,13 @@ impl Tape16Z {
     pub fn extent(&self) -> &[u8] {
         &self.buf
     }
-    /// Its presence's bytes in its home, if it has one.
+    /// Its presence's bytes in its home, if it has one: up to its auxiliary index, where it has one.
     pub fn presence_bytes(&self) -> Option<&[u8]> {
-        (self.p.presence != 0).then(|| &self.buf[self.p.presence..])
+        self.p.presence_in(&self.buf)
+    }
+    /// Its auxiliary index's bytes in its home (decision 0656), if it has one: read in place (`AuxIndex::read`).
+    pub fn aux_bytes(&self) -> Option<&[u8]> {
+        (self.p.aux != 0).then(|| &self.buf[self.p.aux..])
     }
     /// Its ERROR and MISSING nodes, in preorder, as its writer listed them (`presence::faults`), read in its home;
     /// `None` where its home holds no presence.
@@ -1594,7 +1694,7 @@ impl Tape16Z {
         }
         // Its presence, after it in its home, where it has one.
         let mut p = p;
-        p.presence = presence::find(&buf, zat[ZEND], count)?;
+        (p.presence, p.aux) = presence::find(&buf, zat[ZEND], count)?;
         fits(&p, &buf, std::array::from_fn(|k| at_parts + 4 * k * (count + 1)))?;
         let source_len = u64_at(&buf, head::SOURCE_LEN)?;
         check_lines(&buf[zat[ZLINES]..zat[ZLINES] + lines], &p, source_len)?;
@@ -2199,17 +2299,6 @@ mod tests {
     use super::*;
     use crate::tape::children;
     use crate::tape::tests::{Plain, sample};
-
-    /// Format 16 (or 16z where `z`) written from the tree `t`, each node's code mapped to the language's number
-    /// (`number`, by `t`'s code), in one pass (`write`).
-    fn write_from<T: Tape>(lang: &Lang, t: &T, number: &[u32], source: &[u8], terminators: crate::newlines::Terminators, tag: u8, z: bool) -> Result<Written, String> {
-        write(lang, t.len(), source, terminators, tag, z, nodes_of(t, number))
-    }
-
-    /// Each of `table`'s codes as `lang`'s number: what `write_from` maps a tree's codes with.
-    fn numbers(lang: &Lang, table: &CodeTable) -> Result<Vec<u32>, String> {
-        table.entries().map(|e| lang.number(e).ok_or_else(|| format!("code {e:?} is not in the language's table"))).collect()
-    }
 
     /// Format 16 written from `t` in one pass, and 16z written the same way, which is the format 16 tape's blocks.
     fn sixteen<T: Tape>(lang: &Lang, t: &T, number: &[u32], source_len: u64) -> Tape16 {

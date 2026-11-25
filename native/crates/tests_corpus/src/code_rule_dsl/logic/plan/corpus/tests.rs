@@ -1398,6 +1398,25 @@ fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, 
     (alone, together)
 }
 
+/// RUF034 alone: `value` answered on request, and python/ast.rerail's demand on `unparen`. `value`'s request reads
+/// `unparen`, whose demand comes from `same_pair`, which negates `same_leaf`, which reads `value`: the demand leaves
+/// `same_pair` out to stay stratified, and then joins the compared nodes by a child's position only, across files. Its
+/// answer was cross-file once preparation applied the demand, after combining had judged it file-local, and the run
+/// was refused ("`value` is answered on request in the cross-file part"). Beside a reader of `value` across files it
+/// ran, `value` eager. Alone it runs too, and finds what it finds there.
+#[test]
+fn an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack() {
+    let same = ".language python\n#include \"python/compare.rerail\"\n.decl same(l: number)\nsame(l) :- branches(e, a, b), cmp_same(a, b), line(e, l).\n\
+                .decl branches(e: node, a: node, b: node)\nbranches(e, a, b) :- kind(e, \"conditional_expression\"), child(e, a, 0), child(e, b, 2).\n\
+                cmp_same_ask(a, b) :- branches(_, a, b).\n.output same\n";
+    let across = ".language python\n.decl twin(v: symbol) cross_file\n\
+                  twin(v) :- kind(n, \"integer\"), kind(m, \"integer\"), docof(n, d), docof(m, e), d != e, value(n, v), value(m, v).\n.output twin\n";
+    let py = "x = 1 if f else 1\ny = 1 if f else 0\nz = 0x10 if f else 16\nw = (2) if f else 2.0\n";
+    let (alone, together) = alone_and_together("demand-across-files", ("a.py", py), same, across, "same");
+    assert_eq!(together, [["1"], ["3"]], "the same branches, literals by value");
+    assert_eq!(alone, together);
+}
+
 /// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
 /// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
 /// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
@@ -1767,7 +1786,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
-        crate::content_store::atoms::install_kept_tables(&db).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -1950,7 +1969,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
-        crate::content_store::atoms::install_kept_tables(&db).unwrap();
+        crate::content_store::install_kept_tables(&db).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
         rows.sort();
         rows
@@ -2096,6 +2115,39 @@ passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
     }
     assert!(tested, "the program has a text test");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A text a `join` makes, read by `cat(w, ":", j)`, gives its row in a store where neither text is an atom yet. The cat
+/// checks `j` against the text it recovers from `m`: a test of a bound slot, whose `j` the walk made and deferred
+/// (`Deferred`). Looked up as a probe's text, a deferred text was no atom, and the row was dropped: phase 0 planned no
+/// module of two files (`core:a+b`), and every program reading one failed ("in no module of phase 0's plan").
+#[test]
+fn a_cat_of_a_text_its_join_made_keeps_its_row() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cat-of-join");
+    std::fs::create_dir_all(dir.join("corpus")).unwrap();
+    // Texts no store holds: the joined texts and the names are made in this run.
+    let nonce = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos());
+    let program = format!(r#"
+.decl g(p: symbol)
+.decl member(p: symbol, q: symbol)
+.decl name(p: symbol, m: symbol)
+g("a"). g("b"). g("c").
+member("a", "x1{nonce}"). member("a", "x2{nonce}"). member("b", "y{nonce}"). member("c", "z1{nonce}"). member("c", "z2{nonce}"). member("c", "z3{nonce}").
+name(p, m) :- g(p), j = join q by q sep "+" : {{ member(p, q) }}, m = cat("core", ":", j).
+.output name
+"#);
+    let out = dir.join("out");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(&program, &dir.join("corpus"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "name").unwrap();
+    rows.sort();
+    let _ = std::fs::remove_dir_all(&dir);
+    let want: Vec<Vec<String>> = vec![
+        vec!["a".into(), format!("core:x1{nonce}+x2{nonce}")],
+        vec!["b".into(), format!("core:y{nonce}")],
+        vec!["c".into(), format!("core:z1{nonce}+z2{nonce}+z3{nonce}")],
+    ];
+    assert_eq!(rows, want, "each group's name, its members joined");
 }
 
 /// A cross-file reader of a node's text (`passes` reads `uses`, which joins two files) finds it (O-cross-file-answers):
@@ -2268,12 +2320,17 @@ fn every_switch_lowering_reads_is_classified() {
     let region = |from: &str, to: &str| region_of("corpus.rs", &corpus, from, to);
     let base_region = |from: &str, to: &str| region_of("corpus/base.rs", &base, from, to);
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
-    // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
-    // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    // reads a switch (`scoping`, the tail's passes), the `.rerail` lowering its `rr::parse` runs (`logic/rr`,
+    // `front`), and the passes it replays to judge an answer as the program's own demand leaves it
+    // (`answers_where_documents_are_version` through `reading_demanded`: simplify, reach index, demand). The combined
+    // program is kept under `COMBINING` alone.
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
         "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
+        "logic/plan/corpus/preparation/simplify.rs", "logic/plan/corpus/preparation/prune.rs", "logic/plan/corpus/preparation/demand.rs",
+        "logic/plan/corpus/preparation/magic.rs", "logic/plan/corpus/preparation/magic",
     ]);
+    combining.push(("corpus/base.rs, answers_where_documents_are_version".to_owned(), base_region("\npub fn answers_where_documents_are_version(", "\n/// The programs `programs` linked into one")));
     combining.push(("corpus/base.rs, combine_tail".to_owned(), base_region("\npub fn combine_tail(", "\n}\n")));
     combining.push(("corpus/base.rs, the combine's tail".to_owned(), base_region("\npub enum Tail {", "\n/// The programs `programs` linked into one")));
     // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
@@ -3300,6 +3357,41 @@ holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), line(i, l).
     holes.sort();
     assert_eq!(together, holes);
     assert_eq!(holes, [row(&["{col}", "name", "3"]), row(&["{table}", "table", "3"]), row(&["{uid}", "value", "2"]), row(&["{uid}", "value", "3"])]);
+}
+
+/// Decision 0597 rule 8: a pass's kept rows are an input of every chunk, bound empty where the chunk admits no tape
+/// value. PYI050 as it was written before d6fec0755c (its `parsed` in a branch of its own body), beside ASYNC100,
+/// makes the annotation context's pass read `def_outside`, whose kept rows (`…_rr_kept`) the program declares; over a
+/// file with no string to parse, the chunk answers no request in its fixpoint, and they were left unbound: its plan
+/// failed ("no statistics for rr_pass_annotation_def_outside_rr_kept.c0") where the engine before the hub's merge ran.
+#[test]
+fn a_pass_kept_rows_are_bound_in_a_chunk_that_admits_no_value() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("pass-kept-empty");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
+    let pack = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/rule-syntax/packs/python");
+    let async100 = std::fs::read_to_string(pack.join("ruff-async100-cancel-scope-no-checkpoint.rerail")).unwrap();
+    let pyi050 = "\
+.policy \"t:pyi050-before\" revision 1
+.language python
+#include \"python/typing.rerail\"
+#include \"python/version.rerail\"
+.violation PYI050(at: node) code \"PYI050\" \"NoReturn as a parameter's annotation\"
+PYI050(t) :- kind(f, \"function_definition\"), applies(f), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, t),
+    (typing_sym(t, \"NoReturn\") ; parsed(t, \"annotation\", r), type_bare(r, n), typing_sym(n, \"NoReturn\")).
+.decl applies(f: node)
+applies(f) :- in_stub(f).
+applies(f) :- kind(f, \"function_definition\"), targets(11).
+";
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    // As the `logic` command runs a folder of rule files: one run of them all, the memo on.
+    let options = serde_json::json!({ "reuse": true });
+    let ran = super::run_with_parsed(&[async100.as_str(), pyi050], &[None, None], &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &super::Typing::default(), &options);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let found = crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "violation").unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap_or_else(|e| panic!("the run fails: {e}"));
+    assert!(found.is_empty(), "no finding over a file of no def or with: {found:?}");
 }
 
 /// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's

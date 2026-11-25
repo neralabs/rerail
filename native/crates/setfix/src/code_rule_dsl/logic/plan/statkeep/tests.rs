@@ -47,7 +47,7 @@ fn documents_read_where_they_lie_count_as_their_flat_rows() {
     fresh.documents_read(now.len() / 3, 3, &read(&now), &from, 1);
     assert_eq!(placed, fresh);
     // Read by the source's walk, a column at a time (`documents_scanned`): the same counts, in and out.
-    let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.as_chunks::<3>().0.iter().map(|r| rerail_blocks::vector::Vector::<i64>::from(&r[..])));
+    let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.as_chunks::<3>().0.iter().map(|r| r.iter().copied().collect()));
     let mut scanned = RelStats::new(names());
     scanned.documents_scanned(&source(&all), &from, 1);
     assert_eq!(scanned, flat);

@@ -755,37 +755,6 @@ impl Known<'_> {
     }
 }
 
-/// Whether `cross`'s `text` is read by node alone (decision 0689, `Projection::text_probed`): every `text` atom of its
-/// rules (the split's cross part, the atoms `NodeReads` left there) reads a node, or a `source` or `src_line` span,
-/// that a positive atom of its rule binds, by the node columns of `whole`'s relations, each derived one's: a
-/// cross-file relation's too, as the cross part reads `text` in its versions, an edited file's old document in the
-/// old one (decision 0458), not the new tape. `Ok`: the heads of the rules that read it; `Err`: why not (a rule whose
-/// atom reads no bound node, or none reads it).
-pub fn cross_text_by_node(whole: &Version, cross: &Version, matchers: &BTreeSet<String>) -> std::result::Result<BTreeSet<String>, String> {
-    let derived: BTreeSet<String> = whole.rules().map(|r| whole.rel_name(r.head().rel()).to_owned()).collect();
-    let cols = node_columns(whole, matchers, &derived, &LINE_SPANS);
-    let mut heads = BTreeSet::new();
-    for r in cross.rules() {
-        let bound = node_bound(cross, r, &cols);
-        for l in r.body() {
-            let Lit::Atom(a) = l.view() else { continue };
-            if cross.rel_name(a.rel()) != "text" {
-                continue;
-            }
-            let head = cross.rel_name(r.head().rel()).to_owned();
-            let a = args(a);
-            if !(a.len() == 2 && matches!(a[0], TermRef::Var(x) if bound.contains(&x))) {
-                return Err(format!("{head}'s reads a location no atom of its rule binds to a node"));
-            }
-            heads.insert(head);
-        }
-    }
-    if heads.is_empty() {
-        return Err("no rule of it reads text".to_owned());
-    }
-    Ok(heads)
-}
-
 /// Version `v` with the `text` atoms of the nodes its rules bind read as the node's text (`NodeReads`), and, by
 /// per-node relation, the heads whose atoms of it stay rows, each with why its node is not known to be one.
 pub fn text_rows_kept(v: Arc<Version>, matchers: BTreeSet<String>) -> Result<BTreeMap<String, BTreeMap<String, String>>> {

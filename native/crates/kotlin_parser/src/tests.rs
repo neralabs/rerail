@@ -156,10 +156,14 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         return None;
     }
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
-    let n = starts.len().max(lx.recs.len());
+    // Tier 1 as Rust keeps the comments apart from the tokens (as the lean lexer); the interpreter's records hold both,
+    // by where they start.
+    let mut recs: Vec<_> = lx.recs.iter().chain(&lx.extras).copied().collect();
+    recs.sort_by_key(|r| r.start);
+    let n = starts.len().max(recs.len());
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
-        let rec = lx.recs.get(k);
+        let rec = recs.get(k);
         let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         if theirs != ours {
             let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
@@ -684,12 +688,12 @@ fn a_string_with_templates_is_one_record() {
         }
         // The records' masks, as a device without the token loop reads them (Metal): the loop's
         // records, a region tier 2 splits its opener alone, and none at a template's `}`.
-        let bits = |o: u16| -> Vec<u32> {
+        let bits = |o: u16| -> rerail_tape_format::Vector<u32> {
             let words = &run.outputs[program.extract_outputs()[usize::from(o)]];
             (0..words.len() * 64).filter(|&b| b < bytes.len() && words[b / 64] >> (b % 64) & 1 == 1).map(|b| b as u32).collect()
         };
-        let opened: Vec<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
-        assert_eq!((bits(r.starts), bits(r.lasts)), (starts.to_vec(), opened), "the records' masks, {text:?}");
+        let opened: rerail_tape_format::Vector<u32> = starts.iter().zip(lasts.iter()).map(|(&s, &l)| if matches!(bytes[s as usize], b'"' | b'\'') { s } else { l }).collect();
+        assert_eq!((bits(r.starts), bits(r.lasts)), (starts.clone(), opened), "the records' masks, {text:?}");
         // Tier 2 over them, coded by the record pass, as over a device's records.
         let table = rerail_compiler::records::WordTable::new(&r.words).expect("the words fit a table");
         let (ms, ml) = (bits(r.starts), bits(r.lasts));

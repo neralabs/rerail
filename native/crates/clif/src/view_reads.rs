@@ -35,9 +35,6 @@ pub struct ViewDoc {
     /// name's canonical code's), and the field atom (`tag << 16 | field`).
     pub kinds: Run,
     pub fields: Run,
-    /// Each numbered node's place among its parent's children (u32s, by local id): the walk's, derived once
-    /// (`Projected::idx`, decision 0353 step 3), as the tape holds no sibling's place.
-    pub places: Run,
     /// core.rerail's positions past the nodes (`Locs`), for the `Loc` views: the tokens, then where the text is the
     /// document's own (1) the whole text and each line, then the end points (`ends`, one a node, or none).
     pub tokens: u32,
@@ -72,8 +69,19 @@ pub struct ViewDoc {
     pub names: Run,
     /// `PLACED_SEGMENTS`' segments (`SEGMENT_WORDS` u32s each, in program order): an embedder's program's map.
     pub segments: Run,
+    /// Which place a numbered node's is, read in its tape's auxiliary index (decision 0656 step 4): `PLACE_NAMED`
+    /// (`tape_place`, core.rerail's shape) or `PLACE_PAST_COMMENTS` (`tape_place_past_comments`, T's). An outermost
+    /// anchor's is its rank among the anchors (`ids` item `ANCHOR_ITEM`).
+    pub place: u32,
+    pub pad: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 5 + 16 + 24 + 16 * 7);
+const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4 + 16 + 24 + 16 * 7 + 8);
+
+/// `ViewDoc::place`'s kinds.
+pub const PLACE_NAMED: u32 = 1;
+pub const PLACE_PAST_COMMENTS: u32 = 2;
+/// The rank index's item of an anchored projection's anchors (`Item::Anchor`).
+pub const ANCHOR_ITEM: i64 = 11;
 
 /// `ViewDoc::placement`'s kinds.
 pub const PLACED_COPIED: u32 = 1;
@@ -114,9 +122,9 @@ pub struct ViewRow {
 const _: () = assert!(std::mem::size_of::<ViewRow>() == (8 + 8 + 8 + 8 + 12 + 4 + 4 * ROWS + std::mem::size_of::<crate::view::TapeView>() + 4).next_multiple_of(8));
 
 /// A row's first rows: one per view of `VIEWS`, then the views no kernel reads, the host's alone: `child`'s sibling
-/// view (`SIBLING`), the token order's four (`TOK`), `spread` (`SPREAD`) and `end_point` (`END`), and the other
-/// relations of the tape's answers (`TAPE`, the engine's `tape_rows`). Every view's rows are found in the directory,
-/// whoever reads them.
+/// view (`SIBLING`), the token order's four (`TOK`), `spread` (`SPREAD`), `end_point` (`END`) and `text` (`TEXT`: its
+/// nodes with text, then its positions with text), and the other relations of the tape's answers (`TAPE`, the
+/// engine's `tape_rows`). Every view's rows are found in the directory, whoever reads them.
 pub const ROWS: usize = TAPE + TAPE_RELATIONS;
 /// `op`'s rows (each numbered node's anonymous children, `Item::Op`): `view_op`'s, in `VIEWS`.
 pub const OP: usize = 12;
@@ -126,9 +134,11 @@ pub const SIBLING: usize = VIEWS.len();
 pub const TOK: usize = SIBLING + 1;
 pub const SPREAD: usize = TOK + 4;
 pub const END: usize = SPREAD + 1;
+/// `text`'s rows (decision 0656 step 4: a view, no row made).
+pub const TEXT: usize = END + 1;
 /// The first of the tape's other relations' (`tape_rows`): `structural_before`, `structural_after`,
 /// `rr_token_named`, `visit_index`, `tree_digest` and `doc`, in that order.
-pub const TAPE: usize = END + 1;
+pub const TAPE: usize = TEXT + 1;
 /// How many relations `TAPE` starts.
 pub const TAPE_RELATIONS: usize = 6;
 
@@ -329,7 +339,6 @@ pub mod at {
     pub const NUMBERING: i32 = offset_of!(ViewDoc, numbering) as i32;
     pub const KINDS: i32 = offset_of!(ViewDoc, kinds) as i32;
     pub const FIELDS: i32 = offset_of!(ViewDoc, fields) as i32;
-    pub const PLACES: i32 = offset_of!(ViewDoc, places) as i32;
     pub const TOKENS: i32 = offset_of!(ViewDoc, tokens) as i32;
     pub const OWN_TEXT: i32 = offset_of!(ViewDoc, own_text) as i32;
     pub const ENDS: i32 = offset_of!(ViewDoc, ends) as i32;
@@ -342,6 +351,7 @@ pub mod at {
     pub const PLACED: i32 = offset_of!(ViewDoc, placed) as i32;
     pub const NAMES: i32 = offset_of!(ViewDoc, names) as i32;
     pub const SEGMENTS: i32 = offset_of!(ViewDoc, segments) as i32;
+    pub const PLACE: i32 = offset_of!(ViewDoc, place) as i32;
 }
 
 /// The `node` view's columns (`Viewed::columns`): the document, the node's id, its kind, start and end.
@@ -366,7 +376,7 @@ pub const OP_COLUMNS: u32 = 2;
 #[cfg(feature = "ir")]
 pub fn ukl() -> String {
     use std::mem::offset_of;
-    let fields: [(&str, &str, usize); 24] = [
+    let fields: [(&str, &str, usize); 25] = [
         ("uint32_t", "key", offset_of!(ViewDoc, key)),
         ("uint32_t", "tag", offset_of!(ViewDoc, tag)),
         ("uint32_t", "preorder", offset_of!(ViewDoc, preorder)),
@@ -374,7 +384,6 @@ pub fn ukl() -> String {
         ("Run", "numbering", offset_of!(ViewDoc, numbering)),
         ("Run", "kinds", offset_of!(ViewDoc, kinds)),
         ("Run", "fields", offset_of!(ViewDoc, fields)),
-        ("Run", "places", offset_of!(ViewDoc, places)),
         ("uint32_t", "tokens", offset_of!(ViewDoc, tokens)),
         ("uint32_t", "own_text", offset_of!(ViewDoc, own_text)),
         ("uint32_t", "ends", offset_of!(ViewDoc, ends)),
@@ -391,6 +400,8 @@ pub fn ukl() -> String {
         ("Run", "digests", offset_of!(ViewDoc, digests)),
         ("Run", "names", offset_of!(ViewDoc, names)),
         ("Run", "segments", offset_of!(ViewDoc, segments)),
+        ("uint32_t", "place", offset_of!(ViewDoc, place)),
+        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
     ];
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint64_t source;\n    uint32_t homes[3];\n    uint32_t key;\n    uint32_t rows[{}];\n    uint32_t view[{}];\n    uint32_t bytes;\n}} ViewRow;\n\
@@ -513,7 +524,8 @@ pub fn node(b: &mut B<'_, '_>) -> Value {
 }
 
 /// `view_child(i, col)`: column `col` of the document's `child` row `i`, of numbered node `i + 1` (every node but the
-/// root): the parent's id, the child's id, its place among the parent's children.
+/// root): the parent's id, the child's id, its place among the parent's children: read in the tape's auxiliary index
+/// (`tape_place`, or `tape_place_past_comments` where the entry says so), an outermost anchor's its rank among them.
 #[cfg(feature = "ir")]
 pub fn child(b: &mut B<'_, '_>) -> Value {
     let (i, col) = (b.arg(0), b.arg(1));
@@ -524,7 +536,23 @@ pub fn child(b: &mut B<'_, '_>) -> Value {
         b.parent_id(l, x)
     }, |b| {
         let c = b.f.ins().icmp_imm(IntCC::Equal, col, 1);
-        b.either(I64, c, |b| b.node_id(l), |b| b.entry_item(at::PLACES, l))
+        b.either(I64, c, |b| b.node_id(l), |b| {
+            let x = b.tape_node(l);
+            let numbering = b.follow(b.tape, at::NUMBERING);
+            let anchor = b.c32(ANCHOR_ITEM);
+            let is = b.call_at("num_is", numbering, &[anchor, x]);
+            let is = b.f.ins().icmp_imm(IntCC::NotEqual, is, 0);
+            let place = b.either(I32, is, |b| {
+                let numbering = b.follow(b.tape, at::NUMBERING);
+                let anchor = b.c32(ANCHOR_ITEM);
+                b.call_at("num_rank", numbering, &[anchor, x])
+            }, |b| {
+                let kind = b.word_at(I32, b.tape, at::PLACE);
+                let past = b.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(PLACE_PAST_COMMENTS));
+                b.either(I32, past, |b| b.call_tape("tape_place_past_comments", &[x]), |b| b.call_tape("tape_place", &[x]))
+            });
+            b.f.ins().uextend(I64, place)
+        })
     })
 }
 

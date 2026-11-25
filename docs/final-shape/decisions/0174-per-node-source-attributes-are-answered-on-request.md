@@ -305,6 +305,29 @@ step 2, 6f62434e9). Now an attribute with no request stays an input, as the deci
 reads it"): one that nothing reads is bound for no node. `made_on_request` and the core shape filter by name, so
 they hold either way.
 
+### An answer the program's own demand puts across files (2026-11-20)
+
+RUF034 run alone was refused (`` `value` is answered on request in the cross-file part ``), though it ran in the
+pack. Combining judged `value`'s answer file-local, which it was in the combined program. Preparation then applied
+the program's own demand (python/ast.rerail's `.pragma "magic-transform" "unparen"`, decision 0145). `value`'s request
+reads `unparen`, whose demand comes from compare.rerail's `same_pair`, which negates `same_leaf`, which reads `value`.
+To keep the program stratified, the transform left `same_pair` out of `unparen`'s demand rules, which then joined the
+two compared nodes by a child's position only. That join is across files, so `unparen`, `value`'s request and its
+answer went to the cross-file part. In the pack, readers of `value` across modules had made it eager at combining,
+and the cycle never formed.
+
+Combining now also judges an answer in the program as preparation makes it, its own demand included, when the answer
+reads a demanded relation (`answers_where_documents_are`, `demanded`: `run_observed`'s steps before the demand, then
+the demand, the prune after it and `reach_form::undo_in_cycles`; on the combined program as it is, the demand made no
+`unparen` demand rule at all). RUF034 alone has `value` eager, as in the pack, and gives the pack's findings. A
+program whose function answers read no demanded relation does no more work. Test:
+`an_answer_the_programs_demand_puts_across_files_is_eager_alone_as_in_a_pack` (refused without it).
+
+The combined program is kept under `COMBINING`'s switches alone, so what this replay reads is listed there: the
+switches of `simplify` and of the reach index, which preparing reads again. The replay leaves two things out. It does
+not read `RERAIL_DEMAND`: it replays the demand under `=off` too, which can only make an answer eager, never wrong.
+And it does not fold guests' copies (`hiding::fold_own`), which needs the run's language, unknown when combining.
+
 ## 9. Order
 
 1. `node_text` on request, checked by §5. Remove 330d9cc2c's demand.

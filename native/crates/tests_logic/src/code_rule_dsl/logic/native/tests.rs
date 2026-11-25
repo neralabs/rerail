@@ -5,7 +5,7 @@ use rusqlite::Connection;
 /// A connection to a new content store, whose `atoms` table holds the symbols.
 fn connection() -> Connection {
     let path = crate::code_rule_dsl::fixtures::temp();
-    drop(crate::code_rule_dsl::fixtures::open(&path));
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     register(&db).unwrap();
     db
@@ -388,6 +388,27 @@ fn a_walk_along_an_edge_runs_as_its_closure() {
         assert_eq!(got, want, "{case}");
         super::setfix::close(&db, &name).unwrap();
     }
+}
+
+/// A walk whose reader is a lattice relation (a summary of the walk's rows, folded one row a key) does not take the
+/// closure form: the closure writes rows by distinct node and pends its seeds, where a lattice folds each row it is
+/// given. It runs semi-naive, the lattice holding each node's least tag (typed_corpus's dependency summaries).
+#[test]
+fn a_walk_read_by_a_lattice_runs_semi_naive() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let db = connection();
+    db.execute_batch("CREATE TABLE s(c0, c1); INSERT INTO s VALUES (1, 10), (3, 5); CREATE TABLE e(c0, c1); INSERT INTO e VALUES (1, 2), (2, 3), (3, 4); CREATE TABLE r(c0, c1); CREATE TABLE m(c0, c1);").unwrap();
+    let src = |t: &str| format!("t:b:{}:{}:ii", hex(t), hex("c0, c1"));
+    let seed = format!("pos {} v0 v1\nhead v0 v1", src("s"));
+    let walk = format!("pos d0 v0 v1\npos {} v0 v2\nhead v2 v1", src("e"));
+    let least = "pos d0 v0 v1\nhead v0 v1";
+    let spec = format!("name lat_walk\nrel r ii empty\nrel m ii empty\nlattice 1 1 {} -\nseed 0 {}\njoin 0 0 {}\njoin 1 0 {}", hex("min"), hex(&seed), hex(&walk), hex(least));
+    super::setfix::open(&db, &spec).unwrap();
+    let report = super::setfix::run(&db, "lat_walk", 0).unwrap();
+    assert!(report.ends_with(" 1"), "{report}");
+    assert_eq!(pairs(&db, "SELECT c0, c1 FROM r ORDER BY c0, c1"), [(1, 10), (2, 10), (3, 5), (3, 10), (4, 5), (4, 10)]);
+    assert_eq!(pairs(&db, "SELECT c0, c1 FROM m ORDER BY c0"), [(1, 10), (2, 10), (3, 5), (4, 5)], "each node's least tag");
+    super::setfix::close(&db, "lat_walk").unwrap();
 }
 
 /// The closure form over a reach graph of many components (decision 0098 §1): chains, small cyclic components packed

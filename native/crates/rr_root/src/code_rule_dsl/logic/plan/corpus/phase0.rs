@@ -23,7 +23,7 @@ use rerail_store::Canonical as _;
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 // Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
@@ -189,10 +189,10 @@ impl Graph {
         self.holds()
     }
 
-    /// The graph as a store keeps it (`Images::facts`) and reads it back (`Images::graph_of`), for the engine's tests of
-    /// phase 0: none where it does not read back, or no image store is here.
+    /// The graph as a store keeps it (`Images::facts`) and as a later process reads it back (`Images::graph_of`), for
+    /// the engine's tests of phase 0.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn kept_as_facts(&self) -> Option<Graph> {
+    pub fn kept_and_read(&self) -> Option<Graph> {
         let images = Images::here()?;
         images.graph_of(&images.facts(self), &mut Read::default())
     }
@@ -249,7 +249,16 @@ impl Looks {
         g.digests.iter().chain(&g.rules).all(|(p, d)| self.digests.entry(p.clone()).or_insert_with(|| super::observe(|o| o.digest(p))).as_ref() == Some(d))
             && g.absent.iter().all(|p| *self.missing.entry(p.clone()).or_insert_with(|| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing))
             // Each module's image in the store the run reads: one another store holds is lowered again here.
-            && g.lowered.keys().all(|k| *self.images.entry(k.clone()).or_insert_with(|| crate::code_rule_dsl::logic::rr::planned_module_held(k)))
+            && self.images_held(g)
+    }
+
+    /// Whether the store the run reads holds each module image `g` lowers: those not looked at yet asked together.
+    fn images_held(&mut self, g: &Graph) -> bool {
+        let new: Vec<&str> = g.lowered.keys().filter(|k| !self.images.contains_key(*k)).map(String::as_str).collect();
+        for (k, held) in new.iter().zip(crate::code_rule_dsl::logic::rr::planned_modules_held(&new)) {
+            self.images.insert((*k).to_owned(), held);
+        }
+        g.lowered.keys().all(|k| self.images[k])
     }
 }
 
@@ -272,6 +281,31 @@ struct PhaseZeroGraphs(Mutex<HashMap<(Option<Dirs>, Seed), Arc<Graph>>>);
 /// (1,263 lookups, 0.85 s of ep2's edit).
 #[derive(Default)]
 struct PhaseZeroRetained(Mutex<std::collections::HashSet<(Option<PathBuf>, crate::content_store::HashKey)>>);
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static DERIVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+/// The bootstrap runs `graphs` started on this thread, for the engine's tests of phase 0.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn derive_runs() -> usize {
+    DERIVES.with(|d| d.get())
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static NO_IMAGES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f` with no graph images read or kept (neither the shipped bundle nor a store's), as a build's first run finds
+/// none: for the engine's tests of phase 0.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn without_images<R>(f: impl FnOnce() -> R) -> R {
+    NO_IMAGES.with(|n| n.set(true));
+    let r = f();
+    NO_IMAGES.with(|n| n.set(false));
+    r
+}
 
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let dirs = Dirs::here();
@@ -321,22 +355,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let mut wanted = wanted;
     if !wanted.is_empty() && let Some(images) = &images {
         let mut accepted = HashMap::new();
-        // The images in one read of the store, not one a seed.
-        let keys: Vec<crate::content_store::HashKey> = wanted.iter().map(|seed| images.key(seed)).collect();
-        // The engine's shipped graphs first (images), then the store's (kept facts, read together).
-        let mut graphs: Vec<Option<Graph>> = crate::code_rule_dsl::logic::rr::shipped_graph_images(&keys, |b| images.decode(b));
-        let rest: Vec<usize> = (0..keys.len()).filter(|&k| graphs[k].is_none()).collect();
-        if !rest.is_empty() {
-            let store_keys: Vec<crate::content_store::HashKey> = rest.iter().map(|&k| images.store_key(&keys[k])).collect();
-            let kept = crate::code_rule_dsl::logic::rr::graph_facts(images.store(), &store_keys);
-            // The graphs share the library's modules: each path and digest read once for all of them.
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "the graphs, of their facts".into());
-            let mut read = Read::default();
-            for (k, facts) in rest.into_iter().zip(kept) {
-                graphs[k] = facts.and_then(|f| images.graph_of(&f, &mut read));
-            }
-        }
-        let mut graphs = graphs.into_iter();
+        let mut graphs = images.kept(&wanted).into_iter();
         let trace = std::env::var_os("RERAIL_PHASE0_TRACE").is_some();
         wanted.retain(|seed| {
             let image = graphs.next().flatten();
@@ -381,8 +400,20 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     };
     if !wanted.is_empty() && compose != "off" && wanted.iter().all(own_seed) && let Some(dirs) = dirs_here.clone() {
         let mut made = HashMap::new();
-        for seed in &wanted {
-            let Some(g) = composed(seed, &dirs)? else { continue };
+        // Every composition's modules and phase programs first, their graphs derived in one run for all where no image
+        // holds them: composed one seed at a time, each seed whose modules had none ran `bootstrap.rerail` for those
+        // alone (a build's first run: a run of its own for nearly every module of the library, one after another).
+        let comps: Vec<(&Seed, Option<Composition>)> = wanted.iter().map(|seed| (seed, composition(seed, &dirs))).collect();
+        let mut modules: Vec<Seed> = comps.iter().filter_map(|(_, c)| c.as_ref()).flat_map(|c| c.files.iter().cloned()).collect();
+        modules.sort();
+        modules.dedup();
+        if !modules.is_empty() {
+            graphs(&modules)?;
+        }
+        for (seed, c) in comps {
+            let Some(c) = c else { continue };
+            let parts = graphs(&c.files)?;
+            let g = c.assemble(seed, &parts);
             // `RERAIL_PHASE0_COMPOSE=check`: the composed graph against the one its own run derives.
             if compose == "check" {
                 let derived = derive(std::slice::from_ref(seed)).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?.of(seed, 0);
@@ -397,9 +428,20 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
                 *g = made.get(seed).cloned();
             }
         }
+        // Kept as images, as a derived graph is (below): a composed graph is the one its run derives. Kept in the
+        // process alone, each later process composed every program's graph again (312 of a pack's 350 seeds, most of
+        // an edit's run before its strata).
+        if let Some(images) = &images
+            && !made.is_empty()
+        {
+            crate::code_rule_dsl::logic::rr::export_graph_images(&made.iter().map(|(seed, g)| (images.key(seed), images.encode(g))).collect::<Vec<_>>());
+            crate::code_rule_dsl::logic::rr::keep_graph_facts(images.store(), made.iter().map(|(seed, g)| (images.store_key(&images.key(seed)), images.facts(g))).collect());
+        }
         kept.lock().expect("phase 0's graphs").extend(made.into_iter().map(|(seed, graph)| ((Some(dirs.clone()), seed), graph)));
     }
     if !wanted.is_empty() {
+        #[cfg(any(test, feature = "test-hooks"))]
+        DERIVES.with(|d| d.set(d.get() + 1));
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
             eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if images.is_some() { "on" } else { "off" });
         }
@@ -499,6 +541,29 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
 /// derives it, and reports a missing one. The modules' graphs each hold what their modules reach through their
 /// phases (`rules`) and the candidates their includes found absent, which the text's graph holds as well.
 fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Error> {
+    match composition(seed, dirs) {
+        Some(c) => {
+            let parts = graphs(&c.files)?;
+            Ok(Some(c.assemble(seed, &parts)))
+        }
+        None => Ok(None),
+    }
+}
+
+/// What a composed graph is made of (`composed`): the seed's node, what it asks for and where, the modules' and
+/// phase programs' file seeds, the candidates absent, its phases, and, for a file, its digest.
+struct Composition {
+    start: String,
+    asks: Vec<(i64, String, PathBuf)>,
+    files: Vec<Seed>,
+    absent: Vec<PathBuf>,
+    named: Vec<(String, PathBuf)>,
+    own: Option<(PathBuf, [u8; 32])>,
+}
+
+/// `seed`'s composition (`composed`), found without a graph: none where it is not composed.
+#[inline(never)]
+fn composition(seed: &Seed, dirs: &Dirs) -> Option<Composition> {
     use crate::content_store::observe::Kind;
     // The seed's node in the graph, its names (offset, name; `core.rerail` at -1 outside T's shape) and phases, and,
     // for a file, its digest.
@@ -510,11 +575,11 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
         // test's rule file): those are seeds of the template's run, which `graphs` derives in one run for all.
         Seed::File(path) => {
             if path.starts_with(&dirs.lib) || path.starts_with(&dirs.phases) {
-                return Ok(None);
+                return None;
             }
-            let (Some((bytes, _)), Some(digest)) = (super::observe(|o| o.read(path)), super::observe(|o| o.digest(path))) else { return Ok(None) };
-            let Ok(text) = String::from_utf8(bytes) else { return Ok(None) };
-            let Ok((includes, t_shape, phases)) = crate::code_rule_dsl::logic::rr::includes_and_phases(&text) else { return Ok(None) };
+            let (Some((bytes, _)), Some(digest)) = (super::observe(|o| o.read(path)), super::observe(|o| o.digest(path))) else { return None };
+            let Ok(text) = String::from_utf8(bytes) else { return None };
+            let Ok((includes, t_shape, phases)) = crate::code_rule_dsl::logic::rr::includes_and_phases(&text) else { return None };
             let names = includes.into_iter().chain((!t_shape).then(|| (-1, "core.rerail".to_owned()))).collect();
             (path.to_string_lossy().into_owned(), names, phases, Some((path.clone(), digest)))
         }
@@ -522,7 +587,7 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
     // A program in T's shape reads its files without `core.rerail`: its modules are the plan's `bare` variant, which
     // the library's own graphs (each a file seed, read with it) do not hold. Its run derives them.
     if !names.iter().any(|(at, n)| *at == -1 && n == "core.rerail") {
-        return Ok(None);
+        return None;
     }
     let lib = dirs.lib.to_string_lossy();
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(names.len());
@@ -531,15 +596,15 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
     for (at, name) in names {
         let path = candidate_path(&lib, &name);
         if super::observe(|o| o.kind(&path)) != Kind::File {
-            return Ok(None);
+            return None;
         }
         // Each name a file has (its own `core.rerail` too) has its candidate beside the file, held absent
         // (`p0_absent`: every candidate not there); one there is the run's to resolve.
         if let Some((own_path, _)) = &own {
-            let Some((dir, _)) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned())) else { return Ok(None) };
+            let Some((dir, _)) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned())) else { return None };
             let beside = candidate_path(&dir, &name);
             if super::observe(|o| o.kind(&beside)) != Kind::Missing {
-                return Ok(None);
+                return None;
             }
             absent.push(beside);
         }
@@ -554,7 +619,7 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
         match super::observe(|o| o.kind(&path)) {
             Kind::File => files.push(Seed::File(path.clone())),
             Kind::Missing => absent.push(path.clone()),
-            _ => return Ok(None),
+            _ => return None,
         }
         named.push((p.clone(), path));
     }
@@ -562,61 +627,78 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
     named.dedup();
     files.sort();
     files.dedup();
-    let parts = graphs(&files)?;
-    let mut whole = Graph::default();
-    for g in &parts {
-        for (from, to) in &g.includes {
-            whole.includes.entry(from.clone()).or_insert_with(|| to.clone());
+    Some(Composition { start, asks, files, absent, named, own })
+}
+
+impl Composition {
+    /// The composed graph of `seed`, its modules' and phase programs' graphs `parts` (one a file seed, in order).
+    fn assemble(self, seed: &Seed, parts: &[Arc<Graph>]) -> Graph {
+        let Composition { start, asks, files, absent, named, own } = self;
+        let mut whole = Graph::default();
+        for g in parts {
+            for (from, to) in &g.includes {
+                whole.includes.entry(from.clone()).or_insert_with(|| to.clone());
+            }
+            whole.missing.extend(g.missing.iter().cloned());
+            whole.absent.extend(g.absent.iter().cloned());
+            whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
+            whole.rules.extend(g.rules.iter().map(|(p, d)| (p.clone(), *d)));
+            whole.plans.extend(g.plans.iter().copied());
+            whole.plan.extend(g.plan.iter().map(|(m, row)| (m.clone(), row.clone())));
+            whole.lowered.extend(g.lowered.iter().map(|(k, d)| (k.clone(), d.clone())));
         }
-        whole.missing.extend(g.missing.iter().cloned());
-        whole.absent.extend(g.absent.iter().cloned());
-        whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
-        whole.rules.extend(g.rules.iter().map(|(p, d)| (p.clone(), *d)));
-        whole.plans.extend(g.plans.iter().copied());
-        whole.plan.extend(g.plan.iter().map(|(m, row)| (m.clone(), row.clone())));
-        whole.lowered.extend(g.lowered.iter().map(|(k, d)| (k.clone(), d.clone())));
+        whole.absent.extend(absent);
+        whole.includes.insert(start.clone(), asks);
+        if !named.is_empty() {
+            whole.phases.insert(start, named);
+        }
+        if let Some((path, digest)) = own {
+            whole.digests.insert(path, digest);
+        }
+        let mut g = whole.of(seed, 0);
+        // What the modules reach through their phases, and the candidates they found absent: their graphs' (`of` reads a
+        // module's phases only from a run's graph, which theirs hold as `rules`, with the candidates beside what those
+        // reach). But one: a module taken as a file seed names `core.rerail` itself (`<its dir>/core.rerail`, absent), which
+        // a module a text includes does not, unless a module beside it names `core.rerail` too.
+        for (part, seed) in parts.iter().zip(&files) {
+            g.rules.extend(part.rules.iter().filter(|(p, _)| !g.digests.contains_key(*p)).map(|(p, d)| (p.clone(), *d)));
+            let Seed::File(start) = seed else { continue };
+            let start_key = start.to_string_lossy().into_owned();
+            let dir = |from: &str| bootstrap_spelling(from).rsplit_once('/').map(|(d, _)| d.to_owned());
+            let own_dir = dir(&start_key);
+            let named = part.includes.iter().any(|(from, to)| {
+                to.iter().any(|(at, n, _)| n == "core.rerail" && !(*from == start_key && *at == -1) && dir(from) == own_dir)
+            });
+            let implicit = own_dir.as_deref().map(|d| candidate_path(d, "core.rerail"));
+            g.absent.extend(part.absent.iter().filter(|p| named || Some(*p) != implicit.as_ref()).cloned());
+        }
+        // The phase programs the text names, which `of` reached as `rules`: a phase program that is one of the text's
+        // modules too is a module.
+        g.rules.retain(|p, _| !g.digests.contains_key(p));
+        g.absent.sort();
+        g.absent.dedup();
+        g.missing.sort();
+        g.missing.dedup();
+        g.plans.sort();
+        g.plans.dedup();
+        g
     }
-    whole.absent.extend(absent);
-    whole.includes.insert(start.clone(), asks);
-    if !named.is_empty() {
-        whole.phases.insert(start, named);
-    }
-    if let Some((path, digest)) = own {
-        whole.digests.insert(path, digest);
-    }
-    let mut g = whole.of(seed, 0);
-    // What the modules reach through their phases, and the candidates they found absent: their graphs' (`of` reads a
-    // module's phases only from a run's graph, which theirs hold as `rules`, with the candidates beside what those
-    // reach). But one: a module taken as a file seed names `core.rerail` itself (`<its dir>/core.rerail`, absent), which
-    // a module a text includes does not, unless a module beside it names `core.rerail` too.
-    for (part, seed) in parts.iter().zip(&files) {
-        g.rules.extend(part.rules.iter().filter(|(p, _)| !g.digests.contains_key(*p)).map(|(p, d)| (p.clone(), *d)));
-        let Seed::File(start) = seed else { continue };
-        let start_key = start.to_string_lossy().into_owned();
-        let dir = |from: &str| bootstrap_spelling(from).rsplit_once('/').map(|(d, _)| d.to_owned());
-        let own_dir = dir(&start_key);
-        let named = part.includes.iter().any(|(from, to)| {
-            to.iter().any(|(at, n, _)| n == "core.rerail" && !(*from == start_key && *at == -1) && dir(from) == own_dir)
-        });
-        let implicit = own_dir.as_deref().map(|d| candidate_path(d, "core.rerail"));
-        g.absent.extend(part.absent.iter().filter(|p| named || Some(*p) != implicit.as_ref()).cloned());
-    }
-    // The phase programs the text names, which `of` reached as `rules`: a phase program that is one of the text's
-    // modules too is a module.
-    g.rules.retain(|p, _| !g.digests.contains_key(p));
-    g.absent.sort();
-    g.absent.dedup();
-    g.missing.sort();
-    g.missing.dedup();
-    g.plans.sort();
-    g.plans.dedup();
-    Ok(Some(g))
 }
 
 /// `composed`, with this checkout's directories, for the engine's tests of phase 0 (`phase0::tests`).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn composed_here(seed: &Seed) -> std::result::Result<Option<Graph>, Error> {
     composed(seed, &Dirs::here().expect("the library and the phase programs' directory"))
+}
+
+/// Graph `g` read back from each form a graph is kept in: the store's kept facts (`Graph::kept_and_read`) and the
+/// shipped bundle's image (`Images::encode`), for the engine's tests of phase 0 (`phase0::tests`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn through_kept_forms(g: &Graph) -> Option<(Graph, Graph)> {
+    let facts = g.kept_and_read()?;
+    let images = Images::here()?;
+    let image = images.decode(&images.encode(g))?;
+    Some((facts, image))
 }
 
 /// Whether two graphs of a seed are one: their digest (modules and edges), what they reach through phases, and the
@@ -643,6 +725,24 @@ impl Dirs {
     pub(in crate::code_rule_dsl) fn here() -> Option<Dirs> {
         Some(Dirs { lib: dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?, phases: phase_lib()? })
     }
+
+    /// Library file `path` (canonical), which a program of the run includes, as the seed whose graph plans it as a
+    /// module: the file itself under the library or the phase programs (`p0_seed_reaches(f, f)`). Elsewhere a file
+    /// seed is a program's own text, no module (decision 0639 §2), so a file there that programs include (the packs'
+    /// tables beside the library, `#include "../packs/python/….stdlib.rerail"`) is a text that includes it by its
+    /// name from the library, as a program that includes it names it: it is planned as that program's module is.
+    /// A text names only the library's files (`p0_cand`, rank 1), and a file beside a program is written into the
+    /// program's text (`settings::program_texts`), so every library file of a run has such a name.
+    pub(in crate::code_rule_dsl) fn module_seed(&self, path: PathBuf) -> Seed {
+        if path.starts_with(&self.lib) || path.starts_with(&self.phases) {
+            return Seed::File(path);
+        }
+        let name = self.lib.parent().and_then(|up| path.strip_prefix(up).ok()).map(|rel| format!("../{}", rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")));
+        match name {
+            Some(name) => Seed::Text { t_shape: false, includes: vec![(0, name)], phases: Vec::new() },
+            None => Seed::File(path),
+        }
+    }
 }
 
 /// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rerail` is handed it.
@@ -664,6 +764,10 @@ struct Images {
 
 impl Images {
     fn here() -> Option<Images> {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if NO_IMAGES.with(|n| n.get()) {
+            return None;
+        }
         let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?;
         Some(Images { lib: format!("{}/", bootstrap_spelling(&lib.to_string_lossy())), phases: format!("{}/", bootstrap_spelling(&phase_lib()?.to_string_lossy())), store: OnceLock::new() })
     }
@@ -706,6 +810,25 @@ impl Images {
         crate::content_store::HashKey::sha256(format!("rerail phase 0 graph image 3\0{}\0{seed}", crate::code_rule_dsl::build_ids::engine()).as_bytes())
     }
 
+    /// The graphs kept for `seeds`, in their order, whether they hold or not: the engine's shipped graphs first
+    /// (images), then the store's (kept facts), in one read of the store, not one a seed.
+    fn kept(&self, seeds: &[Seed]) -> Vec<Option<Graph>> {
+        let keys: Vec<crate::content_store::HashKey> = seeds.iter().map(|seed| self.key(seed)).collect();
+        let mut graphs: Vec<Option<Graph>> = crate::code_rule_dsl::logic::rr::shipped_graph_images(&keys, |b| self.decode(b));
+        let rest: Vec<usize> = (0..keys.len()).filter(|&k| graphs[k].is_none()).collect();
+        if !rest.is_empty() {
+            let store_keys: Vec<crate::content_store::HashKey> = rest.iter().map(|&k| self.store_key(&keys[k])).collect();
+            let kept = crate::code_rule_dsl::logic::rr::graph_facts(self.store(), &store_keys);
+            // The graphs share the library's modules: each path and digest read once for all of them.
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the graphs, of their facts".into());
+            let mut read = Read::default();
+            for (k, facts) in rest.into_iter().zip(kept) {
+                graphs[k] = facts.and_then(|f| self.graph_of(&f, &mut read));
+            }
+        }
+        graphs
+    }
+
     /// The key a store keeps seed key `key`'s graph under, as kept facts (`rr::graph_facts`): the image's key is the
     /// shipped bundle's.
     fn store_key(&self, key: &crate::content_store::HashKey) -> crate::content_store::HashKey {
@@ -714,10 +837,9 @@ impl Images {
 
     /// The graph as facts (t33 step 2), its paths as the image writes them (`rel`): `p0g_include(from, at, name,
     /// path)`, `p0g_missing(from, at, name)`, `p0g_absent(path)`, `p0g_digest(path, sha256)`, `p0g_phase(from,
-    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, `p0g_module(name, rank, key, scope)` (the module plan,
-    /// decision 0639 §1, its scope's names comma-separated) and `p0g_lowered(key, image)`, each relation's rows in the
-    /// graph's order: all `encode` writes, so a graph kept as facts is the graph kept as an image. Without the plan, a
-    /// graph read back from a store's facts planned no module, and a text that read it found its files in none.
+    /// phase, path)`, `p0g_rule(path, sha256)`, `p0g_plan(plan)`, and the module plan (decision 0639):
+    /// `p0g_module(name, rank, key, scope)` (its scope's names, comma-separated) and `p0g_lowered(key, image)`; each
+    /// relation's rows in the graph's order.
     fn facts(&self, g: &Graph) -> crate::code_rule_dsl::logic::program_facts::Facts {
         use crate::code_rule_dsl::logic::front::Value;
         let s = |x: String| Value::Str(x.into());
@@ -750,6 +872,8 @@ impl Images {
         for d in &g.plans {
             put("p0g_plan", vec![hex(d)]);
         }
+        // The module plan and its images (decision 0639 §1, §3), as the image writes them (`encode`): a graph read back
+        // without them planned no module, and every text composed of it failed ("in no module of phase 0's plan").
         for (m, r) in &g.plan {
             put("p0g_module", vec![s(m.clone()), Value::Int(r.rank), s(r.key.clone()), s(r.scope.iter().cloned().collect::<Vec<_>>().join(","))]);
         }
@@ -1059,10 +1183,31 @@ impl Graph {
 }
 
 /// Runs `bootstrap.rerail` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
+/// The seeds whose kept graphs name the modules a run of phase 0 over `seeds` plans, as far as they are known before
+/// it runs, read from no file: each file seed (its graph plans its own module and its includes'), and for a text seed,
+/// which is no module, each library file it includes by name. A guess that is wrong costs a read, never an answer
+/// (`derive`).
+fn planning(seeds: &[Seed], lib: &Path) -> Vec<Seed> {
+    let mut out = std::collections::BTreeSet::new();
+    for seed in seeds {
+        match seed {
+            Seed::File(_) => {
+                out.insert(seed.clone());
+            }
+            Seed::Text { includes, .. } => {
+                out.extend(includes.iter().filter_map(|(_, name)| dunce::canonicalize(lib.join(name)).ok()).filter(|p| p.is_file()).map(Seed::File));
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let lib = dunce::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rerail");
+    // The store's module images, found before the run's first wave: its answers to `p0_lower_req` read them there.
+    crate::code_rule_dsl::logic::rr::images_ahead();
     // The builtin read: the one rule file the engine knows by itself.
     let (bytes, _) = super::observe(|o| o.read(&bootstrap)).ok_or_else(|| PlanError::Plan(format!("{}: cannot read the file", bootstrap.display())))?;
     let mut text = String::from_utf8(bytes).map_err(|e| PlanError::Plan(format!("{}: {e}", bootstrap.display())))?;
@@ -1118,6 +1263,15 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     }
     // The library is already a permitted input root. Phase zero only loads the files its seeds request.
     let options = serde_json::json!({ "reuse": true, "inputFiles": [] });
+    // The modules the kept graphs of the seeds and their includes planned (`planning`), read from the image store before
+    // the run's first wave (decision 0104): the run answers its lowering requests inside its waves, where it reads no
+    // store, so a module the store held was lowered again in every new process (decision 0639 T4). A graph kept for a
+    // seed whose file changed still names its other modules' keys; a module whose key changed, or that no store holds,
+    // is lowered.
+    if let Some(images) = Images::here() {
+        let keys: Vec<String> = images.kept(&planning(seeds, &lib)).into_iter().flatten().flat_map(|g| g.plan.into_values().map(|m| m.key)).collect();
+        crate::code_rule_dsl::logic::rr::hold_planned_modules(&keys);
+    }
     let mut image = Vec::new();
     let phase_0 = in_phase_0();
     let run = super::run_handed(&[&text], None, None, &lib, None, std::path::Path::new(""), "program",

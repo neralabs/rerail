@@ -34,7 +34,7 @@ impl ViewEntry {
     /// `p`'s entry, in `block` (its projection's, which its numbering is in), its kinds as `dialect` holds them, and
     /// its codes' names interned in `names` where the batch reads `op`: written whole on the first ask, the same entry
     /// after.
-    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect, names: Option<&crate::content_store::atoms::Atoms>) -> Self {
+    pub fn new(block: &Arc<Block>, p: &Projected, dialect: &Dialect, names: Option<&dyn crate::content_store::AtomTable>) -> Self {
         assert!(Arc::ptr_eq(p.block(), block), "an entry is in its projection's block");
         let (desc, codes) = p.entry();
         codes.get_or_init(|| Self::fill(block, p, dialect, desc, names));
@@ -43,7 +43,7 @@ impl ViewEntry {
 
     /// Writes the rest of `p`'s entry `desc` (its key, file and tag are there from the start), and returns its codes'
     /// table.
-    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>, names: Option<&crate::content_store::atoms::Atoms>) -> Codes {
+    fn fill(block: &Arc<Block>, p: &Projected, dialect: &Dialect, desc: &Desc<ViewDoc>, names: Option<&dyn crate::content_store::AtomTable>) -> Codes {
         let f = p.f();
         let n = f.code_count();
         // copy: derived (each code's kind and field atom, computed once from the tape's code table and the dialect)
@@ -113,8 +113,8 @@ impl ViewEntry {
             if let Some(names) = &names {
                 Run::set(&raw mut (*d).names, names.as_ptr(), names.len());
             }
-            let places = p.places_column();
-            Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
+            // A node's place, read in its tape's auxiliary index (`tape_place`, `tape_place_past_comments`).
+            (*d).place = p.place_kind() as u32;
             // The tape's rows' derived columns made by now (`tape_rows::derive`: those its program reads).
             let (columns, named) = p.derived.made();
             let [before, after, visits, digests] = columns;

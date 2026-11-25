@@ -128,6 +128,35 @@
         assert!(super::composed_here(&super::Seed::File(lib.join("python/env.rerail"))).unwrap().is_none());
     }
 
+    /// Seeds composed of the library's modules take the modules none holds from one run for them all, not a run a seed:
+    /// a build's first run composed its 300 rule files' graphs one after another, each its modules' run (36 runs).
+    #[test]
+    fn composed_seeds_take_their_modules_from_one_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let seeds: Vec<super::Seed> = [("a.rerail", "python/env.rerail"), ("b.rerail", "python/conditions.rerail")]
+            .iter()
+            .map(|(name, module)| {
+                let path = dir.path().join(name);
+                std::fs::write(&path, format!("#include \"core.rerail\"\n#include \"{module}\"\n.decl {}(s: symbol)\n", &name[..1])).unwrap();
+                super::Seed::File(dunce::canonicalize(&path).unwrap())
+            })
+            .collect();
+        // No images, as a build's first run finds none.
+        super::without_images(|| {
+            let before = super::derive_runs();
+            let graphs = super::graphs(&seeds).unwrap();
+            assert_eq!(graphs.len(), 2);
+            assert_eq!(super::derive_runs() - before, 1, "the seeds' modules in one run");
+            for s in &seeds {
+                assert!(super::composed_here(s).unwrap().is_some(), "{s:?} is composed of the library's modules");
+            }
+            for (s, g) in seeds.iter().zip(&graphs) {
+                let derived = super::derive(std::slice::from_ref(s)).unwrap().of(s, 0);
+                assert!(super::same_graph(g, &derived), "{s:?}: {}", g.differences(&derived));
+            }
+        });
+    }
+
     /// A phase program's graph from a run shared with other file seeds is its own (`Graph::of`): its walk through the
     /// phase programs' includes names no other seed's `core.rerail` (a module that was a seed of the run names it as a
     /// file seed), which held `<the module's dir>/core.rerail` absent in every graph that reached it.
@@ -402,6 +431,38 @@
         assert_ne!(decl[&2], fact[&2], "a fact in its scope: top's key");
     }
 
+    /// A graph read back from the store's kept facts or the shipped image is the graph kept: its module plan and
+    /// its modules' images too (decision 0639 §1, §3). The kept facts (t33 step 2) held no plan, and every text whose
+    /// graph was composed of a module read back from them failed ("core.rerail: in no module of phase 0's plan").
+    #[test]
+    fn a_graph_kept_and_read_back_keeps_its_plan() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let seed = super::Seed::File(lib.join("core.rerail"));
+        let graph = super::graph(&seed).unwrap();
+        assert!(!graph.plan.is_empty(), "core.rerail's graph plans its own module");
+        let (facts, image) = super::through_kept_forms(&graph).expect("the forms read back");
+        for (form, g) in [("kept facts", &facts), ("image", &image)] {
+            assert!(super::same_graph(g, &graph), "{form}: {}", g.differences(&graph));
+            assert_eq!(g.plans, graph.plans, "{form}: the plans");
+        }
+    }
+
+    /// A graph read back from the facts a store keeps it as (t33 step 2) holds its module plan and its modules' images
+    /// (decision 0639): kept without them, a later process's run found every library file in no module of its plan,
+    /// and refused to link.
+    #[test]
+    fn a_kept_graph_reads_back_with_its_module_plan() {
+        let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).unwrap();
+        let text = crate::code_rule_dsl::logic::settings::program_text(&lib.join("python/conditions.rerail")).unwrap();
+        let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
+        let graph = super::graph(&seed).unwrap();
+        assert!(!graph.plan.is_empty(), "{}", graph.describe());
+        let read = graph.kept_and_read().expect("the kept graph reads");
+        assert_eq!(read.plan, graph.plan, "the module plan, as made");
+        assert_eq!(read.lowered, graph.lowered, "the modules' images, as made");
+        assert!(super::same_graph(&read, &graph), "{}", graph.differences(&read));
+    }
+
     /// T5 (decision 0639 §3): a graph whose module's image the store does not hold does not hold (`Graph::holds`), so
     /// `graphs` derives it again in that store, which asks for the lowering; a reused run of phase 0 checks its answer
     /// by the same look (`rr::planned_module_held`, the record's `p0_lower_req` entry).
@@ -430,7 +491,7 @@
         let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
         let graph = super::graph(&seed).unwrap();
         assert!(!graph.plan.is_empty(), "{}", graph.describe());
-        let back = graph.kept_as_facts().expect("the graph read back from its facts");
+        let back = graph.kept_and_read().expect("the graph read back from its facts");
         assert_eq!(back.plan, graph.plan, "the module plan");
         assert_eq!(back.lowered, graph.lowered, "the modules' images");
         assert_eq!(back.digests, graph.digests, "the modules' digests");
@@ -439,7 +500,7 @@
         std::fs::write(dir.path().join("r.rerail"), "#include \"python/ruff-classes.rerail\"\n#include \"../packs/python/ruff-ruf013-implicit-optional.stdlib.rerail\"\n.decl k(m: symbol)\nk(m) :- stdlib_module(m).\n.output k\n").unwrap();
         let seed = super::Seed::File(dunce::canonicalize(dir.path().join("r.rerail")).unwrap());
         let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
-        let back = graph.kept_as_facts().expect("the graph read back from its facts");
+        let back = graph.kept_and_read().expect("the graph read back from its facts");
         assert!(!graph.plan.is_empty(), "{}", graph.describe());
         // One spelling a file: the pack's table is `packs/…`, as a program's canonical list of its files has it, not
         // `lib/../packs/…` (`Library::scope` compares them).

@@ -8,7 +8,10 @@
 // the hazards, the scope leases and the private files, and the observer (`observe`), re-exported here.
 pub use rerail_observe::content_store::*;
 pub mod analysis_scope;
-pub mod atoms;
+/// The atoms (rerail-atoms), at their old path.
+pub use rerail_atoms as atoms;
+mod atoms_store;
+pub use atoms_store::{attach_atoms, install_atoms, install_kept_tables};
 pub use atoms::{ProcessIds, StoreIds, Sym};
 #[cfg(target_os = "macos")]
 mod accel_models;
@@ -26,6 +29,7 @@ pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
 pub use rerail_blocks::block::Flush;
 mod derivation;
+mod as_fact_store;
 mod document_places;
 pub use document_places::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
 mod held;
@@ -69,7 +73,7 @@ mod workspaces;
 pub mod write_back;
 
 pub use held::forget_snapshot as forget_held_snapshot;
-pub use object_segments::{copy_beside, ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, TapeBytes, TapeHeld};
+pub use object_segments::{copy_beside, ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, SourcePlace, TapeBytes, TapeHeld};
 pub use held::{Rel as KeptRel, Stored as KeptStored, local_space, MemoBlob, MemoPut, MemoRow};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;

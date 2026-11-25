@@ -88,7 +88,8 @@ pub const AXIS_KEYS: usize = 4;
 pub struct InFlight {
     pub at: usize,
     pub room: rerail_blocks::relation::IndexRoom,
-    pub done: rerail_accel::gpu::join::Submitted,
+    /// Its builder's committed work (the lane's `Submitted::flushed`): a taker waits on it.
+    pub done: std::sync::Arc<rerail_accel::gpu::shared::Flushed>,
     /// Taken by another batch's probe, whose work reads it after its builder's: its room is never given back.
     pub lent: bool,
     /// Whether its builder's program ran it to its end, read once `done` completed: a program stopped before it (an
@@ -225,9 +226,30 @@ pub enum Life {
 }
 
 /// The blocks a run's new relations go in outside a chunk, while they have room: one a `Life` (decision 0442: the
-/// run's, so no two runs' relations share a block).
+/// run's, so no two runs' relations share a block); and its vectors' (`Lanes`).
 #[derive(Default)]
-struct Open([Mutex<Option<Arc<Facts>>>; 4]);
+struct Open([Mutex<Option<Arc<Facts>>>; 4], Lanes);
+
+/// How many open blocks a `Life`'s vectors and structures with no home of their own spread over (`open_chunk`).
+const LANES: usize = 32;
+
+/// The open blocks of a `Life`'s vectors and structures with no home of their own (`open_chunk`): one a thread (by its
+/// id), so a thread's short-lived arrays (a lookup's rows, a join's keys) are taken and given back in a block no other
+/// thread takes them from, under a lock no other thread waits on. In one open block a `Life`, every thread's took its
+/// lock and its ledger's: on corpus0 × B-now, 90 s of the run's 168 s CPU in the system's lock waits. Two threads
+/// whose ids meet share one, as every thread did.
+#[derive(Default)]
+struct Lanes([[Mutex<Option<Arc<Facts>>>; LANES]; 4]);
+
+impl Lanes {
+    /// This thread's open block of `life`.
+    fn here(&self, life: Life) -> &Mutex<Option<Arc<Facts>>> {
+        use std::hash::{Hash, Hasher};
+        let mut h = rustc_hash::FxHasher::default();
+        std::thread::current().id().hash(&mut h);
+        &self.0[life as usize][(h.finish() >> 7) as usize % LANES]
+    }
+}
 
 /// The open blocks new relations go in outside a chunk (`Open`): the run's, or outside a run the machine's (decision
 /// 0442: every piece of state has an owner). A session's work between its runs shares the machine's, as a run's
@@ -384,6 +406,8 @@ pub fn held() -> [(usize, usize, usize); 3] {
 #[derive(Default)]
 pub struct Chunk {
     open: [Mutex<Option<Arc<Facts>>>; 4],
+    /// Its vectors' open blocks, one a thread (`Lanes`).
+    lanes: Lanes,
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
     /// The bytes written in its blocks given back (`Facts`'s drop), and in those held when it ended (`Written`).
     tally: Arc<std::sync::atomic::AtomicUsize>,
@@ -541,7 +565,7 @@ pub fn in_chunk_measured<R>(f: impl FnOnce() -> R) -> (R, Written) {
     impl Drop for Leave {
         fn drop(&mut self) {
             drop(self.0.take());
-            for open in &self.1.open {
+            for open in self.1.open.iter().chain(self.1.lanes.0.iter().flatten()) {
                 open.lock().unwrap_or_else(|e| e.into_inner()).take();
             }
             let made = std::mem::take(&mut *self.1.made.lock().unwrap_or_else(|e| e.into_inner()));
@@ -591,13 +615,9 @@ fn lease(bytes: usize, life: Life) -> Result<Block, String> {
 /// `lease`'s block of `bytes`, no more: a relation's alone in it outside a run (`Part::try_new_with`).
 fn lease_room(bytes: usize) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
-    let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
+    let device = rerail_blocks::alloc::run_device();
     rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Churn, device, ..Need::SLAB })
 }
-
-/// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
-/// above this crate, installed by `install_block_device`); `May` until one is installed.
-static BLOCK_DEVICE: std::sync::OnceLock<fn() -> rerail_blocks::alloc::Device> = std::sync::OnceLock::new();
 
 /// A code table's words (`rerail_tape_format::tape::CodeTable`, decision 0628 §2) in a block: what the tape crate,
 /// below the blocks, places a table it makes in (`place_tables_with`).
@@ -608,19 +628,21 @@ pub fn place_table(words: &[u32]) -> rerail_tape_format::tape::Words {
     Arc::new(v)
 }
 
-/// Installs what a block of relations asks about the device (`placement::block_device`); the first one stays.
+/// Installs what a block of relations, and a tape's room (`tape::placed::place`), asks about the device
+/// (`placement::block_device`): `rerail_blocks::alloc::run_device`'s answer; the first one stays.
 pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
-    let _ = BLOCK_DEVICE.set(device);
+    rerail_blocks::alloc::install_run_device(device);
 }
 
 /// The batches' relations held now, the most bytes first (`syntax::made::sources_held`, above this crate, installed by
 /// `install_sources_held`): (bytes in their blocks, name, documents made, the batch's documents, the span of its first
-/// group, of its latest). None until one is installed.
-static SOURCES_HELD: rerail_registry::Slot<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> = rerail_registry::Slot::new("what lists the batches' relations held (facts::rows::SOURCES_HELD)");
+/// group, of its latest). None until boot registers it.
+pub static SOURCES_HELD: rerail_registry::Slot<fn() -> Vec<(usize, String, usize, usize, u32, u32)>> =
+    rerail_registry::Slot::new("the batches' relations held (facts::rows::SOURCES_HELD)");
 
-/// Installs what lists the batches' relations held (`syntax::made::sources_held`): once, at load.
+/// Registers what lists the batches' relations held (`syntax::made::sources_held`), once, by boot.
 pub fn install_sources_held(held: fn() -> Vec<(usize, String, usize, usize, u32, u32)>) {
-    SOURCES_HELD.register("boot", held);
+    SOURCES_HELD.register("rerail-boot", held);
 }
 
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
@@ -662,14 +684,14 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
     Ok(f)
 }
 
-/// A chunk of `need` bytes (aligned to `align`) in the open block of `life`'s relations (the chunk's, if a chunk's
-/// evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
+/// A chunk of `need` bytes (aligned to `align`) in this thread's open block of `life`'s vectors (`Lanes`; the chunk's,
+/// if a chunk's evaluation runs), past its others' margin, taken under the block's lock. Checked for room under the lock and taken
 /// after it, the room could be another thread's by then, or not in one piece (a free list's), and the chunk failed
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
     let runs = open_blocks();
-    let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+    let mut open = chunk.as_ref().map_or(runs.1.here(life), |c| c.lanes.here(life)).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
         && f.admits(need)
         && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
@@ -694,14 +716,18 @@ impl rerail_blocks::maps::Room for LifeRoom {
     }
 }
 
-/// The run's room (`LifeRoom(Life::Run)`): it holds nothing but the life, so each structure takes its own.
+/// The run's room (`LifeRoom(Life::Run)`). It holds nothing but the life, so every structure shares one: a new one a
+/// call was a heap allocation for each vector made with no room (53 M on a cold PostHog run, note t60 §5.7).
 pub fn run_room() -> Arc<dyn rerail_blocks::maps::Room> {
-    Arc::new(LifeRoom(Life::Run))
+    static ROOM: std::sync::OnceLock<Arc<dyn rerail_blocks::maps::Room>> = std::sync::OnceLock::new();
+    ROOM.get_or_init(|| Arc::new(LifeRoom(Life::Run))).clone()
 }
 
-/// A source's room (`LifeRoom(Life::Source)`): a batch's structures, dropped with the batch.
+/// A source's room (`LifeRoom(Life::Source)`): a batch's structures, dropped with the batch. One, shared, as
+/// `run_room`'s.
 pub fn source_room() -> Arc<dyn rerail_blocks::maps::Room> {
-    Arc::new(LifeRoom(Life::Source))
+    static ROOM: std::sync::OnceLock<Arc<dyn rerail_blocks::maps::Room>> = std::sync::OnceLock::new();
+    ROOM.get_or_init(|| Arc::new(LifeRoom(Life::Source))).clone()
 }
 
 /// Where the structures derived from a relation's rows go (its indexes' arrays, a `Vector` in its room, `Home::room`: decision 0384 step 4):
@@ -962,10 +988,10 @@ fn capacity_for(rows: usize) -> u64 {
 }
 
 /// The bytes `indexes` indexes of `rows` rows take in their relation's block (`Relation::try_reserve_index`): each
-/// its buckets and its rows, each chunk aligned, and the directory.
+/// its buckets and its rows with their marks (decision 0671), each chunk aligned, and the directory.
 fn index_room(indexes: usize, rows: u64) -> usize {
     let rows = rows.max(1) as usize;
-    let one = 4 * (rows.next_power_of_two() + 1) + 4 * rows + 2 * rerail_blocks::block::PAGE;
+    let one = 4 * (rows.next_power_of_two() + 1) + rerail_blocks::relation::index_rows_bytes(rows) + 2 * rerail_blocks::block::PAGE;
     indexes * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64
 }
 
@@ -990,7 +1016,8 @@ fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     let rows = vals.len() / k;
-    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + 8 * MARGIN), Life::Run));
+    // Its rows twice, and two indexes of them (each its buckets, rows and marks, decision 0671).
+    let facts = Arc::new(Facts::new(Block::anon(kind::FACTS, 2 * room_for(k, rows) + index_room(2, rows as u64) + 8 * MARGIN), Life::Run));
     let rel = Relation::try_create(&facts.block, &spec(k), None).expect("room for the relation");
     assert!(rel.rows.try_reserve(&facts.block, rows as u64));
     // SAFETY: rows `0..rows` are reserved, and this thread alone writes them before any reader looks.
@@ -1672,8 +1699,9 @@ impl Part {
     /// A relation of `k` columns, room for `rows` rows reserved (none claimed) alone in a block of `life`'s, with room
     /// for `indexes` indexes of them.
     fn reserved(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
+        // Each index its buckets, and its rows with their marks (decision 0671).
         let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;
+        let one = 4 * (cap + 1) + rerail_blocks::relation::index_rows_bytes(rows) + 2 * 64;
         let index = indexes.max(1) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
         Part::try_new_with(life, k, rows, index, false)
     }
@@ -2864,21 +2892,6 @@ impl Rows {
         let (p, i) = self.part_of(from);
         let (q, _) = self.part_of(to - 1);
         std::ptr::eq(p, q).then(|| RangeRead { col: p.cols[c], add: (p.skip + i).wrapping_sub(from), _rows: std::marker::PhantomData })
-    }
-
-    /// The first row whose value in column `c` is not below `key`, the column sorted over every row (`rows()` where
-    /// none is): the parts by their last values, then the one part's own search (`rerail_blocks::rows::Rows::
-    /// lower_bound`: its chunks' first values, then the chunk's encoding or slice). A bisection by `get` searched the
-    /// parts and the chunks again for every row it read.
-    pub fn lower_bound(&self, c: usize, key: i64) -> u32 {
-        let parts = self.segs.iter().map(|(first, p)| (*first, p)).chain(self.tail.as_ref().map(|t| (self.from, t)));
-        for (first, p) in parts {
-            let n = p.len();
-            if n > 0 && p.cols[c].get(n - 1) >= key {
-                return first + p.rel().rows.lower_bound(c, 0, n, key);
-            }
-        }
-        self.rows() as u32
     }
 
     /// The relation holding row `id`, and the row's place in it.

@@ -564,7 +564,7 @@ pub fn plain_end(r: &crate::records::Records, made: &crate::block_native::BlockN
             let arms = rd.arms.iter().all(|a| {
                 let closed = safe(a.closer, i32::from(a.off));
                 let open = match a.none {
-                    ReadNone::Refuse | ReadNone::End => true,
+                    ReadNone::Refuse | ReadNone::End | ReadNone::Bad(_) => true,
                     ReadNone::Bytes(m) => m > 0 && safe(a.opener, i32::from(m) - 1),
                 };
                 closed && open
@@ -639,10 +639,14 @@ pub fn first_bytes(r: &crate::records::Records, k: usize) -> [u64; 4] {
     set
 }
 
-/// The run rule most first bytes take (a word's), whose word the token loop keeps a block.
+/// The run rule most first bytes take of those a word may begin (a word's), whose word the token
+/// loop keeps a block.
 pub fn main_run(r: &crate::records::Records) -> Option<u16> {
     let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
-    let main = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], crate::records::EndRule::Run(_))).max_by_key(|&k| first_bytes(k))?;
+    // A run a word may begin (a lexer's identifier arm) before one none does (`.rerail`'s `bad`,
+    // the bytes no other token begins with: wide, and rare as a lexer's error arm).
+    let wordy = |k: usize| r.words.iter().any(|w| w.first().is_some_and(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == k)));
+    let main = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], crate::records::EndRule::Run(_))).max_by_key(|&k| (wordy(k), first_bytes(k)))?;
     match r.rules[main] {
         crate::records::EndRule::Run(o) => Some(o),
         _ => None,

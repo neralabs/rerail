@@ -19,6 +19,20 @@ impl Store for Provider {
     fn own_recorded_manifests(&self, path: &Path, root: &str, plans: &[[u8; 32]], owner: &AnalysisOwner, now: i64) -> StoreResult<usize> {
         ContentStore::open(path)?.own_recorded_manifests(root, plans, owner, now)
     }
+
+    fn file_read(&self, db: &rusqlite::Connection, path: &Path, space: &[u8; 32], f: &mut dyn FnMut(Option<&dyn KeptRead>)) -> StoreResult<()> {
+        // The rows and their files read as one (`KeptSpace::read`, 74497099e5): a file a commit swept between them is
+        // read again from the last commit's rows.
+        match super::kept_facts::KeptSpace::read(path, db, space)? {
+            Some(kept) => f(Some(&kept.view())),
+            None => f(None),
+        }
+        Ok(())
+    }
+
+    fn file_write(&self, t: &rusqlite::Connection, path: &Path, space: &[u8; 32], puts: Vec<KeptPut>) -> StoreResult<()> {
+        super::kept_facts::write_space(path, t, space, puts, None).map(drop)
+    }
 }
 
 impl Kept for ContentStore {

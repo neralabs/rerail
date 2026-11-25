@@ -77,4 +77,12 @@ export const shortSessionId = (id, host) => {
   return `${HOST_PREFIX[host] ?? "session"}-${tail}`;
 };
 
+/**
+ * Who a violation is credited to, for its open-session button: its session, or with none the repository, whose own
+ * audit recorded a change in another worktree that no session made (`session` null: nothing to open).
+ */
+export const violationOwner = x => (x.sessionId === null
+  ? { session: null, label: "Repository", title: "Found in another worktree; no session made this change" }
+  : { session: x.sessionId, label: shortSessionId(x.sessionId, x.host), title: "Open this session" });
+
 export const HOST_NAME = { "claude-code": "Claude Code", codex: "Codex", cursor: "Cursor", omp: "OMP", pi: "Pi" };

@@ -147,6 +147,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_t_text", &[Number], Text),
     ("rr_node_intval", &[Number], Number),
     ("rr_node_op_t", &[Number], Text),
+    // A node's preorder key (the syntax table's `LongTexts::order_any`): `node_order`'s `k`, which a comparison of two
+    // nodes reads (`lowering_tail::OrderNodes`).
+    ("rr_node_order", &[Number], Number),
     // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
@@ -215,8 +218,8 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
         let arity = signature(name).map_or(1, |(_, args, _)| args.len());
         db.create_scalar_function(name, i32::try_from(arity).expect("few arguments"), FunctionFlags::SQLITE_UTF8, move |ctx| {
             let more: Vec<i64> = (1..arity).map(|i| ctx.get::<Option<i64>>(i).map(Option::unwrap_or_default)).collect::<rusqlite::Result<_>>()?;
-            let text = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n, &more));
-            Ok(node_read_value(name, text))
+            let read = ctx.get::<Option<i64>>(0)?.and_then(|n| node_read(name, crate::code_rule_dsl::facts::vtab::bound_source_in(&data, LONG_TEXT_NODES).as_deref(), n, &more));
+            Ok(read.unwrap_or(Value::Null))
         })?;
     }
     db.create_aggregate_function("rr_product", 1, FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC, Product)?;
@@ -226,17 +229,16 @@ pub(in crate::code_rule_dsl) fn register(db: &Connection) -> rusqlite::Result<()
 /// A node read (`vtab::NODE_READS`) of node `n`: `@rr_node_text`'s text past `text`'s inline bound,
 /// `@rr_node_text_any`'s text at any length, `@rr_node_value`'s value, read through `nodes`, the run's binding of the
 /// long-text nodes with their batch (`syntax::LongTexts`); none without one. Its value is the run's, so `eval` has none.
-pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64, more: &[i64]) -> Option<String> {
+pub fn node_read(name: &str, nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source>, n: i64, more: &[i64]) -> Option<Value> {
     nodes?.node_read(name, n, more)
 }
 
-/// A node read's answer as the value its signature returns: a number's (`@rr_node_intval`) from its decimal, else the
-/// text; NULL for none.
-pub fn node_read_value(name: &str, read: Option<String>) -> Value {
-    match (read, signature(name).map(|(_, _, ret)| ret)) {
-        (None, _) => Value::Null,
-        (Some(t), Some(Kind::Number)) => t.parse::<i64>().map_or(Value::Null, Value::Integer),
-        (Some(t), _) => Value::Text(t),
+/// A node read's text as the value its signature returns: a number's (`@rr_node_intval`) from its decimal (none where
+/// it is not one), else the text.
+pub fn node_text_value(name: &str, text: String) -> Option<Value> {
+    match signature(name).map(|(_, _, ret)| ret) {
+        Some(Kind::Number) => text.parse::<i64>().ok().map(Value::Integer),
+        _ => Some(Value::Text(text)),
     }
 }
 

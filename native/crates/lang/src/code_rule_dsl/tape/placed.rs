@@ -8,7 +8,7 @@ use rerail_tape_format::home::{Home, Room};
 /// A slab's room, held: the slab lives as long as a tape placed in it.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct SlabRoom {
-    slab: std::sync::Arc<rerail_metal::slabs::Slab>,
+    slab: std::sync::Arc<rerail_slabs::Slab>,
     at: usize,
     len: usize,
 }
@@ -33,10 +33,16 @@ impl Room for SlabRoom {
     }
 }
 
-/// The device the slabs are on, if there is one: the process's, whatever its backend (decision 0440 step C).
+/// The device the slabs are on, where this run reads tapes on one: the process's, whatever its backend (decision 0440
+/// step C), unless the run is bound to the CPU (`rerail_blocks::alloc::run_device` is `No`). A CPU run's tapes and
+/// sources are read by the host alone, so they take no room of the device's pool and are copied into none: a CPU run
+/// leased the residency's 64 MB slab for them (t57 §8, the cost case `a_cpu_run_leases_no_device_memory`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn device() -> Option<&'static rerail_metal::lane::Device> {
-    rerail_metal::lane::device().ok()
+pub fn device() -> Option<&'static rerail_device::device::Device> {
+    if rerail_blocks::alloc::run_device() == rerail_blocks::alloc::Device::No {
+        return None;
+    }
+    rerail_slabs::device().ok()
 }
 
 /// The home `bytes` lie in, as a views' directory names it (`view_reads::ViewHome`, decision 0353 step 3 on the CPU):
@@ -49,7 +55,7 @@ pub struct HomeOf {
     pub host: u64,
     pub at: u64,
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub device: Option<(u64, rerail_metal::lane::Buffer)>,
+    pub device: Option<(u64, rerail_device::device::Buffer)>,
 }
 
 pub fn home_of(room: Option<&std::sync::Arc<dyn Room>>, bytes: &[u8]) -> HomeOf {
@@ -87,7 +93,8 @@ pub fn reads_tapes() -> bool {
     false
 }
 
-/// `len` bytes written by `fill` into their home: a slab's room where the device's pool gives one, else a vector.
+/// `len` bytes written by `fill` into their home: a slab's room where the run reads tapes on a device (`device`) and
+/// its pool gives one, else a vector.
 pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) -> std::io::Result<Home> {
     let mut fill = Some(fill);
     if let Some(home) = place_in_room(len, |out| fill.take().expect("filled once")(out))? {
@@ -107,7 +114,7 @@ pub fn place_in_room(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if device().is_some() {
         // A word of room past the tape: the device's reads load a whole word where a value ends (`clif_word`).
-        let Ok((slab, at)) = rerail_metal::slabs::tape_room(len + 16) else {
+        let Ok((slab, at)) = rerail_slabs::tape_room(len + 16) else {
             crate::code_rule_dsl::prof::count("tape.room_refused", 1);
             return Ok(None);
         };
@@ -140,7 +147,7 @@ struct SlabRooms;
 impl rerail_tape_format::home::Rooms for SlabRooms {
     fn region(&self, len: usize) -> Option<Box<dyn rerail_tape_format::home::Region>> {
         // With a word of room past its last tape (`give`).
-        match rerail_metal::slabs::tape_room(len + 16) {
+        match rerail_slabs::tape_room(len + 16) {
             Ok((slab, at)) => Some(Box::new(SlabRegion { slab, at, len: len + 16, given: 0 })),
             Err(_) => {
                 crate::code_rule_dsl::prof::count("tape.room_refused", 1);
@@ -154,7 +161,7 @@ impl rerail_tape_format::home::Rooms for SlabRooms {
 /// past its last tape.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 struct SlabRegion {
-    slab: std::sync::Arc<rerail_metal::slabs::Slab>,
+    slab: std::sync::Arc<rerail_slabs::Slab>,
     at: usize,
     len: usize,
     given: usize,
@@ -171,7 +178,7 @@ impl rerail_tape_format::home::Region for SlabRegion {
         let room = SlabRoom { slab: std::sync::Arc::clone(&self.slab), at: self.at + self.given, len };
         // A word of room past the tape, as `place` leaves it: the device's reads load a whole word where a value ends
         // (`clif_word`). The next room starts aligned.
-        self.given = (self.given + rerail_metal::slabs::aligned(len + 16)).min(self.len);
+        self.given = (self.given + rerail_slabs::aligned(len + 16)).min(self.len);
         crate::code_rule_dsl::prof::count("tape.placed", 1);
         crate::code_rule_dsl::prof::count("tape.written_in_place", 1);
         std::sync::Arc::new(room)
@@ -195,14 +202,14 @@ pub fn placer(len: usize, fill: &mut dyn FnMut(&mut [u8]) -> std::io::Result<()>
 
 /// The slab, offset and length of `room`, where it is a slab's (`place`'s): where the device reads its bytes.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn slab_room(room: &std::sync::Arc<dyn Room>) -> Option<(std::sync::Arc<rerail_metal::slabs::Slab>, usize, usize)> {
+pub fn slab_room(room: &std::sync::Arc<dyn Room>) -> Option<(std::sync::Arc<rerail_slabs::Slab>, usize, usize)> {
     room.as_any().downcast_ref::<SlabRoom>().map(|r| (std::sync::Arc::clone(&r.slab), r.at, r.len))
 }
 
 /// A document's source read from `path` straight into its home (decision 0353 step 7, row 13): a slab's room where
 /// the device's pool gives one, which every reader then reads where it lies, the device too. Nothing is read twice.
 pub fn read_text(path: &std::path::Path) -> std::io::Result<crate::code_rule_dsl::tape::Text> {
-    let home = crate::git_workspace::snapshot::read_placed(path, &placer)?;
+    let home = rerail_observe::git_workspace::snapshot::read_placed(path, &placer)?;
     crate::code_rule_dsl::tape::Text::new(home).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 

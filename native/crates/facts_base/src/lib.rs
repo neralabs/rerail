@@ -15,9 +15,13 @@
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
 // cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
+// The store's interface (`content_store::FactStore`) and records; the tests open the store itself (crate split 10b-2).
+#[cfg(not(test))]
+pub use rerail_observe::content_store;
+#[cfg(test)]
 pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
+pub use rerail_observe::git_access;
+pub use rerail_observe::git_workspace;
 extern crate self as rerail_facts;
 #[path = "code_rule_dsl"]
 pub mod code_rule_dsl {
@@ -69,6 +73,7 @@ pub mod code_rule_dsl {
         }
         pub mod crypto;
         pub use rerail_prof::code_rule_dsl::logic::profile;
+        pub mod sql_names;
         pub mod strings;
     }
     pub use rerail_lang::code_rule_dsl::module_path;
@@ -77,9 +82,7 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     pub mod search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    #[path = "profile/sql.rs"]
-    pub mod sql_profile;
-    pub mod sql_admission;
+    pub use rerail_prof::code_rule_dsl::sql_frame;
     #[path = "stats"]
     pub mod stats {
         pub mod identity;
@@ -130,3 +133,18 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which boot does not load: the store registered with the observer below it
+/// (`content_store::observer_store::base::STORE`) as the binary loads, as boot registers it: the kept project settings
+/// (`repository::kept_settings`, decision 0665) read and write through it.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        rerail_store::content_store::observer_store::register();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

@@ -64,9 +64,9 @@ rule pack bumps ([docs/pack-format.md](pack-format.md#release)).
   request, is named in a warning not to merge: published so, no released Rerail could load it.
 - The tag is pushed with the `neralabs-ci` app's token.
 - **Anything core ships:** every path except packs, documentation, CI, changesets and pending changelog entries, tests,
-  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack.
-  `package-lock.json` counts only when more than its pack entries moved (`NOT_SHIPPED` in
-  `scripts/release/core-paths.mjs`).
+  fixtures, corpora, benchmarks, development and release scripts, and repository files npm does not pack. The `.rerail`
+  rule library under `docs/rule-syntax/lib/` ships with core, so it counts. `package-lock.json` counts only when more
+  than its pack entries moved (`NOT_SHIPPED` and `SHIPPED_FROM_NOT_SHIPPED` in `scripts/release/core-paths.mjs`).
 
 </details>
 
@@ -99,8 +99,8 @@ releases. Nothing in CI reads them: the checklist is the merger's word (`BEFORE_
 Merging publishes the release to `next`; nothing reaches `latest` until a person approves its promotion. First:
 
 - **End-user testing.** One hour using the release the way a user does. `rerail update --channel next` installs its
-  core and lists the newer versions of your installed packs on `next`, with the `rerail packs add` command for each:
-  run them, so the packs under test are the release's too.
+  core, then updates your installed packs to their newest versions on `next`, so the packs under test are the
+  release's too.
 
 If testing finds a problem, fix it on `main` as any pull request. The next Release pull request releases the fix as the
 next version on `next`, and that version is the one to test and promote. The version that failed stays on `next` and
