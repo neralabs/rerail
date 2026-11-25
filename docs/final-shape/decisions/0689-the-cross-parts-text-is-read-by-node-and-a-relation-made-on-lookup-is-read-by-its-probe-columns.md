@@ -67,12 +67,23 @@ The 300-file bench, on the M1 Max, CPU, one run each, against HEAD's run of the 
 - 463 violations. All 661 output relations are identical, row for row, compared as sorted CSV.
 - The decision line: "the cross part's: read by node, off the tape, by p297_rr_h_agg_…, q13_same_leaf, q4_same_leaf,
   q6_same_leaf, rr_diagnostic_33ab31c6…, rr_diagnostic_8dba1432…".
-- CPU, the new binary's second run against HEAD's: cross 3.78 s (3.74 s), statistics 1.43 s (1.38 s), combine
-  0.74 s (0.72 s), prepare 2.72 s (2.59 s). No phase changes measurably. The same binary's two runs differ by 0.3 s
-  in cross alone (3.48 s, 3.78 s). The bench's corpus is 300 files, and this change moves where `text` is read, not how
-  much is read.
-- The new binary's first run took 2.47 s in combine: its spans were the 317 programs lowered ("a program's version in
-  scope: its image, or lowered"), not taken as kept images, as a new binary's first run does. Compare second runs.
+- CPU: the parent commit (fdce9360b3) and this one, built alike, run alternately on the M1 Max (load 5–6), three
+  runs each after a warm-up of each:
+
+  | | process user s | cross s | file-local workers (`wait`) s |
+  |---|---|---|---|
+  | before | 110.0, 103.3, 101.0 | 3.77, 3.66, 3.66 | 34.6, 30.6, 29.7 |
+  | after | 104.3, 103.3, 111.0 | 3.47, 3.70, 3.74 | 32.5, 29.2, 34.6 |
+
+  No difference beyond the runs' own spread (10 s of user CPU, 0.3 s of cross).
+- What the change removes is the cross part's `text` rows: the span "core per-node rows (literal, text, …)" in
+  `p224_shown`'s batch, 0.151–0.155 s a run, gone after. That is 4% of the cross phase, under its spread. The corpus
+  batch still makes all 300 documents (`CorpusDocs { made: 300 }` in both) for the cross part's other views (tree,
+  string annotations, extra document rows), so no document's building is saved on a cold run. The planner's
+  `probed_by` changes no plan's cost measurably on this bench.
+- A new binary's first run lowers the 317 programs (combine 2.47 s, from 0.72 s), and a second reuses their images.
+  Compare second runs. An earlier comparison against an unidentified build (27 s less self CPU) was a build's
+  difference, not this change's.
 
 ## Tests
 
