@@ -304,25 +304,30 @@ impl<R: TapeRows> Source for RowsView<R> {
         if !self.rows.keyed(column) {
             return None;
         }
-        let firsts = self.firsts();
         let mut rows = Vector::new();
-        for &v in values {
-            self.rows.find(&self.batch, column, v, &mut |doc, x| {
-                let per = self.per(doc);
-                let at = self.at(doc);
-                let rank = match per.rows {
-                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
-                    Rows::Doc => (x == 0).then_some(0),
-                    Rows::None => None,
-                };
-                if let Some(k) = rank {
-                    rows.push(firsts.at(doc) + k as usize);
-                }
-            });
-        }
+        self.found(column, values, &mut |r| rows.push(r));
         rows.sort_unstable();
         rows.dedup();
         Some(rows)
+    }
+    /// `lookup`'s rows in its order, sorted in the probe's frame: a list made a probe was 2.07 M on cold PostHog.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        if !self.rows.keyed(column) {
+            return false;
+        }
+        rerail_blocks::frame::op(|fr| {
+            let mut rows = fr.vec::<u64>();
+            self.found(column, values, &mut |r| rows.push(r as u64));
+            rows.sort_unstable();
+            let mut last = None;
+            for &r in rows.iter() {
+                if last != Some(r) {
+                    each(r as usize);
+                    last = Some(r);
+                }
+            }
+        });
+        true
     }
 }
 
@@ -869,5 +874,26 @@ impl TapeRows for TreeDigest {
     fn row(&self, at: &At, _: &(), _: u32, k: u32, out: &mut [i64]) {
         out[0] = at.p().global(k);
         out[1] = i64::from(Self::atoms(at)[k as usize]);
+    }
+}
+
+impl<R: TapeRows> RowsView<R> {
+    /// The rows `find` gives of `values` on `column` (a keyed one), each given to `each`, unsorted and maybe twice.
+    fn found(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) {
+        let firsts = self.firsts();
+        for &v in values {
+            self.rows.find(&self.batch, column, v, &mut |doc, x| {
+                let per = self.per(doc);
+                let at = self.at(doc);
+                let rank = match per.rows {
+                    Rows::Ranked { .. } => per.rows.rank(at.p(), x),
+                    Rows::Doc => (x == 0).then_some(0),
+                    Rows::None => None,
+                };
+                if let Some(k) = rank {
+                    each(firsts.at(doc) + k as usize);
+                }
+            });
+        }
     }
 }
