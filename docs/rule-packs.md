@@ -13,7 +13,7 @@ Rerail installs the packs you choose into `$RERAIL_HOME/packs`. A pack runs only
 <details>
 <summary>What a pack holds, who adds it, how packs are recommended</summary>
 
-A pack directory holds rule documents in `rules/` and a `pack.json`. The `pack.json` lists them with the metadata the dashboard shows (a title and group per rule), a match definition, and whether its rules start on.
+A pack directory holds rule documents in `rules/` and a `pack.json`. The `pack.json` lists them with the metadata the dashboard shows (a title and group per rule, and its risk and severity where the pack gives them: [rule dimensions](rule-dimensions.md)), a match definition, and whether its rules start on.
 
 Set-up installs and adds the packs the person confirms. Afterwards the dashboard adds and removes packs and turns their rules on or off, for the repository. The API and its MCP tools add and remove packs, turn rules off or change their mode, per repository, folder and checkout.
 
