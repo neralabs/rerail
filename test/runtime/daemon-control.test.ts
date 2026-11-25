@@ -3278,7 +3278,7 @@ describe("a record whose live pid is not the home's daemon", () => {
    */
   async function stopReadingStartsFor(answerMs: number, signals: Array<string | number | undefined>, reads: Array<{ program: string; boundMs: number }>): Promise<StopDaemonResult> {
     const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
-    const answering = ((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+    const answering = ((program: string, args: readonly string[], options: childProcess.SpawnSyncOptionsWithStringEncoding): childProcess.SpawnSyncReturns<string> => {
       const boundMs = Number(options.timeout);
       reads.push({ program, boundMs });
       if (answerMs >= boundMs) {
@@ -3316,14 +3316,10 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopReadingStartsFor(1_000, signals, reads)).toBe("stopped");
     expect(signals).toEqual(["SIGTERM"]);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
-    // The stop's lookup and its check just before the SIGTERM each read the start, both under that setting, each within
-    // the stop's 10 s.
-    expect(reads).toHaveLength(2);
-    for (const { program, boundMs } of reads) {
-      expect(program).toMatch(/\\powershell\.exe$/iu);
-      expect(boundMs).toBeGreaterThan(0);
-      expect(boundMs).toBeLessThanOrEqual(10_000);
-    }
+    // The stop's lookup and its check just before the SIGTERM each read the start, both under that setting, each given
+    // the stop's whole 10 s: the lookup's counted from its start, the check's afresh.
+    expect(reads.map(({ boundMs }) => boundMs)).toEqual([10_000, 10_000]);
+    for (const { program } of reads) expect(program).toMatch(/\\powershell\.exe$/iu);
   });
 
   // The stop's 10 s is all that ends a PowerShell that never answers: the read is ended there and reads nothing, and the
@@ -3334,8 +3330,7 @@ describe("a record whose live pid is not the home's daemon", () => {
     await expect(stopReadingStartsFor(Number.POSITIVE_INFINITY, signals, reads)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
     expect(signals).toEqual([]);
     expect(JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8"))).toMatchObject({ pid: LIVE_PID });
-    expect(reads).toHaveLength(2);
-    for (const { boundMs } of reads) expect(boundMs).toBeLessThanOrEqual(10_000);
+    expect(reads.map(({ boundMs }) => boundMs)).toEqual([10_000, 10_000]);
   });
 
   // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM. With no start read,
