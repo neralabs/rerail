@@ -522,3 +522,32 @@ formula").
   (1.4 MB of words it reads at random here), so 500 searches do not fit in the L2 cache and each read is the
   memory's: the device is bound by its memory's traffic, not its latency. Not kept: the values a byte a variable
   besides their words (a quarter of the words the checks read): the same times, 1.84 to 17.1 s.
+- **A search that reads less of the memory** (the user, 2026-11-25: a counter word a gate updated by atomic adds,
+  small bounded state a search, no serial heap walk, and as much as fits in threadgroup memory without limiting
+  occupancy). The search changes with its CPU twin, step for step, and each step keeps Kotlin's shipped answers'
+  bytes:
+  - The decisions' heap is a 32-ary max tree of (activity, variable), the higher variable first on equal
+    activities: a decision reads its root and remakes the nodes on its path, a lane a child; a bump raises its
+    path, the group at once. The twin's heap is rebuilt after a rescale, as the tree is, so both always take the
+    exact maximum.
+  - A wide gate (an And or a One of over two arguments) has a counter word, its false arguments and its true ones,
+    kept by local atomic adds as the trail's values are counted (`cs_count_up`) and taken back on backtracking.
+    The counters decide whether a gate's full check must run (`cs_wide_may`); they are a filter, so the search is
+    the same. They live only in threadgroup memory, 512 a formula at most: a gate past them has none and is
+    always checked in full. Not kept: the rest in the state, by atomics on the device's memory (512 copies of
+    the hard dump below: 10.3 s against 5.95 s).
+  - A slot's header, its values (2 bits a variable, 16 a word, as many as fit), its counters and analysis's bump
+    queue are in threadgroup memory, 5 KiB a group: the kernel's 126 registers still keep 16 groups an SM. The
+    room is split by the formula alone, never by its batch (a search resumed in another batch, or a formula a
+    resident launch takes after its start, finds its counters where it left them).
+  - Analysis keeps the current level's marked variables by their trail positions, a lane each (4 a lane, else the
+    trail is searched as before), and takes the highest: no backwards scan of the trail. A gate's explanation is
+    read by the group from the gate itself, a lane a literal, not built by one lane. Its bumps are queued and
+    raised 32 at once. A watch list's next node is read while its node is visited.
+- Measured on the Sparks, which other sessions' GPU tests share (a run's time varies 2 to 3 times with them; the
+  least of the runs): the hard dump above, 1 copy 1.57 s (1.84 s before), 512 copies 5.25 s (5.1 s), 768 copies
+  22 s, 1,024 copies 26 s (17.1 s). At 768 copies, a slot's threadgroup words 64, 256, 512 and 1,280: 95, 83, 43
+  and 33 s, one run each. Cold Kotlin with the device alone: 8.7 s of proving (9.4 s before), the shipped bytes.
+  Its longest search (897,135 rounds, 11,071 conflicts) is the rebuilt heap's: the twin without the rebuild takes
+  643,551 rounds on it. Over Kotlin's 36 searches of over 100 ms, the twin takes 59,861 conflicts (57,414
+  without the rebuild), the CPU's solver 49,791.

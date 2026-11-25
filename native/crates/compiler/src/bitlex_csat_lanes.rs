@@ -909,7 +909,8 @@ impl<'a> Search<'a> {
         false
     }
 
-    // `bitlex_sat::Order`'s heap, as the kernel keeps it.
+    // The decisions' heap (`bitlex_sat::Order`'s): its top is always the most active variable in it, the kernel's
+    // tree's top (`cs_top`).
     fn before(&self, a: u32, b: u32) -> bool {
         let (x, y) = (self.act[a as usize], self.act[b as usize]);
         x > y || (x == y && a > b)
@@ -1198,6 +1199,11 @@ impl<'a> Search<'a> {
                 *a >>= BUMP_SHIFT;
             }
             self.bump >>= BUMP_SHIFT;
+            // Two activities scaled to one are ordered by their numbers now: the heap made again, so its top is
+            // the most active variable as the kernel's tree's is.
+            for i in (0..self.heap_n / 2).rev() {
+                self.down(i);
+            }
         }
         let Some((len, back)) = got else {
             self.finish(Status::Roomless);

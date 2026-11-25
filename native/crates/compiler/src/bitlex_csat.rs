@@ -34,7 +34,13 @@ pub struct Gates {
     /// has at most two, else where they begin in `args` (decision 0670: one load a gate, on the CPU and a device).
     rec: Grown<[Lit; 4]>,
     args: Grown<Lit>,
+    /// The wide gates (more than two arguments): each one's number among them is its record's fourth word (with
+    /// `REPEATS`), the device's counter of its arguments' values (`bitlex_csat_gpu`).
+    wides: usize,
 }
+
+/// A wide gate's record's fourth word: set where a literal is among its arguments twice.
+pub const REPEATS: u32 = 1 << 31;
 
 /// The kinds in a record's first word.
 const KINDS: [Kind; 3] = [Kind::And, Kind::Xor, Kind::One];
@@ -42,7 +48,7 @@ const KINDS: [Kind; 3] = [Kind::And, Kind::Xor, Kind::One];
 impl Gates {
     /// None yet, built in `block`, where a kernel reads them (`bitlex_grown`).
     pub fn in_block(block: &FormulaBlock) -> Gates {
-        Gates { rec: Grown::in_block(block), args: Grown::in_block(block) }
+        Gates { rec: Grown::in_block(block), args: Grown::in_block(block), wides: 0 }
     }
 
     /// Its records and wide arguments: their block and byte offsets there (`None` on the heap).
@@ -68,9 +74,18 @@ impl Gates {
             _ => {
                 let start = self.args.len() as Lit;
                 self.args.extend_from_slice(args);
-                [head, out, start, 0]
+                let mut sorted = args.to_vec();
+                sorted.sort_unstable();
+                let repeats = if sorted.windows(2).any(|w| w[0] == w[1]) { REPEATS } else { 0 };
+                self.wides += 1;
+                [head, out, start, (self.wides as u32 - 1 | repeats) as Lit]
             }
         });
+    }
+
+    /// The wide gates (more than two arguments).
+    pub fn wides(&self) -> usize {
+        self.wides
     }
 
     /// `out` holds exactly when each of `args` does.
@@ -94,7 +109,9 @@ impl Gates {
             return;
         }
         self.rec.truncate(n);
-        let end = self.rec.iter().rev().find(|r| r[0] >> 2 > 2).map_or(0, |r| (r[2] + (r[0] >> 2)) as usize);
+        let last = self.rec.iter().rev().find(|r| r[0] >> 2 > 2);
+        let end = last.map_or(0, |r| (r[2] + (r[0] >> 2)) as usize);
+        self.wides = last.map_or(0, |r| (r[3] as u32 & !REPEATS) as usize + 1);
         self.args.truncate(end);
     }
 
@@ -213,6 +230,11 @@ pub struct Fanout {
     starts: Grown<u32>,
     gates: Grown<u32>,
     seeds: Vec<u32>,
+    /// A variable's wide gates it is an argument of (from `wide_starts[v]` to `wide_starts[v + 1]`), two words
+    /// each: the gate's number among the wide ones, and how many of its arguments are the variable's positive
+    /// literal and its negative one (`pos | neg << 16`). The device's counters' (`bitlex_csat_gpu`).
+    wide_starts: Grown<u32>,
+    wide: Grown<u32>,
 }
 
 fn var(l: Lit) -> usize {
@@ -272,8 +294,43 @@ impl Fanout {
                 }
             }
         }
-        let seeds = range.filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
-        Fanout { starts, gates: out, seeds }
+        let seeds = range.clone().filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
+        // The wide gates' arguments by variable: a gate's literals sorted, each variable's counted.
+        let mut wide_count = vec![0u32; vars + 2];
+        let mut entries: Vec<(u32, u32, u32)> = Vec::new();
+        let mut lits: Vec<Lit> = Vec::new();
+        for g in range {
+            let args = gates.args(g);
+            if args.len() <= 2 || gates.kind(g) == Kind::Xor {
+                continue;
+            }
+            let ordinal = gates.rec[g][3] as u32 & !REPEATS;
+            lits.clear();
+            lits.extend(args.iter().map(|&a| a.abs() << 1 | Lit::from(a < 0)));
+            lits.sort_unstable();
+            for run in lits.chunk_by(|a, b| a >> 1 == b >> 1) {
+                let neg = run.iter().filter(|&&x| x & 1 != 0).count() as u32;
+                let v = (run[0] >> 1) as u32;
+                entries.push((v, ordinal, (run.len() as u32 - neg) | neg << 16));
+                wide_count[v as usize + 1] += 1;
+            }
+        }
+        for v in 0..=vars {
+            wide_count[v + 1] += wide_count[v];
+        }
+        entries.sort_by_key(|e| e.0);
+        let mut wide_starts = Grown::like(&gates.rec);
+        wide_starts.extend_from_slice(&wide_count);
+        let mut wide = Grown::like(&gates.rec);
+        for &(_, ordinal, counts) in &entries {
+            wide.extend_from_slice(&[ordinal, counts]);
+        }
+        Fanout { starts, gates: out, seeds, wide_starts, wide }
+    }
+
+    /// Its wide gates' starts and entries (`wide_starts`, `wide`): their byte offsets in the block they are in.
+    pub fn placed_wide(&self) -> Option<(usize, usize)> {
+        Some((self.wide_starts.placed()?.1, self.wide.placed()?.1))
     }
 
     /// Its starts (a variable's gates from `starts[v]` to `starts[v + 1]`) and gates: their byte offsets in the

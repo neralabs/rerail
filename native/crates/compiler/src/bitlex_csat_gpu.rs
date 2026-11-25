@@ -30,7 +30,7 @@ pub fn enabled() -> bool {
 }
 
 /// A descriptor's words (the kernel's `DESC`), and where a batch places a formula's model and what it carries.
-const DESC: usize = 32;
+const DESC: usize = 40;
 const D_MODEL: usize = 12;
 const D_CARRY: usize = 30;
 /// A formula's lanes: one SIMD group.
@@ -42,6 +42,11 @@ const STEPS: u32 = 1 << 12;
 pub const STATE_BYTES: usize = 1 << 30;
 /// The slots at most.
 const SLOTS: usize = 1 << 13;
+/// A slot's threadgroup memory at most, in words: 5 KiB, so that it does not bound the groups an SM keeps resident
+/// (16, by registers, on GB10's 100 KiB a SM, 1 KiB a group of it the driver's).
+const SHARED_WORDS: usize = 1280;
+/// Analysis's bump queue in threadgroup memory (the kernel's `BQ`): variables, and their activities.
+const BQ: usize = 32;
 /// The state's header (the kernel's `HEADER`) and the statuses it reports.
 const HEADER: usize = 32;
 const SAT: u32 = 1;
@@ -59,16 +64,39 @@ struct Args {
     init: u32,
     slots: u32,
     slot_words: u32,
-    pad: [u32; 3],
+    room: u32,
+    pad1: u32,
+    pad2: u32,
 }
 // SAFETY: eight u32s, no padding.
 unsafe impl rerail_gpu::Pod for Args {}
 
 /// A formula's state, in words (the kernel's layout, `cs_setup`), its widest gate `wide - 2` wide, its plain
-/// clauses (and carried ones) `clauses`.
-fn state_words(vars: usize, clauses: usize, wide: usize) -> usize {
+/// clauses (and carried ones) `clauses`, its wide gates `wides`.
+fn state_words(vars: usize, clauses: usize, wide: usize, wides: usize) -> usize {
     let (n, l, a) = (vars + 1, learned(vars) as usize, arena(vars) as usize);
-    HEADER + 11 * n + 2 * wide + LANES as usize + l + (l + 1) + 4 * (clauses + l) + a
+    HEADER + 9 * n + 2 * tree_nodes(n) + wides + 2 * wide + l + (l + 1) + 4 * (clauses + l) + a
+}
+
+/// The decisions' tree's nodes over `n` activities (the kernel's `cs_tcount` levels): `n` divided by 32 again and
+/// again, rounded up, to one.
+fn tree_nodes(n: usize) -> usize {
+    let (mut total, mut m) = (0, n);
+    loop {
+        m = m.div_ceil(32);
+        total += m;
+        if m == 1 {
+            return total;
+        }
+    }
+}
+
+/// A slot's threadgroup memory past its header and bump queue, in words, whatever its batch: `SHARED_WORDS` in all
+/// (`RERAIL_CSAT_SHARED_WORDS`, a measurement aid). The kernel splits it by the slot's formula alone, its wide
+/// gates' counters (`CW_ROOM` at most) and then its values, 16 variables a word; a wide gate past them has no
+/// counter, and a value past them is the state's.
+fn shared_room() -> usize {
+    std::env::var("RERAIL_CSAT_SHARED_WORDS").ok().and_then(|w| w.parse().ok()).unwrap_or(SHARED_WORDS).saturating_sub(HEADER + 2 * BQ)
 }
 
 /// A formula's widest gate's width and 2 (at least 4): the room of a conflict's clause or an explanation.
@@ -102,6 +130,10 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
             out[i] = Some(x);
         }
     }
+    // With `RERAIL_DEVICE_SOLVE_TRACE`: the batch's launches and the time they ran (decision 0670).
+    if std::env::var_os("RERAIL_DEVICE_SOLVE_TRACE").is_some() {
+        eprintln!("gpu solve: {} formulas, {} slots of {} words, {} launches, {:.1} ms launched", formulas.len(), batch.slots, batch.slot_words, batch.launches, batch.ran.as_secs_f64() * 1e3);
+    }
     Ok(out.into_iter().map(|x| x.expect("every formula the device's")).collect())
 }
 
@@ -126,12 +158,14 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
     if !b2.same(b) {
         return Err(elsewhere());
     }
-    let (os, og) = match f.own {
+    let (ws, we) = f.fan.placed_wide().ok_or_else(elsewhere)?;
+    let (os, og, ows, owe) = match f.own {
         Some(o) => {
             let (s, g) = o.placed().ok_or_else(elsewhere)?;
-            (words(s)?, words(g)?)
+            let (ws, we) = o.placed_wide().ok_or_else(elsewhere)?;
+            (words(s)?, words(g)?, words(ws)?, words(we)?)
         }
-        None => (u32::MAX, u32::MAX),
+        None => (u32::MAX, u32::MAX, u32::MAX, u32::MAX),
     };
     let wide = wide(f.gates);
     // A window's solve: its window's level 0 and the clauses earlier solves carried, in the block too.
@@ -199,15 +233,23 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
         r[10],
         r[11],
         r[12],
+        f.gates.wides() as u32,
+        words(ws)?,
+        words(we)?,
+        ows,
+        owe,
+        0,
+        0,
+        0,
         0,
     ];
     let cv = carry_vars(f);
     Ok(Desc {
         words: d,
-        vars: f.vars,
         resume: f.resume.is_some(),
         carries: cv != 0,
-        slot_words: state_words(f.vars, f.clauses.len() + carried, wide),
+        vars: f.vars,
+        slot_words: state_words(f.vars, f.clauses.len() + carried, wide, f.gates.wides()),
         block: b.clone(),
     })
 }
@@ -478,7 +520,8 @@ impl Batch {
         shared_word(&self.queue, Q_STOP).store(0, Ordering::Release);
         shared_word(&self.queue, Q_ENDED).store(0, Ordering::Release);
         self.publish();
-        let a = Args { n: self.cap as u32, steps: STEPS, init: 0, slots: self.slots as u32, slot_words: self.slot_words as u32, pad: [0; 3] };
+        let room = shared_room();
+        let a = Args { n: self.cap as u32, steps: STEPS, init: 0, slots: self.slots as u32, slot_words: self.slot_words as u32, room: room as u32, pad1: 0, pad2: 0 };
         launch(&self.q, self.function)
             .value("args", &a)
             .buffer("blk", &self.blk)
@@ -488,6 +531,7 @@ impl Batch {
             .buffer("models", &self.models)
             .buffer("carry", &self.carry)
             .buffer("queue", &self.queue)
+            .local("sh", (4 * (HEADER + 2 * BQ + room)) as u64)
             .run(&[self.slots as u64], &[LANES])?;
         self.running = Some(self.q.flush());
         self.launched_at = Some(std::time::Instant::now());
@@ -879,6 +923,88 @@ DEFINE_KERNEL2(chase, chase,
             unsafe { std::alloc::dealloc(host, layout) };
         }
     }
+    /// A measurement (decision 0670): one SIMD group's chain of dependent operations of one kind, cycles each: a
+    /// shuffle, a ballot, a match, a reduction, an exclusive sum, a group barrier with a threadgroup read, a
+    /// threadgroup read, a threadgroup atomic add, and a read of the device's memory that L1 holds.
+    #[test]
+    #[ignore]
+    fn warp_operation_latency() {
+        const OPS: &str = r#"
+#include <ukl/simd.h>
+typedef struct OpArgs { uint32_t steps; uint32_t op; uint32_t pad1; uint32_t pad2; } OpArgs;
+UKL_REFLECT_STRUCT(OpArgs, steps, op, pad1, pad2)
+DEFINE_KERNEL2(ops, ops,
+               ARGS,     OpArgs,   args, ,
+               RWBUFFER, uint32_t, buf,  "[1024]",
+               RWBUFFER, uint32_t, out,  "[2]",
+               RWLOCAL,  uint32_t, sh,   "[1024]",
+               TGID0,    uint32_t, g,    ,
+               LANE,     uint32_t, lane, )
+{
+    for (uint32_t k = lane; k < 1024u; k += UKL_SIMD_WIDTH)
+        sh[k] = (k * 7u + 1u) & 1023u;
+    ukl_sg_barrier();
+    uint32_t x = lane, op = args.op;
+    uint64_t t = ukl_clock();
+    for (uint32_t s = 0u; s < args.steps; s++) {
+        if (op == 0u)
+            x = ukl_sg_shuffle(x, (x + 1u) & 31u __UKL_ARGS);
+        else if (op == 1u)
+            x = (uint32_t)ukl_sg_ballot(((x >> (lane & 7u)) & 1u) != 0u __UKL_ARGS) + lane;
+        else if (op == 2u)
+            x = (uint32_t)ukl_sg_match(x & 3u __UKL_ARGS) + lane;
+        else if (op == 3u)
+            x = ukl_sg_sum(x __UKL_ARGS) + lane;
+        else if (op == 4u)
+            x = ukl_sg_exclusive_sum(x & 7u, lane __UKL_ARGS) + 1u;
+        else if (op == 5u) {
+            sh[lane] = x;
+            ukl_sg_barrier();
+            x = sh[(x + 1u) & 31u];
+        } else if (op == 6u)
+            x = sh[x & 1023u];
+        else if (op == 7u)
+            x = ukl_atomic_add_local(sh + (x & 1023u), 1u) & 1023u;
+        else
+            x = buf[x & 1023u];
+    }
+    if (lane == 0u) {
+        out[0] = x;
+        out[1] = (uint32_t)(ukl_clock() - t);
+    }
+}
+"#;
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct OpArgs {
+            steps: u32,
+            op: u32,
+            pad: [u32; 2],
+        }
+        // SAFETY: four u32s.
+        unsafe impl rerail_gpu::Pod for OpArgs {}
+        let Some(shared) = rerail_gpu::shared::get() else { return };
+        let mut q = ComputeQueue::new(&shared.queue);
+        let f = program("ops.uglykl", OPS).expect("the kernel").function("ops").expect("ops");
+        let buf = alloc_working::<u32>(1024).expect("device memory");
+        let init: Vec<u32> = (0..1024u32).map(|k| (k * 7 + 1) & 1023).collect();
+        let host = rerail_gpu::kernels::buffer_of(&init).expect("a buffer");
+        q.enqueue_copy_between_device_regions(&host, &buf, 0, 0, 4096);
+        q.flush().await_().expect("the copy");
+        let out = alloc::<u32>(2).expect("out");
+        let steps = 1u32 << 14;
+        let names = ["shuffle", "ballot", "match", "sum", "exclusive sum", "barrier and threadgroup read", "threadgroup read", "threadgroup atomic add", "device read (L1)"];
+        for (op, name) in names.iter().enumerate() {
+            let mut cycles = 0u32;
+            for _ in 0..2 {
+                launch(&q, f).value("args", &OpArgs { steps, op: op as u32, pad: [0; 2] }).buffer("buf", &buf).buffer("out", &out).local("sh", 4096).run(&[1], &[LANES]).expect("a launch");
+                q.flush().await_().expect("the launch");
+                cycles = words_of(&out, 1, 1)[0];
+            }
+            eprintln!("{name}: {:.1} cycles", f64::from(cycles) / f64::from(steps));
+        }
+    }
+
     use crate::bitlex_csat::{Fanout, Gates, Solver};
     use crate::bitlex_csat_lanes::tests::{circuit, holds, same_search, Rng};
     use crate::bitlex_sat::{Answer as CpuAnswer, Clauses};
