@@ -23,8 +23,22 @@ afterEach(async () => {
 });
 
 const SESSION = { host: "claude-code" as const, sessionId: "weeks-long", cwd: "" };
-/** The line an open writes to a record that has none, which these cases read back as the session's next line. */
-const TRACKING_LINE = `${JSON.stringify({ type: "hud-tracking-start" })}\n`;
+/** The first line an open writes to a record that has none, which these cases read back as the session's next line. */
+const TRACKING = { type: "hud-tracking-start" };
+
+/** What the record at `path` holds past its first `bytes` bytes, line by line, each parsed: what the session wrote since it opened. */
+async function linesAfter(path: string, bytes: number): Promise<unknown[]> {
+  const handle = await open(path, "r");
+  try {
+    const after = Buffer.alloc((await handle.stat()).size - bytes);
+    await handle.read(after, 0, after.length, bytes);
+    const text = after.toString("utf8");
+    expect(text.endsWith("\n")).toBe(true);
+    return text.slice(0, -1).split("\n").map(line => JSON.parse(line) as unknown);
+  } finally {
+    await handle.close();
+  }
+}
 
 interface World {
   readonly root: string;
@@ -113,15 +127,7 @@ describe("a session record of any size", () => {
     expect(written).toBeGreaterThan(bufferConstants.MAX_STRING_LENGTH);
 
     expect(await openedRules(at)).toEqual(expect.arrayContaining(["before-the-bulk", "after-the-bulk"]));
-    const end = await open(at.record, "r");
-    try {
-      const { size } = await end.stat();
-      const tail = Buffer.alloc(size - written);
-      await end.read(tail, 0, tail.length, written);
-      expect(tail.toString("utf8")).toBe(TRACKING_LINE);
-    } finally {
-      await end.close();
-    }
+    expect((await linesAfter(at.record, written))[0]).toEqual(TRACKING);
   }, 180_000);
 
   it("cuts a last line a write left unfinished off at its first byte, after more than a read's worth of multi-byte text, before the next line", async () => {
@@ -130,7 +136,8 @@ describe("a session record of any size", () => {
     const whole = Buffer.from(`${JSON.stringify({ type: "event", eventId: "é".repeat(700_000) })}\n${ruleLine("kept")}`);
     await writeFile(at.record, Buffer.concat([whole, Buffer.from('{"type":"event","eventId":"cut sh')]));
     expect(await openedRules(at)).toContain("kept");
-    expect((await readFile(at.record)).equals(Buffer.concat([whole, Buffer.from(TRACKING_LINE)]))).toBe(true);
+    expect((await readFile(at.record)).subarray(0, whole.length).equals(whole)).toBe(true);
+    expect((await linesAfter(at.record, whole.length))[0]).toEqual(TRACKING);
   });
 
   it("gives a whole last line with no newline its newline before the next line", async () => {
@@ -138,7 +145,8 @@ describe("a session record of any size", () => {
     const last = ruleLine("last").trimEnd();
     await writeFile(at.record, last);
     expect(await openedRules(at)).toContain("last");
-    expect(await readFile(at.record, "utf8")).toBe(`${last}\n${TRACKING_LINE}`);
+    expect((await readFile(at.record, "utf8")).startsWith(`${last}\n`)).toBe(true);
+    expect((await linesAfter(at.record, Buffer.byteLength(last) + 1))[0]).toEqual(TRACKING);
   });
 
   it("opens a record with empty lines among its lines", async () => {
