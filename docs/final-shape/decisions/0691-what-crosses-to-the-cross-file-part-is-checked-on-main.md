@@ -282,5 +282,9 @@ Found on the way and fixed:
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
 - A lowering's value view (`match_all`'s `rr_ctx`/`rr_mall`) is not covered by its readers (React's `sandbox_token`).
-- A producer for `spec_resolved` (main's `import_target` resolver). Resolution reads other files, so it is the
-  cross part's, keyed by symbols, and read back per file by path; see fix 10's neighbour in the commit that adds it.
+- A producer for `spec_resolved` (main's `import_target` resolver). Resolution reads other files, so a file's own
+  part cannot answer it. Until then `n-no-missing-import` and `n-no-missing-require` find every import missing.
+- The branch's fix 3e (b754ec6c93, points-to as the phase `points_to`) is not ported. Main's points-to is the typing
+  program's P3 (`calls_p3`), a lineage apart from the branch's `python/points-to`, and lacks t32 stage 8. Of
+  Django's 155 node entries, 85 are that program's relations; most of the rest are the four call-graph policies fix
+  3e rewrites.
