@@ -12,8 +12,10 @@
  * `WORKTREE_FULL_WALK_MS` old. It hands each session what it saw of the others last time. Reading them all stat'ed
  * every file of every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
-import { relative, sep } from "node:path";
+import { lstat } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
+import { fileStamp } from "../file-stamp.js";
 import { gitFirstSightListing, GitReads, gitTrackedIgnoredReader, gitUnmergedReader, type HeadListing } from "../git.js";
 import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
@@ -499,21 +501,39 @@ export function stampedSince(source: Pick<ObservedSource, "modifiedAt">, since: 
 }
 
 /**
- * Whether `sources`, a worktree's snapshot, holds a file stamped since `since` (`stampedSince`): of the files a session
- * opened then first sees, only such a file goes to Git's verdicts. Any other is its baseline, and a `.gitignore` it
- * takes for its rules is no change unless stamped since.
+ * Whether the file at `absolute` still holds what a walk read as `source`, by the rule a walk keeps for its own reads
+ * (`staleStamp` in `code-rule-bridge.ts`, Git's racy-index rule): it has the stamp the walk read, and the walk read a
+ * stamp older than its own start (`ObservedSource.observedAt`). Both are read on the filesystem's clock, which stamps
+ * files and advances in ticks, so a write since the walk began, even one in the tick the walk read the file in, has a
+ * later stamp. Not where the file cannot be stamped now.
  */
-function anyStampedSince(sources: ReadonlyMap<string, ObservedSource>, since: number): boolean {
-  for (const source of sources.values()) if (stampedSince(source, since)) return true;
-  return false;
+async function readStill(absolute: string, source: ObservedSource): Promise<boolean> {
+  const stamp = await lstat(absolute).then(fileStamp, () => undefined);
+  return stamp === source.stamp && (source.modifiedAt ?? Infinity) < (source.observedAt ?? -Infinity);
+}
+
+/**
+ * `listed` (`HeadListing`) without those of the files `stamped` (named relative to the worktree at `root`) that no
+ * longer hold what the walk read (`readStill`). The walk reads a worktree's files before its Git lists them, so a file
+ * the walk read and something then put back to `HEAD`'s text, as `git checkout -- <file>` or `git stash` do, is one Git
+ * names as holding that text, though the walk read another. Checked once every listing has ended, which judged no
+ * other text than the walk read in a file that still holds it.
+ */
+async function heldSinceRead(root: string, listed: HeadListing, stamped: ReadonlyArray<readonly [string, ObservedSource]>): Promise<HeadListing> {
+  const atHead = new Set(listed.atHead);
+  for (const [path, source] of stamped) if (!await readStill(join(root, path), source)) atHead.delete(path);
+  return { notAtHead: listed.notAtHead, atHead };
 }
 
 /**
  * `WorktreeFindings.listed` and `byHead` of the worktree at `root` whose `HEAD` the walk read as `head` and whose
  * snapshot holds `sources`: listed when the walk shows a session it first (`firstSeen`), and `byHead` asked only where
- * that first sight takes a file for Git to judge (`anyStampedSince`). A session that opens beside worktrees Git added
- * before it takes none of their files, and the index's three listings cost each of them, one worktree after another:
- * on Windows 11, beside 104 worktrees, the walk that first showed a new session the worktrees took 26 to 78 s.
+ * that first sight takes a file for Git to judge: one stamped since the earliest session seeing it first opened
+ * (`stampedSince`). Any other is its baseline, and a `.gitignore` it takes for its rules is no change unless stamped
+ * since. A session that opens beside worktrees Git added before it takes none of their files, and the index's three
+ * listings cost each of them, one worktree after another: on Windows 11, beside 104 worktrees, the walk that first
+ * showed a new session the worktrees took 26 to 78 s. Of the files stamped since, `byHead` names as holding `HEAD`'s
+ * text only those that still hold what the walk read (`heldSinceRead`); only the worktree's own checkout has one.
  */
 async function listedFor(
   git: GitReads,
@@ -523,7 +543,10 @@ async function listedFor(
 ): Promise<FirstSightListings> {
   const since = firstSeen.get(root);
   if (since === undefined) return { listed: new Map(), byHead: new Map() };
-  return await listChanged(git, root, checkouts, anyStampedSince(sources, since) ? head : undefined);
+  const stamped = [...sources].filter(([, source]) => stampedSince(source, since));
+  const { listed, byHead } = await listChanged(git, root, checkouts, stamped.length > 0 ? head : undefined);
+  const own = byHead.get(root);
+  return { listed, byHead: own === undefined ? byHead : new Map([[root, await heldSinceRead(root, own, stamped)]]) };
 }
 
 /** The list `learnt` stored for the registry, read with no Git, which the walk's list takes in the same synchronous run. */
