@@ -733,16 +733,8 @@ impl<'a> G<'a> {
             // A run joins an earlier run of its arm where no run between can hold at a token it holds at: their tests
             // ask apart words, a word none of a kind's tokens is, or kinds of apart tokens (a token is of one kind). The
             // lean parser tests an arm's tokens together (decision 0673 steps 8 and 11).
-            let tokens_of = |k: &str| -> Vec<&str> { self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| n.as_str()).collect() };
             let holds = |c: &Cond| self.holds(c);
-            let apart = |a: &Holds, b: &Holds| {
-                let (Some((aw, ak)), Some((bw, bk))) = (a, b) else { return false };
-                let word_kind = |ws: &[String], ks: &[String]| ks.iter().all(|k| {
-                    let kw = self.kind_words(k);
-                    ws.iter().all(|w| !kw.contains(w))
-                });
-                aw.iter().all(|w| !bw.contains(w)) && word_kind(aw, bk) && word_kind(bw, ak) && ak.iter().all(|k| bk.iter().all(|o| k != o && tokens_of(o).iter().all(|x| !tokens_of(k).contains(x))))
-            };
+            let apart = |a: &Holds, b: &Holds| self.apart(a, b);
             let mut j = 1;
             while j < runs.len() {
                 let t = runs[j].1;
@@ -842,6 +834,29 @@ impl<'a> G<'a> {
     /// Where test `c` may hold, as `decide_tests` joins runs: at a token that is one of `.0`'s words or of one of `.1`'s
     /// kinds; None, anywhere. A word's test its words, a kind's its kind, a mark's its definitions' first tokens; a test
     /// under others (a flag, `marked`) where its last does.
+    /// Whether no token is where both `a` and `b` may hold: apart words, a word none of a kind's tokens is, or kinds of
+    /// apart tokens (a token is of one kind).
+    fn apart(&self, a: &Holds, b: &Holds) -> bool {
+        let tokens_of = |k: &str| -> Vec<&str> { self.x.tokens.iter().filter(|(_, n)| n == k || n.strip_suffix("_close") == Some(k)).map(|(_, n)| n.as_str()).collect() };
+        let (Some((aw, ak)), Some((bw, bk))) = (a, b) else { return false };
+        let word_kind = |ws: &[String], ks: &[String]| {
+            ks.iter().all(|k| {
+                let kw = self.kind_words(k);
+                ws.iter().all(|w| !kw.contains(w))
+            })
+        };
+        aw.iter().all(|w| !bw.contains(w)) && word_kind(aw, bk) && word_kind(bw, ak) && ak.iter().all(|k| bk.iter().all(|o| k != o && tokens_of(o).iter().all(|x| !tokens_of(k).contains(x))))
+    }
+
+    /// Where a first token's test may hold (`holds`).
+    fn first_holds(&self, t: &Test) -> Holds {
+        match t {
+            Test::Word(w) => Some((vec![format!("w::{}", self.word_const(*w))], vec![])),
+            Test::Kind(k) => Some((vec![], vec![k.clone()])),
+            Test::Mark(m) => self.holds(&Cond::Mark { mark: *m, test: Box::new(Cond::text("")) }),
+        }
+    }
+
     fn holds(&self, c: &Cond) -> Holds {
         match c.core() {
             Cond::Word { at: 0, ws } => Some((ws.clone(), vec![])),
@@ -1221,11 +1236,21 @@ impl<'a> G<'a> {
                 let arms = self.arms(a, rest, rule)?;
                 let ex = self.exits_ending(rest, rule)?;
                 let arms: Vec<(Vec<First>, Block)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
-                // An optional part that begins with a call of a level, before a token of one word it cannot begin
-                // with: the part, unless that token follows, as the lean parser's `if !self.is_p(RPAREN) { … }`.
-                // The call refuses a token it does not begin with.
+                // An optional part that must take a token, tested by words and kinds alone, before a token of one word
+                // it cannot begin with: the part, unless that token follows, as the lean parser's `list` asks
+                // `is_p(close)` and simdjson `*peek() == ']'`. The part refuses a token it does not begin with. Not a
+                // part of one test (`['sep' …]`), which asks as much as the token after it, as the lean parser's.
                 let follow = match rest.first().and_then(|r| self.token_of(r)) {
-                    Some((Test::Word(w), _)) if ex.is_empty() && arms.len() == 1 && self.leads_with_call(a) && self.plain_tests(&arms[0].0) && !arms[0].0.iter().any(|(t, _)| matches!(t, Test::Word(x) if *x == w)) => Some(w),
+                    Some((Test::Word(w), _))
+                        if ex.is_empty()
+                            && arms.len() == 1
+                            && !self.first(a)?.1
+                            && (self.leads_with_call(a) || arms[0].0.len() > 1)
+                            && self.plain_tests(&arms[0].0)
+                            && !arms[0].0.iter().any(|(t, _)| matches!(t, Test::Word(x) if *x == w)) =>
+                    {
+                        Some(w)
+                    }
                     _ => None,
                 };
                 if let Some(w) = follow {
@@ -1262,13 +1287,26 @@ impl<'a> G<'a> {
                 let mut arms = self.arms(g, rest, rule)?;
                 let empty = arms.iter().position(|a| a.2);
                 // A choice that must take a token, whose last alternative is a call of a level that tests its own
-                // first token, tested by words and kinds alone: that call is the default, as the lean parser's
-                // `else { self.term()?; }`, and it refuses a token it does not begin with. No test leads to it.
+                // first token: that call is the default, as the lean parser's `else { self.term()?; }`, and it refuses
+                // a token it does not begin with. No test leads to it. Its words and kinds are asked after the other
+                // arms' (whose words it does not have); a mark of its, asked before them, only where none of theirs
+                // can hold at its token, as the lean parser's `term` asks its own peeks (decision 0685 rock 4).
                 let mut alts = Vec::new();
                 Self::alts(g, &mut alts);
+                // A word of its was asked before the other arms' kinds: none of their kinds' tokens is one.
+                let others: Vec<(bool, Holds)> = arms[..arms.len().saturating_sub(1)].iter().flat_map(|a| a.0.iter().map(|(t, _)| (matches!(t, Test::Kind(_)), self.first_holds(t)))).collect();
+                let marks_apart = |fs: &[First]| {
+                    fs.iter().all(|(t, _)| match t {
+                        // A mark that holds only at one kind's tokens, which the arm tests: that kind's test.
+                        Test::Mark(m) if self.implied_kind(*m).is_some_and(|k| fs.iter().any(|x| matches!(&x.0, Test::Kind(j) if *j == k))) => true,
+                        Test::Mark(_) => others.iter().all(|o| self.apart(&self.first_holds(t), &o.1)),
+                        Test::Word(_) => others.iter().filter(|o| o.0).all(|o| self.apart(&self.first_holds(t), &o.1)),
+                        Test::Kind(_) => true,
+                    })
+                };
                 let default = empty.is_none()
                     && alts.last().is_some_and(|a| self.leads_with_call(a))
-                    && arms.last().is_some_and(|a| self.plain_tests(&a.0));
+                    && arms.last().is_some_and(|a| self.plain_tests(&a.0) || marks_apart(&a.0));
                 let none = match empty {
                     Some(i) => arms[i].1.clone(),
                     None if default => {
@@ -1729,6 +1767,7 @@ impl<'a> G<'a> {
                     let t = self.elem(inner, j)?;
                     let not = match t.split_once(" == ") {
                         Some((a, b)) if !t.contains("||") && !t.contains("&&") => format!("{a} != {b}"),
+                        _ if t.starts_with("matches!(") && !t.contains("||") && !t.contains("&&") => format!("!{t}"),
                         _ => format!("!({t})"),
                     };
                     pos.push(format!("({j} < self.n && {not})"));
@@ -1740,9 +1779,14 @@ impl<'a> G<'a> {
                 TokenElem::Many(..) => return Err("a run inside an element".into()),
             }
         }
+        // Words alone at one token: one `matches!`, as the lean parser's `matches!(k - P0, EQ | NE | …)`.
+        let word = format!("self.word_at({j}) == ");
         let mut c = match pos.len() {
             0 => "true".to_owned(),
             1 => pos.remove(0),
+            _ if pos.iter().all(|p| p.starts_with(&word) && !p[word.len()..].contains(' ')) => {
+                format!("matches!(self.word_at({j}), {})", pos.iter().map(|p| &p[word.len()..]).collect::<Vec<_>>().join(" | "))
+            }
             _ => format!("({})", pos.join(" || ")),
         };
         for a in and {
@@ -2601,9 +2645,12 @@ impl<'a> G<'a> {
             Self::leaves(&mut made);
             bs = made.into_iter().map(|(_, b)| b).collect();
         }
+        let holds = |c: &Cond| self.holds(c);
+        let apart = |a: &Holds, b: &Holds| self.apart(a, b);
         bs.iter_mut().for_each(|b| {
             moves::known_takes(b);
             moves::joined(b);
+            moves::into_default(b, &holds, &apart);
         });
         // A method those made short and of one caller: written there, and its caller's arms joined again.
         let methods = self.methods.borrow().clone();
@@ -2615,6 +2662,7 @@ impl<'a> G<'a> {
             bs.iter_mut().for_each(|b| {
                 moves::known_takes(b);
                 moves::joined(b);
+                moves::into_default(b, &holds, &apart);
             });
         }
         let names = self.names.get_or_init(|| moves::Names::of(&mut bs));

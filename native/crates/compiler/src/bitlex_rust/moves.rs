@@ -67,7 +67,18 @@ impl Cond {
             Cond::Not(c) if matches!(&**c, Cond::Word { ws, .. } if ws.len() == 1) => c.print().replacen(" == ", " != ", 1),
             Cond::Not(c) => {
                 let t = c.print();
-                if one_group(&t) || (t.starts_with("self.") && !t.contains(' ')) || matches!(&**c, Cond::Word { .. }) { format!("!{t}") } else { format!("!({t})") }
+                // One call or path: nothing outside its brackets but the call (`s.is_some_and(|e| …)`).
+                let mut depth = 0i32;
+                let atomic = !t.starts_with('!')
+                    && t.bytes().all(|x| {
+                        match x {
+                            b'(' | b'[' | b'{' => depth += 1,
+                            b')' | b']' | b'}' => depth -= 1,
+                            _ => {}
+                        }
+                        depth > 0 || x != b' '
+                    });
+                if one_group(&t) || atomic || matches!(&**c, Cond::Word { .. }) { format!("!{t}") } else { format!("!({t})") }
             }
             Cond::And(cs) => cs.iter().map(|c| if matches!(c, Cond::Or(_)) { format!("({})", c.print()) } else { c.print() }).collect::<Vec<_>>().join(" && "),
             Cond::Or(cs) => cs.iter().map(Cond::print).collect::<Vec<_>>().join(" || "),
@@ -982,10 +993,14 @@ pub(crate) fn known_takes(b: &mut Block) {
     walk(b, Vec::new());
 }
 
-/// The words a test asks of the token `e` a scan found: `self.word_at(e) == w::A || …`, each of them; none where it asks
-/// anything else.
+/// The words a test asks of the token `e` a scan found: `self.word_at(e) == w::A || …` or `matches!(self.word_at(e),
+/// w::A | …)`, each of them; none where it asks anything else.
 fn scan_words(tail: &str) -> Option<HashSet<&str>> {
-    bare(tail).split(" || ").map(|p| p.trim().strip_prefix("self.word_at(e) == ")).collect()
+    let t = bare(tail);
+    if let Some(ws) = t.strip_prefix("matches!(self.word_at(e), ").and_then(|r| r.strip_suffix(')')) {
+        return Some(ws.split(" | ").map(str::trim).collect());
+    }
+    t.split(" || ").map(|p| p.trim().strip_prefix("self.word_at(e) == ")).collect()
 }
 
 /// Whether no token passes both tests: each asks the word at one place, of words none of which the other's has, or
@@ -1002,6 +1017,45 @@ fn disjoint(a: &Cond, b: &Cond) -> bool {
             }
         })
     })
+}
+
+/// `b` with an arm of an `if` whose code is its `else`'s default (a `match` of the word, its `_`) gone into that default:
+/// the arms after it never hold where it does, and an arm of the `match` whose words it may hold at asks it does not
+/// (`w::LPAREN if !t`), as the lean parser's `literal` reads a group at a `(` unless a term follows its `)`, and else
+/// the term (decision 0685 rock 4). `holds`, `apart`: `G::holds`, `G::apart`.
+pub(crate) fn into_default(b: &mut Block, holds: &dyn Fn(&Cond) -> super::Holds, apart: &dyn Fn(&super::Holds, &super::Holds) -> bool) {
+    blocks(b, &mut |x| {
+        for op in x.iter_mut() {
+            let Op::If { arms, els: Some(e) } = op else { continue };
+            let [Op::Match { subject, arms: m, default }] = e.as_mut_slice() else { continue };
+            if subject != "self.word()" {
+                continue;
+            }
+            let Some(i) = arms.iter().position(|(_, body)| body == default) else { continue };
+            let c = arms[i].0.clone();
+            let h = holds(&c);
+            if h.is_none() || !arms[i + 1..].iter().all(|(d, _)| disjoint(d, &c) || apart(&holds(d), &h)) {
+                continue;
+            }
+            // The `match` arms it may hold at: each a guard, `!c`; one with a guard already, as it was.
+            let at: Vec<usize> = (0..m.len()).filter(|&j| !apart(&Some((m[j].0.words.clone(), vec![])), &h) || m[j].0.words.is_empty()).collect();
+            if at.iter().any(|&j| m[j].0.guard.is_some() || m[j].0.words.is_empty()) {
+                continue;
+            }
+            for j in at {
+                m[j].0.guard = Some(Cond::Not(Box::new(c.clone())));
+            }
+            arms.remove(i);
+            if arms.is_empty() {
+                *op = Op::If { arms: Vec::new(), els: Some(std::mem::take(e)) };
+            }
+        }
+        // An `if` of no arms: its `else`.
+        *x = std::mem::take(x).into_iter().flat_map(|op| match op {
+            Op::If { arms, els: Some(e) } if arms.is_empty() => e,
+            op => vec![op],
+        }).collect();
+    });
 }
 
 /// `a && b`, each that holds an `||` in parentheses.

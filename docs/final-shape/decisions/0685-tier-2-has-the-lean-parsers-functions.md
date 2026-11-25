@@ -133,6 +133,22 @@ changed and how.
     it to a kind, is one leaf over the two, its kind chosen first (`let kind = …`), as the lean parser's
     `leaf_over(kind, i, i + 2)`: rr's `-1` and `.input`, Kotlin's `as?`, `>=`, `?.`, `return@` and a label's `@`.
     Neither tier 2 merges a token now.
+11. A literal's term the default, a group unless a term follows (rock 4's printing). A choice's last alternative that
+    begins with a call of a level is its default (`else { self.term()?; }`) also where it has marks, where none of
+    them can hold at a token another arm's test can, nor its words at another arm's kind's (`G::apart`,
+    `G::first_holds`). Then `moves::into_default`: an arm of an `if` whose code is its `else`'s `match` default goes
+    into it, and the `match` arm whose word it may hold at asks it does not (`w::LPAREN if !past_lparen…`), as the
+    lean parser's `group.is_ok() && !term_follows`. A token's choice of words is `matches!(self.word_at(j), A | B)`
+    (`G::elem`), as the lean parser's `matches!(k - P0, EQ | NE | …)`. rr's `literal`: where the `(`'s close is
+    followed by `~`, the subject in parentheses and the pattern; else a `match` of the word: `!` a negation, `(` a
+    group unless a term follows its `)`, else the term and its comparison or pattern. `paren_subject`: `(`, a nested
+    one or the term, `)`.
+12. An optional part asked by the word after it (rock 8's printing). A part that must take a token, tested by words
+    and kinds alone, of more than one test, before a word it cannot begin with, is read unless that word follows
+    (`if self.word() != w::RBRACK { … }`), as the lean parser's `list` asks `is_p(close)` and simdjson
+    `*peek() == ']'`. rr's JSON rules are simdjson's states: `json_document` a `{`, the members where a key follows,
+    the `}`; `json_array` a `[`, the values unless the `]` follows, the `]`; `json_value` one `match` on the token, an
+    array the default.
 
 ## Rocks 4 and 8: the grammar keeps its shape
 

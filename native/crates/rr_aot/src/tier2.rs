@@ -1212,11 +1212,9 @@ impl<L: Layout> P<'_, L> {
             self.id(f::FUNCTION)?;
             self.close()?;
             self.field_made(f::VALUE);
-        } else if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) || self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::LPAREN_10 || self.flags & FLAG_NO_NAMED == 0 && self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && (self.kind_at(self.i + 1) == t::NUMBER || self.kind_at(self.i + 1) == t::STRING || self.kind_at(self.i + 1) == t::CODE_LITERAL || self.kind_at(self.i + 1) == t::IDENTIFIER || self.word_at(self.i + 1) == w::LBRACE_20 || self.word_at(self.i + 1) == w::AT_23) || matches!(self.word(), w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::LPAREN_10) || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER {
+        } else {
             self.term()?;
             self.field_made(f::VALUE);
-        } else {
-            return self.refuse();
         }
         self.close()?;
         Ok(())
@@ -1269,7 +1267,7 @@ impl<L: Layout> P<'_, L> {
     fn json_array(&mut self) -> R {
         self.deeper()?;
         self.word_pass_as(w::LBRACK_25)?;
-        if matches!(self.word(), w::MINUS_27 | w::TRUE_61 | w::FALSE_62 | w::NULL_63 | w::LBRACE_20 | w::LBRACK_25) || self.kind() == t::STRING || self.kind() == t::NUMBER {
+        if self.word() != w::RBRACK_26 {
             self.list_1(Self::json_value)?;
         }
         self.word_pass_as(w::RBRACK_26)?;
@@ -1462,38 +1460,42 @@ impl<L: Layout> P<'_, L> {
         if past_lparen.is_some_and(|e| self.word_at(e) == w::TILDE_31) {
             self.paren_subject()?;
             self.pattern_tail()?;
-        } else if past_lparen.is_some_and(|e| (self.word_at(e) == w::EQ_16 || self.word_at(e) == w::BANG_EQ_5 || self.word_at(e) == w::LT_17 || self.word_at(e) == w::LT_EQ_6 || self.word_at(e) == w::GT_18 || self.word_at(e) == w::GT_EQ_7 || self.word_at(e) == w::PLUS_28 || self.word_at(e) == w::MINUS_27 || self.word_at(e) == w::STAR_24 || self.word_at(e) == w::SLASH_29 || self.word_at(e) == w::PERCENT_30)) || self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) || self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::LPAREN_10 || self.flags & FLAG_NO_NAMED == 0 && self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && (self.kind_at(self.i + 1) == t::NUMBER || self.kind_at(self.i + 1) == t::STRING || self.kind_at(self.i + 1) == t::CODE_LITERAL || self.kind_at(self.i + 1) == t::IDENTIFIER || self.word_at(self.i + 1) == w::LBRACE_20 || self.word_at(self.i + 1) == w::AT_23) || matches!(self.word(), w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20) || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER {
-            self.term()?;
-            if COMPARISON_OPERATOR[self.word() as usize] != 0 || self.word() == w::TILDE_31 {
-                self.relabel_field(0)?;
-                if COMPARISON_OPERATOR[self.word() as usize] != 0 {
-                    self.wrap(k::COMPARISON, f::LEFT)?;
-                    self.tk_as(true, COMPARISON_OPERATOR[self.word() as usize], f::OPERATOR)?;
-                    self.term()?;
-                    self.field_made(f::RIGHT);
+        } else {
+            match self.word() {
+                w::BANG_19 => {
+                    self.open(k::NEGATION);
+                    self.implied()?;
+                    self.literal()?;
+                    self.field_made(f::OPERAND);
+                    if self.made_is(k::COMPARISON) {
+                        return self.refuse();
+                    }
                     self.close()?;
-                } else if self.word() == w::TILDE_31 {
-                    self.pattern_tail()?;
+                }
+                w::LPAREN_10 if !past_lparen.is_some_and(|e| matches!(self.word_at(e), w::EQ_16 | w::BANG_EQ_5 | w::LT_17 | w::LT_EQ_6 | w::GT_18 | w::GT_EQ_7 | w::PLUS_28 | w::MINUS_27 | w::STAR_24 | w::SLASH_29 | w::PERCENT_30)) => {
+                    self.open(k::GROUP);
+                    self.implied()?;
+                    self.body()?;
+                    self.field_made(f::BODY);
+                    self.p(w::RPAREN_11)?;
+                    self.close()?;
+                }
+                _ => {
+                    self.term()?;
+                    if COMPARISON_OPERATOR[self.word() as usize] != 0 || self.word() == w::TILDE_31 {
+                        self.relabel_field(0)?;
+                        if COMPARISON_OPERATOR[self.word() as usize] != 0 {
+                            self.wrap(k::COMPARISON, f::LEFT)?;
+                            self.tk_as(true, COMPARISON_OPERATOR[self.word() as usize], f::OPERATOR)?;
+                            self.term()?;
+                            self.field_made(f::RIGHT);
+                            self.close()?;
+                        } else if self.word() == w::TILDE_31 {
+                            self.pattern_tail()?;
+                        }
+                    }
                 }
             }
-        } else if self.word() == w::BANG_19 {
-            self.open(k::NEGATION);
-            self.implied()?;
-            self.literal()?;
-            self.field_made(f::OPERAND);
-            if self.made_is(k::COMPARISON) {
-                return self.refuse();
-            }
-            self.close()?;
-        } else if self.word() == w::LPAREN_10 {
-            self.open(k::GROUP);
-            self.implied()?;
-            self.body()?;
-            self.field_made(f::BODY);
-            self.p(w::RPAREN_11)?;
-            self.close()?;
-        } else {
-            return self.refuse();
         }
         if matches!(self.made_kind(), k::VARIABLE | k::NUMBER | k::FLOAT | k::STRING | k::CODE_LITERAL | k::WILDCARD | k::UNARY_EXPRESSION | k::BINARY_EXPRESSION | k::PARENTHESIZED_EXPRESSION | k::FUNCTOR_CALL | k::AGGREGATE | k::JSON_OBJECT | k::NAMED_ARGUMENT) {
             return self.refuse();
@@ -1515,14 +1517,8 @@ impl<L: Layout> P<'_, L> {
         self.p(w::LPAREN_10)?;
         if self.past_lparen(self.i).is_some_and(|e| self.word_at(e) == w::RPAREN_11) {
             self.paren_subject()?;
-        } else if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) || self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::LPAREN_10 || self.flags & FLAG_NO_NAMED == 0 && self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && (self.kind_at(self.i + 1) == t::NUMBER || self.kind_at(self.i + 1) == t::STRING || self.kind_at(self.i + 1) == t::CODE_LITERAL || self.kind_at(self.i + 1) == t::IDENTIFIER || self.word_at(self.i + 1) == w::LBRACE_20 || self.word_at(self.i + 1) == w::AT_23) {
-            self.term()?;
         } else {
-            if matches!(self.word(), w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::LPAREN_10) || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER {
-                self.term()?;
-            } else {
-                return self.refuse();
-            }
+            self.term()?;
         }
         if self.made_is(k::CALL) {
             return self.refuse();
