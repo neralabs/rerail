@@ -1,0 +1,18 @@
+[
+  {
+    "id": "blade-parser-duplicate-condition-expressions",
+    "status": "same"
+  },
+  {
+    "id": "tlint-space-after-blade-directives",
+    "status": "different",
+    "reason": "Control directives Blade leaves unpaired (`Lead @forelse($arg) Trail`, `@for($args)`, a bare `@while`) are reported by tlint, which matches directives line by line, and by the translation, which reads the template's directives; the original reads compiled structures, and the compiled view compiles no half of one. tlint v9.7.0's SpaceAfterBladeDirectives reports all 10 (and on fixtures and samples-blade reports exactly the translation's keys).",
+    "right": "translation",
+    "counts": {
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 10
+      }
+    }
+  }
+]
