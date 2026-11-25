@@ -22,15 +22,27 @@ function failedStart(program, code) {
   return { pid: 0, output: [null, "", ""], stdout: "", stderr: "", status: null, signal: code === "ETIMEDOUT" ? "SIGTERM" : null, error };
 }
 
-childProcess.spawnSync = (program, args, options) => {
-  if (typeof program !== "string" || win32.basename(program).toLowerCase() !== "powershell.exe") return realSpawnSync(program, args, options);
+/** Whether `program` names Windows PowerShell's executable. */
+function isPowerShell(program) {
+  return typeof program === "string" && win32.basename(program).toLowerCase() === "powershell.exe";
+}
+
+/** The timeout a spawnSync call's options give, in ms; 0 for none. */
+function timeoutOf(options) {
+  return Number(options?.timeout ?? 0);
+}
+
+/** A synchronous start of PowerShell as this stand-in machine makes it: refused, or held first and ended at its timeout. */
+function slowStart(program, args, options) {
   if (blocked) return failedStart(program, "EACCES");
-  const timeout = Number(options?.timeout ?? 0);
+  const timeout = timeoutOf(options);
   if (timeout > 0 && delayMs >= timeout) {
     hold(timeout);
     return failedStart(program, "ETIMEDOUT");
   }
   hold(delayMs);
   return realSpawnSync(program, args, timeout > 0 ? { ...options, timeout: timeout - delayMs } : options);
-};
+}
+
+childProcess.spawnSync = (program, args, options) => (isPowerShell(program) ? slowStart(program, args, options) : realSpawnSync(program, args, options));
 syncBuiltinESMExports();
