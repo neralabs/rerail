@@ -250,8 +250,15 @@ impl Own {
             (rel, col, k[2], n)
         }).collect();
         posted.sort_unstable();
-        for (rel, col, v, n) in posted {
-            rows.entry(format!("{OWN_POSTINGS}{rel}:{col}")).or_insert_with(|| (2, rerail_blocks::vector::Vector::new())).1.extend([v, n]);
+        // Sorted by relation and column: each (relation, column)'s rows a run, its name made once (a name a posting
+        // was 0.89 M on cold PostHog).
+        let mut at = 0;
+        while at < posted.len() {
+            let (rel, col) = (&posted[at].0, &posted[at].1);
+            let end = at + posted[at..].iter().take_while(|p| &p.0 == rel && &p.1 == col).count();
+            let held = &mut rows.entry(format!("{OWN_POSTINGS}{rel}:{col}")).or_insert_with(|| (2, rerail_blocks::vector::Vector::new())).1;
+            held.extend(posted[at..end].iter().flat_map(|&(_, _, v, n)| [v, n]));
+            at = end;
         }
     }
 
