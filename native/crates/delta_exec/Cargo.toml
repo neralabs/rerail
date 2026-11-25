@@ -20,3 +20,8 @@ rerail-rr-syntax = { path = "../rr_syntax" }
 
 [dev-dependencies]
 rerail-delta-exec = { path = ".", features = ["test-hooks"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dev-dependencies]
+# A kernel that follows references through a launch's device descriptor table (its test): the device layer's
+# programs. A dev-dependency: the crate itself never compiles or launches a kernel.
+rerail-gpu = { path = "../../../gpu" }

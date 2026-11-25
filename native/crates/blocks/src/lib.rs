@@ -68,6 +68,10 @@ pub(crate) const RESERVE_ONLY: libc::c_int = 0;
 #[cfg(windows)]
 mod windows;
 pub mod gpu;
+/// The device layer, for a block's device buffer and address (`Block::device_buffer`, `gens::device_rows`): re-exported
+/// so a crate above blocks names the device it launches on without depending on the device layer itself.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub use rerail_device as device;
 
 pub use block::{Block, Cells, Frozen, Header};
 pub use refs::{Ptr, Span};

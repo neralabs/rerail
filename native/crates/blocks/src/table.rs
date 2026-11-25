@@ -610,6 +610,8 @@ mod tests {
             check(range(&v, ..=4).unwrap().collect(), &|x| x <= 4);
             check(range(&v, (Bound::Excluded(9), Bound::Unbounded)).unwrap().collect(), &|x| x > 9);
             check(range(&v, (Bound::Excluded(i64::MAX), Bound::Unbounded)).unwrap().collect(), &|_| false);
+            // A reversed range, empty on purpose: it reads no row.
+            #[allow(clippy::reversed_empty_ranges)]
             check(range(&v, 30..10).unwrap().collect(), &|_| false);
         });
     }

@@ -61,7 +61,9 @@ pub const CONTROL_BYTES: usize = 40;
 
 // ---- the source ---------------------------------------------------------------------------------------------------
 
-/// The rows a layer is made from: a run's δ runs, or the layers merged (newest first, each sorted).
+/// The rows a layer is made from: a run's δ runs, or the layers merged (newest first, each sorted). One a phase's
+/// call, on its stack: the variants' sizes do not matter.
+#[allow(clippy::large_enum_variant)]
 enum Src<'a> {
     Runs(Runs<'a>),
     // copy: not block data (a handle and a first row a merged layer)
@@ -693,7 +695,6 @@ fn isort<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     set_word::<u64>(v.work, W_IWIDTH, CHUNK as u64);
     set_word::<u64>(v.work, W_IWHICH, 0);
     let out = LayerOut::new(v.layer);
-    let shape = out.head.shape;
     for item in t.items() {
         let (x, k) = (item / ch, item % ch);
         let a = words_mut::<u32>(v.work, v.w.ix_a + 4 * v.w.cap * x, n_out);
@@ -749,7 +750,7 @@ fn isettle<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
             continue;
         }
         let r = k * CHUNK..((k + 1) * CHUNK).min(n_out);
-        out.index(x)[r.clone()].copy_from_slice(&sorted[r]); // copy: derived (the layer's index, from the sort's work)
+        out.perm(x)[r.clone()].copy_from_slice(&sorted[r]); // copy: derived (the layer's index, from the sort's work)
     }
 }
 
@@ -768,7 +769,7 @@ fn iaux<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
             continue;
         }
         for p in k * CHUNK..((k + 1) * CHUNK).min(n_out) {
-            let row = out.index(x)[p] as usize;
+            let row = out.perm(x)[p] as usize;
             let lead = out.get(row, key[0] as usize);
             if kind & IX_FENCES != 0 && p % FENCE == 0 {
                 out.fences(x)[p / FENCE] = lead;

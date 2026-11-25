@@ -119,7 +119,7 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
             out.extend(l.bloom(x).iter().enumerate().map(|(i, &w)| vec![9, x as i64, i as i64, w as i64]));
             continue;
         }
-        out.extend(l.index(x).iter().enumerate().map(|(i, &p)| vec![5, x as i64, i as i64, p.into()]));
+        out.extend(l.perm(x).iter().enumerate().map(|(i, &p)| vec![5, x as i64, i as i64, p.into()]));
         out.extend(l.fences(x).iter().enumerate().map(|(i, &f)| vec![7, x as i64, i as i64, f]));
         out.extend(l.tags(x).iter().enumerate().map(|(i, &t)| vec![8, x as i64, i as i64, t.into()]));
         out.extend(l.prints(x).iter().enumerate().map(|(i, &p)| vec![10, x as i64, i as i64, p.into()]));

@@ -490,3 +490,24 @@ What a run block's trace refuses, each saying where the plan puts it (`a_shape_t
 Outside these runs: the descriptor table is the CPU's (a device's comes with a device executor; no Metal runs here);
 the twins' clippy.toml and a cargo build of these crates were not run (only narrow Relax runs on this machine are
 allowed); references of a block that is gone are let go at the directory's next `release`, `make` or `sweep`.
+
+## The device's descriptor table; clippy and cargo (2026-11-25)
+
+With cargo and clippy on a farm host and Metal allowed for it (the user, 2026-11-25), what the section above left
+outside its runs:
+
+- **A device's descriptor table** (E2): `Launch::device_table` writes the launch's rows again, each block's address
+  its device buffer's (`gens::device_rows`: the block's memory wrapped in place, `Block::device_buffer`, nothing
+  uploaded), in a DESC block of its own the kernel binds, and names the reached buffers as used through addresses.
+  `gens::DESC_READS` is the table's device half in UKL: a row as `Desc` lies, its address a pointer, and `desc_row`,
+  an id's row as `Table::row` finds it. `op::tests::a_kernel_follows_references_through_the_device_table`: a kernel
+  reads four blocks (a chain of references) through the table, their headers, reference tables and values, as the
+  CPU's table gives them, and an id the launch cannot reach has no row; passed on the CPU backend (Linux, cargo) and
+  on Metal (one farm Mac, the device opened).
+- **Clippy**, the twins' `clippy.toml` with it, over `rerail-blocks`, `rerail-delta-twins` and `rerail-delta-exec`
+  (lib and tests): the delta crates have no finding. In blocks it found a real fault: `Rows::lower_bound`'s search of
+  a column under key runs was guarded by `(0..1 << 63).contains(&key)`, an empty range (`1 << 63` is `i64::MIN`), so
+  it never ran, and once run it compared a run's high bits unsigned where the column's order is its values' (i64).
+  It now compares them signed and runs for every key; its test's column is sorted as i64 (the run whose high bits
+  are negative first). blocks' findings left are in `maps.rs` (the run room's, not this line's).
+- **Cargo**: the three crates build and pass under cargo (Linux host): blocks 118 of 118, the delta crates 25 of 25.

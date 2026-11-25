@@ -3802,6 +3802,7 @@ dependencies = [
  "rerail-blocks",
  "rerail-delta-exec",
  "rerail-delta-twins",
+ "rerail-gpu",
  "rerail-rr-syntax",
 ]
 

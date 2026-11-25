@@ -9,6 +9,9 @@
 //! A launch (`Directory::launch`) pins every slot by its mode, then read-pins every block the slots refer to,
 //! transitively, and writes the CPU's descriptor table of them: their host addresses, lengths, kinds and versions.
 //! Any conflict refuses the start, naming the operation, and nothing stays pinned.
+//!
+//! A launch's table on a device (`Launch::device_table`) is the same rows, each block's address the device's: its
+//! memory wrapped in place, nothing uploaded. A kernel finds a row by id through `gens::DESC_READS`.
 
 use rerail_blocks::block::kind;
 use rerail_blocks::gens::{self, BODY_AT, Desc, Table};
@@ -218,6 +221,49 @@ impl Directory {
         }
         let table_pin = pin_block(&table, op, false).expect("the table is the launch's");
         Ok(Launch { slots: pins, reach, table: table_pin, at, read: read.to_vec() })
+    }
+}
+
+/// A launch's descriptor table on a device: the same rows as its CPU table, each block's address the device's
+/// (`gens::device_rows`), in a block of its own that the kernel binds, and the buffers the kernel reaches through it.
+/// It reads the launch's blocks, so it lives no longer than the launch's pins: the caller keeps the launch until the
+/// device's work completes.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub struct DeviceTable<'l> {
+    _launch: std::marker::PhantomData<&'l Launch>,
+    pin: BlockPin,
+    /// Where the table lies in its block.
+    pub at: u64,
+    /// The table block's buffer, to bind.
+    pub buffer: rerail_blocks::device::device::Buffer,
+    /// The blocks' buffers, which the kernel reads through their addresses (`uses_read`).
+    pub reached: Vec<rerail_blocks::device::device::Buffer>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl DeviceTable<'_> {
+    /// Its rows, by id ascending, as the device reads them.
+    pub fn rows(&self) -> &[Desc] {
+        let b = self.pin.bytes();
+        let n = gens::word::<u64>(b, self.at as usize) as usize;
+        gens::words::<Desc>(b, self.at as usize + 8, n)
+    }
+}
+
+impl Launch {
+    /// The launch's descriptor table on `device` (E2: a kernel follows a reference through its own device's table).
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    pub fn device_table(&self, device: &rerail_blocks::device::device::Device) -> Result<DeviceTable<'_>, String> {
+        let (rows, reached) = gens::device_rows(self.table().rows(), &self.reach, device)?;
+        let table = Arc::new(Block::anon(kind::DESC, BODY_AT + gens::table_bytes(&rows) + rerail_blocks::block::PAGE));
+        let at = table.alloc(gens::table_bytes(&rows), 64);
+        {
+            let mut w = pin_block(&table, "device descriptor table", true).expect("a new block is unused");
+            gens::write_table(&mut w.bytes_mut().expect("a write pin")[at..], &rows);
+        }
+        let pin = pin_block(&table, "device descriptor table", false).expect("the table is the launch's");
+        let buffer = table.device_buffer(device)?;
+        Ok(DeviceTable { _launch: std::marker::PhantomData, pin, at: at as u64, buffer, reached })
     }
 }
 

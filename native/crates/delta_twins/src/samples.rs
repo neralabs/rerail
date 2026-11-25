@@ -200,12 +200,12 @@ fn merge_tile(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     for k in t.items() {
         let (lo, hi) = (k * CHUNK, ((k + 1) * CHUNK).min(n));
         let (mut i, mut j) = (co_rank(lo, a, b), lo - co_rank(lo, a, b));
-        for o in lo..hi {
+        for d in &mut dst[lo..hi] {
             if j >= b.len() || (i < a.len() && a[i] <= b[j]) {
-                dst[o] = a[i];
+                *d = a[i];
                 i += 1;
             } else {
-                dst[o] = b[j];
+                *d = b[j];
                 j += 1;
             }
         }

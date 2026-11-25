@@ -1137,7 +1137,7 @@ impl Version {
     /// from `b`'s gone and added rows, so in the change's size where its after state records its change
     /// (`Read::since`).
     pub fn change<S: crate::bistate::Read>(b: &crate::bistate::Bistate<S>) -> Vec<Delta> {
-        use crate::bistate::{ColumnIndex, ColumnRead, Read};
+        use crate::bistate::{ColumnIndex, ColumnRead};
         let after = b.after();
         (0..after.arity())
             .map(|c| {
@@ -1445,7 +1445,7 @@ mod tests {
             let mut s = of(all.iter().copied());
             s.remove(all[0]);
             let bytes = s.encode();
-            let mut back = Sketch::decode(&|i| bytes[i], 0, bytes.len(), room()).expect(&what);
+            let mut back = Sketch::decode(&|i| bytes[i], 0, bytes.len(), room()).expect(what);
             assert_eq!(back.encode(), bytes, "{what}: bytes");
             assert_eq!(back.reading(), s.reading(), "{what}: reading");
             assert!(back.in_blocks(), "{what}: in blocks");

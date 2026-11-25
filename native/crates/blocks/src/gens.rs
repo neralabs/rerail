@@ -13,6 +13,10 @@
 //! device. On the CPU the table holds host addresses, and `Table` is how a twin follows one: an id gives the bytes of
 //! a block pinned for the launch, in place.
 //!
+//! A device's table is the same format, its rows' addresses the blocks' device addresses (`device_rows`), in a block
+//! of its own bound to the kernel; a kernel finds a block's row by id through `DESC_READS`, `Table::row`'s device
+//! half, and reads the block where it lies through the row's address.
+//!
 //! **Typed views.** A block's columns are fixed-width integers read where they lie: `words` and `words_mut` give a
 //! run of a `Pod` type at a byte offset, checked for bounds and alignment; `atomics` gives atomic words of a block
 //! pinned to write, for claims and cells many writers fill at once (host threads or a GPU's).
@@ -125,7 +129,7 @@ unsafe impl Pod for Desc {}
 
 /// A descriptor table's bytes: its row count, then its rows, by id ascending.
 pub fn table_bytes(rows: &[Desc]) -> usize {
-    8 + rows.len() * size_of::<Desc>()
+    8 + size_of_val(rows)
 }
 
 /// Writes a descriptor table at the start of `bytes` (a table block's body): rows sorted by id.
@@ -134,6 +138,45 @@ pub fn write_table(bytes: &mut [u8], rows: &[Desc]) {
     words_mut::<Desc>(bytes, 8, rows.len()).copy_from_slice(rows); // copy: derived (the launch's descriptors, written once into its table block)
     words_mut::<Desc>(bytes, 8, rows.len()).sort_by_key(|d| d.id);
 }
+
+/// A device's descriptor table rows for `rows` (a launch's CPU rows, over `pins`): each block's address in the device's
+/// domain, its buffer the block's own (`Block::device_buffer`: its memory wrapped in place, nothing uploaded), and the
+/// length that buffer covers. With the buffers, which a launch names as used through addresses (`uses_read`).
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub fn device_rows(rows: &[Desc], pins: &[BlockPin], device: &rerail_device::device::Device) -> Result<(Vec<Desc>, Vec<rerail_device::device::Buffer>), String> {
+    let mut out = Vec::with_capacity(rows.len());
+    let mut buffers = Vec::with_capacity(rows.len());
+    for d in rows {
+        let pin = pins.iter().find(|p| p.addr() as u64 == d.addr).ok_or_else(|| format!("descriptor table row #{} names memory the launch did not pin", d.id))?;
+        let b = pin.block();
+        let buffer = b.device_buffer(device)?;
+        let addr = buffer.device_address().ok_or_else(|| format!("block #{}: the device gives its buffers no address", d.id))?;
+        let len = b.kept_device_buffer().map_or(d.len, |(_, n)| (n as u64).min(d.len));
+        out.push(Desc { addr, len, ..*d });
+        buffers.push(buffer);
+    }
+    Ok((out, buffers))
+}
+
+/// A descriptor table's device reads, in UKL (decision 0440: every backend's): a row as `Desc` lies, its address a
+/// pointer into the block's memory on the device, and the row of an id, found as `Table::row` finds it (the rows by
+/// id ascending). After `<ukl/backend.h>`.
+pub const DESC_READS: &str = r#"
+#include <ukl/clif.h>
+typedef struct DescRow { uint32_t id; uint32_t kind; uint64_t version; CLIF_BLOCK_SPACE const uint8_t* addr; uint64_t len; } DescRow;
+UKL_STATIC_ASSERT(sizeof(DescRow) == 32, "DescRow: gens::Desc's size");
+// Block `id`'s row in the table at `t` (its row count, then its rows), or none (0) when the launch cannot reach it.
+UKL_INLINE CLIF_BLOCK_SPACE const DescRow* desc_row(CLIF_BLOCK_SPACE const uint8_t* t, uint32_t id) {
+    uint64_t n = *(CLIF_BLOCK_SPACE const uint64_t*)t;
+    CLIF_BLOCK_SPACE const DescRow* rows = (CLIF_BLOCK_SPACE const DescRow*)(t + 8);
+    uint64_t lo = 0, hi = n;
+    while (lo < hi) {
+        uint64_t m = (lo + hi) / 2u;
+        if (rows[m].id < id) lo = m + 1u; else hi = m;
+    }
+    return lo < n && rows[lo].id == id ? rows + lo : 0;
+}
+"#;
 
 /// The CPU's descriptor table of one launch, as a twin follows it: an id gives the bytes of a block pinned for the
 /// launch, where they lie. Made over the table's own pinned block and the pins of every block it names; each row is

@@ -195,7 +195,7 @@ impl Shape {
         }
         for (i, ix) in self.indexes.iter().enumerate() {
             let (kind, key) = match ix {
-                IndexSpec::Order { key, fences, prints } => (IX_ORDER | u32::from(*fences) * IX_FENCES | u32::from(*prints) * IX_PRINTS, key),
+                IndexSpec::Order { key, fences, prints } => (IX_ORDER | if *fences { IX_FENCES } else { 0 } | if *prints { IX_PRINTS } else { 0 }, key),
                 IndexSpec::Perm(key) => (IX_ORDER, key),
                 IndexSpec::Hash(key) => (IX_HASH | IX_PRINTS, key),
                 IndexSpec::Bloom(key) => (IX_BLOOM, key),
@@ -695,7 +695,7 @@ impl<'a> LayerOut<'a> {
         words_mut(self.bytes, self.head.sketch_at as usize, self.head.shape.arity())
     }
 
-    pub fn index(&mut self, i: usize) -> &mut [u32] {
+    pub fn perm(&mut self, i: usize) -> &mut [u32] {
         words_mut(self.bytes, self.head.idx_at[i] as usize, self.head.n as usize)
     }
 
@@ -801,7 +801,7 @@ impl<'a> Layer<'a> {
         words(self.bytes, self.head.sketch_at as usize, self.head.shape.arity())
     }
 
-    pub fn index(&self, i: usize) -> &'a [u32] {
+    pub fn perm(&self, i: usize) -> &'a [u32] {
         words(self.bytes, self.head.idx_at[i] as usize, self.n())
     }
 
@@ -889,7 +889,7 @@ impl<'a> Layer<'a> {
         if kind & IX_BLOOM != 0 {
             return None;
         }
-        let perm = self.index(x);
+        let perm = self.perm(x);
         let n = perm.len();
         let (tags, fences) = (self.tags(x), self.fences(x));
         let cmp = |p: usize| self.cmp_key(perm[p] as usize, cols, key);
@@ -1102,13 +1102,16 @@ impl Read for Chain<'_> {
     }
 }
 
+/// A probe's place in one layer: the layer, the positions left, and the index's order when one is read.
+type InLayer<'a> = (Layer<'a>, std::ops::Range<usize>, Option<&'a [u32]>);
+
 /// A probe of a chain: each layer's matches in turn.
 pub struct ProbeIter<'a> {
     chain: Chain<'a>,
     cs: [u8; MAX_COLS],
     k: [i64; MAX_COLS],
     n: usize,
-    inner: Option<(Layer<'a>, std::ops::Range<usize>, Option<&'a [u32]>)>,
+    inner: Option<InLayer<'a>>,
     layer: Option<Id>,
 }
 
@@ -1120,7 +1123,7 @@ impl Iterator for ProbeIter<'_> {
             if let Some((l, r, perm)) = &mut self.inner {
                 let (cs, ks) = (&self.cs[..self.n], &self.k[..self.n]);
                 let span = self.chain.span(l);
-                while let Some(j) = r.next() {
+                for j in r.by_ref() {
                     let i = match perm {
                         Some(p) => p[j] as usize,
                         None => j,
@@ -1245,10 +1248,8 @@ impl<'a> States for Chain<'a> {
             }
             // One layer's partition changed when it holds a row of it; across layers, when their digests do not
             // cancel (an add and its undo sum to zero).
-            if (n == 1 && moved > 0) || digest != 0 {
-                if self.part.is_none_or(|p| p == i64::from(key)) {
-                    out(i64::from(key));
-                }
+            if ((n == 1 && moved > 0) || digest != 0) && self.part.is_none_or(|p| p == i64::from(key)) {
+                out(i64::from(key));
             }
         }
     }

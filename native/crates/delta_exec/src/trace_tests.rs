@@ -59,7 +59,7 @@ fn random_run(r: &mut impl FnMut() -> u64, set: &Rows) -> (Vec<(Vec<i64>, i32)>,
     let mut next = set.clone();
     let mut pairs = Vec::new();
     for x in set.iter() {
-        if r() % 4 == 0 {
+        if r().is_multiple_of(4) {
             pairs.push((x.clone(), -1));
             next.remove(x);
         }
@@ -128,7 +128,7 @@ fn a_random_trace_reads_as_its_set() {
         for c in ColumnIndex::all(3) {
             let st = s.stats(c);
             assert_eq!(st.count, set.len() as i64, "state {k}: the sketch counts the live rows");
-            if let Some(m) = set.iter().map(|x| x[c.get() as usize]).min() {
+            if let Some(m) = set.iter().map(|x| x[c.get()]).min() {
                 assert!(st.min <= m, "the sketch's min bounds the live rows'");
             }
         }
