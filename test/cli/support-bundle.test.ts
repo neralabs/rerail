@@ -608,6 +608,15 @@ describe("rerail support-bundle", () => {
     expect((await run(world)).bundle.session?.steers).toHaveLength(1);
   });
 
+  it("finds a steer on the ledger's last line when no newline ends it, as a write cut short leaves it", async () => {
+    const world = await fixture();
+    recordSession(world, SESSION, 1_000);
+    writeLedger(world, SESSION);
+    const ledger = join(world.repo, ".rerail", "sessions", createHash("sha256").update(SESSION).digest("hex"), "events.jsonl");
+    writeFileSync(ledger, readFileSync(ledger, "utf8").trimEnd());
+    expect((await run(world)).bundle.session?.steers).toEqual([{ mechanism: "message", requested: "steer", ruleIds: ["eslint-eqeqeq"], text: STEER }]);
+  });
+
   it("says so when the session steered and the steers' ledger is gone", async () => {
     const world = await fixture();
     recordSession(world, SESSION, 1_000);
