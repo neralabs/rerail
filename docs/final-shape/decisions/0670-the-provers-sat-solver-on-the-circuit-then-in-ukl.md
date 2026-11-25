@@ -512,3 +512,13 @@ formula").
     Constraint Propagation", §3.3); the GPU wins by many searches at once, each a warp, with a few bytes of state a
     clause (a counter word updated by an atomic add) and a bit pair a variable, so thousands stay resident.
   - Cold Kotlin, the shipped answers' bytes: the device alone 9.3 s of proving, the CPU alone 6.6 s.
+- **The device's throughput, measured** (`the_dumped_formulas_on_the_device`, one hard dump of 31,800 variables in
+  many copies, a slot each; the least of three runs, as other jobs share the Spark's GPU): 1 copy 1.84 s, 96
+  copies 2.24 s, 512 copies 5.1 s, 1,024 copies 17.1 s; the CPU's copy of the search 134 ms on one core. The
+  kernel is not held to a group an SM (121 registers, 24 bytes of stack, no shared memory: 16 groups fit an SM),
+  and up to about 2 groups an SM a copy costs nothing more; past that every part of a search slows, the decisions'
+  heap most (one copy against 1,024: the gate items 2.0 G to 23.6 G cycles, the decisions 0.25 G to 10.5 G). At
+  its best the device does a copy in 10 ms, about 13 of the CPU's cores. A search's state is 11 words a variable
+  (1.4 MB of words it reads at random here), so 500 searches do not fit in the L2 cache and each read is the
+  memory's: the device is bound by its memory's traffic, not its latency. Not kept: the values a byte a variable
+  besides their words (a quarter of the words the checks read): the same times, 1.84 to 17.1 s.
