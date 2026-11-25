@@ -6,6 +6,12 @@
 //! from the heap.
 
 pub mod vector;
+/// An operation's own memory: the thread's bump frame and the stack's short arrays (decision 0687).
+pub mod frame;
+#[doc(hidden)]
+pub mod probe;
+
+pub use frame::{Frame, FrameVec, InlineVec, op};
 
 use std::any::Any;
 use std::sync::Arc;
@@ -42,6 +48,8 @@ pub struct Region {
     /// check is called only while one is queued. It lives as long as the guard, which the region holds.
     uses: *const std::sync::atomic::AtomicUsize,
     share: Option<fn(&Region) -> Region>,
+    /// PROBE (to remove): the scratch survey's tag.
+    pub(crate) tag: probe::Tag,
 }
 
 /// The check of the CPU's reads and writes of a block's bytes against the device's queued uses of them (decision 0487
@@ -67,7 +75,7 @@ impl Region {
     /// # Safety
     /// `ptr..ptr + len` is writable, aligned as asked, and this region's alone while `owner` lives.
     pub unsafe fn new(ptr: *mut u8, len: usize, owner: Box<dyn Any + Send + Sync>) -> Region {
-        Region { ptr, len, owner, guard: None, uses: &NO_USES, share: None }
+        Region { ptr, len, owner, guard: None, uses: &NO_USES, share: None, tag: probe::Tag::default() }
     }
 
     /// It, each CPU read and write checked by `guard`, its first byte at `at` of the guard's block.
@@ -103,7 +111,8 @@ impl Region {
     }
 
     /// What holds it, taken: a room's region handed on whole (its chunk to a relation's directory).
-    pub fn into_owner(self) -> Box<dyn Any + Send + Sync> {
+    pub fn into_owner(mut self) -> Box<dyn Any + Send + Sync> {
+        self.tag.handed();
         self.owner
     }
     #[inline]
@@ -175,8 +184,9 @@ pub fn install_default_room(provider: &'static str, room: fn() -> Arc<dyn Room>)
 
 /// The room of the run under way (the facts layer's, once installed), else the heap's.
 pub fn default_room() -> Arc<dyn Room> {
-    match DEFAULT_ROOM.try_get() {
+    let room: Arc<dyn Room> = match DEFAULT_ROOM.try_get() {
         Some(room) => room(),
         None => Arc::new(HeapRoom),
-    }
+    };
+    if probe::on() { Arc::new(probe::ProbeRoom(room)) } else { room }
 }

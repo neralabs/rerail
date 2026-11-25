@@ -39,6 +39,8 @@ pub mod ledger;
 pub mod maps;
 pub mod mapped;
 pub use rerail_vector::vector;
+/// An operation's own memory: the thread's bump frame and the stack's short arrays (decision 0687).
+pub use rerail_vector::frame;
 pub mod mem;
 pub mod packed;
 pub mod ranged;

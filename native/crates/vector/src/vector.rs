@@ -95,7 +95,8 @@ impl<T: Pod> Vector<T> {
             return Err(self);
         }
         let len = self.len;
-        let region = self.mem.take().expect("a region");
+        let mut region = self.mem.take().expect("a region");
+        region.tag.handed();
         Ok((region, len))
     }
 
@@ -170,6 +171,9 @@ impl<T: Pod> Vector<T> {
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
         }
+        if let Some(old) = self.mem.as_mut() {
+            region.tag.grown(&mut old.tag);
+        }
         (self.mem, self.ptr, self.cap) = (Some(region), ptr, cap);
     }
 
@@ -187,6 +191,9 @@ impl<T: Pod> Vector<T> {
             // SAFETY: as `reserve`'s.
             // copy: growth: an array that outgrew its region, moved once, as a vector's growth moves it
             unsafe { std::ptr::copy_nonoverlapping(self.ptr, ptr, self.len) };
+        }
+        if let Some(old) = self.mem.as_mut() {
+            region.tag.grown(&mut old.tag);
         }
         (self.mem, self.ptr, self.cap) = (Some(region), ptr, need);
     }
