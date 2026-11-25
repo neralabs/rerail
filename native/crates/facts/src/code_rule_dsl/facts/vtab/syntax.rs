@@ -420,18 +420,28 @@ impl LongTexts {
     /// (whose text `text` holds), a span, or a node of a document not in the batch. Only the nodes a rule binds are
     /// read and interned (decision 0108 §1).
     pub fn long_text(&self, n: i64) -> Option<String> {
+        self.long_text_ref(n).map(str::to_owned)
+    }
+
+    /// `long_text`, lent from the tape.
+    fn long_text_ref(&self, n: i64) -> Option<&str> {
         let (key, low) = ((n >> 32) as u32, n as u32);
         let p = &self.batch.docs[*self.docs.get(&key)?];
         let local = p.local_of(low)?;
         let core = p.ranks().select(Item::Node, local)?;
         let text = p.f().text(core);
-        (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
+        (text.len() > core_rr::TEXT_INLINE).then_some(text)
     }
 
     /// Node `n`'s exact source text at any length, or a comment span's (a comment no node is: `Extra`'s `node_text`
     /// rows); none for another span or a node of a document not in the batch. It answers `node_text`'s requests
     /// (decision 0174): only the nodes a rule asks for are read and interned.
     pub fn text_any(&self, n: i64) -> Option<String> {
+        self.text_any_ref(n).map(str::to_owned)
+    }
+
+    /// `text_any`, lent from the tape.
+    fn text_any_ref(&self, n: i64) -> Option<&str> {
         let (key, low) = ((n >> 32) as u32, n as u32);
         let p = &self.batch.docs[*self.docs.get(&key)?];
         let f = p.f();
@@ -447,14 +457,14 @@ impl LongTexts {
                 if p.local_of_node(id) == NONE {
                     j += 1;
                     if j == k {
-                        return Some(f.text(id).to_owned());
+                        return Some(f.text(id));
                     }
                 }
             }
             return None;
         }
         let core = p.ranks().select(Item::Node, p.local_of(low)?)?;
-        Some(f.text(core).to_owned())
+        Some(f.text(core))
     }
 
     /// Node `n`'s value as W reads it (`value(n, v)`, the plain reading), read off its document's tape: the
@@ -524,6 +534,13 @@ impl Source for LongTexts {
             "rr_node_str" => self.str_any(n).map(Value::Text),
             "rr_node_order" => self.order_any(n).map(Value::Integer),
             _ => None,
+        }
+    }
+    fn node_read_ref(&self, name: &str, n: i64) -> Option<super::NodeRead<'_>> {
+        match name {
+            "rr_node_text" => self.long_text_ref(n).map(super::NodeRead::Text),
+            "rr_node_text_any" => self.text_any_ref(n).map(super::NodeRead::Text),
+            _ => self.node_read(name, n).map(super::NodeRead::Value),
         }
     }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
@@ -770,8 +787,38 @@ pub fn unparsed<'a>(f: FactsIn<'a>, d: &Document) -> &'a str {
 }
 
 /// A document's tape: its content key, hex (`tape_of`).
-pub fn tape_hex(digest: &[u8; 32]) -> String {
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+pub fn tape_hex(digest: &[u8; 32]) -> TapeHex {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = [0u8; 64];
+    for (i, b) in digest.iter().enumerate() {
+        out[2 * i] = HEX[(b >> 4) as usize];
+        out[2 * i + 1] = HEX[(b & 15) as usize];
+    }
+    TapeHex(out)
+}
+
+/// A tape's digest as text (`tape_hex`): its 64 hex digits, held inline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TapeHex([u8; 64]);
+
+impl std::ops::Deref for TapeHex {
+    type Target = str;
+    fn deref(&self) -> &str {
+        // SAFETY: hex digits only (`tape_hex`), ASCII.
+        unsafe { std::str::from_utf8_unchecked(&self.0) }
+    }
+}
+
+impl std::fmt::Display for TapeHex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self)
+    }
+}
+
+impl std::fmt::Debug for TapeHex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
 }
 
 /// Where a guest's bytes stand in its host's source.

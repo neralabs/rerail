@@ -35,7 +35,7 @@ pub struct GuestRows {
     unparse_of: Vector<[i64; 2]>,
 }
 
-fn hex(digest: &[u8; 32]) -> String {
+fn hex(digest: &[u8; 32]) -> super::TapeHex {
     super::tape_hex(digest)
 }
 
