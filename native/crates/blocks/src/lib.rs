@@ -24,6 +24,7 @@ pub mod atoms;
 pub mod bistate;
 pub mod block;
 pub mod bloom;
+pub mod change;
 pub mod chunk;
 pub mod col;
 #[cfg(any(unix, windows))]

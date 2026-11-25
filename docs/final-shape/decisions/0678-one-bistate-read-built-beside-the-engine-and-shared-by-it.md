@@ -1,6 +1,6 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Steps 1, 3 and 4 done. Step 2 cut down by the user's constraints (below) to the reads of a column
+Status: in progress. Steps 1, 3, 4 and 5 done. Step 2 cut down by the user's constraints (below) to the reads of a column
 and of a chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
@@ -256,6 +256,35 @@ Tests:
   reads. By words it takes at least 32 times as many.
 - `a_delta_records_its_kills_and_brings_back_a_row_pushed_again`.
 - setfix's version tests and its quick tier (with blocks' and clif's: 253 tests) pass with the debug check on.
+
+## Step 5: the operations in their change form (`blocks::change`)
+
+Step 2 of the user's list. Each operation of step 3 takes its inputs as bistates and gives its output's change. An
+input `A` across a change is `A_gone`, `A_added` (both listed, step 4) and `A_kept` (live in both: never listed; a
+probe of the after state finds a row, and the before state's liveness says whether it is kept).
+
+- `join(a, b, on)`: gone `A_gone ⋈ B_before ∪ A_kept ⋈ B_gone`, added `A_added ⋈ B_after ∪ A_kept ⋈ B_added`.
+  Each output pair is in one term at most, so the change is the least one when the inputs' are. The output is
+  pairs of ids, so no count of derivations is needed.
+- `semi(a, b, on, neg)`: `A`'s changed rows, tested against `B` before or after, then `A`'s kept rows of each key
+  `B`'s change touches whose match came or went.
+- `group(a, by, agg)`: each key `A`'s change touches, its value read in both states. The old row goes and the new
+  one comes when they differ.
+
+Their cost is the change's rows and their matches, plus, for `semi` and `group`, the rows of the keys the change
+touches. The keys are the only thing collected, each once.
+
+`change::check` is the harness: gone rows were in the output before, added rows were not, none is both, and the
+output before, less gone, plus added, is the output after (L1).
+
+Tests: chains of 12 changes of two relations (pseudo-random, the same every run), each state a version (a roll-up
+of the last state) and its delta. At every state the change keeps L1 against the cold operation of `table`, and the
+changes applied in turn from the first cold output equal each state's cold output (L3). The chains cover:
+
+- joins merged, probed by index and probed by range, on one column and on two;
+- semi- and anti-joins on the sort column and off it, with kept rows going and coming as their matches do;
+- every aggregate, bounded ones included;
+- a cold run's change: its whole output added.
 
 ## Next steps, proposed (Claude's, not agreed)
 
