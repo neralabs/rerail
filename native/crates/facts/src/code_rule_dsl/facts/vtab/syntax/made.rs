@@ -1956,6 +1956,14 @@ impl Source for MadeRows {
             _ => self.target().estimated_len(),
         }
     }
+    /// Its made rows', its counts as given, or its sample's once made; else none (`estimated_len` would make it).
+    fn known_len(&self) -> Option<usize> {
+        match (self.done(), self.batch.rows.counted(self.rel)) {
+            (Some(t), _) => Some(t.estimated_len()),
+            (None, Some(n)) => Some(n),
+            (None, None) => self.sampled.get().map(|s| s.as_ref().and_then(|s| s.first()).map_or(0, |c| c.1 as usize)),
+        }
+    }
     fn rows_owned(&self, _g: usize, _owned: &dyn Fn(i64) -> bool) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.done().and_then(|t| t.rows_owned(_g, _owned))
     }
@@ -2446,6 +2454,14 @@ impl Source for TextTest {
             Some(w) => w.len(),
             None if self.batch.lazy() => self.tested.state.lock().passed[self.k].rows.len().max(1),
             None => self.sampled().unwrap_or_else(|| self.whole().len()),
+        }
+    }
+    /// `estimated_len` where it tests no string a sample would make: scanned, a lazy batch's probed, or sampled.
+    fn known_len(&self) -> Option<usize> {
+        match self.whole.get() {
+            Some(w) => Some(w.len()),
+            None if self.batch.lazy() => Some(self.estimated_len()),
+            None => self.sampled.get().map(|s| s.map_or(0, |s| s.0)),
         }
     }
     /// A key of strings: each passing string one row, once scanned.

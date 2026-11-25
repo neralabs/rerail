@@ -49,6 +49,8 @@ struct Corpus {
     program: String,
     outputs: &'static [&'static str],
     runs: usize,
+    /// The nodes a chunk holds (`corpus::run`'s `chunk_nodes`): the files one chunk, unless a test splits them.
+    chunk_nodes: usize,
 }
 
 impl Corpus {
@@ -65,7 +67,7 @@ impl Corpus {
         let rule = dir.join("program.rerail");
         std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
-        let c = Corpus { dir, marker, program, outputs, runs: 0 };
+        let c = Corpus { dir, marker, program, outputs, runs: 0, chunk_nodes: 1 << 18 };
         for (file, body) in FILES {
             c.write(file, body);
         }
@@ -87,7 +89,7 @@ impl Corpus {
         self.runs += 1;
         let out = self.dir.join(format!("out{}", self.runs));
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
-        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, self.chunk_nodes).unwrap();
         let rows = self.outputs.iter().map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap_or_default().into_iter().collect()).collect();
         (report, rows)
     }
@@ -607,5 +609,60 @@ home(d, p, x) :- used_in(d, x), dpath(d, p), @rx_matches(p, "^[bc][.]py$") = 1.
     for x in &tests {
         let rel = x.split(':').next().unwrap_or_default();
         assert!(given.contains(rel), "{rel}: the chunks' passing strings are given to the corpus batch: {given:?}");
+    }
+}
+
+/// A relation a batch makes, that no count gives, is measured on a sample of its documents once a mix, by the chunks
+/// of its plan window (Q88): a later chunk of the mix scales that measure, its rows' count its source's where one is
+/// known with no row made (`Source::known_len`), else the measured chunk's per document. Asked its `estimated_len`
+/// there, each chunk made its sample, a matcher wave of its own before the wave that made the rest (the `all` run: 25
+/// more waves, 6.9 s of CPU, 2026-11-24).
+#[test]
+fn a_kept_measure_is_scaled_without_a_sample_of_each_chunk() {
+    use crate::code_rule_dsl::logic::profile;
+    let window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW as u64;
+    // `PROGRAM`, and a file-local test of a document's path (a node's text is read in place, no text test): a text
+    // test each chunk reads, its scan priced by its sample.
+    const PROGRAM_TESTED: &str = concat!(
+        "\n.decl qnamed(f: node, p: symbol)\n",
+        "qnamed(f, p) :- kind(f, \"function_definition\"), docof(f, d), doc(d, p, _), @rx_matches(p, \"m1[0-9][.]py$\") = 1.\n",
+        ".output qnamed\n"
+    );
+    let program = format!("{PROGRAM}{PROGRAM_TESTED}");
+    let mut c = Corpus::with("kept-measure-scaled", &program, &["shape", "named", "span", "home", "qnamed"]);
+    // More chunks than a plan window, a few files each, every file Python: one mix.
+    for i in 0..24 {
+        c.write(&format!("m{i}.py"), &format!("from a import f\n\ndef q{i}(v):\n    return f(v)\n"));
+    }
+    c.chunk_nodes = 48;
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let made = {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::take_decisions();
+        let (_, rows) = c.run();
+        every_output_has_rows(&rows);
+        profile::take_decisions()
+    };
+    profile::set(false);
+    let by_rel = |title: &str| {
+        let mut by: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        for ((t, x), n) in &made {
+            if t == title {
+                *by.entry(x.split(':').next().unwrap_or_default().to_owned()).or_default() += n;
+            }
+        }
+        by
+    };
+    let mut sampled = by_rel("a relation measured on a sample of its batch's documents (decision 0494)");
+    let tests = by_rel("a text test measured on a sample of its batch's documents (decision 0494)");
+    assert!(!tests.is_empty(), "a chunk measures a text test on a sample: {:?}", made.keys().filter(|(t, x)| t.contains("text test") || x.contains("strtest")).collect::<Vec<_>>());
+    sampled.extend(tests);
+    let scaled = by_rel("a kept measure scaled to a chunk (Q88)");
+    assert!(!sampled.is_empty(), "a chunk measures a relation on a sample: {:?}", made.keys().filter(|(t, _)| t.contains("0494")).collect::<Vec<_>>());
+    for (rel, n) in &sampled {
+        let reused = scaled.get(rel).copied().unwrap_or(0);
+        assert!(reused > 0, "{rel}: the chunks past the plan window scale its kept measure ({n} sampled)");
+        assert!(*n <= window, "{rel}: measured on a sample by the plan window's chunks alone, not by each of {}: {n}", n + reused);
     }
 }

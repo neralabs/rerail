@@ -1561,7 +1561,7 @@ pub fn estimate(f: Fields<'_>, model: &mut Model, (base, ids_of): (&Placed, &BTr
             }
             out.insert(rel.to_owned(), (rows, work, planned));
             if !model.stats.card.contains_key(rel) {
-                model.stats.card.insert(rel.to_owned(), rows.max(1.0));
+                model.stats.card.insert(rel, rows.max(1.0));
                 inserted.card.push(rel.to_owned());
                 // A column's distinct values: at most the rows, and at most those of the body column that binds it.
                 let width = v.decl_of(rel).map_or(0, |d| d.cols().len());

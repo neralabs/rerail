@@ -588,10 +588,9 @@ impl Stats {
     }
 
     /// The lookup costs `source` declares for relation `rel`'s columns, those not one (`Source::lookup_cost`), and
-    /// its scan's (`Source::scan_cost`), under the column `SCAN`.
-    pub fn lookup_costs(&mut self, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source) {
+    /// its scan's, `scan` (the caller's: `Source::scan_cost`, or a kept measure's), under the column `SCAN`.
+    pub fn lookup_costs(&mut self, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, scan: f64) {
         let mut costs: Vec<(String, f64)> = self.lookup.decoded(rel).unwrap_or_default();
-        let scan = source.scan_cost();
         if scan != 1.0 {
             costs.retain(|(c, _)| c != SCAN);
             costs.push((SCAN.to_owned(), scan));
@@ -929,7 +928,7 @@ impl Model {
             indexes: st.indexes.clone(),
             docs: st.docs,
             memo: Default::default(),
-            estimated: rels.iter().filter(|r| st.estimated.contains(*r)).cloned().collect(),
+            estimated: rels.iter().filter(|r| st.estimated.contains(r)).cloned().collect(),
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
@@ -2050,9 +2049,7 @@ pub fn prepared_held() -> Arc<prepared::ByVersion> {
 pub fn plans_to_store() -> Option<StoredPlans> {
     let plans = with_plans(|p| p.cloned())?;
     // A run that kept no plan changes none: the store's are not read for it.
-    if plans.kept.load().iter().next().is_none() {
-        return None;
-    }
+    plans.kept.load().iter().next()?;
     plans.settle();
     let (kept, stored) = (plans.kept.load(), plans.stored.load());
     let mut out: Option<StoredPlans> = None;
@@ -5926,7 +5923,7 @@ pub fn column_sources(vs: &body::Versions, scc: &super::super::front::Comp, rule
 pub fn recursive<'v>(b: &Body<'v>, scc: &super::super::front::Comp) -> Vec<(usize, &'v str)> {
     (0..b.len())
         .filter_map(|i| b.plain_atom(i).filter(|a| !a.neg()).map(|a| (i, b.rel(a))))
-        .filter(|(_, rel)| scc.contains(*rel))
+        .filter(|(_, rel)| scc.contains(rel))
         .collect()
 }
 

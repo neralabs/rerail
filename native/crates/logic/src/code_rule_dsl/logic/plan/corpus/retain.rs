@@ -1301,6 +1301,9 @@ impl Source for Renamed {
     fn estimated_len(&self) -> usize {
         self.0.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        self.0.known_len()
+    }
     fn may_hold_rows(&self) -> bool {
         self.0.may_hold_rows()
     }
@@ -2758,6 +2761,9 @@ impl Source for Traced {
     }
     fn estimated_len(&self) -> usize {
         self.inner.estimated_len()
+    }
+    fn known_len(&self) -> Option<usize> {
+        self.inner.known_len()
     }
     fn may_hold_rows(&self) -> bool {
         self.inner.may_hold_rows()

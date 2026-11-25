@@ -3220,7 +3220,9 @@ fn run_observed_within(
     // types holding a tenth of its nodes or more (`chunk_mix`), so a chunk of TypeScript after chunks of Python is
     // measured again, and a stray file is not a new mix.
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
-    let measured_once: HashMap<(String, String), Once<Vec<(String, i64, i64, i64, i64)>>> = HashMap::new();
+    // Each measure with its chunk's documents, a later chunk's scale where its source knows no count, and its scan's
+    // cost (`Source::scan_cost`: a text test's strings a passing row, read off the same sample).
+    let measured_once: HashMap<(String, String), Once<(usize, Vec<(String, i64, i64, i64, i64)>, f64)>> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
     // its pages skip the filesystem's calls; so are the temp tables the strata make.
@@ -5373,13 +5375,30 @@ fn run_observed_within(
             }
             let key = (mix.clone(), rel.clone());
             let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
-            let measured = match once {
-                Some((first, measured)) if first > 0 => syntax::scaled_statistics(&measured, first, source.estimated_len()),
-                _ => {
+            // This chunk's rows of it: a kept measure's are its source's where known with no row made (`known_len`),
+            // else the measured chunk's per document. Its `estimated_len` made a sample of each chunk's batch, a
+            // matcher wave of its own before the wave that made the rest; and a measure of no rows was made again in
+            // each chunk, its sample's wave too. One of no rows scales to none, unless its source knows of rows. Its
+            // scan's cost is the kept measure's: a text test's, asked here, made the sample too.
+            let kept = once.and_then(|(first, (docs, measured, scan))| {
+                let known = source.known_len();
+                let rows = known.unwrap_or_else(|| (first as u128 * chunk_docs_n as u128 / docs.max(1) as u128) as usize);
+                let scaled = match (first, rows) {
+                    (0, 0) => measured,
+                    (0, _) => return None,
+                    _ => syntax::scaled_statistics(&measured, first, rows),
+                };
+                crate::code_rule_dsl::logic::profile::decision("a kept measure scaled to a chunk (Q88)", || format!("{rel}: {}", if known.is_some() { "by its rows, known with none made" } else { "by its documents" }));
+                Some((scaled, rows, scan))
+            });
+            let (measured, rows, scan) = match kept {
+                Some(kept) => kept,
+                None => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = sampled_statistics_unanswered(&rel, source.as_ref(), &super::shapes::Shapes::for_run(std::sync::Arc::clone(&base_shapes)), stats.counts());
-                    once_keep(&mut measured_once.lock(), key, Once(seq, source.estimated_len(), measured.clone()));
-                    measured
+                    let (rows, scan) = (source.estimated_len(), source.scan_cost());
+                    once_keep(&mut measured_once.lock(), key, Once(seq, rows, (chunk_docs_n, measured.clone(), scan)));
+                    (measured, rows, scan)
                 }
             };
             // The relations the batches make (T has no statistics of them): the transducer's and the tree axes',
@@ -5394,10 +5413,10 @@ fn run_observed_within(
             };
             // A memoised run measures the base relations the cross-file part reads once, over every file's rows (below).
             if split.base.contains(&rel) && !(memoised && stored.iter().any(|(r, _)| *r == rel)) && (own || !t_stats.knows(&rel) || made_here(&rel)) {
-                totals_add.push((rel.clone(), source.estimated_len(), measured.clone()));
+                totals_add.push((rel.clone(), rows, measured.clone()));
             }
             stats.measured(&rel, measured.into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
-            stats.lookup_costs(&rel, source.as_ref());
+            stats.lookup_costs(&rel, source.as_ref(), scan);
             modules.bind(db, &rel, source)?;
             bound.insert(rel);
         }

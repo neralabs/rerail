@@ -358,6 +358,13 @@ pub trait Source: Send + Sync {
     fn estimated_len(&self) -> usize {
         self.len()
     }
+    /// `estimated_len` where it makes no row; `None` where only a make would tell (a batch's relation that no count
+    /// gives, before its rows or sample are made: its `estimated_len` makes the sample, decision 0494). A chunk that
+    /// reuses a kept measure scales it by this, else by its documents: asking `estimated_len` there made every chunk's
+    /// sample, a matcher wave of its own before the wave that makes the rest (the `all` run: 25 more waves, 6.9 s).
+    fn known_len(&self) -> Option<usize> {
+        Some(self.estimated_len())
+    }
     /// Whether it may hold a row: `false` only where it holds none. A test for an empty input (a rule over one is
     /// not run) asks this, not `len`, so a source whose rows are made when read (a batch's, decision 0494) answers
     /// without making them, and is taken as holding rows.

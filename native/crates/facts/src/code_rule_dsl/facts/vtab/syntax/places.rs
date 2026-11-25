@@ -157,6 +157,9 @@ impl Source for Places {
     fn estimated_len(&self) -> usize {
         self.view.estimated_len() + self.spans.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        Some(self.view.known_len()? + self.spans.known_len()?)
+    }
     fn value(&self, row: usize, column: usize) -> i64 {
         let first = self.first();
         if row < first { self.view.value(row, column) } else { self.spans.value(row - first, column) }

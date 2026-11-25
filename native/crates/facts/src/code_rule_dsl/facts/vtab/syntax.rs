@@ -553,6 +553,9 @@ impl Source for LongTexts {
     fn estimated_len(&self) -> usize {
         if self.batch.lazy() { self.nodes.estimated_len() } else { self.tape_len() }
     }
+    fn known_len(&self) -> Option<usize> {
+        if self.batch.lazy() { self.nodes.known_len() } else { Some(self.tape_len()) }
+    }
     /// Its one column's statistics, of its rows counted on the tape (decision 0353): one row a node, so each of its
     /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
     /// rows, every relation's of every document's (the M3's 300-file peak held 77 MB of them, and a 158 MB block).

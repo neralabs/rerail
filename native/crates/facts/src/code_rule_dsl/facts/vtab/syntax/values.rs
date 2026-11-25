@@ -698,6 +698,9 @@ impl Source for Layered {
     fn estimated_len(&self) -> usize {
         self.base.estimated_len()
     }
+    fn known_len(&self) -> Option<usize> {
+        self.base.known_len()
+    }
     fn may_hold_rows(&self) -> bool {
         self.base.may_hold_rows() || self.values.total(&self.name) > 0
     }
