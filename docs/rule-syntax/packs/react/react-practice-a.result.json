@@ -1,0 +1,8 @@
+[
+ { "id": "react-practice-cache-update-in-mutate-call", "status": "same" },
+ { "id": "react-practice-callback-for-dom-only", "status": "same" },
+ { "id": "react-practice-fresh-dependency", "status": "same" },
+ { "id": "react-practice-hoist-static-value", "status": "same" },
+ { "id": "react-practice-lifecycle-hook", "status": "same" },
+ { "id": "react-practice-memo-trivial-expression", "status": "same" }
+]

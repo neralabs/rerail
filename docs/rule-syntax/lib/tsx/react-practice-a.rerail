@@ -1,0 +1,63 @@
+// tsx/react-practice-a: React's Hooks and object as Rerail's own React practice rules name them (batch
+// react-practice-a: memo-trivial-expression, callback-for-dom-only, cache-update-in-mutate-call, lifecycle-hook,
+// fresh-dependency, hoist-static-value). eslint-plugin-react-hooks knows a Hook by its name alone (tsx/react-hooks);
+// these rules also follow the name to where it comes from, so `useMemo` of another library is not React's.
+//
+// What a rule gets from this library:
+//   pr_global(r, x)          identifier r reads x, and nothing in its file declares x (the JSON's resolves.global)
+//   pr_import(r, src, x)     identifier r reads what `import … from src` brings in as x: "default", "*" or a name
+//   react_object(r, src)     identifier r is React's object: a global `React` (src ""), or `import R from src`,
+//                            `import * as R from src`
+//   react_api(f, x, src, form)   callee f names React's export x, by form:
+//     "global"     useMemo                                 nothing declares useMemo   (src "")
+//     "import"     import { useMemo as m } from src        m
+//     "member"     R.useMemo                               R a react_object from src
+//     "shorthand"  const { useMemo } = R                   useMemo
+//     "alias"      const { useMemo: m } = R                m
+//   Each rule says which sources are React's (src "" is a global): "react" or also "react-dom", case or not.
+//   pr_fn_name(f, n)         node n names function f: its own name (a declaration or named expression), else, for an
+//                            unnamed expression or arrow, the name it is stored under (`const n =`, `n =`, `{ n: … }`,
+//                            a default `{ n = … }`), or an object method's name; a computed key names nothing
+//   pr_ident(n)              n is a name: an identifier, a property name or a shorthand pattern
+//
+//   const memo = React.useMemo(() => a + b, [a, b]);       react_api(React.useMemo, "useMemo", "react", "member")
+#include "tsx/names.rerail"
+
+.decl pr_global(r: node, x: symbol)
+pr_global(r, x) :- kind(r, "identifier"), ref(r, x, "value"), !ref_site(r, _).
+
+.decl pr_import(r: node, src: symbol, x: symbol)
+pr_import(r, s, x) :- kind(r, "identifier"), ref_site(r, sp), import_binding(sp, _, s, x).
+
+.decl react_object(r: node, src: symbol)
+react_object(r, "") :- pr_global(r, "React").
+react_object(r, s) :- pr_import(r, s, x), (x = "default" ; x = "*").
+
+.decl react_api(f: node, x: symbol, src: symbol, form: symbol)
+react_api(f, x, "", "global") :- pr_global(f, x).
+react_api(f, x, s, "import") :- pr_import(f, s, x), x != "default", x != "*".
+react_api(f, x, s, "member") :- kind(f, "member_expression"), field(f, "object", o), react_object(o, s),
+    field(f, "property", p), kind(p, "property_identifier"), text(p, x).
+react_api(f, x, s, "shorthand") :- kind(f, "identifier"), ref_site(f, p), kind(p, "shorthand_property_identifier_pattern"),
+    text(p, x), pr_destructured(p, o), react_object(o, s).
+react_api(f, x, s, "alias") :- kind(f, "identifier"), ref_site(f, p), child(pp, p, _), kind(pp, "pair_pattern"),
+    field(pp, "value", p), field(pp, "key", k), text(k, x), pr_destructured(pp, o), react_object(o, s).
+// pr_destructured(p, o): p is a property of the object pattern `const { … } = o` names.
+.decl pr_destructured(p: node, o: node)
+pr_destructured(p, o) :- child(pat, p, _), kind(pat, "object_pattern"), field(d, "name", pat),
+    kind(d, "variable_declarator"), field(d, "value", o).
+
+.decl pr_fn_name(f: node, n: node)
+pr_fn_name(f, n) :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration") ;
+    kind(f, "function_expression") ; kind(f, "generator_function")), field(f, "name", n).
+pr_fn_name(f, n) :- (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")),
+    !field(f, "name", _), pr_stored_as(f, n).
+pr_fn_name(f, n) :- kind(f, "method_definition"), child(o, f, _), kind(o, "object"), field(f, "name", n),
+    !kind(n, "computed_property_name").
+.decl pr_stored_as(f: node, n: node)
+pr_stored_as(f, n) :- field(d, "value", f), kind(d, "variable_declarator"), field(d, "name", n).
+pr_stored_as(f, n) :- field(a, "right", f), (kind(a, "assignment_expression") ; kind(a, "assignment_pattern") ;
+    kind(a, "object_assignment_pattern")), field(a, "left", n).
+pr_stored_as(f, n) :- field(p, "value", f), kind(p, "pair"), field(p, "key", n), !kind(n, "computed_property_name").
+.decl pr_ident(n: node)
+pr_ident(n) :- kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier_pattern").
