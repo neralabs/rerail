@@ -742,7 +742,9 @@ pub(super) struct Group {
     /// its relation's block, decision 0353). A group's rows never change, so it stands. A probe without it walked the
     /// group's every row: a maintained join's probes of `docof`, one document's group each, were quadratic.
     /// One slot a (relation, column), `INDEXED` columns a relation, set once: a probe reads it with no lock.
-    index: Box<[std::sync::OnceLock<ColIndex>]>,
+    /// Each slot boxed once built: most are never probed, and an index held in place made a group's slots 16 KB
+    /// (2,439 GB·s on cold PostHog).
+    index: Box<[std::sync::OnceLock<Box<ColIndex>>]>,
     /// The strings its rows used (`Made::used`), where its batch keeps them: a renewed batch's vocabulary is its
     /// groups' (decision 0616).
     strings: Option<Arc<[u32]>>,
@@ -757,7 +759,7 @@ impl Group {
     /// The group's rows of relation `rel` (held in `r`) whose `column` is a key of the index, made if it is not.
     fn index(&self, rel: usize, column: usize, r: &Relation) -> &ColIndex {
         assert!(column < INDEXED, "a made relation of at most {INDEXED} columns");
-        self.index[rel * INDEXED + column].get_or_init(|| {
+        self.index[rel * INDEXED + column].get_or_init(|| Box::new((|| {
             let range = self.ranges[rel].clone();
             let read = r.range_reader(range.clone(), column);
             let at = |row: usize| read.as_ref().map_or_else(|| Source::value(r, row, column), |c| c.get(row as u32));
@@ -785,7 +787,7 @@ impl Group {
             pairs.sort_unstable();
             let fence = pairs.iter().step_by(ORDER_FENCE).map(|p| p.0).collect();
             ColIndex::Order { order: pairs.into_iter().map(|(_, row)| row).collect(), fence }
-        })
+        })()))
     }
     /// The group's rows of `rel` (in `r`) whose `column` is `value`, in row order, each given to `each`.
     /// `near`: the row the last probe's search ended at (a cursor's), searched out from and left at this one's.
