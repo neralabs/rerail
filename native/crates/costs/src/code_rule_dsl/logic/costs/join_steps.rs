@@ -5,7 +5,6 @@
 //! them with its samples and writes them in its transaction (`take`, `insert`). The queue holds at most
 //! [`QUEUE_LIMIT`] steps: past it a line's are dropped, measurements and not results.
 
-use rerail_blocks::vector::Vector;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 

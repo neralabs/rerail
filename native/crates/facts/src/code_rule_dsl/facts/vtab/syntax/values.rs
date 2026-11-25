@@ -514,15 +514,6 @@ impl Layered {
     pub fn source_of(&self, n: i64) -> Arc<dyn Source> {
         self.values.source_of(&self.name, n).unwrap_or_else(|| Arc::clone(&self.base))
     }
-    /// The sources that may hold node `n`'s document: the chunk's batch's, then each admitted value's that names its
-    /// key (a value's rows are keyed by its places' hosts too, so a host file's key names its guests' parts).
-    pub fn sources_of(&self, n: i64) -> Vec<Arc<dyn Source>> {
-        let mut out = vec![Arc::clone(&self.base)];
-        if let Some(p) = self.values.parts.load().get(&self.name) {
-            out.extend(p.by_key.parts((n >> 32) as u32).map(|i| Arc::clone(&p.list[i].src)));
-        }
-        out
-    }
     fn parts<T>(&self, f: impl FnOnce(&Parts) -> T) -> Option<T> {
         if self.values.admitted.load(Ordering::Acquire) == 0 {
             return None;
@@ -675,8 +666,14 @@ impl Source for Layered {
     /// A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
     /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too (`sources_of`), so a host file's
     /// key names its guests' parts as well: the first of them that holds the node answers.
+    /// The base's read, else the first part's that holds `n`'s key: asked where they lie, no list of them made.
     fn node_read(&self, name: &str, n: i64) -> Option<String> {
-        self.sources_of(n).into_iter().find_map(|s| s.node_read(name, n))
+        if let Some(v) = self.base.node_read(name, n) {
+            return Some(v);
+        }
+        let parts = self.values.parts.load();
+        let p = parts.get(&self.name)?;
+        p.by_key.parts((n >> 32) as u32).find_map(|i| p.list[i].src.node_read(name, n))
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -737,28 +734,32 @@ impl Source for Layered {
         self.base.doc_column()
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>> {
-        let mut out = self.base.lookup(column, values)?;
+        let mut out = rerail_blocks::vector::Vector::new();
+        self.lookup_each(column, values, &mut |r| out.push(r)).then_some(out)
+    }
+    /// The base's rows, then the parts' that may hold each value, numbered past the base's.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        if !self.base.lookup_each(column, values, each) {
+            return false;
+        }
         if self.made.is_some() {
             let at = self.lookup_at();
-            if let Some(rows) = self.scanned(|s| values.iter().flat_map(|&v| s.holding(at, column, v)).collect::<Vec<_>>()) {
-                out.extend(rows);
-            }
-            return Some(out);
+            self.scanned(|s| values.iter().for_each(|&v| s.holding(at, column, v).for_each(&mut *each)));
+            return true;
         }
         let docs = self.base.keys_documents(column);
         self.parts(|p| {
             for &v in values {
                 p.of(v, docs, &mut |part| {
                     let at = self.base_len() + part.start;
-                    match part.src.lookup(column, &[v]) {
-                        Some(rows) => out.extend(rows.into_iter().map(|r| at + r)),
+                    if !part.src.lookup_each(column, &[v], &mut |r| each(at + r)) {
                         // A part that keeps no index of `column` is read whole: a value's rows are few.
-                        None => out.extend((0..part.src.len()).filter(|&r| part.src.value(r, column) == v).map(|r| at + r)),
+                        (0..part.src.len()).filter(|&r| part.src.value(r, column) == v).for_each(|r| each(at + r));
                     }
                 });
             }
         });
-        Some(out)
+        true
     }
     /// `lookup`'s rows by position: the base's, then the parts' that may hold `value` (a value's rows are few), at
     /// their place past the base's. A base made on lookup numbers its values' rows as they are made (`MADE_AT`):

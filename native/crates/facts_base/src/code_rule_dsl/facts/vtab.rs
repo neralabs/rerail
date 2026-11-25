@@ -180,6 +180,20 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// so `functions::eval` gives none.
 pub const NODE_READS: [&str; 4] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str"];
 
+/// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
+/// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
+pub type Row = rerail_blocks::frame::InlineVec<i64, 8>;
+
+/// A `Row` of its values: `row![a, b]`.
+#[macro_export]
+macro_rules! row {
+    ($($v:expr),* $(,)?) => {{
+        let mut r = $crate::code_rule_dsl::facts::vtab::Row::new();
+        $(r.push($v);)*
+        r
+    }};
+}
+
 /// A lookup's rows read by position (`Source::lookup_seq`): how many, and the `i`th, where they lie (a list the source
 /// holds, its runs of rows), or a list made of them.
 pub struct Seq<'a> {
@@ -496,6 +510,18 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>>;
+    /// `lookup`'s rows, each given to `each` as it is found, in `lookup`'s order, with no list made (decision 0687: a
+    /// probe's rows are the caller's to keep, in its own memory); false where it scans (`lookup`'s `None`). The
+    /// default reads `lookup`'s list; a source probed often gives its rows as it finds them.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        match self.lookup(column, values) {
+            Some(rows) => {
+                rows.iter().for_each(|&r| each(r));
+                true
+            }
+            None => false,
+        }
+    }
     /// `lookup`'s rows for `value`, read by position (`Seq`), in its order; `None` where it scans. A source whose
     /// lookups are runs of rows (a view's document) or a list it holds (a kind's nodes) gives them made into no list
     /// of its own: what a probe's candidates number (`setfix::InRel::probe_size`) and are drawn from (`probe_sample`)
@@ -1810,14 +1836,14 @@ impl Relation {
     }
     /// A relation of `rows`, staged (`push`), not yet written into a block: rows a relation that goes on from another
     /// writes once, past that one's (`grown`: a tape value's rows admitted inside a chunk's fixpoint, decision 0431 §8).
-    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
+    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Row>) -> Self {
         let mut r = Relation::new(columns);
         rows.for_each(|row| r.push(&row));
         r
     }
     /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
     /// (no staging, no growth or move); else staged, as `push` stages them.
-    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
+    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Row>) -> Self {
         let mut r = Relation::new(columns);
         if let (n, Some(m)) = rows.size_hint()
             && n == m

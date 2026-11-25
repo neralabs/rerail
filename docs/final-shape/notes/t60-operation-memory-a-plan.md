@@ -1,6 +1,6 @@
 # t60. Operation memory: where each scratch array belongs, and one way to ask for it (a plan)
 
-A plan, not a decision. Each step that changes a rule is written as a decision record when the user takes it.
+A plan. The user approved it on 2026-11-25 ("go ahead"); its rules are decision 0687.
 
 ## Intro
 
@@ -34,7 +34,7 @@ The plan in short:
    one.
 
 The survey's tools: the probe (`crates/vector/src/probe.rs`, uncommitted, on with `RERAIL_PROBE_SCRATCH=<file>`),
-`working-data/m3/syms.py`, `scratch2.py`, and `classify.py` (scratchpad; §5's classes).
+`working-data/m3/syms.py`, `scratch2.py` and `classify.py` (§5's classes).
 
 ## 1. The boundary
 
@@ -229,14 +229,62 @@ class totals by array are in the survey (A 75.5%, B1 10.1%, B2 1.6%, C1 6.7%, C2
 | 17 K, 15 K, 8 K | `InRel::index`, `Rel::new`, `view` | usize, 32 B | Inline, in the relation's record |
 | 6 K | `threads::spawn_in` ← `exec::as_job` | [u64; 2], 22 KB | The job's output, sized first |
 
-### 5.7 What the survey does not cover
+### 5.7 The heap (step 0's survey)
 
 `std::vec::Vec` appears at about 22,000 sites in `crates/`, tests included, and goes through the heap, not a room.
-The probe saw none of them. Step 0 extends the probe to the global allocator, keyed by the same sites, so that
-those arrays get the same classes:
+The first survey saw none of them. Step 0 extended the probe to the engine's global allocator
+(`rerail_prof`'s `Sampled` calls `rerail_vector::probe::heap_alloc`, `heap_realloc` and `heap_free`), keyed by the
+same sites.
 
-- a `Vec` inside an operation may stay where it is, or move to the frame where that is measured to pay;
-- a `Vec` holding chunk or run data moves to blocks (0628's order stands for data).
+Run `hp-3158` was the same cold PostHog run, on m1max under the probe: 29,930 findings, 326 s, 7.14 T instructions,
+about three times an unprobed run.
+
+| | Arrays | ≤64 B | <131 µs | Bytes at their ends | Makers |
+|---|---|---|---|---|---|
+| The heap | 622 M | 457 M (74%) | 469 M (75%) | 76 GB | 3,157 |
+| The run room | 57 M | 47 M (81%) | 43 M (74%) | 52 GB | 499 |
+
+By the makers' dominant class, the heap's 622 M allocations are:
+
+| Class | Allocations |
+|---|---|
+| A | 439 M |
+| B1 | 110 M |
+| B2 | 0.25 M |
+| C1 | 12 M |
+| C2 | 36 M |
+| D | 24 M |
+
+**The run room's own cost is on the heap too.** Each roomless `Vector` costs, beside its ledger chunk:
+
+| Heap allocations | Maker | Size | What it is |
+|---|---|---|---|
+| 53 M | `rows::run_room` | 24 B | `rerail_vector::default_room()` makes an `Arc<LifeRoom>` per array |
+| 68 M | `region::Mutable::adopt` | 264 B | each region's owner, boxed |
+| 7.6 M | `rows::placed` | 24 B | a third allocation per region |
+
+That is two or three heap allocations per array, and it is why a `Vector` costs 39 to 46 ns where a frame vector
+costs 4.6 ns (step 1's benchmark). Moving arrays to the frame removes all three.
+
+The heap's own largest makers, the arrays in the operations themselves:
+
+| Allocations | Maker | Size |
+|---|---|---|
+| 38 M | `rowcode::Fused::run` | 16 B |
+| 19 M | `run_join_in_each::enter::flush` | 8 B |
+| 30 M | `granules::number` | 156 B on average |
+| 28 M | `View::find_keyed` | 40 B |
+| 21 M | `Within::lookup` | 37 B |
+| 17 M | `LongTexts::text_any` | 11 B: strings |
+| 17 M | `Layered::sources_of` | 16 B |
+| 11 M | `u8::fmt` ← `GuestRows::document` | formatted text |
+| 8.1 M | `ExecutionArena::default` | 151 B, an arena made per root |
+| 7.0 M | `containers_on` | 37 B |
+| 6.9 M | `contained_on` | 40 B |
+| 6.9 M | `FactsIn::children` | 38 B |
+| 5.4 M | `Atoms::with_str` | 25 B |
+
+In the dump, `heap` is the type of every heap row. `classify.py` gives each maker its class, as for the room's.
 
 ## 6. Work order
 
@@ -312,3 +360,76 @@ rayon collects.
    cost (0.18 T) shrinks before the room itself goes.
 4. **The probe stays, off by default.** It measures each step, and it is committed with step 1. When it is off, its
    cost is one empty `Option` per region and one test in `default_room`, and step 7 removes that test.
+
+## 8. Progress
+
+### Step 0 (done)
+
+- **The record** is decision 0687.
+- **The probe covers the heap** (§5.7): `rerail_vector::probe`, called from the engine's global allocator, and
+  allocation-free while off (one load per allocation).
+- **The baseline** is run `hp-3158` (§5.7).
+
+### Step 1 (done)
+
+`rerail_vector::frame`, re-exported as `rerail_blocks::frame`, holds `op`, `Frame`, `FrameVec` and `InlineVec`. The
+arena is a list of chunks per thread: 256 KB first, then doubling up to 16 MB, kept up to 64 MB.
+
+Its tests:
+- growth in place at the top, and a move below it;
+- the frame's end, and an unwound inner frame, giving their bytes back;
+- an outer frame's vector growing inside an inner frame, which goes to the heap;
+- a vector dropped at the top giving its bytes back;
+- a take larger than a chunk;
+- an outer frame's take inside an inner frame refused;
+- a split written by rayon workers, and stolen jobs' frames;
+- `InlineVec`'s spill;
+- doc tests that a `FrameVec` neither outlives its frame nor crosses threads.
+
+The cost of a 32-byte array made, filled and dropped, in a release build on a farm Mac:
+
+| | ns |
+|---|---|
+| `InlineVec` | 3.7 |
+| frame | 4.6 (a bare take: 1.1) |
+| `Vec` (jemalloc) | 11.4 |
+| `Vector` in the heap room | 46 (the run room adds the ledger) |
+
+`InlineVec` spills to the heap, not the frame. It may be made outside any operation, and an inner frame's end
+would take a spill it made. So it holds any `Copy` value, slices too.
+
+`op_on` (a frame over a dedicated scratch block, for a kernel to bind) waits for step 8, its first user.
+`blocks::scratch` keeps the freeze's and the pack's temporaries until then.
+
+### Step 2 (under way)
+
+Changed so far:
+
+- **`Source::lookup_each`** gives a lookup's rows one at a time, with no list. `Within` and `Layered` implement it
+  natively, and their `lookup` is now a collection of it. setfix's `View::find_into` reads through it.
+- **setfix's probe lists.**
+  - `View::find_keyed_into` fills the step's own list (`LastProbe::ids`): the memo's, or one it let go
+    (`Probed::put`, `spare_ids`), reused by the step's next probe. The memo shares it (`Probed::Ids` and
+    `Cands::Shared` hold an `Arc`), so the clone per candidate list is gone.
+- **`Within`'s containers and contained** fill a `FrameVec` in the frame of `Within::rows` (or the lookup's), which
+  writes them into the pairs relation.
+- **`FactsIn::children`** returns an `InlineVec<u32, 16>`.
+- **Relation rows** (`Relation::from_rows`, `staged`, `Make`) are `Row = InlineVec<i64, 8>`, written with
+  `rerail_facts_base::row!`: one per row on the stack, not one array each.
+- **`VarSet`** is an `InlineVec<u64, 4>`.
+- **rowcode.** A fused chunk's column and output lists (`Fused::run`) and its words (`flush`) are on the stack.
+- **`Layered::node_read`** asks the base, then each part, in place: no list of `Arc`s made (`sources_of` is
+  removed).
+- **`rows::run_room` and `source_room`** give one shared `Arc` per life, not a new one per call. That is 53 M heap
+  allocations: the interim run room (§7.3) costs the same without them.
+
+Left for step 4, because each is a whole operation to frame: `granules::number` (about 40 working arrays, its
+table placed in blocks at the end) and the parse writers.
+
+The first part (the probe lists, `lookup_each`, `Within`, `children`, `Row`, `VarSet`, the shared room), on cold
+PostHog on m1max with the probe off, against HEAD with the probe compiled in:
+
+| | Instructions | User CPU | Wall | Peak | Findings |
+|---|---|---|---|---|---|
+| Before | 3.338 T | 319 s | 79.1 s | 7.16 GB | 29,930 |
+| After | 3.215 T (−3.7%) | 308 s | 75.4 s | 7.17 GB | 29,930 |

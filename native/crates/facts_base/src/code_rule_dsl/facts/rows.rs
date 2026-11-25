@@ -719,9 +719,11 @@ impl rerail_blocks::maps::Room for LifeRoom {
     }
 }
 
-/// The run's room (`LifeRoom(Life::Run)`): it holds nothing but the life, so each structure takes its own.
+/// The run's room (`LifeRoom(Life::Run)`). It holds nothing but the life, so every structure shares one: a new one a
+/// call was a heap allocation for each vector made with no room (53 M on a cold PostHog run, note t60 §5.7).
 pub fn run_room() -> Arc<dyn rerail_blocks::maps::Room> {
-    Arc::new(LifeRoom(Life::Run))
+    static ROOM: std::sync::OnceLock<Arc<dyn rerail_blocks::maps::Room>> = std::sync::OnceLock::new();
+    ROOM.get_or_init(|| Arc::new(LifeRoom(Life::Run))).clone()
 }
 
 /// Installs the run's room as every crate's default (`rerail_vector::default_room`): what a vector or map made with
@@ -730,9 +732,11 @@ pub fn install_run_room() {
     rerail_blocks::maps::install_default_room("rerail-facts-base", run_room);
 }
 
-/// A source's room (`LifeRoom(Life::Source)`): a batch's structures, dropped with the batch.
+/// A source's room (`LifeRoom(Life::Source)`): a batch's structures, dropped with the batch. One, shared, as
+/// `run_room`'s.
 pub fn source_room() -> Arc<dyn rerail_blocks::maps::Room> {
-    Arc::new(LifeRoom(Life::Source))
+    static ROOM: std::sync::OnceLock<Arc<dyn rerail_blocks::maps::Room>> = std::sync::OnceLock::new();
+    ROOM.get_or_init(|| Arc::new(LifeRoom(Life::Source))).clone()
 }
 
 /// Where the structures derived from a relation's rows go (its indexes' arrays, a `Vector` in its room, `Home::room`: decision 0384 step 4):

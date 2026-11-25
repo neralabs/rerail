@@ -2447,7 +2447,7 @@ impl TextTest {
         }
         self.tested.scan(&self.batch, &self.scanned);
         let s = self.tested.state.lock();
-        let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| rerail_blocks::vector![v]));
+        let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| rerail_facts_base::row![v]));
         drop(s);
         self.whole.get_or_init(|| r)
     }
