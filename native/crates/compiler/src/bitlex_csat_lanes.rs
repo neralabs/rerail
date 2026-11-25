@@ -43,6 +43,63 @@ pub struct Resume<'a> {
     pub carry_vars: usize,
 }
 
+impl Formula<'_> {
+    /// A hash of what its search reads (its gates' fanout follows from its gates): two formulas with one are the
+    /// same search, to the same result. Two of foldhash's quality hashes, of two seeds: a result is kept by it
+    /// (`bitlex_prove::Solves`), so a collision would be a wrong answer.
+    pub fn fingerprint(&self) -> u128 {
+        use std::hash::{BuildHasher as _, Hasher as _};
+        let seeds = [0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344];
+        let mut h = seeds.map(|s| foldhash::quality::FixedState::with_seed(s).build_hasher());
+        let mut put = |x: u64| {
+            h[0].write_u64(x);
+            h[1].write_u64(x);
+        };
+        put(self.vars as u64);
+        put(self.base as u64);
+        put(u64::from(self.conflicts));
+        for g in 0..self.gates.len() {
+            put(self.gates.kind(g) as u64 | (self.gates.out(g) as u32 as u64) << 8);
+            put(self.gates.args(g).len() as u64);
+            for &a in self.gates.args(g) {
+                put(a as u32 as u64);
+            }
+        }
+        put(self.gates.len() as u64);
+        put(self.clauses.lits().len() as u64);
+        put(self.clauses.ends().len() as u64);
+        for &l in self.clauses.lits() {
+            put(l as u32 as u64);
+        }
+        for &e in self.clauses.ends() {
+            put(u64::from(e));
+        }
+        if let Some(r) = self.resume {
+            put(u64::from(r.start.broken));
+            put(r.start.set.len() as u64);
+            for &v in r.start.set.iter() {
+                put(u64::from(v));
+            }
+            put(r.start.conflict.len() as u64);
+            for &l in r.start.conflict.iter() {
+                put(l as u32 as u64);
+            }
+            put(r.window_clauses as u64);
+            put(r.assume as u32 as u64);
+            put(r.carry_vars as u64);
+            put(r.carried.lits().len() as u64);
+            put(r.carried.ends().len() as u64);
+            for &l in r.carried.lits() {
+                put(l as u32 as u64);
+            }
+            for &e in r.carried.ends() {
+                put(u64::from(e));
+            }
+        }
+        u128::from(h[0].finish()) << 64 | u128::from(h[1].finish())
+    }
+}
+
 impl<'a> Formula<'a> {
     /// A formula solved whole, from nothing.
     pub fn new(vars: usize, gates: &'a Gates, base: usize, fan: &'a Fanout, own: Option<&'a Fanout>, clauses: &'a Clauses, conflicts: u32) -> Self {

@@ -810,6 +810,77 @@ pub struct Induction {
     /// The device its solves are handed to (`bitlex_csat_gpu::Service`, decision 0670): the same search as here.
     #[cfg(not(target_family = "wasm"))]
     device: Option<std::sync::Arc<crate::bitlex_csat_gpu::Service>>,
+    /// The long solves' results, by their formulas, shared by its forks (`Solves`).
+    kept: std::sync::Arc<Solves>,
+}
+
+/// The results of a compile's long solves, by their formulas' fingerprints (`lanes::Formula::fingerprint`), for
+/// the solves that repeat one: a cold Kotlin compile asks 13,613 solves of 8,311 formulas, and its repeats took 26%
+/// of the device's time (decision 0670). A solve is a function of its formula, so a repeat's result is the one a
+/// search would give, every count and clause as it. Only those of `KEPT_ROUNDS` rounds or more are kept (98% of
+/// the repeats' rounds there), their models and cores as bits, up to `KEPT_BYTES`.
+#[derive(Default)]
+pub struct Solves {
+    kept: std::sync::Mutex<(HashMap<u128, Kept>, usize)>,
+}
+
+const KEPT_ROUNDS: u32 = 256;
+const KEPT_BYTES: usize = 64 << 20;
+
+/// A kept result: its model's and its core's values as bits, and the rest as it was.
+struct Kept {
+    solved: lanes::Solved,
+    model: Option<(Vec<u64>, usize)>,
+    used: Option<(Vec<u64>, usize)>,
+}
+
+fn bits_of(v: &[bool]) -> (Vec<u64>, usize) {
+    let mut w = vec![0u64; v.len().div_ceil(64)];
+    for (i, &b) in v.iter().enumerate() {
+        w[i / 64] |= u64::from(b) << (i % 64);
+    }
+    (w, v.len())
+}
+
+fn bools_of((w, n): &(Vec<u64>, usize)) -> Vec<bool> {
+    (0..*n).map(|i| w[i / 64] >> (i % 64) & 1 != 0).collect()
+}
+
+impl Solves {
+    fn get(&self, fp: u128) -> Option<lanes::Solved> {
+        let kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        let k = kept.0.get(&fp)?;
+        let mut s = k.solved.clone();
+        if let Some(m) = &k.model {
+            s.answer = lanes::Answer::Sat(bools_of(m));
+        }
+        s.used = k.used.as_ref().map(bools_of);
+        Some(s)
+    }
+
+    fn put(&self, fp: u128, s: &lanes::Solved) {
+        if s.rounds < KEPT_ROUNDS {
+            return;
+        }
+        let model = match &s.answer {
+            lanes::Answer::Sat(m) => Some(bits_of(m)),
+            _ => None,
+        };
+        let used = s.used.as_deref().map(bits_of);
+        let mut solved = s.clone();
+        if model.is_some() {
+            solved.answer = lanes::Answer::Sat(Vec::new());
+        }
+        solved.used = None;
+        let bytes = 64 + 8 * (model.as_ref().map_or(0, |m| m.0.len()) + used.as_ref().map_or(0, |u| u.0.len()))
+            + solved.carry.iter().map(|c| 16 + 4 * c.len()).sum::<usize>();
+        let mut kept = self.kept.lock().unwrap_or_else(|e| e.into_inner());
+        if kept.1 + bytes > KEPT_BYTES || kept.0.contains_key(&fp) {
+            return;
+        }
+        kept.1 += bytes;
+        kept.0.insert(fp, Kept { solved, model, used });
+    }
 }
 
 /// The version of what the provers answer, in every question's key (`Proofs`, decision 0414):
@@ -1197,7 +1268,7 @@ enum Outcome {
 
 impl Induction {
     pub fn new(rounds: &[Vec<(u16, u16)>], horizon: u32, conflicts: u32) -> Self {
-        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), core: None, #[cfg(not(target_family = "wasm"))] device: None }
+        Induction { nexts: rounds.iter().flatten().copied().collect(), horizon, conflicts, lemmas: Vec::new(), solves: 0, witnesses: Witnesses::default(), rounds: rounds.to_vec(), windows: HashMap::default(), window_list: Vec::new(), block: std::sync::OnceLock::new(), question: 0, spent: 0, given: Vec::new(), whole_hypothesis: false, work: Budget::unlimited(), core: None, #[cfg(not(target_family = "wasm"))] device: None, kept: Default::default() }
     }
 
     /// This prover within the compile's budget `work`.
@@ -1220,6 +1291,7 @@ impl Induction {
         let mut p = Induction::new(&self.rounds, self.horizon, self.conflicts).within(work);
         p.given = self.given.clone();
         p.block = self.block().clone().into();
+        p.kept = self.kept.clone();
         p
     }
 
@@ -1581,14 +1653,21 @@ impl Induction {
         let x = {
             let resume = lanes::Resume { start, window_clauses: window_base, carried: learned, assume: sel, carry_vars: base_vars };
             let f = lanes::Formula { resume: Some(resume), ..lanes::Formula::new(vars, &u.gates, base_gates, fan, own_fan.as_ref(), &u.clauses, budget) };
-            #[cfg(not(target_family = "wasm"))]
-            let x = match &service {
-                Some(s) => s.solve(&f),
-                None => lanes::solve(&f),
-            };
-            #[cfg(target_family = "wasm")]
-            let x = lanes::solve(&f);
-            x
+            let fp = f.fingerprint();
+            match self.kept.get(fp) {
+                Some(x) => x,
+                None => {
+                    #[cfg(not(target_family = "wasm"))]
+                    let x = match &service {
+                        Some(s) => s.solve(&f),
+                        None => lanes::solve(&f),
+                    };
+                    #[cfg(target_family = "wasm")]
+                    let x = lanes::solve(&f);
+                    self.kept.put(fp, &x);
+                    x
+                }
+            }
         };
         // What holds for every solve of the window, kept for its next ones (`LEARNED_KEPT` literals at most).
         for c in &x.carry {

@@ -286,13 +286,17 @@ UKL_INLINE Check cs_check(UKL_PRIVATE Csat* c, uint32_t g, bool write)
     r.cursor = 0u;
     uint32_t n = cs_g_width(c, g), kind = cs_g_kind(c, g), len = 0u;
     int32_t o = cs_g_out(c, g);
+    // The first two arguments' values read at once, not one after the other (their reads are a pass's latency).
+    int32_t pre[2];
+    pre[0] = n > 0u ? cs_value(c, cs_g_arg(c, g, n, 0u)) : 0;
+    pre[1] = n > 1u ? cs_value(c, cs_g_arg(c, g, n, 1u)) : 0;
     if (kind == 0u) {
         // And.
         int32_t vo = cs_value(c, o);
         uint32_t unset = 0u, unset_at = 0u;
         for (uint32_t i = 0u; i < n; i++) {
             int32_t a = cs_g_arg(c, g, n, i);
-            int32_t va = cs_value(c, a);
+            int32_t va = i < 2u ? pre[i] : cs_value(c, a);
             if (va == -1) {
                 if (vo == 1) {
                     r.mode = M_CONFLICT;
@@ -377,7 +381,7 @@ UKL_INLINE Check cs_check(UKL_PRIVATE Csat* c, uint32_t g, bool write)
         uint32_t held = NONE, unset = 0u, unset_at = 0u;
         for (uint32_t i = 0u; i < n; i++) {
             int32_t a = cs_g_arg(c, g, n, i);
-            int32_t va = cs_value(c, a);
+            int32_t va = i < 2u ? pre[i] : cs_value(c, a);
             if (va == 1) {
                 if (held != NONE) {
                     r.mode = M_CONFLICT;
@@ -415,6 +419,137 @@ UKL_INLINE Check cs_check(UKL_PRIVATE Csat* c, uint32_t g, bool write)
     return r;
 }
 
+// A mask's highest lane.
+UKL_INLINE uint32_t cs_mask_highest(ukl_mask_t m)
+{
+    return sizeof(ukl_mask_t) == 8u ? 63u - ukl_clz64((uint64_t)m) : 31u - ukl_clz32((uint32_t)m);
+}
+// The lanes from `lo` to `hi`, clamped to the group.
+UKL_INLINE ukl_mask_t cs_mask_range(int32_t lo, int32_t hi)
+{
+    int32_t w = (int32_t)UKL_SIMD_WIDTH;
+    uint32_t a = (uint32_t)(lo < 0 ? 0 : (lo > w ? w : lo)), b = (uint32_t)(hi < 0 ? 0 : (hi > w ? w : hi));
+    return ukl_mask_below(b) & ~ukl_mask_below(a);
+}
+
+// How many chunks of a pass's wide arguments are read at once.
+#define WIDE_CHUNKS 4u
+
+// The lane whose wide gate holds argument `f` of the pass's stream (`p` each lane's first).
+UKL_INLINE uint32_t cs_wide_owner(uint32_t p, uint32_t f __UKL_PARAMS)
+{
+    uint32_t own = 0u;
+    for (uint32_t step = UKL_SIMD_WIDTH / 2u; step != 0u; step >>= 1u)
+        if (ukl_sg_shuffle(p, own + step __UKL_ARGS) <= f)
+            own += step;
+    return own;
+}
+
+// Every lane: the lanes' wide gates (`wide`: an And or a One whose arguments are in `args`) checked together, as
+// `cs_check` would each (without its clause). Their arguments are one stream over the lanes, `WIDE_CHUNKS` chunks of
+// it read at once, and each lane folds its own gate's from the chunks' ballots: an And's first false and first unset
+// argument (and whether every unset one is that literal), a One's first true, its trues and unset ones and its last
+// unset one.
+UKL_INLINE Check cs_check_wide(UKL_PRIVATE Csat* c, uint32_t g, bool wide __UKL_PARAMS)
+{
+    Check r;
+    r.mode = M_NONE;
+    r.lit = 0;
+    r.why = 0u;
+    r.cursor = 0u;
+    uint32_t kind = wide ? cs_g_kind(c, g) : 0u, n = wide ? cs_g_width(c, g) : 0u;
+    uint32_t base = wide ? c->b[c->rec + 4u * g + 2u] : 0u;
+    int32_t o = wide ? cs_g_out(c, g) : 0;
+    int32_t vo = wide && kind == 0u ? cs_value(c, o) : 0;
+    uint32_t p = ukl_sg_exclusive_sum(n, c->lane __UKL_ARGS), total = ukl_sg_sum(n __UKL_ARGS);
+    uint32_t first_false = NONE, first_unset = NONE, held = NONE, trues = 0u, unset = 0u, last_unset = 0u, other = 0u;
+    int32_t au = 0;
+    for (uint32_t j0 = 0u; j0 < total; j0 += WIDE_CHUNKS * UKL_SIMD_WIDTH) {
+        int32_t a[WIDE_CHUNKS], va[WIDE_CHUNKS];
+        uint32_t owner[WIDE_CHUNKS];
+        for (uint32_t k = 0u; k < WIDE_CHUNKS; k++) {
+            uint32_t f = j0 + k * UKL_SIMD_WIDTH + c->lane;
+            uint32_t own = cs_wide_owner(p, f __UKL_ARGS);
+            uint32_t at = ukl_sg_shuffle(base, own __UKL_ARGS) + f - ukl_sg_shuffle(p, own __UKL_ARGS);
+            a[k] = f < total ? (int32_t)c->b[c->args + at] : 0;
+            owner[k] = own;
+        }
+        for (uint32_t k = 0u; k < WIDE_CHUNKS; k++)
+            va[k] = a[k] != 0 ? cs_value(c, a[k]) : 2;
+        for (uint32_t k = 0u; k < WIDE_CHUNKS; k++) {
+            uint32_t s0 = j0 + k * UKL_SIMD_WIDTH;
+            ukl_mask_t bf = ukl_sg_ballot(va[k] == -1 __UKL_ARGS), bu = ukl_sg_ballot(va[k] == 0 __UKL_ARGS);
+            ukl_mask_t bt = ukl_sg_ballot(va[k] == 1 __UKL_ARGS);
+            ukl_mask_t m = wide ? cs_mask_range((int32_t)p - (int32_t)s0, (int32_t)(p + n) - (int32_t)s0) : 0u;
+            bf &= m;
+            bu &= m;
+            bt &= m;
+            uint32_t from = bu != 0u ? ukl_mask_lowest(bu) : 0u;
+            int32_t got = (int32_t)ukl_sg_shuffle((uint32_t)a[k], from __UKL_ARGS);
+            if (bf != 0u && first_false == NONE)
+                first_false = s0 + ukl_mask_lowest(bf) - p;
+            if (bu != 0u && first_unset == NONE) {
+                first_unset = s0 + from - p;
+                au = got;
+            }
+            if (bt != 0u && held == NONE)
+                held = s0 + ukl_mask_lowest(bt) - p;
+            trues += ukl_mask_count(bt);
+            unset += ukl_mask_count(bu);
+            if (bu != 0u)
+                last_unset = s0 + cs_mask_highest(bu) - p;
+            // An And's unset arguments that are not its first unset one's literal. That one is the earliest chunk's
+            // with one, so it is known here for every unset argument of this chunk and the earlier ones.
+            int32_t want = (int32_t)ukl_sg_shuffle((uint32_t)au, owner[k] __UKL_ARGS);
+            other += ukl_mask_count(ukl_sg_ballot(va[k] == 0 && a[k] != want __UKL_ARGS) & m);
+        }
+    }
+    if (kind == 0u) {
+        if (!wide)
+            return r;
+        if (first_false != NONE) {
+            if (vo == 1) {
+                r.mode = M_CONFLICT;
+            } else if (vo == 0) {
+                r.mode = M_ONE;
+                r.lit = -o;
+                r.why = first_false;
+            }
+            return r;
+        }
+        if (vo == 1) {
+            if (first_unset != NONE)
+                r.mode = M_AND;
+        } else if (vo == 0 && first_unset == NONE) {
+            r.mode = M_ONE;
+            r.lit = o;
+        } else if (vo == -1 && first_unset == NONE) {
+            r.mode = M_CONFLICT;
+        } else if (vo == -1 && other == 0u) {
+            r.mode = M_ONE;
+            r.lit = -au;
+            r.why = first_unset;
+        }
+        return r;
+    }
+    // One.
+    if (trues >= 2u) {
+        r.mode = M_CONFLICT;
+    } else if (held != NONE) {
+        if (unset > 0u) {
+            r.mode = M_HELD;
+            r.why = held;
+        }
+    } else if (unset == 0u) {
+        r.mode = M_CONFLICT;
+    } else if (unset == 1u) {
+        r.mode = M_ONE;
+        r.lit = cs_g_arg(c, g, n, last_unset);
+        r.why = last_unset;
+    }
+    return r;
+}
+
 // Whether a gate can imply with nothing set.
 UKL_INLINE bool cs_seed(UKL_PRIVATE Csat* c, uint32_t g)
 {
@@ -432,8 +567,15 @@ UKL_INLINE bool cs_items(UKL_PRIVATE Csat* c, uint32_t g, bool active __UKL_PARA
 {
     Check k;
     k.mode = M_NONE;
-    if (active)
+    // The wide Ands and Ones the group checks together (`cs_check_wide`); the rest each lane alone.
+    bool wide = active && cs_g_kind(c, g) != 1u && cs_g_width(c, g) > 2u;
+    if (active && !wide)
         k = cs_check(c, g, false);
+    if (ukl_sg_ballot(wide __UKL_ARGS) != 0u) {
+        Check w = cs_check_wide(c, g, wide __UKL_ARGS);
+        if (wide)
+            k = w;
+    }
     uint32_t first = ukl_sg_first(k.mode == M_CONFLICT __UKL_ARGS);
     if (first != UKL_NONE) {
         if (c->lane == first) {

@@ -438,3 +438,40 @@ formula").
     on the device and 2,813 ran past 20 ms there, all within one resident launch: their time is the device's search,
     not a launch's. The wall was then 8.8 s.
 
+- **Why a hard search runs one after another, and what was tried** (the user, 2026-11-24: "why must the order be
+  fixed? Aren't the solutions deterministic? And can't we run enough to be sure we have covered any possible
+  earlier solutions?"). Measured on the Spark (a GB10) with the six largest of cold Kotlin's long solves (about
+  31,800 variables each; `RERAIL_CSAT_DUMP`), and with cold Kotlin, the budget lifted:
+  - **The order and the answers.** Each decision's polarity perturbed by a hash (two seeds), Kotlin blessed: the
+    proving's steps went from 158.2 M to 149.5 M, so the searches differed, and the answers file was the same bytes
+    (8,763 answers). The truth of a question does not hang on the order. The fixed order is what makes the
+    device's result the CPU's, every count and clause, so either may finish a solve (the race).
+  - **A portfolio** (each dump with 32 polarity seeds, the fewest rounds of them): 0.68, 0.72, 0.60, 0.57 and 0.89
+    of the unperturbed search's rounds for the five unsatisfiable dumps, 0.23 for the satisfiable one; every seed
+    the same answer. A device search's round is several times a core's, so 32 searches at once do not catch up
+    with one on a core for these.
+  - **Cubes** (a dump split on its 3 or 6 most read variables into 8 or 64 searches under assumptions): the longest
+    cube took 0.88 to 2.1 times the whole search's rounds. No shorter path.
+  - **Repeats.** 13,613 solves of 8,311 formulas: 5,302 repeats, 2.25 s of 23.2 s of the CPU's solve time and 26%
+    of the device's (the repeats are the long ones there). Kept: `bitlex_prove::Solves`, a compile's results by
+    their formula's fingerprint (`lanes::Formula::fingerprint`, two foldhash quality hashes over everything the
+    search reads, the window's `Start` included), shared by the prover's forks. A solve is a function of its
+    formula, so a kept result is the search's, every count, clause and budget charge as it. Only those of 256
+    rounds or more are kept (98% of the repeats' rounds), models and cores as bits, 64 MB at most. Cold Kotlin
+    now hands 10,575 formulas to the device's service, against 13,613; the CPU's proving 7.6 s to 6.6 s.
+  - **Where a round's time goes.** A dependent read costs about 47 cycles from L1 and 320 from L2 (`memory_latency_by_kind`;
+    pinned host memory 765 to 1,054, registered host memory as the device's own). A slot's formula and state are
+    far past L1, so a round is a chain of L2 trips: a literal's fanout, its gates' records, their arguments, their
+    values. 70% of a round was the gate items, and of that three quarters the gates' checks: a lane checked its
+    gate alone, reading its arguments one after another, so a pass of 32 gates took its widest gate's reads (about
+    19 arguments a pass, of about 300 in all; 237 gates of 32 to 72 arguments, 37 Ones of about 56).
+    - Kept: a pass's wide Ands and Ones (over 2 arguments) checked by the group together, their arguments one
+      stream over the lanes, 4 chunks of 32 read at once, each gate's result folded from the chunks' ballots
+      (`cs_check_wide`), as the serial scan gives it; a narrow gate's two values read at once. The gate items 17
+      to 30% shorter (the largest dump 7,352 to 6,102 Mcycles); the device's search the CPU's, step for step. Eight
+      chunks at once took more registers (118 against 96) and was slower.
+    - Not kept: the values' bits and flags on chip, a byte a variable (32-bit words do not fit the GB10's 99 KB a
+      group for 31,800 variables): 7% of the gate items, before the change above. The values are not the chain.
+  - Cold Kotlin, the shipped answers' bytes either way: the device's service 7.8 to 8.3 s, the CPU alone 6.6 to
+    6.7 s (6,316 to 6,730 of the device's formulas given up to the CPU's race). The device's search of a long
+    formula is still several times a core's.

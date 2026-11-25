@@ -565,6 +565,8 @@ pub struct Service {
     state: std::sync::Mutex<Waiting>,
     wake: std::sync::Condvar,
     trace: bool,
+    solve_trace: bool,
+    race_after: std::time::Duration,
 }
 
 struct Waiting {
@@ -609,6 +611,9 @@ impl Default for Service {
             state: std::sync::Mutex::new(Waiting { handed: Vec::new(), closed: false, failed: None }),
             wake: std::sync::Condvar::new(),
             trace: std::env::var_os("RERAIL_PROVING_TRACE").is_some(),
+            solve_trace: std::env::var_os("RERAIL_DEVICE_SOLVE_TRACE").is_some(),
+            // A measurement aid: `RERAIL_PROVER_RACE_MS`, the race's wait in milliseconds.
+            race_after: std::env::var("RERAIL_PROVER_RACE_MS").ok().and_then(|v| v.parse().ok()).map_or(RACE_AFTER, std::time::Duration::from_millis),
         }
     }
 }
@@ -617,6 +622,8 @@ impl Default for Service {
 struct Live {
     batch: Batch,
     replies: Vec<std::sync::Arc<Reply>>,
+    /// When each formula was handed in (`RERAIL_DEVICE_SOLVE_TRACE`).
+    handed_at: Vec<std::time::Instant>,
     at: std::time::Instant,
     on_device: usize,
     given_up: usize,
@@ -640,7 +647,7 @@ impl Service {
         self.wake.notify_all();
         {
             let got = reply.got.lock().expect("a reply");
-            let (mut got, _) = reply.ready.wait_timeout_while(got, RACE_AFTER, |g| g.is_none()).expect("a reply");
+            let (mut got, _) = reply.ready.wait_timeout_while(got, self.race_after, |g| g.is_none()).expect("a reply");
             if let Some(Some(x)) = got.take() {
                 return x;
             }
@@ -728,13 +735,14 @@ impl Service {
                         let slots = (STATE_BYTES / (4 * slot_words)).clamp(1, SLOTS);
                         let models = MODEL_ROOM.max((d.vars + 1).div_ceil(32));
                         let batch = Batch::open(&d.block, BATCH_ROOM, models, BATCH_ROOM * (1 + CARRY_ROOM), slot_words, slots)?;
-                        live.push(Live { batch, replies: Vec::new(), at: std::time::Instant::now(), on_device: 0, given_up: 0 });
+                        live.push(Live { batch, replies: Vec::new(), handed_at: Vec::new(), at: std::time::Instant::now(), on_device: 0, given_up: 0 });
                         let l = live.last_mut().expect("opened");
                         l.batch.add(&d)?.ok_or("the prover's GPU: a formula without room in an empty batch")?;
                         l
                     }
                 };
                 l.replies.push(reply);
+                l.handed_at.push(std::time::Instant::now());
             }
             // Each batch's results out, its formulas the CPU finished given up, and a launch where formulas wait and
             // none runs.
@@ -748,8 +756,16 @@ impl Service {
                     continue;
                 }
                 for (k, x) in l.batch.poll()? {
-                    match x {
-                        Some(_) => l.on_device += 1,
+                    match &x {
+                        Some(x) => {
+                            l.on_device += 1;
+                            // A measurement aid: each result the device's, its time from handed in, its search's counts
+                            // and the cycles of its parts.
+                            if self.solve_trace {
+                                let ms = l.handed_at[k].elapsed().as_secs_f64() * 1e3;
+                                eprintln!("device solve {ms:.2} ms: {} conflicts, {} decisions, {} rounds, {} visits, {} items, {} reductions, kcycles visit/items/analyze/back/decide/reduce {:?}", x.conflicts, x.decisions, x.rounds, x.visits, x.items, x.reductions, x.cycles.map(|c| u64::from(c) * 256 / 1000));
+                            }
+                        }
                         None => l.given_up += 1,
                     }
                     l.replies[k].give(x);
@@ -784,6 +800,89 @@ const MODEL_ROOM: usize = 1 << 22;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A measurement (decision 0670): a chain of dependent reads, one lane, over pinned host memory (`alloc`), host
+    /// memory registered for the device (`wrap_host_memory`, as the formula block is) and the device's own
+    /// (`alloc_working`), each in a size the L2 cache holds and one it does not: cycles a read.
+    #[test]
+    #[ignore]
+    fn memory_latency_by_kind() {
+        const CHASE: &str = r#"
+#include <ukl/simd.h>
+typedef struct ChaseArgs { uint32_t steps; uint32_t pad0; uint32_t pad1; uint32_t pad2; } ChaseArgs;
+UKL_REFLECT_STRUCT(ChaseArgs, steps, pad0, pad1, pad2)
+DEFINE_KERNEL2(chase, chase,
+               ARGS,     ChaseArgs, args, ,
+               ROBUFFER, uint32_t,  buf,  "[n]",
+               RWBUFFER, uint32_t,  out,  "[2]",
+               TGID0,    uint32_t,  g,    ,
+               LANE,     uint32_t,  lane, )
+{
+    uint32_t i = 0u;
+    uint64_t t = ukl_clock();
+    for (uint32_t s = 0u; s < args.steps; s++)
+        i = buf[i];
+    if (lane == 0u) {
+        out[0] = i;
+        out[1] = (uint32_t)(ukl_clock() - t);
+    }
+}
+"#;
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct ChaseArgs {
+            steps: u32,
+            pad: [u32; 3],
+        }
+        // SAFETY: four u32s.
+        unsafe impl rerail_gpu::Pod for ChaseArgs {}
+        let Some(shared) = rerail_gpu::shared::get() else { return };
+        let f = program("chase.uglykl", CHASE).and_then(|p| p.function("chase")).expect("the chase kernel");
+        let mut q = ComputeQueue::new(&shared.queue);
+        let steps = 20_000u32;
+        for words in [1usize << 12, 1 << 16, 1 << 26] {
+            // A cycle through every 64-byte line, in a shuffled order.
+            let lines = words / 16;
+            let mut order: Vec<usize> = (0..lines).collect();
+            let mut r = 0x2545_f491_4f6c_dd1du64;
+            for i in (1..lines).rev() {
+                r ^= r << 13;
+                r ^= r >> 7;
+                r ^= r << 17;
+                order.swap(i, (r % (i as u64 + 1)) as usize);
+            }
+            let mut next = vec![0u32; words];
+            for k in 0..lines {
+                next[order[k] * 16] = (order[(k + 1) % lines] * 16) as u32;
+            }
+            let pinned = alloc::<u32>(words).expect("pinned");
+            // SAFETY: `words` u32s.
+            unsafe { std::ptr::copy_nonoverlapping(next.as_ptr(), pinned.contents().cast::<u32>(), words) };
+            let layout = std::alloc::Layout::from_size_align(4 * words, 1 << 16).expect("a layout");
+            // SAFETY: a non-zero size.
+            let host = unsafe { std::alloc::alloc(layout) };
+            // SAFETY: `host` holds `words` u32s.
+            unsafe { std::ptr::copy_nonoverlapping(next.as_ptr(), host.cast::<u32>(), words) };
+            // SAFETY: `host` outlives the wrap (freed below, after the launches).
+            let wrapped = unsafe { rerail_gpu::device::wrap_host_memory(&shared.device, host, 4 * words) }.expect("a wrap");
+            let device = alloc_working::<u32>(words).expect("device memory");
+            q.enqueue_copy_between_device_regions(&pinned, &device, 0, 0, 4 * words as u64);
+            q.flush().await_().expect("the copy");
+            let out = alloc::<u32>(2).expect("out");
+            for (name, b) in [("pinned host", &pinned), ("registered host", &wrapped), ("device", &device)] {
+                let mut cycles = 0u32;
+                for _ in 0..2 {
+                    launch(&q, f).value("args", &ChaseArgs { steps, pad: [0; 3] }).buffer("buf", b).buffer("out", &out).run(&[1], &[LANES]).expect("a launch");
+                    q.flush().await_().expect("the launch");
+                    cycles = words_of(&out, 1, 1)[0];
+                }
+                eprintln!("{} KB, {name}: {:.0} cycles a read", 4 * words / 1024, f64::from(cycles) / f64::from(steps));
+            }
+            drop(wrapped);
+            // SAFETY: allocated above with `layout`; the wrap is dropped and no launch runs.
+            unsafe { std::alloc::dealloc(host, layout) };
+        }
+    }
     use crate::bitlex_csat::{Fanout, Gates, Solver};
     use crate::bitlex_csat_lanes::tests::{circuit, holds, same_search, Rng};
     use crate::bitlex_sat::{Answer as CpuAnswer, Clauses};
