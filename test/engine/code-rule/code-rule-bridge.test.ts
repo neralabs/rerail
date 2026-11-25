@@ -5415,6 +5415,52 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(changes).toEqual([{ path: join(worktree, ".gitignore"), via: "observed", ignoresMore: ["scratch/"] }]);
   });
 
+  // A session that opens beside worktrees Git added before it sees each of them first, and its first sight takes none
+  // of their files: none is stamped since it opened. The shared walk still compared each one's index with its HEAD,
+  // three Git processes a worktree one after another, and a session takes nothing of a walk until it ends: on Windows
+  // 11, beside 104 worktrees, a new session's first walk took 26 to 78 s, and so did its record of a write its own
+  // command made in a new worktree meanwhile.
+  it("compares no index with HEAD at a session's first sight of a worktree with no file stamped since it opened", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    // A session opened in the same tick of the file clock as Git's checkout takes the worktree's files as stamped since.
+    await awaitClockAfter(...readdirSync(join(worktree, "src")).map(name => join(worktree, "src", name)));
+    asyncGitCalls.args.length = 0;
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const named = (...words: string[]) => asyncGitCalls.args.filter(args => words.every(word => args.includes(word))).length;
+    expect({ moves: named("reflog"), staged: named("diff-index"), marked: named("ls-files", "-v") }).toEqual({ moves: 0, staged: 0, marked: 0 });
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "steer_bad.py"), "violation\n"));
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toContain(repositoryPath(root, join(worktree, "src", "steer_bad.py")));
+  });
+
+  // The walk lists a worktree once for all the sessions it shows the worktree first. A session open before Git added
+  // the worktree takes each of its files at that first sight, as each is stamped since it opened, so the index listings
+  // follow the earliest of them, even beside a session opened after Git added it, which takes none.
+  it("judges a worktree's files without Git for a session open before Git added it, beside one opened after", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const session = () => createBridge(root, {
+      ...auditor(audit), sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root, worktreeRoots: () => roots,
+    }, { worktreeWalks: walks, worktreeWalkGapMs: 0 });
+    const [early, late] = [session(), session()];
+    await early.openWorkspace("session-1");
+    await early.checkpoint("turn");
+    await early.settleWorktreeWalk();
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    roots.push(worktree);
+    await awaitClockAfter(...readdirSync(join(worktree, "src")).map(name => join(worktree, "src", name)));
+    await late.openWorkspace("session-2");
+    asyncGitCalls.args.length = 0;
+    await late.checkpoint("turn");
+    await late.settleWorktreeWalk();
+    await early.settleWorktreeWalk();
+    expect({ blobs: asyncGitCalls.args.filter(args => args.includes("cat-file")).length, audits: audit.mock.calls.length }).toEqual({ blobs: 0, audits: 0 });
+  });
+
   // Every file of a worktree Git adds while the session runs is stamped after the session opened, so the session took
   // each one at the worktree's first walk as a change for Git to judge: inside the session's queue, which a shell
   // command's result waits on, a reading of the file's blob (`cat-file`) and of HEAD's moves (`reflog`), Git starts
