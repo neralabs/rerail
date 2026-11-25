@@ -124,7 +124,9 @@ mod windows {
     use windows_sys::Win32::Foundation::{
         ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, FILETIME, GetLastError, INVALID_HANDLE_VALUE,
     };
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_READ_ATTRIBUTES, OPEN_EXISTING};
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_READ_ATTRIBUTES, OPEN_EXISTING,
+    };
     use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
     use windows_sys::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
