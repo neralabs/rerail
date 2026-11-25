@@ -1934,7 +1934,7 @@ impl<L: Layout> P<'_, L> {
             }
         } else {
             if matches!(self.word(), w::CLASS_13 | w::INTERFACE_15) {
-                self.tk_as(matches!(self.word(), w::CLASS_13 | w::INTERFACE_15), ANON[self.word() as usize], 0)?;
+                self.bump_as(ANON[self.word() as usize])?;
                 self.type_name()?;
                 self.ask_semi(false)?;
                 if self.m_head_ctor() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -2360,7 +2360,7 @@ impl<L: Layout> P<'_, L> {
             if !(self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
-                    self.p_stored(w::QUEST_40, k::QUEST)?;
+                    self.bump_as(k::QUEST)?;
                     loop {
                         self.ask_semi(false)?;
                         if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -2924,7 +2924,7 @@ impl<L: Layout> P<'_, L> {
             if !(!self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
-                    self.p_stored(w::QUEST_40, k::QUEST)?;
+                    self.bump_as(k::QUEST)?;
                     self.quests()?;
                 }
             }
@@ -2934,7 +2934,7 @@ impl<L: Layout> P<'_, L> {
             if !(!self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
-                    self.p_stored(w::QUEST_40, k::QUEST)?;
+                    self.bump_as(k::QUEST)?;
                     self.quests()?;
                 }
             }
@@ -3069,7 +3069,7 @@ impl<L: Layout> P<'_, L> {
         self.recv_type()?;
         if self.word() == w::QUEST_40 {
             self.wrap(k::NULLABLE_TYPE, 0)?;
-            self.p_stored(w::QUEST_40, k::QUEST)?;
+            self.bump_as(k::QUEST)?;
             while self.word() == w::QUEST_40 {
                 self.bump_as(k::QUEST)?;
             }
@@ -3302,7 +3302,7 @@ impl<L: Layout> P<'_, L> {
                     }
                     w::BAR_BAR_51 => {
                         self.wrap(k::DISJUNCTION_EXPRESSION, 0)?;
-                        self.p(w::BAR_BAR_51)?;
+                        self.implied()?;
                         let asks = self.asks;
                         self.asks = asks & 0x0 | 0x8;
                         self.disj_operand()?;
@@ -3410,7 +3410,7 @@ impl<L: Layout> P<'_, L> {
             if !(!self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
-                    self.p_stored(w::QUEST_40, k::QUEST)?;
+                    self.bump_as(k::QUEST)?;
                     self.quests()?;
                 }
             }
@@ -3420,7 +3420,7 @@ impl<L: Layout> P<'_, L> {
             if !(!self.marked && self.m_semi() || !self.marked && self.m_semi_close()) {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
-                    self.p_stored(w::QUEST_40, k::QUEST)?;
+                    self.bump_as(k::QUEST)?;
                     self.quests()?;
                 }
             }
@@ -4065,7 +4065,7 @@ impl<L: Layout> P<'_, L> {
             self.asks = asks;
         } else {
             if matches!(self.word(), w::BANG_49 | w::MINUS_77 | w::PLUS_76 | w::PLUS_PLUS_80 | w::MINUS_MINUS_81) {
-                self.tk_as(matches!(self.word(), w::BANG_49 | w::MINUS_77 | w::PLUS_76 | w::PLUS_PLUS_80 | w::MINUS_MINUS_81), ANON[self.word() as usize], 0)?;
+                self.bump_as(ANON[self.word() as usize])?;
                 let asks = self.asks;
                 self.asks = asks & 0x0 | 0x8;
                 self.unary_tight()?;
@@ -4096,7 +4096,7 @@ impl<L: Layout> P<'_, L> {
         } else if self.word() == w::LBRACK_5 {
             self.wrap(k::INDEXING_EXPRESSION, 0)?;
             self.open(k::INDEXING_SUFFIX);
-            self.p(w::LBRACK_5)?;
+            self.implied()?;
             let asks = self.asks;
             self.asks = asks & 0x0 | 0x0;
             self.r_expression()?;
@@ -4107,7 +4107,7 @@ impl<L: Layout> P<'_, L> {
             self.close()?;
         } else if matches!(self.word(), w::PLUS_PLUS_80 | w::MINUS_MINUS_81 | w::BANG_BANG_82) {
             self.wrap(k::POSTFIX_EXPRESSION, 0)?;
-            self.tk_as(matches!(self.word(), w::PLUS_PLUS_80 | w::MINUS_MINUS_81 | w::BANG_BANG_82), ANON[self.word() as usize], 0)?;
+            self.bump_as(ANON[self.word() as usize])?;
             self.close()?;
         } else if self.pat_qdot_0_0(self.i, self.n) || matches!(self.word(), w::DOT_32 | w::COLON_COLON_63) {
             self.wrap(k::NAVIGATION_EXPRESSION, 0)?;
@@ -4493,7 +4493,7 @@ impl<L: Layout> P<'_, L> {
             match self.word() {
                 w::L_115 => {
                     self.wrap(k::LONG_LITERAL, 0)?;
-                    self.p(w::L_115)?;
+                    self.implied()?;
                     self.close()?;
                 }
                 w::U_119 | w::U_120 | w::UL_121 | w::UL_122 => {

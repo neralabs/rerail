@@ -2309,6 +2309,39 @@ impl<'a> G<'a> {
     /// Where a decision's arms each open a node, an arm that only calls a node's rule of one caller opens and closes
     /// that node itself, and the rule's method reads what is inside it, as the lean parser's `violation`: so the
     /// decision can open its node once (`moves::open_once`, decision 0685 step 2).
+    /// A method called from one place once the rewrites made it short (a decision's arms joined, `moves::joined`): its
+    /// code written there, as `inlined` writes one from the start; of no parameters, no locals, no depth counted, no
+    /// return but a refusal, up to `INLINE_LINES`. The method is gone (its block empty).
+    fn late_inline(made: &mut [(String, Block)]) {
+        loop {
+            let texts: Vec<String> = made.iter().map(|(_, b)| moves::print(b, "")).collect();
+            let one = (1..made.len()).find(|&i| {
+                let (f, b) = &made[i];
+                let Some(at) = method_body(b) else { return false };
+                let Op::At(_, inner) = &b[at] else { return false };
+                let text = moves::print(inner, "");
+                let header = moves::print(&b[..at], "");
+                header.contains(&format!("fn {f}(&mut self) -> R {{"))
+                    && !header.contains("deeper")
+                    && text.lines().count() <= INLINE_LINES
+                    && !text.contains("let ")
+                    && !text.contains("return Ok")
+                    && !moves::one_leaf_only(inner)
+                    && !text.contains(&format!("self.{f}()"))
+                    && texts.iter().map(|t| t.matches(&format!("self.{f}()")).count()).sum::<usize>() == 1
+                    && !texts.iter().any(|t| t.contains(&format!("Self::{f}")))
+            });
+            let Some(i) = one else { break };
+            let f = made[i].0.clone();
+            let at = method_body(&made[i].1).expect("a method");
+            let Op::At(_, inner) = made[i].1[at].clone() else { unreachable!() };
+            for (_, b) in made.iter_mut() {
+                moves::inline_call(b, &f, &inner);
+            }
+            made[i].1.clear();
+        }
+    }
+
     /// A leaf the rules grow a token at a time (a take of the token as a leaf of kind `K`, then merges into it, here
     /// and in the functions they call that only merge) is one leaf over the tokens: `leaf_open`, the tokens passed,
     /// `leaf_close(K)`, as the lean parser scans and then writes one `leaf_over` (rock 3). For a kind each of whose
@@ -2318,18 +2351,7 @@ impl<'a> G<'a> {
         for (_, b) in made.iter_mut() {
             moves::merge_kinds(b, &mut kinds);
         }
-        let body = |b: &Block| -> Option<usize> {
-            // A method: its lines around one block, none of them a move of the tree's or a take.
-            let at = b.iter().position(|o| matches!(o, Op::At(..)))?;
-            let plain = b.iter().enumerate().all(|(i, o)| match o {
-                Op::Line(l) => l.lines().all(|l| {
-                    let t = l.trim();
-                    t.is_empty() || t.starts_with("///") || t.starts_with("fn ") || t.starts_with("#[") || matches!(t, "self.deeper()?;" | "self.depth -= 1;" | "Ok(())" | "}")
-                }),
-                _ => i == at,
-            });
-            plain.then_some(at)
-        };
+        let body = method_body;
         for k in kinds {
             // The functions that only merge into `k`: those whose code merges, calling only such (the most there are:
             // they may call each other).
@@ -2551,6 +2573,17 @@ impl<'a> G<'a> {
             moves::known_takes(b);
             moves::joined(b);
         });
+        // A method those made short and of one caller: written there, and its caller's arms joined again.
+        let methods = self.methods.borrow().clone();
+        if methods.len() == bs.len() {
+            let mut made: Vec<(String, Block)> = methods.into_iter().zip(std::mem::take(&mut bs)).collect();
+            Self::late_inline(&mut made);
+            bs = made.into_iter().map(|(_, b)| b).collect();
+            bs.iter_mut().for_each(|b| {
+                moves::known_takes(b);
+                moves::joined(b);
+            });
+        }
         let names = self.names.get_or_init(|| moves::Names::of(&mut bs));
         bs.iter().map(|b| moves::print_named(b, "", names)).collect()
     }
@@ -3306,6 +3339,20 @@ fn no_field(code: &str, f: &str) -> String {
 
 /// The fewest lines of a loop the rules repeat that is a function of its own (`G::repeated`).
 const REPEATED_LINES: usize = 6;
+
+/// A method's block: its lines around one block of moves (`Op::At`), none of them a move of the tree's or a take; where
+/// that block is.
+fn method_body(b: &Block) -> Option<usize> {
+    let at = b.iter().position(|o| matches!(o, Op::At(..)))?;
+    let plain = b.iter().enumerate().all(|(i, o)| match o {
+        Op::Line(l) => l.lines().all(|l| {
+            let t = l.trim();
+            t.is_empty() || t.starts_with("///") || t.starts_with("fn ") || t.starts_with("#[") || matches!(t, "self.deeper()?;" | "self.depth -= 1;" | "Ok(())" | "}")
+        }),
+        _ => i == at,
+    });
+    plain.then_some(at)
+}
 
 /// The fewest lines of a run the rules repeat but for its calls and fields that is a function of its own (`G::lists`).
 const LIST_LINES: usize = 4;

@@ -805,6 +805,12 @@ fn facts_of(c: &Cond) -> Vec<(usize, String)> {
     c.conjuncts().into_iter().filter_map(fact).collect()
 }
 
+/// Whether a method's code is one leaf over the tokens it reads (`G::leaves`): an idea of its own, as the lean
+/// parser's `raw_line` and `json`.
+pub(crate) fn one_leaf_only(b: &Block) -> bool {
+    matches!(b.first(), Some(Op::Line(l)) if l == "self.leaf_open();") && matches!(b.last(), Some(Op::Line(l)) if l.starts_with("self.leaf_close("))
+}
+
 /// `b` with each take whose token the code before it tested (an `if`'s or a `match`'s, a `while`'s, past the moves
 /// that take no token: opening a node, setting a field) taking it untested, as the lean parser's `statement` bumps
 /// the `.` and the word it matched.
@@ -837,7 +843,7 @@ pub(crate) fn known_takes(b: &mut Block) {
                     facts = facts.into_iter().filter(|(a, _)| *a > 0).map(|(a, f)| (a - 1, f)).collect();
                 }
                 Op::Open(_) | Op::Field(_) => {}
-                Op::Line(l) if ["let kind", "self.retag(", "self.marked", "self.deeper()", "self.leaf_open()", "self.open(", "self.field_made("].iter().any(|p| l.trim_start().starts_with(p)) => {}
+                Op::Line(l) if ["let kind", "self.retag(", "self.marked", "self.deeper()", "self.leaf_open()", "self.open(", "self.field_made(", "self.wrap(", "self.relabel_"].iter().any(|p| l.trim_start().starts_with(p)) => {}
                 Op::If { arms, els } => {
                     for (c, x) in arms.iter_mut() {
                         let mut f = facts.clone();
@@ -879,6 +885,28 @@ pub(crate) fn known_takes(b: &mut Block) {
     walk(b, Vec::new());
 }
 
+/// The words a test asks of the token `e` a scan found: `self.word_at(e) == w::A || …`, each of them; none where it asks
+/// anything else.
+fn scan_words(tail: &str) -> Option<HashSet<&str>> {
+    bare(tail).split(" || ").map(|p| p.trim().strip_prefix("self.word_at(e) == ")).collect()
+}
+
+/// Whether no token passes both tests: each asks the word at one place, of words none of which the other's has, or
+/// one held scan's close the same way.
+fn disjoint(a: &Cond, b: &Cond) -> bool {
+    a.conjuncts().iter().any(|x| {
+        b.conjuncts().iter().any(|y| match (x, y) {
+            (Cond::Word { at: i, ws: u }, Cond::Word { at: j, ws: v }) => i == j && !u.iter().any(|w| v.contains(w)),
+            // One scan's close (`S.is_some_and(|e| …)`), asked of words none the other's asks.
+            _ => {
+                let (p, q) = (x.print(), y.print());
+                let split = |t: &str| t.split_once(".is_some_and(|e| ").and_then(|(s, r)| Some((s.to_owned(), r.strip_suffix(')')?.to_owned())));
+                matches!((split(&p), split(&q)), (Some((s, a)), Some((t, b))) if s == t && !s.contains(' ') && matches!((scan_words(&a), scan_words(&b)), (Some(u), Some(v)) if u.is_disjoint(&v)))
+            }
+        })
+    })
+}
+
 /// `a && b`, each that holds an `||` in parentheses.
 fn and(a: Cond, b: Cond) -> Cond {
     // An `||` outside any parentheses in its text (an `Or` itself `And` prints in parentheses).
@@ -915,11 +943,19 @@ pub(crate) fn joined(b: &mut Block) {
         for op in x.iter_mut() {
             match op {
                 Op::If { arms, els } => {
+                    // An arm whose code an arm before has, where no arm between them passes its test or none passes
+                    // the one before's: one arm, at the first's place or at the second's.
                     let mut out: Vec<(Cond, Block)> = Vec::new();
                     for (c, body) in std::mem::take(arms) {
-                        match out.last_mut() {
-                            Some(last) if last.1 == body => last.0 = Cond::or(std::mem::replace(&mut last.0, Cond::text("true")), c),
-                            _ => out.push((c, body)),
+                        let up = (0..out.len()).rev().find(|&i| out[i].1 == body && out[i + 1..].iter().all(|(d, _)| disjoint(d, &c)));
+                        let down = || (0..out.len()).rev().find(|&i| out[i].1 == body && out[i + 1..].iter().all(|(d, _)| disjoint(d, &out[i].0)));
+                        if let Some(i) = up {
+                            out[i].0 = Cond::or(std::mem::replace(&mut out[i].0, Cond::text("true")), c);
+                        } else if let Some(i) = down() {
+                            let (d, _) = out.remove(i);
+                            out.push((Cond::or(d, c), body));
+                        } else {
+                            out.push((c, body));
                         }
                     }
                     while out.len() > 1 && els.as_ref().is_some_and(|e| *e == out[out.len() - 1].1) {
@@ -962,6 +998,27 @@ pub(crate) fn joined(b: &mut Block) {
             }
         }
         x.retain(|op| !matches!(op, Op::If { arms, els: None } if arms.iter().all(|(_, b)| b.is_empty())));
+        // `if A || B { x; match self.word() { A => …, B => …, _ => refuse } }`, `x` taking no token: the `match`'s `_`
+        // never runs, and the `match` of the word is an `if` chain, as the lean parser asks each.
+        for op in x.iter_mut() {
+            let Op::If { arms, .. } = op else { continue };
+            for (c, body) in arms.iter_mut() {
+                let ors: Vec<String> = match c.core() {
+                    Cond::Or(cs) => cs.iter().map(|c| bare(&c.print()).to_owned()).collect(),
+                    c => vec![bare(&c.print()).to_owned()],
+                };
+                let quiet = |o: &Op| matches!(o, Op::Field(_)) || matches!(o, Op::Line(l) if l.trim_start().starts_with("self.relabel_") || l.trim_start().starts_with("self.retag("));
+                let Some((Op::Match { subject, arms: m, default }, pre)) = body.split_last_mut() else { continue };
+                if subject != "self.word()" || !matches!(default.as_slice(), [Op::Refuse]) || !pre.iter().all(quiet) {
+                    continue;
+                }
+                let tests: Vec<String> = m.iter().map(|(p, _)| bare(&p.cond().print()).to_owned()).collect();
+                if tests.len() == ors.len() && tests.iter().all(|t| ors.contains(t)) {
+                    let chain = Op::If { arms: m.iter().map(|(p, b)| (p.cond(), b.clone())).collect(), els: None };
+                    *body.last_mut().expect("a match") = chain;
+                }
+            }
+        }
         // `if c {} else { y }`: `if !c { y }`.
         for op in x.iter_mut() {
             if let Op::If { arms, els } = op

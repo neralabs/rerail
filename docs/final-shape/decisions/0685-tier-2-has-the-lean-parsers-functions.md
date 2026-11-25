@@ -106,3 +106,15 @@ changed and how.
    no token: an open, a field, a retag) takes it untested: rr's `directive` arms take the `.` and their word as
    `self.implied()?` (`bump_as(k::DOT)` where the `.` is stored), as the lean parser's `statement`; `@`, `code`,
    `options`, `tag`, `fix`, `safe`, a `<` `>` pair and `()` likewise. `id` keeps its test, as the lean parser's.
+8. Arms joined across arms they exclude, and methods written in their one caller once short (`moves::joined`,
+   `G::late_inline`). Two arms of the same code with arms between join where none between passes the later's test,
+   or none passes the earlier's (`moves::disjoint`: the word at one place, of no common word, or one held scan's
+   close asked of no common word); the joined arm takes the place that keeps the order. Then a method the rewrites
+   made short (up to `INLINE_LINES`), called from one place, of no parameters, locals, depth or early `Ok`, and not
+   one leaf over a range (`moves::one_leaf_only`: the lean parser keeps `raw_line` and `json` as functions), is
+   written there, and its caller's arms joined again. `if A || B { x; match self.word() { A => …, B => …, _ =>
+   refuse } }` is an `if` chain, its `_` never reached; a take after `wrap` or a relabel takes untested. rr's
+   `literal` is now the lean parser's: a `(`'s close asked for `~` (the subject in parentheses), else the term and
+   then `if` a comparison operator `wrap`, the operator, the right term, `else if` `~` the pattern; `literal_tail`,
+   `paren_inner`, `io_directive`, `code_part`, `r_statement` and `block_statement` are written in their callers.
+   rr's calls form has 45 rules' functions, the lean parser's count, and two `list`s.
