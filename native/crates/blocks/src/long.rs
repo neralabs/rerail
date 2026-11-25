@@ -64,6 +64,23 @@ struct State {
 /// freed in a loop) then neither gives its pages back nor faults them in each time.
 const RESIDENT: usize = 16;
 
+/// The bytes of every long room's runs whose pages are in memory (taken, or emptied and kept): for the profile's
+/// account of a footprint, as `scratch::resident` is the stacks'.
+static IN_MEMORY: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// What the threads' long rooms hold in memory now (`IN_MEMORY`).
+pub fn resident() -> usize {
+    IN_MEMORY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Drop for Long {
+    fn drop(&mut self) {
+        let s = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
+        let kept = s.runs.iter().filter(|r| !r.given).count();
+        IN_MEMORY.fetch_sub(kept * RUN, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// The room's block and its runs: what a region holds to be freed from any thread.
 pub struct Long {
     block: Arc<Block>,
@@ -121,6 +138,7 @@ impl Long {
                 let r = s.runs.len() as u32;
                 assert!(self.run_at(r) + RUN <= self.block.reserved(), "a thread's long room is full: {} runs", r);
                 s.runs.push(Run { class: NONE, listed: false, given: false, live: 0, bump: 0, free: 0 });
+                IN_MEMORY.fetch_add(RUN, std::sync::atomic::Ordering::Relaxed);
                 r
             }
         };
@@ -128,6 +146,7 @@ impl Long {
         if s.runs[r as usize].given {
             // SAFETY: the run's own pages, given back when it was last emptied.
             unsafe { crate::mem::reuse_pages(self.base.add(at), RUN) };
+            IN_MEMORY.fetch_add(RUN, std::sync::atomic::Ordering::Relaxed);
         }
         s.runs[r as usize] = Run { class: class as u8, listed: true, given: false, live: 1, bump: 1, free: 0 };
         s.partial[class].push(r);
@@ -152,6 +171,7 @@ impl Long {
             if given {
                 // SAFETY: the run's own pages: no region of it is live.
                 unsafe { crate::mem::give_back(self.base.add(self.run_at(r)), RUN) };
+                IN_MEMORY.fetch_sub(RUN, std::sync::atomic::Ordering::Relaxed);
             }
             if run.listed {
                 s.partial[class].retain(|&x| x != r);
