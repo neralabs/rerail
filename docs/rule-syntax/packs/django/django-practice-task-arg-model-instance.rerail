@@ -29,15 +29,10 @@ TaskArgModelInstance(a, t, x) :- tam_task_call(c, t), tam_arg(c, a), tam_instanc
 .decl tam_send(m: symbol)
 tam_send("delay"). tam_send("apply_async"). tam_send("s"). tam_send("si").
 .decl tam_task_call(c: node, t: symbol)
+// The task is a def of a module the call's file reads, decorated as a task (`@shared_task`, `@app.task(...)`,
+// `@task`): the phase py_names hands the run's tasks on by module (dj_task_def, decision 0677).
 tam_task_call(c, x) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m), tam_send(m), sym_of(o, q),
-    qualname(f, q), tam_task_def(f), def_name(f, x).
-// tam_task_def(f): def f is decorated as a task: `@shared_task`, `@app.task(...)`, `@task`.
-.decl tam_task_def(f: node)
-tam_task_def(f) :- kind(f, "function_definition"), decorator(f, e), unparen(e, m), tam_task_decorator(m).
-.decl tam_task_decorator(e: node)
-tam_task_decorator(e) :- attr_of(e, _, "task").
-tam_task_decorator(e) :- sym_of(e, q), (split_dot(q, _, "task") ; split_dot(q, _, "shared_task")).
-tam_task_decorator(e) :- kind(e, "call"), field(e, "function", f), tam_task_decorator(f).
+    docof(c, d), doc(d, p, _), py_names__reads_at(p, mq), py_names__dj_task_def(mq, q), split_dot(q, _, x).
 
 // tam_arg(c, a): a is an argument the task receives: delay's and s's arguments, apply_async's args/kwargs items.
 .decl tam_arg(c: node, a: node)

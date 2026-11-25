@@ -149,12 +149,18 @@ dj_model_ref(c, mq, m) :- class_def(c, mq), docof(c, d), doc(d, p, _), py_names_
 // declares a field, a query expression's `output_field` aside (dj_model_class_is, by symbol alone).
 //   from shop.models import Book; Book.objects.all()    dj_model_named(<Book>, "shop.models.Book")
 .decl dj_model_named(e: node, mq: symbol)
-dj_model_named(e, mq) :- dj_model_ref(e, mq, _), dj_model_base(mq).
-dj_model_named(e, mq) :- dj_model_ref(e, mq, m), py_names__ancestor(m, mq, b), dj_model_base(b).
-dj_model_named(e, mq) :- dj_model_ref(e, mq, m), py_names__member_call(m, mq, x, f), x != "output_field",
-    split_dot(f, fm, t), dj_field_module(fm), (suffix("Field", t) ; dj_relation_class(t)), !dj_expression_named(e, mq).
-.decl dj_expression_named(e: node, mq: symbol)
-dj_expression_named(e, mq) :- dj_model_ref(e, mq, m), py_names__ancestor(m, mq, b),
+dj_model_named(e, mq) :- dj_model_ref(e, mq, _), docof(e, d), dj_model_at(d, mq).
+// dj_model_at(d, mq): class mq of a module document d reads is a model, by the same tests: what a rule asks of a class
+// it knows by name alone (a proven type, a view's `model =`).
+.decl dj_model_at(d: number, mq: symbol)
+dj_model_at(d, mq) :- dj_class_at(d, _, mq), dj_model_base(mq).
+dj_model_at(d, mq) :- dj_class_at(d, m, mq), py_names__ancestor(m, mq, b), dj_model_base(b).
+dj_model_at(d, mq) :- dj_class_at(d, m, mq), py_names__member_call(m, mq, x, f), x != "output_field",
+    split_dot(f, fm, t), dj_field_module(fm), (suffix("Field", t) ; dj_relation_class(t)), !dj_expression_at(d, mq).
+.decl dj_class_at(d: number, m: symbol, mq: symbol)
+dj_class_at(d, m, mq) :- doc(d, p, _), py_names__reads_at(p, m), py_names__class(m, mq).
+.decl dj_expression_at(d: number, mq: symbol)
+dj_expression_at(d, mq) :- dj_class_at(d, m, mq), py_names__ancestor(m, mq, b),
     (prefix("django.db.models.expressions.", b) ; prefix("django.db.models.functions.", b) ;
     prefix("django.db.models.aggregates.", b) ; prefix("django.db.models.lookups.", b) ; dj_expression_base(b)).
 // dj_model_field(e, x, t): the model e names has field x of field class t, declared in its body or an ancestor's of
@@ -245,31 +251,9 @@ dj_model_method(c, f, x) :- dj_model(c), kind(f, "function_definition"), nearest
     within(f, b), def_name(f, x).
 
 // ---- querysets ---------------------------------------------------------------------------------------------------
-.decl dj_manager_name(x: symbol)
-dj_manager_name("objects"). dj_manager_name("_default_manager"). dj_manager_name("_base_manager").
-.decl dj_manager(e: node)
-dj_manager(e) :- attr_of(e, _, x), dj_manager_name(x).
-// dj_qs_method(m): QuerySet methods that return a QuerySet (Django's "Methods that return new QuerySets").
-.decl dj_qs_method(m: symbol)
-dj_qs_method("all"). dj_qs_method("filter"). dj_qs_method("exclude"). dj_qs_method("annotate").
-dj_qs_method("alias"). dj_qs_method("order_by"). dj_qs_method("reverse"). dj_qs_method("distinct").
-dj_qs_method("values"). dj_qs_method("values_list"). dj_qs_method("none"). dj_qs_method("union").
-dj_qs_method("intersection"). dj_qs_method("difference"). dj_qs_method("select_related").
-dj_qs_method("prefetch_related"). dj_qs_method("extra"). dj_qs_method("defer"). dj_qs_method("only").
-dj_qs_method("using"). dj_qs_method("select_for_update"). dj_qs_method("raw").
-.decl dj_qs(e: node)
-dj_qs(e) :- dj_manager(e).
-dj_qs(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs_method(m), dj_qs(o).
-dj_qs(p) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs(e).
+// dj_manager, dj_qs, dj_qs_root: python/django-shared (the phase py_names reads a view's queryset too).
 .decl dj_qs_call(c: node, m: symbol)
 dj_qs_call(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs(o).
-// dj_qs_root(q, r): queryset chain q starts at the manager of expression r (through parentheses, as dj_qs).
-//   Book.objects.filter(a=1).all()                  dj_qs_root(<the chain>, <Book>)
-//   (Book.objects.filter(a=1)).first()             dj_qs_root(<(Book.objects.filter(a=1))>, <Book>)
-.decl dj_qs_root(q: node, r: node)
-dj_qs_root(q, o) :- dj_manager(q), attr_of(q, o, _).
-dj_qs_root(q, r) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), dj_qs_root(o, r).
-dj_qs_root(p, r) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs_root(e, r).
 // dj_qs_model(q, r): queryset chain q starts at `M.objects` with r, in q's own file, naming M, a model class of the
 // run (dj_model_named), so its rows are M's: what a user reads of M it reads through r (dj_model_field, …).
 // dj_qs_class(q, mq): the same, by the model class's qualified name.
@@ -395,27 +379,37 @@ dj_message(m) :- kind(m, "call"), field(m, "function", f), sym_of(f, q), dj_mess
 // `tasks.notify_order`, `current_app`), other than a plain function of the run with no decorator, or a call on one
 // (`notify_order.s(1)`, `task.using(priority=1)`). A parameter or local (`client.delay(2.0)`) is not one.
 .decl dj_task_ref(t: node)
-dj_task_ref(t) :- sym_of(t, q), !dj_plain_def(q).
+dj_task_ref(t) :- sym_of(t, q), docof(t, d), !dj_plain_at(d, q).
 dj_task_ref(t) :- attr_of(t, o, _), unparen(o, u), dj_task_ref(u).
 dj_task_ref(t) :- kind(t, "call"), field(t, "function", f), attr_of(f, o, _), unparen(o, u), dj_task_ref(u).
-.decl dj_plain_def(q: symbol)
-dj_plain_def(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g, _).
+// dj_plain_at(d, q): q is a def with no decorator, of a module document d reads (the phase py_names' plain_def).
+.decl dj_plain_at(d: number, q: symbol)
+dj_plain_at(d, q) :- doc(d, p, _), py_names__reads_at(p, m), py_names__plain_def(m, q).
 // dj_task_waits_for_commit(c): c is `t.delay(...)`/`t.apply_async(...)` on a task t of the run whose decorator names
 // a task class `base=X`, where X's own (or inherited) apply_async or delay calls transaction.on_commit (pretix's
 // TransactionAwareTask); or the run's Celery app makes such a class every task's class (addons-server's AMOTask,
-// `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit.
+// `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit. The task, its class and the app are in
+// any file: the phase py_names joins them by symbol (dj_deferred_task, dj_app_defers), read through the modules the
+// call's file reads (decision 0677).
+.decl py_names__dj_deferred_task(m: symbol, f: symbol)
+.decl py_names__dj_app_defers(m: symbol)
+// py_names__dj_view_model(m, q, s): class q of module m, or an ancestor of the run, says `model = S` or
+// `queryset = S.objects…` in its body (get-handler-writes' view over S).
+.decl py_names__dj_view_model(m: symbol, q: symbol, s: symbol)
+// py_names__dj_task_def(m, f): function f of module m is decorated as a Celery task (`@shared_task`, `@app.task(...)`,
+// `@task`).
+.decl py_names__dj_task_def(m: symbol, f: symbol)
+// py_names__dj_anc_clean_call(m, q, x): a class of the run among class q's ancestors calls `self.x()`, x a clean_…
+// method (django-practice-clean-field-returns-value).
+.decl py_names__dj_anc_clean_call(m: symbol, q: symbol, x: symbol)
 .decl dj_task_waits_for_commit(c: node)
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
-    (m = "delay" ; m = "apply_async"), sym_of(o, q), kind(g, "function_definition"), qualname(g, q), decorator(g, e),
-    kind(e, "call"), call_arg(e, _, "base", bv), sym_of(bv, bq), dj_deferring_task_class(bq).
+    (m = "delay" ; m = "apply_async"), sym_of(o, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, mq),
+    py_names__dj_deferred_task(mq, q).
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
-    (m = "delay" ; m = "apply_async"), dj_app_defers(_).
-.decl dj_deferring_task_class(cq: symbol)
-dj_deferring_task_class(cq) :- mro_method(cq, m, h), (m = "delay" ; m = "apply_async"), kind(oc, "call"), within(oc, h),
-    field(oc, "function", of), sym_of(of, "django.db.transaction.on_commit").
-.decl dj_app_defers(k: node)
-dj_app_defers(k) :- kind(k, "call"), field(k, "function", f), sym_of(f, "celery.Celery"), call_arg(k, _, "task_cls", v),
-    sym_of(v, bq), dj_deferring_task_class(bq).
+    (m = "delay" ; m = "apply_async"), docof(c, d), dj_app_defers(d).
+.decl dj_app_defers(d: number)
+dj_app_defers(d) :- doc(d, p, _), py_names__reads_at(p, m), py_names__dj_app_defers(m).
 // dj_dispatch_in_failing_handler(c): side effect c sits in an except handler that always re-raises
 // (py_reraising_handler): the transaction rolls back, so an on_commit callback would never run (a failure mail or
 // error task belongs there).
@@ -430,22 +424,20 @@ dj_dispatch_result_used(c) :- dj_side_effect(c, _), kind(a, "assignment"), field
     def_frame(i, fr), i != l, earlier(l, i), !bind_only(i).
 
 // ---- views -------------------------------------------------------------------------------------------------------
-.decl dj_view_base(q: symbol)
-dj_view_base(q) :- class_base(_, q), prefix("django.views.", q).
-dj_view_base(q) :- class_base(_, q), prefix("django.contrib.auth.views.", q), suffix("View", q).
-dj_view_base(q) :- class_base(_, q), (prefix("rest_framework.views.", q) ; prefix("rest_framework.generics.", q) ;
-    prefix("rest_framework.viewsets.", q)).
-// dj_view_lib(q): a view class Django or DRF defines. Their `…Mixin` classes supply parts of a view and are not
-// views themselves.
-//   django.views.generic.TemplateView               dj_view_lib
-//   django.views.generic.base.ContextMixin          not dj_view_lib
-.decl dj_view_lib(q: symbol)
-dj_view_lib(q) :- dj_view_base(q), !suffix("Mixin", q).
-.decl dj_view_q(q: symbol)
-dj_view_q(q) :- dj_view_lib(q).
-dj_view_q(q) :- class_def(c, q), class_base(c, b), dj_view_q(b).
+// dj_view_class(c): class c is a view: among its ancestors (python/names' class_lib_anc, through the run's classes in
+// any file) is a view class Django or DRF defines (dj_lib_view). Their `…Mixin` classes supply parts of a view and
+// are not views themselves.
+//   django.views.generic.TemplateView               a view
+//   django.views.generic.base.ContextMixin          not a view
+// dj_drf_view_class(c): the same of a DRF view class.
 .decl dj_view_class(c: node)
-dj_view_class(c) :- class_def(c, q), class_base(c, b), dj_view_q(b).
+dj_view_class(c) :- dj_lib_view(c, _).
+.decl dj_drf_view_class(c: node)
+dj_drf_view_class(c) :- dj_lib_view(c, b), prefix("rest_framework.", b).
+.decl dj_lib_view(c: node, b: symbol)
+dj_lib_view(c, b) :- class_lib_anc(c, b), !suffix("Mixin", b), (prefix("django.views.", b) ;
+    prefix("django.contrib.auth.views.", b), suffix("View", b) ; prefix("rest_framework.views.", b) ;
+    prefix("rest_framework.generics.", b) ; prefix("rest_framework.viewsets.", b)).
 
 // ---- files and settings ------------------------------------------------------------------------------------------
 .decl dj_migration_doc(d: number)

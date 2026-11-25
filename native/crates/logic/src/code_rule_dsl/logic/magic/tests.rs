@@ -59,6 +59,39 @@ fn a_demand_joins_no_other_documents_nodes_by_a_value() {
     }
 }
 
+/// A demand answered through a coarser one keeps no literal that only the demanded atom tied to the key (decision
+/// 0677). `w`'s `un(v, c)` comes after the test of c, so it asks for `un` with both columns bound, which `out`'s
+/// `un(v, u)` answers through `un_bf`, keyed by v alone. The test of c (`kind`, `field`, `named`) reached v only by
+/// the value t of `whole(t, q)`: default-called-once's `magic_unparen_bf(v)`, which the split refused as a relation of
+/// one file joining two. Left out, the demand only widens; `whole` stays, and binds nothing of another file.
+#[test]
+fn a_coarser_demand_keeps_no_literal_only_the_demanded_atom_tied() {
+    let src = ".decl kind(n: node, k: symbol)\n.input kind\n.decl child(p: node, c: node, i: number)\n.input child\n\
+        .decl field(p: node, x: symbol, c: node)\n.input field\n.decl named(e: node, q: symbol)\n.input named\n\
+        .decl arg(f: node, v: node)\n.input arg\n.decl ftype(f: node, t: symbol)\n.input ftype\n\
+        .decl whole(t: symbol, q: symbol)\nwhole(\"Date\", \"now\").\n\
+        .decl un(e: node, m: node)\n.pragma \"magic-transform\" \"un\"\n\
+        un(e, e) :- kind(e, \"x\").\nun(e, m) :- kind(e, \"paren\"), child(e, i, 0), un(i, m).\n\
+        .decl w(f: node, v: node)\n\
+        w(f, v) :- ftype(f, t), arg(f, v), kind(c, \"call\"), field(c, \"function\", e), named(e, q), whole(t, q), un(v, c).\n\
+        .decl out(f: node, u: node)\n.output out\nout(f, u) :- ftype(f, _), arg(f, v), un(v, u), !w(f, v).\n";
+    for gate in [false, true] {
+        let v = parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+        let mut p = Pipeline::new("listed demand", v);
+        p.program(&mut Prune::default());
+        let mut demand = ProgramDemand { gate, ..ProgramDemand::default() };
+        p.program(&mut demand);
+        let v = p.finish().unwrap_or_else(|e| panic!("{e}")).0;
+        assert!(matches!(demand.outcome, Some(Ok(_))), "gate {gate}: {:?}", demand.outcome);
+        let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let magic: Vec<&String> = rules.iter().filter(|r| r.starts_with("magic_un_")).collect();
+        assert!(magic.iter().any(|r| r.contains("whole(")), "gate {gate}: the demand of `un` from `w`: {rules:#?}");
+        for r in magic {
+            assert!(!r.contains("named(") && !r.contains("field("), "gate {gate}: joins the call's file to v's by a value: {r}\n{rules:#?}");
+        }
+    }
+}
+
 /// T's `rdl.py sql` front over `src`: prune, demand (`mode`: `demand` is `.demand`'s magic sets, `adorn` the
 /// adornment of every derived relation, `gate` that with gated negations), prune.
 fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {
@@ -143,6 +176,13 @@ fn t_programs_transform_like_t() {
             // `glob` is a `.rerail` built-in, so the program's relation of that name reads as `glob_` (the goldens are
             // copies, kept as written).
             let expected = renamed.replace_all(&expected, |c: &regex::Captures| format!("{}glob_{}", &c[1], &c[2])).into_owned();
+            // A demand answered through a coarser one keeps no literal that only the demanded atom tied to its key
+            // (decision 0677, batch 6): T's `home_bbb`, answered through `home_ffb`, kept `rifrom(s, …)`, which reaches
+            // t by the value x alone and joins s's document to t's.
+            let expected = expected.replace(
+                "rule magic_home_ffb($t) :- magic_ifrom_bbff($t, $x), rifrom($s, $x, $m, $y)\n",
+                "rule magic_home_ffb($t) :- magic_ifrom_bbff($t, $x)\n",
+            );
             // T declares the gates of every trial its greedy search made, a rejected one's too (`done_islocal` in
             // `calls_rust.gate`); the version declares the gates of the program it made. A declaration no rule or
             // gate names is not compared, for a gate.

@@ -97,7 +97,7 @@ ghw_wrote(hq, y, what, p, l) :- ghw_write(_, h, _), o = min v : { ghw_write(v, h
 ghw_safe_action(kq, x) :- class_def(_, kq), (x = "get" ; x = "head").
 ghw_safe_action(kq, x) :- ghw_drf_q(kq), (x = "list" ; x = "retrieve").
 // ghw_drf_q(q): q is a rest_framework class, a vendored copy's `ViewSetMixin` (taiga's taiga.base.api), or a class of
-// the run deriving from one (a linear closure, as dj_view_q).
+// the run deriving from one (a linear closure).
 .decl ghw_drf_q(q: symbol)
 ghw_drf_q(q) :- class_base(_, q), prefix("rest_framework.", q).
 ghw_drf_q(q) :- class_base(_, q), split_dot(q, _, "ViewSetMixin").
@@ -128,7 +128,7 @@ ghw_write_method(m) :- (b = "create" ; b = "update" ; b = "delete" ; b = "get_or
 // knows, or an expression the type program proves is a model.
 .decl ghw_model_instance(r: node, h: node)
 ghw_model_instance(r, h) :- ghw_instance_class(r, h, _).
-ghw_model_instance(r, h) :- proven_type(r, t), class_def(k, t), dj_model(k), owner(r, h).
+ghw_model_instance(r, h) :- proven_type(r, t), owner(r, h), docof(r, d), dj_model_at(d, t).
 // ghw_instance_class(r, h, q): identifier r, in function h, holds an instance of model class q: python/django's
 // dj_instance_class (`self` in q's method, a name bound to `Q(...)` or to a fetch from Q's manager, awaited or not),
 // a name h assigns from `get_object_or_404(Q, …)` or `self.get_object()` in a view class over Q, or a for-loop
@@ -149,19 +149,16 @@ ghw_instance_value(v, h, q) :- asg(h, _, v, _), unparen(v, w), kind(w, "await"),
 ghw_fetch_call(c, h, q) :- kind(c, "call"), owner(c, h), field(c, "function", fn),
     sym_of(fn, "django.shortcuts.get_object_or_404"), posarg(c, 0, a), ghw_model_ref(a, q).
 ghw_fetch_call(c, h, q) :- kind(c, "call"), owner(c, h), field(c, "function", fn), attr_of(fn, s, "get_object"),
-    kind(s, "identifier"), text(s, "self"), nearest(h, k, scope), kind(k, "class_definition"), class_def(k, kq),
-    ghw_view_model(kq, q).
+    kind(s, "identifier"), text(s, "self"), nearest(h, k, scope), kind(k, "class_definition"), ghw_view_model(k, q).
 // ghw_model_ref(a, q): a names model class q, or a queryset over it.
 .decl ghw_model_ref(a: node, q: symbol)
-ghw_model_ref(a, q) :- sym_of(a, q), class_def(k, q), dj_model(k).
+ghw_model_ref(a, q) :- dj_model_named(a, q).
 ghw_model_ref(a, q) :- dj_qs_class(a, q).
-// ghw_view_model(kq, q): view class kq, or a base of the run, says `model = Q` or `queryset = Q.objects…`.
-.decl ghw_view_model(kq: symbol, q: symbol)
-ghw_view_model(kq, q) :- class_def(k, kq), ghw_view_attr(k, q).
-ghw_view_model(kq, q) :- class_def(_, kq), subclass(kq, b), class_def(k, b), ghw_view_attr(k, q).
-.decl ghw_view_attr(k: node, q: symbol)
-ghw_view_attr(k, q) :- kind(k, "class_definition"), (x = "model" ; x = "queryset"), rasg(k, x, v, _), unparen(v, e),
-    ghw_model_ref(e, q).
+// ghw_view_model(k, q): view class k, or a base of the run in any file, says `model = Q` or `queryset = Q.objects…`,
+// Q a model: the phase py_names hands each class's on by symbol (dj_view_model, decision 0677).
+.decl ghw_view_model(k: node, q: symbol)
+ghw_view_model(k, q) :- class_def(k, kq), docof(k, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__dj_view_model(m, kq, q), dj_model_at(d, q).
 // ghw_model_call(x, g, how): a call in def x, `o.m(...)` with o a model instance of class q, runs q's method m, g.
 // Only where the call program has no target for the call.
 .decl ghw_model_call(x: symbol, g: symbol, how: symbol)

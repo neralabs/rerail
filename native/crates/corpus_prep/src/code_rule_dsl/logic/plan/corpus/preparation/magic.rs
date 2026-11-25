@@ -963,6 +963,14 @@ fn keys_once<'v>(v: &'v Version, about: &About, demand: &[String]) -> Result<Opt
 /// extra that would unstratify the program), y's file joined to c's by the index i. A literal the program itself
 /// joins by a value (`magic_lookup_fbb(x, m)` beside a scope s) is the author's, and stays. Leaving a literal out
 /// only widens the demand. A key with no place is left as it is.
+///
+/// The same holds of a literal the key's binders need only through a value, where the rule ties it to the key through
+/// the demanded atom itself, or a literal after it. A demand answered through a coarser one (`unparen_bb` through
+/// `unparen_bf`) keeps the prefix that bound the dropped column: default-called-once's
+/// `magic_unparen_bf(v) :- field(c, "function", e), kind(c, "call"), sym_of(e, q), dco_w161_whole(t, q),
+/// dco_field(f, t), call_arg(f, -1, "default", v)` joined the call c's file to v's by t, c tied to v by the demanded
+/// `unparen(v, c)` alone. Such a literal is left out too unless it reads a key variable, and only while the positive
+/// literals kept still bind the key.
 fn drop_other_documents<'v>(v: &Version, r: RuleRef<'v>, key: &VarSet, pre: &[(M<'v>, bool)], needed: &[bool], ks: &mut [bool]) {
     let mut places = VarSet::new();
     let mut place = |a: AtomRef<'_>| {
@@ -983,23 +991,20 @@ fn drop_other_documents<'v>(v: &Version, r: RuleRef<'v>, key: &VarSet, pre: &[(M
             place(a);
         }
     }
-    let placed: Vec<VarSet> = pre
-        .iter()
-        .map(|(l, _)| {
-            let vars = l.vars(r);
-            vars.minus(&vars.minus(&places))
-        })
-        .collect();
+    let only_places = |vars: VarSet| vars.minus(&vars.minus(&places));
+    let placed: Vec<VarSet> = pre.iter().map(|(l, _)| only_places(l.vars(r))).collect();
+    // The places of each literal of the rule: the demanded atom's and those after it too.
+    let whole: Vec<VarSet> = r.body().map(|l| only_places(lit_vars(l))).collect();
     let from = key.minus(&key.minus(&places));
     if from.is_empty() {
         return;
     }
-    // The places the key reaches through the literals `with` keeps.
-    let reach = |with: &dyn Fn(usize) -> bool| {
+    // The places the key reaches through the place sets `with` keeps.
+    let reach = |sets: &[VarSet], with: &dyn Fn(usize) -> bool| {
         let mut reach = from.clone();
         loop {
             let mut grew = false;
-            for (i, p) in placed.iter().enumerate() {
+            for (i, p) in sets.iter().enumerate() {
                 if with(i) && !p.is_disjoint(&reach) && !p.is_subset(&reach) {
                     reach.extend(p);
                     grew = true;
@@ -1010,11 +1015,23 @@ fn drop_other_documents<'v>(v: &Version, r: RuleRef<'v>, key: &VarSet, pre: &[(M
             }
         }
     };
-    let (every, kept) = (reach(&|_| true), reach(&|i| ks[i]));
+    let (every, kept) = (reach(&whole, &|_| true), reach(&placed, &|i| ks[i]));
+    let before = ks.to_vec();
     for (i, p) in placed.iter().enumerate() {
-        if ks[i] && !needed[i] && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
+        let reads_key = !pre[i].0.vars(r).is_disjoint(key);
+        if ks[i] && (!needed[i] || !reads_key) && !p.is_empty() && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
             ks[i] = false;
         }
+    }
+    // The positive literals kept must still bind the key; otherwise the demand stays as it was.
+    let mut bound = VarSet::new();
+    for (i, (l, _)) in pre.iter().enumerate() {
+        if ks[i] && l.positive(v).is_some() {
+            bound.extend(&l.vars(r));
+        }
+    }
+    if !key.is_subset(&bound) {
+        ks.copy_from_slice(&before);
     }
 }
 

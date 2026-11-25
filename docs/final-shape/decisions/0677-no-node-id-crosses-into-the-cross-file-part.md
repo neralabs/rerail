@@ -912,6 +912,52 @@ The other packs' split tests (blade, complexity, django, javascript, next, node,
 rerail, rr, rust, sql, typescript, vue) find what they found before the demand change, so the change made no new
 crossing there.
 
+**Batch 6: Django, by the phase `py_names`, and one engine fix.** Django's rules walked the run's classes and defs by
+`class_def` and `qualname` in any file: a view's line (`dj_view_q`), a custom field's (`dco_field_q`), a task class's
+methods (`mro_method`), a form base's calls (`subclass`), a task's def. Each such walk joined the reading file's
+nodes with another file's, so the reader went to the cross part. Fixes 3a–3d moved the same walks into the phase,
+and this batch does it for the rest. Each file's rules turn their own defs, decorators and calls into symbols, the
+phase joins them by symbol, and hands them on under a module. A file reads them through `reads_at`, as it reads
+`ancestor`. A name is read as the file binds it or, if imported, by its qualified name (`sym_of ; qn`): in the
+phase, `sym_of` alone resolves no library name (`@shared_task`, `celery.Celery`, `transaction.on_commit`).
+
+The phase's new exports (`SETTINGS_BY_FOLDER` lists them):
+- `plain_def(m, q)`: a def with no decorator. `dj_task_ref` reads it per document (`dj_plain_at(d, q)`).
+- `dj_task_def(m, f)`: a def decorated as a Celery task (task-arg-model-instance).
+- `dj_deferred_task(m, f)` and `dj_app_defers(m)`: a task whose class's delay/apply_async calls
+  `transaction.on_commit`, and an app that makes such a class every task's (`dj_task_waits_for_commit`).
+  `dj_app_defers` is a fact of the whole run. It is handed on under every module, so a file's memo entry, keyed by
+  the rows of the modules it reads, is keyed by it too.
+- `dj_anc_clean_call(m, q, x)`: a form base of the run calls `self.clean_<x>()` (clean-field-returns-value).
+- `dj_view_model(m, q, s)`: a view or its base says `model = S` or `queryset = S.objects…` (get-handler-writes).
+  The queryset helpers (`dj_manager`, `dj_qs`, `dj_qs_root`) moved to python/django-shared for it, unchanged.
+
+The readers:
+- A view is a class with a Django or DRF view among its library ancestors (`class_lib_anc`, `dj_lib_view`).
+  `dj_view_q`, `dj_view_lib` and `dj_view_base` are gone, and so is function-decorator-on-method's `fdm_drf_q`.
+- A custom field class is read through `library_ancestor` (default-called-once).
+- A model by class name is `dj_model_at(d, q)`, keyed by the document. `dj_model_named` reads it, so the model test
+  has one definition. get-handler-writes asks it of a proven type and of a view's model.
+- settings-module-import resolves modules by name and document. Each file relays its imports, its
+  DJANGO_SETTINGS_MODULE values, its star imports and its INSTALLED_APPS. The cross part finds the settings
+  documents (`smi_doc`, `smi_named`), and the finding joins the file's import to that answer.
+
+The engine. **A coarser demand keeps no literal that only the demanded atom tied to its key** (`magic.rs`,
+`drop_other_documents`). `unparen(v, c)` with both columns bound is answered through `unparen_bf`. The magic rule
+kept the prefix that had bound c, and that prefix reached v only through a value:
+`magic_unparen_bf(v) :- field(c, "function", e), kind(c, "call"), sym_of(e, q), dco_w161_whole(t, q), dco_field(f, t),
+call_arg(f, -1, "default", v)`. With `dco_field` per file, the split refused it as a relation of one file joining two.
+Batch 3's rule now measures the key's reach over the whole rule, the demanded atom included. It also leaves out a
+needed literal that reads no key variable, as long as the positive literals kept still bind the key. Test:
+`a_coarser_demand_keeps_no_literal_only_the_demanded_atom_tied`. T's own `calls` program had the same rule:
+`magic_home_ffb(t) :- magic_ifrom_bbff(t, x), rifrom(s, x, m, y)`, where `home_bbb` is answered through `home_ffb`
+and `rifrom`'s scope s reaches t by the value x alone. The engine now leaves `rifrom` out, and
+`t_programs_transform_like_t` names that one line where it differs from T's golden. The golden file stays as T
+wrote it.
+
+Django's entries go from 31 to 2 (65 to 36 in all): `dar_non_atomic_wrapped`, and `rr_found_through` under
+`smi_named`. The second is the located-output item that stays open below. All 27 case tests pass.
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
