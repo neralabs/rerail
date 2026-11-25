@@ -1733,14 +1733,14 @@ unsafe impl VTabCursor for Cursor {
 /// A column whose values were pushed in order (a document's lines, columns and texts, by node) is its own index:
 /// searched in the cells, with no sort and no row list. Its distinct values are counted as it is pushed.
 pub struct Relation {
-    columns: Vec<String>,
+    /// Its columns' names, interned once a schema (`column_names`): a relation makes none of its own.
+    columns: &'static [&'static str],
     /// Rows pushed and not yet read, row-major: the first read moves them into `cells`.
     staged: std::sync::Mutex<Vector<i64>>,
     rows: usize,
     cells: OnceLock<super::rows::Rows>,
-    indexes: Box<[OnceLock<ColumnIndex>]>,
-    /// Per column, its distinct values while its values have come in nondecreasing order, else `None`.
-    ordered: Box<[Option<usize>]>,
+    /// Per column, its index and its order, in one list.
+    cols: Box<[Col]>,
     /// Every row's id in order, made when a column pushed in order is first probed for a slice of its rows
     /// (`sorted_rows`): such a column's rows of one value are consecutive, and need no index of their own.
     identity: OnceLock<Vector<u32>>,
@@ -1752,6 +1752,53 @@ pub struct Relation {
 /// (`rerail_blocks::order`): its rows in value order (then row), the value at every `FENCE`th, and each row's print of
 /// its value. A probe of one value reads the fences, then its span's prints, eight a word, and only the rows whose
 /// print is the value's: about one row read where a bisection read eight, each a decode of its sealed chunk.
+/// A relation's column: its index (made when it is first probed), and its distinct values while its values have come
+/// in nondecreasing order, else `None`.
+struct Col {
+    index: OnceLock<ColumnIndex>,
+    ordered: Option<usize>,
+}
+impl Col {
+    fn of(ordered: Option<usize>) -> Self {
+        Col { index: OnceLock::new(), ordered }
+    }
+}
+
+/// `columns` interned: one list a schema, made once in the process and never freed (an append-only interner of the
+/// engine's own names, as its atoms' are). A relation's columns were a `Vec` of a `String` each, `1 + k` allocations
+/// a relation, and a chunk makes millions of relations.
+fn column_names<S: AsRef<str>>(columns: &[S]) -> &'static [&'static str] {
+    use std::hash::{BuildHasher, Hasher};
+    type Names = &'static [&'static str];
+    thread_local! { static NEAR: std::cell::RefCell<rustc_hash::FxHashMap<u64, Names>> = Default::default(); }
+    static ALL: std::sync::Mutex<Option<rustc_hash::FxHashMap<u64, Vec<Names>>>> = std::sync::Mutex::new(None);
+    let same = |n: Names| n.len() == columns.len() && n.iter().zip(columns).all(|(a, b)| *a == b.as_ref());
+    let mut h = rustc_hash::FxBuildHasher.build_hasher();
+    for c in columns {
+        h.write(c.as_ref().as_bytes());
+        h.write_u8(0xff);
+    }
+    let key = h.finish();
+    // The thread's list of the names' hash, else the process's (a hash two lists share: the process's alone).
+    if let Ok(Some(n)) = NEAR.try_with(|m| m.borrow().get(&key).copied().filter(|&n| same(n))) {
+        return n;
+    }
+    let n = {
+        let mut all = ALL.lock().unwrap_or_else(|e| e.into_inner());
+        let lists = all.get_or_insert_with(Default::default).entry(key).or_default();
+        match lists.iter().copied().find(|&n| same(n)) {
+            Some(n) => n,
+            None => {
+                let n: Names = Box::leak(columns.iter().map(|c| &*Box::leak(Box::<str>::from(c.as_ref()))).collect::<Vec<&'static str>>().into_boxed_slice());
+                lists.push(n);
+                n
+            }
+        }
+    };
+    let _ = NEAR.try_with(|m| m.borrow_mut().insert(key, n));
+    n
+}
+
 struct ColumnIndex {
     /// The rows in value order; empty for a column pushed in order (`Relation::ordered`): its rows are their order.
     ids: Vector<u32>,
@@ -1776,12 +1823,11 @@ impl Relation {
     pub fn new(columns: &[&str]) -> Self {
         assert!(!columns.is_empty());
         Self {
-            columns: columns.iter().map(|c| (*c).to_owned()).collect(),
+            columns: column_names(columns),
             staged: Default::default(),
             rows: 0,
             cells: OnceLock::new(),
-            indexes: columns.iter().map(|_| OnceLock::new()).collect(),
-            ordered: columns.iter().map(|_| Some(0)).collect(),
+            cols: columns.iter().map(|_| Col::of(Some(0))).collect(),
             identity: OnceLock::new(),
             grows: false,
         }
@@ -1823,18 +1869,17 @@ impl Relation {
         let k = columns.len();
         let mut parts = Vec::new();
         for (r, range) in runs {
-            assert_eq!(&r.columns, columns, "a run of a relation of other columns");
+            assert!(r.columns.len() == columns.len() && r.columns.iter().zip(columns).all(|(a, b)| a == b), "a run of a relation of other columns");
             parts.extend(r.cells().runs(range.start as u32, range.end as u32));
         }
         let cells = super::rows::Rows::of_parts(k, super::rows::Life::Source, parts);
         let rows = cells.rows();
         Relation {
-            columns: columns.to_vec(),
+            columns: column_names(columns),
             staged: Default::default(),
             rows,
             cells: OnceLock::from(cells),
-            indexes: columns.iter().map(|_| OnceLock::new()).collect(),
-            ordered: columns.iter().map(|_| None).collect(),
+            cols: columns.iter().map(|_| Col::of(None)).collect(),
             identity: OnceLock::new(),
             grows: true,
         }
@@ -1849,12 +1894,11 @@ impl Relation {
         let k = self.columns.len();
         let base = self.cells();
         let mut r = Relation {
-            columns: self.columns.clone(),
+            columns: self.columns,
             staged: Default::default(),
             rows: self.rows,
             cells: OnceLock::from(base.shared(self.rows)),
-            indexes: self.columns.iter().map(|_| OnceLock::new()).collect(),
-            ordered: self.ordered.clone(),
+            cols: self.cols.iter().map(|c| Col::of(c.ordered)).collect(),
             identity: OnceLock::new(),
             grows: true,
         };
@@ -1903,7 +1947,7 @@ impl Relation {
         // The last row read where it is: staged, or (pushed after a read) in the block.
         let staged = self.staged.get_mut().unwrap_or_else(|e| e.into_inner());
         let cells = self.cells.get();
-        for (c, o) in self.ordered.iter_mut().enumerate() {
+        for (c, o) in self.cols.iter_mut().map(|c| &mut c.ordered).enumerate() {
             let prev = last.map(|l| cells.map_or_else(|| staged[l * k + c], |r| r.get(l as u32, c)));
             *o = match (*o, prev) {
                 (Some(d), None) => Some(d + 1),
@@ -1917,7 +1961,7 @@ impl Relation {
             None => staged.extend_from_slice(row),
         }
         self.rows += 1;
-        self.indexes.iter_mut().for_each(|i| *i = OnceLock::new());
+        self.cols.iter_mut().for_each(|c| c.index = OnceLock::new());
         self.identity = OnceLock::new();
     }
     /// Column `c` of rows `range`, resolved once where they lie in one part (`Rows::range_reader`).
@@ -1937,12 +1981,12 @@ impl Relation {
         })
     }
     fn index(&self, column: usize) -> &ColumnIndex {
-        crate::code_rule_dsl::logic::profile::once(&self.indexes[column], "relation: a column's index built", || {
+        crate::code_rule_dsl::logic::profile::once(&self.cols[column].index, "relation: a column's index built", || {
             use super::rows::collect_in;
             use rerail_blocks::order::print_vals;
             let home = self.cells().home();
             let print = |v: i64| print_vals(std::iter::once(v));
-            if let Some(distinct) = self.ordered[column] {
+            if let Some(distinct) = self.cols[column].ordered {
                 // Its rows are its order: the fences and prints of its values as they lie, each read once.
                 let vals = (0..self.len()).map(|r| self.value(r, column));
                 let prints = collect_in(home.as_ref(), vals.map(print));
@@ -1962,7 +2006,7 @@ impl Relation {
     }
     /// Whether `column`'s values were pushed in order, so that it is its own index.
     pub fn ordered(&self, column: usize) -> bool {
-        self.ordered[column].is_some()
+        self.cols[column].ordered.is_some()
     }
     /// The positions in `column`'s order of the rows holding `value` (`rerail_blocks::order::find`: the fences, then
     /// the span's prints, then the rows whose print is the value's).
@@ -2019,7 +2063,7 @@ fn first_from(n: usize, from: usize, below: impl Fn(usize) -> bool) -> usize {
 impl Source for Relation {
     fn revision(&self)->Option<u64> {Some(0)}
     fn columns(&self) -> Vec<String> {
-        self.columns.clone()
+        self.columns.iter().map(|c| (*c).to_owned()).collect()
     }
     fn len(&self) -> usize {
         self.rows
@@ -2028,7 +2072,7 @@ impl Source for Relation {
         self.cells().in_block()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
-        let distinct = self.ordered[column].unwrap_or_else(|| self.index(column).distinct);
+        let distinct = self.cols[column].ordered.unwrap_or_else(|| self.index(column).distinct);
         let one = self.len().div_ceil(distinct.max(1));
         if batch { one * 8 } else { one }
     }
@@ -2068,7 +2112,7 @@ impl Source for Relation {
     /// collected its rows into a list, and the join copied it into another: 6,400 samples of a cold PostHog run.
     fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
         let range = self.equal(column, value);
-        if self.ordered[column].is_some() {
+        if self.cols[column].ordered.is_some() {
             let ids = self.identity.get_or_init(|| (0..self.len() as u32).collect());
             return Some(&ids[range]);
         }
@@ -2094,7 +2138,7 @@ impl Source for Relation {
     }
     /// A column pushed in order of the rows' ids: its rows a range, no identity list made.
     fn sorted_range(&self, column: usize, value: i64) -> Option<Range<u32>> {
-        self.ordered[column].is_some().then(|| {
+        self.cols[column].ordered.is_some().then(|| {
             let r = self.equal(column, value);
             r.start as u32..r.end as u32
         })
@@ -2105,7 +2149,7 @@ impl Source for Relation {
     /// A column pushed in order whose values are each one row (`ordered`: as many distinct values as rows) is a key:
     /// a view of the relation's rows probes it here (`setfix::hold_view_in_place`), with no index of its own.
     fn keys_rows(&self, column: usize) -> bool {
-        self.ordered[column] == Some(self.len())
+        self.cols[column].ordered == Some(self.len())
     }
     /// The row of `value` in a key column (`keys_rows`): a search of the cells, as `lookup`'s.
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
