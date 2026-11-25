@@ -14,7 +14,7 @@
  */
 import { relative, sep } from "node:path";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
-import { gitFirstSightListing, GitReads, gitTrackedIgnoredReader, gitUnmergedReader } from "../git.js";
+import { gitFirstSightListing, GitReads, gitTrackedIgnoredReader, gitUnmergedReader, type HeadListing } from "../git.js";
 import { readGitHead } from "../git-head-reader.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 import type { TreeWatch } from "./tree-watch.js";
@@ -74,10 +74,10 @@ export interface WorktreeFindings {
    */
   readonly listed: ReadonlyMap<string, readonly string[] | undefined>;
   /**
-   * Listed with `listed`, for the worktree's own checkout: the files whose text may differ from `head`
-   * (`FirstSightListing.notAtHead`); absent where Git did not say which.
+   * Listed with `listed`, for the worktree's own checkout: which files hold what `head` holds and which may differ
+   * (`FirstSightListing.byHead`); absent where Git did not say.
    */
-  readonly notAtHead: ReadonlyMap<string, readonly string[]>;
+  readonly byHead: ReadonlyMap<string, HeadListing>;
   /** Subtrees the walk could not read. */
   readonly failedRoots: ReadonlySet<string>;
   /**
@@ -291,7 +291,7 @@ interface Departed {
 
 /** What the last read of a worktree found, kept to hand to sessions while nothing tells of a change there. */
 interface Kept {
-  readonly findings: Omit<WorktreeFindings, "texts" | "listed" | "notAtHead" | "inner" | "changes">;
+  readonly findings: Omit<WorktreeFindings, "texts" | "listed" | "byHead" | "inner" | "changes">;
   /** Whether the read left something to try again: a folder it could not list, or a file it could not read. */
   readonly retry: boolean;
   /** The other worktrees and sessions' checkouts inside it that the read left out (`leftOut`), one per line. */
@@ -453,21 +453,21 @@ function retried(scan: SourceScan): boolean {
 }
 
 /** What a walk's Git lists of a worktree's checkouts for a session's first sight of it (`WorktreeFindings`). */
-type FirstSightListings = Pick<WorktreeFindings, "listed" | "notAtHead">;
+type FirstSightListings = Pick<WorktreeFindings, "listed" | "byHead">;
 
 /**
- * What Git lists as modified or untracked in each of `checkouts`, and in the worktree's own at `root` the files whose
- * text may differ from `head` (`gitFirstSightListing`): `HEAD` is read for that checkout only.
+ * What Git lists as modified or untracked in each of `checkouts`, and in the worktree's own at `root` which files hold
+ * what `head` holds (`gitFirstSightListing`): `HEAD` is read for that checkout only.
  */
 async function listChanged(git: GitReads, root: string, checkouts: ReadonlySet<string>, head: string | undefined): Promise<FirstSightListings> {
   const listed = new Map<string, readonly string[] | undefined>();
-  const notAtHead = new Map<string, readonly string[]>();
+  const byHead = new Map<string, HeadListing>();
   for (const checkout of checkouts) {
     const listing = await git.run(signal => gitFirstSightListing(checkout, checkout === root ? head : undefined, { signal }));
     listed.set(checkout, listing.changed);
-    if (listing.notAtHead !== undefined) notAtHead.set(checkout, listing.notAtHead);
+    if (listing.byHead !== undefined) byHead.set(checkout, listing.byHead);
   }
-  return { listed, notAtHead };
+  return { listed, byHead };
 }
 
 /**
@@ -486,7 +486,7 @@ function firstSeenIn(walking: ReadonlyMap<Watching, WatcherWalk>): Set<string> {
 }
 
 /**
- * `WorktreeFindings.listed` and `notAtHead` of the worktree at `root` whose `HEAD` the walk read as `head`: listed when
+ * `WorktreeFindings.listed` and `byHead` of the worktree at `root` whose `HEAD` the walk read as `head`: listed when
  * the walk shows a session it first (`firstSeen`).
  */
 async function listedFor(
@@ -495,7 +495,7 @@ async function listedFor(
   firstSeen: ReadonlySet<string>,
   checkouts: ReadonlySet<string>,
 ): Promise<FirstSightListings> {
-  return firstSeen.has(root) ? await listChanged(git, root, checkouts, head) : { listed: new Map(), notAtHead: new Map() };
+  return firstSeen.has(root) ? await listChanged(git, root, checkouts, head) : { listed: new Map(), byHead: new Map() };
 }
 
 /** The list `learnt` stored for the registry, read with no Git, which the walk's list takes in the same synchronous run. */
@@ -1077,7 +1077,7 @@ export class WorktreeWalks {
     const readAt = Date.now();
     const result = await this.#readWorktree(root, begun, state);
     if (result === undefined) return undefined;
-    const { texts: _texts, listed: _listed, notAtHead: _notAtHead, changes: _changes, ...findings } = result.findings;
+    const { texts: _texts, listed: _listed, byHead: _byHead, changes: _changes, ...findings } = result.findings;
     if (this.#watched(root)) {
       this.#kept.set(root, {
         findings, retry: retried(result.scan), skipped: state.skipped, look: state.look, readAt, trackedIgnored: state.trackedIgnored,

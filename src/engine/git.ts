@@ -1793,62 +1793,83 @@ export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadO
   return modifiedOrUntracked(await gitModifiedOrUntrackedListing(cwd, options));
 }
 
+/**
+ * What a first sight's listings say of a checkout's files against the commit `head` (`gitFirstSightListing`), each file
+ * by the name Git printed.
+ */
+export interface HeadListing {
+  /**
+   * The files whose text may differ from what `head` holds, named by three listings: those `ls-files --modified
+   * --others` printed, which compares each file with the index; those whose index entry differs from `head`'s tree
+   * (`diff-index --cached`); and those whose index entry is marked assume-unchanged or skip-worktree, or is unmerged
+   * (`indexEntries`), which the first takes as the index holds them whatever they hold.
+   */
+  readonly notAtHead: ReadonlySet<string>;
+  /**
+   * The files that hold what `head` holds: each index entry `ls-files -v` printed with neither mark that `notAtHead`
+   * does not name. Only Git's own names are here. A file Git ignores and does not track is not, though `--others` left
+   * it out, nor is a file a walk finds under a name other than the index's: another case where Git ignores case
+   * (`core.ignorecase`), another Unicode normal form where Git composes the names a Mac hands it
+   * (`core.precomposeunicode`).
+   */
+  readonly atHead: ReadonlySet<string>;
+}
+
 /** What a walk lists of a checkout for a session that sees it for the first time (`gitFirstSightListing`). */
 export interface FirstSightListing {
   /** The files `gitModifiedOrUntrackedPaths` answers. */
   readonly changed: string[] | undefined;
   /**
-   * The files whose text may differ from what the commit `head` holds, named by three listings: those `ls-files
-   * --modified --others` printed, which compares each file with the index; those whose index entry differs from
-   * `head`'s tree (`diff-index --cached`); and those whose index entry is marked assume-unchanged or skip-worktree
-   * (`markedListing`), which the first leaves out whatever they hold. Every other file holds what the index holds, and
-   * the index what `head` holds. Undefined when any listing failed, ran past its time limit or passed
-   * `MAX_LISTED_PATH_BYTES`, without `head`, and when `HEAD`'s newest move is a commit (`headMovedOnlyByCommits` with no
-   * `from`): that commit may hold what a command wrote. A reflog Git cannot read counts as a newest move that is no
-   * commit, as the session's reading of `HEAD`'s moves takes it. `markedListing` prints the whole index under that
-   * bound (64 MiB, about a million paths), so the checkout of a larger index goes to Git's reading.
+   * What the listings say of each file against the commit `head` (`HeadListing`). Undefined when any listing failed,
+   * ran past its time limit or passed `MAX_LISTED_PATH_BYTES`, without `head`, and when `HEAD`'s newest move is a
+   * commit (`headMovedOnlyByCommits` with no `from`): that commit may hold what a command wrote. A reflog Git cannot
+   * read counts as a newest move that is no commit, as the session's reading of `HEAD`'s moves takes it. `ls-files -v`
+   * prints the whole index under that bound (64 MiB, about a million paths), so the checkout of a larger index goes to
+   * Git's reading.
    */
-  readonly notAtHead: string[] | undefined;
+  readonly byHead: HeadListing | undefined;
 }
 
-/**
- * The path of an entry `ls-files -v` printed as `<tag> <path>` whose tag is not `H` (tracked, with neither mark): `h`
- * assume-unchanged, `S` skip-worktree, `s` both, and `M` or `m` unmerged, which `ls-files --modified` names already.
- */
-function markedPath(entry: string): string[] {
-  return entry.startsWith("H ") ? [] : [entry.slice(entry.indexOf(" ") + 1)];
-}
+/** The index's entries by one `ls-files -v`: `plain` those Git printed as `H` (tracked, with neither mark), `marked` the rest. */
+type IndexEntries = { readonly ended: "printed"; readonly plain: string[]; readonly marked: string[] } | { readonly ended: "failed" | "timed-out" };
 
 /**
- * The files of the checkout at `cwd` whose index entry is marked assume-unchanged or skip-worktree (`markedPath`), by
- * one `ls-files -v` of the whole index: Git prints no count or list of the marked entries alone.
+ * The entries of the checkout at `cwd`'s index, each printed as `<tag> <path>`: `H` tracked with neither mark, `h`
+ * assume-unchanged, `S` skip-worktree, `s` both, `M` or `m` unmerged. Git prints no count or list of the marked entries
+ * alone, so this is the whole index.
  */
-async function markedListing(cwd: string, options: GitReadOptions): Promise<ChangedPathsListing> {
+async function indexEntries(cwd: string, options: GitReadOptions): Promise<IndexEntries> {
   const listing = listedPaths(await readGit(cwd, ["ls-files", "-z", "-v"], options.signal, MAX_LISTED_PATH_BYTES));
-  return listing.ended === "printed" ? { ended: "printed", paths: listing.paths.flatMap(markedPath) } : listing;
+  if (listing.ended !== "printed") return listing;
+  const plain: string[] = [];
+  const marked: string[] = [];
+  for (const entry of listing.paths) (entry.startsWith("H ") ? plain : marked).push(entry.slice(entry.indexOf(" ") + 1));
+  return { ended: "printed", plain, marked };
 }
 
 /**
- * The files of the checkout at `cwd` whose index entry differs from the commit `head` (`diff-index --cached`), then
- * those marked so that `ls-files --modified` leaves them out (`markedListing`): ended as the first that did not print.
+ * `HeadListing` of the checkout at `cwd` against the commit `head`, given what `ls-files --modified --others` printed
+ * (`changed`): undefined once `diff-index --cached` or `ls-files -v` did not print.
  */
-async function indexListings(cwd: string, head: string, options: GitReadOptions): Promise<ChangedPathsListing> {
+async function headListing(cwd: string, head: string, changed: readonly string[], options: GitReadOptions): Promise<HeadListing | undefined> {
   const staged = listedPaths(await readGit(cwd, ["diff-index", "-z", "--cached", "--name-only", head, "--"], options.signal, MAX_LISTED_PATH_BYTES));
-  if (staged.ended !== "printed") return staged;
-  const marked = await markedListing(cwd, options);
-  return marked.ended === "printed" ? { ended: "printed", paths: [...staged.paths, ...marked.paths] } : marked;
+  if (staged.ended !== "printed") return undefined;
+  const entries = await indexEntries(cwd, options);
+  if (entries.ended !== "printed") return undefined;
+  const notAtHead = new Set([...changed, ...staged.paths, ...entries.marked]);
+  return { notAtHead, atHead: new Set(entries.plain.filter(path => !notAtHead.has(path))) };
 }
 
 /**
- * The files of the checkout at `cwd` that `gitModifiedOrUntrackedPaths` answers, and those whose text may differ from
- * the commit `head` (`FirstSightListing`): one Git process, and three more once the first printed and `head` is known.
+ * The files of the checkout at `cwd` that `gitModifiedOrUntrackedPaths` answers, and what the listings say of each
+ * against the commit `head` (`FirstSightListing`): one Git process, and three more once the first printed and `head`
+ * is known.
  */
 export async function gitFirstSightListing(cwd: string, head: string | undefined, options: GitReadOptions = {}): Promise<FirstSightListing> {
   const listing = await gitModifiedOrUntrackedListing(cwd, options);
   const changed = modifiedOrUntracked(listing);
-  if (listing.ended !== "printed" || head === undefined || await headMovedOnlyByCommits(cwd, undefined, options)) return { changed, notAtHead: undefined };
-  const fromIndex = await indexListings(cwd, head, options);
-  return { changed, notAtHead: fromIndex.ended === "printed" ? [...listing.paths, ...fromIndex.paths] : undefined };
+  if (listing.ended !== "printed" || head === undefined || await headMovedOnlyByCommits(cwd, undefined, options)) return { changed, byHead: undefined };
+  return { changed, byHead: await headListing(cwd, head, listing.paths, options) };
 }
 
 /**

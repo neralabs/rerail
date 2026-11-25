@@ -276,7 +276,7 @@ vi.mock("../../../src/engine/git.js", async importOriginal => {
     },
     gitFirstSightListing: async (checkout: string, head: string | undefined, options?: Git.GitReadOptions): Promise<Git.FirstSightListing> => {
       listings.calls.push(`walk ${checkout}`);
-      return taken(listings.late, checkout) ? { changed: undefined, notAtHead: undefined } : await actual.gitFirstSightListing(checkout, head, options);
+      return taken(listings.late, checkout) ? { changed: undefined, byHead: undefined } : await actual.gitFirstSightListing(checkout, head, options);
     },
     gitModifiedOrUntrackedListing: async (checkout: string, options?: Git.GitReadOptions): Promise<Git.ChangedPathsListing> => {
       listings.calls.push(`again ${checkout}`);
@@ -5551,9 +5551,10 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
   /**
    * A bridge on `twoBranches`, first `prepare`d, whose session opened before Git added a worktree of `other`; it walks
    * the worktree once `roots` holds it, and the worktree owns its files once `roots` or `owned` holds it. A checkout in
-   * `owned` owns its files before one in `roots`. `named` gives a file of the worktree as the session names it.
+   * `owned` owns its files before one in `roots`. `named` gives a file of the worktree as the session names it. `extra`
+   * replaces what the auditor answers beyond its checkouts.
    */
-  async function worktreeAddedLater(prepare: (root: string) => Promise<void> = async () => undefined) {
+  async function worktreeAddedLater(prepare: (root: string) => Promise<void> = async () => undefined, extra: Partial<CodeRuleAuditor> = {}) {
     const root = await twoBranches();
     await prepare(root);
     const roots: string[] = [];
@@ -5561,6 +5562,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
     const bridge = createBridge(root, {
       ...auditor(auditGeneratedEdits),
+      ...extra,
       sourceRoot: path => [...owned, ...roots].find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
       worktreeRoots: () => roots,
     }, { worktreeWalkGapMs: 0 });
@@ -5835,6 +5837,55 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     // session starts no reading of Git's verdicts, which would start another.
     expect({ deleted: editModes(auditGeneratedEdits).filter(([path]) => path === named("src/notes.py")), blobs: started("cat-file"), moves: started("reflog") })
       .toEqual({ deleted: [], blobs: 0, moves: 1 });
+  });
+
+  /** A `prepare` of `worktreeAddedLater` that has Git ignore `pattern` in every worktree of the repository. */
+  function excluding(pattern: string): (root: string) => Promise<void> {
+    return async root => {
+      await mkdir(join(root, ".git", "info"), { recursive: true });
+      await appendFile(join(root, ".git", "info", "exclude"), `${pattern}\n`);
+    };
+  }
+
+  // A person who turned 'Follow .gitignore' off has the files Git ignores read: the auditor here ignores none, as such a
+  // lane's `ignoresPath` answers. Git's listings for a first sight leave out every file Git ignores and the index does
+  // not hold, so only a file Git names as holding `HEAD`'s text may be taken for Git's.
+  it("records a source Git ignores that the session's command wrote in a worktree before its first walk, where the session reads ignored files", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater(excluding("src/ignored.py"));
+    await shellInWorktree(bridge, async () => {
+      await writeFile(join(worktree, "src", "ignored.py"), "violation\n");
+      roots.push(worktree);
+    }, worktree);
+    expect(editPaths(auditGeneratedEdits)).toContain(named("src/ignored.py"));
+  });
+
+  // With 'Follow .gitignore' on, no walk observes a file Git ignores, a new worktree's as any other's; the command's file
+  // Git does not ignore is recorded, so the case sees the take happen.
+  it("records only the file Git does not ignore of two the session's command wrote in a worktree before its first walk, where the session follows .gitignore", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater(excluding("src/ignored.py"), {
+      ignoresPath: (path, directory) => !directory && basename(path) === "ignored.py",
+    });
+    await shellInWorktree(bridge, async () => {
+      await writeFile(join(worktree, "src", "ignored.py"), "violation\n");
+      await writeFile(join(worktree, "src", "kept.py"), "violation\n");
+      roots.push(worktree);
+    }, worktree);
+    expect(editPaths(auditGeneratedEdits)).toEqual([named("src/kept.py")]);
+  });
+
+  // Where Git ignores case (`core.ignorecase`, set on every Windows and macOS volume that does), it takes `src/A.py` for
+  // the index's `src/a.py`: `ls-files --others` leaves it out and `--modified` names it as the index does. On a volume
+  // that keeps case apart (Linux) the setting alone makes Git do the same.
+  it("records a file the session's command renamed to another case and changed in a worktree before its first walk, where Git ignores case", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater(async root => {
+      git(root, "config", "core.ignorecase", "true");
+    });
+    await shellInWorktree(bridge, async () => {
+      await rename(join(worktree, "src", "a.py"), join(worktree, "src", "A.py"));
+      await writeFile(join(worktree, "src", "A.py"), "old\nviolation\nmine\n");
+      roots.push(worktree);
+    }, worktree);
+    expect(editPaths(auditGeneratedEdits)).toContain(named("src/A.py"));
   });
 
   it("walks a worktree inside the session's folder once", async () => {

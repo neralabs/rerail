@@ -30,6 +30,7 @@ import {
   readGitBlobs,
   type ChangedPathsListing,
   type CrlfRule,
+  type HeadListing,
 } from "../git.js";
 import { readGitCrlfPaths } from "../git-crlf-reader.js";
 import { readGitHead } from "../git-head-reader.js";
@@ -928,45 +929,47 @@ function takeCheckouts(
 }
 
 /**
- * Puts into `listed` (`WalkStart.listedAtFirstSight`) the files whose text may differ from `HEAD` that the walk first
- * showing a session a worktree listed of its own checkout (`WorktreeFindings.notAtHead`), where Git said which. Git lists
- * an unmerged path as modified, so a conflict is among the files read.
+ * Puts into `listed` (`WalkStart.listedAtFirstSight`) what the walk first showing a session a worktree listed of its
+ * own checkout (`WorktreeFindings.byHead`), where Git said it. Git lists an unmerged path as modified, so a conflict is
+ * among the files read.
  */
-function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, ReadonlySet<string>>): void {
-  for (const [checkout, paths] of findings.notAtHead) listed.set(checkout, new Set(paths));
+function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, HeadListing>): void {
+  for (const [checkout, byHead] of findings.byHead) listed.set(checkout, byHead);
 }
 
 /**
  * Whether a file of the worktree at `root` (physical), named relative to it, holds Git's own text by the listings of
- * the walk that first shows it to a session (`WorktreeFindings.notAtHead`): a file of the worktree's own checkout that
- * no listing names, that the walk read, and whose text the evaluator does not hold as the session's (`held`).
- * `#firstSightVerdicts` gives such a file that verdict without Git, and `#sortUnownedWrite` then drops it, so it changes
- * nothing the session holds, and its first sight leaves it to the snapshot rather than take it as a change. A file in
- * `held` is taken: Git can remove a worktree the session edited in and add one at its path again, and the first
- * sight's `log` audit of the file replaces the text the evaluator holds. None is where the listings did not print, or
- * in a checkout inside the worktree, whose files Git's reading judges.
+ * the walk that first shows it to a session (`WorktreeFindings.byHead`): a file of the worktree's own checkout that Git
+ * names, by the name the walk found, as holding what `HEAD` holds (`HeadListing.atHead`), that the walk read, and whose
+ * text the evaluator does not hold as the session's (`held`). `#firstSightVerdicts` gives such a file that verdict
+ * without Git, and `#sortUnownedWrite` then drops it, so it changes nothing the session holds, and its first sight
+ * leaves it to the snapshot rather than take it as a change. A file Git does not name so is taken, as at a first sight
+ * with no listing: one Git ignores, which a session not following `.gitignore` reads, and one under another name than
+ * the index's. A file in `held` is taken: Git can remove a worktree the session edited in and add one at its path
+ * again, and the first sight's `log` audit of the file replaces the text the evaluator holds. None is where the
+ * listings did not print, or in a checkout inside the worktree, whose files Git's reading judges.
  */
 function heldByGitAtFirstSight(root: string, findings: WorktreeFindings, held: ReadonlySet<string>): (path: string, source: ObservedSource) => boolean {
-  const listed = findings.notAtHead.get(root);
+  const listed = findings.byHead.get(root);
   if (listed === undefined) return () => false;
-  const named = new Set(listed);
   const inner = [...findings.checkouts].filter(checkout => checkout !== root).map(checkout => relative(root, checkout).split(sep).join("/"));
-  return (path, source) => source.readError === undefined && !named.has(path) && !held.has(path)
+  return (path, source) => source.readError === undefined && listed.atHead.has(path) && !held.has(path)
     && !inner.some(folder => path === folder || path.startsWith(`${folder}/`));
 }
 
 /**
- * Whether `edit`, of the file at `path` in its checkout, is one the walk's listings (`listed`) leave out: a file there
- * that holds what its index holds, where the index holds what `HEAD` holds. A deletion they leave out is of a path
+ * Whether `edit`, of the file at `path` in its checkout, is one the walk's listings (`listed`) say Git wrote: a file
+ * Git names as holding what `HEAD` holds (`HeadListing.atHead`). A deletion of a path they name nowhere is of one
  * neither the index nor `HEAD` has, which a reading with no `HEAD` known before takes for Git's too (`removedByGit`).
  * Where the session knows a `HEAD` of the checkout (`headKnown`), as a session its runtime suspended carries over
  * (`SessionWalkResume.gitSeen`), a deletion goes to Git's reading, which judges it against that `HEAD`; a worktree Git
  * stopped listing took its `HEAD` with it (`#forgetWorktrees`). So does a file with a read error, which has no verdict
  * of Git's.
  */
-function listedUnchanged(edit: CodeRuleEdit, path: string, listed: ReadonlySet<string>, headKnown: boolean): boolean {
-  if (edit.readError !== undefined || listed.has(path)) return false;
-  return edit.deleted !== true || !headKnown;
+function listedUnchanged(edit: CodeRuleEdit, path: string, listed: HeadListing, headKnown: boolean): boolean {
+  if (edit.readError !== undefined) return false;
+  if (edit.deleted !== true) return listed.atHead.has(path);
+  return !headKnown && !listed.notAtHead.has(path) && !listed.atHead.has(path);
 }
 
 /**
@@ -1273,11 +1276,11 @@ interface WalkStart {
   readonly heads: ReadonlyMap<string, string>;
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /**
-   * In a take of the other worktrees' walk, by checkout (physical), the files whose text may differ from `HEAD` that its
-   * Git listed when the walk first showed the session that checkout's worktree (`takeFirstSightListings`): every other
-   * file there holds what its index holds, and the index what `HEAD` held as the walk began.
+   * In a take of the other worktrees' walk, by checkout (physical), what its Git listed when the walk first showed the
+   * session that checkout's worktree (`takeFirstSightListings`): the files that held what `HEAD` held as the walk began,
+   * and those that may differ.
    */
-  readonly listedAtFirstSight?: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly listedAtFirstSight?: ReadonlyMap<string, HeadListing>;
   /**
    * `ToolCallWindows.ends` as the walk started: a command that ended since may have been writing what the walk read, and
    * only the calls that ended before are those the walk answers for (`ToolCallWindows.answered`).
@@ -3662,7 +3665,7 @@ export class CodeRuleBridge {
     const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
     const readFrom = new Map<string, number>();
-    const listedAtFirstSight = new Map<string, ReadonlySet<string>>();
+    const listedAtFirstSight = new Map<string, HeadListing>();
     const kept = this.#keptWorktreePaths(start.worktrees);
     for (const [root, findings] of found) {
       const worktree = sessionPath(discovery.root, root);
@@ -4391,18 +4394,18 @@ export class CodeRuleBridge {
 
   /**
    * `#gitVerdicts` of the changes in `checkout` that a walk first showing the session its worktree found there. A file
-   * its Git did not list then (`listed`, `WalkStart.listedAtFirstSight`) holds what the index holds, and the index what
-   * `HEAD` held, whose newest move was no commit: Git's own text, as a reading of `HEAD`'s blob would find with no move
-   * of `HEAD` known before (`#heldByGit`). It is judged so without asking Git, in the queue a shell command's result
-   * waits on. The changes that reach it are the files the listings name, those with a read error, the `.gitignore`
-   * files, and those the session observed, hid or holds the text of there (`#keptWorktreePaths`, `#heldIn`), a deletion
-   * among them: a first sight leaves every other file of the checkout to the snapshot (`heldByGitAtFirstSight`). Those
-   * not judged so are read as before (`listedUnchanged`).
+   * its Git then named as holding what `HEAD` held (`listed`, `WalkStart.listedAtFirstSight`), whose newest move was no
+   * commit, holds Git's own text, as a reading of `HEAD`'s blob would find with no move of `HEAD` known before
+   * (`#heldByGit`). It is judged so without asking Git, in the queue a shell command's result waits on. The changes that
+   * reach it are the files Git does not name so, those with a read error, the `.gitignore` files, and those the session
+   * observed, hid or holds the text of there (`#keptWorktreePaths`, `#heldIn`), a deletion among them: a first sight
+   * leaves every other file of the checkout to the snapshot (`heldByGitAtFirstSight`). Those not judged so are read as
+   * before (`listedUnchanged`).
    */
   async #firstSightVerdicts(
     discovery: SourceDiscovery,
     walk: WalkStart,
-    { checkout, listed }: { readonly checkout: string; readonly listed: ReadonlySet<string> },
+    { checkout, listed }: { readonly checkout: string; readonly listed: HeadListing },
     group: readonly CodeRuleEdit[],
     uncaptured: ReadonlyMap<string, string>,
   ): Promise<Map<string, GitVerdict>> {
