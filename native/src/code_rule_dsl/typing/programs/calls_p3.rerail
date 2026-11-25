@@ -1,20 +1,21 @@
 // calls_p3.rerail: the analysis phase's typing (P3 of decision 0083 §1, note t28) as a program of its own, for the oracle
-// tests and the Jedi benchmark. Its rules are the library module python/points-to.rerail, which a rule includes
-// (through python/calls and python/types) to have them in its own program; this program names their outputs.
+// tests and the Jedi benchmark. Its rules are python/points-to-solve's, the ones the phase `points_to` runs (a rule
+// reads them through python/points-to); this program names their outputs. Each is keyed by terms (decision 0677,
+// note t55): a call's or a value position's term, and a definition's symbol. `pt_tm(n, t)` is each node's.
 #include "core.rerail"
-#include "python/points-to.rerail"
+#include "python/points-to-solve.rerail"
 
-.decl call_lib(c: node)
+.decl call_lib(c: symbol)
 call_lib(c) :- pt_call_lib(c).
-.decl base(c: node, b: node)
+.decl base(c: symbol, b: symbol)
 base(c, b) :- pt_base(c, b).
-.decl finding(rule: symbol, n: node)
+.decl finding(rule: symbol, n: symbol)
 finding(r, n) :- pt_finding(r, n).
-.decl async_open(c: node)
+.decl async_open(c: symbol)
 async_open(c) :- pt_async_open(c).
-.decl chain_step(f: node, g: node)
+.decl chain_step(f: symbol, g: symbol)
 chain_step(f, g) :- pt_chain_step(f, g).
-.decl calls(f: node, g: node)
+.decl calls(f: symbol, g: symbol)
 calls(f, g) :- pt_calls(f, g).
 .output call_lib, call_target, call_open, base, finding, async_open, chain_step, calls
 .output type_of, type_open, proven_type, possible_type, possible_open

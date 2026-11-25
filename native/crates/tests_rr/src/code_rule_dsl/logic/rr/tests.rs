@@ -5402,7 +5402,7 @@ fn a_demand_split_stays_linear_in_the_modules() {
         std::fs::write(root.join(format!("m{m}.py")), &source).unwrap();
     }
     let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    std::fs::write(&rule, ".policy \"split-linear\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
     let profile = directory.path().join("profile");
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
@@ -5686,7 +5686,7 @@ fn a_run_on_two_threads_ends() {
         std::fs::write(root.join(format!("m{m}.py")), format!("def f{m}(x):\n    return len(x)\n\n\ndef g{m}():\n    print(f{m}([1]))\n")).unwrap();
     }
     let rule = directory.path().join("calls.rerail");
-    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, f), kind(f, \"nothing_has_this_kind\").\n").unwrap();
+    std::fs::write(&rule, ".policy \"two-threads\" revision 1\n.language python\n.scope include \"**/*.py\"\n#include \"python/calls.rerail\"\n.violation P(at: node) \"c\"\nP(c) :- call_target(c, \"nothing.has.this.symbol\").\n").unwrap();
     let mut child = std::process::Command::new(std::env::current_exe().unwrap());
     child
         .args(["--exact", "code_rule_dsl::logic::rr::tests::demand_split_child", "--ignored", "--nocapture"])

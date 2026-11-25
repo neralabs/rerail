@@ -1,6 +1,6 @@
 # Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).
 # programs	probe	gap	programs by pack
-740	text test match: a bound pattern	not on the device: refused: a cat's text read by rx has no device form	python-main 462, lib 73, python 50, data-layer 30, javascript 30, rerail 27, typescript 18, next 8, node 6, react 6, vue 6, django 5, engine 4, php 4, sql 4, blade 2, rule-syntax 2, rust 2, rr 1
+741	text test match: a bound pattern	not on the device: refused: a cat's text read by rx has no device form	python-main 462, lib 74, python 50, data-layer 30, javascript 30, rerail 27, typescript 18, next 8, node 6, react 6, vue 6, django 5, engine 4, php 4, sql 4, blade 2, rule-syntax 2, rust 2, rr 1
 469	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	python-main 396, data-layer 23, lib 17, rerail 13, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, django 1, php 1, rule-syntax 1
 98	function @replace_all/3	not on the device: no computed term	lib 33, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, rust 1, sql 1, vue 1
 98	functor @replace_all/3	not on the device: no computed term	lib 33, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, next 2, node 2, django 1, engine 1, rust 1, sql 1, vue 1

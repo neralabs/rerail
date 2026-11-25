@@ -44,6 +44,13 @@ the cross part. So the flows are solved over symbols in a phase, as `py_names` s
 expressions' flows as constraints between *terms*. The phase solves the terms' values to its fixed point and hands
 them on by module. Each file reads them back at its own nodes.
 
+**Built (2026-11-25), 0677 § Fix 3e: built.** The terms built are positions, not the shapes in the table below: a
+definition is its symbol (`m.C.run`, `#k` for a rebinding), and any other node is its place in its nearest scope,
+relative to the scope's start, with its length and how many of its ancestors share that span (`m.C.run@14+5^0`).
+They come from the tree alone, need no rule per expression form, and change with the same edits, those inside the
+scope. The flows were not rewritten as constraints between terms: the old cross-file rules were lifted rule for
+rule, each node column made a term. The table is the plan as written.
+
 A term names a value by the expression's shape and its scope's symbol, never by a node:
 
 | Expression | Term |
@@ -120,6 +127,7 @@ as they are.
   Django pack and python-main.
 - **The phase's cost.** P3's cross part runs every file's flows now. The phase runs the same rules over terms, and
   reading back is one join per value position. Measured at step 2 against the current P3, CPU and wall, on the
-  same host.
+  same host. (Measured once built, 0677 § Fix 3e: built: 8% fewer instructions on 143 files of posthog, peak memory
+  1.18 to 1.40 GB.)
 - **Data-layer's own call graph** (`pc_edge`, `plp_anycand`) is the same shape as the call-graph readers above, and
   is rewritten the same way after step 5.

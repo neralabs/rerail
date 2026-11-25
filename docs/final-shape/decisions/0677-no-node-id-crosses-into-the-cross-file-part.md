@@ -171,8 +171,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
    Class hierarchy (3a), class members and a Django model read by its symbol (3b): **done (2026-11-24)**, § Fix 3:
    built. A model's `Meta` options and managers (3c), and its hooks (3d): **done (2026-11-25)**, § Fix 3c: built,
-   § Fix 3d: built. Points-to, `plp_anycand` and `item_parts` remain. Points-to's design (values as symbols, its flows
-   a phase over terms, the call-graph readers over symbols in their own cross part) is note t55.
+   § Fix 3d: built. Points-to (3e), the phase `points_to`, and Django's four call-graph policies over symbols:
+   **done (2026-11-25)**, § Fix 3e: built (note t55 is its design). `plp_anycand` and `item_parts` remain.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
@@ -500,6 +500,89 @@ and reads Book's hooks:
 
 Both receivers are in a signals module nothing imports. A bare `super().save()` with a docstring is no hook. The
 signals module's own defs are known as receivers.
+
+### Fix 3e: built (2026-11-25): points-to as the phase `points_to`, the call graph by symbol
+
+**The list.** 440 entries, from 538: Django's 136 are 38. They left:
+- points-to's 74 `pt_` relations;
+- `call_target`, `call_open` and `type_open`;
+- the call-graph policies' 20: ghw's `ghw_handler`, `ghw_own_method` and `ghw_self_bound`, sora's 7 and sfu's 10;
+- `tam_instance`, whose node came through `proven_type`.
+
+The data layer's lists are unchanged.
+
+**The phase.** Points-to's per-file rules (`lib/python/points-to-file.rerail`) state each file's flows at its nodes,
+as before. Its cross-file rules (`points-to-solve.rerail`) are the old ones with every node column made a term: a
+rule's per-file part became a helper that reads its nodes and gives their terms (`<rel>_t`, `<head>_l_<i>`). A
+one-off script lifted them, rule for rule, and the comments were kept. `native/src/code_rule_dsl/typing/programs/
+points_to.rerail` is the phase. It exports seven relations by path and term (`call_target_at(p, t, f)`,
+`type_of_at`, `proven_type_at`, …). They are settings scoped by path (`SETTINGS_BY_PATH`, 0665), with no folder hop:
+a file reads its own rows, so a change misses only the files whose answers changed. `lib/python/points-to.rerail` is
+the interface. It reads them back at the file's own nodes (`call_target(c, f) :- pt_tm(c, t),
+points_to__call_target_at(p, t, f)`), so `call_target`'s second column is the callee's symbol.
+
+**Terms** (`pt_tm(n, t)`, in the per-file part):
+- A module: its name, or its path when it has none.
+- A live definition: its scope's term and its name (`m.C.run`), and `#k` for the k-th live def of that name in
+  that scope.
+- A dead definition, and any other node: its nearest scope's term, its start relative to that scope's, its length,
+  and how many of its ancestors span exactly it (`m.C.run@14+5^0`). The count tells a node from a parent of the same
+  span: a `type` over its identifier, an expression statement over its call.
+- A guest's node (a quoted annotation's code): its own document, which every string of that text shares
+  (decision 0431), and its place there (`~1825239168@0+4^1`). The annotation context names it (`pt_gtm`), and the
+  host reads that, since only the context reads a guest's nodes.
+
+So an edit changes the terms of its own scope only. A node's kind is not in the term: the planner keeps a kind
+symbol and a name symbol apart (`$k is a Name and a Kind`), and the count does the kind's job.
+`pt_def(f, q)` gives the defs' terms alone. A rule finds a definition's node in its own file through it, never
+through `pt_tm` with the node free.
+
+note t55 planned terms by expression shape (`T(o).a`). Positions in the scope are what was built: they come from
+the tree alone, need no rule per expression form, and change with the same edits, those inside the scope.
+
+**The call graph by symbol.** python/calls' `calls`, `calls_open` and `reach` are over symbols. It adds `method_sym`
+and `mro_method_sym`, python/scopes' `method` and `mro_method` by the def's symbol. The four Django policies that
+walk the graph keep one shape: each file states its own facts by symbol, the walk is a cross rule over symbols alone,
+and the finding reads its node in its own file.
+- **get-handler-writes (ghw), sync-ORM-from-async (sora).** A handler, or an async def, is its class's `class_def`
+  name and its def's symbol. A call in it is its term. Each def's first write, or first query, is stated in its own
+  file (`ghw_wrote`, `sora_ran`), and a finding names it by path and line (`{p}:{l}`, no longer a node of another
+  file). When several defs reached write, the finding names the least by symbol: a `min` over symbols is refused,
+  since it would order their ids.
+- **select-for-update (sfu).** Whether a node runs in a transaction is stated per file: for reasons of its own file
+  (`sfu_loc`), or if a context manager or a decorator of the run opens one (`sfu_via(n, "cm:" + symbol)`,
+  `"wrap:" + name`). Which of those open one is a fixpoint over symbols (`sfu_atomic`): a context manager whose
+  `yield`, or a wrapper whose call of its argument, runs in a transaction for either reason. It was a recursion over
+  nodes of every file.
+- **dispatch-in-atomic (dar).** `dar_view` and `dar_live` are over symbols. Each file states its own calls
+  (`dar_call`).
+
+The rule left on each policy's list is a relation that reads another family's crossing (`dj_view_class`,
+`ghw_instance_class`), under that crossing's own name.
+
+**Tests.**
+- The oracle tests (`typing::oracle_tests`, 30): the old analysis's answers, mapped to terms, equal the phase's.
+  The Jedi comparison reads the same spans (`P3_SPANS` by term), and `rules_read_the_python_program_through_lib_calls`
+  reads both by term.
+- Every rule file's own tests (`rule_files_pass_their_own_tests`): python/calls' cases, and Django's policies' cases
+  with every expected line. python/calls' test answers pair two files' lines, and are declared `cross_file`.
+- The pack split tests: Django's, the data layer's, python's.
+- The corpus tests of fixes 2–3d and the prepared program's identity.
+- The executor-coverage ledger counts one more `lib` file for the bound-pattern match (741 programs): points-to's
+  rules are two files now, and no rule gained a gap.
+
+**Cost.** The four call-graph policies over 143 files of posthog (`rerail-shared/bench/posthog-1644`, its `api` and
+top-level modules), the CLI at O0 with `test-hooks` on this Mac, one run each:
+
+| | Wall | CPU | Instructions | Peak RSS | Findings |
+|---|---|---|---|---|---|
+| Before (fcc1ef18c3), load 19 | 22.6 s | 35.2 s | 0.725 × 10¹² | 1.18 GB | 0 |
+| After, load 4 | 18.5 s | 35.0 s | 0.668 × 10¹² | 1.40 GB | 0 |
+
+The loads differ, so the instructions are the comparison: 8% fewer. A first version of sfu took 40% more: its
+`sfu_built_read` paired every node of an assignment's right side with every later read of the name (22 million
+rows). The old rule's `sfu_in_atomic(i)` had bound it. It now starts from the lock calls. The phase's own largest
+costs are `pt_tm` over every node, about 1.6 s of CPU between the two parts.
 
 ## Open
 

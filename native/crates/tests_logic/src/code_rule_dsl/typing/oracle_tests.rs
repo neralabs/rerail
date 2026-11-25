@@ -453,9 +453,20 @@ fn python_type_relations_agree_with_the_runtime() {
 #[test]
 fn rules_read_the_python_program_through_lib_calls() {
     let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
+    // The program's rows are keyed by terms (`pt_tm`, decision 0677), the rule's by its own nodes; both read a
+    // target's definition by its symbol (`pt_def`). An edge pairs two files' nodes: this test's own output.
+    let direct_keyed = "
+.decl edge(cp: symbol, cs: number, fp: symbol, fs: number) cross_file
+edge(cp, cs, fp, fs) :- kind(c, \"call\"), pt_tm(c, t), call_target(t, f), pt_def(g, f), node(d, c, _, cs, _), doc(d, cp, _), node(h, g, _, fs, _), doc(h, fp, _).
+.decl proven(np: symbol, ns: number, ne: number, t: symbol)
+proven(np, ns, ne, u) :- pt_vpos(n), pt_tm(n, t), proven_type(t, u), node(d, n, _, ns, ne), doc(d, np, _).
+.decl unknown(cp: symbol, cs: number)
+unknown(cp, cs) :- kind(c, \"call\"), pt_tm(c, t), call_open(t), node(d, c, _, cs, _), doc(d, cp, _).
+.output edge, proven, unknown
+";
     let keyed = "
-.decl edge(cp: symbol, cs: number, fp: symbol, fs: number)
-edge(cp, cs, fp, fs) :- call_target(c, f), node(d, c, _, cs, _), doc(d, cp, _), node(g, f, _, fs, _), doc(g, fp, _).
+.decl edge(cp: symbol, cs: number, fp: symbol, fs: number) cross_file
+edge(cp, cs, fp, fs) :- call_target(c, f), pt_def(g, f), node(d, c, _, cs, _), doc(d, cp, _), node(h, g, _, fs, _), doc(h, fp, _).
 .decl proven(np: symbol, ns: number, ne: number, t: symbol)
 proven(np, ns, ne, t) :- proven_type(n, t), node(d, n, _, ns, ne), doc(d, np, _).
 .decl unknown(cp: symbol, cs: number)
@@ -464,7 +475,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
 ";
     let rows = |out: &Path, rel: &str| -> BTreeSet<Vec<String>> { output::shown(out, rel).unwrap().into_iter().collect() };
     let direct = crate::code_rule_dsl::fixtures::temp().with_extension("direct");
-    corpus::run(&format!("{}\n{keyed}", program("calls_p3")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
+    corpus::run(&format!("{}\n{direct_keyed}", program("calls_p3")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
     let rule_dir = crate::code_rule_dsl::fixtures::temp().with_extension("rule");
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rerail");
@@ -473,7 +484,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     let through = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
     let phases: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
-    assert!(phases.contains(&"struct") && phases.contains(&"types"), "the earlier phases ran: {phases:?}");
+    assert!(phases.contains(&"struct") && phases.contains(&"types") && phases.contains(&"points_to"), "the earlier phases ran: {phases:?}");
     for rel in ["edge", "proven", "unknown"] {
         let (a, b) = (rows(&direct, rel), rows(&through, rel));
         println!("{rel}: {} rows", a.len());
@@ -820,7 +831,7 @@ fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_ar
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     // The overloads each call fits (`lcfn`), by the call's line.
-    let text = format!("{}\n{}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- pt_lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"), jedi_spans("calls_p3"));
+    let text = format!("{}\n{}\n.decl t_fit(c: symbol, f: symbol)\nt_fit(c, f) :- pt_lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"), jedi_spans("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| output::shown(&out, rel).unwrap();
     let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
@@ -1300,8 +1311,25 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
 /// The spans a run's outputs are scored against Jedi's by, over typing program `name`: `calls_p3`'s rules are
 /// python/points-to's, whose own relations are named `pt_…`.
 fn jedi_spans(name: &str) -> String {
-    if name == "calls_p3" { JEDI_SPANS.replace("callee(c, e), pv(", "pt_callee(c, e), pt_pv(") } else { JEDI_SPANS.to_owned() }
+    if name == "calls_p3" { P3_SPANS.to_owned() } else { JEDI_SPANS.to_owned() }
 }
+
+/// `calls_p3`'s: its rows are keyed by terms (`pt_tm`, decision 0677), a call's or a value position's, and a
+/// definition's symbol, so each span is keyed by its node's term.
+const P3_SPANS: &str = "
+.decl oracle_jedi_cls(c: symbol, k: symbol)
+oracle_jedi_cls(c, k) :- pt_callee_t(c, e), pt_pv(e, \"cls\", k).
+.decl oracle_jedi_at(n: symbol, s: number, e: number)
+oracle_jedi_at(t, s, e) :- kind(n, \"call\"), pt_tm(n, t), node(_, n, _, s, e).
+oracle_jedi_at(t, s, e) :- kind(f, \"function_definition\"), pt_tm(f, t), node(_, f, _, s, e).
+oracle_jedi_at(t, s, e) :- kind(f, \"class_definition\"), pt_tm(f, t), node(_, f, _, s, e).
+oracle_jedi_at(t, s, e) :- kind(f, \"lambda\"), pt_tm(f, t), node(_, f, _, s, e).
+.decl oracle_jedi_path(n: symbol, p: symbol)
+oracle_jedi_path(t, p) :- oracle_jedi_kind(k), kind(n, k), pt_tm(n, t), docof(n, d), doc(d, p, _).
+.decl oracle_jedi_kind(k: symbol)
+oracle_jedi_kind(\"call\"). oracle_jedi_kind(\"function_definition\"). oracle_jedi_kind(\"class_definition\"). oracle_jedi_kind(\"lambda\").
+.output oracle_jedi_cls, oracle_jedi_at, oracle_jedi_path
+";
 
 const JEDI_SPANS: &str = "
 .decl oracle_jedi_cls(c: node, k: node)
@@ -1351,6 +1379,8 @@ fn benchmark_python_calls_program_corpus() {
         .iter()
         .flat_map(|rel| outputs.rows(rel))
         .flat_map(|r| r.values().filter_map(|v| Some((v.to_string(), v.path()?.to_owned()))).collect::<Vec<_>>())
+        // calls_p3's terms carry no path of their own (`P3_SPANS`).
+        .chain(outputs.get("oracle_jedi_path").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| (r[0].clone(), r[1].clone())))
         .collect();
     let file = |node: &str| paths[node].clone();
     let mut sources: BTreeMap<String, String> = BTreeMap::new();

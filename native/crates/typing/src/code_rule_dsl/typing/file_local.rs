@@ -233,8 +233,21 @@ pub fn setting_input(rel: &str) -> bool {
 /// The settings with a row per file (decision 0665), keyed by its path in column 0, and the column that names the
 /// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`), target (`tsx_names__target_at(path, spec, t)`) or
 /// module (`py_names__reads_at(path, m)`) whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder,
-/// target or module, in column 0.
-pub const SETTINGS_BY_PATH: [(&str, usize); 4] = [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2), ("py_names__reads_at", 1)];
+/// target or module, in column 0. The phase `points_to`'s answers name none (decision 0677, note t55): each row is
+/// about a node of the file at its path, by its term, and that file reads its own rows alone.
+pub const SETTINGS_BY_PATH: [(&str, Option<usize>); 11] = [
+    ("package_for", Some(1)),
+    ("tsconfig_for", Some(1)),
+    ("tsx_names__target_at", Some(2)),
+    ("py_names__reads_at", Some(1)),
+    ("points_to__call_target_at", None),
+    ("points_to__call_open_at", None),
+    ("points_to__type_of_at", None),
+    ("points_to__type_open_at", None),
+    ("points_to__proven_type_at", None),
+    ("points_to__possible_type_at", None),
+    ("points_to__possible_open_at", None),
+];
 pub const SETTINGS_BY_FOLDER: [&str; 27] = [
     "package",
     "package_field",
@@ -265,8 +278,9 @@ pub const SETTINGS_BY_FOLDER: [&str; 27] = [
     "py_names__dj_receiver_fn",
 ];
 
-/// The folder, target or module column of a setting keyed by a file's path (`SETTINGS_BY_PATH`).
-pub fn setting_by_path(rel: &str) -> Option<usize> {
+/// The folder, target or module column of a setting keyed by a file's path (`SETTINGS_BY_PATH`): `None` when the
+/// relation is not one, `Some(None)` when it is and names none.
+pub fn setting_by_path(rel: &str) -> Option<Option<usize>> {
     SETTINGS_BY_PATH.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c)
 }
 
