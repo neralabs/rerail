@@ -1,12 +1,12 @@
-.policy "eslint-plugin-vue-no-mutating-props" revision 2
+.policy "eslint-plugin-vue-no-mutating-props" revision 3
 .description "Don't mutate a Vue component's props, in its template or its script; emit an event for the parent, or copy the prop into local state."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
+#include "vue/vue-01.rerail"
 #include "vue/mutation.rerail"
-//   vcomp(o), vname(o, g, x, n), vsetup(o, f), vprops_call(c), vprop_name(c, x, n), tfree(r, x, a), vexpr(a, x),
-//   vmut_at(s, at, how, n), vmut_first(s, m, x)
+//   vcomp(o), vname(o, g, x, n), vsetup(o, f), vprops_call(c), vprop_name(c, x, n), vdir(e, a, d, arg), vmod(a, m),
+//   vmut_at(s, at, how, n), vmut_first(s, m, x), vjs(n), vts(n), vview_root(p), vin_script(n)
 
 // eslint-plugin-vue's no-mutating-props, default options (shallowOnly: false). A mutation is findMutating's: an
 // assignment, `++`, `delete`, push/pop/…/fill called on it, or Object.assign(it, …).
@@ -19,30 +19,66 @@
 //   v-model="prop" and :x.sync="prop" (also `this.prop`, `props.prop`) are reported at the expression.
 .violation mutated(at: node, x: symbol) code "vue/no-mutating-props" "Unexpected mutation of \"{x}\" prop."
     suppress eslint "vue/no-mutating-props"
+// The scripts and the template are one program, the view (vue/vue-01): each clause that starts a search once per view
+// grammar.
 // Script: `this.x` (or a `const vm = this`) inside a component that declares x.
-mutated(at, x) :- this_member(m, x), vmut_at(m, at, _, _).
+mutated(at, x) :- this_member(m, x), vjs(m), vmut_at(m, at, _, _).
+mutated(at, x) :- this_member(m, x), vts(m), vmut_at(m, at, _, _).
 // Script: a variable of setup(props)'s parameter or of defineProps's result. The whole props object needs a member
 // mutated (`props.a++`); a destructured prop is also mutated by a call on it (`list.push(1)`, Object.assign(list, …)).
-mutated(at, x) :- prop_ref(r, ""), vmut_at(r, at, _, n), n != r, vmut_first(r, _, x).
-mutated(at, top) :- prop_ref(r, top), top != "", vmut_at(r, at, how, n), (n != r ; how = "call").
+mutated(at, x) :- prop_ref(r, ""), vjs(r), vmut_at(r, at, _, n), n != r, vmut_first(r, _, x).
+mutated(at, x) :- prop_ref(r, ""), vts(r), vmut_at(r, at, _, n), n != r, vmut_first(r, _, x).
+mutated(at, top) :- prop_ref(r, top), vjs(r), top != "", vmut_at(r, at, how, n), (n != r ; how = "call").
+mutated(at, top) :- prop_ref(r, top), vts(r), top != "", vmut_at(r, at, how, n), (n != r ; how = "call").
 // Template: `this.x` and free names; a name that is defineProps's result variable is the root props object.
-mutated(at, x) :- tcomp(d, _), vcode(a, g, _), docof(g, d), has(g, t, this_kind), this_prop(t, m, x),
-    tprop(d, x), vmut_at(m, at, _, _).
-mutated(at, x) :- tfree(r, x, a), docof(a, d), tprop(d, x), !props_var(d, x), vmut_at(r, at, _, _).
-mutated(at, x) :- tfree(r, y, a), docof(a, d), props_var(d, y), vmut_at(r, at, _, _),
+mutated(at, x) :- tthis(t), vjs(t), docof(t, d), tcomp(d, _), this_prop(t, m, x), tprop(d, x), vmut_at(m, at, _, _).
+mutated(at, x) :- tthis(t), vts(t), docof(t, d), tcomp(d, _), this_prop(t, m, x), tprop(d, x), vmut_at(m, at, _, _).
+mutated(at, x) :- tname(r, x), vjs(r), docof(r, d), tprop(d, x), !props_var(d, x), vmut_at(r, at, _, _).
+mutated(at, x) :- tname(r, x), vts(r), docof(r, d), tprop(d, x), !props_var(d, x), vmut_at(r, at, _, _).
+mutated(at, x) :- tname(r, y), vjs(r), docof(r, d), props_var(d, y), vmut_at(r, at, _, _),
     (vmut_object(m, r), static_prop(m, r, x) ; !static_parent(r), x = y).
-mutated(x, y) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), tprop(d, y), !props_var(d, y).
-mutated(x, z) :- model(a, x), root(x, n), tfree(n, y, a), docof(a, d), props_var(d, y),
+mutated(at, x) :- tname(r, y), vts(r), docof(r, d), props_var(d, y), vmut_at(r, at, _, _),
+    (vmut_object(m, r), static_prop(m, r, x) ; !static_parent(r), x = y).
+mutated(x, y) :- model(_, x), vjs(x), root(x, n), tname(n, y), docof(n, d), tprop(d, y), !props_var(d, y).
+mutated(x, y) :- model(_, x), vts(x), root(x, n), tname(n, y), docof(n, d), tprop(d, y), !props_var(d, y).
+mutated(x, z) :- model(_, x), vjs(x), root(x, n), tname(n, y), docof(n, d), props_var(d, y),
     (second(x, m), vmut_first(n, m, z) ; !second(x, _), z = y).
-mutated(x, z) :- model(a, x), root(x, n), kind(n, "this"), second(x, m), this_prop(n, m, z), docof(a, d), tprop(d, z).
+mutated(x, z) :- model(_, x), vts(x), root(x, n), tname(n, y), docof(n, d), props_var(d, y),
+    (second(x, m), vmut_first(n, m, z) ; !second(x, _), z = y).
+mutated(x, z) :- model(_, x), vjs(x), root(x, n), kind(n, "this"), second(x, m), this_prop(n, m, z), docof(n, d),
+    tprop(d, z).
+mutated(x, z) :- model(_, x), vts(x), root(x, n), kind(n, "this"), second(x, m), this_prop(n, m, z), docof(n, d),
+    tprop(d, z).
 
-vmut_ask(m) :- this_member(m, _).
-vmut_ask(r) :- prop_ref(r, _).
-vmut_ask(m) :- vcode(_, g, _), has(g, t, this_kind), this_prop(t, m, _).
-vmut_ask(r) :- tfree(r, _, _).
-vmut_ask(n) :- model(_, x), root(x, n).
-.decl this_kind(k: symbol)
-this_kind("this").
+vmut_ask(m) :- this_member(m, _), vjs(m).
+vmut_ask(m) :- this_member(m, _), vts(m).
+vmut_ask(r) :- prop_ref(r, _), vjs(r).
+vmut_ask(r) :- prop_ref(r, _), vts(r).
+vmut_ask(m) :- tthis(t), vjs(t), this_prop(t, m, _).
+vmut_ask(m) :- tthis(t), vts(t), this_prop(t, m, _).
+vmut_ask(r) :- tname(r, _), vjs(r).
+vmut_ask(r) :- tname(r, _), vts(r).
+vmut_ask(n) :- model(_, x), vjs(x), root(x, n).
+vmut_ask(n) :- model(_, x), vts(x), root(x, n).
+// ---- template code: the view's statements for the template (vue/view.rs) -----------------------------------------
+// vtcode(n): view node n is template code: its host node is in the <template>.
+.decl vtcode(n: node)
+vtcode(n) :- host_node(n, h), kind(h, "template_element").
+vtcode(n) :- host_node(n, h), within(h, te), kind(te, "template_element").
+// tthis(t): `this` in the template's code.
+.decl tthis(t: node)
+tthis(t) :- kind(t, "this"), vtcode(t).
+// tname(r, x): a name of the template's code that no template variable binds (v-for's aliases and slot parameters
+// are the view's arrow parameters): it reads the component instance, whether or not a script declares it.
+.decl tname(r: node, x: symbol)
+tname(r, x) :- vtcode(r), ref(r, x, "value"), !tbound(r).
+.decl tbound(r: node)
+tbound(r) :- ref_site(r, s), vtcode(s).
+// tdir_expr(a, x): directive a's expression, which the view writes as the statement `(x);` standing at a.
+.decl tdir_expr(a: node, x: node)
+tdir_expr(a, x) :- host_node(st, a), kind(st, "expression_statement"), child(st, p, 0),
+    kind(p, "parenthesized_expression"), child(p, x, 0).
+
 .decl this_prop(t: node, m: node, x: symbol)
 this_prop(t, m, x) :- vmut_object(m, t), static_prop(m, t, x).
 .decl static_parent(r: node)
@@ -102,7 +138,10 @@ tcomp(d, o) :- candidate(d, o), !exited_later(o).
 .decl candidate(d: number, o: node)
 candidate(d, o) :- vcomp(o), docof(o, d), !setup_props(d), !has_export(d), !instance(o).
 .decl exited_later(o: node)
-exited_later(o) :- candidate(d, o), candidate(d, o2), o2 != o, (within(o, o2) ; earlier(o, o2), !within(o2, o)).
+exited_later(o) :- candidate(d, o), candidate(d, o2), o2 != o, (within(o, o2) ; starts_before(o, o2), !within(o2, o)).
+.decl starts_before(o: node, o2: node)  // `earlier` has no row over the view
+starts_before(o, o2) :- candidate(d, o), candidate(d, o2), line(o, l), line(o2, l2), (l < l2 ; l = l2, col(o, c),
+    col(o2, c2), c < c2).
 .decl instance(o: node)  // new Vue({…})
 instance(o) :- kind(n, "new_expression"), call_arg(n, w, 0), vskip_as(w, o), vcomp(o).
 .decl setup_props(d: number)
@@ -113,8 +152,8 @@ exported(o) :- vcomp(o), kind(e, "export_statement"), field(e, "value", w), vunw
 has_export(d) :- exported(o), docof(o, d).
 .decl tprop(d: number, x: symbol)
 tprop(d, x) :- tcomp(d, c), vprop_name(c, x, _), !whitelisted(x), !top_level_name(d, x).
-.decl top_level_name(d: number, x: symbol)  // a script declares x at its top
-top_level_name(d, x) :- vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
+.decl top_level_name(d: number, x: symbol)  // a script declares x at its top: the view's module scope
+top_level_name(d, x) :- vview_root(p), docof(p, d), decl_site(p, x, _, _, _).
 tprop(d, x) :- tcomp(d, c), pleaf(c, id, top), top != "", text(id, x).
 tprop(d, x) :- tcomp(d, o), vname(o, "props", x, _).
 .decl props_var(d: number, x: symbol)
@@ -129,8 +168,8 @@ whitelisted("BigInt").
 
 // ---- template: v-model and v-bind.sync (getMemberChaining) ---------------------------------------------------------
 .decl model(a: node, x: node)
-model(a, x) :- vdir(_, a, "model", _), vexpr(a, w), deparen(w, x).
-model(a, x) :- vdir(_, a, "bind", _), vmod(a, "sync"), vexpr(a, w), deparen(w, x).
+model(a, x) :- vdir(_, a, "model", _), tdir_expr(a, w), deparen(w, x).
+model(a, x) :- vdir(_, a, "bind", _), vmod(a, "sync"), tdir_expr(a, w), deparen(w, x).
 .decl down(x: node, n: node)
 down(x, x) :- model(_, x).
 down(x, o) :- down(x, n), (kind(n, "member_expression") ; kind(n, "subscript_expression")), field(n, "object", w),

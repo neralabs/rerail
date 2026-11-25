@@ -14,15 +14,15 @@
 // disjunction `(vjs(n) ; vts(n))` names neither): the engine copies that relation, and every relation it reads, for
 // the grammar's kinds.
 //
-// `value` is answered on request (decision 0174), and the requests are made from the readers' host literals: no view
-// node is asked for, and a copied relation one of whose rules reads `value` of its seeded node has no row at all,
-// from any rule (`k(n, x) :- kind(n, "property_identifier"), text(n, x). k(n, x) :- kind(n, "string"), value(n, x).`
-// read as vjs(n), k(n, _) gives nothing; with RERAIL_NODE_SOURCES=eager it gives both). vvalued reads `value` of no
-// node in particular, which keeps `value` an input made for every node (rr::lower's sources_on_request), the view's
-// too; vjs and vts read it so that every rule here reaches it.
+// `value` is answered on request (decision 0174), and no view node is asked for: a copied relation one of whose rules
+// reads `value` of its seeded node has no row at all, from any rule (`k(n, x) :- kind(n, "property_identifier"),
+// text(n, x). k(n, x) :- kind(n, "string"), value(n, x).` read as vjs(n), k(n, _) gives nothing). vvalued reads
+// `value` of no node in particular, which keeps `value` an input made for every node (rr::lower's
+// sources_on_request), the view's too; vjs and vts read it so that every rule here reaches it.
 //
 // This file adds clauses to vue/component's script relations (vin_setup, vin_script, vsetup_doc, vcomp's
-// `export default`, vmacro_site), which read the blocks' own guests: over the view they have no rows.
+// `export default`, vmacro_site), which read the blocks' own guests: over the view they have no rows. And it restates,
+// in a form the engine specialises, the library clauses these rules reach that it does not (below the relations).
 //
 // Interface:
 //   vjs(n), vts(n)      n is a node of a JavaScript (TypeScript) view
@@ -72,9 +72,9 @@ vlater_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, q, x, "set"), 
     (lq < lp ; lq = lp, col(q, cq), col(p, cp), cq < cp).
 
 // A kind read into a variable and compared inside a disjunction, `kind(p, k), (k = "a" ; k = "b")`, is not named in
-// the guest's grammar (the comparisons are; a disjunction of them is not), so it holds of no view node. tsx/names'
-// destructured names are such: `const { a } = toRefs(p)` and `let [m] = defineModel()` declared nothing. The same
-// clauses with the kinds as atoms:
+// the guest's grammar (one comparison, `k = "a"`, is), so it holds of no view node. tsx/names' destructured names are
+// such: `const { a } = toRefs(p)` and `let [m] = defineModel()` declared nothing. The same clauses with the kinds as
+// atoms:
 pattern_name(p, x, d) :- kind(d, "variable_declarator"), field(d, "name", pat), (kind(pat, "object_pattern") ;
     kind(pat, "array_pattern")), within(p, pat), bound_name(p, x), nearest(p, f, fn_scope), nearest(d, f, fn_scope).
 bound_name(p, x) :- (kind(p, "shorthand_property_identifier_pattern") ; kind(p, "identifier")), text(p, x),
