@@ -21,7 +21,7 @@ import {
   withEnginePins,
   withoutEnginePins,
 } from "../../scripts/release/engine/packages.mjs";
-import { NATIVE_ENGINE_SYSTEMS, nativeEnginePackageName, nativePlatformSuffix } from "../../src/engine/index.ts";
+import { NATIVE_ENGINE_SYSTEMS, nativeEnginePackageName, nativePlatformSuffix, nativeTrayFileName } from "../../src/engine/index.ts";
 import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const core = JSON.parse(readFileSync("package.json", "utf8"));
@@ -34,10 +34,11 @@ const manifest = (packages = ENGINE_PACKAGES, version = "1.2.0") => ({ version, 
 describe("ENGINE_PACKAGES", () => {
   it("has one package for each engine the release builds, under the name and suffix the runtime loads the engine by", () => {
     expect(ENGINE_PACKAGES.map(({ target }) => target).sort()).toEqual([...core.napi.targets].sort());
-    for (const { suffix, os, cpu, engine, name } of ENGINE_PACKAGES) {
+    for (const { suffix, os, cpu, engine, tray, name } of ENGINE_PACKAGES) {
       expect(nativePlatformSuffix(os, cpu), suffix).toBe(suffix);
       expect(nativeEnginePackageName(os, cpu), suffix).toBe(name);
       expect(engine, suffix).toBe(engineFileName(os, cpu));
+      expect(tray, suffix).toBe(nativeTrayFileName(os, cpu));
     }
     expect(NATIVE_ENGINE_SYSTEMS).toEqual(ENGINE_PACKAGES.map(({ os, cpu }) => [os, cpu]));
   });
@@ -90,6 +91,9 @@ describe("packEnginePackages", () => {
     out = join(folder, "out");
     mkdirSync(native);
     for (const { engine } of [macArm, linuxX64]) writeFileSync(join(native, engine), `engine ${engine}`);
+    // Written 0o644: the release's native/ comes from artifacts, which keep no file modes. macOS's has no tray, as a
+    // checkout's pulled engine has none.
+    writeFileSync(join(native, linuxX64.tray), `tray ${linuxX64.tray}`);
     packed = packEnginePackages({ root: process.cwd(), native, out });
   });
   afterAll(() => removeFolderSync(folder));
@@ -100,16 +104,27 @@ describe("packEnginePackages", () => {
     expect(absentEnginePackages(packed.manifest)).toEqual(packed.absent);
   });
 
-  it("puts the engine, its package.json, a README and the licence and notices in each tarball, and nothing else", () => {
+  // Relative names: Git for Windows' GNU tar reads the `C:` of an absolute path as a remote host.
+  const tar = (...args) => execFileSync("tar", [...args], { cwd: out, encoding: "utf8" });
+  const listing = (file) => tar("-tzf", file).trim().split(/\r?\n/u).sort();
+
+  it("puts the engine, the tray program, its package.json, a README and the licence and notices in each tarball, and nothing else", () => {
     const { file } = packed.manifest.packages[1];
-    // Relative names: Git for Windows' GNU tar reads the `C:` of an absolute path as a remote host.
-    const tar = (...args) => execFileSync("tar", [...args], { cwd: out, encoding: "utf8" });
-    expect(tar("-tzf", file).trim().split(/\r?\n/u).sort()).toEqual(
-      ["LICENSE", "NOTICE", "README.md", "THIRD_PARTY_NOTICES", "package.json", linuxX64.engine].map((name) => `package/${name}`).sort(),
+    expect(listing(file)).toEqual(
+      ["LICENSE", "NOTICE", "README.md", "THIRD_PARTY_NOTICES", "package.json", linuxX64.engine, linuxX64.tray].map((name) => `package/${name}`).sort(),
     );
+    expect(tar("-xzOf", file, `package/${linuxX64.tray}`)).toBe(`tray ${linuxX64.tray}`);
+    // Without --all, an engine whose tray program is absent is packed alone.
+    expect(listing(packed.manifest.packages[0].file)).not.toContain(`package/${macArm.tray}`);
     expect(JSON.parse(tar("-xzOf", file, "package/package.json"))).toEqual(enginePackageJson(linuxX64, core));
     expect(tar("-xzOf", file, `package/${linuxX64.engine}`)).toBe(`engine ${linuxX64.engine}`);
     expect(tar("-xzOf", file, "package/README.md")).toContain(`# ${linuxX64.name}\n\nThe native engine of [Rerail](${core.homepage}) for Linux with glibc on x64.\n`);
+  });
+
+  // Windows has no execute bit to give the file, so a tarball packed there marks it as npm finds it; the release packs on Linux.
+  it.skipIf(process.platform === "win32")("marks the tray program executable, as the runtime starts it", () => {
+    const line = tar("-tvzf", packed.manifest.packages[1].file).split(/\r?\n/u).find((entry) => entry.endsWith(`package/${linuxX64.tray}`));
+    expect(line).toMatch(/^-rwxr-xr-x /u);
   });
 
   it("writes a manifest of each tarball: its package, core's version, its file and the integrity npm's registry gives it", () => {
@@ -135,9 +150,18 @@ describe("packEnginePackages", () => {
     expect(engineTarballsProblem(copy, packed.manifest)).toContain(`has no ${packed.manifest.packages[0].file}`);
   });
 
-  it("refuses a release short of an engine, and a folder with none", () => {
+  it("refuses a release short of an engine or a tray program, and a folder with no engine", () => {
     expect(() => packEnginePackages({ root: process.cwd(), native, out: join(folder, "all"), all: true })).toThrow(/lacks rerail_engine\.darwin-x64\.node, .*: a release packs all 6 engines/u);
     expect(() => packEnginePackages({ root: process.cwd(), native: join(folder, "none"), out: join(folder, "all") })).toThrow("holds no engine");
+    const engines = join(folder, "engines");
+    mkdirSync(engines);
+    for (const { engine, tray } of ENGINE_PACKAGES) {
+      writeFileSync(join(engines, engine), "");
+      if (tray !== macArm.tray && tray !== linuxX64.tray) writeFileSync(join(engines, tray), "");
+    }
+    expect(() => packEnginePackages({ root: process.cwd(), native: engines, out: join(folder, "all"), all: true })).toThrow(
+      `${engines} lacks ${macArm.tray}, ${linuxX64.tray}: a release packs the tray program beside each of the 6 engines`,
+    );
   });
 
   it("takes pack and a folder to write, and nothing it does not know", () => {

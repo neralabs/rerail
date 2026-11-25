@@ -1,15 +1,17 @@
 #!/usr/bin/env node
-// The npm packages that carry Rerail's native engine, one per operating system and processor. Core (@neralabs/rerail)
-// ships no engine itself: npm's registry refuses a tarball that holds all six. Core names the six as exact-version
-// optional dependencies instead, and each is published at core's version, before core.
+// The npm packages that carry Rerail's native engine, and the tray icon program beside it, one per operating system and
+// processor. Core (@neralabs/rerail) ships no engine itself: npm's registry refuses a tarball that holds all six. Core
+// names the six as exact-version optional dependencies instead, and each is published at core's version, before core.
 //
-// `pack` builds each package from a built engine (native/rerail_engine.<suffix>.node) and writes its tarball, and a
-// manifest of what it packed (ENGINE_PACKAGES_FILE), into one folder. Packing core against that folder
-// (RERAIL_ENGINE_PACKAGES, read by shrinkwrap-pack.mjs) pins each tarball's version and integrity in core's
-// package.json and npm-shrinkwrap.json. Nothing is committed: a package's folder exists only while it is packed.
+// `pack` builds each package from a built engine (native/rerail_engine.<suffix>.node) and tray program
+// (native/rerail-tray.<suffix>, .exe on Windows), and writes its tarball, and a manifest of what it packed
+// (ENGINE_PACKAGES_FILE), into one folder. Packing core against that folder (RERAIL_ENGINE_PACKAGES, read by
+// shrinkwrap-pack.mjs) pins each tarball's version and integrity in core's package.json and npm-shrinkwrap.json.
+// Nothing is committed: a package's folder exists only while it is packed.
 //
-// The release packs all six (`--all` fails when an engine is absent). A checkout usually has only its own machine's
-// engine: without `--all`, `pack` packs the engines it finds and names the ones it does not. A core packed against
+// The release packs all six (`--all` fails when an engine or a tray program is absent). A checkout usually has only its
+// own machine's engine, and no tray program where the engine was pulled: without `--all`, `pack` packs the engines it
+// finds, each with its tray program where native/ has it, and names what it does not find. A core packed against
 // that folder installs with an engine on those platforms only, and the release's check refuses it (shrinkwrap-pack.mjs
 // check).
 //
@@ -18,7 +20,7 @@
 //   node scripts/release/engine/packages.mjs pack --out <folder> [--native <folder>] [--all]
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -39,7 +41,8 @@ export const ENGINE_PACKAGES_ENV = "RERAIL_ENGINE_PACKAGES";
  * and `process.arch`). The runtime loads the package of its own suffix and cannot import this file (src/ imports
  * nothing outside it), so test/scripts/release-engine-packages.test.mjs fails when the two disagree. `libc` keeps npm
  * from installing a glibc engine on a musl Linux. `target` is the Rust target the engine is built for (package.json's
- * `napi.targets`), and `engine` the file napi writes for it in native/.
+ * `napi.targets`), and `engine` the file napi writes for it in native/. `tray` is the tray icon program
+ * scripts/build/release-tray.mjs writes there, named as the runtime's `nativeTrayFileName` names it.
  */
 export const ENGINE_PACKAGES = [
   { suffix: "darwin-arm64", os: "darwin", cpu: "arm64", target: "aarch64-apple-darwin" },
@@ -48,7 +51,14 @@ export const ENGINE_PACKAGES = [
   { suffix: "linux-x64-gnu", os: "linux", cpu: "x64", libc: "glibc", target: "x86_64-unknown-linux-gnu" },
   { suffix: "win32-arm64-msvc", os: "win32", cpu: "arm64", target: "aarch64-pc-windows-msvc" },
   { suffix: "win32-x64-msvc", os: "win32", cpu: "x64", target: "x86_64-pc-windows-msvc" },
-].map((row) => Object.freeze({ ...row, name: `@neralabs/rerail-engine-${row.suffix}`, engine: `rerail_engine.${row.suffix}.node` }));
+].map((row) =>
+  Object.freeze({
+    ...row,
+    name: `@neralabs/rerail-engine-${row.suffix}`,
+    engine: `rerail_engine.${row.suffix}.node`,
+    tray: `rerail-tray.${row.suffix}${row.os === "win32" ? ".exe" : ""}`,
+  }),
+);
 
 const BY_NAME = new Map(ENGINE_PACKAGES.map((enginePackage) => [enginePackage.name, enginePackage]));
 const SYSTEMS = { darwin: "macOS", linux: "Linux with glibc", win32: "Windows" };
@@ -103,11 +113,20 @@ export function fileIntegrity(path) {
   return `sha512-${createHash("sha512").update(readFileSync(path)).digest("base64")}`;
 }
 
-/** Packs `enginePackage` from `native`'s engine into `out`, through a folder it removes; returns its manifest entry. */
+/**
+ * Packs `enginePackage` from `native`'s engine, and its tray program where `native` has one, into `out`, through a
+ * folder it removes; returns its manifest entry.
+ */
 function packEnginePackage(enginePackage, { root, core, native, out }) {
   const folder = mkdtempSync(join(tmpdir(), "rerail-engine-package-"));
   try {
     copyFileSync(join(native, enginePackage.engine), join(folder, enginePackage.engine));
+    if (existsSync(join(native, enginePackage.tray))) {
+      copyFileSync(join(native, enginePackage.tray), join(folder, enginePackage.tray));
+      // The runtime starts it. The release's native/ is downloaded from artifacts, which keep no file mode, and npm
+      // packs the mode it finds.
+      chmodSync(join(folder, enginePackage.tray), 0o755);
+    }
     writeFileSync(join(folder, "package.json"), `${JSON.stringify(enginePackageJson(enginePackage, core), null, 2)}\n`);
     writeFileSync(join(folder, "README.md"), enginePackageReadme(enginePackage, core));
     for (const notice of NOTICES) copyFileSync(join(root, notice), join(folder, notice));
@@ -123,13 +142,16 @@ function packEnginePackage(enginePackage, { root, core, native, out }) {
 
 /**
  * Packs an engine package for every engine `native` holds into `out`, and writes the manifest there. Returns the
- * manifest and the packages whose engine is absent (`absent`). Throws when `native` holds no engine, and, with `all`,
- * when it lacks any: a release packs every one.
+ * manifest, the packages whose engine is absent (`absent`), and those packed without their tray program (`trayless`).
+ * Throws when `native` holds no engine, and, with `all`, when it lacks any engine or tray program: a release packs
+ * every one.
  */
 export function packEnginePackages({ root = ROOT, native = join(root, "native"), out, all = false }) {
   const absent = ENGINE_PACKAGES.filter((enginePackage) => !existsSync(join(native, enginePackage.engine)));
   if (absent.length === ENGINE_PACKAGES.length) throw new Error(`${native} holds no engine: npm run build:native builds this machine's, and npm run engine:pull fetches a released one`);
   if (all && absent.length > 0) throw new Error(`${native} lacks ${absent.map(({ engine }) => engine).join(", ")}: a release packs all ${ENGINE_PACKAGES.length} engines`);
+  const trayless = ENGINE_PACKAGES.filter((enginePackage) => !absent.includes(enginePackage) && !existsSync(join(native, enginePackage.tray)));
+  if (all && trayless.length > 0) throw new Error(`${native} lacks ${trayless.map(({ tray }) => tray).join(", ")}: a release packs the tray program beside each of the ${ENGINE_PACKAGES.length} engines`);
   const core = readJson(join(root, "package.json"));
   mkdirSync(out, { recursive: true });
   // A manifest from an earlier run describes tarballs this run replaces.
@@ -137,7 +159,7 @@ export function packEnginePackages({ root = ROOT, native = join(root, "native"),
   const packages = ENGINE_PACKAGES.filter((enginePackage) => !absent.includes(enginePackage)).map((enginePackage) => packEnginePackage(enginePackage, { root, core, native, out }));
   const manifest = { version: core.version, packages };
   writeFileSync(join(out, ENGINE_PACKAGES_FILE), `${JSON.stringify(manifest, null, 2)}\n`);
-  return { manifest, absent };
+  return { manifest, absent, trayless };
 }
 
 const isText = (value, pattern) => typeof value === "string" && pattern.test(value);
@@ -248,10 +270,13 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
     process.stderr.write(`${USAGE}\n${error.message}\n`);
     process.exit(2);
   }
-  const { manifest, absent } = packEnginePackages(options);
+  const { manifest, absent, trayless } = packEnginePackages(options);
   for (const { name, version, file } of manifest.packages) console.log(`${name}@${version}: ${join(options.out, file)}`);
   console.log(`${join(options.out, ENGINE_PACKAGES_FILE)} lists ${manifest.packages.length} of ${ENGINE_PACKAGES.length} engine packages.`);
   if (absent.length > 0) {
     console.warn(`Not packed, for want of an engine in ${options.native ?? join(ROOT, "native")}: ${absent.map(({ name }) => name).join(", ")}. A core packed against ${options.out} installs with an engine on ${manifest.packages.map(({ suffix }) => suffix).join(", ")} only, and the release's check refuses it.`);
+  }
+  if (trayless.length > 0) {
+    console.warn(`Packed without a tray program, for want of one in ${options.native ?? join(ROOT, "native")}: ${trayless.map(({ name }) => name).join(", ")}. npm run build:tray builds this machine's.`);
   }
 }
