@@ -97,7 +97,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     databasePath: join(home, "rerail.sqlite"),
     kernelSocketPath,
     ui: "bundled",
-    startedAt: daemon.startedAt ?? 0,
+    startedAt: daemon.startedAt ?? 1,
     packageRoot: "/tmp/rerail-bridge-test-package",
     ...(daemon.accessToken === undefined ? {} : { accessToken: daemon.accessToken }),
   }));
@@ -320,7 +320,7 @@ describe("Rerail MCP bridge", () => {
     const second = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "ping" });
     const pongs = [1, 2].map(id => JSON.stringify({ jsonrpc: "2.0", id, result: {} }));
     const restartedInPlace = async (machine: Machine): Promise<Response> => {
-      await recordDaemon(machine.home, { pid: process.pid, port: 4321, startedAt: 1 });
+      await recordDaemon(machine.home, { pid: process.pid, port: 4321, startedAt: 2 });
       return new Response(pongs[0], { status: 200 });
     };
     const run = await runBridge([first, second], [restartedInPlace, new Response(pongs[1], { status: 200 })]);

@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapsMore, discoveryGapPlaces, outputText, describeInput, callToolLabel } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, lostEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapsMore, discoveryGapPlaces, outputText, describeInput, callToolLabel } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -370,6 +370,7 @@ const placesCounted = (n, more) => (more ? `more than ${fmt(n)} places; ${fmt(n)
 /** Each count of what Rerail did not see of a session, in the order the timeline says them, with the clause for a count above 0. */
 const COVERAGE_CLAUSES = [
   [droppedEvents, n => `${fmt(n)} ${plural(n, "event")} never reached Rerail`],
+  [lostEvents, n => `the records of ${fmt(n)} ${plural(n, "event")} were lost when the computer stopped`],
   [uncheckedBoundaries, n => `rules had not yet seen shell edits at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
   [discoveryGaps, (n, sess) => `rules could not fully check part of the repository (${placesCounted(n, discoveryGapsMore(sess))})`],
   [codeRulesPendingBoundaries, n => `code rules were not yet running at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],

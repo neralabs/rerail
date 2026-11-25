@@ -36,8 +36,11 @@ import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  daemonServesPackage,
   daemonUsesPackageRoot,
+  foundRunning,
   lookupDaemon,
+  MACHINE_WITHOUT_ENGINE,
   mainInstanceHolderRuns,
   openDashboard,
   START_LOCK_DIR,
@@ -50,6 +53,8 @@ import {
   type DaemonMachine,
   type DaemonState,
   type FoundDaemon,
+  type FoundRunning,
+  type OlderDaemon,
   type StopDaemonResult,
 } from "../runtime/daemon-control.js";
 import { DAEMON_PORT_FILE, DEFAULT_DAEMON_PORT, parseArguments, parsePort } from "../daemon/daemon.js";
@@ -224,7 +229,8 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
     process.stdout.write(`Would stop the Rerail daemon${plannedMoves(present(), target)}.\n`);
     return;
   }
-  process.stdout.write(stopLine(await stopDaemon(home)));
+  // The stop loads no engine: the uninstall deletes the engine's folder after it.
+  process.stdout.write(stopLine(await stopDaemon(home, MACHINE_WITHOUT_ENGINE)));
   const listed = present();
   if (listed.length === 0) {
     process.stdout.write("No rules or history to back up.\n");
@@ -379,7 +385,7 @@ function heldCacheCleanup(path: string): string {
  */
 async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<ReadonlySet<string>> {
   if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
-  else process.stdout.write(stopLine(await stopDaemon(home)));
+  else process.stdout.write(stopLine(await stopDaemon(home, MACHINE_WITHOUT_ENGINE)));
   const deletion = planDataDeletion(home, machine);
   if (dryRun) {
     for (const { path, what } of deletion.remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
@@ -1032,10 +1038,11 @@ const DASHBOARD_ROUTES: Record<DashboardPage, string> = { rules: "rules" };
 
 /**
  * The daemon of the active install; it serves every repository. A running daemon from another package (an older
- * version), or on another port than `port` names, is replaced, on the port it had unless `port` names one. A daemon
- * that does not answer is never killed here; its pid may belong to another process by now, so `startDaemon`'s
- * refusal (with how to stop it) is the answer. `RERAIL_AUTOSTART=0` or `false` ({@link autostartOff}; the updater's
- * health check sets `0`) uses only a daemon already running from this install, and starts or replaces none.
+ * version), of a release before the engine's proof wherever it ran from ({@link daemonServesPackage}), or on another
+ * port than `port` names, is replaced, on the port it had unless `port` names one. A daemon that does not answer is
+ * never killed here; its pid may belong to another process by now, so `startDaemon`'s refusal (with how to stop it) is
+ * the answer. `RERAIL_AUTOSTART=0` or `false` ({@link autostartOff}; the updater's health check sets `0`) uses only a
+ * daemon already running from this install, and starts or replaces none.
  */
 async function activeDaemon(context: SetupContext, port: number | undefined): Promise<DaemonState> {
   const packageRoot = await activePackageRoot(context);
@@ -1043,8 +1050,8 @@ async function activeDaemon(context: SetupContext, port: number | undefined): Pr
   const kept = await keptDaemon(lookup, packageRoot, port);
   if (kept !== undefined) return kept;
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
-  if (lookup.status === "running") await stopDaemon(context.home);
-  return await startActiveDaemon(context.home, packageRoot, port ?? (lookup.status === "running" ? lookup.state.port : undefined));
+  const stopped = await stoppedPort(context.home, lookup);
+  return await startActiveDaemon(context.home, packageRoot, port ?? stopped);
 }
 
 /** The version directory of the active install, not the current link: the daemon and its SQLite binding belong to it. */
@@ -1072,7 +1079,7 @@ interface KeptDaemonReason {
 async function replaceOtherPackageDaemon(context: SetupContext): Promise<string | undefined> {
   const packageRoot = await activePackageRoot(context);
   const lookup = await lookupDaemon(context.home);
-  if (lookup.status === "absent" || await daemonUsesPackageRoot(lookup.state, packageRoot)) return undefined;
+  if (lookup.status === "absent" || (lookup.status !== "older" && await daemonUsesPackageRoot(lookup.state, packageRoot))) return undefined;
   const kept = keptReason(context.home, lookup);
   if (kept !== undefined) return stillRunsLine(lookup.state, kept);
   return await restartOnActivePackage(context.home, packageRoot, lookup.state);
@@ -1090,20 +1097,22 @@ function errorText(error: unknown): string {
 }
 
 /** Why a start leaves alone a daemon that is alive but not running as it should ({@link DaemonLookup}). */
-const NOT_ANSWERING: Readonly<Record<Exclude<FoundDaemon["status"], "running">, string>> = {
+const NOT_ANSWERING: Readonly<Record<Exclude<FoundDaemon["status"], FoundRunning["status"]>, string>> = {
   unresponsive: "it does not answer",
   refused: "it refuses the access capability daemon.json records",
 };
 
 /**
  * Why the refresh leaves running the daemon `found`, from another package: `RERAIL_AUTOSTART=0` or `false`, under which
- * nothing replaces it; it does not answer, or refuses the capability, so a start would only refuse it too; or a start
- * on its address and port alone would not bring it back as it was ({@link startedWithDefaults}). Undefined when the refresh
- * replaces it.
+ * nothing replaces it; it does not answer, or refuses the capability, so a start would only refuse it too; it runs a
+ * release before the engine's proof ({@link OlderDaemon}), whose record cannot say whether it was started with a
+ * `--public-host`, which a start would drop; or a start on its address and port alone would not bring it back as it was
+ * ({@link startedWithDefaults}). Undefined when the refresh replaces it.
  */
 function keptReason(home: string, found: FoundDaemon): KeptDaemonReason | undefined {
   if (autostartOff()) return { why: `RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps Rerail from replacing it`, restart: RESTART_DAEMON };
-  if (found.status !== "running") return { why: NOT_ANSWERING[found.status], restart: RESTART_DAEMON };
+  if (!foundRunning(found)) return { why: NOT_ANSWERING[found.status], restart: RESTART_DAEMON };
+  if (found.status === "older") return { why: "it is a release before 0.1.5, whose record does not say which options it was started with", restart: `run rerail daemon start with the options you gave it, which ends it first` };
   if (startedWithDefaults(home, found.state)) return undefined;
   return { why: "it was started with options a restart here would drop", restart: `${RESTART_DAEMON} with the options you gave it` };
 }
@@ -1144,7 +1153,7 @@ async function failedRestartLine(home: string, packageRoot: string, error: unkno
   const after = await lookupDaemon(home).catch(() => undefined);
   if (after === undefined) return `${failed}; ${RESTART_DAEMON}.`;
   if (after.status === "absent") return `${failed}, and none is running now; run rerail daemon start.`;
-  if (await daemonUsesPackageRoot(after.state, packageRoot)) return `${failed}, but one of Rerail ${after.state.version} is coming up or running now; rerail status shows which.`;
+  if (after.status !== "older" && await daemonUsesPackageRoot(after.state, packageRoot)) return `${failed}, but one of Rerail ${after.state.version} is coming up or running now; rerail status shows which.`;
   return `${failed}, which still runs Rerail ${after.state.version}; ${RESTART_DAEMON}.`;
 }
 
@@ -1157,10 +1166,13 @@ function startedWithDefaults(home: string, state: DaemonState): boolean {
   return state.ui === "bundled" && state.tlsFingerprint256 === undefined && state.remoteRefused === undefined && accessTokenKept(home, state);
 }
 
-/** The daemon `lookup` found, when set-up keeps it: running from `packageRoot`, and on `port` when one is named. */
+/**
+ * The daemon `lookup` found, when set-up keeps it: running from `packageRoot` and of a release with the engine's proof
+ * ({@link daemonServesPackage}), and on `port` when one is named.
+ */
 async function keptDaemon(lookup: DaemonLookup, packageRoot: string, port: number | undefined): Promise<DaemonState | undefined> {
   if (lookup.status !== "running" || (port !== undefined && lookup.state.port !== port)) return undefined;
-  return await daemonUsesPackageRoot(lookup.state, packageRoot) ? lookup.state : undefined;
+  return await daemonServesPackage(lookup, packageRoot) ? lookup.state : undefined;
 }
 
 /**
@@ -1169,6 +1181,16 @@ async function keptDaemon(lookup: DaemonLookup, packageRoot: string, port: numbe
  */
 async function startActiveDaemon(home: string, packageRoot: string, port: number | undefined): Promise<DaemonState> {
   return (await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, { dev: false, ...(port === undefined ? {} : { port }) })).daemon.state;
+}
+
+/**
+ * Stops the daemon `lookup` found running, one of a release before the proof included, set-up's start taking its place,
+ * and gives the port it had.
+ */
+async function stoppedPort(home: string, lookup: DaemonLookup): Promise<number | undefined> {
+  if (!foundRunning(lookup)) return undefined;
+  await stopDaemon(home);
+  return lookup.state.port;
 }
 
 /** `<origin>/?repository=<key>&checkout=<path>#<page>`: the page, scoped to the repository and checkout set-up ran for. */

@@ -50,6 +50,9 @@ import { keepFolderPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
+import { placeCheckout, placeWorktrees } from "../engine/catalog/checkouts/checkout-placement.js";
+import type { WorktreeRegistry } from "../engine/catalog/repository-identity.js";
+import { GitReads } from "../engine/git.js";
 import type { CheckoutContext } from "../engine/catalog/repository-model.js";
 import type { PendingNote } from "./merge-assist/notes.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "./merge-assist/service.js";
@@ -58,7 +61,7 @@ import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
-import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
+import { restorableRule, type DroppedEvents, type LostEvent, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin, steerTitle } from "../engine/code-rule/steer-origin.js";
@@ -286,6 +289,41 @@ function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
   return new Set(ledger.flatMap((entry) => (entry.type === "event" ? [entry.eventId] : [])));
 }
+
+/** When the ledger's first event that carries its row's time was recorded; undefined when none does. */
+function firstDatedEvent(ledger: readonly LedgerEntry[]): number | undefined {
+  for (const entry of ledger) if (entry.type === "event" && entry.observedAt !== undefined) return entry.observedAt;
+  return undefined;
+}
+
+/** The event kinds the ledger's lines name (`persistEvent` writes each line with its row's kind). */
+function ledgerKinds(ledger: readonly LedgerEntry[]): Set<string> {
+  return new Set(ledger.flatMap((entry) => (entry.type === "event" && entry.kind !== undefined ? [entry.kind] : [])));
+}
+
+/**
+ * The events the ledger holds whose rows a power cut or an operating system crash took, oldest first. An event's row is
+ * committed before its ledger line is written, one event after another, or, while another process holds the write lock,
+ * waits in the record writer behind the rows before it (`openRecordWriter`); such a loss, like a daemon killed with rows
+ * still waiting, takes only the store's last rows: so the lost events are those after `recorded`
+ * (`SqliteSessionStore.lastRecordedEvent`), the newest one whose row is there, or the last of a stretch a record of lost
+ * events already counted. A ledger that does not hold `recorded` gives none, whatever lines an older build wrote in it:
+ * `rerail reset` deleted the session's history, or the loss took every row of it, which nothing tells apart. Between
+ * `recorded` and the ledger's end, a line an older build wrote (no kind or time) ends the walk, since those builds
+ * synced every commit. The walk reads only the ledger in memory.
+ */
+function lostEvents(ledger: readonly LedgerEntry[], recorded: string | undefined): LostEvent[] {
+  const from = ledger.findLastIndex(entry => entry.type === "event" && entry.eventId === recorded);
+  if (from < 0) return [];
+  const lost: LostEvent[] = [];
+  for (let index = ledger.length - 1; index > from; index -= 1) {
+    const entry = ledger[index]!;
+    if (entry.type !== "event") continue;
+    if (entry.kind === undefined || entry.observedAt === undefined) break;
+    lost.push({ eventId: entry.eventId, kind: entry.kind, observedAt: entry.observedAt });
+  }
+  return lost.reverse();
+}
 interface AuditRequestVerdict {
   status: "completed" | "failed" | "interrupted";
   error: string | null;
@@ -454,7 +492,8 @@ const ContentItemSchema = z.object({
   }),
 });
 const LedgerEntrySchema = z.union([
-  z.object({ type: z.literal("event"), eventId: z.string() }),
+  // `kind` and `observedAt` are the event's row's own, which a ledger written before they were added lacks.
+  z.object({ type: z.literal("event"), eventId: z.string(), kind: z.string().optional(), observedAt: z.number().int().optional() }),
   z.object({ type: z.literal("hud-tracking-start") }),
   z.object({ type: z.literal("sample"), item: ContentItemSchema }),
   z.object({ type: z.literal("turn"), eventId: z.string() }),
@@ -480,7 +519,7 @@ const LedgerEntrySchema = z.union([
 ]);
 
 type LedgerEntry =
-  | { type: "event"; eventId: string }
+  | { type: "event"; eventId: string; kind?: string; observedAt?: number }
   | { type: "hud-tracking-start" }
   | { type: "sample"; item: ContentItem }
   | { type: "turn"; eventId: string }
@@ -1029,6 +1068,14 @@ async function appendJsonLine(path: string, value: unknown, state: JsonlAppendSt
 }
 
 /**
+ * What the session store keeps of `event`: scrubbed of secrets (`scrubValue`), and a result whose call named a
+ * secret-like path (`withheld`) without its output. The live event, which rules match, keeps them.
+ */
+function storedPayload(event: AdapterEvent, withheld: boolean): unknown {
+  return event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event);
+}
+
+/**
  * What the session store keeps of a result whose call named a secret-like path: that its output was left out, and how
  * large it was. People read the transcript whole, but a `cat .env` output is a secret Rerail recognizes, so it is never
  * written down; the call itself is kept.
@@ -1303,6 +1350,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** Every checkout this runtime's sessions touch, with its eligibility and compiled rules. */
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
+  /**
+   * The Git reads that place a session's checkout, then the other worktrees Git lists for it (`placeCheckout`,
+   * `placeWorktrees`): a disposed runtime ends them, and returns once each Git they started has exited, so none is left
+   * running in a checkout (Windows refuses to remove a folder a process holds). A read another runtime started and
+   * shares with them goes on, and is not waited for (`sharedRead`).
+   */
+  readonly #placing = new GitReads();
   readonly #sessions = new Map<string, RuntimeSessionState>();
   /**
    * While an event that happened earlier opens its session (`IngestOptions.observedAt`), when it happened, by session id:
@@ -2391,6 +2445,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async dispose(): Promise<void> {
     this.#disposing = true;
     this.#pollControlsWhileSessionsOpen();
+    const placingEnded = this.#placing.stop();
     // No conflict change is offered to a session that is closing.
     this.#mergeAssistUnlisten?.();
     // The sessions still open did not end: what each owes its agent waits in its ledger for its next event, as across
@@ -2399,6 +2454,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
     await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
+    await placingEnded;
     // A Merge Assist this runtime made works over its database: its hook's late answers stop before that closes.
     if (this.#ownsMergeAssist) await this.#mergeAssist?.stop();
     this.#controls.close();
@@ -2417,8 +2473,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A resume for a scan stops here while another process holds the write lock, before any of the open's work.
     this.#failWhileWriteLockedForScan(session.sessionId);
     const recordedStart = this.#recordedStart(session.sessionId);
-    const startedAt = recordedStart ?? this.#startTime(session.sessionId);
-    const ledger = await this.#openLedger(session, recordedStart === undefined);
+    // Read before the wait below, which can last as long as Git's reads of the checkout.
+    const startTime = this.#startTime(session.sessionId);
+    // What the checkout's first events ask Git is learnt here without blocking the daemon (`placeCheckout`), so the
+    // steps below find it kept: every other session's events are answered meanwhile, and this session's wait in order.
+    const ledger = await this.#ledgerWhilePlaced(session, recordedStart === undefined);
+    // A session whose row is gone (a power cut took it with its first commits, or `rerail reset` took an ended one's)
+    // started when its ledger's first dated event came, not now.
+    const startedAt = recordedStart ?? firstDatedEvent(ledger.entries) ?? startTime;
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
     const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));
@@ -2499,6 +2561,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await this.#beforeSessionPublish?.(session);
       this.#failWhileWriteLockedForScan(session.sessionId);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
+      const recorded = this.#sessionStore.lastRecordedEvent(session.sessionId, ledgerKinds(ledger.entries));
+      this.#sessionStore.recordLostEvents(session, lostEvents(ledger.entries, recorded));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, ledger.completeTracking);
       opened.ownerClaim = this.#registerOwner(session.sessionId);
@@ -2659,6 +2723,31 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   #writeOwedClaim(state: RuntimeSessionState): void {
     if (state.claimOwed === true) this.#claimAgain(state.descriptor.sessionId);
+  }
+
+  /**
+   * The session's ledger ({@link #openLedger}), read while its checkout is placed ({@link #placeCheckout}): both settle
+   * before it answers or fails, so an open that fails leaves no Git of its placement running in the checkout. Once both
+   * stand, the other worktrees Git lists are placed ({@link placeWorktrees}) under the same reads, and the open does not
+   * wait for them: its first hook waits for its own checkout only, and a dispose ends that pass and waits for its Git.
+   */
+  async #ledgerWhilePlaced(session: AdapterSession, unrecorded: boolean): Promise<OpenedLedger> {
+    const [ledger, placed] = await Promise.allSettled([this.#openLedger(session, unrecorded), this.#placeCheckout(session)]);
+    if (ledger.status === "rejected") throw ledger.reason;
+    if (placed.status === "rejected") throw placed.reason;
+    const registry = placed.value;
+    if (registry !== undefined) void this.#placing.run(signal => placeWorktrees(registry, { signal }));
+    return ledger.value;
+  }
+
+  /**
+   * {@link placeCheckout} for the session's folder, with the registry Git listed for it; a runtime disposed meanwhile
+   * fails the open before any Git finds the checkout.
+   */
+  async #placeCheckout(session: AdapterSession): Promise<WorktreeRegistry | undefined> {
+    const registry = await this.#placing.run(signal => placeCheckout(session.cwd, { signal }));
+    if (this.#placing.stopped) throw new Error(`the session ${session.sessionId} opened while Rerail was stopping`);
+    return registry;
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
@@ -3060,32 +3149,30 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
-    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) {
-      // Recorded before the event counts as processed: a call sent again after a crash here is judged again.
-      await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
-      state.secretCalls.add(event.toolCallId);
-    }
+    await this.#noteSecretCall(state, event);
     const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
-    this.#storeEvent(state, sessionId, event, withheld);
-    if (withheld) {
-      await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
-      state.secretCalls.delete(event.toolCallId);
-      state.withheldResults.add(event.eventId);
-    }
-    await this.#append(state, { type: "event", eventId: event.eventId });
+    // When the event happened: for one that reaches the runtime later, its own time (`happenedAt`), else now.
+    const observedAt = happenedAt(state).observedAt ?? Date.now();
+    this.#sessionStore.append({ sessionId, eventId: event.eventId, kind: event.kind, observedAt, payload: storedPayload(event, withheld) }, state.descriptor);
+    if (withheld) await this.#noteWithheldResult(state, event);
+    // The row's kind and time go with the line, so the session's next open can record which events a power cut took
+    // (`lostEvents`).
+    await this.#append(state, { type: "event", eventId: event.eventId, kind: event.kind, observedAt });
     state.processed.add(event.eventId);
   }
 
-  /** The event's row in the session store, `withheld` when it is a result whose output Rerail keeps no copy of. */
-  #storeEvent(state: RuntimeSessionState, sessionId: string, event: AdapterEvent, withheld: boolean): void {
-    this.#sessionStore.append({
-      sessionId,
-      eventId: event.eventId,
-      kind: event.kind,
-      // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
-      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
-      ...happenedAt(state),
-    }, state.descriptor);
+  /** A call that names a secret-like path, recorded before the event counts as processed: sent again after a crash here, it is judged again. */
+  async #noteSecretCall(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
+    if (event.kind !== "call" || !callNamesSecretPath(event.input, state.descriptor.cwd)) return;
+    await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
+    state.secretCalls.add(event.toolCallId);
+  }
+
+  /** A result of such a call, its output left out of its row, recorded once the row is written. */
+  async #noteWithheldResult(state: RuntimeSessionState, event: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
+    await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
+    state.secretCalls.delete(event.toolCallId);
+    state.withheldResults.add(event.eventId);
   }
 
   async persistTurn(sessionId: string, eventId: string): Promise<void> {
