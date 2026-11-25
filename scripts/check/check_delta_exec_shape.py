@@ -120,16 +120,42 @@ def b1(failures: list) -> None:
             hits(path, code, pattern, why, failures)
 
 
+def b2(failures: list) -> None:
+    """B2, the program trace: one bistate definition (0678's `Bistate`, in blocks); a trace with two states, the
+    committed one and the run's layer (the user, 2026-11-25), so no frontier API (`at`, `between`, `fork`, `pin`);
+    its layers `Relation`s, each continuing the one below; `consolidate` an operation whose twin is in the twins'
+    crate."""
+    crates = ROOT / "native/crates"
+    defs = []
+    for path in sorted(crates.rglob("*.rs")):
+        if "/target/" in str(path):
+            continue
+        text = path.read_text(errors="replace")
+        if re.search(r"\bstruct\s+Bistate\b", text):
+            defs.append(path.relative_to(ROOT))
+    if [str(d) for d in defs] != ["native/crates/blocks/src/bistate.rs"]:
+        failures.append(f"one Bistate, in blocks' bistate.rs: found {', '.join(map(str, defs)) or 'none'}")
+    trace = crates / "blocks/src/trace.rs"
+    code = strip_rust(trace.read_text())
+    hits(trace, code, r"\bfn\s+(at|between|fork|pin|frontier)\b|\bstruct\s+(Frontier|Version)\b", "a frontier API (a trace has two states)", failures)
+    if "Relation::try_continue" not in code:
+        failures.append(f"{trace.relative_to(ROOT)}: a layer continues the one below (Relation::try_continue)")
+    for path in sorted(list((ROOT / "native/crates/delta_exec/src").rglob("*.rs")) + list((TWINS / "src").rglob("*.rs"))):
+        hits(path, strip_rust(path.read_text()), r"\bstruct\s+(Bistate|Trace|Layer|Frontier)\b", "a second trace or bistate (blocks holds the one)", failures)
+    if "pub fn consolidate(slots: &mut [Slot<'_>], params: &[u8])" not in (TWINS / "src/trace.rs").read_text():
+        failures.append("the consolidate twin is a TwinFn in the twins' crate")
+
+
 def main() -> int:
     failures: list = []
-    for check in (m0, b1):
+    for check in (m0, b1, b2):
         check(failures)
     for f in failures:
         print(f)
     if failures:
         print(f"{len(failures)} shape check(s) failed (decision 0686, the rebuild plan)")
         return 1
-    print("delta_exec shape: every check holds (M0, B1)")
+    print("delta_exec shape: every check holds (M0, B1, B2)")
     return 0
 
 

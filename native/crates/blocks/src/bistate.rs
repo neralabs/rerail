@@ -292,7 +292,12 @@ impl<S: Read> Bistate<S> {
 
     /// Whether nothing changed: no row gone or added.
     pub fn is_identity(&self) -> bool {
-        if self.listed().is_some() {
+        if let Some((_, since)) = self.listed() {
+            // No id flipped and none new: the counts alone say so (decision 0686 B2: a layer's identity is read from
+            // its counts, never its rows).
+            if since.flips.is_empty() && self.after.end() == since.end {
+                return true;
+            }
             return self.counts() == (0, 0);
         }
         WordIndex::upto(self.after.end()).all(|w| self.before_word(w) == self.after.live_word(w))
@@ -338,26 +343,34 @@ pub fn is_least<S: Read>(s: &Bistate<S>) -> bool {
     s.gone().all(|g| s.added().all(|a| ColumnIndex::all(cols).any(|c| before.get(g, c) != s.after.get(a, c))))
 }
 
-/// A view's column: the base's and the delta's, each resolved once (`Rows::reader`).
+/// A view's column: the base's and the delta's, each resolved once (`Rows::reader`); a trace's layers' ids below
+/// the last layer's read down the chain (`chain`, the last layer, and the column).
 #[derive(Clone, Copy)]
-pub struct ViewColumn {
+pub struct ViewColumn<'a> {
     base: Option<crate::rows::ColRead>,
     top: crate::rows::ColRead,
     base_rows: u32,
+    chain: Option<(&'a crate::relation::Relation, usize)>,
 }
 
-impl ColumnRead for ViewColumn {
+impl ColumnRead for ViewColumn<'_> {
     #[inline]
     fn get(&self, id: RowId) -> i64 {
         let id = id.get();
-        if id < self.base_rows { self.base.expect("a delta's base").get(id) } else { self.top.get(id - self.base_rows) }
+        if id >= self.base_rows {
+            return self.top.get(id - self.base_rows);
+        }
+        match self.chain {
+            Some((r, c)) => r.get(id, c),
+            None => self.base.expect("a delta's base").get(id),
+        }
     }
 }
 
 /// A relation read alone: its own rows, less its dead bits.
 impl Read for View<'_> {
     type Column<'s>
-        = ViewColumn
+        = ViewColumn<'s>
     where
         Self: 's;
 
@@ -373,6 +386,15 @@ impl Read for View<'_> {
     fn live_word(&self, w: WordIndex) -> u64 {
         let dead = |r: &crate::relation::Relation| r.dead.as_slice().get(w.get()).copied().unwrap_or(0);
         let mut live = below(Read::end(self), w) & !dead(self.top);
+        if self.chained() {
+            // Each layer's dead bits name its own kills (of ids below its own rows): a row is live when none has.
+            let mut r = self.top;
+            while let Some(b) = r.base() {
+                live &= !dead(b);
+                r = b;
+            }
+            return live;
+        }
         if let Some(b) = self.base {
             live &= !(dead(b) & below(RowId::new(self.top.base_rows), w));
         }
@@ -385,12 +407,19 @@ impl Read for View<'_> {
 
     /// A frozen delta's change: its base's ids it killed (`Relation::changed`), and its own rows after them.
     fn since(&self) -> Option<Since<'_>> {
-        self.base?;
+        if !self.chained() {
+            self.base?;
+        }
         self.top.is_frozen().then(|| Since { end: RowId::new(self.top.base_rows), flips: self.top.changed.as_slice() })
     }
 
-    fn column(&self, c: ColumnIndex) -> ViewColumn {
-        ViewColumn { base: self.base.map(|b| b.rows.reader(c.get())), top: self.top.rows.reader(c.get()), base_rows: self.top.base_rows }
+    fn column(&self, c: ColumnIndex) -> ViewColumn<'_> {
+        ViewColumn {
+            base: self.base.map(|b| b.rows.reader(c.get())),
+            top: self.top.rows.reader(c.get()),
+            base_rows: self.top.base_rows,
+            chain: self.chained().then_some((self.top, c.get())),
+        }
     }
 }
 
@@ -398,9 +427,11 @@ impl<'a> View<'a> {
     /// The view as a change of its base (decision 0678): before, the base alone; after, the base and its delta. A
     /// full relation's view is a cold run's.
     pub fn bistate(&self) -> Bistate<View<'a>> {
-        match self.base {
-            Some(b) => Bistate::new(View::full(b), *self),
-            None => Bistate::cold(*self),
+        match (self.base, self.top.base()) {
+            (Some(b), _) => Bistate::new(View::full(b), *self),
+            // A trace's last layer: before, the layers below it.
+            (None, Some(below)) if self.chained() => Bistate::new(View::full(below), *self),
+            _ => Bistate::cold(*self),
         }
     }
 }

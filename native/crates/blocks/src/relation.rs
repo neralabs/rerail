@@ -365,6 +365,26 @@ impl Relation {
         if self.continues() { self.base_rows + self.rows.len() } else { self.rows.len() }
     }
 
+    /// Whether row `id` is live in the state this relation ends (decision 0686 B2): a layer of a trace is a
+    /// continuation of the layers below it (`try_continue`), and a row is live when no layer from the one that holds
+    /// it up to this one has killed it (each layer's dead bits name only its own kills). Read down the chain, one
+    /// layer at a time: a trace keeps about log n of them (geometric roll-up, O5).
+    pub fn live_down(&self, id: u32) -> bool {
+        let mut r = self;
+        loop {
+            if r.dead_bit(id) {
+                return false;
+            }
+            if id >= r.base_rows {
+                return id < r.base_rows + r.rows.len();
+            }
+            match r.base() {
+                Some(b) => r = b,
+                None => return false,
+            }
+        }
+    }
+
     /// Row `id`'s value in column `c` (the CLIF's `rel_get`, the kernels' and the JIT's): a continuation's id below
     /// `base_rows` read in its base, down the chain of bases (a fork of a fork) to the one whose own rows hold it;
     /// its own rows from `base_rows` on (a delta's own ids count from its base's too).
@@ -1333,8 +1353,44 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     // the base holds one: one probe of the base's row index, else of its sort column's range, else a scan (a base
     // of more than `MAX_KEY` columns and no sort column).
     let every: Vec<u16> = (0..a as u16).collect();
+    // A layer of a trace (decision 0686 B2) continues the layers below it: its base is the state they end, read down
+    // the chain. A row is a duplicate when a row live in that state holds its values; liveness is the chain's.
+    let chained = rel.continues() && base.is_some_and(|b| b.continues() || b.base_rows == 0);
+    let live_before = |id: u32| -> bool {
+        match base {
+            Some(b) if chained => b.live_down(id),
+            Some(b) => !b.dead_bit(id),
+            None => false,
+        }
+    };
+    let chain_row = |i: usize| -> Option<u32> {
+        let mut layer = base;
+        while let Some(l) = layer {
+            let same = |id: u32| (0..a).all(|c| l.own(id, c) == val(c, i));
+            let mut key = [0i64; MAX_KEY];
+            for (c, k) in key.iter_mut().enumerate().take(a) {
+                *k = val(c, i);
+            }
+            let found = match l.find_index(&every, l.rows.len()) {
+                Some(x) if l.index_at(x).ordered == 1 => {
+                    let r = leading(l, &every, &key[..a]);
+                    (r.start + l.base_rows..r.end + l.base_rows).find(|&id| same(id) && live_before(id))
+                }
+                Some(x) => l.group(x, key_hash(&key[..a])).iter().copied().find(|&id| same(id) && live_before(id)),
+                None => l.ids().find(|&id| same(id) && live_before(id)),
+            };
+            if found.is_some() {
+                return found;
+            }
+            layer = l.base();
+        }
+        None
+    };
     let base_ix = base.and_then(|b| b.find_index(&every, b.rows.len()));
     let base_row = |i: usize| -> Option<u32> {
+        if chained {
+            return chain_row(i);
+        }
         let b = base?;
         let same = |id: u32| (0..a).all(|c| b.rows.get(id, c) == val(c, i));
         if let Some(x) = base_ix {
@@ -1363,8 +1419,7 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     for &id in ids {
         let i = id as usize;
         if let Some(b) = base_row(i) {
-            let based = base.expect("a base row's base");
-            if !based.dead_bit(b) && is_dead(dead, b as usize) {
+            if live_before(b) && is_dead(dead, b as usize) {
                 back[nback] = b;
                 nback += 1;
             }
@@ -1379,10 +1434,10 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     // The change: each base row killed that was live in the base and stays killed, ascending, once.
     let changed: &mut [u32] = scratch.take(nkilled as usize);
     let mut nchanged = 0;
-    if let Some(b) = base {
+    if base.is_some() {
         for k in 0..nkilled {
             let id = rel.killed.get(k, 0) as usize;
-            if id < br && !b.dead_bit(id as u32) && is_dead(dead, id) {
+            if id < br && live_before(id as u32) && is_dead(dead, id) {
                 changed[nchanged] = id as u32;
                 nchanged += 1;
             }
@@ -1426,7 +1481,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     // is on them all). Only a full relation is a delta's base, so only a full relation has one. A relation with no
     // declared index is given its row index as an added one, after it is frozen (below), so its directory keeps its
     // room for the indexes its readers add (`try_reserve_index`).
-    let row_index = base.is_none() && a > 0 && a <= MAX_KEY && !spec.indexes.contains(&every);
+    // A trace's layer (a continuation) has one too: the next layer finds its duplicates there (decision 0686 B2).
+    let row_index = (base.is_none() || (rel.continues() && base.is_some())) && a > 0 && a <= MAX_KEY && !spec.indexes.contains(&every);
     let mut keys: Vec<Vec<u16>> = spec.indexes.clone();
     if row_index && !keys.is_empty() {
         keys.push(every.clone());
@@ -1545,6 +1601,11 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
 
 /// A relation as readers see it: a full relation alone, or a base and its delta read as one. Ids `..base_rows`
 /// are the base's, the rest the delta's. A probe and the ordered scan come in order on the sort column.
+///
+/// Or a trace's state of n layers (decision 0686 B2): `base` none and `top` the last layer, a continuation of the
+/// ones below it (`Relation::try_continue`). Its ids below `top.base_rows` are read down the chain
+/// (`Relation::get`), and a row is live when no layer from its own up has killed it (`Relation::live_down`). An
+/// ordered scan or a probe of such a state is not built yet: it refuses.
 #[derive(Clone, Copy)]
 pub struct View<'a> {
     pub base: Option<&'a Relation>,
@@ -1567,13 +1628,30 @@ impl<'a> View<'a> {
         self.top.base_rows + self.top.rows.len()
     }
 
+    /// Whether it is a trace's state of layers: a chain of continuations read as one.
+    #[inline]
+    pub fn chained(&self) -> bool {
+        self.base.is_none() && self.top.continues()
+    }
+
     #[inline]
     pub fn get(&self, id: u32, c: usize) -> i64 {
-        if id < self.top.base_rows { self.base.expect("a delta's base").rows.get(id, c) } else { self.top.own(id, c) }
+        if id < self.top.base_rows {
+            match self.base {
+                Some(b) => b.rows.get(id, c),
+                None if self.top.continues() => self.top.get(id, c),
+                None => panic!("a delta's base"),
+            }
+        } else {
+            self.top.own(id, c)
+        }
     }
 
     #[inline]
     pub fn live(&self, id: u32) -> bool {
+        if self.chained() {
+            return self.top.live_down(id);
+        }
         if self.top.dead_bit(id) {
             return false;
         }
@@ -1605,12 +1683,16 @@ impl<'a> View<'a> {
     /// `ordered`, read in place: no allocation.
     pub fn ordered_iter(&self) -> impl Iterator<Item = u32> + '_ {
         assert!(self.top.is_frozen(), "an ordered read needs a frozen relation");
+        assert!(!self.chained(), "an ordered read of a trace's layers is not built yet");
         let own = self.top.base_rows..self.top.base_rows + self.top.rows.len();
         let based = 0..self.base.map_or(0, |b| b.rows.len());
         Merge::new(self, based.filter(|&id| self.live(id)), own)
     }
 
     pub fn live_len(&self) -> usize {
+        if self.chained() {
+            return (0..self.total()).filter(|&id| self.live(id)).count();
+        }
         let own = self.top.rows.len() as usize;
         match self.base {
             None => own,
@@ -1625,6 +1707,7 @@ impl<'a> View<'a> {
 
     /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
     pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
+        assert!(!self.chained(), "a probe of a trace's layers is not built yet");
         let ix = self.top.index_at(i);
         let cols = &ix.key[..ix.ncols as usize];
         let (own, based, exact) = if ix.ordered == 1 {
@@ -1761,7 +1844,7 @@ impl Iterator for Ids<'_> {
 
 /// The positions of `rel`'s own rows (sorted in place) whose columns `cols`, the order key's first ones, equal
 /// `key`: one range, by binary search on each leading column in turn.
-fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
+pub(crate) fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
     let (mut lo, mut hi) = (0u32, rel.rows.len());
     for oc in rel.sort_col().into_iter().take(cols.len()).map(|c| c as u16) {
         let k = key[cols.iter().position(|&c| c == oc).expect("a leading column")];

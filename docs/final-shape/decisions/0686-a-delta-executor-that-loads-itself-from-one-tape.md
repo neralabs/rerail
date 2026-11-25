@@ -1,7 +1,7 @@
 # 0686: A delta executor that loads itself from one tape
 
-Status: being rebuilt to the agreed design, milestone by milestone; M0 (the clean slate) and B1 (operations on
-blocks) done. Design pages: *Bootstrap
+Status: being rebuilt to the agreed design, milestone by milestone; M0 (the clean slate), B1 (operations on
+blocks) and B2 (the program trace) done. Design pages: *Bootstrap
 from one tape* (https://claude.ai/artifact/7Sc29B3894aE1PBsbhwbqa, cited B§), *Delta-first engine primitives*
 (https://claude.ai/artifact/2pcYo27YJWcPwM3msKjoAH, P§) and *The program bistate and the bootstrap*
 (https://claude.ai/artifact/28cUPRyFpEhqCnPbj5gKLT). The rebuild plan: *0686: Rebuild Plan*
@@ -225,6 +225,54 @@ as about log n layers. Asked which governs B2, the user: "yes build it that way"
 one state is stored; a trace has two states, the committed one and the run's open layer on it; 0678's `Bistate<S>`
 stays the one definition, with `S` a `View` widened to n layers; no reads at other frontiers, no `fork`, no named
 pins. B2's check is that a random chain of layers reads as a flat set at both states.
+
+## B2: the program trace (2026-11-25)
+
+Built as the user narrowed P§12 (above): two states, layers as storage.
+
+- **The trace** is `rerail_blocks::trace::Trace`: one relation's layers in one block, and the run's open layer. A
+  layer is a `Relation` as it is (P§13, "Keep"): the first full, each later one `Relation::try_continue` of the one
+  below, so its ids follow theirs, its own rows are the rows its run added, its dead bits its kills of rows below.
+  `Trace` holds only the block and its layers' offsets (bookkeeping of the operation graph).
+- **The state** is `View::full` of the last layer, read down the chain: `View` widened to n layers (`View::chained`;
+  `Relation::live_down`, a row live when no layer from its own up killed it; `Read::live_word` the same a word at a
+  time; `ViewColumn` reads down the chain). An ordered scan and a probe of a chained view are not built: they refuse.
+  The old engine's views and forks read as before (a full relation, a base and delta, a fork with no kills).
+- **The change** is `View::bistate` of the last layer: 0678's `Bistate`, the one definition, before the state below and
+  after the state with the layer. Its gone rows are the layer's `changed` ids, so it is read in its size;
+  `is_identity` answers from the counts alone (no id flipped and no row of its own) before any row is read.
+- **`LayerW`** is `RelW` on the open layer: rows pushed, rows of the state killed.
+- **Freeze over a chain.** `freeze_in` of a continuation given its base finds a pushed row's duplicate in any layer
+  below (each layer's row index, or its sort range for an ordered one), live in the state below; a row killed and
+  pushed again in one layer is brought back (its kill cancelled), so the change is the least one. Such a layer gets a
+  row index too. A freeze with no base, or of a relation that is not a continuation, is unchanged.
+- **Partitions** on a column the trace names (the module, for P2), with the partition index on each layer. Beside each
+  layer, `consolidate` writes `parts(part, digest, added, gone)`, the digest's move a sum of `row_digest` (no order
+  needed), and `gone(part, id)`, the layer's kills by partition, each frozen with an index on the partition: derived
+  facts written once where computed. `restrict(p)` reads partition `p`'s rows of the last change only, through those
+  indexes; `part_digest(p)` sums the layers' moves; `part_ids(p)` reads the state's rows in `p`.
+- **`consolidate`** is an operation (`delta_exec::trace::CONSOLIDATE`): one slot, the trace's block, read and written;
+  params `ConsolidateP` (the layer's offsets, the sort and partition columns); its twin
+  `rerail_delta_twins::trace::consolidate` calls blocks' `trace::consolidate` with a scratch of the call's own.
+  `delta_exec::trace::commit` runs it through `run_cpu` and commits the layer.
+- **Not built:** P§12's `Frontier`, `at`, `between`, `fork`, named pins (the user's two states); the roll-up (after
+  L1). A row's liveness is read down the chain, one step a layer.
+
+Checks (Relax, local):
+
+- [x] A random chain of layers reads as a flat set at both states: 24 rounds of pushes (new rows, rows held, rows just
+  killed) and kills, 4 seeds unsorted and 3 sorted on the partition column; each round's state is the model set, its
+  before the previous one, its change passes `bistate::check` (L1) and `is_least`. With the chain dedup turned off the
+  three trace tests fail (tried, restored).
+- [x] A change restricted to a partition is that partition's added and gone ids, read through its indexes alone (the
+  ids it reads are the ids it returns; counted by `restrict`, not measured); its digest is its rows' digest.
+- [x] A round that changes nothing (nothing pushed, only rows held, a row killed and pushed again) is the identity by
+  its counts, with no row of its own and no partition changed.
+- [x] `consolidate` runs as an operation on the trace's block, in place; a reader holding the block refuses its start.
+- [x] One `Bistate`, in `blocks`; no frontier API in the trace; its layers continue `Relation`s; no second trace or
+  bistate in `delta_exec` or the twins (`check_delta_exec_shape.py` section `b2`; tried against a second `Bistate` and
+  a `fork`: both named).
+- [x] blocks `--lib` 124/124 (its relation and bistate tests unchanged); delta_exec `--lib` 11/11.
 
 ## Operations: the execution shape (2026-11-25, being designed)
 

@@ -19,6 +19,8 @@
 
 use rerail_blocks::region::BlockPin;
 
+pub mod trace;
+
 /// One slot's block as a twin sees it: pinned by the executor, to read or to write (`BlockPin`). A twin reads a
 /// block's structures through `pin.block()` and its bytes through `pin.bytes()`, and writes only a `Write` slot's.
 pub enum Slot<'a> {
