@@ -167,9 +167,20 @@ describe("a session record of any size", () => {
     await writeFile(at.record, lines.map(line => `${JSON.stringify(line)}\n`).join(""));
     const { preimages: _closed, ...closed } = closedCall;
     const { preimages: _first, ...first } = firstTaken;
-    expect(await readSessionLedger(at.record)).toEqual({
+    expect(await readSessionLedger(at.record, { sampleText: true })).toEqual({
       entries: [closed, result, open, first, secondTaken], lines: 5, appendState: { prefix: "", truncateTo: null },
     });
+  });
+
+  it("keeps a sample's text only for a session whose content source keeps samples, and counts every sample", async () => {
+    const at = await world();
+    const sample = (id: string, text: string) => ({
+      type: "sample", item: { ref: { source: "host:event", id }, text, metadata: { owner: "tool", session: SESSION.sessionId } },
+    });
+    const samples = [sample("read", "the whole text of a file the agent read"), sample("prompt", "the person's prompt")];
+    await writeFile(at.record, samples.map(line => `${JSON.stringify(line)}\n`).join(""));
+    expect((await readSessionLedger(at.record, { sampleText: true })).entries).toEqual(samples);
+    expect((await readSessionLedger(at.record, { sampleText: false })).entries).toEqual([sample("read", ""), sample("prompt", "")]);
   });
 
   it("refuses a record that is a symbolic link and writes nothing where it leads", async context => {

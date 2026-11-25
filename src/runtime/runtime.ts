@@ -295,34 +295,52 @@ export interface ReadLedger {
 
 /**
  * Reads a session's ledger back a line at a time (`readLines`), each value taken to its entry as it is read
- * (`ledgerEntryOf`). A code-rule call's preimages, the text each file it edits held before the edit, are let go once
- * its result is read, or once a later call takes its id: only a call still open is begun again with them
- * (`unresolvedCodeRuleCalls`), and a session open for weeks holds one for nearly every edit it made.
+ * (`ledgerEntryOf`), keeping only what an open reads of it (`KeptLedger`). A session open for weeks has written a line
+ * for every prompt, tool call and result, and a file's whole text for most edits.
  */
-export async function readSessionLedger(path: string): Promise<ReadLedger> {
-  const entries: LedgerEntry[] = [];
-  const openCalls = new Map<string, number>();
+export async function readSessionLedger(path: string, keep: { readonly sampleText: boolean }): Promise<ReadLedger> {
+  const kept = new KeptLedger(keep.sampleText);
   let lines = 0;
   const appendState = await readLines(path, value => {
     lines += 1;
     const entry = ledgerEntryOf(value);
-    if (entry === undefined) return;
-    if (entry.type === "policy-call" || entry.type === "policy-result") closeCall(entries, openCalls, entry.toolCallId);
-    if (entry.type === "policy-call") openCalls.set(entry.toolCallId, entries.length);
-    entries.push(entry);
+    if (entry !== undefined) kept.add(entry);
   });
-  return { entries, lines, appendState };
+  return { entries: kept.entries, lines, appendState };
 }
 
-/** Replaces the entry of the open call `toolCallId` in `entries` with one without its preimages; nothing when none is open. */
-function closeCall(entries: LedgerEntry[], openCalls: Map<string, number>, toolCallId: string): void {
-  const index = openCalls.get(toolCallId);
-  if (index === undefined) return;
-  openCalls.delete(toolCallId);
-  const call = entries[index];
-  if (call?.type !== "policy-call" || call.preimages === undefined) return;
-  const { preimages: _preimages, ...closed } = call;
-  entries[index] = closed;
+/**
+ * A session's ledger entries as an open keeps them. A code-rule call's preimages, the text each file it edits held
+ * before the edit, are let go once its result is read, or once a later call takes its id: only a call still open is
+ * begun again with them (`unresolvedCodeRuleCalls`). Without `sampleText`, a sample keeps no text: a session whose
+ * content source keeps none (`keepsSamples`) counts its samples and reads nothing of them.
+ */
+class KeptLedger {
+  readonly entries: LedgerEntry[] = [];
+  /** Where among `entries` each call whose result has not been read is, by its id. */
+  readonly #openCalls = new Map<string, number>();
+  readonly #sampleText: boolean;
+
+  constructor(sampleText: boolean) {
+    this.#sampleText = sampleText;
+  }
+
+  add(entry: LedgerEntry): void {
+    if (entry.type === "policy-call" || entry.type === "policy-result") this.#close(entry.toolCallId);
+    if (entry.type === "policy-call") this.#openCalls.set(entry.toolCallId, this.entries.length);
+    this.entries.push(entry.type === "sample" && !this.#sampleText ? { ...entry, item: { ...entry.item, text: "" } } : entry);
+  }
+
+  /** Replaces the entry of the open call `toolCallId` with one without its preimages; nothing when none is open. */
+  #close(toolCallId: string): void {
+    const index = this.#openCalls.get(toolCallId);
+    if (index === undefined) return;
+    this.#openCalls.delete(toolCallId);
+    const call = this.entries[index];
+    if (call?.type !== "policy-call" || call.preimages === undefined) return;
+    const { preimages: _preimages, ...closed } = call;
+    this.entries[index] = closed;
+  }
 }
 
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
@@ -1569,7 +1587,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #dropLedgerOwed(sessionId: string): Promise<void> {
     const path = join(sessionDirectory(this.#storageRoot, sessionId), "events.jsonl");
     try {
-      const { entries, appendState } = await readSessionLedger(path);
+      const { entries, appendState } = await readSessionLedger(path, { sampleText: false });
       if (restoredOwed(entries).recorded === 0) return;
       await appendJsonLine(path, { type: "owed", steers: [], findings: [] } satisfies OwedEntry, appendState);
     } catch (error) {
@@ -2787,7 +2805,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await makeLedgerFolder(directory, { repair: this.#storageRootIsDefault });
     keepFolderPrivate(directory);
     const path = join(directory, "events.jsonl");
-    const { entries, lines, appendState } = await readSessionLedger(path);
+    const { entries, lines, appendState } = await readSessionLedger(path, { sampleText: keepsSamples(session.host) });
     // The ledger marker survives a database reset. Never mistake resumed or reset history for a fresh session.
     // With no DB, ledger, or native replay history, this is the session's first observed Rerail participation.
     const completeTracking = unrecorded && lines === 0 && (this.#nativeSession?.turn ?? 0) === 0;
