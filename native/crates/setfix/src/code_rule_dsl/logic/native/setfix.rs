@@ -132,8 +132,29 @@ pub struct Interner { pub atoms: Arc<crate::content_store::atoms::Atoms>, buf: S
 /// order one walk would have made them in, so each gets the atom one walk would have given it, and the morsels'
 /// rows are read with those atoms in place of these values (`morsels`). The morsels then intern nothing as they
 /// walk: no atom's id follows the threads' timing, and no morsel takes the arena's every shard to write.
+/// Each text held once, in `texts`; `at` finds it by its text, a slot an index into `texts` (a text held as its
+/// key too was a copy a deferred text: 1.62 M on cold PostHog).
 #[derive(Default)]
-struct Deferred { texts: Vec<String>, at: HashMap<String, u32> }
+struct Deferred { texts: Vec<String>, at: hashbrown::HashTable<u32> }
+
+impl Deferred {
+    fn hash(s: &str) -> u64 {
+        use std::hash::BuildHasher as _;
+        foldhash::fast::FixedState::with_seed(0).hash_one(s)
+    }
+    /// The place of text `s`, if deferred.
+    fn find(&self, s: &str) -> Option<u32> {
+        self.at.find(Self::hash(s), |&i| self.texts[i as usize] == s).copied()
+    }
+    /// Defers `s` (not deferred yet): its place.
+    fn add(&mut self, s: &str) -> u32 {
+        let at = self.texts.len() as u32;
+        self.texts.push(s.to_owned());
+        let texts = &self.texts;
+        self.at.insert_unique(Self::hash(s), at, |&i| Self::hash(&texts[i as usize]));
+        at
+    }
+}
 
 
 /// The first value of a text a morsel deferred (`Deferred`): past every atom (`Sym` is 32 bits) and below every node
@@ -174,7 +195,7 @@ impl Interner {
     /// The atom `id` would give `s`, if it would not make one (`Atoms::existing`): found as interning finds it, with
     /// no read interning would not make. In a morsel, a text it deferred is its deferred value.
     fn held(&self, s: &str) -> Option<i64> {
-        self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?)))
+        self.atoms.existing(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(self.deferred.as_ref()?.find(s)?)))
     }
     /// `v`, unless it is a text this walk made and deferred: no row of a relation the walk reads holds one, so a probe
     /// of it (`PROBE_OUT`) matches nothing, as a text that is no atom (decision 0666: the device's atoms find, which
@@ -190,10 +211,7 @@ impl Interner {
             return v;
         }
         if let Some(d) = self.deferred.as_mut() {
-            let at = d.texts.len() as u32;
-            d.texts.push(s.to_owned());
-            d.at.insert(s.to_owned(), at);
-            return DEFERRED + i64::from(at);
+            return DEFERRED + i64::from(d.add(s));
         }
         match self.atoms.intern(s) {
             Ok(atom) => i64::from(atom),
@@ -206,7 +224,7 @@ impl Interner {
     /// The atom arena the symbols are in (the device interns the texts it makes into it).
     pub fn atoms(&self) -> &Arc<crate::content_store::atoms::Atoms> { &self.atoms }
     /// The atom of `s` in this process's arena (`symbols` read the database's atoms into it).
-    fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(*self.deferred.as_ref()?.at.get(s)?))) }
+    fn get(&self, s: &str) -> Option<i64> { self.atoms.get(s).map(i64::from).or_else(|| Some(DEFERRED + i64::from(self.deferred.as_ref()?.find(s)?))) }
     /// Atom `v`'s text, reading the database's atoms written since `symbols` when `v` is past the arena; "" if there
     /// is no such atom or they could not be read (a join step has no error to return: it matches as it did before).
     pub fn name(&self, v: i64) -> String {
