@@ -1310,6 +1310,9 @@ struct Run<'p> {
     /// count is `totals`' last word.
     uniq: Option<mj::Table>,
     uniq_cols: Vec<usize>,
+    /// Its head's rows' key in its relation's first order (t58 increment A, `run_key`), its parts its `uniq_cols`'
+    /// columns: they are then made distinct by sorting, in that order, not by a hash table.
+    key: Option<mj::SortKey>,
     /// The text arena its text functions made their texts into (its batch's, shared with the batch's other jobs).
     arena: Option<Rc<mj::Arena>>,
 }
@@ -1641,7 +1644,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], consts: vec![Vec::new(); plan.stages.len()], screens: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], places: vec![None; plan.stages.len()], consts: vec![Vec::new(); plan.stages.len()], screens: vec![None; plan.stages.len()], probes: vec![None; plan.stages.len()], uniq: None, uniq_cols, key: None, arena: None })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1792,7 +1795,11 @@ impl<'p> Run<'p> {
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
         let uniq = batch.table(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}: the head's table of {} rows", table.cap))?;
-        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}: the head's dedup over {} rows", table.cap))?;
+        match &self.key {
+            Some(key) => batch.dedup_sorted(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq, None, key),
+            None => batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq),
+        }
+        .map_err(|e| format!("{e:?}: the head's dedup over {} rows", table.cap))?;
         self.uniq = Some(uniq);
         Ok(())
     }
@@ -2105,7 +2112,7 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner)
     // would be held by a thread that then waits, or goes idle: past the queue's 64, every thread asking for one waits.
     let encoded = with_open::<Wave, _>(|w| {
         let (n, batch) = w.as_mut().expect("the open wave");
-        let runs = encode_runs(rules, batch, &mut rep, names);
+        let runs = encode_runs(rules, batch, &mut rep, names, store);
         // Its heads' rows placed by its own program (`encode_place`), as `run`'s; its rows' rooms fresh, as `resume`
         // finds them.
         let fresh: Vec<Fresh> = vec![Fresh::default(); store.rels.len()];
@@ -2175,7 +2182,7 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
     let room = admitted(rules, rep)?;
     let mut batch = direct_batch(None)?;
-    let runs = encode_runs(rules, &mut batch, rep, names)?;
+    let runs = encode_runs(rules, &mut batch, rep, names, store)?;
     // Its heads' rows placed in the same program (decision 0603: a stratum is one launch), from the device's counts.
     let pre = encode_place(&runs, rules, store, fresh, rep, &mut batch)?;
     // Its arena is address space mapped as its claims reach it (`mj::Batch::arena_reserved`): a claim past it maps
@@ -2216,12 +2223,12 @@ fn made_before_encoding(rules: &[(&Plan, &JoinRule, usize)]) {
     }
 }
 
-fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
+fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner, store: &Store) -> Result<Vec<Run<'static>>, String> {
     // A lease past the Metal budget is refused here (decision 0126): the stratum then runs on the CPU, named.
-    rerail_accel::gpu::shared::within_budget(|| encode_runs_bounded(rules, batch, rep, names))
+    rerail_accel::gpu::shared::within_budget(|| encode_runs_bounded(rules, batch, rep, names, store))
 }
 
-fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
+fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner, store: &Store) -> Result<Vec<Run<'static>>, String> {
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
     // The rules whose tables' expected bytes (`Plan::expected`, as `admitted` reserves them) fit one submission's
     // space, encoded together, level-major: their stages at each depth launch together (decision 0601).
@@ -2234,6 +2241,11 @@ fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batc
         take += 1;
     }
     let mut runs = rules[..take].iter().map(|(plan, _, _)| Run::new(plan)).collect::<Result<Vec<Run<'static>>, String>>()?;
+    // Each head's rows made distinct in its first order where its bounds pack it (t58 increment A).
+    let bounds = head_bounds(&rules[..take], store);
+    for (r, (plan, _, h)) in runs.iter_mut().zip(rules) {
+        r.key = bounds.get(h).and_then(|b| run_key(plan, &r.uniq_cols, &store.rels[*h], b));
+    }
     // On a refusal the runs go, with the stages encoded: the passes that reach their buffers hold them until their
     // work completes (decision 0491 step 2).
     encode_levels(&mut runs.iter_mut().map(|r| (r, 0)).collect::<Vec<_>>(), batch, rep, &mut Own::default(), names)?;
@@ -2578,6 +2590,28 @@ impl HeadKey {
     }
 }
 
+/// A run's head rows' key (t58 increment A): its head's `HeadKey` under `bounds`, each part the column of its run's
+/// distinct rows (`uniq_cols`) that holds it. A column this rule makes a constant holds one value of its rows: no
+/// bits, so none where its bounds give it some (another rule's values); a constant leading column leaves its rows'
+/// tags all one, so the key is not tagged.
+fn run_key(plan: &Plan, uniq_cols: &[usize], rel: &super::Rel, bounds: &[[i64; 2]]) -> Option<mj::SortKey> {
+    if rel.folds() || rel.k == 0 || rel.k > 16 || plan.head.len() != rel.k || plan.arena.iter().any(|&a| a) {
+        return None;
+    }
+    let (order, tagged) = rel.first_order();
+    let hk = HeadKey::of(order, tagged, bounds)?;
+    let mut parts = Vec::with_capacity(hk.parts.len());
+    for &(c, lo, w) in &hk.parts {
+        match plan.head[c] {
+            Some(_) if w == 0 => {}
+            Some(_) => return None,
+            None => parts.push((uniq_cols.iter().position(|&u| u == plan.head_slots[c])? as u32, w, lo)),
+        }
+    }
+    let tagged = hk.tagged && plan.head[order[0]].is_none();
+    Some(mj::SortKey { tagged, parts, bits: hk.bits })
+}
+
 /// `place`'s work encoded into the stratum's own program, after its joins (decision 0603: a stratum is one launch):
 /// each head's union of its rules' distinct rows from their counts on the device (`append_rows`, a placed table),
 /// made distinct, less the rows the head holds, placed into room for the rows the head can reach (`reach`, within
@@ -2641,7 +2675,9 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
             parts: hk.parts.iter().map(|&(c, lo, w)| (c as u32, w, lo)).collect(),
             bits: hk.bits,
         });
-        // Made distinct: one rule's rows are already, unless sorted.
+        // Made distinct: one rule's rows are already, and in the first order where its run sorted them (`run_key`).
+        let one_sorted = from.len() == 1 && runs[from[0]].key.is_some();
+        let key = key.filter(|_| from.len() > 1);
         let (rows, slot) = if let Some(key) = &key {
             let distinct = b.table(k, guess).map_err(e)?;
             b.dedup_sorted(&union, &all, 0, 1, &words, &distinct, None, key).map_err(e)?;
@@ -2677,7 +2713,7 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
             }
             _ => (rows, slot),
         };
-        made.push((h, rows, slot, words, bound, key.is_some()));
+        made.push((h, rows, slot, words, bound, key.is_some() || one_sorted));
     }
     if pre.heads.is_empty() {
         return Ok(None);
