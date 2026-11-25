@@ -475,3 +475,40 @@ formula").
   - Cold Kotlin, the shipped answers' bytes either way: the device's service 7.8 to 8.3 s, the CPU alone 6.6 to
     6.7 s (6,316 to 6,730 of the device's formulas given up to the CPU's race). The device's search of a long
     formula is still several times a core's.
+- **The CPU's race removed; the device's occupancy measured** (the user, 2026-11-24: "I never asked for a CPU race";
+  "a competent implementation would ensure that there is enough parallel work that the memory latency is
+  hidden"). The race had hidden the device's state: the CPU finished 6,618 of 10,568 formulas, each a search the
+  device ran too. Measured on the Spark, cold Kotlin blessed, the budget lifted (`RERAIL_PROVING_TRACE` now
+  prints the formulas on the device at once over time, each batch's slots, its launches and how many a host's stop
+  ended):
+  - With the race, 13.6 formulas on the device on average while it had any (50 at most): the device stood almost
+    empty. Without it, at 4 threads a core: 36 s of proving.
+  - **The launches churned.** A slot ended its launch (its state kept) whenever a formula waited that no slot took,
+    which, with more formulas than slots, was every 8 steps for every slot: 10,222 launches in one batch of 4,096
+    formulas, each waiting for its slowest slot. A slot now ends early for a waiting formula only where a slot has
+    ended its launch (`Q_ENDED`, counted as each ends; its room unused until the next launch); while every slot
+    runs, a waiting formula waits for the first slot done. 230 launches for that batch; 36 s to 11.5 s.
+  - The give-up is removed with the race (`GIVEN_UP`, `RELEASED`, `Batch::give_up`, `lanes::solve_unless`): every
+    formula handed to the service is the device's, and only a device that fails leaves solves to the CPU.
+  - **The race hid a lost formula.** A slot took a formula by an increment of `Q_TAKE`, and where none was left
+    took the increment back. Between the two, another slot's take (the host having published more) read the count
+    one too high: one formula was never taken and another was taken twice. The race solved the lost one on the
+    CPU; without it, `a_resumed_window_on_the_device_is_the_cpus` waited for ever (17 of 252 never taken). A slot
+    now takes by a compare-and-swap that never passes the formulas published: the test in 3.6 s.
+  - **Threads asking**: 4, 16 and 64 a core, 1 GB of slots: 11.5, 9.3 and 9.7 s; `ASKING_A_CORE` is 16. The
+    proving then waits on its longest solve (10.8 s on the device; 1,360 conflicts and 136,000 rounds).
+  - **Slots**: a slot is its batch's largest formula's state, doubled for those that come later: 1.8 M to 3.5 M
+    words (7 to 14 MB), half of it learned clauses' room (`arena`, 64 words a variable to 1 M) where a solve learns
+    12 clauses on average. 1 GB holds 117 to 152 slots. More slots made every search slower, the whole too: the big
+    batch 6.9 s at 152 slots, 9.4 s at 639, past 200 s at 1,197 (each solve from handed in 110 ms, 613 ms). The
+    device is saturated at about 150 searches: their reads miss L2 (a search's state and formula spread over
+    megabytes), so more searches only share the memory's bandwidth.
+  - **A search against a core**: the CPU's solves sum to 23.8 s of CPU (13,613; its longest 0.87 s, 9,124
+    conflicts); a device search is about 30 times a core's (1,360 conflicts: 10.8 s against about 0.35 s for
+    those of that size on a core). A round is about 45 dependent reads of L2 (2.6 watch nodes and 52 gate items),
+    33,000 cycles; an analysis, one lane walking the trail, 680,000 cycles a conflict.
+  - The published GPU SAT work agrees on the shape: none of it reports a GPU's propagation faster than a core's
+    two watched literals for one search (Nadel et al. 2026, "SAT Sampling at Scale via GPU-based Boolean
+    Constraint Propagation", §3.3); the GPU wins by many searches at once, each a warp, with a few bytes of state a
+    clause (a counter word updated by an atomic add) and a bit pair a variable, so thousands stay resident.
+  - Cold Kotlin, the shipped answers' bytes: the device alone 9.3 s of proving, the CPU alone 6.6 s.

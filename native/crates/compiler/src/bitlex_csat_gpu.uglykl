@@ -146,15 +146,14 @@
 #define UNKNOWN 3u   // the conflicts' budget spent
 #define ROOMLESS 4u  // the learned clauses' room full
 #define BROKEN 5u    // a loop past its bound: the state is not what the solver keeps (a fault, which the host reports)
-#define GIVEN_UP 6u  // the host's, at any time: another solver finished it first, and its memory may change
-#define RELEASED 7u  // a slot's answer to GIVEN_UP: no slot reads the formula again
 
 // The queue's words (pinned host memory the host writes while a launch runs): the formulas taken, those the host has
 // published (`avail`), the host's stop (no formula taken, every slot ends), then each slot's formula or NONE.
 #define Q_TAKE 0u
 #define Q_AVAIL 1u
 #define Q_STOP 2u
-#define Q_SLOT 3u
+#define Q_ENDED 3u
+#define Q_SLOT 4u
 
 // What a gate's check found.
 #define M_NONE 0u
@@ -1581,30 +1580,31 @@ UKL_INLINE void cs_report(UKL_PRIVATE Csat* c, UKL_GLOBAL uint32_t* o, UKL_GLOBA
         o[8] = c->s[H_REDUCES];
         for (uint32_t k = 0u; k < 6u; k++)
             o[9u + k] = c->s[H_T_VISIT + k];
-        // The status last, past a fence the host's reads see: the host reads a report once it is set. Given up
-        // meanwhile: released instead, the report never read.
+        // The status last, past a fence the host's reads see: the host reads a report once it is set.
         ukl_fence_system();
-        if (ukl_atomic_cas(o, RUNNING, c->s[H_STATUS]) == GIVEN_UP)
-            ukl_atomic_cas(o, GIVEN_UP, RELEASED);
+        ukl_atomic_cas(o, RUNNING, c->s[H_STATUS]);
     }
     ukl_sg_barrier();
 }
 
-// A slot's look at its formula's report and the queue, between steps (lane 0's, every lane's answer): 1 where the
-// host gave the formula up (released now), 2 where the slot should end its launch, its state kept: the host's stop,
-// or formulas published that no slot takes (the slots that take them have ended), which the next launch's take.
-UKL_INLINE uint32_t cs_look(UKL_GLOBAL uint32_t* o, UKL_GLOBAL uint32_t* queue, uint32_t lane __UKL_PARAMS)
+// A slot's look at the queue, between steps (lane 0's, every lane's answer): 1 where the slot should end its
+// launch, its state kept: the host's stop, or formulas published that no slot takes while a slot has ended (its
+// room unused this launch), which the next launch's slots take. While every slot runs, a waiting formula waits for
+// the first slot done.
+UKL_INLINE uint32_t cs_look(UKL_GLOBAL uint32_t* queue, uint32_t lane __UKL_PARAMS)
 {
     uint32_t v = 0u;
-    if (lane == 0u) {
-        if (ukl_atomic_poll(o) == GIVEN_UP) {
-            ukl_atomic_cas(o, GIVEN_UP, RELEASED);
-            v = 1u;
-        } else if (ukl_atomic_poll(queue + Q_STOP) != 0u || ukl_atomic_poll(queue + Q_AVAIL) > ukl_atomic_poll(queue + Q_TAKE)) {
-            v = 2u;
-        }
-    }
+    if (lane == 0u && (ukl_atomic_poll(queue + Q_STOP) != 0u
+                       || (ukl_atomic_poll(queue + Q_ENDED) != 0u && ukl_atomic_poll(queue + Q_AVAIL) > ukl_atomic_poll(queue + Q_TAKE))))
+        v = 1u;
     return ukl_sg_shuffle(v, 0u __UKL_ARGS);
+}
+
+// A slot's launch ended: counted, so the slots still running end theirs where formulas wait (`cs_look`).
+UKL_INLINE void cs_ended(UKL_GLOBAL uint32_t* queue, uint32_t lane)
+{
+    if (lane == 0u)
+        ukl_atomic_add(queue + Q_ENDED, 1u);
 }
 
 // One launch on the device while the host adds formulas (decision 0670): a slot (a SIMD group) takes the published
@@ -1613,7 +1613,7 @@ UKL_INLINE uint32_t cs_look(UKL_GLOBAL uint32_t* o, UKL_GLOBAL uint32_t* queue, 
 // moment it is (`cs_report`: the status last, past a system fence), read by the host while the launch runs. A
 // formula's state is in its slot (`queue[Q_SLOT + slot]` its formula), so a batch's memory is the slots', not the
 // formulas'. A launch is bounded: a slot runs `args.steps` steps at most, and ends early (its state kept, resumed
-// by the next launch) where formulas wait that no slot takes, or the host stops it; a formula is unknown past
+// by the next launch) where formulas wait that no slot takes while a slot has ended (`cs_look`), or the host stops it; a formula is unknown past
 // `MAX_STEPS` of its own (`bitlex_csat_lanes::STEPS`). The host clears the queue and the reports.
 DEFINE_KERNEL2(prover, csat_solve,
                ARGS,     Args,     args,   ,
@@ -1623,7 +1623,7 @@ DEFINE_KERNEL2(prover, csat_solve,
                RWBUFFER, uint32_t, out,    "[n * 16]",
                RWBUFFER, uint32_t, models, "[model words]",
                RWBUFFER, uint32_t, carry,  "[carry words]",
-               RWBUFFER, uint32_t, queue,  "[3 + slots]",
+               RWBUFFER, uint32_t, queue,  "[4 + slots]",
                TGID0,    uint32_t, slot,   ,
                LANE,     uint32_t, lane,   )
 {
@@ -1639,24 +1639,25 @@ DEFINE_KERNEL2(prover, csat_solve,
         if (f == NONE) {
             uint32_t got = NONE;
             if (lane == 0u && ukl_atomic_poll(queue + Q_STOP) == 0u) {
+                // The next published formula, taken by a compare-and-swap: the count never passes those published
+                // (an increment taken back past them would let another slot's take in between skip one and repeat
+                // another). Bounded: each failed swap is another slot's take.
                 uint32_t avail = ukl_atomic_poll(queue + Q_AVAIL);
-                got = ukl_atomic_add(queue + Q_TAKE, 1u);
-                // None left: taken back, so the count stays the formulas taken.
-                if (got >= avail) {
-                    ukl_atomic_sub(queue + Q_TAKE, 1u);
-                    got = NONE;
-                }
-                // Given up before it began: released, and the next.
-                else if (ukl_atomic_poll(out + got * 16u) == GIVEN_UP) {
-                    ukl_atomic_cas(out + got * 16u, GIVEN_UP, RELEASED);
-                    got = NONE - 1u;
+                uint32_t t = ukl_atomic_poll(queue + Q_TAKE);
+                for (uint32_t tries = 0u; t < avail && tries <= args.n; tries++) {
+                    uint32_t was = ukl_atomic_cas(queue + Q_TAKE, t, t + 1u);
+                    if (was == t) {
+                        got = t;
+                        break;
+                    }
+                    t = was;
                 }
             }
             f = ukl_sg_shuffle(got, 0u __UKL_ARGS);
-            if (f == NONE)
+            if (f == NONE) {
+                cs_ended(queue, lane);
                 return;
-            if (f == NONE - 1u)
-                continue;
+            }
             ukl_fence_device();
             if (lane == 0u)
                 queue[Q_SLOT + slot] = f;
@@ -1664,28 +1665,13 @@ DEFINE_KERNEL2(prover, csat_solve,
             cs_start(c __UKL_ARGS);
             steps++;
         } else {
-            // Held from a launch before: given up since, it is read no more.
-            uint32_t gone = 0u;
-            if (lane == 0u) {
-                uint32_t o0 = ukl_atomic_poll(out + f * 16u);
-                if (o0 == GIVEN_UP)
-                    ukl_atomic_cas(out + f * 16u, GIVEN_UP, RELEASED);
-                gone = o0 == GIVEN_UP || o0 == RELEASED ? 1u : 0u;
-            }
-            if (ukl_sg_shuffle(gone, 0u __UKL_ARGS) != 0u) {
-                if (lane == 0u)
-                    queue[Q_SLOT + slot] = NONE;
-                ukl_sg_barrier();
-                continue;
-            }
+            // Held from a launch before.
             cs_setup(c, table + f * DESC);
         }
         uint32_t n = c->vars + 1u;
-        uint32_t looked = 0u;
         while (steps < args.steps && c->s[H_STATUS] == RUNNING) {
             if ((steps & 7u) == 7u) {
-                looked = cs_look(out + f * 16u, queue, lane __UKL_ARGS);
-                if (looked != 0u)
+                if (cs_look(queue, lane __UKL_ARGS) != 0u)
                     break;
             }
             if (c->s[H_STEPS] >= MAX_STEPS) {
@@ -1722,19 +1708,15 @@ DEFINE_KERNEL2(prover, csat_solve,
                 cs_conflict(c __UKL_ARGS);
         }
         ukl_sg_barrier();
-        if (looked == 1u) {
-            // Given up: its formula is read no more.
-            if (lane == 0u)
-                queue[Q_SLOT + slot] = NONE;
-            ukl_sg_barrier();
-            continue;
-        }
-        if (c->s[H_STATUS] == RUNNING)
+        if (c->s[H_STATUS] == RUNNING) {
+            cs_ended(queue, lane);
             return;
+        }
         UKL_GLOBAL const uint32_t* d = table + f * DESC;
         cs_report(c, out + f * 16u, models + d[D_MODEL], carry __UKL_ARGS);
         if (lane == 0u)
             queue[Q_SLOT + slot] = NONE;
         ukl_sg_barrier();
     }
+    cs_ended(queue, lane);
 }

@@ -48,7 +48,6 @@ const SAT: u32 = 1;
 const UNSAT: u32 = 2;
 const ROOMLESS: u32 = 4;
 const BROKEN: u32 = 5;
-const GIVEN_UP: u32 = 6;
 /// The words a formula's report holds (`out`).
 const OUT: usize = 16;
 
@@ -100,7 +99,7 @@ pub fn solve_in(formulas: &[Formula], state_bytes: usize) -> Result<Vec<Solved>,
     let mut batch = Batch::new(formulas, state_bytes)?;
     while !batch.finished() {
         for (i, x) in batch.step()? {
-            out[i] = Some(x.expect("none given up"));
+            out[i] = Some(x);
         }
     }
     Ok(out.into_iter().map(|x| x.expect("every formula the device's")).collect())
@@ -214,10 +213,9 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
 }
 
 /// A batch on the device: one launch at a time (`poll` launches where formulas wait and none runs), which runs
-/// while the host adds formulas (`add`), gives them up (`give_up`) and reads their results (`poll`), all in pinned
-/// memory both see. Its descriptors are its own buffer, which never moves under a launch. It holds no borrow of its
-/// formulas: what it reads of them is in the block, which their owners leave as it is while they wait for their
-/// results (a formula's memory may change once its result is out, or it is released).
+/// while the host adds formulas (`add`) and reads their results (`poll`), all in pinned memory both see. Its
+/// descriptors are its own buffer, which never moves under a launch. It holds no borrow of its formulas: what it
+/// reads of them is in the block, which their owners leave as it is while they wait for their results.
 pub struct Batch {
     n: usize,
     /// The formulas published to the launches (`Q_AVAIL`): those within the block's extent the running launch sees.
@@ -246,12 +244,15 @@ pub struct Batch {
     queue: rerail_gpu::device::Buffer,
     /// Each formula's variables, whether it resumes a window, where its model and what it carries are.
     meta: Vec<(usize, bool, usize, Option<usize>)>,
-    reported: Vec<bool>,
     /// The formulas not yet reported, to look at.
     open: Vec<usize>,
     left: usize,
     running: Option<rerail_gpu::device::ComputeEvent>,
     pub launches: usize,
+    /// A measurement aid: the launches stopped for a formula past the block's extent, and the time launches ran.
+    pub stops: usize,
+    pub ran: std::time::Duration,
+    launched_at: Option<std::time::Instant>,
 }
 
 /// `n` words of a buffer the host sees, from word `at`.
@@ -273,11 +274,12 @@ fn shared_word(b: &rerail_gpu::device::Buffer, i: usize) -> &std::sync::atomic::
     unsafe { &*p.add(i) }
 }
 
-/// The queue's words (the kernel's): the formulas taken (word 0), those published, the stop, each slot's formula.
+/// The queue's words (the kernel's): the formulas taken (word 0), those published, the stop, the slots whose launch
+/// ended, each slot's formula.
 const Q_AVAIL: usize = 1;
 const Q_STOP: usize = 2;
-const Q_SLOT: usize = 3;
-const RELEASED: u32 = 7;
+const Q_ENDED: usize = 3;
+const Q_SLOT: usize = 4;
 
 impl Batch {
     /// The batch laid out. An error where there is no device, the kernel does not compile, or a formula is not in the
@@ -333,11 +335,13 @@ impl Batch {
             carry: alloc::<u32>(carry_cap.max(1))?,
             queue: alloc::<u32>(Q_SLOT + slots)?,
             meta: Vec::with_capacity(cap),
-            reported: Vec::with_capacity(cap),
             open: Vec::with_capacity(cap),
             left: 0,
             running: None,
             launches: 0,
+            stops: 0,
+            ran: std::time::Duration::ZERO,
+            launched_at: None,
         };
         use std::sync::atomic::Ordering::Relaxed;
         for i in 0..Q_SLOT {
@@ -371,7 +375,6 @@ impl Batch {
         }
         shared_word(&self.out, k * OUT).store(0, Relaxed);
         self.meta.push((d.vars, d.resume, self.model_words, carry_at));
-        self.reported.push(false);
         self.open.push(k);
         self.need.push(self.block.block().used());
         self.model_words += model;
@@ -398,7 +401,9 @@ impl Batch {
             shared_word(&self.queue, Q_AVAIL).store(p as u32, Ordering::Release);
         }
         if p < self.n {
-            shared_word(&self.queue, Q_STOP).store(1, Ordering::Release);
+            if shared_word(&self.queue, Q_STOP).swap(1, Ordering::AcqRel) == 0 {
+                self.stops += 1;
+            }
         }
     }
 
@@ -412,22 +417,16 @@ impl Batch {
         self.n == self.cap
     }
 
-    /// Formula `k` given up (another solver has its result): `poll` reports it released (`None`) once no slot reads
-    /// it, or its result where it was out first.
-    pub fn give_up(&mut self, k: usize) {
-        if !self.reported[k] {
-            let _ = shared_word(&self.out, k * OUT).compare_exchange(0, GIVEN_UP, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire);
-        }
-    }
-
-    /// The formulas whose results are out since the last poll: each its result, or `None` where it was given up and
-    /// no slot reads it now. A launch ended is awaited, and one made where formulas wait.
-    pub fn poll(&mut self) -> Result<Vec<(usize, Option<Solved>)>, String> {
+    /// The formulas whose results are out since the last poll, each its result. A launch ended is awaited, and one
+    /// made where formulas wait.
+    pub fn poll(&mut self) -> Result<Vec<(usize, Solved)>, String> {
         use std::sync::atomic::Ordering;
         if self.running.as_ref().is_some_and(|e| e.is_complete()) {
             self.running.take().expect("running").await_()?;
+            if let Some(t) = self.launched_at.take() {
+                self.ran += t.elapsed();
+            }
         }
-        let idle = self.running.is_none();
         let mut done = Vec::new();
         let open = std::mem::take(&mut self.open);
         for &i in &open {
@@ -435,24 +434,16 @@ impl Batch {
             match st {
                 0 => continue,
                 BROKEN => return Err(format!("the device's solver broke on formula {i}: a loop past its bound")),
-                RELEASED => {}
-                GIVEN_UP if idle => {}
-                GIVEN_UP => continue,
                 _ => {
                     let o = words_of(&self.out, i * OUT, OUT);
-                    done.push((i, Some(self.decode(i, &o))));
-                    continue;
+                    done.push((i, self.decode(i, &o)));
                 }
             }
-            done.push((i, None));
         }
         let finished: std::collections::HashSet<usize> = done.iter().map(|&(i, _)| i).collect();
         self.open = open.into_iter().filter(|i| !finished.contains(i)).collect();
-        for &(i, _) in &done {
-            self.reported[i] = true;
-            self.left -= 1;
-        }
-        // A launch where formulas wait for one: added since, held by a slot, or given up but maybe held.
+        self.left -= done.len();
+        // A launch where formulas wait for one: added since, or held by a slot.
         if self.running.is_none() && self.left > 0 {
             self.launch()?;
         }
@@ -460,7 +451,7 @@ impl Batch {
     }
 
     /// The results out, waiting for the running launch where none is.
-    pub fn step(&mut self) -> Result<Vec<(usize, Option<Solved>)>, String> {
+    pub fn step(&mut self) -> Result<Vec<(usize, Solved)>, String> {
         let got = self.poll()?;
         if got.is_empty()
             && let Some(e) = self.running.take()
@@ -485,6 +476,7 @@ impl Batch {
         self.blk = self.block.block().device_buffer(&shared.device)?;
         self.extent = self.block.block().device_extent();
         shared_word(&self.queue, Q_STOP).store(0, Ordering::Release);
+        shared_word(&self.queue, Q_ENDED).store(0, Ordering::Release);
         self.publish();
         let a = Args { n: self.cap as u32, steps: STEPS, init: 0, slots: self.slots as u32, slot_words: self.slot_words as u32, pad: [0; 3] };
         launch(&self.q, self.function)
@@ -498,6 +490,7 @@ impl Batch {
             .buffer("queue", &self.queue)
             .run(&[self.slots as u64], &[LANES])?;
         self.running = Some(self.q.flush());
+        self.launched_at = Some(std::time::Instant::now());
         Ok(())
     }
 
@@ -553,20 +546,17 @@ impl Drop for Batch {
 }
 
 /// The device as a service to the threads that solve (decision 0670): a work queue. A thread hands it a formula
-/// (`solve`) and waits; the device's thread (`run`) adds it to the batch on the device (`Batch::add`), which a
-/// running launch takes at once, and looks at the results every `POLL`, handing each back the moment it is out; a
-/// launch is made only where formulas wait and none runs. A search alone is slower on the device than here (its reads
-/// one after another), many at once faster: a solve not back within `RACE_AFTER` is raced by its thread here
-/// (`solve_unless`, the same search), the first result taken, and where the CPU is first the device gives the
-/// formula up (a slot releases it) before the thread goes on (the formula is the thread's to change then). With
-/// more threads than cores, those waiting leave the cores to the others. A device that fails leaves every solve to
-/// the CPU.
+/// (`solve`) and waits for its result; the device's thread (`run`) adds it to the batch on the device
+/// (`Batch::add`), which a running launch takes at once, and looks at the results every `POLL`, handing each back the
+/// moment it is out; a launch is made only where formulas wait and none runs. Every solve handed in is the device's:
+/// the device's throughput is its searches at once, so the threads asking are many, those waiting leaving the cores
+/// to those building their formulas. Only a device that fails (or a formula it cannot describe) leaves solves to the
+/// CPU.
 pub struct Service {
     state: std::sync::Mutex<Waiting>,
     wake: std::sync::Condvar,
     trace: bool,
     solve_trace: bool,
-    race_after: std::time::Duration,
 }
 
 struct Waiting {
@@ -575,13 +565,13 @@ struct Waiting {
     failed: Option<String>,
 }
 
-/// A handed formula's result: the device's, or `None` (given up, or the device failed: the CPU's).
+/// A handed formula's result: the device's, or `None` (the device failed: the CPU's).
 #[derive(Default)]
 struct Reply {
     got: std::sync::Mutex<Option<Option<Solved>>>,
     ready: std::sync::Condvar,
-    /// Its thread has the result: the device gives the formula up.
-    abandoned: std::sync::atomic::AtomicBool,
+    /// The device done with it (a measurement aid).
+    given: std::sync::atomic::AtomicBool,
 }
 
 impl Reply {
@@ -591,19 +581,13 @@ impl Reply {
             *got = Some(x);
         }
         drop(got);
+        self.given.store(true, std::sync::atomic::Ordering::Release);
         self.ready.notify_all();
-    }
-
-    fn back(&self) -> bool {
-        self.got.lock().expect("a reply").is_some()
     }
 }
 
 /// How often the device's thread looks at a running launch's results.
 const POLL: std::time::Duration = std::time::Duration::from_micros(20);
-
-/// How long a solve waits on the device before its thread races it here.
-const RACE_AFTER: std::time::Duration = std::time::Duration::from_millis(2);
 
 impl Default for Service {
     fn default() -> Self {
@@ -612,8 +596,6 @@ impl Default for Service {
             wake: std::sync::Condvar::new(),
             trace: std::env::var_os("RERAIL_PROVING_TRACE").is_some(),
             solve_trace: std::env::var_os("RERAIL_DEVICE_SOLVE_TRACE").is_some(),
-            // A measurement aid: `RERAIL_PROVER_RACE_MS`, the race's wait in milliseconds.
-            race_after: std::env::var("RERAIL_PROVER_RACE_MS").ok().and_then(|v| v.parse().ok()).map_or(RACE_AFTER, std::time::Duration::from_millis),
         }
     }
 }
@@ -625,12 +607,10 @@ struct Live {
     /// When each formula was handed in (`RERAIL_DEVICE_SOLVE_TRACE`).
     handed_at: Vec<std::time::Instant>,
     at: std::time::Instant,
-    on_device: usize,
-    given_up: usize,
 }
 
 impl Service {
-    /// `f` solved: on the device or here, whichever first. The same result either way.
+    /// `f` solved on the device: the CPU's result (the same search).
     pub fn solve(&self, f: &Formula) -> Solved {
         let reply = std::sync::Arc::new(Reply::default());
         {
@@ -645,30 +625,15 @@ impl Service {
             w.handed.push((d, reply.clone()));
         }
         self.wake.notify_all();
-        {
-            let got = reply.got.lock().expect("a reply");
-            let (mut got, _) = reply.ready.wait_timeout_while(got, self.race_after, |g| g.is_none()).expect("a reply");
-            if let Some(Some(x)) = got.take() {
-                return x;
-            }
-            if got.is_some() {
-                // Given up, or the device failed: the CPU's.
-                drop(got);
-                return crate::bitlex_csat_lanes::solve(f);
-            }
-        }
-        // Raced here.
-        if let Some(x) = crate::bitlex_csat_lanes::solve_unless(f, &|| reply.back()) {
-            reply.abandoned.store(true, std::sync::atomic::Ordering::Release);
-            self.wake.notify_all();
-            // The device done with the formula: its result, or its giving up.
-            let got = reply.got.lock().expect("a reply");
-            drop(reply.ready.wait_while(got, |g| g.is_none()).expect("a reply"));
-            return x;
-        }
-        match reply.got.lock().expect("a reply").take() {
+        let got = reply.got.lock().expect("a reply");
+        let mut got = reply.ready.wait_while(got, |g| g.is_none()).expect("a reply");
+        match got.take() {
             Some(Some(x)) => x,
-            _ => crate::bitlex_csat_lanes::solve(f),
+            // The device failed: the CPU's.
+            _ => {
+                drop(got);
+                crate::bitlex_csat_lanes::solve(f)
+            }
         }
     }
 
@@ -700,7 +665,12 @@ impl Service {
 
     fn serve(&self, live: &mut Vec<Live>) -> Result<(), String> {
         let mut batches = 0usize;
+        // A measurement aid (`RERAIL_PROVING_TRACE`): the formulas on the device at once, over time.
+        let mut busy = Occupancy::default();
         loop {
+            if self.trace {
+                busy.at(live.iter().map(|l| l.replies.iter().filter(|r| !r.given.load(std::sync::atomic::Ordering::Acquire)).count()).sum());
+            }
             let handed = {
                 let mut w = self.state.lock().expect("the service");
                 loop {
@@ -715,6 +685,9 @@ impl Service {
                     if w.closed {
                         for l in live.drain(..) {
                             self.retired(&l, &mut batches);
+                        }
+                        if self.trace {
+                            busy.report();
                         }
                         return Ok(());
                     }
@@ -732,10 +705,16 @@ impl Service {
                     Some(_) => live.last_mut().expect("added"),
                     None => {
                         let slot_words = 2 * d.slot_words;
-                        let slots = (STATE_BYTES / (4 * slot_words)).clamp(1, SLOTS);
+                        // A measurement aid: `RERAIL_PROVER_STATE_MB`, the slots' states at most.
+                        let state_bytes = std::env::var("RERAIL_PROVER_STATE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(STATE_BYTES, |m| m << 20);
+                        let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS);
                         let models = MODEL_ROOM.max((d.vars + 1).div_ceil(32));
+                        let t_open = std::time::Instant::now();
                         let batch = Batch::open(&d.block, BATCH_ROOM, models, BATCH_ROOM * (1 + CARRY_ROOM), slot_words, slots)?;
-                        live.push(Live { batch, replies: Vec::new(), handed_at: Vec::new(), at: std::time::Instant::now(), on_device: 0, given_up: 0 });
+                        if self.trace {
+                            eprintln!("gpu batch opened in {:.1} ms: {slots} slots of {slot_words} words", t_open.elapsed().as_secs_f64() * 1e3);
+                        }
+                        live.push(Live { batch, replies: Vec::new(), handed_at: Vec::new(), at: std::time::Instant::now() });
                         let l = live.last_mut().expect("opened");
                         l.batch.add(&d)?.ok_or("the prover's GPU: a formula without room in an empty batch")?;
                         l
@@ -744,31 +723,19 @@ impl Service {
                 l.replies.push(reply);
                 l.handed_at.push(std::time::Instant::now());
             }
-            // Each batch's results out, its formulas the CPU finished given up, and a launch where formulas wait and
-            // none runs.
+            // Each batch's results out, and a launch where formulas wait and none runs.
             for l in live.iter_mut() {
-                for (k, r) in l.replies.iter().enumerate() {
-                    if !l.batch.reported[k] && r.abandoned.load(std::sync::atomic::Ordering::Acquire) {
-                        l.batch.give_up(k);
-                    }
-                }
                 if l.batch.finished() {
                     continue;
                 }
                 for (k, x) in l.batch.poll()? {
-                    match &x {
-                        Some(x) => {
-                            l.on_device += 1;
-                            // A measurement aid: each result the device's, its time from handed in, its search's counts
-                            // and the cycles of its parts.
-                            if self.solve_trace {
-                                let ms = l.handed_at[k].elapsed().as_secs_f64() * 1e3;
-                                eprintln!("device solve {ms:.2} ms: {} conflicts, {} decisions, {} rounds, {} visits, {} items, {} reductions, kcycles visit/items/analyze/back/decide/reduce {:?}", x.conflicts, x.decisions, x.rounds, x.visits, x.items, x.reductions, x.cycles.map(|c| u64::from(c) * 256 / 1000));
-                            }
-                        }
-                        None => l.given_up += 1,
+                    // A measurement aid: each result, its time from handed in, its search's counts and the cycles of
+                    // its parts.
+                    if self.solve_trace {
+                        let ms = l.handed_at[k].elapsed().as_secs_f64() * 1e3;
+                        eprintln!("device solve {ms:.2} ms: {} conflicts, {} decisions, {} rounds, {} visits, {} items, {} reductions, kcycles visit/items/analyze/back/decide/reduce {:?}", x.conflicts, x.decisions, x.rounds, x.visits, x.items, x.reductions, x.cycles.map(|c| u64::from(c) * 256 / 1000));
                     }
-                    l.replies[k].give(x);
+                    l.replies[k].give(Some(x));
                 }
             }
             // A batch out of room is done with once its formulas are.
@@ -787,9 +754,38 @@ impl Service {
 
     fn retired(&self, l: &Live, batches: &mut usize) {
         if self.trace {
-            eprintln!("gpu batch {batches}: {} formulas, {} on the device, {} given up, {} launches, {:.1} ms", l.replies.len(), l.on_device, l.given_up, l.batch.launches, l.at.elapsed().as_secs_f64() * 1e3);
+            eprintln!("gpu batch {batches}: {} formulas, {} launches, {:.1} ms, {} stopped for the block, {:.1} ms launched, {} slots of {} words", l.replies.len(), l.batch.launches, l.at.elapsed().as_secs_f64() * 1e3, l.batch.stops, l.batch.ran.as_secs_f64() * 1e3, l.batch.slots, l.batch.slot_words);
         }
         *batches += 1;
+    }
+}
+
+/// The formulas on the device at once, over time (a measurement aid): the time at each count, in powers of two.
+#[derive(Default)]
+struct Occupancy {
+    last: Option<(std::time::Instant, usize)>,
+    by_log: [f64; 16],
+    weighted: f64,
+    most: usize,
+}
+
+impl Occupancy {
+    fn at(&mut self, n: usize) {
+        let now = std::time::Instant::now();
+        if let Some((t, k)) = self.last {
+            let dt = (now - t).as_secs_f64();
+            self.by_log[(usize::BITS - k.leading_zeros()) as usize] += dt;
+            self.weighted += dt * k as f64;
+        }
+        self.last = Some((now, n));
+        self.most = self.most.max(n);
+    }
+
+    fn report(&self) {
+        let total: f64 = self.by_log.iter().sum();
+        let busy: f64 = self.by_log[1..].iter().sum();
+        let parts: Vec<String> = (0..16).filter(|&i| self.by_log[i] > 0.0).map(|i| format!("{}: {:.3} s", if i == 0 { 0 } else { 1usize << (i - 1) }, self.by_log[i])).collect();
+        eprintln!("gpu occupancy: {total:.3} s served, {busy:.3} s with formulas on the device, {:.1} on average while busy, {} at most; time at least n: {}", self.weighted / busy.max(1e-9), self.most, parts.join(", "));
     }
 }
 

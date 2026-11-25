@@ -3724,7 +3724,7 @@ fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows:
 
 /// Threads asking questions a core, with the device: most of them wait on their solves on the device at a time.
 #[cfg(not(target_family = "wasm"))]
-const ASKING_A_CORE: usize = 4;
+const ASKING_A_CORE: usize = 16;
 
 /// `either_never_many`'s answers with the solves on the device (decisions 0654, 0670). Each question is asked as on
 /// the CPU, on a thread of its own, and each of its solves handed to the device's service (`bitlex_csat_gpu::Service`)
@@ -3735,7 +3735,9 @@ const ASKING_A_CORE: usize = 4;
 fn never_on_device(prover: &bitlex_prove::Induction, ops: &[BlockOp], tables: &[crate::block::ClassTable], xs: &[Val], budgets: &[bitlex_prove::Budget]) -> (Vec<bool>, Vec<Vec<Vec<u8>>>) {
     use rayon::prelude::*;
     let service = std::sync::Arc::new(crate::bitlex_csat_gpu::Service::default());
-    let threads = ASKING_A_CORE * std::thread::available_parallelism().map_or(1, |n| n.get());
+    // A measurement aid: `RERAIL_ASKING_A_CORE`, the threads a core.
+    let a_core = std::env::var("RERAIL_ASKING_A_CORE").ok().and_then(|v| v.parse().ok()).unwrap_or(ASKING_A_CORE);
+    let threads = a_core * std::thread::available_parallelism().map_or(1, |n| n.get());
     let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().expect("the asking threads");
     std::thread::scope(|scope| {
         let d = scope.spawn(|| service.run());
