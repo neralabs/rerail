@@ -921,12 +921,22 @@ export interface EngineFile {
  */
 let loaded: { readonly configuredPath: string | undefined; readonly file: EngineFile; readonly binding: NativeBinding } | undefined;
 
+/**
+ * Each engine file this process has loaded, by the name Node keeps its module under (`require.resolve`, which follows
+ * links), with the file as it was read just before Node first loaded it under that name. Node loads a file under one
+ * name once and hands back that engine at every later `require` of the name, though a build has replaced the file since.
+ */
+const loadedFiles = new Map<string, EngineFile>();
+
 export function loadNativeBinding(): NativeBinding {
   const configuredPath = process.env.RERAIL_ENGINE_PATH;
   if (loaded === undefined || loaded.configuredPath !== configuredPath) {
-    // Read before the load: a file replaced between the two leaves a stamp no file on disk has, never the new file's.
-    const file = engineFile(resolveNativeBindingPath(configuredPath));
-    loaded = { configuredPath, file, binding: requireEngine(file.path) };
+    const path = resolveNativeBindingPath(configuredPath);
+    const name = require.resolve(path);
+    // Read before Node first loads the name: a file replaced between the two leaves a stamp no file on disk has.
+    const file = loadedFiles.get(name) ?? engineFile(path);
+    loaded = { configuredPath, file, binding: requireEngine(path) };
+    loadedFiles.set(name, file);
   }
   return loaded.binding;
 }
@@ -934,12 +944,14 @@ export function loadNativeBinding(): NativeBinding {
 /**
  * The engine file the next call into the engine runs: the one this process loaded, with its time and size as they were
  * then, as Node keeps the engine it loaded though a build replaces its file or writes one ahead of it in the look; while
- * this process holds no engine under the `RERAIL_ENGINE_PATH` set now, the file a load would take, as it is now.
+ * this process holds another engine than the `RERAIL_ENGINE_PATH` set now takes, the file a load would take, as it was
+ * when Node first loaded it under its name, or as it is now where Node has not.
  */
 export function loadedEngineFile(): EngineFile {
   const configuredPath = process.env.RERAIL_ENGINE_PATH;
   if (loaded !== undefined && loaded.configuredPath === configuredPath) return loaded.file;
-  return engineFile(resolveNativeBindingPath(configuredPath));
+  const path = resolveNativeBindingPath(configuredPath);
+  return loadedFiles.get(require.resolve(path)) ?? engineFile(path);
 }
 
 function engineFile(path: string): EngineFile {
