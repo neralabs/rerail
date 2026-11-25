@@ -200,14 +200,15 @@ describe("runCommand", () => {
     await expect(runCommand(process.execPath, ["-e", command], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "early late", stderr: "" });
   });
 
-  // A process the command started can hold its output open after the command exits, and "close" then waits for it.
+  // A process the command started can hold its output open after the command exits, and "close" then waits for it. The
+  // command is named by its full path, since on Windows Rerail starts a program by no other name.
   it("stops waiting on the output of a command that exited once its timeout has run", async () => {
     spawnsOnce((child) => {
       child.stderr.write("npm http fetch GET 200 one\n");
       exit(child);
     });
-    await expect(runCommand("npm", ["view", "@neralabs/rerail"], { timeoutMs: 1_000 })).rejects.toThrow(
-      "npm did not finish within 1 s and was stopped; its last output:\nnpm http fetch GET 200 one",
+    await expect(runCommand(process.execPath, ["view", "@neralabs/rerail"], { timeoutMs: 1_000 })).rejects.toThrow(
+      `${process.execPath} did not finish within 1 s and was stopped; its last output:\nnpm http fetch GET 200 one`,
     );
   });
 });
