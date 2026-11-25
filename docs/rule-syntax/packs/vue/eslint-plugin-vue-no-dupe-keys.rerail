@@ -1,10 +1,11 @@
-.policy "eslint-plugin-vue-no-dupe-keys" revision 2
+.policy "eslint-plugin-vue-no-dupe-keys" revision 3
 .description "Avoid reusing a name across a Vue component's props, computed, data, methods and setup, or a prop name for a script setup binding; the names collide in the template."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   vname(o, g, x, n), vprops_call(c), vprop_name(c, x, n), vscript(p, setup), decl_site(s, x, site, form, space)
+#include "vue/vue-01.rerail"
+//   vname(o, g, x, n), vprops_call(c), vprop_name(c, x, n), decl_site(s, x, site, form, space)
+//   vjs(n), vts(n), vview_root(p)
 
 // eslint-plugin-vue's no-dupe-keys.
 // Options API: a name that props, computed, data, methods or setup (option groups: more option names) already
@@ -17,11 +18,19 @@
 .violation dupe_key(at: node, x: symbol) code "vue/no-dupe-keys"
     "Duplicate key '{x}'. May cause name collision in script or template tag."
     suppress eslint "vue/no-dupe-keys"
-dupe_key(n, x) :- named(o, x, n), named(o, x, m), earlier(m, n).
-dupe_key(site, x) :- vprops_call(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
+// Each clause that starts a search once per view grammar (vue/vue-01).
+dupe_key(n, x) :- named(o, x, n), named(o, x, m), before(m, n).
+dupe_key(site, x) :- vprops_call(c), vjs(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
+    !reads_props(c, site).
+dupe_key(site, x) :- vprops_call(c), vts(c), vprop_name(c, x, _), !renamed(c, x), top_binding(c, x, site),
     !reads_props(c, site).
 .decl named(o: node, x: symbol, n: node)
-named(o, x, n) :- vname(o, g, x, n), (group(g) ; option_item("groups", _, g)).
+named(o, x, n) :- vname(o, g, x, n), vjs(n), (group(g) ; option_item("groups", _, g)).
+named(o, x, n) :- vname(o, g, x, n), vts(n), (group(g) ; option_item("groups", _, g)).
+// before(m, n): m starts before n (iterateProperties' order is the source's; `earlier` has no row over the view).
+.decl before(m: node, n: node)
+before(m, n) :- named(o, x, n), named(o, x, m), line(m, lm), line(n, ln), (lm < ln ; lm = ln, col(m, cm),
+    col(n, cn), cm < cn).
 .decl group(g: symbol)
 group("props"). group("computed"). group("data"). group("methods"). group("setup").
 
@@ -34,10 +43,11 @@ pattern(c, l) :- vprops_call(c), vmacro(w, "withDefaults"), call_arg(w, a, 0), v
 renamed(c, x) :- pattern(c, l), kind(l, "object_pattern"), child(l, p, _), kind(p, "pair_pattern"),
     field(p, "key", k), kind(k, "property_identifier"), text(k, x), field(p, "value", v), kind(v, "identifier"),
     !text(v, x).
-// top_binding(c, x, site): x is declared at the top of a script of c's file; the site is the declaration.
+// top_binding(c, x, site): x is declared at the top of the scripts (the view's module scope, as vue-eslint-parser
+// reads both blocks as one program); the site is the declaration.
 .decl top_binding(c: node, x: symbol, site: node)
-top_binding(c, x, at) :- vprop_name(c, x, _), docof(c, d), vscript(p, _), docof(p, d), decl_site(p, x, s, _, "value"),
-    def_node(s, at).
+top_binding(c, x, at) :- vprop_name(c, x, _), docof(c, d), vview_root(p), docof(p, d),
+    decl_site(p, x, s, _, "value"), def_node(s, at).
 .decl def_node(s: node, at: node)  // ESLint's def.node: the declarator of a destructured name
 def_node(s, s) :- decl_site(_, _, s, f, _), f != "pattern".
 def_node(s, d) :- decl_site(_, _, s, "pattern", _), nearest(s, d, "variable_declarator").

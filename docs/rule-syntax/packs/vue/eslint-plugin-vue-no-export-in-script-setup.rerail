@@ -1,10 +1,10 @@
-.policy "eslint-plugin-vue-no-export-in-script-setup" revision 2
+.policy "eslint-plugin-vue-no-export-in-script-setup" revision 3
 .description "Don't export values from a Vue script setup block (type exports are fine); put shared exports in a separate regular script block."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   vscript(p, setup)
+#include "vue/vue-01.rerail"
+//   vtop(e, setup), vjs(n), vts(n)
 
 // eslint-plugin-vue's no-export-in-script-setup: an export statement in <script setup>, which compiles into the
 // setup function and cannot export. Type exports are erased and allowed. A declaration export is reported at its
@@ -17,7 +17,8 @@
 export_in_setup(kw) :- setup_export(e), field(e, "declaration", _), first_token(e, kw).
 export_in_setup(e) :- setup_export(e), !field(e, "declaration", _).
 .decl setup_export(e: node)
-setup_export(e) :- vscript(p, "true"), child(p, e, _), kind(e, "export_statement"), !type_export(e).
+setup_export(e) :- vtop(e, "true"), vjs(e), kind(e, "export_statement"), !type_export(e).
+setup_export(e) :- vtop(e, "true"), vts(e), kind(e, "export_statement"), !type_export(e).
 // type_export(e): `export type …`, `export interface …`, `export declare type …`, or specifiers that are all types.
 .decl type_export(e: node)
 type_export(e) :- kind(e, "export_statement"), op(e, "type").

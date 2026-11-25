@@ -1,10 +1,11 @@
-.policy "eslint-plugin-vue-no-async-in-computed-properties" revision 2
+.policy "eslint-plugin-vue-no-async-in-computed-properties" revision 3
 .description "Keep Vue computed properties synchronous, with no async getter, await, promises, nextTick or timers; a computed must return its value right away."
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   vcomputed(o, x, f), vcomputed_fn(c, f), vcomp(o), vscript(p, setup), static_prop(n, o, x), call_arg(c, a, i)
+#include "vue/vue-01.rerail"
+//   vcomputed(o, x, f), vcomputed_fn(c, f), vcomp(o), vin_setup(n), static_prop(n, o, x), call_arg(c, a, i)
+//   vjs(n), vts(n)
 
 // eslint-plugin-vue's no-async-in-computed-properties: in a computed getter's own code (not a nested function's),
 //   async getters         computed: { async a() {} }              computed(async () => 1)
@@ -18,14 +19,20 @@
 // component when the file has none.
 .violation async_computed(at: node, msg: symbol) code "vue/no-async-in-computed-properties" "{msg}"
     suppress eslint "vue/no-async-in-computed-properties"
-async_computed(at, m) :- getter(f, x), op(f, "async"), report_at(f, at), says("async", x, m).
-async_computed(n, m) :- getter(f, x), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
+// Each clause once per view grammar (vue/vue-01): getter's column holds both, so it names neither.
+async_computed(at, m) :- getter(f, x), vjs(f), op(f, "async"), report_at(f, at), says("async", x, m).
+async_computed(at, m) :- getter(f, x), vts(f), op(f, "async"), report_at(f, at), says("async", x, m).
+async_computed(n, m) :- getter(f, x), vjs(n), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
+async_computed(n, m) :- getter(f, x), vts(n), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
 
 // getter(f, x): x is the computed's name, "" for a computed() getter.
 .decl getter(f: node, x: symbol)
-getter(f, x) :- vcomputed(_, x, f), docof(f, d), !vsetup_doc(d).
-getter(g, "") :- vcomputed_fn(_, g), vin_setup(g).
-getter(g, "") :- vcomputed_fn(_, g), docof(g, d), !vsetup_doc(d), vcomp(o), within(g, o).
+getter(f, x) :- vcomputed(_, x, f), vjs(f), docof(f, d), !vsetup_doc(d).
+getter(f, x) :- vcomputed(_, x, f), vts(f), docof(f, d), !vsetup_doc(d).
+getter(g, "") :- vcomputed_fn(_, g), vjs(g), vin_setup(g).
+getter(g, "") :- vcomputed_fn(_, g), vts(g), vin_setup(g).
+getter(g, "") :- vcomputed_fn(_, g), vjs(g), docof(g, d), !vsetup_doc(d), vcomp(o), within(g, o).
+getter(g, "") :- vcomputed_fn(_, g), vts(g), docof(g, d), !vsetup_doc(d), vcomp(o), within(g, o).
 .decl report_at(f: node, at: node)  // a method's FunctionExpression starts at its parameters
 report_at(f, f) :- getter(f, _), !kind(f, "method_definition").
 report_at(f, p) :- getter(f, _), kind(f, "method_definition"), field(f, "parameters", p).
