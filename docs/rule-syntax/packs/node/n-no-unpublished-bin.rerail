@@ -7,7 +7,7 @@
 // package has no executable:
 //   package.json { "bin": "./bin/cli.js", "files": ["lib"] }:   bin/cli.js reported
 // "Published" is npm's view (npm_ignored: the `files` list, else .npmignore, else .gitignore), which needs the
-// proposed native input. Reported at the Program node, as the plugin does. Not read: convertPath.
+// repository's input of that name. Reported at the Program node, as the plugin does. Not read: convertPath.
 
 #include "tsx/node-package.rerail"   // pkg_bin_file, npm_ignored, program_start
 

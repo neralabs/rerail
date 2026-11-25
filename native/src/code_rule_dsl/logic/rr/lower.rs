@@ -5336,7 +5336,7 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
     }
 }
 
-pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+pub const WORLD: [(&str, &str); 4] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req"), ("module_file", "rr_module_req")];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
     WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)

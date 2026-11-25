@@ -1,0 +1,39 @@
+// The phase `node_resolve` (decision 0083; 0691): the file each module specifier resolves to, as Node resolves it with
+// eslint-plugin-n's options (main's `import_target`, a port of enhanced-resolve). Resolution reads other files
+// (package.json, tsconfig, node_modules), so a file's own part cannot answer it: each file states the strings a
+// specifier may be, by symbol, the cross part asks the engine for each (`module_file`, answered natively), and the
+// files are handed on by path. A phase naming no `.language` takes its reader's.
+//   file_at(p, x, st, f)  specifier x, of style st ("require", "import", "type"), in the file at path p resolves to f:
+//                         workspace-relative, or absolute outside the root; no row where resolution fails
+// tsx/node-resolve.rerail reads it as `node_resolve__file_at`, at its own file's path, for each of its node_target's.
+//
+// The strings are a superset of tsx/node-resolve's node_target, by syntax alone: node_target follows the global
+// require through aliases with the policy's own tables (values.rerail's node_global), which a phase does not have.
+// So every call's first constant string argument is asked as a require (an alias of require, require.resolve), every
+// import and export source as an import (or type), and every import() argument as an import. Each name is cut at its
+// "!", as node_target cuts it.
+
+#include "core.rerail"
+#include "tsx/values.rerail"   // first_arg, const_str
+
+.phase node_resolve
+.export file_at
+
+// spec_at(p, v, st): the file at p holds string v where a specifier of style st may be.
+.decl spec_at(p: symbol, v: symbol, st: symbol)
+spec_at(p, v, "require") :- kind(c, "call_expression"), first_arg(c, s), const_str(s, v), docof(c, d), doc(d, p, _).
+spec_at(p, v, st) :- kind(i, k), (k = "import_statement" ; k = "export_statement"), field(i, "source", s),
+    kind(s, "string"), value(s, v), (op(i, "type"), st = "type" ; !op(i, "type"), st = "import"), docof(i, d),
+    doc(d, p, _).
+spec_at(p, v, "import") :- kind(c, "call_expression"), field(c, "function", f), kind(f, "import"), first_arg(c, s),
+    kind(s, "string"), value(s, v), docof(c, d), doc(d, p, _).
+// name_at(p, x, st): its name, up to a "!" (a loader prefix: "style-loader!./a.css" names "style-loader").
+.decl name_at(p: symbol, x: symbol, st: symbol)
+name_at(p, v, st) :- spec_at(p, v, st), !contains("!", v).
+name_at(p, x, st) :- spec_at(p, v, st), match("(?<x>[^!]*)!.*", v).
+// ask_at(p, x, st, k): the request's key, "<p>\n<x>\n<st>", made in the file's own part: the engine's request
+// (`rr_module_req`) is derived in the cross part from the literals that bind its key, so it reads this alone.
+.decl ask_at(p: symbol, x: symbol, st: symbol, k: symbol)
+ask_at(p, x, st, cat(p, cat("\n", cat(x, cat("\n", st))))) :- name_at(p, x, st).
+.decl file_at(p: symbol, x: symbol, st: symbol, f: symbol)
+file_at(p, x, st, f) :- ask_at(p, x, st, k), module_file(k, f).

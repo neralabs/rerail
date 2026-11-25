@@ -103,8 +103,8 @@ Found on the way and fixed:
      `fast_pydantic`, `in_collection_call`, `violation_at`; the data layer's `ca_conditional`). The branch rewrote
      these rules in its later fixes.
    - Policies not run: 25 → 0. React's and Node's failures were the missing `tsconfig` rows and unbound library
-     inputs. `spec_resolved` and `npm_ignored` are bound empty until their producers are ported, so n-no-missing-import
-     and n-no-missing-require find every import missing: see Open.
+     inputs. `spec_resolved` and `npm_ignored` were bound empty, so n-no-missing-import and n-no-missing-require
+     found every import missing. Fixes 10 and 11 give them producers.
 3. **Covered views and each relation's one-document rows** (the branch's 0652 follow-up). A view of values that every
    reader covers is file-local (`covers`): each of its rules finds its rows in the reader's own. The split lists the
    relations whose rows are each one document's (`row_documents`), and a maintained split asks a covered view again
@@ -270,6 +270,31 @@ Found on the way and fixed:
      the rule had been simplified away; with rows, the split saw two documents, `d` and `at`'s.
    - Tests: the repository asks each file's nearest package (a stand-in publication, in the facts crate), and a
      program reads what npm leaves out (`files`, `.npmignore`, no package), with the real reader.
+11. **`spec_resolved` comes from the phase `node_resolve`** (new on main; the branch binds it empty).
+   - Core has a fourth file-system request, `module_file(k, f)`: `k` is the importing file's path, the specifier
+     and its style (`require`, `import`, `type`), joined by `\n`. `rr::WORLD` names it with `rr_module_req`, so it is
+     asked as `dir_entry` is: by a rule that binds `k`.
+   - The engine answers it with `import_target`, eslint-plugin-n's resolution at default options
+     (`import_target::resolver`): resolved where the target has no error, as the plugin reads `resolveError`. The
+     answer is workspace-relative, or absolute outside the root. Corpus lies below the ecma crate, so the engine
+     registers the resolver at load (`install_module_resolver`); without it, nothing resolves.
+   - `World` keeps each answer. A cross memo checks it by resolving again (the kind `module`), and the cone's rounds
+     never keep a module request as unchanged by the journal: its key names no path, and a resolution reads files
+     it does not name (`package.json`, `tsconfig.json`, `node_modules`).
+   - The phase (`typing/programs/node_resolve.rerail`) states, per file and by symbol, each string a specifier may
+     be: a call's first constant string argument as a `require`, an import or export source as an `import` or
+     `type`, and an `import()`'s argument as an `import`, each cut at its `!`. That is a superset of
+     `node_target`'s, which follows the global require with the policy's tables (`node_global`, `node_module`), and a
+     phase has none of them. It exports `file_at(p, x, st, f)`. `node-resolve.rerail` derives `spec_resolved` from
+     `node_resolve__file_at` at the node's own path, which is a setting by path (`SETTINGS_BY_PATH`, column 0).
+   - Found on the way, on main: the cone of requests bound the per-file relations it reads only as the answers of
+     a load. A cone that asks only the file system and keys its requests by a file's own rows (here `ask_at`)
+     loads nothing. Its reads were bound to nothing, and planning failed for want of their statistics. The cone now
+     binds every export it reads as an input as well. A cone that loads binds the same relations as before.
+   - Tests: a workspace with a relative file, a missing one, a package in `node_modules` (its `main`), a builtin
+     and a dynamic import. Every specifier but the missing one resolves, and the missing one is `spec_failed` until
+     its file is added, on the next run. The Node pack's lists are unchanged: its 11 node entries come from
+     `node_module` and `node_global`, not from resolution.
 
 ## Consequences
 
@@ -282,9 +307,7 @@ Found on the way and fixed:
 
 - The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
 - A lowering's value view (`match_all`'s `rr_ctx`/`rr_mall`) is not covered by its readers (React's `sandbox_token`).
-- A producer for `spec_resolved` (main's `import_target` resolver). Resolution reads other files, so a file's own
-  part cannot answer it. Until then `n-no-missing-import` and `n-no-missing-require` find every import missing.
-- The branch's fix 3e (b754ec6c93, points-to as the phase `points_to`) is not ported. Main's points-to is the typing
-  program's P3 (`calls_p3`), a lineage apart from the branch's `python/points-to`, and lacks t32 stage 8. Of
+- The branch's fix 3e (b754ec6c93, points-to as the phase `points_to`) is not ported yet. Main's points-to is the
+  typing program's P3 (`calls_p3`), a lineage apart from the branch's `python/points-to`, and lacks t32 stage 8. Of
   Django's 155 node entries, 85 are that program's relations; most of the rest are the four call-graph policies fix
-  3e rewrites.
+  3e rewrites. Decided (2026-11-25): ported in this pull request, which does not merge until every rule works.

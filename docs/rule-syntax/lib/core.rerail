@@ -295,6 +295,10 @@
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl file_digest(path: symbol, c: symbol)
+// module_file(k, f): the file module specifier k resolves to, k being "<importing path>\n<specifier>\n<style>" (style
+// "require", "import" or "type"), as Node resolves it with eslint-plugin-n's options; no row where it fails. Asked as
+// dir_entry is, by a rule binding k (the phase node_resolve).
+.decl module_file(k: symbol, f: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol) extensible
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
 // ---- a coding agent's tool calls (`tool-calls.md`) ----

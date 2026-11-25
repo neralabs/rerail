@@ -76,9 +76,9 @@ never ran those rules on:
 - **D5** deprecated-api: invalid-101 is `GLOBAL; /*globals GLOBAL*/`. rrlab gives `directive_global` no rows (R1), so
   the rule's clause for comment-declared globals never fires. ESLint gives several findings at one key for
   `export * from "fs"`, and the rule gives one.
-- **D6** resolution (`spec_resolved`) and npm's published view (`npm_ignored`) are PROPOSED native inputs (C1, C2) with
-  no rows today. Every specifier then fails to resolve, and every file counts as published. The rule logic around them
-  matches the plugin case by case: which specifiers, style, allowModules, the TS alias, devDependency-only, private.
+- **D6** resolution (`spec_resolved`) comes from the phase `node_resolve` (C1), and npm's published view
+  (`npm_ignored`) from the repository's walk (C2). The rule logic around them matches the plugin case by case: which
+  specifiers, style, allowModules, the TS alias, devDependency-only, private.
 - **D7** no-path-concat: `path.sep` is taken as "/" (POSIX), as on the recording machine.
 - **D8** no-sync: the typed `ignores` entries (`{from: "file"|"lib"|"package"}`) need types and are not ported. String
   entries are.
@@ -93,7 +93,10 @@ never ran those rules on:
 
 ## Library and core change requests
 
-**C1. core: module resolution.** Add this native input:
+**C1. core: module resolution.** Done (decision 0691): the phase `node_resolve`
+(`native/src/code_rule_dsl/typing/programs/node_resolve.rerail`) resolves each file's specifiers through core's
+`module_file` request, answered by the engine's `import_target`, and `node-resolve.rerail` derives `spec_resolved` from
+its export at the file's own path. As first requested:
 
 ```
 .decl spec_resolved(n: node, file: symbol)   // string n (a require/import specifier) resolves to file, as
@@ -103,7 +106,8 @@ never ran those rules on:
 Today it is declared in `lib/tsx/node-resolve.rerail`, which also gives the options it needs: the conditions, the
 tryExtensions, the tsconfig paths and the .js->.ts map.
 
-**C2. core: npm's publish view.** Add this native input:
+**C2. core: npm's publish view.** Done (decision 0691): the repository's walk makes `npm_ignored` with
+`package_manifest`'s reader. As first requested:
 
 ```
 .decl npm_ignored(path: symbol)   // npm leaves path out of the package: package.json `files`, else .npmignore,

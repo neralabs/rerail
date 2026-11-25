@@ -10,8 +10,8 @@
 //   spec_kind(name, k)    "relative" ./x ../x, "absolute" /x, "node", "data", "http", "npm" or "unknown"
 //   spec_package(name, m) the package a name loads: "@a/b/c" gives "@a/b", "lodash/fp" "lodash", a built-in its
 //                         module ("node:fs/promises" gives "fs"); relative names have none
-//   spec_resolved(n, file)    PROPOSED core input: the file n resolves to, from n's document, as the plugin's
-//                         resolver finds it (below); no row when resolution fails
+//   spec_resolved(n, file)    the file n resolves to, from n's document, as the plugin's resolver finds it (below);
+//                         no row when resolution fails
 //   spec_failed(n)        resolution fails (the plugin's resolveError): no file, and not a data: or http(s):
 //                         import, which the plugin takes as found
 //   node_target_file(n, file) the plugin's target.filePath: the resolved file; for a relative or absolute name
@@ -38,7 +38,8 @@
 // (Node's conditions "node", "require", plus "import" for imports and "types" for type imports; `main` and index
 // files for require and packages; tryExtensions .js, .json, .node, .mjs, .cjs, and for TypeScript files the
 // tsconfig `paths` aliases and the .js -> .ts extension map), reading node_modules, which the repository walk
-// skips. Until core has it, it is declared here and has no rows: every target then fails to resolve.
+// skips. Resolution reads other files, so a file's own part cannot answer it: the phase node_resolve
+// (typing/programs/node_resolve.rerail) resolves each file's specifiers, and hands the files on by path.
 //
 // Builds on tsx/values (api_use for the global require and require.resolve, const_str, first_arg), tsx/node
 // (builtin_spec, the Node.js module table), tsx/node-package (pkg_file) and core (package_for, package_field,
@@ -47,8 +48,11 @@
 #include "tsx/node.rerail"   // builtin_spec
 #include "tsx/node-package.rerail"
 
+// spec_resolved(n, f): the phase node_resolve's answer for n's file, specifier and style, read at n's own path. The
+// phase resolves every string a specifier may be (a superset of node_target's), so each of node_target's is asked.
+.decl node_resolve__file_at(p: symbol, x: symbol, st: symbol, f: symbol)
 .decl spec_resolved(n: node, file: symbol)
-.input spec_resolved
+spec_resolved(n, f) :- node_target(n, x, st), docof(n, d), doc(d, p, _), node_resolve__file_at(p, x, st, f).
 
 // The global require, as values.rerail traces it: a CommonJS file's require, `const r = require; r(x)`, and
 // require.resolve. (Rows for values.rerail's tables; the same rows may come with other tables.)

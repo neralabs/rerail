@@ -6789,7 +6789,15 @@ fn run_observed(
         let load_placed = super::body::Placed::whole(load.clone());
         let load_f = load_placed.fields()?;
         let load_answers: Vec<(&str, &str)> = load_f.answers().iter().map(|&(q, a)| (load_f.rel_name(q), load_f.rel_name(a))).collect();
-        let per_file: Vec<String> = load_answers.iter().filter(|(q, a)| *q == world::LOAD && split.exports.iter().any(|e| e == a)).map(|(_, a)| (*a).to_owned()).collect();
+        // The per-file relations the cone reads: those a load answers, and those it reads as inputs whatever it asks.
+        // A cone of file-system requests alone (a phase keying `module_file` by its files' own rows) loads nothing,
+        // and its per-file reads were bound to nothing (no statistics, no rows).
+        let mut per_file: Vec<String> = load_answers.iter().filter(|(q, a)| *q == world::LOAD && split.exports.iter().any(|e| e == a)).map(|(_, a)| (*a).to_owned()).collect();
+        for rel in split.exports.iter().filter(|e| load_f.is_input(e) && !crate::code_rule_dsl::typing::file_local::run_constant(prog, e)) {
+            if !per_file.contains(rel) {
+                per_file.push(rel.clone());
+            }
+        }
         let world_rels: Vec<(String, usize)> = load_answers.iter().map(|(_, a)| *a).filter(|r| !split.exports.iter().any(|e| e == r)).filter_map(|r| load_f.arity(r).map(|w| (r.to_owned(), w))).collect();
         // Those the cone takes as inputs start empty; the others are its own tables.
         let world_inputs: Vec<(String, usize)> = world_rels.iter().filter(|(r, _)| load_f.is_input(r)).cloned().collect();
@@ -6963,6 +6971,10 @@ fn run_observed(
             let db_text = &db2;
             let still_fn = journal.map(|(roots, named, _)| {
                 move |req: &str, key: &[i64]| -> bool {
+                    // A module's resolution reads files its key does not name: asked again.
+                    if req == world::MODULE_REQ {
+                        return false;
+                    }
                     let Some(text) = key.first().and_then(|a| crate::code_rule_dsl::logic::native::sym_text_of(db_text, *a).ok()) else { return false };
                     let path = std::path::Path::new(&text);
                     roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !(path.starts_with(n) || req == "rr_dir_req" && n.parent() == Some(path)))
@@ -7097,6 +7109,10 @@ fn run_observed(
                         let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
                         for ((_, is_dir), name) in entries.iter().zip(atoms(&names)?) {
                             out.push(vec![row[0], name, i64::from(*is_dir)]);
+                        }
+                    } else if *produced == "module_file" {
+                        if let Some(file) = world.module(&asked) {
+                            out.push(vec![row[0], atoms(&[file.as_str()])?[0]]);
                         }
                     } else if *produced == "file_digest" {
                         if let Some(d) = world.digest(&asked) {

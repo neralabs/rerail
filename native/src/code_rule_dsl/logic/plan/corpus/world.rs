@@ -5,6 +5,9 @@
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
 //! - `file_line(path, i, text)`: the lines of a file, from 1;
 //! - `file_digest(path, c)`: the SHA-256 of a file's bytes, hex (what a cache key names a file's content by);
+//! - `module_file(k, f)`: the file a module specifier resolves to, `k` being the importing file's path, the specifier
+//!   and its style, joined by `\n` (Node's resolution as eslint-plugin-n reads it, `import_target`: the phase
+//!   `node_resolve`);
 //!
 //! and ask for documents with `load(path, module, grammar)`: the file at `path`, parsed in `grammar`, as module
 //! `module` (its resolution's answer, which names the document as a file of the corpus is named by its path). A
@@ -84,7 +87,25 @@ pub(super) struct World {
     /// Documents loaded this run and taken back since (`unload`): out of the budget, their rows still held where
     /// they were made, so a load asked again takes them back in place (`reload`).
     taken: BTreeMap<String, Loaded>,
+    /// Each module request's answer (`module_file`), and the resolver that gave them, made at the first request.
+    modules: BTreeMap<String, Option<String>>,
+    resolver: Option<Box<dyn Fn(&str, &str, &str) -> Option<String>>>,
 }
+
+/// What resolves a module specifier (`import_target::resolver`, a crate above this one): for the corpus root, a
+/// resolver of (importing file, specifier, style) to the file. Registered at load (`install_module_resolver`);
+/// without it no specifier resolves.
+pub type ModuleResolver = fn(root: &Path) -> Box<dyn Fn(&str, &str, &str) -> Option<String>>;
+
+static MODULE_RESOLVER: std::sync::OnceLock<ModuleResolver> = std::sync::OnceLock::new();
+
+/// Registers what resolves module specifiers (once, at load).
+pub fn install_module_resolver(resolver: ModuleResolver) {
+    let _ = MODULE_RESOLVER.set(resolver);
+}
+
+/// The request relation of `module_file`, whose key names no path (`still` asks it again every run).
+pub(super) const MODULE_REQ: &str = "rr_module_req";
 
 impl World {
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
@@ -173,6 +194,24 @@ impl World {
         };
         self.digests.insert(asked.to_owned(), d.clone());
         Some(d)
+    }
+
+    /// The file a module request resolves to (`module_file`): its key is the importing file's path, the specifier and
+    /// its style, joined by `\n`. None where it does not resolve, or the key is not three parts.
+    pub(super) fn module(&mut self, asked: &str) -> Option<String> {
+        if let Some(found) = self.modules.get(asked) {
+            return found.clone();
+        }
+        let found = (|| {
+            let (importer, rest) = asked.split_once('\n')?;
+            let (name, style) = rest.rsplit_once('\n')?;
+            if self.resolver.is_none() {
+                self.resolver = Some(MODULE_RESOLVER.get()?(&self.root));
+            }
+            (self.resolver.as_ref()?)(importer, name, style)
+        })();
+        self.modules.insert(asked.to_owned(), found.clone());
+        found
     }
 
     /// A load's document: the file's canonical path, when it is new, allowed, in the run's grammar and within the
@@ -307,6 +346,10 @@ impl World {
         for asked in &self.refused {
             out.push(("refused".to_owned(), asked.clone(), self.probe(asked)));
         }
+        // A resolution reads many files (package.json, tsconfig, node_modules): it is checked by resolving again.
+        for (asked, found) in &self.modules {
+            out.push(("module".to_owned(), asked.clone(), found.clone().unwrap_or_default()));
+        }
         out
     }
 
@@ -326,6 +369,7 @@ impl World {
                 "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
+                "module" => self.module(path).unwrap_or_default(),
                 _ => return Some((c, None)),
             };
             (now != *digest).then_some((c, Some(now)))

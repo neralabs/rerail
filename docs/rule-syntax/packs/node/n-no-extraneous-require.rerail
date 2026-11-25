@@ -10,7 +10,7 @@
 //   require("./util")  require("fs")  require("nope")    not: relative, built-in, or not resolved at all
 // The listed names are the package's own name and the keys of dependencies, devDependencies, peerDependencies and
 // optionalDependencies. Option allowModules lists packages never reported; a TypeScript file's tsconfig `paths`
-// alias is no package. Resolution is node-resolve.rerail's proposed native input. Not read: convertPath,
+// alias is no package. Resolution is the phase node_resolve's (node-resolve.rerail's spec_resolved). Not read: convertPath,
 // pnpm-workspace.yaml.
 
 #include "tsx/node-resolve.rerail"   // node_target, builtin_spec, spec_package, node_target_file, pkg_lists, allow_module, spec_ts_alias

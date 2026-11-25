@@ -5199,6 +5199,8 @@ pub(crate) fn install_languages() {
     facts::nearest::install_nearest(typing::file_local::nearest);
     // `core.rerail`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
+    // What resolves a module specifier (`module_file`, the phase node_resolve's request).
+    logic::plan::corpus::world::install_module_resolver(import_target::resolver);
     // What npm publishes of a package (`npm_ignored`, a repository input).
     facts::repository::install_npm_publication(|folder, bytes, npmignore, gitignore| {
         let manifest = package_manifest::Manifest::parse(folder.to_owned(), bytes).with_ignore_files(npmignore, gitignore);

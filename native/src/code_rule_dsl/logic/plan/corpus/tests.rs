@@ -2546,3 +2546,66 @@ fn a_files_npm_leaves_out_are_npm_ignored() {
     assert_eq!(rows, [vec!["cli/scripts/build.js".to_owned()], vec!["lib/test/a.test.js".to_owned()]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Decision 0691: `spec_resolved` comes from the phase `node_resolve`, which resolves each file's specifiers natively
+/// (`module_file`, main's `import_target`) and hands the files on by path. A relative file, an installed package (its
+/// `main`, in node_modules, which the repository walk skips), a builtin and a dynamic import resolve; a missing file
+/// does not, and is the one `spec_failed`. Adding the file resolves it on the next run.
+#[test]
+fn node_specifiers_resolve_through_the_phase() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("node-resolve");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    for (path, text) in [
+        ("package.json", r#"{"name": "app", "dependencies": {"lodash": "1"}}"#),
+        ("src/a.js", "const b = require(\"./b\");\nconst n = require(\"./nope\");\nconst l = require(\"lodash\");\nconst fs = require(\"fs\");\nimport(\"./c.mjs\");\n"),
+        ("src/b.js", "module.exports = 1;\n"),
+        ("src/c.mjs", "export const c = 1;\n"),
+        ("node_modules/lodash/package.json", r#"{"name": "lodash", "main": "main.js"}"#),
+        ("node_modules/lodash/main.js", "module.exports = {};\n"),
+    ] {
+        let to = ws.join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, r#".language javascript
+#include "tsx/node-resolve.rerail"
+.decl resolved(p: symbol, x: symbol, f: symbol)
+resolved(p, x, f) :- spec_resolved(n, f), node_target(n, x, _), docof(n, d), doc(d, p, _).
+.output resolved
+.decl failed(p: symbol, x: symbol)
+failed(p, x) :- spec_failed(n), node_target(n, x, _), docof(n, d), doc(d, p, _).
+.output failed
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |out: &str| {
+        super::run(&program, &ws, None, &dir.join(out), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let outputs = super::super::output::Outputs::open(&dir.join(out)).unwrap();
+        let rows = |name: &str| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown()).unwrap_or_default();
+            rows.sort();
+            rows
+        };
+        (rows("resolved"), rows("failed"))
+    };
+    let row = |cols: &[&str]| cols.iter().map(|c| (*c).to_owned()).collect::<Vec<_>>();
+    let (resolved, failed) = run("out1");
+    assert_eq!(
+        resolved,
+        [
+            row(&["src/a.js", "./b", "src/b.js"]),
+            row(&["src/a.js", "./c.mjs", "src/c.mjs"]),
+            row(&["src/a.js", "fs", "fs"]),
+            row(&["src/a.js", "lodash", "node_modules/lodash/main.js"]),
+        ]
+    );
+    assert_eq!(failed, [row(&["src/a.js", "./nope"])]);
+    std::fs::write(ws.join("src/nope.js"), "module.exports = 2;\n").unwrap();
+    let (resolved, failed) = run("out2");
+    assert!(resolved.contains(&row(&["src/a.js", "./nope", "src/nope.js"])), "{resolved:?}");
+    assert!(failed.is_empty(), "{failed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
