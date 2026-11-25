@@ -2576,6 +2576,17 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
   });
 
+  // A read of the recorded pid's start that did not answer leaves the lock's holder record to decide, as a read that
+  // gave nothing does.
+  it("removes the record when another live process wrote the home's holder record and the lock is held, though the recorded pid's start read did not answer", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await holdHome(home, OTHER_PID);
+    await writeFile(stateFile, JSON.stringify(state("win32")));
+    const machine = withHolderStarted(machineWith("win32", [], () => true, () => "unanswered"), holderRecordWritten() - 1_000);
+    expect(await lookupDaemon(home, machine)).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
   // The holder record was written an hour ago and the process its pid names started half an hour ago, so before now: it
   // took a dead holder's pid since, and shows nothing of the lock. The start of the pid daemon.json names cannot be read.
   it.each(["linux", "win32"] as const)("keeps the record when the holder record's pid started after that record was written and before now, and its stop ends nothing and says what to check (%s)", async platform => {
