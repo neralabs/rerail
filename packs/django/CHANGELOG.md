@@ -4,6 +4,14 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 a version's minor follows the Rerail line it needs (0.2.x needs Rerail 0.2 or newer), and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.2.1 (2026-11-25)
+
+27 rules, 25 of them on by default.
+
+### Changed
+
+- Each rule now says what it guards against, where its code lives and how badly a violation can go, so the dashboard can filter the pack's rules by risk. The pack needs Rerail 0.2.2 or newer.
+
 ## 0.2.0 (2026-11-24)
 
 27 rules, 25 of them on by default.
