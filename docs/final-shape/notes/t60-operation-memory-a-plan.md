@@ -476,6 +476,7 @@ the same session as each batch, cold PostHog on m1max, CPU, with the probe off:
 | Batches 1–4 (`bf7c57a584`) | 2.644 T (−2.3%) | 248.9 s | 64.8 s | 7.22 GB (−0.68 GB) | 29,930 |
 | Batches 1–5 (`6a9e50c610`) | 2.597 T (−4.1%) | 256.4 s (−2.6%) | 76.6 s | 7.28 GB (−0.58 GB) | 29,930 |
 | Batches 1–7 (`5ad1f1d34b`) | 2.573 T (−5.0%) | 243.3 s (−4.2%) | 62.4 s (−7.3%) | 7.22 GB (−0.68 GB) | 29,930 |
+| Batches 1–8 (`7235bb0b07`) | 2.583 T (−4.5%) | 244.2 s (−3.9%) | 59.2 s (−7.1%) | 7.35 GB (−0.53 GB) | 29,930 |
 
 Batch 5's session ran on a busier host: its merged engine took 263.3 s and 76.8 s there, so its CPU and wall are
 read against that run, not the range above.
@@ -530,6 +531,20 @@ The merged engine's survey (`RERAIL_PROBE_SCRATCH`, 327 M arrays, 13,306 makers)
      (1.22 M); a made group shares its strings' list (1.18 M); a traced statement's words are joined in a thread
      buffer (the hazard profile's, 2.1 M).
 
+8. **What batch 7 had left** (`76b9742cdd` … `7235bb0b07`).
+   - `make_rows`' 4.28 M at line 0 were placed at their call instructions (the return address less 4, `atos -i`):
+     the profile's byte count, a `format!` a relation a make. `count_named_args` formats a stage's name into a
+     thread buffer, only while stages are counted, and keeps it for a new stage; the 28 such sites use it.
+   - The AST wave's result is taken, not cloned (1.31 M); a scope's name holds its first binding in place (`Chain`,
+     4.9 M).
+   - A job's carried guards are held in place in its `Entered` (8 of 8 words; a larger one boxed), put back in the
+     reverse order of entry (1.32 M).
+   - The cone rounds' answers are flat (`FlatRows`, `KeySet`): no name and list a key or list a row, and no pair
+     made to test a key (1.31 M).
+   - A chunk's values' parts and keys are logs every snapshot shares (`AppendLog`, an insert-only key table read
+     with no lock): a snapshot reads below its own count, so it reads what it did before; no block or shard is
+     copied at an admit (0.88 M).
+
 The merge's red tests, fixed on the way:
 
 - 0652's check now takes a demand set (`magic_…`) as the engine's own crossing (#932's case).
@@ -546,9 +561,5 @@ Left, by the survey:
   admit lock and read under theirs.
 - The batch's `Vector<i64>` makers inlined into `make_rows` (7.46 M + 1.15 M), found by line in the next survey.
 - The rayon collects (3.7 M).
-- `scope::Builder::bind` (4.9 M, from the Python visitor's `bind_name`): the scope table is the document's output, a
-  key string and a list a name bound; 282 uses outside its module.
-- `make_rows`' inlined makers (4.28 M at no line) and the AST wave's matches (`Wave::matched`, 1.31 M).
-- `run_state::Shared::enter` (1.32 M): a box a carried part a job.
-- `Asks::came` (1.31 M, run-long).
+- A scope's name's key string (`Builder::bind`'s other half).
 - The footprints: `chunk_held_rows` (the run's held rows, real data), `placed::place`, `build_in_wave_as`.
