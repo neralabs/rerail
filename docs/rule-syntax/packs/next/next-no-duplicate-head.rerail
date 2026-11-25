@@ -11,13 +11,14 @@
 //   }
 
 #include "tsx/next.rerail"
+#include "tsx/next-01.rerail"
 
 .violation duplicate(at: node) code "@next/next/no-duplicate-head"
     "Do not include multiple instances of `<Head/>`. See: https://nextjs.org/docs/messages/no-duplicate-head"
     suppress eslint "@next/next/no-duplicate-head"
     suppress oxlint "no-duplicate-head"
 duplicate(h) :- kind(r, "return_statement"), document_class_above(r), child(r, x, 0), unparen_jsx(x, e),
-    child_el(e, h, "Head"), child_el(e, first, "Head"), earlier(first, h).
+    child_el(e, h, "Head"), child_el(e, first, "Head"), src_before(first, h).
 
 // document_class_above(r): some class around r extends Document, the name next/document's default import
 // binds. ESTree calls `export default class extends Document {}` a ClassDeclaration too.

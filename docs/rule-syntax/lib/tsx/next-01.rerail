@@ -1,0 +1,21 @@
+// tsx/next-01: source order for JavaScript and TypeScript, while core's `earlier` has no rows for them.
+//
+// What a rule gets from this library:
+//   src_before(m, n)        m starts before n in the same document (by start offset)
+//
+// core.rerail says earlier(m, n) is start-offset order outside Python, but the engine fills visit_index, which
+// earlier is lowered to, for Python documents only (facts/vtab/syntax/tree.rs), so on a .js or .tsx file every
+// `earlier` is false and every `!earlier` true. src_before is that documented order, read off node's offsets.
+// An ancestor and its first descendant start at the same offset, so neither is src_before the other; the rules
+// here compare statements, siblings, or an assignment target and a later read, which never nest.
+// When the engine gives earlier rows for these documents, this file goes and its rules say `earlier` again.
+//
+// Builds on core.
+
+.decl src_before(m: node, n: node)
+src_before(m, n) :- node(d, m, _, a, _), node(d, n, _, b, _), a < b.
+
+// Examples, one per rule that uses this library (packs/next):
+//   no-async-client-component      "use client"; export default async function Page() {}       "use client" first
+//   no-duplicate-head              <Html><Head /><Head /></Html>                                  the first Head
+//   no-location-assign-relative-destination  let u = "https://x"; u = "/a"; location.href = u    the last write

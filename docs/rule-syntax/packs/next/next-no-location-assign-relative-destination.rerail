@@ -14,6 +14,7 @@
 // not a local or imported name; ["href"] and ["assign"] count as .href and .assign.
 
 #include "tsx/names.rerail"
+#include "tsx/next-01.rerail"
 
 .violation relative(at: node, what: symbol) code "@next/next/no-location-assign-relative-destination"
     "Replace this {what} with redirect() during render or useRouter().push() in a client event handler."
@@ -57,9 +58,9 @@ relative_url(v) :- kind(v, "identifier"), ref_site(v, s), binding_value(s, e), !
 //   let u = "/a"; u = "https://x"; location.href = u      fine
 //   let u = "https://x"; location.href = u; u = "/a"      fine
 .decl write_before(v: node, o: node, e: node)
-write_before(v, o, e) :- kind(v, "identifier"), ref_site(v, s), site_occurrence(s, o), assign(_, o, e), earlier(o, v).
+write_before(v, o, e) :- kind(v, "identifier"), ref_site(v, s), site_occurrence(s, o), assign(_, o, e), src_before(o, v).
 .decl later_write(v: node, o: node)
-later_write(v, o) :- write_before(v, o, _), write_before(v, p, _), earlier(o, p).
+later_write(v, o) :- write_before(v, o, _), write_before(v, p, _), src_before(o, p).
 .decl assign(a: node, l: node, e: node)  // l = e, l += e, …
 assign(a, l, e) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
     field(a, "left", l), field(a, "right", e).
