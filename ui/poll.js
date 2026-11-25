@@ -310,6 +310,21 @@ export async function recommendationsFor(scope) {
   return body.recommendations;
 }
 
+/**
+ * The rule packs published on npm for a captured scope's target, kept for the page only while it still shows that
+ * scope. A daemon that reads no npm has none to list, which is no failure; any other failed read is kept as why.
+ */
+export async function publishedPacksFor(scope) {
+  let published;
+  try {
+    const { body } = await get(`/api/rule-packs/published?${new URLSearchParams(scope.target)}`);
+    published = { packs: body.packs, unread: body.unread ?? null };
+  } catch (error) {
+    published = { packs: [], unread: error.code === "published-packs-unavailable" ? null : error.apiMessage ?? error.message };
+  }
+  if (inScope(scope)) data.publishedPacks = published;
+}
+
 async function loadActivity(since, target) {
   const body = await fetchFresh(`/api/rules/activity?since=${since}${repositoryFilter()}`, target);
   if (body === undefined) return false;
@@ -1160,7 +1175,7 @@ export function changeScope(scope) {
   Object.assign(data, {
     repository: null, checkout: null, rules: new Map(), attachedPacks: new Map(), activity: {}, activityAll: {},
     activitySessions: null, activityAllSessions: null, findings: pagedList(), ruleFindings: pagedList(), sessions: pagedList(),
-    sessionFindings: pagedList(), recentSessions: null, recommendations: null, followGitignore: null, loaded: false, missing: false,
+    sessionFindings: pagedList(), recentSessions: null, recommendations: null, publishedPacks: null, followGitignore: null, loaded: false, missing: false,
     mergeAssist: null, mergeAssistError: null, behindSince: 0,
   });
   mergeAssistRead = { at: 0, loading: null, generation: -1 };

@@ -34,7 +34,8 @@ no hosted model.
   your work: the request carries what any npm request does, npm's user agent (npm and Node versions, operating system,
   CPU) and the credentials your npm config holds for the registry. `RERAIL_UPDATE_CHECK=0` set for the daemon turns it
   off (`src/setup/update-check.ts`).
-  Every other network request runs because you ran a command, added a remote or turned Merge Assist on (both in
+  Every other network request runs because you ran a command, opened Add rule packs in the dashboard, added a remote
+  or turned Merge Assist on (both in
   internal testing, below), with one exception: when the SQLite binding fails its load check, starting the daemon
   rebuilds it with npm (below).
 - **No pack install scripts.** Packs are installed and removed with `npm --ignore-scripts`
@@ -62,6 +63,7 @@ npm runs for the daily update check, updates, set-up, recommending and adding pa
 | `rerail update`, `rerail packs update` | The newest version of each rule pack you installed, asked by its package name on your channel (on `next` for a pack the channel has no version of), then the newest of those that fits the active core |
 | `rerail setup` from a non-managed copy (e.g. `npx`) | The managed `@neralabs/rerail` install, with this computer's engine package, `@neralabs/rerail-engine-<suffix>` |
 | Set-up, `rerail start`, `rerail packs recommend` | Every rule pack, matched to your repository **locally**; nothing about it is sent |
+| Opening Add rule packs in the dashboard of an installed Rerail, when the daemon has read no list yet or the one it read is a day old | Every rule pack, as `rerail packs recommend` fetches them, matched to your repository **locally**; nothing about it is sent |
 | `rerail packs add`, packs confirmed in set-up | The chosen packs |
 | SQLite binding fails its load check, when the daemon starts or during an update | `npm rebuild better-sqlite3`; may fetch a prebuilt binary or Node headers through that package's own tooling |
 
