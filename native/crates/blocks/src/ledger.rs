@@ -1002,4 +1002,7 @@ impl rerail_vector::Guard for Ledger {
     fn cpu_write(&self, at: usize, len: usize) {
         Ledger::cpu_write(self, at, len)
     }
+    fn uses(&self) -> &std::sync::atomic::AtomicUsize {
+        &self.chunk_uses
+    }
 }

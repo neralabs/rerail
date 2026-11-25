@@ -105,11 +105,14 @@ impl<T: Pod> Vector<T> {
     }
 
     /// The CPU reads (or writes) `n` `T`s from its `from`th: its region's guard checks them (decision 0487 R4). With
-    /// none, no more than a load.
+    /// none, or none of the device's uses of its block queued, no more than a load: every read of a value through
+    /// `Deref` (each `v[i]`) passes here, and a call to the guard at each was a sixth of a cold PostHog run's
+    /// instructions (0.58 T of 3.70 T, decision 0684).
     #[inline]
     #[track_caller]
     fn check(&self, from: usize, n: usize, write: bool) {
         if let Some(m) = &self.mem
+            && m.device_uses()
             && let Some((g, at)) = m.guard()
         {
             let (at, len) = (at + from * size_of::<T>(), (n * size_of::<T>()).max(1));

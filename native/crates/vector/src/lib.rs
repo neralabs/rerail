@@ -38,6 +38,9 @@ pub struct Region {
     len: usize,
     owner: Box<dyn Any + Send + Sync>,
     guard: Option<(Arc<dyn Guard>, usize)>,
+    /// The guard's count of the device's queued uses of its block (`Guard::uses`), read where it lies: the guard's
+    /// check is called only while one is queued. It lives as long as the guard, which the region holds.
+    uses: *const std::sync::atomic::AtomicUsize,
     share: Option<fn(&Region) -> Region>,
 }
 
@@ -46,7 +49,13 @@ pub struct Region {
 pub trait Guard: Send + Sync {
     fn cpu_read(&self, at: usize, len: usize);
     fn cpu_write(&self, at: usize, len: usize);
+    /// How many of the device's uses of the block are queued: none, and every CPU read and write passes (the check's
+    /// first test, made by the region where it reads, decision 0684). Held by the guard for as long as it lives.
+    fn uses(&self) -> &std::sync::atomic::AtomicUsize;
 }
+
+/// No guard's count of uses: none queued.
+static NO_USES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 // SAFETY: the region's bytes are its holder's alone, written through `&mut self` or as atomics.
 unsafe impl Send for Region {}
@@ -58,11 +67,12 @@ impl Region {
     /// # Safety
     /// `ptr..ptr + len` is writable, aligned as asked, and this region's alone while `owner` lives.
     pub unsafe fn new(ptr: *mut u8, len: usize, owner: Box<dyn Any + Send + Sync>) -> Region {
-        Region { ptr, len, owner, guard: None, share: None }
+        Region { ptr, len, owner, guard: None, uses: &NO_USES, share: None }
     }
 
     /// It, each CPU read and write checked by `guard`, its first byte at `at` of the guard's block.
     pub fn guarded(mut self, guard: Arc<dyn Guard>, at: usize) -> Region {
+        self.uses = guard.uses();
         self.guard = Some((guard, at));
         self
     }
@@ -71,6 +81,14 @@ impl Region {
     pub fn shared_by(mut self, share: fn(&Region) -> Region) -> Region {
         self.share = Some(share);
         self
+    }
+
+    /// Whether any of the device's uses of its guard's block is queued: only then does a CPU read or write call the
+    /// guard (decision 0487 R4). Relaxed, as the guard's own first test (`Ledger::cpu`).
+    #[inline]
+    pub fn device_uses(&self) -> bool {
+        // SAFETY: `uses` is `NO_USES` or the count of the guard this region holds.
+        unsafe { (*self.uses).load(std::sync::atomic::Ordering::Relaxed) != 0 }
     }
 
     /// Its guard and its first byte's offset in the guard's block.
