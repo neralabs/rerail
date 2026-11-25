@@ -10,6 +10,17 @@
 //   class(m, c)       module m defines class c
 //   defined(m, q)     module m defines q: a def or a class, nested ones too (its qualname)
 //   public(m, x)      x is part of module m's public interface (public_name: `__all__`, else no leading `_`)
+//   ancestor(m, q, b) class q of module m inherits from b, at any depth (0677 fix 3a): each base resolved as
+//                     python/scopes' class_base resolves it, re-exports followed, a library's base by its name
+//   library_ancestor(m, q, b)  the same where no workspace module defines b: a library's class (`django.forms.Form`)
+//   anc_call(m, q, x, f)      a class of the run among class q's ancestors (q of module m) assigns attribute x, in its
+//                             body, a call of f (`name = models.CharField(max_length=10)`: x "name", f
+//                             "django.db.models.CharField"), f resolved as a base is (0677 fix 3b)
+//   anc_kw(m, q, x, k, v)     that call's keyword argument k, its value's text v
+//   anc_ref(m, q, x, s)       the right side of such an ancestor's `x = …` names s, at any depth (python/scopes' sym_of)
+//   anc_method(m, q, x)       such an ancestor defines method x (a def whose nearest scope is the class)
+// An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
+// module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
 // python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
 // python/names, so it never reads its own exports.
 
@@ -17,7 +28,7 @@
 #include "python/scopes.rerail"
 
 .phase py_names
-.export reads_at, exports, class, defined, public
+.export reads_at, exports, class, defined, public, ancestor, library_ancestor, anc_call, anc_kw, anc_ref, anc_method
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -48,3 +59,71 @@ class(m, c) :- class_def(n, c), module_of(n, m).
 
 .decl public(m: symbol, x: symbol)
 public(m, x) :- public_name(m, x).
+
+// base(q, b): class q lists base b (keyword arguments, `metaclass=M`, are none). A name the class's own file binds is
+// resolved there (python/scopes' sym_of: its definitions, builtins); a name through an import (qn) by the modules'
+// exports (as resolve_export), or itself where no workspace module exports it (`django.db.models.Model`). The same
+// three rules python/scopes' class_base reads through python/names' sym_of, with no node handed on.
+.decl base_expr(q: symbol, e: node)
+base_expr(q, e) :- class_def(c, q), field(c, "superclasses", al), child(al, e, _), !kind(e, "keyword_argument").
+.decl base_name(q: symbol, q0: symbol)
+base_name(q, q0) :- base_expr(q, e), qn(e, q0).
+// base_here(q, b): a base its class's own file resolves, a relation of its own so the node e is joined in the file's
+// part: read in base's rule, which is cross-file by its others, the join held e in the cross part (0677).
+.decl base_here(q: symbol, b: symbol)
+base_here(q, b) :- base_expr(q, e), sym_of(e, b).
+.decl base(q: symbol, b: symbol)
+base(q, b) :- base_here(q, b).
+// resolve_export's two rules, for a base's name (its `export_query` is python/imports' own, decision 0263).
+base(q, b) :- base_name(q, q0), split_dot(q0, m, x), exports(m, x, b).
+base(q, q0) :- base_name(q, q0), count : { split_dot(q0, m, x), exported(m, x) } = 0.
+// anc(q, b): b is among q's bases, at any depth. Linear (a base's ancestors, not a join of two closures): its rows
+// are each class's ancestors, the depth of the hierarchy, not its square.
+.decl anc(q: symbol, b: symbol)
+anc(q, b) :- base(q, b).
+anc(q, b) :- base(q, m), anc(m, b).
+.decl ancestor(m: symbol, q: symbol, b: symbol)
+ancestor(m, q, b) :- class(m, q), anc(q, b).
+// A library's class has no bases here (no module of the run defines it), so these are where each line of bases
+// leaves the run.
+.decl run_class(q: symbol)
+run_class(q) :- class(_, q).
+.decl library_ancestor(m: symbol, q: symbol, b: symbol)
+library_ancestor(m, q, b) :- ancestor(m, q, b), !run_class(b).
+
+// Class members (0677 fix 3b): what each class's body assigns and defines, by symbol, joined to its ancestors by
+// symbol. A class body's statements are its children (python/ast's body_stmt reads python/names, which reads these).
+.decl own_asg(q: symbol, x: symbol, r: node)
+own_asg(q, x, r) :- class_def(c, q), field(c, "body", b), child(b, s, _), kind(s, "expression_statement"), child(s, a, 0),
+    kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r).
+// A callee resolved by the three rules a base is (`base`): the file's own binding, a name through an import by the
+// modules' exports, else the name itself.
+.decl own_call_here(q: symbol, x: symbol, f: symbol)
+own_call_here(q, x, f) :- own_asg(q, x, r), kind(r, "call"), field(r, "function", e), sym_of(e, f).
+.decl own_call_name(q: symbol, x: symbol, f0: symbol)
+own_call_name(q, x, f0) :- own_asg(q, x, r), kind(r, "call"), field(r, "function", e), qn(e, f0).
+.decl own_call(q: symbol, x: symbol, f: symbol)
+own_call(q, x, f) :- own_call_here(q, x, f).
+own_call(q, x, f) :- own_call_name(q, x, f0), split_dot(f0, m, y), exports(m, y, f).
+own_call(q, x, f0) :- own_call_name(q, x, f0), count : { split_dot(f0, m, y), exported(m, y) } = 0.
+.decl own_kw(q: symbol, x: symbol, k: symbol, v: symbol)
+own_kw(q, x, k, v) :- own_asg(q, x, r), kind(r, "call"), field(r, "arguments", al), child(al, ka, _),
+    kind(ka, "keyword_argument"), field(ka, "name", n), text(n, k), field(ka, "value", w), node_text(w, v).
+.decl own_ref_here(q: symbol, x: symbol, s: symbol)
+own_ref_here(q, x, s) :- own_asg(q, x, r), (e = r ; within(e, r)), sym_of(e, s).
+.decl own_ref_name(q: symbol, x: symbol, s0: symbol)
+own_ref_name(q, x, s0) :- own_asg(q, x, r), (e = r ; within(e, r)), qn(e, s0).
+.decl own_ref(q: symbol, x: symbol, s: symbol)
+own_ref(q, x, s) :- own_ref_here(q, x, s).
+own_ref(q, x, s) :- own_ref_name(q, x, s0), split_dot(s0, m, y), exports(m, y, s).
+own_ref(q, x, s0) :- own_ref_name(q, x, s0), count : { split_dot(s0, m, y), exported(m, y) } = 0.
+.decl own_method(q: symbol, x: symbol)
+own_method(q, x) :- class_def(c, q), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, x).
+.decl anc_call(m: symbol, q: symbol, x: symbol, f: symbol)
+anc_call(m, q, x, f) :- class(m, q), anc(q, o), own_call(o, x, f).
+.decl anc_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
+anc_kw(m, q, x, k, v) :- class(m, q), anc(q, o), own_kw(o, x, k, v).
+.decl anc_ref(m: symbol, q: symbol, x: symbol, s: symbol)
+anc_ref(m, q, x, s) :- class(m, q), anc(q, o), own_ref(o, x, s).
+.decl anc_method(m: symbol, q: symbol, x: symbol)
+anc_method(m, q, x) :- class(m, q), anc(q, o), own_method(o, x).

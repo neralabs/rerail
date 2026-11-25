@@ -207,6 +207,25 @@ Found on the way and fixed:
      Django, `bwh_in_hook`, `dar_non_atomic_wrapped` and `tam_task_call` (split), and `fdm_drf`, `fdm_drf_q`,
      `ghw_drf_q`, `ghw_model_ref`, `rmw_class`, `s_dj_deferring_task_class` (node). Python's `D412`, the data
      layer's `pub_member` and `true_lazy`. The branch's fix 3 commits fix the Django ones.
+8. **Class ancestry and ancestors' members by symbol, through `py_names`** (the branch's cbf1a4bdf4, 0677 fix 3a).
+   - The phase hands on each class's ancestors by symbol, a linear closure keyed by the class's module, and each
+     ancestor's declarations by symbol. `python/names`' `class_anc` and `class_anc_call` read them by the reading
+     file's own rows.
+   - Django's library (`packs/django/rules/lib/django.rerail` on main) reads them. A model is a class with a known base
+     among its ancestors, and `dj_has_field(c, x, t)` and `dj_attname(c, a, x)` name fields by symbol, not by a call
+     node in another file. `dj_field_kw` carries a field's keyword arguments. Its readers follow.
+   - `bulk-not-loop` keeps main's split form, with only the field's symbol cross-file. The branch's `bnl_number`
+     held the step's node cross-file.
+   - `factorize`: a relation whose factors meet at a node key, and whose head holds no node, is handed on whole: its
+     parts would carry the node into the cross part.
+   - Tests: the class ancestry through the phase is the cross-file closures' answer; class members reach each
+     subclass; a Python file's entry is kept under its own classes' ancestry. The Django pack's 27 rule tests pass
+     (`test-rr`).
+   - Not ported: the store's two sweep fixes in the same commit (`connection.rs`, `kept_facts.rs`).
+   - Lists: split 35 → 40, node 456 → 418 (Django 206 → 179, Python 40 → 33). Added, as on the branch after this
+     commit: Django's `bwh_method`, `dj_instance_value`, `ghw_model_instance`, `ghw_model_ref`,
+     `sora_model_instance` (split), and `dj_fetch_call`, `dj_instance_class`, `dj_instance_value`, `dj_qs_model`
+     (node), which pair two files' class nodes. Fix 3b keys them by symbol.
 
 ## Consequences
 

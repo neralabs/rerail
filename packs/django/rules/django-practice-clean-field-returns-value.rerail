@@ -34,13 +34,12 @@ CleanFieldFallsOff(n, m, x) :- cfr_clean(f, m, x), field(f, "body", b), cfr_open
 .violation CleanFieldBareReturn(at: node, m: symbol, x: symbol) "This bare `return` in `{m}()` makes cleaned_data[\"{x}\"] None: Django stores the method's return value as the field's cleaned value. Return the cleaned value instead (`return self.cleaned_data[\"{x}\"]`), or raise ValidationError."
 CleanFieldBareReturn(r, m, x) :- cfr_clean(f, m, x), fn_return(f, r), bare_return(r).
 
-// cfr_form_base(q): a form class outside the run: django.forms' own, or a `…Form` class of another package's
-// `forms` module (UserCreationForm, allauth's SignupForm, wagtail's WagtailAdminModelForm).
-.decl cfr_form_base(q: symbol) cross_file  // every file's bases: symbols alone (decisions 0652, 0677)
-cfr_form_base(q) :- class_base(_, q), !class_def(_, q), split_dot(q, m, x), suffix("Form", x),
-    (m = "django.forms" ; prefix("django.forms.", m) ; suffix(".forms", m) ; contains(".forms.", m)).
+// cfr_form(c): c inherits from a form class outside the run (python/names' class_lib_anc): django.forms' own, or a
+// `…Form` class of another package's `forms` module (UserCreationForm, allauth's SignupForm, wagtail's
+// WagtailAdminModelForm).
 .decl cfr_form(c: node)
-cfr_form(c) :- class_def(c, q), subclass(q, b), cfr_form_base(b).
+cfr_form(c) :- class_lib_anc(c, b), split_dot(b, m, x), suffix("Form", x),
+    (m = "django.forms" ; prefix("django.forms.", m) ; suffix(".forms", m) ; contains(".forms.", m)).
 
 // cfr_clean(f, m, x): f is the method m = `clean_<x>(self)` of a form class, outside test code, and not a helper.
 .decl cfr_clean(f: node, m: symbol, x: symbol)

@@ -21,10 +21,10 @@ N802(nm, x) :- kind(f, "function_definition"), field(f, "name", nm), text(nm, x)
 // dispatched(f, x): a callback by naming convention, directly in the body of a class (not under an `if` there)
 // whose bases (resolved, transitively) say so.
 .decl dispatched(f: node, x: symbol)
-dispatched(f, x) :- ast_parent(f, c), kind(c, "class_definition"), def_name(f, x), prefix("visit_", x), class_def(c, q),
-    subclass(q, b), (b = "ast.NodeVisitor" ; b = "ast.NodeTransformer").
-dispatched(f, x) :- ast_parent(f, c), kind(c, "class_definition"), def_name(f, x), prefix("do_", x), class_def(c, q),
-    subclass(q, b), http_handler(b).
+dispatched(f, x) :- ast_parent(f, c), kind(c, "class_definition"), def_name(f, x), prefix("visit_", x),
+    class_anc(c, b), (b = "ast.NodeVisitor" ; b = "ast.NodeTransformer").
+dispatched(f, x) :- ast_parent(f, c), kind(c, "class_definition"), def_name(f, x), prefix("do_", x),
+    class_anc(c, b), http_handler(b).
 .decl http_handler(q: symbol)
 http_handler("http.server.BaseHTTPRequestHandler"). http_handler("http.server.CGIHTTPRequestHandler").
 http_handler("http.server.SimpleHTTPRequestHandler").

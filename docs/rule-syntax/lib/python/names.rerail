@@ -9,6 +9,10 @@
 //   py_names__class(m, c)       module m defines class c
 //   py_names__defined(m, q)     module m defines q (a def or class, nested ones too)
 //   py_names__public(m, x)      x is part of module m's public interface (python/imports' public_name)
+//   py_names__ancestor(m, q, b) class q of module m inherits from b, at any depth (bases resolved as class_base)
+//   py_names__library_ancestor(m, q, b)  the same where no module of the run defines b: a library's class
+//   py_names__anc_call(m, q, x, f), py_names__anc_kw(m, q, x, k, v), py_names__anc_ref(m, q, x, s),
+//   py_names__anc_method(m, q, x)  what class q's ancestors of the run assign and define in their bodies
 // Each is read by a module the file's own `reads_at` rows name, so a rule reading them stays file-local, and a file's
 // memo entry is keyed by those rows alone (decision 0665): an edit misses the files whose modules' rows changed.
 #include "python/scopes.rerail"
@@ -18,6 +22,12 @@
 .decl py_names__class(m: symbol, c: symbol)
 .decl py_names__defined(m: symbol, q: symbol)
 .decl py_names__public(m: symbol, x: symbol)
+.decl py_names__ancestor(m: symbol, q: symbol, b: symbol)
+.decl py_names__library_ancestor(m: symbol, q: symbol, b: symbol)
+.decl py_names__anc_call(m: symbol, q: symbol, x: symbol, f: symbol)
+.decl py_names__anc_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
+.decl py_names__anc_ref(m: symbol, q: symbol, x: symbol, s: symbol)
+.decl py_names__anc_method(m: symbol, q: symbol, x: symbol)
 
 // export_at(n, q0, q): in n's file, the qualified name q0 ("m.x") is q: module m's export x, followed through
 // re-exports to its definition. With `from pkg import App` where pkg/__init__.py has `from .core import App`,
@@ -38,6 +48,34 @@ sym_of(n, q) :- attr_of(n, o, a), sym_of(o, c), docof(n, d), doc(d, p, _), py_na
 .decl site_exported(site: node)  // a module-level binding listed in __all__ or not underscore-private
 site_exported(site) :- binding(s, x, site, _), kind(s, "module"), docof(s, d), doc(d, p, m), py_names__reads_at(p, m),
     py_names__public(m, x).
+
+// class_anc(c, b): class c inherits from b, at any depth, by its own module's rows (0677 fix 3a). What a rule reads
+// for a class's own ancestry, where `class_def(c, q), subclass(q, b)` read python/scopes' closure over every file's
+// classes, and so took c into the cross-file part.
+//   class Leaf(Mid) where Mid(Base), Base(models.Model)    class_anc(<Leaf>, "django.db.models.Model")
+.decl class_anc(c: node, b: symbol)
+// Read by a module its file's reads_at rows name (its own among them), as every read of the phase here: a module
+// read from `doc`'s own column is no key the memo's settings scopes know (0665), so the read was of every module's
+// rows, and a changed ancestry missed every file.
+class_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__ancestor(m, q, b).
+// class_lib_anc(c, b): class c inherits from library class b (one no module of the run defines), at any depth: what
+// `class_base(_, q), !class_def(_, q)` asked of every file's classes.
+.decl class_lib_anc(c: node, b: symbol)
+class_lib_anc(c, b) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__library_ancestor(m, q, b).
+// What class c's ancestors of the run hold, by symbol (0677 fix 3b): the phase py_names joins each ancestor's body to
+// the class, so no node of another file is read. class_anc_call(c, x, f): an ancestor's body assigns `x = f(...)`;
+// class_anc_kw(c, x, k, v): with keyword argument k of text v; class_anc_ref(c, x, s): its `x = …` names s;
+// class_anc_method(c, x): an ancestor defines method x.
+.decl class_anc_call(c: node, x: symbol, f: symbol)
+class_anc_call(c, x, f) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__anc_call(m, q, x, f).
+.decl class_anc_kw(c: node, x: symbol, k: symbol, v: symbol)
+class_anc_kw(c, x, k, v) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m),
+    py_names__anc_kw(m, q, x, k, v).
+.decl class_anc_ref(c: node, x: symbol, s: symbol)
+class_anc_ref(c, x, s) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__anc_ref(m, q, x, s).
+.decl class_anc_method(c: node, x: symbol)
+class_anc_method(c, x) :- class_def(c, q), docof(c, d), doc(d, p, _), py_names__reads_at(p, m), py_names__anc_method(m, q, x).
 
 // ---- tests ---------------------------------------------------------------------------------------------------------
 // sym_of of an attribute of a class: of the same module, of an imported class, and of what is no definition of the run.

@@ -61,7 +61,7 @@ bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body
 bnl_number_lit(n) :- unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
 // Cross-file: the run's models, in any file (decision 0652).
 .decl bnl_number_field(x: symbol) cross_file
-bnl_number_field(x) :- dj_has_field(_, x, _, t), dj_number_field(t).
+bnl_number_field(x) :- dj_has_field(_, x, t), dj_number_field(t).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may

@@ -13,10 +13,10 @@
 //                  dj_fk(c, x)                 field x of model c holds one related object (ForeignKey, OneToOneField,
 //                                              ParentalKey), so `obj.x_id` holds its key
 //                  dj_fk_class(t)              field class t (a dj_field's t) holds one related object
-//                  dj_model_super(c, b)        class b of the run is among model c's bases, directly or not
-//                  dj_has_field(c, x, call, t) as dj_field, for a field model c declares or inherits from a class of
-//                                              the run among its bases
-//                  dj_attname(c, a, call)      a row of model c holds field call's value in attribute a: the field's
+//                  dj_has_field(c, x, t)       model c has field x of field class t: declared in its body or in a
+//                                              class of the run among its ancestors (by symbol, 0677 fix 3b)
+//                  dj_field_kw(c, x, k, v)     a declaration of model c's field x passes keyword argument k, of text v
+//                  dj_attname(c, a, x)         a row of model c holds field x's value in attribute a: the field's
 //                                              name, and `x_id` for a ForeignKey or OneToOneField x
 //                  dj_number_field(t)          field class t holds a number (IntegerField, DecimalField, ...)
 //                  dj_model_method(c, f, x)    f is method x defined directly in model c's body
@@ -119,12 +119,6 @@ dj_fk_class("ForeignKey"). dj_fk_class("OneToOneField"). dj_fk_class("ParentalKe
 dj_class_field(c, x, call, t) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _),
     kind(s, "expression_statement"), child(s, a, 0), kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"),
     text(l, x), field(a, "right", call), dj_field_call(call, t).
-// dj_model_q(q): q names a model class: a known base, or a class of the run with a model class among its bases. A
-// linear closure seeded from the bases: python/names' subclass is a quadratic one over every class of the run,
-// which does not finish on a large repository.
-.decl dj_model_q(q: symbol)
-dj_model_q(q) :- dj_model_base(q).
-dj_model_q(q) :- class_def(c, q), class_base(c, b), dj_model_q(b).
 // dj_expression(c): class c is a query expression, which declares fields (`output_field = models.TextField()`) but
 // is no model: a direct base under django.db.models' expressions, functions, aggregates or lookups modules, or one
 // of their classes as django.db.models exports them.
@@ -141,32 +135,37 @@ dj_expression_base("django.db.models.ExpressionWrapper"). dj_expression_base("dj
 dj_expression_base("django.db.models.Window").
 // A field declared in the body is model evidence, except a query expression's `output_field`.
 .decl dj_model(c: node)
-dj_model(c) :- class_def(c, q), dj_model_q(q).
+// A model class: a known base itself, or a class with one among its ancestors (python/names' class_anc, the phase
+// py_names' linear closure keyed by the class's module, 0677 fix 3a; a closure over every file's classes here did not
+// finish on a large repository as python/scopes' subclass, and took c into the cross-file part).
+dj_model(c) :- class_def(c, q), dj_model_base(q).
+dj_model(c) :- class_anc(c, b), dj_model_base(b).
 dj_model(c) :- dj_class_field(c, x, _, _), x != "output_field", !dj_expression(c).
 .decl dj_field(c: node, x: symbol, call: node, t: symbol)
 dj_field(c, x, call, t) :- dj_model(c), dj_class_field(c, x, call, t).
 .decl dj_fk(c: node, x: symbol)
 dj_fk(c, x) :- dj_field(c, x, _, t), dj_fk_class(t).
-// dj_model_super(c, b): class b of the run is among model c's bases, directly or through other classes of the run:
-// the classes whose fields c inherits. A linear closure from the models, as dj_model_q.
-//   class Novel(Book): ...                          dj_model_super(<Novel>, <Book>)
-.decl dj_model_super(c: node, b: node)
-dj_model_super(c, b) :- dj_model(c), class_base(c, q), class_def(b, q).
-dj_model_super(c, b) :- dj_model_super(c, m), class_base(m, q), class_def(b, q).
-// dj_has_field(c, x, call, t): model c has field x, a call of field class t, declared in its body or in a class of
-// the run among its bases (dj_field reads c's own body only).
+// dj_has_field(c, x, t): model c has field x of field class t, declared in its body (dj_field) or in a class of the
+// run among its ancestors: python/names' class_anc_call, the phase py_names' join of each ancestor's body to the class
+// by symbol (0677 fix 3b). Pairing c with the ancestor's class node in its own file took both into the cross-file part.
 //   class Novel(Book): pages = models.IntegerField()
-//                                                   dj_has_field(<Novel>, "pages", _, "IntegerField"),
-//                                                   dj_has_field(<Novel>, "author", _, "ForeignKey")
-.decl dj_has_field(c: node, x: symbol, call: node, t: symbol)
-dj_has_field(c, x, call, t) :- dj_field(c, x, call, t).
-dj_has_field(c, x, call, t) :- dj_model_super(c, b), dj_class_field(b, x, call, t).
-// dj_attname(c, a, call): a row of model c holds the value of field call (dj_has_field) in attribute a: the field's
-// name, and for a ForeignKey, OneToOneField or ParentalKey x also `x_id`, where Django keeps its key.
-//   author = models.ForeignKey(Author, ...)         dj_attname(<Book>, "author", <call>), dj_attname(<Book>, "author_id", <call>)
-.decl dj_attname(c: node, a: symbol, call: node)
-dj_attname(c, x, call) :- dj_has_field(c, x, call, _).
-dj_attname(c, cat(x, "_id"), call) :- dj_has_field(c, x, call, t), dj_fk_class(t).
+//                                                   dj_has_field(<Novel>, "pages", "IntegerField"),
+//                                                   dj_has_field(<Novel>, "author", "ForeignKey")
+.decl dj_has_field(c: node, x: symbol, t: symbol)
+dj_has_field(c, x, t) :- dj_field(c, x, _, t).
+dj_has_field(c, x, t) :- dj_model(c), class_anc_call(c, x, f), split_dot(f, m, t), dj_field_module(m),
+    (suffix("Field", t) ; dj_relation_class(t)).
+// dj_field_kw(c, x, k, v): a declaration of model c's field x passes keyword argument k, whose value's text is v.
+//   author = models.ForeignKey(Author, to_field="code")   dj_field_kw(<Book>, "author", "to_field", "\"code\"")
+.decl dj_field_kw(c: node, x: symbol, k: symbol, v: symbol)
+dj_field_kw(c, x, k, v) :- dj_field(c, x, call, _), call_arg(call, -1, k, w), node_text(w, v).
+dj_field_kw(c, x, k, v) :- dj_has_field(c, x, _), class_anc_kw(c, x, k, v).
+// dj_attname(c, a, x): a row of model c holds the value of field x (dj_has_field) in attribute a: the field's name,
+// and for a ForeignKey, OneToOneField or ParentalKey x also `x_id`, where Django keeps its key.
+//   author = models.ForeignKey(Author, ...)         dj_attname(<Book>, "author", "author"), dj_attname(<Book>, "author_id", "author")
+.decl dj_attname(c: node, a: symbol, x: symbol)
+dj_attname(c, x, x) :- dj_has_field(c, x, _).
+dj_attname(c, cat(x, "_id"), x) :- dj_has_field(c, x, t), dj_fk_class(t).
 // dj_number_field(t): the field classes whose values are numbers a counter is kept in (DurationField aside).
 .decl dj_number_field(t: symbol)
 dj_number_field("IntegerField"). dj_number_field("SmallIntegerField"). dj_number_field("BigIntegerField").
@@ -206,7 +205,7 @@ dj_qs_root(p, r) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs_ro
 // dj_qs_class(q, mq): the same, by the model class's qualified name.
 //   Book.objects.filter(a=1)                        dj_qs_model(<the chain>, <class Book>),
 //                                                   dj_qs_class(<the chain>, "shop.models.Book")
-.decl dj_qs_model(q: node, c: node)
+.decl dj_qs_model(q: node, c: node) cross_file  // pairs two files' class nodes: decision 0677 fix 3b (models by symbol)
 dj_qs_model(q, c) :- dj_qs_root(q, r), sym_of(r, mq), class_def(c, mq), dj_model(c).
 .decl dj_qs_class(q: node, mq: symbol)
 dj_qs_class(q, mq) :- dj_qs_model(q, c), class_def(c, mq).
