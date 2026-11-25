@@ -32,6 +32,8 @@ import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import * as native from "../../../src/engine/native/native.js";
+import { contentStoreProblem } from "../../../src/engine/native/main-instance.js";
+import { mainContentStoreDirectory } from "../../../src/engine/native/rerail-build.js";
 import { CheckoutRerailRuns } from "../../../src/engine/rr/rr-checkout-runs.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -607,6 +609,29 @@ describe("mechanical code rule regressions", () => {
     } finally {
       vi.mocked(readFile).mockReset();
       await enforcer.close();
+    }
+  });
+
+  // The daemon's engine status asks the audit's own question (`contentStoreProblem`), so the two give one reason.
+  it("records a failed audit, with the reason the engine status gives, when the only store named is the main daemon's and this process is not it", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-enforcer-home-"));
+    roots.push(home);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("USERPROFILE", home);
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(mainContentStoreDirectory(), "content-v1.sqlite"));
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ audits: recorder });
+    try {
+      const why = contentStoreProblem();
+      expect(why).toMatch(/belongs to the main Rerail daemon/u);
+      await enforcer.openWorkspace("main-store-refused");
+      expect([...audits.values()].map(audit => audit.result)).toEqual([expect.objectContaining({
+        status: "failed",
+        failures: [expect.objectContaining({ code: "adapter-error", message: why })],
+      })]);
+    } finally {
+      await enforcer.close();
+      vi.unstubAllEnvs();
     }
   });
 

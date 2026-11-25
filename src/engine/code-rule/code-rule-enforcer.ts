@@ -61,8 +61,7 @@ import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch } from "../file-replace.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
-import { assertContentStoreOwner } from "../native/main-instance.js";
-import { contentStorePath } from "../native/rerail-build.js";
+import { ownedContentStorePath } from "../native/main-instance.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { binaryPrefix } from "./binary-prefix.js";
@@ -1261,9 +1260,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    */
   #prepareWorkspace(): PreparedWorkspace {
     const snapshot = this.#catalog.snapshot();
-    // This build's own store; only the main daemon may open the machine-wide one.
-    const storePath = contentStorePath();
-    assertContentStoreOwner(storePath);
+    // This build's own store; only the main daemon may open the machine-wide one. The daemon's engine status asks the
+    // same function once, at the daemon's start (`contentStoreProblem`), and reports the engine unavailable when it throws.
+    const storePath = ownedContentStorePath();
     const binding = loadNativeBinding();
     // The storage attach discovers the checkout in the engine, which reads the config files Rerail's Git names.
     nativeGitAccess(binding);

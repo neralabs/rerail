@@ -361,7 +361,7 @@ It only reads: it never starts a daemon, runs a check or writes anything. OMP an
 - ` · worktree` after the rule count, while the checkout runs its own rules from `.rerail/rules` ([a worktree's own rules](rule-packs.md#a-worktrees-own-rules)). Links to their pack page: `R E R A I L ● 27 rules · worktree · steered 3×`.
 - ` · N to approve` while N rules or packs on here run in Log awaiting [approval](rule-scoping.md#approval); a pack counts once. Links to the repository's Overview, which lists them.
 - ` · indexing` in OMP, not Pi, during indexing ([above](#edits-made-by-shell-commands-and-before-rules-are-ready)).
-- `engine unavailable` if the rule engine could not load.
+- `engine unavailable` if the rule engine could not load, or this Rerail has no [content store](how-setup-works.md#the-content-store) for code rules; `rerail status` gives the reason.
 - `audit failed (N failures)` if the latest audit failed; N counts every failure, including any beyond its list of at most 20.
 - For a completed audit with gaps: `N files not checked`, `N rules ran out of work`, `N rules stopped by file work`.
 - ` · ◐ <summary>` after the steering count where Merge Assist is on, while any in-flight conflict in the session's checkout is open and not quiet. Links to that conflict's card on the Merge Assist page. It is the newest such conflict's line, cut to 90 characters, with ` (+N)` when N more are open: the conflict hook command's `status` when it gave one ([the conflict hook](merge-assist-v1-build.md#the-conflict-hook)), else the conflict's summary, `<their label> (<author>) is changing <symbol or file>` (without the author when none is known).
