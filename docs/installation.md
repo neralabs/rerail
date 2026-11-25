@@ -8,7 +8,8 @@ Details: [How set-up works](how-setup-works.md). Problems: [Troubleshooting](tro
 
 ## Requirements
 
-Set-up checks these first and changes nothing if one is missing.
+Set-up checks these first and changes nothing if one is missing. With no Node at all there is no `npx` to start
+set-up, so check Node yourself: [Install](#install) says how.
 
 - **Node.js 24** or newer.
 - **Git** on your `PATH`; Rerail reads every repository through it.
@@ -33,6 +34,10 @@ Run set-up in your repository; it turns nothing on until you say yes.
 ```sh
 npx @neralabs/rerail setup
 ```
+
+That needs Node.js 24 or newer; `npx` comes with Node. Check with `node --version`: `command not found` means Node is not
+installed, so set-up cannot start to say so. Install it from [nodejs.org](https://nodejs.org) or with Homebrew
+(`brew install node`), nvm, fnm or Volta, then run the command in a new terminal.
 
 It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Developer Mode, and asks:
 
@@ -161,6 +166,8 @@ Rerunning `npx @neralabs/rerail setup` also updates.
   six engines, about 240 MB, because the version you update from runs it
   ([what an update downloads](how-setup-works.md#updates)).
 - The new version applies to coding agent sessions started afterwards; connected coding agents get its commands.
+  The daemon restarts on it, on the same port, so reload an open dashboard to see it
+  ([how updates hand over](how-setup-works.md#one-main-instance)).
 - Once core is updated, `rerail update` updates each installed rule pack to the newest version that fits it
   (`rerail packs update` does the same on its own). The update from 0.1.5 runs 0.1.5's updater, which only lists the
   newer packs: run `rerail packs update` once after it.

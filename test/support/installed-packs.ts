@@ -5,7 +5,7 @@
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { defaultRerailHome, installedPacksPrefix, rulePackPackageOf } from "../../src/engine/index.js";
+import { defaultRerailHome, installedPacksPrefix, rulePackPackageOf, type ConversationRule } from "../../src/engine/index.js";
 import type { PackStore } from "../../src/setup/index.js";
 import { fixturesPath, repositoryPath } from "./oracles.js";
 import { removeFolderSync } from "./platform/remove-folder.js";
@@ -87,6 +87,20 @@ export function withOlderTokenRule(source: string, copy: string, ruleId: string)
       forbid: { ast: { language: "python", rule: { regex: "^print$", inside: { kind: "print_statement" } } } },
     }],
   }));
+  return copy;
+}
+
+/**
+ * A copy in `copy` of the pack in `source` that also ships the conversation rule `rule`, filed under group Git and
+ * started as the rule's own document says (on, in its mode). Returns `copy`.
+ */
+export function withConversationRule(source: string, copy: string, rule: ConversationRule): string {
+  for (const entry of ["pack.json", "package.json", "rules"]) cpSync(join(source, entry), join(copy, entry), { recursive: true });
+  writeFileSync(join(copy, "rules", `${rule.id}.json`), JSON.stringify(rule));
+  const manifest = join(copy, "pack.json");
+  const pack = JSON.parse(readFileSync(manifest, "utf8")) as { rules: object[] };
+  pack.rules.push({ id: rule.id, document: `rules/${rule.id}.json`, title: rule.title ?? rule.id, group: "Git" });
+  writeFileSync(manifest, JSON.stringify(pack));
   return copy;
 }
 

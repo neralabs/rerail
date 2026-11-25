@@ -356,6 +356,7 @@ The daemon serves packs over HTTP; each call is also an MCP tool.
 
 - **`GET /api/rule-packs`** (`rule_packs_list`): installed packs, plus `skipped` ones left out.
 - **`GET /api/rule-packs/recommendations`** (`rule_packs_recommend`): installed packs fitting a target checkout.
+- **`GET /api/rule-packs/published`** (`rule_packs_published`): the packs `rerail packs recommend` offers, installed or not: each published pack that fits this Rerail, with the installed version standing in where npm cannot give one or the one installed is newer; the dashboard's Add rule packs lists those not installed with the command that installs them.
 - **`GET /api/rerail-rules`** (`rerail_rules_list`): each By Rerail rule's `packId`, the pack listing it, or `null`.
 - **`PUT /api/repository/attachments`** (`repository_attachments_set`): adds packs to a repository, in a folder or whole. The first addition sets the repository up.
 
@@ -364,5 +365,6 @@ The daemon serves packs over HTTP; each call is also an MCP tool.
 
 - **`GET /api/rule-packs`** gives each installed pack's version, `packageName`, `publisher` (`rerail` for Rerail's own, else the npm scope or unscoped package name) and rules. Each `skipped` entry has path, package name, version and why.
 - **`GET /api/rule-packs/recommendations`** takes `repository` or `checkout`; MCP defaults to the calling agent's checkout. Each pack comes with rule count (rules that start on), reason and folder. If the checkout is not on disk, the repository's main checkout is scanned, else its most recently seen one. Scans block the daemon, so a checkout is rescanned at most once a minute; installs and removals show at once.
+- **`GET /api/rule-packs/published`** takes `repository` or `checkout` too. Each pack comes with its version on npm, rule count (rules that start on), the version installed (`installedVersion`, null when it is not), and the reason and folder when it fits the checkout, matched locally from the same scan. The daemon of an installed Rerail reads npm, on a thread of its own, when a person asks and it holds no list or the one it holds is a day old: the first read waits for it, a later one gets the old list while the next is read. A coding agent's read gets only what is held. Each npm call stops after a minute; when npm gives no pack, `readAt` is null and `unread` says why, and a person's read asks npm again only five minutes later. Failed reads and the packs a read leaves out go to the daemon log. A checkout's daemon reads no npm and answers 503.
 
 </details>

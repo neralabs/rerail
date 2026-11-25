@@ -22,8 +22,14 @@
 .prow2 .pact2{flex:none;align-self:center;display:flex;justify-content:flex-end}
 .added{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:var(--radius-md);background:var(--success-subtle);color:var(--success-foreground);font-size:11.5px;font-weight:500;white-space:nowrap}
 .added .ico{color:inherit}
-/* A pack removed during this visit: its row says so, with Undo, until the page is left. */
-.rmtag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:var(--radius-md);background:var(--subtle);color:var(--muted-foreground);font-size:11.5px;font-weight:500;white-space:nowrap}
+/* A pack removed during this visit: its row says so, with Undo, until the page is left. A pack only published says
+ * it is not installed, alike. */
+.rmtag,.notinst{display:inline-flex;align-items:center;padding:2px 8px;border-radius:var(--radius-md);background:var(--subtle);color:var(--muted-foreground);font-size:11.5px;font-weight:500;white-space:nowrap}
+/* A pack only published on npm opens no sheet until it is installed; its row says how to install it. */
+.prow2.pub,.pcard.pub{cursor:default}
+.prow2.pub:hover{background:none}
+.pcard.pub:hover{border-color:var(--border)}
+.pubnote{margin:16px 2px 0;font-size:12.5px;color:var(--muted-foreground)}
 /* Remove's question takes its own line under the pack's text, in rows and cards. */
 .prow2:has(> .rmline){flex-wrap:wrap;row-gap:10px}
 .prow2 > .rmline{flex:1 1 100%;padding-left:52px}
@@ -70,7 +76,7 @@ body[data-panel="open"] .catalog:not(.rv) .prow2 .pt2 > b,body[data-panel="open"
 
 /* A pack's status line, under its name: its version, quiet, then Added or Removed; every chip as tall as "Added". */
 .pstate{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px}
-.pstate .badge,.pstate .added,.pstate .rmtag{line-height:16px}
+.pstate .badge,.pstate .added,.pstate .rmtag,.pstate .notinst{line-height:16px}
 .pstate .badge{padding:2px 8px;font-size:11.5px}
 .pcard .pstate{margin-bottom:-4px}
 

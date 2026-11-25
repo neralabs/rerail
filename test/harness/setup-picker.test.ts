@@ -175,7 +175,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
     const last = await pickSetup(ui, steps(setup, fakeSetupEnvironment(), home));
 
     expect(ui.selects[0]!.title).toBe("Which project do you want to start with?");
-    expect(ui.notices[0]!.message).toContain("No repo found here.");
+    expect(ui.notices[0]!.message).toContain("No Git repository here.");
     expect(ui.inputs).toEqual([{ title: "Which folder?", placeholder: "for example ~/code/acme-web" }]);
     expect(last).toMatchObject({ step: "done" });
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");

@@ -579,6 +579,32 @@ export function explainNoFit(scan: RepositoryScan, packs: readonly RulePack[]): 
   };
 }
 
+/**
+ * A rule pack `rerail packs recommend` offers, installed or not: one published on npm that fits this Rerail, at npm's
+ * version, or at the installed version where that stands in (npm cannot give it, or the one installed is newer).
+ */
+export interface PublishedRulePack {
+  /** The pack as its published version reads it; its match definition is matched against a checkout here, offline. */
+  readonly pack: RulePack;
+  readonly packageName: string;
+  readonly version: string;
+  /** The rules on once the pack is added. */
+  readonly ruleCount: number;
+}
+
+/** The published packs and when npm gave them (epoch ms), or why there are none. */
+export type PublishedRulePacks =
+  | { readonly packs: readonly PublishedRulePack[]; readonly readAt: number }
+  | { readonly unread: string };
+
+export interface PublishedRulePackReader {
+  /**
+   * The packs last read. With `refresh`, which only a person's read passes, a read of npm starts when none is held or
+   * the one held is old; with none held, this waits for it. Without `refresh` npm never runs.
+   */
+  read(refresh: boolean): Promise<PublishedRulePacks>;
+}
+
 /** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */
 export function recommendRulePacks(
   repositoryRoot: string,
@@ -588,21 +614,37 @@ export function recommendRulePacks(
   return rulePacksThatFit(scanRepository(repositoryRoot), packs, notRun).filter(found => found.ruleCount > 0);
 }
 
-/** How long a daemon reuses a repository's recommendations before scanning it again. */
+/** How long a daemon reuses a repository's scan, and the recommendations made from it, before scanning it again. */
 export const RECOMMENDATION_CACHE_MS = 60_000;
-const recommendationCache = new Map<string, { at: number; digest: string; recommendations: RulePackRecommendation[] }>();
+/** By the scan they were made from, so they go with it. */
+const recommendationCache = new WeakMap<RepositoryScan, { digest: string; recommendations: RulePackRecommendation[] }>();
+const scanCache = new Map<string, { at: number; scan: RepositoryScan }>();
 
 /**
- * `recommendRulePacks` over the installed packs, for the daemon, which answers synchronously: the scan blocks other
+ * The scan of the repository at `repositoryRoot`, for the daemon, which answers synchronously: the scan blocks other
  * requests while it runs (about 0.3 to 0.5 s on a large repository), so a repository is scanned at most once per
- * `RECOMMENDATION_CACHE_MS` while the installed packs stay the same. A file added or removed within that window shows on
- * the next scan; a pack installed or removed shows at once.
+ * `RECOMMENDATION_CACHE_MS`, whichever packs are matched against it. A file added or removed within that window shows
+ * on the next scan. Scans older than that are dropped, so the daemon holds only those of repositories read lately.
+ */
+export function recentScan(repositoryRoot: string, now = Date.now()): RepositoryScan {
+  for (const [root, entry] of scanCache) if (now - entry.at >= RECOMMENDATION_CACHE_MS) scanCache.delete(root);
+  const cached = scanCache.get(repositoryRoot);
+  if (cached !== undefined) return cached.scan;
+  const scan = scanRepository(repositoryRoot);
+  scanCache.set(repositoryRoot, { at: now, scan });
+  return scan;
+}
+
+/**
+ * `recommendRulePacks` over the installed packs, for the daemon, from the repository's `recentScan`: the same
+ * recommendations while neither the scan nor the installed packs change, so a pack installed or removed shows at once.
  */
 export function cachedRecommendRulePacks(repositoryRoot: string, now = Date.now()): RulePackRecommendation[] {
   const catalog = loadRuleCatalog();
-  const cached = recommendationCache.get(repositoryRoot);
-  if (cached !== undefined && cached.digest === catalog.digest && now - cached.at < RECOMMENDATION_CACHE_MS) return cached.recommendations;
-  const recommendations = recommendRulePacks(repositoryRoot, [...catalog.packs.values()], catalog.notRun);
-  recommendationCache.set(repositoryRoot, { at: now, digest: catalog.digest, recommendations });
+  const scan = recentScan(repositoryRoot, now);
+  const cached = recommendationCache.get(scan);
+  if (cached?.digest === catalog.digest) return cached.recommendations;
+  const recommendations = rulePacksThatFit(scan, [...catalog.packs.values()], catalog.notRun).filter(found => found.ruleCount > 0);
+  recommendationCache.set(scan, { digest: catalog.digest, recommendations });
   return recommendations;
 }
