@@ -63,7 +63,7 @@ export type DescribedError = Record<string, unknown> & { message: string };
 export type ChildRelayed =
   | { id: number; ev: "spawn"; pid: number | undefined }
   | { id: number; ev: "data"; fd: 1 | 2; chunk: Uint8Array }
-  | { id: number; ev: "end"; fd: 1 | 2 }
+  | { id: number; ev: "end"; fd: 1 | 2; error?: DescribedError }
   | { id: number; ev: "error"; error: DescribedError; code: number | null }
   | { id: number; ev: "exit" | "close"; code: number | null; signal: NodeJS.Signals | null };
 
@@ -175,7 +175,8 @@ function kill(child: ChildProcess, { id, signal }: { id: number; signal: NodeJS.
 
 /**
  * Relays what `stream` (output `fd`) gives: each chunk as a copy, transferred, so no pooled buffer is detached, and
- * while less than {@link RELAY_WINDOW} of it waits untaken.
+ * while less than {@link RELAY_WINDOW} of it waits untaken; then its end, or the error its read failed with, which ends
+ * it too and which the asking thread's stream fails with.
  */
 function relay(id: number, stream: Readable | null, fd: 1 | 2, post: Post): void {
   if (stream === null) return;
@@ -185,7 +186,7 @@ function relay(id: number, stream: Readable | null, fd: 1 | 2, post: Post): void
     owe(stream, chunk.byteLength);
   });
   stream.on("end", () => post({ id, ev: "end", fd }));
-  stream.on("error", () => undefined);
+  stream.on("error", error => post({ id, ev: "end", fd, error: described(error) }));
 }
 
 /**

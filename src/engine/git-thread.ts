@@ -286,7 +286,7 @@ class ThreadGit extends EventEmitter implements GitProcess {
       this.pid = event.pid;
       this.emit("spawn");
     } else if (event.ev === "data") this.#feed(event.fd, Buffer.from(event.chunk.buffer, event.chunk.byteOffset, event.chunk.byteLength));
-    else if (event.ev === "end") this.#feed(event.fd, null);
+    else if (event.ev === "end") this.#outputEnded(event.fd, event.error);
     else if (event.ev === "error") this.#failed(event.error, event.code);
     else if (event.ev === "exit") this.#exited(event.code, event.signal);
     else this.#closed();
@@ -372,6 +372,15 @@ class ThreadGit extends EventEmitter implements GitProcess {
     if (output === null || output.destroyed) return;
     this.#untaken[fd] += chunk?.byteLength ?? 0;
     output.push(chunk);
+  }
+
+  /**
+   * Output `fd` ended in the thread: its stream ends, or, where its read failed there, fails with that error as the
+   * stream of Node's child fails, so no reader takes the output so far for the whole of it.
+   */
+  #outputEnded(fd: 1 | 2, error: DescribedError | undefined): void {
+    if (error === undefined) this.#feed(fd, null);
+    else (fd === 1 ? this.stdout : this.stderr)?.destroy(errorOf(error));
   }
 
   /**

@@ -47,8 +47,8 @@ import { until } from "../../support/processes/daemon-home.js";
 
 /**
  * The preload: a start whose environment names files waits, without a turn of the thread's loop, as Node's start does,
- * and its mark holds the id of the thread that made it. While `ends-held` exists beside the preload, each end of a tree a
- * thread makes waits there the same way (`endsHeld`).
+ * and its mark holds the id of the thread that made it; with RERAIL_TEST_OUTPUT_FAILS its stdout's read fails. While
+ * `ends-held` exists beside the preload, each end of a tree a thread makes waits there the same way (`endsHeld`).
  */
 const PRELOAD = String.raw`const cp = require("node:child_process");
 const { existsSync, writeFileSync } = require("node:fs");
@@ -71,7 +71,9 @@ cp.spawn = function spawn(file, args, options) {
   const until = Date.now() + 20000;
   while (wait.length > 0 && !wait.some(path => existsSync(path)) && Date.now() < until) Atomics.wait(nap, 0, 0, 10);
   if (wait.length > 0 && !wait.some(path => existsSync(path))) writeFileSync(wait[0] + ".gave-up", "");
-  return spawnOf.apply(this, arguments);
+  const child = spawnOf.apply(this, arguments);
+  if (env.RERAIL_TEST_OUTPUT_FAILS) process.nextTick(() => child.stdout.destroy(Object.assign(new Error("read EIO"), { code: "EIO" })));
+  return child;
 };
 // Off Windows a tree's end is the child's kill; on Windows it is taskkill's start, held above.
 const killOf = cp.ChildProcess.prototype.kill;
@@ -533,6 +535,21 @@ describe("Git started in starter threads, when a read ends or a thread does", ()
       await writeFile(done, "");
     }
   }, 60_000);
+
+  it("fails an output whose read failed in the starter thread, as Node's child fails it, and never ends it as whole", async () => {
+    expect(startGitInThread("win32")).toBe(true);
+    const child = startGit(process.execPath, ["-e", "process.stdout.write('printed')"], { ...process.env, RERAIL_TEST_OUTPUT_FAILS: "1" }, "pipe");
+    const closed = once(child, "close");
+    const output = new Promise<unknown>(resolve => {
+      child.stdout.on("error", (error: NodeJS.ErrnoException) => resolve({ error: error.message, code: error.code }));
+      child.stdout.on("end", () => resolve("ended"));
+    });
+    child.stdout.resume();
+    child.stdin.on("error", () => undefined);
+    child.stdin.end();
+    expect(await output).toEqual({ error: "read EIO", code: "EIO" });
+    await closed;
+  }, 30_000);
 });
 
 /** How a run of `run` with Node's `-e script` and `timeoutMs` ended: its output, or the fields of its error. */
