@@ -1,1 +1,0 @@
-The dashboard shows a change as soon as it is written instead of at its next 5 s refresh; several changes in a row show at most 5 s after the first, as before. It says it is reconnecting as soon as the daemon stops. An open tab with nothing new sends no requests.

@@ -173,7 +173,7 @@ Details: [Updates](how-setup-works.md#updates).
 
 Rerail is off in every repository until started there; stopping keeps your rules and history.
 
-- **`/rerail-start` or `rerail start`** (`rerail start` in Codex) starts it in this checkout.
+- **`/rerail-start` or `rerail start`** (`$rerail-start` in Codex) starts it in this checkout.
 - **`/rerail-stop` or `rerail stop`** stops it here: nothing is recorded or checked.
 
 <details>

@@ -87,7 +87,7 @@ export interface RerailDaemonOptions {
   checkoutPruning?: false | { intervalMs: number };
   /** False keeps the history's sync in the background off ({@link startHistorySync}); tests may pass its period and sync. */
   historySync?: false | HistorySyncOptions;
-  /** Internal testing: how the dashboard's change stream watches and beats; tests drive its notices and set its beat. */
+  /** How the dashboard's change stream watches and beats; tests drive its notices and set its beat. */
   changeFeed?: ChangeFeedOptions;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;

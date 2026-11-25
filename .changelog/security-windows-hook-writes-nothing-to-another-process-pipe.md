@@ -1,1 +1,0 @@
-On Windows, with `RERAIL_ENGINE_SOCKET` set, a hook's lookup sends nothing, not even the proof's challenge, to a pipe Windows names as another process's or that refuses to say who serves it; the start check still sends the challenge to the pipe `daemon.json` names. When Windows cannot be asked, the hook and `rerail status` say so.

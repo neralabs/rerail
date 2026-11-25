@@ -1,1 +1,0 @@
-A session that opens again after 30 quiet minutes, a daemon restart or a resume no longer holds a read, a search or another tool call that writes nothing until its rules have opened again. Its first edit or shell command still waits up to 20 seconds for them, so what it writes is steered at its own result.

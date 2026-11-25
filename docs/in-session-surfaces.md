@@ -193,7 +193,7 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 - **Claude Code, Codex, Cursor** wait up to one second after an edit for its check, so the agent sees the steer under the edit and can act that turn. Checks usually take tens of milliseconds. At turn end they wait for all of the turn's checks while the hook waits, up to 30 seconds; once the hook gives up, the session's next prompt or tool call no longer waits behind the turn end, and the first prompt, tool call or turn end after the checks finish carries their steers.
 - **OMP and Pi** wait up to 10 seconds at a tool result and at turn end, so a shell command that wrote thousands of files does not stall the agent for minutes.
 
-Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule. A hook stops waiting for a Rerail too busy to answer it within 30 seconds; a steer its answer would have carried goes to the session's next hook.
+Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule. A hook stops waiting for a Rerail too busy to answer it within 30 seconds; a steer its answer would have carried goes to the session's next hook. A daemon that runs but has stopped reading costs only the hooks that start in its first 12 s their wait: later hooks answer at once, the daemon checks their events in order once it reads again, and what it finds reaches the agent with the session's next answer ([details](troubleshooting.md#rerail-status-says-hooks-run-but-nothing-was-recorded)).
 
 One rare case misses the one-second wait: an agent writes a file into a worktree just after many of its files changed at once, such as a nested checkout moved inside it or the worktree deleted and added again, while another session is open in the repository. The walk of the other worktrees then checks every file that changed, and the steer for the new file can come one or two tool calls later. Its finding is in Log as soon as its check ends.
 
@@ -230,16 +230,21 @@ In a large repository, Rerail indexes at session start before code rules can run
 - OMP's footer shows ` · indexing` while it lasts, only if it takes over half a second.
 - The dashboard timeline says code rules were not yet running at those steps.
 
-The daemon frees what a session that sends nothing for 30 minutes holds in memory, and a checkout's compiled rules 15
-minutes after no session there holds them. The session stays open, since its agent may be too: the dashboard shows it
-live, a scan asked for it runs, and its next event opens it again. Its rules may then compile again (about 12 s of CPU
-for a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's
-edits, shell commands and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its
-own result as every later one is; a tool call that writes nothing Rerail checks at its result, such as a read or a
-search, does not wait. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
-are not waited for further by that tool call or any later one, so the agent is held once, not at every call; those edits
-are checked by the first pass once they open, and the dashboard timeline counts each step that went without them. Each
-turn's end still waits for them, so the turn's steers reach the agent before the turn is over.
+The daemon frees what a session that sends nothing for 30 minutes holds in memory. The session stays open, since its
+agent may be too: the dashboard shows it live, a scan asked for it runs, and its next event opens it again. A checkout's
+compiled rules and file walk stay in memory after no session there holds them, so a later session there does not wait
+for them again: for 15 minutes, then until the daemon is short of memory (its heap past 60% of its limit after a full
+collection, the daemon holding over a quarter of the machine's memory, or under a tenth of it left to other programs;
+always on macOS, whose free memory the daemon does not read) or the checkout's folder is removed. All of them are freed
+before the daemon restarts at its heap limit. A session that opens after its checkout's rules were freed compiles them
+again (about 12 s of CPU for a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and
+Cursor, a reopened session's edits, shell commands and turn end wait up to 20 seconds for its rules, so its first edit
+is checked and steered at its own result as every later one is; a tool call that writes nothing Rerail checks at its
+result, such as a read or a search, does not wait. A daemon restart or a resumed session reopens the same way. Rules
+still not open after 20 seconds are not waited for further by that tool call or any later one, so the agent is held
+once, not at every call; those edits are checked by the first pass once they open, and the dashboard timeline counts
+each step that went without them. Each turn's end still waits for them, so the turn's steers reach the agent before the
+turn is over.
 
 - A command that rewrites a file the agent edited before the quiet is measured from the text the agent left there, so
   a rule that judges only the agent's lines judges only those.
