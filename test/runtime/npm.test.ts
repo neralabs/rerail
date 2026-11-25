@@ -39,12 +39,18 @@ async function fakeNpm(body: string): Promise<string> {
 }
 
 /** A spawned child as `runCommand` sees one, whose events a test emits itself. */
-type FakeChild = EventEmitter & { stdout: PassThrough; stderr: PassThrough; exitCode: number | null; signalCode: NodeJS.Signals | null };
+type FakeChild = EventEmitter & {
+  stdout: PassThrough;
+  stderr: PassThrough;
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+  kill: (signal?: NodeJS.Signals) => boolean;
+};
 
 /** Makes the next spawn return a child that `run` drives from the next tick, once the caller is listening, as Node's does. */
 function spawnsOnce(run: (child: FakeChild) => void): void {
   vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
-    const child: FakeChild = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
+    const child: FakeChild = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null, kill: vi.fn(() => true) });
     process.nextTick(() => run(child));
     return child as unknown as childProcess.ChildProcess;
   });
@@ -202,14 +208,17 @@ describe("runCommand", () => {
 
   // A process the command started can hold its output open after the command exits, and "close" then waits for it. The
   // command is named by its full path, since on Windows Rerail starts a program by no other name.
-  it("stops waiting on the output of a command that exited once its timeout has run", async () => {
+  it("stops waiting on the output of a command that exited once its timeout has run, and signals no process", async () => {
+    let spawned: FakeChild | undefined;
     spawnsOnce((child) => {
+      spawned = child;
       child.stderr.write("npm http fetch GET 200 one\n");
       exit(child);
     });
     await expect(runCommand(process.execPath, ["view", "@neralabs/rerail"], { timeoutMs: 1_000 })).rejects.toThrow(
       `${process.execPath} did not finish within 1 s and was stopped; its last output:\nnpm http fetch GET 200 one`,
     );
+    expect(spawned?.kill).not.toHaveBeenCalled();
   });
 });
 

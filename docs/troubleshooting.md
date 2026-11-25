@@ -789,6 +789,19 @@ The Rerail home was moved or removed while its daemon ran. The daemon writes thi
 writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
 database of the home it lost. End the pid it names, then run `rerail daemon start`.
 
+### `not-on-disk: the change was made, but Rerail could not confirm it is on the disk …`
+
+The daemon made a change you asked for in the dashboard, with `rerail settings` or `rerail scan` (in internal testing),
+or through an MCP tool, then waited for the disk to keep it, and the disk gave the error the message ends with. The
+dashboard shows the same message. Rerail says a change is made only once it is on the disk, so a power cut cannot undo
+it; this one is made, but a power cut or an operating system crash may still undo it. Do not make it again unless you
+see it is gone: making it again can make it twice, such as a second audit request.
+
+The daemon's background sync of the history syncs the same file. While that sync fails, `daemon.log` says
+`rerail daemon: syncing the history to the disk failed, trying again every 5 s: …` once, and
+`rerail daemon: syncing the history to the disk works again` once a sync succeeds. Until then a power cut or an
+operating system crash can take more than the last 5 s of history ([Rerail database](reference.md#rerail-database)).
+
 ### Containers: the dashboard does not open from the host
 
 The daemon listens on the container's loopback only, so a published port (`-p 4737:4737`) gets an empty reply. Set-up

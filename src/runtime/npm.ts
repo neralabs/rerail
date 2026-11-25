@@ -15,7 +15,10 @@ export interface CommandResult {
 export interface CommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  /** Stops the command once it has run this long, failing with a `CommandTimeoutError`; by default it runs until it ends. */
+  /**
+   * Stops the command once it has run this long, failing with a `CommandTimeoutError`. By default it runs until it ends:
+   * until its output closes, which a process it started can keep open after it exits.
+   */
   timeoutMs?: number;
 }
 

@@ -41,11 +41,13 @@
     "A pack's rule written in `.rerail`, such as the Django pack's, cannot be copied yet, so its scope cannot be changed: `rerail rules show <id>` prints its file, and the person turns it on or off, or changes its mode, in the dashboard.",
     "A rule's mode is `log` (recorded only) or `steer` (its guidance is sent to the agent).",
     "Write a code rule as a JSON draft whose `rule` is a `rerail.policy/v1` document; `rerail rules add` takes only JSON. A rule pack may ship rules written in `.rerail`, which sessions run; `rerail rules test <file>.rerail` runs the file's tests.",
-    "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't and record that line with `rerail feedback <rule-id> '<that line>'`.",
+    "When Rerail reports violations of your last edit, fix them, or tell the user in one line why you won't and record that line with `rerail feedback <rule-id> '<that line>'`. On Windows, or for a line with `'`, give `-` in its place and the line on stdin.",
     "Rule packs are npm packages named `@neralabs/rerail-pack-<id>`; manage them with `rerail packs list`, `add`, `remove`, `update` and `recommend`.",
-    "Update with `rerail update` (`/rerail-update`, `$rerail-update` in Codex): it updates core, then each rule pack to the newest version that fits. After the update from 0.1.5, run `rerail packs update` once.",
+    "Update with `rerail update` (`/rerail-update`, `$rerail-update` in Codex): it updates core, then each rule pack to the newest version that fits. After an update from 0.1.5 or earlier, run `rerail packs update` once.",
     "Packs that port a linter are linter-equivalent to it, and set-up turns their rules on and off to match the repository's own linter config; after that config changes, `rerail packs calibrate` reads it again.",
+    "A rule pack's `pack.json` may give a rule `dimensions`: `risk`, `layer` and `severity` together, from the fixed values in docs/rule-dimensions.md, and an optional `hazard` id. Cores before 0.2.2 refuse the field. Side packs are a design, not built.",
     "A rule for one worktree only is a rule document in that worktree's `.rerail/rules/<name>.json`: it runs there and in no other checkout, needs no install or add, and `rerail packs list` run there shows whether it loaded.",
+    "When Rerail seems not to record or steer, `rerail status` says whether the daemon runs and what to do; `rerail daemon stop`, then `rerail daemon start`, restarts it. `/rerail-bug-report` helps fix the person's own rule or report a Rerail bug.",
     "The features in docs/internal-testing.md, `rerail scan`, conversation rules and `block` mode among them, are unsupported and off until their `RERAIL_EXPERIMENTAL_<FEATURE>` variable is set. Suggest one only when the person asks for it."
   ]
 }

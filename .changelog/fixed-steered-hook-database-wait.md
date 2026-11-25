@@ -1,1 +1,0 @@
-A tool call whose hook delivered a steer no longer waits for the database after its answer while another Rerail process holds it: the Rerail daemon takes the steer's receipt, keeps it and records it once the database is free, even past 5 seconds. Before, the hook waited for the database and lost the receipt after 5 seconds.
