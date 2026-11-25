@@ -1,0 +1,144 @@
+.policy "react-practice-request-beside-data-library" revision 2
+.description "Fetch server data with a query hook in files that already use a data-fetching library, not with a request in useEffect saved to useState; the library handles caching and races."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+
+// A React practice rule (no upstream linter). In a file that already uses a data library (TanStack Query, SWR,
+// Apollo, Relay, tRPC, RTK Query), a request made in an effect and stored with useState misses its caching,
+// deduplication and race handling:
+//   useEffect(() => { getOwner(id).then((r) => setOwner(r.name)); }, [id]);           reported, at getOwner(id)
+//   useEffect(() => { (async () => { const r = await fetch(u); setData(await r.json()); })(); }, [u]);   reported
+//   fetchQuery(env, q, v).subscribe({ next: (d) => setData(d) })                       reported (Relay)
+//   the same in a file importing only QueryClient, ApolloProvider or other setup, or only types   not reported
+//   refetch(), mutate…(), save…/update…/post…(), sleep(), res.json(), localStorage…, navigator…   not requests
+// The request is the call whose result reaches a useState setter: through `.then` (after any .catch/.finally), an
+// `await` in an async function whose value is passed to the setter or stored and passed later in the same body,
+// or Relay's subscribe `next`; inside an effect callback, anywhere. The library is imported at the top level for a
+// value, or required into a top-level variable.
+#include "tsx/react-practice-b.rerail"
+
+rp_hook_ask("useEffect"). rp_hook_ask("useLayoutEffect"). rp_hook_ask("useState").
+
+.violation request(at: node, lib: symbol, req: symbol) code "REQUEST_BESIDE_DATA_LIBRARY"
+    "This file already uses {lib}: move `{req}` into one of its query hooks instead of an effect and useState, so caching, races and loading state are handled. Keep the effect if this is not server data."
+request(r, m, q) :- rbl_request(r, f), rbl_sets_state(r), rbl_effect_cb(cb), within(r, cb), docof(r, d), react_doc(d),
+    rbl_gate(d, m), text(f, q).
+
+// ---- the request ---------------------------------------------------------------------------------------------------
+// rbl_request(r, f): r calls f with arguments, and is no promise step, local work or known non-request.
+.decl rbl_request(r: node, f: node)
+rbl_request(r, f) :- kind(r, "call_expression"), field(r, "function", f), field(r, "arguments", l), kind(l, "arguments"),
+    !rbl_chain_member(f), !rbl_not_request(r).
+.decl rbl_chain_member(m: node)  // .then, .catch, .finally, .toPromise
+rbl_chain_member(m) :- kind(m, "member_expression"), field(m, "property", p), text(p, x),
+    (x = "then" ; x = "catch" ; x = "finally" ; x = "toPromise").
+.decl rbl_not_request(r: node)
+rbl_not_request(r) :- kind(r, "call_expression"), text(r, t),
+    match("(?:await\\s+)?(?:Promise\\b|import\\b|require\\b|new\\b|super\\b|createImageBitmap\\b|(?:[\\w$]+\\s*\\??\\.\\s*)*(?:refetch\\w*|mutate\\w*|prefetchQuery|fetchInfiniteQuery|ensureQueryData|invalidateQueries|(?:get|refresh)\\w*(?:Token|Session))\\s*[(<]|(?:[\\w$]+\\s*\\??\\.\\s*)+fetchQuery\\s*[(<]|(?:[\\w$]+\\s*\\??\\.\\s*)*(?:sleep|delay|wait|pause)\\s*[(<]|(?:[\\w$]+\\s*\\??\\.\\s*)*(?:save|update|create|delete|remove|post|put|patch|submit|send|upload|write)(?:[A-Z_$]\\w*)?\\s*[(<]|(?:[\\w$]+\\s*\\??\\.\\s*)*(?:\\w*[qQ]ueryClient|utils|trpc|\\w*[aA]uth|(?:local|session)Storage|AsyncStorage|localforage)\\s*\\??\\.|(?:[\\w$]+\\s*\\??\\.\\s*)*[sS]torage\\s*\\.\\s*(?:get|set|remove)Item\\b|(?:window\\s*\\??\\.\\s*)?(?:navigator|crypto|document|caches|Notification|indexedDB)\\s*\\??\\.)[\\s\\S]*", t).
+// res.json(), res.text(), … with no arguments: reading a response, not a request.
+rbl_not_request(r) :- kind(r, "call_expression"), field(r, "function", f), kind(f, "member_expression"), field(f, "property", p),
+    text(p, x), (x = "json" ; x = "text" ; x = "blob" ; x = "arrayBuffer" ; x = "formData" ; x = "bytes"),
+    field(r, "arguments", l), text(l, a), match("\\(\\s*\\)", a).
+// A native module's API (Expo, React Native): device work.
+rbl_not_request(r) :- kind(r, "call_expression"), field(r, "function", f), rbl_native_root(f).
+.decl rbl_native_root(n: node)
+rbl_native_root(n) :- kind(n, "identifier"), ref_site(n, s), inside(s, i, "import_statement"), field(i, "source", src), str(src, m),
+    match("expo(-[\\w-]+)?|react-native(-[\\w-]+)?|@react-native[\\w./-]*|@expo/[\\w./-]+", m).
+rbl_native_root(n) :- kind(n, "member_expression"), field(n, "object", o), rbl_native_root(o).
+
+// ---- state ---------------------------------------------------------------------------------------------------------
+.decl rbl_setter(f: node)  // a useState setter
+rbl_setter(f) :- kind(f, "identifier"), ref_site(f, p), rp_state_setter(p, "useState", _).
+.decl rbl_setter_call(c: node)
+rbl_setter_call(c) :- kind(c, "call_expression"), field(c, "function", f), rbl_setter(f).
+.decl rbl_name_kind(k: symbol)
+rbl_name_kind("identifier"). rbl_name_kind("shorthand_property_identifier").
+// A callback that receives a result: a .then callback, or Relay's `next`.
+.decl rbl_result_cb(f: node)
+rbl_result_cb(f) :- function_node(f), child(l, f, _), kind(l, "arguments"), child(t, l, _), kind(t, "call_expression"),
+    field(t, "function", m), kind(m, "member_expression"), field(m, "property", p), text(p, "then").
+rbl_result_cb(f) :- function_node(f), field(p, "value", f), kind(p, "pair"), field(p, "key", k), text(k, "next").
+rbl_result_cb(f) :- kind(f, "method_definition"), field(f, "name", n), text(n, "next").
+.decl rbl_setter_gets_result(c: node)  // setS(… a name the result callback declares …)
+rbl_setter_gets_result(c) :- rbl_setter_call(c), field(c, "arguments", l), has(l, n, rbl_name_kind), ref_site(n, s),
+    nearest(s, g, function_kind), rbl_result_cb(g).
+// The value is passed straight to a setter, or to a callback that passes it on outside nested functions.
+.decl rbl_passes(w: node)
+rbl_passes(w) :- rbl_setter(w).
+rbl_passes(w) :- function_node(w), within_stop(c, w, function_kind), rbl_setter_gets_result(c).
+
+.decl rbl_sets_state(r: node)
+// r.then(…), after any .catch, .finally or .toPromise, passes the result to a setter.
+rbl_sets_state(r) :- rbl_chain_sets(r).
+.decl rbl_chain_sets(r: node)
+rbl_chain_sets(r) :- field(m, "object", r), kind(m, "member_expression"), field(c, "function", m), kind(c, "call_expression"),
+    (rbl_then_sets(c) ; rbl_chain_member(m), rbl_chain_sets(c)).
+.decl rbl_then_sets(c: node)
+rbl_then_sets(c) :- field(c, "function", m), kind(m, "member_expression"), field(m, "property", p), text(p, "then"),
+    field(c, "arguments", l), child(l, w, _), rbl_passes(w).
+// await r, in the async function r runs in: inside a setter call, or stored and passed to a setter later.
+rbl_sets_state(r) :- child(a, r, _), kind(a, "await_expression"), nearest(r, f, function_kind), op(f, "async"),
+    within_stop(r, c, function_kind), rbl_setter_call(c).
+rbl_sets_state(r) :- child(a, r, _), kind(a, "await_expression"), nearest(r, f, function_kind), op(f, "async"),
+    within_stop(r, d, rbl_decl_stop), kind(d, "variable_declarator"), field(d, "value", v), (v = r ; within(r, v)),
+    within_stop(r, x, rbl_body_edge), precedes(x, y), (rbl_gets_awaited(y) ; within_stop(z, y, function_kind), rbl_gets_awaited(z)).
+.decl rbl_decl_stop(k: symbol)
+rbl_decl_stop(k) :- function_kind(k) ; k = "expression_statement".
+.decl rbl_body_edge(n: node)  // a function, or its body block
+rbl_body_edge(n) :- function_node(n).
+rbl_body_edge(b) :- kind(b, "statement_block"), field(f, "body", b), function_node(f).
+.decl rbl_gets_awaited(c: node)  // setS(… a name whose value awaited …)
+rbl_gets_awaited(c) :- rbl_setter_call(c), field(c, "arguments", l), has(l, n, rbl_name_kind), rbl_awaited(n).
+.decl rbl_awaited(n: node)  // n names a variable declared with an await in its value, or a name that has one
+rbl_awaited(n) :- (kind(n, "identifier") ; kind(n, "shorthand_property_identifier")), ref_site(n, s),
+    (kind(s, "variable_declarator"), d = s ; pattern_name(s, _, d)), field(d, "value", v),
+    (kind(v, "await_expression") ; within_stop(w, v, function_kind), (kind(w, "await_expression") ; rbl_awaited(w))).
+// Relay: fetchQuery(…).subscribe({ next: … }) with next passing its value to a setter.
+rbl_sets_state(r) :- field(r, "function", f), kind(f, "identifier"), text(f, "fetchQuery"), field(m, "object", r),
+    kind(m, "member_expression"), field(m, "property", p), text(p, "subscribe"), field(c, "function", m),
+    kind(c, "call_expression"), field(c, "arguments", l), child(l, o, _), kind(o, "object"), child(o, x, _), rbl_next(x).
+.decl rbl_next(x: node)
+rbl_next(x) :- kind(x, "pair"), field(x, "key", k), text(k, "next"), field(x, "value", w), rbl_passes(w).
+rbl_next(x) :- kind(x, "method_definition"), field(x, "name", n), text(n, "next"), within_stop(c, x, function_kind),
+    rbl_setter_gets_result(c).
+
+// ---- effects -------------------------------------------------------------------------------------------------------
+.decl rbl_effect_cb(cb: node)  // useEffect's or useLayoutEffect's callback, React's however it is reached
+rbl_effect_cb(cb) :- (kind(cb, "arrow_function") ; kind(cb, "function_expression")), call_arg(c, cb, 0), field(c, "function", f),
+    rp_hook(f, x, _), (x = "useEffect" ; x = "useLayoutEffect"), field(c, "arguments", l), child(l, cb, _).
+
+// ---- the data library ----------------------------------------------------------------------------------------------
+.decl rbl_lib(m: symbol)
+rbl_lib(m) :- (import_binding(_, _, m, _) ; rp_require_arg(_, m)),
+    match("@tanstack/react-query|react-query|swr(/[\\w./-]+)?|@apollo/client(/[\\w./-]+)?|react-relay(/[\\w./-]+)?|@trpc/(react-query|next|tanstack-react-query)(/[\\w./-]+)?|@reduxjs/toolkit/query(/react)?", m).
+.decl rbl_setup(x: symbol)  // the library's setup, which a component using it for data does not import alone
+rbl_setup("QueryClient"). rbl_setup("QueryClientProvider"). rbl_setup("QueryCache"). rbl_setup("MutationCache").
+rbl_setup("ApolloProvider"). rbl_setup("ApolloClient"). rbl_setup("InMemoryCache"). rbl_setup("HttpLink").
+rbl_setup("ApolloLink"). rbl_setup("SWRConfig"). rbl_setup("RelayEnvironmentProvider"). rbl_setup("Environment").
+rbl_setup("Network"). rbl_setup("RecordSource"). rbl_setup("Store").
+// rbl_gate(d, m): document d imports library m at the top level for a value (a namespace, a default, or a named
+// import other than setup and types), or requires it into a top-level variable that is not only setup.
+.decl rbl_gate(d: number, m: symbol)
+rbl_gate(d, m) :- kind(p, "program"), docof(p, d), child(p, i, _), kind(i, "import_statement"), text(i, t),
+    !match("import\\s+type\\b[\\s\\S]*", t), field(i, "source", s), str(s, m), rbl_lib(m), rbl_value_import(i).
+.decl rbl_value_import(i: node)
+rbl_value_import(i) :- kind(i, "import_statement"), has(i, _, "namespace_import").
+rbl_value_import(i) :- kind(i, "import_statement"), has(i, n, "identifier"), child(c, n, _), kind(c, "import_clause").
+rbl_value_import(i) :- kind(i, "import_statement"), has(i, sp, "import_specifier"), text(sp, t), !match("type\\s[\\s\\S]*", t),
+    field(sp, "name", n), text(n, x), !rbl_setup(x).
+rbl_gate(d, m) :- kind(p, "program"), docof(p, d), child(p, s, _), (kind(s, "lexical_declaration") ; kind(s, "variable_declaration")),
+    child(s, v, _), kind(v, "variable_declarator"), !rbl_setup_only(v), rbl_value_part(v, c), rp_require_arg(c, m), rbl_lib(m).
+.decl rbl_setup_only(v: node)  // const { QueryClient } = require(…): only setup names destructured
+rbl_setup_only(v) :- kind(v, "variable_declarator"), field(v, "name", op), kind(op, "object_pattern"), !rbl_pattern_value(op).
+.decl rbl_pattern_value(op: node)
+rbl_pattern_value(op) :- kind(op, "object_pattern"), child(op, x, _), kind(x, "shorthand_property_identifier_pattern"), text(x, t),
+    !rbl_setup(t).
+rbl_pattern_value(op) :- kind(op, "object_pattern"), child(op, x, _), kind(x, "pair_pattern"), field(x, "key", k), text(k, t),
+    !rbl_setup(t).
+// rbl_value_part(v, c): c is a child of declarator v, or reached from one through member accesses only:
+// `require("swr").default`.
+.decl rbl_value_part(v: node, c: node)
+rbl_value_part(v, c) :- kind(v, "variable_declarator"), child(p, v, _), child(q, p, _), kind(q, "program"), child(v, c, _).
+rbl_value_part(v, c) :- rbl_value_part(v, m), kind(m, "member_expression"), child(m, c, _).

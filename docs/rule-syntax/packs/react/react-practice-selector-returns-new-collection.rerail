@@ -1,0 +1,90 @@
+.policy "react-practice-selector-returns-new-collection" revision 2
+.description "Avoid selectors on the app's own store hooks that return a new object or array without a shallow comparison; the component may re-render on every store change."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+
+// A React practice rule (no upstream linter). A store hook (Zustand's `useStore`, a `useXSelector`) re-renders when
+// its selector's result changes by identity, so a selector that builds a new object or array re-renders on every
+// store change:
+//   useCalendarStore((s) => ({ a: s.a, b: s.b }))           reported
+//   useCartStore((s) => s.items.filter((i) => i.on))         reported: map, filter, flatMap, Object.keys, Array.from …
+//   useCalendarStore((s) => s.a)                             not: one value
+//   useCartStore(pick, shallow)                              not: a second argument compares
+//   useSelector((s) => ({ … }))  with useSelector from react-redux    not: left to the redux rules
+//   useShallowStore(…), useStoreWithEqualityFn(…)            not: the name says it compares
+// The hook is called by a name `use…Store`, `use…Selector` or `use…StoreContext`, bare or as a member, with one
+// argument: a function with a parameter, or a name bound to one (also through useCallback), whose result (the
+// arrow's body, or the block's final `return`) is an object or array literal or a call that builds one.
+#include "tsx/react-practice-b.rerail"
+
+.violation fresh(at: node, hook: symbol) code "SELECTOR_RETURNS_NEW_COLLECTION"
+    "This selector returns a new object or array on each call. Select each value with its own {hook} call, or compare shallowly (useShallow on Zustand 5)."
+fresh(c, h) :- kind(c, "call_expression"), field(c, "function", f), snc_callee(f), text(f, h), call_arg_count(c, 1),
+    call_arg(c, a, 0), snc_selector_arg(a), docof(c, d), react_doc(d).
+
+// The store hook.
+.decl snc_callee(f: node)
+snc_callee(f) :- kind(f, "identifier"), text(f, x), snc_hook_name(x), !snc_redux(f).
+snc_callee(f) :- kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"), text(p, x),
+    snc_hook_name(x).
+.decl snc_hook_name(x: symbol)
+snc_hook_name(x) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x),
+    match("use[A-Za-z0-9_$]*(Store|Selector|StoreContext)", x),
+    !match(".*(Shallow|Equal)([A-Z].*)?", x).
+// A hook imported from react-redux, or a name bound to one: `const useAppSelector = useSelector`.
+.decl snc_redux(f: node)
+snc_redux(f) :- kind(f, "identifier"), ref_site(f, sp), kind(sp, "import_specifier"), import_binding(sp, _, "react-redux", _).
+snc_redux(f) :- kind(f, "identifier"), ref_site(f, s), binding_value(s, v), snc_redux(v).
+
+// The selector: a function with a parameter whose result is a new collection, or a name bound to one.
+.decl snc_selector_arg(a: node)
+snc_selector_arg(a) :- snc_selector(a).
+snc_selector_arg(a) :- kind(a, "identifier"), ref_site(a, s), kind(s, "function_declaration"), snc_selector(s).
+snc_selector_arg(a) :- kind(a, "identifier"), ref_site(a, s), kind(s, "variable_declarator"), field(s, "value", v),
+    (snc_selector(v) ; kind(v, "call_expression"), field(v, "function", g), snc_use_callback(g), call_arg(v, w, 0),
+    snc_selector(w)).
+.decl snc_selector(f: node)
+snc_selector(f) :- (kind(f, "arrow_function") ; kind(f, "function_expression") ; kind(f, "function_declaration")),
+    snc_has_param(f), field(f, "body", b), !kind(b, "statement_block"), snc_collection(b).
+snc_selector(f) :- (kind(f, "arrow_function") ; kind(f, "function_expression") ; kind(f, "function_declaration")),
+    snc_has_param(f), field(f, "body", b), kind(b, "statement_block"), child(b, r, i), kind(r, "return_statement"),
+    count : { child(b, o, j), j > i, !kind(o, "comment") } = 0, child(r, e, k), !kind(e, "comment"),
+    count : { child(r, o, j), j < k, !kind(o, "comment") } = 0, snc_collection(e).
+.decl snc_has_param(f: node)
+snc_has_param(f) :- field(f, "parameter", p), kind(p, "identifier").
+snc_has_param(f) :- field(f, "parameters", ps), kind(ps, "formal_parameters"), child(ps, p, _), kind(p, k),
+    (k = "identifier" ; k = "required_parameter" ; k = "optional_parameter" ; k = "object_pattern" ;
+    k = "array_pattern" ; k = "assignment_pattern").
+// useCallback, React's: undeclared, imported from "react", taken off React, or React.useCallback.
+.decl snc_use_callback(g: node)
+snc_use_callback(g) :- kind(g, "identifier"), rp_undeclared(g, "useCallback").
+snc_use_callback(g) :- kind(g, "identifier"), ref_site(g, sp), kind(sp, "import_specifier"),
+    import_binding(sp, _, "react", "useCallback").
+snc_use_callback(g) :- kind(g, "identifier"), text(g, "useCallback"), ref_site(g, s),
+    (kind(s, "variable_declarator"), d = s ; pattern_name(s, _, d)), field(d, "value", v), snc_react_object(v).
+snc_use_callback(g) :- kind(g, "member_expression"), field(g, "object", o), snc_react_object(o), field(g, "property", p),
+    kind(p, "property_identifier"), text(p, "useCallback").
+// Here React is only "react" itself, as written: an undeclared React, or its default or namespace import.
+.decl snc_react_object(o: node)
+snc_react_object(o) :- rp_react_object(o, "global").
+snc_react_object(o) :- kind(o, "identifier"), ref_site(o, sp), (kind(sp, "import_clause") ; kind(sp, "namespace_import")),
+    import_binding(sp, _, "react", _).
+
+// A new collection: an object or array literal, or a call that builds one; through parentheses, as, satisfies, !.
+.decl snc_collection(e: node)
+snc_collection(e) :- kind(e, "object") ; kind(e, "array") ; snc_new_array(e).
+snc_collection(w) :- rp_inner(w, e), snc_collection(e).
+.decl snc_new_array(c: node)
+snc_new_array(c) :- snc_method(c, x, _), (x = "map" ; x = "filter" ; x = "flatMap").
+snc_new_array(c) :- snc_method(c, x, o), (x = "slice" ; x = "concat"), (kind(o, "array") ; snc_new_array(o)).
+snc_new_array(c) :- snc_method(c, "slice", _), call_arg_count(c, 0).
+snc_new_array(c) :- snc_method(c, "concat", _), field(c, "arguments", l), child(l, e, _), kind(e, "array").
+snc_new_array(c) :- snc_method(c, x, o), kind(o, "identifier"), rp_undeclared(o, "Object"),
+    (x = "keys" ; x = "values" ; x = "entries").
+snc_new_array(c) :- snc_method(c, "from", o), kind(o, "identifier"), rp_undeclared(o, "Array").
+// snc_method(c, x, o): c calls o.x.
+.decl snc_method(c: node, x: symbol, o: node)
+snc_method(c, x, o) :- kind(c, "call_expression"), field(c, "function", m), kind(m, "member_expression"),
+    field(m, "property", p), kind(p, "property_identifier"), text(p, x), field(m, "object", o).

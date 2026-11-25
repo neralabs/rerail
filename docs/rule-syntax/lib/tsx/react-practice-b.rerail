@@ -1,0 +1,93 @@
+// tsx/react-practice-b: React's own names as the react pack's practice rules (react-practice-*) find them, by binding
+// and not by spelling alone: a Hook is React's when the name is undeclared in the file, imported from React, taken
+// off the React object, or destructured from it. And the state setters of `const [s, setS] = useState(…)`.
+//
+// What a rule gets from this library:
+//   React itself
+//     rp_react_module(m)       module specifier m is React's: "react" or "react-dom", in any case
+//     rp_undeclared(r, x)      r is a value reference to x that nothing in its file declares (main's resolves.global)
+//     rp_react_require(c, m)   c is `require("react")`, require undeclared; m the module
+//     rp_react_object(o, h)    identifier o is the React object: h "global" an undeclared `React`; "import" a default or
+//                              namespace import of React (`import R from "react"`, `import * as R from "react"`);
+//                              "require" a plain name bound to require("react") (`const R = require("react")`)
+//     rp_destructured(r, x, d) identifier r resolves to a name destructured out of key x of declarator d's own object
+//                              pattern: `const { x } = …`, `const { x: r } = …`
+//   Hooks, for the names x of rp_hook_ask(x), which the including rule fills
+//     rp_hook(f, x, h)         callee f is React's x: an undeclared x, `import { x as f } from "react"`, `React.x`,
+//                              `const { x } = React`; h is "cjs" where that goes through require("react") (`React.x`
+//                              with a required React, `const { x } = require("react")`), else "esm"
+//     rp_hook_call(c, x, h)    c calls such a callee, seen through parentheses and `as`, `satisfies` and `!`
+//   wrappers
+//     rp_inner(w, e)           w is `(e)`, `e as T`, `e satisfies T` or `e!`: e is its first child, comments aside
+//   state
+//     rp_state_setter(p, x, h) p is the setter name of `const [s, p] = x(…)` for a state Hook x: the identifier right
+//                              after the pattern's first comma (`[s, setS]`, `[, setS]`)
+//
+//   import { useEffect as ue } from "react";  ue(f)          rp_hook(ue, "useEffect", "esm")
+//   const { useState } = require("react");  useState(0)     rp_hook(useState, "useState", "cjs")
+//   function useEffect() {}  useEffect(f)                    none: the name is declared here
+//
+// Builds on tsx/names (ref, ref_site, pattern_name, import_binding), tsx/eslint-a-common (call_arg) and tsx/slots.
+#include "tsx/react.rerail"
+#include "tsx/slots.rerail"
+
+// ---- React itself ------------------------------------------------------------------------------------------------
+.decl rp_react_module(m: symbol)
+rp_react_module(m) :- import_binding(_, _, m, _), (@lower(m) = "react" ; @lower(m) = "react-dom").
+rp_react_module(m) :- rp_require_arg(_, m), (@lower(m) = "react" ; @lower(m) = "react-dom").
+// An undeclared name: no declaration in the file binds it, whatever the environment's globals.
+.decl rp_undeclared(r: node, x: symbol)
+rp_undeclared(r, x) :- ref(r, x, "value"), !ref_site(r, _).
+.decl rp_require_arg(c: node, m: symbol)  // require("m"), require undeclared, m its first argument's string
+rp_require_arg(c, m) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"),
+    rp_undeclared(f, "require"), call_arg(c, s, 0), kind(s, "string"), str(s, m), m != "".
+.decl rp_react_require(c: node, m: symbol)
+rp_react_require(c, m) :- rp_require_arg(c, m), rp_react_module(m).
+.decl rp_react_object(o: node, h: symbol)
+rp_react_object(o, "global") :- kind(o, "identifier"), rp_undeclared(o, "React").
+rp_react_object(o, "import") :- kind(o, "identifier"), ref_site(o, sp), (kind(sp, "import_clause") ; kind(sp, "namespace_import")),
+    import_binding(sp, _, m, _), rp_react_module(m).
+rp_react_object(o, "require") :- kind(o, "identifier"), ref_site(o, d), kind(d, "variable_declarator"), field(d, "name", n),
+    kind(n, "identifier"), field(d, "value", v), rp_react_require(v, _).
+// `const { x } = …` binds x at the shorthand; `const { x: y } = …` binds y, the pair's value. The pattern is the
+// declarator's own, not one nested in it.
+.decl rp_destructured(r: node, x: symbol, d: node)
+rp_destructured(r, x, d) :- kind(r, "identifier"), ref_site(r, p), kind(p, "shorthand_property_identifier_pattern"),
+    text(p, x), child(op, p, _), field(d, "name", op), kind(d, "variable_declarator").
+rp_destructured(r, x, d) :- kind(r, "identifier"), ref_site(r, p), kind(p, "identifier"), child(pp, p, _),
+    kind(pp, "pair_pattern"), field(pp, "value", p), field(pp, "key", k), text(k, x), child(op, pp, _),
+    field(d, "name", op), kind(d, "variable_declarator").
+
+// ---- Hooks -------------------------------------------------------------------------------------------------------
+.decl rp_hook_ask(x: symbol) extensible  // filled by the including rule: the Hooks it asks about
+.decl rp_hook(f: node, x: symbol, h: symbol)
+rp_hook(f, x, "esm") :- rp_hook_ask(x), kind(f, "identifier"), rp_undeclared(f, x).
+rp_hook(f, x, "esm") :- rp_hook_ask(x), kind(f, "identifier"), ref_site(f, sp), kind(sp, "import_specifier"),
+    import_binding(sp, _, m, x), rp_react_module(m).
+rp_hook(f, x, h) :- rp_hook_ask(x), kind(f, "member_expression"), field(f, "property", p), kind(p, "property_identifier"),
+    text(p, x), field(f, "object", o), rp_react_object(o, k), (k = "require", h = "cjs" ; k != "require", h = "esm").
+rp_hook(f, x, h) :- rp_hook_ask(x), rp_destructured(f, x, d), field(d, "value", v),
+    (rp_react_object(v, k), (k = "require", h = "cjs" ; k != "require", h = "esm") ; rp_react_require(v, _), h = "cjs").
+.decl rp_hook_call(c: node, x: symbol, h: symbol)
+rp_hook_call(c, x, h) :- kind(c, "call_expression"), field(c, "function", f), rp_hook(f, x, h).
+rp_hook_call(w, x, h) :- rp_inner(w, e), rp_hook_call(e, x, h).
+
+// ---- wrappers ----------------------------------------------------------------------------------------------------
+.decl rp_inner(w: node, e: node)
+rp_inner(w, e) :- kind(w, k), (k = "parenthesized_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "non_null_expression"), child(w, e, i), !kind(e, "comment"),
+    count : { child(w, o, j), j < i, !kind(o, "comment") } = 0.
+
+// ---- state -------------------------------------------------------------------------------------------------------
+.decl rp_state_setter(p: node, x: symbol, h: symbol)
+rp_state_setter(p, x, h) :- kind(p, "identifier"), child(ap, p, _), kind(ap, "array_pattern"), slot(ap, p, 1), rp_after_comma(p),
+    field(d, "name", ap), kind(d, "variable_declarator"), field(d, "value", v), rp_hook_call(v, x, h).
+// The token right before p is a comma: `[s, setS]`, `[, setS]`; not `[s, /* c */ setS]`. A separator comma is in the
+// source before p (structural_before); a hole's comma is stored (tsx/slots' slot_comma), with no child after it.
+.decl rp_after_comma(p: node)
+rp_after_comma(p) :- child(ap, p, _), kind(ap, "array_pattern"), structural_before(p, g), match("[\\s\\S]*,\\s*", g).
+rp_after_comma(p) :- child(ap, p, _), kind(ap, "array_pattern"), node(_, p, _, ps, _), slot_comma(ap, at), at < ps,
+    !rp_child_between(ap, at, ps).
+.decl rp_child_between(ap: node, at: number, ps: number)
+rp_child_between(ap, at, ps) :- slot_comma(ap, at), child(ap, c, _), node(_, c, _, cs, _), cs > at, child(ap, p, _),
+    node(_, p, _, ps, _), cs < ps.
