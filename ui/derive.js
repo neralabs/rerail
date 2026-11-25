@@ -65,6 +65,19 @@ export function worktreeLeftOut(skipped, checkoutPath) {
 const CATEGORY_LABEL = { language: "Language", framework: "Framework", repository: "Repository" };
 export const categoryLabel = category => CATEGORY_LABEL[category] ?? "";
 
+/** A pack rule's risk (`dimensions.risk`, `RULE_RISKS` in src/engine/catalog/rule-packs.ts) as the dashboard names it, in that order. */
+export const RISK_LABELS = [
+  ["security", "Security"],
+  ["data-safety", "Data safety"],
+  ["availability", "Availability"],
+  ["correctness", "Correctness"],
+  ["performance", "Performance"],
+  ["maintainability", "Maintainability"],
+  ["test-quality", "Test quality"],
+];
+const RISK_LABEL = Object.fromEntries(RISK_LABELS);
+export const riskLabel = risk => RISK_LABEL[risk] ?? risk;
+
 /**
  * Whether the rule runs: switched on, its options apply to its document, and Rerail runs that document. A rule whose
  * stored options no longer apply (`configError`), or that Rerail keeps but never evaluates (`inactive`: a language not

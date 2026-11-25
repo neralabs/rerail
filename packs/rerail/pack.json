@@ -21,6 +21,11 @@
       "document": "rules/rerail-conformance-boundary.json",
       "title": "Run programs in conformance through its runner, and keep authoring code out of it",
       "group": "Layering",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "tests",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "conformance/port-readiness/cache.ts",
@@ -37,6 +42,11 @@
       "document": "rules/rerail-conformance-pinned-data.json",
       "title": "Read only pinned data in conformance, with no network calls or downloads",
       "group": "Layering",
+      "dimensions": {
+        "risk": "test-quality",
+        "layer": "tests",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "conformance/port-readiness/corpus.ts",
@@ -53,6 +63,11 @@
       "document": "rules/rerail-host-sdk-imports.json",
       "title": "Import a coding agent's SDK only in src/hosts",
       "group": "Layering",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "src/harness/native-semantic-tools.ts",
@@ -69,6 +84,11 @@
       "document": "rules/rerail-language-branching.json",
       "title": "Branch on a language or family only in an Engine Adapter",
       "group": "Layering",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "native/src/code_rule_dsl/tape.rs",
@@ -85,6 +105,11 @@
       "document": "rules/rerail-command-sigil.json",
       "title": "Take the command sigil from the adapter capabilities",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "src/harness/setup-screens.ts",
@@ -101,6 +126,11 @@
       "document": "rules/rerail-fixed-value-lists.json",
       "title": "Take fixed value lists from their constants",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "src/runtime/event-protocol.ts",
@@ -117,6 +147,11 @@
       "document": "rules/rerail-git-no-lazy-fetch.json",
       "title": "Start Git only through the engine's Git module, with lazy fetch off",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "src/engine/git.ts",
@@ -133,6 +168,11 @@
       "document": "rules/rerail-home-file-names.json",
       "title": "Build lists of the Rerail home's files from their writers' constants",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "src/cli/setup-cli.ts",
@@ -149,6 +189,11 @@
       "document": "rules/rerail-home-file-paths.json",
       "title": "Take the Rerail home's install paths from the updater",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "src/setup/coding-agents.ts",
@@ -165,6 +210,11 @@
       "document": "rules/rerail-no-code-execution.json",
       "title": "Read pack matches and repository config as data, and install packs without scripts",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "security",
+        "layer": "code",
+        "severity": "critical"
+      },
       "examples": {
         "caught": {
           "path": "src/setup/rule-pack-store.ts",
@@ -181,6 +231,11 @@
       "document": "rules/rerail-no-message-classification.json",
       "title": "Classify failures by code, never by their message text",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "src/engine/audit/audit.ts",
@@ -197,6 +252,11 @@
       "document": "rules/rerail-pack-package-names.json",
       "title": "Build pack npm names with the catalog's naming helpers",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "src/setup/rule-pack-store.ts",
@@ -213,6 +273,11 @@
       "document": "rules/rerail-session-paths.json",
       "title": "Resolve a session's storage root and model path with the session-paths helpers",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "src/daemon/daemon.ts",
@@ -229,6 +294,11 @@
       "document": "rules/rerail-start-state.json",
       "title": "Turn a checkout's status into a start state only in the repository start module",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "src/harness/hook-host.ts",
@@ -245,6 +315,11 @@
       "document": "rules/rerail-table-probes-in-storage.json",
       "title": "Keep table and column probes of Rerail's database in storage",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "data-access",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "src/engine/audit/audit-store.ts",
@@ -261,6 +336,11 @@
       "document": "rules/rerail-walk-limits.json",
       "title": "Take repository walk folders and limits from the enforcer",
       "group": "Ownership",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "src/cli/rule-draft.ts",
@@ -277,6 +357,11 @@
       "document": "rules/rerail-fixtures-root.json",
       "title": "Reach the fixtures directory from Rust through fixtures_dir!() and oracle!()",
       "group": "Repository layout",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "tests",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "native/src/code_rule_dsl/scope/rust/tests.rs",
@@ -293,6 +378,11 @@
       "document": "rules/rerail-generator-placement.json",
       "title": "Keep generators of committed files in scripts/generate",
       "group": "Repository layout",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "packs/next/candidates/build-rules.mjs",
@@ -309,6 +399,11 @@
       "document": "rules/rerail-pack-rule-test-placement.json",
       "title": "Keep tests of single pack rules in the pack-rules test folder",
       "group": "Repository layout",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "tests",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "test/engine/code-rule/python-bandit-b604-shell-keyword.test.ts",
@@ -325,6 +420,11 @@
       "document": "rules/rerail-rule-documents-in-packs.json",
       "title": "Add rule documents only inside a pack",
       "group": "Repository layout",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "packs/pack-message-tool-names.draft.json",
@@ -341,6 +441,11 @@
       "document": "rules/rerail-pack-data-helper-copies.json",
       "title": "Import the shared pack-data helpers in upstream generators",
       "group": "Release and pack data",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "packs/javascript/upstream/generate.mjs",
@@ -357,6 +462,11 @@
       "document": "rules/rerail-pack-data-runtime-names.json",
       "title": "Take pack-data runtime names from gates.yaml",
       "group": "Release and pack data",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "scripts/pack-data/recipes/complexity.ts",
@@ -373,6 +483,11 @@
       "document": "rules/rerail-pack-data-through-publish.json",
       "title": "Publish pack data through the publish workflow",
       "group": "Release and pack data",
+      "dimensions": {
+        "risk": "security",
+        "layer": "config",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "text": "npm run fixtures:push -- --pack react --tool eslint-plugin-react"
@@ -387,6 +502,11 @@
       "document": "rules/rerail-provenance-writers.json",
       "title": "Write licence and provenance records only through their shared writers",
       "group": "Release and pack data",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "packs/vue/upstream/eslint-plugin-vue/generate.mjs",
@@ -403,6 +523,11 @@
       "document": "rules/rerail-workflow-script-facts.json",
       "title": "Take workflow entry paths, shipped paths and tool-pack lists from their owners",
       "group": "Release and pack data",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "config",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": ".github/workflows/upstream-bump.yml",
@@ -419,6 +544,11 @@
       "document": "rules/rerail-workflow-shared-conditions.json",
       "title": "Decide a workflow's release pull request skip once",
       "group": "Release and pack data",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "config",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": ".github/workflows/ci.yml",
@@ -435,6 +565,11 @@
       "document": "rules/rerail-ui-api-precedence.json",
       "title": "Show the API's setting deciders instead of ranking them in the dashboard",
       "group": "Dashboard",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "ui",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "ui/settings-writes.js",
@@ -451,6 +586,11 @@
       "document": "rules/rerail-ui-color-tokens.json",
       "title": "Take dashboard colours from Nera's design tokens",
       "group": "Dashboard",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "ui",
+        "severity": "low"
+      },
       "examples": {
         "caught": {
           "path": "ui/css/base.css",
@@ -467,6 +607,11 @@
       "document": "rules/rerail-ui-pure-modules.json",
       "title": "Keep the dashboard's pure modules free of network, storage and DOM work",
       "group": "Dashboard",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "ui",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "ui/repo-rules.js",
@@ -483,6 +628,11 @@
       "document": "rules/rerail-grammar-node-kinds.json",
       "title": "Name grammar node kinds on the family's adapter, not in shared engine code",
       "group": "Native engine",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "native/src/code_rule_dsl/suppress/rerail.rs",
@@ -499,6 +649,11 @@
       "document": "rules/rerail-language-facts-from-registry.json",
       "title": "Take language facts from the language registry",
       "group": "Native engine",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "native/src/git_workspace.rs",
@@ -515,6 +670,11 @@
       "document": "rules/rerail-origin-ranges.json",
       "title": "Map byte ranges across documents only through Origin",
       "group": "Native engine",
+      "dimensions": {
+        "risk": "correctness",
+        "layer": "code",
+        "severity": "high"
+      },
       "examples": {
         "caught": {
           "path": "native/src/code_rule_dsl/vue/view.rs",
@@ -531,6 +691,11 @@
       "document": "rules/rerail-store-reads-in-documents.json",
       "title": "Read stored source and tape only through workspace/documents.rs",
       "group": "Native engine",
+      "dimensions": {
+        "risk": "maintainability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "native/src/code_rule_dsl/facts/families.rs",
@@ -547,6 +712,11 @@
       "document": "rules/rerail-walk-limits-native.json",
       "title": "Pass Rust repository walks the host's folders and limits",
       "group": "Native engine",
+      "dimensions": {
+        "risk": "availability",
+        "layer": "code",
+        "severity": "medium"
+      },
       "examples": {
         "caught": {
           "path": "native/src/code_rule_dsl/module_graph.rs",
