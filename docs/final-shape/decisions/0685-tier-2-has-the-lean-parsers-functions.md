@@ -123,3 +123,26 @@ changed and how.
    `r_word` asks each kind once, as the lean parser's `match self.kind()`. Methods whose code is the same but for
    their names are one, the first, called for each: rr's inside of a brace pair (`raw_text_x_0`), read for a raw
    text and for a JSON object alike once each is one leaf, as the lean parser's one `braces`.
+10. One `primary`, and one leaf over two tokens (rock 6). The grammar's `primary` is one choice, as the lean parser's
+    `primary` and simdjson's one `switch` on a value's first byte (its `-` and digits one number): `numeric`,
+    `unsigned` and `minus` are gone. `numeric` was a level only so that a float's mark (`float_at`) was under no
+    field (`grammar.rs`: a mark makes no node); `word`, a function of its own in the lean parser, is that level now,
+    and reads a float, a number, a name, a string or a code literal as the lean parser's `word`. A unary's operand is a
+    `primary`: `-` and a number is one leaf, so none follows a unary's `-`. Then `moves::two_token_leaves`, in
+    `G::leaves`: a token taken as a leaf and joined to the next (`merge_as`), or a decision each of whose arms joins
+    it to a kind, is one leaf over the two, its kind chosen first (`let kind = …`), as the lean parser's
+    `leaf_over(kind, i, i + 2)`: rr's `-1` and `.input`, Kotlin's `as?`, `>=`, `?.`, `return@` and a label's `@`.
+    Neither tier 2 merges a token now.
+
+## Rocks 4 and 8: the grammar keeps its shape
+
+The user, 2026-11-25, after the pros and cons of each shape and what simdjson does: "do these".
+
+- **A `(` at a literal is decided by reading ahead** (`paren_term`, `paren_tilde`, `paren_closes`), as 0673 chose,
+  not by trying a group and going back as the lean parser does. The grammar is also `grammar.rs`'s state machine
+  (the interpreters, Cranelift, Metal), which reads a file once and cannot go back; simdjson never goes back either.
+  What is left is the generator's: how `literal` prints its tests and `paren_subject`.
+- **A policy document is checked as JSON by the grammar's rules** (`json_document`, `json_member`, `json_value`,
+  `json_array`), in the one pass, as simdjson's DOM parser checks while it reads. The lean parser's `serde_json` over
+  the scanned braces reads the bytes twice, and one grammar cannot call another in the state machine. What is left is
+  the generator's: those rules printed as simdjson's object, array and value states.

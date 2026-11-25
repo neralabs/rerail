@@ -356,7 +356,7 @@ tree rr {
   choice block_body     = (body: block_statement)* end_on '.' 'end'
   choice block_statement nested = include | test_on refused | fixtures_on refused | directive | clause
   # A word of a setting's, a declaration's tail: a leaf with a field.
-  choice word           = value | code_literal
+  choice word nested    = identifier | float_at number as float | number | string | code_literal
   node edit_declaration = '.' 'edit' name: identifier columns: column_list
   # A declaration's `.` and a functor's are stored: their modifiers may hold one.
   node functor_declaration = '.' 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation | '{')* line
@@ -402,7 +402,6 @@ tree rr {
   node column_list      = '(' [column: column (',' column: column)*] ')'
   node column           = name: identifier ':' type: type
   node type             = name: identifier [empty_angle '<' '>' | implied '<' argument: identifier implied '>']
-  choice value          = identifier | numeric | string
   node clause           = head: head (',' head: head)* [':-' body: body] ['=>' edit: term (',' edit: term)*] '.'
   # A head's modal: `must` or `may` before its relation, as the lean parser's; before a `(` it is the relation.
   node head             = [modal_on modal: ('must' | 'may')] relation: identifier arguments: argument_list
@@ -458,19 +457,16 @@ tree rr {
   # argument's name, or it starts an aggregate, as the lean parser's `primary`: `count` and a `:`; an aggregate's
   # word, its `(…)` and a `:` (`agg_call`, where the lean parser reads a call and goes back); an aggregate's word and
   # a term's first token (`agg_word`). An aggregate's word is no named argument's name.
-  choice primary        = numeric | unsigned
-  # A number, a float where its token says so: one leaf.
-  choice numeric nested = float_at number as float | number
-  choice unsigned nested = string | code_literal | '_' as wildcard | minus | functor_call | json
+  # A number is a float where its token says so. `-` and a number: one number leaf (a float, where its token says so);
+  # else `-` and its operand, a primary (no number: `-` and a number is the leaf).
+  choice primary nested = float_at number as float | number | string | code_literal | '_' as wildcard
+                        | neg_number '-' (float_at merge float number | merge number number) | unary_expression | functor_call | json
                         | count_on aggregate | agg_call aggregate | agg_word aggregate
                         | call_on ('_' as wildcard | identifier wrap call function arguments: argument_list)
                         | unless no_named (named_on ('_' as wildcard | identifier wrap named_argument name ':' value: term))
                         | identifier as variable
                         | parenthesized_expression
-  # `-` and a number: one number leaf (a float, where its token says so). Else `-` and its
-  # operand, a primary that is no number.
-  choice minus          = neg_number '-' (float_at merge float number | merge number number) | unary_expression
-  node unary_expression nested = implied '-' operand: unsigned
+  node unary_expression nested = implied '-' operand: primary
   node parenthesized_expression = '(' expression: term ')'
   node functor_call     = '@' function: identifier arguments: argument_list
   # An aggregate, as the lean parser's `aggregate`: `count` and its body alone (`count` implied); else its word (`product`,
@@ -514,7 +510,7 @@ tree rr {
   implied group '(' ')'
   implied negation '!'
   implied pattern_tail '~' 'at'
-  implied unsigned ':'
+  implied primary ':'
   implied paren_subject '(' ')'
   implied parenthesized_expression '(' ')'
   implied functor_call '@'

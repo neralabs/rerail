@@ -745,6 +745,90 @@ pub(crate) fn one_leaf(b: &mut Block, k: &str, merging: &HashSet<String>, calls:
     found
 }
 
+/// `b` with each token taken as a leaf of no field and then joined to the next (`merge_as`), or a decision of whose
+/// every arm joins it to one of another kind, one leaf over the two: `leaf_open`, both passed, `leaf_close` of the
+/// kind the decision gives (`let kind = …`), as the lean parser's `leaf_over(kind, i, i + 2)` of `-1` and `.input`
+/// (decision 0685 rock 6).
+pub(crate) fn two_token_leaves(b: &mut Block) {
+    blocks(b, &mut |x| {
+        let mut i = 0;
+        while i + 1 < x.len() {
+            let first = match &x[i] {
+                Op::Take { take: Take::Leaf { test, field, .. }, nf, m } if field == "0" => Op::Take { take: Take::Pass { test: test.clone() }, nf: *nf, m: *m },
+                Op::Take { take: Take::WordLeaf { word, .. }, nf, m } => Op::Take { take: Take::WordPass { word: word.clone() }, nf: *nf, m: *m },
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            // The second token's merge, alone, of one test on every arm: its test, its move, each arm's kind.
+            let merge = |body: &Block| match body.as_slice() {
+                [Op::Take { take: Take::Merge { test, kind }, nf, m }] => Some((test.clone(), *nf, *m, kind.clone())),
+                _ => None,
+            };
+            let refuses = |body: &Block| matches!(body.as_slice(), [Op::Refuse]);
+            // The second token's one test: the merges' where they are alike, else the one test they ask besides
+            // `true` where each other arm's own test already holds it (`fact`).
+            let one_test = |conds: Vec<&Cond>, ms: &[(Cond, bool, Option<bool>, String)]| -> Option<(Cond, bool, Option<bool>)> {
+                let (nf, m) = (ms[0].1, ms[0].2);
+                if ms.iter().any(|x| (x.1, x.2) != (nf, m)) {
+                    return None;
+                }
+                let mut tests: Vec<&Cond> = ms.iter().map(|x| &x.0).filter(|t| t.print() != "true").collect();
+                tests.dedup_by(|a, b| a.print() == b.print());
+                match tests.as_slice() {
+                    [] => Some((ms[0].0.clone(), nf, m)),
+                    [t] => {
+                        let f = fact(t)?;
+                        conds.iter().zip(ms).all(|(c, x)| x.0.print() == t.print() || facts_of(c).contains(&f)).then(|| ((*t).clone(), nf, m))
+                    }
+                    _ => None,
+                }
+            };
+            let (second, table, kind) = match &x[i + 1] {
+                Op::Take { take: Take::Merge { test, kind }, nf, m } => (Op::Take { take: Take::Pass { test: test.clone() }, nf: *nf, m: *m }, None, kind.clone()),
+                Op::If { arms, els: Some(e) } if refuses(e) && arms.iter().all(|(_, a)| merge(a).is_some()) => {
+                    let ms: Vec<_> = arms.iter().filter_map(|(_, a)| merge(a)).collect();
+                    let Some((test, nf, m)) = one_test(arms.iter().map(|(c, _)| c).collect(), &ms) else {
+                        i += 1;
+                        continue;
+                    };
+                    let mut t = "let kind = ".to_owned();
+                    for ((c, _), m) in arms.iter().zip(&ms) {
+                        let _ = write!(t, "if {} {{ {} }} else ", c.print(), m.3);
+                    }
+                    t.push_str("{ return self.refuse(); };");
+                    (Op::Take { take: Take::Pass { test }, nf, m }, Some(t), "kind".to_owned())
+                }
+                Op::Match { subject, arms, default } if refuses(default) && arms.iter().all(|(_, a)| merge(a).is_some()) => {
+                    let ms: Vec<_> = arms.iter().filter_map(|(_, a)| merge(a)).collect();
+                    if ms.iter().any(|m| (&m.0, m.1, m.2) != (&ms[0].0, ms[0].1, ms[0].2)) {
+                        i += 1;
+                        continue;
+                    }
+                    let mut t = format!("let kind = match {subject} {{\n");
+                    for ((p, _), m) in arms.iter().zip(&ms) {
+                        let _ = writeln!(t, "    {} => {},", p.print(), m.3);
+                    }
+                    t.push_str("    _ => return self.refuse(),\n};");
+                    (Op::Take { take: Take::Pass { test: ms[0].0.clone() }, nf: ms[0].1, m: ms[0].2 }, Some(t), "kind".to_owned())
+                }
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            let mut new = vec![Op::Line("self.leaf_open();".into()), first];
+            new.extend(table.map(Op::Line));
+            new.push(second);
+            new.push(Op::Line(format!("self.leaf_close({kind})?;")));
+            let n = new.len();
+            x.splice(i..i + 2, new);
+            i += n;
+        }
+    });
+}
+
 /// `b`, a function that only joins tokens (`merges_only`), its takes passes (`passes`): the calls of `merging` it makes
 /// counted in `calls`.
 pub(crate) fn passes_in(b: &mut Block, k: &str, merging: &HashSet<String>, calls: &mut HashMap<String, usize>) {

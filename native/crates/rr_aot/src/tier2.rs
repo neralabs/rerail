@@ -602,22 +602,6 @@ impl<'a, L: Layout> P<'a, L> {
         Ok(())
     }
 
-    /// The token, which must pass `ok`, joined to the leaf made last: one leaf of `kind`.
-    fn merge_as(&mut self, ok: bool, kind: u16) -> R {
-        let at = self.top.1;
-        if !ok || at == NONE || at as usize + 1 != self.w.len() {
-            return self.refuse();
-        }
-        let (s, key) = (self.w.plain_start(at as usize), self.w.plain_key(at as usize));
-        // The comments between are its text.
-        self.pend = self.xi;
-        let (_, e) = self.take()?;
-        self.w.plain_truncate(at as usize);
-        let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
-        self.set_made(at as u32);
-        Ok(())
-    }
-
     /// The token, which must be word `w`: read into a `leaf`, no leaf of its own.
     #[inline(always)]
     fn word_pass_as(&mut self, w: u32) -> R {
@@ -896,24 +880,7 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 w::INPUT_58 | w::OUTPUT_59 => {
-                    self.bump_as(k::DOT)?;
-                    match self.word() {
-                        w::INPUT_58 => {
-                            self.merge_as(true, k::DOT_INPUT)?;
-                        }
-                        w::OUTPUT_59 => {
-                            self.merge_as(true, k::DOT_OUTPUT)?;
-                        }
-                        _ => {
-                            return self.refuse();
-                        }
-                    }
-                    if self.word() == w::DOT_13 {
-                    } else if self.kind() == t::IDENTIFIER {
-                        self.list(f::RELATION, Self::io_relation)?;
-                    } else {
-                        return self.refuse();
-                    }
+                    self.io_directive()?;
                 }
                 w::LATTICE_71 => {
                     self.implied()?;
@@ -1042,14 +1009,36 @@ impl<L: Layout> P<'_, L> {
 
     /// `word`.
     fn r_word(&mut self) -> R {
-        if self.kind() == t::IDENTIFIER {
+        if self.bit_at(self.i, 0) {
+            self.tk_as(self.kind() == t::NUMBER, k::FLOAT, 0)?;
+        } else if self.kind() == t::IDENTIFIER {
             self.bump_as(k::IDENTIFIER)?;
         } else if self.kind() == t::NUMBER {
-            self.numeric()?;
+            self.bump_as(k::NUMBER)?;
         } else if self.kind() == t::STRING {
             self.bump_as(k::STRING)?;
         } else if self.kind() == t::CODE_LITERAL {
             self.bump_as(k::CODE_LITERAL)?;
+        } else {
+            return self.refuse();
+        }
+        Ok(())
+    }
+
+    /// `io_directive`.
+    fn io_directive(&mut self) -> R {
+        self.leaf_open();
+        self.word_pass_as(w::DOT_13)?;
+        let kind = match self.word() {
+            w::INPUT_58 => k::DOT_INPUT,
+            w::OUTPUT_59 => k::DOT_OUTPUT,
+            _ => return self.refuse(),
+        };
+        self.pass_as(true)?;
+        self.leaf_close(kind)?;
+        if self.word() == w::DOT_13 {
+        } else if self.kind() == t::IDENTIFIER {
+            self.list(f::RELATION, Self::io_relation)?;
         } else {
             return self.refuse();
         }
@@ -1588,46 +1577,17 @@ impl<L: Layout> P<'_, L> {
 
     /// `primary`.
     fn primary(&mut self) -> R {
-        if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) || self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::LPAREN_10 || self.flags & FLAG_NO_NAMED == 0 && self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && (self.kind_at(self.i + 1) == t::NUMBER || self.kind_at(self.i + 1) == t::STRING || self.kind_at(self.i + 1) == t::CODE_LITERAL || self.kind_at(self.i + 1) == t::IDENTIFIER || self.word_at(self.i + 1) == w::LBRACE_20 || self.word_at(self.i + 1) == w::AT_23) {
-            self.unsigned()?;
-        } else {
-            match self.word() {
-                w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::LPAREN_10 => {
-                    self.unsigned()?;
-                }
-                _ if self.kind() == t::NUMBER => {
-                    self.numeric()?;
-                }
-                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER => {
-                    self.unsigned()?;
-                }
-                _ => {
-                    return self.refuse();
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// `numeric`.
-    fn numeric(&mut self) -> R {
+        self.deeper()?;
         if self.bit_at(self.i, 0) {
             self.tk_as(self.kind() == t::NUMBER, k::FLOAT, 0)?;
-        } else if self.kind() == t::NUMBER {
-            self.bump_as(k::NUMBER)?;
-        } else {
-            return self.refuse();
-        }
-        Ok(())
-    }
-
-    /// `unsigned`.
-    fn unsigned(&mut self) -> R {
-        self.deeper()?;
-        if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) {
+        } else if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) {
             self.aggregate()?;
         } else if self.word() == w::MINUS_27 && self.kind_at(self.i + 1) == t::NUMBER {
-            self.minus()?;
+            self.leaf_open();
+            self.pass_as(true)?;
+            let kind = if self.bit_at(self.i, 0) { k::FLOAT } else if self.kind() == t::NUMBER { k::NUMBER } else { return self.refuse(); };
+            self.pass_as(true)?;
+            self.leaf_close(kind)?;
         } else if self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::LPAREN_10 {
             match self.word() {
                 w::X_65 => {
@@ -1669,7 +1629,11 @@ impl<L: Layout> P<'_, L> {
                     self.bump_as(k::WILDCARD)?;
                 }
                 w::MINUS_27 => {
-                    self.minus()?;
+                    self.open(k::UNARY_EXPRESSION);
+                    self.implied()?;
+                    self.primary()?;
+                    self.field_made(f::OPERAND);
+                    self.close()?;
                 }
                 w::AT_23 => {
                     self.open(k::FUNCTOR_CALL);
@@ -1690,6 +1654,9 @@ impl<L: Layout> P<'_, L> {
                     self.p(w::RPAREN_11)?;
                     self.close()?;
                 }
+                _ if self.kind() == t::NUMBER => {
+                    self.bump_as(k::NUMBER)?;
+                }
                 _ if self.kind() == t::STRING => {
                     self.bump_as(k::STRING)?;
                 }
@@ -1705,27 +1672,6 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.depth -= 1;
-        Ok(())
-    }
-
-    /// `minus`.
-    fn minus(&mut self) -> R {
-        if self.word() == w::MINUS_27 && self.kind_at(self.i + 1) == t::NUMBER {
-            self.bump_as(k::MINUS)?;
-            if self.bit_at(self.i, 0) {
-                self.merge_as(true, k::FLOAT)?;
-            } else if self.kind() == t::NUMBER {
-                self.merge_as(true, k::NUMBER)?;
-            } else {
-                return self.refuse();
-            }
-        } else {
-            self.open(k::UNARY_EXPRESSION);
-            self.p(w::MINUS_27)?;
-            self.unsigned()?;
-            self.field_made(f::OPERAND);
-            self.close()?;
-        }
         Ok(())
     }
 

@@ -1807,7 +1807,7 @@ pub mod tests {
             .replace("[modal_on modal: ('must' | 'may')] ", "")
             .replace("neg_number '-' (float_at merge float number | merge number number) | unary_expression", "unary_expression")
             .replace("                        | call_on ('_' as wildcard | identifier wrap call function arguments: argument_list)\n                        | unless no_named (named_on ('_' as wildcard | identifier wrap named_argument name ':' value: term))\n", "")
-            .replace("  implied unsigned ':'\n", "")
+            .replace("  implied primary ':'\n", "")
             .replace("  implied aggregate ','\n", "")
             .replace("(by_list 'by' '(' key: term (',' key: term)* ')' ('sep' separator: string ':' implied '{' | ':' '{')\n                            | ['by'", "(['by'")
             .replace("test_on refused | fixtures_on refused | directive", "setting")

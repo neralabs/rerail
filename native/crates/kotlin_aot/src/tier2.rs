@@ -675,6 +675,8 @@ pub struct P<'a, L: Layout> {
     levels: Vec<(u32, u32)>,
     /// The last token's end.
     last_end: u32,
+    /// A `leaf`'s first token's record (`leaf_open`).
+    leaf_from: usize,
     /// The marks taken or passed at this token, by their order.
     taken: u64,
     /// The marks found at this token (`held`): which, and whether each holds.
@@ -704,7 +706,7 @@ impl<'a, L: Layout> P<'a, L> {
         let (recs, xs, m) = (&lx.recs[..], &lx.extras[..], &lx.masks);
         let n = recs.len();
         // Room for each token's node and half as many again, and each comment's, as the lean parser's writer.
-        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
+        let mut p = P { src, recs, xs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, xi: 0, next_x: xs.first().map_or(u32::MAX, |x| x.start), w: Writer::new(0, widths, n + n / 2 + xs.len() + 8), top: (NONE, NONE), levels: Vec::with_capacity(64), last_end: 0, leaf_from: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.pass_comments();
         p.arrive()?;
         Ok(p)
@@ -1080,19 +1082,20 @@ impl<'a, L: Layout> P<'a, L> {
         Ok(())
     }
 
-    /// The token, which must pass `ok`, joined to the leaf made last: one leaf of `kind`.
-    fn merge_as(&mut self, ok: bool, kind: u16) -> R {
-        let at = self.top.1;
-        if !ok || at == NONE || at as usize + 1 != self.w.len() {
+    /// The token, which must be word `w`: read into a `leaf`, no leaf of its own.
+    #[inline(always)]
+    fn word_pass_as(&mut self, w: u32) -> R {
+        self.pass_as(self.word() == w)
+    }
+
+    /// The token, which must pass `ok`: read into a `leaf`, no leaf of its own; the comments before it stay pending,
+    /// the leaf's text (`leaf_close`).
+    #[inline(always)]
+    fn pass_as(&mut self, ok: bool) -> R {
+        if !ok {
             return self.refuse();
         }
-        let (s, key) = (self.w.plain_start(at as usize), self.w.plain_key(at as usize));
-        // The comments between are its text.
-        self.pend = self.xi;
-        let (_, e) = self.take()?;
-        self.w.plain_truncate(at as usize);
-        let at = self.w.plain_leaf(key & !0x3ff | u32::from(kind), s, e);
-        self.set_made(at as u32);
+        self.take()?;
         Ok(())
     }
 
@@ -3373,8 +3376,10 @@ impl<L: Layout> P<'_, L> {
     fn as_op(&mut self) -> R {
         self.wrap(k::AS_EXPRESSION, 0)?;
         if self.pat_as_q_0_0(self.i, self.n) {
-            self.p_stored(w::AS_10, k::AS)?;
-            self.merge_as(self.word() == w::QUEST_40, k::AS_QUEST)?;
+            self.leaf_open();
+            self.word_pass_as(w::AS_10)?;
+            self.pass_as(self.word() == w::QUEST_40)?;
+            self.leaf_close(k::AS_QUEST)?;
         } else {
             if self.word() == w::AS_10 {
                 self.bump_as(k::AS)?;
@@ -3561,8 +3566,10 @@ impl<L: Layout> P<'_, L> {
     fn cmp_op(&mut self) -> R {
         self.wrap(k::COMPARISON_EXPRESSION, 0)?;
         if self.pat_ge_0_0(self.i, self.n) {
-            self.p_stored(w::GT_27, k::GT)?;
-            self.merge_as(self.word() == w::EQ_12, k::GT_EQ)?;
+            self.leaf_open();
+            self.word_pass_as(w::GT_27)?;
+            self.pass_as(self.word() == w::EQ_12)?;
+            self.leaf_close(k::GT_EQ)?;
         } else {
             match self.word() {
                 w::LT_26 => {
@@ -4148,8 +4155,10 @@ impl<L: Layout> P<'_, L> {
 
     /// `label`.
     fn label(&mut self) -> R {
-        self.tk_as(self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105), k::SIMPLE_IDENTIFIER, 0)?;
-        self.merge_as(self.word() == w::AT_2, k::LABEL)?;
+        self.leaf_open();
+        self.pass_as(self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105))?;
+        self.pass_as(self.word() == w::AT_2)?;
+        self.leaf_close(k::LABEL)?;
         self.marked = false;
         Ok(())
     }
@@ -4232,8 +4241,10 @@ impl<L: Layout> P<'_, L> {
     fn navigation_suffix(&mut self) -> R {
         self.open(k::NAVIGATION_SUFFIX);
         if self.pat_qdot_0_0(self.i, self.n) {
-            self.p_stored(w::QUEST_40, k::QUEST_186)?;
-            self.merge_as(self.word() == w::DOT_32, k::QUEST_DOT)?;
+            self.leaf_open();
+            self.word_pass_as(w::QUEST_40)?;
+            self.pass_as(self.word() == w::DOT_32)?;
+            self.leaf_close(k::QUEST_DOT)?;
         } else {
             match self.word() {
                 w::DOT_32 => {
@@ -4639,8 +4650,10 @@ impl<L: Layout> P<'_, L> {
         if self.pat_jump_at_0_0(self.i, self.n) {
             match self.word() {
                 w::RETURN_60 => {
-                    self.bump_as(k::RETURN)?;
-                    self.merge_as(self.word() == w::AT_2, k::RETURN_AT)?;
+                    self.leaf_open();
+                    self.pass_as(true)?;
+                    self.pass_as(self.word() == w::AT_2)?;
+                    self.leaf_close(k::RETURN_AT)?;
                     self.tk_as(self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105), k::LABEL, 0)?;
                     self.ask_semi(false)?;
                     if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
@@ -4652,13 +4665,17 @@ impl<L: Layout> P<'_, L> {
                     }
                 }
                 w::BREAK_62 => {
-                    self.bump_as(k::BREAK)?;
-                    self.merge_as(self.word() == w::AT_2, k::BREAK_AT)?;
+                    self.leaf_open();
+                    self.pass_as(true)?;
+                    self.pass_as(self.word() == w::AT_2)?;
+                    self.leaf_close(k::BREAK_AT)?;
                     self.tk_as(self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105), k::LABEL, 0)?;
                 }
                 w::CONTINUE_61 => {
-                    self.bump_as(k::CONTINUE)?;
-                    self.merge_as(self.word() == w::AT_2, k::CONTINUE_AT)?;
+                    self.leaf_open();
+                    self.pass_as(true)?;
+                    self.pass_as(self.word() == w::AT_2)?;
+                    self.leaf_close(k::CONTINUE_AT)?;
                     self.tk_as(self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105), k::LABEL, 0)?;
                 }
                 _ => {
@@ -6476,6 +6493,26 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
+}
+
+#[allow(clippy::all, dead_code)]
+impl<L: Layout> P<'_, L> {
+    /// `leaf K R` starts: the comments before it written, its first token's record kept (`leaf_from`).
+    fn leaf_open(&mut self) {
+        self.flush();
+        self.leaf_from = self.i;
+    }
+
+    /// `leaf K R`'s leaf, after `R` read the tokens: one leaf of `kind` from the first token's start to the last's end,
+    /// the comments between them its text (as a merge's), those after it still pending.
+    fn leaf_close(&mut self, kind: u16) -> R {
+        while self.pend < self.xi && self.xs[self.pend].start < self.last_end {
+            self.pend += 1;
+        }
+        let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
+        self.set_made(at as u32);
+        Ok(())
+    }
 }
 
 /// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), finished by `finish` (the

@@ -2372,7 +2372,8 @@ impl<'a> G<'a> {
     /// A leaf the rules grow a token at a time (a take of the token as a leaf of kind `K`, then merges into it, here
     /// and in the functions they call that only merge) is one leaf over the tokens: `leaf_open`, the tokens passed,
     /// `leaf_close(K)`, as the lean parser scans and then writes one `leaf_over` (rock 3). For a kind each of whose
-    /// merges, and each call of whose merging functions, is in such a run; else as it was.
+    /// merges, and each call of whose merging functions, is in such a run; else as it was. Then a merge of one token
+    /// into the one before is a leaf over the two (`moves::two_token_leaves`).
     fn leaves(made: &mut [(String, Block)]) {
         let mut kinds = Vec::new();
         for (_, b) in made.iter_mut() {
@@ -2414,6 +2415,10 @@ impl<'a> G<'a> {
             if any && !left.contains(&k) && all_calls {
                 made.clone_from_slice(&new);
             }
+        }
+        // A merge left joins one token to the one before: one leaf over the two, its kind chosen first.
+        for (_, b) in made.iter_mut() {
+            moves::two_token_leaves(b);
         }
     }
 
