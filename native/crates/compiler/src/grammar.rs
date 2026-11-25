@@ -871,7 +871,8 @@ pub fn saved_states(uses: usize, inner: usize) -> usize {
 ///
 /// A function a rule (`by_rules`): every rule or choice with `RULE_INNER` inner positions or
 /// more is called, however often it is used, as a recursive-descent parser has a function a
-/// rule; one smaller is a switch's arms, inlined.
+/// rule; one smaller is a switch's arms, inlined, and so is a choice used once as an alternative of a level's choice
+/// (its alternatives the level's, grouped).
 /// Each rule's and choice's uses' follows, as Bitlex's reference passes them (`tree.rs`'s
 /// `follow`, doc 24 §2.3): the hidden marks that may come after a use, the enclosing rule's own
 /// follows included where the rest of its body may match nothing. A `nested` rule's body and the
@@ -997,6 +998,9 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
         called: HashMap<String, bool>,
         /// Inlined for good: what a refusing level reaches.
         kept: Vec<String>,
+        /// Choices used once, as an alternative of a level's choice: its alternatives grouped (`primary`'s by their
+        /// first token), each the level's switch's arm.
+        grouping: Vec<String>,
     }
     let body = |name: &str| -> Option<&Gram> {
         rules.iter().find(|r| r.kind == name).map(|r| &r.body).or_else(|| choices.iter().find(|c| c.0 == name).map(|c| &c.2))
@@ -1016,6 +1020,18 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
     let mut f = Facts { by_rules, ..Facts::default() };
     for g in rules.iter().chain(levels).map(|r| &r.body).chain(choices.iter().map(|c| &c.2)) {
         count(g, 1, &mut f.uses);
+    }
+    for g in rules.iter().filter(|r| r.nested).chain(levels).map(|r| &r.body) {
+        if let Gram::Alt(gs) = g {
+            for x in gs {
+                if let Gram::Sym(n) = x
+                    && f.uses.get(n) == Some(&1)
+                    && choices.iter().any(|c| c.0 == *n)
+                {
+                    f.grouping.push(n.clone());
+                }
+            }
+        }
     }
     // A name's positions where it is used: one for a call or a token, its body's inlined.
     fn size(g: &Gram, f: &mut Facts, ctx: &dyn Fn(&str) -> (Option<Gram>, bool), stack: &mut Vec<String>) -> usize {
@@ -1119,7 +1135,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
         let inner = s.saturating_sub(lasts(b, ctx, &f.called, stack));
         let e = empty(b, ctx, &f.called, stack) || merges_first(b, ctx, &f.called, stack);
         stack.pop();
-        let worth = if f.by_rules { inner >= RULE_INNER } else { saved_states(f.uses.get(n).copied().unwrap_or(0), inner) >= SHARED_STATES };
+        let worth = if f.by_rules { inner >= RULE_INNER && !f.grouping.iter().any(|g| g == n) } else { saved_states(f.uses.get(n).copied().unwrap_or(0), inner) >= SHARED_STATES };
         let c = !e && !f.kept.iter().any(|k| k == n) && worth;
         f.size.insert(n.to_owned(), s);
         f.called.insert(n.to_owned(), c);

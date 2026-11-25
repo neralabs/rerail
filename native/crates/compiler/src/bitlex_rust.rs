@@ -494,6 +494,26 @@ impl<'a> G<'a> {
 
     /// The kind mark `m` holds at alone: a mark of no gap, whose tests are all at that kind's tokens (`mark M = empty,
     /// at K when …`).
+    /// The tests of the tokens mark `m` may hold at (each definition's first token), its own test aside: a kind where it
+    /// holds at one kind's tokens alone (`implied_kind`).
+    fn mark_tests(&self, m: usize) -> Option<Vec<Test>> {
+        if let Some(k) = self.implied_kind(m) {
+            return Some(vec![Test::Kind(k)]);
+        }
+        let mut out = Vec::new();
+        for d in self.x.marks.iter().filter(|x| x.name == self.x.marks[m].name) {
+            for x in d.tokens.and_then(|(_, seq)| seq.first())? {
+                match x {
+                    TokenElem::Kind(k) => out.push(Test::Kind(k.clone())),
+                    TokenElem::Word(w) => out.push(Test::Word(self.word_of(&String::from_utf8_lossy(w))?)),
+                    TokenElem::With(_) | TokenElem::Without(_) => {}
+                    _ => return None,
+                }
+            }
+        }
+        (!out.is_empty()).then_some(out)
+    }
+
     fn implied_kind(&self, m: usize) -> Option<String> {
         let name = &self.x.marks.get(m)?.name;
         self.x.lexer.iter().find_map(|s| match s {
@@ -1325,6 +1345,43 @@ impl<'a> G<'a> {
                 // can hold at its token, as the lean parser's `term` asks its own peeks (decision 0685 rock 4).
                 let mut alts = Vec::new();
                 Self::alts(g, &mut alts);
+                // A rule's call, a level's or not, whose code asks its own first token, its marks too: its arm asked by
+                // the tokens its tests may hold at alone, where no other arm's test may hold at one of them, as the
+                // lean parser's `primary` switches on the kind and asks a word's peeks in the word's arm.
+                let rule_call = |a: &Gram| matches!(a, Gram::Sym(n) if self.mark_of(n).is_none() && self.token_of(a).is_none() && self.rules.contains_key(n.as_str()) && self.rule_first(n).is_ok_and(|f| !f.1));
+                if alts.len() == arms.len() && empty.is_none() {
+                    let plain: Vec<Option<Vec<First>>> = alts
+                        .iter()
+                        .zip(&arms)
+                        .map(|(a, arm)| {
+                            if !rule_call(a) || arm.0.iter().all(|(t, f)| f.is_none() && !matches!(t, Test::Mark(_))) {
+                                return None;
+                            }
+                            let mut out: Vec<First> = Vec::new();
+                            for (t, _) in &arm.0 {
+                                let ts = match t {
+                                    Test::Mark(m) => self.mark_tests(*m)?,
+                                    t => vec![t.clone()],
+                                };
+                                for t in ts {
+                                    if !out.iter().any(|x| x.0 == t) {
+                                        out.push((t, None));
+                                    }
+                                }
+                            }
+                            Some(out)
+                        })
+                        .collect();
+                    for i in 0..arms.len() {
+                        let Some(p) = &plain[i] else { continue };
+                        let apart = p.iter().all(|(t, _)| {
+                            (0..arms.len()).filter(|&j| j != i).all(|j| plain[j].as_ref().unwrap_or(&arms[j].0).iter().all(|(o, _)| self.apart(&self.first_holds(t), &self.first_holds(o))))
+                        });
+                        if apart {
+                            arms[i].0 = p.clone();
+                        }
+                    }
+                }
                 // A word of its was asked before the other arms' kinds: none of their kinds' tokens is one (a soft word
                 // the lexer gives another kind too is). A test under a flag is asked where it is.
                 let others: Vec<(&Test, Holds)> = arms[..arms.len().saturating_sub(1)].iter().flat_map(|a| a.0.iter().map(|(t, _)| (t, self.first_holds(t)))).collect();
@@ -1340,9 +1397,8 @@ impl<'a> G<'a> {
                         Test::Kind(_) => true,
                     })
                 };
-                // A rule's code, a level's or not, asks its own first token: a rule that must take one refuses where none
-                // of its tests holds.
-                let rule_call = |a: &Gram| matches!(a, Gram::Sym(n) if self.mark_of(n).is_none() && self.token_of(a).is_none() && self.rules.contains_key(n.as_str()) && self.rule_first(n).is_ok_and(|f| !f.1));
+                // A rule's code, a level's or not, asks its own first token (`rule_call`): a rule that must take one
+                // refuses where none of its tests holds.
                 let default = empty.is_none()
                     && alts.last().is_some_and(|a| self.leads_with_call(a) || rule_call(a))
                     && arms.last().is_some_and(|a| a.0.iter().all(|f| f.1.is_none()) && marks_apart(&a.0));
@@ -2742,6 +2798,7 @@ impl<'a> G<'a> {
         let holds = |c: &Cond| self.holds(c);
         let apart = |a: &Holds, b: &Holds| self.apart(a, b);
         bs.iter_mut().for_each(|b| {
+            moves::open_first(b);
             moves::known_takes(b);
             moves::joined(b);
             moves::into_default(b, &holds, &apart);

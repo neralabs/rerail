@@ -180,6 +180,23 @@ changed and how.
       (`pass_as(true)`), and its kind asks only the float's mark. A leaf of two tokens whose last decision's arm
       asks the pass's test is the `else` (`two_token_leaves`). `else { if … }` is `else if …`.
     - Stays: `literal` and `paren_subject` (steps 11, 12) read as they did.
+14. One switch on a primary's token, and a node opened where its peek decided it (the user's "make the change",
+    2026-11-25, after the profile of tier 2 beside the lean parser).
+    - **`primary` is one `match` on the token**, as the lean parser's `match self.kind()`. The grammar groups its
+      alternatives by first token (`number_primary`, `minus_primary`, `name_primary`), so each peek is asked in its
+      group alone: a number's float bit in the number's arm, `-` and a number in the `-`'s, the aggregates, a call and
+      a named argument in a word's. `_` is a word's arm first (`name_primary`), as the lean parser's `w == W_WILD`.
+    - **A call to a rule that asks its own first token, its peeks too, is chosen by the tokens they may hold at alone**
+      (`G::mark_tests`), where no other arm's test may hold at one of them. Otherwise the peeks stay in the caller.
+    - **A test the code already asked is not asked again** (`moves::known_takes`), for any arm of an `if`, not only
+      the first: the number's arm, under `kind() == NUMBER`, asks the float bit alone.
+    - **A token taken and then wrapped is the node opened first, the token taken with the wrap's field**
+      (`moves::open_first`), as the lean parser opens `Call` at a name its peek saw a `(` after. The tape is the same.
+      The grammar keeps the wrap (`identifier wrap call function …`): the state machine's executors (the interpreter,
+      the JIT, the Metal kernels) take `ending literal call as atom inner relation`'s inner node only from a wrap.
+    - **The state machine keeps the grouping inlined** (`grammar.rs`, `shared`): in its function-a-rule shape, a choice
+      used once as an alternative of a level's choice is that level's switch's arms, not a call, so the JIT's
+      `primary` is one state's switch as before. Called, each primary paid a push and a return.
 
 ## Rocks 4 and 8: the grammar keeps its shape
 

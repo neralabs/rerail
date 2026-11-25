@@ -962,15 +962,15 @@ pub(crate) fn known_takes(b: &mut Block) {
                 Op::Open(_) | Op::Field(_) => {}
                 Op::Line(l) if ["let kind", "self.retag(", "self.marked", "self.deeper()", "self.leaf_open()", "self.open(", "self.field_made(", "self.wrap(", "self.relabel_"].iter().any(|p| l.trim_start().starts_with(p)) => {}
                 Op::If { arms, els } => {
-                    // A first test the code before it asked (each of its parts a fact that holds): its code alone, as
-                    // the lean parser asks a token once.
-                    let known = arms.first().is_some_and(|(c, _)| {
+                    // A test the code before it asked (each of its parts a fact that holds): its code the `else`, the
+                    // arms after it gone, as the lean parser asks a token once (the first: its code alone).
+                    let known = arms.iter().position(|(c, _)| {
                         let cs = c.conjuncts();
                         !cs.is_empty() && cs.iter().all(|x| fact(x).is_some_and(|f| facts.contains(&f)))
                     });
-                    if known {
-                        let x = arms.remove(0).1;
-                        arms.clear();
+                    if let Some(i) = known {
+                        let x = arms.remove(i).1;
+                        arms.truncate(i);
                         *els = Some(x);
                     }
                     for (c, x) in arms.iter_mut() {
@@ -1094,6 +1094,27 @@ pub(crate) fn into_default(b: &mut Block, holds: &dyn Fn(&Cond) -> super::Holds,
                 arms.extend(more);
                 *els = last;
             }
+        }
+    });
+}
+
+/// A token taken and then wrapped (`self.wrap(K, F)`): the node opened first and the token taken with the wrap's field,
+/// as the lean parser's `primary` opens `Call` at a name its peek saw a `(` after. The tape is the same: the wrap puts its
+/// node at the token's place, after the extras before it, which the open writes first too.
+pub(crate) fn open_first(b: &mut Block) {
+    blocks(b, &mut |x| {
+        for i in 1..x.len() {
+            let Op::Line(l) = &x[i] else { continue };
+            let Some((kind, field)) = l.trim().strip_prefix("self.wrap(").and_then(|r| r.strip_suffix(")?;")).and_then(|r| r.split_once(", ")) else { continue };
+            let (kind, field) = (kind.to_owned(), field.to_owned());
+            let Op::Take { take: Take::Leaf { field: f, .. }, .. } = &mut x[i - 1] else { continue };
+            if f != "0" {
+                continue;
+            }
+            *f = field;
+            let take = x[i - 1].clone();
+            x[i - 1] = Op::Open(kind);
+            x[i] = take;
         }
     });
 }

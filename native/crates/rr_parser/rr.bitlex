@@ -461,13 +461,17 @@ tree rr {
   # a term's first token (`agg_word`). An aggregate's word is no named argument's name.
   # A number is a float where its token says so. `-` and a number: one number leaf (a float, where its token says so);
   # else `-` and its operand, a primary (no number: `-` and a number is the leaf).
-  choice primary nested = float_at number as float | number | string | code_literal | '_' as wildcard
-                        | neg_number '-' (float_at merge float number | merge number number) | unary_expression | functor_call | json
-                        | count_on aggregate | agg_call aggregate | agg_word aggregate
+  # One choice on the token, as the lean parser's `match self.kind()` and simdjson's `switch` on a value's first byte;
+  # the peeks of a number, a `-` and a word asked in their arm alone (`number_primary`, `minus_primary`, `name_primary`).
+  # `_` is a word, a wildcard (and before a `(` or a `:` too), as the lean parser's `w == W_WILD`.
+  choice primary nested = number_primary | string | code_literal | minus_primary | functor_call | json | name_primary
+                        | parenthesized_expression
+  choice number_primary = float_at number as float | number
+  choice minus_primary  = neg_number '-' (float_at merge float number | merge number number) | unary_expression
+  choice name_primary   = '_' as wildcard | count_on aggregate | agg_call aggregate | agg_word aggregate
                         | call_on ('_' as wildcard | identifier wrap call function arguments: argument_list)
                         | unless no_named (named_on ('_' as wildcard | identifier wrap named_argument name ':' value: term))
                         | identifier as variable
-                        | parenthesized_expression
   node unary_expression nested = implied '-' operand: primary
   node parenthesized_expression = '(' expression: term ')'
   node functor_call     = '@' function: identifier arguments: argument_list
@@ -512,7 +516,7 @@ tree rr {
   implied group '(' ')'
   implied negation '!'
   implied pattern_tail '~' 'at'
-  implied primary ':'
+  implied name_primary ':'
   implied paren_subject '(' ')'
   implied parenthesized_expression '(' ')'
   implied functor_call '@'
