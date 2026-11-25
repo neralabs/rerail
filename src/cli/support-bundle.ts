@@ -11,6 +11,7 @@
  */
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
+import { eachLineSync } from "../engine/storage/file-lines.js";
 import { replaceFileSync } from "../engine/file-replace.js";
 import { arch, homedir, hostname, platform, release, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -492,22 +493,51 @@ function readTimeline(database: RerailDatabase, sessionId: string): SupportBundl
 /** The steers as delivered, from the session's ledger: the one thing in it that leaves. Its samples and preimages hold the person's files. */
 function readSteers(roots: readonly string[], sessionId: string): { steers: SupportBundleSteer[]; total: number; found: boolean } {
   const directory = createHash("sha256").update(sessionId).digest("hex");
-  const ledger = roots.map(root => readQuietly(join(defaultStorageRoot(root), directory, "events.jsonl"))).find(text => text !== undefined);
-  if (ledger === undefined) return { steers: [], total: 0, found: false };
-  const steers: SupportBundleSteer[] = [];
-  for (const line of ledger.split("\n")) {
-    if (line === "") continue;
-    let entry: { type?: unknown; delivery?: { mechanism: string; requested: string; ruleIds: string[]; content: string } };
-    try {
-      entry = JSON.parse(line) as typeof entry;
-    } catch {
-      continue;
-    }
-    if (entry.type !== "delivery" || entry.delivery === undefined) continue;
-    const { mechanism, requested, ruleIds, content } = entry.delivery;
-    steers.push({ mechanism, requested, ruleIds, text: content.length > MAX_STEER_CHARACTERS ? `${content.slice(0, MAX_STEER_CHARACTERS)}…` : content });
+  for (const root of roots) {
+    const steers = ledgerSteers(join(defaultStorageRoot(root), directory, "events.jsonl"));
+    if (steers !== undefined) return { steers: steers.slice(-MAX_STEERS), total: steers.length, found: true };
   }
-  return { steers: steers.slice(-MAX_STEERS), total: steers.length, found: true };
+  return { steers: [], total: 0, found: false };
+}
+
+/**
+ * The steers a session ledger holds, its last line included, read a line at a time (`eachLineSync`): a session open for
+ * weeks can write more text than one string holds. Undefined when the ledger cannot be read.
+ */
+function ledgerSteers(path: string): SupportBundleSteer[] | undefined {
+  const steers: SupportBundleSteer[] = [];
+  const take = (line: string): void => {
+    const steer = deliveredSteer(line);
+    if (steer !== undefined) steers.push(steer);
+  };
+  let descriptor: number;
+  try {
+    descriptor = openSync(path, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    take(eachLineSync(descriptor, take).text);
+    return steers;
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/** The steer a ledger line records (a `delivery` entry), its text cut at `MAX_STEER_CHARACTERS`; undefined for any other line. */
+function deliveredSteer(line: string): SupportBundleSteer | undefined {
+  if (line === "") return undefined;
+  let entry: { type?: unknown; delivery?: { mechanism: string; requested: string; ruleIds: string[]; content: string } };
+  try {
+    entry = JSON.parse(line) as typeof entry;
+  } catch {
+    return undefined;
+  }
+  if (entry.type !== "delivery" || entry.delivery === undefined) return undefined;
+  const { mechanism, requested, ruleIds, content } = entry.delivery;
+  return { mechanism, requested, ruleIds, text: content.length > MAX_STEER_CHARACTERS ? `${content.slice(0, MAX_STEER_CHARACTERS)}…` : content };
 }
 
 function reportedPath(path: string | undefined): string | null {

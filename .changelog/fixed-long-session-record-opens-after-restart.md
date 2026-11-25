@@ -1,0 +1,1 @@
+A coding session open for weeks is checked again after the daemon restarts: its record, past 512 MB, made every hook event of the session fail with "Invalid string length", so none was recorded or checked, and `rerail support-bundle` found no steers for it. The record is now read a line at a time, whatever its size.

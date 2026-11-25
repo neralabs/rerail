@@ -45,7 +45,7 @@ import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
 import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { defaultRerailDatabasePath, failWhileWriteLocked } from "../engine/storage/database.js";
-import { makeLedgerFolder, openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
+import { makeLedgerFolder, openLedgerFile, readLedgerFile, readLedgerLines, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { keepFolderPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
@@ -1028,29 +1028,25 @@ interface SessionStart {
   readonly steerStrategy: SteerStrategy;
 }
 
+/**
+ * The values of a JSON-lines record file, read a line at a time (`readLedgerLines`), and where its next line goes. A
+ * line that is no JSON fails the read, except the last when no newline ends it: a write cut short, which the next
+ * append cuts off (`truncateTo`, its first byte); a last line that is whole gets its newline first (`prefix`).
+ */
 async function readLines(path: string): Promise<JsonlReadResult> {
-  let content = await readLedgerFile(path, dirname(path));
-  if (content === undefined) return { values: [], appendState: { prefix: "", truncateTo: null } };
-
+  const values: unknown[] = [];
+  const last = await readLedgerLines(path, dirname(path), line => {
+    if (line !== "") values.push(JSON.parse(line));
+  });
   const appendState: JsonlAppendState = { prefix: "", truncateTo: null };
-  if (content.length > 0 && !content.endsWith("\n")) {
-    const tailStart = content.lastIndexOf("\n") + 1;
-    try {
-      JSON.parse(content.slice(tailStart));
-      appendState.prefix = "\n";
-    } catch {
-      const validPrefix = content.slice(0, tailStart);
-      appendState.truncateTo = Buffer.byteLength(validPrefix);
-      content = validPrefix;
-    }
+  if (last === undefined || last.text === "") return { values, appendState };
+  try {
+    values.push(JSON.parse(last.text));
+    appendState.prefix = "\n";
+  } catch {
+    appendState.truncateTo = last.start;
   }
-  return {
-    values: content
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as unknown),
-    appendState,
-  };
+  return { values, appendState };
 }
 
 /** Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it. */

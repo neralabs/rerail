@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type BigIntStats, constants } from "node:fs";
 import { type FileHandle, lstat, mkdir, open, rm } from "node:fs/promises";
+import { eachLine, type LastLine } from "./file-lines.js";
 import { renameWithRetry } from "../file-replace.js";
 import { openNoFollow } from "../no-follow.js";
 import { type FoundFolderRepair, keepFolderPrivate, keepFoundFolderPrivate, type PrivateMachine, type RepairEnd, shareLikeParent } from "./private-files.js";
@@ -219,18 +220,45 @@ export async function openLedgerFile(path: string, flags: number, mode = 0o600):
   }
 }
 
-/** A session record file's text, or undefined when it or its folder is missing. Refuses what `makeLedgerFolder` does. */
-export async function readLedgerFile(path: string, directory: string): Promise<string | undefined> {
+/**
+ * A session record file opened to read, or undefined when it or its folder is missing. Refuses what `makeLedgerFolder`
+ * does.
+ */
+async function openLedgerToRead(path: string, directory: string): Promise<FileHandle | undefined> {
   await ledgerFolder(directory, false);
-  let handle: FileHandle;
   try {
-    handle = await openLedgerFile(path, constants.O_RDONLY);
+    return await openLedgerFile(path, constants.O_RDONLY);
   } catch (error) {
     if (errno(error) === "ENOENT") return undefined;
     throw error;
   }
+}
+
+/**
+ * A session record file's text, or undefined when it or its folder is missing. Refuses what `makeLedgerFolder` does.
+ * For a file Rerail replaces whole; one a session appends to for its whole life is read by {@link readLedgerLines}.
+ */
+export async function readLedgerFile(path: string, directory: string): Promise<string | undefined> {
+  const handle = await openLedgerToRead(path, directory);
+  if (handle === undefined) return undefined;
   try {
     return await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Hands each line of a session record file to `onLine` and returns its last line, the text after its last newline
+ * (`eachLine`); undefined when it or its folder is missing. Refuses what `makeLedgerFolder` does. A file a session
+ * appends to for its whole life can hold more text than one string can (536,870,888 characters in Node 22): read
+ * whole, a session open for weeks could no longer be opened again.
+ */
+export async function readLedgerLines(path: string, directory: string, onLine: (line: string) => void): Promise<LastLine | undefined> {
+  const handle = await openLedgerToRead(path, directory);
+  if (handle === undefined) return undefined;
+  try {
+    return await eachLine(handle, onLine);
   } finally {
     await handle.close();
   }
