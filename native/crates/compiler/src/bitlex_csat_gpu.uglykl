@@ -87,13 +87,11 @@
 #define D_CENDS 28u
 #define D_CN 29u
 #define D_CARRY 30u      // word offset of its room in `carry` (`CARRY_ROOM` words and its count)
-// Its wide gates (more than two arguments: an And or a One), each counted (`cs_cnt`), and their arguments by
-// variable (`bitlex_csat::Fanout`'s `wide`): the window's, and a solve's own (NONE: none).
-#define D_WIDES 31u
-#define D_WSTARTS 32u
-#define D_WENTS 33u
-#define D_OWSTARTS 34u
-#define D_OWENTS 35u
+// Beside each fanout's gates (`D_FGATES`, `D_OGATES`), entry for entry, what a value of the variable adds to the
+// gate's counter (`bitlex_csat::Fanout`'s `counts`: its arguments that are the variable's positive literal and its
+// negative one, `pos | neg << 16`): the window's, and a solve's own (NONE: none).
+#define D_FCOUNTS 31u
+#define D_OCOUNTS 32u
 #define DESC 40u
 
 // A state's header.
@@ -104,7 +102,7 @@
 #define H_CONFLICTS 4u
 #define H_LEARNED 5u
 #define H_USED 6u
-#define H_COUNTED 7u  // the trail's values the wide gates' counters hold: its first ones
+#define H_COUNTED 7u  // the trail's values the gates' counters hold: its first ones
 #define H_STEPS 8u    // the steps it took
 #define H_BEGAN 9u    // a resumed solve's trail where its search began: values learned at level 0 lie past it
 #define H_BUMP 10u    // the next bump
@@ -194,14 +192,13 @@ typedef struct Csat {
     uint32_t start_set, start_n, start_conflict, start_cn, start_broken, carry_vars, carry_at;
     // The state's arrays (word offsets in `s`).
     uint32_t wide;
-    // `val`: a variable's word (below); `rw`: its reason and the argument that implied it (`why`), side by side;
-    // `act` and `tree` the decisions' (`cs_top`).
-    uint32_t val, rw, trail, limits, tpos, act, tree, whead, wnext, wlit, lstart, arena, cbuf, ebuf, lmark, lbd;
+    // `vr`: a variable's record (`cs_vr`); `act` and `tree` the decisions' (`cs_top`).
+    uint32_t vr, trail, limits, act, tree, wnext, wlit, lstart, arena, cbuf, ebuf, lmark, lbd;
     // The tree's levels above the activities.
     uint32_t tlevels;
-    // The wide gates: their count, their arguments by variable (the window's, a solve's own), and their counters
-    // (`cnt` in the state, the first `cwn` in threadgroup memory, `cw`).
-    uint32_t wides, ws, we, ows, owe, cnt, cwn;
+    // The gates' counters (`cnt` in the state, the first `cwn` in threadgroup memory, `cw`), and what a value adds
+    // to them, beside each fanout's gates (the window's `fc`, a solve's own `oc`).
+    uint32_t fc, oc, cnt, cwn;
     UKL_LOCAL uint32_t* cw;
     // Threadgroup memory: the header (`h`, the state's first `HEADER` words while the slot runs it) and the values
     // of the variables below `svars`, 2 bits each (`sv`, as a variable's word's low bits).
@@ -220,6 +217,13 @@ typedef struct Check {
 } Check;
 
 UKL_INLINE uint32_t cs_lvar(int32_t l) { return (uint32_t)(l < 0 ? -l : l); }
+// A variable's record, 8 words (one 32-byte sector: what a value's assignment writes and a round reads together):
+// its word (below), its reason and the argument that implied it (`why`), its trail position, and the heads of its
+// literals' watch lists (positive, negative); 2 words unused.
+#define VR 8u
+UKL_INLINE uint32_t cs_vr(UKL_PRIVATE Csat* c, uint32_t v) { return c->vr + VR * v; }
+// The watch list's head of literal slot `k` (`cs_lslot`).
+UKL_INLINE uint32_t cs_wh(UKL_PRIVATE Csat* c, uint32_t k) { return c->vr + VR * (k >> 1) + 5u + (k & 1u); }
 // A literal's watch list: the clauses watching it, visited when it turns false.
 UKL_INLINE uint32_t cs_lslot(int32_t l) { return 2u * cs_lvar(l) + (l < 0 ? 1u : 0u); }
 
@@ -227,7 +231,7 @@ UKL_INLINE uint32_t cs_lslot(int32_t l) { return 2u * cs_lvar(l) + (l < 0 ? 1u :
 // Its value (the low 2 bits) read from threadgroup memory where the variable is below `svars`.
 UKL_INLINE uint32_t cs_bits(UKL_PRIVATE Csat* c, uint32_t v)
 {
-    return v < c->svars ? (c->sv[v >> 4] >> (2u * (v & 15u))) & 3u : c->s[c->val + v] & 3u;
+    return v < c->svars ? (c->sv[v >> 4] >> (2u * (v & 15u))) & 3u : c->s[cs_vr(c, v)] & 3u;
 }
 // A variable's value bits added to (`add`) or taken from its threadgroup word: no two lanes' fields overlap, and a
 // field is 0 when set and its bits when unset, so an add sets it and a subtract unsets it.
@@ -246,7 +250,7 @@ UKL_INLINE int32_t cs_value(UKL_PRIVATE Csat* c, int32_t l)
     int32_t t = (w & 1u) != 0u ? 1 : -1;
     return l > 0 ? t : -t;
 }
-UKL_INLINE uint32_t cs_level_of(UKL_PRIVATE Csat* c, uint32_t v) { return (c->s[c->val + v] >> 2) & LEVELS; }
+UKL_INLINE uint32_t cs_level_of(UKL_PRIVATE Csat* c, uint32_t v) { return (c->s[cs_vr(c, v)] >> 2) & LEVELS; }
 
 UKL_INLINE uint32_t cs_g_kind(UKL_PRIVATE Csat* c, uint32_t g) { return c->b[c->rec + 4u * g] & 3u; }
 UKL_INLINE uint32_t cs_g_width(UKL_PRIVATE Csat* c, uint32_t g) { return c->b[c->rec + 4u * g] >> 2; }
@@ -285,37 +289,21 @@ UKL_INLINE int32_t cs_cl_lit(UKL_PRIVATE Csat* c, uint32_t id, uint32_t k)
     return (int32_t)c->s[c->arena + k];
 }
 
-// A wide gate's counter: its arguments false (the low 16 bits) and true (the high), as the trail's first
-// `H_COUNTED` values set them.
+// A gate's counter: its arguments false (the low 16 bits) and true (the high), as the trail's first `H_COUNTED`
+// values set them (`bitlex_csat_lanes::Search::cnt`). Each gate has one: the first `cwn` in threadgroup memory, the
+// rest in the state. A value's adds are reductions (nothing waits for their result).
 #define REPEATS 0x80000000u
-// A wide gate's counter is kept only in threadgroup memory: one past its room (`cwn`) has none, and its gate is
-// always checked in full, so no count reaches the device's memory.
-UKL_INLINE uint32_t cs_cnt(UKL_PRIVATE Csat* c, uint32_t o)
+UKL_INLINE uint32_t cs_cnt(UKL_PRIVATE Csat* c, uint32_t g)
 {
-    return c->cw[o];
+    // The state's read where the adds are made (L2), never a stale line of L1.
+    return g < c->cwn ? c->cw[g] : ukl_atomic_poll(c->s + c->cnt + g);
 }
-UKL_INLINE void cs_cnt_add(UKL_PRIVATE Csat* c, uint32_t o, uint32_t x)
+UKL_INLINE void cs_cnt_add(UKL_PRIVATE Csat* c, uint32_t g, uint32_t x)
 {
-    if (o < c->cwn)
-        ukl_atomic_add_local(c->cw + o, x);
-}
-// A variable's wide gates' entries (two words each: the gate's counter, its arguments that are the variable's
-// positive and negative literals): the window's, then the solve's own.
-UKL_INLINE uint32_t cs_wide_window(UKL_PRIVATE Csat* c, uint32_t v)
-{
-    return v <= c->fvars ? c->b[c->ws + v + 1u] - c->b[c->ws + v] : 0u;
-}
-UKL_INLINE uint32_t cs_wide_count(UKL_PRIVATE Csat* c, uint32_t v)
-{
-    uint32_t n = cs_wide_window(c, v);
-    if (c->ows != NONE)
-        n += c->b[c->ows + v + 1u] - c->b[c->ows + v];
-    return n;
-}
-UKL_INLINE uint32_t cs_wide_entry(UKL_PRIVATE Csat* c, uint32_t v, uint32_t k)
-{
-    uint32_t w = cs_wide_window(c, v);
-    return k < w ? c->we + 2u * (c->b[c->ws + v] + k) : c->owe + 2u * (c->b[c->ows + v] + k - w);
+    if (g < c->cwn)
+        ukl_atomic_add_local(c->cw + g, x);
+    else
+        ukl_atomic_add(c->s + c->cnt + g, x);
 }
 
 // The last lane whose first item (`off`, an exclusive sum over the first `f` lanes) is at or before item `t`: the
@@ -336,12 +324,12 @@ UKL_INLINE uint32_t cs_owner(uint32_t off, uint32_t f, uint32_t t __UKL_PARAMS)
 UKL_INLINE void cs_put(UKL_PRIVATE Csat* c, uint32_t at, int32_t l, uint32_t reason, uint32_t why)
 {
     uint32_t v = cs_lvar(l), bits = l > 0 ? 1u : 2u;
-    c->s[c->val + v] = (c->h[H_LEVEL] << 2) | bits;
+    c->s[cs_vr(c, v)] = (c->h[H_LEVEL] << 2) | bits;
     cs_sv_add(c, v, bits, true);
-    c->s[c->rw + 2u * v] = reason;
-    c->s[c->rw + 2u * v + 1u] = why;
+    c->s[cs_vr(c, v) + 1u] = reason;
+    c->s[cs_vr(c, v) + 2u] = why;
     c->s[c->trail + at] = (uint32_t)l;
-    c->s[c->tpos + v] = at;
+    c->s[cs_vr(c, v) + 3u] = at;
 }
 // Lane 0's: at the trail's end.
 UKL_INLINE void cs_assign(UKL_PRIVATE Csat* c, int32_t l, uint32_t reason, uint32_t why)
@@ -712,59 +700,78 @@ UKL_INLINE bool cs_seed(UKL_PRIVATE Csat* c, uint32_t g)
     return cs_lvar(cs_g_arg(c, g, n, 0u)) == cs_lvar(cs_g_arg(c, g, n, 1u));
 }
 
-// Every lane: the trail's values from `from` to `to` added to (or taken from) their wide gates' counters, a lane an
+// A variable's gates: the window's, then the solve's own.
+UKL_INLINE uint32_t cs_fan_window(UKL_PRIVATE Csat* c, uint32_t v)
+{
+    return v <= c->fvars ? c->b[c->fs + v + 1u] - c->b[c->fs + v] : 0u;
+}
+UKL_INLINE uint32_t cs_fan_count(UKL_PRIVATE Csat* c, uint32_t v)
+{
+    uint32_t n = cs_fan_window(c, v);
+    if (c->os != NONE)
+        n += c->b[c->os + v + 1u] - c->b[c->os + v];
+    return n;
+}
+UKL_INLINE uint32_t cs_fan_gate(UKL_PRIVATE Csat* c, uint32_t v, uint32_t k)
+{
+    uint32_t w = cs_fan_window(c, v);
+    return k < w ? c->b[c->fg + c->b[c->fs + v] + k] : c->b[c->og + c->b[c->os + v] + k - w];
+}
+// Its entry's counts (`D_FCOUNTS`, beside the gate).
+UKL_INLINE uint32_t cs_fan_counts(UKL_PRIVATE Csat* c, uint32_t v, uint32_t k)
+{
+    uint32_t w = cs_fan_window(c, v);
+    return k < w ? c->b[c->fc + c->b[c->fs + v] + k] : c->b[c->oc + c->b[c->os + v] + k - w];
+}
+
+// Every lane: the trail's values from `from` to `to` added to (or taken from) their gates' counters, a lane an
 // entry, 32 at a time.
 UKL_INLINE void cs_count(UKL_PRIVATE Csat* c, uint32_t from, uint32_t to, bool add __UKL_PARAMS)
 {
     for (uint32_t i0 = from; i0 < to; i0 += UKL_SIMD_WIDTH) {
         uint32_t i = i0 + c->lane, f = to - i0 < UKL_SIMD_WIDTH ? to - i0 : UKL_SIMD_WIDTH;
         int32_t l = i < to ? (int32_t)c->s[c->trail + i] : 0;
-        uint32_t mine = i < to ? cs_wide_count(c, cs_lvar(l)) : 0u;
+        uint32_t mine = i < to ? cs_fan_count(c, cs_lvar(l)) : 0u;
         uint32_t off = ukl_sg_exclusive_sum(mine, c->lane __UKL_ARGS), total = ukl_sg_sum(mine __UKL_ARGS);
         for (uint32_t t0 = 0u; t0 < total; t0 += UKL_SIMD_WIDTH) {
             uint32_t t = t0 + c->lane, owner = cs_owner(off, f, t __UKL_ARGS);
             int32_t ol = (int32_t)ukl_sg_shuffle((uint32_t)l, owner __UKL_ARGS);
             uint32_t oo = ukl_sg_shuffle(off, owner __UKL_ARGS);
             if (t < total) {
-                uint32_t e = cs_wide_entry(c, cs_lvar(ol), t - oo), o = c->b[e], pn = c->b[e + 1u];
+                uint32_t g = cs_fan_gate(c, cs_lvar(ol), t - oo), pn = cs_fan_counts(c, cs_lvar(ol), t - oo);
                 uint32_t pos = pn & 0xFFFFu, neg = pn >> 16, x = ol > 0 ? (neg | pos << 16) : (pos | neg << 16);
-                cs_cnt_add(c, o, add ? x : 0u - x);
+                if (x != 0u)
+                    cs_cnt_add(c, g, add ? x : 0u - x);
             }
         }
     }
     ukl_sg_barrier();
 }
 
-// Every lane: the trail's values not yet counted, counted (before a gate is checked).
-UKL_INLINE void cs_count_up(UKL_PRIVATE Csat* c __UKL_PARAMS)
+// Whether gate `g`'s check can find anything, from its counter and its output's value alone, its arguments not read
+// (`bitlex_csat_lanes::Search::may`). The counter lags the trail (a round counts its own literals, not those it
+// implies): a gate passed over here is judged again in the round that counts the rest.
+UKL_INLINE bool cs_may(UKL_PRIVATE Csat* c, uint32_t g)
 {
-    uint32_t from = c->h[H_COUNTED], to = c->h[H_TRAIL];
-    if (from >= to)
-        return;
-    cs_count(c, from, to, true __UKL_ARGS);
-    if (c->lane == 0u)
-        c->h[H_COUNTED] = to;
-    ukl_sg_barrier();
-}
-
-// Whether a wide gate's check (`cs_check_wide`) can find anything, from its counter and its output: the check's
-// cases, by the counts (an And's unset arguments all one literal: one of them, or the gate repeats a literal).
-UKL_INLINE bool cs_wide_may(UKL_PRIVATE Csat* c, uint32_t g)
-{
-    uint32_t r = c->rec + 4u * g, n = c->b[r] >> 2, kind = c->b[r] & 3u, o4 = c->b[r + 3u];
-    if (n >= 0x10000u || (o4 & ~REPEATS) >= c->cwn)
+    uint32_t r = c->rec + 4u * g, head = c->b[r], n = head >> 2, kind = head & 3u;
+    int32_t o = (int32_t)c->b[r + 1u], a0 = (int32_t)c->b[r + 2u], a1 = (int32_t)c->b[r + 3u];
+    uint32_t x = cs_cnt(c, g), F = x & 0xFFFFu, T = x >> 16;
+    int32_t vo = kind != 2u ? cs_value(c, o) : 0;
+    if (kind == 1u)
+        return cs_lvar(a0) == cs_lvar(a1) || F + T + (vo != 0 ? 1u : 0u) >= 2u;
+    if (n >= 0x10000u)
         return true;
-    uint32_t x = cs_cnt(c, o4 & ~REPEATS), F = x & 0xFFFFu, T = x >> 16, U = n - F - T;
+    uint32_t U = n - F - T;
     if (kind == 2u)
         return T >= 2u || (T == 1u && U > 0u) || (T == 0u && U <= 1u);
-    int32_t vo = cs_value(c, (int32_t)c->b[r + 1u]);
     if (F > 0u)
         return vo != -1;
     if (vo == 1)
         return U > 0u;
     if (vo == 0)
         return U == 0u;
-    return U <= 1u || (o4 & REPEATS) != 0u;
+    bool repeats = n == 2u ? a0 == a1 : (n > 2u && ((uint32_t)a1 & REPEATS) != 0u);
+    return U <= 1u || repeats;
 }
 
 // The lanes' gates (`active`), checked: a conflict (the lowest lane's, its clause in `cbuf`), or what they imply on
@@ -773,12 +780,11 @@ UKL_INLINE bool cs_items(UKL_PRIVATE Csat* c, uint32_t g, bool active __UKL_PARA
 {
     Check k;
     k.mode = M_NONE;
-    cs_count_up(c __UKL_ARGS);
-    // The wide Ands and Ones the group checks together (`cs_check_wide`), those whose counters say the check can
-    // find something; the rest each lane alone.
-    bool is_wide = active && cs_g_kind(c, g) != 1u && cs_g_width(c, g) > 2u;
-    bool wide = is_wide && cs_wide_may(c, g);
-    if (active && !is_wide)
+    // Only the gates whose counters say their check can find something are checked: the wide Ands and Ones by the
+    // group together (`cs_check_wide`), the rest each lane alone.
+    bool may = active && cs_may(c, g);
+    bool wide = may && cs_g_kind(c, g) != 1u && cs_g_width(c, g) > 2u;
+    if (may && !wide)
         k = cs_check_narrow(c, g);
     if (ukl_sg_ballot(wide __UKL_ARGS) != 0u) {
         Check w = cs_check_wide(c, g, wide __UKL_ARGS);
@@ -851,7 +857,7 @@ UKL_INLINE bool cs_items(UKL_PRIVATE Csat* c, uint32_t g, bool active __UKL_PARA
 // its clause).
 UKL_INLINE bool cs_visit(UKL_PRIVATE Csat* c, int32_t x __UKL_PARAMS)
 {
-    uint32_t link = c->whead + cs_lslot(x);
+    uint32_t link = cs_wh(c, cs_lslot(x));
     uint32_t k = c->s[link], nodes = 2u * (c->plain + c->lcap);
     // A node's next, its clause's other watch and the clause's literals' range: read together (each from the node's
     // number alone), and the next node's while this one is visited (visiting one changes no other's).
@@ -898,8 +904,8 @@ UKL_INLINE bool cs_visit(UKL_PRIVATE Csat* c, int32_t x __UKL_PARAMS)
             if (c->lane == 0u) {
                 c->s[link] = nk;
                 c->s[c->wlit + k] = (uint32_t)y;
-                c->s[c->wnext + k] = c->s[c->whead + cs_lslot(y)];
-                c->s[c->whead + cs_lslot(y)] = k;
+                c->s[c->wnext + k] = c->s[cs_wh(c, cs_lslot(y))];
+                c->s[cs_wh(c, cs_lslot(y))] = k;
             }
             ukl_sg_barrier();
         } else if (vo == 0) {
@@ -927,29 +933,11 @@ UKL_INLINE void cs_watch(UKL_PRIVATE Csat* c, uint32_t id, int32_t a, int32_t b)
 {
     uint32_t k = 2u * id;
     c->s[c->wlit + k] = (uint32_t)a;
-    c->s[c->wnext + k] = c->s[c->whead + cs_lslot(a)];
-    c->s[c->whead + cs_lslot(a)] = k;
+    c->s[c->wnext + k] = c->s[cs_wh(c, cs_lslot(a))];
+    c->s[cs_wh(c, cs_lslot(a))] = k;
     c->s[c->wlit + k + 1u] = (uint32_t)b;
-    c->s[c->wnext + k + 1u] = c->s[c->whead + cs_lslot(b)];
-    c->s[c->whead + cs_lslot(b)] = k + 1u;
-}
-
-// A variable's gates: the window's, then the solve's own.
-UKL_INLINE uint32_t cs_fan_window(UKL_PRIVATE Csat* c, uint32_t v)
-{
-    return v <= c->fvars ? c->b[c->fs + v + 1u] - c->b[c->fs + v] : 0u;
-}
-UKL_INLINE uint32_t cs_fan_count(UKL_PRIVATE Csat* c, uint32_t v)
-{
-    uint32_t n = cs_fan_window(c, v);
-    if (c->os != NONE)
-        n += c->b[c->os + v + 1u] - c->b[c->os + v];
-    return n;
-}
-UKL_INLINE uint32_t cs_fan_gate(UKL_PRIVATE Csat* c, uint32_t v, uint32_t k)
-{
-    uint32_t w = cs_fan_window(c, v);
-    return k < w ? c->b[c->fg + c->b[c->fs + v] + k] : c->b[c->og + c->b[c->os + v] + k - w];
+    c->s[c->wnext + k + 1u] = c->s[cs_wh(c, cs_lslot(b))];
+    c->s[cs_wh(c, cs_lslot(b))] = k + 1u;
 }
 
 // A round: the trail's next literals, a lane each; their clauses (lane 0), then their gates. True on a conflict.
@@ -960,7 +948,7 @@ UKL_INLINE bool cs_round(UKL_PRIVATE Csat* c __UKL_PARAMS)
     uint32_t f = tl - hd < UKL_SIMD_WIDTH ? tl - hd : UKL_SIMD_WIDTH;
     // Each lane its literal; the group visits the watch lists that are not empty, in trail order.
     int32_t lit = c->lane < f ? (int32_t)c->s[c->trail + hd + c->lane] : 0;
-    bool watched = lit != 0 && c->s[c->whead + cs_lslot(-lit)] != NONE;
+    bool watched = lit != 0 && c->s[cs_wh(c, cs_lslot(-lit))] != NONE;
     ukl_mask_t lists = ukl_sg_ballot(watched __UKL_ARGS);
     for (uint32_t i = 0u; i < f; i++)
         if (((lists >> i) & 1u) != 0u && cs_visit(c, -(int32_t)ukl_sg_shuffle((uint32_t)lit, i __UKL_ARGS) __UKL_ARGS))
@@ -975,6 +963,12 @@ UKL_INLINE bool cs_round(UKL_PRIVATE Csat* c __UKL_PARAMS)
         ukl_sg_barrier();
         return true;
     }
+    // The round's values counted, then their gates judged by the counters.
+    uint32_t from = c->h[H_COUNTED] > hd ? c->h[H_COUNTED] : hd;
+    cs_count(c, from, hd + f, true __UKL_ARGS);
+    if (c->lane == 0u)
+        c->h[H_COUNTED] = hd + f;
+    ukl_sg_barrier();
     uint32_t mine = c->lane < f ? cs_fan_count(c, v) : 0u;
     uint32_t off = ukl_sg_exclusive_sum(mine, c->lane __UKL_ARGS);
     uint32_t total = ukl_sg_sum(mine __UKL_ARGS);
@@ -1164,13 +1158,13 @@ UKL_INLINE void cs_tstart(UKL_PRIVATE Csat* c __UKL_PARAMS)
 // the clause that did (`*id`).
 UKL_INLINE uint32_t cs_explain(UKL_PRIVATE Csat* c, uint32_t v, UKL_PRIVATE uint32_t* id)
 {
-    uint32_t r = c->s[c->rw + 2u * v], w = c->s[c->rw + 2u * v + 1u], len = 0u;
+    uint32_t r = c->s[cs_vr(c, v) + 1u], w = c->s[cs_vr(c, v) + 2u], len = 0u;
     *id = NONE;
     if ((r & GATE) == 0u) {
         *id = r;
         return 0u;
     }
-    int32_t l = (c->s[c->val + v] & 1u) != 0u ? (int32_t)v : -(int32_t)v;
+    int32_t l = (c->s[cs_vr(c, v)] & 1u) != 0u ? (int32_t)v : -(int32_t)v;
     uint32_t g = r & ~GATE, n = cs_g_width(c, g), kind = cs_g_kind(c, g);
     int32_t o = cs_g_out(c, g);
     if (kind == 0u) {
@@ -1261,7 +1255,7 @@ UKL_INLINE int32_t cs_ex_lit(UKL_PRIVATE Csat* c, uint32_t g, uint32_t w, int32_
     return -cs_g_arg(c, g, n, w);
 }
 
-// The most wide gates with a counter: the rest are checked in full each time.
+// The most gates' counters in threadgroup memory (the first gates'): the rest are the state's.
 #define CW_ROOM 512u
 
 // Every lane: the bump queue's `n` variables raised in the tree, a lane each, and the queue emptied.
@@ -1313,11 +1307,11 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
             if (j < j1)
                 q = eg != NONE ? cs_ex_lit(c, eg, ew, el, j) : (id != NONE ? cs_cl_lit(c, id, j) : (int32_t)c->s[c->cbuf + j]);
             uint32_t v = q != 0 ? cs_lvar(q) : 0u;
-            uint32_t lv = q != 0 ? cs_level_of(c, v) : 0u, tp = q != 0 ? c->s[c->tpos + v] : 0u;
+            uint32_t lv = q != 0 ? cs_level_of(c, v) : 0u, tp = q != 0 ? c->s[cs_vr(c, v) + 3u] : 0u;
             // A level-0 value left out: a root of the core (lanes on one variable write the same word).
             if (q != 0 && q != p && lv == 0u)
-                c->s[c->val + v] |= RESTED;
-            bool can = q != 0 && q != p && lv != 0u && (c->s[c->val + v] & SEEN) == 0u;
+                c->s[cs_vr(c, v)] |= RESTED;
+            bool can = q != 0 && q != p && lv != 0u && (c->s[cs_vr(c, v)] & SEEN) == 0u;
             ukl_mask_t same = ukl_sg_match(can ? v : NONE - c->lane __UKL_ARGS);
             can = can && ukl_mask_lowest(same) == c->lane;
             ukl_mask_t cands = ukl_sg_ballot(can __UKL_ARGS);
@@ -1328,7 +1322,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
             // Each one met bumped, at once (a lane each: the bumps' order is not the tree's).
             uint32_t w = 0u;
             if (can) {
-                c->s[c->val + v] |= SEEN;
+                c->s[cs_vr(c, v)] |= SEEN;
                 w = c->s[c->act + v] + c->h[H_BUMP];
                 c->s[c->act + v] = w;
                 if (lv != here)
@@ -1395,7 +1389,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
                     return 0u;
                 }
                 uint32_t lo = at > UKL_SIMD_WIDTH ? at - UKL_SIMD_WIDTH : 0u, i = lo + c->lane;
-                bool hit = i < at && (c->s[c->val + cs_lvar((int32_t)c->s[c->trail + i])] & SEEN) != 0u;
+                bool hit = i < at && (c->s[cs_vr(c, cs_lvar((int32_t)c->s[c->trail + i]))] & SEEN) != 0u;
                 ukl_mask_t m = ukl_sg_ballot(hit __UKL_ARGS);
                 if (m != 0u) {
                     at = lo + 63u - ukl_clz64((uint64_t)m);
@@ -1408,7 +1402,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
         ukl_sg_barrier();
         count--;
         if (c->lane == 0u) {
-            c->s[c->val + cs_lvar(l)] &= ~SEEN;
+            c->s[cs_vr(c, cs_lvar(l))] &= ~SEEN;
             if (count == 0u)
                 c->s[c->arena + u] = (uint32_t)(-l);
         }
@@ -1419,10 +1413,10 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
         }
         // Its reason next: a clause, or a gate and the argument that implied it.
         p = l;
-        uint32_t r = c->s[c->rw + 2u * cs_lvar(l)];
+        uint32_t r = c->s[cs_vr(c, cs_lvar(l)) + 1u];
         if ((r & GATE) != 0u) {
             eg = r & ~GATE;
-            ew = c->s[c->rw + 2u * cs_lvar(l) + 1u];
+            ew = c->s[cs_vr(c, cs_lvar(l)) + 2u];
             el = l;
             id = NONE;
         } else {
@@ -1440,7 +1434,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
         uint32_t k = kb + c->lane, lv = 0u;
         if (k < len) {
             uint32_t v = cs_lvar((int32_t)c->s[c->arena + u + k]);
-            c->s[c->val + v] &= ~SEEN;
+            c->s[cs_vr(c, v)] &= ~SEEN;
             lv = cs_level_of(c, v);
         }
         uint32_t top = ukl_sg_max(lv __UKL_ARGS);
@@ -1477,7 +1471,7 @@ UKL_INLINE uint32_t cs_analyze(UKL_PRIVATE Csat* c, UKL_PRIVATE uint32_t* back _
 UKL_INLINE void cs_back_to(UKL_PRIVATE Csat* c, uint32_t to __UKL_PARAMS)
 {
     uint32_t start = c->s[c->limits + to], tl = c->h[H_TRAIL], counted = c->h[H_COUNTED];
-    // The values counted taken from the wide gates' counters.
+    // The values counted taken from their gates' counters.
     if (start < counted) {
         cs_count(c, start, counted < tl ? counted : tl, false __UKL_ARGS);
         if (c->lane == 0u)
@@ -1489,7 +1483,7 @@ UKL_INLINE void cs_back_to(UKL_PRIVATE Csat* c, uint32_t to __UKL_PARAMS)
         int32_t l = i < tl ? (int32_t)c->s[c->trail + i] : 0;
         uint32_t v = cs_lvar(l);
         if (i < tl) {
-            c->s[c->val + v] = 0u;
+            c->s[cs_vr(c, v)] = 0u;
             cs_sv_add(c, v, l > 0 ? 1u : 2u, false);
         }
         cs_insert(c, i < tl, v __UKL_ARGS);
@@ -1581,7 +1575,7 @@ UKL_INLINE bool cs_reduce(UKL_PRIVATE Csat* c __UKL_PARAMS)
         cs_back_to(c, 0u __UKL_ARGS);
     uint32_t slots = 2u * (c->vars + 1u);
     for (uint32_t k = c->lane; k < slots; k += UKL_SIMD_WIDTH)
-        c->s[c->whead + k] = NONE;
+        c->s[cs_wh(c, k)] = NONE;
     ukl_sg_barrier();
     bool ok = true;
     if (c->lane == 0u) {
@@ -1589,12 +1583,12 @@ UKL_INLINE bool cs_reduce(UKL_PRIVATE Csat* c __UKL_PARAMS)
         uint32_t tl = c->h[H_TRAIL];
         for (uint32_t i = 0u; i < tl; i++) {
             uint32_t v = cs_lvar((int32_t)c->s[c->trail + i]);
-            uint32_t r = c->s[c->rw + 2u * v];
+            uint32_t r = c->s[cs_vr(c, v) + 1u];
             if ((r & GATE) == 0u && r != NONE && r >= c->plain) {
                 // What the clause read stays among the core's roots: the clause goes.
                 for (uint32_t k = cs_cl_begin(c, r), e = cs_cl_end(c, r); k < e; k++)
-                    c->s[c->val + cs_lvar(cs_cl_lit(c, r, k))] |= RESTED;
-                c->s[c->rw + 2u * v] = NONE;
+                    c->s[cs_vr(c, cs_lvar(cs_cl_lit(c, r, k)))] |= RESTED;
+                c->s[cs_vr(c, v) + 1u] = NONE;
             }
         }
         // Kept: the short (by levels) and the newer half, newest first while they fit in half the arena; dropped: those
@@ -1732,7 +1726,10 @@ UKL_INLINE void cs_resume(UKL_PRIVATE Csat* c __UKL_PARAMS)
         cs_put(c, i, (int32_t)c->b[t], c->b[t + 1u], c->b[t + 2u]);
     }
     ukl_sg_barrier();
+    // The window's values counted: no round counts them.
+    cs_count(c, 0u, sn, true __UKL_ARGS);
     if (c->lane == 0u) {
+        c->h[H_COUNTED] = sn;
         c->h[H_TRAIL] = sn;
         c->h[H_HEAD] = sn;
         if (c->start_broken != 0u) {
@@ -1783,15 +1780,17 @@ UKL_INLINE void cs_start(UKL_PRIVATE Csat* c __UKL_PARAMS)
 {
     uint32_t n = c->vars + 1u;
     for (uint32_t v = c->lane; v < n; v += UKL_SIMD_WIDTH) {
-        c->s[c->val + v] = 0u;
+        c->s[cs_vr(c, v)] = 0u;
         c->s[c->lmark + v] = 0u;
-        c->s[c->whead + 2u * v] = NONE;
-        c->s[c->whead + 2u * v + 1u] = NONE;
+        c->s[cs_vr(c, v) + 5u] = NONE;
+        c->s[cs_vr(c, v) + 6u] = NONE;
     }
     for (uint32_t w = c->lane; 16u * w < c->svars; w += UKL_SIMD_WIDTH)
         c->sv[w] = 0u;
     for (uint32_t k = c->lane; k < c->cwn; k += UKL_SIMD_WIDTH)
         c->cw[k] = 0u;
+    for (uint32_t k = c->cwn + c->lane; k < c->gates; k += UKL_SIMD_WIDTH)
+        c->s[c->cnt + k] = 0u;
     cs_tstart(c __UKL_ARGS);
     if (c->lane == 0u) {
         for (uint32_t h = 0u; h < HEADER; h++)
@@ -1855,23 +1854,20 @@ UKL_INLINE void cs_start(UKL_PRIVATE Csat* c __UKL_PARAMS)
 UKL_INLINE void cs_setup(UKL_PRIVATE Csat* c, UKL_GLOBAL const uint32_t* d, UKL_LOCAL uint32_t* room_at, uint32_t room)
 {
     c->vars = d[D_VARS];
-    c->wides = d[D_WIDES];
     // The slot's threadgroup room split by its formula alone, never by the batch (a search resumed in another batch
-    // keeps the same counters and values there): the wide gates' counters (`CW_ROOM` at most), then the values, 16
+    // keeps the same counters and values there): the first gates' counters (`CW_ROOM` at most), then the values, 16
     // variables a word, as many as fit.
-    c->cwn = c->wides < CW_ROOM ? c->wides : CW_ROOM;
+    c->gates = d[D_GATES];
+    c->cwn = c->gates < CW_ROOM ? c->gates : CW_ROOM;
     if (c->cwn > room)
         c->cwn = room;
     c->cw = room_at;
     c->sv = room_at + c->cwn;
     c->svars = c->vars + 1u < 16u * (room - c->cwn) ? c->vars + 1u : 16u * (room - c->cwn);
-    c->ws = d[D_WSTARTS];
-    c->we = d[D_WENTS];
-    c->ows = d[D_OWSTARTS];
-    c->owe = d[D_OWENTS];
+    c->fc = d[D_FCOUNTS];
+    c->oc = d[D_OCOUNTS];
     c->fvars = d[D_FVARS];
     c->base = d[D_BASE];
-    c->gates = d[D_GATES];
     c->rec = d[D_REC];
     c->args = d[D_ARGS];
     c->fs = d[D_FSTARTS];
@@ -1901,20 +1897,17 @@ UKL_INLINE void cs_setup(UKL_PRIVATE Csat* c, UKL_GLOBAL const uint32_t* d, UKL_
     uint32_t n = c->vars + 1u, nodes = 2u * (c->plain + c->lcap);
     // What every step reads first, the learned clauses' room last: a search touches the room's pages only as it
     // fills them. (`state_words` on the host.)
-    c->val = HEADER;
-    c->rw = c->val + n;
-    c->trail = c->rw + 2u * n;
+    c->vr = HEADER;
+    c->trail = c->vr + VR * n;
     c->limits = c->trail + n;
-    c->tpos = c->limits + n;
-    c->act = c->tpos + n;
+    c->act = c->limits + n;
     c->tree = c->act + n;
     c->tlevels = 1u;
     while (cs_tcount(n, c->tlevels) > 1u)
         c->tlevels++;
     c->cnt = cs_tlevel(c, c->tlevels) + 2u;
-    c->lmark = c->cnt + c->wides;
-    c->whead = c->lmark + n;
-    c->cbuf = c->whead + 2u * n;
+    c->lmark = c->cnt + c->gates;
+    c->cbuf = c->lmark + n;
     c->ebuf = c->cbuf + c->wide;
     c->lbd = c->ebuf + c->wide;
     c->lstart = c->lbd + c->lcap;
@@ -1935,7 +1928,7 @@ UKL_INLINE void cs_load(UKL_PRIVATE Csat* c __UKL_PARAMS)
         uint32_t x = 0u;
         for (uint32_t k = 0u; k < 16u; k++) {
             uint32_t v = 16u * w + k;
-            x |= v < c->svars ? (c->s[c->val + v] & 3u) << (2u * k) : 0u;
+            x |= v < c->svars ? (c->s[cs_vr(c, v)] & 3u) << (2u * k) : 0u;
         }
         c->sv[w] = x;
     }
@@ -1943,7 +1936,7 @@ UKL_INLINE void cs_load(UKL_PRIVATE Csat* c __UKL_PARAMS)
 }
 
 // Lane 0: a literal's variable among a refuted solve's core.
-UKL_INLINE void cs_core(UKL_PRIVATE Csat* c, int32_t l) { c->s[c->val + cs_lvar(l)] |= SEEN; }
+UKL_INLINE void cs_core(UKL_PRIVATE Csat* c, int32_t l) { c->s[cs_vr(c, cs_lvar(l))] |= SEEN; }
 
 // Lane 0: a refuted window's solve's core (`bitlex_csat_lanes::Search::used`), marked `SEEN` with the `RESTED`
 // ones: its contradiction's clause, the level-0 values its learned clauses rest on, and back along the trail
@@ -1963,7 +1956,7 @@ UKL_INLINE void cs_used(UKL_PRIVATE Csat* c)
     }
     for (uint32_t i = c->h[H_TRAIL]; i > 0u; i--) {
         uint32_t v = cs_lvar((int32_t)c->s[c->trail + i - 1u]);
-        if ((c->s[c->val + v] & (SEEN | RESTED)) == 0u || c->s[c->rw + 2u * v] == NONE)
+        if ((c->s[cs_vr(c, v)] & (SEEN | RESTED)) == 0u || c->s[cs_vr(c, v) + 1u] == NONE)
             continue;
         uint32_t eid = NONE, len = cs_explain(c, v, &eid);
         if (eid != NONE) {
@@ -1997,7 +1990,7 @@ UKL_INLINE void cs_carry(UKL_PRIVATE Csat* c, UKL_GLOBAL uint32_t* room __UKL_PA
             } else if (ok) {
                 b = began + j;
                 e = b + 1u;
-                ok = c->s[c->rw + 2u * cs_lvar((int32_t)c->s[c->trail + b])] == NONE;
+                ok = c->s[cs_vr(c, cs_lvar((int32_t)c->s[c->trail + b])) + 1u] == NONE;
             }
             for (uint32_t k = b; k < e && ok; k++) {
                 int32_t q = (int32_t)c->s[(pass == 0u ? c->arena : c->trail) + k];
@@ -2037,7 +2030,7 @@ UKL_INLINE void cs_report(UKL_PRIVATE Csat* c, UKL_GLOBAL uint32_t* o, UKL_GLOBA
     ukl_sg_barrier();
     if (st == SAT || core)
         for (uint32_t v0 = 0u; v0 <= c->vars; v0 += UKL_SIMD_WIDTH) {
-            uint32_t v = v0 + c->lane, w = v <= c->vars ? c->s[c->val + v] : 0u;
+            uint32_t v = v0 + c->lane, w = v <= c->vars ? c->s[cs_vr(c, v)] : 0u;
             ukl_mask_t m = ukl_sg_ballot(st == SAT ? (w & 1u) != 0u : (w & (SEEN | RESTED)) != 0u __UKL_ARGS);
             if (c->lane == 0u)
                 model[v0 / 32u] = (uint32_t)m;

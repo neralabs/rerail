@@ -45,6 +45,8 @@ const SLOTS: usize = 1 << 13;
 /// A slot's threadgroup memory at most, in words: 5 KiB, so that it does not bound the groups an SM keeps resident
 /// (16, by registers, on GB10's 100 KiB a SM, 1 KiB a group of it the driver's).
 const SHARED_WORDS: usize = 1280;
+/// A variable's record in a slot's state, in words (the kernel's `VR`).
+const VR: usize = 8;
 /// Analysis's bump queue in threadgroup memory (the kernel's `BQ`): variables, and their activities.
 const BQ: usize = 32;
 /// The state's header (the kernel's `HEADER`) and the statuses it reports.
@@ -72,10 +74,12 @@ struct Args {
 unsafe impl rerail_gpu::Pod for Args {}
 
 /// A formula's state, in words (the kernel's layout, `cs_setup`), its widest gate `wide - 2` wide, its plain
-/// clauses (and carried ones) `clauses`, its wide gates `wides`.
-fn state_words(vars: usize, clauses: usize, wide: usize, wides: usize) -> usize {
+/// clauses (and carried ones) `clauses`, its gates `gates`: a variable's record (`VR` words), its trail entry,
+/// level limit, activity and level mark; the tree; a counter a gate; the buffers, the learned clauses and their
+/// watches. Whole 32-byte sectors, so that a slot's records each lie in one.
+fn state_words(vars: usize, clauses: usize, wide: usize, gates: usize) -> usize {
     let (n, l, a) = (vars + 1, learned(vars) as usize, arena(vars) as usize);
-    HEADER + 9 * n + 2 * tree_nodes(n) + wides + 2 * wide + l + (l + 1) + 4 * (clauses + l) + a
+    (HEADER + (VR + 4) * n + 2 * tree_nodes(n) + gates + 2 * wide + l + (l + 1) + 4 * (clauses + l) + a).next_multiple_of(VR)
 }
 
 /// The decisions' tree's nodes over `n` activities (the kernel's `cs_tcount` levels): `n` divided by 32 again and
@@ -158,14 +162,14 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
     if !b2.same(b) {
         return Err(elsewhere());
     }
-    let (ws, we) = f.fan.placed_wide().ok_or_else(elsewhere)?;
-    let (os, og, ows, owe) = match f.own {
+    let fc = f.fan.placed_counts().ok_or_else(elsewhere)?;
+    let (os, og, oc) = match f.own {
         Some(o) => {
             let (s, g) = o.placed().ok_or_else(elsewhere)?;
-            let (ws, we) = o.placed_wide().ok_or_else(elsewhere)?;
-            (words(s)?, words(g)?, words(ws)?, words(we)?)
+            let c = o.placed_counts().ok_or_else(elsewhere)?;
+            (words(s)?, words(g)?, words(c)?)
         }
-        None => (u32::MAX, u32::MAX, u32::MAX, u32::MAX),
+        None => (u32::MAX, u32::MAX, u32::MAX),
     };
     let wide = wide(f.gates);
     // A window's solve: its window's level 0 and the clauses earlier solves carried, in the block too.
@@ -233,11 +237,11 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
         r[10],
         r[11],
         r[12],
-        f.gates.wides() as u32,
-        words(ws)?,
-        words(we)?,
-        ows,
-        owe,
+        words(fc)?,
+        oc,
+        0,
+        0,
+        0,
         0,
         0,
         0,
@@ -249,7 +253,7 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
         resume: f.resume.is_some(),
         carries: cv != 0,
         vars: f.vars,
-        slot_words: state_words(f.vars, f.clauses.len() + carried, wide, f.gates.wides()),
+        slot_words: state_words(f.vars, f.clauses.len() + carried, wide, f.gates.len()),
         block: b.clone(),
     })
 }

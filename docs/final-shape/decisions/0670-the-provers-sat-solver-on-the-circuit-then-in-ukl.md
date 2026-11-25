@@ -551,3 +551,23 @@ formula").
   Its longest search (897,135 rounds, 11,071 conflicts) is the rebuilt heap's: the twin without the rebuild takes
   643,551 rounds on it. Over Kotlin's 36 searches of over 100 ms, the twin takes 59,861 conflicts (57,414
   without the rebuild), the CPU's solver 49,791.
+- **Every gate decided by its counter** (the user, 2026-11-25: "COMPLETE THE FUCKING WORK"; the published GPU SAT
+  work's shape, a counter word a gate updated by atomic adds and a bit pair a variable). Each gate, narrow or
+  wide, has a counter word (its arguments false and true); a variable's entries in the fanout carry what its value
+  adds to each of its gates' counters (`Fanout::counts`, beside `gates`; 0 where the variable is only the gate's
+  output), and the wide gates' ordinals are gone (a counter is its gate's number). A round first adds its literals'
+  entries (reductions on the state's counters, local atomics on the first 512 in threadgroup memory), then judges
+  each entry's gate by its counter and its output's value alone (`cs_may`, `Search::may`); a gate's arguments are
+  read only where that says its check can imply or conflict. The counters lag the trail (a round counts its own
+  literals, not those it implies): a gate passed over is judged again in the round that counts the rest. That
+  changes the search, and the twin keeps the same counters, rounds and judgement. A variable's value word, reason,
+  argument, trail position and watch heads are one 8-word record, one 32-byte sector; the activities stay an
+  array, the decisions' tree's first level. The state's size had counted 9 words a variable where the layout took
+  10; it now counts the 12 it takes, in whole sectors.
+- Measured (the Spark, nothing else on its GPU in the runs; the least of three a size): the device's tests step
+  for step with the twin; cold Kotlin with the device alone, the shipped bytes, 13.0 s of proving (8.7 s before),
+  its longest search 13.5 s. Over Kotlin's 36 searches of over 100 ms the twin takes 55,549 conflicts (59,861
+  before), the longest 8,035 conflicts and 679,601 rounds (11,071 and 897,135); the 36 on the device at once
+  12.2 s. The hard dump: 889 conflicts and 104,091 rounds (706 and 98,043); 1 copy 1.95 s (1.57 s), 512 copies
+  13.6 s (5.25 s), 1,024 copies 59.7 s (26 s); its gate items 2,291 M cycles (1,564 M) and its jumps back 551 M
+  (189 M), which now take each value back from its gates' counters.
