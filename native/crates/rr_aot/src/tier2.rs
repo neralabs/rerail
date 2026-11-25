@@ -833,41 +833,47 @@ impl<L: Layout> P<'_, L> {
     /// `directive`.
     fn directive(&mut self) -> R {
         if self.word() == w::DOT_13 {
+            let kind = match self.word_at(self.i + 1) {
+                w::POLICY_66 if self.word_at(self.i + 2) == w::LBRACE_20 => k::POLICY_DOCUMENT,
+                w::DECL_67 => k::DECLARATION,
+                w::VIOLATION_68 => k::VIOLATION_DECLARATION,
+                w::EDIT_69 => k::EDIT_DECLARATION,
+                w::FUNCTOR_70 => k::FUNCTOR_DECLARATION,
+                w::TYPE_2 => k::TYPE_DECLARATION,
+                w::INPUT_58 | w::OUTPUT_59 => k::IO_DIRECTIVE,
+                w::LATTICE_71 => k::LATTICE_DECLARATION,
+                w::PRAGMA_1 => k::PRAGMA,
+                _ => k::SETTING,
+            };
+            self.open(kind);
             match self.word_at(self.i + 1) {
                 w::POLICY_66 if self.word_at(self.i + 2) == w::LBRACE_20 => {
-                    self.open(k::POLICY_DOCUMENT);
                     self.p(w::DOT_13)?;
                     self.p(w::POLICY_66)?;
                     self.leaf_open();
                     self.json_document()?;
                     self.leaf_close(k::JSON_OBJECT)?;
                     self.field_made(f::DOCUMENT);
-                    self.close()?;
                 }
                 w::DECL_67 => {
-                    self.open(k::DECLARATION);
                     self.p_stored(w::DOT_13, k::DOT)?;
                     self.p(w::DECL_67)?;
                     self.id(f::NAME)?;
                     self.column_list()?;
                     self.field_made(f::COLUMNS);
                     self.modifiers()?;
-                    self.close()?;
                 }
                 w::VIOLATION_68 => {
                     self.violation_declaration()?;
                 }
                 w::EDIT_69 => {
-                    self.open(k::EDIT_DECLARATION);
                     self.p(w::DOT_13)?;
                     self.p(w::EDIT_69)?;
                     self.id(f::NAME)?;
                     self.column_list()?;
                     self.field_made(f::COLUMNS);
-                    self.close()?;
                 }
                 w::FUNCTOR_70 => {
-                    self.open(k::FUNCTOR_DECLARATION);
                     self.p_stored(w::DOT_13, k::DOT)?;
                     self.p(w::FUNCTOR_70)?;
                     self.id(f::NAME)?;
@@ -877,10 +883,8 @@ impl<L: Layout> P<'_, L> {
                     self.functor_type()?;
                     self.field_made(f::RETURN_TYPE);
                     self.modifiers()?;
-                    self.close()?;
                 }
                 w::TYPE_2 => {
-                    self.open(k::TYPE_DECLARATION);
                     self.p(w::DOT_13)?;
                     self.p(w::TYPE_2)?;
                     self.id(f::NAME)?;
@@ -895,7 +899,6 @@ impl<L: Layout> P<'_, L> {
                     } else {
                         return self.refuse();
                     }
-                    self.close()?;
                 }
                 w::INPUT_58 | w::OUTPUT_59 => {
                     self.io_directive()?;
@@ -904,18 +907,17 @@ impl<L: Layout> P<'_, L> {
                     self.lattice_declaration()?;
                 }
                 w::PRAGMA_1 => {
-                    self.open(k::PRAGMA);
                     self.p(w::DOT_13)?;
                     self.p(w::PRAGMA_1)?;
                     while self.kind() == t::STRING {
                         self.tk_as(true, k::STRING, f::ARGUMENT)?;
                     }
-                    self.close()?;
                 }
                 _ => {
                     self.setting()?;
                 }
             }
+            self.close()?;
         } else {
             return self.refuse();
         }
@@ -924,7 +926,6 @@ impl<L: Layout> P<'_, L> {
 
     /// `setting`.
     fn setting(&mut self) -> R {
-        self.open(k::SETTING);
         self.p_stored(w::DOT_13, k::DOT)?;
         if self.i >= self.n || self.bit_at(self.i, 1) {
             self.id(f::NAME)?;
@@ -960,7 +961,6 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
-        self.close()?;
         Ok(())
     }
 
@@ -1050,7 +1050,6 @@ impl<L: Layout> P<'_, L> {
 
     /// `io_directive`.
     fn io_directive(&mut self) -> R {
-        self.open(k::IO_DIRECTIVE);
         self.p_stored(w::DOT_13, k::DOT)?;
         match self.word() {
             w::INPUT_58 => {
@@ -1075,13 +1074,11 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
-        self.close()?;
         Ok(())
     }
 
     /// `lattice_declaration`.
     fn lattice_declaration(&mut self) -> R {
-        self.open(k::LATTICE_DECLARATION);
         self.p(w::DOT_13)?;
         self.p(w::LATTICE_71)?;
         self.id(f::NAME)?;
@@ -1101,13 +1098,11 @@ impl<L: Layout> P<'_, L> {
             }
         }
         self.p(w::RBRACE_21)?;
-        self.close()?;
         Ok(())
     }
 
     /// `violation_declaration`.
     fn violation_declaration(&mut self) -> R {
-        self.open(k::VIOLATION_DECLARATION);
         self.p(w::DOT_13)?;
         self.p(w::VIOLATION_68)?;
         self.id(f::NAME)?;
@@ -1153,7 +1148,6 @@ impl<L: Layout> P<'_, L> {
                 break;
             }
         }
-        self.close()?;
         Ok(())
     }
 
@@ -1578,17 +1572,6 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// `group`.
-    fn group(&mut self) -> R {
-        self.open(k::GROUP);
-        self.p(w::LPAREN_10)?;
-        self.body()?;
-        self.field_made(f::BODY);
-        self.p(w::RPAREN_11)?;
-        self.close()?;
-        Ok(())
-    }
-
     /// `literal`.
     fn literal(&mut self) -> R {
         self.deeper()?;
@@ -1607,9 +1590,21 @@ impl<L: Layout> P<'_, L> {
                 self.literal_tail()?;
             }
         } else if self.word() == w::BANG_19 {
-            self.negation()?;
+            self.open(k::NEGATION);
+            self.p(w::BANG_19)?;
+            self.literal()?;
+            self.field_made(f::OPERAND);
+            if self.made_is(k::COMPARISON) {
+                return self.refuse();
+            }
+            self.close()?;
         } else if self.word() == w::LPAREN_10 {
-            self.group()?;
+            self.open(k::GROUP);
+            self.p(w::LPAREN_10)?;
+            self.body()?;
+            self.field_made(f::BODY);
+            self.p(w::RPAREN_11)?;
+            self.close()?;
         } else {
             return self.refuse();
         }
@@ -1682,19 +1677,6 @@ impl<L: Layout> P<'_, L> {
         if self.made_is(k::CALL) {
             return self.refuse();
         }
-        Ok(())
-    }
-
-    /// `negation`.
-    fn negation(&mut self) -> R {
-        self.open(k::NEGATION);
-        self.p(w::BANG_19)?;
-        self.literal()?;
-        self.field_made(f::OPERAND);
-        if self.made_is(k::COMPARISON) {
-            return self.refuse();
-        }
-        self.close()?;
         Ok(())
     }
 
@@ -1875,18 +1857,12 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         } else {
-            self.unary_expression()?;
+            self.open(k::UNARY_EXPRESSION);
+            self.p(w::MINUS_27)?;
+            self.unsigned()?;
+            self.field_made(f::OPERAND);
+            self.close()?;
         }
-        Ok(())
-    }
-
-    /// `unary_expression`.
-    fn unary_expression(&mut self) -> R {
-        self.open(k::UNARY_EXPRESSION);
-        self.p(w::MINUS_27)?;
-        self.unsigned()?;
-        self.field_made(f::OPERAND);
-        self.close()?;
         Ok(())
     }
 

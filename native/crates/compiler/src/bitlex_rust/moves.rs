@@ -1,7 +1,7 @@
 //! A rule's code as the lean parser's moves (decision 0681): the generator builds them, rewrites them, and prints
 //! Rust from them once.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 /// A test at the token, as the lean parser asks it: the word at a place, the token's kind, a mark, a flag, and `!`,
@@ -609,6 +609,82 @@ pub(crate) fn what_of(seq: &[Op]) -> Option<String> {
     });
     let one = |v: Vec<String>| if let [x] = v.as_slice() { Some(x.rsplit("::").next().unwrap_or(x).trim_start_matches("r_").to_ascii_lowercase()) } else { None };
     one(fields).or_else(|| one(kinds)).or_else(|| one(calls))
+}
+
+/// The arms of each decision in `b` whose arms each open a node or only call a rule of `split` (its inline form, a
+/// node's): those calls opening and closing the node themselves (`G::opened_by_caller`); each such rule in `opened`.
+pub(crate) fn open_arms(b: &mut Block, split: &HashMap<String, Block>, marked: bool, opened: &mut Vec<String>) {
+    let kind = |body: &Block| -> Option<Option<String>> {
+        match body.as_slice() {
+            [Op::Open(_), ..] => Some(None),
+            [Op::Call(f)] if split.contains_key(f) => Some(Some(f.clone())),
+            [Op::Refuse] => Some(None),
+            _ => None,
+        }
+    };
+    blocks(b, &mut |x| {
+        for op in x.iter_mut() {
+            let bodies: Vec<&mut Block> = match op {
+                Op::If { arms, els } => arms.iter_mut().map(|(_, b)| b).chain(els.iter_mut()).collect(),
+                Op::Match { arms, default, .. } => arms.iter_mut().map(|(_, b)| b).chain(std::iter::once(default)).collect(),
+                _ => continue,
+            };
+            let ks: Option<Vec<Option<String>>> = bodies.iter().map(|b| kind(b)).collect();
+            let Some(ks) = ks else { continue };
+            if !ks.iter().any(Option::is_some) || bodies.iter().filter(|b| matches!(b.first(), Some(Op::Open(_)))).count() + ks.iter().flatten().count() < 2 {
+                continue;
+            }
+            let calls: Vec<String> = ks.into_iter().flatten().collect();
+            for body in bodies {
+                if let [Op::Call(f)] = body.as_slice()
+                    && let Some(inl) = split.get(f)
+                {
+                    let n = inl.len();
+                    *body = vec![inl[0].clone(), Op::Call(f.clone()), inl[n - 2].clone()];
+                    if marked {
+                        body.push(inl[n - 1].clone());
+                    }
+                }
+            }
+            opened.extend(calls);
+        }
+    });
+}
+
+/// A `match` whose arms each open a node first and close it last (`Op::Open`, `Op::Close`), its `_` one of them or a
+/// refusal: the node's kind a table on the word (`let kind = match …`), the node opened before the `match` and closed
+/// after it, as the lean parser's `statement` opens a directive's node once (decision 0685 step 2).
+pub(crate) fn open_once(b: &mut Block) {
+    blocks(b, &mut open_once_in);
+}
+
+fn open_once_in(b: &mut Block) {
+    let mut i = 0;
+    while i < b.len() {
+        let Op::Match { subject, arms, default } = &b[i] else {
+            i += 1;
+            continue;
+        };
+        let opens = |body: &Block| matches!((body.first(), body.last()), (Some(Op::Open(_)), Some(Op::Close)) if body.len() >= 2);
+        let refuses = matches!(default.as_slice(), [Op::Refuse]);
+        if arms.len() < 2 || !arms.iter().all(|(_, body)| opens(body)) || !(refuses || opens(default)) {
+            i += 1;
+            continue;
+        }
+        let kind = |body: &Block| match body.first() {
+            Some(Op::Open(k)) => k.clone(),
+            _ => unreachable!(),
+        };
+        let mut table = format!("let kind = match {subject} {{\n");
+        for (p, body) in arms {
+            let _ = writeln!(table, "    {} => {},", p.print(), kind(body));
+        }
+        let _ = writeln!(table, "    _ => {},\n}};", if refuses { "return self.refuse()".to_owned() } else { kind(default) });
+        let strip = |body: &Block| body[1..body.len() - 1].to_vec();
+        let m = Op::Match { subject: subject.clone(), arms: arms.iter().map(|(p, body)| (p.clone(), strip(body))).collect(), default: if refuses { default.clone() } else { strip(default) } };
+        b.splice(i..=i, [Op::Line(table), Op::Open("kind".into()), m, Op::Close]);
+        i += 4;
+    }
 }
 
 /// `b` with each call of `f` its code `body` (`G::inlined`): whether it had one.

@@ -50,7 +50,15 @@ changed and how.
    the same way. The loop form keeps its places. Not yet the lean parser's: `directive`'s arms each open their node,
    and the declaration, functor, violation, lattice and I/O directives, a setting and the literal's parts are still
    functions of their own.)
-2. The node's kind as a table; open and close hoisted.
+2. The node's kind as a table; open and close hoisted. (Done: after the rewrites, where a decision's arms each open a
+   node or only call a node's rule of one caller, that call opens and closes the node and the rule's method reads
+   what is inside it (`G::opened_by_caller`, `moves::open_arms`), as the lean parser's `violation`; then a `match`
+   whose arms each open a node and close it last opens it once (`moves::open_once`): `let kind = match …` of each
+   arm's kind, `self.open(kind)`, the `match` of the arms' code, `self.close()?`. A level that keeps no state of its
+   caller's (no depth counted, no word kept) is written in its caller too. rr's `directive` is now the lean
+   parser's `statement` and `directive` in one: the kind table on the word after the `.`, one open, the bodies, one
+   close; `violation_declaration`, `lattice_declaration`, `io_directive` and `setting` read inside the node
+   `directive` opens. Kotlin's code has no such `match`: unchanged.)
 3. Token classes. (Done: each choice of tokens of several words has a table of its own, named for it (`G::anon_table`:
    rr's `PUNCTUATION`, `COMPARISON_OPERATOR`, `ADDITIVE`, `MULTIPLICATIVE`; Kotlin's `SOFT_WORD`,
    `ASSIGNMENT_OPERATOR`, `INTERP_SOFT`), and the words chosen in a rule's own `|` the one `ANON`. A test of a

@@ -142,6 +142,8 @@ struct G<'a> {
     names: std::cell::OnceCell<moves::Names>,
     /// Each rule's code where its one caller calls it (`rule`, `inlined`), by its method's name: none for a level's.
     inline: std::cell::RefCell<HashMap<String, Block>>,
+    /// The rules' methods' names, in the order `inlined` gives their moves.
+    methods: std::cell::RefCell<Vec<String>>,
     /// What a level's call saves of its caller's, where only some levels change it (`records`' calls form): the levels
     /// that may refuse a mark or that a rule refusing one calls, and those whose code may set the level's word. None:
     /// every call saves both.
@@ -322,7 +324,7 @@ impl<'a> G<'a> {
                 refusing.clear();
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default(), methods: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -1577,8 +1579,9 @@ impl<'a> G<'a> {
             let mut c = self.code(body, &[], name)?;
             c.extend(self.ending_code(name)?);
             // Its code where its one caller calls it (`inlined`): the node opened and closed there, as the lean
-            // parser's `statement` opens `Include` in place. Not a level's: a level saves and counts its caller's state.
-            if !nested {
+            // parser's `statement` opens `Include` in place. Not a level's that counts the depth or keeps the caller's word:
+            // that state is its method's. (A call that saves the caller's marks asked is no plain call: none is written in.)
+            if !(nested && (self.counts_depth(name) || keeps_word)) {
                 let open = if node { Some(if (self.x.kind)(name).is_some_and(|id| id > 0x3ff) { "UNSET".to_owned() } else { self.kind_const(name)? }) } else { None };
                 let mut inl: Block = open.iter().map(|k| Op::Open(k.clone())).collect();
                 inl.extend(c.iter().cloned());
@@ -2290,7 +2293,51 @@ impl<'a> G<'a> {
                 made.insert(i, (f, b, Some(body)));
             }
         }
+        // The rules' code as written where they are called, for `opened_by_caller`.
+        let mut inline = self.inline.borrow_mut();
+        inline.clear();
+        for (f, _, inl) in &made {
+            if let Some(i) = inl {
+                inline.insert(f.clone(), i.clone());
+            }
+        }
+        *self.methods.borrow_mut() = made.iter().map(|(f, _, _)| f.clone()).collect();
         made.into_iter().map(|(_, b, _)| b).collect()
+    }
+
+    /// Where a decision's arms each open a node, an arm that only calls a node's rule of one caller opens and closes
+    /// that node itself, and the rule's method reads what is inside it, as the lean parser's `violation`: so the
+    /// decision can open its node once (`moves::open_once`, decision 0685 step 2).
+    /// `made`: the rules' methods (`inlined`'s, each its name's), their moves rewritten. A method rewritten again is
+    /// `rewrite`'s.
+    fn opened_by_caller(&self, made: &mut [(String, Block)], rewrite: &dyn Fn(&mut Block)) {
+        let text: String = made.iter().map(|(_, b)| moves::print(b, "")).collect();
+        let inline = self.inline.borrow();
+        // A rule's method, of one call, its inline form a node's: open, its code, close, `marked` cleared.
+        let split: HashMap<String, Block> = made
+            .iter()
+            .filter_map(|(f, _)| inline.get(f).filter(|b| text.matches(&format!("self.{f}()")).count() == 1 && matches!(b.first(), Some(Op::Open(_))) && b.len() >= 3 && matches!(b[b.len() - 2], Op::Close)).map(|b| (f.clone(), b.clone())))
+            .collect();
+        let mut opened: Vec<String> = Vec::new();
+        for (_, b) in made.iter_mut() {
+            moves::open_arms(b, &split, self.marked_read.get(), &mut opened);
+        }
+        for (f, b) in made.iter_mut() {
+            if !opened.contains(f) {
+                continue;
+            }
+            let inl = &split[f.as_str()];
+            let doc = match b.first() {
+                Some(Op::Line(l)) => l.lines().next().unwrap_or_default().to_owned(),
+                _ => String::new(),
+            };
+            let mut body = inl[1..inl.len() - 2].to_vec();
+            rewrite(&mut body);
+            *b = vec![line(format!("{doc}\n    fn {f}(&mut self) -> R {{\n")), Op::At("        ".into(), body), line("        Ok(())\n    }\n\n")];
+        }
+        for (_, b) in made.iter_mut() {
+            moves::open_once(b);
+        }
     }
 
     /// The loops the rules repeat (the same moves in more than one place, `REPEATED_LINES` or more): each one function,
@@ -2345,9 +2392,17 @@ impl<'a> G<'a> {
     pub(crate) fn printed(&self, mut bs: Vec<Block>) -> Vec<String> {
         let marks = self.mark_words.get_or_init(|| self.open_mark_words());
         let anon: Vec<(String, HashSet<String>)> = self.anon.borrow().iter().filter(|(t, _)| *t != "ANON").map(|(t, ws)| (t.clone(), ws.keys().map(|w| format!("w::{}", self.word_const(*w))).collect())).collect();
-        for b in bs.iter_mut() {
+        let rewrite = |b: &mut Block| {
             moves::rewrite(b, &moves::Cx { marks: marks.as_ref(), marked: self.marked_read.get() });
             moves::classes(b, &anon);
+        };
+        bs.iter_mut().for_each(&rewrite);
+        // The rules' methods (`inlined`, in order): each decision whose arms open a node opens it once.
+        let methods = self.methods.borrow().clone();
+        if methods.len() == bs.len() {
+            let mut made: Vec<(String, Block)> = methods.into_iter().zip(std::mem::take(&mut bs)).collect();
+            self.opened_by_caller(&mut made, &rewrite);
+            bs = made.into_iter().map(|(_, b)| b).collect();
         }
         let names = self.names.get_or_init(|| moves::Names::of(&mut bs));
         bs.iter().map(|b| moves::print_named(b, "", names)).collect()
