@@ -275,6 +275,12 @@ every restore. Where the volume keeps no change time to trust (FAT, exFAT, a net
 file's data is not all on this disk (a cloud placeholder, an offline file) or the file cannot be
 read, the stat decides, as it does for Git ([windows.md](windows.md#edits-that-keep-a-files-time)).
 
+Discovery's status hashes a tracked file whose stat differs from its index entry, reading the size
+its `lstat` gave. A file another process cuts short or removes in between (a log, a lock file, a file
+a formatter is writing) is taken as changed, and the rest of the discovery stands (`ChangedWhenRewritten`;
+tests: `a_tracked_file_cut_short_while_status_reads_it_is_changed`,
+`a_tracked_file_removed_while_status_reads_it_is_deleted`).
+
 Publication promotes clean overlay files into the snapshot (`promote_overlay_files_to_snapshot`, at
 most 64 paths).
 

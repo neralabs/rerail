@@ -270,6 +270,34 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// A blob, and what a test does just before status reads the tracked file whose index entry names
+/// it.
+#[cfg(test)]
+type TrackedFileReadHook = (gix::ObjectId, Box<dyn FnOnce() + Send>);
+
+/// Each hook runs once, inside a discovery, just before status reads the tracked file whose index
+/// entry names the hook's blob: a test rewrites the file there, after status took its size. Status
+/// compares on threads of its own, so the hooks are the process's, keyed by a blob only one test
+/// commits.
+#[cfg(test)]
+static BEFORE_TRACKED_FILE_READ: std::sync::Mutex<Vec<TrackedFileReadHook>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// Runs, once, the hook a test set for the blob `entry` names.
+#[cfg(test)]
+fn before_tracked_file_read(entry: &gix::index::Entry) {
+    let hook = {
+        let mut hooks = BEFORE_TRACKED_FILE_READ.lock().unwrap();
+        hooks
+            .iter()
+            .position(|(blob, _)| *blob == entry.id)
+            .map(|at| hooks.swap_remove(at).1)
+    };
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BaseFile {
     pub path: String,
@@ -1291,30 +1319,179 @@ fn untracked_entries(
     Ok(walk.entries)
 }
 
-/// Each path Git status finds staged or changed in the worktree, with how; its walk for untracked
-/// files is [`untracked_entries`]'s.
+/// Whether a comparison of a tracked file failed because the file changed after status took its
+/// `lstat`: cut short before the read, which hashes exactly the size the `lstat` gave
+/// (`UnexpectedEof`), or gone before the open (`NotFound`).
+fn rewritten_while_read(error: &gix::Error) -> bool {
+    error
+        .downcast_any_ref::<std::io::Error>()
+        .is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::UnexpectedEof | std::io::ErrorKind::NotFound
+            )
+        })
+}
+
+/// Compares a tracked file with its index entry as gix's own status does (`FastEq`), and takes for
+/// changed a file another process rewrites or removes while status reads it
+/// ([`rewritten_while_read`]). gix's status ends at the first comparison that fails, without
+/// naming the file, so one log or lock file written at the wrong moment would fail the whole
+/// discovery. A file taken for changed costs only its reuse: its bytes are read where they are
+/// used.
+#[derive(Clone)]
+struct ChangedWhenRewritten;
+
+impl gix::status::plumbing::index_as_worktree::traits::CompareBlobs for ChangedWhenRewritten {
+    type Output = ();
+
+    fn compare_blobs<'a, 'b>(
+        &mut self,
+        entry: &gix::index::Entry,
+        worktree_blob_size: u64,
+        data: impl gix::status::plumbing::index_as_worktree::traits::ReadData<'a>,
+        buf: &mut Vec<u8>,
+    ) -> gix::Result<Option<()>> {
+        #[cfg(test)]
+        before_tracked_file_read(entry);
+        let compared = gix::status::plumbing::index_as_worktree::traits::FastEq.compare_blobs(
+            entry,
+            worktree_blob_size,
+            data,
+            buf,
+        );
+        match compared {
+            Err(error) if rewritten_while_read(&error) => Ok(Some(())),
+            compared => compared,
+        }
+    }
+}
+
+/// The index entries status finds changed in the worktree. An entry whose stat alone is stale
+/// holds its blob's bytes: it is clean and left out, as gix's status iterator leaves it out.
+struct WorktreeItems(Vec<gix::status::Item>);
+
+impl<'index> gix::status::plumbing::index_as_worktree_with_renames::VisitEntry<'index>
+    for WorktreeItems
+{
+    type ContentChange = ();
+    type SubmoduleStatus = gix::submodule::Status;
+
+    fn visit_entry(
+        &mut self,
+        entry: gix::status::plumbing::index_as_worktree_with_renames::Entry<
+            'index,
+            Self::ContentChange,
+            Self::SubmoduleStatus,
+        >,
+    ) {
+        use gix::status::plumbing::index_as_worktree::EntryStatus;
+        use gix::status::plumbing::index_as_worktree_with_renames::Entry;
+        if !matches!(
+            entry,
+            Entry::Modification {
+                status: EntryStatus::NeedsUpdate(_),
+                ..
+            }
+        ) {
+            self.0.push(gix::status::Item::IndexWorktree(entry.into()));
+        }
+    }
+}
+
+/// What status finds staged under `patterns`: the index against HEAD's tree, the one the walk
+/// read, with renames as the repository configures them.
+fn staged_items(
+    repository: &gix::Repository,
+    index: &gix::index::State,
+    head_tree: gix::ObjectId,
+    patterns: &[gix::bstr::BString],
+) -> Result<Vec<gix::status::Item>, DiscoveryError> {
+    let mut pathspec = repository
+        .pathspec(
+            false,
+            patterns,
+            true,
+            index,
+            gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping,
+        )
+        .map_err(|error| discovery_error("cannot read Git status", error))?;
+    let mut items = Vec::new();
+    repository
+        .tree_index_status(
+            &head_tree,
+            index,
+            Some(&mut pathspec),
+            gix::status::tree_index::TrackRenames::AsConfigured,
+            |change, _, _| {
+                items.push(gix::status::Item::TreeIndex(change.into_owned()));
+                Ok(std::ops::ControlFlow::Continue(()))
+            },
+        )
+        .map_err(|error| discovery_error("cannot read Git status item", error))?;
+    Ok(items)
+}
+
+/// What status finds changed in the worktree under `patterns`: each tracked file against its index
+/// entry, compared by [`ChangedWhenRewritten`]. No walk for untracked files, no rename tracking,
+/// and no look inside a submodule.
+fn worktree_items(
+    repository: &gix::Repository,
+    index: &gix::index::State,
+    patterns: &[gix::bstr::BString],
+) -> Result<Vec<gix::status::Item>, DiscoveryError> {
+    let submodules = gix::status::index_worktree::BuiltinSubmoduleStatus::new(
+        repository.clone().into_sync(),
+        gix::status::Submodule::Given {
+            ignore: gix::submodule::config::Ignore::All,
+            check_dirty: false,
+        },
+    )
+    .map_err(|error| discovery_error("cannot read Git status", error))?;
+    let mut items = WorktreeItems(Vec::new());
+    repository
+        .index_worktree_status(
+            index,
+            patterns,
+            &mut items,
+            ChangedWhenRewritten,
+            submodules,
+            &mut gix::progress::Discard,
+            &std::sync::atomic::AtomicBool::new(false),
+            gix::status::index_worktree::Options::default(),
+        )
+        .map_err(|error| discovery_error("cannot read Git status item", error))?;
+    Ok(items.0)
+}
+
+/// What a scoped thread returned. Its panic goes on in this thread, as it would have had its work
+/// run here.
+fn joined<T>(thread: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    match thread.join() {
+        Ok(returned) => returned,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// Each path Git status finds staged or changed in the worktree, with how: the two comparisons of
+/// gix's own status ([`staged_items`] on a thread beside [`worktree_items`], as it runs them). Its
+/// walk for untracked files is [`untracked_entries`]'s.
 fn changed_items(
     found: &Discovery,
     index: &gix::worktree::Index,
     head_tree: gix::ObjectId,
     patterns: &[gix::bstr::BString],
 ) -> Result<BTreeMap<String, OverlayFlags>, DiscoveryError> {
-    let status = found
-        .repository
-        .status(gix::progress::Discard)
-        .map_err(|error| discovery_error("cannot prepare Git status", error))?
-        .index(gix::worktree::IndexPersistedOrInMemory::Persisted(
-            index.clone(),
-        ))
-        .untracked_files(gix::status::UntrackedFiles::None)
-        .index_worktree_submodules(None)
-        .head_tree(head_tree)
-        .into_iter(patterns.iter().cloned())
-        .map_err(|error| discovery_error("cannot read Git status", error))?;
+    let reader = found.repository.clone().into_sync();
+    let (staged, changed) = rerail_accel::exec::scoped(|scope| {
+        let staged =
+            scope.spawn(|| staged_items(&reader.to_thread_local(), index, head_tree, patterns));
+        let changed = worktree_items(&found.repository, index, patterns);
+        (joined(staged), changed)
+    });
     let mut flags = BTreeMap::new();
-    for item in status {
-        let item = item.map_err(|error| discovery_error("cannot read Git status item", error))?;
-        flag_item(&found.ignore, &item, &mut flags)?;
+    for item in staged?.iter().chain(&changed?) {
+        flag_item(&found.ignore, item, &mut flags)?;
     }
     Ok(flags)
 }
@@ -1397,12 +1574,7 @@ fn status_flags(
         let walk =
             scope.spawn(|| untracked_entries(&walker.to_thread_local(), index, &patterns, case));
         let changes = changed_items(found, index, head.tree, &patterns);
-        // A panic of the walk goes on in this thread, as it would have had the walk run here.
-        let untracked = match walk.join() {
-            Ok(untracked) => untracked,
-            Err(panic) => std::panic::resume_unwind(panic),
-        };
-        (changes, untracked)
+        (changes, joined(walk))
     });
     let mut flags = changes?;
     flag_untracked(found, untracked?, &mut flags, &mut head.nested_paths)?;
@@ -2394,6 +2566,154 @@ mod tests {
             workspace.read_source("source.py", u64::MAX).unwrap(),
             b"print('after')\n"
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A file written again with the bytes Git recorded has another stat and is still clean:
+    /// status reads it, finds its blob, and says only that the index entry's stat is stale.
+    #[test]
+    fn a_file_rewritten_with_its_committed_bytes_stays_clean() {
+        let root = fixture_directory("rewritten-same-bytes");
+        initialize_repository(&root, &[("source.py", b"print('same')\n")]);
+        let path = root.join("source.py");
+        std::fs::write(&path, b"print('same')\n").unwrap();
+        backdate(
+            &path,
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800),
+        );
+
+        let workspace = discover(&root).unwrap();
+
+        assert_eq!(workspace.overlays, []);
+        assert!(workspace.clean_source_alias("source.py").is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A repository at a fixture folder named `name` whose commit holds `racing.py` and `kept.py`.
+    /// `racing.py` is then written with other bytes of the same size, so status has to read it,
+    /// and `during_its_read` runs on its path just before status does. Returns the folder and the
+    /// blob the hook waits for ([`ran_during_its_read`]).
+    fn rewritten_while_status_reads_it(
+        name: &str,
+        during_its_read: impl FnOnce(&Path) + Send + 'static,
+    ) -> (PathBuf, gix::ObjectId) {
+        let root = fixture_directory(name);
+        let committed = format!("print('{name}, committed')\n");
+        initialize_repository(
+            &root,
+            &[
+                ("racing.py", committed.as_bytes()),
+                ("kept.py", b"print('kept')\n"),
+            ],
+        );
+        let racing = root.join("racing.py");
+        std::fs::write(&racing, committed.replace("committed", "rewritten")).unwrap();
+        let blob = gix::objs::compute_hash(
+            gix::hash::Kind::Sha1,
+            gix::objs::Kind::Blob,
+            committed.as_bytes(),
+        )
+        .unwrap();
+        BEFORE_TRACKED_FILE_READ
+            .lock()
+            .unwrap()
+            .push((blob, Box::new(move || during_its_read(&racing))));
+        (root, blob)
+    }
+
+    /// Whether the hook set for `blob` ran: status read the file, so the case raced it.
+    fn ran_during_its_read(blob: gix::ObjectId) -> bool {
+        !BEFORE_TRACKED_FILE_READ
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(waiting, _)| *waiting == blob)
+    }
+
+    /// Status hashes a tracked file by reading the size its `lstat` gave. A file another process
+    /// cuts short in between (a log, a lock file, a file a formatter is writing) is changed, and
+    /// the rest of the discovery stands.
+    #[test]
+    fn a_tracked_file_cut_short_while_status_reads_it_is_changed() {
+        let (root, blob) = rewritten_while_status_reads_it("cut-short", |racing| {
+            std::fs::write(racing, b"short\n").unwrap();
+        });
+
+        let workspace = discover(&root).unwrap();
+
+        assert!(
+            ran_during_its_read(blob),
+            "the file was cut short inside status"
+        );
+        assert_eq!(
+            workspace.overlays,
+            [WorkspaceOverlay {
+                path: "racing.py".to_owned(),
+                kind: OverlayKind::Unstaged,
+            }]
+        );
+        assert_eq!(workspace.clean_source_alias("racing.py"), None);
+        assert!(workspace.clean_source_alias("kept.py").is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A tracked file removed between status's `lstat` and its read, as a writer that replaces a
+    /// file by removing it first leaves it for a moment, is deleted.
+    #[test]
+    fn a_tracked_file_removed_while_status_reads_it_is_deleted() {
+        let (root, blob) = rewritten_while_status_reads_it("removed", |racing| {
+            std::fs::remove_file(racing).unwrap();
+        });
+
+        let workspace = discover(&root).unwrap();
+
+        assert!(
+            ran_during_its_read(blob),
+            "the file was removed inside status"
+        );
+        assert_eq!(
+            workspace.overlays,
+            [WorkspaceOverlay {
+                path: "racing.py".to_owned(),
+                kind: OverlayKind::Deleted,
+            }]
+        );
+        assert!(workspace.clean_source_alias("kept.py").is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A scoped discovery reads the status of its root alone: what is staged, changed and untracked
+    /// under it, as Git lists them there, and nothing beside it.
+    #[test]
+    fn a_scoped_discovery_reads_the_status_under_its_root_alone() {
+        let root = fixture_directory("scoped-status");
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        initialize_repository(
+            &root,
+            &[
+                ("pkg/staged.py", b"before\n"),
+                ("pkg/changed.py", b"before\n"),
+                ("pkg/kept.py", b"kept\n"),
+                ("staged.py", b"before\n"),
+                ("changed.py", b"before\n"),
+            ],
+        );
+        for folder in ["pkg/", ""] {
+            for name in ["staged.py", "changed.py", "new.py"] {
+                std::fs::write(root.join(format!("{folder}{name}")), b"after\n").unwrap();
+            }
+        }
+        run_git(&root, &["add", "--", "pkg/staged.py", "staged.py"]);
+        let under_pkg: Vec<_> = porcelain(&root)
+            .into_iter()
+            .filter(|(_, path)| path.starts_with("pkg/"))
+            .collect();
+        assert_eq!(under_pkg.len(), 3, "{under_pkg:?}");
+
+        let workspace = discover_under(&root.join("pkg")).unwrap();
+
+        assert_eq!(overlay_codes(&workspace), under_pkg);
+        assert!(workspace.clean_source_alias("pkg/kept.py").is_some());
         std::fs::remove_dir_all(root).unwrap();
     }
 
