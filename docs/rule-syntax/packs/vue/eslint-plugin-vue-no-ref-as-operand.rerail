@@ -8,8 +8,9 @@
 //   vjs(n), vts(n), vin_script(n)
 
 // eslint-plugin-vue's no-ref-as-operand: a variable that holds a ref, used where its value is meant. A ref variable
-// is declared with ref(), computed(), toRef(), customRef(), shallowRef() (imported from Vue) or defineModel()
-// as its initialiser, or destructured from toRefs(). It is reported as
+// is declared with ref(), computed(), toRef(), customRef(), shallowRef() (imported from Vue, under any local name) or
+// defineModel() as its initialiser, as written (`ref(0) as Ref<number>` is none), or destructured from toRefs() at
+// the pattern's top level (`{ a }`, `{ a: b }`; not `{ a: { b } }` or `...rest`). It is reported as
 //   the test of if, switch or ?:; an operand of a unary, update or binary operator; inside `${}` of an untagged
 //   template; either side of `+=` and the like, the left side of `=`; the left side of && || ?? when declared
 //   const; the object of a member other than .value and .effect; an argument of emit("event", …)
@@ -25,21 +26,26 @@ ref_operand(r, m) :- ref_read(r, s, m), vts(r), vin_script(r), operand(r, s).
 
 // ref_var(s, m, decl): declaration site s holds a ref made by m; decl is "const", "let" or "var".
 .decl ref_var(s: node, m: symbol, decl: symbol)
-ref_var(d, m, k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c), maker(c, m), declared(d, k).
-ref_var(p, "toRefs", k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c),
-    vvue_import_call(c, "toRefs"), field(d, "name", l), kind(l, "object_pattern"), has(l, p, ref_pattern_kind),
+ref_var(d, m, k) :- kind(d, "variable_declarator"), field(d, "value", w), deparen(w, c), maker(c, m), declared(d, k).
+ref_var(p, "toRefs", k) :- kind(d, "variable_declarator"), field(d, "value", w), deparen(w, c),
+    vvue_import_call(c, "toRefs"), field(d, "name", l), kind(l, "object_pattern"), child(l, e, _), torefs_leaf(e, p),
     pattern_name(p, _, d), declared(d, k).
-ref_var(p, "defineModel", k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c),
+ref_var(p, "defineModel", k) :- kind(d, "variable_declarator"), field(d, "value", w), deparen(w, c),
     model_call(c), field(d, "name", l), kind(l, "array_pattern"), child(l, p, 0), declared(d, k).
+// torefs_leaf(e, p): property e of the pattern binds p as a whole: `a`, `a = 1`, `a: b`, `a: b = 1`.
+.decl torefs_leaf(e: node, p: node)
+torefs_leaf(e, e) :- kind(e, "shorthand_property_identifier_pattern").
+torefs_leaf(e, p) :- kind(e, "object_assignment_pattern"), field(e, "left", p),
+    kind(p, "shorthand_property_identifier_pattern").
+torefs_leaf(e, p) :- kind(e, "pair_pattern"), field(e, "value", v), (kind(v, "identifier"), p = v ;
+    kind(v, "assignment_pattern"), field(v, "left", p), kind(p, "identifier")).
 // An alias is a ref variable too, also of a variable a ref was assigned to later:
 //   let foo; foo = ref(5); let bar = foo; bar = 4        bar = 4 is reported (foo's own reads are not)
-ref_var(d, m, k) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, r), kind(r, "identifier"),
+ref_var(d, m, k) :- kind(d, "variable_declarator"), field(d, "value", w), deparen(w, r), kind(r, "identifier"),
     (ref_read(r, _, m) ; assigned_ref(r, m)), declared(d, k).
 .decl assigned_ref(r: node, m: symbol)
 assigned_ref(r, m) :- kind(a, "assignment_expression"), field(a, "left", l), kind(l, "identifier"), ref_site(l, s),
-    field(a, "right", w), vunwrap(w, c), maker(c, m), ref_site(r, s), r != l.
-.decl ref_pattern_kind(k: symbol)
-ref_pattern_kind("identifier"). ref_pattern_kind("shorthand_property_identifier_pattern").
+    field(a, "right", w), deparen(w, c), maker(c, m), ref_site(r, s), r != l.
 .decl maker(c: node, m: symbol)
 maker(c, m) :- vvue_import_call(c, m), (m = "ref" ; m = "computed" ; m = "toRef" ; m = "customRef" ; m = "shallowRef").
 maker(c, "defineModel") :- model_call(c).
@@ -53,10 +59,17 @@ declared(d, k) :- kind(d, "variable_declarator"), child(v, d, _), (kind(v, "lexi
 // ref_read(r, s, m): identifier r reads the ref variable declared at s.
 .decl ref_read(r: node, s: node, m: symbol)
 ref_read(r, s, m) :- ref_var(s, m, _), !remade(s), ref_site(r, s), kind(r, "identifier").
-// remade(s): the variable is assigned a new ref later, `let b = ref(1); b = ref(2)`: the plugin then skips it.
+// remade(s): the variable is assigned a new ref later, `let b = ref(1); b = ref(2)`: the plugin then skips it, as
+// the later definition is processed last. defineModel() calls are processed after every ref() call, so a variable
+// declared with defineModel() is remade only by another defineModel(): `let m = defineModel(); m = ref(1)` keeps it.
 .decl remade(s: node)
-remade(s) :- kind(a, "assignment_expression"), field(a, "left", l), kind(l, "identifier"), ref_site(l, s),
-    field(a, "right", w), vunwrap(w, c), maker(c, _).
+remade(s) :- remaker(s, _), !model_init(s).
+remade(s) :- remaker(s, "defineModel"), model_init(s).
+.decl model_init(s: node)  // `let s = defineModel()`
+model_init(d) :- remaker(d, _), kind(d, "variable_declarator"), field(d, "value", w), deparen(w, c), model_call(c).
+.decl remaker(s: node, m: symbol)  // `s = m()`
+remaker(s, m) :- kind(a, "assignment_expression"), field(a, "left", l), kind(l, "identifier"), ref_site(l, s),
+    field(a, "right", w), deparen(w, c), maker(c, m).
 .decl operand(r: node, s: node)
 operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, k), whole(k).
 operand(r, s) :- ref_read(r, s, _), estree_parent(r, p), kind(p, "binary_expression"), !logical(p).
@@ -80,17 +93,135 @@ logical(p) :- kind(p, "binary_expression"), (op(p, "&&") ; op(p, "||") ; op(p, "
 .decl vmut_member(m: node, r: node)
 vmut_member(m, r) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", w),
     deparen(w, r).
-// emit_call(c): emit("event", …) with emit from defineEmits(), or setup's context: setup(p, { emit }), ctx.emit(…).
+// emit_call(c): emit("event", …) with emit from defineEmits(), or setup's context: setup(p, { emit }),
+// setup(p, { emit: e }), ctx.emit(…) (also with a default, `ctx = {}`). The event name is a string or a template
+// without `${}` (utils.isStringLiteral).
 .decl emit_call(c: node)
-emit_call(c) :- call_arg(c, a, 0), kind(a, "string"), field(c, "function", f), kind(f, "identifier"), ref_site(f, s),
-    emitter(s).
-emit_call(c) :- call_arg(c, a, 0), kind(a, "string"), field(c, "function", f), static_prop(f, o, "emit"),
+emit_call(c) :- call_arg(c, w, 0), deparen(w, a), event_name(a), field(c, "function", f), kind(f, "identifier"),
+    ref_site(f, s), emitter(s).
+emit_call(c) :- call_arg(c, w, 0), deparen(w, a), event_name(a), field(c, "function", f), static_prop(f, o, "emit"),
     kind(o, "identifier"), ref_site(o, s), setup_context(s).
+.decl event_name(a: node)
+event_name(a) :- kind(a, "string").
+event_name(a) :- kind(a, "template_string"), count : { child(a, s, _), kind(s, "template_substitution") } = 0.
 .decl emitter(s: node)
 emitter(d) :- kind(d, "variable_declarator"), field(d, "value", w), vunwrap(w, c), vmacro(c, "defineEmits").
 emitter(p) :- vsetup(_, f), fn_param(f, q, 1), kind(q, "object_pattern"), child(q, p, _),
     kind(p, "shorthand_property_identifier_pattern"), text(p, "emit").
+emitter(v) :- vsetup(_, f), fn_param(f, q, 1), kind(q, "object_pattern"), child(q, p, _), kind(p, "pair_pattern"),
+    field(p, "key", k), key_static(k, "emit"), field(p, "value", v), kind(v, "identifier").
 .decl setup_context(s: node)
 setup_context(p) :- vsetup(_, f), fn_param(f, p, 1), kind(p, "identifier").
-.decl fn_param(f: node, p: node, i: number)  // the i-th parameter's pattern
-fn_param(f, p, i) :- field(f, "parameters", ps), child(ps, q, i), (field(q, "pattern", p) ; !field(q, "pattern", _), p = q).
+// fn_param(f, p, i): the i-th parameter's pattern, its default skipped (utils.skipDefaultParamValue): TypeScript's
+// `ctx: T = {}` keeps it in the parameter's value, JavaScript's `ctx = {}` is an assignment pattern.
+.decl fn_param(f: node, p: node, i: number)
+fn_param(f, p, i) :- field(f, "parameters", ps), child(ps, q, i), field(q, "pattern", p).
+fn_param(f, p, i) :- field(f, "parameters", ps), child(ps, q, i), !field(q, "pattern", _),
+    !kind(q, "assignment_pattern"), p = q.
+fn_param(f, p, i) :- field(f, "parameters", ps), child(ps, q, i), kind(q, "assignment_pattern"), field(q, "left", p).
+
+// Review (vue-01): defect 1, `import { ref as r }`.
+.test review_renamed_ref_import exactly
+    .fixture "r1-renamed-ref.vue" ```
+        <script setup>
+        import { ref as r } from 'vue'
+        const n = r(0)
+        const m = n + 1
+        </script>
+        ```
+    .expect "vue/no-ref-as-operand" at "r1-renamed-ref.vue":4
+.end
+// Review (vue-01): defect 2, an event name written as a template literal.
+.test review_template_literal_event_name exactly
+    .fixture "r2-template-literal-emit.vue" ```
+        <script setup>
+        import { ref } from 'vue'
+        const emit = defineEmits(['change'])
+        const n = ref(0)
+        emit(`change`, n)
+        emit('change', n)
+        </script>
+        ```
+    .expect "vue/no-ref-as-operand" at "r2-template-literal-emit.vue":5
+    .expect "vue/no-ref-as-operand" at "r2-template-literal-emit.vue":6
+.end
+// Review (vue-01): defect 3, setup(props, { emit: e }); the pattern's first emit property is the one.
+.test review_renamed_emit exactly
+    .fixture "r3-emit-renamed.vue" ```
+        <script>
+        import { ref } from 'vue'
+        export default {
+          setup(props, { emit: e }) {
+            const n = ref(0)
+            e('change', n)
+          }
+        }
+        </script>
+        ```
+    .fixture "x3-emit-variants.vue" ```
+        <script>
+        import { ref } from "vue"
+        export default {
+          setup(props, { "emit": e2, emit = () => {} }) {
+            const n = ref(0)
+            e2(`change`, n)
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-ref-as-operand" at "r3-emit-renamed.vue":6
+    .expect "vue/no-ref-as-operand" at "x3-emit-variants.vue":6
+.end
+// Review (vue-01): defect 4, setup(props, ctx = {}).
+.test review_context_with_default exactly
+    .fixture "r4-ctx-default.vue" ```
+        <script>
+        import { ref } from 'vue'
+        export default {
+          setup(props, ctx = {}) {
+            const n = ref(0)
+            ctx.emit('change', n)
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-ref-as-operand" at "r4-ctx-default.vue":6
+.end
+// Review (vue-01): defect 5, `{ a: { b }, ...rest } = toRefs(props)` makes no ref variables (ESLint: nothing).
+.test review_nested_and_rest_to_refs exactly
+    .fixture "r5-torefs-nested.vue" ```
+        <script setup>
+        import { toRefs } from 'vue'
+        const props = defineProps(['a', 'c'])
+        const { a: { b }, ...rest } = toRefs(props)
+        const x = b + 1
+        const y = rest.c.foo
+        </script>
+        ```
+.end
+// Review (vue-01): defect 6, `ref(0) as Ref<number>` makes no ref variable.
+.test review_ref_under_as exactly
+    .fixture "r8-as-ref.vue" ```
+        <script setup lang="ts">
+        import { ref, type Ref } from 'vue'
+        const n = ref(0) as Ref<number>
+        const m = n + 1
+        let k = ref(0)
+        k = 4
+        </script>
+        ```
+    .expect "vue/no-ref-as-operand" at "r8-as-ref.vue":6
+.end
+// Review (vue-01): defect 7, defineModel() is processed after ref(), so `m = ref(1)` does not remake m.
+.test review_define_model_reassigned exactly
+    .fixture "r6-model-reassigned.vue" ```
+        <script setup>
+        import { ref } from 'vue'
+        let m = defineModel()
+        m = ref(1)
+        const z = m + 1
+        </script>
+        ```
+    .expect "vue/no-ref-as-operand" at "r6-model-reassigned.vue":4
+    .expect "vue/no-ref-as-operand" at "r6-model-reassigned.vue":5
+.end

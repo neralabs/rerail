@@ -11,6 +11,7 @@
 // `export` keyword, any other at the statement. No options.
 //   <script setup> export const a = 1; export * from "x"; export default {} </script>      all reported
 //   <script setup lang="ts"> export type T = 1; export interface I {}; export { type U } </script>  allowed
+//   <script setup lang="ts"> export declare const x: number; export declare class C {} </script>  allowed
 .violation export_in_setup(at: loc) code "vue/no-export-in-script-setup"
     "Move this export into a separate regular `<script>` block; `<script setup>` cannot export values."
     suppress eslint "vue/no-export-in-script-setup"
@@ -19,7 +20,8 @@ export_in_setup(e) :- setup_export(e), !field(e, "declaration", _).
 .decl setup_export(e: node)
 setup_export(e) :- vtop(e, "true"), vjs(e), kind(e, "export_statement"), !type_export(e).
 setup_export(e) :- vtop(e, "true"), vts(e), kind(e, "export_statement"), !type_export(e).
-// type_export(e): `export type …`, `export interface …`, `export declare type …`, or specifiers that are all types.
+// type_export(e): typescript-estree's exportKind "type": `export type …`, `export interface …`, any `export declare …`
+// (a const, function, class or namespace too), or specifiers that are all types.
 .decl type_export(e: node)
 type_export(e) :- kind(e, "export_statement"), op(e, "type").
 type_export(e) :- kind(e, "export_statement"), field(e, "declaration", d), type_decl(d).
@@ -27,6 +29,28 @@ type_export(e) :- kind(e, "export_statement"), child(e, c, _), kind(c, "export_c
     count : { child(c, s, _), kind(s, "export_specifier") } > 0,
     count : { child(c, s, _), kind(s, "export_specifier"), !op(s, "type") } = 0.
 .decl type_decl(d: node)
-type_decl(d) :- kind(d, "type_alias_declaration") ; kind(d, "interface_declaration").
-type_decl(d) :- kind(d, "ambient_declaration"), child(d, c, _), (kind(c, "type_alias_declaration") ;
-    kind(c, "interface_declaration")).
+type_decl(d) :- kind(d, "type_alias_declaration") ; kind(d, "interface_declaration") ; kind(d, "ambient_declaration").
+
+// Review (vue-01): defect 1, `export declare …` is a type export (typescript-estree's exportKind "type").
+.test review_declare_exports_are_types exactly
+    .fixture "e1-declare.vue" ```
+        <script setup lang="ts">
+        export declare const x: number
+        export declare function f(): void
+        export type * from './t'
+        export const a = 1
+        </script>
+        ```
+    .fixture "e2-ts-forms.vue" ```
+        <script setup lang="ts">
+        export declare class C {}
+        export declare namespace N {}
+        export enum E { A }
+        export { type T, type U } from './t'
+        export {}
+        </script>
+        ```
+    .expect "vue/no-export-in-script-setup" at "e1-declare.vue":5
+    .expect "vue/no-export-in-script-setup" at "e2-ts-forms.vue":4
+    .expect "vue/no-export-in-script-setup" at "e2-ts-forms.vue":6
+.end

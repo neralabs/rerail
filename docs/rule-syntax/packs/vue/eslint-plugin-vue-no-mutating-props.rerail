@@ -16,7 +16,8 @@
 // The template is checked against one component: <script setup>'s defineProps, else `export default`, else another
 // component object that is no `new Vue`. Its props are the declared names; defineProps drops whitelisted globals
 // and names a script declares at the top, and adds the names destructured from its result.
-//   v-model="prop" and :x.sync="prop" (also `this.prop`, `props.prop`) are reported at the expression.
+//   v-model="prop" and :x.sync="prop" (also `this.prop`, `props.prop`) are reported at the expression; so is a prop
+//   named as the directive's dynamic argument, `v-model:[prop]="x"` (the plugin's selector matches both containers).
 .violation mutated(at: node, x: symbol) code "vue/no-mutating-props" "Unexpected mutation of \"{x}\" prop."
     suppress eslint "vue/no-mutating-props"
 // The scripts and the template are one program, the view (vue/vue-01): each clause that starts a search once per view
@@ -167,9 +168,14 @@ whitelisted("RegExp"). whitelisted("Map"). whitelisted("Set"). whitelisted("JSON
 whitelisted("BigInt").
 
 // ---- template: v-model and v-bind.sync (getMemberChaining) ---------------------------------------------------------
+// Each expression container of the directive: its value, and its dynamic argument `[…]`, which the view writes as a
+// statement of its own standing at the `[…]`.
 .decl model(a: node, x: node)
-model(a, x) :- vdir(_, a, "model", _), tdir_expr(a, w), deparen(w, x).
-model(a, x) :- vdir(_, a, "bind", _), vmod(a, "sync"), tdir_expr(a, w), deparen(w, x).
+model(a, x) :- vdir(_, a, "model", _), tdir_part(a, w), deparen(w, x).
+model(a, x) :- vdir(_, a, "bind", _), vmod(a, "sync"), tdir_part(a, w), deparen(w, x).
+.decl tdir_part(a: node, x: node)
+tdir_part(a, x) :- tdir_expr(a, x).
+tdir_part(a, x) :- child(a, dv, _), kind(dv, "dynamic_directive_value"), tdir_expr(dv, x).
 .decl down(x: node, n: node)
 down(x, x) :- model(_, x).
 down(x, o) :- down(x, n), (kind(n, "member_expression") ; kind(n, "subscript_expression")), field(n, "object", w),
@@ -178,3 +184,55 @@ down(x, o) :- down(x, n), (kind(n, "member_expression") ; kind(n, "subscript_exp
 root(x, n) :- down(x, n), !kind(n, "member_expression"), !kind(n, "subscript_expression").
 .decl second(x: node, m: node)
 second(x, m) :- root(x, n), down(x, m), field(m, "object", w), deparen(w, n).
+
+// Review (vue-01): defect 1, `type foo` takes foo out of the template's props (ESLint: nothing).
+.test review_type_alias_named_like_a_prop exactly
+    .fixture "m1-type-alias.vue" ```
+        <template>
+          <button @click="foo = 'x'">x</button>
+        </template>
+        <script setup lang="ts">
+        type foo = string
+        const props = defineProps<{ foo: string }>()
+        </script>
+        ```
+.end
+// Review (vue-01): defect 2, props of `Base & { bar: string }` (ESLint: foo and bar, on one line).
+.test review_intersection_props exactly
+    .fixture "d10-intersection.vue" ```
+        <template>
+          <button @click="foo = 'x'; bar = 'y'">x</button>
+        </template>
+        <script setup lang="ts">
+        interface Base { foo: string }
+        type Props = Base & { bar: string }
+        const props = defineProps<Props>()
+        </script>
+        ```
+    .expect "vue/no-mutating-props" at "d10-intersection.vue":2
+.end
+// Review (vue-01): defect 3, a prop named as v-model's or .sync's dynamic argument.
+.test review_v_model_dynamic_argument exactly
+    .fixture "m10-dyn-arg.vue" ```
+        <template>
+          <comp v-model:[a]="x" />
+        </template>
+        <script setup>
+        import { ref } from 'vue'
+        defineProps(['a'])
+        const x = ref(1)
+        </script>
+        ```
+    .fixture "x2-sync-dyn.vue" ```
+        <template>
+          <comp :[a].sync="x" />
+        </template>
+        <script setup>
+        import { ref } from "vue"
+        defineProps(["a"])
+        const x = ref(1)
+        </script>
+        ```
+    .expect "vue/no-mutating-props" at "m10-dyn-arg.vue":2
+    .expect "vue/no-mutating-props" at "x2-sync-dyn.vue":2
+.end

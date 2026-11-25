@@ -62,20 +62,17 @@ vmacro_site(c) :- vtop(st, "true"), (kind(st, "lexical_declaration") ; kind(st, 
     child(st, d, _), kind(d, "variable_declarator"), field(d, "value", w), deparen(w, c).
 vmacro_site(c) :- vtop(st, "true"), kind(st, "expression_statement"), child(st, w, 0), deparen(w, c).
 
-// A copied relation names its kinds only of the nodes a base atom ties to its seeded column. vue/component's
-// vopt_fn(h, v, v) :- kind(h, "pair"), function_node(v) ties h to nothing, so a copy seeded at v (vgroup_value's
-// `return {…}` and arrow clauses, read from the returned object) reads `kind(h, "pair")` as Vue's kind and has no
-// row. The same clause with h's value tied to v:
-vopt_fn(h, v, v) :- kind(h, "pair"), field(h, "value", w), vunwrap(w, v), function_node(v).
 // vlater_setter orders by `earlier`, which has no row over the view: the same order by line and column.
 vlater_setter(c, p, x) :- vaccessor(c, p, x, "set"), vaccessor(c, q, x, "set"), line(q, lq), line(p, lp),
     (lq < lp ; lq = lp, col(q, cq), col(p, cp), cq < cp).
 
 // A kind read into a variable and compared inside a disjunction, `kind(p, k), (k = "a" ; k = "b")`, is not named in
 // the guest's grammar (one comparison, `k = "a"`, is), so it holds of no view node. tsx/names' destructured names are
-// such: `const { a } = toRefs(p)` and `let [m] = defineModel()` declared nothing. The same clauses with the kinds as
-// atoms:
+// such: `const { a } = toRefs(p)` and `let [m] = defineModel()` declared nothing; so are its type aliases and
+// interfaces (`type foo = string` beside a prop foo). The same clauses with the kinds as atoms:
 pattern_name(p, x, d) :- kind(d, "variable_declarator"), field(d, "name", pat), (kind(pat, "object_pattern") ;
     kind(pat, "array_pattern")), within(p, pat), bound_name(p, x), nearest(p, f, fn_scope), nearest(d, f, fn_scope).
 bound_name(p, x) :- (kind(p, "shorthand_property_identifier_pattern") ; kind(p, "identifier")), text(p, x),
     child(par, p, _), kind(par, k), binding_parent(k), !field(par, "key", p), !field(par, "right", p).
+decl_site(s, x, t, "type", "type") :- (kind(t, "type_alias_declaration") ; kind(t, "interface_declaration")),
+    field(t, "name", n), text(n, x), nearest(t, s, block_scope).

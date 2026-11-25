@@ -5,7 +5,7 @@
 .scope include "**/*.vue"
 #include "vue/vue-01.rerail"
 //   vcomputed(o, x, f), vcomputed_fn(c, f), vcomp(o), vin_setup(n), static_prop(n, o, x), call_arg(c, a, i)
-//   vjs(n), vts(n)
+//   vjs(n), vts(n), ref_site(r, s), first_token(n, t)
 
 // eslint-plugin-vue's no-async-in-computed-properties: in a computed getter's own code (not a nested function's),
 //   async getters         computed: { async a() {} }              computed(async () => 1)
@@ -13,15 +13,17 @@
 //   new Promise(…)
 //   promise chains        p.then(f), x.catch(f), x.finally(f), Promise.all / race / resolve / … (option
 //                         ignoredObjectNames: chains whose root name is listed are left alone)
-//   nextTick              this.$nextTick(f), Vue.nextTick(f)
+//   nextTick              this.$nextTick(f) (also on `const vm = this`), Vue.nextTick(f)
 //   timers                setTimeout(f), window.setInterval(f), setImmediate(f), requestAnimationFrame(f)
-// Options API getters are checked in a component; computed() getters (imported from Vue) in <script setup>, or in a
-// component when the file has none.
+// Options API getters (utils.getComputedProperties: a method or accessor, or a FunctionExpression; an arrow is none)
+// are checked in a component; computed() getters (imported from Vue, under any local name) in <script setup>, or in
+// a component when the file has none. A getter's own `async` counts only when the function starts on its body's
+// line (the plugin's verify compares lines): `computed(async () =>⏎ load())` reports nothing for the async.
 .violation async_computed(at: node, msg: symbol) code "vue/no-async-in-computed-properties" "{msg}"
     suppress eslint "vue/no-async-in-computed-properties"
 // Each clause once per view grammar (vue/vue-01): getter's column holds both, so it names neither.
-async_computed(at, m) :- getter(f, x), vjs(f), op(f, "async"), report_at(f, at), says("async", x, m).
-async_computed(at, m) :- getter(f, x), vts(f), op(f, "async"), report_at(f, at), says("async", x, m).
+async_computed(at, m) :- getter(f, x), vjs(f), op(f, "async"), report_at(f, at), body_line(f, at), says("async", x, m).
+async_computed(at, m) :- getter(f, x), vts(f), op(f, "async"), report_at(f, at), body_line(f, at), says("async", x, m).
 async_computed(n, m) :- getter(f, x), vjs(n), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
 async_computed(n, m) :- getter(f, x), vts(n), action(n, w), nearest(n, f, vfn_kind), says(w, x, m).
 
@@ -36,6 +38,8 @@ getter(g, "") :- vcomputed_fn(_, g), vts(g), docof(g, d), !vsetup_doc(d), vcomp(
 .decl report_at(f: node, at: node)  // a method's FunctionExpression starts at its parameters
 report_at(f, f) :- getter(f, _), !kind(f, "method_definition").
 report_at(f, p) :- getter(f, _), kind(f, "method_definition"), field(f, "parameters", p).
+.decl body_line(f: node, at: node)  // the reported function starts on its body's line
+body_line(f, at) :- report_at(f, at), field(f, "body", b), line(at, la), line(b, lb), la >= lb.
 
 // action(n, w): n is an asynchronous action of kind w.
 .decl action(n: node, w: symbol)
@@ -54,22 +58,37 @@ promise_method("all"). promise_method("allSettled"). promise_method("any"). prom
 promise_method("reject"). promise_method("resolve"). promise_method("try"). promise_method("withResolvers").
 .decl next_tick(m: node, x: symbol)
 next_tick(m, "$nextTick") :- static_prop(m, o, "$nextTick"), kind(o, "this").
+next_tick(m, "$nextTick") :- static_prop(m, o, "$nextTick"), this_alias(o).
 next_tick(m, "nextTick") :- static_prop(m, o, "nextTick"), kind(o, "identifier"), text(o, "Vue").
+// this_alias(o): utils.isThis of a name, `const vm = this` its one definition.
+.decl this_alias(o: node)
+this_alias(o) :- kind(o, "identifier"), ref_site(o, d), kind(d, "variable_declarator"), field(d, "name", n),
+    kind(n, "identifier"), field(d, "value", v), deparen(v, t), kind(t, "this"), child(l, d, _),
+    kind(l, "lexical_declaration"), first_token(l, k), text(k, "const").
 .decl timer(f: node)
 timer(f) :- kind(f, "identifier"), text(f, x), timed(x).
 timer(f) :- static_prop(f, o, x), kind(o, "identifier"), text(o, "window"), timed(x).
 .decl timed(x: symbol)
 timed("setTimeout"). timed("setInterval"). timed("setImmediate"). timed("requestAnimationFrame").
-// The root name of a chain: a.b().c.then → a; f().then → f.
+// The root name of a chain (getRootObjectName): a.b().c.then → a; f().then → f. Each step skips the wrappers ESTree
+// gives an `expression`: `!`, `as`, `satisfies`, `<T>x`, `x<T>` (and parentheses, which ESTree has not).
 .decl ignored_root(m: node)
-ignored_root(m) :- option_item("ignoredObjectNames", _, y), root(m, r), text(r, y).
+ignored_root(m) :- ignored_name(y), root(m, r), text(r, y).
+.decl ignored_name(y: symbol)  // the option ignoredObjectNames
+ignored_name(y) :- option_item("ignoredObjectNames", _, y).
 .decl root(e: node, r: node)
-root(m, r) :- callee_member(_, m, _), field(m, "object", w), deparen(w, o), root_step(o, r).
+root(m, r) :- callee_member(_, m, _), field(m, "object", w), unwrapped(w, o), root_step(o, r).
 .decl root_step(e: node, r: node)
 root_step(e, e) :- kind(e, "identifier").
 root_step(e, r) :- (kind(e, "member_expression") ; kind(e, "subscript_expression")), field(e, "object", w),
-    deparen(w, o), root_step(o, r).
-root_step(e, r) :- kind(e, "call_expression"), field(e, "function", w), deparen(w, f), root_step(f, r).
+    unwrapped(w, o), root_step(o, r).
+root_step(e, r) :- kind(e, "call_expression"), field(e, "function", w), unwrapped(w, f), root_step(f, r).
+.decl unwrapped(e: node, x: node)  // skipWrapper
+unwrapped(e, x) :- deparen(e, x), !wrapper(x).
+unwrapped(e, x) :- deparen(e, y), wrapper(y), child(y, z, 0), unwrapped(z, x).
+.decl wrapper(y: node)
+wrapper(y) :- kind(y, "non_null_expression") ; kind(y, "as_expression") ; kind(y, "satisfies_expression") ;
+    kind(y, "type_assertion") ; kind(y, "instantiation_expression").
 
 // says(w, x, m): the message for kind w in computed x ("" for a computed() getter).
 .decl says(w: symbol, x: symbol, m: symbol)
@@ -87,3 +106,121 @@ composition("await", "Remove this await from the computed getter and load the va
 composition("new", "Remove this Promise from the computed getter and resolve the value in a watcher or function instead.").
 composition("promise", "Move the async work out of this computed into a watcher or function, and have the getter return a value synchronously.").
 composition("timed", "Move this timer out of the computed getter into a watcher or function; the computed must return its value right away.").
+
+// Review (vue-01): defect 1, an Options API computed whose value is an arrow (ESLint: nothing).
+.test review_arrow_option_getters_are_none exactly
+    .fixture "a1-arrow-options.vue" ```
+        <script>
+        export default {
+          computed: {
+            foo: () => fetch('x').then(r => r),
+            bar: { get: () => Promise.resolve(1) }
+          }
+        }
+        </script>
+        ```
+.end
+// Review (vue-01): defect 2, a `get foo()` accessor in computed.
+.test review_accessor_getter exactly
+    .fixture "a2-accessor.vue" ```
+        <script>
+        export default {
+          computed: {
+            get foo() {
+              return fetch('x').then(r => r)
+            }
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-async-in-computed-properties" at "a2-accessor.vue":5
+.end
+// Review (vue-01): defect 2, a setter's body is computed foo's too (ESLint reports it); function values and
+// `get: function`.
+.test review_accessors_and_function_values exactly
+    .fixture "x1-setter.vue" ```
+        <script>
+        export default {
+          computed: {
+            get foo() {
+              return 1
+            },
+            set foo(v) {
+              fetch(v).then(r => r)
+            },
+            bar: function () {
+              return Promise.resolve(1)
+            },
+            baz: { get: function () { return Promise.resolve(2) } }
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-async-in-computed-properties" at "x1-setter.vue":8
+    .expect "vue/no-async-in-computed-properties" at "x1-setter.vue":11
+    .expect "vue/no-async-in-computed-properties" at "x1-setter.vue":13
+.end
+// Review (vue-01): defect 3, $nextTick on a `const vm = this`.
+.test review_next_tick_on_this_alias exactly
+    .fixture "a3-this-alias.vue" ```
+        <script>
+        export default {
+          computed: {
+            foo() {
+              const vm = this
+              vm.$nextTick(() => {})
+              return 1
+            }
+          }
+        }
+        </script>
+        ```
+    .expect "vue/no-async-in-computed-properties" at "a3-this-alias.vue":6
+.end
+// Review (vue-01): defect 4, `import { computed as c }`.
+.test review_renamed_computed_import exactly
+    .fixture "a4-renamed-computed.vue" ```
+        <script setup>
+        import { computed as c } from 'vue'
+        const x = c(async () => 1)
+        const y = c(() => fetch('x').then(r => r))
+        </script>
+        ```
+    .expect "vue/no-async-in-computed-properties" at "a4-renamed-computed.vue":3
+    .expect "vue/no-async-in-computed-properties" at "a4-renamed-computed.vue":4
+.end
+// Review (vue-01): defect 5, the async is dropped when the body starts a line later; the await is not.
+.test review_async_arrow_body_on_next_line exactly
+    .fixture "a6-arrow-nextline.vue" ```
+        <script setup>
+        import { computed } from 'vue'
+        const x = computed(async () =>
+          await load()
+        )
+        </script>
+        ```
+    .expect "vue/no-async-in-computed-properties" at "a6-arrow-nextline.vue":4
+.end
+// Review (vue-01): defect 6, ignoredObjectNames ["z"] reaches the root through `?.`, `!`, `as` and `satisfies`.
+.test review_ignored_root_through_wrappers exactly
+    .given ignored_name
+    ignored_name("z").
+    .fixture "a9-ignored.vue" ```
+        <script setup lang="ts">
+        import { computed } from 'vue'
+        import { z } from 'zod'
+        const foo = computed(() => z.a?.['b'].c!.d.method().catch(err => err))
+        const bar = computed(() => (z as any).number().catch(42))
+        const baz = computed(() => z.number().catch(42))
+        </script>
+        ```
+    .fixture "x4-ign.vue" ```
+        <script setup lang="ts">
+        import { computed } from "vue"
+        const b = computed(() => (z satisfies any).then(f))
+        const c = computed(() => z.a!.b().then(f))
+        const d = computed(() => y.then(f))
+        </script>
+        ```
+    .expect "vue/no-async-in-computed-properties" at "x4-ign.vue":5
+.end
