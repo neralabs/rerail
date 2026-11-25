@@ -1,1 +1,0 @@
-A coding agent reading findings through Rerail's MCP tools (`violations_list`, `audits_list`, `repository_audit_entries_list`) now gets a finding in a file reached through a folder link into a folder holding secrets (`conf` to `.aws`), or by a Windows short name, by rule and place only, as for a file under `.aws/` itself.

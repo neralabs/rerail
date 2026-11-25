@@ -1,13 +1,25 @@
 /**
  * What the pack pages (`#pack/<id>`, `#created`), the catalog (`#packs`) and the pack sheet derive from the rules and
- * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, and the catalog's kinds
- * and order. Nothing here touches the DOM.
+ * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, the catalog's kinds,
+ * order and the packs suggested for the repository, and the sheet's rules. Nothing here touches the DOM.
  */
-import { categoryLabel, isLog, isRunning } from "./derive.js";
-import { activityOf, fires, matches, ruleSections, titleOf, ui } from "./state.js";
+import { categoryLabel, isLog, isRunning, RISK_LABELS } from "./derive.js";
+import { activityOf, dimensionsOf, fires, matches, RISK_FILTER, ruleSections, titleOf, ui } from "./state.js";
 
 /** The Filter select of a pack page: `ui.filter` values `matches()` reads. */
 export const PAGE_FILTERS = [["all", "All rules"], ["on", "On"], ["steer", "Steer"], ["log", "Log only"], ["off", "Off"], ["fired", "Has violations"]];
+/**
+ * The Filter select's risk choices for a page's `rules`: one `risk:<risk>` per risk their packs give at least one of
+ * them, in the risks' order, with how many rules have it. None when no rule on the page has dimensions.
+ */
+export function pageRiskFilters(rules) {
+  const counts = new Map();
+  for (const r of rules) {
+    const risk = dimensionsOf(r)?.risk;
+    if (risk !== undefined) counts.set(risk, (counts.get(risk) ?? 0) + 1);
+  }
+  return RISK_LABELS.filter(([risk]) => counts.has(risk)).map(([risk, label]) => [`${RISK_FILTER}${risk}`, `${label} (${counts.get(risk)})`]);
+}
 /** The Sort select of a pack page: `ui.sort` values `sortPageRules` reads. */
 export const PAGE_SORTS = [["violations", "Most violations logged"], ["recent", "Most recent violations logged"], ["newest", "Newest first"], ["az", "A to Z"]];
 
@@ -76,6 +88,25 @@ export function catalogPacks(packs, kind) {
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
 
+/**
+ * Why Rerail suggested pack `packId` for this repository, from `GET /api/rule-packs/recommendations` (`""` when it gave
+ * no reason), or `null` when it did not suggest it or the recommendations are not read yet.
+ */
+export function suggestedReason(recommendations, packId) {
+  const pick = (recommendations ?? []).find(r => r.packId === packId);
+  return pick === undefined ? null : pick.reason ?? "";
+}
+
+/**
+ * The catalog's packs in two groups, the ones the recommendations suggest for this repository first, each group in
+ * the order given; `null` while the recommendations are not read or suggest no pack, when the catalog is one list.
+ */
+export function suggestedSplit(packs, recommendations) {
+  if (!recommendations?.length) return null;
+  const picked = new Set(recommendations.map(r => r.packId));
+  return { suggested: packs.filter(p => picked.has(p.id)), others: packs.filter(p => !picked.has(p.id)) };
+}
+
 /** A pack sheet gets a filter box once its pack has more rules than this. */
 export const SHEET_FILTER_AT = 30;
 
@@ -85,3 +116,6 @@ export function sheetRules(pack, query) {
   return pack.rules.filter(r => q === "" || `${r.title} ${r.id}`.toLowerCase().includes(q))
     .sort((a, b) => a.title.localeCompare(b.title));
 }
+
+/** A sheet's rows for a pack not added yet, by how each starts once it is: on, then off, each in the order given. */
+export const startGroups = rows => ({ on: rows.filter(r => r.on), off: rows.filter(r => !r.on) });

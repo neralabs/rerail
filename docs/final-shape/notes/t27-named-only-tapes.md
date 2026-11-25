@@ -1,4 +1,4 @@
-# T27: named-only tapes, assessment and plan (RER-131)
+# T27: named-only tapes, assessment and plan (decision 0161)
 
 ## Intro
 

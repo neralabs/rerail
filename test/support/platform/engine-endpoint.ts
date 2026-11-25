@@ -1,8 +1,43 @@
 import { randomBytes } from "node:crypto";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
-import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof } from "../../../src/runtime/index.js";
+import { defaultRerailDatabasePath } from "../../../src/engine/index.js";
+import { DAEMON_STATE_FILE, ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof, startEngineService } from "../../../src/runtime/index.js";
+
+/**
+ * Starts the engine service at `options.socketPath` as the daemon starts its own, which in the product is the only
+ * process that starts one: holding a capability, and recorded in daemon.json in `home` with this process's pid and a
+ * start stamped after the process began, as the daemon stamps its own. A hook takes that capability from daemon.json,
+ * and on Windows sends nothing to the pipe `RERAIL_ENGINE_SOCKET` names until Windows names the daemon daemon.json
+ * records as the pipe's holder, or its engine proves it holds that capability. Closing the service removes daemon.json.
+ */
+export async function startEngineAsDaemon(home: string, options: Parameters<typeof startEngineService>[0]): Promise<{ close(): Promise<void> }> {
+  const accessToken = randomBytes(16).toString("hex");
+  const service = await startEngineService({ ...options, accessToken });
+  const stateFile = await recordAsDaemon(home, { socketPath: options.socketPath, databasePath: options.databasePath, accessToken });
+  return {
+    close: async () => {
+      await rm(stateFile, { force: true });
+      await service.close();
+    },
+  };
+}
+
+/**
+ * Records this process in daemon.json in `home` as the daemon whose engine listens on `engine.socketPath` holding
+ * `engine.accessToken`, with a start stamped after the process began, as the daemon stamps its own: on Windows a hook
+ * then finds Windows naming the recorded daemon as the pipe's holder and sends to it. Returns daemon.json's path.
+ */
+export async function recordAsDaemon(home: string, engine: { socketPath: string; databasePath?: string | undefined; accessToken: string }): Promise<string> {
+  const stateFile = join(home, DAEMON_STATE_FILE);
+  await mkdir(home, { recursive: true });
+  await writeFile(stateFile, JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+    databasePath: engine.databasePath ?? defaultRerailDatabasePath(), kernelSocketPath: engine.socketPath, ui: "bundled", startedAt: Date.now(),
+    packageRoot: home, accessToken: engine.accessToken }), { mode: 0o600 });
+  return stateFile;
+}
 
 /**
  * An engine endpoint for a test to record or listen on: `engine.sock` in `folder`, or on Windows a named pipe, the only

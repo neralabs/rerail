@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
+import { loadNativeBinding, type NativeBinding, type NativeNamedPipeServer } from "../../engine/native/native.js";
 
 /**
  * What a Rerail engine pipe is on Windows: the name the engine of one Rerail database listens on, the fallback it moves
@@ -79,4 +80,58 @@ export function databasePipeListed(databasePath: string, pipes: () => readonly s
 /** Whether some Rerail engine pipe is among `pipes`; pipes that cannot be listed count as holding one. */
 export function enginePipeListed(pipes: () => readonly string[] = listPipes): boolean {
   return listed(pipes)?.some(isEnginePipe) ?? true;
+}
+
+/**
+ * What Windows says of the server end of a named pipe ({@link pipeServer}): the process holding it and when that process
+ * started; with no pid, other clients kept every instance taken for the whole wait, so no instance could be opened to ask,
+ * or, with `windowsError`, the pipe is there but Windows refused the lookup's open or would not name its holder.
+ */
+export type PipeServer = NativeNamedPipeServer;
+
+/**
+ * What {@link pipeServer} gives: what Windows says of the server end ({@link PipeServer}); `no-pipe` where Windows says no
+ * pipe of that name exists; `not-asked` where Windows could not be asked, since the native binding would not load in
+ * this process, predates the question or threw.
+ */
+export type PipeServerAnswer = PipeServer | "no-pipe" | "not-asked";
+
+/**
+ * The process holding the server end of the Windows named pipe at `path` and when it started, as Windows records them
+ * for each pipe instance (the native binding's `namedPipeServer`). While other clients hold every instance it waits for
+ * one to free and opens again, as Node's own client does, until `timeoutMs` has passed, on a thread of the worker pool,
+ * so this process's own thread and its timers run on meanwhile. Any local user can create a pipe of any name, but not
+ * one Windows records as another process's. `no-pipe` where Windows says no such pipe exists; `not-asked` where the
+ * binding (`binding`, the engine's own unless a test stands in one) predates the question, will not load in this
+ * process or throws. Either way the engine's proof decides, and with no capability in daemon.json nothing can; the
+ * first load failure or throw is reported ({@link reportPipeServerFailure}).
+ */
+export async function pipeServer(
+  path: string,
+  timeoutMs: number,
+  binding: () => Pick<NativeBinding, "namedPipeServer"> = loadNativeBinding,
+): Promise<PipeServerAnswer> {
+  try {
+    const native = binding();
+    if (native.namedPipeServer === undefined) return "not-asked";
+    return await native.namedPipeServer(path, timeoutMs) ?? "no-pipe";
+  } catch (error) {
+    reportPipeServerFailure(path, error);
+    return "not-asked";
+  }
+}
+
+/** Whether a failure to ask Windows which process serves a pipe was reported in this process. */
+let pipeServerFailureReported = false;
+
+/**
+ * Writes the first failure to ask Windows which process serves a pipe to stderr, once per process: without that answer a
+ * hook sends an event there only once the engine on it proves it holds the capability daemon.json records, and where
+ * daemon.json records none, nothing can prove it, so the hook sends nothing and says so.
+ */
+function reportPipeServerFailure(path: string, error: unknown): void {
+  if (pipeServerFailureReported) return;
+  pipeServerFailureReported = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: the engine could not ask Windows which process serves the pipe ${path}, so the engine on it must prove it holds the capability daemon.json records, and where daemon.json records none nothing is sent to it: ${reason}\n`);
 }

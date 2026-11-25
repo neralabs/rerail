@@ -80,6 +80,10 @@ function recordSession(world: Fixture, sessionId: string, startedAt: number): vo
     event("e8", "events-dropped", { count: 4 });
     event("e9", "code-rules-pending", { boundary: "turn-end" });
     event("e10", "a-kind-from-the-future", { secret: PROMPT });
+    // Two stretches of events a power cut took, as a session's next open records them (`LostEvents`).
+    const lost = (count: number, first: string, last: string) => ({ count, kinds: { call: count }, firstEventId: first, lastEventId: last, firstObservedAt: startedAt, lastObservedAt: startedAt });
+    event("e11", "events-lost", lost(3, "x1", "x3"));
+    event("e12", "events-lost", lost(2, "x4", "x5"));
     database.insert(policySessionOwners).values({ sessionId, delivery: "background", active: true, processId: 1, token: OWNER_TOKEN, updatedAt: startedAt }).run();
   } finally {
     database.$client.close();
@@ -287,14 +291,46 @@ describe("rerail support-bundle", () => {
     expect(bundle.rerail.version).toBe("9.9.9");
     expect(bundle.session?.host).toBe("claude-code");
     expect(bundle.session?.eventCounts).toMatchObject({ call: 1, result: 1, "steering-delivered": 1 });
-    expect(bundle.session?.gaps).toEqual({ droppedEvents: 4, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0 });
+    expect(bundle.session?.gaps).toEqual({
+      droppedEvents: 4, lostEvents: 5, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+    });
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "result", tool: "Bash", failed: true }));
+    expect(bundle.session?.timeline.filter(entry => entry.kind === "events-lost").map(entry => entry.count)).toEqual([3, 2]);
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "steering-delivered", ruleIds: ["eslint-eqeqeq"] }));
     expect(bundle.session?.steers).toEqual([{ mechanism: "message", requested: "steer", ruleIds: ["eslint-eqeqeq"], text: STEER }]);
     const audit = bundle.session?.audits[0];
     expect(audit).toMatchObject({ scope: "ai-output", mode: "steer", status: "completed", pathCount: 2, ruleCount: 1, failuresOmitted: 0 });
     expect(audit?.violations[0]).toEqual({ ruleId: "eslint-eqeqeq", clauseId: "eqeqeq", code: "eqeqeq", mode: "steer", path: "src/app.ts", line: 3, column: 5 });
     expect(audit?.failures[0]).toMatchObject({ code: "adapter-error", stage: "parse", path: "src/app.ts" });
+  });
+
+  it("keeps, of an audit with 120 blind files, the failure that says its stored paths are not a JSON array", async () => {
+    const world = await fixture();
+    recordSession(world, SESSION, 1_000);
+    const store = new SqliteAuditStore(defaultRerailDatabasePath());
+    try {
+      const auditId = store.start({ sessionId: SESSION, workspaceRoot: world.repo, scope: "ai-output", mode: "steer", revision: 1, catalogRevision: "digest", ruleRevisions: [], paths: ["src/app.ts"] });
+      const blindFiles = Array.from({ length: 120 }, (_, index) => ({
+        clauseId: "file", code: "budget-exceeded" as const, message: "not checked", path: `src/file-${index}.ts`, stage: "evaluate" as const, blind: "budget" as const,
+      }));
+      store.finish(auditId, { status: "completed", violations: [], failures: blindFiles });
+    } finally {
+      store.close();
+    }
+    // A hand edit past the CHECK on `audits`.
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      database.$client.pragma("ignore_check_constraints = ON");
+      database.$client.prepare("UPDATE audits SET paths_json = ?").run('["src/app.ts"');
+    } finally {
+      database.$client.close();
+    }
+    const { bundle, stderr } = await run(world);
+    const audit = bundle.session?.audits[0];
+    expect(audit).toMatchObject({ pathCount: 0, failuresOmitted: 21, blindFileCount: 120 });
+    expect(audit?.failures).toContainEqual(expect.objectContaining({ clauseId: "paths", code: "adapter-error", stage: "persistence" }));
+    // The error output the command was given names the audit.
+    expect(stderr).toContain("the paths_json of its own row is not a JSON array of strings");
   });
 
   it("records a kind it does not know by its name alone", async () => {

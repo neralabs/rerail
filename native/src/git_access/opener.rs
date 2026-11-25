@@ -1,5 +1,5 @@
-//! The one opener every in-process Git read uses, so the engine reads a repository as the Git
-//! Rerail runs does, or not at all.
+//! The opener the ignore matcher and the workspace discovery read Git through in process, so they
+//! read a repository as the Git Rerail runs does, or not at all.
 //!
 //! - It refuses where Git refuses: a repository another user owns that `safe.directory` does not
 //!   name (`bail_if_untrusted`), and a config file Git cannot parse. A value gix cannot interpret
@@ -10,9 +10,23 @@
 //!   for the system attributes (`git --exec-path`). It applies `GIT_CONFIG_SYSTEM` over the named
 //!   file and `GIT_CONFIG_NOSYSTEM` as Git does; gix applies `HOME`, `XDG_CONFIG_HOME` and
 //!   `GIT_CONFIG_GLOBAL` for the global files.
+//! - It reads the files those name by `include` and `includeIf` as Git does in the worktree it
+//!   opens: in a linked worktree a `gitdir:` condition holds for the worktree's own Git folder
+//!   ([`include_as_git_does`]), where gix alone tests the main checkout's. An include that only the
+//!   main checkout's condition selects and that Git cannot read (a loop, an unreadable or
+//!   unparsable file) refuses the main checkout, as Git does. In a repository the user owns it
+//!   leaves the linked worktree open, as Git does ([`open_without_includes`]); in one another user
+//!   owns it refuses that worktree too, where Git opens it, since an open that skips the include
+//!   would also skip an included `safe.directory`.
 //! - It refuses a config, exclude or attribute file it can name before the read when the file is
 //!   larger than [`MAX_GIT_FILE_BYTES`], so a damaged or hostile repository cannot make the daemon
 //!   read a gigabyte into memory.
+//!
+//! Three reads of the code rules open gix directly instead, with gix's own defaults, and get none
+//! of the above: `@git_tracked`, `@git_commit`, `@git_has` and `git_rev`
+//! (`code_rule_dsl/logic/strings/git.rs`), a base revision's files
+//! (`code_rule_dsl/logic/plan/corpus/inputs.rs`) and a `HEAD` tree's committed sources
+//! (`code_rule_dsl/facts/observe/roots.rs`). They read the index and objects, not ignore rules.
 
 use std::path::{Path, PathBuf};
 
@@ -88,46 +102,158 @@ pub fn open(root: &Path) -> Result<gix::Repository, OpenError> {
 pub fn discover(root: &Path) -> Result<gix::Repository, OpenError> {
     let setup = installed();
     let sources = Sources::new(setup.as_deref());
-    let (found, trust) = gix::discover::upwards_opts(root, upwards_options()).map_err(|error| {
-        let message = format!("cannot discover Git repository: {error}");
-        if is_no_repository(&error) {
-            OpenError::NoRepository(message)
-        } else {
-            OpenError::Failed(message)
-        }
-    })?;
+    let (found, trust) = gix::discover::upwards_opts(root, upwards_options())
+        .map_err(|error| discovery_error("cannot discover Git repository", &error))?;
     let (git_dir, _) = found.into_repository_and_work_tree_directories();
-    // gix's discovery has read `commondir` already; the opener reads it again, bounded, to name the
-    // files it measures, also in a repository another user owns. There, before gix's open checks
-    // `safe.directory`, it reads only that file and stats the config files gix reads to open it (the
-    // common `config`, `config.worktree`); the exclude and attribute files are stat'ed once it has.
-    let common_dir = common_dir(&git_dir)?;
+    let measured_after_open = measure_before_open(&sources, &git_dir, trust)?;
+    let repository = open_as_git_does(root, &sources, trust)?;
+    check_sizes(measured_after_open.into_iter().chain(global_files(&repository)))?;
+    Ok(repository)
+}
+
+/// `<what>: <error>`, as [`OpenError::NoRepository`] where no repository encloses the path.
+fn discovery_error(what: &str, error: &gix::Error) -> OpenError {
+    let message = format!("{what}: {error}");
+    if is_no_repository(error) {
+        OpenError::NoRepository(message)
+    } else {
+        OpenError::Failed(message)
+    }
+}
+
+/// Measures the files gix reads to open the repository whose Git folder is `git_dir`, before it
+/// reads them, and returns those to measure once the open has checked `safe.directory`.
+///
+/// gix's discovery has read `commondir` already; the opener reads it again, bounded, to name the
+/// files it measures, also in a repository another user owns. There, before gix's open checks
+/// `safe.directory`, it reads only that file and stats the config files gix reads to open it (the
+/// common `config`, `config.worktree`); the exclude and attribute files are stat'ed once it has.
+fn measure_before_open(
+    sources: &Sources,
+    git_dir: &Path,
+    trust: gix::sec::Trust,
+) -> Result<Vec<PathBuf>, OpenError> {
+    let common_dir = common_dir(git_dir)?;
     let [config, exclude, attributes] = repository_files(&common_dir);
     let (before, after) = match trust {
         gix::sec::Trust::Full => (vec![config, exclude, attributes], Vec::new()),
         gix::sec::Trust::Reduced => (vec![config], vec![exclude, attributes]),
     };
-    for file in sources
-        .config_files()
-        .into_iter()
-        .chain(before)
-        .chain([git_dir.join("config.worktree")])
-    {
+    let files = sources.config_files().into_iter().chain(before);
+    check_sizes(files.chain([git_dir.join("config.worktree")]))?;
+    Ok(after)
+}
+
+/// Refuses the first of `files` that [`check_size`] refuses.
+fn check_sizes(files: impl IntoIterator<Item = PathBuf>) -> Result<(), OpenError> {
+    for file in files {
         check_size(&file)?;
     }
-    let repository =
-        gix::discover_opts(root, upwards_options(), sources.options()).map_err(|error| {
-            let message = format!("cannot open Git repository: {error}");
-            if is_no_repository(&error) {
-                OpenError::NoRepository(message)
-            } else {
-                OpenError::Failed(message)
-            }
-        })?;
-    for file in after.into_iter().chain(global_files(&repository)) {
-        check_size(&file)?;
-    }
+    Ok(())
+}
+
+/// The repository around `root`, opened by gix with the config files `sources` names, then given
+/// the includes Git reads for a command run there ([`include_as_git_does`]). Where gix's open
+/// fails, a linked worktree of a repository the user owns opens again with no include followed
+/// ([`open_without_includes`]), and the second pass follows them.
+fn open_as_git_does(
+    root: &Path,
+    sources: &Sources,
+    trust: gix::sec::Trust,
+) -> Result<gix::Repository, OpenError> {
+    let mut repository = gix::discover_opts(root, upwards_options(), sources.options())
+        .or_else(|error| open_without_includes(root, sources, trust).ok_or(error))
+        .map_err(|error| discovery_error("cannot open Git repository", &error))?;
+    include_as_git_does(&mut repository)?;
     Ok(repository)
+}
+
+/// The linked worktree around `root` opened by gix with no include followed, for a caller whose
+/// open with includes failed: gix tests a `gitdir:` condition against the main checkout's Git
+/// folder, so an include only that condition selects fails its open (a loop, an unreadable or
+/// unparsable file) where Git, testing the worktree's own folder, never reads it. The caller's
+/// [`include_as_git_does`] then follows the includes Git follows there.
+///
+/// `None`, so the first error stands, where this open fails too, where it opens a main checkout
+/// (Git reads the include there), or where `trust` is below full. In a repository another user
+/// owns, gix's open checks `safe.directory`; with includes off it would miss an included
+/// `safe.directory =` that empties the list, and open a worktree Git refuses. Where the user owns
+/// the repository neither Git nor gix reads `safe.directory`, so the fallback gives up nothing
+/// there. The repository keeps these options: one gix opens from it (a submodule) would follow no
+/// include, and the engine opens none that way.
+fn open_without_includes(
+    root: &Path,
+    sources: &Sources,
+    trust: gix::sec::Trust,
+) -> Option<gix::Repository> {
+    if trust != gix::sec::Trust::Full {
+        return None;
+    }
+    let mut options = sources.options();
+    options.permissions.config.includes = false;
+    let repository = gix::discover_opts(root, upwards_options(), options).ok()?;
+    is_linked_worktree(&repository).then_some(repository)
+}
+
+/// Whether `repository` is a linked worktree: its own Git folder is not the one it shares with
+/// the main checkout.
+fn is_linked_worktree(repository: &gix::Repository) -> bool {
+    repository.git_dir() != repository.common_dir()
+}
+
+/// Gives `repository` the config files Git reads for a command run in its worktree.
+///
+/// Git tests an `includeIf "gitdir:..."` (or `gitdir/i:`) condition against the Git folder of the
+/// worktree the command runs in: `<main>/.git` in the main checkout, `<main>/.git/worktrees/<name>`
+/// in a linked worktree. gix tests it against the common folder, `<main>/.git`, in both, so in a
+/// linked worktree it reads the files a condition on the main checkout names and skips those a
+/// condition on the worktree's own folder names: a `core.excludesFile` or `core.ignoreCase` set in
+/// such a file then differs from Git's. In a linked worktree this drops every section an include
+/// added and follows each include again, testing `gitdir:` against the worktree's own Git folder
+/// and `onbranch:` against its `HEAD`, as Git does. A main checkout keeps gix's reading: there the
+/// two folders are one.
+fn include_as_git_does(repository: &mut gix::Repository) -> Result<(), OpenError> {
+    if !is_linked_worktree(repository) {
+        return Ok(());
+    }
+    let git_dir = repository.git_dir().to_owned();
+    // An unreadable `HEAD` matches no `onbranch:` condition, as gix's own open leaves it.
+    let branch = repository.head_name().ok().flatten();
+    // `~/`, `~<user>/` and `%(prefix)/` in an include path name the folders they name in gix's own
+    // open: each field of the context is set as gix sets it.
+    let install_dir = repository.install_dir().ok();
+    let home = gix::path::env::home_dir();
+    let options = gix::config::file::init::Options {
+        includes: gix::config::file::includes::Options::follow(
+            gix::config::path::interpolate::Context {
+                git_install_dir: install_dir.as_deref(),
+                home_dir: home.as_deref(),
+                home_for_user: Some(gix::config::path::interpolate::home_for_user),
+            },
+            gix::config::file::includes::conditional::Context {
+                git_dir: Some(&git_dir),
+                branch_name: branch.as_ref().map(AsRef::as_ref),
+            },
+        ),
+        ..Default::default()
+    };
+    let mut config = repository.config_snapshot_mut();
+    // Sections an include read sit one level or more below the file that named them.
+    let included: Vec<_> = config
+        .sections_and_ids()
+        .filter(|(section, _)| section.meta().level > 0)
+        .map(|(_, id)| id)
+        .collect();
+    for id in included {
+        config.remove_section_by_id(id);
+    }
+    config.resolve_includes(options).map_err(includes_error)?;
+    config.commit().map_err(includes_error)?;
+    Ok(())
+}
+
+fn includes_error(error: impl std::fmt::Display) -> OpenError {
+    OpenError::Failed(format!("cannot read the Git config's includes: {error}"))
 }
 
 /// The longest `commondir` file read: it holds one path, and no system takes a path this long.

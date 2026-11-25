@@ -22,7 +22,7 @@ import {
   statSync,
   type Stats,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { pathsOwnedByCurrentUser } from "../../native/native.js";
 import { checkoutRealpath, realpathNamesInTurn, storedForm, storedPath } from "../checkout-control.js";
 
@@ -113,7 +113,7 @@ function isFolder(looked: Looked): looked is Stats {
   return isEntry(looked) && looked.isDirectory();
 }
 
-interface FileText {
+export interface FileText {
   readonly text: string;
 }
 
@@ -131,7 +131,7 @@ const READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0);
  * A file's text, read now, as Git reads it (through a link at its name); `"none"` when nothing is there, undefined when
  * it is no regular file, is too large or cannot be read.
  */
-function fileText(path: string): FileText | "none" | undefined {
+export function fileText(path: string): FileText | "none" | undefined {
   let descriptor: number;
   try {
     descriptor = openSync(path, READ_FLAGS);
@@ -189,14 +189,28 @@ interface FoundGitFolder extends NamedGitFolder {
 
 const GITDIR = "gitdir: ";
 
-/** The Git folder a `.git` entry is, or the one a `.git` file names, as Git reads the file. */
+/**
+ * The Git folder a `.git` entry is, or the one a `.git` file names, as Git reads the file and reaches that folder
+ * ({@link gitFolderReached}); undefined when the file names none, or names it in a form left to Git.
+ */
 function gitFolderOf(folder: string, entry: Stats): NamedGitFolder | undefined {
   const at = join(folder, ".git");
   if (entry.isDirectory()) return { gitFolder: at, stamp: `d:${entry.ino}`, file: false };
+  const named = gitFileNames(at, entry);
+  const gitFolder = named === undefined ? undefined : gitFolderReached(folder, named.written);
+  return named === undefined || gitFolder === undefined ? undefined : { gitFolder, stamp: `f:${named.text}`, file: true };
+}
+
+/** The `.git` file `entry` at `at`, read as Git reads it: its text, and the path it names its Git folder by, as written. */
+function gitFileNames(at: string, entry: Stats): { readonly text: string; readonly written: string } | undefined {
   const read = entry.isFile() ? fileText(at) : undefined;
-  if (!isText(read) || !read.text.startsWith(GITDIR)) return undefined;
-  const named = readPath(read.text.slice(GITDIR.length));
-  return named === undefined ? undefined : { gitFolder: resolve(folder, named), stamp: `f:${read.text}`, file: true };
+  const written = gitdirIn(read);
+  return written === undefined || !isText(read) ? undefined : { text: read.text, written };
+}
+
+/** The path a `.git` file's text `read` names its Git folder by, as written; undefined where it names none Git reads. */
+function gitdirIn(read: FileText | "none" | undefined): string | undefined {
+  return isText(read) && read.text.startsWith(GITDIR) ? readPath(read.text.slice(GITDIR.length)) : undefined;
 }
 
 /**
@@ -250,7 +264,8 @@ function commonFolderOf(gitFolder: string, named: string): string | undefined {
 /**
  * What Git reads to place `folder`, when it holds a `.git` folder or file whose Git folder is there; undefined when it
  * holds none, when an input cannot be read or is shaped in a way not modelled here, or when the environment moves
- * Git's lookup. A few lstats, reads of small files and two real paths, and no Git process.
+ * Git's lookup. A few lstats, reads of small files and two real paths, a third for a `.git` file that names its Git
+ * folder by a relative path ({@link gitFolderReached}), and no Git process.
  */
 export function placementInputs(folder: string): PlacementInputs | undefined {
   return environmentMovesLookup() ? undefined : filePlacementInputs(folder);
@@ -261,6 +276,67 @@ export function filePlacementInputs(folder: string): PlacementInputs | undefined
   const entry = gitFolderAt(folder);
   const common = entry === undefined ? undefined : commonOf(entry.gitFolder);
   return entry === undefined || common === undefined ? undefined : withCommon(folder, entry, common);
+}
+
+/**
+ * Whether `folder` is a linked worktree whose Git folder is gone: its `.git` file, read as Git reads it, names a folder
+ * in a Git folder's `worktrees` in a form Git writes ({@link gitFolderReached}), and nothing is there, not even a link.
+ * Its main checkout was deleted or moved away, or Git pruned the worktree's entry, and the clone's id file, kept in the
+ * common Git folder, may have gone too; Git, asked about the folder, reads the `.git` file first and refuses it. A
+ * `.git` that is no regular file is never opened. False while the environment moves Git's lookup, for a path in any
+ * other form, and wherever the disk cannot tell. Two lstats and one read of a small file, and for a relative path the
+ * folder's real path.
+ */
+export function worktreeGitFolderGone(folder: string): boolean {
+  if (environmentMovesLookup()) return false;
+  const at = join(folder, ".git");
+  const entry = look(at);
+  const written = isEntry(entry) ? gitFileNames(at, entry)?.written : undefined;
+  const reached = written === undefined ? undefined : gitFolderReached(folder, written);
+  return reached !== undefined && basename(dirname(reached)) === "worktrees" && look(reached) === "none";
+}
+
+/**
+ * The Git folder Git reaches for the path `written` that the `.git` file in `folder` holds, only where that path is in
+ * one of the two forms Git itself writes there ({@link writtenForm}) and its text is that folder: a clean absolute
+ * path, as written; a relative one, joined to `folder`'s real path, as Git joins it, which climbs through no link. The
+ * placement ({@link gitFolderOf}) and the gone check ({@link worktreeGitFolderGone}) take it. Undefined for any other
+ * spelling, and where that real path cannot be read: the folder is then left to Git.
+ */
+export function gitFolderReached(folder: string, written: string): string | undefined {
+  const form = writtenForm(written);
+  if (form === "absolute") return resolve(written);
+  const real = form === "relative" ? realOf(folder) : undefined;
+  return real === undefined ? undefined : resolve(real, written);
+}
+
+/** How a system splits a path a `.git` file holds into names, and which names Git writes there. */
+interface PathReading {
+  readonly separator: RegExp;
+  /** The first name of an absolute path Git writes: empty on Linux and macOS, a drive letter on Windows. */
+  readonly root: RegExp;
+  /** A name Git writes: not empty, `.` or `..`; on Windows with no `:` and not ending in a dot or a space, which Windows drops. */
+  readonly name: RegExp;
+}
+
+const POSIX_READING: PathReading = { separator: /\//u, root: /^$/u, name: /^(?!\.\.?$)./u };
+const WINDOWS_READING: PathReading = { separator: /[\\/]/u, root: /^[A-Za-z]:$/u, name: /^[^:]*[^.: ]$/u };
+
+/**
+ * Which of the two forms Git itself writes into a `.git` file the path `written` takes, read as on `platform`:
+ * `absolute`, a root and then names, with no `.`, `..` or empty name (on Windows from a drive letter); `relative`,
+ * zero or more leading `..` names and then such names, as `git worktree add --relative-paths` writes it. Undefined for
+ * any other.
+ */
+export function writtenForm(written: string, platform: NodeJS.Platform = process.platform): "absolute" | "relative" | undefined {
+  const reading = platform === "win32" ? WINDOWS_READING : POSIX_READING;
+  const names = written.split(reading.separator);
+  if (reading.root.test(names[0] ?? "")) return namesGitWrites(names.slice(1), reading) ? "absolute" : undefined;
+  return namesGitWrites(names.slice(names.findIndex(name => name !== "..")), reading) ? "relative" : undefined;
+}
+
+function namesGitWrites(names: readonly string[], reading: PathReading): boolean {
+  return names.length > 0 && names.every(name => reading.name.test(name));
 }
 
 function withCommon(folder: string, entry: FoundGitFolder, common: CommonFolder): PlacementInputs | undefined {
@@ -419,13 +495,14 @@ function ownersTaken(paths: readonly string[]): boolean | undefined {
  * identity, and its link text; what the entry resolves to through links, and for a `.git` file its text and the real
  * path of the Git folder it names ({@link gitFolderBehind}); and that Git folder's facts ({@link gitFolderRaw}). Each
  * is read now; a part that cannot be read is held as such. Undefined when the folder's real path, or on Windows the
- * owners, cannot be read.
+ * owners, cannot be read, and for a `.git` file whose path is in neither form Git writes there ({@link namedBehind}).
  */
 export function gitEntryFacts(folder: string): string | undefined {
   const realFolder = realOf(folder);
   if (realFolder === undefined) return undefined;
   const dotGit = join(realFolder, ".git");
   const behind = gitFolderBehind(realFolder, dotGit);
+  if (behind === undefined) return undefined;
   const owned = ownersAsGitReads(realFolder, dotGit, behind.gitFolder ?? dotGit);
   return owned === undefined ? undefined : [realFolder, `owned:${owned}`, behind.facts, gitFolderRaw(behind.gitFolder)].join("\n");
 }
@@ -564,7 +641,7 @@ interface Behind {
  * The `.git` entry in `realFolder`, as Git reads it: its own facts and link text, the real path it resolves to and that
  * entry's facts; for a folder there, that folder is the Git folder ({@link namedBehind} for a file).
  */
-function gitFolderBehind(realFolder: string, dotGit: string): Behind {
+function gitFolderBehind(realFolder: string, dotGit: string): Behind | undefined {
   const entry = look(dotGit);
   const target = realOf(dotGit);
   const resolved = target === undefined ? undefined : look(target);
@@ -574,11 +651,13 @@ function gitFolderBehind(realFolder: string, dotGit: string): Behind {
 
 /**
  * A `.git` entry that resolves to a file: its text, and the real path of the Git folder it names, which Git resolves
- * from the folder holding the `.git` entry, not from where a link took it.
+ * from the folder holding the `.git` entry, not from where a link took it: joined to `realFolder`, it is that folder for
+ * either form Git writes there. Undefined for a path in any other form ({@link writtenForm}), which is left to Git.
  */
-function namedBehind(realFolder: string, dotGit: string, facts: string, resolved: Looked): Behind {
+function namedBehind(realFolder: string, dotGit: string, facts: string, resolved: Looked): Behind | undefined {
   const read = isEntry(resolved) && resolved.isFile() ? fileText(dotGit) : undefined;
-  const named = isText(read) && read.text.startsWith(GITDIR) ? readPath(read.text.slice(GITDIR.length)) : undefined;
+  const named = gitdirIn(read);
+  if (named !== undefined && writtenForm(named) === undefined) return undefined;
   return { facts: `${facts}\n${textFact(read)}`, gitFolder: named === undefined ? undefined : realOf(resolve(realFolder, named)) };
 }
 

@@ -1,4 +1,4 @@
-# T30: named-only trees in memory (RER-131 option B)
+# T30: named-only trees in memory (decision 0161, option B)
 
 ## Intro
 

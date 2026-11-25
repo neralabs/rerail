@@ -1,1 +1,0 @@
-The content store's file is now `content-v5.sqlite`, with the facts it keeps in files in the folders beside it (`.frames`, `.memo`, `.objects`). Names and strings are stored once each, and running several policies over one repository keeps each one's work. The old `content-v1.sqlite` (with its `-wal` and `-shm`) is no longer read and is safe to delete.

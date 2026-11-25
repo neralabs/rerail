@@ -1,11 +1,13 @@
 import type { SteerRule } from "../adapter-contract.js";
-import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
+import type { AuditFailure, AuditMode, AuditOwner, AuditScope } from "../audit/audit.js";
+import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import type { GitReads } from "../git.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
 import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerShell, type SteerTrigger } from "./rerail-steer.js";
-import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
+import { steerNaming, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
 export type CodeRuleDslValue = CodeRuleDslScalar | CodeRuleDslValue[] | { [key: string]: CodeRuleDslValue };
@@ -1475,6 +1477,11 @@ export interface CodeRuleEditBatch {
    * in `log` mode, so the restored source is judged and recorded but steers nothing.
    */
   mode?: AuditMode;
+  /**
+   * Who these edits' audits belong to; `session` when absent. `repository`: changes the walk of the other worktrees
+   * found that no session made, recorded once for the repository by the one session the walk handed them to.
+   */
+  owner?: AuditOwner;
 }
 
 export interface CodeRuleSourceSpan {
@@ -1583,7 +1590,17 @@ export interface IgnoredEditMatch {
 }
 
 /** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
-export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath">;
+export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath" | "sourceRoot">;
+
+/**
+ * Puts `item` last in the list `groups` holds for `key`, starting one for a new key. The list grows in place, so
+ * grouping n items costs n steps; a copy of the list for each item would cost n * n / 2 element copies.
+ */
+export function appendToGroup<K, V>(groups: Map<K, V[]>, key: K, item: V): void {
+  const group = groups.get(key);
+  if (group === undefined) groups.set(key, [item]);
+  else group.push(item);
+}
 
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
@@ -1595,6 +1612,14 @@ export interface CodeRuleAuditor {
    * Absent: a file's checkout does not change while a session runs.
    */
   refreshOwners?(paths: readonly string[]): void;
+  /**
+   * Before a tool call's files are filtered at its start: builds the rules of the checkouts that own `paths` (as for
+   * `acceptsPath`), compiling them off the daemon's thread, and settles once they are built, so `acceptsPath`
+   * compiles nothing on it. Absent: `acceptsPath` builds them itself.
+   */
+  prepareRules?(paths: readonly string[]): Promise<void>;
+  /** Settles once the rules `openWorkspace` builds ahead of any call are built. Absent: it builds none. */
+  rulesBuiltAhead?(): Promise<void>;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */
@@ -1605,9 +1630,9 @@ export interface CodeRuleAuditor {
    */
   ignoresPath?(path: string, directory: boolean): boolean;
   /**
-   * `acceptsPath` and `ignoresPath` for one walk, which asks them only of the files and folders it found, never of a
-   * link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per folder where
-   * the auditor would make one per file. Absent: the walk asks the auditor itself.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk, which asks them only of the files and folders it found,
+   * never of a link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per
+   * folder where the auditor would make one per file. Absent: the walk asks the auditor itself.
    */
   walkView?(): WalkView;
   /**
@@ -1621,8 +1646,18 @@ export interface CodeRuleAuditor {
    * when undefined or absent.
    */
   sourceRoot?(path: string): string | undefined;
-  /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
-  worktreeRoots?(): readonly string[];
+  /**
+   * The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent.
+   * `registry`: the list {@link CodeRuleAuditor.learnWorktreeRoots} gave as stored, in the same synchronous run.
+   */
+  worktreeRoots?(registry?: WorktreeRegistry): readonly string[];
+  /**
+   * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
+   * next call finds Git's list kept while the registry's contents stay as they were: what to wait for, or the list
+   * stored for the registry, with nothing started, for a call in the same synchronous run to take. Undefined, with
+   * nothing started, where there is nothing to learn. Never throws, and what it gives to wait on never rejects.
+   */
+  learnWorktreeRoots?(git: GitReads): WorktreeListLearning | undefined;
   /**
    * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
    * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.
@@ -1644,6 +1679,8 @@ export interface CodeRuleAuditor {
    * walk's included, is checked by one audit of the whole repository. False when absent.
    */
   steeringWaitsForLog?(): boolean;
+  /** The agent's turn ended (or the session reached its final checkpoint): work waiting for the session to go quiet starts now. */
+  turnEnded?(): void;
   /** An audit someone asked for, whose runs are recorded as scans (`AuditOrigin`), not as the session's own. */
   audit?(sessionId: string, input: {
     scope: "repository" | "touched-files";
@@ -1750,9 +1787,10 @@ export function buildSteer(
   shell?: SteerShell,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
   const findings = steerFindings(violations, sensitive);
+  const naming = steerNaming(sourceOf);
   return {
     content: steerBlock(trigger, findings, shell),
     ruleIds: steerRuleIds(violations),
-    rules: steerRules(findings, ruleId => steerOrigin(ruleId, sourceOf(ruleId))),
+    rules: steerRules(findings, naming.origin, naming.title),
   };
 }

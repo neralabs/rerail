@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { changeScope } from "../../ui/poll.js";
 import { loadRepoRuleCounts, repoRuleCounts } from "../../ui/repo-rule-counts.js";
 import { repoLine, repoTag, ruleCountsOf } from "../../ui/repo-rules.js";
-import { agentStatus, installedLabel } from "../../ui/settings-model.js";
+import { agentStatus, installedLabel, isNewerVersion, newerRelease, releaseUrl } from "../../ui/settings-model.js";
+import { data } from "../../ui/state.js";
+import { actions as settingsActions } from "../../ui/views/settings.js";
+import type * as Shell from "../../ui/shell.js";
+
+const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
+// The page's toast, and no redraw: Settings' switches are driven without a page.
+vi.mock("../../ui/shell.js", async importOriginal => ({ ...(await importOriginal<typeof Shell>()), invalidate: () => {}, toast }));
 
 type DataAccess = "kept-out" | "file-tools" | "open";
-const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null; access: DataAccess }>) => {
-  const { access = "open", ...rest } = over;
-  return { id: "claude-code", name: "Claude Code", found: false, connected: false, problem: null, rerailData: { access, why: `${access} because` }, ...rest };
+const agent = (over: Partial<{ found: boolean; connected: boolean; problem: string | null; access: DataAccess; fix: string | null }>) => {
+  const { access = "open", fix = null, ...rest } = over;
+  return { id: "claude-code", name: "Claude Code", found: false, connected: false, problem: null, rerailData: { access, why: `${access} because`, fix }, ...rest };
 };
 
 /** One entry of `GET /api/repository/rules`, as `toStoredRules` reads it. */
@@ -23,9 +31,12 @@ describe("a coding agent's state in Settings", () => {
     });
   });
 
-  it("says whether a connected agent's tools can read Rerail's data, warning unless they are kept out", () => {
-    expect(agentStatus(agent({ found: true, connected: true, access: "kept-out" })).data).toEqual({ text: "kept-out because", warn: false });
-    expect(agentStatus(agent({ found: true, connected: true, access: "file-tools" })).data).toEqual({ text: "file-tools because", warn: true });
+  it("says whether a connected agent's tools can read Rerail's data, warning only when there is something to do", () => {
+    expect(agentStatus(agent({ found: true, connected: true, access: "kept-out" })).data).toEqual({ text: "kept-out because", warn: false, fix: null });
+    // Not wholly kept out, with nothing the person can change (Cursor, Codex, Claude Code on Windows): a fact, not a warning.
+    expect(agentStatus(agent({ found: true, connected: true, access: "file-tools" })).data).toEqual({ text: "file-tools because", warn: false, fix: null });
+    expect(agentStatus(agent({ found: true, connected: true, access: "open" })).data).toEqual({ text: "open because", warn: false, fix: null });
+    expect(agentStatus(agent({ found: true, connected: true, access: "file-tools", fix: "Run /sandbox." })).data).toEqual({ text: "file-tools because", warn: true, fix: "Run /sandbox." });
     expect(agentStatus(agent({ found: true, connected: true, problem: "settings.json is not valid JSON" })).data).toBeUndefined();
     expect(agentStatus(agent({ found: true })).data).toBeUndefined();
   });
@@ -44,6 +55,45 @@ describe("a coding agent's state in Settings", () => {
     expect(agentStatus(agent({ found: true, connected: true, problem: "settings.json is not valid JSON" }))).toMatchObject({
       state: "Couldn’t check", command: null, problem: "settings.json is not valid JSON",
     });
+  });
+});
+
+describe("the version in About Rerail and the top bar", () => {
+  it("links a version to its release page on GitHub", () => {
+    expect(releaseUrl("0.2.0")).toBe("https://github.com/neralabs/rerail/releases/tag/v0.2.0");
+  });
+
+  it("orders versions by number, a prerelease before its release", () => {
+    expect(isNewerVersion("0.2.0", "0.1.15")).toBe(true);
+    expect(isNewerVersion("0.10.0", "0.9.9")).toBe(true);
+    expect(isNewerVersion("0.2.0", "0.2.0")).toBe(false);
+    expect(isNewerVersion("0.1.9", "0.2.0")).toBe(false);
+    expect(isNewerVersion("0.2.0", "0.2.0-beta.1")).toBe(true);
+    expect(isNewerVersion("0.2.0-beta.2", "0.2.0-beta.10")).toBe(false);
+    expect(isNewerVersion("latest", "0.2.0")).toBe(false);
+  });
+
+  it("orders prereleases by semver precedence, the release candidates' -next.N included", () => {
+    // semver 11.4's own example, each one after the one before.
+    const chain = ["1.0.0-alpha", "1.0.0-alpha.1", "1.0.0-alpha.beta", "1.0.0-beta", "1.0.0-beta.2", "1.0.0-beta.11", "1.0.0-rc.1", "1.0.0"];
+    for (const [i, later] of chain.entries()) {
+      if (i === 0) continue;
+      expect(isNewerVersion(later, chain[i - 1]!)).toBe(true);
+      expect(isNewerVersion(chain[i - 1]!, later)).toBe(false);
+    }
+    expect(isNewerVersion("0.3.0-next.10", "0.3.0-next.9")).toBe(true);
+    // ASCII order, not the browser's locale: uppercase sorts before lowercase.
+    expect(isNewerVersion("1.0.0-alpha", "1.0.0-Beta")).toBe(true);
+  });
+
+  it("names a newer version only when the daemon reports one above the version running", () => {
+    expect(newerRelease({ version: "0.2.0", update: { latest: "0.3.0", checkedAt: 1 } })).toBe("0.3.0");
+    expect(newerRelease({ version: "0.2.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
+    expect(newerRelease({ version: "0.3.0", update: { latest: "0.2.0", checkedAt: 1 } })).toBeNull();
+    // A daemon that doesn't check, or hasn't had an answer yet, says nothing; a page that has not heard from it has no health.
+    expect(newerRelease({ version: "0.2.0" })).toBeNull();
+    expect(newerRelease({ version: "0.2.0", update: null })).toBeNull();
+    expect(newerRelease(null)).toBeNull();
   });
 });
 
@@ -160,5 +210,52 @@ describe("reading every repo's rule counts", () => {
 
     expect(repoRuleCounts("store")).toBeNull();
     expect(repoRuleCounts("billing")).toBeNull();
+  });
+});
+
+describe("a Settings switch after its write", () => {
+  const NOT_ON_DISK = "the change was made, but Rerail could not confirm it is on the disk (EIO)";
+  let answer: { status: number; body: unknown };
+  /** The writes sent. The page's own reads, which `changeScope` starts, are not under test: they stay unanswered. */
+  let writes: unknown[];
+
+  beforeEach(() => {
+    writes = [];
+    toast.mockReset();
+    vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
+    vi.stubGlobal("fetch", async (_input: URL, init: { method?: string; body?: string } = {}) => {
+      if (init.method !== "PUT") return await new Promise<Response>(() => {});
+      writes.push(JSON.parse(init.body ?? "null"));
+      return new Response(JSON.stringify(answer.body), { status: answer.status });
+    });
+    changeScope({ repository: "A", checkout: "/work/a" });
+    data.presence = "compact";
+    data.followGitignore = true;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const switches = [
+    { name: "the footer", act: () => settingsActions.presence("silent"), shown: () => data.presence, was: "compact", now: "silent" },
+    { name: "Follow .gitignore", act: () => settingsActions.gitignore("off"), shown: () => data.followGitignore, was: true, now: false },
+  ];
+
+  it.each(switches)("$name keeps its new value when the daemon made the change but could not confirm it on the disk", async ({ act, shown, now }) => {
+    answer = { status: 503, body: { error: "not-on-disk", message: NOT_ON_DISK } };
+    await act();
+
+    expect(writes).toHaveLength(1);
+    expect(shown()).toBe(now);
+    expect(toast).toHaveBeenCalledExactlyOnceWith("The change was made, but Rerail could not confirm it is on the disk (EIO).");
+  });
+
+  it.each(switches)("$name goes back to its old value when the write fails", async ({ act, shown, was }) => {
+    answer = { status: 403, body: { error: "agent-not-permitted", message: "not yours" } };
+    await act();
+
+    expect(shown()).toBe(was);
+    expect(toast).toHaveBeenCalledExactlyOnceWith(expect.stringMatching(/^Couldn’t change .+ answered 403/u));
   });
 });

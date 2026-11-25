@@ -1,5 +1,5 @@
 //! Maintenance of the derivation graph (docs/final-shape/03-architecture.md §2, §14), adapted
-//! from Y1's propagate (Moti-Velz/facts-engine `spikes/facts-b/src/ygraph/engine.rs`).
+//! from Y1's propagate (the facts-engine branch, `spikes/facts-b/src/ygraph/engine.rs`).
 //!
 //! Y1 re-ran one memoised query at a time, in level order, from in-memory reverse indexes. Here
 //! the read sets are `derivation_inputs` rows in the content store and the unit is a wave: every

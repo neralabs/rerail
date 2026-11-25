@@ -545,7 +545,7 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// The next token, a token the grammar implies: the tape leaves it out (a named-only tape, RER-131;
+    /// The next token, a token the grammar implies: the tape leaves it out (a named-only tape, decision 0161;
     /// `docs/parser-generators/32-named-only-rr-tapes.md`). The kind and the named children say where it is.
     fn implied(&mut self) {
         self.i += 1;

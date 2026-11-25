@@ -28,6 +28,9 @@ import { activityRules, callerRepositoryKey, checkoutAt, checkoutRuleCatalog, hi
 import { inactiveField, inactiveOf, targetShape } from "./repository-contracts.js";
 import { presentationDaemonSchema, presentationResponseSchema, sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
+/** How many of a session's `source-discovery-gap` places `sessions_get` lists: what the dashboard shows of them. */
+const DISCOVERY_GAP_PLACES = 20;
+
 /** Query strings arrive as text; MCP arguments arrive typed. Accept both. */
 const booleanParameter = z.union([z.boolean(), z.stringbool()]);
 const countParameter = z.coerce.number().int().nonnegative();
@@ -155,6 +158,9 @@ const auditFailureSchema: z.ZodType<AuditFailure> = z.object({
 
 // `ruleProvenance` is the audit's provenance wherever the database keeps it; the id of its stored copy stays inside.
 export const auditRecordSchema = createSelectSchema(audits).omit({ ruleProvenanceId: true }).extend({
+  sessionId: z.string().nullable().describe("The session the audit belongs to; null for an audit the repository owns, of a change in another worktree that no session made."),
+  repositoryId: z.string().nullable().describe("Of an audit the repository owns, the repository's key; null for a session's."),
+  recordedBy: z.string().nullable().describe("Of an audit the repository owns, the session whose evaluator ran it; null for a session's."),
   paths: z.array(z.string()),
   violations: z.array(codeRuleViolationSchema),
   failures: z.array(auditFailureSchema),
@@ -353,10 +359,10 @@ interface RuleActivityCounts {
  * evaluated, so neither is measured.
  */
 function catalogRuleActivity(
-  { id, kind, rule }: ReturnType<typeof activityRules>[number],
+  { id, kind, rule, notRun }: ReturnType<typeof activityRules>[number],
   counts: RuleActivityCounts,
 ): RuleActivity {
-  const { inactive } = inactiveOf(kind, rule);
+  const { inactive } = inactiveOf(kind, rule, notRun);
   const totals = kind === "conversation" ? undefined : counts.activity.get(id);
   return {
     measured: kind !== "conversation" && inactive === undefined,
@@ -389,10 +395,10 @@ const violationRecordSchema = z.object({
   path: z.string().nullable(),
   span: codeRuleSourceSpanSchema.nullable(),
   fix: codeRuleViolationFixSchema.nullable(),
-  sessionId: z.string(),
+  sessionId: z.string().nullable().describe("The session whose work the violation is in; null for one the repository's own audit recorded: a change in another worktree that no session made."),
   auditId: z.string(),
   at: z.number().int().describe("Start time of the audit that reported the violation."),
-  host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded."),
+  host: z.string().nullable().describe("The coding agent of the violation's session; null when the session is not recorded, or there is none."),
   logged: z.boolean().describe("Rerail recorded the violation without telling the coding agent: the audit ran in Log mode, or the rule was in Log mode then. `mode` is the rule's mode alone."),
   declinedReasons: z.array(z.string()).describe("The reasons the coding agent recorded with `rerail feedback` for declining the steer of this violation's audit and rule, oldest first; empty when no note declined it, and always for a logged violation."),
 }).strict();
@@ -412,6 +418,7 @@ const codingAgentSchema = z.object({
   rerailData: z.object({
     access: z.enum(["kept-out", "file-tools", "open"]).describe("kept-out: neither its commands nor its file tools can read Rerail's data; file-tools: its file tools cannot, its shell commands can; open: nothing keeps it out."),
     why: z.string().describe("One sentence for a person saying why."),
+    fix: z.string().nullable().describe("One sentence for a person saying what they can do on this computer to keep the rest of its tools out too; null when Rerail knows of nothing."),
   }).strict().describe("Whether this coding agent's own tools can read Rerail's data (the Rerail home and the content cache), as far as its configuration on this computer shows. Rerail never changes it."),
 }).strict();
 
@@ -529,7 +536,7 @@ export const operations: readonly Operation[] = [
     id: "rule_packs_list",
     method: "GET",
     path: "/api/rule-packs",
-    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group and the mode it starts in, and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
+    summary: "List every rule pack installed on this machine: what it covers, its version, its npm package and publisher (rerail, or a third party Rerail has not reviewed) and its rules, each with a title, a group, the mode it starts in and, where its pack gives them, its dimensions (risk, layer, severity, hazard), and every installed pack left out with the reason. With a checkout (an MCP call defaults to the calling agent's), that checkout's own rules in .rerail/rules are listed too, as the pack worktree (publisher worktree), and every rule document there left out with the reason. Add a pack to a repository with repository_attachments_set.",
     query: z.object({ checkout: targetShape.checkout }).strict(),
     output: rulePackListSchema,
     handler: (stores, input, caller) => {
@@ -547,7 +554,7 @@ export const operations: readonly Operation[] = [
             ...rest,
             ...(localSource === undefined ? {} : { installedFrom: localSource.kind }),
             ...(subject === undefined ? {} : { approval: { subject: { ...subject }, approved: approvals.has(approvalKey(subject)) } }),
-            rules: [...rules],
+            rules: rules.map(rule => ({ ...rule, ...inactiveOf(rule.kind, catalog.documents.get(rule.id)?.rule, catalog.notRun.get(rule.id)) })),
           };
         }),
         skipped: [...catalog.skipped],
@@ -607,10 +614,10 @@ export const operations: readonly Operation[] = [
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
-    handler: (stores, input, caller) => {
+    handler: async (stores, input, caller) => {
       requireSession(stores, caller, input.sessionId);
       const { sessionId, ...request } = input;
-      const created = stores.auditControls().requestAudit(sessionId, request);
+      const created = await stores.auditControls().requestAudit(sessionId, request);
       // A session the daemon suspended while it was quiet keeps its owner, so its scan queues; it opens again to run it
       // now, as an open session would. The answer does not wait for that: it reads the session's ledger back.
       if (created.status === "queued") stores.resumeSession?.(sessionId);
@@ -709,7 +716,7 @@ export const operations: readonly Operation[] = [
       }, historyScope(stores, caller, input.repository));
       const view = violationView(caller);
       const roots = stores.audits.workspaceRoots([...new Set(page.violations.map(v => v.auditId))]);
-      const reasons = declineReasonsBySteer(stores.reader.placedDeclineNotes([...new Set(page.violations.map(v => v.sessionId))]));
+      const reasons = declineReasonsBySteer(stores.reader.placedDeclineNotes([...new Set(page.violations.flatMap(v => v.sessionId ?? []))]));
       return {
         total: page.total,
         violations: page.violations.map(({ violation: found, sessionId, auditId, at, host, logged }) => {
@@ -757,10 +764,19 @@ export const operations: readonly Operation[] = [
     output: sessionResponseSchema.extend({
       gaps: z.object({
         droppedEvents: z.number().int().nonnegative().describe("Events the coding agent never delivered, from its `events-dropped` records."),
+        lostEvents: z.number().int().nonnegative().describe("Events Rerail recorded whose records a power cut or an operating system crash took, from the `events-lost` records the session's next open writes: its ledger keeps each event's id, kind and time, never its content."),
         uncheckedBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's shell-write check finished."),
         codeRulesPendingBoundaries: z.number().int().nonnegative().describe("Boundaries that answered before the session's code rules were running."),
         ignoredEdits: z.number().int().nonnegative().describe("Tool edits of files no rule checked because Git ignores them (`ignored-edit` events name each file and the ignore file, line and pattern)."),
         ignoreRuleChanges: z.number().int().nonnegative().describe("Changes to Git's ignore rules seen during the session that can make them ignore more: a pattern added, a negation (`!pattern`) removed, or, in a file with a negation, its patterns reordered or repeated. Each `ignore-rules-changed` event names the file and those patterns; comments, blank lines and duplicates in a file without a negation are not changes."),
+        discoveryGaps: z.number().int().nonnegative().describe(`Places the session's shell-write check could not fully check, in the session's folder or the repository's other worktrees: a folder or file Rerail cannot read; a file over 1,000,000 bytes that a rule would read; a source or text file holding binary data, such as UTF-16 text; a walk that fails. Shell writes in such a place went unchecked. Each place is counted once in the session, by its path and its error's code, however many boundaries met it, across a reopened session and a daemon restart; its \`source-discovery-gap\` event holds the path, the reason and the first boundary, and is withheld from coding agents. The check records at most a bound of places in one session; this counts the places recorded, and \`discoveryGapsMore\` says whether it met more.`),
+        discoveryGapsMore: z.boolean().describe("Whether the shell-write check met more places it could not fully check than the session's record takes: `discoveryGaps` counts those recorded, the first it met, and one more record says the rest went unrecorded."),
+        discoveryGapPlaces: z.array(z.object({
+          path: z.string().optional().describe("The place as the session folder names it (`.` for the folder itself, `../other/src` in another worktree); absent when a walk failed whole."),
+          reason: z.string().describe("Why the check could not fully check it, as the walk was told."),
+          boundary: z.string().describe("The boundary that first met it."),
+          observedAt: z.number().int().describe("Epoch milliseconds it was first met."),
+        })).max(DISCOVERY_GAP_PLACES).optional().describe(`The first ${DISCOVERY_GAP_PLACES} places \`discoveryGaps\` counts, in the order the session met them. A person's only: a coding agent gets none, as it gets no \`source-discovery-gap\` payload.`),
       }).describe("Over the whole transcript, however much of it a reader has loaded."),
       declined: z.object({
         violations: z.number().int().nonnegative().describe("Steered violations of a declined steer: its audit's violations of the rule, each counted once."),
@@ -775,7 +791,8 @@ export const operations: readonly Operation[] = [
     handler: (stores, input, caller) => {
       const response = sessionResponse(stores, caller, input.sessionId);
       if (response === null) throw sessionNotFound(input.sessionId);
-      return { ...response, gaps: stores.reader.gaps(input.sessionId), declined: stores.reader.declines(input.sessionId) };
+      const places = caller.kind === "person" ? { discoveryGapPlaces: [...stores.reader.discoveryGaps(input.sessionId, DISCOVERY_GAP_PLACES)] } : {};
+      return { ...response, gaps: { ...stores.reader.gaps(input.sessionId), ...places }, declined: stores.reader.declines(input.sessionId) };
     },
   }),
   defineOperation({

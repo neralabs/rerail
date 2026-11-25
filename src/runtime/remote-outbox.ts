@@ -20,20 +20,21 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import type { AuditRecord, AuditRuleProvenance } from "../engine/audit/audit.js";
-import { SqliteAuditReader } from "../engine/audit/audit-store.js";
+import { isUnreadableList, SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { violationCopiesSql } from "../engine/storage/audit-history.js";
-import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commitDurably, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { keepFilesPrivate } from "../engine/storage/private-files.js";
 import { defaultRerailHome, REMOTE_OUTBOX_FILE } from "../engine/storage/rerail-home.js";
 import { ruleDocumentDigest } from "../engine/stable-json.js";
 import {
   excludedAt, machineId, machineLabel, readRemoteConfig, readRemoteToken, remoteStateKey, type RemoteEntry, type RepositoryExclusion,
 } from "./remote-config.js";
+import { POSTED_EVENTS_STREAM } from "./remote-cursors.js";
 
 export const SINK_PROTOCOL = 1;
 /** C1: one batch is at most 5 MB uncompressed. */
@@ -279,6 +280,65 @@ type PostOutcome = { kind: "accepted" } | { kind: "rejected"; error: string } | 
 
 const isEmptyBatch = (batch: BatchBuilder): boolean => batch.records.length === 0 && batch.oversized.length === 0;
 
+/**
+ * The last event number `batch` carries, its records and those too large to send; 0 when it carries none. Both the
+ * record of a batch about to go out (`#markPosted`) and the cursor its acknowledgement moves (`#acknowledge`) hold it.
+ */
+const lastSequence = (batch: { readonly records: readonly OutboxRecord[]; readonly oversized: readonly OutboxRecord[] }): number =>
+  [...batch.records, ...batch.oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
+
+/** A batch the remote answered, and where its answer is written: the outbox's state, in one transaction (`#acknowledge`). */
+interface AnsweredBatch {
+  readonly state: Database.Database;
+  readonly remote: string;
+  readonly machine: string;
+  readonly records: readonly OutboxRecord[];
+  readonly oversized: readonly OutboxRecord[];
+}
+
+const ADD_GAP_SQL = "INSERT OR REPLACE INTO pending_gaps (remote, id, record_json) VALUES (?, ?, ?)";
+
+/** The event cursor moves past the batch's last event, and each record it carried is held under its hash. */
+function holdAnswered({ state, remote, records, oversized }: AnsweredBatch): void {
+  const sequence = lastSequence({ records, oversized });
+  if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
+  const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
+  for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
+}
+
+/** The queued gaps the batch carried leave the queue; a rejected one is reported again inside the new gap's records. */
+function clearSentGaps({ state, remote, records }: AnsweredBatch): void {
+  const sentGap = state.prepare("DELETE FROM pending_gaps WHERE remote = ? AND id = ?");
+  for (const item of records) if (item.stream === "gap" && item.sequence === undefined) sentGap.run(remote, item.id);
+}
+
+/** A gap queued for each record of the batch too large to send, which the next batch tells the remote of. */
+function queueTooLargeGaps({ state, remote, machine, oversized }: AnsweredBatch): void {
+  const addGap = state.prepare(ADD_GAP_SQL);
+  for (const item of oversized) {
+    const id = `${machine}:too-large:${item.stream}:${item.id}`;
+    const gap = item.stream === "event"
+      ? { stream: "event", fromSequence: item.sequence ?? null, toSequence: item.sequence ?? null, reason: "too-large" }
+      : { stream: item.stream, fromSequence: null, toSequence: null, records: [{ stream: item.stream, id: item.id }], reason: "too-large" };
+    addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
+  }
+}
+
+/** The remote will never take the batch's records (`rejected`): it is told what is missing instead, in the next batch. */
+function queueRejectedGap({ state, remote, machine, records }: AnsweredBatch, rejected: string): void {
+  const events = records.filter(item => item.stream === "event").map(item => item.sequence ?? 0);
+  const others = records.filter(item => item.stream !== "event" && item.stream !== "gap" && item.stream !== "skip").map(item => ({ stream: item.stream, id: item.id }));
+  const gap = {
+    stream: "batch",
+    fromSequence: events.length === 0 ? null : Math.min(...events),
+    toSequence: events.length === 0 ? null : Math.max(...events),
+    records: others,
+    reason: rejected,
+  };
+  const id = `${machine}:rejected:${batchIdOf(records)}`;
+  state.prepare(ADD_GAP_SQL).run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
+}
+
 const errorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** What the remote's answer to a batch means: `detail` is its status, and the start of its body when it sent one. */
@@ -302,6 +362,11 @@ export class RemoteOutbox {
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
   readonly #holder = randomUUID();
+  /**
+   * The audits held under their marked hash whose lists a sync's test found mended (`#mendedFrom`), by the connection
+   * it reads through, which lasts as long as the sync: its later batches test none again.
+   */
+  readonly #mended = new WeakMap<Database.Database, Set<string>>();
 
   constructor(options: OutboxOptions = {}) {
     this.#home = options.home ?? defaultRerailHome();
@@ -382,14 +447,17 @@ export class RemoteOutbox {
   }
 
   /**
-   * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it writes
-   * nothing more: every write checks the remote is still configured under that key first.
+   * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it records
+   * nothing more of the remote's answers: each such write checks the remote is still configured under that key first.
+   * The records of the batches sent to it (`#markPosted`) stay, the one written for a batch still out included, with no
+   * such check: the remote may hold their events, so their numbers stay taken (`keepEventNumbersPastRemotes`).
    */
   forget(key: string): void {
     const state = openState(this.#home);
     try {
       state.transaction(() => {
-        for (const table of ["cursors", "sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(key);
+        for (const table of ["sent", "pending_gaps", "status", "locks"]) state.prepare(`DELETE FROM ${table} WHERE remote = ?`).run(key);
+        state.prepare("DELETE FROM cursors WHERE remote = ? AND stream <> ?").run(key, POSTED_EVENTS_STREAM);
       })();
     } finally {
       state.close();
@@ -474,6 +542,7 @@ export class RemoteOutbox {
       this.#acknowledge(state, key, batch.records, batch.oversized, undefined);
       return "next";
     }
+    this.#markPosted(state, key, batch);
     const outcome = await this.#post(remote, token, batch.records, options.signal);
     const stopped = this.#stoppedWhileOut(sending);
     if (stopped !== undefined) return stopped;
@@ -483,6 +552,21 @@ export class RemoteOutbox {
       return "next";
     }
     return this.#settleBatch(sending, batch, outcome);
+  }
+
+  /**
+   * The last event number `batch` carries, on disk before the batch goes out (`POSTED_EVENTS_STREAM`): once the remote
+   * may hold an event, the next writer of events numbers past it (`keepEventNumbersPastRemotes`), whatever a power cut
+   * takes after, the remote's answer and the cursor's move included. Of the outbox's commits only this one waits for the
+   * disk (`commitDurably`), once per batch that carries events. None runs inside a hook, but the daemon's timer runs
+   * them on the daemon's thread, which a hook arriving meanwhile waits for; and a cut that takes another of them only
+   * makes the outbox send again what the remote holds.
+   */
+  #markPosted(state: Database.Database, remote: string, batch: BatchBuilder): void {
+    const sequence = lastSequence(batch);
+    if (sequence === 0) return;
+    commitDurably(state, () => state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, ?, ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)")
+      .run(remote, POSTED_EVENTS_STREAM, sequence));
   }
 
   /** The result that ends the sync when the lock is lost or the remote is removed (or removed and added again) while a batch was out: nothing more is sent or recorded for it. */
@@ -570,7 +654,8 @@ export class RemoteOutbox {
       const isExcluded = (sessionId: string, at: number): boolean =>
         excludedSessions.has(sessionId) || excluded.at(sessionRepository.get(sessionId) ?? null, at);
       if (!this.#collectEvents(state, rerail, remote, batch, isExcluded)) return batch;
-      if (!this.#collectAudits(rerail, rules, batch, isExcluded, addSnapshot, unsent)) return batch;
+      const isExcludedRepository = (repositoryKey: string | null, at: number): boolean => excluded.at(repositoryKey, at);
+      if (!this.#collectAudits(rerail, rules, batch, { isExcluded, isExcludedRepository }, addSnapshot, unsent)) return batch;
     }
 
     const scans = state.prepare("SELECT scan_id, repository_key, document_json, rules_json, queued_at FROM scans ORDER BY queued_at").all() as Array<{ scan_id: string; repository_key: string; document_json: string; rules_json: string; queued_at: number }>;
@@ -620,32 +705,65 @@ export class RemoteOutbox {
     rerail: Database.Database,
     rules: RuleDocuments,
     batch: BatchBuilder,
-    isExcluded: (sessionId: string, at: number) => boolean,
+    { isExcluded, isExcludedRepository }: {
+      isExcluded: (sessionId: string, at: number) => boolean;
+      isExcludedRepository: (repositoryKey: string | null, at: number) => boolean;
+    },
     addSnapshot: (item: OutboxRecord) => boolean,
     unsent: (item: OutboxRecord) => boolean,
   ): boolean {
-    const rows = rerail.prepare("SELECT audit_id, session_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
-    const pending = rows.flatMap(row => {
-      const hash = auditHash(row);
-      return isExcluded(row.session_id, row.started_at) || !unsent({ line: "", stream: "audit", id: row.audit_id, hash }) ? [] : [{ auditId: row.audit_id, hash }];
-    });
-    if (pending.length === 0) return true;
-    const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent };
+    const rows = rerail.prepare("SELECT audit_id, session_id, repository_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
+    // An audit the repository owns has no session: its repository's exclusions decide.
+    const excludedAudit = (row: FinishedAuditRow): boolean =>
+      row.session_id === null ? isExcludedRepository(row.repository_id, row.started_at) : isExcluded(row.session_id, row.started_at);
+    // Opens the database at its first read: a sync with no audit to test or send opens none.
     const reader = new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
+    const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent, reader, rows };
     try {
-      return pending.every(({ auditId, hash }) => this.#addAudit(sink, reader.get(auditId), hash));
+      return rows.every(row => excludedAudit(row) || this.#addPending(sink, row));
     } finally {
       reader.close();
     }
   }
 
-  /** One audit with the rules it ran and its violations, all in one batch or the audit waits for the next; false once the batch is full. */
-  #addAudit(sink: AuditSink, audit: AuditRecord | undefined, hash: string): boolean {
+  /**
+   * `row`'s audit unless the remote holds it as it is; false once the batch is full. One held under its readable hash
+   * is passed by unread: one sent whole is not sent again for damage to its paths, failures, rule revisions or rule
+   * provenance, which its hash leaves out. One held under its marked hash, sent with a stored list that did not read,
+   * is passed by while its lists still do not read and sent again whole once mended (`#mendedFrom`). Any other is read
+   * only while the batch has room, so a full batch ends the reads.
+   */
+  #addPending(sink: AuditSink, row: FinishedAuditRow): boolean {
+    if (heldAs(sink, row, false)) return true;
+    if (heldAs(sink, row, true) && !this.#mendedFrom(sink, row).has(row.audit_id)) return true;
+    return this.#addAudit(sink, sink.reader.get(row.audit_id), row);
+  }
+
+  /**
+   * The audits held under their marked hash whose stored lists read again, tested in SQL once a sync, at the first such
+   * audit it meets, `row`: that one and every one after it, in one statement (`readableAudits`). One held so only after
+   * that test was sent marked by this sync, from the record it read, so it is passed by untested.
+   */
+  #mendedFrom(sink: AuditSink, row: FinishedAuditRow): Set<string> {
+    const tested = this.#mended.get(sink.rerail);
+    if (tested !== undefined) return tested;
+    const marked = sink.rows.slice(sink.rows.indexOf(row)).filter(later => heldAs(sink, later, true));
+    const mended = sink.reader.readableAudits(marked.map(later => later.audit_id));
+    this.#mended.set(sink.rerail, mended);
+    return mended;
+  }
+
+  /**
+   * One audit with the rules it ran and its violations, all in one batch or the audit waits for the next; false once the
+   * batch is full. Its hash is marked when the record sent lists a failure for a stored list it reads as none.
+   */
+  #addAudit(sink: AuditSink, audit: AuditRecord | undefined, row: FinishedAuditRow): boolean {
     if (audit === undefined) return true;
     for (const provenance of audit.ruleProvenance) {
       const rule = provenanceRule(provenance, audit.workspaceRoot);
       if (rule !== undefined && !this.#addRule(sink.rules, rule, sink.batch, sink.unsent)) return false;
     }
+    const hash = auditHash(row, audit.failures.some(isUnreadableList));
     return addTogether(sink, [auditRecord(audit, hash), ...violationRecords(audit, violationKeysOf(sink.rerail, audit))]);
   }
 
@@ -659,8 +777,7 @@ export class RemoteOutbox {
     if (!unsent(probe) || batch.ids.has(`rule\0${provenance.payloadHash}`)) return true;
     const document = provenance.document ?? rules.find(provenance);
     if (document === undefined) return true;
-    const mode = document.kind === "code" ? (document.rule as { mode?: string }).mode ?? null : null;
-    return batch.add(record("rule", provenance.payloadHash, { ruleId: provenance.ruleId, kind: document.kind, mode, document: document.rule }, { hash: provenance.payloadHash }));
+    return batch.add(record("rule", provenance.payloadHash, remoteRuleBody(provenance.ruleId, document), { hash: provenance.payloadHash }));
   }
 
   async #post(remote: RemoteEntry, token: string, records: readonly OutboxRecord[], stop?: AbortSignal): Promise<PostOutcome> {
@@ -694,36 +811,11 @@ export class RemoteOutbox {
     state.transaction(() => {
       // Removed, or removed and added again, while this batch was out: its answer belongs to no remote now.
       if (!this.#configured(remote)) return;
-      const machine = machineId(this.#home);
-      const sequence = [...records, ...oversized].reduce((max, item) => Math.max(max, item.sequence ?? 0), 0);
-      if (sequence > 0) state.prepare("INSERT INTO cursors (remote, stream, value) VALUES (?, 'event', ?) ON CONFLICT (remote, stream) DO UPDATE SET value = max(value, excluded.value)").run(remote, sequence);
-      const upsert = state.prepare("INSERT INTO sent (remote, stream, id, hash) VALUES (?, ?, ?, ?) ON CONFLICT (remote, stream, id) DO UPDATE SET hash = excluded.hash");
-      for (const item of [...records, ...oversized]) if (item.hash !== undefined) upsert.run(remote, item.stream, item.id, item.hash);
-      const sentGap = state.prepare("DELETE FROM pending_gaps WHERE remote = ? AND id = ?");
-      // Only the gaps this batch carried: a rejected one is reported again inside the new gap's records.
-      for (const item of records) if (item.stream === "gap" && item.sequence === undefined) sentGap.run(remote, item.id);
-      const addGap = state.prepare("INSERT OR REPLACE INTO pending_gaps (remote, id, record_json) VALUES (?, ?, ?)");
-      for (const item of oversized) {
-        const id = `${machine}:too-large:${item.stream}:${item.id}`;
-        const gap = item.stream === "event"
-          ? { stream: "event", fromSequence: item.sequence ?? null, toSequence: item.sequence ?? null, reason: "too-large" }
-          : { stream: item.stream, fromSequence: null, toSequence: null, records: [{ stream: item.stream, id: item.id }], reason: "too-large" };
-        addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
-      }
-      if (rejected !== undefined) {
-        // The remote will never take these: it is told what is missing instead, in the next batch.
-        const events = records.filter(item => item.stream === "event").map(item => item.sequence ?? 0);
-        const others = records.filter(item => item.stream !== "event" && item.stream !== "gap" && item.stream !== "skip").map(item => ({ stream: item.stream, id: item.id }));
-        const gap = {
-          stream: "batch",
-          fromSequence: events.length === 0 ? null : Math.min(...events),
-          toSequence: events.length === 0 ? null : Math.max(...events),
-          records: others,
-          reason: rejected,
-        };
-        const id = `${machine}:rejected:${batchIdOf(records)}`;
-        addGap.run(remote, id, JSON.stringify({ type: "gap", id, ...gap }));
-      }
+      const answered: AnsweredBatch = { state, remote, machine: machineId(this.#home), records, oversized };
+      holdAnswered(answered);
+      clearSentGaps(answered);
+      queueTooLargeGaps(answered);
+      if (rejected !== undefined) queueRejectedGap(answered, rejected);
     })();
   }
 
@@ -792,22 +884,28 @@ const SCAN_VIOLATION_KEYS = `SELECT ordinal, violation_key, logged FROM (
     ${violationCopiesSql("audit", "audits audit, json_each(audit.violations_json) violation", "audit.audit_id = ?")}
   ) WHERE copy = 1`;
 
-/** `audit`'s violations by ordinal: the first copy of each, its key and whether it was logged. */
+/**
+ * `audit`'s violations by ordinal: the first copy of each, its key and whether it was logged. None when its record
+ * lists none: a scan's stored violations that the record reads as none (`readLists`) would end the sync in SQLite's
+ * `json_each`.
+ */
 function violationKeysOf(rerail: Database.Database, audit: AuditRecord): ReadonlyMap<number, { violation_key: string; logged: number }> {
+  if (audit.violations.length === 0) return new Map();
   const rows = rerail.prepare(audit.origin === "scan" ? SCAN_VIOLATION_KEYS : ONGOING_VIOLATION_KEYS).all(audit.auditId) as Array<{ ordinal: number; violation_key: string; logged: number }>;
   return new Map(rows.map(entry => [entry.ordinal, entry]));
 }
 
-/** A finished audit as `#collectAudits` lists it. */
-interface FinishedAuditRow { audit_id: string; session_id: string; origin: string; status: string; started_at: number; finished_at: number; size: number }
+/** A finished audit as `#collectAudits` lists it; an audit the repository owns has `repository_id` and no session. */
+interface FinishedAuditRow { audit_id: string; session_id: string | null; repository_id: string | null; origin: string; status: string; started_at: number; finished_at: number; size: number }
 
 /**
- * What decides whether an audit is sent again: a change to its status, end or violations, or its marking as a scan.
- * An ongoing audit's hash leaves `origin` out, so the update that added it resends none of them; a scan sent before
- * then goes again, with `origin: "scan"`.
+ * What decides whether an audit is sent again: a change to its status, end or violations, its marking as a scan, or
+ * whether it was sent with a stored list its record reads as none (`unreadable`). An ongoing audit's hash leaves
+ * `origin` out, so the update that added it resends none of them; a scan sent before then goes again, with
+ * `origin: "scan"`. A readable audit's hash leaves `unreadable` out the same way, so no audit sent before goes again.
  */
-function auditHash(row: FinishedAuditRow): string {
-  return hashOf([row.status, row.finished_at, row.size, ...(row.origin === "scan" ? ["scan"] : [])]);
+function auditHash(row: FinishedAuditRow, unreadable: boolean): string {
+  return hashOf([row.status, row.finished_at, row.size, ...(row.origin === "scan" ? ["scan"] : []), ...(unreadable ? ["unreadable"] : [])]);
 }
 
 /** The rule document a provenance names, for `#addRule`; undefined for one stored without a payload hash. */
@@ -824,6 +922,14 @@ interface AuditSink {
   readonly batch: BatchBuilder;
   readonly addSnapshot: (item: OutboxRecord) => boolean;
   readonly unsent: (item: OutboxRecord) => boolean;
+  readonly reader: SqliteAuditReader;
+  /** Every finished audit, in the order the sync goes through them. */
+  readonly rows: readonly FinishedAuditRow[];
+}
+
+/** Whether the remote holds `row`'s audit under its readable hash or, `unreadable`, its marked one (`auditHash`). */
+function heldAs(sink: AuditSink, row: FinishedAuditRow, unreadable: boolean): boolean {
+  return !sink.unsent({ line: "", stream: "audit", id: row.audit_id, hash: auditHash(row, unreadable) });
 }
 
 /** `items` into the batch together, or none of them while the batch has records and no room for all; false then. */
@@ -836,6 +942,7 @@ function addTogether(sink: AuditSink, items: readonly OutboxRecord[]): boolean {
 function auditRecord(audit: AuditRecord, hash: string): OutboxRecord {
   return record("audit", audit.auditId, {
     sessionId: audit.sessionId,
+    repositoryKey: audit.repositoryId,
     workspaceRoot: audit.workspaceRoot,
     scope: audit.scope,
     mode: audit.mode,
@@ -924,4 +1031,15 @@ export function startRemoteSink(options: OutboxOptions & { intervalMs?: number; 
       await running;
     },
   };
+}
+
+/**
+ * What the remote sink is sent of a rule: its kind, a code rule's mode, and its document; a rule written in `.rerail`
+ * without where its file and the files it includes are on this computer.
+ */
+function remoteRuleBody(ruleId: string, document: RuleDocument): Record<string, unknown> {
+  if (document.kind === "conversation") return { ruleId, kind: document.kind, mode: null, document: document.rule };
+  if (document.kind === "code") return { ruleId, kind: document.kind, mode: document.rule.mode, document: document.rule };
+  const { path: _path, includes: _includes, ...portable } = document.rule;
+  return { ruleId, kind: document.kind, mode: document.rule.mode, document: portable };
 }

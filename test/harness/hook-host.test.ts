@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { appendFile, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
-import { encodeRerailEventResult, type EngineEndpoint } from "../../src/runtime/index.js";
+import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, encodeRerailEventResult, engineProof, type DaemonMachine, type EngineEndpoint } from "../../src/runtime/index.js";
+import { defaultEngineSocketPath } from "../../src/daemon/index.js";
 import {
   emitHookOutput,
   holdStopSteers,
@@ -30,18 +32,27 @@ import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
+import { DEAD_PID } from "../support/processes/daemon-home.js";
 
-// The lookup of a named engine socket, and a later hook's lookup of the running daemon, work as they do; a test stands
-// in for one call of either at a time.
+// The lookup of a named engine socket, a session start's lookup of the daemon, and a later hook's lookup of the running
+// daemon work as they do; a test stands in for one call of any of them at a time.
 const lookups = vi.hoisted(() => ({
-  engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>(),
+  engineEndpointAt: vi.fn<(socketPath: string, deadline?: number) => Promise<EngineEndpoint>>(),
+  daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean, deadline?: number) => Promise<EngineEndpoint>>(),
   runningDaemonEngineEndpoint: vi.fn<(deadline?: number) => Promise<unknown>>(),
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
-  lookups.engineEndpointAt.mockImplementation(socketPath => actual.engineEndpointAt(socketPath));
+  lookups.engineEndpointAt.mockImplementation((socketPath, deadline) => actual.engineEndpointAt(socketPath, deadline));
+  lookups.daemonEngineEndpoint.mockImplementation((replace, deadline) => actual.daemonEngineEndpoint(replace, deadline));
   lookups.runningDaemonEngineEndpoint.mockImplementation(deadline => actual.runningDaemonEngineEndpoint(deadline));
-  return { ...actual, engineEndpointAt: lookups.engineEndpointAt, runningDaemonEngineEndpoint: lookups.runningDaemonEngineEndpoint };
+  return {
+    ...actual,
+    engineEndpointAt: lookups.engineEndpointAt,
+    daemonEngineEndpoint: lookups.daemonEngineEndpoint,
+    runningDaemonEngineEndpoint: lookups.runningDaemonEngineEndpoint,
+  };
 });
 
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
@@ -59,9 +70,14 @@ interface HeldEngine {
   close(): Promise<void>;
 }
 
+/** The capability the held engine holds, which daemon.json records for its socket. */
+const HELD_CAPABILITY = "held-engine-capability";
+
 /**
  * A daemon's engine socket that answers the first event only once `answerFirst` is called, as a busy daemon checking an
- * edit does, and every later event at once.
+ * edit does, and every later event at once. daemon.json records it with its capability until it closes, as the daemon
+ * records itself: this process's pid and a start stamped after the process began, so Windows names the recorded daemon
+ * as the pipe's holder. It proves it holds that capability, as a hook's start check asks.
  */
 async function heldEngine(root: string): Promise<HeldEngine> {
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-held-engine-${randomUUID()}` : join(root, "engine.sock");
@@ -69,6 +85,11 @@ async function heldEngine(root: string): Promise<HeldEngine> {
   const firstArrived = Promise.withResolvers<void>();
   const first = Promise.withResolvers<void>();
   const server = createServer(async (request, response) => {
+    if (request.url === ENGINE_PROOF_PATH) {
+      request.resume();
+      response.end(JSON.stringify({ proof: engineProof(HELD_CAPABILITY, String(request.headers[ENGINE_CHALLENGE_HEADER])) }));
+      return;
+    }
     let body = "";
     for await (const chunk of request) body += String(chunk);
     const { event } = JSON.parse(body) as { event: { eventId: string } };
@@ -80,12 +101,19 @@ async function heldEngine(root: string): Promise<HeldEngine> {
     response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [] }));
   });
   await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
+  await mkdir(process.env.RERAIL_HOME!, { recursive: true });
+  await writeFile(stateFile, JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+    databasePath: join(root, "rerail.sqlite"), kernelSocketPath: socketPath, ui: "bundled", startedAt: Date.now(), packageRoot: root, accessToken: HELD_CAPABILITY }));
   return {
     socketPath,
     received,
     firstArrived: firstArrived.promise,
     answerFirst: () => first.resolve(),
-    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+    close: async () => {
+      await rm(stateFile, { force: true });
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
   };
 }
 
@@ -163,7 +191,7 @@ describe("hook steers", () => {
   it.each(hookCases)("counts no $host output whose only delivery is a note naming no rule (a Merge Assist note)", async ({ host, run, input }) => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
-    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes-1: retry.ts" };
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jdoe-1: retry.ts" };
     await persistPending(pendingPath(options.storageRoot!, host, "session-1"), [{ ...delivery("Your edit overlaps open work."), conflict }]);
     const output = await run(input(root), options);
     expect(JSON.stringify(output)).toContain("Your edit overlaps open work.");
@@ -175,7 +203,7 @@ describe("hook steers", () => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
     const path = pendingPath(options.storageRoot!, "claude-code", "session-1");
-    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jbarnes-1: retry.ts" };
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps jdoe-1: retry.ts" };
     await mkdir(join(path, ".."), { recursive: true });
     await writeFile(path, JSON.stringify([{ ...delivery("kept"), conflict }, { ...delivery("unlinked"), conflict: { ...conflict, url: null } }, { ...delivery("unnamed"), conflict: "x" }]));
     expect(await readPending(path)).toEqual([{ ...delivery("kept"), conflict }, delivery("unlinked"), delivery("unnamed")]);
@@ -360,6 +388,24 @@ describe("hook host durable state", () => {
     }
   });
 
+  it("looks up the engine socket the hook is given with the hook's deadline, so a proof its start check had since the event arrived answers for it", async () => {
+    const root = await temporaryDirectory();
+    const deadlines: number[] = [];
+    // The hook ends at its lookup, which is all this case reads: the deadline it hands the lookup.
+    lookups.engineEndpointAt.mockImplementationOnce(async (_socketPath, deadline) => {
+      deadlines.push(deadline ?? Number.NaN);
+      throw new Error("the lookup this case stands in for");
+    });
+    const { embedder: _embedder, ...options } = hookOptions(root);
+    const before = Date.now();
+    await expect(runClaudeHook({ session_id: "s", cwd: root, hook_event_name: "UserPromptSubmit", prompt_id: "p", prompt: "go" }, { ...options, kernelSocketPath: join(root, "named.sock") }))
+      .rejects.toThrow("the lookup this case stands in for");
+    expect(deadlines).toHaveLength(1);
+    // The hook's deadline: 12 s from the event's arrival, the start check's read of the daemon included.
+    expect(deadlines[0]).toBeGreaterThanOrEqual(before + 12_000);
+    expect(deadlines[0]).toBeLessThanOrEqual(Date.now() + 12_000);
+  });
+
   it("finds the daemon before it takes the session's lock, so a hook waiting on a busy daemon's probe holds up no other hook", { timeout: 20_000 }, async () => {
     const root = await temporaryDirectory();
     const engine = await heldEngine(root);
@@ -483,9 +529,10 @@ describe("hook host durable state", () => {
   });
 });
 
-describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none runs", () => {
+describe("a session's start where RERAIL_AUTOSTART keeps hooks from starting or replacing a daemon", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   const notRunning = (setting: string) =>
@@ -520,6 +567,77 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
       // What the person asked for is no failure, and nothing started a daemon.
       expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(false);
       expect(existsSync(join(process.env.RERAIL_HOME!, "daemon.json"))).toBe(false);
+    },
+  );
+
+  const keptLine = (setting: string) =>
+    `The running Rerail daemon is from another Rerail package or an earlier release, and RERAIL_AUTOSTART=${setting} keeps hooks from replacing it, so nothing is recorded until a daemon from the active package runs. Run rerail daemon stop, then rerail daemon start.`;
+  /** This checkout: the package the hooks under test run from. */
+  const OWN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const PIPE = defaultEngineSocketPath(String.raw`C:\Users\me\.rerail\rerail.sqlite`, "win32");
+  /** The engine pipe as `\\.\pipe\` lists it. */
+  const PIPE_NAME = PIPE.slice(PIPE.lastIndexOf("\\") + 1);
+  /** When the kept daemon stamped `startedAt`; its process started 0.6 s before. */
+  const STARTED_AT = 1_700_000_000_000;
+  // A daemon of Rerail 0.1.4 or earlier, whose engine has no proof, launched from the hooks' own package as an upgrade
+  // in place leaves its record; and a daemon of another install, whose engine proves itself.
+  const keptDaemons = [
+    { daemon: "of Rerail 0.1.4 or earlier from the hooks' own package", version: "0.1.4", packageRoot: OWN_ROOT, proof: "no-proof" },
+    { daemon: "of another install", version: "0.1.6", packageRoot: String.raw`C:\Users\me\AppData\Roaming\npm\node_modules\@neralabs\rerail`, proof: "proved" },
+  ] as const;
+
+  /**
+   * A Windows machine with RERAIL_AUTOSTART set to `setting` whose daemon.json, in this test's Rerail home, names `kept`
+   * running; each request to its URL goes to `asked`.
+   */
+  async function besideKeptDaemon(kept: (typeof keptDaemons)[number], setting: string, asked: string[]): Promise<DaemonMachine> {
+    const home = process.env.RERAIL_HOME!;
+    await mkdir(home, { recursive: true });
+    const state = {
+      pid: DEAD_PID, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: kept.version, databasePath: join(home, "rerail.sqlite"),
+      kernelSocketPath: PIPE, ui: "dev", startedAt: STARTED_AT, packageRoot: kept.packageRoot, accessToken: "capability", nativeToken: "native",
+    };
+    await writeFile(join(home, "daemon.json"), JSON.stringify(state));
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      const path = new URL(url).pathname;
+      asked.push(path);
+      return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
+    }));
+    return fakeMachine("win32", {
+      env: { RERAIL_HOME: home, RERAIL_AUTOSTART: setting },
+      kill: pid => {
+        if (pid !== DEAD_PID) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+      pipes: () => [PIPE_NAME],
+      capabilityProof: async () => kept.proof,
+      processStartedAt: pid => (pid === DEAD_PID ? STARTED_AT - 600 : undefined),
+    });
+  }
+
+  // A daemon runs that the hooks may not send events to: one of Rerail 0.1.4 or earlier predates the fields they send
+  // (told apart on Windows), and one of another install is not the active package's. RERAIL_AUTOSTART=0 keeps the hooks
+  // from replacing it, so nothing is recorded while it runs. The session's start says so where the person reads it, with
+  // the stop before the start, since a start beside a running daemon answers that one already runs; each lost event is
+  // a failure `rerail status` names. The line names the setting as the person set it.
+  it.each(sessionStarts.flatMap(start => keptDaemons.flatMap(kept => ["0", "false"].map(setting => ({ ...start, kept, setting })))))(
+    "tells the person in $host that nothing is recorded beside a daemon $kept.daemon that the hooks may not replace, with RERAIL_AUTOSTART=$setting",
+    async ({ run, input, told, kept, setting }) => {
+      const root = await temporaryDirectory();
+      vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+      vi.stubEnv("RERAIL_AUTOSTART", setting);
+      const asked: string[] = [];
+      const machine = await besideKeptDaemon(kept, setting, asked);
+      const { daemonEngineEndpoint } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+      lookups.daemonEngineEndpoint.mockClear().mockImplementationOnce((replace, deadline) => daemonEngineEndpoint(replace, deadline, machine));
+      const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
+      const served = await serveText(parsed => run(parsed, daemonPath), JSON.stringify(input(root)));
+      expect(served).toEqual({ stdout: `${JSON.stringify(told(keptLine(setting)))}\n`, stderr: "" });
+      expect(lookups.daemonEngineEndpoint).toHaveBeenCalledTimes(1);
+      // The kept daemon is sent nothing, its record stays for `rerail daemon stop`, and the lost event is logged.
+      expect(asked.filter(path => path !== "/healthz")).toEqual([]);
+      expect(existsSync(join(process.env.RERAIL_HOME!, "daemon.json"))).toBe(true);
+      expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(true);
     },
   );
 
@@ -576,5 +694,19 @@ describe("a session's start where RERAIL_AUTOSTART keeps the daemon off and none
     expect(await serveText(parsed => run(parsed, daemonPath), JSON.stringify(input(root)))).toEqual({ stdout: "{}\n", stderr: `rerail hook: ${reason}\n` });
     expect(lookups.runningDaemonEngineEndpoint).toHaveBeenCalledTimes(1);
     expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(false);
+  });
+
+  // Beside a daemon it may neither use nor replace, a later hook answers as any failed hook does and logs the event it
+  // lost, which `rerail status` names: only the session's start tells the person, once.
+  it.each(laterHooks)("answers a later $host hook beside a daemon it may not replace as any failed hook, and logs it", async ({ run, input }) => {
+    const root = await temporaryDirectory();
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const { OtherDaemonKeptError } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+    const reason = "RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon stop, then rerail daemon start, or set RERAIL_ENGINE_SOCKET";
+    lookups.runningDaemonEngineEndpoint.mockClear().mockRejectedValueOnce(new OtherDaemonKeptError(reason));
+    const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
+    expect(await serveText(parsed => run(parsed, daemonPath), JSON.stringify(input(root)))).toEqual({ stdout: "{}\n", stderr: `rerail hook: ${reason}\n` });
+    expect(existsSync(join(process.env.RERAIL_HOME!, HOOK_FAILURES_FILE))).toBe(true);
   });
 });

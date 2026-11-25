@@ -25,6 +25,7 @@ import {
   renderRecommendedPacks,
   renderSkipped,
   renderSummary,
+  notRunLine,
   renderTips,
   renderUnsupportedPlatform,
   renderWslNote,
@@ -561,6 +562,25 @@ describe("T6 / C6 summary", () => {
     expect(text).not.toMatch(/close this/i);
   });
 
+  it.each(LANES)("says which added packs have rules this Rerail does not run, under the count that leaves them out (%s)", lane => {
+    const notRun = [{ name: "JavaScript", version: "0.1.9", ruleCount: 4 }, { name: "TypeScript", version: "0.1.8", ruleCount: 2 }];
+    const lines = stripAnsi(renderSummary({ ...SUMMARY, ruleCount: 160, notRun }, lane)).split("\n");
+    const at = lines.indexOf("● Rerail is on in acme-web · 2 rule packs, 160 rules");
+    const note = lines.slice(at + 1, lines.indexOf("", at));
+    expect(note.every(line => line.startsWith("  ") && line.length <= 74)).toBe(true);
+    expect(note.map(line => line.trim()).join(" ")).toBe(
+      "This Rerail does not run 6 rules of JavaScript 0.1.9 (4) and TypeScript 0.1.8 (2): they test a token parsed files now leave out. Each pack's next version runs them again; rerail packs list names them.",
+    );
+    expect(stripAnsi(renderSummary(SUMMARY, lane))).not.toContain("does not run");
+  });
+
+  it("says the same of one rule of one pack in the singular", () => {
+    expect(notRunLine([{ name: "Python", version: "0.1.10", ruleCount: 1 }])).toBe(
+      "This Rerail does not run 1 rule of Python 0.1.10 (1): it tests a token parsed files now leave out. The pack's next version runs it again; rerail packs list names it.",
+    );
+    expect(notRunLine([])).toBeUndefined();
+  });
+
   it("puts the tips below the divider, after the link, in the terminal", () => {
     const text = stripAnsi(renderSummary(SUMMARY, "terminal"));
     const link = text.indexOf("Manage");
@@ -620,6 +640,19 @@ describe("T6 / C6 summary", () => {
     const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, ompPlugin: true } }, "terminal"));
     expect(text).toContain("  OMP       OMP also loads Rerail from its plugin install, so two copies run.\n            Run omp plugin uninstall @neralabs/rerail, then restart OMP.\n");
     expect(stripAnsi(renderSummary(SUMMARY, "terminal"))).not.toContain("omp plugin uninstall");
+  });
+
+  it("says Claude Code's hooks start with node, what that costs and how to try cmd.exe again, where cmd.exe ran no command", () => {
+    const agents = { ...CONNECTED, nodeHookFallback: true };
+    const row = [
+      "  Claude    cmd.exe could not run a test command, so Rerail’s hooks start",
+      "            with node. Where Claude Code’s PATH finds another Node first,",
+      "            each hook event starts a second Node.",
+      "            Run rerail install --refresh to try cmd.exe again.\n",
+    ].join("\n");
+    expect(stripAnsi(renderSummary({ ...SUMMARY, agents }, "terminal"))).toContain(row);
+    expect(stripAnsi(renderSkipped(agents, "terminal"))).toContain(row);
+    expect(stripAnsi(renderSummary(SUMMARY, "terminal"))).not.toContain("install --refresh");
   });
 
   it("names Codex's form of the commands beside the others' where Codex is one of several agents", () => {

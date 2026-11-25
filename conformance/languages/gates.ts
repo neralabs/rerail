@@ -127,10 +127,16 @@ function packJsonRules(root: string, pack: string): PackJsonRule[] {
 /** A document's repository-relative path from its pack-relative one (pack.json's `document`, a port's `policy`). */
 const packPath = (pack: string, document: string): string => `packs/${pack}/${documentPath(document)}`;
 
-/** The pack's own rules (conformance.json `own`) pack.json ships, by their documents' repository-relative paths. */
+/**
+ * The pack's own rules (conformance.json `own`) pack.json ships, by their documents' repository-relative paths. A rule
+ * written in `.rerail` is left out: `loads` and `compact` read JSON documents, and the pack validation's checks 1 to 3
+ * prove a `.rerail` rule through the engine and the `.rerail` runner instead.
+ */
 function ownRules(root: string, loaded: LoadedPack): Map<string, PackJsonRule> {
   const own = new Set(loaded.pack.own);
-  return new Map(packJsonRules(root, loaded.pack.pack).filter((rule) => own.has(rule.id)).map((rule) => [packPath(loaded.pack.pack, rule.document), rule]));
+  return new Map(packJsonRules(root, loaded.pack.pack)
+    .filter((rule) => own.has(rule.id) && !rule.document.endsWith(".rerail"))
+    .map((rule) => [packPath(loaded.pack.pack, rule.document), rule]));
 }
 
 const failing = (checks: readonly Check[]) => checks.find((check) => !check.ok);

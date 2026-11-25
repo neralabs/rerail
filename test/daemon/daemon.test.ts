@@ -1,6 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, watch } from "node:fs";
+import { on } from "node:events";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
-import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -19,15 +20,20 @@ import { NativeSessionServer } from "../../src/daemon/native-session-server.js";
 import {
   type DaemonHealth,
   type DaemonState,
+  engineRequestBody,
   ingestEngineEvent,
+  SqliteSessionReader,
   SqliteSessionStore,
   SESSION_EVENT_PAGE_LIMIT,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
-import { keepClaudeStatusFiles } from "../../src/presentation/index.js";
-import { setUpTestRepository } from "../support/repository-rules.js";
+import {
+  type AdapterEvent, leaveUntaken, openRerailDatabase, RepositoryWorktreeWalks, setRuleSetting, SqliteAuditStore, SqliteAuditControlStore,
+  UNTAKEN_EVENTS_DIR, untakenFolderId, type UntakenPass,
+} from "../../src/engine/index.js";
+import { keepClaudeStatusFiles, presentedSessionNoteRules, steerDashboard } from "../../src/presentation/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
@@ -415,7 +421,10 @@ describe("Rerail daemon", () => {
     // `sessions_get` adds the transcript's gaps and declined steers, which the status line does not read.
     const { gaps, declined, ...head } = (await getJson<Record<string, unknown>>(daemon, "/api/sessions/large-run")).body;
     expect(compact.context?.session).toEqual(head);
-    expect(gaps).toEqual({ droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 });
+    expect(gaps).toEqual({
+      droppedEvents: 0, lostEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+      discoveryGapPlaces: [],
+    });
     expect(declined).toEqual({ violations: 0, notes: [] });
     expect(compact.context?.session?.audit).toEqual({
       workspaceRoot: root, scope: "repository", mode: "log", status: "failed", violationCount: 1, failureCount: 148,
@@ -542,6 +551,92 @@ describe("Rerail daemon", () => {
       status: 404,
       body: { error: "session-not-found" },
     });
+  });
+
+  /** One event sent to the daemon's engine socket as a hook sends it, with `headers`; the answer as JSON. */
+  async function postEvent(daemon: RerailDaemon, event: AdapterEvent, headers: Record<string, string>): Promise<unknown> {
+    const body = JSON.stringify({ event });
+    const { promise, resolve: answered, reject } = Promise.withResolvers<unknown>();
+    const outgoing = httpRequest({
+      socketPath: daemon.kernelSocketPath, method: "POST", path: "/events",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), [ACCESS_HEADER]: ACCESS, ...headers },
+    }, (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on("data", chunk => chunks.push(chunk));
+      incoming.on("end", () => answered(JSON.parse(Buffer.concat(chunks).toString())));
+      incoming.on("error", reject);
+    });
+    outgoing.on("error", reject);
+    outgoing.end(body);
+    return await promise;
+  }
+
+  /** A session's start in `root`, as Claude Code's hook sends it. */
+  const sessionStart = (root: string, sessionId: string) =>
+    ({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } }) as const;
+  /** What a hook that reads the answer's facts sends with its event. */
+  const READS_FACTS = { "x-rerail-event-answer": "2" };
+  const ONE_RULE = "typescript-eslint-consistent-type-definitions";
+  const setUpOneRule = (root: string): string => setUpTestRepository(root, { rerailRules: [ONE_RULE] }, join(root, "rerail.sqlite"));
+
+  /** Turns the repository's one rule off once the daemon's runtime there has loaded its rules for an earlier session. */
+  async function turnRuleOffAfterLoad(daemon: RerailDaemon, root: string, repositoryKey: string): Promise<void> {
+    // 0: the one rule's setting names a rule this daemon's catalog does not hold (the test home installs no pack), so
+    // the count stays 0 through the turn-off, and the later note shows its start read the changed configuration again
+    // by giving a count at all.
+    expect(await postEvent(daemon, sessionStart(root, "earlier-session"), READS_FACTS))
+      .toMatchObject({ sessionNote: { setUp: true, ruleCount: 0 } });
+    const database = openRerailDatabase(join(root, "rerail.sqlite"));
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: ONE_RULE, on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  interface SessionStartCase {
+    readonly state: string;
+    /** Records `root`'s repository in that state; returns its key. */
+    readonly prepare: (root: string) => string;
+    /** What changes once the daemon runs, before the session starts. */
+    readonly change?: (daemon: RerailDaemon, root: string, repositoryKey: string) => Promise<void>;
+    readonly note: unknown;
+  }
+
+  it.each<SessionStartCase>([
+    { state: "set up", prepare: setUpOneRule, note: { setUp: true, ruleCount: expect.any(Number) } },
+    { state: "not set up", prepare: root => startTestRepository(root, join(root, "rerail.sqlite")), note: { setUp: false } },
+    // A session's start reads its checkout's rules again, so the note counts them as the configuration has them now,
+    // as the footer does, where rules loaded before the change would give no count.
+    { state: "whose rule was turned off after its runtime loaded it", prepare: setUpOneRule, change: turnRuleOffAfterLoad, note: { setUp: true, ruleCount: 0 } },
+  ])("answers a hook's session start in a repository $state with the dashboard and rules its HTTP API gives, and an older hook without them", async ({ prepare, change, note }) => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    const repositoryKey = prepare(root);
+    await mkdir(join(root, "home"), { recursive: true });
+    const daemon = await start({ stateFile: join(root, "home", "daemon.json") });
+    await change?.(daemon, root, repositoryKey);
+    const event = sessionStart(root, "answered-session");
+    const answer = await postEvent(daemon, event, READS_FACTS);
+    // What the hook reads over HTTP right after the answer when the answer does not carry it.
+    expect(answer).toEqual({
+      eventId: event.eventId, deliveries: [], dashboard: await steerDashboard(root), sessionNote: await presentedSessionNoteRules(event.session),
+    });
+    expect(answer).toMatchObject({ sessionNote: note });
+    // A hook older than these fields refuses an answer that carries them; it does not ask, so it gets the answer it knows.
+    const older = sessionStart(root, "older-session");
+    expect(await postEvent(daemon, older, {})).toEqual({ eventId: older.eventId, deliveries: [] });
+  });
+
+  it("answers a session start in a checkout stopped since the session opened without facts, so the hook reads them as before", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    setUpOneRule(root);
+    await mkdir(join(root, "home"), { recursive: true });
+    const daemon = await start({ stateFile: join(root, "home", "daemon.json") });
+    const event = sessionStart(root, "stopped-session");
+    expect(await postEvent(daemon, event, READS_FACTS)).toMatchObject({ sessionNote: { setUp: true, ruleCount: expect.any(Number) } });
+    stopTestRepository(root, join(root, "rerail.sqlite"));
+    // Its runtime takes no event once stopped, so what it held of the session before the stop is not told.
+    expect(await postEvent(daemon, event, READS_FACTS)).toEqual({ eventId: event.eventId, deliveries: [] });
   });
 
   it("lists machine-wide history by default and one repository's with a repository filter, and reads any session by id", async () => {
@@ -1154,6 +1249,86 @@ describe("Rerail daemon", () => {
     await daemon.close();
     expect(existsSync(stateFile)).toBe(false);
     await expect(fetch(daemon.url)).rejects.toThrow();
+  });
+
+  it("checks the events hooks left untaken before its start, oldest first, before any event sent to it, and names the folder it watches", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const stateFile = join(root, "daemon.json");
+    const session = { host: "claude-code" as const, sessionId: "untaken-session", cwd: root };
+    const prompt = (eventId: string) => ({ kind: "user-prompt" as const, eventId, sessionId: session.sessionId, session, text: eventId });
+    // Left while no daemon read, the later one written first: the daemon takes them by when their hooks met them.
+    await leaveUntaken(root, 1, engineRequestBody(prompt("second")), 2_000);
+    await leaveUntaken(root, 1, engineRequestBody(prompt("first")), 1_000);
+    await start({ stateFile });
+    // Test boundary: the state file a hook reads, parsed and asserted right after.
+    const state = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
+    expect(state.untakenFolder).toBe(untakenFolderId(root));
+    const endpoint = { socketPath: state.kernelSocketPath, accessToken: ACCESS };
+    await ingestEngineEvent(endpoint, { kind: "session-start", eventId: "start", session });
+    await ingestEngineEvent(endpoint, prompt("third"));
+    const store = new SqliteSessionReader(join(root, "rerail.sqlite"));
+    try {
+      const recorded = store.events(session.sessionId).filter(event => ["session-start", "user-prompt"].includes(event.kind));
+      expect(recorded.map(event => event.eventId)).toEqual(["first", "second", "start", "third"]);
+      expect(recorded.slice(0, 2).map(event => event.observedAt)).toEqual([1_000, 2_000]);
+    } finally {
+      store.close();
+    }
+    expect((await readdir(join(root, UNTAKEN_EVENTS_DIR))).filter(name => name.endsWith(".json"))).toEqual([]);
+  });
+
+  it("checks the events hooks left before its start once it has written its state file, with no event sent, and says so", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const session = { host: "claude-code" as const, sessionId: "untaken-start", cwd: root };
+    await leaveUntaken(root, 1, engineRequestBody({ kind: "user-prompt", eventId: "left", sessionId: session.sessionId, session, text: "left" }), 1_000);
+    const checked = Promise.withResolvers<UntakenPass>();
+    await start({ stateFile: join(root, "daemon.json"), lateChecked: pass => checked.resolve(pass) });
+    // Within a bound of its own, under the case's: a daemon that never checks them fails here, not at the case's timeout.
+    const none = new Promise(resolve => setTimeout(resolve, 4_000, "no check within 4 s"));
+    expect(await Promise.race([checked.promise, none])).toEqual({ events: 1, from: 1_000, to: 1_000, failed: 0 });
+  });
+
+  it("checks an event a hook leaves while it runs, as its watch sees it, with no event sent", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const session = { host: "claude-code" as const, sessionId: "untaken-watch", cwd: root };
+    const checked = Promise.withResolvers<UntakenPass>();
+    await start({ stateFile: join(root, "daemon.json"), lateChecked: pass => checked.resolve(pass) });
+    await leaveUntaken(root, 1, engineRequestBody({ kind: "user-prompt", eventId: "left", sessionId: session.sessionId, session, text: "left" }), 5_000);
+    // Within a bound of its own, under the case's: a daemon that never checks it fails here, not at the case's timeout.
+    const none = new Promise(resolve => setTimeout(resolve, 4_000, "no check within 4 s"));
+    expect(await Promise.race([checked.promise, none])).toEqual({ events: 1, from: 5_000, to: 5_000, failed: 0 });
+  });
+
+  // A watch whose folder was moved or removed makes no folder to follow: a home that `rm -r` removes, or one moved, gets
+  // nothing written into it. It follows the folder the next hook makes at the daemon's next event, on Windows too,
+  // where a watch of a moved folder hears nothing.
+  it.each(["moved away", "removed"] as const)("names in its state file the folder a hook makes once the one it watched is %s, at its next event", async gone => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    startTestRepository(root, join(root, "rerail.sqlite"));
+    const stateFile = join(root, "daemon.json");
+    await start({ stateFile });
+    // Test boundary: the state file a hook reads, parsed and asserted.
+    const named = async (): Promise<string | undefined> => (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
+    const before = await named();
+    const session = { host: "claude-code" as const, sessionId: "untaken-follow", cwd: root };
+    const home = watch(root);
+    const changes = on(home, "change") as AsyncIterableIterator<[string, string | null]>;
+    try {
+      const folder = join(root, UNTAKEN_EVENTS_DIR);
+      if (gone === "removed") await removeFolder(folder);
+      else await rename(folder, join(root, "moved-away"));
+      await leaveUntaken(root, 1, engineRequestBody({ kind: "user-prompt", eventId: "left", sessionId: session.sessionId, session, text: "left" }), 1_000);
+      const { kernelSocketPath } = JSON.parse(await readFile(stateFile, "utf8")) as DaemonState;
+      await ingestEngineEvent({ socketPath: kernelSocketPath, accessToken: ACCESS }, { kind: "session-start", eventId: "start", session });
+      // Ends on the state file naming the folder the hook made; the write is the daemon's own, after the event's take.
+      while ((await named()) !== untakenFolderId(root)) await changes.next();
+      expect(untakenFolderId(root)).not.toBe(before);
+    } finally {
+      home.close();
+    }
   });
 
   it("accepts API writes whose Origin is a known host on the requested port and refuses every other", async () => {

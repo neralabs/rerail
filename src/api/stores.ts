@@ -1,7 +1,10 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { z } from "zod";
-import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { databaseInstalledAt, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { installedPacksPrefix, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { databaseInstalledAt, openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { syncHistoryLog } from "../engine/storage/log-sync.js";
+import { onRecordsWritten } from "../engine/storage/record-writes.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
@@ -12,6 +15,7 @@ import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-stor
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { createMergeAssistService, type MergeAssistRuntime, type MergeAssistService } from "../runtime/merge-assist/service.js";
 import type { RerailApiStores } from "./operation.js";
+import { databaseChangeFeed, type ChangeFeed, type ChangeFeedOptions } from "./change-feed.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 
 export interface DatabaseApiStoresOptions {
@@ -22,8 +26,13 @@ export interface DatabaseApiStoresOptions {
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
   /** The daemon's engine service, which starts opening again a session it suspended (`RerailApiStores.resumeSession`). */
   readonly resumeSession?: (sessionId: string) => void;
-  /** The Merge Assist service sessions share (the runtime's); without one, a service over this database. */
-  readonly mergeAssist?: MergeAssistService;
+  /**
+   * The Merge Assist service sessions share (the runtime's); without one, a service over this database. Its conflict
+   * events, when it tells them, are `conflicts` notices of {@link DatabaseApiStores.changes}.
+   */
+  readonly mergeAssist?: MergeAssistService & Partial<Pick<MergeAssistRuntime, "onConflictsChanged">>;
+  /** How {@link DatabaseApiStores.changes} watches and beats; tests set the beat and drive the notices. */
+  readonly changeFeed?: ChangeFeedOptions | undefined;
 }
 
 /**
@@ -39,6 +48,9 @@ export class DatabaseApiStores implements RerailApiStores {
   #preferences: SqlitePresentationPreferenceStore | undefined;
   #auditControls: SqliteAuditControlStore | undefined;
   #database: RerailDatabase | undefined;
+  /** {@link dataVersion}'s statement on its own connection (`#versionReader`), once asked for. */
+  #dataVersion: { get(): number | undefined } | undefined;
+  #versionReader: RerailDatabase | undefined;
   #startStates: ((workspace: string, spelling?: string) => RepositoryStartState) | undefined;
   #checkouts: ((workspace: string) => CheckoutContext | undefined) | undefined;
   #mergeAssist: MergeAssistService | undefined;
@@ -48,6 +60,13 @@ export class DatabaseApiStores implements RerailApiStores {
   #localRevision = 0;
   /** {@link installedAt} once known; it never changes. */
   #installedAt: number | null = null;
+  /**
+   * {@link changes} once asked for, and how it stops hearing Merge Assist's conflict events and this process's record
+   * writes; all end with the stores.
+   */
+  #changes: ChangeFeed | undefined;
+  #stopConflicts: (() => void) | undefined;
+  #stopRecords: (() => void) | undefined;
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -117,8 +136,22 @@ export class DatabaseApiStores implements RerailApiStores {
   }
 
   dataVersion(): string {
-    const sqliteVersion = this.database().$client.pragma("data_version", { simple: true }) as number;
+    // Prepared once and stepped at each call, which reads the version anew: preparing it again at every call cost more
+    // than the answer, and the change stream asks at each notice and each look.
+    this.#dataVersion ??= this.#versionConnection().$client.prepare<[], number>("PRAGMA data_version").pluck();
+    const sqliteVersion = this.#dataVersion.get() as number;
     return `${sqliteVersion}:${this.#localRevision}`;
+  }
+
+  /**
+   * The connection {@link dataVersion} reads on, opened once {@link database} has made and upgraded the file. No write
+   * goes through it, and `PRAGMA data_version` moves for every connection's commit but its own reader's, so the commits
+   * on {@link database}'s connection (the daemon's Merge Assist writes there) move it as another process's do.
+   */
+  #versionConnection(): RerailDatabase {
+    this.database();
+    this.#versionReader ??= openSqliteDatabase(this.#path, { readonly: true });
+    return this.#versionReader;
   }
 
   historyVersion(): string | undefined {
@@ -134,6 +167,26 @@ export class DatabaseApiStores implements RerailApiStores {
 
   markChanged(): void {
     this.#localRevision += 1;
+    // Its commit's own notice can be heard before this count moves, when the handler awaited after it wrote.
+    this.#changes?.notify("data");
+  }
+
+  changes(): ChangeFeed {
+    if (this.#changes !== undefined) return this.#changes;
+    // An install or removal of a pack rewrites the prefix's package files and its node_modules.
+    const packs = installedPacksPrefix();
+    const feed = databaseChangeFeed(this.#path, () => this.historyVersion(), { files: [packs, join(packs, "node_modules")], ...this.#options.changeFeed });
+    // A conflict event of the Merge Assist these stores answer with reaches the stream as it happens.
+    this.#stopConflicts = this.#options.mergeAssist?.onConflictsChanged?.(() => feed.notify("conflicts"));
+    // So does each commit of this process's record writer (a hook's records, the checks' audits), which its writer tells:
+    // on Windows the folder's watch hears none of them (`databaseChangeFeed`).
+    this.#stopRecords = onRecordsWritten(this.#path, () => feed.notify("data"));
+    this.#changes = feed;
+    return feed;
+  }
+
+  async syncToDisk(): Promise<void> {
+    await syncHistoryLog(this.#path);
   }
 
   repositoryState(workspace: string, spelling?: string): RepositoryStartState {
@@ -147,11 +200,15 @@ export class DatabaseApiStores implements RerailApiStores {
     // Its hook commands get SIGTERM, its passes end at their next Git read, and its late answers record nothing, before
     // the database closes under them: a stop with no wait does all that in its call.
     void this.#ownMergeAssist?.stop(0);
+    this.#stopConflicts?.();
+    this.#stopRecords?.();
+    this.#changes?.close();
     this.reader.close();
     this.#sessionStore?.close();
     this.#auditControls?.close();
     this.audits.close();
     this.#preferences?.close();
+    this.#versionReader?.$client.close();
     this.#database?.$client.close();
   }
 }

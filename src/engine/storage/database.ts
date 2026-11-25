@@ -10,6 +10,7 @@ import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
 import { defaultRerailHome, RERAIL_DATABASE_FILE } from "./rerail-home.js";
 import { keepFilesPrivate } from "./private-files.js";
+import { apartFromLockWaits } from "./write-lock-wait.js";
 
 export type RerailDatabase = BetterSQLite3Database<typeof schema> & { readonly $client: Database.Database };
 
@@ -21,6 +22,14 @@ export interface OpenRerailDatabaseOptions {
 }
 
 export { RERAIL_DATABASE_FILE };
+
+/**
+ * How long a statement on a Rerail connection waits for another connection's write lock before it fails with
+ * `SQLITE_BUSY` (`PRAGMA busy_timeout`, on every connection): so a write is not lost because another Rerail process
+ * holds the lock for a moment. A record write waits in memory instead, its thread waiting no longer than this from
+ * when it was asked (`record-writes.ts`).
+ */
+export const BUSY_TIMEOUT_MS = 5_000;
 
 /** `$RERAIL_HOME/rerail.sqlite`, with the Rerail home defaulting to `~/.rerail`. */
 export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = process.env): string {
@@ -41,7 +50,7 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   const client = new Database(path, { readonly });
   try {
     const database = drizzle(client, { schema });
-    database.run(sql`PRAGMA busy_timeout = 5000`);
+    client.pragma(`busy_timeout = ${String(BUSY_TIMEOUT_MS)}`);
     return database;
   } catch (error) {
     client.close();
@@ -49,18 +58,65 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   }
 }
 
+/** `synchronous` for every writer this process opens: NORMAL, or FULL once {@link commitEveryWriteDurably} ran. */
+let writerSynchronous: "NORMAL" | "FULL" = "NORMAL";
+
+/**
+ * Makes every commit of every writer this process opens from then on wait for the disk, as {@link commitDurably} makes
+ * one: for the `rerail` command, which runs no hook and no daemon, so each write it makes is a change a person asked for
+ * (a rule added, turned off or approved, a setting, a repository started or stopped, history reset) and is on the disk
+ * before the command says it is made.
+ */
+export function commitEveryWriteDurably(): void {
+  writerSynchronous = "FULL";
+}
+
 /**
  * What a writer owns: the file mode, WAL, and the connection's integrity settings. The file and every file named after
  * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
  * creates the database file's mode. `secure_delete` zeroes what a delete frees (cells and pages), so deleted history
  * does not linger in free space; it costs writes only on deletes.
+ *
+ * `synchronous = NORMAL`: a commit appends to the WAL and returns without waiting for the disk; the WAL reaches the disk
+ * when a checkpoint copies it into the file, when the daemon syncs it (`startHistorySync`, about every 5 s while commits
+ * wait), or when the operating system writes it back. What it keeps: the file is never damaged, each transaction is
+ * kept whole or not at all, and the commits kept are the earliest ones (WAL frames carry a running checksum, so recovery
+ * keeps a prefix of them, in order); when only Rerail's own process ends (killed, out of memory, crashed), nothing
+ * committed is lost. What it does not keep: after a power cut or an operating system crash, the commits the log held
+ * unsynced (about the last 5 s of history, more while the disk stalls a sync). `FULL` kept those too by waiting for the
+ * disk at every commit, up to a second at a time while another program kept the disk busy, inside the hook that wrote.
+ * What the next start and the session's next open repair of such a loss: `endSessionsOfEndedOwners`,
+ * `keepEventNumbersPastRemotes` and the session's `lostEvents`; they record the loss, and nothing brings back what it
+ * took. A change of rule configuration or of a setting is a person's decision, which must not roll back once Rerail
+ * said it was made, so it waits for the disk where no hook waits: the `rerail` command's writers commit with `FULL`
+ * ({@link commitEveryWriteDurably}), and the daemon's API answers a change only once the log is synced
+ * (`invokeOperation`, `syncHistoryLog`). `docs/reference.md` (Rerail database) says the same, and a test holds the two
+ * together.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
   keepFilesPrivate(dirname(path), [basename(path)]);
   enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
   database.run(sql`PRAGMA foreign_keys = ON`);
-  database.run(sql`PRAGMA synchronous = FULL`);
+  database.run(sql.raw(`PRAGMA synchronous = ${writerSynchronous}`));
   database.run(sql`PRAGMA secure_delete = ON`);
+}
+
+/**
+ * Runs `write` in one transaction of `client` whose commit waits for the disk (`synchronous = FULL` for it alone), and
+ * gives the connection back its own setting however `write` ends: for the rare commit a power cut must not take, on a
+ * connection whose other commits do not wait. A FULL commit in WAL mode also syncs every frame the log holds before it.
+ * Call it outside a transaction: inside one, `write` would commit with the open transaction, which does not wait for
+ * the disk, and SQLite refuses to change `synchronous` there, so it throws before `write` runs.
+ */
+export function commitDurably<T>(client: Database.Database, write: () => T): T {
+  if (client.inTransaction) throw new Error("commitDurably must be called outside a transaction: inside one, its commit would not wait for the disk");
+  const own = client.pragma("synchronous", { simple: true }) as number;
+  client.pragma("synchronous = FULL");
+  try {
+    return client.transaction(write)();
+  } finally {
+    client.pragma(`synchronous = ${own}`);
+  }
 }
 
 /** Open the Node-owned SQLite database without applying Rerail's project schema. */
@@ -80,13 +136,16 @@ export function openSqliteDatabase(path: string, options: OpenRerailDatabaseOpti
  * Throws SQLite's `SQLITE_BUSY` at once while another connection holds the write lock of the database at `path`, where
  * a write would wait for it up to `busy_timeout` (5 s) on the caller's thread; takes and gives back the lock otherwise.
  * For work that can wait for the lock without holding the thread: the daemon's reopen of a quiet session for a scan.
+ * The take never meets a lock wait of this thread taking the lock to learn it is free (`apartFromLockWaits`).
  */
 export function failWhileWriteLocked(path: string): void {
   const database = openSqliteDatabase(path);
   try {
     database.$client.pragma("busy_timeout = 0");
-    database.$client.exec("BEGIN IMMEDIATE");
-    database.$client.exec("ROLLBACK");
+    apartFromLockWaits(path, () => {
+      database.$client.exec("BEGIN IMMEDIATE");
+      database.$client.exec("ROLLBACK");
+    });
   } finally {
     database.$client.close();
   }
@@ -417,6 +476,8 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
       }
       // A note names its repository as well as any session, so one recorded where no session was steered goes too.
       database.run(sql`DELETE FROM ${schema.steerFeedback} WHERE ${schema.steerFeedback.repositoryId} = ${repositoryId}`);
+      // So do the audits the repository owns, which name no session.
+      database.run(sql`DELETE FROM ${schema.audits} WHERE ${schema.audits.sessionId} IS NULL AND ${schema.audits.repositoryId} = ${repositoryId}`);
       const ended = schema.sessionsOfRepository(repositoryId, { ended: true });
       database.run(sql`DELETE FROM ${schema.policySessionOwners} WHERE ${schema.policySessionOwners.sessionId} IN (${ended})`);
       // Merge Assist's record of the conflict notes each of those sessions was handed (`delivered:<session id>`).

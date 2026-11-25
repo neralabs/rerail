@@ -18,9 +18,11 @@ Set-up checks these first and changes nothing if one is missing.
 <details>
 <summary>Platform and registry notes</summary>
 
-When a requirement is missing, set-up stops and says what to do. Native engines ship prebuilt, so nothing is compiled
-on your machine. [Supported and not supported](#supported-and-not-supported) has the full platform list.
-[Registry access](#registry-access) covers npmjs, the only registry Rerail is published to, and mirrors.
+When a requirement is missing, set-up stops and says what to do. Native engines ship prebuilt, one npm package per
+system and processor, so nothing is compiled on your machine: set-up installs Rerail and the engine for yours.
+[Supported and not supported](#supported-and-not-supported) has the full platform list.
+[Registry access](#registry-access) covers npmjs, the only registry Rerail is published to, the engine packages and
+mirrors.
 
 </details>
 
@@ -36,7 +38,7 @@ It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Devel
 
 1. **Read sessions?** "No" stops set-up with Rerail installed and off.
 2. **Read this repository?** Or skip the scan and pick rule packs yourself.
-3. **Start?** Accept the recommended rule packs, change them, or answer "Not now".
+3. **Start?** Accept the suggested rule packs, change them, or answer "Not now".
 
 <details>
 <summary>What each question covers</summary>
@@ -45,7 +47,7 @@ It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Devel
    edit) to check them against your rules?
 2. Outside a repository it asks which folder to start with, or lets you skip; `--repo <folder>` names one. If you skip
    the scan and pick rule packs yourself, no code is read.
-3. It shows the recommended rule packs, each with why it matched, or why none fits, and the coding agents it will
+3. It shows the suggested rule packs, each with why it was suggested, or why none matches, and the coding agents it will
    connect. "Not now" installs, connects and turns on nothing.
 
 Connecting a coding agent adds Rerail's commands to it, and the commands load Rerail's skills: instructions, in
@@ -95,10 +97,11 @@ Set-up writes to three places outside the repository, and to nothing before you 
 <details>
 <summary>Exact files and entries</summary>
 
-- **`~/.rerail`** (or `RERAIL_HOME`): the package, the `rerail` launcher in `~/.rerail/bin`, the database of your rules
-  and session history (`rerail.sqlite`), and the daemon's files. The cache is `~/.cache/rerail`, on Windows
-  `%USERPROFILE%\AppData\Local\rerail`. On Windows, a `RERAIL_HOME` set-up creates outside your profile folder gets an access list
-  that lets only you, SYSTEM and Administrators in, since a new folder under `C:\` lets every local user read it.
+- **`~/.rerail`** (or `RERAIL_HOME`): the package and its engine for this computer, the `rerail` launcher in
+  `~/.rerail/bin`, the database of your rules and session history (`rerail.sqlite`), and the daemon's files. The cache
+  is `~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail`. On Windows, a `RERAIL_HOME` set-up creates
+  outside your profile folder gets an access list that lets only you, SYSTEM and Administrators in, since a new folder
+  under `C:\` lets every local user read it.
 - **Shell startup file**: a block between `# >>> rerail >>>` and `# <<< rerail <<<` on macOS and Linux, or the user
   `Path` on Windows. `RERAIL_MODIFY_PATH=0` leaves `PATH` to you.
 - **Coding agent settings** in `~/.claude`, `~/.codex`, `~/.cursor`, `~/.omp/agent` and `~/.pi/agent`. The denies keep
@@ -136,7 +139,11 @@ restart OMP. Set-up cannot replace OMP's copy, so both would load; set-up and `r
 
 ## Update
 
-Rerail updates only when you ask; nothing polls the registry or installs a version in the background.
+Rerail updates only when you ask; nothing installs a version in the background. Once a day the daemon asks npm
+whether a newer version is out, and the dashboard says so in the top bar and in Settings, under About Rerail. Unless
+you add a remote or turn Merge Assist on (internal testing), that check is the only request Rerail makes on its own,
+apart from an npm rebuild of the SQLite binding when it fails to load ([privacy](privacy.md)); `RERAIL_UPDATE_CHECK=0`
+set for the daemon turns it off.
 
 ```sh
 rerail update check   # is a newer version on the channel?
@@ -150,7 +157,13 @@ Rerunning `npx @neralabs/rerail setup` also updates.
 
 - `rerail update --channel <tag>` selects the npm dist-tag: `latest`, `beta` or `next`.
 - An update first copies the database to `~/.rerail/rerail.sqlite.pre-update`.
+- An update downloads Rerail and the engine for your computer, about 50 MB. The first update from 0.1.5 downloads all
+  six engines, about 240 MB, because the version you update from runs it
+  ([what an update downloads](how-setup-works.md#updates)).
 - The new version applies to coding agent sessions started afterwards; connected coding agents get its commands.
+- Once core is updated, `rerail update` updates each installed rule pack to the newest version that fits it
+  (`rerail packs update` does the same on its own). The update from 0.1.5 runs 0.1.5's updater, which only lists the
+  newer packs: run `rerail packs update` once after it.
 
 </details>
 
@@ -160,7 +173,7 @@ Details: [Updates](how-setup-works.md#updates).
 
 Rerail is off in every repository until started there; stopping keeps your rules and history.
 
-- **`/rerail-start` or `rerail start`** (`rerail start` in Codex) starts it in this checkout.
+- **`/rerail-start` or `rerail start`** (`$rerail-start` in Codex) starts it in this checkout.
 - **`/rerail-stop` or `rerail stop`** stops it here: nothing is recorded or checked.
 
 <details>
@@ -234,10 +247,12 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
     agent's commands for its shell. Claude Code there needs Git Bash, from Git for Windows, even though Claude Code
     itself does not require it.
 - **Containers and devcontainers** with a glibc image, including the default `node:24` and `node:24-slim`, with or
-  without an init process.
+  without an init process. Run set-up inside the container or image: an install holds the engine for the system and
+  processor that installed it, so a `~/.rerail` copied or mounted in from the host has none for the container.
 - **WSL 2**, as Linux, with the coding agent running in WSL too: install Rerail on the same side as the coding agent. A
   repository on the Windows drive (`/mnt/c/…`) works but is slow from WSL; set-up says so.
-- **A registry mirror or proxy** set in `~/.npmrc`.
+- **A registry mirror or proxy** set in `~/.npmrc`, when it serves Rerail's engine packages as well as
+  `@neralabs/rerail` ([Registry access](#registry-access)).
 
 </details>
 
@@ -287,7 +302,38 @@ current settings. For Claude Code, that is whether `sandbox.enabled` is on in yo
 
 ## Registry access
 
-Rerail is published only to npmjs, as a public package, so no account or sign-in is needed.
+Rerail is published only to npmjs, as public packages, so no account or sign-in is needed.
 
 Set-up and `rerail update` use your npm configuration, so a mirror or proxy in `~/.npmrc` works; a repository's own
 `.npmrc` does not apply to updates. [Updates](how-setup-works.md#updates) covers expired tokens and signature checks.
+
+A private registry, mirror or allowlist must serve seven packages, each at the version you install: `@neralabs/rerail`
+and its six engine packages. Rule packs are packages too, `@neralabs/rerail-pack-<id>`.
+
+<details>
+<summary>The engine packages, and what happens when one is missing</summary>
+
+Rerail's native engine is not inside `@neralabs/rerail`. Each system and processor has an engine package, published
+with every version of Rerail at that same version:
+
+| Package | Engine for |
+|---|---|
+| `@neralabs/rerail-engine-darwin-arm64` | macOS on arm64 |
+| `@neralabs/rerail-engine-darwin-x64` | macOS on x64 |
+| `@neralabs/rerail-engine-linux-arm64-gnu` | Linux with glibc on arm64 |
+| `@neralabs/rerail-engine-linux-x64-gnu` | Linux with glibc on x64 |
+| `@neralabs/rerail-engine-win32-arm64-msvc` | Windows on arm64 |
+| `@neralabs/rerail-engine-win32-x64-msvc` | Windows on x64 |
+
+- **Set-up and `rerail update`** install `@neralabs/rerail` and the one engine package for your computer. Where the
+  registry lacks that package, they stop, name it, and install nothing
+  ([Troubleshooting](troubleshooting.md#npm-could-not-install--the-engine--runs-on-here)).
+- **Plain npm** (`npx`, `npm install -g`, Pi's gallery install, a dependency in a `package.json`) installs the engine
+  packages as optional dependencies of `@neralabs/rerail`. npm 11.6.2 and the later npm 11 releases install all six
+  on every computer. npm skips an optional dependency it cannot fetch and still exits with 0, so where a registry lacks
+  your computer's engine package, or npm is set to leave optional dependencies out (`omit=optional` or
+  `optional=false` in an `.npmrc`), the install finishes without an engine and Rerail says so when it starts
+  ([Troubleshooting](troubleshooting.md#rerails-engine-is-not-installed)).
+- Rerail runs no install script, and no engine package has one.
+
+</details>

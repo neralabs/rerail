@@ -1,8 +1,8 @@
 # Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).
 # programs	probe	gap	programs by pack
-704	text test match: a bound pattern	not on the device: refused: a cat's text read by rx has no device form	python-main 462, lib 64, python 50, data-layer 30, javascript 30, typescript 18, next 8, django 6, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
-454	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	python-main 396, data-layer 23, lib 15, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, django 1, php 1, rule-syntax 1
-94	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	lib 26, data-layer 25, python-main 13, python 11, django 3, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
+733	text test match: a bound pattern	not on the device: refused: a cat's text read by rx has no device form	python-main 462, lib 66, python 50, data-layer 30, javascript 30, rerail 27, typescript 18, next 8, django 6, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
+468	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	python-main 396, data-layer 23, lib 15, rerail 13, rust 4, next 3, react 3, django 2, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
+96	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	data-layer 25, lib 25, python-main 13, python 11, django 4, next 3, rust 3, sql 3, engine 2, rerail 2, vue 2, node 1, react 1, typescript 1
 93	function @replace_all/3	not on the device: no computed term	lib 27, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, django 1, rust 1, sql 1, vue 1
 93	functor @replace_all/3	not on the device: no computed term	lib 27, python-main 20, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, django 1, rust 1, sql 1, vue 1
 37	builtin to_number/1	not on the device: no computed term	lib 13, python-main 10, python 7, javascript 4, data-layer 2, typescript 1
@@ -10,9 +10,9 @@
 29	aggregate join	not on the device: no string join	lib 8, data-layer 6, django 4, javascript 3, python 3, node 2, typescript 2, next 1
 18	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18
 15	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3, django 1, python-main 1
+11	text test icontains: a bound pattern	not on the device: refused: the text test @icontains of a pattern that is not a constant has no device form	data-layer 7, lib 2, django 1, rerail 1
 10	shipped functor @trim/1	not on the device: no computed term	data-layer (engine) 10
 10	shipped functor @trim/2	not on the device: no computed term	data-layer (engine) 10
-10	text test icontains: a bound pattern	not on the device: refused: the text test @icontains of a pattern that is not a constant has no device form	data-layer 7, lib 2, django 1
 9	shipped functor @instr/2	not on the device: no computed term	data-layer (engine) 9
 8	function @pkg_up/2	not on the device: no computed term	engine 3, lib 3, django 1, typing 1
 8	function @rx_extract/3	not on the device: no computed term	data-layer (engine) 8
@@ -44,6 +44,7 @@
 2	shipped functor @join_nonempty/4	not native: sqlite: error: no SQL for @join_nonempty($a, $b, $c, $a)	data-layer (engine) 2
 2	shipped functor @ltrim/2	not on the device: no computed term	data-layer (engine) 2
 2	text test iprefix: a bound pattern	not on the device: refused: the text test @iprefix of a pattern that is not a constant has no device form	javascript 1, react 1
+2	text test isuffix: a bound pattern	not on the device: refused: the text test @isuffix of a pattern that is not a constant has no device form	python 1, rerail 1
 1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
 1	function @glob_sub/3	not on the device: no computed term	lib 1
 1	function @package_of/1	not on the device: no computed term	lib 1
@@ -54,4 +55,3 @@
 1	shipped functor @qualdepth/1	not native: sqlite: error: no SQL for @qualdepth($a)	data-layer (engine) 1
 1	shipped functor @qualname/1	not native: sqlite: error: no SQL for @qualname($a)	data-layer (engine) 1
 1	shipped functor @substr_bytes/3	not on the device: no computed term	data-layer (engine) 1
-1	text test isuffix: a bound pattern	not on the device: refused: the text test @isuffix of a pattern that is not a constant has no device form	python 1

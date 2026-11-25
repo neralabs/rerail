@@ -169,7 +169,7 @@ pub(super) fn define(
         signature.params.push(AbiParam::new(types::I32));
         signature.returns.push(AbiParam::new(types::I32));
         let id =
-            module.declare_function(&format!("tempo_value_{index}"), Linkage::Local, &signature)?;
+            module.declare_function(&format!("rerail_value_{index}"), Linkage::Local, &signature)?;
         match value {
             ValueProgram::Equal { string } => {
                 define_bytes(module, id, &native.strings[usize::from(*string)], false)?;

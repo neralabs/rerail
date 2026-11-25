@@ -31,7 +31,7 @@ The package ships no rules. Each rule is one of:
 - **By its publisher** (`By @acme`): from a third party's pack (`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`), not reviewed by Rerail.
 - **Created by you**: stored once per machine in the library.
 
-`rerail rules export` writes the library and all repository configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`); `rerail rules import <file> [--approve]` loads it back.
+`rerail rules export` writes the library and all repository configuration to `$RERAIL_HOME/rules.json` (or `--output <file>`); `rerail rules import <file> [--approve]` loads it back; it is a person's command, refused in a coding agent's session.
 
 <details>
 <summary>Pack rules, edited copies and backups</summary>
@@ -46,7 +46,7 @@ Editing a By Rerail rule stores a copy in the library, added where the original 
 
 ### Packs
 
-A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove` and `recommend` manage them afterwards. `rerail packs calibrate [--repo <dir>] [--dry-run] [--json]` reads the repository's own lint config again, as set-up does, and updates the settings it gave the repository's packs: a setting you made yourself stays ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). See [Rule packs](rule-packs.md).
+A **rule pack** (`packs/<id>/`, [pack format](pack-format.md)) holds rule documents in `rules/` and a `pack.json`, but no code. Set-up recommends the packs that fit; `rerail packs list`, `add`, `remove`, `update` and `recommend` manage them afterwards. `rerail packs calibrate [--repo <dir>] [--dry-run] [--json]` reads the repository's own lint config again, as set-up does, and updates the settings it gave the repository's packs: a setting you made yourself stays ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). See [Rule packs](rule-packs.md).
 
 <details>
 <summary>How matching works, and your own packs</summary>
@@ -135,6 +135,8 @@ Weak:
 ## Rerail database
 
 One SQLite file per Rerail home holds all rule configuration, your rules and the machine's execution history.
+
+A change you make to rules or settings, with the `rerail` command or in the dashboard, is on the disk before Rerail says it is made. History is written without waiting for the disk at each write, and the daemon syncs it to the disk about every 5 s while writes wait; a sync that fails is said once in `daemon.log` and tried again every 5 s. When only Rerail stops, however it stops, nothing is lost and the file is never damaged. A power cut or an operating system crash can take about the last 5 s of history, more while the disk is too busy to finish a sync. The next start closes the checks that history left running, and a session's next open records which of its events went, how many and when (the dashboard's session timeline and `sessions_get`'s `gaps.lostEvents` count them); neither brings back what they held.
 
 The file is `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). Its main tables:
 
@@ -269,7 +271,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 <summary>Why these prerequisites</summary>
 
 - Rerail reads every repository through Git. It skips a `git` inside the repository or `node_modules`, so a repository's `bin/` can't shadow it. With none on `PATH`, it falls back to the usual install locations.
-- Linux needs glibc 2.28 because Node 24 does. The package carries prebuilt native kernels for every supported target; nothing is compiled on your machine.
+- Linux needs glibc 2.28 because Node 24 does. Each supported target has a prebuilt engine package, installed with Rerail; nothing is compiled on your machine.
 - The package is public, so npm needs no login.
 
 </details>
@@ -365,7 +367,14 @@ The trust-root file must arrive through an authenticated channel independent of 
 
 ## Update
 
-Updates are explicit: Rerail never checks a registry or installs on its own.
+Updates are explicit: Rerail never installs on its own. Once a day the daemon of an installed Rerail asks npm for the
+newest version on the update channel, the one a bare `rerail update` installs, and keeps the answer in
+`update-check.json` in the Rerail home. `/healthz` reports it as `update` while that channel is still the update channel, and the dashboard shows "Update available"
+while it is newer than the daemon's version. A failed ask keeps the last answer, logs one line to `daemon.log` and is
+tried again a day later; a restarted daemon asks only once that day has passed. Unless you add a remote or turn Merge
+Assist on (internal testing), it is the only request Rerail makes on its own, apart from an npm rebuild of the SQLite binding when it fails to load ([privacy](privacy.md)). `RERAIL_UPDATE_CHECK=0` (or `false`) set for the daemon turns it off. A daemon run from a checkout never
+checks, and neither does one while its home holds a signed customer profile (internal testing), whose channel it cannot
+read. The daemon runs npm with the Node it runs under first on `PATH`, so a daemon started with an agent's shorter `PATH` still reaches the npm installed beside that Node.
 
 ```sh
 rerail version            # the installed version
@@ -374,7 +383,7 @@ rerail update check       # resolve the channel without installing
 rerail update             # install and activate a newer version
 ```
 
-`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by listing the installed rule packs with a newer version.
+`rerail update` backs up the database, installs and validates the new version, activates it, and re-registers your connected coding agents. It names each step on stderr as it starts, and ends by updating each installed rule pack to the newest version that fits the active core.
 
 <details>
 <summary>Update steps and failures</summary>
@@ -386,11 +395,11 @@ rerail update             # install and activate a newer version
 3. Validates its native runtime and event stream.
 4. Activates it atomically for new harness sessions; `rerail update status` names the replaced version.
 5. Updated or not, re-registers every connected coding agent (`rerail install --refresh`, which also runs on its own), adding new commands, skills and hooks and removing retired ones. A coding agent never connected is left alone.
-6. Updated or not, once the refresh succeeds, lists each installed rule pack with a newer version on the channel that fits the active core (on `next` for a pack the channel has no version of, which is where set-up installs it from; its line says `(on next)`), and the `rerail packs add <id>@<version>` command that installs them ([rule packs](rule-packs.md#third-parties-packs)). It installs none. A pack npm cannot be asked about gets a `warning:` line; the update still succeeds.
+6. Updated or not, once the refresh succeeds, the active version runs `rerail packs update`: each installed rule pack moves to the newest version up to the channel's that the active core accepts by its core range (up to `next`'s for a pack the channel has no version of, which is where set-up installs it from; its line says `(from next)`), so the active core's engine checks it ([updating packs](rule-packs.md#rerail-packs)). A third party's new version runs in Log until you approve it. A pack npm cannot be asked about gets a `warning:` line. A pack that does not install or load, or whose npm install has not finished at 1 min 20 s, is put back alone, the others still move, and the update exits 1 with the new core active. If another Rerail process holds the rule packs past the 5 min Rerail waits for them, the packs after that one are not tried: each gets a line, and the packs already moved are still listed.
 
-Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
+Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each, then installs each pack as a step of its own. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
 
-An agent that can't be re-registered is named with the reason, the rest are refreshed, and the update exits 1 with the new version active. One whose configuration can't be read is named and skipped. Coming from a version without step 5, run `rerail install --refresh` once.
+An agent that can't be re-registered is named with the reason, the rest are refreshed, and the update exits 1 with the new version active. One whose configuration can't be read is named and skipped. Coming from a version without step 5, run `rerail install --refresh` once. Coming from a version without step 6 (0.1.5 and earlier), whose updater only lists the newer packs, run `rerail packs update` once.
 
 </details>
 
@@ -427,6 +436,8 @@ The daemon owns the resident kernel and exposes the database over HTTP, OpenAPI 
 - **`GET /openapi.json`**: OpenAPI 3.1 for `/api`.
 - **`POST /mcp`**: MCP Streamable HTTP, each `/api` operation a same-named tool.
 - **`/api/*`**: the operations below.
+- **`GET /api/changes`**: the server-sent event stream the dashboard follows instead of reading everything every few
+  seconds. Not an operation, so neither MCP nor the OpenAPI document lists it.
 - **Anything else**: the bundled UI.
 
 <details>
@@ -434,8 +445,30 @@ The daemon owns the resident kernel and exposes the database over HTTP, OpenAPI 
 
 The daemon writes rules and work links; the shared runtime records harness events.
 
-- `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
+- `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, `update` (the daily
+  update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
+- `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
+  is sent at once, again when a commit to the database becomes readable or a pack is installed or removed, and
+  every 5 s, so the page can tell a daemon that stopped answering from one with nothing to say; the
+  checkout's own rules and branches, and while Merge Assist is on for its GitHub repository the daemon's gh hosts file,
+  are read at that 5 s message, and a token that moved is sent once read, so a login, logout or switch made with gh
+  shows on an open Merge Assist page within about 5 s. A message
+  named `conflicts` comes at each Merge Assist conflict event. The page reads again when the token moves: a single
+  commit at once, and while changes keep coming, each within 5 s of being written. It also reads at a 5 s message once its activity
+  window has moved on, or while its Merge Assist page shows a scan running or gh signed out, missing or unavailable,
+  and, while that page shows gh signed in, when the status says the daemon reads gh again (`readAgainInMs`): that
+  status starts the read, and the page asks at most every 5 s until a status shows what gh said. A
+  failed read is tried again after 10 s, doubling to 30 s, and the read that answers again opens a new stream. A stream
+  that misses two 5 s messages before its first one, as behind a proxy or a scanner that holds streamed responses until
+  they end, makes the page read every 5 s until a stream brings a message, whatever earlier streams did. Behind such a
+  proxy the page shows Connecting… for those 12 s after it loads, and after a daemon restart reads nothing for the 12 s
+  after the read that found the daemon back. A browser without Web Locks, or a page that is not a secure context, holds
+  no stream and reads every 5 s. A daemon that stops closes the stream. The records the daemon writes for sessions and
+  checks, and the dashboard's own writes, are sent at once, and so is another process's commit on Linux and macOS. On
+  Windows a commit of the `rerail` command, which waits for the disk, is sent at once too; another process's other
+  commits, which do not wait for it, are sent when that process closes the database, and otherwise at the next 5 s
+  message: Windows reports no change to the database's files for such a commit until the file is flushed or closed.
 - UI client-side routes fall back to `index.html`.
 
 Without the native addon the daemon still runs: `status`, `/healthz` and the UI header report the kernel unavailable, and transcripts stay readable. Model files can fail `model/manifest.json`; a clone without Git LFS has a pointer for `model.safetensors`. Then `rerail status` prints `Model: checksum mismatch (model.safetensors)` and exits 5, and `/healthz` reports it. The dashboard header turns red naming the file, and session attaches fail until the files are fetched and the daemon restarted.
@@ -462,16 +495,16 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `repository_link` | `POST /api/repository/aliases` | Resolve another remote address here. People only. |
 | `repository_reset` | `POST /api/repository/reset` | Clear history like `rerail reset`. Ended sessions go; running ones keep recording; rules and settings stay. People only. |
 | `rules_activity` | `GET /api/rules/activity?since=&repository=` | Per rule since a time: violations (log-only count), sessions, last sighting, `audits`, steers; removed rules with violations as `removed: true`. `sessions: { started, withViolations }`. |
-| `rule_packs_list` | `GET /api/rule-packs?checkout=` | Packs with npm package, publisher (`rerail`, or a third party's scope or package name) and rules (kind, title, group, mode, on/off, examples). With a checkout (MCP: the caller's), also its `.rerail/rules` as pack and publisher `worktree`, skipped files in `skipped`. Read-only. |
+| `rule_packs_list` | `GET /api/rule-packs?checkout=` | Packs with npm package, publisher (`rerail`, or a third party's scope or package name) and rules (kind, title, group, mode, on/off, examples, and `dimensions` where the pack gives them: [rule dimensions](rule-dimensions.md)). With a checkout (MCP: the caller's), also its `.rerail/rules` as pack and publisher `worktree`, skipped files in `skipped`. Read-only. |
 | `rule_packs_recommend` | `GET /api/rule-packs/recommendations?repository=&checkout=` | Packs fitting a checkout: rule count, reason, folder. Local; changes nothing. |
-| `coding_agents_list` | `GET /api/coding-agents` | Per coding agent: `found`, `connected`, `problem`, and whether its tools can read Rerail's data (`rerailData`: `access` is `kept-out`, `file-tools` or `open`, with `why`). Dry run; shown in Settings and `rerail status`. |
+| `coding_agents_list` | `GET /api/coding-agents` | Per coding agent: `found`, `connected`, `problem`, and whether its tools can read Rerail's data (`rerailData`: `access` is `kept-out`, `file-tools` or `open`, with `why`, and `fix`: what a person can do to keep the rest of its tools out, or null). Dry run; shown in Settings and `rerail status`. |
 | `rerail_rules_list` | `GET /api/rerail-rules?kind=` | By Rerail rules with their pack. |
 | `library_rules_list` | `GET /api/library-rules?kind=` | Rules created by you. |
 | `library_rules_get` | `GET /api/library-rules/{id}` | One rule created by you. |
 | `library_rules_upsert` | `PUT /api/library-rules/{id}` | Create or replace your rule (`attach: true` adds it to the target); a By Rerail id stores an edited copy. |
 | `library_rules_remove` | `DELETE /api/library-rules/{id}` | Delete your rule, its attachments and settings. |
 | `sessions_list` | `GET /api/sessions?since=&limit=&cursor=` | Sessions newest first with counts, `steeredViolations`, `declinedViolations`, `lastEventAt`; `total`, `nextCursor`. |
-| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`); and `declined`, the steers the coding agent declined with `rerail feedback`: each note's reason and the audit it answers, and how many steered violations that covers. |
+| `sessions_get` | `GET /api/sessions/{sessionId}` | Summary with `gaps` over the whole transcript: undelivered events, events whose records a power cut or an operating system crash took (`lostEvents`; [Rerail database](#rerail-database)), boundaries answered before checks ran, tool edits left unchecked because Git ignores the file (`ignoredEdits`), changes seen that make Git's ignore rules ignore more (`ignoreRuleChanges`), the places the shell-write check could not fully check, each once in the session (`discoveryGaps`, the places recorded, at most 1,000; `discoveryGapsMore` when it met more), and for a person the first 20 with path and reason (`discoveryGapPlaces`); and `declined`, the steers the coding agent declined with `rerail feedback`: each note's reason and the audit it answers, and how many steered violations that covers. |
 | `session_events` | `GET /api/sessions/{sessionId}/events?after=&before=&limit=` | Ordered events, at most 500 per page, forward from `after` or the page before `before`; `nextAfter` continues. Agents get some payloads withheld ([details](#what-a-coding-agent-may-read)). |
 | `work_links_list` | `GET /api/sessions/{sessionId}/work-links` | A session's external references. |
 | `work_links_add` | `PUT /api/sessions/{sessionId}/work-links` | `{ kind, reference, url? }`; re-linking updates the url. |
@@ -479,8 +512,8 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `audit_settings_update` | `PATCH /api/sessions/{sessionId}/audit-settings` | People only (`rerail settings`). Set defaults, which outlast the session: `mode` `steer`/`log`; `steerStrategy` `message`/`rewind`/`subagent`. |
 | `audit_requests_create` | `POST /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental: the four audit-request and repository-audit operations answer `404 experimental-off`, and are no MCP tools, unless the daemon runs with `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1`. Queue an audit for a session. |
 | `audit_requests_list` | `GET /api/sessions/{sessionId}/audit-requests` | Internal testing; experimental. `{ auditRequests }` with their `auditIds`. |
-| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. |
-| `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session, `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
+| `audits_list` | `GET /api/audits?auditId=&sessionId=&status=&scope=&mode=&origin=` | `{ audits, total }` with `violations` and failures; `mode` is run mode, `origin` is `ongoing` or `scan`. An audit whose stored rule provenance, rule revisions, paths, violations or failures are not a JSON array of their items (a damaged file or a hand edit) lists with that list empty and one more failure for each that says so, and `daemon.log` names it. `sessionId` is null for an audit the repository owns (a change in another worktree that no session made), which names the repository in `repositoryId`. |
+| `violations_list` | `GET /api/violations?since=&ruleId=&sessionId=&limit=&cursor=` | Violations newest first with `ruleId`, `clauseId`, session (null for one the repository's own audit recorded), `host`, `auditId`, and `logged` (the agent wasn't told: the audit or the rule was in Log mode); `total`, `nextCursor`. |
 | `rule_approvals_set` | `POST /api/rule-approvals` | Approve a rule's or pack's content so it steers; people only ([Approval](rule-scoping.md#approval)). |
 | `presentation_get` | `GET /api/presentation?repository=&host=&sessionId=&onDemand=&spelling=` | The presentation preference that applies, optionally with that session's status ([Hiding the footer](in-session-surfaces.md#hiding-the-footer)). On Windows, `spelling` is the folder as its host spelt it, read only for a start or stop Rerail 0.1.4 saved under it. |
 | `presentation_preferences_list` | `GET /api/presentation-preferences` | The stored presentation preferences. |
@@ -488,7 +521,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `presentation_preferences_remove` | `DELETE /api/presentation-preferences?repository=&host=` | Remove an override, so the next default applies; people only. |
 | `repository_audits_list` | `GET /api/repository-audits` | Internal testing; experimental. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
 | `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing; experimental. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
-| `merge_assist_get` | `GET /api/merge-assist?repository=&checkout=` | Internal testing; experimental: every `merge_assist_*` operation answers `404 experimental-off` unless the daemon runs with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`. [Merge Assist](#merge-assist) for one checkout: on or off, the branch and base branch, `gh`'s readiness (`missing`, `signed-out`, `signed-in`, `not-github`, `unavailable` when its sign-in could not be read, `unchecked` while Merge Assist is off, when no `gh` runs), whether a scan is running, the last scan (`lastScan`: when, how many branches and pull requests it compared, and what it could not read), the person's `settings`, and the in-flight `conflicts`, open ones not quiet first and then newest first, then the latest 20 dismissed (each with `quiet`, `summary`, the hook command's last answer, `hook`, and, once dismissed, `dismissal: { name, at }`; a dismissed one keeps no hunks). Reads only. |
+| `merge_assist_get` | `GET /api/merge-assist?repository=&checkout=` | Internal testing; experimental: every `merge_assist_*` operation answers `404 experimental-off` unless the daemon runs with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`. [Merge Assist](#merge-assist) for one checkout: on or off, the branch and base branch, `gh`'s readiness (`missing`, `signed-out`, `signed-in`, `not-github`, `unavailable` when its sign-in could not be read, `unchecked` while Merge Assist is off, when no `gh` runs) as `gh` last said it, with when (`readAt`; a status runs `gh` for it in its answer when none was read for the daemon's `gh` configuration folder and whether `GH_TOKEN` or `GITHUB_TOKEN` is set, or `gh`'s sign-in file changed since, and in the background, for the next read, once the reading is five minutes old, one minute while `gh` could not tell) and `readAgainInMs`, how long until a status reads `gh` again, counted on the daemon's clock (0 once due, while that read runs), whether a scan is running, the last scan (`lastScan`: when, how many branches and pull requests it compared, and what it could not read), the person's `settings`, and the in-flight `conflicts`, open ones not quiet first and then newest first, then the latest 20 dismissed (each with `quiet`, `summary`, the hook command's last answer, `hook`, and, once dismissed, `dismissal: { name, at }`; a dismissed one keeps no hunks). Reads only. |
 | `merge_assist_settings_get` | `GET /api/merge-assist/settings?repository=&checkout=` | Internal testing; experimental. The person's Merge Assist settings for the checkout's repository: `{ hook }`, the conflict hook command `{ command, timeoutSeconds }` or null. Reads only; a coding agent may read them. |
 | `merge_assist_scan` | `POST /api/merge-assist/scan` | Internal testing; experimental. Find the checkout's in-flight conflicts now: overlapping changes with open pull requests, listed afresh through `gh`, and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). A coding agent may scan only its own checkout and the checkouts inside it. |
 | `merge_assist_settings_set` | `PUT /api/merge-assist/settings` | Internal testing; experimental. `{ enabled?, hook? }`, at least one: `enabled` turns Merge Assist on or off for the checkout's repository (off fires `closed` for every open conflict, then clears every checkout's conflicts, last scan and `gh` readiness; the settings stay); `hook` sets the conflict hook command, `{ command: string[], timeoutSeconds? }` (an argv array of 1–64 non-empty strings, run without a shell; 1–60 seconds, 10 by default), or `null` removes it. Answers the status. People only. |
@@ -496,7 +529,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 
 `src/api/http.ts` mounts the operations with Hono and emits OpenAPI; `src/api/mcp.ts` registers them as MCP tools.
 
-Validation failures return `400 { error: "invalid-request", issues }`. Handler errors carry a status and a code: `rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`, `invalid-cursor`.
+Validation failures return `400 { error: "invalid-request", issues }`. Handler errors carry a status and a code: `rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`, `invalid-cursor`. A write whose change was made but could not be confirmed on the disk (its log's sync failed) answers `503 not-on-disk`, whose message says so and that trying it again may make the change twice; the dashboard shows that message, and MCP, `rerail scan` and `rerail settings` show `not-on-disk: <message>`.
 
 </details>
 
@@ -510,6 +543,10 @@ Validation failures return `400 { error: "invalid-request", issues }`. Handler e
 `rerail install` (and `rerail setup`) adds a `rerail` entry to `~/.omp/agent/mcp.json`, beside the extension symlink. It is a stdio server running the installed `rerail mcp-bridge` (`{ "command": "<node>", "args": ["<install>/dist/cli/cli.js", "mcp-bridge"] }`). `--remove` deletes only that entry.
 
 The bridge relays to the daemon recorded in `daemon.json`, following port changes and restarts, so the entry never needs editing. It first waits for that daemon's `/healthz` to answer with the recorded pid. A stale file therefore yields "Rerail daemon is not running" rather than reaching whatever holds the port.
+
+The bridge relays one request at a time, in the order they come. Before it sends one, it gives the daemon 30 s from the moment it takes the request to pass its checks: on Windows the daemon's engine proving it holds the access capability, then the `/healthz` check of a newly recorded daemon. A check that starts with less than 2 s of that left still gets 2 s. The daemon then has 30 s from the send to answer. A daemon busy in an audit is waited for and answers; one still silent at either bound gives "Rerail daemon is running but did not answer within 30 s".
+
+On Windows, while other clients hold every instance of the engine's pipe, as hooks waiting on a busy daemon do, the proof keeps trying for a free instance within the checks' 30 s; a daemon that frees none in that time is reported as running but not answering.
 
 After that check a request costs one file read, and the bridge re-checks only on connection failure. Suppose a checked daemon is killed with SIGKILL, its pid is reused, and another daemon takes its port before the next request: that request reaches the other daemon.
 
@@ -620,16 +657,27 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 ### Daemon state
 
-`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. Each line the daemon writes there starts with the UTC time it was written (`2026-11-11T15:33:02.123Z `); what Node or the engine write to the file directly, such as the report of a fatal error, has no time, nor do the lines of the `rerail daemon start` that a hook or session runs to start the daemon. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook or set-up starts the daemon (OMP sessions, and Pi sessions of a managed install, start their own), so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; the session's start says so (Claude Code and Codex show the line, and Cursor's agent is asked to relay it), and `rerail status` says the same: the daemon is not running, and `RERAIL_AUTOSTART=0` keeps hooks from starting it, so nothing is recorded until it runs.
+`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. Each line the daemon writes there starts with the UTC time it was written (`2026-11-11T15:33:02.123Z `); what Node or the engine write to the file directly, such as the report of a fatal error, has no time, nor do the lines of the `rerail daemon start` that a hook or session runs to start the daemon. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook or set-up starts the daemon (OMP sessions, and Pi sessions of a managed install, start their own), so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; the session's start says so (Claude Code and Codex show the line, and Cursor's agent is asked to relay it), and `rerail status` says the same: the daemon is not running, and `RERAIL_AUTOSTART=0` keeps hooks from starting it, so nothing is recorded until it runs. A daemon that runs but that hooks may not use, one of another Rerail package or, on Windows, of Rerail 0.1.4 or earlier, is not replaced either: the session's start says that nothing is recorded until a daemon from the active package runs, and to run `rerail daemon stop`, then `rerail daemon start`.
 
 <details>
 <summary>Ports, reuse and the kernel socket</summary>
 
 `daemon-port.json` remembers the last port (or `--port`), reused by a start without `--port` so dashboard links survive restarts. `rerail daemon start` reuses a running daemon and says where; stale state from a crash or reboot is cleared. `stop`, `status` and `manage` run from the launcher you invoked, not the managed version, so they work mid-update.
 
-A Rerail home has one daemon. The daemon holds `locks/daemon.lock` in the home for as long as it runs, and a second daemon started there stops after about a second, naming the first. The daemon also checks every second that `daemon.json` still holds what it wrote and writes it again when it is gone or changed, so `rerail daemon start` and `rerail daemon stop` find a running daemon even after its `daemon.json` was removed. `rerail daemon stop` ends a daemon that does not answer only when the process `daemon.json` names holds that lock as the pid recorded beside it, or started no later than the `startedAt` time `daemon.json` records (the start is read on Linux and Windows). It removes `daemon.json` and ends nothing of that process when the process started more than 10 s after that time, as one does after a daemon was killed and the system gave its pid to another program, or, when that process's start cannot be read or falls within those 10 s, when the lock is held by the process recorded beside it, which started no later than that record was written; when a daemon holds the home's lock, the stop then stops that daemon once it records itself again, or says which pid holds the lock, and when none does it says so. Otherwise it ends nothing, keeps `daemon.json` and says how to check the process: so for a busy daemon of Rerail 0.1.4 or earlier, which holds no lock, on macOS, where no start time is read (read from the code; no macOS run has shown it). The stop decides just before each signal it sends from those facts, never from what `daemon.json` says by then: a daemon still proven is ended whether its `daemon.json` is gone, unreadable or names another pid, as when its own shutdown removed it after another stop asked first, and one that outlives its `SIGTERM` is killed while one of those facts still proves it, its start included once it has let go of the lock. A daemon that held the lock when the stop began, whether it answered or was too busy to, and has let go of it since is ended while it runs, as when its exit runs on, unless its start reads more than 10 s later than that time or the lock belongs by then to another live process and `daemon.json` no longer names it. A daemon that did not hold the lock when the stop began, recorded beside the lock whose lock file is there and held by no one, and whose start does not prove it, is left to exit, and the stop says it stopped: a daemon lets go of the lock once it has closed. A missing lock file proves nothing. A process the stop no longer proves gets nothing: once it has exited the stop says it stopped; when the home's lock belongs to another live process by then and `daemon.json` no longer names the stopped one, as after a start replaced that daemon, the stop leaves the record as it is and says to run it again; while nothing proves it either way, the stop keeps every record and says how to check the process. Afterwards the stop removes `daemon.json` unless it cannot be read or names the live process that holds the home's lock as the pid recorded beside it, as a daemon a start launched meanwhile does. `rerail status` and hooks read the same facts within the lookup's own wait, and remove the record only when they prove another process; otherwise they say the daemon is alive but not answering. On Windows the start time is read through Windows PowerShell, which is ended at what is left of that wait, or at the stop's 10 s.
+A Rerail home has one daemon. The daemon holds `locks/daemon.lock` in the home for as long as it runs. Another daemon started there stops and names the first as soon as the first answers as the home's daemon. When the first does not answer, the new daemon waits up to a second for the lock and stops if the first still holds it. The daemon also checks every second that `daemon.json` still holds what it wrote and writes it again when it is gone or changed, so `rerail daemon start` and `rerail daemon stop` find a running daemon even after its `daemon.json` was removed. `rerail daemon stop` ends a daemon that does not answer only when the process `daemon.json` names holds that lock as the pid recorded beside it, or started no later than the `startedAt` time `daemon.json` records (the start is read on Linux and Windows), a time no more than 10 s past the reader's clock: a later one, as a daemon stamps before the clock is set back, would come after any process's start, so it proves nothing. It removes `daemon.json` and ends nothing of that process when the process started more than 10 s after that time, as one does after a daemon was killed and the system gave its pid to another program, or, when that process's start cannot be read or falls within those 10 s, when the lock is held by the process recorded beside it, which started no later than that record was written; when a daemon holds the home's lock, the stop then stops that daemon once it records itself again, or says which pid holds the lock, and when none does it says so. Otherwise it ends nothing, keeps `daemon.json` and says how to check the process: so for a busy daemon of Rerail 0.1.4 or earlier, which holds no lock, on macOS, where no start time is read (read from the code; no macOS run has shown it). The stop decides just before each signal it sends from those facts, never from what `daemon.json` says by then: a daemon still proven is ended whether its `daemon.json` is gone, unreadable or names another pid, as when its own shutdown removed it after another stop asked first, and one that outlives its `SIGTERM` is killed while one of those facts still proves it, its start included once it has let go of the lock. A daemon that held the lock when the stop began, whether it answered or was too busy to, and has let go of it since is ended while it runs, as when its exit runs on, unless its start reads more than 10 s later than that time or the lock belongs by then to another live process and `daemon.json` no longer names it. A daemon that did not hold the lock when the stop began, recorded beside the lock whose lock file is there and held by no one, and whose start does not prove it, is left to exit, and the stop says it stopped: a daemon lets go of the lock once it has closed. A missing lock file proves nothing. A process the stop no longer proves gets nothing: once it has exited the stop says it stopped; when the home's lock belongs to another live process by then and `daemon.json` no longer names the stopped one, as after a start replaced that daemon, the stop leaves the record as it is and says to run it again; while nothing proves it either way, the stop keeps every record and says how to check the process. Afterwards the stop removes `daemon.json` unless it cannot be read or names the live process that holds the home's lock as the pid recorded beside it, as a daemon a start launched meanwhile does. `rerail status` and hooks read the same facts within the lookup's own wait, and remove the record only when they prove another process; otherwise they say the daemon is alive but not answering. On Windows the start time is read through the engine (`GetProcessTimes`), a system call that needs none of that wait left; `rerail install --remove`, which deletes the folder the engine loads from next, reads it through the engine in a child process that has exited before that: the child is ended only when it has not answered within 30 s, and the stop then ends nothing and says that the read did not answer. Where that child gives no answer, as when the engine does not load, it reads through Windows PowerShell, which is ended at what is left of the stop's 10 s.
 
 `daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; when another process already holds the default pipe name, the daemon listens on that name with a random suffix and records that one; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
+
+On Windows, where any local user can create a pipe of any name, a hook sends its events to the pipe `RERAIL_ENGINE_SOCKET` names, with the capability, only when that pipe is the home's own daemon: Windows says the process serving the pipe is the daemon `daemon.json` records (its pid, started no later than it recorded itself), of any Rerail version, one before 0.1.1 getting the events with no capability; or else, only where Windows says no pipe of that name exists or cannot be asked, the engine on the pipe proves it holds the capability `daemon.json` records. The hook's lookup sends nothing, not even the proof's challenge, to a pipe Windows names as another process's, or to one that refuses to let Windows say which process serves it; its start check still asks the pipe `daemon.json` names for that proof, as every reader of `daemon.json` does, and a proof the start check got from that same pipe answers for both. Otherwise the hook sends nothing and says why, and `rerail status` lists it:
+
+- nothing listens on the pipe: the Rerail daemon is not running; start it with `rerail daemon start`;
+- other clients kept every instance of the pipe taken for 30 s, so Windows could not say who serves it;
+- the pipe is not this Rerail home's daemon: Windows names another process as its holder;
+- the pipe is there, but Windows refused to say which process holds it, and the hook gives the error Windows gave;
+- the pipe could not be shown to be this Rerail home's daemon: Windows named no holder, or could not be asked because the native engine would not load in the hook's process, predates that question or failed while asking, and the engine on the pipe did not prove it holds the capability (within 30 s, or at all), or `daemon.json` records no capability for it to prove;
+- no `daemon.json` says which engine the pipe must be.
+
+The hook checks once and sends its events afterwards; [the threat model](threat-model.md#t14-smaller-local-exposures) states how long that can take and what it leaves open.
 
 </details>
 
@@ -756,7 +804,7 @@ A file written and committed in one command stays an edit, measured from the tre
 <details>
 <summary>What counts as the session's own write</summary>
 
-A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. A call whose result never comes (one you interrupted) counts as running until the turn or the session ends; a subagent's, until the main agent's next stop after its own.
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. In another of the repository's worktrees, a change is the session's own only when the call that ran as it was written ran in that worktree, by the folder the hook names ([Rule scoping](rule-scoping.md)); one no session made there is recorded once, in Log, as the repository's. A call whose result never comes (one you interrupted) counts as running until the turn or the session ends; a subagent's, until the main agent's next stop after its own.
 
 </details>
 
@@ -774,6 +822,42 @@ A newer edit drops a steer still queued for its file. In AI-output scope it also
 Delivery is not an audit: it has no acceptance callback, acknowledgement persistence, retry chain or exactly-once guarantee. An audit returns violations and execution failures, never `unknown`. Unreadable sources, unavailable generated ranges, missing capabilities, exhausted budgets and evaluator errors go to `audits`, never the conversation. `audit_requests_create` requests an audit; `GET /api/audits` pages records.
 
 </details>
+
+#### Rules written in .rerail
+
+A pack's rules written in `.rerail` ([pack format](pack-format.md#rules-written-in-rerail)) run through a separate
+engine path: a short-lived process reads the checkout's files from disk and runs the rules over all of them. They
+run at different times from JSON rules.
+
+| When | What runs | Recorded as |
+| --- | --- | --- |
+| A session writes a file in the scope of a `.rerail` rule | Once the checkout has had no write for 10 seconds, or the agent's turn ends, the rules that take the written files run over the whole checkout. | An audit of its own (`ongoing`), separate from the edit's JSON audit. |
+| `rerail scan`, an audit request, the first repository audit | Every active `.rerail` rule, beside the JSON rules. | The same audit as the JSON rules; it finishes when both have. |
+
+- **Steering.** An edit's check never waits for its `.rerail` run. The run's findings are selected as the session's
+  scope says (`ai-output`: lines written since the file's last run; `touched-files`: the whole written files) and
+  steer at the session's next boundary, as a late steer does. Findings of a rule in `log` mode are recorded only.
+- **One run at a time per checkout.** Writes made while a run goes on wait for the next run, which carries every
+  session's writes since. A run is never started with writes newer ones made stale. A change to the checkout's
+  `.rerail` rules (a rule turned off, a pack updated or removed) stops a session's running run, records it
+  `superseded`, and runs its files again with the new rules; a session that ends stops its run and records it
+  `interrupted`.
+- **Budgets.** A run after edits may take 5 minutes: a steer later than that reaches an agent that has moved on. On
+  a large repository that is not enough on a laptop (the Django pack needs about 2 minutes after a one-file edit of
+  a 1,300-file application on 16 threads), and such edits record each rule's budget gap instead of findings. A scan's
+  run takes the `.rerail` runner's default deadline, since no agent waits for it. `RERAIL_RR_DEADLINE_MS` replaces
+  both. A run is also bounded by memory (`RERAIL_RR_MEMORY_MB`) and threads (`RERAIL_RR_THREADS`).
+  `RERAIL_RR_QUIET_MS` replaces the 10-second quiet period. A run stopped at a budget gives each of its rules a
+  `budget-exceeded` failure that names the setting to raise; the other rules' results stand. `RERAIL_RR_STORE=checkout`
+  keeps the engine's store of the checkout between runs: faster on a small project, slower and heavier on a large one.
+- **Reading the rules.** Rerail reads what a pack's `.rerail` rules say when it loads the pack, and waits at most 30
+  seconds for that; the runs' deadline does not change it, `RERAIL_RR_DESCRIBE_DEADLINE_MS` does. A pack whose rules
+  take longer is left out, with a message that names the limit; Rerail reads them again the next time it loads its
+  packs.
+- **Which files.** A `.rerail` run reads the files Git lists in the checkout (tracked, and untracked ones Git does
+  not ignore), leaving out the folders Rerail's own walks never enter (`node_modules`, `dist`, `.git`, `.venv` and the
+  like). It reads no file Git ignores, even where the repository's audits are set not to follow `.gitignore`.
+  Findings in a checkout nested in this one are left to that checkout's own rules.
 
 #### Command reference
 
@@ -797,7 +881,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 
 - **`/rerail`**: rendered by `rerail session`; Cursor gets the repository-level form.
 - **`/rerail-manage`**: the same link the footer's rule count carries.
-- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts each rule and tests it (`rerail rules test <draft.json>`). A suggested rule that passes is added with `rerail rules add <draft.json>` and left unapproved, so it runs in Log; the agent then asks once whether to approve them so they steer (`rerail rules approve <id>`), and the dashboard's Overview sends you to the rest, each approved on its page after it is read. A rule you asked for is read back, and on your yes `rerail rules add` and `rerail rules approve` add it to your library and this repository. Either way the repository is set up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
+- **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts each rule and tests it (`rerail rules test <draft.json>`). A suggested rule that passes is added with `rerail rules add <draft.json>`, and a rule you asked for is read back and added on your yes. Either way it runs in Log until you approve it on its page in the dashboard, which the dashboard's Overview sends you to: `rerail rules approve <id>` is refused in the agent's session. Either way the repository is set up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
 - **`/rerail-uninstall`**: offers both removals, keeping a backup or deleting everything, the second with its `--dry-run` output. OMP and Pi ask via a native selector, then confirm a full deletion after showing that output; Claude Code doesn't pre-approve either removal.
@@ -811,9 +895,9 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
 - `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
-- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft, a draft without a `title` included; a worktree's rule file on its own is checked as it loads, with no title needed.
+- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft, a draft without a `title` included; a worktree's rule file on its own is checked as it loads, with no title needed. Given a `.rerail` rule file, it runs the tests the file carries (`.test ... .end`) against the `.rerail` rule library the package ships.
 - `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). It refuses a rule without a `title`, the rule in your own words that the dashboard lists it by. A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
-- The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
+- The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)), or a person approves it on its page in the dashboard. In a coding agent's session, `rules approve` only lists what waits, and `rules add` of a draft that changes one of your approved rules saves it as a copy that waits ([coding agents](rule-scoping.md#coding-agents)).
 
 <details>
 <summary>Test output and add details</summary>
@@ -822,7 +906,7 @@ A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `
 - The pass lists files the rule couldn't check and counts in-scope binary files, which no rule reads.
 - Text output shows the first five matches and files; `--json` shows all. Path and `file`-query matches have no line.
 - A bare rule document, such as `.rerail/rules/<name>.json`, gets validation and the repository pass only.
-- A `.rerail` rule file, in the new rule language: `rules test` runs the tests it carries (`.test ... .end`) and reports each as passed or failed (`--json`: every test with its failures and findings). Those tests read programs the package does not ship, so it runs only from a Rerail checkout, or with `RERAIL_SOURCE_ROOT` naming one; elsewhere it refuses.
+- A `.rerail` rule file, in the new rule language: `rules test` runs the tests it carries (`.test ... .end`) against the `.rerail` rule library the package ships, and reports each as passed or failed (`--json`: every test with its failures and findings).
 
 `rerail rules add` sets the repository up with only that rule if needed. A rule already added here stays where it is when the draft names no `folder`; `"folder": ""` widens it to the whole repository. It never replaces a rule shipped by Rerail. Your copy of one takes no `folder`. It is refused where the repository does not add the original, and where your copy of it is already added; `rules show` names that copy, the one to change. Your copy made for another repository is refused where its original runs and the copy is not added, since both would steer. `rerail rules approve` with no names lists everything awaiting approval and its source.
 

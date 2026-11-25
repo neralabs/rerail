@@ -329,7 +329,7 @@ describe("A scan requested while the session's evaluator is still opening", () =
     const session = { host: "omp" as const, sessionId: "scan-opening", cwd: root };
     await runtime.ingest({ kind: "session-start", eventId: "start", session });
     const controls = new SqliteAuditControlStore(databasePath);
-    const request = controls.requestAudit(session.sessionId, { scope: "repository" });
+    const request = (await controls.requestAudit(session.sessionId, { scope: "repository" }));
     // It waits, queued, for the evaluator: claimed at once, the scan's writes would come whenever the rules had compiled,
     // each waiting up to 5 s for a write lock another process took meanwhile.
     const statusOf = () => controls.listAuditRequests(session.sessionId).find(item => item.id === request.id)?.status;
@@ -412,7 +412,7 @@ describe("A scan of a session's checkout", () => {
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId, cwd: root } });
       await runtime.codeRulesOpened(sessionId);
-      const request = controls.requestAudit(sessionId, { scope: "repository" });
+      const request = (await controls.requestAudit(sessionId, { scope: "repository" }));
       const finished = () => controls.listAuditRequests(sessionId).find(item => item.id === request.id)!;
       await vi.waitFor(() => expect(finished().status).toBe("completed"), { timeout: 10_000 });
       const [scanId] = finished().auditIds;
@@ -1036,6 +1036,7 @@ describe("Rerail session restore", () => {
         rule: {
           id: "acme:no-force-push",
           mode: "steer",
+          title: "Ask before force-pushing",
           match: { field: "input.command", regex: String.raw`\bgit\s+push\b[^\n]*--force\b` },
           sample: { source: "tool:Bash", boundary: "tool-call" },
           action: { content: "Ask before force-pushing." },
@@ -1069,7 +1070,7 @@ describe("Rerail session restore", () => {
           steerLatitude("claude-code", "acme:no-force-push", "Follow"),
         ].join("\n"),
         ruleIds: ["acme:no-force-push"],
-        rules: [{ id: "acme:no-force-push", state: "steered" }],
+        rules: [{ id: "acme:no-force-push", title: "Ask before force-pushing", state: "steered" }],
       })]);
     } finally {
       await runtime.dispose();

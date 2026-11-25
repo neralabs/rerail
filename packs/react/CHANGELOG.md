@@ -2,7 +2,23 @@
 
 Every notable change to this rule pack, latest first. Each release says how many rules the pack ships, then lists its changes, rule by rule, under Added, Changed, Deprecated, Removed, Fixed and Security, as in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); releases from before the pack's notes took that format list them without those headings. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are [changesets](../../.changeset/README.md), so there is no `## Unreleased`.
 
-Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
+Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 a version's minor follows the Rerail line it needs (0.2.x needs Rerail 0.2 or newer), and a patch can add, change or remove rules, so read the notes before you update.
+
+## 0.1.12 (2026-11-24)
+
+51 rules, 32 of them on by default.
+
+### Fixed
+
+- `react-hooks-rules-of-hooks` no longer reports a `use` call the file binds to something other than React, such as chai's imported `use(plugin)`, markdown-it's `Md.use(plugin)` or a test fixture's `use` parameter, as a Hook called outside a component. React's `use`, imported from `react` or unbound, is still checked.
+
+## 0.1.11 (2026-11-20)
+
+51 rules, 32 of them on by default.
+
+### Fixed
+
+- `react-jsx-no-target-blank` treats `target` and `rel` conditionals whose tests are both something other than a name, such as `url.startsWith("http") ? …`, as one test, as eslint-plugin-react does: only the `rel` branch beside an exact `_blank` must hold `noreferrer`. Such links are no longer reported, and one whose target is `_BLANK` now is.
 
 ## 0.1.10 (2026-11-17)
 

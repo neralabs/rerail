@@ -154,7 +154,13 @@ describe("engine service answers a hook no longer waits for", () => {
     await unheardReopen(first);
     // Quiet past the limit again: the close keeps the steer it was given back, which its ledger already counts.
     await first.closeQuiet();
+    // The idle close let the session go while its rules still opened, so that close kept the steer, not the service's:
+    // its runtime is among those no session uses, kept for the checkout's next session, and closing those takes it out
+    // at once. Its close settles once its rules stop opening, which the service's close makes them.
+    const closing = first.closeUnusedRuntimes();
+    expect(first.openRuntimes()).toBe(0);
     await first.close();
+    await closing;
     const second = await checkingService({ root: first.root });
     expect(contents(await ingestEngineEvent(second.engine, prompt("prompt-3", SESSION, second.root)))).toEqual([STEER]);
     expect(await ingestEngineEvent(second.engine, prompt("prompt-4"))).toEqual([]);
@@ -163,16 +169,22 @@ describe("engine service answers a hook no longer waits for", () => {
 
   it("tells the steer a session owed when it opened again and the one it found since once each, the owed one first, when the hook whose answer took both gave up", async () => {
     const reopening = Promise.withResolvers<void>();
-    const service = await owingService(reopening, SECOND_STEER);
+    const service = await owingService(reopening, { owed: SECOND_STEER });
     reopening.resolve();
     // The turn's end that opens the session again waits for its rules, then for its edit checks, which find `STEER`:
     // its answer carries the steer the session owed and the one it found, and its hook goes as that answer is written.
     const responses = serverResponses(1);
     const gone = hook(service.socketPath, turnEnd("stop-2", service.root));
-    atItsAnswer((await responses)[0], gone.destroy);
+    let dropped = "";
+    atItsAnswer((await responses)[0], body => {
+      dropped = body;
+      gone.destroy();
+    });
     await service.checking;
     service.finishCheck();
     await gone.closed;
+    // The answer its hook never read carried both: the found one did not reach the session after that answer.
+    expect(leads(decodeRerailEventResult(dropped).deliveries)).toEqual(leads([SECOND_STEER, STEER]));
     expect(contents(await ingestEngineEvent(service.engine, prompt("prompt-3")))).toEqual([SECOND_STEER, STEER]);
     expect(await ingestEngineEvent(service.engine, prompt("prompt-4"))).toEqual([]);
     expect({ owed: await service.deliveriesOf(SECOND_STEER), found: await service.deliveriesOf(STEER) }).toEqual({ owed: 1, found: 1 });
@@ -222,14 +234,16 @@ describe("engine service answers a hook no longer waits for", () => {
   });
 
   it("answers a session's end once the service has let go of the session, as before", async () => {
-    const service = await checkingService({ idleRuntimeMs: 0 });
+    const service = await checkingService();
     const responses = serverResponses(1);
     const ending = ingestEngineEvent(service.engine, { kind: "session-end", eventId: "end", sessionId: SESSION, session: { host: "claude-code", sessionId: SESSION, cwd: service.root } });
-    // What the service holds as it writes the answer: the session's runtime is gone already.
-    let openWhenAnswered = -1;
-    atItsAnswer((await responses)[0], () => (openWhenAnswered = service.openRuntimes()));
+    // What the service holds as it writes the answer: no session uses the session's runtime any more, so it is among
+    // the runtimes no session uses, kept for its checkout's next session, and closing those closes it.
+    let closing: Promise<void> | undefined;
+    atItsAnswer((await responses)[0], () => (closing = service.closeUnusedRuntimes()));
     await ending;
-    expect(openWhenAnswered).toBe(0);
+    await closing;
+    expect(service.openRuntimes()).toBe(0);
   });
 });
 
@@ -263,14 +277,16 @@ function serverResponses(count: number): Promise<ServerResponse[]> {
 }
 
 /**
- * Has `act` run as the server writes `response`, in the same turn and before the write: a client that leaves then goes
- * before the daemon can read that it has gone, and what `act` reads is what the service holds as it answers.
+ * Has `act` run as the server writes `response`, in the same turn and before the write, with the body it writes: a
+ * client that leaves then goes before the daemon can read that it has gone, and what `act` reads is what the service
+ * holds as it answers.
  */
-function atItsAnswer(response: ServerResponse | undefined, act: () => void): void {
+function atItsAnswer(response: ServerResponse | undefined, act: (body: string) => void): void {
   if (response === undefined) throw new Error("the server read no request");
   const end = response.end.bind(response);
   response.end = ((...args: Parameters<typeof end>) => {
-    act();
+    const [body] = args;
+    act(typeof body === "string" ? body : "");
     return end(...args);
   }) as typeof response.end;
 }
@@ -380,8 +396,6 @@ function hook(socketPath: string, event: AdapterEvent): {
 }
 
 interface ServiceOptions {
-  /** 0 closes a runtime as its last session ends. */
-  idleRuntimeMs?: number;
   idleSessionMs?: number;
   now?: () => number;
   /** A folder an earlier service of the test ran in: this one runs over its records, as a daemon started again does. */
@@ -393,11 +407,14 @@ interface ServiceOptions {
 type CheckingService = Awaited<ReturnType<typeof checkingService>>;
 
 /**
- * A service whose session `gone` went quiet while it owed `owed` and closed, its ledger keeping the steer owed. The
- * session's rules open again as `reopening` says. `closeQuiet` has the session go quiet past the limit again and closes
- * it.
+ * A service whose session `gone` went quiet while it owed `owed` (`STEER` unless given) and closed, its ledger keeping
+ * the steer owed. The session's rules open again as `reopening` says. `closeQuiet` has the session go quiet past the
+ * limit again and closes it.
  */
-async function owingService(reopening: PromiseWithResolvers<void>, owed = STEER): Promise<CheckingService & { closeQuiet: () => Promise<void> }> {
+async function owingService(
+  reopening: PromiseWithResolvers<void>, options: { owed?: string } = {},
+): Promise<CheckingService & { closeQuiet: () => Promise<void> }> {
+  const { owed = STEER } = options;
   let clock = 1_000;
   const service = await checkingService({ now: () => clock, idleSessionMs: 1_000, reopening });
   // Quiet past the limit for a session that owes a steer: it closes all the same.
@@ -436,6 +453,8 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
   start: (sessionId: string) => Promise<void>;
   steer: (sessionId: string, content: string) => Promise<void>;
   openRuntimes: () => number;
+  /** Closes every runtime no session uses (`EngineService.closeUnusedRuntimes`). */
+  closeUnusedRuntimes: () => Promise<void>;
   closeIdleSessions: () => Promise<void>;
   deliveriesOf: (content: string) => Promise<number>;
   close: () => Promise<void>;
@@ -513,6 +532,7 @@ async function checkingService(options: ServiceOptions = {}): Promise<{
     // As `start` waits: the runtime takes the open in after it.
     reopened: reopened.promise.then(async () => await new Promise<void>(done => setImmediate(done))),
     openRuntimes: () => service.openRuntimes(),
+    closeUnusedRuntimes: () => service.closeUnusedRuntimes(),
     closeIdleSessions: () => service.closeIdleSessions(),
     deliveriesOf: content => deliveryEntries(join(root, "state"), content),
     close,

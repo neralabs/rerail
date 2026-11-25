@@ -133,7 +133,7 @@ fn compare_parsed(source: &str, language: GrammarDialect, rules: &[Value], damag
 }
 
 /// A source as the engine reads it: tree-sitter's tree written to a tape and restored, with no
-/// token the grammar implies (RER-131).
+/// token the grammar implies (decision 0161).
 fn tape_doc(source: &str, language: GrammarDialect) -> AstGrep<TapeDoc> {
     let parsed = StrDoc::new(source, language);
     let grammar = Grammar::new(language).unwrap();
@@ -144,7 +144,7 @@ fn tape_doc(source: &str, language: GrammarDialect) -> AstGrep<TapeDoc> {
 
 /// Each matcher (named for its failures) selects, from the anchor index of the restored tape, the
 /// nodes a full walk of that tape matches, visiting each stored node once. A tape is named-only
-/// (RER-131), and so is every tree the engine reads: tree-sitter's own tree is no oracle here.
+/// (decision 0161), and so is every tree the engine reads: tree-sitter's own tree is no oracle here.
 fn compare_matchers(
     source: &str,
     language: GrammarDialect,
@@ -606,7 +606,7 @@ fn incomplete_index_is_not_a_clean_absence() {
     let grammar = Grammar::new(GrammarDialect::TypeScript).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     let tape = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap();
-    // The tree\'s nodes: a stored image is named-only (RER-131).
+    // The tree\'s nodes: a stored image is named-only (decision 0161).
     let tree_nodes = tape.transducer_len();
     let matcher = compile_rule(
         &json!({"pattern": "bar(2)"}),
@@ -831,7 +831,7 @@ fn sibling_projections_are_exact_in_both_blade_documents() {
 
 // ast-grep's sibling walks are byte-positioned on the native tree: `next` skips zero-width
 // siblings at the node's end, and `next_all`/`prev_all` start from the first child of the
-// parent that ends after the node's start. The tape stores no implied token (RER-131), so its
+// parent that ends after the node's start. The tape stores no implied token (decision 0161), so its
 // walks are tree-sitter's over the nodes it stores.
 #[test]
 fn tape_sibling_walks_match_native_around_zero_width_nodes() {

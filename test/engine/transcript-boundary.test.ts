@@ -442,6 +442,7 @@ describe("the transcript boundary for coding agents", () => {
       ["steering-delivered", { ruleIds: ["no-console-log"] }],
       ["code-rules-pending", { boundary: "edit" }],
       ["events-dropped", { id: "d", count: 3 }],
+      ["events-lost", { count: 2, kinds: { "user-prompt": 2 }, firstEventId: "a", lastEventId: "b", firstObservedAt: 1, lastObservedAt: 2 }],
     ] as const) expect(agentTranscriptPayload(kind, payload), kind).toBe(payload);
     expect(agentTranscriptPayload("file-snapshot", { path: "src/a.ts", content: "API_KEY=x" })).toEqual(WITHHELD_PAYLOAD);
     expect(agentTranscriptPayload("constructor", "API_KEY=x")).toEqual(WITHHELD_PAYLOAD);
@@ -449,6 +450,9 @@ describe("the transcript boundary for coding agents", () => {
     expect(agentTranscriptPayload("ignored-edit", { path: "scratch/a.ts", source: ".git/info/exclude", line: 7, pattern: "scratch/" }))
       .toEqual(WITHHELD_PAYLOAD);
     expect(agentTranscriptPayload("ignore-rules-changed", { path: ".git/info/exclude", via: "observed" })).toEqual(WITHHELD_PAYLOAD);
+    // What a walk could not read names folders and files the agent may not see, and is the person's record, not the agent's.
+    expect(agentTranscriptPayload("source-discovery-gap", { boundary: "turn", path: ".secrets", reason: "EACCES: permission denied, opendir '/repo/.secrets'" }))
+      .toEqual(WITHHELD_PAYLOAD);
   });
 
   it("withholds a call that names a file linked to a secret in the session's checkout", context => {

@@ -77,7 +77,7 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
     const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
     // Their change to line 10 and the lines built on it, and this edit's line two below: an overlap.
-    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+    commit(ws.worktree("jdoe-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
     const noted = Promise.withResolvers<void>();
@@ -105,8 +105,8 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
 
       const [conflict] = (await service.status(ws.repo)).conflicts;
       expect(deliveries.filter(delivery => delivery.conflict !== undefined)).toEqual([expect.objectContaining({
-        content: expect.stringContaining("Your edit to src/api/model.ts overlaps open work: \"jbarnes-model\" (\"Tim Belanger\"), described on their side as \"Share compiled matchers\"."),
-        conflict: { id: conflict!.id, text: "your edit overlaps jbarnes-model (Tim Belanger): model.ts" },
+        content: expect.stringContaining("Your edit to src/api/model.ts overlaps open work: \"jdoe-model\" (\"Alex Kim\"), described on their side as \"Share compiled matchers\"."),
+        conflict: { id: conflict!.id, text: "your edit overlaps jdoe-model (Alex Kim): model.ts" },
         rules: [],
       })]);
       expect(service.pendingNotes(sessionId, ws.repo)).toEqual([]);
@@ -119,7 +119,7 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
     const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
     const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
-    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+    commit(ws.worktree("jdoe-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
@@ -153,7 +153,7 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
     const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
     const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
-    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+    commit(ws.worktree("jdoe-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
@@ -187,7 +187,7 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
     const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
     const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
     const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
-    commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+    commit(ws.worktree("jdoe-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
     writeFiles(ws.repo, { "src/api/model.ts": text(12, "  cloned 12") });
     const service = ws.service();
     await service.setEnabled(ws.repo, true);
@@ -265,7 +265,7 @@ describe("Merge Assist in a session", { timeout: 60_000 }, () => {
       const model = Array.from({ length: 30 }, (_, index) => `  line ${index + 1}`);
       const text = (line: number, value: string) => `${model.map((entry, index) => (index + 1 === line ? value : entry)).join("\n")}\n`;
       const ws = await workspace({ files: { "src/api/model.ts": text(0, "") } });
-      commit(ws.worktree("jbarnes-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
+      commit(ws.worktree("jdoe-model"), { "src/api/model.ts": text(10, SHARED) }, "Share compiled matchers");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       if (withHookCommand) {

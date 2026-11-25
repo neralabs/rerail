@@ -21,7 +21,7 @@ Setup, for both:
 
 ## Step 1: one added import misses one file
 
-The edit is `import os` added after the imports of `l1100_exceptions/exceptions.py`, on a store primed with
+The edit is `import os` added after the imports of the corpus's exceptions module, on a store primed with
 the unedited corpus.
 
 | | per-file memo | cross-file components | CPU main thread | cross part | RSS |

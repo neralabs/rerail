@@ -1,1 +1,0 @@
-The daemon no longer exits when another program removes a running session's record from `rerail.sqlite`, as restoring a copy taken before that session began through SQLite's backup API does. It exited within a second, and edits in every open session went unchecked until a daemon started again. That session now keeps recording and writes its record again.

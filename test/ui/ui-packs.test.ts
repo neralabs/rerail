@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { changeScope, toStoredRules, type StoredRule } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
-import { catalogKinds, catalogPacks, packSwitch, pageRules, sheetRules, shownRules, sortPageRules, switchTurnsOn } from "../../ui/pack-model.js";
+import { catalogKinds, catalogPacks, packSwitch, pageRiskFilters, pageRules, sheetRules, shownRules, sortPageRules, startGroups, suggestedReason, suggestedSplit, switchTurnsOn } from "../../ui/pack-model.js";
 import { packSwitchWrites, settingWrites } from "../../ui/settings-writes.js";
-import { isFromPack, publisherLabel, worktreeLeftOut } from "../../ui/derive.js";
+import { isFromPack, publisherLabel, RISK_LABELS, worktreeLeftOut } from "../../ui/derive.js";
+import { RULE_RISKS } from "../../src/engine/index.js";
 import { packKind } from "../../ui/render/pack-panel.js";
 import { changeOwner } from "../../ui/shell.js";
 
@@ -265,6 +266,30 @@ describe("a pack page's rules", () => {
     expect(shown("all", "ts:b")).toEqual(["ts:b"]);
     expect(shown("on", "ts:b")).toEqual([]);
   });
+
+  it("offers the risks its rules have, in the risks' order with counts, and filters and searches by them", () => {
+    const [typescript] = data.packs as { rules: { id: string; dimensions?: unknown }[] }[];
+    typescript!.rules[0]!.dimensions = { risk: "data-safety", layer: "jobs", severity: "critical" };
+    typescript!.rules[2]!.dimensions = { risk: "security", layer: "server", severity: "high", hazard: "auth.mutation-without-auth" };
+    data.packs = [...data.packs];
+    const all = pageRules("pack:typescript")!;
+    const shown = (filter: string, query = "") => { Object.assign(ui2, { filter, query, sort: "az" }); return shownRules(all).map(r => r.rule.id); };
+
+    expect(pageRiskFilters(all)).toEqual([["risk:security", "Security (1)"], ["risk:data-safety", "Data safety (1)"]]);
+    expect(pageRiskFilters(pageRules("pack:next")!)).toEqual([]);
+    expect(shown("risk:security")).toEqual(["ts:c"]);
+    expect(shown("risk:data-safety")).toEqual(["ts:a"]);
+    expect(shown("risk:performance")).toEqual([]);
+    // A risk is found by its label and by its id as pack.json and the API write it.
+    expect(shown("all", "data safety")).toEqual(["ts:a"]);
+    expect(shown("all", "data-safety")).toEqual(["ts:a"]);
+    expect(shown("all", "critical")).toEqual(["ts:a"]);
+    expect(shown("all", "mutation-without-auth")).toEqual(["ts:c"]);
+  });
+
+  it("names every risk a pack may give", () => {
+    expect(RISK_LABELS.map(([risk]) => risk)).toEqual([...RULE_RISKS]);
+  });
 });
 
 describe("the catalog", () => {
@@ -282,6 +307,34 @@ describe("the catalog", () => {
     expect(catalogPacks(packs, "all").map(p => p.id)).toEqual(["blade", "next", "python", "vue"]);
     expect(catalogPacks(packs, "framework").map(p => p.id)).toEqual(["next", "vue"]);
     expect(catalogPacks(packs, "language").map(p => p.id)).toEqual(["blade", "python"]);
+  });
+
+  it("puts the packs Rerail suggests for the repo first, once the recommendations name one", () => {
+    const sorted = catalogPacks(packs, "all");
+    const recommendations = [{ packId: "vue", reason: "package.json depends on vue" }, { packId: "python" }];
+
+    expect(suggestedSplit(sorted, null)).toBeNull();
+    expect(suggestedSplit(sorted, [])).toBeNull();
+    const split = suggestedSplit(sorted, recommendations);
+    expect(split?.suggested.map(p => p.id)).toEqual(["python", "vue"]);
+    expect(split?.others.map(p => p.id)).toEqual(["blade", "next"]);
+    // A kind with no suggested pack still splits: its packs are all others.
+    expect(suggestedSplit(catalogPacks(packs, "language").filter(p => p.id === "blade"), recommendations)?.suggested).toEqual([]);
+  });
+
+  it("says why a pack is suggested, empty when the recommendation gives no reason", () => {
+    const recommendations = [{ packId: "vue", reason: "package.json depends on vue" }, { packId: "python" }];
+
+    expect(suggestedReason(recommendations, "vue")).toBe("package.json depends on vue");
+    expect(suggestedReason(recommendations, "python")).toBe("");
+    expect(suggestedReason(recommendations, "next")).toBeNull();
+    expect(suggestedReason(null, "vue")).toBeNull();
+  });
+
+  it("groups a pack not added by how its rules start, keeping their order", () => {
+    const rows = [{ id: "x:1", title: "Alpha", on: true }, { id: "x:2", title: "Beta", on: false }, { id: "x:3", title: "Gamma", on: true }];
+
+    expect(startGroups(rows)).toEqual({ on: [rows[0], rows[2]], off: [rows[1]] });
   });
 
   it("filters a pack sheet's rules by title or id, A to Z", () => {

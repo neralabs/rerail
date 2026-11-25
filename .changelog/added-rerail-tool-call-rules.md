@@ -1,1 +1,0 @@
-From a Rerail checkout, `rerail rules test` runs a `.rerail` rule over tool calls: a policy with `.scope tool_calls` reads each call's tool and string arguments and reports its finding at the call, and a test gives it calls with ``.tool_call "Bash" `{"command": "…"}` ``. Sessions still check tool calls with JSON tool-call rules, in internal testing.

@@ -8,8 +8,8 @@ import { ADAPTER_CAPABILITIES, type RerailHost } from "../engine/adapter-contrac
 import { ENTRY_POINTS, PACKAGE_ROOT as packageRoot, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { claudeWorkspace } from "../hosts/claude/claude-event-adapter.js";
-import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
-import { renderRerailSummary } from "../harness/rerail-summary.js";
+import { readRerailSummary, readRulesDashboard, type RerailSummaryRead } from "../presentation/session-presentation.js";
+import { renderRerailSummary, type RerailSummaryInput } from "../harness/rerail-summary.js";
 import {
   assertLocalEngineEntitlement,
   authorizedUpdateChannel,
@@ -24,7 +24,6 @@ import { CustomerActivationManager, CustomerProfileStore } from "../activation/c
 import {
   checkoutRuleCounts, readOnlyStartState, stopRerail, workspaceSetUp, workspaceStartState, type RepositoryStopOptions,
 } from "../runtime/repository-start.js";
-import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { gitExecutable, GitUnavailableError } from "../engine/git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
@@ -41,18 +40,23 @@ import {
   parsePublicHosts,
   type ParsedArguments,
 } from "../daemon/daemon.js";
-import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
+import { commitEveryWriteDurably, defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
   accessTokenKept,
   BROWSER_OFF_NOTE,
   dashboardAccessLink,
   dashboardLink,
   daemonNotRunningMessage,
+  foundRunning,
+  homeDaemonInStart,
   lookupDaemon,
   NOT_HOME_DAEMON_NOTE,
+  olderDaemonMessage,
+  olderDaemonReplacedMessage,
   openInBrowser,
   openDashboard,
   startDaemon,
+  startingDaemonNoticeTo,
   STOP_ANSWERS,
   stopDaemon,
   keepAutostartClaim,
@@ -71,7 +75,6 @@ import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { installedPackDirectories, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { RERAIL_PUBLISHER, rulePackPublisher, rulePackShortName } from "../engine/catalog/rule-packs.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
@@ -81,7 +84,7 @@ import { runRuleEvidenceCommand } from "./rule-evidence.js";
 import { ENGINE_USAGE, runEngineCommand } from "./engine-cli.js";
 import { runRuleApproveCommand } from "./rule-approval-cli.js";
 import { runShowMeCommand } from "./show-me.js";
-import { runMergeAssistCommand } from "./merge-assist-cli.js";
+import { endOnceWritten, runMergeAssistCommand } from "./merge-assist-cli.js";
 import { runSupportBundleCommand } from "./support-bundle.js";
 import { runPacksCommand } from "./packs-cli.js";
 import { runFeedbackCommand } from "./feedback-cli.js";
@@ -92,7 +95,7 @@ import {
 import { checkNodeVersion } from "../setup/node-version.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { missingClaudeHookScripts } from "../setup/registered-hooks.js";
-import { HOOK_FAILURE_WINDOW_MS, hookFailureLines, readHookFailures } from "../harness/hook-failures.js";
+import { HOOK_FAILURE_WINDOW_MS, hookFailureLines, lateCheckLines, readHookFailures, untakenWaitingLines } from "../harness/hook-failures.js";
 import { lastObservedEventAt } from "../runtime/session-store.js";
 import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
@@ -103,8 +106,8 @@ import {
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
-import { newerPackVersions, packsLeftOutByCore, type PackUpdate, type PackUpdateCheck } from "../setup/rule-pack-store.js";
-import { formatDuration, streamProgress, type Progress } from "../runtime/progress.js";
+import { packsLeftOutByCore } from "../setup/rule-pack-store.js";
+import { formatDuration, streamProgress } from "../runtime/progress.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
 
@@ -164,71 +167,18 @@ function leftOutPackLines(coreVersion: string, leftOut: readonly string[]): stri
   return [
     `Rerail ${coreVersion} leaves out ${one ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${one ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    // A pack is pinned to the version installed, so a bare package name keeps it, and a tag can name a version the pack
-    // does not have (one installed from `next`): the version is what moves it.
-    "Install a version that fits with `rerail packs add <package>@<version>`; the newer versions that fit are listed once the update is done.",
+    "Once your coding agents are refreshed, `rerail packs update` moves each rule pack to the newest version that fits; one with no such version stays left out.",
   ];
 }
 
 /**
- * The installed rule packs with a newer version that fits the core the update left active, each with the version to
- * move to, and the one command that installs them all; nothing when there is none.
+ * After an update, whether or not it changed core, since packs are released without it: the version `current` names
+ * moves each installed rule pack to the newest version it loads (`rerail packs update`), as its own CLI, so a pack made
+ * for that core is checked by that core's engine. Nothing to do with no pack installed.
  */
-function packUpdateLines({ updates }: PackUpdateCheck, channel: string): string[] {
-  if (updates.length === 0) return [];
-  const name = (packageName: string) => rulePackShortName(packageName);
-  return [
-    packUpdateHeader(updates, channel),
-    ...updates.map(pack => `  ${name(pack.packageName)} ${pack.installed} → ${pack.available}${packUpdateNotes(pack, channel)}`),
-    `A pack's new version changes the rules of every repository that adds it. To update ${updates.length === 1 ? "it" : "them"}:`,
-    `  rerail packs add ${updates.map(pack => `${name(pack.packageName)}@${pack.available}`).join(" ")}`,
-  ];
-}
-
-/** The line over the newer pack versions: it names the update's channel only when every version is on it. */
-function packUpdateHeader(updates: readonly PackUpdate[], channel: string): string {
-  const packs = updates.length === 1 ? "a rule pack" : `${updates.length} rule packs`;
-  return updates.every(pack => pack.tag === channel)
-    ? `Newer versions of ${packs} you installed are on ${channel}:`
-    : `Newer versions of ${packs} you installed:`;
-}
-
-/**
- * What a newer pack version's line adds, in parentheses: the tag npm has it under when that is not the update's
- * channel (`next`, for a pack the channel has no version of), and, for a third party's pack, that its new version waits
- * for a person's approval again.
- */
-function packUpdateNotes(pack: PackUpdate, channel: string): string {
-  const notes = [
-    ...pack.tag === channel ? [] : [`on ${pack.tag}`],
-    ...rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER
-      ? []
-      : [`Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve ${pack.packageName}`],
-  ];
-  return notes.length === 0 ? "" : ` (${notes.join("; ")})`;
-}
-
-/**
- * After an update, whether or not it changed core, since packs are released without it: suggests the newer versions
- * of the installed rule packs, installing none. The update is done by then, so a check that fails only says so.
- */
-async function suggestPackUpdates(home: string, result: UpdateResult, progress: Progress): Promise<void> {
-  if (installedPackDirectories(home).length === 0) return;
-  let check: PackUpdateCheck;
-  try {
-    check = await progress.step(
-      "Checking your rule packs for newer versions",
-      async () => await newerPackVersions(home, result.channel, result.current.version),
-      { afterMs: 30_000, hint: "npm may be slow or stuck; each npm request about a pack stops at 1 min, and the update itself is done." },
-    );
-  } catch (error) {
-    check = { updates: [], problems: [error instanceof Error ? error.message : String(error)] };
-  }
-  if (check.problems.length > 0) {
-    process.stderr.write(`warning: could not check every rule pack for a newer version: ${check.problems.join("; ")}\n`);
-  }
-  const lines = packUpdateLines(check, result.channel);
-  if (lines.length > 0) process.stdout.write(`${lines.join("\n")}\n`);
+async function updatePacksWithActiveVersion(home: string, updater: ManagedUpdater): Promise<number> {
+  if (installedPackDirectories(home).length === 0) return 0;
+  return await runChild(process.execPath, [join(updater.currentLink, ENTRY_POINTS.cli), MANAGED_CHILD_ARGUMENT, "packs", "update"]);
 }
 
 function selectedChannel(args: readonly string[]): string | undefined {
@@ -260,12 +210,13 @@ function usage(): string {
     "  rerail packs [list]",
     "  rerail packs add <id[@version] | package[@version] | tarball | folder>...",
     "  rerail packs remove <id | package>...",
+    "  rerail packs update",
     "  rerail packs recommend [--repo <dir>]",
     "  rerail packs calibrate [--repo <dir>] [--dry-run] [--json]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
     "  rerail rules show <rule id> [--repo <dir>]",
-    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]   rule.rerail: from a Rerail checkout, or with RERAIL_SOURCE_ROOT naming one",
+    "  rerail rules test <draft.json | rule.json | rule.rerail> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
     "  rerail rules approve [<rule id | pack> …] [--repo <dir>]",
@@ -319,7 +270,9 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
   const launch = daemonStartLaunch(parsed);
-  const result = await startDaemon({ home, packageRoot }, launch);
+  // A daemon still in its start, one set-up or another start launched, is waited for; the person is told whose.
+  const result = await startDaemon({ home, packageRoot, onWaiting: startingDaemonNoticeTo(home) }, launch);
+  if (result.replaced !== undefined) process.stdout.write(`${olderDaemonReplacedMessage(result.replaced)}\n`);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
@@ -405,8 +358,8 @@ async function runStatusCommand(home: string): Promise<number> {
     return 3;
   }
   process.stdout.write(workspaceStatus(process.cwd()));
-  const code = printDaemonStatus(lookup);
-  for (const line of hookHealthLines(home)) process.stdout.write(`${line}\n`);
+  const code = printStartingDaemon(home, lookup) ?? printDaemonStatus(lookup);
+  for (const line of hookHealthLines(home, lookup)) process.stdout.write(`${line}\n`);
   printRemoteStatus(home);
   await printCodingAgentDataAccess(home);
   return code;
@@ -446,45 +399,77 @@ function printRemoteStatus(home: string): void {
   }
 }
 
-/** For each connected coding agent, whether its tools can read Rerail's data on this computer. */
+/** For each connected coding agent, whether its tools can read Rerail's data on this computer, and the step that changes it where there is one. */
 async function printCodingAgentDataAccess(home: string): Promise<void> {
   for (const agent of await codingAgentStates(registrationRoot(home, packageRoot), codingAgentHome())) {
-    // Each sentence names its coding agent.
-    if (agent.connected) process.stdout.write(`${agent.rerailData.why}\n`);
+    // Each sentence names its coding agent, and its step follows it.
+    if (!agent.connected) continue;
+    process.stdout.write(`${agent.rerailData.why}\n`);
+    if (agent.rerailData.fix !== null) process.stdout.write(`${agent.rerailData.fix}\n`);
   }
 }
 
 /**
  * What `rerail status` says of the hooks: Claude Code's registration naming Rerail scripts that are gone, where every
- * hook fails before Rerail runs, and the hook events Rerail could not record in the last day, with why.
+ * hook fails before Rerail runs, the hook events Rerail could not record in the last day, with why, those that wait now
+ * for the daemon `lookup` found, and those it checked late.
  */
-function hookHealthLines(home: string): string[] {
+function hookHealthLines(home: string, lookup: DaemonLookup): string[] {
   const missing = missingClaudeHookScripts(codingAgentHome());
   const registration = missing.length === 0 ? [] : [
     `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run rerail install --refresh.`,
   ];
   const log = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
   const recorded = log.failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
-  return [...registration, ...hookFailureLines(log, recorded)];
+  const waiting = lookup.status === "absent" ? [] : untakenWaitingLines(home, lookup.state.pid);
+  return [...registration, ...hookFailureLines(log, recorded), ...waiting, ...lateCheckLines(log)];
+}
+
+/**
+ * What `rerail status` says of a daemon still in its start that does not answer yet, with the exit code of a daemon that
+ * does not answer: that it is starting, never to stop it, after the note that the lookup removed a daemon.json naming
+ * another process when it did. Undefined when the lookup found it answering, found one of a release before the
+ * engine's proof, which holds no lock and so can run beside a daemon in its start, or none is in its start.
+ */
+function printStartingDaemon(home: string, lookup: DaemonLookup): number | undefined {
+  if (foundRunning(lookup) || lookup.status === "refused") return undefined;
+  const pid = homeDaemonInStart(home);
+  if (pid === undefined) return undefined;
+  if (lookup.status === "absent" && lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
+  process.stdout.write(`Rerail daemon (pid ${pid}) is still starting and does not answer yet. See ${join(home, DAEMON_LOG_FILE)}\n`);
+  return 4;
 }
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
 function printDaemonStatus(lookup: DaemonLookup): number {
+  if (lookup.status !== "running") return printDaemonWithoutHealth(lookup);
+  printDaemon({ state: lookup.state, health: lookup.health });
+  return lookup.health.healthy === false ? 5 : 0;
+}
+
+/**
+ * What `rerail status` says of a daemon it has no health of, and the exit code: 3 when none runs, 4 for one that is
+ * alive and not answering, refused the capability, or runs a release before the engine's proof, which is asked nothing.
+ */
+function printDaemonWithoutHealth(lookup: Exclude<DaemonLookup, { status: "running" }>): number {
   if (lookup.status === "absent") {
     if (lookup.notDaemon !== undefined) process.stdout.write(`${NOT_HOME_DAEMON_NOTE}\n`);
     process.stdout.write(`${daemonNotRunningMessage()}\n`);
     return 3;
   }
+  process.stdout.write(`${daemonWithoutHealthLine(lookup)}\n`);
+  return 4;
+}
+
+/** The line {@link printDaemonWithoutHealth} prints for a daemon that is alive. */
+function daemonWithoutHealthLine(lookup: Exclude<DaemonLookup, { status: "absent" | "running" }>): string {
   if (lookup.status === "unresponsive") {
-    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.\n`);
-    return 4;
+    return `Rerail daemon pid ${lookup.state.pid} is alive but not answering at ${lookup.state.url}; run rerail daemon stop, then rerail daemon start.`;
   }
   if (lookup.status === "refused") {
-    process.stdout.write(`Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.\n`);
-    return 4;
+    return `Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.`;
   }
-  printDaemon({ state: lookup.state, health: lookup.health });
-  return lookup.health.healthy === false ? 5 : 0;
+  return olderDaemonMessage(lookup.state);
 }
 
 /**
@@ -603,9 +588,9 @@ async function runUpdateCommand(
     "install",
     "--refresh",
   ]);
-  // The refresh's failure stays the last thing said.
-  if (refreshed === 0) await suggestPackUpdates(home, result, progress);
-  return refreshed;
+  // The refresh's failure stays the last thing said, and the packs wait for a refresh that worked.
+  if (refreshed !== 0) return refreshed;
+  return await updatePacksWithActiveVersion(home, updater);
 }
 
 /**
@@ -631,6 +616,38 @@ function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval
   }
 }
 
+const SESSION_USAGE = "Usage: rerail session [<host> [<session-id>]] [--open]; inside Codex, rerail session uses CODEX_THREAD_ID";
+
+/**
+ * The coding agent and session `rerail session [<host> [<session-id>]]` names. With no argument it is Codex's own
+ * thread (`CODEX_THREAD_ID`); one argument names a coding agent that cannot name its session (Cursor).
+ */
+function sessionTarget(args: readonly string[]): { host: RerailHost; sessionId: string | undefined } {
+  const [host = "", sessionId] = args.length === 0 ? ["codex", process.env.CODEX_THREAD_ID] : args;
+  if (args.length > 2 || !Object.hasOwn(ADAPTER_CAPABILITIES, host) || (args.length !== 1 && !sessionId?.trim())) {
+    throw new Error(SESSION_USAGE);
+  }
+  return { host: host as RerailHost, sessionId };
+}
+
+/** The rule counts `/rerail` shows where the coding agent cannot name its session, in a started checkout; else none. */
+function summaryCounts({ presentation, repositoryState }: RerailSummaryRead, cwd: string): Pick<RerailSummaryInput, "ruleCount" | "awaitingApproval"> {
+  const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
+  return { ruleCount: counts?.on ?? null, awaitingApproval: counts?.awaitingApproval ?? null };
+}
+
+/**
+ * `rerail session --open`: the session's page, else the rules page; exit 3 when there is neither. Where no daemon
+ * answered the summary's read, the rules page is asked for once more: the person asked for a page, and a daemon that
+ * was busy a moment ago may answer now.
+ */
+async function openSessionPage({ presentation, rulesUrl }: RerailSummaryRead, cwd: string): Promise<number> {
+  const page = presentation?.url ?? rulesUrl ?? (await readRulesDashboard({ cwd })).url;
+  if (page === null) return 3;
+  reportOpening(await openDashboard(page), page);
+  return 0;
+}
+
 /**
  * `/rerail`: what Rerail is doing for the caller's exact session, then every command. Codex supplies its
  * thread identity to shell tools; Cursor names only itself, so it gets the repository's state instead.
@@ -638,37 +655,18 @@ function repositoryRuleCounts(workspace: string): { on: number; awaitingApproval
  */
 async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   const open = rawArgs.includes("--open");
-  const args = open ? rawArgs.filter(argument => argument !== "--open") : rawArgs;
-  const host = args.length === 0 ? "codex" : args[0];
-  const sessionId = args.length === 0 ? process.env.CODEX_THREAD_ID : args[1];
-  if (args.length > 2 || host === undefined || !Object.hasOwn(ADAPTER_CAPABILITIES, host)
-      || (args.length !== 1 && !sessionId?.trim())) {
-    throw new Error("Usage: rerail session [<host> [<session-id>]] [--open]; inside Codex, rerail session uses CODEX_THREAD_ID");
-  }
+  const { host, sessionId } = sessionTarget(rawArgs.filter(argument => argument !== "--open"));
   const cwd = claudeWorkspace(process.cwd());
   // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides,
   // read without ever taking the write lock.
-  const startState = (): RepositoryStartState | undefined => readOnlyStartState(cwd);
-  const presentation = sessionId === undefined
-    ? null
-    : await readPresentation({ host: host as RerailHost, sessionId, cwd, onDemand: true, startState });
-  const repositoryState = presentation === null ? await readSummaryState(cwd, host as RerailHost, startState) : presentation.repositoryState;
-  const rulesUrl = (await readRulesDashboard({ cwd })).url;
-  const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
+  const summary = await readRerailSummary({ host, sessionId, cwd, startState: () => readOnlyStartState(cwd) });
   process.stdout.write(`${renderRerailSummary({
-    presentation,
-    repositoryState,
-    ruleCount: counts?.on ?? null,
-    awaitingApproval: counts?.awaitingApproval ?? null,
-    rulesUrl,
+    ...summary,
+    ...summaryCounts(summary, cwd),
     repositoryName: repositoryName(cwd),
-    sigil: ADAPTER_CAPABILITIES[host as RerailHost].commandSigil,
+    sigil: ADAPTER_CAPABILITIES[host].commandSigil,
   })}\n`);
-  if (!open) return 0;
-  const page = presentation?.url ?? rulesUrl;
-  if (page === null) return 3;
-  reportOpening(await openDashboard(page), page);
-  return 0;
+  return open ? await openSessionPage(summary, cwd) : 0;
 }
 
 /** `rerail daemon start [options]` or `rerail daemon stop`, in `home`. */
@@ -989,8 +987,8 @@ async function runProjectCommand(command: string, args: readonly string[], { hom
     case "scan":
     case "settings":
       return await runAuditCommand(command, args, { home, version: packageVersion });
-    // Internal testing: Merge Assist.
-    case "merge-assist": return await runMergeAssistCommand(args, usage);
+    // Internal testing: Merge Assist. It answers once, and its process ends once that answer, or its failure, is out.
+    case "merge-assist": return await endOnceWritten(await runMergeAssistCommand(args, usage).catch(failed));
     // Internal testing: the remote sink.
     case "remote": return await runRemoteCommand(args, { home });
     // `daemon`, `status` and `manage`.
@@ -1022,9 +1020,17 @@ for (const stream of [process.stdout, process.stderr]) {
   });
 }
 
+/** A command that failed: its message on stderr, and exit code 1. */
+function failed(error: unknown): number {
+  process.stderr.write(`rerail: ${(error as Error).message}\n`);
+  return 1;
+}
+
+// Every write this command makes is a change a person asked for, and no hook waits on it: each commit is on the disk
+// before the command says it is made, so a power cut right after cannot roll it back.
+commitEveryWriteDurably();
 try {
   process.exitCode = await main();
 } catch (error) {
-  process.stderr.write(`rerail: ${(error as Error).message}\n`);
-  process.exitCode = 1;
+  process.exitCode = failed(error);
 }

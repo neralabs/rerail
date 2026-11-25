@@ -56,7 +56,7 @@ tape-cache = ["rerail-device-metal/tape-cache", "rerail-facts/tape-cache", "rera
 # macOS's `malloc_history` and `heap` see every live allocation with its stack. Never on for a build that ships.
 system-allocator = ["rerail-device-metal/system-allocator", "rerail-facts/system-allocator", "rerail-lang/system-allocator", "rerail-lang-ecma/system-allocator", "rerail-lang-json/system-allocator", "rerail-lang-php/system-allocator", "rerail-lang-python/system-allocator", "rerail-lang-rust/system-allocator", "rerail-lang-sql/system-allocator", "rerail-logic/system-allocator", "rerail-rr/system-allocator", "rerail-sessions/system-allocator", "rerail-transducer/system-allocator", "rerail-w/system-allocator"]
 code-rule-profile = ["rerail-device-metal/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-lang-ecma/code-rule-profile", "rerail-lang-json/code-rule-profile", "rerail-lang-php/code-rule-profile", "rerail-lang-python/code-rule-profile", "rerail-lang-rust/code-rule-profile", "rerail-lang-sql/code-rule-profile", "rerail-logic/code-rule-profile", "rerail-rr/code-rule-profile", "rerail-sessions/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-w/code-rule-profile"]
-# P's workspace anchor path (Pulling-it-all-together@cbee7a03): its anchor corpus prepared for every
+# P's workspace anchor path (PIAT@cbee7a03): its anchor corpus prepared for every
 # rule and read by `FileAnchorIndex::build_at`, in place of W's per-file index. Test builds only, over
 # the test-only copy `matcher::p_anchors`, until open item O20 picks one engine.
 p-anchor-corpus = ["rerail-device-metal/p-anchor-corpus", "rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-lang-ecma/p-anchor-corpus", "rerail-lang-json/p-anchor-corpus", "rerail-lang-php/p-anchor-corpus", "rerail-lang-python/p-anchor-corpus", "rerail-lang-rust/p-anchor-corpus", "rerail-lang-sql/p-anchor-corpus", "rerail-logic/p-anchor-corpus", "rerail-rr/p-anchor-corpus", "rerail-sessions/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-w/p-anchor-corpus"]
@@ -134,9 +134,9 @@ serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
 # The reach index (decision 0119): each start's closure as a compressed bitmap.
-roaring = "=0.11.5"
+roaring = "=0.12.0"
 regex-automata = "=0.4.18"
-regex-syntax = "=0.8.11"
+regex-syntax = "=0.8.12"
 # Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,
 # `rollback_hook`, `authorizer`) through `&mut Connection`, and the engine installs them on connections its
 # statements share.
@@ -154,7 +154,7 @@ rustc-hash = "=2.1.3"
 serde_json = "1.0"
 serde_yaml_ng = "=0.10.0"
 # Git blob ids, for run artifacts' input digests (`corpus::inputs`, data-layer/RUN-FACTS.md section 4).
-sha1 = "0.10"
+sha1 = "0.11"
 sha2 = "0.11"
 tree-sitter-language = "=0.1.9"
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }
@@ -165,7 +165,7 @@ tree-sitter = "=0.27.1"
 bitlex = { path = "../tools/bitlex", default-features = false }
 # CPython's identifier normalization (NFKC, PEP 3131), which Ruff applies to Python names too.
 unicode-normalization = "=0.1.26"
-zstd = "=0.14.3"
+zstd = "=0.14.4"
 
 # The engine's crates (tools/cratify/apply.py): its sources, mounted in place.
 rerail-facts = { path = "crates/facts", default-features = false }
@@ -207,7 +207,8 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # `Win32_System_IO` and `Win32_System_Ioctl`: the tree watch's completion port, reads and oplock (`tree_watch/windows.rs`).
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+# `Win32_System_Pipes`: which process holds a named pipe's server end (`pipe_server.rs`).
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 rerail-device-metal = { path = "crates/device_metal", default-features = false }
@@ -287,7 +288,7 @@ napi-build = "2.2"
 sha2 = "0.11"
 # The vendored grammars' build (`src/build_grammars.rs`), which the build script mounts; it runs in rerail-lang's
 # once the crate split gives it there (`BUILDS_GRAMMARS`).
-cc = "=1.11.1"
+cc = "=1.11.2"
 tree-sitter-generate = { version = "=0.27.2", default-features = false }
 flate2 = "=1.1.11"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.

@@ -17,7 +17,9 @@ import {
   type DaemonState,
   AUTOSTART_CLAIM_FILE,
   DAEMON_STATE_FILE,
+  daemonEndpoint,
   findRunningDaemon,
+  homeDaemonInStart,
   processAlive,
   readDaemonState,
   startDaemon,
@@ -27,7 +29,9 @@ import {
 import {
   DEAD_PID,
   daemonProcess,
+  daemonsStarted,
   exitMessage,
+  failSlowStart,
   freePort,
   holdEventLoop,
   launchers,
@@ -38,6 +42,7 @@ import {
   releaseSlowStart,
   until,
   watchedEnvironment,
+  watchedExits,
 } from "../../support/processes/daemon-home.js";
 import { oneInstanceHolder } from "../../support/platform/one-instance-pipe.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
@@ -200,6 +205,37 @@ describe("the daemons of a Rerail home", () => {
       await later.exited;
       expect(launchers(home)).toHaveLength(1);
     });
+    await until(async () => await findRunningDaemon(home) !== undefined && launchersEnded(home), 60_000, "a daemon running and every start ended");
+    expect(launchers(home)).toHaveLength(1);
+    expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
+  }, 120_000);
+
+  /**
+   * Waits until the daemon `slowStart` names is held in its start and the start that launched it has let go of the start
+   * lock, which that start does only to wait for its daemon outside the lock.
+   */
+  async function launchWaitedForOutsideLock(slowStart: string): Promise<void> {
+    await until(() => existsSync(`${slowStart}.held`), 40_000, "the daemon held in its start");
+    await withStartLock(home, async () => undefined);
+  }
+
+  // A launcher ended its claim once the daemon it launched said it was in its start, before it waited for that daemon:
+  // each hook that found no daemon.json during that wait launched one more start.
+  it("keeps the claim of a launcher that waits for the daemon it launched in its start, so hooks meanwhile launch nothing", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const slowStart = join(home, "slow-start");
+    env = watchedEnvironment(home, undefined, slowStart);
+    // The daemon holds right after it first listens, before it can write daemon.json, until the test lets it go on.
+    await writeFile(slowStart, "");
+    const first = hookFindingNoDaemon();
+    const later = Array.from({ length: 3 }, () => hookFindingNoDaemon());
+    await Promise.all([first, ...later].map(async hook => await hook.ready));
+    first.go();
+    await first.exited;
+    await launchWaitedForOutsideLock(slowStart);
+    for (const hook of later) hook.go();
+    await Promise.all(later.map(async hook => await hook.exited));
+    releaseSlowStart(slowStart);
     await until(async () => await findRunningDaemon(home) !== undefined && launchersEnded(home), 60_000, "a daemon running and every start ended");
     expect(launchers(home)).toHaveLength(1);
     expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
@@ -370,6 +406,49 @@ describe("the daemons of a Rerail home", () => {
     expect(recorded).toBe(live[0]);
   }, 120_000);
 
+  // The start waits for the daemon it launched outside the start lock once that daemon's record says it is starting,
+  // and reports it started once it answers. It told the person it waited for that daemon as for one another process
+  // launched, on almost every start.
+  it("waits for the daemon it launched while that daemon's record says it is starting, says nothing of it, and starts no second", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const slowStart = join(home, "slow-start");
+    env = watchedEnvironment(home, undefined, slowStart);
+    // The daemon holds right after it first listens, before it can write daemon.json, until the start waits outside the lock.
+    await writeFile(slowStart, "");
+    const told: number[] = [];
+    const starting = startDaemon({ ...control(), onWaiting: pid => void told.push(pid) }, { dev: true, env });
+    // A start that ends before its daemon is held, as a failed launch does, fails the case with its own error at once.
+    const ended = starting.then(() => {
+      throw new Error("the start ended before its daemon was held in its start");
+    });
+    await Promise.race([launchWaitedForOutsideLock(slowStart), ended]);
+    releaseSlowStart(slowStart);
+    const first = await starting;
+    expect(first.started).toBe(true);
+    expect(told).toEqual([]);
+    await until(() => !existsSync(`${slowStart}.held`), 40_000);
+    const { live, recorded } = await settled();
+    expect(live).toEqual([first.daemon.state.pid]);
+    expect(recorded).toBe(live[0]);
+  }, 120_000);
+
+  // A daemon this start launched that exited in its start, after the start began to wait for it outside the start
+  // lock, was launched again, and again for as long as each launch failed, the person shown no log.
+  it("fails at once, with what the daemon wrote, when the daemon it launched exits in its start, and launches no second", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const slowStart = join(home, "slow-start");
+    env = watchedEnvironment(home, undefined, slowStart);
+    await writeFile(slowStart, "");
+    // A start's wait far past this case's own bound: the exit ends the start, never the wait's end.
+    waits.startMs = 120_000;
+    const failed = expect(startDaemon(control(), { dev: true, env }))
+      .rejects.toThrow(/^Rerail daemon exited with code 7 before it was ready:\n[^]*the test failed this start/u);
+    await launchWaitedForOutsideLock(slowStart);
+    failSlowStart(slowStart);
+    await failed;
+    expect(daemonsStarted(home)).toHaveLength(1);
+  }, 60_000);
+
   // Two states of a start met in one home: another program holds the engine pipe's name with a pipe that allows one
   // instance, and the daemon is slow to come up. The start says the daemon may still be starting, by its pid, never
   // that it exited on the pipe or did not become ready, and the next start finds it serving on the fallback pipe.
@@ -414,13 +493,85 @@ describe("the daemons of a Rerail home", () => {
     // A second daemon process in the same home, as a start whose wait for a slow daemon ran out launches one.
     const second = daemonProcess(home, env);
     others.push(second);
-    const ended = await Promise.race([once(second, "exit").then(([code]) => `exited ${String(code)}`), delay(7_000).then(() => "still running")]);
+    // Its exit, however long its start takes on a busy machine: the case's own limit bounds the wait.
+    const ended = await once(second, "exit").then(([code]) => `exited ${String(code)}`);
     expect(ended).toMatch(/^exited [1-9]/u);
     expect(await exitMessage(second)).toContain(`rerail daemon: Another Rerail daemon (pid ${first.pid}) runs in ${home}`);
     expect(await recordedPid(home)).toBe(first.pid);
     await until(() => !existsSync(`${busy}.held`));
     expect((await findRunningDaemon(home))?.state).toMatchObject({ pid: first.pid, port });
     expect(liveDaemons(home)).toEqual([first.pid]);
+  }, 60_000);
+
+  /** A daemon process of this checkout's build, once daemon.json names it; `stdin` as {@link daemonProcess} takes it. */
+  async function recordedDaemon(stdin: "ignore" | "pipe" = "ignore"): Promise<ChildProcess> {
+    const daemon = daemonProcess(home, env, ["--port", "0"], stdin);
+    others.push(daemon);
+    await until(async () => {
+      if (daemon.exitCode !== null) throw new Error(`the daemon stopped: ${await exitMessage(daemon)}`);
+      return await recordedPid(home) === daemon.pid;
+    }, 30_000, "daemon.json naming the daemon");
+    return daemon;
+  }
+
+  /**
+   * Asks the daemon daemon.json names to stop with the request `rerail daemon stop` sends on Windows, which every
+   * daemon serves; resolves once the daemon has taken it. That stop then kills the daemon if it still runs 10 s later;
+   * this ask kills nothing.
+   */
+  async function askToStop(): Promise<void> {
+    const state = await readDaemonState(stateFile);
+    if (state?.nativeToken === undefined) throw new Error("daemon.json names no daemon to ask");
+    const endpoint = daemonEndpoint(state, "/native/shutdown");
+    const response = await endpoint.fetch(endpoint.url, { method: "POST", headers: { ...endpoint.headers, authorization: `Bearer ${state.nativeToken}` } });
+    await response.body?.cancel();
+    expect(response.status).toBe(202);
+  }
+
+  it("leaves the home to the next daemon once a stopped daemon's close is done, however long its process takes to exit", async () => {
+    const exits = watchedExits(home, env, true);
+    env = exits.env;
+    const first = await recordedDaemon("pipe");
+    // Only the test's release ends the first's held exit: no stop's kill and no clock, however long the next takes.
+    await askToStop();
+    await until(() => exits.exiting(first.pid!), 30_000, "the first daemon closed and exiting");
+    const next = await recordedDaemon();
+    expect(processAlive(first.pid!)).toBe(true);
+    expect(liveDaemons(home)).toEqual([next.pid]);
+    exits.release(first);
+    await once(first, "exit");
+  }, 90_000);
+
+  it("stops a daemon started beside a running one on the running one's answer, before its wait for the lock ends", async () => {
+    const exits = watchedExits(home, env);
+    env = exits.env;
+    const first = await recordedDaemon();
+    const second = daemonProcess(home, env, ["--port", "0"]);
+    others.push(second);
+    const [code] = await once(second, "exit") as [number | null];
+    expect(code).not.toBe(0);
+    expect(await exitMessage(second)).toContain(`rerail daemon: Another Rerail daemon (pid ${first.pid}) runs in ${home}`);
+    expect(exits.lockWaitAtExit(second.pid!)).toBe("waiting");
+  }, 60_000);
+
+  it("gives a daemon started beside a holder that is not the running daemon its whole wait for the lock", async () => {
+    const exits = watchedExits(home, env);
+    env = exits.env;
+    await recordedDaemon();
+    // The daemon writes its record beside the lock again once its start is over, after daemon.json names it
+    // (`HomeDaemonLease.started`): a record written before then would be replaced.
+    await until(() => homeDaemonInStart(home) === undefined, 30_000, "the record beside the lock saying the start is over");
+    // The record beside the lock names another process that runs, which the running daemon's answer does not name.
+    const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
+    others.push(other);
+    await once(other, "spawn");
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: other.pid }));
+    const second = daemonProcess(home, env, ["--port", "0"]);
+    others.push(second);
+    const [code] = await once(second, "exit") as [number | null];
+    expect(code).not.toBe(0);
+    expect(await exitMessage(second)).toContain(`rerail daemon: Another Rerail daemon (pid ${other.pid}) runs in ${home}`);
+    expect(exits.lockWaitAtExit(second.pid!)).toBe("ended");
   }, 60_000);
 
   /** What a test writes over the running daemon's daemon.json: the record as something other than the daemon left it. */

@@ -8,9 +8,9 @@
 import { h, setAttr, setClass, setContent, setText, icon } from "../dom.js";
 import { fmt } from "../format.js";
 import { isWorktreePack } from "../derive.js";
-import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached } from "../state.js";
+import { data, ui, packById, repoName, totalFires, rangeLabel, fires, filtering, isAttached, RISK_FILTER } from "../state.js";
 import { writes } from "../shell.js";
-import { enforcementCounts, pageKey, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
+import { enforcementCounts, pageKey, pageRiskFilters, pageRules, packSwitch, runningOf, shownRules, switchTurnsOn } from "../pack-model.js";
 import { CREATE_COMMAND, renderRuleTable } from "../render/rules.js";
 import { ruleControls, ruleControlActions, ruleControlInput, ruleControlChange } from "../render/rule-controls.js";
 import { removePackControl } from "../render/pack-panel.js";
@@ -80,17 +80,33 @@ function renderPackAll(all, name) {
   setAttr(sw, "title", state === "true" ? `Turn all ${fmt(total)} off` : on > 0 ? `Turn the other ${fmt(total - on)} on` : `Turn all ${fmt(total)} on`);
 }
 
+/**
+ * The page's risk choices for the Filter (`pageRiskFilters`). A risk chosen on another pack's page that no rule here
+ * has is let go first, so this page lists its rules.
+ */
+function keptRiskFilters(all) {
+  const riskFilters = pageRiskFilters(all);
+  if (ui.filter.startsWith(RISK_FILTER) && !riskFilters.some(([v]) => v === ui.filter)) ui.filter = "all";
+  return riskFilters;
+}
+
+/** The search, Filter and Sort over the table, with the whole-pack switch at the end of their row. */
+function renderControls(all, pack, riskFilters) {
+  const controls = ruleControls(riskFilters);
+  if (controls.root.parentNode !== page.controls) page.controls.replaceChildren(controls.root);
+  if (page.packAll.parentNode !== controls.slot) controls.slot.replaceChildren(page.packAll);
+  renderPackAll(all, pack?.name ?? CREATED);
+}
+
 export function render(root) {
   if (page === null) build();
   const all = pageRules(pageKey(ui.view, ui.pack));
   if (all === null || all.length === 0) { renderNotice(root); return; }
   if (page.root.parentNode !== root) root.replaceChildren(page.root);
+  const riskFilters = keptRiskFilters(all);
   const pack = ui.view === "created" ? null : packById(ui.pack), shown = shownRules(all);
   renderHead(all, shown, pack);
-  const controls = ruleControls();
-  if (controls.root.parentNode !== page.controls) page.controls.replaceChildren(controls.root);
-  if (page.packAll.parentNode !== controls.slot) controls.slot.replaceChildren(page.packAll);
-  renderPackAll(all, pack?.name ?? CREATED);
+  renderControls(all, pack, riskFilters);
   renderRuleTable(page.table, shown);
 }
 

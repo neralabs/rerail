@@ -20,12 +20,12 @@ is reverted.
   `src/runtime/daemon-control.ts`, `RerailDaemonOptions.enginePlatform`. `openNoFollow` takes the no-follow flag, and
   its test passes `0` to run the Windows path against a real symlink on Linux.
 - **On Windows itself.** `build-windows` builds the native engine on Windows once per run and hands it to the
-  `unit-windows` shards, and `rust-windows` runs the engine's `#[cfg(windows)]` Rust tests whenever the change selects
-  the engine's tests. `package.yml`, which `release.yml` and the environment matrix call, builds the engine for Windows
-  x64 and arm64 and refuses one that imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`);
-  `release.yml` then installs the package on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The
-  [environment matrix](environment-matrix.md) installs it on Windows 11 VMs. None of these but the three CI jobs runs
-  on a pull request.
+  `unit-windows` shards, which take the JavaScript package (dist/) from the Linux build job, and `rust-windows` runs the
+  engine's `#[cfg(windows)]` Rust tests whenever the change selects the engine's tests. `package.yml`, which
+  `release.yml` and the environment matrix call, builds the engine for Windows x64 and arm64 and refuses one that
+  imports the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`); `release.yml` then installs the package
+  on a Windows x64 runner with `scripts/host/windows-install-smoke.ps1`. The [environment matrix](environment-matrix.md)
+  installs it on Windows 11 VMs. None of these but the three CI jobs runs on a pull request.
 
 <details>
 <summary>Windows-safe paths</summary>
@@ -221,12 +221,14 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 - `gitHome` takes `HOME`, else `HOMEDRIVE` and `HOMEPATH` when that folder exists (a home share), else the profile
   folder, as Git for Windows does. So Rerail reads and watches the `~/.gitconfig` and `core.excludesFile` that Git
   reads.
-- The engine reads repositories in process for the ignore rules and the code-rule store, through one opener
-  (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config file it
+- The engine reads repositories in process for the ignore rules and the code-rule store's view of a checkout, through
+  one opener (`native/src/git_access/`). At its first such read a process asks the Git Rerail runs which system config file it
   reads (`src/engine/native/git-access.ts`: `git var GIT_CONFIG_SYSTEM` and its config listing outside any
   repository), so the engine takes Git for Windows' `core.autocrlf=true` from that Git's `etc\gitconfig` and
   starts no `git.exe` of its own. Before, the Git library the engine links found the system file by running the first
-  `git.exe` on `PATH`, once per process, past the checks above. The engine takes its home from `HOME`, else the
+  `git.exe` on `PATH`, once per process, past the checks above. Three reads of the code rules still open the
+  repository that way (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD`
+  tree's committed sources), so the first of them in a process can start that `git.exe`. The engine takes its home from `HOME`, else the
   profile folder: with no `HOME` and a home share, its global files are the profile folder's, not the share's.
 
 </details>
@@ -402,6 +404,48 @@ checks that every file the manifest pins is `-text`.
 
 </details>
 
+## Edits that keep a file's time
+
+On Windows a scan reads a clean file whose change time moved after its last write, since the stat Git records cannot
+show such an edit there.
+
+<details>
+<summary>The change-time check, and where the stat still decides</summary>
+
+A warm repository index restores a clean file's stored results while the file's stat equals the stat Git recorded in
+its index entry. On Unix that stat holds the change time, which every write moves. On Windows it holds the creation
+time in that field, so a tool that rewrote a file at the same size and put its modification time back (`touch -r`, a
+copy or an extraction that keeps times) left the stat equal, and every later scan reported the findings of the
+committed text. `holds_blob_bytes` and `clean_blob_unread` (`native/src/git_workspace.rs`) also need NTFS's change
+time, read through the handle the stat opens (`native/src/git_workspace/worktree_stat.rs`), to equal the modification
+time. A file whose change time moved is read and hashed at every scan: nothing keeps what an earlier hash showed.
+Untouched files are restored unread, as their change time equals their modification time.
+
+The stat decides, as it does for Git, in three cases:
+
+- **No change time to trust.** FAT and exFAT answer a change time of 0. A network share's change time is kept by the
+  server's file system: a volume counts as local only where it refuses the protocol query (`FileRemoteProtocolInfo`)
+  with error 87, as NTFS and ReFS do. A workspace asks each volume once, or once by each call that misses it while
+  another asks.
+- **Data not on this disk.** A cloud provider's placeholder (`FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`,
+  `FILE_ATTRIBUTE_RECALL_ON_OPEN`) and an offline file (`FILE_ATTRIBUTE_OFFLINE`) keep their stat's answer: freeing a
+  placeholder's space moves its change time, and a read would download it.
+- **A file this process cannot read**, its read denied or another process holding or locking it: no hash can check
+  it.
+
+The server graph's disk walk (`native/src/code_rule_dsl/module_graph.rs`) keeps each source's summary while the
+source's stamp stands. On Windows the stamp held only the modification time and length; it also holds the change time
+and file id, read with each folder's listing (`FileIdBothDirectoryInfo`, `module_graph/listing.rs`), so a source
+rewritten from `'use server'` to `'use client'` at the same size and time is read again. The listing gives the folder
+entry's copy of the times, which NTFS refreshes only when the last handle to the file closes, and only for the name
+that handle opened: a rewrite through another hard link keeps this name's old stamp, and one whose writer still holds
+its handle keeps it until the handle closes.
+
+CI's `rust-windows` job runs these cases: rerail-store's `git_workspace::`, the walk's `code_rule_dsl::module_graph::`
+and the warm index's four.
+
+</details>
+
 ## Each coding agent's shell
 
 Rerail writes every command it hands an agent or a person in the syntax of the shell that runs it. On Windows,
@@ -414,11 +458,37 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` where `node` on PATH is the recorded node, where set-up finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`); elsewhere, a folder on a server before node's on PATH included, `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone, one Node a hook event, in two processes with `cmd.exe`, whatever PATH Claude Code has; `node <hook launcher> <recorded node> <hook>` where set-up finds no `cmd.exe` by its full System32 path, where that `cmd.exe` runs no command (`cmd.exe /d /c exit 0` started at set-up does not end with exit 0), or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`) | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 
 OMP and Pi load Rerail as an extension and run no hook command; a steer writes their commands for Git Bash.
+
+Claude Code's hook launcher turns on Node's compile cache before it loads the hook (`module.enableCompileCache`, in
+the folder `NODE_COMPILE_CACHE` names, else Node's own `node-compile-cache` in the user's temporary folder). Where the
+node that starts it is not the recorded node, it starts itself under the recorded node, which does the same, so the
+cache is on whatever node PATH has and the hook gets no environment variable it did not have. Every hook event starts
+a Node that loads the hook's script of over 2 MB; with the cache, V8 reads the code it compiled at an earlier event
+instead of parsing and compiling the script again. `NODE_DISABLE_COMPILE_CACHE=1` keeps it off. Codex's and Cursor's
+entries start the hook without the launcher, so they compile it at each event.
+
+A company policy can leave `cmd.exe` in System32 and keep it from running commands, so set-up starts
+`cmd.exe /d /c exit 0` once before it writes Claude Code's `cmd.exe` entry, and writes the `node` entry where that
+start fails or ends with another exit code. Under the `DisableCMD` policy at 1 ("Prevent access to the command prompt",
+with script processing disabled too), `cmd.exe` answers every command within about 30 ms with exit 255 and "The
+command prompt has been disabled by your administrator." On a Windows 11 test machine, a `cmd.exe` entry written before
+the policy then failed every hook event of a Claude Code 2.1.322 session that way: Claude Code recorded each as a hook
+error that does not block, showed "Stop hook error occurred" in print mode, and ran every tool call; no hook reached
+Rerail. Set-up run under the policy wrote the `node` entry, and the same session ran every hook with no error. At 2,
+which leaves scripts on, `cmd.exe /c` runs commands as it does without the policy, and set-up keeps the `cmd.exe`
+entry. Where set-up writes the `node` entry because that start failed or timed out (10 s), it says so in one line:
+hooks then start the `node` Claude Code's `PATH` finds, a second Node each event where that is not the recorded one,
+and `rerail install --refresh` starts `cmd.exe` again. The check behind `rerail status` and the dashboard's Settings
+starts no program: it counts Claude Code as connected while its settings hold either entry, so a start of `cmd.exe`
+that fails once never shows working hooks as not connected, and no dashboard request waits on `cmd.exe`. So a policy
+set after set-up shows only as Claude Code's own hook error on every event, not in `rerail status`, until set-up,
+`rerail install --refresh` or `rerail update` runs again and writes the `node` entry. An AppLocker or WDAC rule that
+refuses `cmd.exe` was not tried; set-up reads a start that fails as it reads one that ends with another exit code.
 
 Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
 But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's
@@ -497,12 +567,20 @@ the one node started.
 
 A coding agent that times out a hook kills the process it started. On macOS and Linux that is node, since the sh
 launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, `cmd.exe` for
-Claude Code where its entry starts `cmd.exe`, and the hook launcher where the `node` entry finds another node on PATH.
-Where that node is the recorded one, the launcher runs the hook in the process Claude Code ends, as on macOS and Linux.
+Claude Code, whose entry set-up writes through `cmd.exe` wherever `cmd.exe` can start its paths, and the hook launcher
+where a `node` entry finds another node on PATH. Where a `node` entry finds the recorded one, the launcher runs the
+hook in the process Claude Code ends, as on macOS and Linux.
 Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
 session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
 and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
-holder's pid to another process. The watch checks the parent once a second. Since the watch does nothing
+holder's pid to another process. The watch checks the parent once a second, so a Claude Code hook whose `cmd.exe`
+parent was killed runs on until its next check. On a Windows 11 machine, 10 runs each with the kill falling across
+that second, such a hook ended 16 to 933 ms after the kill (median 480 ms), where the hook of a `node` entry that
+finds the recorded node, which the kill ends itself, ended within 4 to 20 ms. A Claude Code hook lets go of its
+session's lock while the daemon checks its event, the wait a timeout usually cuts short: the session's next hook,
+started at the kill, then took the lock within 16 ms with either entry. A hook killed while it held the lock holds it
+until it ends: the next hook then waited 2 to 878 ms for it (median 427 ms), where after such an entry's kill it took
+the lock from the ended holder in 3 to 10 ms. Since the watch does nothing
 off Windows, `test/harness/hook-entries.test.ts` checks that `serveHookEntry` ends a hook whose parent is gone while
 the hook still runs, and that each entry module serves its hook through `serveHookEntry`.
 
@@ -558,20 +636,56 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   A recorded pid, whether this user may signal it or not, counts as the recorded daemon only when its engine pipe
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
-  Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
-  daemon: its state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
+  Nothing goes to the recorded URL before that. An engine of Rerail 0.1.4 or earlier has no proof and answers the
+  challenge 404, as any listener without the proof's path does, and a process can outlive its pipe and port: a daemon
+  that shuts down lets go of both before it exits. So a 404 counts only where `daemon.json` was written by a release
+  before the proof (its `version` before 0.1.5); from a later release the record is removed unprobed. For an earlier
+  one, a lookup (`rerail status`, `rerail daemon stop`, a hook's start of the daemon, set-up) lets the process's
+  creation time decide, read as below: a pid this user may signal that started no later than the `startedAt` that
+  `daemon.json` records is the daemon that wrote it. It proved nothing, so it is sent nothing that carries the
+  capability or the native token, its health probe included, and `rerail status` exits 4, saying which release it runs
+  and to run `rerail daemon start`. `rerail daemon stop`, `rerail daemon start`, a hook's start, set-up and `rerail
+  install --remove` end it through its process: one call opens the process, reads its creation time, ends it through
+  that handle and waits on it for the exit, so a pid Windows gives to another process meanwhile is never ended. The
+  wait is bounded at the stop's 5 s kill wait, and for `rerail install --remove` at 35 s with the start of the child
+  process it ends through (below), only so that an end that hangs cannot hold the command for good.
+  `rerail daemon start` then starts this release's daemon and says, in one line, which daemon it ended. A hook's
+  start and set-up replace it whatever package it ran from, since it predates the fields hooks send; a hook that may
+  not replace it (`RERAIL_AUTOSTART=0`, or a daemon found only after the start looked) sends it nothing and logs each
+  event it lost, which `rerail status` reports with the stop to run before the start. Under `RERAIL_AUTOSTART=0` a
+  session's start also tells the person that nothing is recorded until a daemon from the active package runs, and to
+  run `rerail daemon stop`, then `rerail daemon start`. A pid behind such an engine that started more than 10 s later,
+  or that this user may not signal, is not that daemon, and the record is removed; one whose start is not read, or is
+  later by 10 s or less, is kept as a busy daemon is, and sent nothing, as is one whose recorded start lies more than
+  10 s past the reader's clock, before which any process started: nothing is ended on it. Every other reader
+  (each hook's check whether Rerail runs in its repository, the status line, the MCP bridge) sends such an engine
+  nothing and reads no start, as for an engine that does not prove itself, and removes nothing: a hook makes that check
+  before every tool call. An engine that does not answer the proof in time is taken for a busy daemon: its
+  state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
   process (`recordedProcess`): it started more than 10 s after the `startedAt` that `daemon.json` records, or another
   process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start
   no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not
-  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through
-  Windows PowerShell, which loads no Rerail engine, and is ended at what is left of the lookup's limit (the stop's
-  10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. So on a
-  machine whose policy blocks `powershell.exe` itself, no start is read, and a busy daemon of 0.1.4 or earlier is not
-  shown to be this home's: `rerail daemon stop` ends nothing and says how to check the process, and `rerail install
-  --remove` stops with that error, having already taken Rerail out of the coding agents. The command that message
-  gives runs PowerShell too, so there open Task Manager's Details tab, show its Command line column, end the process
-  with the pid the message names if its command line runs Rerail's `daemon-entry.js` for this home, and run the
-  command again. The proof's limit counts
+  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through the
+  engine (`GetProcessTimes`), which starts no process, however little of the lookup's limit is left: a process this
+  user may not query, or an engine that does not load (the first such failure goes to stderr), leaves it unread, and
+  the record is kept. `rerail install --remove` deletes the folder the engine loads from next, and Windows keeps a
+  loaded DLL from being deleted, so it reads the start, and ends a daemon of 0.1.4 or earlier, through the engine in a
+  child Node process that has exited before the read returns (`src/engine/process-reader.ts`): how fast the machine
+  starts Windows PowerShell plays no part. The child is ended only when it has not answered within 30 s, 35 s for an
+  end with its 5 s wait for the exit; the stop then ends nothing, keeps the record and says that the read of the
+  daemon's start did not answer. Where the child gives no answer, as when the running package's engine is missing or
+  does not load, the read and the end go through Windows PowerShell: the read's PowerShell is ended at what is left of
+  the lookup's limit, and one ended there, or one that cannot run, reads nothing; the end's PowerShell is ended at the
+  stop's 10 s wait and its 5 s kill wait, 15 s with its own start, and one ended after it ended the process reads as
+  still running. The lookup's limit counts from its start and bounds the read through PowerShell for a busy daemon and
+  for one whose engine has no proof alike: 2 s, which the proof shares, for `rerail status`, set-up's look for a daemon
+  to keep and a hook's start of the daemon; the stop's 10 s wait for `rerail daemon stop`, set-up's stop of a daemon it
+  replaces and both stops of `rerail install --remove`. So on a machine whose policy blocks `powershell.exe` itself and
+  where the running package's engine does not load, a busy daemon of 0.1.4 or earlier is not shown to be this home's
+  in `rerail install --remove`, which stops with that error, having already taken Rerail out of the coding
+  agents. The command that message gives runs PowerShell too, so there open Task Manager's Details tab, show its
+  Command line column, end the process with the pid the message names if its command line runs Rerail's
+  `daemon-entry.js` for this home, and run the command again. The proof's limit counts
   from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/daemon/engine-proof.ts`). It connects to the pipe
   spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
@@ -671,9 +785,35 @@ preimages and held steers.
 - The person's SID comes from `whoami /user`, whatever the account: `S-1-5-21-...` for a local or domain account,
   `S-1-12-1-...` for a Microsoft Entra ID (Azure AD) account, as on most company laptops.
 - A Rerail home or `.rerail\sessions` folder Rerail makes outside the profile gets the ACL when it is made, and a home
-  an earlier release made gets it at the next daemon launch. `rerail remote add` gives the `remote-tokens` folder the
-  ACL before it writes a token there, so a remote's token is private before any daemon launch. A failure is reported on
-  stderr and never fails the caller.
+  an earlier release made gets it at the next daemon launch. A `.rerail\sessions` Rerail did not make (Git makes one
+  for a repository that commits a file in it; a person, or Rerail 0.1.4, may have made it) gets it when the daemon
+  first opens a session there: the daemon reads the folder's ACL with `icacls` once per folder in its life and, when
+  the folder still inherits its parent's, gives it one under which what each account makes there is that account's
+  alone. The person may list the folder; each account an entry the folder inherits from its parent let add a folder
+  there, unless a deny entry set on the folder itself names it, may still add one, pass through it and read its
+  attributes and ACL, never list it: it gets that right on the folder itself, added to any entry already set there
+  for it, before the folder stops inheriting. Each file and folder in it,
+  the records already there included, grants its maker (CREATOR OWNER), SYSTEM and Administrators alone. Before that,
+  each agent host's lock and held-steer folder there (`<host>-locks`, `<host>-pending`) lets those accounts add files,
+  and one made later gets the same entry from whoever makes it, so an account sharing the checkout keeps recording. If
+  a lock or held-steer folder cannot be shared because `icacls` hit its time limit or did not start, the repair stops
+  before the records folder's ACL changes, and the next session tries again. Each `icacls` that reads or sets a
+  records folder's ACL, or that of a folder in it, runs with `/l`: a junction or symbolic link another account puts in
+  place of one has its own ACL read or changed, never that of what it points to. Windows takes about 0.1 to 0.2 ms per
+  file or folder already there to pass the ACL on, twice when other accounts keep the right to add a folder there (one
+  `icacls` adds their entry, the next stops the inheritance), neither with a time limit, and no session waits for
+  that: a session waits only for the read,
+  and one whose own folder is made before the ACL has been passed on (while it is, or just before it is done) first
+  gives its own folder the same ACL, one more `icacls`, so what it writes in its own folder is private from its first
+  byte. A session, lock or held-steer folder another account made before the first
+  repair keeps the ACL it had, as on 0.1.5, since only its maker may change it: the daemon log names a lock or
+  held-steer folder, and every account's hooks still lock there through the entries it inherited. Rerail's Git status reads nothing in a records folder (its
+  walk never enters one, and its built-in ignores name it, in any letter case where `core.ignoreCase` is on, as Git
+  for Windows sets it), so an account that may not list the folder, or read a file Git put there, keeps its
+  repository reuse there.
+  `rerail remote add` gives the `remote-tokens` folder the ACL before it writes a token there, so a remote's token is
+  private before any daemon launch. A failure is reported on stderr, a daemon's log, with `icacls`'s reason, and never
+  fails the caller.
 - `loadDaemonTls` refuses a TLS private key that `openToOthers` finds other accounts can read, naming those accounts
   and the `icacls` command that fixes it. When this account reads that key, the daemon then serves this computer alone,
   on loopback, and says why (`serveRerailDaemon`), so hooks keep recording while the key is fixed. A key whose ACL it

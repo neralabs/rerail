@@ -16,27 +16,11 @@ pub fn max() -> usize {
 
 /// Makes the one pool, sized to `max`: called before anything uses it (the engine's `main`; Node's registration of
 /// the addon, `lib.rs`, never its constructor). On the process's main thread it is called with `this_thread`, so that
-/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is.
+/// thread is one of the pool's (its own work and its waits are the pool's). A pool already made is left as it is. Every
+/// job is fenced off the device wave of the job it may run inside (`lanes::wave::fence`).
 pub fn configure(this_thread: bool) {
+    rerail_accel::exec::fence_jobs(crate::code_rule_dsl::logic::lanes::wave::fence, crate::code_rule_dsl::logic::lanes::wave::unfence);
     rerail_accel::exec::configure(this_thread);
-}
-
-/// Whether this is the process's main thread.
-pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
-        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
 }
 
 /// Jobs on the one pool that borrow the caller's data, within [`scope`]: every one has ended when it returns. Each is
@@ -82,12 +66,14 @@ pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
 }
 
 /// A job that takes turns with its caller (a request and its answers): it waits for the caller, so the caller's
-/// waits must never run it on the caller's own stack. It runs on another of the pool's threads, and the caller runs
-/// no other job until it has started ([`Beside::wait_for`]); with one thread (or none), on a thread of its own: one
-/// thread cannot hold both stacks.
+/// waits must never run it on the caller's own stack, and it may not hold one of the pool's threads (decision 0100
+/// §12: nothing that waits for another long job may itself be a job). It runs on a thread of its own: on the pool,
+/// its waits for the caller's answers held a thread the caller's chunks needed, and with 2 threads every run with a
+/// cone of requests stalled (the caller waited for chunks no thread was free to build). Its own parallel work still
+/// runs on the pool.
 pub(crate) struct Beside<T> {
     name: &'static str,
-    slot: std::sync::Arc<(parking_lot::Mutex<Option<std::thread::Result<T>>>, std::sync::atomic::AtomicBool)>,
+    slot: std::sync::Arc<parking_lot::Mutex<Option<std::thread::Result<T>>>>,
 }
 
 /// Frees `value` on the pool, off the caller's thread: freeing a large structure (a program analysis's results for
@@ -96,44 +82,40 @@ pub(crate) fn drop_behind<T: Send + 'static>(value: T) {
     rayon::spawn(move || drop(value));
 }
 
-/// Starts `f` beside the caller ([`Beside`]).
+/// Starts `f` beside the caller ([`Beside`]), on a stack the size of a pool thread's.
 pub(crate) fn beside<T: Send + 'static>(name: &'static str, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
-    let slot = std::sync::Arc::new((parking_lot::Mutex::new(None), std::sync::atomic::AtomicBool::new(false)));
+    beside_on(name, rerail_accel::exec::POOL_STACK, f)
+}
+
+/// [`beside`], on a thread with `stack` bytes of stack. A thread that cannot be started is the job's result, an `Err`
+/// that names it, so [`Beside::join`] reports it: nothing else would ever end its wait. It is not run on the caller's
+/// thread instead: it waits for the caller, so there it would never end.
+fn beside_on<T: Send + 'static>(name: &'static str, stack: usize, f: impl FnOnce() -> T + Send + 'static) -> Beside<T> {
+    let slot = std::sync::Arc::new(parking_lot::Mutex::new(None));
     let held = std::sync::Arc::clone(&slot);
     let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
-    let run = move || {
-        held.1.store(true, std::sync::atomic::Ordering::Release);
+    let started = rerail_accel::exec::service(name, Some(stack), move || {
         let _in = carry.enter();
         let _span = crate::code_rule_dsl::logic::profile::span_at(carry.under(), || format!("{name} (job)"));
         let r = rerail_accel::exec::as_job(name, || std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)));
-        *held.0.lock() = Some(r);
-    };
-    if cfg!(not(target_family = "wasm")) && max() >= 2 {
-        rayon::spawn(run);
-    } else {
-        let _ = rerail_accel::exec::service(name, None, run);
+        *held.lock() = Some(r);
+    });
+    if let Err(e) = started {
+        *slot.lock() = Some(Err(Box::new(format!("cannot start {name}: {e}"))));
     }
     Beside { name, slot }
 }
 
 impl<T> Beside<T> {
-    /// Waits until `poll` gives a value, the wait recorded under `site`. Once the job has started, the wait runs the
-    /// pool's other jobs; before, it only sleeps (a little more each time, to 1 ms), so it never takes the job itself.
-    pub(crate) fn wait_for<V>(&self, site: &'static str, mut poll: impl FnMut() -> Option<V>) -> V {
-        let mut nap = 20e-6f64;
-        while !self.slot.1.load(std::sync::atomic::Ordering::Acquire) {
-            if let Some(v) = poll() {
-                return v;
-            }
-            std::thread::sleep(std::time::Duration::from_secs_f64(nap));
-            nap = (nap * 2.0).min(1e-3);
-        }
+    /// Waits until `poll` gives a value, the wait recorded under `site`, running the pool's other jobs meanwhile: the
+    /// job is on a thread of its own, so the wait never takes it.
+    pub(crate) fn wait_for<V>(&self, site: &'static str, poll: impl FnMut() -> Option<V>) -> V {
         rerail_accel::exec::help_until_as(site, poll)
     }
 
     /// Its result, once it ends (a panic as `Err`).
     pub(crate) fn join(self) -> std::thread::Result<T> {
-        self.wait_for(self.name, || self.slot.0.lock().take())
+        self.wait_for(self.name, || self.slot.lock().take())
     }
 }
 
@@ -184,5 +166,15 @@ pub mod tests {
             answer.send(i * 2).unwrap();
         }
         assert_eq!(job.join().unwrap(), (0..20).map(|i| i * 2).sum::<u32>());
+    }
+
+    /// A job whose thread cannot be started (a stack larger than the address space) ends at once, as an `Err` that
+    /// names it: its caller's wait for it ends.
+    #[test]
+    fn a_job_beside_that_cannot_start_is_an_error() {
+        let job = super::beside_on("a test's unstartable job", 1 << 60, || ());
+        assert!(job.slot.lock().is_some(), "the failed start is the job's result");
+        let e = job.join().expect_err("a job that never started");
+        assert!(e.downcast_ref::<String>().is_some_and(|m| m.starts_with("cannot start a test's unstartable job: ")));
     }
 }

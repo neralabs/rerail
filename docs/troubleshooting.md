@@ -69,6 +69,14 @@ Other reasons:
   only glibc engines for Linux; use a glibc image such as `node:24-slim`.
 - **No engine** (FreeBSD, 32-bit ARM): `Rerail has no engine for <system> on <processor>`.
 
+A Rerail that npm installed without set-up, as a dependency or with `npm install -g`, makes no such check. Where it
+then finds no engine package for the system, it gives the reason itself:
+
+```text
+Rerail has no engine for Linux with musl (Alpine, for example): on Linux it needs glibc.
+Rerail has no engine for freebsd on x64: it runs on macOS, Windows, and Linux with glibc, each on arm64 or x64.
+```
+
 </details>
 
 ### Git is missing
@@ -128,9 +136,11 @@ The installed `rerail` command is `rerail.cmd`, which the policy does not block.
 
 ### Set-up prints nothing for a while
 
-The first `npx @neralabs/rerail setup` downloads about 240 MB, which unpacks to over 700 MB; npx prints nothing
-meanwhile, for a minute or more on a slow connection.
-Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`.
+The first `npx @neralabs/rerail setup` downloads about 240 MB, which unpacks to over 700 MB: npm 11.6.2 and the later
+npm 11 releases fetch Rerail's engines for all six platforms into npx's cache. npx prints nothing meanwhile, for a
+minute or more on a slow connection.
+Set-up then prints `Downloading @neralabs/rerail@<version> from npm…`, and npm installs it again under `~/.rerail`,
+this time with the one engine for this computer, about 50 MB.
 From there each step prints a line as it starts, and a step still running prints `still running after 30 s`, then
 again every 30 seconds.
 
@@ -185,12 +195,48 @@ cannot be installed offline.
 <summary>Mirrors, and `Another Rerail update is already running`</summary>
 
 `rerail update` stops the same way. Both run your own `npm` with your `~/.npmrc`, so a registry mirror set there
-works for Rerail and its rule packs.
+works for Rerail and its rule packs, as long as it serves Rerail's six engine packages as well as `@neralabs/rerail`
+([Registry access](installation.md#registry-access)).
 
 A failed install removes what it staged. The update lock is free the moment the set-up or `rerail update` holding it
 ends, Ctrl-C included, so `Another Rerail update is already running` means one is installing now. A Rerail whose engine
 does not load holds the folder `~/.rerail/locks/update-without-engine` instead; if one was cut short and the message
 stays with nothing installing, delete that folder and run again.
+
+</details>
+
+### `npm could not install …, the engine … runs on here`
+
+```text
+npm could not install @neralabs/rerail-engine-linux-x64-gnu@0.2.1, the engine @neralabs/rerail@0.2.1 runs on here (E404): the registry npm installs from (https://npm.example.com) does not have it. A mirror, proxy or allowlist must carry @neralabs/rerail-engine-linux-x64-gnu as well as @neralabs/rerail: check the registry in your npm configuration. Nothing was installed.
+```
+
+Set-up and `rerail update` install Rerail and this computer's engine package in one npm command, and your registry
+served the first and not the second. Have it serve the six engine packages
+([Registry access](installation.md#registry-access)), then run the same command again. Nothing was installed, and a
+version already active stays active.
+
+<details>
+<summary>The codes, and an engine that is not the released one</summary>
+
+- **`E404`:** the registry does not know the package; the message names the registry when npm did. **`ETARGET`:** it
+  knows the package and lacks that version, as a mirror that has not caught up does.
+- **`EBADPLATFORM`:** the message reads `npm takes it for another system's engine`. The `npm` on your PATH runs on a
+  Node built for another processor than the Node Rerail runs on, which the message names: put that Node first on PATH
+  and run the command again.
+- **Another file under the same name:**
+
+  ```text
+  The @neralabs/rerail-engine-linux-x64-gnu@0.2.1 npm installed is not the one @neralabs/rerail@0.2.1 was released with: its integrity is sha512-…, and @neralabs/rerail@0.2.1 pins sha512-…. The registry npm installs from serves another file under that name. Nothing of it was run.
+  ```
+
+  Each Rerail version pins the sha512 of the engine package released with it, and what your registry served has
+  another. Compare `npm view @neralabs/rerail-engine-<suffix>@<version> dist.integrity` through your registry and with
+  `--registry https://registry.npmjs.org`: a mirror must pass npmjs's tarball on unchanged.
+- **A registry that gives npm no sha512:** where a registry describes a version with a SHA-1 alone, Rerail has npm
+  hash the tarball it installed and compares that, so the install goes on as usual. Where npm cannot hash it, the
+  message reads `npm recorded no SHA-512 for the … it installed (its integrity is sha1-…), and its tarball could not be
+  hashed …`, with npm's reason, and nothing is installed: run the command again once npm reaches the registry.
 
 </details>
 
@@ -224,6 +270,16 @@ Node.js and React would be suggested, but have no rules yet, so set-up does not 
 These packs are published but have no rules yet, so they would check nothing. Nothing to do: a later version brings
 its rules. `rerail packs recommend` lists them too.
 
+### A rule pack is left out, or its rules show as not running, after an update
+
+Rerail 0.2.1 and later leave out a pack version published before 17 November 2026, and mark as not running a rule of
+the 17 November versions that tests a token the new syntax trees leave out. Install the newest version of each pack
+that works with this Rerail:
+
+```sh
+rerail packs update
+```
+
 ### `No rule pack matches what it’s built with`
 
 ```text
@@ -245,6 +301,95 @@ and says how they were listed. **Not scanned** names the folders set-up never re
 every one of them, by the places it names; a leading `/` means only at the repository's top. **Packs look for** says
 what each pack would match. To add a pack anyway, answer "Change rule packs…", or run `rerail packs add <id>`.
 `rerail packs recommend` prints the same explanation, with what each pack looks for on that pack's line.
+
+## The engine
+
+Rerail's native engine is not inside `@neralabs/rerail`: each system and processor has an engine package, installed
+with Rerail at the same version ([Registry access](installation.md#registry-access)). A command, hook or daemon that
+cannot load it stops with one of the messages below. Set-up and `rerail update` print it after
+`Installed native runtime health check failed:` and keep the version that was active.
+
+### Rerail's engine is not installed
+
+```text
+Rerail's engine for Linux on x64 is not installed: the Rerail at /home/you/.npm/_npx/0f1e2d3c4b5a6978/node_modules/@neralabs/rerail has no @neralabs/rerail-engine-linux-x64-gnu@0.2.1, an optional dependency of @neralabs/rerail. npm leaves optional dependencies out under --omit=optional (omit=optional or optional=false in an .npmrc), and when the registry or mirror it installs from lacks the package or serves another file for it. Install it with `npm install --prefix "/home/you/.npm/_npx/0f1e2d3c4b5a6978" @neralabs/rerail-engine-linux-x64-gnu@0.2.1`. Or set RERAIL_ENGINE_PATH to an engine file for this system (rerail_engine.linux-x64-gnu.node).
+```
+
+npm installed Rerail without its engine and reported no error: it skips an optional dependency it is told to leave out,
+or cannot fetch, and still exits with 0. Run the command the message gives. Naming the package installs it whatever
+the setting, and where the registry lacks it npm now fails and says so.
+
+When `rerail update` printed the message, it gives no command: the update staged that Rerail in a folder it removed
+as it failed, and the version that was active stays active. Fix the cause below, then run `rerail update` again.
+
+<details>
+<summary>Finding the cause, and other shapes of the message</summary>
+
+- **npm leaves optional dependencies out.** `npm config list` shows `omit = ["optional"]` or `optional = false`, from
+  an `.npmrc` or an `NPM_CONFIG_` variable. Remove it, or keep running the message's command after each install you
+  make with npm yourself.
+- **The registry lacks the package.** `npm view @neralabs/rerail-engine-<suffix>@<version> version` prints the version
+  when your registry serves it. A private registry, mirror or allowlist must serve all six engine packages
+  ([Registry access](installation.md#registry-access)).
+- **The registry serves another file for the package.** npm checks each engine package against the sha512 Rerail pins
+  for it and leaves out one that differs, with no error. Compare
+  `npm view @neralabs/rerail-engine-<suffix>@<version> dist.integrity` through your registry and with
+  `--registry https://registry.npmjs.org`.
+- **An update from Rerail 0.1.5 or earlier:** in place of a command, the message says
+
+  ```text
+  An update or set-up staged this Rerail, and removes its folder when it fails: run the update or set-up again once npm can install the package. Where npm's settings leave optional dependencies out, set the environment variable npm_config_include=optional for that run.
+  ```
+
+  Those versions install `@neralabs/rerail` alone and leave its engine to npm's optional dependencies, so a setting
+  that leaves them out stops the update. Set the variable in the terminal that runs the update, not in an `.npmrc`:
+  `npm_config_include=optional rerail update` in sh, bash or zsh; `$env:npm_config_include = "optional"; rerail update`
+  in PowerShell; `set npm_config_include=optional` and then `rerail update` in cmd. It does not help where the
+  registry lacks the package. Later versions install the engine package by name and need no variable.
+- **A global install, or any folder npm did not install Rerail into as a dependency:** the message gives the command
+  without a folder:
+
+  ```text
+  Install it with `npm install @neralabs/rerail-engine-linux-x64-gnu@0.2.1`, run where @neralabs/rerail is installed (with `-g` for a global install).
+  ```
+- **`RERAIL_ENGINE_PATH`** names an engine file for Rerail to load instead of looking for the package. Use the engine
+  built for this Rerail's version; a missing file is `RERAIL_ENGINE_PATH does not exist: <path>`.
+
+</details>
+
+### Rerail was installed for another system
+
+```text
+The Rerail at /Users/you/.rerail/versions/0.2.1/node_modules/@neralabs/rerail was installed for macOS on arm64, and this is macOS on x64: it has @neralabs/rerail-engine-darwin-arm64 and no @neralabs/rerail-engine-darwin-x64@0.2.1. Its folder came from another computer, or this Node is built for another processor than the Node that installed it. Run Rerail with that Node, or add this system's engine. Install it with `npm install --prefix "/Users/you/.rerail/versions/0.2.1" --force @neralabs/rerail-engine-darwin-x64@0.2.1`. `--force` has npm keep the other system's engine. Or set RERAIL_ENGINE_PATH to an engine file for this system (rerail_engine.darwin-x64.node).
+```
+
+An install holds the engine for the system and processor of the Node that installed it, and this Node is another.
+Run Rerail with the Node that installed it, or run the command the message gives, after which the install holds this
+system's engine too. npm 11.6.2 and later also install all six inside Rerail then, about 240 MB.
+
+<details>
+<summary>How an install meets another system</summary>
+
+- **Two Nodes on one computer, built for different processors:** on a Mac, an x64 Node under Rosetta beside an arm64
+  one, from two version managers, say; on Windows on Arm, an x64 Node beside an arm64 one.
+- **A folder from another computer:** a `~/.rerail` copied, restored from a backup, taken from a CI cache keyed without
+  the system, or mounted from the host into a container. Run `npx @neralabs/rerail setup` on the system that runs
+  Rerail, with a Rerail home of its own (`RERAIL_HOME`) where the folder is shared.
+
+</details>
+
+### The engine package is another version than Rerail
+
+```text
+@neralabs/rerail-engine-linux-x64-gnu at /home/you/app/node_modules/@neralabs/rerail-engine-linux-x64-gnu is version 0.2.2, and the Rerail at /home/you/app/node_modules/@neralabs/rerail is version 0.2.1: Rerail loads only the engine released with it. Install it with `npm install --prefix "/home/you/app" @neralabs/rerail-engine-linux-x64-gnu@0.2.1`.
+```
+
+Rerail found its system's engine package at another version than its own, and loads only the engine released with
+it. Run the command the message gives.
+
+This happens when an engine package was installed or updated apart from Rerail: named in a `package.json` of its own,
+or left beside Rerail in its `node_modules/@neralabs` folder by an earlier install. Depend on `@neralabs/rerail`
+alone; it names the engine package of its version.
 
 ## The `rerail` command
 
@@ -455,7 +600,12 @@ Agents load hooks and commands when a session starts. Open a new session after s
 A coding agent ran Rerail's hooks, and Rerail could not record their events. The line names the last event that
 failed, the coding agent and its version, the Rerail version and the reason, such as `no Rerail daemon answered`
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
-(it was busy, for example opening a large checkout; events are recorded again once it answers),
+(it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an
+older version, or could not watch `untaken-events`; events are recorded again once it answers), `the Rerail daemon
+(pid …) is running but not reading, and 256 events already wait for it, the most Rerail keeps` or `… would pass the
+16 MiB Rerail keeps` (see below), `… and
+the event is larger than the 1 MiB one event may hold` (a tool call that large, which a daemon that reads refuses
+too), `… and the event could not be left for it` with the error that kept it out of `untaken-events`,
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB one hook
@@ -472,11 +622,38 @@ was: `since <time>, as far back as the log goes`; when another program keeps `ho
 it counts from when `hook-failures.jsonl` began. When every failure it still holds came after the last recorded
 event, hooks may have failed before the time it leads with, and the line says `as far back as the log goes` too.
 
+A daemon that runs but does not answer costs only the hooks that start in its first 12 s their wait: each leaves its
+event in `untaken-events` in the Rerail home and answers, and while such an event waits there each later hook leaves
+its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
+it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
+check finds reaches the agent with the session's next answer, not with the hook that left the event. Rerail never saw
+such a tool call's files before it ran, so it tells the call its own lines only where the file before the call is
+certain, and checks the whole file the call left everywhere else. The file before the call is certain only when the
+call is an Edit or MultiEdit (not a Write), its edits put back (each new text, found exactly once, replaced by its old
+text, at every place for an edit of every place) give a text on which the tool would make them again and leave
+exactly the file as it is, and that text is the file as the session last saw it. Then the call is told exactly its
+own lines, as when Rerail sees it run, but for one case: an edit of every place is also told a line holding its new
+text that another program wrote over an older line since the session last looked, one line more, never fewer.
+Anything else is checked whole, and a finding can name lines the call did not write, but none of its own is missed: a
+Write; an Edit that created its file; an Edit whose new text the file no
+longer holds once; a file another program or another such call changed since the session last saw it, or that the
+session first saw after the call ran, as in a busy spell that starts with the session. A tool's output is not kept
+with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check
+is bounded; past that a hook's event is lost and the line above counts it. An entry there the daemon cannot read (a
+folder under an event's name, a file another user or program left, one another program holds open) counts once as
+an event it could not check, and is removed where it can be. While events wait, `rerail status` says
+`Hooks: N hook events wait in untaken-events for the Rerail daemon, which has not read since <time>`; once the daemon
+has checked them it says how many it checked late, and how many it could not check. In Cursor, prompts and answers
+read from the transcript stay unread until the next hook the daemon answers, which checks them.
+
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. A session that starts with no daemon running says so as it starts: Claude Code and Codex
 show the line under the session's start, and Cursor's agent is asked to begin its first reply with it. The line, which
 `rerail status` prints too, says the daemon is not running, that `RERAIL_AUTOSTART=0` keeps hooks from starting it, so
-nothing is recorded until it runs, and to start it with `rerail daemon start`.
+nothing is recorded until it runs, and to start it with `rerail daemon start`. A daemon that runs but that hooks may
+not use, one of another Rerail package or, on Windows, one of Rerail 0.1.4 or earlier, is not replaced either: the
+session's start says that nothing is recorded until a daemon from the active package runs, and to run
+`rerail daemon stop`, then `rerail daemon start`. Each event lost beside it goes to the hook failure log above.
 
 If `rerail status` instead names Claude Code hook scripts that are missing, Claude Code's settings point at a Rerail
 that is gone, and every hook fails before Rerail runs. Run `rerail install --refresh` and open a new session.
@@ -599,8 +776,9 @@ A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machi
 
 ### `Another Rerail daemon (pid …) runs in …`
 
-Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there waits a second for it, then
-writes this line to the home's `daemon.log` and exits; a `rerail daemon start` that launched it prints the line under
+Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there writes this line to the
+home's `daemon.log` and exits as soon as the holder answers as the home's daemon, or after waiting a second for the lock
+when the holder does not answer. A `rerail daemon start` that launched it prints the line under
 `Rerail daemon exited with code 1 before it was ready`. While the daemon it names answers, the next
 `rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
 pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
@@ -610,6 +788,19 @@ pid to end; if the stop finds none and a start prints this line again, end the p
 The Rerail home was moved or removed while its daemon ran. The daemon writes this line to `daemon.log` and stops
 writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
 database of the home it lost. End the pid it names, then run `rerail daemon start`.
+
+### `not-on-disk: the change was made, but Rerail could not confirm it is on the disk …`
+
+The daemon made a change you asked for in the dashboard, with `rerail settings` or `rerail scan` (in internal testing),
+or through an MCP tool, then waited for the disk to keep it, and the disk gave the error the message ends with. The
+dashboard shows the same message. Rerail says a change is made only once it is on the disk, so a power cut cannot undo
+it; this one is made, but a power cut or an operating system crash may still undo it. Do not make it again unless you
+see it is gone: making it again can make it twice, such as a second audit request.
+
+The daemon's background sync of the history syncs the same file. While that sync fails, `daemon.log` says
+`rerail daemon: syncing the history to the disk failed, trying again every 5 s: …` once, and
+`rerail daemon: syncing the history to the disk works again` once a sync succeeds. Until then a power cut or an
+operating system crash can take more than the last 5 s of history ([Rerail database](reference.md#rerail-database)).
 
 ### Containers: the dashboard does not open from the host
 
@@ -684,6 +875,15 @@ set-up in WSL warns and goes on:
 ## Working from a clone of Rerail
 
 For changing Rerail itself; setting up is in [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).
+
+### `Rerail's engine … is not built`
+
+```text
+Rerail's engine for macOS on arm64 is not built: /Users/you/rerail/native has no rerail_engine.darwin-arm64.node. Build it with `npm run build:native`, or fetch a released one with `npm run engine:pull`. Or set RERAIL_ENGINE_PATH to an engine file for this system (rerail_engine.darwin-arm64.node).
+```
+
+A clone loads the engine in its own `native/` folder, and a new clone has none. `npm run build:native` builds this
+machine's from source, which needs Rust; `npm run engine:pull` fetches the one a release published.
 
 ### Windows: checks and pack tests fail in a clone made before LF line ends
 

@@ -1,13 +1,12 @@
 /**
- * The page's rule setting writes: rules on or off, a whole rule pack on or off, and whether a rule pack's rules honour
- * linter suppression comments. Each change is one `PUT /api/repository/settings` per folder and setting it writes,
- * owned by this worktree or the repository (`owner(packId)`, given the pack the change is to, when it is to one pack),
- * sent in click order. The page shows the change at once; after a failed write it puts back what nothing saved and reads
+ * The page's rule setting writes: rules on or off, and a whole rule pack on or off. Each change is one
+ * `PUT /api/repository/settings` per folder and setting it writes, owned by this worktree or the repository
+ * (`owner(packId)`, given the pack the change is to, when it is to one pack), sent in click order. The page shows the change at once; after a failed write it puts back what nothing saved and reads
  * the rules in full, so it ends on what the daemon holds. `toast` and `invalidate` are the page's.
  */
-import { send } from "./api.js";
+import { madeButUnconfirmed, send } from "./api.js";
 import { data } from "./state.js";
-import { inPack, packSettingDecides } from "./derive.js";
+import { inPack } from "./derive.js";
 import { captureScope, inScope, refetch, refreshNow } from "./poll.js";
 import { failed as failedText } from "./format.js";
 
@@ -30,6 +29,27 @@ async function put(body) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Send `puts` in order to `scope`'s target for owner `by`, while the page shows that scope. Resolves how many were
+ * `saved` and the `failure` that stopped the rest (null when none did). A change the daemon made but could not confirm
+ * on the disk (`madeButUnconfirmed`) stops nothing: the writes after it go out, and it is the `failure` only when no
+ * other write failed.
+ */
+async function sendAll(scope, by, puts) {
+  let saved = 0, unconfirmed = null;
+  for (const { folder, targets, setting } of puts) {
+    if (!inScope(scope)) break;
+    try {
+      await put({ ...scope.target, folder, owner: by, targets, ...setting });
+    } catch (error) {
+      if (!madeButUnconfirmed(error)) return { saved, failure: error };
+      unconfirmed = error;
+    }
+    saved += 1;
+  }
+  return { saved, failure: unconfirmed };
 }
 
 /** One entry per folder: the targets written there. */
@@ -77,34 +97,30 @@ export function settingWrites({ toast, invalidate, owner }) {
   /**
    * Send `puts` (`{ folder, targets, setting }` each) in order, and show the change on `rules` at once with `show`.
    * The repository, owner and rows are fixed when the action starts: switching repository mid-save writes nothing there.
-   * `label` is the toast once saved; `failed` begins the toast when a write fails, before the error. `packId` is the one
-   * pack the change is to, which decides its owner.
+   * `label` is the toast once saved, the daemon's words once a change was made but not confirmed on the disk
+   * (`sendAll`); `failed` begins the toast when a write fails, before the error. `packId` is the one pack the change is
+   * to, which decides its owner.
    */
   async function save(puts, rules, show, label, failed = SAVE_FAILED, packId = undefined) {
     if (puts.length === 0) return;
     const scope = captureScope();
     const by = owner(packId);
     const before = new Map(rules.map(r => [r, { ...r }]));
-    for (const r of rules) show(r);
+    rules.forEach(show);
     const shown = new Map(rules.map(r => [r, { ...r }]));
     invalidate();
     const key = JSON.stringify(scope.target);
     const previous = writing.get(key) ?? Promise.resolve();
     const { promise: settled, resolve: done } = Promise.withResolvers();
     writing.set(key, settled);
-    let failure = null, saved = 0;
+    let outcome;
     try {
       await previous;
-      for (const { folder, targets, setting } of puts) {
-        if (!inScope(scope)) break;
-        await put({ ...scope.target, folder, owner: by, targets, ...setting });
-        saved += 1;
-      }
-    } catch (error) {
-      failure = error;
+      outcome = await sendAll(scope, by, puts);
     } finally {
       done();
     }
+    const { failure, saved } = outcome;
     // Another repository's page now: these rows and the outcome are not its.
     if (!inScope(scope)) return;
     if (failure === null) {
@@ -134,47 +150,10 @@ export function settingWrites({ toast, invalidate, owner }) {
     return save(packSwitchWrites(packId, enabled), rules, r => { r.enabled = enabled; }, label, failed, packId);
   }
 
-  /**
-   * Honour or ignore suppression comments for a rule pack, at every folder it is added at. The page shows it in the
-   * folders of the pack's rules its setting decides: not where a setting that outranks it decides, by owner, folder
-   * depth, or a rule's own setting at the same owner and folder.
-   */
-  function setPackSuppressions(packId, suppressions, label, failed) {
-    const by = owner(packId);
-    const decides = state => packSettingDecides(state, packId, by, data.checkout?.checkoutPath);
-    const rules = [...data.rules.values()].filter(r => r.folderStates.some(decides));
-    const folders = byFolder(packFolders(packId).map(folder => [folder, { kind: "pack", id: packId }]));
-    return save(writesOf(folders, { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "pack")), label, failed, packId);
-  }
-
-  return { setEnabled, setPackEnabled, setPackSuppressions };
+  return { setEnabled, setPackEnabled };
 }
 
-/**
- * Put back on stored rule `r` what a write that saved nothing showed (`shown`, over `was`), except wherever a later
- * change has replaced it since.
- */
+/** Put back on stored rule `r` what a write that saved nothing showed (`shown`, over `was`), unless a later change has replaced it since. */
 function undo(r, was, shown) {
-  r.folderStates = r.folderStates.map((state, index) => (state === shown.folderStates[index] ? was.folderStates[index] : state));
-  r.suppressions = r.folderStates[0]?.suppressions ?? r.suppressions;
-  r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;
   if (r.enabled === shown.enabled) r.enabled = was.enabled;
 }
-
-/**
- * What decides a folder's suppressions once a setting on `target` written as `owner` lands there, as the API reports
- * it, so a second change before the page refreshes weighs the first.
- */
-const decider = (owner, target) => state => (owner === "checkout"
-  ? { by: "checkout", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target }
-  : { by: "repository", folder: state.folder, target });
-
-/**
- * Show a suppressions change on a stored rule, in every folder it is added at that `changes`, with what now decides it
- * (`source`, from the folder's state).
- */
-const showSuppressions = (suppressions, changes, source) => r => {
-  r.folderStates = r.folderStates.map(state => (changes(state) ? { ...state, suppressions, suppressionsSource: source(state) } : state));
-  r.suppressions = r.folderStates[0]?.suppressions ?? suppressions;
-  r.suppressionsSource = r.folderStates[0]?.suppressionsSource ?? r.suppressionsSource;
-};

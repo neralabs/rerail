@@ -186,7 +186,7 @@ impl Grammar {
         self.kinds.field_name(code)
     }
 
-    /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
+    /// The tree-sitter language of this grammar's dialect (the predecessor's accessor; the packed runtime's
     /// Metal tests compile queries against it).
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn language(&self) -> Language {
@@ -1021,7 +1021,7 @@ pub fn with_all_tokens<T>(f: impl FnOnce() -> T) -> T {
 /// placeholders its segments mark (`omitted`) are left out, with their subtrees.
 /// Tree-sitter's tree under `root` into `nodes`, in preorder. Where `filter` (the grammar's token
 /// automata) is given, a token it implies is skipped as the walk meets it: it is never a record
-/// (`tokens::TokenGrammar::stored_children`, RER-131).
+/// (`tokens::TokenGrammar::stored_children`, decision 0161).
 fn encode_tree(
     nodes: &mut Vec<Pending>,
     supertypes: &mut Vec<(u32, u16)>,
@@ -2496,7 +2496,7 @@ pub struct HostLink {
 /// white space after its last statement, and a statement ending in a `;` its embedder wrote over
 /// no bytes holds the white space before it, which stands for nothing of the node's.
 ///
-/// The tape stores no implied token (RER-131, `tokens`): `echo` and `;` a Blade echo is written as,
+/// The tape stores no implied token (decision 0161, `tokens`): `echo` and `;` a Blade echo is written as,
 /// the `;` marker Vue's script and template programs start with. Their text is in the gaps a node's
 /// stored children leave in its span, the source `structural_before` and `structural_after` hold
 /// (core.rerail): comments are nodes, so a gap is implied tokens and white space only, and each run of
@@ -3040,7 +3040,7 @@ impl TapeDoc {
     }
 
     /// Whether the tokens the tape leaves out right after `parent`'s child `child` (its index among
-    /// the children) begin with `word` (`Doc::implied_after`, RER-131).
+    /// the children) begin with `word` (`Doc::implied_after`, decision 0161).
     pub fn transducer_implied_after(&self, parent: u32, child: usize, word: &[&str]) -> bool {
         self.implied_after(&self.node(parent), child, word) == Some(true)
     }
@@ -3555,7 +3555,7 @@ impl Doc for TapeDoc {
         Cow::Borrowed(&self.source[node.range()])
     }
     /// The implied word the tape leaves out in the gap after `parent`'s child `child`
-    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), RER-131.
+    /// (`tokens::stored_gaps`: the word before the next named child, or after the last), decision 0161.
     fn implied_after<'a>(
         &'a self,
         parent: &TapeNode<'a>,
@@ -3612,7 +3612,7 @@ pub fn stored_children_for_test<'t>(
 
 /// A pattern's tree as a tape: tree-sitter's parse of `source`, written as a document is
 /// (`TapeImage::encode_tree_image`), so the tokens the grammar implies are left out of patterns as
-/// they are of documents (RER-131). With it, per record, what tree-sitter's node says that the tape
+/// they are of documents (decision 0161). With it, per record, what tree-sitter's node says that the tape
 /// does not ([`PatternShape`]).
 pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, PatternShape), String> {
     use ast_grep_core::language::Language as _;

@@ -15,7 +15,10 @@ export interface CommandResult {
 export interface CommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  /** Stops the command once it has run this long, failing with a `CommandTimeoutError`; by default it runs until it ends. */
+  /**
+   * Stops the command once it has run this long, failing with a `CommandTimeoutError`. By default it runs until it ends:
+   * until its output closes, which a process it started can keep open after it exits.
+   */
   timeoutMs?: number;
 }
 
@@ -37,18 +40,20 @@ export class CommandTimeoutError extends Error {
 const lastLines = (text: string): string => text.split(/\r?\n/u).filter(line => line.trim() !== "").slice(-TIMEOUT_OUTPUT_LINES).join("\n");
 
 /** How long a command stopped for running too long has to exit after SIGTERM before it is killed. */
-const KILL_GRACE_MS = 5_000;
+export const KILL_GRACE_MS = 5_000;
 
 /**
  * Stops `child` once it has run `timeoutMs`, calling `stopping` first: SIGTERM, then SIGKILL if it is still running
- * `KILL_GRACE_MS` later, since a command that ignores SIGTERM would otherwise never end. The function returned
- * cancels both; with no `timeoutMs` there is nothing to cancel.
+ * `KILL_GRACE_MS` later, since a command that ignores SIGTERM would otherwise never end. A child that has already
+ * exited gets neither: only `stopping` can end the wait on its output. The function returned cancels both; with no
+ * `timeoutMs` there is nothing to cancel.
  */
 function stopAfter(child: ChildProcess, timeoutMs: number | undefined, stopping: () => void): () => void {
   if (timeoutMs === undefined) return () => {};
   let kill: NodeJS.Timeout | undefined;
   const term = setTimeout(() => {
     stopping();
+    if (child.exitCode !== null || child.signalCode !== null) return;
     child.kill();
     kill = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
   }, timeoutMs);
@@ -77,8 +82,16 @@ export async function runCommand(command: string, args: readonly string[], optio
   let stdout = "";
   let stderr = "";
   let timedOut = false;
+  let exited = false;
+  /** Reports the stop, and stops reading output that a process the command started may hold open for good. */
+  const timeOut = (): void => {
+    child.stdout.destroy();
+    child.stderr.destroy();
+    reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(cleanCommandError(stderr || stdout))));
+  };
   const cancelStop = stopAfter(child, options.timeoutMs, () => {
     timedOut = true;
+    if (exited) timeOut();
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -92,17 +105,25 @@ export async function runCommand(command: string, args: readonly string[], optio
     cancelStop();
     reject(error);
   });
-  child.once("exit", (code, signal) => {
+  // A command stopped for running too long is reported as soon as it exits: a process it started may still hold its
+  // output open. For the same reason the deadline holds past "exit", until "close".
+  child.once("exit", () => {
+    exited = true;
+    if (!timedOut) return;
     cancelStop();
-    const detail = cleanCommandError(stderr || stdout);
-    if (timedOut) {
-      reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(detail)));
-      return;
-    }
+    timeOut();
+  });
+  // Any other ends at "close", once the child's output is read to its end. "exit" can come first, and an answer taken
+  // then can be missing what the child wrote last: on Linux, about one `npm view --json` in ten under load came back
+  // empty, which the caller then read as JSON.
+  child.once("close", (code, signal) => {
+    cancelStop();
+    if (timedOut) return;
     if (code === 0) {
       resolveCommand({ stdout, stderr });
       return;
     }
+    const detail = cleanCommandError(stderr || stdout);
     const detailSuffix = detail.length === 0 ? "" : `: ${detail}`;
     reject(new Error(`${command} failed (${signal ?? code ?? "unknown"})${detailSuffix}`));
   });
@@ -144,6 +165,30 @@ const NPM_UNREACHABLE = /\bnpm (?:error|ERR!) code (ECONNREFUSED|ENOTFOUND|EAI_A
 const NPM_TIMEOUT = /\bnpm (?:error|ERR!) network timeout at: /u;
 /** The URL npm's fetch error names: `request to <url> failed, reason: …` or `network timeout at: <url>`. */
 const NPM_FETCH_URL = /(?:request to|network timeout at:) (https?:\/\/[^\s,]+)/u;
+
+/** npm's code where its registry has no such package (E404) or version (ETARGET), or the package is built for another system. */
+const NPM_PACKAGE_REFUSED = /\bnpm (?:error|ERR!) code (E404|ETARGET|EBADPLATFORM)\b/u;
+/** The address npm's E404 names: `404 Not Found - GET <url>`. */
+const NPM_NOT_FOUND_URL = /\bGET (https?:\/\/\S+)/u;
+
+/** npm's refusal of one package an install named, as its own output gives it. */
+export interface NpmPackageRefusal {
+  /** No such package (E404), no such version (ETARGET), or a package built for another system (EBADPLATFORM). */
+  readonly code: "E404" | "ETARGET" | "EBADPLATFORM";
+  /** The registry npm asked, where its error names the request. */
+  readonly registry: string | undefined;
+}
+
+/**
+ * npm's refusal of the package `name` in the output of a failed install; undefined where npm failed for another
+ * reason, or over another package.
+ */
+export function npmPackageRefusal(message: string, name: string): NpmPackageRefusal | undefined {
+  const code = NPM_PACKAGE_REFUSED.exec(message)?.[1] as NpmPackageRefusal["code"] | undefined;
+  if (code === undefined || !message.includes(name)) return undefined;
+  const address = NPM_NOT_FOUND_URL.exec(message)?.[1];
+  return { code, registry: address === undefined ? undefined : URL.parse(address)?.origin };
+}
 
 /**
  * npm waits 10 s, then 60 s, before its two retries of a request, and against a registry that is down it does that for

@@ -114,9 +114,9 @@ export function isApproved(db: Pick<RerailDatabase, "select">, subject: RuleAppr
 }
 
 /**
- * Record that a person approved `subject`; approving it again changes nothing. The first approval of an edited copy of
- * a By Rerail rule since it was created switches the original off wherever the copy is added, with a repository
- * setting, as the copy now replaces it there.
+ * Record that a person approved `subject`; approving it again changes nothing. The first approval of an edited copy
+ * since it was created (of a By Rerail rule, or of your approved rule a coding agent edited) switches the original off
+ * wherever the copy is added, with a repository setting, as the copy now replaces it there.
  */
 export function approve(db: Pick<RerailDatabase, "select" | "insert">, subject: RuleApprovalSubject, now: number = Date.now()): void {
   const copy = subject.kind === "rule"

@@ -445,21 +445,33 @@ function selectSession(database: RerailDatabase, historyIds: readonly string[], 
   return session;
 }
 
+interface TimelineRow {
+  kind: string; at: number; tool: string | null; failed: number | null; ruleIds: string | null; count: number | null; boundary: string | null; activeRuleCount: number | null;
+}
+
+type TimelineFields = Omit<SupportBundleTimelineEntry, "at" | "kind">;
+
+const toolOf = ({ tool }: TimelineRow): TimelineFields => (tool === null ? {} : { tool });
+const countOf = ({ count }: TimelineRow): TimelineFields => (count === null ? {} : { count });
+const boundaryOf = ({ boundary }: TimelineRow): TimelineFields => (boundary === null ? {} : { boundary });
+
 /**
  * The fields of a stored event that may leave it, by kind. They are read with `json_extract`, so a payload's text never
  * reaches this process, and a kind not named here is recorded by its name alone.
  */
-function timelineEntry(row: {
-  kind: string; at: number; tool: string | null; failed: number | null; ruleIds: string | null; count: number | null; boundary: string | null; activeRuleCount: number | null;
-}): SupportBundleTimelineEntry {
-  const entry: SupportBundleTimelineEntry = { at: row.at, kind: row.kind };
-  if ((row.kind === "call" || row.kind === "result") && row.tool !== null) entry.tool = row.tool;
-  if (row.kind === "result" && row.failed === 1) entry.failed = true;
-  if (row.kind === "steering-delivered" && row.ruleIds !== null) entry.ruleIds = JSON.parse(row.ruleIds) as string[];
-  if (row.kind === "events-dropped" && row.count !== null) entry.count = row.count;
-  if ((row.kind === "source-discovery-pending" || row.kind === "code-rules-pending") && row.boundary !== null) entry.boundary = row.boundary;
-  if (row.kind === "rule-coverage" && row.activeRuleCount !== null) entry.activeRuleCount = row.activeRuleCount;
-  return entry;
+const TIMELINE_FIELDS = new Map<string, (row: TimelineRow) => TimelineFields>([
+  ["call", toolOf],
+  ["result", row => ({ ...toolOf(row), ...(row.failed === 1 ? { failed: true } : {}) })],
+  ["steering-delivered", ({ ruleIds }) => (ruleIds === null ? {} : { ruleIds: JSON.parse(ruleIds) as string[] })],
+  ["events-dropped", countOf],
+  ["events-lost", countOf],
+  ["source-discovery-pending", boundaryOf],
+  ["code-rules-pending", boundaryOf],
+  ["rule-coverage", ({ activeRuleCount }) => (activeRuleCount === null ? {} : { activeRuleCount })],
+]);
+
+function timelineEntry(row: TimelineRow): SupportBundleTimelineEntry {
+  return { at: row.at, kind: row.kind, ...TIMELINE_FIELDS.get(row.kind)?.(row) };
 }
 
 function readTimeline(database: RerailDatabase, sessionId: string): SupportBundleTimelineEntry[] {
@@ -538,7 +550,8 @@ function reportedAudit(audit: AuditRecord): SupportBundleAudit {
   };
 }
 
-function readSession(database: RerailDatabase, databasePath: string, session: typeof sessions.$inferSelect, workspaceRoot: string, problems: string[]): SupportBundleSession {
+function readSession(database: RerailDatabase, context: DatabaseReadContext, session: typeof sessions.$inferSelect): SupportBundleSession {
+  const { databasePath, workspaceRoot, problems, stderr } = context;
   const eventCounts = Object.fromEntries(database.select({ kind: events.kind, total: count() }).from(events)
     .where(eq(events.sessionId, session.sessionId)).groupBy(events.kind).orderBy(asc(events.kind)).all().map(row => [row.kind, row.total]));
   const eventTotal = Object.values(eventCounts).reduce((sum, total) => sum + total, 0);
@@ -548,7 +561,7 @@ function readSession(database: RerailDatabase, databasePath: string, session: ty
   const steered = eventCounts["steering-delivered"] ?? 0;
   if (!found && steered > 0) problems.push(`steers: the session steered ${steered} time${steered === 1 ? "" : "s"} and its ledger was not found, so their text is missing.`);
   const sessionReader = new SqliteSessionReader(databasePath);
-  const auditReader = new SqliteAuditReader(databasePath);
+  const auditReader = new SqliteAuditReader(databasePath, { log: stderr });
   try {
     const { audits, total: auditTotal } = auditReader.list({ sessionId: session.sessionId, limit: MAX_AUDITS });
     return {
@@ -622,6 +635,8 @@ async function readDaemon(pending: Promise<DaemonLookup>, started: number, probl
 }
 
 function daemonSection(lookup: DaemonLookup, started: number): SupportBundle["daemon"] {
+  // A daemon of a release before the engine's proof is asked nothing: its record says which release it is.
+  if (lookup.status === "older") return { status: "older", version: lookup.state.version, ui: lookup.state.ui };
   if (lookup.status !== "running") return { status: lookup.status };
   const { version, ui, uptimeMs, native } = lookup.health;
   return {
@@ -684,6 +699,8 @@ interface CollectInput {
    * writes it, so a caller that stops the command during the wait still has the bundle it had before there was a wait.
    */
   whileWaiting?: (draft: CollectedBundle) => void;
+  /** Where the line that names an audit whose stored lists do not read goes; the process's error output unless given. */
+  stderr?: Pick<NodeJS.WriteStream, "write">;
 }
 
 /** A bundle, scrubbed, and the ids of the rules the person's team wrote, which the summary names. */
@@ -698,7 +715,7 @@ interface CollectedBundle {
  * it can be waited for.
  */
 export async function collectSupportBundle(input: CollectInput): Promise<CollectedBundle> {
-  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS } = input;
+  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS, stderr = process.stderr } = input;
   const problems: string[] = [];
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
     try {
@@ -720,7 +737,7 @@ export async function collectSupportBundle(input: CollectInput): Promise<Collect
   const catalog = attempt("packs", () => loadRuleCatalog(home), undefined);
 
   if (existsSync(databasePath)) {
-    const context = { attempt, repo, databasePath, sessionId, workspaceRoot, catalog, problems, knownValues, ownRules };
+    const context = { attempt, repo, databasePath, sessionId, workspaceRoot, catalog, problems, knownValues, ownRules, stderr };
     ({ repository, session } = readDatabaseSections(context, repository));
   } else if (sessionId !== undefined) {
     throw new SupportBundleError(SESSION_NOT_FOUND(sessionId));
@@ -772,6 +789,7 @@ interface DatabaseReadContext {
   problems: string[];
   knownValues: KnownValue[];
   ownRules: string[];
+  stderr: Pick<NodeJS.WriteStream, "write">;
 }
 
 /** The bundle's sections from the database: the checkout's repository with its rules, and the session. */
@@ -823,11 +841,11 @@ function readRules(database: RerailDatabase, context: DatabaseReadContext, check
 
 /** The session the bundle is for, if one is found, with its id and folder added to `context.knownValues`. */
 function readSelectedSession(database: RerailDatabase, context: DatabaseReadContext, historyIds: readonly string[]): SupportBundleSession | null {
-  const { attempt, databasePath, workspaceRoot, problems } = context;
+  const { attempt } = context;
   const selected = attempt("session", () => selectSession(database, historyIds, context.sessionId), undefined);
   if (selected === undefined) return null;
   context.knownValues.push({ value: selected.sessionId, label: "<session>" }, { value: selected.cwd, label: "<checkout>" });
-  return attempt("session", () => readSession(database, databasePath, selected, workspaceRoot, problems), null);
+  return attempt("session", () => readSession(database, context, selected), null);
 }
 
 function summaryOf(path: string, bundle: SupportBundle, ownRules: readonly string[]): SupportBundleSummary {
@@ -896,6 +914,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
       sessionId: options.get("--session"),
       packageVersion: io.packageVersion,
       packageRoot: io.packageRoot ?? PACKAGE_ROOT,
+      stderr,
       whileWaiting: draft => {
         writeBundle(output, draft.bundle);
         stderr.write(waitingText(output));

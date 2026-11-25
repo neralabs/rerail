@@ -21,7 +21,7 @@ the states nor the grammar check. It now states each node's content, as tree-sit
   forward, and the stack carry is the depth (closes matched by nearest smaller value,
   `01-branch-free-design.md` §3). Its plan stores, barriers and verifier stay. Metal comes
   after the CPU.
-- **Lessons ledger, ast-index-spike indexes:** no grammar or parser lessons; #28 (CPU and GPU
+- **Lessons ledger, SQL index prototype indexes:** no grammar or parser lessons; #28 (CPU and GPU
   time only) holds for the cost ratchet.
 
 ## Decision

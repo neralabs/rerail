@@ -1,7 +1,7 @@
 # 0161: The tape format from 11 to 15: named-only tapes, and no stored digest
 
 Status: recorded after the fact (2026-11-13). Built 2026-11-09 to 2026-11-11, in the
-named-only tapes work (RER-131), without a decision record and without the user's review.
+named-only tapes work, without a decision record and without the user's review.
 The user will revisit it on another branch. This record states what was done and why, so that
 a change to it is made in one place and knowingly.
 
@@ -98,7 +98,7 @@ engine holds it in memory (`TapeImage::source_digest`). Parsers write no digest.
   over real trees). Tapes came to 0.54–0.65× the nodes and bytes, and 0.71–0.77× after zstd,
   by language. Every pass that walks a tape would visit that many fewer nodes: `inside`, `has`,
   `nearest`, kind postings, GPU slabs, the facts projection, the prefilter. simdjson writes no
-  entry for `{`, `:` or `,` for the same reason. The named-only direction is RER-131's. The
+  entry for `{`, `:` or `,` for the same reason. The named-only direction is that work's. The
   rule that no producer writes an implied token and then drops it is the user's (2026-11-12).
 - **No digest.** 32 bytes a tape. On the Python store that is about 7% of compressed tape
   bytes, because most tapes are small: there the header, digest and code table are a third of

@@ -1,6 +1,6 @@
 # T2 notes: PIAT research core (tape, residency, facts, transducer, Metal, regex)
 
-Root: `Pulling-it-all-together/docs/rule-engine-direction/`. Sections are appended as each source is read in full. Marks: M = measured, D = derived, A = assumed, as the source states.
+Root: `<PIAT>/docs/rule-engine-direction/`. Sections are appended as each source is read in full. Marks: M = measured, D = derived, A = assumed, as the source states.
 
 ---
 
@@ -13,11 +13,11 @@ Root: `Pulling-it-all-together/docs/rule-engine-direction/`. Sections are append
   - v5: grafted programs;
   - v6: nested guest images.
 - v7 regularised the *document* (one source, one grammar, one tree), but not the *record* (:19-25): varint spans, sentinel escapes, flag side lists, ERROR = code 0 plus a list, and aliases as a per-file string table.
-- Magic collision (:26): Tempo's `TMPTAPE4` ≠ Rerail's `TMPTAPE4`; Tempo's Metal is still on Tempo v4.
+- Magic collision (:26): the predecessor's `TMPTAPE4` ≠ Rerail's `TMPTAPE4`; the predecessor's Metal is still on the predecessor's v4.
 - Consequences of the irregularity (:27-29):
   - DLRE rebuilds row-per-node `decoded_*` caches, which is the spike's rejected S089 sidecar (211 B/node on SQLite, 88% of the store);
   - **N1562 expands each node to a 44 B `MetalNode`**;
-  - Tempo's full-corpus run spends about 2 GB on expansion (:85).
+  - The predecessor's full-corpus run spends about 2 GB on expansion (:85).
 - Restored in-memory `TapeDoc.Rec` is ~40 B/node and regular; every consumer pays an O(n) restore (:62).
 - Three representations at the time (:64-73): the content-store `TMPTAPE7` (zstd whole blob, not randomly accessible); DLRE's anchor-corpus copy (spike-style columns, a regular 1-byte `flags`, `kmask` 128 B, demand-filled `decoded_*`); executor ABIs (`Rec`, `MetalNode` 44 B AoS + child array + `MetalFile{node_start, source_start, line_start}`).
 
@@ -142,16 +142,16 @@ Corpora (:3): CPython 3.13 `Lib/`, the data-layer repository's `impl/`, rerail T
 - The final format is v9np: **≈ v7 on disk** (0.94–1.06× zstd) and in memory (0.93–1.01× logical). There is **no expansion**.
 - v8, the expansion candidate, was measured and rejected at 1.24–1.90×.
 - The parent column (+2 B/node) is **derived on load**, only where used. It is not stored.
-- Executors and SQL read the uncompressed SoA columns directly. Tempo's 44 B/node `MetalNode` / `TapeDoc` ~40 B/node expansion is exactly what v9np is designed to eliminate.
+- Executors and SQL read the uncompressed SoA columns directly. The predecessor's 44 B/node `MetalNode` / `TapeDoc` ~40 B/node expansion is exactly what v9np is designed to eliminate.
 - **My withdrawn 01-design's 16 B/node batch arena re-introduced the expansion v9np exists to kill.**
 
 ---
 
-## research/tempo-residency.md (316 lines, read in full)
+## research/predecessor-residency.md (316 lines, read in full)
 
-Normative §20 (Part E, :215-306) is already in t1. These notes cover the evidence and the arithmetic. T: = Tempo `d737fad16`.
+Normative §20 (Part E, :215-306) is already in t1. These notes cover the evidence and the arithmetic. T: = the predecessor `d737fad16`.
 
-### What Tempo really has (Part A)
+### What the predecessor really has (Part A)
 - **At rest** (:27-43):
   - `source_objects` / `tape_objects`, one zstd-3 frame each, with raw_length and SHA-256 outside the frame;
   - tape identity is UNIQUE(source, grammar_id, grammar_version, tape_format_version);
@@ -199,7 +199,7 @@ Normative §20 (Part E, :215-306) is already in t1. These notes cover the eviden
 - SQL (:140-144):
   - tapes are opaque to SQL;
   - contentless FTS5 over the kind stream (position = preorder ordinal, detail=full), values and source words;
-  - `tempo_matches` vtab with a batch token in xFilter, inputs from in-memory TapeDocs.
+  - `<predecessor>_matches` vtab with a batch token in xFilter, inputs from in-memory TapeDocs.
 
 ### Main at the time (Part B, :148-159; delegated survey, to verify in T7)
 - v7 store with the same schema shape, `content-v1.sqlite`, `cache_size=-1024`.
@@ -239,7 +239,7 @@ Normative §20 (Part E, :215-306) is already in t1. These notes cover the eviden
 | CPython 7.90M nodes | 66 MB | 33 MB | ≈ 99 MB | +32 MB |
 | data-layer 11.62M | 99 MB | 58 MB | ≈ 158 MB | +46 MB |
 
-- **The whole gate corpus stays resident.** Tempo's 32 MiB held about a fifth of it.
+- **The whole gate corpus stays resident.** The predecessor's 32 MiB held about a fifth of it.
 - Cold load from the store ≈ 59–77 µs × 5,725 files ≈ 0.34–0.44 s single-threaded, too much for 1–2 s, hence the pinned snapshot class and Q-R8.
 - Pinning scaled from 213 ms/7.77 GB to 158 MB ≈ 4 ms (D, unmeasured extrapolation).
 
@@ -253,13 +253,13 @@ Normative §20 (Part E, :215-306) is already in t1. These notes cover the eviden
 7. pure-SQL fallback can't read zstd → `tape_column` no-copy TVF; never store uncompressed columns in SQLite (that would duplicate them in the page cache).
 8. per-edit → edit slab.
 9. caps double-count → count shared once.
-10. **Tempo's GPU ABI can't be reused under v9np**: MetalNode, ChildIndex, named order and the relations array are deleted; kernels read kf/size/base/off/tail + sidecars.
+10. **The predecessor's GPU ABI can't be reused under v9np**: MetalNode, ChildIndex, named order and the relations array are deleted; kernels read kf/size/base/off/tail + sidecars.
 
-### Answer to "tempo work on tape caching and pinned-memory uncompressed tapes" (Q3)
-- Tempo has:
+### Answer to "[the predecessor's] work on tape caching and pinned-memory uncompressed tapes" (Q3)
+- The predecessor has:
   - built and measured: page-allocated anon-mmap arenas, no-copy shared MTLBuffers with a deallocator + associated-object lifetime, a reserve-before-allocate ledger, lease pins;
   - measured: that **retaining** buffers (pinning = retention) wins 30–60× and first-use mapping dominates (213 ms vs 6 ms).
-- Tempo did **not** implement the tape cache by identity: production rebuilds and uploads a 44 B/node private copy per evaluation.
+- The predecessor did **not** implement the tape cache by identity: production rebuilds and uploads a 44 B/node private copy per evaluation.
 - The final shape (spec §20):
   - takes the mechanisms and the evidence;
   - decompresses v9np once, directly into pinned 64 MiB slabs (16 B-aligned columns), whole gate corpus ≈ 100–160 MB;
@@ -281,7 +281,7 @@ Normative output: spec §21 + decision 0005 (§21 text is in t1). These notes co
   - Base facts are per file, owned by `bundle_key`, keyed by content hash + cache_version, and deleted and rewritten in one transaction. "Persist query results only when measurement shows a query is expensive."
   - Skinny EAV → typed per-family tables: 500 files **47.1 s → 18.0 s** (M).
   - **Tip shortfalls:** catalog relations inlined as CTEs everywhere (never shared); `materialized` only a CTE hint; dependency-cone tables created but never read; `SqliteProjectFactCache` has no callers; `DerivedFactSpec` rejected on the declarative path; `lint_function_transitive_summary` rebuilt in full on every save.
-- **Moti facts-engine** (`685db3f7`):
+- **Facts-engine** (`685db3f7`):
   - derived relations are SQL views in SCHEMA.md (`py_owner`, `py_function`, `py_call`, `cg_def`, …), read with include_str;
   - **memo per clause**, keyed (content hash, plan digest, schema version[, path]), content-pure clauses path-free;
   - plan digest = blake3(engine version, schema, rewrites, rule, inputs, physical plans);
@@ -356,9 +356,9 @@ Normative output: spec §21 + decision 0005 (§21 text is in t1). These notes co
 
 ## research/transducer-ir.md (308 lines, read in full)
 
-Sources: Tempo `e95613625` docs and code; N1562 `c674f4b6`. Predates spec-transducer (which normalises its recommendations).
+Sources: the predecessor `e95613625` docs and code; N1562 `c674f4b6`. Predates spec-transducer (which normalises its recommendations).
 
-### The IR as built in Tempo (§1)
+### The IR as built in the predecessor (§1)
 - A verified fixed-width structural automaton: **one 32-bit word** `opcode:u8|mode:u8|operand:u16`, so ≤ 65,536 instructions and table entries; local tables for strings, predicates, labels and u64 constants (:58-59).
 - It is a **path-enumerating tree walker** from supplied roots. A path = (pc, node, ordered capture list, repeat counters, cursor slots). Navigation with several results forks; FORK defers; only EMIT outputs. Logical order is depth-first, which parallel backends reproduce by sorting on (task ordinal, local ordinal). Cycles must progress (:41-55).
 - Structural ops (:63-82): STOP, KIND, FIELD, FLAGS, TEXT/SIZE, SUPERTYPE, CHILD, NEXT, PARENT, DESCEND, FOLLOWING, SAVE/RESTORE_CURSOR, CAPTURE, REPEAT_*, FORK policy, GOTO, EMIT.
@@ -373,9 +373,9 @@ Sources: Tempo `e95613625` docs and code; N1562 `c674f4b6`. Predates spec-transd
   - **on Metal one invocation covers every (file, program, root) task, packed as blocks of ≤ 256 tuples**;
   - grouped by execution signature;
   - count/scan/scatter output, no atomics.
-  - **Tempo's execution unit is already cross-file batched.**
+  - **The predecessor's execution unit is already cross-file batched.**
 - Determinism: errors per task; a failed task publishes nothing; an incomplete result is never a negative (:112).
-- Tempo's IR is canonical and newer; N1562's is an older copy plus `packed/**` ported from Landing v3/v4 (:114-117).
+- The predecessor's IR is canonical and newer; N1562's is an older copy plus `packed/**` ported from the predecessor repository's v3/v4 (:114-117).
 
 ### N1562's lowering (§0.2) — the anti-pattern
 - Tree relations (inside/has/precedes/follows/stopBy) were lowered to **SQL over navigation-edge rows**:
@@ -401,7 +401,7 @@ Sources: Tempo `e95613625` docs and code; N1562 `c674f4b6`. Predates spec-transd
   - within-document value joins between independent matches are expensive on Metal (they became L5 in derived-facts);
   - cross-file, repository, name graphs, allowlists, priorities and consolidation go to SQL.
 
-### Execution numbers (§3, M from Tempo docs)
+### Execution numbers (§3, M from the predecessor's docs)
 - CPU, root-terminal patterns (8 Python identifier patterns, 5,725 files): transducer **359 ms** vs ast-grep on tapes 818 ms vs ast-grep on tree-sitter trees 12,609 ms. Parse 8.65 s; tape encode/restore 4.57 s.
 - 128-comment quantifier stress: interpreter 37.6 ms vs Cranelift JIT 34.6 ms. That JIT was declared "not a JIT for transducer semantics" (a dispatcher calling Rust), replaced by a shared `native_ir.rs` emitting Cranelift + MSL.
 - **Metal, CPython 335 programs** (2,079 files, 82.9M tasks, 37.4M outputs, 85.1M normalized rows):
@@ -427,13 +427,13 @@ Sources: Tempo `e95613625` docs and code; N1562 `c674f4b6`. Predates spec-transd
 - Risks: Metal divergence for EXISTS/COUNT/ellipsis in the dynamic-frontier class; **per-edit launch count dominates for one file → fused or persistent kernels**; rehydration consistency.
 
 ### Bearing on Q1
-- "Transducer" in the final shape = Tempo's IR word format + verifier + side programs + shared `native_ir` lowering, with the path model changed to **set mode with barriers** (spec-transducer). The Metal failures Tempo hit are artefacts of exact SCM semantics plus per-batch repacking, not of the IR or of batching.
+- "Transducer" in the final shape = the predecessor's IR word format + verifier + side programs + shared `native_ir` lowering, with the path model changed to **set mode with barriers** (spec-transducer). The Metal failures the predecessor hit are artefacts of exact SCM semantics plus per-batch repacking, not of the IR or of batching.
 
 ---
 
 ## research/sql-vs-transducer.md (222 lines, read in full)
 
-Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b6576f0`, Moti's sql-dl60, facts-engine, facts-plan, spike indexes. Dated 2026-10-25.
+Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b6576f0`, sql-dl60, facts-engine, facts-plan, spike indexes. Dated 2026-10-25.
 
 ### Verdict (§0)
 - **About 85–90% of SQL-lowering code computes tape-local, per-document things** (or only reproduces exact operational semantics): T, T+ or D. About 10% is legitimately SQL: file-level candidate scope, cross-file composition, cross-file closures, stats-driven planning, consolidation (:37).
@@ -465,7 +465,7 @@ Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b
   - `compact_output_sql.rs` → D;
   - `query/plan/` (identity, scope, grouping, utility dedup) → **S, kept as `engine/plan/`**;
   - `sql_backend.rs` → reshaped boundary.
-- Moti: sql-dl60 frame engine → D; facts-engine `facts_memo` → S (storage of outputs per (doc digest, program digest)); facts-plan Y1/Y2 → S, with per-document extraction feeding Y1 → T.
+- Facts-engine: sql-dl60 frame engine → D; facts-engine `facts_memo` → S (storage of outputs per (doc digest, program digest)); facts-plan Y1/Y2 → S, with per-document extraction feeding Y1 → T.
 - The spike's linter analysis: **77 of 99 rules are single-file**; the caller composes anti-join/count/closure around structural fragments (:119).
 
 ### IR extensions named (§3), mostly absorbed into spec-transducer
@@ -525,12 +525,12 @@ Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b
 - **Nested sub-rules become strata.** The inner rule is materialised first as a sorted node set (postings or bitmap); the outer relation is a range query or set operation. **Dispatches are O(rule nesting depth) per batch**, not O(tree depth) and not O(instructions × generations) (:18-22).
 - Only monotone single-direction recursive utilities need O(depth) waves, GPU-driven in one command buffer (:24).
 
-### Why Tempo and N1562 hit their guards (:30-40)
+### Why the predecessor and N1562 hit their guards (:30-40)
 1. Path enumeration: DESCEND forks one frontier state per descendant (`metal_step_helpers.metal:36`).
 2. **One instruction per generation under exact ordering/containment: 44 launches per generation**; a two-node fixture hit the 200-dispatch cap at generation 5.
 3. Quadratic capture-containment antichains: 584 dispatches, 1.91 GB, 21.7M comparison pairs.
 - N1562 memory scales with live paths × state (per-path arenas).
-- Set semantics removes 2–3; the range formulation removes 1. Tempo's shape spike already showed broad grid kernels with count/scan/scatter (34 invocations, 40 ms).
+- Set semantics removes 2–3; the range formulation removes 1. The predecessor's shape spike already showed broad grid kernels with count/scan/scatter (34 invocations, 40 ms).
 
 ### Technique verdicts (:42-56, M unless noted)
 - Adopt: interval arithmetic; postings + range search (**20–2000× faster than any traversal; the same postings as the kind index**); `anc_P`/parent columns (0.14–0.63 ms to build over 5.4M nodes); SIMD-group cooperative scan for huge intervals (10.6 → 0.86 ms); indirect GPU-driven dispatch (70 dispatches in one command buffer, no CPU round trips).
@@ -577,7 +577,7 @@ Sources: SSC `b87eba3b` + its uncommitted fragment pivot, DLRE merged, N1562 `8b
 
 ### Bearing on Q1/Q3
 - The Metal execution model of the final shape is this stratified set formulation (spec-transducer's set stage) over the resident v9np columns + kind postings. Posting-based operators run at **0.005–0.05 ms GPU for whole-corpus queries**. That is why batching across the corpus is the point and per-file execution is wrong.
-- **Contradiction with v9np:** this design lists `parent` as resident per batch, and v9np does not store it. Resolution per §20.6: `par` is a resident sidecar keyed by tape digest (+32–46 MB for the gate corpora, per tempo-residency). Building `anc_P`-like columns costs 0.14–0.63 ms GPU.
+- **Contradiction with v9np:** this design lists `parent` as resident per batch, and v9np does not store it. Resolution per §20.6: `par` is a resident sidecar keyed by tape digest (+32–46 MB for the gate corpora, per predecessor-residency). Building `anc_P`-like columns costs 0.14–0.63 ms GPU.
 
 ---
 
@@ -702,14 +702,14 @@ Machine: M5 Max 40 GPU cores, macOS 26.4.1, runtime-compiled shaders, checked ag
   - unlowered constructs, which are counted compiler gaps, never executed elsewhere.
 
 ### Bearing on the final shape
-- This is the answer to Tempo's handover blocker, "dynamic frontier continuation": frontiers stay resident and GPU-scheduled waves continue them; the CPU only appends slot chunks on "not done".
+- This is the answer to the predecessor's handover blocker, "dynamic frontier continuation": frontiers stay resident and GPU-scheduled waves continue them; the CPU only appends slot chunks on "not done".
 - The final executor model = **stratified Datalog over node sets per batch, as GPU-scheduled waves in one command buffer**, with per-document batch splitting for budget. It is the same algebra as Typing-support's Datalog (T9), which runs the cross-file/name-keyed part on CPU natively. Relationship to check against T9: are Typing's node-local lattice waves the same machinery?
 
 ---
 
 ## research/fusion.md (117 lines, read in full). Superseded header: no CPU/JIT rerun (as metal-recursion)
 
-CPU only. A minimal copy of Tempo's interpreter + ANCESTOR, EXISTS/NOT_EXISTS/ACCEPT, DESCEND_KIND, set mode with label bitsets and per-pc reachable-label masks, lazy enumeration and peephole. Tape: a regular table from tree-sitter-python 0.25 over the Python 3.14 stdlib, **1,847 files, 8.54M nodes**. Min of 3–5 runs; differences < 1.3× are noise.
+CPU only. A minimal copy of the predecessor's interpreter + ANCESTOR, EXISTS/NOT_EXISTS/ACCEPT, DESCEND_KIND, set mode with label bitsets and per-pc reachable-label masks, lazy enumeration and peephole. Tape: a regular table from tree-sitter-python 0.25 over the Python 3.14 stdlib, **1,847 files, 8.54M nodes**. Min of 3–5 runs; differences < 1.3× are noise.
 
 ### Results (M)
 - **Shared relation-mask passes:**

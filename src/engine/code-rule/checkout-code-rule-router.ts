@@ -13,7 +13,9 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { worktreeRegistry } from "../catalog/repository-identity.js";
+import { placeWorktrees, placingWorktrees } from "../catalog/checkouts/checkout-placement.js";
+import { learnWorktreeList, worktreeRegistry, type WorktreeListLearning, type WorktreeRegistry } from "../catalog/repository-identity.js";
+import type { GitReads } from "../git.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
@@ -30,6 +32,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
+import { appendToGroup } from "./code-rule.js";
 import type { CheckoutCatalogs, CheckoutCodeRuleCatalog, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
 import type { SteerShell } from "./rerail-steer.js";
@@ -63,6 +66,9 @@ interface Lane {
   /** The count of `refreshCodeRules` calls when its rules were last read; it reads them again at its next use after another. */
   refreshed: number;
 }
+
+/** How many repositories' rules a session builds ahead as it opens (`#aheadRoots`): each may hold hundreds of MB compiled. */
+const BUILT_AHEAD_REPOSITORIES = 8;
 
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
   return {
@@ -110,6 +116,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
+  /** The build of the rules `openWorkspace` builds ahead. */
+  #builtAhead: Promise<void> = Promise.resolve();
 
   constructor(options: CheckoutCodeRuleRouterOptions) {
     this.#options = options;
@@ -118,7 +126,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     this.#gitIgnoreMatchers = options.gitIgnoreMatchers ?? new GitIgnoreMatchers();
   }
 
-  /** Interrupts the session's earlier runs once, then opens the starting checkout's lane. */
+  /**
+   * Interrupts the session's earlier runs once, then opens the starting checkout's lane, its rules compiled off the
+   * daemon's thread. Beside it, without holding the open, builds ahead the rules of the checkouts the session most
+   * likely edits next (`#aheadRoots`; `rulesBuiltAhead` settles once they are built), so its first edit there finds
+   * them compiled.
+   */
   async openWorkspace(sessionId: string): Promise<void> {
     if (this.#sessionId !== undefined || this.#closing) throw new Error("Checkout code-rule router cannot be reopened");
     this.#sessionId = sessionId;
@@ -127,7 +140,100 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     } catch (error) {
       process.stderr.write(`rerail: policy execution recording failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }
+    // Started first: its compiles take a line of their own, so they run beside the starting checkout's.
+    this.#builtAhead = this.#buildAhead(sessionId);
+    await this.#prepare(this.#options.startingCheckout);
     await this.#lane(this.#options.startingCheckout)?.opening;
+  }
+
+  /**
+   * Builds the rules of each checkout that owns one of `paths` (a tool call's files) and has no lane yet, compiling off
+   * the daemon's thread each rule no live catalog holds; settles once they are built. The call waits for its own rules
+   * as before, while every other session's events run. A build that fails here is left to the lane's own open, which
+   * reports it as before.
+   */
+  async prepareRules(paths: readonly string[]): Promise<void> {
+    if (this.#closing) return;
+    const roots = new Set(paths.flatMap(path => this.#owner(resolve(this.#sessionRoot, path))?.checkoutRoot ?? []));
+    await Promise.all([...roots].map(async root => await this.#prepare(root)));
+  }
+
+  /** Settles once the rules `openWorkspace` builds ahead are built, or their build ended. */
+  async rulesBuiltAhead(): Promise<void> {
+    await this.#builtAhead;
+  }
+
+  /** One repository at a time, so the daemon's thread reads one rule set between other sessions' events. */
+  async #buildAhead(sessionId: string): Promise<void> {
+    let roots: string[];
+    try {
+      roots = this.#aheadRoots(sessionId);
+    } catch (error) {
+      this.#notBuiltAhead(`session ${sessionId}`, error);
+      return;
+    }
+    for (const root of roots) {
+      if (this.#closing) return;
+      await this.#prepare(root, this);
+    }
+  }
+
+  /**
+   * The checkouts whose rules the session most likely needs next besides its own, one per repository and at most
+   * `BUILT_AHEAD_REPOSITORIES`: those its earlier checks ran in, newest first (`checkoutsEditedBy`), then the started
+   * repositories nested in its checkout, such as a clone kept in an ignored folder. The session's own repository is left
+   * out: its rules are built as the session opens, and its other worktrees share them.
+   */
+  #aheadRoots(sessionId: string): string[] {
+    const starting = this.#options.startingCheckout;
+    const nested = this.#nestedCheckoutsOf(starting).map(path => join(starting, path));
+    const repositories = new Set([this.#repositoryOf(starting)]);
+    const roots: string[] = [];
+    for (const root of [...this.#options.catalogs.checkoutsEditedBy(sessionId), ...nested]) {
+      const repository = this.#aheadRepositoryOf(root);
+      if (repository === undefined || repositories.has(repository) || roots.length >= BUILT_AHEAD_REPOSITORIES) continue;
+      repositories.add(repository);
+      roots.push(root);
+    }
+    return roots;
+  }
+
+  /** `#repositoryOf(root)`, or undefined when its record cannot be read: that checkout is left out, the others still build. */
+  #aheadRepositoryOf(root: string): string | undefined {
+    try {
+      return this.#repositoryOf(root);
+    } catch (error) {
+      this.#notBuiltAhead(root, error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Says on stderr why the rules of `where` were not built ahead, so a first edit there that compiles them can be
+   * traced. Nothing once the session closes, which lets go of its rules still waiting (`interrupt`).
+   */
+  #notBuiltAhead(where: string, error: unknown): void {
+    if (this.#closing) return;
+    process.stderr.write(`rerail: rules not built ahead for ${where}: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+
+  /** The repository `root` is a checkout of, or `root` itself while it is not recorded. */
+  #repositoryOf(root: string): string {
+    return this.#options.catalogs.checkout(root)?.repositoryKey ?? root;
+  }
+
+  /**
+   * `root`'s catalog built off the thread, while it may run rules and has no lane. `aheadFor` (this router): built for
+   * this session before any call asks, and let go of when the session closes (`interrupt`).
+   */
+  async #prepare(root: string, aheadFor?: object): Promise<void> {
+    try {
+      if (this.#closing || this.#lanes.has(root) || !this.#mayRun(root)) return;
+      await this.#options.catalogs.prepare(root, aheadFor);
+    } catch (error) {
+      // A call's build that fails is left to its lane's open, which builds the catalog on the thread and reports it there.
+      if (aheadFor !== undefined) this.#notBuiltAhead(root, error);
+    }
   }
 
   /**
@@ -232,10 +338,11 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * `acceptsPath` and `ignoresPath` for one walk. A path's full lookup (`#owner`) resolves its real path and looks for
-   * `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file. A file the walk found is
-   * no link, so its checkout is its folder's: each folder gets the full lookup once, for itself and its files. A
-   * checkout recorded while the walk runs owns its files from the next walk.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk. A path's full lookup (`#owner`) resolves its real path
+   * and looks for `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file, and the
+   * grouping of what it found by checkout a third. A file the walk found is no link, so its checkout is its folder's:
+   * each folder gets the full lookup once, for itself and its files. A checkout recorded while the walk runs owns its
+   * files from the next walk.
    */
   walkView(): Required<WalkView> {
     const folders = new Map<string, CheckoutOwner | undefined>();
@@ -252,6 +359,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return {
       acceptsPath: path => this.#accepts(fileOwner(path)),
       ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory),
+      sourceRoot: path => fileOwner(path)?.checkoutRoot,
     };
   }
 
@@ -438,15 +546,30 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * The other worktrees Git registers for the session's checkout that may run rules: a shell write in one is an edit
    * like any other, wherever the worktree sits and whatever the session's checkout ignores. The walk cannot tell which
-   * session wrote a file, so what it finds there is recorded under the repository and steers no session.
+   * session wrote a file, so what it finds there is recorded under the repository and steers no session. `registry` is
+   * the list `learnWorktreeRoots` gave as stored, in the same synchronous run; without it the registry is read now.
    */
-  worktreeRoots(): string[] {
+  worktreeRoots(registry: WorktreeRegistry | undefined = worktreeRegistry(this.#options.startingCheckout)): string[] {
     const starting = this.#options.startingCheckout;
-    const registry = worktreeRegistry(starting);
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
     return (registry?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
       .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
+  }
+
+  /**
+   * Git's list of the worktrees `worktreeRoots` reads, learnt through `git` as a process no thread waits on and kept as
+   * the registry keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
+   * While the stored list stands, that list, for a `worktreeRoots` in the same synchronous run to take; but where a
+   * session opening there is placing the listed worktrees (`placeWorktrees`), that pass, joined through `git`, so the
+   * walk after it asks Git for none of them itself. Undefined for a checkout placed by a kept acceptance, whose list the
+   * registry reads as before.
+   */
+  learnWorktreeRoots(git: GitReads): WorktreeListLearning | undefined {
+    const learnt = learnWorktreeList(this.#options.startingCheckout, git);
+    if (learnt?.kind !== "stored" || !placingWorktrees(learnt.registry)) return learnt;
+    const { registry } = learnt;
+    return { kind: "learning", done: git.run(signal => placeWorktrees(registry, { signal })) };
   }
 
   /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */
@@ -475,8 +598,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const partitioned = new Map<Lane, CodeRuleEdit[]>();
     for (const edit of batch.edits) {
       const routed = this.#route(edit.path);
-      if (routed === undefined) continue;
-      partitioned.set(routed.lane, [...(partitioned.get(routed.lane) ?? []), { ...edit, path: routed.path }]);
+      if (routed !== undefined) appendToGroup(partitioned, routed.lane, { ...edit, path: routed.path });
     }
     const responses: CodeRuleResponse[] = [];
     for (const lane of [...this.#lanes.values()]) {
@@ -500,6 +622,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /** Every lane checks in the router's scope: in repository scope a steering wait waits for a walk's audits too. */
   steeringWaitsForLog(): boolean {
     return this.#settings.scope === "repository";
+  }
+
+  turnEnded(): void {
+    for (const lane of this.#lanes.values()) lane.enforcer.turnEnded();
   }
 
   async settle(): Promise<void> {
@@ -541,12 +667,14 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * Stops every lane. A lane no walk or tool call used since the last refresh reads its rules once more first: a rule a
    * file written in its checkout's `.rerail/rules` leaves unrunnable there is recorded as skipped when the session ends,
-   * if not before.
+   * if not before. The rules the session built ahead that no lane took are let go of, and those still waiting to compile
+   * for it alone never do (`CheckoutCatalogs.releaseAhead`).
    */
   interrupt(options?: AuditorCloseOptions): void {
     if (this.#closing) return;
     for (const lane of [...this.#lanes.values()]) if (lane.refreshed !== this.#refreshes) this.#readRulesAgain(lane);
     this.#closing = true;
+    this.#options.catalogs.releaseAhead(this);
     for (const lane of this.#lanes.values()) lane.enforcer.interrupt(options);
   }
 

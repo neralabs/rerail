@@ -251,7 +251,7 @@ pending pre-lock measurements**, never accepted.
 **Requirements from the discussion** (P session 2026-10-25):
 - The format must be completely regular. v4 to v7 were irregular in intermediate versions (overflow
   pairs, sorted flag lists, alias tables), and it doesn't work unless it is regular.
-- ast-index-spike experimented with multiple trees for different ranges within a file. That has to
+- SQL index prototype experimented with multiple trees for different ranges within a file. That has to
   be taken into account (embedded documents, Blade, Vue).
 - Don't overload the tape with things only associated with the source structure. Per-file alias
   string tables, the digest and length header, and Blade's omissions are kept off the tape: in
@@ -260,11 +260,11 @@ pending pre-lock measurements**, never accepted.
 - Blade stores nothing more or less than the tree-sitter-php tape it replaced. Today its
   compiled-view tape drops nodes over synthetic placeholder segments, so a directive call has no
   `function` child. Proposed fix: the plain tree-sitter-php tape, with omission through the segment
-  map in `file_documents`. Error spans stay in the tape as tree-sitter emits them, as ast-index-spike does. It
+  map in `file_documents`. Error spans stay in the tape as tree-sitter emits them, as the SQL index prototype does. It
   is fine for Blade to store something compatible with the generic structure, in a generic way.
-- Tapes must stay processable in SQL with ast-index-spike techniques. A format change has to show
+- Tapes must stay processable in SQL with the SQL index prototype techniques. A format change has to show
   clear benefits; a size increase (8 → 11 B/node, about 30%) was not acceptable, hence v9np.
-- Tempo keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
+- The predecessor keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
   at-rest format and the resident page format should be designed together.
 
 **Pre-lock measurements** (`research/tape-regularity.md` "Open measurements"). The spike used
@@ -983,7 +983,7 @@ S8 measures these with interleaved arms. Where the memory goes is the first ques
 ## O31. Per-node structures beside the tape
 
 Closed (2026-11-02). The user's ruling: only per-node structures stored in the database must go
-(ast-index-spike: "nothing may *store* one row per node"). None is: S7's store, 322,472 nodes,
+(SQL index prototype: "nothing may *store* one row per node"). None is: S7's store, 322,472 nodes,
 peaks at `derivation_inputs` with 0.12 rows/node. `no_relation_stores_a_row_per_node` and S7 now
 assert at most 0.25 rows/node per table. The in-memory structures the linter first listed
 (`TapeDoc`'s records, `Facts`, the facts vtab's projection, `MetalNode`, Forte's and literal
@@ -1607,7 +1607,7 @@ one run. There were five causes:
 **Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
 executor's, and the admission spike), 104 s at load 40-73.
 
-## O84. The Pulling-it-all-together merge (41f1c88e5): what was checked, and P's tests that need P's addon
+## O84. The PIAT merge (41f1c88e5): what was checked, and P's tests that need P's addon
 
 **Native code.** Every native file P changed since the merge base (`5cf4246e`) was checked hunk by
 hunk against this tree. All but 59 hunks are here. 35 of the 59 are in `matcher/anchors*`: P's
@@ -1620,7 +1620,7 @@ and SQL anchor engine are production in P and test-only here (`CLAUSE_KINDS` and
 **TS and scripts.** Taken from P as they were (the schema's `filePath`, `pythonFString`,
 `calls.graph`, `query.regex.lines`, `layout.line`, which this native compiles; the `data-layer`
 pack in the catalog, whose `rules` list is empty). Checked against this branch's addon (a
-`--profile profiling` build) and against P's own (`Pulling-it-all-together/native/*.node`, built
+`--profile profiling` build) and against P's own (`<PIAT>/native/*.node`, built
 after P's last native commit):
 - Tests that compile a `relational` clause fail here with "unknown field `relational`" and pass on
   P's addon. `vitest.config.ts` leaves them out unless `RERAIL_RELATIONAL_TESTS=1`.
@@ -2700,7 +2700,7 @@ definitions whose digest changed, and base rows changed under `(document, preord
 
 **Closure:** the distributions recorded in 0083, and the symbol key's form decided.
 
-**Measured** (2026-11-08) on `data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+**Measured** (2026-11-08) on the data-layer repository (13,088 `.py` files, 218,046 definitions), last 224 non-merge
 commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
 count). The tool is a dev script, not engine code.
 - **The commits are bulk.**
@@ -3035,7 +3035,7 @@ and both in a `rr_in_annotation_0_*` relation.
 
   It persists on the tree with every branch merged (survivors in place, scalar sharing, exports in memory;
   2026-11-08). One session over steps 01–20 matches a full run until step 05. From step 05 on, `call_open` has 2
-  extra rows (`l2055_lazy_result/tests/test_lazy_result_bugs.py:1067`), unchanged through step 20. Survivors in
+  extra rows (one call in a test of the lazy-result package), unchanged through step 20. Survivors in
   place is not the cause, because the departure is older than that spike. On the merged tree, the row is
   `(c, b) = (…6151, …5048)` with `e = …6154`, and the rule now reads `fl684_ext_base_up__old(c, e),
   pv__del(e, 158, b), !special_base__old(e)`. Every input row is present: `ext_base_up__old(c, e)`,
@@ -3336,20 +3336,18 @@ or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. T
 
 **Measured (2026-11-09), `test-budget`'s scope** (`conform/`, `data_layer_testing/`, the root's files; 1,601
 files): 1,127 of 1,143 exact, total 13,585; 262 s user + 4.6 s sys, load 90–130. The four files where the rules and
-the model differ read an enum defined outside the scope (`MatchProducerFamily` in `l1470_matching_contracts/`,
-`BranchTipMaterialization` and two more in `data_layer/`); each is reported open and counted as 1.
+the model differ read an enum defined outside the scope (one in the matching contracts package, three in
+another package); each is reported open and counted as 1.
 
 **Beyond the model (2026-11-09).** Lists a function builds by `append`/`extend`/`+=` under `for` loops, helpers
 with several returns (the largest), function-local names, and `range` bounds given as `len(x)`.
-`test_speculative_publication_scenarios.py` (pytest 66, model 13) and `test_branches.py` (18, model 8) are now
+The publication-scenario test (pytest 66, model 13) and a branches test (18, model 8) are now
 exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s user + 4.2 s sys, load 20–60; the
-only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
+only files below the model are the four enum files above. A list built by introspection (the case-matrix test, 819) has no length; it stays in
 `collect_disabled`.
 
 **The enums need only their documents (2026-11-09).** A scoped run of the four files, plus each enum's re-export
-chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matching_contracts/graph_producer_models.py`;
-`data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
-`l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
+chain, counts all four exactly (22, 12, 25, 40): no rule change.
 
 **Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Through the `values` phase
 (O-names-cost) the four enum files count exactly on a 212-file root; over the whole workspace that waits on the
@@ -3424,7 +3422,7 @@ the wrapper's, in bytes, not the engine's.)
   files, their conftests, each enum's re-export chain (19 files), and `data_layer_testing/` and the root's files
   (`pcE.rr`'s scope). `struct` and `values` run over all 212; `pytest-collect` reads `values__len`. All four exact
   (22, 12, 25, 40), none open. Cold 25.0 s CPU (318 MB peak RSS); phases reused 13.9 s; with the per-file memo on,
-  19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
+  19.4 s then 5.6 s. A versioned full-text test's 12 needs `data_layer_testing`: its test class
   is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
   counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
 - What a cold phase spends, measured on samples (237, 591 and 2,063 files), and fixed (2026-11-09; outputs
@@ -3517,7 +3515,7 @@ CPU (49.9 user + 5.7 sys), 56 s wall, load 15–20.
 
 ## O-metal-fact-rows. Metal tests facts the host found
 
-**Status:** open (2026-11-09, RER-131; deferred by the user). On Metal, a clause's facts are found on the host before
+**Status:** open (2026-11-09, decision 0161; deferred by the user). On Metal, a clause's facts are found on the host before
 any pass (`fact_rows` in `transducer/packed/compile/matcher.rs`'s `metal`: `Fact::found` per tape, the `tokens` facts'
 regexes over each token text included), and the device only tests the rows it is handed (`Pass::Fact`, the pattern
 kernel's `FACT` case). That is host evaluation on the Metal path, which is not allowed: what Metal's kernels answer,
@@ -3529,7 +3527,7 @@ gone from `metal`, and the entry removed from `REMAINING`; S7's keys equal on al
 
 ## O-metal-root-programs. After Metal labels a batch, the wave runs the root programs on the host
 
-**Status:** open (2026-11-09, RER-131; deferred by the user). `LoweredWave::labelled_metal` hands the wave the labels
+**Status:** open (2026-11-09, decision 0161; deferred by the user). `LoweredWave::labelled_metal` hands the wave the labels
 as views of its tapes, and `demand(batch)` then runs each clause's root program on the host for its results
 (captures, spans), which a label keeps only as bits. The root walks Metal does run (`root_records_*`, `RootsFound`)
 cover a program that is a micro walk of at most 32 frames; any other, a walk that overflowed, or records past the
@@ -3971,7 +3969,7 @@ seed's own start and the engine's.
 
 **Seen (2026-11-12).** Tree-sitter ends a quantified sibling run at an anonymous
 sibling: `(list ((identifier) @item)+)` on `items = [a, b, c]` gives three
-matches of one item each. The tape stores no implied token (RER-131), so the
+matches of one item each. The tape stores no implied token (decision 0161), so the
 transducer's run goes on over `a b c` and gives one match of three items.
 `repetition_across_an_implied_token_is_one_run_on_the_tape` pins both results.
 

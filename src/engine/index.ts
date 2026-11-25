@@ -12,6 +12,8 @@ export {
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
+  type EventAnswerFacts,
+  type HeldSession,
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
@@ -24,9 +26,9 @@ export {
 export { auditRequestSchema } from "./audit/audit-control-schema.js";
 export { SqliteAuditControlStore } from "./audit/audit-control.js";
 export { SqliteAuditReader, SqliteAuditStore } from "./audit/audit-store.js";
-export { type AuditInput, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
+export { type AuditInput, type AuditRecord, type AuditRecorder, type AuditResult, isUnreadFailure, UNREAD_FAILURE_HEAD } from "./audit/audit.js";
 export { loadPackRuleDocuments } from "./catalog/rule-documents.js";
-export { INSTALLED_PACKS_DIR, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "./catalog/rule-catalog.js";
+export { INSTALLED_PACKS_DIR, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, notRunReason, readRuleCatalog } from "./catalog/rule-catalog.js";
 export { WORKTREE_PACK_ID, WORKTREE_PUBLISHER, WORKTREE_RULES_FOLDER, worktreeRuleCatalog } from "./catalog/worktree-pack.js";
 export { approve, currentSubject, isApproved, packSubject, ruleSubject } from "./catalog/rule-approval.js";
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
@@ -66,10 +68,19 @@ export {
   rulePackPackageName,
   rulePackPackageOf,
   rulePackPackageSchema,
+  RULE_RISKS,
 } from "./catalog/rule-packs.js";
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
-export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
+export { type JsonRuleDocument, type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
+export {
+  describeRerailRules,
+  RERAIL_DOCUMENT_EXTENSION,
+  unsupportedRerailRule,
+  type RerailDescription,
+  type RerailRule,
+} from "./catalog/rerail-rules/rerail-rule.js";
+export { runRerailPolicies, type RrDescription, type RrFinding, type RrRunOutcome } from "./rr/rr-runner.js";
 export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export { RepositoryWorktreeWalks } from "./code-rule/worktree-walks.js";
 export {
@@ -95,15 +106,17 @@ export {
   asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
-export { steerOrigin } from "./code-rule/steer-origin.js";
+export { steerOrigin, steerTitle, type SteerRuleSource } from "./code-rule/steer-origin.js";
 export { parseJsonWithoutDuplicateKeys } from "./json-duplicate-keys.js";
 export {
   encodeCodeRuleWorkspaceRequest,
   RESULT_PAGE_BYTES,
   loadNativeBinding,
+  NATIVE_ENGINE_SYSTEMS,
   type NativeBinding,
   type NativeCodeRuleDslWorkspace,
   type NativeCompiledCodeRuleDsl,
+  nativeEnginePackageName,
   nativePlatformSuffix,
   resolveNativeBindingPath,
 } from "./native/native.js";
@@ -111,8 +124,9 @@ export { LOCKS_DIR } from "./native/file-lock.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
-export { processStartedAt } from "./process-liveness.js";
+export { endProcessStartedByPowerShell, ENGINE_READER_ANSWER_MS, processStartedAt } from "./process-liveness.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
+export { leaveUntaken, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, UNTAKEN_WATCH_MARK, untakenFolderId, type UntakenPass } from "./storage/untaken-events.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export { commandLine, shellWord, type Shell } from "./command-line.js";
 export {

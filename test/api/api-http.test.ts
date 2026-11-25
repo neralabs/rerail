@@ -247,6 +247,16 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordIgnoredEdit(SESSION, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
+    // A place a walk could not check is recorded once per key, however many turn ends meet it, whatever its text says then.
+    const locked = { boundary: "turn" as const, path: "src/locked", reason: "EACCES: permission denied, opendir '/repo/src/locked'", key: JSON.stringify(["src/locked", "EACCES"]) };
+    sessionStore.recordDiscoveryGap(SESSION, locked);
+    sessionStore.recordDiscoveryGap(SESSION, { ...locked, reason: "EACCES: permission denied, open '/repo/src/locked'" });
+    const large = { path: "big.bin", reason: "Source exceeds 1000000 byte policy limit" };
+    sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", ...large, key: JSON.stringify(["big.bin", large.reason]) });
+    // The record that says the walks met more places than it takes, once: no place, neither counted nor listed as one.
+    const more = { boundary: "turn" as const, reason: "The walks could not check more than 1000 places; the rest are not recorded", more: true as const };
+    sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
+    sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
     // More than a transcript page of later events: the dashboard opens on those and never loads the gaps. One
     // transaction writes them all: a commit of its own for each, as the session store makes, waits on the disk 600
     // times, seconds on a busy machine.
@@ -256,8 +266,36 @@ describe("Rerail API over HTTP", () => {
       }
     })();
 
-    expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
-      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2 });
+    const { gaps } = await getJson<{ gaps: Record<string, unknown> }>(`/api/sessions/${SESSION.sessionId}`);
+    expect(gaps).toEqual({
+      droppedEvents: 9, lostEvents: 0, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
+      // Each place with why, in the order the session met them, for the person to act on.
+      discoveryGapPlaces: [
+        { boundary: "turn", path: "src/locked", reason: locked.reason, observedAt: expect.any(Number) },
+        { boundary: "turn", ...large, observedAt: expect.any(Number) },
+      ],
+    });
+    // The API's published answer (/openapi.json) names each of these fields, so a client written against it reads them.
+    type Documented = { paths: Record<string, { get?: { responses: Record<string, { content?: Record<string, { schema?: { properties?: { gaps?: { properties?: Record<string, unknown> } } } }> }> } }> };
+    const documented = await getJson<Documented>("/openapi.json");
+    const declared = documented.paths["/api/sessions/{sessionId}"]?.get?.responses["200"]?.content?.["application/json"]?.schema?.properties?.gaps?.properties;
+    expect(Object.keys(declared ?? {}).sort()).toEqual(Object.keys(gaps).sort());
+  });
+
+  it("lists a session's other places, to a person and to the bridge, and every event in its place, when one place's row does not parse", async () => {
+    const place = (path: string) => ({ boundary: "turn" as const, path, reason: `EACCES: permission denied, opendir '/repo/${path}'`, key: JSON.stringify([path, "EACCES"]) });
+    sessionStore.recordDiscoveryGap(SESSION, place("src/a"));
+    database.insert(events).values({ sessionId: SESSION.sessionId, eventId: "source-discovery-gap:bad", kind: "source-discovery-gap", observedAt: 2, payloadJson: "{not json" }).run();
+    sessionStore.recordDiscoveryGap(SESSION, place("src/b"));
+
+    const listed = [{ path: "src/a" }, { path: "src/b" }];
+    expect((await getJson<{ gaps: { discoveryGapPlaces: unknown } }>(`/api/sessions/${SESSION.sessionId}`)).gaps.discoveryGapPlaces).toMatchObject(listed);
+    // The bridge reads the places its session's record holds from the same rows as the workspace opens.
+    expect(sessionStore.discoveryGaps(SESSION.sessionId, 1_001)).toMatchObject(listed);
+    // A person's read of the session's events lists that row too, with no payload, so a page holds every row it reads.
+    const { events: listing } = await getJson<{ events: Array<{ eventId: string; payload: unknown }> }>(`/api/sessions/${SESSION.sessionId}/events`);
+    expect(listing.filter(event => event.eventId.startsWith("source-discovery-gap")).map(event => event.payload))
+      .toEqual([expect.objectContaining(listed[0]), null, expect.objectContaining(listed[1])]);
   });
 
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {
@@ -637,7 +675,7 @@ describe("Rerail API over HTTP", () => {
     expect((await app.request("/api/repositories", { headers: { origin: "https://evil.example", host: PAGE_HOST } })).status).toBe(200);
   });
 
-  it("documents conditional responses and the agent refusal", async () => {
+  it("documents conditional responses, the agent refusal and a write not confirmed on the disk", async () => {
     const document = await getJson<{ paths: Record<string, Record<string, { operationId: string; responses: Record<string, unknown> }>> }>("/openapi.json");
 
     expect(document.paths["/api/repository/rules"]?.get?.operationId).toBe("repository_rules_get");
@@ -646,6 +684,9 @@ describe("Rerail API over HTTP", () => {
     }
     expect(document.paths["/api/repository/settings"]?.put?.responses["304"]).toBeUndefined();
     expect(document.paths["/api/repository/settings"]?.put?.responses["403"]).toBeDefined();
+    expect(document.paths["/api/repository/settings"]?.put?.responses["503"]).toMatchObject({
+      description: expect.stringContaining("not-on-disk: the write was made but could not be confirmed on the disk"),
+    });
     for (const removed of ["/api/rules", "/api/rules/{id}", "/api/rule-context"]) expect(document.paths[removed]).toBeUndefined();
   });
 

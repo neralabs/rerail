@@ -8,42 +8,48 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `index.html` is the frame: the top bar over both columns, the sidebar (`#sidenav`), the content column (`#content`)
   and the sheet (`#panel`). `app.js` renders it and routes clicks to the region's actions.
 - `frame/` draws the frame: `topbar.js` the top bar (sidebar toggle, the wordmark, which opens Overview, repository
-  pill and menu, status) and `sidenav.js` the sidebar (Overview, one item per added rule pack with how many of its
+  pill and menu, status with the version, and while a newer Rerail is out "Update available", whose popover gives the
+  command to paste into a coding agent's session, `/rerail-update`, with Copy and Details in Settings) and `sidenav.js` the sidebar (Overview, one item per added rule pack with how many of its
   rules are on, Created by you, Add rule packs, Create a rule, History by rule and by session, Merge Assist with how
   many of its conflicts are open and not quiet, Settings).
 - `routes.js` holds the routes as pure functions of the URL: `#overview`, `#pack/<id>`, `#created`, `#packs`,
   `#packs?review=1`, `#create`, `#history` (`?rule=<id>`, and `?outcome=steered|logged` for its chip), `#sessions`
-  (`?filter=violations|declined` for its chip), `#settings`, `#merge` (`?conflict=<id>` brings that conflict
+  (`?filter=violations|declined` for its chip), `#settings` (`?section=about` scrolls to About Rerail), `#merge` (`?conflict=<id>` brings that conflict
   into view, as the session's line links it) and `#rule/<id>`, and the links from before v8 (`#rules`, `#activity`,
   `#rule-packs`). `shell.js` applies them and holds what every view shares: render on demand, the toast and clipboard,
   the theme, the writes, opening and closing the sheet, navigation.
 - `actions.js` holds the actions any region may carry (open the sheet, move to a view or repository, a rule's
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
-- `views/` holds one module per view (`overview`, `pack` for a pack page and Created by you, `packs` for the catalog
-  and the review, `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
+- `views/` holds one module per view (`overview`, whose banner for a newer Rerail copies `/rerail-update`; `pack` for
+  a pack page and Created by you; `packs` for the catalog, which lists the packs Rerail suggests for the repository
+  first, each with why, and the review; `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
   place (`access`, `no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
   Merge Assist's page shows, while it is on, its status strip, its Settings (the conflict hook command) and the
   conflicts with work in flight: open ones as cards, those not quiet first and then the newest, a quiet one saying it
   is quiet, with Dismiss (not a conflict) as the one action, then the dismissed ones folded with who dismissed each
   and when. It renders other people's titles, summaries, hunks, names and links as text nodes only, and links a pull
   request only when `safePeerUrl` accepts it.
-- `render/` holds what several views or the sheet share: a pack page's rule table and its controls (`rules.js`,
-  `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
+- `render/` holds what several views or the sheet share: a pack page's rule table (Rule · Enforcement · Violations ·
+  On/off, as Overview's Most violations logged) and its controls (`rules.js`, `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
-  sheet (`pack-panel.js`), the session timeline (`timeline.js`), and a command to copy (`command.js`).
-- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
+  sheet (`pack-panel.js`: why Rerail suggested it, and until it is added its rules under Start on and Start off), the
+  session timeline (`timeline.js`), and a command to copy (`command.js`).
+- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`) whenever the daemon's
+  change stream (`GET /api/changes`, followed through `api.js`) says something changed, at most every 5 s while changes
+  keep coming;
   `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes
   rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the repository (with Undo),
   and `settings-writes.js` writes rule settings. Merge Assist's writes go through `writeMergeAssist` in `poll.js`:
   each answers the checkout's status, which replaces the page's unless a later write was sent, and a read sent before
   the write answered is dropped.
-- Pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and a pack's suppression comments),
+- Pure derivations, without the DOM: `derive.js` (a rule's title, mode, scope and how a pack's rules treat suppression comments),
   `first-open.js` (the Overview: the repository's first-open state, the Violations steered tally, the Most violations
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
-  whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists under
+  whole-pack switch's state, the catalog's kinds and order and the packs suggested for the repository, and a pack
+  sheet's rules), `history-model.js` (which rules History by rule lists under
   its All · Log only · Steered · Declined chips, each violation in one outcome, and which one it shows), `sessions-model.js` (a session's events as turns and tool
-  calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states and
-  the install date), `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and
+  calls, and the steers its coding agent declined, joined to their cards), `settings-model.js` (coding agent states,
+  the install date, and the version: its release notes and whether a newer one is out), `repo-rules.js` (what Settings and the repository menu say of a repository's rule counts) and
   `merge-model.js` (Merge Assist's conflicts and their order, its status strip, readiness checklist and Settings form,
   the sidebar's count, and which pull request links are safe to open).
   `format.js` formats numbers and dates; `dom.js` builds and reconciles elements.

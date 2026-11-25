@@ -2,7 +2,7 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput, callToolLabel } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, lostEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, discoveryGaps, discoveryGapsMore, discoveryGapPlaces, outputText, describeInput, callToolLabel } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
@@ -24,8 +24,9 @@ function build(tl) {
     start: h("div.bound", null, "Session started"),
     turns: h("div.turns"),
     end: h("div.bound"),
+    places: h("div.tlplaces", { hidden: true }, h("p"), h("ul")),
   };
-  tl.replaceChildren(t.empty, t.loading, t.earlier, t.start, t.turns, t.end);
+  tl.replaceChildren(t.empty, t.loading, t.earlier, t.start, t.turns, t.end, t.places);
 }
 
 /* ---------- event rows ---------- */
@@ -360,20 +361,52 @@ function renderEarlier(earlier) {
   setText(t.earlier.firstChild, ["Load earlier", ...parts].join(" · "));
 }
 
+/**
+ * The `n` places the session's record holds, in words, and when the check met more than the record takes (`more`), that
+ * it met more: true for 1,001 places met as for 10,000, and the record that says so is no place.
+ */
+const placesCounted = (n, more) => (more ? `more than ${fmt(n)} places; ${fmt(n)} recorded` : `${fmt(n)} ${plural(n, "place")}`);
+
+/** Each count of what Rerail did not see of a session, in the order the timeline says them, with the clause for a count above 0. */
+const COVERAGE_CLAUSES = [
+  [droppedEvents, n => `${fmt(n)} ${plural(n, "event")} never reached Rerail`],
+  [lostEvents, n => `the records of ${fmt(n)} ${plural(n, "event")} were lost when the computer stopped`],
+  [uncheckedBoundaries, n => `rules had not yet seen shell edits at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
+  [discoveryGaps, (n, sess) => `rules could not fully check part of the repository (${placesCounted(n, discoveryGapsMore(sess))})`],
+  [codeRulesPendingBoundaries, n => `code rules were not yet running at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
+  [ignoredEdits, n => `${fmt(n)} ${plural(n, "edit")} went unchecked because Git ignores the file`],
+  [ignoreRuleChanges, n => `Git's ignore rules changed ${n === 1 ? "once" : `${fmt(n)} times`}`],
+];
+
 /** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
-function coverageGaps(sess) {
-  const dropped = droppedEvents(sess);
-  const unchecked = uncheckedBoundaries(sess);
-  const rulesPending = codeRulesPendingBoundaries(sess);
-  const ignored = ignoredEdits(sess);
-  const ruleChanges = ignoreRuleChanges(sess);
-  return [
-    ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
-    ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
-    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
-    ...(ignored === 0 ? [] : [`${fmt(ignored)} ${plural(ignored, "edit")} went unchecked because Git ignores the file`]),
-    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}`]),
-  ].join("; ");
+export function coverageGaps(sess) {
+  return COVERAGE_CLAUSES.flatMap(([count, clause]) => {
+    const n = count(sess);
+    return n === 0 ? [] : [clause(n, sess)];
+  }).join("; ");
+}
+
+/**
+ * The heading over the `shown` places listed: how many of the places the session's record holds they are, and when the
+ * check met more than the record takes, that it did. It reads both from the session, as `coverageGaps` does. Its words
+ * hold for every reason a place can have, given beside it: what happened to shell edits there is the reason's to say.
+ */
+export function placesHeading(sess, shown) {
+  const total = discoveryGaps(sess);
+  if (discoveryGapsMore(sess)) return `Rules could not fully check more than ${fmt(total)} places; the first ${fmt(shown)} of the ${fmt(total)} recorded:`;
+  const which = shown < total ? `the first ${fmt(shown)} of these ${fmt(total)} places` : plural(shown, "this place", "these places");
+  return `Rules could not fully check ${which}:`;
+}
+
+const placeKey = place => JSON.stringify([place.path ?? "", place.reason]);
+const placeItem = place => h("li", null, h("code", null, place.path ?? "the whole walk"), h("span", null, ` · ${place.reason}`));
+
+/** Each place the session's shell-write check could not check, with why: what a person acts on. Hidden while there are none. */
+function renderPlaces(sess, loaded) {
+  const places = loaded ? discoveryGapPlaces(sess) : [];
+  setAttr(t.places, "hidden", places.length === 0);
+  setText(t.places.firstChild, placesHeading(sess, places.length));
+  syncChildren(t.places.lastChild, places, placeKey, placeItem, () => undefined);
 }
 
 /** The audited-clean note, and what it says of the session's coverage. */
@@ -417,6 +450,7 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   renderCleanNote(sess, gaps, loaded, clean);
   renderLoading(loaded, quietEmpty, total);
   renderBounds(rail, sess, gaps, { loaded, quietEmpty, earlier });
+  renderPlaces(sess, loaded);
   syncChildren(t.turns, visibleTurns(turns, quietEmpty), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
   renderEarlier(earlierToOffer({ loaded, clean, earlier }));
   placeTicks(rail, tl);

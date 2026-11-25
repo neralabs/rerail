@@ -42,24 +42,6 @@ pub const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
 /// included) gets no server graph, as past `MAX_GRAPH_FILES`: the host's audit bound
 /// (`AUDIT_MAX_FILES`).
 pub const MAX_GRAPH_ENTRIES: usize = 100_000;
-/// The folders a server graph does not read, beside hidden ones: the host's
-/// `IGNORED_DIRECTORIES` (code-rule-enforcer.ts), which its repository walk skips.
-const IGNORED_DIRECTORIES: [&str; 14] = [
-    ".git",
-    ".hg",
-    ".svn",
-    ".rerail",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    "dist",
-    "build",
-    ".next",
-    ".turbo",
-    "coverage",
-    "target",
-    "vendor",
-];
 /// A source larger than this is not read for imports; it imports nothing.
 pub const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 /// How many `extends` a configuration chain follows.
@@ -558,23 +540,47 @@ fn strip_outside_strings(text: &str, skip: impl Fn(&[u8], usize) -> Option<usize
     out
 }
 
-/// What a cached summary stands on: the file's modification time and length and, on unix, its
-/// status-change time and inode, which a rewrite restoring the modification time (an archive's
-/// extraction, `rsync -t`) still moves.
+/// What a cached summary stands on: the file's modification time and length, and what a rewrite
+/// restoring the modification time (an archive's extraction, `rsync -t`, a copy that keeps times)
+/// still moves: on unix its status-change time and inode; on Windows NTFS's change time, which
+/// every write and every time set moves, and its file id, both read with its folder's listing
+/// (`listing`). That id is the listing's 64-bit one, which ReFS, whose ids are 128-bit, does not
+/// keep unique: there it tells a file a rename put in place only with the two times beside it.
+/// The listing gives the copy of the times that the folder's entry for the file's name holds,
+/// which NTFS refreshes only when the last handle to the file closes, and only for the name that
+/// handle opened: a rewrite through another hard link leaves this stamp as it was, and so does one
+/// whose writer still holds its handle, until it closes. `read_dir` gives its modification time
+/// and length from the same copy. A restore reads the file's own record (`git_workspace`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Stamp {
+pub struct Stamp {
     modified: SystemTime,
     length: u64,
     #[cfg(unix)]
     changed: (i64, i64),
     #[cfg(unix)]
     file: (u64, u64),
+    #[cfg(windows)]
+    changed: i64,
+    #[cfg(windows)]
+    file: i64,
+    /// Whether the file's data is not all on this disk (`git_workspace::recalls_data`).
+    #[cfg(windows)]
+    recalls: bool,
 }
 
+#[cfg(windows)]
+impl Stamp {
+    /// The stamp the folder's listing read with the file; `None` as below.
+    pub fn of(facts: &listing::Facts) -> Option<Self> {
+        facts.stamp()
+    }
+}
+
+#[cfg(not(windows))]
 impl Stamp {
     /// `None` where the file system gives no modification time: such a file's summary is never
     /// cached.
-    fn of(metadata: &std::fs::Metadata) -> Option<Self> {
+    pub fn of(metadata: &std::fs::Metadata) -> Option<Self> {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
         Some(Self {
@@ -585,6 +591,53 @@ impl Stamp {
             #[cfg(unix)]
             file: (metadata.dev(), metadata.ino()),
         })
+    }
+}
+
+impl Stamp {
+    /// Whether `cached` shows the same last write as this stamp: its modification time and
+    /// length. A change to the file's permissions moves NTFS's change time alone, so a source
+    /// that can no longer be read keeps the summary of that write.
+    #[cfg(windows)]
+    fn same_write(&self, cached: &Self) -> bool {
+        self.modified == cached.modified && self.length == cached.length
+    }
+
+    /// Whether `cached` shows the same last write as this stamp: the whole stamp, since a change
+    /// to the file's permissions moves the status-change time as a write does.
+    #[cfg(not(windows))]
+    fn same_write(&self, cached: &Self) -> bool {
+        self == cached
+    }
+
+    /// Whether the summary cached at `cached` stands for the file this stamp shows: the whole
+    /// stamp is the same or, where the file's data is not all on this disk, its last write is
+    /// (`same_write`). Freeing a cloud file placeholder moves its change time alone, and a read
+    /// would make its provider download it.
+    #[cfg(windows)]
+    fn stands_for(&self, cached: &Self) -> bool {
+        self == cached || self.recalls && self.same_write(cached)
+    }
+
+    /// Whether the summary cached at `cached` stands for the file this stamp shows: the whole
+    /// stamp is the same.
+    #[cfg(not(windows))]
+    fn stands_for(&self, cached: &Self) -> bool {
+        self == cached
+    }
+
+    /// Whether NTFS's change time is older than the file clock's reading `clock`, so every later
+    /// change moves it (`git_workspace::changed_before`).
+    #[cfg(windows)]
+    fn changed_before(&self, clock: Option<i64>) -> bool {
+        crate::git_workspace::changed_before(self.changed, clock)
+    }
+
+    /// No file clock is read off Windows (`git_workspace::file_clock`): the modification time
+    /// alone decides.
+    #[cfg(not(windows))]
+    fn changed_before(&self, _clock: Option<i64>) -> bool {
+        true
     }
 }
 
@@ -602,10 +655,11 @@ const SETTLED_AFTER: Duration = Duration::from_secs(2);
 
 /// The server graph of the package whose folder (workspace-relative) is `folder`, read on disk
 /// below `root` with its `config`: its source files outside hidden folders, the host's ignored
-/// ones (`IGNORED_DIRECTORIES`), nested packages and nested checkouts (a folder holding `.git`).
+/// ones (`git_workspace::ignored_directories`), nested packages and nested checkouts (a folder holding `.git`).
 /// `overlay` replaces one source's text with a host's (`None`: deleted), for a source being
 /// edited that disk does not hold yet. `None` where the package has no graph rather than a
-/// partial one: a folder or source cannot be read, its walk lists more than `MAX_GRAPH_ENTRIES`
+/// partial one: a folder or source cannot be read (a source keeps the summary cached for its last
+/// write: `Stamp::same_write`), its walk lists more than `MAX_GRAPH_ENTRIES`
 /// entries, or it holds more than `MAX_GRAPH_FILES` sources or `MAX_GRAPH_BYTES` of them. The
 /// failure is not cached, so the next call reads it again. The walk is not cancellable; it lists
 /// and inspects at most `MAX_GRAPH_ENTRIES` entries and reads at most `MAX_GRAPH_BYTES`.
@@ -615,11 +669,7 @@ pub fn on_disk(
     config: &Config,
     overlay: Option<(&str, Option<&str>)>,
 ) -> Option<BTreeSet<String>> {
-    let directory = if folder.is_empty() {
-        root.to_path_buf()
-    } else {
-        root.join(folder)
-    };
+    let directory = package_directory(root, folder);
     let mut sources = Vec::new();
     let mut budget = MAX_GRAPH_BYTES;
     let mut entries = MAX_GRAPH_ENTRIES;
@@ -632,86 +682,10 @@ pub fn on_disk(
     ) {
         return None;
     }
-    // The cache's lock is held only to sort its hits from its misses: the misses are read and
-    // summarized once it is released, so a cold walk holds up no other caller.
-    let mut hits = Vec::with_capacity(sources.len());
-    let mut misses = Vec::new();
-    {
-        let cache = DISK_SUMMARIES.lock();
-        for (relative, absolute, metadata) in sources {
-            let path = join(folder, &relative);
-            // The overlay's text replaces this source's below; disk's is not read.
-            if overlay.is_some_and(|(overlaid, _)| overlaid == path) {
-                continue;
-            }
-            let stamp = Stamp::of(&metadata);
-            match (stamp, cache.get(&absolute)) {
-                (Some(stamp), Some((cached, summary))) if stamp == *cached => {
-                    hits.push((path, Arc::clone(summary)));
-                }
-                _ => misses.push((path, absolute, metadata.len(), stamp)),
-            }
-        }
-    }
-    let mut files = hits
-        .into_iter()
-        .map(|(path, summary)| (path, (*summary).clone()))
-        .collect::<BTreeMap<_, _>>();
-    let now = SystemTime::now();
-    let mut read = Vec::new();
-    for (path, absolute, length, stamp) in misses {
-        let source = if length > MAX_SOURCE_BYTES {
-            String::new()
-        } else {
-            match std::fs::read(&absolute) {
-                // As the host decodes a file it reads: invalid UTF-8 becomes replacement
-                // characters.
-                Ok(bytes) => String::from_utf8(bytes)
-                    .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
-                Err(error) if gone(&error) => continue,
-                Err(_) => return None,
-            }
-        };
-        let Some(summary) = summarize(&path, &source) else {
-            continue;
-        };
-        let settled = |stamp: &Stamp| {
-            now.duration_since(stamp.modified)
-                .is_ok_and(|age| age >= SETTLED_AFTER)
-        };
-        if let Some(stamp) = stamp.filter(settled) {
-            read.push((absolute, (stamp, Arc::new(summary.clone()))));
-        }
-        files.insert(path, summary);
-    }
-    if !read.is_empty() {
-        let mut cache = DISK_SUMMARIES.lock();
-        if cache.len() > MAX_CACHED_SUMMARIES {
-            cache.clear();
-        }
-        cache.extend(read);
-    }
+    let mut files = disk_summaries(folder, sources, overlay)?;
     let mut root_app = directory.join("app").is_dir();
-    if let Some((path, source)) = overlay {
-        files.remove(path);
-        if let Some(relative) = relative_to(folder, path)
-            && let Some(source) = source
-        {
-            // As the walk reads it: not below a folder it skips, a nested package or checkout.
-            let mut names = relative.split('/').collect::<Vec<_>>();
-            names.pop();
-            let walked = !names.iter().enumerate().any(|(depth, name)| {
-                let below = directory.join(names[..=depth].join("/"));
-                skipped_folder(name)
-                    || below.join("package.json").exists()
-                    || below.join(".git").exists()
-            });
-            // A file there makes the folder present whether or not the graph reads it as a source.
-            root_app |= relative.starts_with("app/");
-            if let Some(summary) = summarize_bounded(path, source).filter(|_| walked) {
-                files.insert(path.to_owned(), summary);
-            }
-        }
+    if let Some(overlay) = overlay {
+        root_app |= overlay_source(&directory, folder, overlay, &mut files);
     }
     // The walk read one source past the bound, so an overlay's deletion can bring the package
     // back within it; past it, the package has no graph, as a file set has none.
@@ -719,6 +693,183 @@ pub fn on_disk(
         return None;
     }
     Some(server_graph(folder, &files, config, root_app))
+}
+
+/// The folder of the package at `folder` (workspace-relative) below `root`.
+fn package_directory(root: &Path, folder: &str) -> PathBuf {
+    if folder.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(folder)
+    }
+}
+
+/// A source the disk cache holds no summary for at its `stamp`: its workspace path, absolute path
+/// and length, and the summary cached for its last write, if any (`Stamp::same_write`).
+struct Miss {
+    path: String,
+    absolute: PathBuf,
+    length: u64,
+    stamp: Option<Stamp>,
+    kept: Option<Arc<Summary>>,
+}
+
+/// The summaries of the walked `sources` by workspace path, but the overlay's source, whose text
+/// replaces disk's: each from the disk cache while its `Stamp` stands, else read from disk and
+/// cached once settled (`SETTLED_AFTER`). `None` where a source cannot be read and the cache holds
+/// no summary of its last write; the summary of that write stands in for one it can, uncached, so
+/// the next walk reads the source again.
+fn disk_summaries(
+    folder: &str,
+    sources: Vec<Walked>,
+    overlay: Option<(&str, Option<&str>)>,
+) -> Option<BTreeMap<String, Summary>> {
+    let (mut files, misses) = cached_summaries(folder, sources, overlay);
+    // Both read before the sources: a write a read misses comes after them.
+    let now = SystemTime::now();
+    let clock = crate::git_workspace::file_clock();
+    let mut read = Vec::new();
+    for miss in misses {
+        let (Some(summary), from_disk) = read_miss(&miss)? else {
+            continue;
+        };
+        if let Some(stamp) = miss
+            .stamp
+            .filter(|stamp| from_disk && settled(stamp, now, clock))
+        {
+            read.push((miss.absolute, (stamp, Arc::new(summary.clone()))));
+        }
+        files.insert(miss.path, summary);
+    }
+    remember(read);
+    Some(files)
+}
+
+/// The disk cache's summaries of `sources` whose `Stamp` stands, by workspace path, and the
+/// sources it holds none for; the overlay's source is in neither.
+fn cached_summaries(
+    folder: &str,
+    sources: Vec<Walked>,
+    overlay: Option<(&str, Option<&str>)>,
+) -> (BTreeMap<String, Summary>, Vec<Miss>) {
+    // The cache's lock is held only to sort its hits from its misses: the misses are read and
+    // summarized once it is released, so a cold walk holds up no other caller.
+    let mut hits = Vec::with_capacity(sources.len());
+    let mut misses = Vec::new();
+    {
+        let cache = DISK_SUMMARIES.lock();
+        for (relative, absolute, facts) in sources {
+            let path = join(folder, &relative);
+            if overlay.is_some_and(|(overlaid, _)| overlaid == path) {
+                continue;
+            }
+            let stamp = Stamp::of(&facts);
+            match (stamp, cache.get(&absolute)) {
+                (Some(stamp), Some((cached, summary))) if stamp.stands_for(cached) => {
+                    hits.push((path, Arc::clone(summary)));
+                }
+                (_, cached) => misses.push(Miss {
+                    kept: kept(stamp, cached),
+                    path,
+                    absolute,
+                    length: facts.len(),
+                    stamp,
+                }),
+            }
+        }
+    }
+    let files = hits
+        .into_iter()
+        .map(|(path, summary)| (path, (*summary).clone()))
+        .collect();
+    (files, misses)
+}
+
+/// The summary cached for the last write `stamp` shows (`Stamp::same_write`).
+fn kept(stamp: Option<Stamp>, cached: Option<&CachedSummary>) -> Option<Arc<Summary>> {
+    let (cached, summary) = cached?;
+    stamp?.same_write(cached).then(|| Arc::clone(summary))
+}
+
+/// The summary of the source `miss` names, read from disk, and `true`: no summary where it is gone
+/// since its folder was listed or `summarize` leaves it out. Where it cannot be read, the summary
+/// cached for its last write (`Miss::kept`) and `false`, since the source may hold other bytes
+/// under the same last write; else `None`.
+fn read_miss(miss: &Miss) -> Option<(Option<Summary>, bool)> {
+    match source_text(&miss.absolute, miss.length) {
+        Ok(source) => Some((summarize(&miss.path, &source), true)),
+        Err(error) if gone(&error) => Some((None, true)),
+        Err(_) => miss.kept.as_deref().map(|kept| (Some(kept.clone()), false)),
+    }
+}
+
+/// The text of the source at `absolute`, `length` bytes long, as the host decodes a file it reads:
+/// invalid UTF-8 becomes replacement characters. A source over 1 MiB is read as empty.
+fn source_text(absolute: &Path, length: u64) -> std::io::Result<String> {
+    if length > MAX_SOURCE_BYTES {
+        return Ok(String::new());
+    }
+    std::fs::read(absolute).map(|bytes| {
+        String::from_utf8(bytes)
+            .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+    })
+}
+
+/// Whether a source whose read began at `now`, with the file clock reading `clock`
+/// (`git_workspace::file_clock`), is settled: no later rewrite can leave its stamp as it is. Its
+/// modification time is `SETTLED_AFTER` old and, on Windows, its change time older than the
+/// reading, which a rewrite in the change's own tick shares (`Stamp::stands_for`).
+///
+/// On a network share the change time comes from the server's clock and the reading from this
+/// machine's, so with a server clock behind this one a summary can be cached under a change time
+/// that a rewrite in the same tick of the server's clock also gets. The walk takes a share's
+/// change time all the same, where a restore leaves a share's file to its stat
+/// (`git_workspace::holds_blob_bytes`): the listing gives it with no query, and one that moved
+/// costs the walk one source's read, where a restore would read the whole file over the network
+/// at every scan; without it, a rewrite that keeps the size and modification time would keep its
+/// summary however long after its read it came.
+fn settled(stamp: &Stamp, now: SystemTime, clock: Option<i64>) -> bool {
+    now.duration_since(stamp.modified)
+        .is_ok_and(|age| age >= SETTLED_AFTER)
+        && stamp.changed_before(clock)
+}
+
+/// Puts `read` in the disk cache, first dropping the cache whole past `MAX_CACHED_SUMMARIES`.
+fn remember(read: Vec<(PathBuf, CachedSummary)>) {
+    if read.is_empty() {
+        return;
+    }
+    let mut cache = DISK_SUMMARIES.lock();
+    if cache.len() > MAX_CACHED_SUMMARIES {
+        cache.clear();
+    }
+    cache.extend(read);
+}
+
+/// Puts the overlay's source in `files` in place of disk's: its text (`None`: deleted) summarized
+/// where the walk below `directory` would read it, not below a folder it skips (`skips`). Whether
+/// that source makes the package's `app` folder present, which a file there does whether or not
+/// the graph reads it as a source.
+fn overlay_source(
+    directory: &Path,
+    folder: &str,
+    (path, source): (&str, Option<&str>),
+    files: &mut BTreeMap<String, Summary>,
+) -> bool {
+    files.remove(path);
+    let (Some(relative), Some(source)) = (relative_to(folder, path), source) else {
+        return false;
+    };
+    let mut names = relative.split('/').collect::<Vec<_>>();
+    names.pop();
+    let walked = !names
+        .iter()
+        .enumerate()
+        .any(|(depth, name)| skips(name, &directory.join(names[..=depth].join("/"))));
+    if let Some(summary) = summarize_bounded(path, source).filter(|_| walked) {
+        files.insert(path.to_owned(), summary);
+    }
+    relative.starts_with("app/")
 }
 
 /// The summary of the ECMA source at `path`, read as a disk walk reads it: a source over 1 MiB
@@ -765,9 +916,9 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
 }
 
 /// Whether a server graph skips a folder of this name: a hidden one, or one the host's walk
-/// ignores (`IGNORED_DIRECTORIES`).
+/// ignores (`git_workspace::ignored_directories`).
 fn skipped_folder(name: &str) -> bool {
-    name.starts_with('.') || IGNORED_DIRECTORIES.contains(&name)
+    name.starts_with('.') || crate::git_workspace::ignored_directory(name)
 }
 
 /// Collects the ECMA source files below `directory` (paths relative to `top`), skipping the
@@ -780,74 +931,116 @@ fn skipped_folder(name: &str) -> bool {
 pub fn walk(
     top: &Path,
     directory: &Path,
-    sources: &mut Vec<(String, PathBuf, std::fs::Metadata)>,
+    sources: &mut Vec<Walked>,
     budget: &mut u64,
     entries: &mut usize,
 ) -> bool {
-    let listing = match std::fs::read_dir(directory) {
-        Ok(listing) => listing,
-        Err(error) => return gone(&error),
+    let Some(listed) = listed(directory, entries) else {
+        return false;
+    };
+    listed
+        .iter()
+        .all(|entry| visit(top, directory, entry, sources, budget, entries))
+}
+
+/// A source `walk` found: its path relative to the walk's top, its absolute path and its facts.
+type Walked = (String, PathBuf, listing::Facts);
+
+/// The entries of `directory` in name order, each counted down from `entries`: none where the
+/// folder is gone (deleted since its parent was listed); `None` where it or an entry cannot be
+/// read, or it lists more than `entries`.
+pub fn listed(directory: &Path, entries: &mut usize) -> Option<Vec<listing::Entry>> {
+    let found = match listing::list(directory) {
+        Ok(found) => found,
+        Err(error) => return gone(&error).then(Vec::new),
     };
     let mut listed = Vec::new();
-    for entry in listing {
-        let Some(left) = entries.checked_sub(1) else {
-            return false;
-        };
-        *entries = left;
-        let Ok(entry) = entry else {
-            return false;
-        };
-        listed.push(entry);
+    for entry in found {
+        *entries = entries.checked_sub(1)?;
+        listed.push(entry.ok()?);
     }
-    listed.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in listed {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let kind = match entry.file_type() {
-            Ok(kind) => kind,
-            Err(error) if gone(&error) => continue,
-            Err(_) => return false,
-        };
-        let path = entry.path();
-        if kind.is_dir() {
-            if skipped_folder(&name)
-                || path.join("package.json").exists()
-                || path.join(".git").exists()
-            {
-                continue;
-            }
-            if !walk(top, &path, sources, budget, entries) {
-                return false;
-            }
-        } else if kind.is_file() && ecma_label(&name).is_some() {
-            if sources.len() > MAX_GRAPH_FILES {
-                return false;
-            }
-            let metadata = match entry.metadata() {
-                Ok(metadata) => metadata,
-                Err(error) if gone(&error) => continue,
-                Err(_) => return false,
-            };
-            if metadata.len() <= MAX_SOURCE_BYTES {
-                let Some(left) = budget.checked_sub(metadata.len()) else {
-                    return false;
-                };
-                *budget = left;
-            }
-            let relative = path
-                .strip_prefix(top)
-                .map(|relative| {
-                    relative
-                        .components()
-                        .map(|component| component.as_os_str().to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join("/")
-                })
-                .unwrap_or_default();
-            sources.push((relative, path, metadata));
+    listed.sort_by_key(listing::Entry::name);
+    Some(listed)
+}
+
+/// Takes one entry of `directory` into `walk`: a folder is walked unless the walk skips it
+/// (`skips`), an ECMA source is added (`add_source`); `false` where the walk stops.
+fn visit(
+    top: &Path,
+    directory: &Path,
+    entry: &listing::Entry,
+    sources: &mut Vec<Walked>,
+    budget: &mut u64,
+    entries: &mut usize,
+) -> bool {
+    let file_name = entry.name();
+    let path = directory.join(&file_name);
+    let name = file_name.to_string_lossy();
+    match entry.kind() {
+        Ok(listing::Kind::Folder) => {
+            skips(&name, &path) || walk(top, &path, sources, budget, entries)
         }
+        Ok(listing::Kind::File) if ecma_label(&name).is_some() => {
+            add_source(top, path, entry, sources, budget)
+        }
+        Ok(_) => true,
+        Err(error) => gone(&error),
     }
+}
+
+/// Whether `walk` skips the folder `name` at `path`: one `skipped_folder` names, a nested
+/// package or a nested checkout (a folder holding `.git`).
+fn skips(name: &str, path: &Path) -> bool {
+    skipped_folder(name) || path.join("package.json").exists() || path.join(".git").exists()
+}
+
+/// Adds the source `entry` at `path` to `sources`, its bytes (of at most 1 MiB) counted down from
+/// `budget`; a source gone since its folder was listed is left out. `false` once `sources` is past
+/// `MAX_GRAPH_FILES`, past the budget, or where the source cannot be read.
+fn add_source(
+    top: &Path,
+    path: PathBuf,
+    entry: &listing::Entry,
+    sources: &mut Vec<Walked>,
+    budget: &mut u64,
+) -> bool {
+    if sources.len() > MAX_GRAPH_FILES {
+        return false;
+    }
+    let facts = match entry.facts() {
+        Ok(facts) => facts,
+        Err(error) => return gone(&error),
+    };
+    if !spend(budget, facts.len()) {
+        return false;
+    }
+    sources.push((slash_relative(top, &path), path, facts));
     true
+}
+
+/// Counts a source of `length` bytes down from `budget` (one over 1 MiB is read as empty);
+/// `false` past it.
+fn spend(budget: &mut u64, length: u64) -> bool {
+    if length > MAX_SOURCE_BYTES {
+        return true;
+    }
+    budget
+        .checked_sub(length)
+        .map(|left| *budget = left)
+        .is_some()
+}
+
+/// `path` relative to `top`, its components joined by `/`.
+fn slash_relative(top: &Path, path: &Path) -> String {
+    path.strip_prefix(top)
+        .map(|relative| {
+            relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
 }
 
 /// Whether a read failed because the entry no longer exists (deleted since its folder was
@@ -943,4 +1136,5 @@ pub fn is_module_config(path: &str) -> bool {
     name.ends_with(".json") && (name.starts_with("tsconfig") || name.starts_with("jsconfig"))
 }
 
+pub mod listing;
 // cratify: `tests` is rerail-engine's (it mounts it)

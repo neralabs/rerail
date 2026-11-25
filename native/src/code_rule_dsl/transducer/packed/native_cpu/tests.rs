@@ -300,8 +300,8 @@
     #[ignore = "pinned pattern 277 and argparse output-directive reference regression"]
     fn interpreter_output_reference_preserves_pinned_argparse_results() {
         let repository =
-            std::path::PathBuf::from(std::env::var("TEMPO_ALL_SCM_REPOSITORY").unwrap());
-        let query_root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR").unwrap();
+            std::path::PathBuf::from(std::env::var("RERAIL_PACKED_ALL_SCM_REPOSITORY").unwrap());
+        let query_root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR").unwrap();
         let mut paths = std::fs::read_dir(query_root)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -390,7 +390,7 @@
             assert_eq!(actual.outputs, expected);
             assert_eq!(actual.errors, vec![vec![None]]);
             eprintln!(
-                "TEMPO_ARGPARSE_REFERENCE_EVIDENCE {}",
+                "RERAIL_PACKED_ARGPARSE_REFERENCE_EVIDENCE {}",
                 serde_json::json!({
                     "roots": roots.len(), "matches": actual.outputs[0][0].len(),
                     "captures": actual.outputs[0][0].iter().map(|row| row.captures.len()).sum::<usize>(),
@@ -403,7 +403,7 @@
     #[test]
     #[ignore = "offline independent interpreter timing for the CPU corpus reference"]
     fn cpu_quantifier_interpreter_reference_profile() {
-        let path = std::env::var("TEMPO_CPU_QUANTIFIER_SOURCE").unwrap();
+        let path = std::env::var("RERAIL_PACKED_CPU_QUANTIFIER_SOURCE").unwrap();
         let source = std::fs::read_to_string(path).unwrap();
         let files = [tape(&source)];
         let programs = [Program::compile_tree_sitter_query_pattern(
@@ -422,7 +422,7 @@
             crate::code_rule_dsl::transducer::packed::execute_batch(&programs, &files, Some(&anchors))
                 .unwrap();
         eprintln!(
-            "TEMPO_INTERPRETER_QUANTIFIER_REFERENCE roots={} matches={} captures={} seconds={:.6}",
+            "RERAIL_PACKED_INTERPRETER_QUANTIFIER_REFERENCE roots={} matches={} captures={} seconds={:.6}",
             anchors[0][0].len(),
             output[0][0].len(),
             output[0][0]
@@ -3983,4 +3983,82 @@
                 }
             }
         }
+    }
+
+    /// The executor's workload: `files` Python files, file `f` of `reps(f)` functions with `f` in each function's name
+    /// and string, and four programs that between them write every kind of output a task copies out: results,
+    /// captures, a quantified capture, captured text, static properties, and dynamic properties whose value is a span of
+    /// the source (`application/json`) or bytes the task writes (`importmap` and `module` name `json` and `javascript`).
+    fn batch_workload(files: usize, reps: impl Fn(usize) -> usize) -> (Vec<Program>, Vec<TapeDoc>) {
+        let language = SupportLang::Python.get_ts_language();
+        let programs = [
+            "(comment)+ @comment.around",
+            "(call function: (identifier) @name arguments: (argument_list) @args) @call",
+            r#"((identifier) @inner @outer (#offset! @inner 0 1 0 -1) (#downcase! @outer) (#set! role "trimmed") (#set! flag) (#set! @outer kind "raw"))"#,
+            "((string (string_content) @mime) (#set-lang-from-mimetype! @mime))",
+        ]
+        .map(|query| Program::compile_tree_sitter_query_pattern(query, &language).unwrap())
+        .to_vec();
+        let file = |f: usize| {
+            tape(&(0..reps(f))
+                .map(|i| format!("# first {f} {i}\n# second {i}\ndef f{f}_{i}(x, y):\n    return g(x, y) + h(x, \"s{f}_{i}\", 'application/json', 'importmap', 'module')\n"))
+                .collect::<String>())
+        };
+        (programs, (0..files).map(file).collect())
+    }
+
+    /// Every node of each file as a root of every program.
+    fn every_root(programs: &[Program], files: &[TapeDoc]) -> Vec<Vec<Vec<u32>>> {
+        files.iter().map(|file| vec![(0..file.transducer_len() as u32).collect(); programs.len()]).collect()
+    }
+
+    /// A batch of several files gives the interpreter's outputs: each task's results, captures and properties are
+    /// copied out of its arenas and rebased onto the batch's. The workload's outputs reach static and dynamic
+    /// properties and captured text, so a copy that drops or misplaces one shows. Each file has its own size and
+    /// text, so outputs handed to the wrong file show too.
+    #[test]
+    fn multi_file_batches_give_the_interpreter_outputs() {
+        let (programs, files) = batch_workload(6, |f| 1 + f % 3);
+        for batch in files.chunks(3) {
+            let anchors = every_root(&programs, batch);
+            let expected =
+                crate::code_rule_dsl::transducer::packed::execute_batch(&programs, batch, Some(&anchors)).unwrap();
+            let outputs = || expected.iter().flatten().flatten();
+            assert!(outputs().any(|o| !o.properties.is_empty()), "the workload writes static properties");
+            let languages = outputs().flat_map(|o| &o.dynamic_properties).filter_map(|(_, value)| value.as_deref());
+            assert!(languages.filter(|l| *l == b"javascript").count() > 1, "the workload writes dynamic properties' values");
+            assert!(outputs().flat_map(|o| &o.captures).any(|c| c.text.is_some()), "the workload captures text");
+            assert_eq!(super::execute_batch(&programs, batch, &anchors).unwrap(), expected);
+        }
+    }
+
+    /// The executor's time over the workload in one-file batches (47,616 tasks), as the median and fastest of
+    /// `RERAIL_PACKED_CPU_BATCH_ITERATIONS` runs (30 by default), each checked against the first.
+    #[test]
+    #[ignore = "timing: run in a release build to compare the CPU batch executor before and after a change"]
+    fn cpu_batch_executor_timing() {
+        let iterations = std::env::var("RERAIL_PACKED_CPU_BATCH_ITERATIONS").map_or(30, |v| v.parse().unwrap());
+        let (programs, files) = batch_workload(64, |_| 5);
+        let batches = files.chunks(1).map(|batch| (batch, every_root(&programs, batch))).collect::<Vec<_>>();
+        let run = || {
+            batches
+                .iter()
+                .map(|(batch, anchors)| super::execute_batch(std::hint::black_box(&programs), batch, anchors).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let expected = run();
+        let mut seconds = (0..iterations)
+            .map(|_| {
+                let started = std::time::Instant::now();
+                assert_eq!(run(), expected);
+                started.elapsed().as_secs_f64()
+            })
+            .collect::<Vec<_>>();
+        seconds.sort_by(f64::total_cmp);
+        eprintln!(
+            "RERAIL_PACKED_CPU_BATCH_TIMING tasks={} median={:.6} min={:.6}",
+            files.iter().map(|file| file.transducer_len() * programs.len()).sum::<usize>(),
+            seconds[seconds.len() / 2],
+            seconds[0]
+        );
     }

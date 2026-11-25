@@ -4,10 +4,11 @@
 
 /**
  * Paths whose change never changes what core ships, so they alone never release it: the packs (released on their
- * own), documentation and its site's build, CI, changesets and core's pending changelog entries, tests, fixtures,
- * corpora and benchmarks, development and release scripts, and repository files npm does not pack (a generator's
- * output is committed where it ships, so it counts there). Everything else is a core change, `package-lock.json`
- * included unless only its pack workspace entries moved (`lockChangesCore`).
+ * own), documentation (less the rule library core ships from it, `SHIPPED_FROM_NOT_SHIPPED`) and its site's build, CI,
+ * changesets and core's pending changelog entries, tests, fixtures, corpora and benchmarks, development and release
+ * scripts, and repository files npm does not pack (a generator's output is committed where it ships, so it counts
+ * there). Everything else is a core change, `package-lock.json` included unless only its pack workspace entries moved
+ * (`lockChangesCore`).
  * A directory ends in `/`.
  */
 export const NOT_SHIPPED = [
@@ -56,8 +57,17 @@ export const NOT_SHIPPED = [
   "vitest.config.ts",
 ];
 
+/**
+ * Paths under a `NOT_SHIPPED` directory that core ships all the same (the root package.json's `files`): the `.rerail`
+ * rule library the engine reads as it runs. A directory ends in `/`.
+ */
+export const SHIPPED_FROM_NOT_SHIPPED = ["docs/rule-syntax/lib/"];
+
+/** Whether `path` is one of `entries`: under a directory entry, or equal to a file entry. */
+const listed = (entries, path) => entries.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+
 /** Whether a change to repository path `path` can change what core ships. */
-export const shipsWithCore = (path) => !NOT_SHIPPED.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+export const shipsWithCore = (path) => listed(SHIPPED_FROM_NOT_SHIPPED, path) || !listed(NOT_SHIPPED, path);
 
 /** `package-lock.json` without its pack workspace entries, which the pack release moves. */
 const withoutPacks = (lock) => ({ ...lock, packages: Object.fromEntries(Object.entries(lock.packages ?? {}).filter(([key]) => !key.startsWith("packs/"))) });
@@ -96,15 +106,18 @@ export function publishRetryRefusal({ version, ref, latest = "", packageVersion,
 }
 
 /**
- * Paths `coreChanges` doesn't count that can still change the tarball: what builds it, what packing runs, how Git checks
- * out the large files it packs, and the changelog it packs. A directory ends in `/`.
+ * Paths `coreChanges` doesn't count that can still change the tarball: what builds it, what packing runs (the engine
+ * packages core pins, and the shrinkwrap that lists them), how Git checks out the large files it packs, and the
+ * changelog it packs. A directory ends in `/`.
  */
 export const PACKAGE_INPUTS = [
   ".gitattributes",
   ".github/actions/",
   ".github/workflows/package.yml",
   "CHANGELOG.md",
+  "scripts/release/engine/",
   "scripts/release/shrinkwrap-pack.mjs",
+  "scripts/release/shrinkwrap.mjs",
 ];
 
 /** Whether a change to repository path `path` can change the tarball though `coreChanges` doesn't count it. */
@@ -128,13 +141,20 @@ export function retrySummary(version, changed) {
   ].join("\n");
 }
 
-/** What the environment matrix itself runs on: a change to one of these is tested even though core does not ship it. */
+/**
+ * What the environment matrix itself runs on: a change to one of these is tested even though core does not ship it.
+ * The engine packages are among them: the matrix installs the ones package.yml packs, and whether an install has an
+ * engine is decided by how they are packed and pinned.
+ */
 export const MATRIX_INPUTS = [
   ".github/workflows/env-matrix.yml",
   ".github/workflows/package.yml",
   "scripts/host/azure/",
   "scripts/host/windows-host.ps1",
   "scripts/release/core-paths.mjs",
+  "scripts/release/engine/",
+  "scripts/release/shrinkwrap-pack.mjs",
+  "scripts/release/shrinkwrap.mjs",
 ];
 
 /**

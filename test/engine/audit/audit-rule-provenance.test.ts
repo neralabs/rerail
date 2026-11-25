@@ -6,9 +6,9 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
+import { isUnreadableList, SqliteAuditReader, SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type {
-  AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
+  AuditFailure, AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
 } from "../../../src/engine/audit/audit.js";
 import { eraseFreedPages, openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
@@ -232,45 +232,136 @@ function storedEmptyProvenance(path: string): number {
   }
 }
 
+/** What the reads of audits a thread prepared returned (`countAuditReads`). */
+interface AuditReads {
+  /** Every row they returned. */
+  readonly rows: number;
+  /** The UTF-8 bytes of the text those rows held: each audit's id and provenance text a read returned. */
+  readonly textBytes: number;
+  /** Each statement whose program `returnsEachRowItReads` does not vet, with that program's steps as it read them. */
+  readonly unvetted: readonly { readonly source: string; readonly program: readonly string[] }[];
+}
+
+/** One step of the program SQLite compiles for a statement (`EXPLAIN`): its address, opcode and P2, a jump's target. */
+interface ProgramStep {
+  readonly addr: number;
+  readonly opcode: string;
+  readonly p2: number;
+}
+
 /**
- * Times the statements this thread prepares from here on that read audits (`FROM audits`): each `get`, `all` and `run`,
- * and each row `iterate` gives. The time a write takes to commit is left out: it waits on the disk, whatever a statement
- * reads. Puts `prepare` back on `restore`. A move's thread prepares its own statements, which this does not see.
+ * The operations the programs of the move's three reads of audits hold under SQLite 3.53.4 (the case that lists
+ * unvetted reads prints each program), by where a step of each, inside a loop before the row the loop returns, may
+ * jump. `steps` never jump: their P2 names no step. `branches` land only within the loop, at or before the row, where
+ * its values are worked out: in the move's loops, the `CASE` of `takes` and `takenAfter` (`IsNull` and `Gt` test the
+ * start, `IfNot` and `Eq` the JSON, `Goto` passes the other arm). `ends` land only past the loop, and only from its
+ * first step: in the move's loops, the range test on `audits_rule_provenance` (`IdxGT`, `IdxLT`), which ends the loop
+ * at the first index entry past the range, before the audit's row is sought. The other jumps (`Init`, `MustBeInt`, the
+ * seeks, `DecrJumpZero`, `Next`, `Prev`) come outside the loops or after their row in these programs.
  */
-function timeAuditReads(): { totalMs: () => number; restore: () => void } {
-  let total = 0;
-  const timed = <T>(run: () => T): T => {
-    const began = performance.now();
-    try {
-      return run();
-    } finally {
-      total += performance.now() - began;
-    }
+const VETTED = new Map<string, "steps" | "branches" | "ends">([
+  ...["Noop", "OpenRead", "Null", "Affinity", "Variable", "DeferredSeek", "IdxRowid", "Column", "Function", "Integer",
+    "ZeroOrNull", "String8", "ResultRow", "Halt", "Transaction"].map(opcode => [opcode, "steps"] as const),
+  ...["IsNull", "Gt", "IfNot", "Eq", "Goto", "Init", "MustBeInt", "DecrJumpZero", "Next", "Prev"].map(opcode => [opcode, "branches"] as const),
+  ...["IdxGT", "IdxLT", "SeekGE", "SeekGT", "SeekLE"].map(opcode => [opcode, "ends"] as const),
+]);
+
+/**
+ * Whether a statement's program has the shape of the move's reads of audits: it holds only `VETTED` operations and at
+ * least one loop (a `Next` or `Prev`, which jumps back to the loop's first step), and each loop returns a row
+ * (`ResultRow`) that no step before it in the loop jumps past (`returnsInLoop`), so each audit row such a loop reads,
+ * it returns. A sort, an aggregate, a count, an OFFSET, a DISTINCT and an IN each need an operation outside `VETTED`;
+ * a lookup with no loop fails for that, and a WHERE term the index search does not answer for its jump past the row.
+ */
+function returnsEachRowItReads(program: readonly ProgramStep[]): boolean {
+  const loops = program.filter(step => step.opcode === "Next" || step.opcode === "Prev");
+  return program.every(step => VETTED.has(step.opcode)) && loops.length > 0 && loops.every(loop => returnsInLoop(program, loop));
+}
+
+/** Whether `loop` returns a row, and each of its steps before that row lands as its kind allows (`landsBeforeRow`). */
+function returnsInLoop(program: readonly ProgramStep[], loop: ProgramStep): boolean {
+  const steps = program.filter(step => step.addr >= loop.p2 && step.addr < loop.addr);
+  const row = steps.find(step => step.opcode === "ResultRow")?.addr;
+  return row !== undefined && steps.every(step => step.addr > row || landsBeforeRow(step, loop, row));
+}
+
+/** Whether `step`, before `loop`'s row at `row`, jumps only as its kind in `VETTED` allows. */
+function landsBeforeRow(step: ProgramStep, loop: ProgramStep, row: number): boolean {
+  const kind = VETTED.get(step.opcode);
+  if (kind === "branches") return step.p2 >= loop.p2 && step.p2 <= row;
+  return kind !== "ends" || (step.addr === loop.p2 && step.p2 > loop.addr);
+}
+
+/** The UTF-8 bytes of the text one returned row holds, a plucked value or each of a row's columns. */
+function textBytesOf(row: unknown): number {
+  if (typeof row === "string") return Buffer.byteLength(row);
+  if (typeof row !== "object" || row === null) return 0;
+  return Object.values(row).reduce((sum: number, value) => sum + textBytesOf(value), 0);
+}
+
+/**
+ * Counts what the statements this thread prepares from here on that read audits (`FROM audits`) return: each row a
+ * `get` or `all` gives and each row `iterate` gives, and the text they hold (`AuditReads`). better-sqlite3 gives no
+ * count of the rows SQLite reads to answer a statement, so this counts the rows each one returns, a count no load
+ * changes, and reads the program SQLite compiles for each call (`EXPLAIN`, with the call's values): a statement whose
+ * program `returnsEachRowItReads` does not vet is listed in `unvetted`, so where none is, the count is every audit row
+ * their loops read. Puts `prepare` back on `restore`. A move's thread prepares its own statements, which this does not
+ * see.
+ */
+function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
+  let rows = 0;
+  let textBytes = 0;
+  const unvetted = new Map<string, readonly string[]>();
+  const returned = (row: unknown): void => {
+    rows += 1;
+    textBytes += textBytesOf(row);
   };
   const prepare = Database.prototype.prepare;
   const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
     const statement = prepare.call(this, source);
     if (!/\bFROM audits\b/u.test(source)) return statement;
-    for (const kind of ["get", "all", "run"] as const) {
-      const original = statement[kind].bind(statement) as (...values: unknown[]) => unknown;
-      Object.assign(statement, { [kind]: (...values: unknown[]) => timed(() => original(...values)) });
-    }
+    const explain = prepare.call(this, `EXPLAIN ${source}`);
+    const program = explain.all.bind(explain) as (...values: unknown[]) => ProgramStep[];
+    const read = (values: unknown[]): void => {
+      const steps = program(...values);
+      if (!returnsEachRowItReads(steps)) unvetted.set(source, steps.map(({ addr, opcode, p2 }) => `${addr} ${opcode} ${p2}`));
+    };
+    const get = statement.get.bind(statement) as (...values: unknown[]) => unknown;
+    const all = statement.all.bind(statement) as (...values: unknown[]) => unknown[];
     const iterate = statement.iterate.bind(statement) as (...values: unknown[]) => IterableIterator<unknown>;
     Object.assign(statement, {
+      get: (...values: unknown[]) => {
+        read(values);
+        const row = get(...values);
+        if (row !== undefined) returned(row);
+        return row;
+      },
+      all: (...values: unknown[]) => {
+        read(values);
+        const found = all(...values);
+        found.forEach(returned);
+        return found;
+      },
       iterate: (...values: unknown[]) => {
-        const rows = iterate(...values);
+        read(values);
+        const found = iterate(...values);
         return {
           [Symbol.iterator]() {
             return this;
           },
-          next: () => timed(() => rows.next()),
-          return: (value?: unknown) => rows.return?.(value) ?? { done: true, value },
+          next: () => {
+            const step = found.next();
+            if (step.done !== true) returned(step.value);
+            return step;
+          },
+          return: (value?: unknown) => found.return?.(value) ?? { done: true, value },
         };
       },
     });
     return statement;
   });
-  return { totalMs: () => total, restore: () => spy.mockRestore() };
+  const listed = (): AuditReads["unvetted"] => [...unvetted].map(([source, program]) => ({ source, program }));
+  return { reads: () => ({ rows, textBytes, unvetted: listed() }), restore: () => spy.mockRestore() };
 }
 
 /**
@@ -378,13 +469,13 @@ interface LaterStart {
   readonly moved: number;
   readonly waits: readonly number[];
   readonly logged: string;
-  readonly readMs: number;
+  readonly reads: AuditReads;
 }
 
 /**
  * A later daemon start of the move on `path`, by the time `clock` gives: what it resolved to, each wait for an older
- * Rerail it asked its timer for (the first ends the start, as a stop would), what it wrote to stderr, and how long this
- * thread's reads of audits took.
+ * Rerail it asked its timer for (the first ends the start, as a stop would), what it wrote to stderr, and what this
+ * thread's reads of audits returned.
  */
 async function laterStart(path: string, clock: () => number): Promise<LaterStart> {
   const stop = new AbortController();
@@ -395,12 +486,12 @@ async function laterStart(path: string, clock: () => number): Promise<LaterStart
     return Promise.reject(new Error("stopped"));
   };
   const stderr = spyOnStderr();
-  const timed = timeAuditReads();
+  const counted = countAuditReads();
   try {
     const moved = await moveRuleProvenancesInWorker(path, stop.signal, { clock, timer });
-    return { moved, waits, logged: stderr.logged(), readMs: timed.totalMs() };
+    return { moved, waits, logged: stderr.logged(), reads: counted.reads() };
   } finally {
-    timed.restore();
+    counted.restore();
     stderr.restore();
   }
 }
@@ -591,11 +682,16 @@ describe("audit rule provenance", () => {
     }
 
     // The older build reads `[]` as the provenance of each audit this build moved or wrote, and every other field as it
-    // read it before the move and as this build reads it.
+    // read it before the move and as this build reads it, but the owner beside the session, which it never reads.
     const after = readAsOlder(path, ids);
     expect(provenanceTexts(after)).toEqual(ids.map(() => "[]"));
     expect(withoutProvenance(after.slice(0, olderIds.length))).toEqual(withoutProvenance(before));
-    expect(withoutProvenance(after)).toEqual(withoutProvenance(current));
+    const asOlderReads = (audit: AuditRecord | undefined) => {
+      if (audit === undefined) return undefined;
+      const { repositoryId: _repositoryId, recordedBy: _recordedBy, ...read } = audit;
+      return read;
+    };
+    expect(withoutProvenance(after)).toEqual(withoutProvenance(current.map(asOlderReads)));
     expect(provenanceTexts(current)).toEqual([...written.map(({ text }) => text), JSON.stringify(app), "[]"]);
   });
 
@@ -758,11 +854,20 @@ describe("audit rule provenance", () => {
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)), from);
     const last = from + written.length - 1;
     upgradeAt(path, from + 1_000);
+    // The move's clock reads 2 s after the first audit at its first read, however long the set-up took, and then runs
+    // at the real clock's pace, behind it by that set-up: once it reads the window over, so does the move's thread,
+    // which reads the real clock.
+    let behind: number | undefined;
+    const clock = (): number => {
+      const now = Date.now();
+      behind ??= now - (from + 2_000);
+      return now - behind;
+    };
     const stderr = spyOnStderr();
     let logged = "";
     try {
       // A window of 3 s: the move waits until 3 s after the last audit recorded before the upgrade.
-      expect(await moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000 })).toBe(30);
+      expect(await moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000, clock })).toBe(30);
     } finally {
       logged = stderr.logged();
       stderr.restore();
@@ -803,19 +908,25 @@ describe("audit rule provenance", () => {
     const path = await fileOfTheBuildBefore();
     const app = provenanceOf("/home/dev/app", 200);
     writeInlineAudits(path, Array.from({ length: 30 }, () => app));
-    // This build upgraded the file a second ago; the older Rerail's audits begin after that.
-    upgradeAt(path, Date.now() - 1_000);
-    recordAsOlder(path, "beside-1", app);
+    // This build upgraded the file an hour ago, and the older Rerail's audits begin a second after that: the move's
+    // thread reads the real clock and finds none of them in the window, so only the clock and timer below hold the move.
+    const upgraded = Date.now() - 3_600_000;
+    upgradeAt(path, upgraded);
+    let now = recordAsOlder(path, "beside-1", app, upgraded + 1_000);
+    const second = now + 1_500;
+    // The timer the wait sleeps on moves the move's clock by what it is asked; the older Rerail records its second
+    // audit during the first pass.
+    const timer = (ms: number): Promise<void> => {
+      if (now < second) recordAsOlder(path, "beside-2", app, second);
+      now += ms;
+      return Promise.resolve();
+    };
     const stderr = spyOnStderr();
-    let second: number;
     let logged = "";
     try {
       // A window of 3 s: the move waits until 3 s after the older Rerail's audit, and another audit 1.5 s in makes it
       // wait again, until 3 s after that one.
-      const moving = moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000 });
-      await new Promise(resolve => setTimeout(resolve, 1_500));
-      second = recordAsOlder(path, "beside-2", app);
-      expect(await moving).toBe(30);
+      expect(await moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000, clock: () => now, timer })).toBe(30);
     } finally {
       logged = stderr.logged();
       stderr.restore();
@@ -1014,23 +1125,76 @@ describe("audit rule provenance", () => {
       + "and the audit reads as it did.\n");
     expect(auditsNamingNoCopy(path)).toBe(1);
     expect(inlineAudits(path)).toBe(1);
-    // It reads as the build before reads it, before the move and after; every other audit reads as written.
+    // The build before fails on it, before the move and after. This build reads it with no provenance and a failure
+    // that says so, and every other audit as written.
     expect(before).toMatch(/^SyntaxError: /u);
+    const quiet = spyOnStderr();
     const store = new SqliteAuditStore(path);
     try {
-      expect(readOutcome(() => store.get(damaged)?.ruleProvenance)).toBe(before);
+      expect(store.get(damaged)).toMatchObject({ ruleProvenance: [], failures: [UNREADABLE_PROVENANCE] });
       for (const { auditId, text } of written.filter(({ auditId }) => auditId !== damaged)) {
         expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
       }
     } finally {
       store.close();
+      quiet.restore();
     }
     expect(readOutcome(() => readAsOlder(path, [damaged])[0]?.ruleProvenance)).toBe(before);
   }, 60_000);
 
+  it("lists as unvetted each read of audits that sorts, aggregates, counts, skips by OFFSET, DISTINCT, IN or a start tested in WHERE, or has no loop, and none of the move's", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 2)));
+    openRerailDatabase(path).$client.close();
+    // The move's three reads of audits compile to these programs under SQLite 3.53.4: each step's address and operation,
+    // with its P2 where it jumps, and the loop in brackets. Each passes `returnsEachRowItReads`, and none reads an audit
+    // row outside its loop.
+    // `takes`: 0 Init 30, 1 Noop, 2 OpenRead, 3 OpenRead, 4 Null, 5 Affinity, 6 SeekGE 29, 7 Variable, 8 IsNull 29,
+    //   9 Affinity, [10 IdxGT 29, 11 DeferredSeek, 12 IsNull 15, 13 Column, 14 Gt 26, 15 Column, 16 Function,
+    //   17 IfNot 24, 18 Column, 19 Function, 20 Integer, 21 Eq 23, 22 ZeroOrNull, 23 Goto 25, 24 Integer, 25 Goto 27,
+    //   26 Null, 27 ResultRow, 28 Next 10], 29 Halt, 30 Transaction, 31 Variable, 32 String8, 33 Goto 1.
+    // `lastOlderWrite`: 0 Init 15, 1 Noop, 2 Integer, 3 OpenRead, 4 OpenRead, 5 Null, 6 Affinity, 7 SeekLE 14,
+    //   [8 IdxLT 14, 9 DeferredSeek, 10 Column, 11 ResultRow, 12 DecrJumpZero 14, 13 Prev 8], 14 Halt, 15 Transaction,
+    //   16 Goto 1.
+    // `takenAfter`: 0 Init 29, 1 Noop, 2 Variable, 3 MustBeInt, 4 IfNot 28, 5 OpenRead, 6 OpenRead, 7 Null, 8 Variable,
+    //   9 IsNull 28, 10 Affinity, 11 SeekGT 28, 12 Variable, 13 IsNull 28, 14 Affinity, [15 IdxGT 28, 16 DeferredSeek,
+    //   17 IdxRowid, 18 Column, 19 IsNull 22, 20 Column, 21 Gt 24, 22 Column, 23 Goto 25, 24 Null, 25 ResultRow,
+    //   26 DecrJumpZero 28, 27 Next 15], 28 Halt, 29 Transaction, 30 Variable, 31 Goto 1.
+    // Each read below can read an audit row it does not return, and each is listed.
+    const unvettedReads: [string, unknown[]][] = [
+      // A sort through a temporary b-tree (OpenEphemeral, IdxInsert, Sort), outside `VETTED`.
+      ["SELECT started_at FROM audits ORDER BY started_at LIMIT 1", []],
+      // A start tested in WHERE, which the index search does not answer: every step is in `VETTED`, and its `Gt` jumps
+      // from before the row to `Next`.
+      ["SELECT audit_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL AND started_at <= ? ORDER BY rowid", [0]],
+      // An aggregate (AggStep, AggFinal) and a count (Count, with no loop), outside `VETTED`.
+      ["SELECT max(started_at) FROM audits", []],
+      ["SELECT count(*) FROM audits", []],
+      // An OFFSET (OffsetLimit, IfPos), a DISTINCT (OpenEphemeral, Found) and an IN (Once, OpenEphemeral, NotFound).
+      ["SELECT audit_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL ORDER BY rowid LIMIT 1 OFFSET 5", []],
+      ["SELECT DISTINCT session_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL", []],
+      ["SELECT audit_id FROM audits INDEXED BY audits_rule_provenance WHERE rule_provenance_id IS NULL AND session_id IN ('a', 'b', 'c')", []],
+      // A lookup by id that tests the audit's start: every step is in `VETTED`, and it has no loop.
+      ["SELECT audit_id FROM audits WHERE audit_id = ? AND started_at <= ?", ["older-0", 0]],
+    ];
+    const counted = countAuditReads();
+    try {
+      expect(await move(path, { clock: () => Date.now() + 8 * 24 * 3_600_000 })).toBe(20);
+      const database = new Database(path, { readonly: true });
+      try {
+        for (const [source, values] of unvettedReads) database.prepare(source).all(...values);
+      } finally {
+        database.close();
+      }
+    } finally {
+      counted.restore();
+    }
+    expect(counted.reads().unvetted.map(({ source }) => source)).toEqual(unvettedReads.map(([source]) => source));
+  }, 60_000);
+
   it("reads no row of the audits an older Rerail recorded after the step, in its last batch or on its calling thread once nothing is left", async () => {
     const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
+    const written = writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
     openRerailDatabase(path).$client.close();
     // An older Rerail sharing the file then records 2,000 audits, each with its provenance in its row: about 200 KB,
     // with the audit's start after it.
@@ -1040,31 +1204,37 @@ describe("audit rule provenance", () => {
     // Eight days on, so the move does not wait for them.
     const clock = (): number => Date.now() + 8 * 24 * 3_600_000;
 
-    // What the move's reads of audits take, its batches and the checks before each: reading the start of each of those
-    // 2,000 rows took 125 ms in one batch, under its write lock, on Linux and 470 ms on Windows.
-    const moving = timeAuditReads();
+    // What the move's reads of audits return, its batches and the checks before each. A batch that read past the step
+    // read the start of each of those 2,000 rows, under its write lock.
+    const moving = countAuditReads();
+    let moved: number;
     try {
-      expect(await move(path, { clock })).toBe(20);
+      moved = await move(path, { clock });
     } finally {
       moving.restore();
     }
-    expect(moving.totalMs()).toBeLessThan(25);
+    // Its two batches return the 20 audits it takes, with their ids and provenance texts. The check at its start and the
+    // one before each of those batches return two rows: the first audit left to take, and the start of the last audit
+    // that names no stored copy, the older Rerail's 2,000th, which says whether that Rerail still records. The check
+    // before a third batch finds no audit left, and that batch returns none: 26 rows, and no text of the 2,000.
+    const taken = written.reduce((sum, { auditId, text: json }) => sum + Buffer.byteLength(auditId) + Buffer.byteLength(json), 0);
+    expect({ moved, reads: moving.reads() }).toEqual({ moved: 20, reads: { rows: 26, textBytes: taken, unvetted: [] } });
     expect(inlineAudits(path)).toBe(2_000);
 
     // The older Rerail goes on recording: its next audit begins an hour before the clock reads, so a start that found an
     // audit left to move would wait a week for it. A later start finds nothing left to move: it neither waits nor starts
     // a thread, and says nothing. A check that read past the last audit the step recorded would find the older Rerail's
     // audits. On the calling thread, the daemon's, which answers hooks, reading the start of each of those rows took 18
-    // to 1,134 ms on a real daemon's start.
+    // to 1,134 ms on a real daemon's start. Its check returns no row.
     recordAsOlder(path, "older-later", provenanceOf("/home/dev/app", 20), clock() - 3_600_000);
     const later = await laterStart(path, clock);
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.readMs).toBeLessThan(20);
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unvetted: [] });
   }, 120_000);
 
-  it("reads one audit row on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
+  it("reads two audit rows on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
     openRerailDatabase(path).$client.close();
@@ -1078,24 +1248,28 @@ describe("audit rule provenance", () => {
       return Promise.reject(new Error("stopped"));
     };
     const stderr = spyOnStderr();
-    const timed = timeAuditReads();
+    const counted = countAuditReads();
     let logged = "";
     try {
       expect(await moveRuleProvenancesInWorker(path, stop.signal, { timer })).toBe(0);
     } finally {
-      timed.restore();
+      counted.restore();
       logged = stderr.logged();
       stderr.restore();
     }
 
     expect(logged).toContain(`began at ${new Date(at).toISOString()}.`);
     // Reading the start of every audit in the week, and the row of each that began after the older Rerail's, took
-    // 69 ms on Linux and 195 ms on Windows.
-    expect(timed.totalMs()).toBeLessThan(20);
+    // 69 ms on Linux and 195 ms on Windows. The check returns two rows: the first audit left to take, and the start of
+    // the older Rerail's audit, the last recorded that names no stored copy; none of their text. Its statements'
+    // programs pass `returnsEachRowItReads` and, as the case that lists them shows, read audit rows only in their loops,
+    // so it reads those two alone: one that sorted, summed or tested a start on each audit, as that reading did, is
+    // listed in `unvetted`.
+    expect(counted.reads()).toEqual({ rows: 2, textBytes: 0, unvetted: [] });
     expect(inlineAudits(path)).toBe(21);
   }, 60_000);
 
-  it("moves every audit recorded before the step, one begun after the time the step recorded among them, and reads one audit row a check on its calling thread", async () => {
+  it("moves every audit recorded before the step, one begun after the time the step recorded among them, and reads two audit rows on its calling thread", async () => {
     const path = await fileOfTheBuildBefore();
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
     // This build upgrades the file a day on. The clock went back between the audits and that open, as an NTP
@@ -1113,15 +1287,17 @@ describe("audit rule provenance", () => {
     const clock = (): number => 10 * day;
 
     // The move runs on a thread of its own; on the calling thread, the daemon's, which answers hooks, the start's check
-    // and the check once the move's thread ends each read one audit row at most. Bounded by the time the step recorded
+    // and the check once the move's thread ends read two audit rows in all. Bounded by the time the step recorded
     // alone, the move would stop at the 16th: it and the 14 after it would keep their copy for good.
-    const moving = timeAuditReads();
+    const moving = countAuditReads();
     try {
       expect(await moveRuleProvenancesInWorker(path, undefined, { clock })).toBe(30);
     } finally {
       moving.restore();
     }
-    expect(moving.totalMs()).toBeLessThan(20);
+    // The start's check returns the first audit left to take and the start of the last that names no stored copy, the
+    // older Rerail's 2,000th; the check once the thread ends returns none.
+    expect(moving.reads()).toEqual({ rows: 2, textBytes: 0, unvetted: [] });
     // Every audit recorded before the step reads as written. The older Rerail's stay in their rows, where it reads
     // them, the one its clock dated before the step included.
     expect(inlineAudits(path)).toBe(2_001);
@@ -1142,7 +1318,7 @@ describe("audit rule provenance", () => {
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.readMs).toBeLessThan(20);
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unvetted: [] });
   }, 120_000);
 
   it.each([
@@ -1472,5 +1648,396 @@ describe("audit rule provenance", () => {
 
     resetRepositoryHistory(path, "remote:example/kept");
     expect(storedCopies()).toBe(0);
+  });
+});
+
+/**
+ * The failure an audit lists before its own when the rule provenance the database holds for it is not a JSON array, so
+ * it reads as none.
+ */
+const UNREADABLE_PROVENANCE = {
+  clauseId: "rule-provenance", code: "adapter-error", stage: "persistence",
+  message: "The audit's rule provenance in the database is not a JSON array of objects, which only a damaged file or a hand edit leaves, so it reads as none.",
+};
+
+/**
+ * Six finished audits this build records, oldest first: three of one checkout's rules, then three of another's, each
+ * naming the stored copy of its provenance.
+ */
+function sixAudits(path: string): { auditIds: string[]; expected: Map<string, AuditRuleProvenance[]> } {
+  const first = provenanceOf("/home/dev/app", 3);
+  const second = provenanceOf("/home/dev/app-worktree", 4);
+  const store = new SqliteAuditStore(path);
+  try {
+    const recorded = [first, first, first, second, second, second].map(provenance => {
+      const auditId = store.start(auditInput("/home/dev/app", provenance));
+      store.finish(auditId, { status: "completed" });
+      return [auditId, provenance] as const;
+    });
+    return { auditIds: recorded.map(([auditId]) => auditId), expected: new Map(recorded) };
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Writes `text` over an audit's own provenance and makes it name no stored copy, past the CHECK on `audits`, as the
+ * issue's steps do by hand: only a damaged file or a hand edit leaves such text.
+ */
+function damageAuditRow(path: string, auditId: string, text: string): void {
+  const database = new Database(path);
+  try {
+    database.pragma("ignore_check_constraints = ON");
+    database.prepare("UPDATE audits SET rule_provenance_json = ?, rule_provenance_id = NULL WHERE audit_id = ?").run(text, auditId);
+  } finally {
+    database.close();
+  }
+}
+
+/** Writes `text` over the stored copy of the provenance `auditId` names, past its CHECK; the copy's id. */
+function damageStoredCopy(path: string, auditId: string, text: string): number {
+  const database = new Database(path);
+  try {
+    database.pragma("ignore_check_constraints = ON");
+    const copy = database.prepare("SELECT rule_provenance_id FROM audits WHERE audit_id = ?").pluck().get(auditId) as number;
+    database.prepare("UPDATE audit_rule_provenances SET rule_provenance_json = ? WHERE provenance_id = ?").run(text, copy);
+    return copy;
+  } finally {
+    database.close();
+  }
+}
+
+/** The message `JSON.parse` fails with on `text`, as this Node writes it. */
+function parseFailure(text: string): string {
+  try {
+    JSON.parse(text);
+    return "parsed";
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+describe("an audit whose rule provenance does not read", () => {
+  it("lists every audit of each page that holds one whose provenance in its row does not parse, that one with no provenance and a failure that says so", async () => {
+    const path = await temporaryDatabase();
+    const { auditIds, expected } = sixAudits(path);
+    const damaged = auditIds[4]!;
+    damageAuditRow(path, damaged, '[{"ruleId":"typescript/broken","revision":3');
+    expected.set(damaged, []);
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    try {
+      const listed = store.list({ limit: 200 }).audits;
+      expect(new Map(listed.map(audit => [audit.auditId, audit.ruleProvenance]))).toEqual(expected);
+      const record = listed.find(audit => audit.auditId === damaged);
+      expect(record).toMatchObject({ failures: [UNREADABLE_PROVENANCE], failureCount: 1, unlistedFailureCount: 0, blindFiles: [] });
+      expect(listed.filter(audit => audit.failures.length > 0)).toHaveLength(1);
+      // Each page of two answers, the one holding it among them; together they hold every audit.
+      const paged = [0, 2, 4].flatMap(offset => store.list({ limit: 2, offset }).audits.map(audit => audit.auditId));
+      expect(paged.sort()).toEqual([...auditIds].sort());
+      expect(store.get(damaged)).toEqual(record);
+      expect(store.get(auditIds[0]!)?.ruleProvenance).toEqual(expected.get(auditIds[0]!));
+      // The read-only reader the remote outbox and the support bundle read through reads the same.
+      expect(reader.list({ limit: 200 }).audits).toEqual(listed);
+      expect(reader.get(damaged)).toEqual(record);
+    } finally {
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it("reads every audit that names a stored copy whose text does not parse with no provenance and a failure that says so, and every other as stored", async () => {
+    const path = await temporaryDatabase();
+    const { auditIds, expected } = sixAudits(path);
+    damageStoredCopy(path, auditIds[0]!, '[{"ruleId":"typescript/broken"');
+    for (const auditId of auditIds.slice(0, 3)) expected.set(auditId, []);
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    try {
+      const listed = store.list({ limit: 200 }).audits;
+      expect(new Map(listed.map(audit => [audit.auditId, audit.ruleProvenance]))).toEqual(expected);
+      expect(new Map(listed.map(audit => [audit.auditId, audit.failures]))).toEqual(new Map(auditIds.map((auditId, index) => [
+        auditId, index < 3 ? [UNREADABLE_PROVENANCE] : [],
+      ])));
+      expect(store.get(auditIds[1]!)?.failures).toEqual([UNREADABLE_PROVENANCE]);
+    } finally {
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it.each(['{"ruleId":"typescript/broken"}', "null", '"[]"', "3", "[null]", '[{"ruleId":"typescript/a"},[]]'])(
+    "reads provenance that parses as %s, which is no JSON array of objects, as none, with a failure that says so",
+    async text => {
+      const path = await temporaryDatabase();
+      const { auditIds } = sixAudits(path);
+      damageAuditRow(path, auditIds[2]!, text);
+      const stderr = spyOnStderr();
+      const store = new SqliteAuditStore(path);
+      try {
+        expect(store.get(auditIds[2]!)).toMatchObject({ ruleProvenance: [], failures: [UNREADABLE_PROVENANCE], failureCount: 1 });
+      } finally {
+        store.close();
+        stderr.restore();
+      }
+    },
+  );
+
+  it("names in its log, once for each damaged text, the audit that read it with no provenance and where that text is", async () => {
+    const path = await temporaryDatabase();
+    const { auditIds } = sixAudits(path);
+    const text = '[{"ruleId":"typescript/broken","revision":3';
+    damageAuditRow(path, auditIds[4]!, text);
+    const copy = damageStoredCopy(path, auditIds[0]!, "{}");
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    let logged = "";
+    try {
+      store.get(auditIds[1]!);
+      store.list({ limit: 200 });
+      // Later reads of either text, on this connection or another, say nothing more.
+      store.list({ limit: 200 });
+      store.get(auditIds[4]!);
+      reader.list({ limit: 200 });
+    } finally {
+      logged = stderr.logged();
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+    expect(logged).toBe(
+      `rerail: ${path}: audit ${auditIds[1]} reads with no rule provenance, and a failure that says so: rule_provenance_json `
+      + `of audit_rule_provenances row ${copy}, which every audit naming it reads, is not a JSON array of objects (it parses to another JSON value).\n`
+      + `rerail: ${path}: audit ${auditIds[4]} reads with no rule provenance, and a failure that says so: the rule_provenance_json `
+      + `of its own row is not a JSON array of objects (${parseFailure(text)}).\n`,
+    );
+  });
+});
+
+/** Each other list an `audits` row holds, by its column, what the failure an audit lists for it calls it and its items. */
+const STORED_LISTS = {
+  ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions", items: "objects" },
+  paths: { column: "paths_json", clauseId: "paths", name: "paths", items: "strings" },
+  violations: { column: "violations_json", clauseId: "violations", name: "violations", items: "objects" },
+  failures: { column: "failures_json", clauseId: "failures", name: "failures", items: "objects" },
+} as const;
+type StoredList = keyof typeof STORED_LISTS;
+const LISTS = Object.keys(STORED_LISTS) as StoredList[];
+
+/** The failure an audit lists before its own when the text the database holds for its `list` is not a JSON array of its items. */
+function unreadableList(list: StoredList): AuditFailure {
+  const { clauseId, name, items } = STORED_LISTS[list];
+  return {
+    clauseId, code: "adapter-error", stage: "persistence",
+    message: `The audit's ${name} in the database are not a JSON array of ${items}, which only a damaged file or a hand edit leaves, so they read as none.`,
+  };
+}
+
+const VIOLATION = {
+  id: "violation-1", ruleId: "typescript/rule-000", clauseId: "clause-a", code: "forbidden-call", mode: "steer" as const,
+  message: "forbidden call", path: "src/a.ts", captures: {}, variables: {},
+};
+const FAILURE: AuditFailure = { clauseId: "clause-b", code: "adapter-error", message: "failed", stage: "evaluate" };
+
+/** Three finished audits of one session, each with a rule revision, a path, a violation and a failure; their ids. */
+function threeAudits(path: string): string[] {
+  const store = new SqliteAuditStore(path);
+  try {
+    return [0, 1, 2].map(() => {
+      const auditId = store.start({ ...auditInput("/home/dev/app", provenanceOf("/home/dev/app", 2)), ruleRevisions: [{ ruleId: "typescript/rule-000", revision: 1 }] });
+      store.finish(auditId, { status: "completed", violations: [VIOLATION], failures: [FAILURE] });
+      return auditId;
+    });
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Writes `text` over one list of an audit's row, past the CHECK on `audits`. The history triggers parse the rule
+ * revisions and the violations on UPDATE and refuse such text, so those that name the column are set aside for the
+ * write and put back: the state a damaged file leaves.
+ */
+function damageList(path: string, auditId: string, list: StoredList, text: string): void {
+  const { column } = STORED_LISTS[list];
+  const database = new Database(path);
+  try {
+    database.pragma("ignore_check_constraints = ON");
+    const triggers = database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'audits' AND sql LIKE ?")
+      .all(`%${column}%`) as Array<{ name: string; sql: string }>;
+    database.transaction(() => {
+      for (const trigger of triggers) database.exec(`DROP TRIGGER "${trigger.name}"`);
+      database.prepare(`UPDATE audits SET ${column} = ? WHERE audit_id = ?`).run(text, auditId);
+      for (const trigger of triggers) database.exec(trigger.sql);
+    })();
+  } finally {
+    database.close();
+  }
+}
+
+/** The audit `auditId` as a store on `path` reads it. */
+function readAudit(path: string, auditId: string): AuditRecord | undefined {
+  const store = new SqliteAuditStore(path);
+  try {
+    return store.get(auditId);
+  } finally {
+    store.close();
+  }
+}
+
+describe("an audit whose other stored lists do not read", () => {
+  // Lists that parse with an item that is not what the list holds, as the CHECK on `audits` lets through.
+  const STRAY_ITEMS = [["ruleRevisions", "[null]"], ["paths", '["src/a.ts",3]'], ["violations", "[null]"], ["failures", "[null]"]] as const;
+  it.each([...LISTS.map(list => [list, '[{"ruleId":"typescript/broken"'] as const), ...STRAY_ITEMS])(
+    "lists every audit of each page that holds one whose %s read as %s, that one with none and a failure that says so", async (list, text) => {
+    const path = await temporaryDatabase();
+    const auditIds = threeAudits(path);
+    const before = readAudit(path, auditIds[1]!)!;
+    const healthy = readAudit(path, auditIds[0]!);
+    expect(healthy).toMatchObject({
+      ruleRevisions: [{ ruleId: "typescript/rule-000", revision: 1 }], paths: ["src/a.ts"], violations: [{ id: "violation-1" }], failures: [FAILURE],
+    });
+    damageList(path, auditIds[1]!, list, text);
+    const failures = list === "failures" ? [unreadableList(list)] : [unreadableList(list), FAILURE];
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    try {
+      const listed = store.list({ limit: 200 }).audits;
+      expect(listed.map(audit => audit.auditId).sort()).toEqual([...auditIds].sort());
+      const record = listed.find(audit => audit.auditId === auditIds[1]);
+      expect(record).toEqual({ ...before, [list]: list === "failures" ? failures : [], failures, failureCount: failures.length });
+      expect(listed.find(audit => audit.auditId === auditIds[0])).toEqual(healthy);
+      expect(store.get(auditIds[1]!)).toEqual(record);
+      expect(reader.list({ limit: 200 }).audits).toEqual(listed);
+      expect(reader.get(auditIds[1]!)).toEqual(record);
+    } finally {
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  // An object with a member, since SQLite's JSON functions walk an object's members as they walk an array's items.
+  const BROKEN = '[{"ruleId":"typescript/broken"';
+  const OBJECT = '{"blind":"budget"}';
+  it.each([
+    ["ruleRevisions", BROKEN], ["ruleProvenance", BROKEN], ["paths", OBJECT], ["violations", BROKEN], ["violations", OBJECT],
+    ["violations", "{}"], ["failures", BROKEN], ["failures", OBJECT], ["ruleProvenance", "[null]"], ...STRAY_ITEMS,
+  ] as const)("answers the session's summary when its latest audit's %s read as %s, with the counts of its record", async (list, text) => {
+    const path = await temporaryDatabase();
+    threeAudits(path);
+    const latest = new SqliteAuditStore(path);
+    const latestId = latest.list({ limit: 1 }).audits[0]!.auditId;
+    latest.close();
+    const healthy = { workspaceRoot: "/home/dev/app", scope: "touched-files", mode: "steer", status: "completed", violationCount: 1,
+      failureCount: 1, unlistedFailureCount: 0, blindFileCount: 0, gapCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0 };
+    if (list === "ruleProvenance") damageAuditRow(path, latestId, text);
+    else damageList(path, latestId, list, text);
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    try {
+      const record = store.get(latestId)!;
+      expect(record.failureCount).toBe(list === "failures" ? 1 : 2);
+      expect(store.latestSummary("session-a")).toEqual({ ...healthy, violationCount: record.violations.length, failureCount: record.failureCount });
+      expect(reader.latestSummary("session-a")).toEqual(store.latestSummary("session-a"));
+    } finally {
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it("answers the session's summary when the stored rule provenance its latest audit names does not read, with the counts of its record", async () => {
+    const path = await temporaryDatabase();
+    threeAudits(path);
+    const latest = new SqliteAuditStore(path);
+    const latestId = latest.list({ limit: 1 }).audits[0]!.auditId;
+    latest.close();
+    damageStoredCopy(path, latestId, BROKEN);
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    try {
+      expect(store.get(latestId)).toMatchObject({ ruleProvenance: [], violations: [VIOLATION], failureCount: 2 });
+      expect(store.latestSummary("session-a")).toMatchObject({ violationCount: 1, failureCount: 2 });
+    } finally {
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it("names in its log, once for each damaged list, two of one audit among them, the audit that read it with none and the column that holds it", async () => {
+    const path = await temporaryDatabase();
+    const auditIds = threeAudits(path);
+    const text = '[{"ruleId":"typescript/broken"';
+    damageList(path, auditIds[0]!, "paths", text);
+    damageList(path, auditIds[0]!, "failures", "null");
+    damageList(path, auditIds[1]!, "violations", "{}");
+    damageList(path, auditIds[2]!, "failures", "[null]");
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    let logged = "";
+    try {
+      store.list({ limit: 200 });
+      store.list({ limit: 200 });
+      store.get(auditIds[0]!);
+      reader.list({ limit: 200 });
+    } finally {
+      logged = stderr.logged();
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+    expect(logged.split("\n").sort()).toEqual([
+      "",
+      `rerail: ${path}: audit ${auditIds[0]} reads with no paths, and a failure that says so: the paths_json of its own row is `
+      + `not a JSON array of strings (${parseFailure(text)}).`,
+      `rerail: ${path}: audit ${auditIds[0]} reads with no failures, and a failure that says so: the failures_json of its `
+      + "own row is not a JSON array of objects (it parses to another JSON value).",
+      `rerail: ${path}: audit ${auditIds[1]} reads with no violations, and a failure that says so: the violations_json of its `
+      + "own row is not a JSON array of objects (it parses to another JSON value).",
+      `rerail: ${path}: audit ${auditIds[2]} reads with no failures, and a failure that says so: the failures_json of its `
+      + "own row is not a JSON array of objects (an item of it is another JSON value).",
+    ].sort());
+  });
+
+  it("tests each stored list of the session's latest audit once for its summary, in one statement", async () => {
+    const path = await temporaryDatabase();
+    threeAudits(path);
+    const store = new SqliteAuditStore(path);
+    const probe = new Database(path, { readonly: true });
+    const reads = vi.spyOn(Object.getPrototypeOf(probe.prepare("SELECT 1")) as Database.Statement, "get");
+    let statements: Array<{ source: string; params: unknown[] }> = [];
+    try {
+      expect(store.latestSummary("session-a")).toMatchObject({ violationCount: 1, failureCount: 1 });
+      statements = reads.mock.contexts.map((statement, index) => ({ source: (statement as Database.Statement).source, params: reads.mock.calls[index]! }))
+        .filter(statement => statement.source.includes("json_valid"));
+    } finally {
+      reads.mockRestore();
+      store.close();
+    }
+    try {
+      // Each test of a list in SQL begins with `json_valid`: the program SQLite compiles calls it once for each of the
+      // five lists, so neither the statement nor the planner tests a list twice.
+      expect(statements).toHaveLength(1);
+      const program = probe.prepare(`EXPLAIN ${statements[0]!.source}`).all(...statements[0]!.params) as Array<{ p4: unknown }>;
+      expect(program.filter(step => String(step.p4).startsWith("json_valid("))).toHaveLength(5);
+    } finally {
+      probe.close();
+    }
+  });
+
+  it.each([
+    ["another message", { message: "The audit's paths are damaged." }, true],
+    ["the clause id of the enforcer's spool failures", { clauseId: "spool" }, false],
+    ["another stage", { stage: "evaluate" }, false],
+    ["another code", { code: "budget-exceeded" }, false],
+  ] as const)("reads a failure for a stored list that does not read with %s by its stage, code and clause id", (_, change, marks) => {
+    expect(isUnreadableList({ ...unreadableList("paths"), ...change })).toBe(marks);
   });
 });

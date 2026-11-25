@@ -36,6 +36,8 @@ How rule packs are built, ported, checked and extended.
 
 - [rule-packs.md](rule-packs.md): packs, matching and recommendation, the shipped packs, and a worktree's own rules
 - [pack-format.md](pack-format.md): pack layout, pack data, provenance records and the validation contract
+- [rule-dimensions.md](rule-dimensions.md): slicing rules across packs by risk, layer, severity and hazard, the values,
+  and the side packs they lead to
 - [upstream.md](upstream.md): upstream snapshots and pack data, samples and their licences, new snapshots, the
   publish workflow, upstream releases and bumps, and CI
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
@@ -47,9 +49,11 @@ How rule packs are built, ported, checked and extended.
 ## Release
 How core and packs are published.
 
-- [release.md](release.md): how core is built, versioned and published
+- [release.md](release.md): how core and its engine packages are built, versioned and published
 - [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first npm publish and its trusted
   publisher
+- [publishing-the-engine-packages.md](publishing-the-engine-packages.md): runbook for the first npm publish of the six
+  engine packages and their trusted publishers
 - [environment-matrix.md](environment-matrix.md): the operating systems a release is installed and exercised on, and
   what each run checks
 

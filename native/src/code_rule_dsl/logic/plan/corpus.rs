@@ -94,13 +94,20 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_NODE_IDS",
     // Identical relations merged (`same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
+    // The passes combining replays to judge an answer as preparation's own demand leaves it (`demanded`), and runs
+    // again in preparing: `simplify` and the reach index.
+    "RERAIL_EXISTENCE_COUNTS",
+    "RERAIL_INLINE_FILTERS",
+    "RERAIL_JOIN_KEYS",
+    "RERAIL_PROJECT_COLUMNS",
+    "RERAIL_REACH_INDEX",
 ];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
 /// kept): each changes the prepared program, so each is in its key. The run's other switches are not: the key also
 /// keys a session's kept frames, which a diagnostic switch turned on mid-session must not make cold. A switch read in
-/// lowering or preparation is listed here or as changing none, which a test checks
-/// (`every_switch_lowering_reads_is_classified`).
+/// lowering or preparation is listed here, in `COMBINING` (which the prepared key holds through the combined
+/// program's), or as changing none, which a test checks (`every_switch_lowering_reads_is_classified`).
 pub const PREPARING: &[&str] = &[
     // Lowering and its passes.
     "RERAIL_TEXT_NODES",
@@ -110,12 +117,6 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_FACTORIZE",
     "RERAIL_EXPORT_DEMAND",
     "RERAIL_CROSS_MEMO",
-    "RERAIL_REACH_INDEX",
-    // `simplify`.
-    "RERAIL_EXISTENCE_COUNTS",
-    "RERAIL_INLINE_FILTERS",
-    "RERAIL_JOIN_KEYS",
-    "RERAIL_PROJECT_COLUMNS",
     // `run_observed`'s preparation.
     "RERAIL_TEXT_TESTS",
     "RERAIL_DEMAND",
@@ -896,19 +897,93 @@ pub(in crate::code_rule_dsl) struct Cone {
 /// hold: there `@rr_node_value` answered nothing, without an error, and every reader of `value` saw no value (the
 /// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
 /// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
-/// cross-file reader asks for is eager.
+/// cross-file reader asks for is eager, and so is one whose answer the program's own demand puts in the cross-file part
+/// (`demanded`): preparation applies that demand after combining, so it is judged here as it will run.
 fn answers_where_documents_are(prog: &mut front::Program) {
-    use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
-    loop {
-        let local = crate::code_rule_dsl::typing::file_local::split(prog);
-        let Some((round, rel)) = ON_REQUEST.iter().find_map(|round| {
-            round.iter().find(|a| matches!(a.answer, Answer::Function(_)) && prog.decls.contains_key(a.req) && !local.contains(a.rel)).map(|a| (*round, a.rel))
-        }) else {
-            return;
-        };
-        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
-        undo_round(prog, round);
+    while let Some((round, rel, why)) = cross_file_answer(prog) {
+        crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local ({why}), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
+        crate::code_rule_dsl::logic::rr::lower::undo_round(prog, round);
     }
+}
+
+/// One round of the attributes answered on request (`rr::lower::ON_REQUEST`).
+type OnRequestRound = &'static [crate::code_rule_dsl::logic::rr::lower::OnRequest];
+
+/// The first round with an attribute answered by a function of the node's document whose answer the split finds
+/// cross-file, that attribute, and why: in the program as written, or else in it as preparation makes it with its own
+/// demand (`demanded`), where the attribute is still answered as preparation's check asks.
+fn cross_file_answer(prog: &front::Program) -> Option<(OnRequestRound, &'static str, &'static str)> {
+    let found = |p: &front::Program| {
+        let local = crate::code_rule_dsl::typing::file_local::split(p);
+        let cross = |a: &&crate::code_rule_dsl::logic::rr::lower::OnRequest| answered_by_function(prog, a) && !local.contains(a.rel) && p.rules.iter().any(|r| r.head.rel == a.rel);
+        crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().find_map(|round| round.iter().find(cross).map(|a| (*round, a.rel)))
+    };
+    if let Some((round, rel)) = found(prog) {
+        return Some((round, rel, "a cross-file reader asks"));
+    }
+    let (round, rel) = found(&demanded(prog)?)?;
+    Some((round, rel, "the program's demand reads across files for its request"))
+}
+
+/// Whether `prog` answers the attribute on request by a function of the node's document.
+fn answered_by_function(prog: &front::Program, a: &crate::code_rule_dsl::logic::rr::lower::OnRequest) -> bool {
+    matches!(a.answer, crate::code_rule_dsl::logic::rr::lower::Answer::Function(_)) && prog.decls.contains_key(a.req)
+}
+
+/// `prog` as preparation makes it up to its own demand (`.pragma "magic-transform"`, decision 0145), demand included,
+/// when that demand can change an attribute's answer by a function (`demand_reaches_an_answer`). The transform leaves
+/// a derived literal out of a demand rule where keeping it would close a negative cycle, and a request reading the
+/// demanded relation can close one through the attribute's readers. RUF034 alone: `rr_value_req` reads `unparen`, whose
+/// demand comes from `same_pair`, which negates `same_leaf`, which reads `value`; without `same_pair`, `unparen`'s
+/// demand joined the two compared nodes by a child's position only, so it, `value`'s request and its answer were
+/// cross-file, and preparation refused the program. The steps are `run_observed`'s before the demand, in its order (the
+/// combined program has none of them yet: on it, the demand made no `unparen` demand rule), then the demand, the
+/// prune after it, and the closures the demand put in cycles made rows again (`reach_form::undo_in_cycles`). Not
+/// `hiding::fold_own`: it folds guests' copies for the run's language, which combining does not know (the prepared key
+/// names it). Nor `RERAIL_DEMAND=off`: the demand is replayed under it too, which can only make an answer eager, so the
+/// combined program is not a function of it. None when the demand cannot change an answer, or when a step fails
+/// (preparation then fails, or leaves the demand out).
+fn demanded(prog: &front::Program) -> Option<front::Program> {
+    if !demand_reaches_an_answer(prog) {
+        return None;
+    }
+    let mut p = prog.clone();
+    cpython_functors(&mut p).ok()?;
+    base_inputs(&mut p);
+    let mut p = front::prune(p);
+    crate::code_rule_dsl::logic::simplify::simplify(&mut p);
+    let mut p = front::prune(p);
+    crate::code_rule_dsl::logic::reach_form::find(&mut p).ok()?;
+    let (p, _) = crate::code_rule_dsl::logic::magic::demand_negated_tests(p);
+    let mut p = front::prune(crate::code_rule_dsl::logic::magic::demand_bound_columns(p, &Default::default()).ok()?);
+    crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut p).ok()?;
+    Some(p)
+}
+
+/// Whether `prog` has its own demand, and an attribute answered by a function whose answer reads a demanded relation:
+/// the demand can change only what reads what it demands.
+fn demand_reaches_an_answer(prog: &front::Program) -> bool {
+    if prog.demand.is_empty() {
+        return false;
+    }
+    let reading = reading_demanded(prog);
+    crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|r| r.iter()).any(|a| answered_by_function(prog, a) && reading.contains(a.rel))
+}
+
+/// The relations `prog` demands and those whose rules read one, directly or through others: what its demand can change.
+fn reading_demanded(prog: &front::Program) -> BTreeSet<&str> {
+    let mut readers: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for rule in &prog.rules {
+        for read in rule.body.iter().filter_map(front::Literal::atom) {
+            readers.entry(read.rel.as_str()).or_default().push(rule.head.rel.as_str());
+        }
+    }
+    let mut seen: BTreeSet<&str> = prog.demand.iter().map(String::as_str).collect();
+    let mut todo: Vec<&str> = seen.iter().copied().collect();
+    while let Some(rel) = todo.pop() {
+        todo.extend(readers.get(rel).into_iter().flatten().copied().filter(|h| seen.insert(*h)));
+    }
+    seen
 }
 
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
@@ -10370,37 +10445,54 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
     out
 }
 
-/// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
-/// (`.rerail`), skipping hidden directories and `target`.
-pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
-    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
-    let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
-        Some(label) => by_label.entry(label).or_default().push(relative),
-        // A hidden file (`.env`, `.hidden.md`) is no text document, as in W.
-        None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
-        None => {}
-    };
-    // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
-    // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
-    // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
-    let git = git_files(root);
-    if let Some((under, overlays)) = git {
-        let mut listed = 0;
-        for relative in &under {
-            let relative = relative.as_str();
-            let dirs: Vec<&str> = relative.split('/').collect();
-            if dirs[..dirs.len() - 1].iter().any(|d| d.starts_with('.') || *d == "target") {
-                continue;
-            }
-            listed += 1;
-            classify(relative.to_owned());
-        }
-        crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({overlays} overlays: changed, staged or untracked), no walk"));
-    } else {
-    // Phase 0's observer lists each directory: again only when its stat changed (t23).
-    let mut pending = vec![root.to_path_buf()];
-    // The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
-    // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+/// Whether the corpus lists files under a directory of this name: every one but those the host's walk never enters
+/// (`git_workspace::ignored_directories`), hidden ones (`.github`) included.
+fn listed_directory(name: &str) -> bool {
+    !crate::git_workspace::ignored_directory(name)
+}
+
+/// Whether `root` is a site directory (`site-packages`): it holds an installed distribution's `*.dist-info`, which
+/// `typing::deps::Installed::scan` reads. The host's ignored directories are a repository's; a site directory's
+/// packages are what Python imports, whatever their names (`vendor`, `build`, `coverage`), so none is skipped there.
+fn site_directory(root: &Path) -> bool {
+    observe(|o| o.listing(root)).is_some_and(|listing| listing.iter().any(|(name, is_dir)| *is_dir && name.ends_with(".dist-info")))
+}
+
+/// The files under `root` a run reads, relative. In a Git work tree, the files Git sees (HEAD's, less deleted, plus
+/// staged and untracked ones it does not ignore), with no walk. Outside one, where Git cannot read it, or where it
+/// sees no file under the root (one it ignores, such as fetched fixtures), the walk. Neither lists a file under a
+/// directory `listed_directory` refuses, but in a site directory (`site_directory`).
+fn corpus_paths(root: &Path) -> Result<Vec<String>> {
+    let enters: fn(&str) -> bool = if site_directory(root) { |_| true } else { listed_directory };
+    match git_files(root) {
+        Some((under, overlays)) => Ok(git_listed(under, overlays, enters)),
+        None => walked(root, enters),
+    }
+}
+
+/// Git's files under the root (`git_files`), less those under a directory `enters` refuses.
+fn git_listed(under: Vec<String>, overlays: usize, enters: fn(&str) -> bool) -> Vec<String> {
+    let listed: Vec<String> = under.into_iter().filter(|p| p.rsplit_once('/').is_none_or(|(dirs, _)| dirs.split('/').all(enters))).collect();
+    crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || {
+        format!("{} files from Git ({overlays} overlays: changed, staged or untracked), no walk", listed.len())
+    });
+    listed
+}
+
+/// The walk, into the directories `enters` allows: phase 0's observer lists each directory, again only when its stat
+/// changed (t23).
+fn walked(root: &Path, enters: fn(&str) -> bool) -> Result<Vec<String>> {
+    preload_root(root);
+    let (mut pending, mut out) = (vec![root.to_path_buf()], Vec::new());
+    while let Some(dir) = pending.pop() {
+        walk_directory(root, &dir, enters, &mut pending, &mut out)?;
+    }
+    Ok(out)
+}
+
+/// The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
+/// (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+fn preload_root(root: &Path) {
     observe(|o| {
         o.preload(root);
         if let Ok(real) = dunce::canonicalize(root)
@@ -10409,36 +10501,61 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
             o.preload(&real);
         }
     });
-    while let Some(dir) = pending.pop() {
-        let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
-        for (name, is_dir) in listing.iter() {
-            let path = dir.join(name);
-            if *is_dir {
-                if !name.starts_with('.') && name != "target" {
-                    pending.push(path);
-                }
-                continue;
-            }
-            if !path.is_file() {
-                continue;
-            }
-            let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().into_owned();
-            // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
-            classify(relative);
+}
+
+/// One directory of the walk: the subdirectories `enters` allows go to `pending`, the files to `out`, named with `/`
+/// (`slashed`) as Git's listing names them.
+fn walk_directory(root: &Path, dir: &Path, enters: fn(&str) -> bool, pending: &mut Vec<std::path::PathBuf>, out: &mut Vec<String>) -> Result<()> {
+    let listing = observe(|o| o.listing(dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+    for (name, is_dir) in listing.iter() {
+        let path = dir.join(name);
+        if *is_dir {
+            pending.extend(enters(name).then_some(path));
+        } else if path.is_file() {
+            out.push(slashed(&path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy(), std::path::MAIN_SEPARATOR));
         }
     }
+    Ok(())
+}
+
+/// A relative path whose parts `separator` divides (the platform's: `\` on Windows), with `/` between them, as every
+/// reader of the corpus's paths takes them (scope globs, artifact digests, Git's listing). Elsewhere a `\` is a
+/// character of a name, and is kept.
+fn slashed(relative: &str, separator: char) -> String {
+    relative.split(separator).collect::<Vec<_>>().join("/")
+}
+
+/// The corpus's files under `root` (`corpus_paths`), relative and in path order: each grammar's, by the language
+/// registry's suffixes (`languages/<id>.json`: Python's include stubs, `.pyi`), and the others as text.
+pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
+    let mut found = classified(corpus_paths(root)?);
+    sample(&mut found);
+    Ok(found)
+}
+
+/// `paths` by grammar, each sorted; a path of no grammar is text, but a hidden file (`.env`, `.hidden.md`), as in W.
+fn classified(paths: Vec<String>) -> CorpusFiles {
+    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
+    for relative in paths {
+        match crate::code_rule_dsl::language::label_of_path(&relative) {
+            Some(label) => by_label.entry(label).or_default().push(relative),
+            None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
+            None => {}
+        }
     }
     by_label.values_mut().for_each(|files| files.sort());
     text.sort();
-    // `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
-    if let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) {
-        // Documents read as text too: a rule that reads every text document (a check over the repository's docs)
-        // would otherwise read all of them in every sample.
-        for files in by_label.values_mut().chain([&mut text]) {
-            *files = files.iter().step_by(n).cloned().collect();
-        }
+    CorpusFiles { by_label, text }
+}
+
+/// `RERAIL_SAMPLE_EVERY=n`: every n-th file only, to iterate on a rule's cost quickly (its findings are a sample's).
+/// Documents read as text too: a rule that reads every text document (a check over the repository's docs) would
+/// otherwise read all of them in every sample.
+fn sample(found: &mut CorpusFiles) {
+    let Some(n) = std::env::var("RERAIL_SAMPLE_EVERY").ok().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 1) else { return };
+    for files in found.by_label.values_mut().chain([&mut found.text]) {
+        *files = files.iter().step_by(n).cloned().collect();
     }
-    Ok(CorpusFiles { by_label, text })
 }
 
 /// Makes the base relations `prog` reads and does not derive inputs (`select::input_columns` names a base relation).
@@ -10796,6 +10913,53 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// The corpus lists the files a host's walk reads: under every directory but the host's ignored directories (at
+    /// any depth), hidden ones (`.github`) included, from Git's listing and from the walk alike. A site directory
+    /// (one holding a `*.dist-info`) is no repository: its packages are listed whatever their names.
+    #[test]
+    fn the_corpus_skips_the_hosts_ignored_directories_only() {
+        let listed = [".github/workflows/a.yml", ".vscode/b.yml", "wf/a.yml"];
+        let skipped: Vec<String> = crate::git_workspace::ignored_directories().iter().flat_map(|d| [format!("{d}/a.yml"), format!("src/{d}/b.yml")]).collect();
+        let make = |root: &std::path::Path| {
+            for path in listed.iter().copied().chain(skipped.iter().map(String::as_str)) {
+                let path = root.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, "uses: ./.github/actions/php\n").unwrap();
+            }
+        };
+        let files = |root: &std::path::Path| {
+            let found = super::corpus_files(root).unwrap();
+            let mut all: Vec<String> = found.by_label.into_values().flatten().chain(found.text).collect();
+            all.sort();
+            all
+        };
+        let walked = tempfile::tempdir().unwrap();
+        make(walked.path());
+        assert_eq!(files(walked.path()), listed, "the walk");
+        let work = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(work.path()).args(args).output().unwrap().status.success(), "git {args:?}");
+        git(&["init", "-q"]);
+        make(work.path());
+        git(&["add", "-A"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "every directory committed"]);
+        assert_eq!(files(work.path()), listed, "Git's listing");
+        let site = tempfile::tempdir().unwrap();
+        make(site.path());
+        std::fs::create_dir(site.path().join("vendor-1.0.dist-info")).unwrap();
+        std::fs::write(site.path().join("vendor-1.0.dist-info/RECORD"), "vendor/a.yml,,\n").unwrap();
+        let mut every: Vec<String> = listed.iter().map(|p| p.to_string()).chain(skipped).chain(["vendor-1.0.dist-info/RECORD".to_owned()]).collect();
+        every.sort();
+        assert_eq!(files(site.path()), every, "a site directory");
+    }
+
+    /// A walked path is named with `/` on every platform, as Git's listing names it: Windows' `\` divides its parts,
+    /// elsewhere it is a character of a name.
+    #[test]
+    fn a_walked_path_is_named_with_slashes() {
+        assert_eq!(super::slashed(r"pkg\sub\a.py", '\\'), "pkg/sub/a.py");
+        assert_eq!(super::slashed(r"pkg/odd\name.py", '/'), r"pkg/odd\name.py");
+    }
+
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
     /// unkept, every run read the work tree's whole status again to find none. In a process of its own, whose store
     /// is named (`RERAIL_TAPE_CACHE`), so the observer asks the journal, as a run's does.

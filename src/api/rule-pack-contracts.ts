@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { RULE_PACK_CATEGORIES } from "../engine/catalog/rule-packs.js";
+import { RULE_PACK_CATEGORIES, ruleDimensionsSchema } from "../engine/catalog/rule-packs.js";
 import { RULE_KINDS } from "../engine/storage/schema.js";
-import { approvalSubjectSchema } from "./repository-contracts.js";
+import { approvalSubjectSchema, inactiveRuleSchema } from "./repository-contracts.js";
 
-const ruleExampleSchema = z.object({ path: z.string().optional(), text: z.string() }).strict();
+const ruleExampleSchema = z.object({
+  path: z.string().optional(),
+  text: z.string(),
+  with: z.array(z.object({ path: z.string(), text: z.string() }).strict()).optional()
+    .describe("For a rule written in .rerail that reads across files: the other files of the example's repository."),
+}).strict();
 
 export const rulePackSchema = z.object({
   id: z.string(),
@@ -32,6 +37,9 @@ export const rulePackSchema = z.object({
     heldOff: z.string().optional().describe("Why a reviewer holds the rule off though upstream turns it on; set-up never turns it on from the repository's lint config."),
     examples: z.object({ caught: ruleExampleSchema, passes: ruleExampleSchema }).strict().optional()
       .describe("One example the rule catches and one it lets pass, where the pack has them."),
+    dimensions: ruleDimensionsSchema.optional()
+      .describe("Where the pack gives them: what goes wrong when the rule is broken (risk), where its code lives (layer), the worst realistic outcome (severity), and the hazard id packs share when they catch the same thing in different stacks."),
+    inactive: inactiveRuleSchema.optional(),
   }).strict()),
 }).strict();
 

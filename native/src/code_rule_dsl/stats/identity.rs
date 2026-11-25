@@ -1,4 +1,4 @@
-//! Plan identities (05 Phase 5 row 3), from scale-test-the-re-railer's
+//! Plan identities (05 Phase 5 row 3), from N's
 //! `query/plan/identity.rs`: domain-separated SHA-256 over tagged, length-prefixed fields, so two
 //! identities are equal only for equal inputs of the same domain. `compiled_plans` is keyed by a
 //! [`CompiledPlanId`] (`stats::plans`), built from the plan's semantic identities and the
