@@ -238,6 +238,32 @@ interface AuditReads {
   readonly rows: number;
   /** The UTF-8 bytes of the text those rows held: each audit's id and provenance text a read returned. */
   readonly textBytes: number;
+  /** Each statement whose program can read an audit row it does not return (`returnsEachRowItReads`). */
+  readonly unreturned: readonly string[];
+}
+
+/** One step of the program SQLite compiles for a statement (`EXPLAIN`): its address, opcode and P2, a test's jump. */
+interface ProgramStep {
+  readonly addr: number;
+  readonly opcode: string;
+  readonly p2: number;
+}
+
+/** The opcodes that test a value and jump to their P2 by the result. */
+const TESTS = new Set(["Eq", "Ne", "Lt", "Le", "Gt", "Ge", "If", "IfNot", "IsNull", "NotNull", "IsType"]);
+
+/**
+ * Whether a statement's program returns each row it reads: each of its loops (a `Next` or `Prev`, which jumps back to
+ * the loop's first step) returns a row inside it (`ResultRow`), and no test before that step jumps past it to the next
+ * row. A sort through a temporary b-tree and an aggregate such as `MAX` return after the loop that read the rows, and a
+ * WHERE term the index search does not answer is tested on each row it gives, skipping those that fail.
+ */
+function returnsEachRowItReads(program: readonly ProgramStep[]): boolean {
+  const row = program.find(step => step.opcode === "ResultRow")?.addr ?? -1;
+  const skips = (loop: ProgramStep): boolean => program.some(step => TESTS.has(step.opcode) && step.addr >= loop.p2
+    && step.addr < row && step.p2 > row && step.p2 <= loop.addr);
+  return program.filter(step => step.opcode === "Next" || step.opcode === "Prev")
+    .every(loop => loop.p2 <= row && row < loop.addr && !skips(loop));
 }
 
 /** The UTF-8 bytes of the text one returned row holds, a plucked value or each of a row's columns. */
@@ -251,13 +277,14 @@ function textBytesOf(row: unknown): number {
  * Counts what the statements this thread prepares from here on that read audits (`FROM audits`) return: each row a
  * `get` or `all` gives and each row `iterate` gives, and the text they hold (`AuditReads`). better-sqlite3 gives no
  * count of the rows SQLite reads to answer a statement, so this counts the rows each one returns, a count no load
- * changes. The move's statements name their index and test nothing else in a WHERE term, so each audit row SQLite
- * reads for them is one they return. Puts `prepare` back on `restore`. A move's thread prepares its own statements,
- * which this does not see.
+ * changes, and reads the program SQLite compiles for each call (`EXPLAIN`, with the call's values): a statement whose
+ * program can read a row it does not return is listed in `unreturned`, so the count is every audit row it read. Puts
+ * `prepare` back on `restore`. A move's thread prepares its own statements, which this does not see.
  */
 function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
   let rows = 0;
   let textBytes = 0;
+  const unreturned = new Set<string>();
   const returned = (row: unknown): void => {
     rows += 1;
     textBytes += textBytesOf(row);
@@ -266,21 +293,29 @@ function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
   const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
     const statement = prepare.call(this, source);
     if (!/\bFROM audits\b/u.test(source)) return statement;
+    const explain = prepare.call(this, `EXPLAIN ${source}`);
+    const program = explain.all.bind(explain) as (...values: unknown[]) => ProgramStep[];
+    const read = (values: unknown[]): void => {
+      if (!returnsEachRowItReads(program(...values))) unreturned.add(source);
+    };
     const get = statement.get.bind(statement) as (...values: unknown[]) => unknown;
     const all = statement.all.bind(statement) as (...values: unknown[]) => unknown[];
     const iterate = statement.iterate.bind(statement) as (...values: unknown[]) => IterableIterator<unknown>;
     Object.assign(statement, {
       get: (...values: unknown[]) => {
+        read(values);
         const row = get(...values);
         if (row !== undefined) returned(row);
         return row;
       },
       all: (...values: unknown[]) => {
+        read(values);
         const found = all(...values);
         found.forEach(returned);
         return found;
       },
       iterate: (...values: unknown[]) => {
+        read(values);
         const found = iterate(...values);
         return {
           [Symbol.iterator]() {
@@ -297,7 +332,7 @@ function countAuditReads(): { reads: () => AuditReads; restore: () => void } {
     });
     return statement;
   });
-  return { reads: () => ({ rows, textBytes }), restore: () => spy.mockRestore() };
+  return { reads: () => ({ rows, textBytes, unreturned: [...unreturned] }), restore: () => spy.mockRestore() };
 }
 
 /**
@@ -1104,7 +1139,7 @@ describe("audit rule provenance", () => {
     // that names no stored copy, the older Rerail's 2,000th, which says whether that Rerail still records. The check
     // before a third batch finds no audit left, and that batch returns none: 26 rows, and no text of the 2,000.
     const taken = written.reduce((sum, { auditId, text: json }) => sum + Buffer.byteLength(auditId) + Buffer.byteLength(json), 0);
-    expect({ moved, reads: moving.reads() }).toEqual({ moved: 20, reads: { rows: 26, textBytes: taken } });
+    expect({ moved, reads: moving.reads() }).toEqual({ moved: 20, reads: { rows: 26, textBytes: taken, unreturned: [] } });
     expect(inlineAudits(path)).toBe(2_000);
 
     // The older Rerail goes on recording: its next audit begins an hour before the clock reads, so a start that found an
@@ -1117,10 +1152,10 @@ describe("audit rule provenance", () => {
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.reads).toEqual({ rows: 0, textBytes: 0 });
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unreturned: [] });
   }, 120_000);
 
-  it("reads one audit row on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
+  it("reads two audit rows on its calling thread while it waits for an older Rerail, however many audits this build recorded since", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, Array.from({ length: 20 }, () => provenanceOf("/home/dev/app", 20)));
     openRerailDatabase(path).$client.close();
@@ -1147,12 +1182,14 @@ describe("audit rule provenance", () => {
     expect(logged).toContain(`began at ${new Date(at).toISOString()}.`);
     // Reading the start of every audit in the week, and the row of each that began after the older Rerail's, took
     // 69 ms on Linux and 195 ms on Windows. The check returns two rows: the first audit left to take, and the start of
-    // the older Rerail's audit, the last recorded that names no stored copy; none of their text.
-    expect(counted.reads()).toEqual({ rows: 2, textBytes: 0 });
+    // the older Rerail's audit, the last recorded that names no stored copy; none of their text. Its statements'
+    // programs return each row they read, so it reads those two alone: one that sorted, summed or tested a start on
+    // each audit, as that reading did, is listed in `unreturned`.
+    expect(counted.reads()).toEqual({ rows: 2, textBytes: 0, unreturned: [] });
     expect(inlineAudits(path)).toBe(21);
   }, 60_000);
 
-  it("moves every audit recorded before the step, one begun after the time the step recorded among them, and reads one audit row a check on its calling thread", async () => {
+  it("moves every audit recorded before the step, one begun after the time the step recorded among them, and reads two audit rows on its calling thread", async () => {
     const path = await fileOfTheBuildBefore();
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
     // This build upgrades the file a day on. The clock went back between the audits and that open, as an NTP
@@ -1170,7 +1207,7 @@ describe("audit rule provenance", () => {
     const clock = (): number => 10 * day;
 
     // The move runs on a thread of its own; on the calling thread, the daemon's, which answers hooks, the start's check
-    // and the check once the move's thread ends each read one audit row at most. Bounded by the time the step recorded
+    // and the check once the move's thread ends read two audit rows in all. Bounded by the time the step recorded
     // alone, the move would stop at the 16th: it and the 14 after it would keep their copy for good.
     const moving = countAuditReads();
     try {
@@ -1180,7 +1217,7 @@ describe("audit rule provenance", () => {
     }
     // The start's check returns the first audit left to take and the start of the last that names no stored copy, the
     // older Rerail's 2,000th; the check once the thread ends returns none.
-    expect(moving.reads()).toEqual({ rows: 2, textBytes: 0 });
+    expect(moving.reads()).toEqual({ rows: 2, textBytes: 0, unreturned: [] });
     // Every audit recorded before the step reads as written. The older Rerail's stay in their rows, where it reads
     // them, the one its clock dated before the step included.
     expect(inlineAudits(path)).toBe(2_001);
@@ -1201,7 +1238,7 @@ describe("audit rule provenance", () => {
     expect(later.moved).toBe(0);
     expect(later.waits).toEqual([]);
     expect(later.logged).not.toContain(WAITS_FOR_OLDER);
-    expect(later.reads).toEqual({ rows: 0, textBytes: 0 });
+    expect(later.reads).toEqual({ rows: 0, textBytes: 0, unreturned: [] });
   }, 120_000);
 
   it.each([
