@@ -198,8 +198,9 @@ impl ShardKey for i64 {
 impl<K: ShardKey> Keys<K> {
     /// The parts below `bound` that hold rows of key `k`, in the order admitted.
     fn parts(&self, k: K, bound: usize) -> impl Iterator<Item = usize> + '_ {
-        let table = self.log.table.load_full();
-        let first = table.find(k.bits()).map_or(EMPTY, |s| s.first.load(Ordering::Acquire));
+        // The table borrowed for the first link alone (`load`: no count of its holders written, as a probe of each
+        // join would).
+        let first = self.log.table.load().find(k.bits()).map_or(EMPTY, |s| s.first.load(Ordering::Acquire));
         // A link's number is one past its place (`EMPTY` is no link).
         let mut at = first;
         std::iter::from_fn(move || {
