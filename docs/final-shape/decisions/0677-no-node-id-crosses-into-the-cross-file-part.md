@@ -173,7 +173,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    built. A model's `Meta` options and managers (3c), and its hooks (3d): **done (2026-11-25)**, § Fix 3c: built,
    § Fix 3d: built. Points-to (3e), the phase `points_to`, and Django's four call-graph policies over symbols:
    **done (2026-11-25)**, § Fix 3e: built (note t55 is its design). The data layer's purity call graph
-   (`plp_anycand`, 3f): **done (2026-11-25)**, § Fix 3f: built. `item_parts` remains.
+   (`plp_anycand`, 3f): **done (2026-11-25)**, § Fix 3f: built. The TSX `/* global */` items (`item_parts`, 3g):
+   **done (2026-11-25)**, § Fix 3g: built.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
@@ -656,6 +657,24 @@ The purity analysis runs once per key, not once per def node, and its findings j
 **For the list's work.** With `RERAIL_SHOW_CROSSINGS=1`, a pack split test prints each relation it finds and the
 crossing it is under (run with `--no-capture`). This fix's stale entries, those of the `:alone` and sharded runs
 included, came from the union of one run's printed lines (§ Open).
+
+### Fix 3g: built (2026-11-25): a `/* global */` comment's items in its own file
+
+**The list.** 312 entries, from 328: javascript's 11 and typescript's 5, every relation under `item_parts`.
+javascript's `rr_found_through` stays, under its other crossings (`capital`, `unescape`).
+
+`lib/tsx/eslint-b-scope.rerail` split a `/* global */` comment's items (`"b:readonly"` is `b`, `"readonly"`) through a
+table keyed by the item's text, `item_parts(i, x, v) :- gitem(_, i, _), …`. Leaving out the comment made it a table
+of every file's items, with no location. So `global_item(c, …)`, its one reader, joined it in the cross part, with
+the comment's node. Everything built on `global_item` followed it there: `gval`, `global_named`, `global_call`,
+typescript's `global_hit`. An item's parts are a function of its text alone, so `global_item` now splits it in the
+comment's own rule, and `item_parts` is gone.
+
+No test read a `/* global */` comment before. typescript-eslint-no-unused-vars now has a case of two files
+(`global_comment_items_are_read_in_their_file`), with a setting, an `off` item and an item after the comment's
+line break. Its findings, and eslint-no-redeclare's, are the same as the old engine's with the old rules. The pack split
+tests and every rule file's own tests pass. javascript's split test runs in 3 shards, so its stale entries came from
+the union of their `RERAIL_SHOW_CROSSINGS` lines (§ Open).
 
 ## Open
 
