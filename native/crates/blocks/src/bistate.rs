@@ -22,9 +22,10 @@
 //! its relation's block, and its cells are read where they lie (`Read::get`). `check` is the law a bistate keeps,
 //! read in place too, built for tests (`test-hooks`) only.
 //!
-//! Cost: `added`, `gone`, `counts` and `is_identity` read the two states' liveness words, so they cost
-//! `after.end() / 64` word reads, not the change's size. A state whose layer records its own kills (a delta's
-//! `killed` rows) will read them in O(change) (0678, step 3).
+//! Cost: a state that records its change since its version (`Read::since`: a frozen delta's `changed` ids, an
+//! `InRel`'s kills since its start) is read in the change's size: `added`, `gone`, `counts` and `is_identity` read
+//! the ids it names and its new rows' words, never the version's liveness (0678 step 4). A state that records none
+//! is read a liveness word at a time over every id: `after.end() / 64` words.
 
 pub use crate::ids::{ColumnIndex, RowId, WordIndex};
 use crate::relation::View;
@@ -33,6 +34,15 @@ use crate::relation::View;
 /// the column again.
 pub trait ColumnRead {
     fn get(&self, id: RowId) -> i64;
+}
+
+/// What a state records of its change since its version (decision 0678 step 4): the version's end, and the
+/// version's ids whose liveness may differ now, ascending, each once (a superset is allowed: each is checked). Ids
+/// from `end` on are rows new since.
+#[derive(Clone, Copy, Debug)]
+pub struct Since<'s> {
+    pub end: RowId,
+    pub flips: &'s [u32],
 }
 
 /// A relation at one state, read where it lies.
@@ -75,6 +85,11 @@ pub trait Read {
     #[inline]
     fn live(&self, id: RowId) -> bool {
         self.live_word(id.word()) >> id.bit() & 1 != 0
+    }
+
+    /// Its change since its version, where it records one: none by default.
+    fn since(&self) -> Option<Since<'_>> {
+        None
     }
 
     /// Its live ids, ascending.
@@ -144,6 +159,31 @@ impl<F: Fn(WordIndex) -> u64> Bits<F> {
     }
 }
 
+/// The rows from `from` to `end` whose bits a word function sets, ascending: only the words that hold them read.
+fn bits_from(from: RowId, end: RowId, word: impl Fn(WordIndex) -> u64) -> Bits<impl Fn(WordIndex) -> u64> {
+    let first = from.word();
+    let words = first.get() as u32..end.get().div_ceil(64).max(first.get() as u32);
+    Bits { word: move |w: WordIndex| word(w) & !below(from, w), words, at: WordIndex::default(), cur: 0 }
+}
+
+/// One of two iterators of ids.
+enum Either<A, B> {
+    L(A),
+    R(B),
+}
+
+impl<A: Iterator<Item = RowId>, B: Iterator<Item = RowId>> Iterator for Either<A, B> {
+    type Item = RowId;
+
+    #[inline]
+    fn next(&mut self) -> Option<RowId> {
+        match self {
+            Either::L(a) => a.next(),
+            Either::R(b) => b.next(),
+        }
+    }
+}
+
 impl<F: Fn(WordIndex) -> u64> Iterator for Bits<F> {
     type Item = RowId;
 
@@ -195,18 +235,52 @@ impl<S: Read> Bistate<S> {
         self.before.as_ref().map_or(RowId::ZERO, Read::end)
     }
 
+    /// The after state's record of its change, when it is a change of this bistate's before state.
+    fn listed(&self) -> Option<(&S, Since<'_>)> {
+        let before = self.before.as_ref()?;
+        let since = self.after.since()?;
+        (since.end == before.end()).then_some((before, since))
+    }
+
     /// The ids live after and not before, ascending: rows added since, and rows of before resurrected.
-    pub fn added(&self) -> Bits<impl Fn(WordIndex) -> u64 + '_> {
-        Bits::new(self.after.end(), move |w| self.after.live_word(w) & !self.before_word(w))
+    pub fn added(&self) -> impl Iterator<Item = RowId> + '_ {
+        match self.listed() {
+            Some((before, since)) => {
+                let after = &self.after;
+                let back = since.flips.iter().map(|&i| RowId::new(i)).filter(move |&id| !before.live(id) && after.live(id));
+                Either::L(back.chain(bits_from(since.end, after.end(), move |w| after.live_word(w))))
+            }
+            None => Either::R(Bits::new(self.after.end(), move |w| self.after.live_word(w) & !self.before_word(w))),
+        }
     }
 
     /// The ids live before and not after, ascending: rows killed since.
-    pub fn gone(&self) -> Bits<impl Fn(WordIndex) -> u64 + '_> {
-        Bits::new(self.before_end(), move |w| self.before_word(w) & !self.after.live_word(w))
+    pub fn gone(&self) -> impl Iterator<Item = RowId> + '_ {
+        match self.listed() {
+            Some((before, since)) => {
+                let after = &self.after;
+                Either::L(since.flips.iter().map(|&i| RowId::new(i)).filter(move |&id| before.live(id) && !after.live(id)))
+            }
+            None => Either::R(Bits::new(self.before_end(), move |w| self.before_word(w) & !self.after.live_word(w))),
+        }
     }
 
     /// Rows gone and rows added, counted.
     pub fn counts(&self) -> (usize, usize) {
+        if let Some((before, since)) = self.listed() {
+            let (mut gone, mut added) = (0, 0);
+            for id in since.flips.iter().map(|&i| RowId::new(i)) {
+                let (b, a) = (before.live(id), self.after.live(id));
+                gone += usize::from(b && !a);
+                added += usize::from(a && !b);
+            }
+            let new = bits_from(since.end, self.after.end(), |w| self.after.live_word(w));
+            let words = new.words.clone();
+            for w in words.map(WordIndex::new) {
+                added += (new.word)(w).count_ones() as usize;
+            }
+            return (gone, added);
+        }
         let (mut gone, mut added) = (0, 0);
         for w in WordIndex::upto(self.after.end()) {
             let (b, a) = (self.before_word(w), self.after.live_word(w));
@@ -218,6 +292,9 @@ impl<S: Read> Bistate<S> {
 
     /// Whether nothing changed: no row gone or added.
     pub fn is_identity(&self) -> bool {
+        if self.listed().is_some() {
+            return self.counts() == (0, 0);
+        }
         WordIndex::upto(self.after.end()).all(|w| self.before_word(w) == self.after.live_word(w))
     }
 }
@@ -306,6 +383,12 @@ impl Read for View<'_> {
         View::get(self, id.get(), c.get())
     }
 
+    /// A frozen delta's change: its base's ids it killed (`Relation::changed`), and its own rows after them.
+    fn since(&self) -> Option<Since<'_>> {
+        self.base?;
+        self.top.is_frozen().then(|| Since { end: RowId::new(self.top.base_rows), flips: self.top.changed.as_slice() })
+    }
+
     fn column(&self, c: ColumnIndex) -> ViewColumn {
         ViewColumn { base: self.base.map(|b| b.rows.reader(c.get())), top: self.top.rows.reader(c.get()), base_rows: self.top.base_rows }
     }
@@ -382,6 +465,8 @@ pub struct Marked<'a, G: Fn(RowId, ColumnIndex) -> i64> {
     pub end: RowId,
     pub dead: &'a [u64],
     pub get: G,
+    /// Its change since its version, where its holder records one (an `InRel`'s kills since its start).
+    pub since: Option<Since<'a>>,
 }
 
 impl<G: Fn(RowId, ColumnIndex) -> i64> Read for Marked<'_, G> {
@@ -405,6 +490,10 @@ impl<G: Fn(RowId, ColumnIndex) -> i64> Read for Marked<'_, G> {
 
     fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
         (self.get)(id, c)
+    }
+
+    fn since(&self) -> Option<Since<'_>> {
+        self.since
     }
 
     /// Its cells come through `get`, a cell at a time: it has no column of its own to resolve.
@@ -492,6 +581,30 @@ mod tests {
         });
     }
 
+    /// A frozen delta records its change: the base rows it killed, read without the base's liveness. A base row
+    /// killed and pushed again is brought back, not added again: its kill is cancelled, and it is in no change.
+    #[test]
+    fn a_delta_records_its_kills_and_brings_back_a_row_pushed_again() {
+        let base = [[1, 10], [2, 20], [3, 30], [4, 40]];
+        with_delta(&base, &[[5, 50], [3, 30]], &[0, 2, 0], |v| {
+            assert_eq!(v.top.changed.as_slice(), &[0], "id 2 pushed again: its kill cancelled; id 0 once");
+            assert!(View::live(&v, 2), "brought back where it was");
+            let s = v.bistate();
+            assert!(s.listed().is_some());
+            check(&s);
+            assert!(is_least(&s));
+            assert_eq!(s.gone().map(RowId::get).collect::<Vec<_>>(), vec![0]);
+            assert_eq!(s.added().map(|id| pair(s.after(), id)).collect::<Vec<_>>(), vec![[5, 50]]);
+            assert_eq!(s.counts(), (1, 1));
+        });
+        with_delta(&base, &[[3, 30]], &[2], |v| {
+            assert!(v.top.changed.as_slice().is_empty());
+            let s = v.bistate();
+            check(&s);
+            assert!(s.is_identity(), "killed and pushed again: no change");
+        });
+    }
+
     /// A delta that adds only rows its base holds and kills none is the identity.
     #[test]
     fn a_delta_of_nothing_new_is_the_identity() {
@@ -530,21 +643,97 @@ mod tests {
         let mut now = dead.clone();
         now.resize(4, 0);
         now[2] |= 1 << 1; // id 129, added and dead: in neither state
-        let before = Marked { arity: 2, end: RowId::new(100), dead: &dead0, get };
-        let after = Marked { arity: 2, end: RowId::new(n), dead: &now, get };
-        let s = Bistate::new(before, after);
-        check(&s);
-        assert_eq!(s.gone().map(RowId::get).collect::<Vec<_>>(), vec![9, 84]);
-        let added: Vec<u32> = s.added().map(RowId::get).collect();
-        assert_eq!(added[0], 67, "a row resurrected is added");
-        assert_eq!(added[1..], (100..n).filter(|&id| id != 129).collect::<Vec<_>>()[..]);
+        // Read by words, and from the ids the after state records (a superset: id 5 dead in both, id 40 live in
+        // both): the same change.
+        for since in [None, Some(Since { end: RowId::new(100), flips: &[5, 9, 40, 67, 84] })] {
+            let before = Marked { arity: 2, end: RowId::new(100), dead: &dead0, get, since: None };
+            let after = Marked { arity: 2, end: RowId::new(n), dead: &now, get, since };
+            let s = Bistate::new(before, after);
+            assert_eq!(s.listed().is_some(), since.is_some());
+            check(&s);
+            assert_eq!(s.gone().map(RowId::get).collect::<Vec<_>>(), vec![9, 84]);
+            let added: Vec<u32> = s.added().map(RowId::get).collect();
+            assert_eq!(added[0], 67, "a row resurrected is added");
+            assert_eq!(added[1..], (100..n).filter(|&id| id != 129).collect::<Vec<_>>()[..]);
+            assert_eq!(s.counts(), (2, 1 + 99));
+        }
+    }
+
+    /// A state that counts its liveness reads.
+    struct Counted<'c, R> {
+        r: R,
+        words: &'c std::cell::Cell<usize>,
+    }
+
+    impl<R: Read> Read for Counted<'_, R> {
+        type Column<'s>
+            = R::Column<'s>
+        where
+            Self: 's;
+
+        fn arity(&self) -> usize {
+            self.r.arity()
+        }
+
+        fn end(&self) -> RowId {
+            self.r.end()
+        }
+
+        fn live_word(&self, w: WordIndex) -> u64 {
+            self.words.set(self.words.get() + 1);
+            self.r.live_word(w)
+        }
+
+        fn get(&self, id: RowId, c: ColumnIndex) -> i64 {
+            self.r.get(id, c)
+        }
+
+        fn column(&self, c: ColumnIndex) -> R::Column<'_> {
+            self.r.column(c)
+        }
+
+        fn since(&self) -> Option<Since<'_>> {
+            self.r.since()
+        }
+    }
+
+    /// A change recorded by its state costs its size: a version 64 times as large, with the same kills and rows
+    /// added, takes the same liveness reads; read by words, it takes 64 times as many.
+    #[test]
+    fn a_recorded_change_costs_its_size() {
+        let reads = |n0: u32, listed: bool| -> (usize, (usize, usize), Vec<u32>, Vec<u32>) {
+            let get = |id: RowId, _: ColumnIndex| i64::from(id.get());
+            let words = std::cell::Cell::new(0);
+            let mut now = vec![0u64; (n0 as usize + 100).div_ceil(64)];
+            for id in [3u32, 7, n0 - 1, n0 + 5] {
+                now[id as usize >> 6] |= 1 << (id & 63);
+            }
+            let flips = [3u32, 7, n0 - 1];
+            let since = listed.then_some(Since { end: RowId::new(n0), flips: &flips });
+            let before = Counted { r: Marked { arity: 1, end: RowId::new(n0), dead: &[], get, since: None }, words: &words };
+            let after = Counted { r: Marked { arity: 1, end: RowId::new(n0 + 100), dead: &now, get, since }, words: &words };
+            let s = Bistate::new(before, after);
+            words.set(0);
+            let counts = s.counts();
+            let gone: Vec<u32> = s.gone().map(RowId::get).collect();
+            let added: Vec<u32> = s.added().map(|id| id.get() - n0).collect();
+            (words.get(), counts, gone.iter().map(|&g| if g == n0 - 1 { u32::MAX } else { g }).collect(), added)
+        };
+        let (small, c1, g1, a1) = reads(1 << 10, true);
+        let (large, c2, g2, a2) = reads(1 << 16, true);
+        assert_eq!((c1, &g1, &a1), (c2, &g2, &a2), "the same change");
+        assert_eq!(c1, (3, 99));
+        assert_eq!(small, large, "a recorded change's reads do not grow with its version");
+        let (by_words_small, ..) = reads(1 << 10, false);
+        let (by_words_large, ..) = reads(1 << 16, false);
+        assert!(by_words_large >= 32 * by_words_small, "{by_words_small} {by_words_large}");
     }
 
     /// Word boundaries: ends of 0, 1, 63, 64, 65 and 128 ids.
     #[test]
     fn ends_at_word_boundaries() {
         for end in [0u32, 1, 63, 64, 65, 128] {
-            let state = || Marked { arity: 1, end: RowId::new(end), dead: &[], get: |id: RowId, _| i64::from(id.get()) };
+            let state = || Marked { arity: 1, end: RowId::new(end), dead: &[], get: |id: RowId, _| i64::from(id.get()), since: None };
             assert_eq!(state().live_ids().count(), end as usize, "{end}");
             check(&Bistate::cold(state()));
         }

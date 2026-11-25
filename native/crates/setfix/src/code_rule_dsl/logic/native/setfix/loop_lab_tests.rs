@@ -141,7 +141,7 @@ fn a_joins_candidates_cost() {
     let mut syms = Interner::for_loading(&store.syms);
     let mut j = join_rule_with(&db, &spec, &mut syms, false).unwrap();
     j.indexed();
-    let src = match &j.steps[1] { Step::Atom { src, .. } => src.clone(), _ => panic!("a probe of lab_one") };
+    let src = match &j.steps[1] { Step::Atom { src, .. } => src, _ => panic!("a probe of lab_one") };
     let spec = [(0usize, Key::Slot(0))];
     let need = 0b11u64;
     time("parts: the order's search (find_at)", keys.len(), &|| {

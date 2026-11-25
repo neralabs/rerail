@@ -165,6 +165,10 @@ structure! {
         /// release; the bytes of their chunk. Its kills delta (`try_kills_at`) reads them here.
         pub own_dead: Span<u64>,
         pub own_dead_kept: AtomicU64,
+        /// A frozen delta's change (decision 0678 step 4): the base's ids whose liveness it changes (its kills of
+        /// live base rows), ascending, each once. A change is read from these and its own rows alone, never from the
+        /// base's liveness. Empty for a full relation, an open one, and a delta that kills nothing.
+        pub changed: Span<u32>,
     }
 }
 
@@ -1264,9 +1268,10 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     let keys = sort_canonical(scratch, cols, n, &key, &lo, &hi, ids);
     let same = |p: usize| same_row(cols, n, &key, keys, ids, p);
 
-    // Set semantics: a row once, and in a delta, not a row its base still holds live.
-    let base_live = |i: usize| -> bool {
-        let Some(b) = base else { return false };
+    // Set semantics: a row once, and in a delta, not a row its base holds. The base row equal to own row `i`, if
+    // the base holds one.
+    let base_row = |i: usize| -> Option<u32> {
+        let b = base?;
         let (mut l, mut h) = (0u32, b.rows.len());
         while l < h {
             let mid = (l + h) / 2;
@@ -1280,22 +1285,61 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             match o {
                 Ordering::Less => l = mid + 1,
                 Ordering::Greater => h = mid,
-                Ordering::Equal => return !b.dead_bit(mid) && !is_dead(dead, mid as usize),
+                Ordering::Equal => return Some(mid),
             }
         }
-        false
+        None
     };
-    // Decided against the kills alone: a duplicate dropped here is one of its own rows, never a base row.
+    // An own row its base holds is dropped. When the delta killed that base row, the row pushed again brings it
+    // back (the user, 2026-11-24: resurrected rather than inserted again): its kill is cancelled, so its id stays
+    // what it was and the change is the least one. A base row dead in the base itself is not brought back: a full
+    // relation's rows are all live, so none is.
     let order: &mut [u32] = scratch.take(m);
-    let mut live = 0;
+    let back: &mut [u32] = scratch.take(m);
+    let (mut live, mut nback) = (0, 0);
     for (p, &id) in ids.iter().enumerate().take(m) {
         let i = id as usize;
-        if (p > 0 && same(p)) || base_live(i) {
+        if p > 0 && same(p) {
+            continue;
+        }
+        if let Some(b) = base_row(i) {
+            let based = base.expect("a base row's base");
+            if !based.dead_bit(b) && is_dead(dead, b as usize) {
+                back[nback] = b;
+                nback += 1;
+            }
             continue;
         }
         order[live] = i as u32;
         live += 1;
     }
+    for &b in &back[..nback] {
+        dead[b as usize >> 6] &= !(1u64 << (b & 63));
+    }
+    // The change: each base row killed that was live in the base and stays killed, ascending, once.
+    let changed: &mut [u32] = scratch.take(nkilled as usize);
+    let mut nchanged = 0;
+    if let Some(b) = base {
+        for k in 0..nkilled {
+            let id = rel.killed.get(k, 0) as usize;
+            if id < br && !b.dead_bit(id as u32) && is_dead(dead, id) {
+                changed[nchanged] = id as u32;
+                nchanged += 1;
+            }
+        }
+    }
+    let changed = &mut changed[..nchanged];
+    changed.sort_unstable();
+    let changed = {
+        let mut u = 0;
+        for j in 0..changed.len() {
+            if j == 0 || changed[j] != changed[j - 1] {
+                changed[u] = changed[j];
+                u += 1;
+            }
+        }
+        &changed[..u]
+    };
     let order = &order[..live];
     let dropped = (m - live) as u64;
 
@@ -1406,6 +1450,12 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             let words: *mut u64 = block.alloc_t(base_words);
             std::ptr::copy_nonoverlapping(dead.as_ptr(), words, base_words);
             Span::set(&rel.dead, words, base_words);
+        }
+        if !changed.is_empty() {
+            let cp: *mut u32 = block.alloc_t(changed.len());
+            // copy: derived: the change, computed here from the kills, written once where it is kept
+            std::ptr::copy_nonoverlapping(changed.as_ptr(), cp, changed.len());
+            Span::set(&rel.changed, cp, changed.len());
         }
         Span::set(&rel.indexes, ixp, spec.indexes.len());
         Span::set(&rel.stats, sp, a);

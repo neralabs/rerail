@@ -1,6 +1,6 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Steps 1 and 3 done. Step 2 cut down by the user's constraints (below) to the reads of a column
+Status: in progress. Steps 1, 3 and 4 done. Step 2 cut down by the user's constraints (below) to the reads of a column
 and of a chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
@@ -214,8 +214,48 @@ Tests (`table::tests`), each against the same answer read a cell at a time:
   estimated rows), so `access` can carry a cost.
 - **Adapters:** `vtab::Source` read through a `Table` (its lookups, ranges, orders and `holds`), and setfix's `InRel`
   as one (its open rows are unsorted: `sort()` none until it is frozen).
-- **Writes:** a delta's writer with resurrection (constraint 1); today a row back is pushed again.
+- **Writes:** resurrection is done by freeze (step 4); a writer that brings back a base row by id is not needed yet.
 - **Sort on one column:** freeze still sorts on every column in turn. The table relies only on the first.
+
+## Step 4: a change read in its size
+
+The user, 2026-11-24, on the next steps: "please do 1, 2 and 3". Step 1 of that list was to read a change from what
+the delta records, not from the version's liveness.
+
+A state now says what it changed since its version (`Read::since`): the version's end, and the version's ids whose
+liveness may differ, ascending, each once (a superset is allowed: each id is checked). `Bistate::gone`, `added`,
+`counts` and `is_identity` read those ids and the new rows' liveness words only. A state that records nothing is
+read by words, as before.
+
+The two engine forms record their change:
+
+- **A frozen delta** (`Relation::changed`, a new field at the end of the descriptor): freeze writes the base ids it
+  killed that were live in the base, sorted, once. `View::since` gives them.
+- **setfix's `InRel`**: every kill since its start goes through `Rel::kill_row`, which pushes the id onto its
+  origin's log (`Origin::killed`, beside the start it is relative to). `InRel::moved` sorts the log and drops
+  repeats; `InRel::version` reads its change from it. A debug build checks the log's counts against the liveness
+  words on every `version`, so a kill that bypassed the log fails the test that made it.
+
+**Resurrection** (the user: "maybe we can allow dead then alive for an optimization to resurrect rather than
+re-insert items"). What was built, Claude's choice:
+
+- In a frozen delta, a row pushed again that equals a base row the delta killed brings that row back. Freeze cancels
+  the kill rather than adding a second row, so the id stays and the change is the least one. A version's rows are a
+  frozen full relation's and all live, so "dead then alive" across one delta is exactly this case. The dead bits keep
+  their meaning (kills of the base), so no reader's liveness rule changed: the host's, the CLIF's or the GPU's
+  `v_live`.
+- `InRel` still adds a row derived again as a new row. Bringing back the old id would break its semi-naive waves:
+  a wave's new rows are one range of ids (`set_delta(lo, hi)`), and an old id brought back lies outside it, so the
+  rules that read the wave's delta would not see it.
+
+Tests:
+
+- `bistate::tests::marked_states_read_their_change_by_words`: the same change from the words and from a recorded
+  superset of ids.
+- `a_recorded_change_costs_its_size`: a version 64 times as large, with the same change, takes the same liveness
+  reads. By words it takes at least 32 times as many.
+- `a_delta_records_its_kills_and_brings_back_a_row_pushed_again`.
+- setfix's version tests and its quick tier (with blocks' and clif's: 253 tests) pass with the debug check on.
 
 ## Next steps, proposed (Claude's, not agreed)
 

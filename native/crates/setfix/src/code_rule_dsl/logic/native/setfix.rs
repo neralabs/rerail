@@ -36,7 +36,7 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
-use rerail_blocks::bistate::{Bistate, ColumnIndex, Marked, RowId};
+use rerail_blocks::bistate::{Bistate, ColumnIndex, Marked, RowId, Since};
 use rerail_blocks::vector::Vector;
 use rerail_section::{Handle, Section};
 pub mod scalars;
@@ -652,12 +652,35 @@ enum Origin {
     /// Its first `n` rows are the old relation's (`Rel::based`), less those it marked dead; it added the rest.
     /// `dead`: the old relation's dead rows, as it started (its version at the run's start, decision 0364 stage 2:
     /// what `old`, `minus` and `plus` are read from, with no other relation kept).
-    Based { at: usize, n: usize, dead: Arc<rerail_blocks::vector::Vector<u64>> },
+    /// `killed`: every row it marked dead since it started, as `Origin::killed` says.
+    Based { at: usize, n: usize, dead: Arc<rerail_blocks::vector::Vector<u64>>, killed: Vector<u32> },
     /// Made from the old relation's survivors (too many dead to keep in place): its first `kept` rows, then those
     /// it added; `removed`, the old rows it left out, row-major.
-    Compacted { at: usize, old_n: usize, kept: usize, removed: Vector<i64> },
+    Compacted { at: usize, old_n: usize, kept: usize, removed: Vector<i64>, killed: Vector<u32> },
+}
+impl Origin {
+    /// The rows it marked dead since it started: its version's change, read in the change's size (decision 0678
+    /// step 4). Each kill is pushed as it is made; `InRel::moved` sorts them and drops repeats, so an input's are
+    /// ascending and each once. Kills of rows it added are among them; a reader checks each.
+    fn killed(&mut self) -> &mut Vector<u32> {
+        match self {
+            Origin::Based { killed, .. } | Origin::Compacted { killed, .. } => killed,
+        }
+    }
 }
 impl Rel {
+    /// Marks row `id` dead: whether it was live. A kill since it started is recorded in its origin (`Origin::killed`).
+    fn kill_row(&mut self, id: u32) -> bool {
+        if !kill(&mut self.dead, id) {
+            return false;
+        }
+        self.ndead += 1;
+        if let Some(o) = &mut self.from {
+            o.killed().push(id);
+        }
+        true
+    }
+
     pub fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
@@ -755,10 +778,8 @@ impl Rel {
                     continue;
                 }
             }
-            if let Some(id) = held
-                && kill(&mut self.dead, id)
-            {
-                self.ndead += 1;
+            if let Some(id) = held {
+                self.kill_row(id);
             }
             row[..lat.keys].copy_from_slice(&key);
             row[lat.keys] = v;
@@ -813,6 +834,7 @@ impl Rel {
         let data = &old.rows;
         let mut dead = old.dead.clone();
         let mut ndead = old.ndead;
+        let mut killed: Vector<u32> = Vector::new();
         let mut row = vec![0i64; k];
         for g in 0..gone.n {
             if is_dead(&gone.dead, g as u32) {
@@ -824,6 +846,7 @@ impl Rel {
             }
             if let Some(id) = find_row(&orders, data, k, &row, |id| is_dead(&dead, id)) && kill(&mut dead, id) {
                 ndead += 1;
+                killed.push(id);
             }
         }
         if ndead * 8 > old.n.max(1) {
@@ -840,7 +863,7 @@ impl Rel {
         let serves = if made.is_none() && old.serves.len() == whole.len() { old.serves.iter().zip(&whole).filter(|(_, w)| **w).map(|(s, _)| s.clone()).collect() } else { idx.iter().map(|_| Vec::new()).collect() };
         let sketches = match made { Some((_, sketches)) => sketches, None => old.sketches.clone() };
         let level = if old.has_levels() { old.level.clone() } else { crate::code_rule_dsl::facts::rows::vector_in(None, 0) };
-        let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.clone()) });
+        let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.clone()), killed });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: old.rows.shared(old.n), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: keys::RowSet::default(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
                    lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None, cap: u32::MAX, ordered: false, keyed: Vec::new(), broke: Vec::new(), room: std::sync::OnceLock::new() })
@@ -867,7 +890,7 @@ impl Rel {
         if !levels { rel.level.resize(0, 0); }
         // A kept relation read in place (decision 0456 step 6, a view of its entry) is counted by its view.
         if old.k == k {
-            rel.from = Some(Origin::Compacted { at: old as *const InRel as usize, old_n: old.len(), kept: rel.n, removed });
+            rel.from = Some(Origin::Compacted { at: old as *const InRel as usize, old_n: old.len(), kept: rel.n, removed, killed: Vector::new() });
         }
         rel
     }
@@ -2059,8 +2082,7 @@ impl MaintMode {
                 continue;
             }
             let rel = &mut store.rels[r];
-            if kill(&mut rel.dead, id) {
-                rel.ndead += 1;
+            if rel.kill_row(id) {
                 self.counts[1] += 1;
             }
             for d in self.drivers.iter().filter(|d| d.0 == r) {
@@ -2151,8 +2173,7 @@ impl MaintMode {
         }
         for &(head, id) in &kills {
             let rel = &mut store.rels[head];
-            if kill(&mut rel.dead, id) {
-                rel.ndead += 1;
+            if rel.kill_row(id) {
                 self.counts[1] += 1;
             }
         }
@@ -4830,7 +4851,7 @@ impl View {
                 let mut found: Vec<(u32, [i64; READ])> = rows
                     .into_iter()
                     .map(|row| {
-                        self.src.row_at(row, &all, &mut got);
+                        self.src.row_at(row, all, &mut got);
                         let mut vals = [0i64; READ];
                         for c in 0..all.len() {
                             if need >> c & 1 != 0 {
@@ -6410,6 +6431,11 @@ impl InRel {
     pub fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
         rel.count_dead();
+        if let Some(o) = &mut rel.from {
+            let killed = o.killed();
+            killed.sort_unstable();
+            killed.dedup();
+        }
         // Declared sorted (decision 0456 K7): laid out in canonical order, unless its rows are numbered as the kept
         // relation it started from numbers them (its versions are read by id, decision 0364).
         if rel.ordered && rel.from.is_none() && rel.lat.is_none() && rel.k > 0 {
@@ -6677,8 +6703,8 @@ impl InRel {
             }
         }
         for (id, &kept) in found.iter().enumerate() {
-            if !kept && kill(&mut rel.dead, id as u32) {
-                rel.ndead += 1;
+            if !kept {
+                rel.kill_row(id as u32);
             }
         }
         Some(InRel::moved(rel))
@@ -6722,7 +6748,7 @@ impl InRel {
             Some(Origin::Compacted { at: a, old_n, removed, .. }) if *a == at && *old_n == n && removed.is_empty() => {
                 Some(DeltaIds { rel: self, gone: Gone::Ids(self.version_ids(Ver::Minus)?), added: self.version_ids(Ver::Plus)? })
             }
-            Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == n => {
+            Some(Origin::Compacted { at: a, old_n, kept, removed, .. }) if *a == at && *old_n == n => {
                 let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).map(|id| id as u32).collect();
                 Some(DeltaIds { rel: self, gone: Gone::Rows(removed), added })
             }
@@ -6740,7 +6766,7 @@ impl InRel {
                 let rows_of = |ids: Vector<u32>| { crate::code_rule_dsl::logic::run::shape::rows_copied(ids.len()); ids.into_iter().fold(rerail_blocks::vector::Vector::new(), |mut v, id| { v.extend_from_slice(&self.row(id as usize)); v }) };
                 Some((rows_of(self.version_ids(Ver::Plus)?), rows_of(self.version_ids(Ver::Minus)?)))
             }
-            Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == n => {
+            Some(Origin::Compacted { at: a, old_n, kept, removed, .. }) if *a == at && *old_n == n => {
                 // copy: derived: a test's delta, the rows added since (0364)
                 let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(rerail_blocks::vector::Vector::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
                 crate::code_rule_dsl::logic::run::shape::rows_copied(added.len() / self.k.max(1) + removed.len() / self.k.max(1));
@@ -6883,6 +6909,14 @@ impl InRel {
             _ => None,
         }
     }
+    /// The rows it killed since its start, ascending and each once (`Origin::killed`): `None` where `start` is.
+    fn start_kills(&self) -> Option<&[u32]> {
+        self.start()?;
+        match &self.from {
+            Some(Origin::Based { killed, .. } | Origin::Compacted { killed, .. }) => Some(&killed[..]),
+            None => None,
+        }
+    }
     /// The ids of its version `ver` that are not the relation's own live rows (`Ver::Minus`: rows live at the
     /// start and dead now; `Ver::Plus`: rows added since, live), ascending. `None` without a version, or for `Old`.
     /// Read through its version (`version`), the change as `blocks::bistate` reads every change (decision 0678).
@@ -6901,8 +6935,18 @@ impl InRel {
         let (n0, dead0) = self.start()?;
         let end = |n: usize| RowId::new(u32::try_from(n).expect("a relation's rows fit a row id"));
         let get = move |id: RowId, c: ColumnIndex| self.value(id.get() as usize, c.get());
-        let before = Marked { arity: self.k, end: end(n0), dead: dead0, get };
-        Some(Bistate::new(before, Marked { arity: self.k, end: end(self.n), dead: &self.dead, get }))
+        // Its change, read from the kills it recorded since it started (`Origin::killed`): its size, not its rows'.
+        let since = self.start_kills().map(|flips| Since { end: end(n0), flips });
+        let before = Marked { arity: self.k, end: end(n0), dead: dead0, get, since: None };
+        let v = Bistate::new(before, Marked { arity: self.k, end: end(self.n), dead: &self.dead, get, since });
+        // Every kill since the start goes through `Rel::kill_row`: a debug build checks the record against the
+        // liveness words.
+        #[cfg(debug_assertions)]
+        {
+            let by_words = Bistate::new(Marked { arity: self.k, end: end(n0), dead: dead0, get, since: None }, Marked { arity: self.k, end: end(self.n), dead: &self.dead, get, since: None });
+            debug_assert_eq!(v.counts(), by_words.counts(), "{}: its recorded kills are its change", self.name.get().map_or("", String::as_str));
+        }
+        Some(v)
     }
     /// Its version `ver` as a relation read in place, no row copied (decision 0364 stage 2): `Old`, its first rows
     /// with the start's dead rows (its rows shared); `Minus` and `Plus`, a view of their ids over it. `None` without
