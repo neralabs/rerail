@@ -146,9 +146,17 @@ class Session {
   }
 }
 
-/** Every audit recorded, newest first. */
+/**
+ * Every audit recorded, newest first. The reader is closed after each read: on Windows a database this process still
+ * holds open cannot be deleted, so the Rerail home's removal after the file would fail with EBUSY.
+ */
 function audits(): AuditRecord[] {
-  return new SqliteAuditReader(defaultRerailDatabasePath()).list({ limit: 200 }).audits;
+  const reader = new SqliteAuditReader(defaultRerailDatabasePath());
+  try {
+    return reader.list({ limit: 200 }).audits;
+  } finally {
+    reader.close();
+  }
 }
 
 /** Waits for the finished audit of a `.rerail` run (one that carried only `.rerail` rules) over `path`. */
