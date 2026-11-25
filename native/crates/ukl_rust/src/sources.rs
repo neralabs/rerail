@@ -7,4 +7,4 @@ pub const LABEL_PASSES_16: u64 = 0x0c753df66dbb7f65;
 /// `join_stages.uglykl` as the join program (`JOIN_PROGRAM`, decision 0603) for views of format 0 (several), 16 and
 /// 16z: `join_run`, written by hand (the oracle of rerail-ukl-vec's Rust of it), which reads the views' format as the
 /// compiled reads do, so one Rust for each.
-pub const JOIN_PROGRAM: [u64; 3] = [0x519e167bc84d86cf, 0x6d9bcb7efa1f8b59, 0xe3d2a28c1611f9b6];
+pub const JOIN_PROGRAM: [u64; 3] = [0x818273331cf0e9f4, 0x821e37725ed3dcb6, 0x6728456541126aad];

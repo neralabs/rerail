@@ -2282,9 +2282,10 @@ impl Batch {
     /// the level's wide sort, each kept where its key is not the one before it's. The order is the head's first, so
     /// the host takes the rows as they lie and sorts nothing.
     #[allow(clippy::too_many_arguments)]
+    /// Less `held`'s rows where given: a row kept where its bit is clear, and its bit set (`HeldBits`).
     pub(in crate::code_rule_dsl) fn dedup_sorted(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
-                                                 held: Option<(&DevRel, LatMap<'_>)>, key: &SortKey) -> Result<(), Error> {
-        self.dedup_with(table, cols, in_slot, out_slot, totals, out, held, Some(key))
+                                                 held: Option<HeldBits<'_>>, key: &SortKey) -> Result<(), Error> {
+        self.dedup_with(table, cols, in_slot, out_slot, totals, out, None, Some((key, held)))
     }
 
     /// `table`'s distinct rows over slots `cols` (at most 16) into `out` (a column per slot of `cols`, in that order,
@@ -2305,7 +2306,8 @@ impl Batch {
 
     #[allow(clippy::too_many_arguments)]
     fn dedup_with(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
-                  held: Option<(&DevRel, LatMap<'_>)>, key: Option<&SortKey>) -> Result<(), Error> {
+                  held: Option<(&DevRel, LatMap<'_>)>, sorted: Option<(&SortKey, Option<HeldBits<'_>>)>) -> Result<(), Error> {
+        let (key, bits) = (sorted.map(|s| s.0), sorted.and_then(|s| s.1));
         assert!(cols.len() <= 16 && out.room() == table.room());
         let places = (2 * table.room()).next_power_of_two().max(16);
         let mut d = [0u32; 32];
@@ -2336,8 +2338,19 @@ impl Batch {
             // Its rows decoded from their keys (`head_row`): every column a part, and none held (no row to probe).
             assert!(k.parts.len() <= 16 && k.bits <= 64 && k.parts.iter().all(|&(c, _, _)| (c as usize) < cols.len()));
             assert!((0..cols.len() as u32).all(|c| k.parts.iter().any(|p| p.0 == c)), "a sorted dedup's every column in its key");
-            assert!(held.is_none(), "a sorted dedup less held rows");
+            assert!(held.is_none(), "a sorted dedup less a map's rows");
         }
+        // Less a bitmap's rows (`HeldBits`): its index bits in the map's mask word, its place in its block.
+        let bb = match bits {
+            Some(hb) => {
+                let k = key.expect("a bitmap's dedup sorted");
+                assert!(k.index_bits() == hb.bits && hb.bits <= HELD_BITS_MAX);
+                (d[23], d[24]) = (1, hb.bits);
+                (d[30], d[31]) = (hb.at as u32, (hb.at as u64 >> 32) as u32);
+                Some(bound(hb.home)?)
+            }
+            None => None,
+        };
         // Its places placed with its input where that is placed: twice its rows, a power of two (5d); and as many
         // again past them, each row's place (`dedup_claim_one`'s, its mark's). A sorted one has none.
         let p = Held::new(if table.placed() || key.is_some() { 16 } else { 2 * 4 * places })?;
@@ -2351,16 +2364,8 @@ impl Batch {
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.h = job.reach(&p.buffer, 0, true)?;
         if let Some(k) = key {
-            // `HeadKeyP`: tagged, its parts, its rank's shift and its rank (its level's, `flush`); each part its
-            // column, bits, least's words.
-            let mut w = [0u32; 72];
-            w[0] = u32::from(k.tagged);
-            w[1] = k.parts.len() as u32;
-            for (i, &(c, bits, lo)) in k.parts.iter().enumerate() {
-                w[4 + 4 * i..8 + 4 * i].copy_from_slice(&[c, bits, lo as u64 as u32, (lo as u64 >> 32) as u32]);
-            }
-            job.p = Some(w.iter().flat_map(|x| x.to_ne_bytes()).collect());
-            (job.wide, job.key_bits) = (table.room(), k.bits);
+            job.p = Some(k.words().iter().flat_map(|x| x.to_ne_bytes()).collect());
+            (job.wide, job.key_bits, job.presorted) = (table.room(), k.bits, k.presorted);
         }
         job.desc.o = out.reach_by(&mut job, true)?;
         let (mut reads, mut writes) = (vec![table.key(job.desc.l), job.desc.totals], vec![out.key(job.desc.o), job.desc.totals]);
@@ -2370,6 +2375,11 @@ impl Batch {
             reads.push(job.desc.s);
             writes.push(job.desc.vc);
             job.own.push(hb);
+        }
+        if let Some(bb) = bb {
+            job.desc.vc = job.reach(&bb.buffer, 0, true)?;
+            writes.push(job.desc.vc);
+            job.own.push(bb);
         }
         // Its clear a thread for 4 places (`dedup_clear_one`); a sorted one's keys instead (`dedup_key_one`).
         (job.n, job.count, job.scatter, job.clear, job.claim) = if key.is_some() { (n, n, n, 0, 0) } else { (n, n, n, places / 4, table.room()) };
@@ -2669,6 +2679,30 @@ impl Batch {
         self.queue(job)
     }
 
+    /// A set head's held bitmap (`HeldBits`) emptied and every row of `r`'s first `n` set in it, its bit at its index
+    /// under `key` (code 6 of `lat_hclear_one` and `lat_rehash_one`): a program's first work, as `set_map`'s.
+    pub(in crate::code_rule_dsl) fn set_bits(&mut self, r: &DevRel, n: usize, bits: HeldBits<'_>, key: &SortKey) -> Result<(), Error> {
+        let words = HeldBits::words_for(bits.bits);
+        assert!(key.index_bits() == bits.bits && bits.bits <= HELD_BITS_MAX && r.cols <= 8 && key.parts.iter().all(|p| (p.0 as usize) < r.cols));
+        let p = LatParams { top: 0, n: n as u32, had: 0, nkeys: r.cols as u32, code: 6, after: NONE, pmask: 0, hmask: (words - 1) as u32, level: 0, omask: 0,
+                            counted: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: bits.at as u64, h0_at: 0 };
+        let hb = bound(bits.home)?;
+        let mut job = Job::new(JobKind::Lattice, 0, Stage::default());
+        job.desc.s = job.reach(&r.buffer.buffer, 0, false)?;
+        job.desc.vc = job.reach(&hb.buffer, 0, true)?;
+        for d in [&mut job.desc.l, &mut job.desc.a, &mut job.desc.totals, &mut job.desc.h, &mut job.desc.o, &mut job.desc.counters, &mut job.desc.v, &mut job.desc.g] {
+            *d = job.desc.s;
+        }
+        // Its key's `HeadKeyP` past its `LatP`, for its rows' indexes.
+        let mut bytes = lat_bytes(&p).to_vec();
+        bytes.extend(key.words().iter().flat_map(|x| x.to_ne_bytes()));
+        job.p = Some(bytes);
+        (job.count, job.clear, job.lattice) = (0, 0, [words, n]);
+        job.order(&[job.desc.s], &[job.desc.vc]);
+        job.own.push(hb);
+        self.queue(job)
+    }
+
     pub(in crate::code_rule_dsl) fn lattice_grow(&mut self, r: &DevRel, nkeys: usize, map: LatMap<'_>, old: Option<LatMap<'_>>) -> Result<(), Error> {
         assert!(map.places.is_power_of_two() && old.is_none_or(|o| o.places.is_power_of_two() && o.places <= map.places));
         let (omask, h0_at) = old.map_or((0, 0), |o| ((o.places - 1) as u32, o.at as u64));
@@ -2755,7 +2789,8 @@ impl Batch {
         if wide_bits + rank_bits > 64 {
             return Err(Error::BackendCapacity);
         }
-        let wide_passes = (wide_bits + rank_bits).div_ceil(8).max(1) as usize;
+        // None where every one's rows come sorted (`SortKey::presorted`): their keys lie in their order already.
+        let wide_passes = if wide_jobs.iter().all(|&i| jobs[i].presorted) { 0 } else { (wide_bits + rank_bits).div_ceil(8).max(1) as usize };
         for (rank, &i) in wide_jobs.iter().enumerate() {
             let shift = if rank_bits == 0 { 64 } else { wide_bits };
             let p = jobs[i].p.as_mut().expect("a sorted dedup's key");
@@ -3999,11 +4034,55 @@ const HK_ODD: WordAt = WordAt::word(69);
 
 /// A sorted dedup's key (t58 increment A, `join_stages.uglykl`'s `HeadKeyP`): the order's leading column's 16-bit
 /// tag where `tagged`, then each part, most significant first: (column of the dedup's `cols`, bits, least).
+/// `presorted`: its rows come in its order already (one rule's, sorted by its run's dedup), so its level sorts no
+/// keys where every sorted dedup of it says so.
 #[derive(Clone, Debug, PartialEq)]
 pub(in crate::code_rule_dsl) struct SortKey {
     pub tagged: bool,
     pub parts: Vec<(u32, u32, i64)>,
     pub bits: u32,
+    pub presorted: bool,
+}
+
+impl SortKey {
+    /// Its parts' bits, less its tag: a row's index among every row its bounds allow (`HeldBits`).
+    pub(in crate::code_rule_dsl) fn index_bits(&self) -> u32 {
+        self.bits - if self.tagged { 16 } else { 0 }
+    }
+
+    /// `HeadKeyP`'s words: tagged, its parts, its rank's shift and its rank (its level's, `flush`); each part its
+    /// column, bits, least's words.
+    fn words(&self) -> [u32; 72] {
+        let mut w = [0u32; 72];
+        w[0] = u32::from(self.tagged);
+        w[1] = self.parts.len() as u32;
+        for (i, &(c, bits, lo)) in self.parts.iter().enumerate() {
+            w[4 + 4 * i..8 + 4 * i].copy_from_slice(&[c, bits, lo as u64 as u32, (lo as u64 >> 32) as u32]);
+        }
+        w
+    }
+}
+
+/// The largest held bitmap's index bits (`HeldBits`): 2^24 rows, 2 MB.
+pub(in crate::code_rule_dsl) const HELD_BITS_MAX: u32 = 24;
+
+/// A recursive set head's rows as a bitmap of every row its key's bounds allow (t58 increment A), in its relation's
+/// block: a row's bit at its key's index bits (`SortKey::index_bits`, its parts less their least, end to end). Made
+/// from its relation's rows at a program's start (`Batch::set_bits`); a sorted dedup less it (`dedup_sorted`) keeps a
+/// row whose bit is clear and sets it.
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) struct HeldBits<'a> {
+    pub(in crate::code_rule_dsl) home: &'a std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
+    /// Its first word's byte offset in its block, and its words (`2^bits / 32`, at least one).
+    pub(in crate::code_rule_dsl) at: usize,
+    pub(in crate::code_rule_dsl) bits: u32,
+}
+
+impl HeldBits<'_> {
+    /// The words of a bitmap of `bits` index bits.
+    pub(in crate::code_rule_dsl) fn words_for(bits: u32) -> usize {
+        ((1usize << bits) / 32).max(1)
+    }
 }
 const PK_IX_PLACE: u32 = 5;
 const PK_DEDUP_CLEAR: u32 = 6;
@@ -4564,6 +4643,8 @@ struct Job {
     /// bits, below its rank's. 0: not one.
     wide: usize,
     key_bits: u32,
+    /// Its rows come in its key's order (`SortKey::presorted`).
+    presorted: bool,
     /// A lattice fold's key map's slots to empty, and its old map's to place again (0: none).
     lattice: [usize; 2],
     /// A copy's rows written: its destination's address, and its rows from and to.
@@ -4664,6 +4745,7 @@ impl Job {
             buckets: 0,
             wide: 0,
             key_bits: 0,
+            presorted: false,
             lattice: [0; 2],
             span: None,
             rows: None,

@@ -1136,9 +1136,18 @@ impl Rel {
                     }
                     self.n += 1;
                 }
-                // Written in the first order: known sorted, its orders take it in place.
-                if in_order.contains(&lot) {
-                    self.sorted.note(&self.data, k, &self.idx[0].cols, lot_from as u32, self.n as u32);
+                // Written in the first order: known sorted, its orders take it in place; a run of it at a time where it
+                // is runs (a fixpoint's rounds' rows, each round's in the order).
+                if let Some((_, runs)) = in_order.iter().find(|(l, _)| *l == lot) {
+                    if runs.is_empty() {
+                        self.sorted.note(&self.data, k, &self.idx[0].cols, lot_from as u32, self.n as u32);
+                    }
+                    let mut at = lot_from as u32;
+                    for &n in runs {
+                        self.sorted.note(&self.data, k, &self.idx[0].cols, at, at + n);
+                        at += n;
+                    }
+                    debug_assert!(runs.is_empty() || at as usize == self.n, "a lot's runs its rows");
                 }
             }
             if pend {
@@ -1387,8 +1396,9 @@ pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, break
                    /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
                    placed: Vec<(Placed, Option<Vec<u32>>)>,
                    /// The lots of `placed` written in the relation's first order (t58 increment A): taken as rows known
-                   /// sorted (`Sorted::note`), so no order of them is sorted on the host.
-                   in_order: Vec<usize>,
+                   /// sorted (`Sorted::note`), so no order of them is sorted on the host. Each with its runs' rows where
+                   /// it is sorted a run at a time (none: the lot one run).
+                   in_order: Vec<(usize, Vec<u32>)>,
                    /// A lattice relation's key map the device folded its placed rows through (decision 0384 step 5):
                    /// the relation takes it as its own with them.
                    map: Option<keys::KeyMap> }
@@ -1442,8 +1452,17 @@ impl Fresh {
     /// relation notes them so, and sorts nothing of them.
     pub fn place_in_order(&mut self, placed: Placed) {
         if placed.len() > 0 {
-            self.in_order.push(self.placed.len());
+            self.in_order.push((self.placed.len(), Vec::new()));
             self.placed.push((placed, None));
+        }
+    }
+    /// `place`'s, the rows a run at a time in the relation's first order (`runs`, their rows, end to end: a device
+    /// fixpoint's rounds', each round's new rows sorted by its dedup): each run noted so.
+    pub fn place_in_runs(&mut self, placed: Placed, rounds: Option<Vec<u32>>, runs: Vec<u32>) {
+        debug_assert_eq!(runs.iter().map(|&n| n as u64).sum::<u64>(), placed.len() as u64, "the runs' rows its rows");
+        if placed.len() > 0 {
+            self.in_order.push((self.placed.len(), runs));
+            self.place(placed, rounds);
         }
     }
     pub fn place(&mut self, placed: Placed, rounds: Option<Vec<u32>>) {
@@ -2890,7 +2909,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                         // through (decision 0384 step 5).
                         // Its lots in the first order with them, at their places past `f`'s own.
                         let at = f.placed.len();
-                        f.in_order.extend(d.in_order.iter().map(|&l| at + l));
+                        f.in_order.extend(d.in_order.into_iter().map(|(l, r)| (at + l, r)));
                         f.placed.extend(d.placed);
                         if d.map.is_some() {
                             debug_assert!(f.map.is_none(), "two folds' maps for one relation");

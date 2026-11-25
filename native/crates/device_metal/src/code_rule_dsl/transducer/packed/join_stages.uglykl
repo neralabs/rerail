@@ -1464,6 +1464,20 @@ UKL_INLINE void head_row(uint64_t k, JSPACE const HeadKeyP* p, JSPACE int64_t* O
     }
 }
 
+// A row's index among every row its key's bounds allow (a held bitmap's): its parts less their least, end to end, no
+// tag. `vals` its value in each column of the key's.
+UKL_INLINE uint64_t held_index(JSPACE const HeadKeyP* p, UKL_PRIVATE const uint64_t* vals)
+{
+    uint64_t x = 0ul;
+    for (uint32_t i = 0u; i < p->nparts && i < 16u; i++) {
+        uint32_t w = p->part[i][1];
+        if (w == 0u || w >= 64u) continue;
+        uint64_t base = (uint64_t)p->part[i][2] | ((uint64_t)p->part[i][3] << 32);
+        x = (x << w) | (vals[p->part[i][0]] - base);
+    }
+    return x;
+}
+
 // Row `x`'s key, at the job's first key `eb` of the level's wide sort.
 UKL_INLINE void dedup_key_one(Longs T, JSPACE const uint32_t* totals, JSPACE uint64_t* keys, DedupP d, JSPACE const HeadKeyP* p, uint32_t eb, uint32_t x)
 {
@@ -1472,17 +1486,25 @@ UKL_INLINE void dedup_key_one(Longs T, JSPACE const uint32_t* totals, JSPACE uin
     keys[eb + x] = head_key(T, d, p, x);
 }
 
-// Sorted key `t`: kept where it is not the one before it.
-UKL_INLINE void dedup_mark_sorted_one(JSPACE const uint32_t* totals, JSPACE const uint64_t* keys, JSPACE uint32_t* counts, DedupP d, uint32_t eb, uint32_t t)
+// Sorted key `t`: kept where it is not the one before it, and (`seen`: a held bitmap at `h_at` of `VC`, its index bits
+// `hmask`, a key's low bits its index) its held bit is clear.
+UKL_INLINE void dedup_mark_sorted_one(JSPACE const uint32_t* totals, JSPACE const uint64_t* keys, JSPACE uint32_t* counts, DedupP d, JSPACE const uint8_t* VC, uint32_t eb, uint32_t t)
 {
     if (t > d->cap) return;
     uint32_t n = ukl_min(totals[d->in_slot], d->cap);
     if (t >= n) { counts[t] = 0; return; }
-    counts[t] = (uint32_t)(t == 0u || keys[eb + t] != keys[eb + t - 1u]);
+    uint64_t key = keys[eb + t];
+    uint32_t keep = (uint32_t)(t == 0u || key != keys[eb + t - 1u]);
+    if (keep != 0u && d->seen != 0u) {
+        JSPACE const uint32_t* B = (JSPACE const uint32_t*)(VC + d->h_at);
+        uint64_t x = key & ((1ul << d->hmask) - 1ul);
+        if (((B[x >> 5] >> (uint32_t)(x & 31ul)) & 1u) != 0u) keep = 0u;
+    }
+    counts[t] = keep;
 }
 
 // Sorted key `t`'s row, where it was kept, decoded from it: the rows in their keys' order.
-UKL_INLINE void dedup_scatter_sorted_one(JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, DedupP d, JSPACE const HeadKeyP* p,
+UKL_INLINE void dedup_scatter_sorted_one(JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, DedupP d, JSPACE uint8_t* VC, JSPACE const HeadKeyP* p,
                                          JSPACE const uint64_t* keys, uint32_t eb, uint32_t t)
 {
     uint32_t o0 = offsets[0];
@@ -1492,7 +1514,13 @@ UKL_INLINE void dedup_scatter_sorted_one(JSPACE uint32_t* totals, JSPACE const u
     uint32_t at = (offsets[t] - o0);
     if ((offsets[t + 1] - o0) == at) return;
     if (at >= d->ocap) return;
-    head_row(keys[eb + t], p, O, d->ocap, at);
+    uint64_t key = keys[eb + t];
+    head_row(key, p, O, d->ocap, at);
+    // Its held bit set (`seen`): distinct keys, so one writer a bit, many a word.
+    if (d->seen != 0u) {
+        uint64_t x = key & ((1ul << d->hmask) - 1ul);
+        ukl_atomic_or((JSPACE uint32_t*)(VC + d->h_at) + (x >> 5), 1u << (uint32_t)(x & 31ul));
+    }
 }
 
 UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, JSPACE const uint8_t* R, JSPACE uint8_t* HB, DedupP d, uint32_t x)
@@ -1700,6 +1728,8 @@ UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32
     clif_struct(LatP, p, pp);
     if (i > p.hmask) return;
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
+    // Code 6: a held bitmap's word.
+    if (p.code == 6u) { H[i] = 0u; return; }
     H[3 * i] = 0xffffffffu;
     H[3 * i + 1] = 0;
     H[3 * i + 2] = 0;
@@ -1708,10 +1738,19 @@ UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32
 // The old map's slot `s` (at `h0_at` in `OB`, `omask + 1` slots) into the new one (grown: every key placed again, its
 // changes and round with it); its key read in `R`'s row.
 // Code 4 (a set's map, `Dedup::seen`): row `s` of the relation's first `n` placed instead, each row a key of its own.
+// Code 6 (a set's held bitmap): row `s`'s bit set, at its index under the key past `pp` (`held_index`).
 UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
     LatP p;
     clif_struct(LatP, p, pp);
+    if (p.code == 6u) {
+        if (s >= p.n) return;
+        uint64_t vals[8];
+        for (uint32_t c = 0; c < p.nkeys && c < 8; c++) vals[c] = (uint64_t)lat_r(R, &p, s, c);
+        uint64_t x = held_index((JSPACE const HeadKeyP*)(pp + 1), vals);
+        ukl_atomic_or((JSPACE uint32_t*)(HB + p.h_at) + (x >> 5), 1u << (uint32_t)(x & 31ul));
+        return;
+    }
     if (p.code == 4u) {
         if (s >= p.n) return;
         JSPACE uint32_t* M = (JSPACE uint32_t*)(HB + p.h_at);
@@ -2256,7 +2295,7 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_DEDUP_MARK:
             if (j->dd->sorted != 0u) {
                 JSPACE const HeadKeyP* hk = (JSPACE const HeadKeyP*)j->P;
-                dedup_mark_sorted_one(j->totals, WIDE_KEYS(H, hk->total, hk->odd), c, j->dd, JOB_WORD(jw, eb), t);
+                dedup_mark_sorted_one(j->totals, WIDE_KEYS(H, hk->total, hk->odd), c, j->dd, j->VC, JOB_WORD(jw, eb), t);
             }
             else dedup_mark_one(L, j->totals, H, c, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t);
             break;
@@ -2266,7 +2305,7 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_DEDUP_SCATTER:
             if (j->dd->sorted != 0u) {
                 JSPACE const HeadKeyP* hk = (JSPACE const HeadKeyP*)j->P;
-                dedup_scatter_sorted_one(j->totals, c, O, j->dd, hk, WIDE_KEYS(H, hk->total, hk->odd), JOB_WORD(jw, eb), t);
+                dedup_scatter_sorted_one(j->totals, c, O, j->dd, j->VC, hk, WIDE_KEYS(H, hk->total, hk->odd), JOB_WORD(jw, eb), t);
             }
             else dedup_scatter_one(L, j->totals, c, O, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t);
             break;

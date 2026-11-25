@@ -17,7 +17,7 @@
 
 use crate::Launch;
 use core::arch::aarch64::*;
-use core::sync::atomic::{AtomicU32, Ordering::SeqCst};
+use core::sync::atomic::{AtomicU32, Ordering, Ordering::SeqCst};
 
 const NONE: u32 = u32::MAX;
 /// A finisher's phases run itself at most, a dispatch (`JOIN_INLINE`, decision 0674), of at most
@@ -1745,7 +1745,17 @@ unsafe fn lat_rows(p: &LatP, cnt: *const u32) -> u32 {
 }
 
 /// Code 4 (a set's map, `Dedup::seen`): row `s` of the relation's first `n` placed instead, each row a key of its own.
+/// Code 6 (a set's held bitmap, t58 increment A): row `s`'s bit set, at its index under the key past `p` (`held_index`).
 unsafe fn lat_rehash_one(rd: Reads, r: *const u8, ob: *const u8, hb: *mut u8, p: &LatP, s: u32) {
+    if p.code == 6 {
+        if s >= p.n {
+            return;
+        }
+        let k = &*((p as *const LatP).add(1) as *const HeadKeyP);
+        let x = held_index(k, |c| lat_r(rd, r, p, s, c) as u64);
+        at((hb.add(p.h_at as usize) as *mut u32).add((x >> 5) as usize)).fetch_or(1 << (x & 31), Ordering::Relaxed);
+        return;
+    }
     if p.code == 4 {
         if s >= p.n {
             return;
@@ -2276,6 +2286,28 @@ unsafe fn head_key(t: *const i64, d: &Dedup, p: &HeadKeyP, x: u32) -> u64 {
     if p.rank_shift >= 64 { k } else { k | u64::from(p.rank) << p.rank_shift }
 }
 
+/// A row's index among every row its key's bounds allow (a held bitmap's, `HeldBits`): its parts less their least,
+/// end to end, no tag; `val(c)` its value in column `c` of the key's.
+#[inline(always)]
+unsafe fn held_index(p: &HeadKeyP, val: impl Fn(u32) -> u64) -> u64 {
+    let mut x = 0u64;
+    for part in &p.part[..p.nparts.min(16) as usize] {
+        let w = part[1];
+        if w == 0 || w >= 64 {
+            continue;
+        }
+        x = x << w | val(part[0]).wrapping_sub(u64::from(part[2]) | u64::from(part[3]) << 32);
+    }
+    x
+}
+
+/// A sorted dedup's held bitmap (`Dedup::seen`, its index bits in `hmask`, its first word at `h_at` of `vc`), and its
+/// keys' index mask: a key's low bits are its index (its tag and rank above them, `head_key`).
+#[inline(always)]
+unsafe fn held_bits(d: &Dedup, vc: *mut u8) -> Option<(*mut u32, u64)> {
+    (d.seen != 0).then(|| (vc.add(d.h_at as usize) as *mut u32, (1u64 << d.hmask) - 1))
+}
+
 /// Key `k`'s row (`head_key`'s, read back): each part from the key's low bits up, its least added, into its column of
 /// `o`'s row `at`. Every column of the dedup's is a part (`HeadKey`: the order is on every column).
 #[inline(always)]
@@ -2296,20 +2328,35 @@ unsafe fn dedup_key_range(t: *const i64, totals: *const u32, keys: *mut u64, d: 
     }
 }
 
-/// Sorted keys `t0..t1`: each kept where it is not the one before it (`dedup_mark_sorted_one`).
-unsafe fn dedup_mark_sorted_range(totals: *const u32, keys: *const u64, counts: *mut u32, d: &Dedup, eb: u32, t0: u32, t1: u32) {
+/// Sorted keys `t0..t1`: each kept where it is not the one before it, and its held bit (where it has a bitmap) is
+/// clear (`dedup_mark_sorted_one`).
+unsafe fn dedup_mark_sorted_range(totals: *const u32, keys: *const u64, counts: *mut u32, d: &Dedup, vc: *mut u8, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(d.cap.saturating_add(1));
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     fill_u32(counts, t0.max(n), t1, 0);
     let k = keys.add(eb as usize);
-    for s in t0..t1.min(n) {
-        *counts.add(s as usize) = u32::from(s == 0 || *k.add(s as usize) != *k.add(s as usize - 1));
+    match held_bits(d, vc) {
+        None => {
+            for s in t0..t1.min(n) {
+                *counts.add(s as usize) = u32::from(s == 0 || *k.add(s as usize) != *k.add(s as usize - 1));
+            }
+        }
+        Some((bits, mask)) => {
+            for s in t0..t1.min(n) {
+                let key = *k.add(s as usize);
+                let x = key & mask;
+                let held = (*bits.add((x >> 5) as usize) >> (x & 31)) & 1;
+                *counts.add(s as usize) = u32::from((s == 0 || key != *k.add(s as usize - 1)) && held == 0);
+            }
+        }
     }
 }
 
-/// Sorted keys `t0..t1`' rows where they were kept, decoded from them, in their order (`dedup_scatter_sorted_one`).
+/// Sorted keys `t0..t1`' rows where they were kept, decoded from them, in their order, and each one's held bit set
+/// (`dedup_scatter_sorted_one`).
 #[allow(clippy::too_many_arguments)]
-unsafe fn dedup_scatter_sorted_range(totals: *mut u32, offsets: *const u32, o: *mut i64, d: &Dedup, p: &HeadKeyP, keys: *const u64, eb: u32, t0: u32, t1: u32) {
+unsafe fn dedup_scatter_sorted_range(totals: *mut u32, offsets: *const u32, o: *mut i64, d: &Dedup, vc: *mut u8, p: &HeadKeyP, keys: *const u64, eb: u32, t0: u32, t1: u32) {
+    let bits = held_bits(d, vc);
     let o0 = *offsets;
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     if t0 == 0 && t1 > 0 {
@@ -2321,7 +2368,12 @@ unsafe fn dedup_scatter_sorted_range(totals: *mut u32, offsets: *const u32, o: *
         if (*offsets.add(s as usize + 1)).wrapping_sub(o0) == at || at >= d.ocap {
             continue;
         }
-        head_row(*k.add(s as usize), p, o, d.ocap, at);
+        let key = *k.add(s as usize);
+        head_row(key, p, o, d.ocap, at);
+        if let Some((bits, mask)) = bits {
+            let x = key & mask;
+            (*(bits.add((x >> 5) as usize) as *const AtomicU32)).fetch_or(1 << (x & 31), Ordering::Relaxed);
+        }
     }
 }
 
@@ -2458,10 +2510,15 @@ unsafe fn lat_clear_range(pl: *mut u32, best: *mut u32, flags: *mut u32, p: &Lat
     fill_u32(flags, i0, i1, 0);
 }
 
-/// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries a `st3`.
+/// A lattice's key table cleared: each entry (row, changes, level) none, 0, 0, four entries a `st3`. Code 6: a held
+/// bitmap's words, 0.
 unsafe fn lat_hclear_range(hb: *mut u8, p: &LatP, i0: u32, i1: u32) {
     let i1 = i1.min(p.hmask.saturating_add(1));
     let h = hb.add(p.h_at as usize) as *mut u32;
+    if p.code == 6 {
+        fill_u32(h, i0, i1, 0);
+        return;
+    }
     let entry = uint32x4x3_t(vdupq_n_u32(NONE), vdupq_n_u32(0), vdupq_n_u32(0));
     let mut i = i0;
     while i + 4 <= i1 {
@@ -3226,7 +3283,7 @@ impl Prog {
             }
             PK_DEDUP_MARK if (*j.dd).sorted != 0 => {
                 let p = &*(j.p as *const HeadKeyP);
-                dedup_mark_sorted_range(j.totals, wide_at(b.h, p.total).keys[p.odd as usize], b.c, &*j.dd, b.eb, t0, t1)
+                dedup_mark_sorted_range(j.totals, wide_at(b.h, p.total).keys[p.odd as usize], b.c, &*j.dd, j.vc, b.eb, t0, t1)
             }
             PK_DEDUP_MARK => dedup_mark_range(b.l, j.totals, b.h, b.c, j.s_, j.vc, &*j.dd, t0, t1),
             PK_STAGE_SCATTER => stage_scatter_range(&stage(j.ws), j, b, t0, t1),
@@ -3234,7 +3291,7 @@ impl Prog {
             PK_ROW_SCATTER => row_scatter_range(&stage(j.s), j, b, t0, t1),
             PK_DEDUP_SCATTER if (*j.dd).sorted != 0 => {
                 let p = &*(j.p as *const HeadKeyP);
-                dedup_scatter_sorted_range(j.totals, b.c, b.o, &*j.dd, p, wide_at(b.h, p.total).keys[p.odd as usize], b.eb, t0, t1)
+                dedup_scatter_sorted_range(j.totals, b.c, b.o, &*j.dd, j.vc, p, wide_at(b.h, p.total).keys[p.odd as usize], b.eb, t0, t1)
             }
             PK_DEDUP_SCATTER => dedup_scatter_range(rd, b.l, j.totals, b.c, b.o, j.s_, j.vc, &*j.dd, t0, t1),
             PK_LAT_HCLEAR => lat_hclear_range(j.vc, lat(), t0, t1),
