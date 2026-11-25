@@ -1834,10 +1834,10 @@ describe("a state file Windows left behind", () => {
    * `olderEngine`'s, whose pid runs until that end says `ended`. Each process the end starts is `spawnSync`'s, run by
    * `start`, with its program, arguments and bound going to `starts`.
    */
-  async function stopOlderOnUninstallMachine(start: (options: childProcess.SpawnSyncOptions) => childProcess.SpawnSyncReturns<string>, starts: unknown[]): Promise<StopDaemonResult> {
-    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+  async function stopOlderOnUninstallMachine(start: (options: childProcess.SpawnSyncOptions, program: string) => childProcess.SpawnSyncReturns<string>, starts: unknown[]): Promise<StopDaemonResult> {
+    vi.mocked(childProcess.spawnSync).mockImplementation(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
       starts.push({ program, args, timeout: options.timeout });
-      return start(options);
+      return start(options, program);
     }) as unknown as typeof childProcess.spawnSync);
     let running = true;
     const machine: DaemonMachine = {
@@ -1853,7 +1853,11 @@ describe("a state file Windows left behind", () => {
       },
     };
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT })));
-    return await stopDaemon(home, machine);
+    try {
+      return await stopDaemon(home, machine);
+    } finally {
+      vi.mocked(childProcess.spawnSync).mockReset();
+    }
   }
 
   // The uninstall ends such a daemon through the engine in a child Node process, which has exited before the uninstall
@@ -1879,6 +1883,24 @@ describe("a state file Windows left behind", () => {
     );
     expect(starts).toHaveLength(1);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
+  });
+
+  // An install whose engine is missing or does not load must still be removable: the child then exits without an answer,
+  // and the end goes through Windows PowerShell as before, given the stop's 10 s for PowerShell's own start on top of
+  // the kill's wait for the exit, the wait the child was given.
+  it("ends a daemon whose engine has no proof through Windows PowerShell on the uninstall's machine when the child gives no answer", async () => {
+    const starts: unknown[] = [];
+    const exited = (stdout: string, status: number): childProcess.SpawnSyncReturns<string> => ({ pid: 1, output: [null, stdout, ""], stdout, stderr: "", status, signal: null });
+    const powerShell = /\\powershell\.exe$/iu;
+    const result = await stopOlderOnUninstallMachine((_options, program) => (powerShell.test(program) ? exited("asked\r\nended\r\n", 0) : exited("", 3)), starts);
+    expect(result).toBe("stopped");
+    const waitMs = 5_000;
+    const args = [join(PACKAGE_ROOT, ENTRY_POINTS.processReader), "end", String(DEAD_PID), String(OLDER_STARTED_AT), String(waitMs)];
+    expect(starts).toEqual([
+      { program: process.execPath, args, timeout: ENGINE_READER_ANSWER_MS + waitMs },
+      { program: expect.stringMatching(powerShell), args: expect.any(Array), timeout: 10_000 + waitMs },
+    ]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
   });
 
   it.runIf(process.platform === "win32")("finds a daemon whose engine has no proof on this machine, starting no process for it", async () => {
