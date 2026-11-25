@@ -98,7 +98,12 @@ projection, as before.
     every chunk and the cross-file part, and measured once.
     - `option` and `option_item` come from the policy's options (`corpus::run_with_options`), flattened as
       rrlab flattens them.
-    - `file`, `package`, `package_field` and `package_for` come from one walk of the root.
+    - `file`, `package`, `package_field`, `package_for`, `tsconfig`, `tsconfig_for` and `tsconfig_path` come
+      from one walk of the root. A configuration (`tsconfig.json`, else `jsconfig.json`) is read as TypeScript
+      reads it (JSON with comments, `json::strip_jsonc`, shared with the module graph), its relative `extends`
+      chain merged beneath it; `baseUrl` is given from the root, a `paths` target as written.
+    - A library's own `.input` that core does not make and no fact gives (`tsx/node-resolve.rerail`'s
+      `spec_resolved`, "until core has it") is bound empty in the cross-file part, under its declared columns.
 11. **Functors.**
     - `@dot("", b)` is `b`: in the native executor's `cat`, its inverse with the first part given, and SQL.
     - `@lower` is registered as Unicode lowercase. SQLite's own `lower` is ASCII only.
