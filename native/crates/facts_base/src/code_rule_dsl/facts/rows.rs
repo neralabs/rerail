@@ -1063,7 +1063,7 @@ impl KeyRuns {
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
 fn spec(k: usize) -> Spec {
-    Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
+    Spec { widths: vec![8; k], sort: None, indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
 }
 
 /// One relation of a block: a segment or a tail, shared by its holders; its chunks given back to the block's free
@@ -1811,7 +1811,7 @@ impl Part {
     /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
     /// before it writes a row.
     pub fn over_key_runs(life: Life, k: usize, rows: usize, runs: usize) -> (Part, KeyRuns) {
-        let spec = Spec { widths: vec![4; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
+        let spec = Spec { widths: vec![4; k], sort: None, indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
         let table = 8 * (runs + 2) + 64;
         let indexes = rerail_blocks::relation::ADDED_INDEXES;
         let mut part = Part::try_new_spec(life, spec, rows, index_room(indexes, rows as u64) + table, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));

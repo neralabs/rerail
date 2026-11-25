@@ -145,7 +145,7 @@ mod tests {
         use rerail_gpu::device::ComputeQueue;
         use rerail_gpu::kernels::{alloc, launch, read};
         let Some(shared) = rerail_gpu::shared::get() else { return };
-        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
+        let spec = Spec { widths: vec![8, 4], sort: Some(0), indexes: vec![vec![1]], min_log: 4 };
         let lock = Mutex::new(());
         let base_block = Block::anon(kind::FACTS, 16 << 20);
         let base = Relation::create(&base_block, &spec, None);

@@ -510,7 +510,7 @@ mod tests {
     use std::sync::Mutex;
 
     fn spec() -> Spec {
-        Spec { widths: vec![8, 8], order: vec![0], indexes: vec![vec![0]], min_log: crate::rows::MIN_LOG }
+        Spec { widths: vec![8, 8], sort: Some(0), indexes: vec![vec![0]], min_log: crate::rows::MIN_LOG }
     }
 
     /// A base relation and its delta in one block: the base's rows `base`, then the delta's `added` and its kills

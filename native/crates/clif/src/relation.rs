@@ -759,7 +759,7 @@ mod tests {
             assert_eq!(rel_key_mix(std::ptr::null(), h, v as u64), rerail_blocks::mix(h, v), "mix of {h:#x} and {v}");
         }
 
-        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
+        let spec = Spec { widths: vec![8, 4], sort: Some(0), indexes: vec![vec![1]], min_log: 4 };
         let lock = Mutex::new(());
         let base_block = Block::anon(kind::FACTS, 16 << 20);
         let base = Relation::create(&base_block, &spec, None);
@@ -812,7 +812,7 @@ mod tests {
         type Bound = extern "C" fn(*const u8, u32, u64, u32, u32, u64) -> u32;
         // SAFETY: the read's signature: its descriptor's address, then its parameters.
         let bound: Bound = unsafe { std::mem::transmute::<*const u8, Bound>(reads.function("rel_lower_bound")) };
-        let spec = Spec { widths: vec![8, 8], order: vec![0], indexes: Vec::new(), min_log: 4 };
+        let spec = Spec { widths: vec![8, 8], sort: Some(0), indexes: Vec::new(), min_log: 4 };
         let lock = Mutex::new(());
         let base_block = Block::anon(kind::FACTS, 16 << 20);
         let base = Relation::create(&base_block, &spec, None);
@@ -852,7 +852,7 @@ mod tests {
         type Three = extern "C" fn(*const u8, u32, u32, u64) -> u64;
         // SAFETY: the read's signature: its descriptor's address, then its parameters.
         let rel_get: Three = unsafe { std::mem::transmute::<*const u8, Three>(reads.function("rel_get")) };
-        let spec = Spec { widths: vec![8], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+        let spec = Spec { widths: vec![8], sort: None, indexes: Vec::new(), min_log: 4 };
         let block = Block::anon(kind::FACTS, 64 << 20);
         let put = |r: &Relation, v: i64| {
             assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + 1)));
@@ -956,7 +956,7 @@ mod tests {
                 std::mem::transmute::<*const u8, Three>(reads.function("rel_get")),
             )
         };
-        let spec = Spec { widths: vec![4, 4, 4, 8], order: vec![], indexes: vec![], min_log: 4 };
+        let spec = Spec { widths: vec![4, 4, 4, 8], sort: None, indexes: vec![], min_log: 4 };
         let block = Block::anon(kind::FACTS, 16 << 20);
         let (firsts, keys) = ([0u32, 1, 700, 701, 3_000, 4_999], [1u32, 2, 77, 1 << 31, u32::MAX - 1, u32::MAX]);
         let before = rerail_blocks::rows::alloc_runs(&block, firsts.len());
@@ -1010,7 +1010,7 @@ mod tests {
         type Two = extern "C" fn(*const u8, u32, u32) -> u64;
         // SAFETY: each read's signature: its descriptor's address, then its parameters.
         let (put, get): (Put, Two) = unsafe { (std::mem::transmute::<*const u8, Put>(reads.function("rows_put")), std::mem::transmute::<*const u8, Two>(reads.function("rows_get"))) };
-        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![], min_log: 4 };
+        let spec = Spec { widths: vec![8, 4], sort: Some(0), indexes: vec![], min_log: 4 };
         let lock = Mutex::new(());
         let block = Block::anon(kind::FACTS, 1 << 20);
         let rel = Relation::create(&block, &spec, None);
@@ -1049,7 +1049,7 @@ mod tests {
     /// `chunk_of` is the one `rows_at` gives.
     #[test]
     fn the_hosts_chunk_arithmetic_is_the_reads() {
-        let spec = Spec { widths: vec![8], order: vec![0], indexes: vec![], min_log: 4 };
+        let spec = Spec { widths: vec![8], sort: Some(0), indexes: vec![], min_log: 4 };
         let lock = Mutex::new(());
         let block = Block::anon(kind::FACTS, 16 << 20);
         let rel = Relation::create(&block, &spec, None);

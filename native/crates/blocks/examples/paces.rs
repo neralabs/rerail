@@ -115,7 +115,7 @@ fn nid(doc: u32, i: u32) -> i64 {
 // ---- schemas ----
 
 fn spec(widths: &[u32], indexes: &[&[u16]], min_log: u32) -> Spec {
-    Spec { widths: widths.to_vec(), order: (0..widths.len() as u16).collect(), indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log }
+    Spec { widths: widths.to_vec(), sort: Some(0), indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log }
 }
 
 fn schema(rels: &[(&str, usize, Spec)]) -> Arc<Schema> {

@@ -225,7 +225,7 @@ mod tests {
 
     impl Chain {
         fn new(order: u16, indexes: &[&[u16]]) -> Chain {
-            let spec = Spec { widths: vec![8, 8], order: vec![order], indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log: crate::rows::MIN_LOG };
+            let spec = Spec { widths: vec![8, 8], sort: Some(order), indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log: crate::rows::MIN_LOG };
             Chain { block: Block::anon(kind::FACTS, 64 << 20), spec, lock: Mutex::new(()) }
         }
 

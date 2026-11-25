@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn a_dead_relations_pages_go_back_and_its_neighbours_rows_stay() {
         let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
-        let spec = crate::relation::Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: MIN_LOG };
+        let spec = crate::relation::Spec { widths: vec![8, 8], sort: None, indexes: Vec::new(), min_log: MIN_LOG };
         let dead = crate::relation::Relation::create(&block, &spec, None);
         let kept = crate::relation::Relation::create(&block, &spec, None);
         let n = 200_000u32;

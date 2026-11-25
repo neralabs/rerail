@@ -1,6 +1,6 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Steps 1, 3, 4, 5, 6 and 7 done. Step 2 cut down by the user's constraints (below) to the reads of a column
+Status: in progress. Steps 1, 3, 4, 5, 6, 7 and 8 done. Step 2 cut down by the user's constraints (below) to the reads of a column
 and of a chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
@@ -359,6 +359,50 @@ Tests:
 - `a_maintained_relations_sketches_are_its_live_rows`: a relation based on a kept one, with rows gone, rows added
   and some killed after they were counted, has each column's distinct values and squares of a relation made from
   its live rows.
+
+## Step 8: freeze sorts on one column or none, and finds rows by hashing them
+
+The user's constraint 2, and of the design page "Changes in their size" (2026-11-24): "freeze without sorting
+unnecessarily" and "resurrection, if we can make it more efficient". The user: "go ahead".
+
+Freeze sorted every row on every column (the order key, then the rest). The sort did three jobs: finding duplicates,
+finding the base row a delta's row equals (a binary search of the base), and giving the declared order. Only the last
+needs an order.
+
+- **`Spec::sort: Option<u16>`** replaces `Spec::order`: one sort column, or none. A relation records it in its
+  descriptor (`okey[0]`, `nokey` 0 or 1; the layout is unchanged).
+- **One sort, of one column.** `relation::distinct_sorted` radix sorts the ids on the sort column, stably, so ties
+  keep the order the rows came in. A relation with no sort column keeps that order.
+- **Duplicates by hashing.** The same helper drops a row equal to one before it, through a table of the rows' hashes
+  in scratch. An index's count of distinct keys is a table of their hashes too, no longer a sort of them.
+- **A row index, in the relation's block.** A full relation of at most `MAX_KEY` columns gets a hashed index on every
+  column (0353: an index in its relation's block). It is appended to the declared indexes; a relation with none gets
+  it as an added index (`try_reserve_index`), so its directory keeps room for the indexes readers add. A delta's
+  freeze finds the base row a pushed row equals with one probe of it: the delta's duplicate of a live base row is
+  dropped, and a row it killed and pushed again is brought back (step 4's resurrection) in one probe, not a binary
+  search. A base wider than `MAX_KEY` is searched on its sort column's range, or scanned.
+- **Reads in order.** `View` merges a base and its delta on the sort column, the base's row first on a tie, and a
+  probe's answer comes in that order. `View::digest` and `Packed::digest` are sums of each row's hash, so they need
+  no order.
+- **The kept form keeps its canonical order** (`packed`: the sort column, then every other column), derived from the
+  same `Spec::sort`, and records its first `MAX_KEY` columns as before. This was kept on purpose: a kept entry is
+  content-addressed, so the same set must give the same bytes however its rows came, and the store merges and probes
+  kept entries on leading columns (`prefilter/kept.rs`'s merge, `Packed::probe` of several columns). `pack` of a view
+  now puts its rows into that order (`prepare`'s check, then its sort) rather than taking the view's order as
+  canonical. Whether the kept form should follow the one-column rule, with content addressing by an order-free digest
+  instead, is the user's to decide.
+
+Tests:
+
+- `relation::tests::rows_are_sorted_on_one_column_or_none_and_found_by_their_row_index`: with no sort column, rows in
+  the order they came, each once, and a row index added with room left for another; for a base with no declared
+  index, one with one, and one of nine columns (no row index), a delta's kill of a row pushed again is cancelled, its
+  duplicate of a live row dropped, and its change the one kill that stands.
+- `relation::tests::freeze_and_probes_agree_with_a_set`, now checking the set, each row once, sorted on its column,
+  and each probe's answer in the ordered read's order.
+
+On a farm host: blocks, clif and the tests of the crates that build a `Spec` (store's kept facts, facts-base's rows,
+setfix's blocks comparison), 173 pass; the store's and facts-base's whole quick tiers, 312 pass.
 
 ## Next steps, proposed (Claude's, not agreed)
 

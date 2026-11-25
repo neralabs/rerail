@@ -34,7 +34,7 @@ fn lent(rows: &[(i64, i64)]) -> Box<dyn KeptRows> {
 /// `lent`, its rows `dead` killed by the run (the entry's dead bits).
 fn lent_dead(rows: &[(i64, i64)], dead: &[u32]) -> Box<dyn KeptRows> {
     let block = Block::anon(kind::FACTS, 16 << 20);
-    let spec = Spec { widths: vec![8, 8], order: vec![0], indexes: vec![vec![0]], min_log: 4 };
+    let spec = Spec { widths: vec![8, 8], sort: Some(0), indexes: vec![vec![0]], min_log: 4 };
     let rel = Relation::create(&block, &spec, None);
     let lock = std::sync::Mutex::new(());
     let w = RelW { block: &block, rel, lock: &lock };
@@ -427,7 +427,7 @@ fn kept_facts_are_a_virtual_table() {
 #[test]
 fn a_continuation_is_kept_with_every_row_it_reads() {
     let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
-    let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+    let spec = Spec { widths: vec![8, 8], sort: None, indexes: Vec::new(), min_log: 4 };
     let fill = |r: &Relation, from: u32, n: u32, tag: i64| {
         assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + n)));
         let at = r.rows.len();

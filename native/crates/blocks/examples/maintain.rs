@@ -82,7 +82,7 @@ const INPUTS: [usize; 3] = [DEF, IMP, CALL];
 const NREL: usize = 10;
 
 fn spec(widths: &[u32], indexes: &[&[u16]]) -> Spec {
-    Spec { widths: widths.to_vec(), order: (0..widths.len() as u16).collect(), indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log: 10 }
+    Spec { widths: widths.to_vec(), sort: Some(0), indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log: 10 }
 }
 
 fn schema() -> Arc<Schema> {

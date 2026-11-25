@@ -176,7 +176,7 @@ fn blocks_compare_baseline() {
 fn blocks_compare_blocks() {
     let flat = rows();
     let mut m = Meter::new("blocks (rows in a block, freeze)");
-    let spec = Spec { widths: vec![4; K], order: vec![0, 1, 2], indexes: vec![vec![1]], min_log: 10 };
+    let spec = Spec { widths: vec![4; K], sort: Some(0), indexes: vec![vec![1]], min_log: 10 };
     let block = Block::anon(kind::FACTS, 1 << 30);
     let lock = std::sync::Mutex::new(());
     let rel = m.time("build: extend (one claim)", || {

@@ -49,7 +49,7 @@ fn main() {
     rayon::broadcast(|_| ());
     let flat = rows();
     let mut m = M { lines: Vec::new() };
-    let spec = Spec { widths: vec![4; 3], order: vec![0, 1, 2], indexes: vec![vec![0], vec![1]], min_log: 10 };
+    let spec = Spec { widths: vec![4; 3], sort: Some(0), indexes: vec![vec![0], vec![1]], min_log: 10 };
 
     // In place: rows claimed into chunks, frozen where they are.
     let block = Block::anon(kind::FACTS, 1 << 30);

@@ -3,18 +3,20 @@
 //! **Freeze** turns rows written in any order (by many threads, or a GPU's claims) into a relation read in a
 //! fixed order:
 //!
-//! - **Set semantics.** It drops duplicate rows, and in a delta it also drops rows its base still holds live.
-//! - **The canonical order.** The live rows, sorted by the relation's order key (its declared columns first,
-//!   then the rest), moved into that order in place: an own row's id is then its place in the order, so there is
-//!   no order array, and no dead bits for its own rows (the duplicates are gone, not marked).
-//! - **Hash indexes** on the declared keys. Each key's rows are grouped in canonical order, so a probe's answer
-//!   comes in a fixed order too.
+//! - **Set semantics.** It drops duplicate rows, and in a delta it also drops rows its base still holds live. Both
+//!   are found by hashing whole rows: a table of them in scratch for its own rows, and the base's row index for the
+//!   base's (decision 0678 step 8). A row the delta killed and pushed again is the base's row brought back.
+//! - **One sort column, or none.** The live rows, sorted on the relation's sort column when it has one (ties in
+//!   the order they came), else left in that order, moved into it in place: an own row's id is then its place, so
+//!   there is no order array, and no dead bits for its own rows (the duplicates are gone, not marked).
+//! - **Hash indexes** on the declared keys, and a **row index** on every column (when it has at most `MAX_KEY`):
+//!   each key's rows grouped in id order, so a probe's answer comes in a fixed order too.
 //! - **Dead bits and statistics.** The dead bits are a delta's kills of its base's rows (none in a full
 //!   relation); the statistics are each column's minimum and maximum.
 //!
 //! **A delta** is a relation whose ids continue after its base's (`base_rows`). Its kills name base rows or its
-//! own. `View` reads a base and its delta as one relation: liveness from both, the merged canonical order, and
-//! probes of both indexes merged.
+//! own. `View` reads a base and its delta as one relation: liveness from both, the two merged on the sort column
+//! (the base's row first on a tie), and probes of both indexes merged.
 
 use crate::block::Block;
 use crate::refs::Span;
@@ -60,7 +62,7 @@ structure! {
         pub key: [u16; 8],
         /// Buckets less one (a power of two less one).
         pub mask: u64,
-        /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in canonical
+        /// Bucket `b`'s rows are `rows[offs[b]..offs[b + 1]]`: every key whose hash falls in `b`, in id
         /// order. A reader checks the key (4 bytes a bucket, about one key a bucket; no hash kept). In a sorted order
         /// (`ORDER`), `rows` is every row in the key's order, and `offs` is empty.
         pub offs: Span<u32>,
@@ -133,7 +135,8 @@ structure! {
         pub base_rows: u32,
         /// Live rows of its own, once frozen.
         pub live: AtomicU32,
-        /// The order key: columns compared first, `nokey` of them, then the rest in order.
+        /// The sort column, `okey[0]`, when `nokey` is 1; none when it is 0 (decision 0678 step 8). The other entries
+        /// are unused, kept for the descriptor's layout.
         pub okey: [u16; 8],
         pub nokey: u32,
         pub nindex: AtomicU32,
@@ -203,8 +206,9 @@ pub struct IndexRoom {
 #[derive(Clone, Debug)]
 pub struct Spec {
     pub widths: Vec<u32>,
-    /// Columns compared first in the canonical order.
-    pub order: Vec<u16>,
+    /// The one column its rows are sorted on (decision 0678 step 8: zero or one): ties keep the order the rows came
+    /// in. `None`: they stay in that order. Rows are made distinct by their row index, never by a sort.
+    pub sort: Option<u16>,
     /// The keys probes ask by.
     pub indexes: Vec<Vec<u16>>,
     /// The first chunk holds `2^min_log` rows.
@@ -235,11 +239,10 @@ impl Relation {
                 assert_eq!(b.base_rows, 0, "a delta's base is a full relation");
                 b.rows.len()
             });
-            assert!(spec.order.len() <= 8);
-            for (i, &c) in spec.order.iter().enumerate() {
-                (*p).okey[i] = c;
+            if let Some(c) = spec.sort {
+                (*p).okey[0] = c;
             }
-            (*p).nokey = spec.order.len() as u32;
+            (*p).nokey = u32::from(spec.sort.is_some());
             Rows::init_in(&raw mut (*p).rows, cols, &spec.widths, spec.min_log);
             Rows::init_in(&raw mut (*p).killed, cols.add(spec.widths.len()), &[4], 6);
             Some(&*p)
@@ -1153,72 +1156,88 @@ fn bits_for(range: u64) -> u32 {
     64 - range.leading_zeros()
 }
 
-/// Sorts `ids` (rows of `cols`: column `c`'s `n` values at `cols[c * n..]`, ranging over `lo[c]..=hi[c]`) into the
-/// canonical order of `key`. When the key packs into 64 bits (each column less its minimum, in the bits its range
-/// needs, the first highest), the packed keys are radix sorted with the ids and returned alongside them: equal
-/// keys are equal rows. Else the ids are sorted by comparing the rows.
-pub(crate) fn sort_canonical<'s>(
-    scratch: &'s crate::scratch::Scratch,
-    cols: &[i64],
-    n: usize,
-    key: &[usize],
-    lo: &[i64],
-    hi: &[i64],
-    ids: &mut [u32],
-) -> Option<&'s [u64]> {
+/// Sorts `ids` (rows of `cols`: column `c`'s `n` values at `cols[c * n..]`) on column `sort` when given (with its
+/// range `lo..=hi`), stably, so ties keep their order; then drops each row equal to one before it, found in a table
+/// of the rows' hashes in `scratch`. The rows left are moved to the front of `ids`, in order: their count. Set
+/// semantics without a sort on every column (decision 0678 step 8).
+pub(crate) fn distinct_sorted(scratch: &crate::scratch::Scratch, cols: &[i64], n: usize, a: usize, sort: Option<(usize, i64, i64)>, ids: &mut [u32]) -> usize {
     let m = ids.len();
-    let kbits: Vec<u32> = key.iter().map(|&c| if n == 0 { 0 } else { bits_for((hi[c] as i128 - lo[c] as i128) as u64) }).collect();
-    let packed_bits: u32 = kbits.iter().sum();
     let val = |c: usize, i: usize| cols[c * n + i];
-    if packed_bits > 64 {
-        ids.sort_unstable_by(|&x, &y| {
-            for &c in key {
-                let o = val(c, x as usize).cmp(&val(c, y as usize));
-                if o != Ordering::Equal {
-                    return o;
-                }
+    if let Some((c, lo, hi)) = sort {
+        let bits = bits_for((hi as i128 - lo as i128) as u64);
+        if m > 1 && bits > 0 {
+            let keys: &mut [u64] = scratch.take(m);
+            for (k, &i) in keys.iter_mut().zip(ids.iter()) {
+                *k = (val(c, i as usize) as i128 - lo as i128) as u64;
             }
-            Ordering::Equal
-        });
-        return None;
-    }
-    let keys: &mut [u64] = scratch.take(m);
-    for (k, &i) in keys.iter_mut().zip(ids.iter()) {
-        let mut x = 0u64;
-        for (j, &c) in key.iter().enumerate() {
-            // A column of one value takes no bits; `checked_shl` keeps a 64-bit shift of an empty key defined.
-            x = x.checked_shl(kbits[j]).unwrap_or(0) | (val(c, i as usize) as i128 - lo[c] as i128) as u64;
+            let (tk, ti) = (scratch.take::<u64>(m), scratch.take::<u32>(m));
+            crate::sort::radix_pairs(keys, ids, bits, tk, ti);
         }
-        *k = x;
     }
-    let (tk, ti) = (scratch.take::<u64>(m), scratch.take::<u32>(m));
-    crate::sort::radix_pairs(keys, ids, packed_bits, tk, ti);
-    Some(keys)
+    let cap = (2 * m).next_power_of_two().max(2);
+    let mask = cap - 1;
+    let slots: &mut [u32] = scratch.take(cap);
+    slots.fill(u32::MAX);
+    let mut left = 0;
+    for p in 0..m {
+        let i = ids[p] as usize;
+        let mut h = crate::SEED;
+        for c in 0..a {
+            h = crate::mix(h, val(c, i));
+        }
+        let mut at = h as usize & mask;
+        let seen = loop {
+            match slots[at] {
+                u32::MAX => {
+                    slots[at] = i as u32;
+                    break false;
+                }
+                j if (0..a).all(|c| val(c, j as usize) == val(c, i)) => break true,
+                _ => at = (at + 1) & mask,
+            }
+        };
+        if !seen {
+            ids[left] = ids[p];
+            left += 1;
+        }
+    }
+    left
 }
 
-/// Whether the row at sorted place `p` equals the one before it (`sort_canonical`'s keys, or the rows).
-#[inline]
-pub(crate) fn same_row(cols: &[i64], n: usize, key: &[usize], keys: Option<&[u64]>, ids: &[u32], p: usize) -> bool {
-    match keys {
-        Some(k) => k[p] == k[p - 1],
-        None => key.iter().all(|&c| cols[c * n + ids[p] as usize] == cols[c * n + ids[p - 1] as usize]),
+/// How many distinct values `hs` holds, by a table of them in `scratch`: no sort.
+fn distinct_hashes(scratch: &crate::scratch::Scratch, hs: &[u64]) -> usize {
+    let cap = (2 * hs.len()).next_power_of_two().max(2);
+    let mask = cap - 1;
+    let slots: &mut [u64] = scratch.take(cap);
+    let used: &mut [u64] = scratch.zeroed(cap.div_ceil(64));
+    let mut d = 0;
+    for &h in hs {
+        let mut at = (h ^ h >> 29) as usize & mask;
+        loop {
+            if used[at >> 6] >> (at & 63) & 1 == 0 {
+                used[at >> 6] |= 1 << (at & 63);
+                slots[at] = h;
+                d += 1;
+                break;
+            }
+            if slots[at] == h {
+                break;
+            }
+            at = (at + 1) & mask;
+        }
     }
-}
-
-/// The canonical order's columns: the order key's, then the rest.
-pub(crate) fn canonical_cols(spec: &Spec, a: usize) -> Vec<usize> {
-    spec.order.iter().map(|&c| c as usize).chain((0..a).filter(|c| !spec.order.contains(&(*c as u16)))).collect()
+    d
 }
 
 /// `freeze`, its temporaries from `scratch`. How, for `n` rows of `a` columns:
 ///
 /// - each column is read once, a chunk at a time, into `n` values;
-/// - the order key is packed into a `u64` (each column less its minimum, in the bits its range needs) and radix
-///   sorted with the row ids, when it fits 64 bits; else the ids are sorted by comparing the rows;
-/// - a duplicate is a row whose packed key equals the one before it;
+/// - the sort column, when there is one, is radix sorted with the row ids, stably (`distinct_sorted`);
+/// - a duplicate is a row equal to one before it in a table of the rows' hashes; a row the base holds is found in
+///   the base's row index;
 /// - each column is written back in order, a chunk at a time;
 /// - an index's buckets are filled by one counting pass over the rows in order, its bucket count from the
-///   number of distinct keys (a bitmap of the key's range, when that is small).
+///   number of distinct keys (a bitmap of the key's range, when that is small, else a table of their hashes).
 pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relation>, scratch: &crate::scratch::Scratch) -> FreezeStats {
     assert!(!rel.is_frozen());
     let a = rel.arity as usize;
@@ -1254,8 +1273,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     }
     let val = |c: usize, i: usize| cols[c * n + i];
 
-    // The canonical order: the order key's columns, then the rest.
-    let key = canonical_cols(spec, a);
+    // The sort column, and the rows left once duplicates go.
+    let sort = spec.sort.map(|c| c as usize);
     let ids: &mut [u32] = scratch.take(n);
     let mut m = 0;
     for i in 0..n {
@@ -1264,31 +1283,33 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             m += 1;
         }
     }
-    let ids = &mut ids[..m];
-    let keys = sort_canonical(scratch, cols, n, &key, &lo, &hi, ids);
-    let same = |p: usize| same_row(cols, n, &key, keys, ids, p);
+    let m = distinct_sorted(scratch, cols, n, a, sort.map(|c| (c, lo[c], hi[c])), &mut ids[..m]);
+    let ids = &ids[..m];
 
     // Set semantics: a row once, and in a delta, not a row its base holds. The base row equal to own row `i`, if
-    // the base holds one.
+    // the base holds one: one probe of the base's row index, else of its sort column's range, else a scan (a base
+    // of more than `MAX_KEY` columns and no sort column).
+    let every: Vec<u16> = (0..a as u16).collect();
+    let base_ix = base.and_then(|b| b.find_index(&every, b.rows.len()));
     let base_row = |i: usize| -> Option<u32> {
         let b = base?;
-        let (mut l, mut h) = (0u32, b.rows.len());
-        while l < h {
-            let mid = (l + h) / 2;
-            let mut o = Ordering::Equal;
-            for &c in &key {
-                o = b.rows.get(mid, c).cmp(&val(c, i));
-                if o != Ordering::Equal {
-                    break;
-                }
+        let same = |id: u32| (0..a).all(|c| b.rows.get(id, c) == val(c, i));
+        if let Some(x) = base_ix {
+            let mut key = [0i64; MAX_KEY];
+            for (c, k) in key.iter_mut().enumerate().take(a) {
+                *k = val(c, i);
             }
-            match o {
-                Ordering::Less => l = mid + 1,
-                Ordering::Greater => h = mid,
-                Ordering::Equal => return Some(mid),
-            }
+            return b.group(x, key_hash(&key[..a])).iter().copied().find(|&id| same(id));
         }
-        None
+        let (lo, hi) = match b.nokey {
+            0 => (0, b.rows.len()),
+            _ => {
+                let c = b.okey[0] as usize;
+                let lo = b.rows.lower_bound(c, 0, b.rows.len(), val(c, i));
+                (lo, b.rows.upper_from(c, lo, b.rows.len(), val(c, i)))
+            }
+        };
+        (lo..hi).find(|&id| same(id))
     };
     // An own row its base holds is dropped. When the delta killed that base row, the row pushed again brings it
     // back (the user, 2026-11-24: resurrected rather than inserted again): its kill is cancelled, so its id stays
@@ -1297,11 +1318,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     let order: &mut [u32] = scratch.take(m);
     let back: &mut [u32] = scratch.take(m);
     let (mut live, mut nback) = (0, 0);
-    for (p, &id) in ids.iter().enumerate().take(m) {
+    for &id in ids {
         let i = id as usize;
-        if p > 0 && same(p) {
-            continue;
-        }
         if let Some(b) = base_row(i) {
             let based = base.expect("a base row's base");
             if !based.dead_bit(b) && is_dead(dead, b as usize) {
@@ -1343,7 +1361,7 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     let order = &order[..live];
     let dropped = (m - live) as u64;
 
-    // Sorted in place: each column written back in canonical order, so an own row's id is its place in that
+    // Sorted in place: each column written back in its order, so an own row's id is its place in that
     // order. No order array, and no dead bits for its own rows (the dropped ones are gone). The statistics are
     // each column's range over the live rows.
     let moved: &mut [i64] = scratch.take(live);
@@ -1361,17 +1379,25 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
     }
     rel.rows.len.store(live as u32, Release);
 
-    // Indexes: each key's rows grouped, in canonical order within a group.
-    let ixp: *mut crate::relation::Index = block.alloc_t(spec.indexes.len().max(1));
-    for (x, icols) in spec.indexes.iter().enumerate() {
+    // Indexes: each key's rows grouped, in id order within a group; then the row index, on every column, which a
+    // delta's freeze finds its base's rows in (when the relation has at most `MAX_KEY` columns and no declared index
+    // is on them all). Only a full relation is a delta's base, so only a full relation has one. A relation with no
+    // declared index is given its row index as an added one, after it is frozen (below), so its directory keeps its
+    // room for the indexes its readers add (`try_reserve_index`).
+    let row_index = base.is_none() && a > 0 && a <= MAX_KEY && !spec.indexes.contains(&every);
+    let mut keys: Vec<Vec<u16>> = spec.indexes.clone();
+    if row_index && !keys.is_empty() {
+        keys.push(every.clone());
+    }
+    let ixp: *mut crate::relation::Index = block.alloc_t(keys.len().max(1));
+    for (x, icols) in keys.iter().enumerate() {
         assert!(icols.len() <= MAX_KEY);
-        let lead = &spec.order[..icols.len().min(spec.order.len())];
         let ix = unsafe { &mut *ixp.add(x) };
         ix.ncols = icols.len() as u32;
         for (j, &c) in icols.iter().enumerate() {
             ix.key[j] = c;
         }
-        if icols.len() <= spec.order.len() && icols.iter().all(|c| lead.contains(c)) {
+        if icols.len() == 1 && sort == Some(icols[0] as usize) {
             ix.ordered = 1;
             continue;
         }
@@ -1388,6 +1414,8 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
         let span: u32 = ibits.iter().sum();
         let distinct = if live == 0 {
             0
+        } else if *icols == every {
+            live
         } else if span <= 24 {
             let words: &mut [u64] = scratch.zeroed((1usize << span).div_ceil(64));
             let mut d = 0usize;
@@ -1407,8 +1435,7 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             for (j, h) in hs.iter_mut().enumerate() {
                 *h = key_hash(&kv(j)[..nk]);
             }
-            hs.sort_unstable();
-            1 + hs.windows(2).filter(|w| w[0] != w[1]).count()
+            distinct_hashes(scratch, hs)
         };
         let cap = distinct.next_power_of_two().max(1);
         let mask = (cap - 1) as u64;
@@ -1457,17 +1484,25 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             std::ptr::copy_nonoverlapping(changed.as_ptr(), cp, changed.len());
             Span::set(&rel.changed, cp, changed.len());
         }
-        Span::set(&rel.indexes, ixp, spec.indexes.len());
+        Span::set(&rel.indexes, ixp, keys.len());
         Span::set(&rel.stats, sp, a);
     }
-    rel.nindex.store(spec.indexes.len() as u32, Relaxed);
+    rel.nindex.store(keys.len() as u32, Relaxed);
     rel.live.store(live as u32, Relaxed);
     rel.flags.fetch_or(FROZEN, Release);
+    if row_index && keys.is_empty() && live > 0 {
+        // SAFETY: frozen just now, by its only writer; its rows `0..live` are written.
+        unsafe {
+            let room = rel.try_reserve_index(block, &every, live as u32).expect("block full: a row index");
+            rel.build_index(&room);
+            rel.index_built(&room);
+        }
+    }
     FreezeStats { rows: n as u64, live: live as u64, dropped, bytes: (block.used() - before) as u64 }
 }
 
 /// A relation as readers see it: a full relation alone, or a base and its delta read as one. Ids `..base_rows`
-/// are the base's, the rest the delta's. A probe and the ordered scan come in the canonical order.
+/// are the base's, the rest the delta's. A probe and the ordered scan come in order on the sort column.
 #[derive(Clone, Copy)]
 pub struct View<'a> {
     pub base: Option<&'a Relation>,
@@ -1511,27 +1546,17 @@ impl<'a> View<'a> {
         (0..self.arity()).map(|c| self.get(id, c)).collect()
     }
 
+    /// Two rows by the sort column: equal when it has none (a merge then takes the base's row first).
     fn cmp(&self, x: u32, y: u32) -> Ordering {
-        let ok = &self.top.okey[..self.top.nokey as usize];
-        for &c in ok {
-            let o = self.get(x, c as usize).cmp(&self.get(y, c as usize));
-            if o != Ordering::Equal {
-                return o;
-            }
+        if self.top.nokey == 0 {
+            return Ordering::Equal;
         }
-        for c in 0..self.arity() {
-            if ok.contains(&(c as u16)) {
-                continue;
-            }
-            let o = self.get(x, c).cmp(&self.get(y, c));
-            if o != Ordering::Equal {
-                return o;
-            }
-        }
-        Ordering::Equal
+        let c = self.top.okey[0] as usize;
+        self.get(x, c).cmp(&self.get(y, c))
     }
 
-    /// Live ids in the canonical order: the base's (less what the delta killed) merged with the delta's.
+    /// Live ids in order: the base's (less what the delta killed) merged with the delta's on the sort column, the
+    /// base's first on a tie; with no sort column, the base's, then the delta's.
     pub fn ordered(&self) -> Vec<u32> {
         self.ordered_iter().collect()
     }
@@ -1552,7 +1577,7 @@ impl<'a> View<'a> {
         }
     }
 
-    /// The live rows whose index-`i` columns equal `key`, in canonical order.
+    /// The live rows whose index-`i` columns equal `key`, in order (`ordered`'s).
     pub fn probe(&self, i: usize, key: &[i64]) -> Vec<u32> {
         self.probe_iter(i, key).collect()
     }
@@ -1575,21 +1600,19 @@ impl<'a> View<'a> {
         Probe { v: *self, key, cols, own0, base0, exact, own, based, ha: None, hb: None, primed: false }
     }
 
-    /// A digest of the live rows in canonical order: the same for the same set, whatever wrote it, in any order.
+    /// A digest of the live rows: the same for the same set, whatever wrote it, in any order (a sum of each row's
+    /// hash, so no order is needed; `Packed::digest` is the same).
     pub fn digest(&self) -> u64 {
-        let mut h = crate::SEED;
-        let mut n = 0u64;
-        for id in self.ordered() {
-            for c in 0..self.arity() {
-                h = crate::mix(h, self.get(id, c));
-            }
+        let (mut sum, mut n) = (0u64, 0u64);
+        for id in (0..self.total()).filter(|&id| self.live(id)) {
+            sum = sum.wrapping_add(row_digest((0..self.arity()).map(|c| self.get(id, c))));
             n += 1;
         }
-        crate::mix(h, n as i64)
+        crate::mix(sum, n as i64)
     }
 }
 
-/// A probe's answer, in canonical order: a frozen relation's own rows (always live: its dead bits name only its
+/// A probe's answer, in order (`View::ordered`'s): a frozen relation's own rows (always live: its dead bits name only its
 /// base's rows), and when it is a delta, its base's live rows, merged. A leading key's ranges are exact; a bucket's
 /// rows are checked against the key.
 pub struct Probe<'k> {
@@ -1708,7 +1731,13 @@ fn leading(rel: &Relation, cols: &[u16], key: &[i64]) -> std::ops::Range<u32> {
     lo..hi
 }
 
-/// Two id streams, each in canonical order, merged into one.
+/// One row's hash in a set's digest (`View::digest`, `Packed::digest`).
+pub fn row_digest(vals: impl Iterator<Item = i64>) -> u64 {
+    let h = vals.fold(crate::SEED, crate::mix);
+    crate::mix(h, 0x5eed)
+}
+
+/// Two id streams, each in order on the sort column, merged into one.
 struct Merge<'v, A: Iterator<Item = u32>, B: Iterator<Item = u32>> {
     v: &'v View<'v>,
     a: std::iter::Peekable<A>,
@@ -1744,7 +1773,7 @@ mod tests {
     #[test]
     fn a_released_relations_chunks_are_taken_by_the_next() {
         let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
-        let spec = Spec { widths: vec![8, 8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let spec = Spec { widths: vec![8, 8, 8], sort: None, indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
         let fill = |r: &Relation, base: i64| {
             assert!(r.rows.try_reserve(&block, 50_000));
             unsafe {
@@ -1777,7 +1806,7 @@ mod tests {
     #[test]
     fn a_continuation_reads_its_bases_rows_where_they_lie() {
         let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
-        let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let spec = Spec { widths: vec![8, 8], sort: None, indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
         let put = |r: &Relation, from: u32, n: u32, tag: i64| {
             assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + n)));
             let at = r.rows.len();
@@ -1850,7 +1879,7 @@ mod tests {
     #[test]
     fn a_forgotten_index_gives_its_room_back() {
         let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
-        let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let spec = Spec { widths: vec![8, 8], sort: None, indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
         let rel = Relation::try_create(&block, &spec, None).unwrap();
         rel.rewritten();
         let n = 20_000u32;
@@ -1888,6 +1917,20 @@ mod tests {
         assert!(block.free_bytes() >= free + 4 * n as usize + 16 * n as usize, "rows, index and directory given back");
     }
 
+    /// Rows as a sorted set (each once), to compare sets.
+    fn as_set(rows: &[Vec<i64>]) -> Vec<Vec<i64>> {
+        let set: BTreeSet<Vec<i64>> = rows.iter().cloned().collect();
+        assert_eq!(set.len(), rows.len(), "a row twice");
+        let mut by: Vec<Vec<i64>> = set.into_iter().collect();
+        by.sort_by_key(|r| (r[1], r[0], r[2]));
+        by
+    }
+
+    /// Whether `rows` are in order on column `c`.
+    fn sorted_on(rows: &[Vec<i64>], c: usize) -> bool {
+        rows.windows(2).all(|w| w[0][c] <= w[1][c])
+    }
+
     fn rows_of(v: &View) -> Vec<Vec<i64>> {
         v.ordered_iter().map(|id| v.row(id)).collect()
     }
@@ -1899,7 +1942,7 @@ mod tests {
     fn an_added_index_groups_each_keys_rows_in_id_order() {
         let block = Block::anon(kind::FACTS, 16 << 20);
         let lock = Mutex::new(());
-        let spec = Spec { widths: vec![8; 9], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+        let spec = Spec { widths: vec![8; 9], sort: None, indexes: Vec::new(), min_log: 4 };
         let rel = Relation::create(&block, &spec, None);
         let rows: Vec<[i64; 9]> = (0..2_000i64).map(|i| std::array::from_fn(|c| if c == 0 { i % 37 } else { (i * 7 + c as i64) % 5 - 2 })).collect();
         RelW { block: &block, rel, lock: &lock }.extend(&rows.iter().flatten().copied().collect::<Vec<_>>());
@@ -1934,7 +1977,7 @@ mod tests {
     fn an_index_is_of_its_rows_from_and_one_given_back_is_taken_again() {
         let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
         let lock = Mutex::new(());
-        let spec = Spec { widths: vec![8; 2], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+        let spec = Spec { widths: vec![8; 2], sort: None, indexes: Vec::new(), min_log: 4 };
         let rel = Relation::create(&block, &spec, None);
         let rows: Vec<i64> = (0..2_000i64).flat_map(|i| [i % 37, i]).collect();
         RelW { block: &block, rel, lock: &lock }.extend(&rows);
@@ -1987,12 +2030,12 @@ mod tests {
         assert!(block.used() > used);
     }
 
-    /// Freeze keeps a set in canonical order, a delta's set being its base's less its kills plus its own rows; the
-    /// probes answer as a scan does. Both sorts: the packed key, and a key too wide to pack.
+    /// Freeze keeps a set sorted on its one column, a delta's set being its base's less its kills plus its own rows;
+    /// the probes answer as a scan does, in the same order. Small values and values too wide to pack together.
     #[test]
     fn freeze_and_probes_agree_with_a_set() {
         for wide in [false, true] {
-            let spec = Spec { widths: vec![8, 4, 4], order: vec![1, 0], indexes: vec![vec![1], vec![2]], min_log: 4 };
+            let spec = Spec { widths: vec![8, 4, 4], sort: Some(1), indexes: vec![vec![1], vec![2]], min_log: 4 };
             let big = if wide { 1i64 << 50 } else { 1 };
             let mut x = 7u64;
             let mut next = |m: u64| {
@@ -2010,7 +2053,8 @@ mod tests {
             let set: BTreeSet<(i64, i64, i64)> = rows.iter().map(|r| (r[1], r[0], r[2])).collect();
             let v = View::full(rel);
             let want: Vec<Vec<i64>> = set.iter().map(|&(b, a, c)| vec![a, b, c]).collect();
-            assert_eq!(rows_of(&v), want, "wide {wide}: the set, in canonical order");
+            assert_eq!(as_set(&rows_of(&v)), want, "wide {wide}: the set, each row once");
+            assert!(sorted_on(&rows_of(&v), 1), "wide {wide}: sorted on its column");
 
             // A delta: kills of base rows and of its own, repeats of base rows, new rows.
             let dblock = Block::anon(kind::FACTS, 16 << 20);
@@ -2039,15 +2083,68 @@ mod tests {
             freeze(&dblock, d, &spec, Some(rel));
             let dv = View { base: Some(rel), top: d };
             let want: Vec<Vec<i64>> = now.iter().map(|&(b, a, c)| vec![a, b, c]).collect();
-            assert_eq!(rows_of(&dv), want, "wide {wide}: the delta's set");
+            assert_eq!(as_set(&rows_of(&dv)), want, "wide {wide}: the delta's set");
+            assert!(sorted_on(&rows_of(&dv), 1), "wide {wide}: the delta's rows merged on its column");
             assert_eq!(dv.live_len(), now.len());
+            let order: Vec<u32> = dv.ordered();
             for (ix, col) in [(0usize, 1usize), (1, 2)] {
                 for k in [0i64, 3, 17, 31, 33, 250, 499, 1_000] {
-                    let got: Vec<Vec<i64>> = dv.probe_iter(ix, &[k]).map(|id| dv.row(id)).collect();
-                    let scan: Vec<Vec<i64>> = want.iter().filter(|r| r[col] == k).cloned().collect();
-                    assert_eq!(got, scan, "wide {wide}: probe of column {col} for {k}");
+                    let got: Vec<u32> = dv.probe_iter(ix, &[k]).collect();
+                    let scan: Vec<u32> = order.iter().copied().filter(|&id| dv.get(id, col) == k).collect();
+                    assert_eq!(got, scan, "wide {wide}: probe of column {col} for {k}, in the ordered read's order");
                 }
             }
+        }
+    }
+
+    /// Decision 0678 step 8. With no sort column, freeze keeps the rows in the order they came, each once. A delta
+    /// finds the base row a pushed row equals through the base's row index, whether the base has declared indexes
+    /// (it is appended to them) or none (it is added, and the directory keeps room for more); a row the delta killed
+    /// and pushed again is brought back. A base wider than `MAX_KEY` has no row index and is searched instead.
+    #[test]
+    fn rows_are_sorted_on_one_column_or_none_and_found_by_their_row_index() {
+        let lock = Mutex::new(());
+        // No sort: arrival order, duplicates gone.
+        let spec = Spec { widths: vec![8, 8], sort: None, indexes: Vec::new(), min_log: 4 };
+        let block = Block::anon(kind::FACTS, 16 << 20);
+        let rel = Relation::create(&block, &spec, None);
+        let came = [[5i64, 1], [3, 9], [5, 1], [1, 2], [3, 9], [9, 0]];
+        RelW { block: &block, rel, lock: &lock }.extend(&came.iter().flatten().copied().collect::<Vec<_>>());
+        freeze(&block, rel, &spec, None);
+        assert_eq!(rows_of(&View::full(rel)), vec![vec![5, 1], vec![3, 9], vec![1, 2], vec![9, 0]], "in the order they came, each once");
+        assert!(rel.find_index(&[0, 1], 4).is_some(), "a row index, added");
+        assert!(unsafe { rel.try_reserve_index(&block, &[1], 4) }.is_some(), "room for an index a reader adds");
+
+        for (indexes, widths) in [(Vec::new(), vec![8u32, 8]), (vec![vec![0u16]], vec![8, 8]), (Vec::new(), vec![8; 9])] {
+            let a = widths.len();
+            let spec = Spec { widths, sort: Some(0), indexes, min_log: 4 };
+            let block = Block::anon(kind::FACTS, 16 << 20);
+            let rel = Relation::create(&block, &spec, None);
+            let row = |i: i64| (0..a as i64).map(|c| if c == 0 { i % 7 } else { i * 10 + c }).collect::<Vec<i64>>();
+            let w = RelW { block: &block, rel, lock: &lock };
+            for i in 0..200 {
+                w.push(&row(i));
+            }
+            freeze(&block, rel, &spec, None);
+            let every: Vec<u16> = (0..a as u16).collect();
+            assert_eq!(rel.find_index(&every, 200).is_some(), a <= MAX_KEY, "{a} columns: a row index when it fits");
+            let v = View::full(rel);
+            let id_of = |i: i64| (0..200).find(|&id| v.row(id) == row(i)).expect("a row");
+            let dblock = Block::anon(kind::FACTS, 16 << 20);
+            let d = Relation::create(&dblock, &spec, Some(rel));
+            let dw = RelW { block: &dblock, rel: d, lock: &lock };
+            let (gone, back, again) = (id_of(3), id_of(40), id_of(41));
+            dw.kill(gone);
+            dw.kill(back);
+            dw.push(&row(40));
+            dw.push(&row(41));
+            dw.push(&row(500));
+            freeze(&dblock, d, &spec, Some(rel));
+            let dv = View { base: Some(rel), top: d };
+            assert!(!dv.live(gone) && dv.live(back) && dv.live(again), "{a} columns: the kill of a row pushed again is cancelled");
+            assert_eq!(d.rows.len(), 1, "{a} columns: only the new row is the delta's own");
+            assert_eq!(d.changed.as_slice(), &[gone], "{a} columns: the change is the one kill that stands");
+            assert!(sorted_on(&rows_of(&dv), 0));
         }
     }
 }

@@ -377,13 +377,13 @@ fn merge_join<A: Table, B: Table>(a: &A, b: &B, on: &[(ColumnIndex, ColumnIndex)
     }
 }
 
-/// A relation read as a table: frozen, its own rows (and its base's) lie in canonical order, so sorted on the
-/// order's first column, and a base and its delta are its two runs. Its probes use its hashed indexes where one is
+/// A relation read as a table: frozen, its own rows (and its base's) lie sorted on its sort column when it has one
+/// (decision 0678 step 8), and a base and its delta are its two runs. Its probes use its hashed indexes where one is
 /// on exactly the probe's columns, in both relations.
 impl Table for View<'_> {
     fn sort(&self) -> Option<ColumnIndex> {
         let frozen = self.top.is_frozen() && self.base.is_none_or(|b| b.is_frozen());
-        (frozen && self.arity() > 0).then(|| ColumnIndex::new(if self.top.nokey > 0 { self.top.okey[0] } else { 0 }))
+        (frozen && self.top.nokey > 0).then(|| ColumnIndex::new(self.top.okey[0]))
     }
 
     fn runs(&self) -> Runs {
@@ -519,7 +519,7 @@ mod tests {
     /// hashed index on each of `indexes`.
     fn with_delta(order: u16, indexes: &[&[u16]], base: &[[i64; 2]], added: &[[i64; 2]], killed: &[u32], f: impl FnOnce(View<'_>)) {
         let block = Block::anon(kind::FACTS, 16 << 20);
-        let spec = Spec { widths: vec![8, 8], order: vec![order], indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log: crate::rows::MIN_LOG };
+        let spec = Spec { widths: vec![8, 8], sort: Some(order), indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log: crate::rows::MIN_LOG };
         let lock = Mutex::new(());
         let b = Relation::create(&block, &spec, None);
         let w = RelW { block: &block, rel: b, lock: &lock };

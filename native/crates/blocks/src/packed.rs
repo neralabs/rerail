@@ -1,6 +1,9 @@
 //! A packed relation: a frozen relation written again, exactly sized, in the fewest bits.
 //!
-//! Its rows are its live rows in canonical order, so a row's position is its place in that order:
+//! Its rows are its live rows in canonical order, so a row's position is its place in that order. The canonical
+//! order is the spec's sort column, then every other column (`canonical`): a stored form's bytes are the same for
+//! the same set, however its rows came, and the store merges and probes its entries on leading columns. (A relation
+//! in memory sorts on its one column only, decision 0678 step 8; this order is the kept form's.)
 //!
 //! - no order array, no dead bits and no duplicates: they were the in-place form's;
 //! - each column a `PCol`: one `IntCol`, or a node id's two parts (split at `ID_SPLIT`), each its own `IntCol`, and
@@ -16,7 +19,7 @@
 use crate::block::Block;
 use crate::col::{Choice, Dec, IntCol, choose};
 use crate::refs::Span;
-use crate::relation::{Spec, View, canonical_cols, same_row, sort_canonical};
+use crate::relation::{Spec, View};
 use crate::scratch::Scratch;
 use crate::structure;
 use rayon::prelude::*;
@@ -86,10 +89,24 @@ pub struct PackStats {
     pub index_bytes: usize,
 }
 
-/// Whether index `cols` is answered by the order: its columns are the order's first ones, in any order.
-fn on_order(spec: &Spec, cols: &[u16]) -> bool {
-    let lead: Vec<u16> = spec.order.iter().take(cols.len()).copied().collect();
-    cols.len() <= spec.order.len() && cols.iter().all(|c| lead.contains(c))
+/// The canonical order's columns: the sort column, then the rest in order (all in order with none).
+pub(crate) fn canonical(spec: &Spec, a: usize) -> Vec<usize> {
+    let s = spec.sort.map(|c| c as usize);
+    s.into_iter().chain((0..a).filter(|&c| Some(c) != s)).collect()
+}
+
+/// The order a packed relation records (`Packed::okey`): the canonical order's first `MAX_KEY` columns when the spec
+/// sorts, none when it does not (its rows are canonical all the same, but no probe is a range).
+fn recorded(spec: &Spec, a: usize) -> Vec<u16> {
+    if spec.sort.is_none() {
+        return Vec::new();
+    }
+    canonical(spec, a).into_iter().take(crate::relation::MAX_KEY).map(|c| c as u16).collect()
+}
+
+/// Whether index `cols` is answered by the order recorded (`lead`): its columns are its first ones, in any order.
+fn on_order(lead: &[u16], cols: &[u16]) -> bool {
+    cols.len() <= lead.len() && cols.iter().all(|c| lead[..cols.len()].contains(c))
 }
 
 /// A permutation index planned: its column, and its keys, starts and positions with their encodings.
@@ -317,8 +334,9 @@ enum Rel {
 fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, src: Src<'s>, order: Option<&'s [u32]>, n: usize) -> Plan<'s> {
     use crate::col::Vals;
     let mut indexes = Vec::new();
+    let lead = recorded(spec, arity);
     for ix in &spec.indexes {
-        if on_order(spec, ix) {
+        if on_order(&lead, ix) {
             continue;
         }
         assert_eq!(ix.len(), 1, "a packed index off the order is on one column");
@@ -357,8 +375,8 @@ fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, src: Src<'s>, order
         indexes.push(IxPlan { col: c as u32, parts: [(kv, ck), (st, cs), (pm, cp)] });
     }
     let rel = |c: usize| match () {
-        _ if !spec.order.contains(&(c as u16)) => Rel::Any,
-        _ if spec.order.first() == Some(&0) => Rel::Searched,
+        _ if !lead.contains(&(c as u16)) => Rel::Any,
+        _ if lead.first() == Some(&0) => Rel::Searched,
         _ => Rel::Never,
     };
     let choices = each(n * arity >= PAR_MIN, arity, |c| plan_col(src, order, n, c, rel(c)));
@@ -367,9 +385,9 @@ fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, src: Src<'s>, order
 
 /// Lays out the block (descriptors, and every column's words, zero), then packs the columns into it in
 /// parallel: each column into its own words.
-fn place(plan: &Plan, spec: &Spec, kind: u32) -> (Block, PackStats) {
+fn place(plan: &Plan, okey: &[u16], kind: u32) -> (Block, PackStats) {
     let block = crate::alloc::host(kind, plan.bytes());
-    let p = place_at(&block, plan, spec);
+    let p = place_at(&block, plan, okey);
     block.set_root(p);
     let stats = stats_of(plan, block.used());
     (block, stats)
@@ -396,7 +414,7 @@ type Job<'a> = (&'a Choice, JobVals<'a>, &'a mut [u64], &'a mut [u64]);
 
 /// Places `plan` in `block` (open): its descriptor first, then its columns' words, all from one point on, so the
 /// packed relation is one contiguous range of the block (decision 0456 K4: it moves by `memcpy`).
-fn place_at(block: &Block, plan: &Plan, spec: &Spec) -> *mut Packed {
+fn place_at(block: &Block, plan: &Plan, okey: &[u16]) -> *mut Packed {
     let p: *mut Packed = block.alloc_t(1);
     let cp: *mut PCol = block.alloc_t(plan.arity);
     let ip: *mut PIndex = block.alloc_t(plan.indexes.len().max(1));
@@ -405,8 +423,8 @@ fn place_at(block: &Block, plan: &Plan, spec: &Spec) -> *mut Packed {
     unsafe {
         (*p).arity = plan.arity as u32;
         (*p).n = n as u32;
-        (*p).nokey = spec.order.len() as u32;
-        for (i, &c) in spec.order.iter().enumerate() {
+        (*p).nokey = okey.len() as u32;
+        for (i, &c) in okey.iter().enumerate() {
             (*p).okey[i] = c;
         }
         // Columns are placed in schema order, their rows in canonical order.
@@ -443,8 +461,9 @@ fn place_at(block: &Block, plan: &Plan, spec: &Spec) -> *mut Packed {
 }
 
 /// Packs what `view` reads (a full relation, or a base and its delta) into a new block of its exact size. A full
-/// frozen relation's rows are in canonical order already, so its columns are read a chunk at a time; a base and
-/// its delta are read through their merged order.
+/// frozen relation's columns are read a chunk at a time; a base and its delta through their merged order. Their
+/// rows are sorted on one column (decision 0678 step 8), so they are put into canonical order here, unless they
+/// are in it already (`prepare`'s check).
 pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
     crate::scratch::with(|s| {
         let a = view.arity();
@@ -468,12 +487,13 @@ pub fn pack(view: &View, spec: &Spec, kind: u32) -> (Block, PackStats) {
                 (cols, n)
             }
         };
-        place(&plan(s, a, spec, Src::Cols { raw: cols, n }, None, n), spec, kind)
+        let prepared = prepare_src(s, Src::Cols { raw: cols, n }, n, a, spec, None, Order::Canonical);
+        place(&prepared.plan, &prepared.order, kind)
     })
 }
 
 /// Packs an open relation's rows directly, never freezing them in place: each column read once, sorted into
-/// canonical order (a radix sort of the packed key, as freeze's), deduplicated, encoded.
+/// canonical order and deduplicated (`prepare`'s), encoded.
 pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Block, PackStats) {
     assert!(!rel.is_delta(), "a delta is packed through its view, with its base");
     crate::scratch::with(|s| {
@@ -481,43 +501,15 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
         let n = rel.rows.len() as usize;
         let rows = &rel.rows;
         let raw: &mut [i64] = s.take(n * a);
-        let read = |(c, col): (usize, &mut [i64])| {
-            rows.read_col(c, n as u32, col);
-            col.iter().fold((i64::MAX, i64::MIN), |(a, b), &v| (a.min(v), b.max(v)))
-        };
-        let range: Vec<(i64, i64)> = if n * a >= PAR_MIN {
-            rerail_context::on_cores(|| raw.par_chunks_mut(n.max(1)).enumerate().map(read).collect())
+        let read = |(c, col): (usize, &mut [i64])| rows.read_col(c, n as u32, col);
+        if n * a >= PAR_MIN {
+            rerail_context::on_cores(|| raw.par_chunks_mut(n.max(1)).enumerate().for_each(read))
         } else {
-            raw.chunks_mut(n.max(1)).enumerate().map(read).collect()
-        };
-        let (lo, hi): (Vec<i64>, Vec<i64>) = (0..a).map(|c| range.get(c).copied().unwrap_or((i64::MAX, i64::MIN))).unzip();
-        let key = canonical_cols(spec, a);
-        let ids: &mut [u32] = s.take(n);
-        for (i, id) in ids.iter_mut().enumerate() {
-            *id = i as u32;
+            raw.chunks_mut(n.max(1)).enumerate().for_each(read)
         }
-        let keys = sort_canonical(s, raw, n, &key, &lo, &hi, ids);
-        let order: &mut [u32] = s.take(n);
-        let mut m = 0;
-        for p in 0..n {
-            if p == 0 || !same_row(raw, n, &key, keys, ids, p) {
-                order[m] = ids[p];
-                m += 1;
-            }
-        }
-        let cols: &mut [i64] = s.take(m * a);
-        let (raw, order) = (&*raw, &order[..m]);
-        let gather = |(c, out): (usize, &mut [i64])| {
-            for (d, &i) in out.iter_mut().zip(order) {
-                *d = raw[c * n + i as usize];
-            }
-        };
-        if m * a >= PAR_MIN {
-            rerail_context::on_cores(|| cols.par_chunks_mut(m.max(1)).enumerate().for_each(gather))
-        } else {
-            cols.chunks_mut(m.max(1)).enumerate().for_each(gather)
-        }
-        place(&plan(s, a, spec, Src::Cols { raw: cols, n: m }, None, m), spec, kind)
+        let raw = &*raw;
+        let prepared = prepare_src(s, Src::Cols { raw, n }, n, a, spec, None, Order::Canonical);
+        place(&prepared.plan, &prepared.order, kind)
     })
 }
 
@@ -525,7 +517,6 @@ pub fn pack_open(rel: &crate::relation::Relation, spec: &Spec, kind: u32) -> (Bl
 pub struct Prepared<'s> {
     plan: Plan<'s>,
     order: Vec<u16>,
-    indexes: Vec<Vec<u16>>,
     /// Whether the rows came in canonical order and distinct, so were not sorted.
     pub in_order: bool,
 }
@@ -573,7 +564,7 @@ pub fn prepare_rows<'s>(s: &'s Scratch, rows: &'s dyn RowsIn, spec: &Spec, level
 
 fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
     assert!(levels.is_none_or(|l| l.len() == n), "a level a row");
-    let key = canonical_cols(spec, a);
+    let key = canonical(spec, a);
     let as_given = given == Order::AsGiven;
     let in_order = as_given || in_canonical_order(src, n, &key);
     let (order, lv, m): (Option<&'s [u32]>, Option<&'s [i64]>, usize) = if in_order {
@@ -620,12 +611,12 @@ fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec
     };
     let mut plan = plan(s, a, spec, src, order, m);
     plan.levels = lv.map(|v| (v, choose(v)));
-    let order = if as_given { Vec::new() } else { spec.order.clone() };
-    Prepared { plan, order, indexes: spec.indexes.clone(), in_order: in_order && !as_given }
+    let order = if as_given { Vec::new() } else { recorded(spec, a) };
+    Prepared { plan, order, in_order: in_order && !as_given }
 }
 
 /// Sorts `ids` (positions of `src`'s rows, column `c` ranging over `lo[c]..=hi[c]`) into the canonical order of
-/// `key`, reading the rows where they lie: as `relation::sort_canonical` sorts columns, the packed keys radix sorted
+/// `key`, reading the rows where they lie: the packed keys radix sorted
 /// with the ids and returned alongside them when the key packs into 64 bits, else the ids sorted by comparing rows.
 fn sort_rows<'s>(scratch: &'s Scratch, src: Src<'_>, n: usize, key: &[usize], lo: &[i64], hi: &[i64], ids: &mut [u32]) -> Option<&'s [u64]> {
     let m = ids.len();
@@ -685,9 +676,8 @@ impl Prepared<'_> {
 
     /// Places it in `block` (open), one contiguous range: the packed relation, and what it wrote.
     pub fn place_in<'b>(&self, block: &'b Block) -> (&'b Packed, PackStats) {
-        let spec = Spec { widths: vec![8; self.plan.arity], order: self.order.clone(), indexes: self.indexes.clone(), min_log: 0 };
         let before = block.used();
-        let p = place_at(block, &self.plan, &spec);
+        let p = place_at(block, &self.plan, &self.order);
         // SAFETY: placed in `block`, which lives as long as the reference.
         (unsafe { &*p }, stats_of(&self.plan, block.used() - before))
     }
@@ -748,15 +738,13 @@ impl Packed {
         Probe::Perm(ix.perm.dec(), starts.get(k) as usize..starts.get(k + 1) as usize)
     }
 
-    /// A digest of the rows in order: the same as the view's it was packed from.
+    /// A digest of the rows: the same as the view's it was packed from (`View::digest`: a sum of each row's hash).
     pub fn digest(&self) -> u64 {
-        let mut h = crate::SEED;
+        let mut sum = 0u64;
         for p in 0..self.len() {
-            for c in 0..self.arity as usize {
-                h = crate::mix(h, self.get(p, c));
-            }
+            sum = sum.wrapping_add(crate::relation::row_digest((0..self.arity as usize).map(|c| self.get(p, c))));
         }
-        crate::mix(h, self.len() as i64)
+        crate::mix(sum, self.len() as i64)
     }
 }
 
@@ -983,7 +971,7 @@ mod tests {
     use crate::block::kind;
 
     fn spec(a: usize) -> Spec {
-        Spec { widths: vec![8; a], order: vec![0], indexes: Vec::new(), min_log: 0 }
+        Spec { widths: vec![8; a], sort: Some(0), indexes: Vec::new(), min_log: 0 }
     }
 
     /// Rows (row-major) as columns.
@@ -1075,7 +1063,7 @@ mod tests {
             }
             assert_eq!(packed.probe(&[0], &[rows[0][0] - 1]).count(), 0, "an id before the first");
             // In an order on both columns, the second relative and searched within its first column's range.
-            let both = Spec { order: vec![0, 1], ..spec(2) };
+            let both = Spec { sort: Some(0), ..spec(2) };
             let c = s.take::<i64>(2 * n);
             // copy: load (the test's rows into the scratch the pack reads)
             c.copy_from_slice(&columns(&rows));
