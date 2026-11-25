@@ -617,38 +617,43 @@ pub fn token_count(src: &str) -> usize {
 /// (`tape::number`), the lines `syntax::TERMINATORS` ends; 16z where `z`, each block's presence where `blocks`. The
 /// engine's run gives its own `z` and `blocks` (its `formats::rr_tape`), and the rooms its tape is written in
 /// (`Sixteen::rooms`, decision 0353 row 17).
-pub struct Sink16 {
+pub struct Sink16<'a> {
     target: rerail_tape_format::Sixteen,
+    /// The tape's auxiliary index's maker, laid where the tape is written (`Writer::finish_16_with`).
+    aux: Option<rerail_tape_format::f16::AuxMaker<'a>>,
 }
 
-impl Sink16 {
+impl Sink16<'static> {
     pub fn new(z: bool, blocks: bool) -> Self {
-        Self::placing(z, blocks, None)
-    }
-
-    /// `new`, its tape written in a room of `rooms` where there is one (`None`: its own vector).
-    pub fn placing(z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>) -> Self {
-        let number = std::sync::Arc::new(crate::tape::number);
-        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, rooms } }
+        Self::placing(z, blocks, None, None)
     }
 }
 
-impl rerail_tape_format::Sink<Result<rerail_tape_format::f16::Finished, String>> for Sink16 {
+impl<'a> Sink16<'a> {
+    /// `new`, its tape written in a room of `rooms` where there is one (`None`: its own vector), with its auxiliary
+    /// index made by `aux`.
+    pub fn placing(z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>, aux: Option<rerail_tape_format::f16::AuxMaker<'a>>) -> Self {
+        let number = std::sync::Arc::new(crate::tape::number);
+        Sink16 { target: rerail_tape_format::Sixteen { lang: crate::tape::lang(), terminators: crate::syntax::TERMINATORS, tag: rerail_tape_format::RR_TAG, z, blocks, number, rooms }, aux }
+    }
+}
+
+impl rerail_tape_format::Sink<Result<rerail_tape_format::f16::Finished, String>> for Sink16<'_> {
     fn target(&self) -> rerail_tape_format::Target {
         Ok(self.target.clone())
     }
     fn finish(&mut self, mut w: Writer) -> Result<Result<rerail_tape_format::f16::Finished, String>, Redo> {
-        w.finish_16()
+        w.finish_16_with(self.aux)
     }
 }
 
-impl Finish for Sink16 {
+impl Finish for Sink16<'_> {
     type Out = Result<rerail_tape_format::f16::Finished, String>;
     fn target(&self) -> rerail_tape_format::Target {
         Ok(self.target.clone())
     }
     fn finish<L: Layout>(&mut self, mut w: Writer<L>) -> Result<Self::Out, Redo> {
-        w.finish_16()
+        w.finish_16_with(self.aux)
     }
 }
 
@@ -667,8 +672,8 @@ pub fn tape(src: &str) -> Result<rerail_tape_format::f16::Tape16, String> {
 /// decision 0631). Not generic, so the parser is compiled here (optimized in dev builds), not in the engine's crate
 /// (`tape_into`'s caller).
 #[inline(never)]
-pub fn tape_to(src: &str, z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>) -> Result<rerail_tape_format::f16::Finished, String> {
-    tape_into(src, &mut Sink16::placing(z, blocks, rooms))
+pub fn tape_to(src: &str, z: bool, blocks: bool, rooms: Option<std::sync::Arc<dyn rerail_tape_format::home::Rooms>>, aux: Option<rerail_tape_format::f16::AuxMaker<'_>>) -> Result<rerail_tape_format::f16::Finished, String> {
+    tape_into(src, &mut Sink16::placing(z, blocks, rooms, aux))
 }
 
 /// [`tape`], the writer writing to `finish`'s target and finished by it: format 16 or 16z, written by its ops as the

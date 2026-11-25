@@ -900,6 +900,11 @@ pub struct Finished {
     pub tape: Written,
 }
 
+/// The maker of a finished tape's auxiliary index (decision 0656 step 3), from the tape as it lies: given to a
+/// writer's `finish_with`, which lays the index after the presence where the writer wrote the tape, in its room
+/// before giving it out (0353 row 17), as `Written::lay_aux` lays it in a tape's own vector.
+pub type AuxMaker<'a> = &'a dyn Fn(&Written) -> Result<Vec<u8>, String>;
+
 impl Written {
     /// The nodes.
     pub fn len(&self) -> usize {

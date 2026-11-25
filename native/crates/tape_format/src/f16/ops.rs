@@ -3,7 +3,7 @@
 //! op the host reserves what the op can need, as a `Vec` reserves before a push, so an op never finds a part full:
 //! a full part is the device's failure, whose document is parsed again on the host.
 
-use super::{Finished, K, Lang, Tape16, Tape16Z, Written, Z, before, bytes_for, mask, stride_of};
+use super::{AuxMaker, Finished, K, Lang, Tape16, Tape16Z, Written, Z, before, bytes_for, mask, stride_of};
 use crate::writer16 as ops;
 use rerail_clif::writer::{self as w, LAID_AT, OPEN, Part, SIDE_AREA, State, TABLE, part};
 
@@ -613,16 +613,55 @@ impl Writer {
     /// The tape and its presence (`w_finish_blocks`, then `w_finish_tail`); `Err` where an op failed, with the
     /// first failure's code (`fail`) and node.
     pub fn finish(&mut self) -> Result<Finished, String> {
+        self.finish_with(None)
+    }
+
+    /// `finish`, with the tape's auxiliary index made by `aux` and laid after its presence where the tape lies: in its
+    /// region before the region gives it out (a given room is never written again), else in its own vector.
+    pub fn finish_with(&mut self, aux: Option<AuxMaker<'_>>) -> Result<Finished, String> {
         self.finish_ops()?;
         let count = (self.state.n as usize).div_ceil(Z);
         let end = self.len_of(part::OUT);
         let faults = self.len_of(part::ERRORS);
+        let (mut laid, mut made) = (0, None);
         if let Some(region) = self.region.as_mut() {
             // The tape where it lies in its region, its presence and faults laid after it there (the room `finish_ops`
             // reserved).
             let blocks = self.keep_blocks.then_some(count);
             let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
             let len = lay_presence(region.free(), end, &low[part::PRESENCE as usize], self.presence_words, blocks, &mut high[0][..faults]);
+            laid = len;
+            // Its index, made from the tape read where it lies (lent, not given: the region's bytes stay the writer's
+            // until it gives them), laid after the presence; the region grown first where the index passes it, as
+            // the writer's working room grows (`reserve`).
+            if let Some(make) = aux {
+                let free = region.free();
+                let lent = std::sync::Arc::new(Lent { at: free.as_ptr(), len });
+                let bytes = {
+                    let home = crate::home::Home::Placed(lent.clone());
+                    let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(home)?) } else { Written::F16(Tape16::from_bytes(home)?) };
+                    make(&tape)?
+                };
+                if std::sync::Arc::strong_count(&lent) != 1 {
+                    return Err("a tape lent to its index's maker was kept".into());
+                }
+                let at = super::presence::aux_at(super::presence::at(end), len);
+                self.reserve(part::OUT, at + bytes.len());
+                made = Some((at, bytes));
+            }
+        }
+        if let Some(region) = self.region.as_mut() {
+            // The presence laid above, moved with the tape where the region grew.
+            let len = match &made {
+                Some((at, bytes)) => {
+                    let free = region.free();
+                    free[laid..*at].fill(0);
+                    // copy: derived (the index made of the tape, written once into its home, as `lay_aux` writes it)
+                    free[*at..*at + bytes.len()].copy_from_slice(bytes);
+                    at + bytes.len()
+                }
+                None => laid,
+            };
             let home = crate::home::Home::Placed(region.give(len));
             let tape = if self.z { Written::F16Z(Tape16Z::from_bytes(home)?) } else { Written::F16(Tape16::from_bytes(home)?) };
             self.given = (0, 0);
@@ -632,7 +671,12 @@ impl Writer {
         self.given = (out.as_ptr() as usize, out.len());
         out.truncate(end);
         let (low, high) = self.parts.split_at_mut(part::ERRORS as usize);
-        finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)
+        let mut f = finished(out, &low[part::PRESENCE as usize], &mut high[0][..faults], self.presence_words, self.keep_blocks.then_some(count), self.z)?;
+        // A region refused to grow for the index: the tape is its own vector, the index made already laid there.
+        if let Some((_, bytes)) = made {
+            f.tape.lay_aux(&bytes)?;
+        }
+        Ok(f)
     }
 
     /// `finish`'s ops, each with the room it can need reserved first.
@@ -676,6 +720,29 @@ impl Writer {
 
 /// A finished writer's presence and faults laid in `out` after its tape's `end` bytes, as `presence::lay_words` lays
 /// them in a vector (`finished`): the home's length.
+/// A tape lent to its index's maker where it lies in the writer's region, before the region gives it out
+/// (`Writer::finish_with`): read only while the maker runs.
+#[derive(Debug)]
+struct Lent {
+    at: *const u8,
+    len: usize,
+}
+
+// SAFETY: the lent bytes are the writer's region's, unchanged while the maker reads them; nothing keeps the room past
+// the maker's return (`finish_with` checks it).
+unsafe impl Send for Lent {}
+unsafe impl Sync for Lent {}
+
+impl crate::home::Room for Lent {
+    fn bytes(&self) -> &[u8] {
+        // SAFETY: as above: `len` bytes of the region's, laid and not yet given.
+        unsafe { std::slice::from_raw_parts(self.at, self.len) }
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 fn lay_presence(out: &mut [u8], end: usize, presence: &[u8], (kind_words, field_words): (usize, usize), blocks: Option<usize>, faults: &mut [u8]) -> usize {
     let count = 1 + blocks.unwrap_or(0);
     let at = super::presence::at(end);

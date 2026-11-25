@@ -502,8 +502,9 @@
         let graph = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
         let back = graph.kept_and_read().expect("the graph read back from its facts");
         assert!(!graph.plan.is_empty(), "{}", graph.describe());
-        // One spelling a file: the pack's table is `packs/…`, as a program's canonical list of its files has it, not
-        // `lib/../packs/…` (`Library::scope` compares them).
-        assert!(!format!("{graph:?}").contains("/../"), "{}", graph.describe());
+        // The pack's table keeps its include's spelling here (`lib/../packs/…`, a module of the library, decision 0639
+        // §2), and is the program's canonical `packs/…` spelled once (`Library::scope`).
+        let table = lib.join("../packs/python/ruff-ruf013-implicit-optional.stdlib.rerail");
+        assert_eq!(crate::code_rule_dsl::logic::rr::one_spelling(&table), dunce::canonicalize(&table).unwrap(), "one spelling");
         assert_eq!(format!("{back:#?}"), format!("{graph:#?}"), "the graph, as its facts keep it");
     }

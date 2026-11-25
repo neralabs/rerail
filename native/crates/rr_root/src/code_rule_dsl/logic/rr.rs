@@ -627,9 +627,32 @@ impl Library {
 
     /// The modules a program whose library files are `files` reads: those all of whose files it includes, in order,
     /// with their keys.
+    /// Both lists spelled once (`one_spelling`): a pack's table beside the library is `lib/../packs/…` as phase 0
+    /// plans it and `packs/…` in a run's canonical list, and spelled two ways it was in no program's scope.
     pub fn scope(&self, files: &[PathBuf]) -> (Vec<&lower::Module>, Vec<crate::content_store::HashKey>) {
+        let files: BTreeSet<PathBuf> = files.iter().map(|f| one_spelling(f)).collect();
         self.modules.iter().zip(&self.files).zip(&self.keys).filter(|((_, fs), _)| fs.iter().all(|f| files.contains(f))).map(|((m, _), k)| (m, *k)).unzip()
     }
+}
+
+/// `path` spelled once: its `.` and `..` taken out by its text, as the library's directory is canonical and only an
+/// include's own `..` is left (`lib/../packs/…` is `packs/…`). A relative path is as written.
+pub fn one_spelling(path: &Path) -> PathBuf {
+    use std::path::Component;
+    if !path.is_absolute() || !path.components().any(|c| matches!(c, Component::CurDir | Component::ParentDir)) {
+        return path.to_path_buf();
+    }
+    let mut out = PathBuf::new();
+    for c in path.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// The library files `paths` (canonical, includes first, as `Modules::files` lists them) as one program, lowered
@@ -762,7 +785,8 @@ pub fn library_modules_planned(paths: &[PathBuf]) -> Result<(Vec<lower::Module>,
     let mut keys = Vec::with_capacity(plan.len());
     for m in &plan {
         modules.push(m.module()?);
-        files.push(m.files.lines().map(PathBuf::from).collect());
+        // Spelled once, as `Library::scope` compares them.
+        files.push(m.files.lines().map(|f| one_spelling(Path::new(f))).collect());
         keys.push(planned_key(&m.key).ok_or_else(|| Error::Syntax(format!("{}: no module key", m.key)))?);
     }
     Ok((modules, files, keys))

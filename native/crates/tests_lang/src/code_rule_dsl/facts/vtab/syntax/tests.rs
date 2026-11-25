@@ -3336,7 +3336,9 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         let counts = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
                         eprintln!("{at}, {room} a generation: the device's cache: {counts:?}, hit ratio {:.3}", counts.hit_ratio());
                     }
-                    let failed = word(rerail_clif::view::cache::FAILED);
+                    // Only a 16z tape's cache is set up (`spec.init`): a 16 tape's is a buffer no read touches, its
+                    // bytes whatever the allocation held (zeroed on Metal, not on every device).
+                    let failed = if view.format == rerail_clif::view::F16Z_FORMAT { word(rerail_clif::view::cache::FAILED) } else { 0 };
                     assert!(room == 1 || failed == 0, "{at}: the device's cache with room failed {failed} times");
                     if failed == 0 {
                         assert_eq!(got, want, "{at}, {room} a generation: the device's rows");

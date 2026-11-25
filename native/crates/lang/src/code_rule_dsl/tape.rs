@@ -1552,7 +1552,8 @@ impl TapeImage {
         }
         // In the run's format, written as the parser goes (`formats::rr_tape`), with its source's digest (not stored
         // since format 12): the documents and the memo are keyed by it.
-        Self::written_16(formats::rr_tape(source)?, grammar.lang, source, None, budget)
+        let aux = formats::AuxFor::new(grammar.lang, source, None, budget);
+        Self::written_16(formats::rr_tape(source, &aux)?, grammar.lang, source, aux.digest(), budget)
     }
 
     /// The tape `walk` writes in preorder, in the run's format (decision 0434 §2): by format 16's ops. `nodes` is about
@@ -1578,7 +1579,8 @@ impl TapeImage {
     ) -> Result<Self, String> {
         let mut ops = formats::TreeOps::of_run_as(grammar.lang, source.as_bytes(), nodes, packed)?;
         walk(&mut ops)?;
-        Self::written_16(ops.finish()?, grammar.lang, source, None, budget)
+        let aux = formats::AuxFor::new(grammar.lang, source, None, budget);
+        Self::written_16(ops.finish(&aux)?, grammar.lang, source, aux.digest(), budget)
     }
 
     /// `source`'s lines as `terminators` end them (decision 0612): the tape's line index, read where it lies, where

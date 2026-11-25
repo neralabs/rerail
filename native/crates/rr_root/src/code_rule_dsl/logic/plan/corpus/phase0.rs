@@ -47,12 +47,10 @@ fn bootstrap_spelling(s: &str) -> std::borrow::Cow<'_, str> {
     s.into()
 }
 
-/// A path bootstrap.rerail gives, as the host spells it: one spelling a file, its `.` and `..` taken out (a pack's
-/// table beside the library, `lib/../packs/…`, is `packs/…`), as the canonical paths a program's files are listed by
-/// (`Modules::files`). Spelled as the include resolved it, the same file under two spellings was two files: a
-/// library module's files were in no program's list that spelled them canonically (`Library::scope`), so its
-/// declarations were out of the program's scope. The library's directory is canonical, so only the include's own
-/// `..` is left to take out. An includer that is no file ("text", "engine") is as written.
+/// A path bootstrap.rerail gives, as the host spells it. A pack's table beside the library keeps its include's
+/// spelling (`lib/../packs/…`): bootstrap takes a file under the library for a module (`p0_seed_reaches`), and the
+/// table is one (decision 0639 §2). Where a module's files meet a program's canonical list (`Library::scope`), both
+/// are spelled once (`rr::one_spelling`).
 fn host_spelling(s: &str) -> String {
     #[cfg(windows)]
     if s.contains('/') && std::path::Path::new(s).is_absolute() {
@@ -61,21 +59,7 @@ fn host_spelling(s: &str) -> String {
             return path.to_string_lossy().into_owned();
         }
     }
-    let path = std::path::Path::new(s);
-    if !path.is_absolute() || !path.components().any(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir)) {
-        return s.to_owned();
-    }
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            c => out.push(c),
-        }
-    }
-    out.to_string_lossy().into_owned()
+    s.to_owned()
 }
 
 fn candidate_path(dir: &str, name: &str) -> PathBuf {

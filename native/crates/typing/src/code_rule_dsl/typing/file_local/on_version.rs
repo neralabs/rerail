@@ -123,7 +123,8 @@ impl FileLocal {
 
 impl Analysis for FileLocal {
     const NAME: &'static str = "file-local split";
-    const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::FACTS).or(Reads::INPUTS).or(Reads::ABOUT);
+    // The outputs too: an output is no family's member, and its key is held by no reader (`key_held`).
+    const READS: Reads = Reads::RULES.or(Reads::DECLS).or(Reads::FACTS).or(Reads::INPUTS).or(Reads::OUTPUTS).or(Reads::ABOUT);
     fn compute(cx: &Cx<'_>) -> Result<FileLocal, String> {
         let d = cx.get::<FieldsData>()?;
         let p = Program::of(cx.v(), Fields::over(cx.v(), &d));
@@ -367,10 +368,12 @@ impl<'v> Program<'v> {
         option_input(rel) || setting_input(rel)
     }
 
-    /// A derived relation's key: its columns and its rules' hashes, in the program's order.
+    /// A derived relation's key: its columns, whether it is an output, and its rules' hashes, in the program's order.
+    /// An edit of the outputs alone makes again the place of the relations it made outputs or not, and their cone.
     fn head_key(&self, r: u32) -> u64 {
         let mut h = hasher();
         self.f.columns(self.name(r)).hash(&mut h);
+        self.rels.output[r as usize].hash(&mut h);
         for &k in &self.rels.rules[r as usize] {
             h.write_u64(self.rules[k].hash());
         }
