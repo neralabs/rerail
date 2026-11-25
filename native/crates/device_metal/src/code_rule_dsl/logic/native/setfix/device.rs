@@ -1229,6 +1229,8 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 stages.push(PStage { first: j.steps.len(), span: 0, kind, desc: d, npassed: 0 });
                 head.push(None);
                 head_slots.push(nslots);
+                // A made text: unbounded (`head_bounds`).
+                head_from.push(None);
                 arena.push(true);
                 nslots += 1;
             }
@@ -2886,7 +2888,7 @@ fn run_key(plan: &Plan, uniq_cols: &[usize], rel: &super::Rel, bounds: &[[i64; 2
         }
     }
     let tagged = hk.tagged && plan.head[order[0]].is_none();
-    Some(mj::SortKey { tagged, parts, bits: hk.bits })
+    Some(mj::SortKey { tagged, parts, bits: hk.bits, presorted: false })
 }
 
 /// `place`'s work encoded into the stratum's own program, after its joins (decision 0603: a stratum is one launch):
@@ -2951,6 +2953,7 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
             tagged: hk.tagged,
             parts: hk.parts.iter().map(|&(c, lo, w)| (c as u32, w, lo)).collect(),
             bits: hk.bits,
+            presorted: false,
         });
         // Made distinct: one rule's rows are already, and in the first order where its run sorted them (`run_key`).
         let one_sorted = from.len() == 1 && runs[from[0]].key.is_some();
@@ -3244,14 +3247,18 @@ pub(in crate::code_rule_dsl) fn reads_own(plan: &Plan) -> bool {
 
 /// A round's rules encoded into `batch`: each one's head rows made distinct on the device, with their count. A rule
 /// over an own relation with no rows, or over an empty input (`reads_empty_input`), is not run (`None`).
-fn round_runs<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report, batch: &mut mj::Batch, sizes: &HashMap<(usize, usize), usize>) -> Result<Vec<Option<Run<'p>>>, String> {
+#[allow(clippy::too_many_arguments)]
+fn round_runs<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report, batch: &mut mj::Batch, sizes: &HashMap<(usize, usize), usize>, store: &Store,
+                  bounds: &HashMap<usize, Vec<[i64; 2]>>) -> Result<Vec<Option<Run<'p>>>, String> {
     let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
-    for (x, (plan, j, _)) in rules.iter().enumerate() {
+    for (x, (plan, j, h)) in rules.iter().enumerate() {
         if !own.ready(plan) || super::reads_empty_input(j) {
             runs.push(None);
             continue;
         }
         let mut r = Run::new(plan)?;
+        // Its head's rows made distinct in its first order where its bounds pack it (t58 increment A).
+        r.key = bounds.get(h).and_then(|b| run_key(plan, &r.uniq_cols, &store.rels[*h], b));
         // Its tables' rows as a program of rounds sized them (`device_rounds`), else guessed as it encodes.
         for (o, c) in r.caps.iter_mut().enumerate().skip(1) {
             if let Some(&n) = sizes.get(&(x, o)) {
@@ -3358,15 +3365,38 @@ const HEAD_ROOM: usize = LAT_ROOM;
 /// places its rows in it first (`mj::Batch::set_map`), at twice the program's bound; a round's new rows are its union
 /// made distinct less the rows the map holds, each placed in it as the row it becomes (`mj::Batch::dedup_less`), so a
 /// round's work is its own rows', not the head's.
+///
+/// Its held bitmap instead (`bits`, t58 increment A), where its rows' sort key (`set_key`) leaves few enough index bits:
+/// a bit for every row its bounds allow, set from its rows at each program's start (`mj::Batch::set_bits`). A round's
+/// new rows are then its union sorted, each kept where it differs from the one before and its bit is clear, and its
+/// bit set (`mj::Batch::dedup_sorted`): no map, and the rows in the head's first order.
 #[derive(Default)]
 struct SetHead {
     part: Option<Part>,
     map: Option<super::keys::KeyMap>,
+    bits: Option<(Vector<u32>, u32)>,
 }
 
 /// A key map where it lies, for the device to bind.
 fn map_at(m: &super::keys::KeyMap) -> mj::LatMap<'_> {
     mj::LatMap { home: m.facts().expect("a map in a block"), at: m.words().offset(), places: m.places(), grows: None }
+}
+
+/// A held bitmap where it lies, for the device to bind.
+fn bits_at((words, bits): &(Vector<u32>, u32)) -> mj::HeldBits<'_> {
+    mj::HeldBits { home: words.facts().expect("a bitmap in a block"), at: words.offset(), bits: *bits }
+}
+
+/// A recursive set head's rows' sort key, over its columns (t58 increment A): its first order under `bounds` (its
+/// rules' fixed point, `head_bounds`), where its index bits fit a held bitmap (`mj::HELD_BITS_MAX`).
+fn set_key(rel: &super::Rel, bounds: Option<&Vec<[i64; 2]>>) -> Option<mj::SortKey> {
+    if rel.folds() || rel.k == 0 || rel.k > 8 {
+        return None;
+    }
+    let (order, tagged) = rel.first_order();
+    let hk = HeadKey::of(order, tagged, bounds?)?;
+    let key = mj::SortKey { tagged: hk.tagged, parts: hk.parts.iter().map(|&(c, lo, w)| (c as u32, w, lo)).collect(), bits: hk.bits, presorted: false };
+    (order.len() == rel.k && key.index_bits() <= mj::HELD_BITS_MAX).then_some(key)
 }
 
 fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<(Vector<u64>, bool), String> {
@@ -3439,6 +3469,9 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     let mut lattices: HashMap<usize, LatHead> = HashMap::new();
     // A set head's one relation, grown round after round in its block (`SetHead`).
     let mut sets: HashMap<usize, SetHead> = HashMap::new();
+    // Each head's bounds over every rule of the component (a recursive head's from its own, to a fixed point): its
+    // rows' sort keys' (t58 increment A).
+    let bounds = head_bounds(&seeds.iter().chain(deltas).copied().collect::<Vec<_>>(), store);
     for &h in heads {
         if let Some(lat) = store.rels[h].device_lattice() {
             let (code, top, after) = lat?;
@@ -3449,6 +3482,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // at a time, so its rounds are kept here by row; a lattice head's are a column of its total (`lat_merge`'s).
     let leveled = |h: usize| store.rels[h].keeps_levels();
     let mut set_levels: HashMap<usize, Vector<u32>> = HashMap::new();
+    let mut set_runs: HashMap<usize, Vec<u32>> = HashMap::new();
     let mut made = rerail_blocks::vector![0u64; seeds.len() + deltas.len()];
     // Every round on the device, the seed round's first: a program of them (`device_rounds`, decision 0603), whose
     // rounds go on across its launches.
@@ -3457,7 +3491,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // keep no levels, whose rows the CPU's waves take as they lie and go on from.
     let narrow = if heads.iter().all(|&h| !lattices.contains_key(&h) && !leveled(h)) { narrow_work() } else { 0 };
     {
-        let mut lp = Looped { own: &mut own, rep: &mut rep, lattices: &mut lattices, sets: &mut sets, set_levels: &mut set_levels, made: &mut made, rounds: &mut rounds, narrow };
+        let mut lp = Looped { own: &mut own, rep: &mut rep, lattices: &mut lattices, sets: &mut sets, set_levels: &mut set_levels, set_runs: &mut set_runs, made: &mut made, rounds: &mut rounds, narrow, bounds: &bounds };
         device_rounds(seeds, deltas, heads, store, names, &named, shared.as_ref(), &mut lp)?;
     }
     // A set head's relation as it lies (decision 0325 step 4): every row new (its relation had none before the run),
@@ -3476,7 +3510,11 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         }
         // Its last round's indexes are of every row, in its block: the store's readers find them (decision 0325).
         let rounds = set_levels.get(&h).filter(|_| leveled(h)).map(|r| (0..n).map(|x| r.get(x).copied().unwrap_or(0)).collect());
-        fresh[h].place(super::Placed::Part(part), rounds);
+        // Each round's rows a run in the head's first order where its dedup sorted them (`set_key`).
+        match set_runs.remove(&h).filter(|r| r.iter().map(|&x| x as usize).sum::<usize>() == n) {
+            Some(runs) => fresh[h].place_in_runs(super::Placed::Part(part), rounds, runs),
+            None => fresh[h].place(super::Placed::Part(part), rounds),
+        }
         rep.distinct += n as u64;
         rep.placed += n as u64;
     }
@@ -3565,10 +3603,14 @@ struct Looped<'a> {
     lattices: &'a mut HashMap<usize, LatHead>,
     sets: &'a mut HashMap<usize, SetHead>,
     set_levels: &'a mut HashMap<usize, Vector<u32>>,
+    /// A sorted set head's rows' runs (`set_key`): each round's new rows, a run in its first order.
+    set_runs: &'a mut HashMap<usize, Vec<u32>>,
     made: &'a mut [u64],
     rounds: &'a mut usize,
     /// A round's work under which it hands the component back (`narrow_work`; 0: never).
     narrow: u32,
+    /// Each head's bounds (`head_bounds`, over the component's rules): its rows' sort keys'.
+    bounds: &'a HashMap<usize, Vec<[i64; 2]>>,
 }
 
 /// A head in a program of rounds (decision 0603 step 3): its relation and its two deltas, each grown in place in its
@@ -3809,6 +3851,7 @@ struct Kept {
     tables: Vec<mj::Table>,
     rels: Vec<Rc<mj::DevRel>>,
     maps: Vec<super::keys::KeyMap>,
+    bits: Vec<Vector<u32>>,
     ends: Vec<Vec<HeadEnd>>,
     words: Vec<mj::Words>,
 }
@@ -3851,9 +3894,13 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
     let start = *lp.rounds + 1;
     let all: Vec<(&Plan, &JoinRule, usize)> = seeds.iter().chain(deltas).copied().collect();
     let (reaches, arena_reach) = reach(&all, heads, store);
-    // A set head's new rows by round, where it keeps levels (decision 0311).
+    // A set head's new rows by round, where it keeps levels (decision 0311), or where a round's are sorted (a held
+    // bitmap's, `set_key`): each round's rows then a run in its first order, which the host takes so.
     let mut logs: HashMap<usize, mj::Words> = HashMap::new();
-    for &h in heads.iter().filter(|&&h| leveled(h)) {
+    let bounds = lp.bounds;
+    let sorted = |h: usize| !store.rels[h].folds() && store.rels[h].device_lattice().is_none() && set_key(&store.rels[h], bounds.get(&h)).is_some();
+    let (leveled_heads, sorted_heads): (Vec<usize>, Vec<usize>) = (heads.iter().copied().filter(|&h| leveled(h)).collect(), heads.iter().copied().filter(|&h| sorted(h)).collect());
+    for &h in leveled_heads.iter().chain(&sorted_heads) {
         logs.insert(h, mj::Words::zeroed(ROUNDS_MAX + 2).map_err(e)?);
     }
     // Each rule's counts summed over the rounds (its run's totals'), and its tables' rows (a program's every round's);
@@ -4051,6 +4098,12 @@ fn device_rounds<'p>(seeds: &[(&'p Plan, &JoinRule, usize)], deltas: &[(&'p Plan
     let end = round.get(0) as usize;
     *lp.rounds = end - 1;
     for (h, log) in &logs {
+        if sorted_heads.contains(h) {
+            lp.set_runs.entry(*h).or_default().extend((start..end).map(|r| log.get(r)).filter(|&n| n > 0));
+        }
+        if !leveled_heads.contains(h) {
+            continue;
+        }
         let lv = lp.set_levels.entry(*h).or_default();
         for r in start..end {
             let n = log.get(r) as usize;
@@ -4110,8 +4163,19 @@ fn encode_program<'p>(seeding: Option<(&[(&'p Plan, &JoinRule, usize)], &mut Has
         if lp.lattices.contains_key(&h) {
             continue;
         }
-        let need = (2 * l.bound).next_power_of_two().max(16);
         let set = lp.sets.entry(h).or_default();
+        // A held bitmap where its key allows one (`SetHead::bits`), made again where its index bits changed.
+        if let Some(key) = set_key(&store.rels[h], lp.bounds.get(&h)) {
+            let b = key.index_bits();
+            if set.bits.as_ref().is_none_or(|x| x.1 != b) {
+                // SAFETY: `lat_hclear_one` (`set_bits`'s first phase, code 6) writes every word before any read.
+                let words = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in::<u32>(Some(&l.total.home()), mj::HeldBits::words_for(b)) };
+                kept.bits.extend(set.bits.replace((words, b)).map(|x| x.0));
+            }
+            batch.set_bits(&lp.own.total[&h], l.len, bits_at(set.bits.as_ref().expect("its bitmap")), &key).map_err(e)?;
+            continue;
+        }
+        let need = (2 * l.bound).next_power_of_two().max(16);
         if set.map.as_ref().is_none_or(|m| m.places() < need) {
             // SAFETY: `lat_hclear_one` (`set_map`'s first phase) writes every slot before any read.
             let words = unsafe { crate::code_rule_dsl::facts::rows::unwritten_in(Some(&l.total.home()), need * super::keys::SLOT) };
@@ -4220,7 +4284,7 @@ fn encode_round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], reads: Option<usize>
             lp.own.delta.insert(h, live_rel(&l.deltas[reads], l.slack, store.rels[h].k, (l.mapped < l.bound).then(|| (l.slack_mapped(), l.buckets())))?);
         }
     }
-    let runs = round_runs(rules, lp.own, names, lp.rep, batch, sizes)?;
+    let runs = round_runs(rules, lp.own, names, lp.rep, batch, sizes, store, lp.bounds)?;
     // The other template's tables as this one's: every round of the program alike.
     for (x, r) in runs.iter().enumerate() {
         for (o, &c) in r.iter().flat_map(|r| r.caps.iter().enumerate().skip(1)) {
@@ -4310,8 +4374,23 @@ fn encode_live_tail(runs: &[Option<Run<'_>>], rules: &[(&Plan, &JoinRule, usize)
         // words' third, which the head gate reads.
         let all: Vec<usize> = (0..k).collect();
         let fresh = batch.table(k, cap).map_err(e)?;
-        let map = lp.sets.get(&h).and_then(|s| s.map.as_ref()).ok_or("a set head's map")?;
-        batch.dedup_less(&union, &all, 0, 2, &words, &fresh, Some((&lp.own.total[&h], map_at(map)))).map_err(e)?;
+        let set = lp.sets.get(&h).ok_or("a set head")?;
+        // Sorted, less its held bitmap's rows (`SetHead::bits`): one rule's rows come in its order already, made
+        // distinct by its run's sort under the same bounds (`run_key`).
+        match (set.bits.as_ref(), set_key(&store.rels[h], lp.bounds.get(&h))) {
+            (Some(bits), Some(mut key)) => {
+                let mut from = rules.iter().zip(runs).filter_map(|(r, run)| run.as_ref().filter(|_| r.2 == h));
+                key.presorted = match (from.next(), from.next()) {
+                    (Some(run), None) => run.key.as_ref().is_some_and(|rk| rk.tagged == key.tagged && rk.bits == key.bits),
+                    _ => false,
+                };
+                batch.dedup_sorted(&union, &all, 0, 2, &words, &fresh, Some(bits_at(bits)), &key).map_err(e)?;
+            }
+            _ => {
+                let map = set.map.as_ref().ok_or("a set head's map")?;
+                batch.dedup_less(&union, &all, 0, 2, &words, &fresh, Some((&lp.own.total[&h], map_at(map)))).map_err(e)?;
+            }
+        }
         made.push(Made { end: HeadEnd { head: h, words, lat: None, delta, cap }, union, cap, fresh: Some(fresh) });
     }
     // The head gate: a round's rows past its relation's rows within its bound (a lattice head's union's rows: its new
