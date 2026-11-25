@@ -61,6 +61,7 @@ import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch } from "../file-replace.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
+import type { GitIgnoreLook } from "../native/git-ignore-answers.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
@@ -799,10 +800,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * and any file in an `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule,
    * the scopes alone decide. An unlisted file (no `languageFor`) is accepted only in the scope of a code rule that reads
    * text, never when it is named like a secret (`sensitiveByName`), and never before the workspace opens. Whatever they
-   * say, a path Git ignores is refused while the lane follows `.gitignore`.
+   * say, a path Git ignores is refused while the lane follows `.gitignore`. `look`: a walk's questions (`ignoresPath`).
    */
-  acceptsPath(path: string): boolean {
-    return (this.#readsPath(path) || (this.#rerailRuns()?.takes(path) ?? false)) && !this.ignoresPath(path, false);
+  acceptsPath(path: string, look?: GitIgnoreLook): boolean {
+    return (this.#readsPath(path) || (this.#rerailRuns()?.takes(path) ?? false)) && !this.ignoresPath(path, false, look);
   }
 
   /**
@@ -852,10 +853,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   /**
    * Whether `path` (relative to the workspace root) is left out because Git ignores it and this lane follows
    * `.gitignore`. Outside Git nothing is. Ignore files that cannot be read leave the path audited (reported on stderr),
-   * so a broken `.gitignore` never hides sources.
+   * so a broken `.gitignore` never hides sources. A walk's question (`look`) takes the answer every session's walks
+   * learnt of the checkout (`GitIgnoreLook`).
    */
-  ignoresPath(path: string, directory: boolean): boolean {
-    return this.#askGitIgnore(path, matcher => matcher.ignored(path, directory)) ?? false;
+  ignoresPath(path: string, directory: boolean, look?: GitIgnoreLook): boolean {
+    return this.#askGitIgnore(path, matcher => (look === undefined ? matcher.ignored(path, directory) : look.ignored(matcher, path, directory))) ?? false;
   }
 
   /**
