@@ -1,0 +1,1 @@
+A file written into another worktree before Rerail first read it, as when one command adds a worktree and writes into it, was in no record. Each session whose first read finds such a file now lists the worktree among the places rules could not fully check, on the dashboard's session page, with the command that checks it.
