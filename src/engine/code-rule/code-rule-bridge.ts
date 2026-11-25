@@ -50,7 +50,7 @@ import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, 
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  storedRegistry, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords, type WorktreeScan,
+  type ReadTurn, storedRegistry, tellTakeTurn, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords, type WorktreeScan,
   type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
@@ -810,6 +810,12 @@ interface WorktreeDiscovery {
   roots: ReadonlySet<string>;
   /** Those whose first walk is still to finish: as with `SourceDiscovery.baselineRoots`, what it finds is a baseline. */
   readonly fresh: Set<string>;
+  /**
+   * Those of `fresh` a take has read and has yet to apply (`#applyTake`): a walk that starts meanwhile does not list them
+   * for the session as first sights, since their part makes them known before that walk's take reads them. One whose
+   * part did not run is a first sight again for the walks after, and the take that finds it still fresh lists it.
+   */
+  readonly taking: Set<string>;
   /** Subtrees the last walk could not read: what it first finds there is a baseline too. */
   baselineRoots: Set<string>;
   /** The session's watch of the shared walk, from its first request on. */
@@ -837,8 +843,8 @@ const REST_OF_CHECKOUT = "\0checkout";
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
-    roots: new Set(), fresh: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(), walkedFrom: undefined,
-    unrecorded: new Set(),
+    roots: new Set(), fresh: new Set(), taking: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(),
+    walkedFrom: undefined, unrecorded: new Set(),
     listed: new Map(),
   };
 }
@@ -964,6 +970,112 @@ function rootHolding(roots: ReadonlySet<string>, path: string): string | undefin
     if (roots.has(root)) return root;
   }
   return undefined;
+}
+
+/** The one of `roots` (session-relative) that `path` is, else the innermost that holds it. */
+function heldBy(roots: ReadonlySet<string>, path: string): string | undefined {
+  return roots.has(path) ? path : rootHolding(roots, path);
+}
+
+/** The entries of `map` by the worktree `holder` names for each key (none: left out), in one pass. */
+function splitBy<V>(map: ReadonlyMap<string, V>, holder: (key: string) => string | undefined): Map<string, Map<string, V>> {
+  const split = new Map<string, Map<string, V>>();
+  for (const [key, value] of map) {
+    const worktree = holder(key);
+    if (worktree === undefined) continue;
+    const part = split.get(worktree) ?? new Map<string, V>();
+    split.set(worktree, part.set(key, value));
+  }
+  return split;
+}
+
+/** `set` split as `splitBy` splits a map. */
+function splitSetBy(set: ReadonlySet<string>, holder: (key: string) => string | undefined): Map<string, Set<string>> {
+  return new Map([...splitBy(new Map([...set].map(key => [key, key])), holder)].map(([worktree, part]) => [worktree, new Set(part.keys())]));
+}
+
+/** A take's entries by the worktree that holds each (`takeParts`), each map and set split once. */
+type TakeSplit = ReturnType<typeof splitTake>;
+
+function splitTake({ walk, scan, views }: WorktreeTake, path: (key: string) => string | undefined, checkout: (key: string) => string | undefined) {
+  return {
+    previous: splitBy(walk.previous, path), heads: splitBy(walk.heads, checkout), unmerged: splitBy(walk.unmerged, checkout),
+    readFrom: splitBy(walk.readFrom, path), records: splitSetBy(walk.records, path),
+    sources: splitBy(scan.sources, path), failedRoots: splitSetBy(scan.failedRoots, path), firstSeen: splitBy(scan.firstSeen, path),
+    checkouts: splitSetBy(scan.checkouts, checkout), passed: splitBy(scan.unmerged, checkout), lateListings: splitBy(scan.lateListings, checkout),
+    views: splitBy(views, path),
+  };
+}
+
+/** A worktree of a take with the snapshot the walk took of it. */
+type Walked = readonly [worktree: string, snapshot: WorktreeSnapshot];
+
+/**
+ * `take` as the parts a session applies on its lane one turn each (`#applyTake`): a part of its own for each worktree
+ * with something to audit, and one part for all those with nothing to audit (`quiet`), placed where the first of them
+ * comes; in order, the worktree around the session folder first when the take holds it, then the walk's order. A walk
+ * that found a few worktrees changed among many costs the session a turn for each of those and one for the rest. A
+ * part holds its worktrees' sources, snapshots, checkouts, records and the reads they answer for (`named` gives a
+ * checkout's session-relative path, `taken` the snapshot the session took last of a worktree); the take's errors and
+ * unread files are the walk's as a whole, so every part reports them as the whole take does. Each entry is looked at
+ * once, so the split costs the size of the take, whatever the number of worktrees.
+ */
+function takeParts(
+  take: WorktreeTake,
+  named: (checkout: string) => string,
+  taken: (worktree: string) => WorktreeSnapshot | undefined,
+): WorktreeTake[] {
+  if (take.snapshots.size <= 1) return [take];
+  const roots = new Set(take.snapshots.keys());
+  const split = splitTake(take, key => heldBy(roots, key), key => heldBy(roots, named(key)));
+  const around = (worktree: string): boolean => worktree.split("/").every(segment => segment === "..");
+  const walked = [...take.snapshots];
+  const ordered = [...walked.filter(([worktree]) => around(worktree)), ...walked.filter(([worktree]) => !around(worktree))];
+  return partsOf(ordered, ([worktree, snapshot]) => taken(worktree) === snapshot && quiet(split, worktree)).map(part => takePart(take, part, split));
+}
+
+/**
+ * Whether the part of `worktree` has nothing to audit: no source changed or seen otherwise by the session, none seen
+ * before, no first-seen text, no listing to ask again. With the snapshot the session took last
+ * (`takeParts`), applying it moves only what the session holds of the worktree's Git state and gaps.
+ */
+function quiet(split: TakeSplit, worktree: string): boolean {
+  return [split.sources, split.previous, split.firstSeen, split.lateListings].every(parts => !parts.has(worktree));
+}
+
+/** `ordered` as parts: one for each entry `still` refuses, and one for all it accepts, where the first of those is. */
+function partsOf(ordered: readonly Walked[], still: (walked: Walked) => boolean): Walked[][] {
+  const parts: Walked[][] = [];
+  let together: Walked[] | undefined;
+  for (const walked of ordered) {
+    if (!still(walked)) parts.push([walked]);
+    else if (together === undefined) parts.push((together = [walked]));
+    else together.push(walked);
+  }
+  return parts;
+}
+
+/** Leaves to the next walk the changes `parts`, parts of a take that never ran, were to record (`leaveRecords`). */
+function leaveUnapplied(discovery: SourceDiscovery, parts: readonly WorktreeTake[]): void {
+  for (const part of parts) leaveRecords(discovery, part.walk, part.walk.records);
+}
+
+function takePart({ walk, scan }: WorktreeTake, walked: readonly Walked[], split: TakeSplit): WorktreeTake {
+  const worktrees = walked.map(([worktree]) => worktree);
+  const of = <V>(parts: ReadonlyMap<string, Map<string, V>>): Map<string, V> => new Map(worktrees.flatMap(worktree => [...(parts.get(worktree) ?? [])]));
+  const ofSet = (parts: ReadonlyMap<string, Set<string>>): Set<string> => new Set(worktrees.flatMap(worktree => [...(parts.get(worktree) ?? [])]));
+  return {
+    walk: {
+      ...walk, worktrees: new Set(worktrees), previous: of(split.previous), heads: of(split.heads), unmerged: of(split.unmerged),
+      readFrom: of(split.readFrom), records: ofSet(split.records),
+    },
+    scan: {
+      ...scan, sources: of(split.sources), failedRoots: ofSet(split.failedRoots), firstSeen: of(split.firstSeen),
+      checkouts: ofSet(split.checkouts), unmerged: of(split.passed), lateListings: of(split.lateListings),
+    },
+    snapshots: new Map(walked),
+    views: of(split.views),
+  };
 }
 
 interface SourceDiscovery {
@@ -3291,7 +3403,7 @@ export class CodeRuleBridge {
       checkout: this.#owningCheckout(discovery.root, ""),
       folder: discovery.root,
       registry: this.#auditor.worktreeRegistry?.(),
-      firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
+      firstSight: new Set(worktrees.filter(worktree => this.#firstSightAtStart(discovery, sessionPath(discovery.root, worktree)))),
       fresh: new Set(worktrees.filter(worktree => discovery.worktrees.fresh.has(sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
       heads: new Set([...discovery.heads.keys()].filter(root => inWorktrees(discovery, root))),
@@ -3299,7 +3411,7 @@ export class CodeRuleBridge {
       scan: request => this.#scanWorktree(discovery, request, rules),
       holdsRefusal: (root, path) => this.#holdsRefusal(inWorktree(sessionPath(discovery.root, root), path === "." ? "" : path)),
       claims: (root, findings) => this.#claimsIn(discovery, root, findings),
-      take: (walk, records) => this.#takeWorktreeWalk(discovery, start, walk, records),
+      take: (walk, records, inTurn) => this.#takeWorktreeWalk(discovery, { start, walk, records, inTurn }),
     };
   }
 
@@ -3567,26 +3679,97 @@ export class CodeRuleBridge {
 
   /**
    * Takes a walk of the other worktrees: what changed since the snapshots the session took last is read off the lane,
-   * then audited and kept on it, as the session folder's walk is. What fails is the walk's error, reported at each
-   * boundary.
+   * in the walk's turn for it (`ReadTurn`), then audited and kept on it, as the session folder's walk is. What fails is
+   * the walk's error, reported at each boundary.
    */
-  async #takeWorktreeWalk(discovery: SourceDiscovery, start: WorktreeStart, walk: WorktreeWalk, records: WorktreeRecords): Promise<void> {
+  async #takeWorktreeWalk(
+    discovery: SourceDiscovery,
+    { start, walk, records, inTurn }: { readonly start: WorktreeStart; readonly walk: WorktreeWalk; readonly records: WorktreeRecords; readonly inTurn: ReadTurn },
+  ): Promise<void> {
     if (this.#abandoned(discovery)) return;
     if ("error" in walk) {
       discovery.worktrees.gaps = [{ reason: walk.error }];
       return;
     }
     try {
-      const take = await this.#worktreeTake(discovery, start, walk.found, walk.observedAt, records);
-      if (this.#abandoned(discovery)) return;
-      await this.#enqueue(async () => {
-        if (this.#abandoned(discovery)) return;
-        await this.#applyWalk(discovery, this.#takeSnapshots(discovery, take), take.scan);
-      });
+      const take = await inTurn(() => this.#readTake(discovery, start, walk, records));
+      if (take !== undefined) await this.#applyTake(discovery, take);
     } catch (error) {
       const gaps = await this.#failedWalkGaps(error);
       if (!this.#abandoned(discovery)) discovery.worktrees.gaps = gaps;
     }
+  }
+
+  /**
+   * What a walk found that the session has yet to take (`#worktreeTake`), read in the walk's turn for it while the
+   * session is still open as the turn comes: one closed while it waited reads nothing. The worktrees it shows the session
+   * first are no first sights for a walk that starts while it is applied (`WorktreeDiscovery.taking`).
+   */
+  async #readTake(
+    discovery: SourceDiscovery,
+    start: WorktreeStart,
+    { found, observedAt }: { readonly found: ReadonlyMap<string, WorktreeFindings>; readonly observedAt: number },
+    records: WorktreeRecords,
+  ): Promise<WorktreeTake | undefined> {
+    if (this.#abandoned(discovery)) return undefined;
+    const take = await this.#worktreeTake(discovery, start, found, observedAt, records);
+    for (const worktree of take.snapshots.keys()) if (discovery.worktrees.fresh.has(worktree)) discovery.worktrees.taking.add(worktree);
+    return take;
+  }
+
+  /**
+   * Audits and keeps a take on the session's lane in parts (`takeParts`): one for each worktree with something to audit,
+   * so a hook of the session waits for at most one worktree's audit however many worktrees the take holds (a first sight
+   * hands it every one), and one for all the worktrees with nothing to audit, so a later walk that found little changed
+   * costs few turns. A part that fails leaves the parts after it to the next walk, as the whole take was, with the
+   * changes they were to record for the repository (`leaveRecords`): the walk hands each such change over once.
+   */
+  async #applyTake(discovery: SourceDiscovery, take: WorktreeTake): Promise<void> {
+    const parts = takeParts(take, checkout => sessionPath(discovery.root, checkout), worktree => this.#worktreeView.snapshot(worktree));
+    let next = 0;
+    try {
+      for (const [index, part] of parts.entries()) {
+        if (this.#abandoned(discovery)) return;
+        const place = { begins: index === 0 ? take.walk.worktrees : undefined, last: index === parts.length - 1 };
+        next = index + 1;
+        await this.#enqueue(() => this.#applyTakePart(discovery, part, place));
+      }
+    } catch (error) {
+      // The failed part left its own records (`#auditWalkEdits`); those of the parts that never ran wait with them.
+      leaveUnapplied(discovery, parts.slice(next));
+      throw error;
+    } finally {
+      // Applied, or a first sight again for the walks that start from now on: its part did not run.
+      for (const worktree of take.snapshots.keys()) discovery.worktrees.taking.delete(worktree);
+    }
+  }
+
+  /**
+   * One part of a take (`#applyTake`). The first lists the worktrees again (a worktree removed while its walk ran took
+   * its files with it: the files the walk missed are no deletions) and lets go of the unread subtrees of worktrees the
+   * walk did not read; the last keeps the session's observations for the next session in its folder, once a take.
+   */
+  async #applyTakePart(
+    discovery: SourceDiscovery,
+    part: WorktreeTake,
+    { begins, last }: { readonly begins: ReadonlySet<string> | undefined; readonly last: boolean },
+  ): Promise<void> {
+    if (this.#abandoned(discovery)) return;
+    tellTakeTurn(part.snapshots.size);
+    if (begins !== undefined) this.#beginTake(discovery, begins);
+    await this.#applyWalk(discovery, this.#takeSnapshots(discovery, part), part.scan);
+    if (last) this.#observations?.set(this.#cwd, new Map(this.#observed));
+  }
+
+  #beginTake(discovery: SourceDiscovery, walked: ReadonlySet<string>): void {
+    this.#syncWorktrees(discovery);
+    const left = discovery.worktrees.baselineRoots;
+    discovery.worktrees.baselineRoots = new Set([...left].filter(root => heldBy(walked, root) !== undefined));
+  }
+
+  /** Whether a walk starting now may show the session a source of `worktree` first (`#mayFirstSee`), but for one a read take holds (`taking`). */
+  #firstSightAtStart(discovery: SourceDiscovery, worktree: string): boolean {
+    return !discovery.worktrees.taking.has(worktree) && this.#mayFirstSee(discovery, worktree);
   }
 
   /**
@@ -3874,16 +4057,18 @@ export class CodeRuleBridge {
   /** Audits what a finished scan found, then makes it the walk's new baseline. */
   async #applyWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<void> {
     if (this.#abandoned(discovery)) return;
-    // A worktree removed while its own walk ran took its files with it: the files the walk then missed are no deletions.
-    if (!walk.inSession) this.#syncWorktrees(discovery);
     const uncaptured = new Map<string, string>();
     const edits = this.#discoverEdits(discovery, walk, scan.sources, uncaptured);
     await this.#noteWalkedIgnoreFiles(discovery, walk, scan.sources);
     await this.#auditWalkEdits(discovery, walk, edits, uncaptured);
     this.#keepFirstSeenTexts(scan.firstSeen);
     keepWalkedGit(discovery, walk, scan);
-    if (walk.inSession) this.#finishSessionWalk(discovery, walk, scan);
-    else this.#finishWorktreeWalk(discovery, walk, scan);
+    if (!walk.inSession) {
+      // A take keeps the session's observations once, after its last part (`#applyTakePart`).
+      this.#finishWorktreeWalk(discovery, walk, scan);
+      return;
+    }
+    this.#finishSessionWalk(discovery, walk, scan);
     this.#observations?.set(this.#cwd, new Map(this.#observed));
   }
 
@@ -3990,7 +4175,10 @@ export class CodeRuleBridge {
     // A worktree Git listed again at its path since the walk began is new to the session: its first walk is to come.
     const gone = new Set([...walk.worktrees].filter(worktree => !walkHeld(discovery, walk, worktree)));
     for (const worktree of walk.worktrees) if (!gone.has(worktree)) worktrees.fresh.delete(worktree);
-    worktrees.baselineRoots = scan.failedRoots;
+    // A part of a take (`#applyTake`) replaces the unread subtrees of its own worktree, a worktree nested in it aside;
+    // the others' wait for their parts.
+    const others = [...worktrees.baselineRoots].filter(root => !walk.worktrees.has(heldBy(worktrees.roots, root) ?? ""));
+    worktrees.baselineRoots = new Set([...others, ...scan.failedRoots]);
     // `git worktree remove` takes the worktree's folder before Git stops listing it, so a walk that began with it listed
     // can find the folder gone, or its delete pending, which fails the walk there. A worktree Git did not list for the
     // whole walk (`#applyWalk`) took its folders and files with it: nothing the walk could not read there is a place.
