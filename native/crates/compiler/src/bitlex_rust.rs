@@ -140,6 +140,8 @@ struct G<'a> {
     /// The takes of the rules' code (`moves::Names`), once every rule is made (`printed`): the helpers it calls, and
     /// the tests they ask (`take_helpers`).
     names: std::cell::OnceCell<moves::Names>,
+    /// Each rule's code where its one caller calls it (`rule`, `inlined`), by its method's name: none for a level's.
+    inline: std::cell::RefCell<HashMap<String, Block>>,
     /// What a level's call saves of its caller's, where only some levels change it (`records`' calls form): the levels
     /// that may refuse a mark or that a rule refusing one calls, and those whose code may set the level's word. None:
     /// every call saves both.
@@ -319,7 +321,7 @@ impl<'a> G<'a> {
                 refusing.clear();
             }
         }
-        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default() }
+        G { x, rules, order, flags, readings, remember, recover, refusing, endings, reads: std::cell::Cell::new(reads), own_fields: Default::default(), most_field: Default::default(), firsts: Default::default(), busy: Default::default(), kinds: Default::default(), fields: Default::default(), follows: Default::default(), mark_words: Default::default(), call_saves: Default::default(), peek_marks: Default::default(), anon: Default::default(), recognizers, leaf_refuses, leaf_call: Default::default(), cuts: Default::default(), scans: Default::default(), marked_read: Default::default(), names: Default::default(), inline: Default::default() }
     }
 
     fn mark_of(&self, name: &str) -> Option<usize> {
@@ -1164,7 +1166,7 @@ impl<'a> G<'a> {
                 // level it returns to (set where that takes the mark, kept where it ends there too).
                 let (set, keep, all) = self.call_asks(rest, rule)?;
                 let mut call = if all == 0 {
-                    vec![line(format!("self.{}()?;", rule_fn(n)))]
+                    vec![Op::Call(rule_fn(n))]
                 } else {
                     vec![line(format!("let asks = self.asks;\nself.asks = asks & {keep:#x} | {set:#x};\nself.{}()?;\nself.asks = asks;", rule_fn(n)))]
                 };
@@ -1213,7 +1215,7 @@ impl<'a> G<'a> {
                     vec![moves::take(Take::Leaf { test: Cond::Word { at: 0, ws: words.clone() }, kind: "ANON[self.word() as usize]".into(), field: "0".into() })]
                 }
             },
-            Gram::Sym(n) if self.rules.contains_key(n.as_str()) => vec![line(format!("self.{}()?;", rule_fn(n)))],
+            Gram::Sym(n) if self.rules.contains_key(n.as_str()) => vec![Op::Call(rule_fn(n))],
             Gram::Sym(n) => return Err(format!("rule {rule}: `{n}`, no rule, mark or token")),
             Gram::Seq(gs) => {
                 let mut out = Block::new();
@@ -1589,6 +1591,21 @@ impl<'a> G<'a> {
             }
             let mut c = self.code(body, &[], name)?;
             c.extend(self.ending_code(name)?);
+            // Its code where its one caller calls it (`inlined`): the node opened and closed there, as the lean
+            // parser's `statement` opens `Include` in place. Not a level's: a level saves and counts its caller's state.
+            if !nested {
+                let open = if node { Some(if (self.x.kind)(name).is_some_and(|id| id > 0x3ff) { "UNSET".to_owned() } else { self.kind_const(name)? }) } else { None };
+                let mut inl: Block = open.iter().map(|k| Op::Open(k.clone())).collect();
+                inl.extend(c.iter().cloned());
+                if node {
+                    inl.push(Op::Close);
+                }
+                inl.push(line("self.marked = false;"));
+                if nf {
+                    moves::no_refusing(&mut inl);
+                }
+                self.inline.borrow_mut().insert(rule_fn(name), inl);
+            }
             code(&mut out, c);
             if node {
                 out.push_str("        self.close()?;\n");
@@ -2244,6 +2261,37 @@ impl<'a> G<'a> {
         Some((words, free))
     }
 
+    /// The rules' methods (`made`, each its method's name and moves), each rule called from one place written there
+    /// (`rule`'s inline form): its method gone, as the lean parser writes one function where the grammar has a rule
+    /// for each part (decision 0685 step 1). Not one that calls itself, nor one the root is, nor one longer than
+    /// `INLINE_LINES`: an idea of its own, as the lean parser's `violation` and `raw_line` are functions of one caller.
+    pub(crate) fn inlined(&self, made: Vec<(String, Block)>) -> Vec<Block> {
+        let mut made: Vec<(String, Block, Option<Block>)> = made.into_iter().map(|(f, b)| {
+            let inl = self.inline.borrow().get(&f).cloned();
+            (f, b, inl)
+        }).collect();
+        let mut kept: HashSet<String> = HashSet::new();
+        loop {
+            let text: String = made.iter().map(|(_, b, _)| moves::print(b, "")).collect();
+            // The rules' own order is the caller's first: the last first, so a rule's size is that of what is written in it.
+            let Some(i) = made.iter().rposition(|(f, _, inl)| inl.as_ref().is_some_and(|b| moves::print(b, "").lines().count() <= INLINE_LINES) && !kept.contains(f) && text.matches(&format!("self.{f}()")).count() == 1) else { break };
+            let (f, b, inl) = made.remove(i);
+            let body = inl.expect("an inline form");
+            let mut found = false;
+            for (_, m, mi) in made.iter_mut() {
+                found |= moves::inline_call(m, &f, &body);
+                if let Some(mi) = mi {
+                    moves::inline_call(mi, &f, &body);
+                }
+            }
+            if !found {
+                kept.insert(f.clone());
+                made.insert(i, (f, b, Some(body)));
+            }
+        }
+        made.into_iter().map(|(_, b, _)| b).collect()
+    }
+
     /// Each block's moves in the lean parser's forms (`moves::rewrite`), then printed, once all of them are rewritten:
     /// their takes named as all of them ask (`moves::Names`).
     pub(crate) fn printed(&self, mut bs: Vec<Block>) -> Vec<String> {
@@ -2682,7 +2730,8 @@ impl<'a> G<'a> {
 
     fn source(&self) -> Result<String, String> {
         // Every rule's moves, then each printed (`rule`).
-        let made = self.order.iter().map(|name| self.rule(name, false)).collect::<Result<Vec<_>, _>>()?;
+        let made = self.order.iter().map(|name| Ok((rule_fn(name), self.rule(name, false)?))).collect::<Result<Vec<_>, String>>()?;
+        let made = self.inlined(made);
         let rules: String = self.printed(made).concat();
         let entry = rule_fn(self.order.first().ok_or("no rule")?);
         self.assemble(&rules, &entry, "// Generated by native/crates/compiler/src/bitlex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's tree rules.\n\n", false)
@@ -3004,6 +3053,9 @@ fn no_field(code: &str, f: &str) -> String {
     }
     (out.join("\n") + "\n").replace(&format!("{f}: 0, "), "")
 }
+
+/// The most lines a rule's code written in its one caller has (`G::inlined`).
+const INLINE_LINES: usize = 20;
 
 /// The parser's helpers that only some grammars' rules call (`relabel`, `drop`), by name: each written into a parser
 /// whose rules call it.

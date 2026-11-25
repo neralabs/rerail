@@ -222,6 +222,12 @@ pub(crate) enum Op {
     Line(String),
     /// The field `f::…` set on the node made last (the lean parser's `field`).
     Field(String),
+    /// A call of the rule whose method is `f` (`self.f()?;`).
+    Call(String),
+    /// A node of kind `k` opened (`self.open(k);`).
+    Open(String),
+    /// The node open closed (`self.close()?;`).
+    Close,
     /// A take of the token. `nf`: in a rule that runs with no mark refused (`records::no_refusing`); `m`: whether a mark
     /// no rule takes may hold at its token (`takes`), once asked.
     Take { take: Take, nf: bool, m: Option<bool> },
@@ -350,6 +356,15 @@ fn print_into(b: &[Op], pad: &str, names: &Names, out: &mut String) {
             Op::Field(f) => {
                 let _ = writeln!(out, "{pad}self.field_made({f});");
             }
+            Op::Call(f) => {
+                let _ = writeln!(out, "{pad}self.{f}()?;");
+            }
+            Op::Open(k) => {
+                let _ = writeln!(out, "{pad}self.open({k});");
+            }
+            Op::Close => {
+                let _ = writeln!(out, "{pad}self.close()?;");
+            }
             Op::Take { take, nf, m } => {
                 let _ = writeln!(out, "{pad}{}", take.print(*nf, *m, names));
             }
@@ -444,6 +459,18 @@ fn takes_in(b: &mut Block, f: &mut dyn FnMut(&mut Take, &mut bool, &mut Option<b
 /// `b` with each take one of a rule that runs with no mark refused (`records::no_refusing`).
 pub(crate) fn no_refusing(b: &mut Block) {
     takes_in(b, &mut |_, nf, _| *nf = true);
+}
+
+/// `b` with each call of `f` its code `body` (`G::inlined`): whether it had one.
+pub(crate) fn inline_call(b: &mut Block, f: &str, body: &Block) -> bool {
+    let mut found = false;
+    blocks(b, &mut |x| {
+        if x.iter().any(|op| matches!(op, Op::Call(g) if g == f)) {
+            found = true;
+            *x = std::mem::take(x).into_iter().flat_map(|op| if matches!(&op, Op::Call(g) if g == f) { body.clone() } else { vec![op] }).collect();
+        }
+    });
+    found
 }
 
 /// What the rewrites read of the grammar.
