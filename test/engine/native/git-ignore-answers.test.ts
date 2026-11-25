@@ -264,6 +264,19 @@ describe("Git's ignore answers kept per checkout", () => {
       expect(walk(auditor, ...paths)).toEqual([false, false, true, true, false]);
     });
 
+    // A session that starts below its checkout's root walks from its own folder, and asks about no folder above it.
+    it("asks Git's ignore rules again about a session's files once a .gitignore above the session's folder changed", async () => {
+      const { session, databasePath } = await checkout();
+      const below = join(session, "pkg", "app");
+      await mkdir(below, { recursive: true });
+      startTestRepository(session, databasePath);
+      const auditor = await opened(await realpath(below), databasePath, new GitIgnoreMatchers());
+      expect(walk(auditor, "x.py")).toEqual([false]);
+
+      await writeFile(join(session, "pkg", ".gitignore"), "app/x.py\n");
+      expect(walk(auditor, "x.py")).toEqual([true]);
+    });
+
     it("asks Git's ignore rules again about a folder's files once a .gitignore went from there or changed below it", async () => {
       const { session, databasePath } = await checkout();
       await writeFile(join(session, "api", ".gitignore"), "x.py\n");
