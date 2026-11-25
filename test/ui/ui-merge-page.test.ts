@@ -83,7 +83,10 @@ describe("a Merge Assist write's toast", () => {
     toast.mockReset();
     vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
     vi.stubGlobal("document", { activeElement: null, body: null });
-    vi.stubGlobal("fetch", async () => new Response(JSON.stringify(answer.body), { status: answer.status }));
+    // The page's own reads, which `changeScope` starts, are not under test: they stay unanswered.
+    vi.stubGlobal("fetch", async (_input: URL, init: { method?: string } = {}) => (init.method === "PUT"
+      ? new Response(JSON.stringify(answer.body), { status: answer.status })
+      : await new Promise<Response>(() => {})));
     changeScope({ repository: "A", checkout: "/work/a" });
   });
 

@@ -216,14 +216,16 @@ describe("reading every repo's rule counts", () => {
 describe("a Settings switch after its write", () => {
   const NOT_ON_DISK = "the change was made, but Rerail could not confirm it is on the disk (EIO)";
   let answer: { status: number; body: unknown };
-  let sent: unknown[];
+  /** The writes sent. The page's own reads, which `changeScope` starts, are not under test: they stay unanswered. */
+  let writes: unknown[];
 
   beforeEach(() => {
-    sent = [];
+    writes = [];
     toast.mockReset();
     vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
-    vi.stubGlobal("fetch", async (_input: URL, init: { body?: string } = {}) => {
-      sent.push(JSON.parse(init.body ?? "null"));
+    vi.stubGlobal("fetch", async (_input: URL, init: { method?: string; body?: string } = {}) => {
+      if (init.method !== "PUT") return await new Promise<Response>(() => {});
+      writes.push(JSON.parse(init.body ?? "null"));
       return new Response(JSON.stringify(answer.body), { status: answer.status });
     });
     changeScope({ repository: "A", checkout: "/work/a" });
@@ -244,7 +246,7 @@ describe("a Settings switch after its write", () => {
     answer = { status: 503, body: { error: "not-on-disk", message: NOT_ON_DISK } };
     await act();
 
-    expect(sent).toHaveLength(1);
+    expect(writes).toHaveLength(1);
     expect(shown()).toBe(now);
     expect(toast).toHaveBeenCalledExactlyOnceWith("The change was made, but Rerail could not confirm it is on the disk (EIO).");
   });
