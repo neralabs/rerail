@@ -15,6 +15,7 @@ which prints `file:line: [rule] message` for every import that crosses a boundar
 | `harness/` | Host plumbing every harness shares: hook adapter and launcher, event stream, native session client, semantic tools, `/rerail` commands | engine, runtime, presentation |
 | `setup/` | Harness registration (what `rerail install` writes into each coding agent's config) and the managed updater | engine, runtime, harness, activation |
 | `hosts/<harness>/` | One coding agent's adapter, hook or extension: `omp`, `pi`, `claude`, `codex`, `cursor`. No host imports another | engine, runtime, presentation, harness, setup |
+| `lsp/` | `rerail lsp`: the Language Server that publishes the checkout's code-rule violations in the editor, and highlights and checks `.rerail` rule files | engine, presentation |
 | `cli/` | The `rerail` command line | any layer |
 
 `index.ts` at the root is the package's public API (`@neralabs/rerail`), and `engine/schemas.ts` is its

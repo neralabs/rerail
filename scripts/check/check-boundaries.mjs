@@ -29,6 +29,7 @@ const LAYERS = {
   harness: ["engine", "runtime", "presentation"],
   setup: ["engine", "runtime", "harness", "activation"],
   host: ["engine", "runtime", "presentation", "harness", "setup"],
+  lsp: ["engine", "presentation"],
   cli: ["*"],
   package: ["*"],
 };

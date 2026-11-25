@@ -3,6 +3,9 @@
  * by the code rules of the checkout that owns it, and publishes their Violations as diagnostics. It runs the rules in
  * its own process, as a headless scan does: a log-mode `touched-files` audit per document version, recorded in memory
  * and never in the Rerail database, so it steers no agent and adds nothing to any session.
+ *
+ * A `.rerail` rule file is read by the engine's own parser too (`rerail-file.ts`): its tokens served as semantic
+ * tokens, for highlighting, and its syntax errors and the engine's check of it published with the rules' diagnostics.
  */
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -28,6 +31,7 @@ import { languageFor } from "../engine/code-rule/code-rule-enforcer.js";
 import { UNLISTED_TEXT_LANGUAGE } from "../engine/code-rule/code-rule-languages.js";
 import { steerDashboard } from "../presentation/session-presentation.js";
 import { JudgedText, diagnosticFix, violationDiagnostic } from "./diagnostics.js";
+import { RERAIL_TOKEN_LEGEND, checkRerailRule, isRerailDocument, readRerailText, type RerailText } from "./rerail-file.js";
 
 export interface LanguageServerOptions {
   /** Reported to the editor as the server's version. */
@@ -45,9 +49,36 @@ interface Judged {
   readonly document: TextDocument;
 }
 
+/** Where a document's diagnostics come from: each source's latest replaces only its own. */
+type DiagnosticOrigin = "rules" | "syntax" | "check";
+
+/** Each document's diagnostics by origin, published together: a publish replaces all of a document's diagnostics. */
+class PublishedDiagnostics {
+  readonly #connection: Connection;
+  readonly #documents = new Map<string, Map<DiagnosticOrigin, Diagnostic[]>>();
+
+  constructor(connection: Connection) {
+    this.#connection = connection;
+  }
+
+  set(uri: string, version: number | undefined, origin: DiagnosticOrigin, diagnostics: Diagnostic[]): void {
+    const origins = this.#documents.get(uri) ?? new Map<DiagnosticOrigin, Diagnostic[]>();
+    origins.set(origin, diagnostics);
+    this.#documents.set(uri, origins);
+    const all = [...origins.values()].flat();
+    void this.#connection.sendDiagnostics({ uri, ...(version === undefined ? {} : { version }), diagnostics: all });
+  }
+
+  forget(uri: string): void {
+    this.#documents.delete(uri);
+    void this.#connection.sendDiagnostics({ uri, diagnostics: [] });
+  }
+}
+
 /** Each document's latest audit is published; one a later revision superseded is dropped. */
 class DocumentLinter implements AuditRecorder {
   readonly #connection: Connection;
+  readonly #published: PublishedDiagnostics;
   readonly #sessionId = `lsp-${randomUUID()}`;
   readonly #catalogs = new CheckoutCatalogs();
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
@@ -59,8 +90,9 @@ class DocumentLinter implements AuditRecorder {
   #revision = 0;
   #nextAuditId = 0;
 
-  constructor(connection: Connection) {
+  constructor(connection: Connection, published: PublishedDiagnostics) {
     this.#connection = connection;
+    this.#published = published;
   }
 
   async check(document: TextDocument): Promise<void> {
@@ -96,7 +128,6 @@ class DocumentLinter implements AuditRecorder {
       const owner = this.#owners.ownerOf(fileURLToPath(document.uri));
       if (owner !== undefined) this.#latest.delete(join(owner.checkoutRoot, owner.path));
     }
-    this.#publish(document.uri, undefined, []);
   }
 
   async close(): Promise<void> {
@@ -135,7 +166,7 @@ class DocumentLinter implements AuditRecorder {
   interrupt(): void {}
 
   #publish(uri: string, version: number | undefined, diagnostics: Diagnostic[]): void {
-    void this.#connection.sendDiagnostics({ uri, ...(version === undefined ? {} : { version }), diagnostics });
+    this.#published.set(uri, version, "rules", diagnostics);
   }
 
   #router(root: string): Promise<CheckoutCodeRuleRouter> {
@@ -176,34 +207,85 @@ export function runRerailLanguageServer(options: LanguageServerOptions): void {
   }
   const connection = createConnection(options.input ?? process.stdin, options.output ?? process.stdout);
   const documents = new TextDocuments(TextDocument);
-  const linter = new DocumentLinter(connection);
+  const published = new PublishedDiagnostics(connection);
+  const linter = new DocumentLinter(connection, published);
   const timers = new Map<string, NodeJS.Timeout>();
+  /** Each open `.rerail` document's latest read, kept for its version: its tokens and its syntax errors. */
+  const rerailReads = new Map<string, { readonly version: number; readonly read: RerailText }>();
+  /** Each open `.rerail` document's version the engine last checked as saved. */
+  const rerailChecked = new Map<string, number>();
+  const failed = (uri: string) => (error: unknown): void => {
+    connection.console.error(`${uri}: ${error instanceof Error ? error.message : String(error)}`);
+  };
+
+  const rerailRead = (document: TextDocument): RerailText => {
+    const kept = rerailReads.get(document.uri);
+    if (kept?.version === document.version) return kept.read;
+    const read = readRerailText(document);
+    rerailReads.set(document.uri, { version: document.version, read });
+    return read;
+  };
+
+  /** A `.rerail` document's syntax errors; and, `saved`, the engine's check of the file, kept until an edit. */
+  const readRerail = (document: TextDocument, saved: boolean): void => {
+    if (!isRerailDocument(document)) return;
+    const { uri, version } = document;
+    try {
+      published.set(uri, version, "syntax", rerailRead(document).errors);
+    } catch (error) {
+      failed(uri)(error);
+    }
+    if (!saved) {
+      if (rerailChecked.get(uri) !== version) published.set(uri, version, "check", []);
+      return;
+    }
+    rerailChecked.set(uri, version);
+    checkRerailRule(document).then(diagnostics => {
+      if (documents.get(uri)?.version === version) published.set(uri, version, "check", diagnostics);
+    }, failed(uri));
+  };
 
   const check = (document: TextDocument): void => {
     clearTimeout(timers.get(document.uri));
     timers.delete(document.uri);
-    linter.check(document).catch((error: unknown) => {
-      connection.console.error(`${document.uri}: ${error instanceof Error ? error.message : String(error)}`);
-    });
+    linter.check(document).catch(failed(document.uri));
   };
 
   connection.onInitialize(() => ({
     capabilities: {
       textDocumentSync: { openClose: true, change: TextDocumentSyncKind.Incremental, save: { includeText: false } },
       codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] },
+      semanticTokensProvider: { legend: RERAIL_TOKEN_LEGEND, full: true },
     },
     serverInfo: { name: "rerail", version: options.version },
   }));
-  documents.onDidOpen(({ document }) => check(document));
-  documents.onDidSave(({ document }) => check(document));
+  documents.onDidOpen(({ document }) => {
+    readRerail(document, true);
+    check(document);
+  });
+  documents.onDidSave(({ document }) => {
+    readRerail(document, true);
+    check(document);
+  });
   documents.onDidChangeContent(({ document }) => {
     clearTimeout(timers.get(document.uri));
-    timers.set(document.uri, setTimeout(() => check(document), CHANGE_DELAY_MS));
+    timers.set(document.uri, setTimeout(() => {
+      readRerail(document, false);
+      check(document);
+    }, CHANGE_DELAY_MS));
   });
   documents.onDidClose(({ document }) => {
     clearTimeout(timers.get(document.uri));
     timers.delete(document.uri);
+    rerailReads.delete(document.uri);
+    rerailChecked.delete(document.uri);
     linter.forget(document);
+    published.forget(document.uri);
+  });
+  connection.languages.semanticTokens.on(({ textDocument }) => {
+    const document = documents.get(textDocument.uri);
+    if (document === undefined || !isRerailDocument(document)) return { data: [] };
+    return { data: rerailRead(document).tokens };
   });
   connection.onCodeAction(({ textDocument, context }) =>
     context.diagnostics.flatMap((diagnostic): CodeAction[] => {

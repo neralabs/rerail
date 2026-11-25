@@ -356,7 +356,27 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   describeRr(pathsJson: string): string;
   /** The policies of `requestJson` (a JSON `RrRunRequest`) run over its root, off the JavaScript thread: a JSON `RrRunResult`. */
   runRr(requestJson: string): Promise<string>;
+  /**
+   * `source`, a `.rerail` file's text, classed for an editor by the engine's own parser, nothing read from disk: a JSON
+   * `RrHighlight`.
+   */
+  highlightRr(source: string): string;
 }
+
+/**
+ * A `.rerail` text as `highlightRr` classes it: its tokens in source order and apart, `[start, end, class]`, and the
+ * statements that do not parse. Spans count UTF-8 bytes.
+ */
+export interface RrHighlight {
+  tokens: [start: number, end: number, cls: RrTokenClass][];
+  errors: { start: number; end: number; message: string }[];
+}
+
+/** A `.rerail` token's class (`rerail_rr_syntax::highlight::Class::name`). */
+export type RrTokenClass =
+  | "comment" | "keyword" | "string" | "regexp" | "code" | "number" | "operator"
+  | "relation" | "relation-declaration" | "function" | "function-declaration"
+  | "variable" | "type" | "type-declaration" | "parameter" | "property" | "value" | "test";
 
 /** What a `.rerail` rule file states of itself, as the engine reads it (`describeRr`). */
 export type RrDescription =

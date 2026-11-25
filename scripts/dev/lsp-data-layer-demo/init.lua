@@ -1,5 +1,6 @@
--- Demo: Neovim with `rerail lsp` attached to Python files, using the demo engine (DEMO_ENGINE) and the isolated
--- Rerail home (DEMO_HOME). DEMO_FLOAT=1 opens the line's diagnostics in a float once they arrive.
+-- Demo: Neovim with `rerail lsp` attached to Python files and `.rerail` rule files (highlighted by the server's
+-- semantic tokens), using the demo engine (DEMO_ENGINE) and the isolated Rerail home (DEMO_HOME). DEMO_FLOAT=1 opens
+-- the line's diagnostics in a float once they arrive.
 local engine = os.getenv("DEMO_ENGINE")
 vim.o.swapfile = false
 vim.o.termguicolors = true
@@ -21,10 +22,11 @@ vim.diagnostic.config({
   severity_sort = true,
   float = { border = "rounded", source = true, header = "Rerail" },
 })
+vim.filetype.add({ extension = { rerail = "rerail" } })
 vim.lsp.config("rerail", {
   cmd = { "node", engine .. "/dist/cli/cli.js", "lsp" },
   cmd_env = { RERAIL_HOME = os.getenv("DEMO_HOME"), RERAIL_AUTOSTART = "0" },
-  filetypes = { "python" },
+  filetypes = { "python", "rerail" },
   root_markers = { ".git" },
 })
 vim.lsp.enable("rerail")

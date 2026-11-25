@@ -3,6 +3,7 @@
 //! by the tape's kinds table (`tape`, decision 0061). The engine (`code_rule_dsl::logic::rr`)
 //! re-exports both under the same names.
 
+pub mod highlight;
 pub mod lean;
 #[doc(hidden)]
 pub mod lean_scalar;

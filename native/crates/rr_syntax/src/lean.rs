@@ -1721,9 +1721,9 @@ impl<L: Layout> Parser<'_, L> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     /// The `.rerail` files of the repository.
-    fn corpus() -> Vec<(String, String)> {
+    pub(crate) fn corpus() -> Vec<(String, String)> {
         let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
