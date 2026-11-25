@@ -1,0 +1,12 @@
+// k1-binding, stratum 1 of 3 (decision 0686): the first lowering. A filter (a negation or a comparison) is moved to
+// just after the atom that binds the last of its variables; atoms keep their order. Its input is K-form (`k_`), its
+// output K-form again (`k1_`). A module is a stratum, so the lowering is three files: what each step holds here.
+
+// Variable v is an argument of atom step k.
+in_atom(m, r, v, k) :- k_step(m, r, k, "atom", _), k_arg(m, r, k, _, t), k_var(m, t, v).
+// ... and of an atom before it.
+bound_before(m, r, v, k) :- in_atom(m, r, v, k), in_atom(m, r, v, j), j < k.
+// A filter, and its variables.
+filter(m, r, f) :- k_step(m, r, f, "not", _).
+filter(m, r, f) :- k_step(m, r, f, "cmp", _).
+in_filter(m, r, f, v) :- filter(m, r, f), k_arg(m, r, f, _, t), k_var(m, t, v).

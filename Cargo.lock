@@ -3796,6 +3796,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-delta-exec"
+version = "0.1.0"
+dependencies = [
+ "rerail-blocks",
+ "rerail-delta-exec",
+ "rerail-rr-syntax",
+ "rerail-tape-format",
+ "rustc-hash",
+]
+
+[[package]]
 name = "rerail-demand-catalog"
 version = "0.1.0"
 dependencies = [

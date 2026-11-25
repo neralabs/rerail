@@ -1,0 +1,22 @@
+[package]
+name = "rerail-delta-exec"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "A delta executor that loads itself from one tape (decision 0686): K-form programs run by the four delta operators, bootstrapped from bootstrap-l0.rerail."
+
+[features]
+default = []
+test-hooks = ["rerail-blocks/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
+
+[dependencies]
+# Relations, bistates and their change operations (decision 0678): every fact this executor keeps lies in them.
+rerail-blocks = { path = "../blocks" }
+# The rr parser: a `.rerail` file's tape, the only reader of its text.
+rerail-rr-syntax = { path = "../rr_syntax" }
+# The tape's reads in place (format 16).
+rerail-tape-format = { path = "../tape_format" }
+rustc-hash = "=2.1.3"
+
+[dev-dependencies]
+rerail-delta-exec = { path = ".", features = ["test-hooks"] }

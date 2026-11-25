@@ -1,0 +1,6 @@
+// k1-binding, stratum 2 of 3: where each variable is bound, and the atoms a filter must wait past.
+
+// Atom k binds v: the first atom v is an argument of.
+binds(m, r, v, k) :- in_atom(m, r, v, k), !bound_before(m, r, v, k).
+// Filter f's variable bound at k is not its last: another is bound at a later atom.
+waits(m, r, f, k) :- in_filter(m, r, f, v), binds(m, r, v, k), in_filter(m, r, f, w), binds(m, r, w, j), k < j.

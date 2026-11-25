@@ -1,0 +1,30 @@
+// k1-binding, stratum 3 of 3: the lowered program.
+
+// Filter f runs after atom k: the one binding its last variable.
+place(m, r, f, k) :- in_filter(m, r, f, v), binds(m, r, v, k), !waits(m, r, f, k).
+
+// The steps, numbered again: atom k at 16k, a filter f placed after atom p at 16p + 1 + f (a body of at most 8
+// steps; K0 has no arithmetic, so the numbers are facts).
+k1_step(m, r, k2, "atom", x) :- k_step(m, r, k, "atom", x), atom_at(k, k2).
+k1_arg(m, r, k2, i, t) :- k_step(m, r, k, "atom", _), atom_at(k, k2), k_arg(m, r, k, i, t).
+k1_step(m, r, k2, s, x) :- place(m, r, f, p), filter_at(p, f, k2), k_step(m, r, f, s, x).
+k1_arg(m, r, k2, i, t) :- place(m, r, f, p), filter_at(p, f, k2), k_arg(m, r, f, i, t).
+
+// The rest as read.
+k1_rule(m, r, h) :- k_rule(m, r, h).
+k1_arg(m, r, -1, i, t) :- k_arg(m, r, -1, i, t).
+k1_var(m, t, v) :- k_var(m, t, v).
+k1_str(m, t, s) :- k_str(m, t, s).
+k1_num(m, t, n) :- k_num(m, t, n).
+k1_wild(m, t) :- k_wild(m, t).
+k1_order(m, k) :- k_order(m, k).
+
+atom_at(0, 0). atom_at(1, 16). atom_at(2, 32). atom_at(3, 48). atom_at(4, 64). atom_at(5, 80). atom_at(6, 96). atom_at(7, 112).
+filter_at(0, 0, 1). filter_at(0, 1, 2). filter_at(0, 2, 3). filter_at(0, 3, 4). filter_at(0, 4, 5). filter_at(0, 5, 6). filter_at(0, 6, 7). filter_at(0, 7, 8).
+filter_at(1, 0, 17). filter_at(1, 1, 18). filter_at(1, 2, 19). filter_at(1, 3, 20). filter_at(1, 4, 21). filter_at(1, 5, 22). filter_at(1, 6, 23). filter_at(1, 7, 24).
+filter_at(2, 0, 33). filter_at(2, 1, 34). filter_at(2, 2, 35). filter_at(2, 3, 36). filter_at(2, 4, 37). filter_at(2, 5, 38). filter_at(2, 6, 39). filter_at(2, 7, 40).
+filter_at(3, 0, 49). filter_at(3, 1, 50). filter_at(3, 2, 51). filter_at(3, 3, 52). filter_at(3, 4, 53). filter_at(3, 5, 54). filter_at(3, 6, 55). filter_at(3, 7, 56).
+filter_at(4, 0, 65). filter_at(4, 1, 66). filter_at(4, 2, 67). filter_at(4, 3, 68). filter_at(4, 4, 69). filter_at(4, 5, 70). filter_at(4, 6, 71). filter_at(4, 7, 72).
+filter_at(5, 0, 81). filter_at(5, 1, 82). filter_at(5, 2, 83). filter_at(5, 3, 84). filter_at(5, 4, 85). filter_at(5, 5, 86). filter_at(5, 6, 87). filter_at(5, 7, 88).
+filter_at(6, 0, 97). filter_at(6, 1, 98). filter_at(6, 2, 99). filter_at(6, 3, 100). filter_at(6, 4, 101). filter_at(6, 5, 102). filter_at(6, 6, 103). filter_at(6, 7, 104).
+filter_at(7, 0, 113). filter_at(7, 1, 114). filter_at(7, 2, 115). filter_at(7, 3, 116). filter_at(7, 4, 117). filter_at(7, 5, 118). filter_at(7, 6, 119). filter_at(7, 7, 120).
