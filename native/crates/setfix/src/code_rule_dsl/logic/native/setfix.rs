@@ -3011,8 +3011,12 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // The seeds' rows, into their relation (the walk's; a reader has none, decision 0561), pending (`pend`) as
         // a push puts them, where they were written: the closure's dedup tests find them before any index has them.
+        // A lattice relation of the stratum folds its rows by its key map (`push_fresh_rows`), its own dedup: none
+        // pending.
         for (r, f) in fresh.iter_mut().enumerate() {
-            store.rels[r].push_fresh(std::mem::take(f), true);
+            let rel = &mut store.rels[r];
+            let pend = rel.lat.is_none();
+            rel.push_fresh(std::mem::take(f), pend);
         }
         let prep = closure::prepare(&cl, store, syms);
         match prep {
@@ -4875,6 +4879,10 @@ impl View {
                 want[m] = key[j];
                 m += 1;
             }
+        }
+        // The source's own test, where it has one: no match handed here.
+        if let Some(held) = self.src.test_at(self.cols[cols[lead]], key[lead], &src[..m], &want[..m], cursor) {
+            return Some(held);
         }
         let mut found = false;
         // The other key's value, which the source may keep its matches to (checked here all the same).
@@ -7901,11 +7909,11 @@ impl JoinRule {
     }
 
     /// The CPU's indexes of its inputs, on the relations its steps hold: what `join_rule` gives a rule parsed with
-    /// them, for one parsed without (a seed placed on the device, which then refused it).
+    /// them, for one parsed without (a seed placed on the device, which then refused it). Every step that probes an
+    /// input gets its index: an atom, a count, a min or max, a strjoin. One parsed without holds a probe of no index,
+    /// which finds no rows (t50 step 9: a refused seed's counts over an input were 0, and Metal's bench lost rows).
+    /// Its keys go in the index's column order, as the parse puts them (`in_index_order`).
     fn indexed(&mut self) {
-        // Every step that reads an input by its key: an atom, and an aggregate or a string join over one. Left as
-        // parsed, an aggregate's index was the device's unindexed one, whose `get` holds no rows: a refused
-        // stratum's `min` found nothing, and its head lost a whole chunk's rows (t50 step 9, Metal at 512 MB).
         let edits: Vec<Edit> = self
             .plan
             .steps
@@ -7914,11 +7922,13 @@ impl JoinRule {
             .enumerate()
             .filter_map(|(i, (st, r))| match st {
                 Step::Atom { src: Src::In(rel, ix), .. } | Step::Scalar { src: Src::In(rel, ix), .. } | Step::StrJoin { src: Src::In(rel, ix), .. } => {
+                    // A ranged probe is an atom's (`ranges`).
+                    let atom = matches!(st, Step::Atom { .. });
                     let (rel, ix) = self.src_in(rel, ix);
                     let ix = rel.index(&ix.cols);
                     // A ranged probe reads the order on its key then the range's column, as `join_rule` gives it.
                     Some(Edit::Index(i, match r.as_ref() {
-                        Some(r) if ix.ordered.is_some() && ix.then.is_none() => rel.index_then(&ix.cols, r.col),
+                        Some(r) if atom && ix.ordered.is_some() && ix.then.is_none() => rel.index_then(&ix.cols, r.col),
                         _ => ix,
                     }))
                 }
@@ -8195,6 +8205,13 @@ fn join_rule(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Interner) ->
     join_rule_with(conn, spec, syms, true)
 }
 
+/// A step's keys in its index's column order (`ix`): a probe reads its key in that order (`candidates`).
+fn in_index_order(ix: &Csr, keys: &mut [(usize, Key)]) {
+    if ix.cols.len() == keys.len() && ix.cols.iter().zip(keys.iter()).any(|(&c, &(k, _))| c != k) {
+        keys.sort_by_key(|&(c, _)| ix.cols.iter().position(|&x| x == c).unwrap_or(usize::MAX));
+    }
+}
+
 /// `join_rule`, with the CPU's indexes of its input relations (`index`) or without them: a join the device runs
 /// reads its relations by its own sorts (`device`), so building the CPU's would be work for nothing. Without them
 /// the join must not run on the CPU (`open` parses it again with them when the device refuses it).
@@ -8325,8 +8342,8 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
                 // the same columns looked a node up in a constant's chain and found nothing (t50 step 1: `rf_ref` by
                 // `[0, 1, 2, 3]` through an index made for `[1, 0, 2, 3]`, a handoff's replacement that derived none
                 // of its 295 rows).
-                if let Src::In(_, ix) = &src && ix.cols.len() == keys.len() && ix.cols.iter().zip(&keys).any(|(&c, &(k, _))| c != k) {
-                    keys.sort_by_key(|&(c, _)| ix.cols.iter().position(|&x| x == c).unwrap_or(usize::MAX));
+                if let Src::In(_, ix) = &src {
+                    in_index_order(ix, &mut keys);
                 }
                 match item {
                     JoinItem::StrJoin { x, by, sep, out: o, .. } => {
@@ -9314,6 +9331,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let v = if let Some(t) = found {
                     text_v(cx, &t)
                 } else if let Some(nodes) = texts.as_ref().map(|h| &**j.bound(h)) {
+                    // A node read's further arguments (`op_at`'s place).
+                    let more: Vec<i64> = args[1..].iter().map(|a| val(slots, *a)).collect();
                     let nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source> = match nodes {
                         NodeTexts::Held(nodes) => Some(&**nodes),
                         NodeTexts::At(at) => {
@@ -9321,7 +9340,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                             at_nodes.as_deref()
                         }
                     };
-                    match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]))) {
+                    match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]), &more)) {
                         Some(NodeRead::Text(t)) => text_v(cx, t),
                         Some(NodeRead::Value(Value::Text(t))) => text_v(cx, &t),
                         Some(NodeRead::Value(Value::Integer(n))) => Some(n),

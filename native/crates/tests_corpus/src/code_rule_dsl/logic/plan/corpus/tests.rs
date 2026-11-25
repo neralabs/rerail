@@ -1872,11 +1872,58 @@ y = x{i} + 2
         }
         let output = super::switches::started(|| child.output()).unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
-        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
+        let mut fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
+        if fault.is_empty() {
+            // Another failure: its last lines.
+            let lines: Vec<&str> = stderr.lines().collect();
+            fault = lines[lines.len().saturating_sub(30)..].to_vec();
+        }
+        assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join("\n"));
     };
     run(&before, false);
     run(&edited, true);
+}
+
+/// A string test compared with `!=` runs natively (decision 0680): the plan search's inlining (decision 0173 §7)
+/// unfolds `!bb_mangled(v)`, bugbear's `identifier(v), prefix("__", v), !suffix("__", v)`, into one copy per literal,
+/// each negated: `@prefix(v, "__") != 1`. A test's value is 0 or 1, so the native engine runs it as `= 0`. Before, it
+/// declined the stratum, and the 300-file bench's strict run stopped on SQL inside the waves. Here `inline` asks for
+/// the unfolding, in a strict run of a process of its own, as a corpus run keeps plans.
+#[test]
+fn a_string_tests_inequality_runs_natively() {
+    let _switches = super::switches::reading();
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path();
+    let src = base.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("a.py"), "a = '__x'\nb = '__y__'\nc = 'z'\n").unwrap();
+    let program = base.join("t.rerail");
+    std::fs::write(
+        &program,
+        ".decl strv(n: node, s: symbol)\nstrv(n, s) :- kind(n, \"string\"), value(n, s).\n\
+         .decl seen(s: symbol)\nseen(s) :- strv(_, s).\n\
+         .decl mangled(s: symbol) inline\nmangled(s) :- seen(s), prefix(\"__\", s), !suffix(\"__\", s).\n\
+         .decl plain(n: node)\nplain(n) :- strv(n, s), seen(s), !mangled(s).\n.output plain\n",
+    )
+    .unwrap();
+    let store = base.join("store.sqlite");
+    super::test_store::begun(&store);
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+    child
+        .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
+        .env("RERAIL_TAPE_CACHE", &store)
+        .env("RERAIL_CHILD_RUN", &src)
+        .env("RERAIL_CHILD_OUT", base.join("out"))
+        .env("RERAIL_CHILD_PROGRAM", &program)
+        .env("RERAIL_COSTS", base.join("costs.sqlite"))
+        .env("RERAIL_IMAGE_STORE", base.join("images"))
+        .env("RERAIL_SQL_STRICT", "1");
+    let output = super::switches::started(|| child.output()).unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(4).collect();
+    assert!(output.status.success(), "the run's process: {}; {}", output.status, if fault.is_empty() { stderr.lines().rev().take(20).collect::<Vec<_>>().join("\n") } else { fault.join("\n") });
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&base.join("out"), "plain").unwrap();
+    assert_eq!(rows.len(), 2, "`__y__` and `z`, not the mangled `__x`: {rows:?}");
 }
 
 /// One corpus run in a process of its own, for `the_run_after_a_cold_one_writes_nothing`.
@@ -2451,6 +2498,267 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// A program whose per-file rule reads the project's settings (decision 0665): a function of a file under a package
+/// of `"type": "module"`.
+const SETTINGS_READ: &str = r#"
+.decl typed(n: node)
+typed(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), package_field(dir, "type", "module").
+.output typed
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- typed(n), field(n, "name", i), text(i, x), docof(n, d), doc(d, p, _).
+.output shown
+"#;
+
+/// A run of `SETTINGS_READ` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn settings_read_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, SETTINGS_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: a file's memo entry is kept under its own package's settings. Two packages, `a` (a module, two
+/// files) and `b` (one file). A source file's edit leaves the settings as they were, and the other files are read
+/// from the memo; an edit of `b/package.json` misses `b`'s files alone; and after each edit the rows are a fresh
+/// run's.
+#[test]
+fn a_files_entry_is_kept_under_its_own_packages_settings() {
+    let files = [
+        ("a/package.json", "{\"name\": \"a\", \"type\": \"module\"}\n"),
+        ("a/x.py", "def f():\n    pass\n"),
+        ("a/y.py", "def g():\n    pass\n"),
+        ("b/package.json", "{\"name\": \"b\"}\n"),
+        ("b/z.py", "def h():\n    pass\n"),
+    ];
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let fresh = |name: &str, edits: &[(&str, &str)]| {
+        let dir = make(name, edits);
+        let (_, rows) = settings_read_run(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        rows
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let dir = make("settings-memo", &[]);
+    let (first, rows) = settings_read_run(&dir);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g")], "a full run's rows");
+    assert!(first.settings.is_some(), "the file-local part reads the settings");
+    // The documents under `b`: `z.py`, and `package.json` where the run reads JSON as documents.
+    let under_b = first.files - 2;
+    // A source file's edit: the settings are as they were, and every other file is read from the memo.
+    let source_edit = [("b/z.py", "# an edit\ndef h():\n    pass\n")];
+    std::fs::write(dir.join("ws/b/z.py"), source_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.settings, first.settings, "a source file's edit changes no setting");
+    assert_eq!(edited.memo.0, edited.files - 1, "every other file is read from the memo: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, fresh("settings-memo-fresh-1", &source_edit), "the rows are a fresh run's");
+    // `b` becomes a module: its files miss, `a`'s are read from the memo.
+    let package_edit = [("b/package.json", "{\"name\": \"b\", \"type\": \"module\"}\n")];
+    std::fs::write(dir.join("ws/b/package.json"), package_edit[0].1).unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_ne!(edited.settings, first.settings, "an edit of a package.json changes the settings");
+    assert_eq!(edited.memo.0, edited.files - under_b, "the files under b alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("a/x.py", "f"), row("a/y.py", "g"), row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-2", &[source_edit[0], package_edit[0]]), "the rows are a fresh run's");
+    // `a` is no module: `a`'s files miss, `b`'s are read from the memo.
+    std::fs::write(dir.join("ws/a/package.json"), "{\"name\": \"a\"}\n").unwrap();
+    let (edited, rows) = settings_read_run(&dir);
+    assert_eq!(edited.memo.0, under_b, "the files under a alone miss: {:?} of {}", edited.memo, edited.files);
+    assert_eq!(rows, [row("b/z.py", "h")]);
+    assert_eq!(rows, fresh("settings-memo-fresh-3", &[source_edit[0], package_edit[0], ("a/package.json", "{\"name\": \"a\"}\n")]), "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: module resolution handed on by the phase `tsx_names` keys a file's memo entry by its own rows. `a.ts`
+/// imports `g` from `./b`, `c.ts` imports `h` from `./d`. Adding `g` to `b.ts`'s exports misses `b.ts` (edited) and
+/// `a.ts` (its target's exports changed) alone: `c.ts` and `d.ts` are read from the memo, and the rows are a fresh
+/// run's. Under the whole export's digest (0083 §2.3) every file missed.
+#[test]
+fn a_files_entry_is_kept_under_its_own_imports_resolution() {
+    const PROGRAM: &str = ".language typescript\n#include \"tsx/names.rerail\"\n.decl used(n: node, p: symbol, q: symbol)\nused(n, p, q) :- sym_of(n, q), docof(n, d), doc(d, p, _).\n.output used\n";
+    let files = [
+        ("a.ts", "import { g } from \"./b\";\ng();\n"),
+        ("b.ts", "export function f() {}\n"),
+        ("c.ts", "import { h } from \"./d\";\nh();\n"),
+        ("d.ts", "export function h() {}\n"),
+    ];
+    let edit = ("b.ts", "export function f() {}\nexport function g() {}\n");
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let run = |dir: &std::path::Path| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        let rule = dir.join("program.rerail");
+        std::fs::write(&rule, PROGRAM).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        // Each row's file and symbol (the node is the row's location, kept so a file's rows are memoised).
+        let mut rows: Vec<Vec<String>> = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("used").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[1..].to_vec()).collect();
+        rows.sort();
+        (report, rows)
+    };
+    let dir = make("tsx-names-memo", &[]);
+    let (_, rows) = run(&dir);
+    let row = |p: &str, q: &str| vec![p.to_owned(), q.to_owned()];
+    assert_eq!(rows, [row("c.ts", "d#h")], "only h resolves, through the phase's exports, to d's own module: {rows:?}");
+    std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
+    let (edited, rows) = run(&dir);
+    assert_eq!(rows, [row("a.ts", "b#g"), row("c.ts", "d#h")], "g resolves now: {rows:?}");
+    assert_eq!(edited.memo.0, edited.files - 2, "b.ts and its importer a.ts alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = make("tsx-names-memo-fresh", &[edit]);
+    assert_eq!(rows, run(&fresh).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: a rule over another file's rows, read through an option (`doc_ignored`: a decorator the
+/// `pydocstyle.ignore-decorators` option lists, resolved across files), and a constant of the run's settings
+/// (`py_version`: `env`, else a file read, else a default). The option's name reaches `option_item` from its
+/// reader, as `naming.rerail`'s `method_dec_named(e, o)` from `method_dec_named(e, "pep8-naming.…")`. And an option
+/// named by a computed name, as pytest's
+/// `option(cat(c, "-require-match-for"), p)`: `option` stays an input, `option_item` is stated still.
+const OPTION_READ: &str = r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl dec_named(n: node, o: symbol) cross_file
+dec_named(n, o) :- def(n, _), option_item(o, _, q), def(_, q).
+.decl ignored(n: node) cross_file
+ignored(n) :- dec_named(n, "ignore").
+.decl ver(v: symbol)
+ver(v) :- env("demo.version", v).
+ver(v) :- !env("demo.version", _), env("demo.venv", e), f = cat(e, "/demo.cfg"), file_line(f, _, v).
+ver("3.13") :- !env("demo.version", _), !env("demo.venv", _).
+.decl shown(p: symbol, x: symbol)
+shown(p, x) :- def(n, x), !ignored(n), ver("3.13"), docof(n, d), doc(d, p, _).
+.output shown
+.decl flagged(n: node)
+flagged(n) :- def(n, x), option(cat(x, "-on"), _).
+.output flagged
+"#;
+
+/// A run of `OPTION_READ` with `options` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn option_read_run(dir: &std::path::Path, options: &serde_json::Value) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, OPTION_READ).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run_with_options(&[&program], &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18, &Default::default(), options).unwrap();
+    let mut rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    rows.sort();
+    (report, rows)
+}
+
+/// Decision 0665: the run's options and settings are decided before the run. With no `ignore` option, the rule that
+/// reads every file's definitions through it cannot hold and goes, and with no `env` the version is the default,
+/// folded first: `shown` is per-file, and an edit of one file reads the others from the memo. With the option set,
+/// the rule holds and reads across files. Each run's rows are a fresh run's.
+#[test]
+fn an_option_the_run_does_not_set_is_decided_before_the_run() {
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in [("x.py", "def f():\n    pass\n"), ("y.py", "def g():\n    pass\n"), ("z.py", "def h():\n    pass\n")] {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let none = serde_json::Value::Null;
+    let dir = make("option-decided");
+    let (first, rows) = option_read_run(&dir, &none);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "no option: nothing ignored, the default version");
+    std::fs::write(dir.join("ws/z.py"), "# an edit\ndef h():\n    pass\n").unwrap();
+    let (edited, rows) = option_read_run(&dir, &none);
+    assert_eq!(edited.memo.0, edited.files - 1, "shown is per-file: every other file is read from the memo: {:?} of {} (first {:?})", edited.memo, edited.files, first.memo);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")]);
+    let _ = std::fs::remove_dir_all(&dir);
+    // The option set: any file defining `h` ignores every definition.
+    let set = serde_json::json!({"ignore": ["h"]});
+    let dir = make("option-set");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, Vec::<Vec<String>>::new(), "the option set: every definition ignored");
+    let _ = std::fs::remove_dir_all(&dir);
+    let set = serde_json::json!({"ignore": ["k"]});
+    let dir = make("option-set-unmatched");
+    let (_, rows) = option_read_run(&dir, &set);
+    assert_eq!(rows, [row("x.py", "f"), row("y.py", "g"), row("z.py", "h")], "an option naming no definition ignores none");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0665: which settings a memoised relation's rows can read. A read keyed by the file's own path, or by a
+/// folder or target its own path's row names (directly, through a relation keyed by it, or carried by a relation
+/// derived from its own rows), is the file's own; one through another key (a constant folder, any file's row) is
+/// every file's.
+#[test]
+fn a_relation_reads_its_own_files_settings_only_through_its_own_path() {
+    use crate::code_rule_dsl::logic::plan::corpus::memo::{SettingsScope, settings_scopes};
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("settings-scopes");
+    std::fs::create_dir_all(&dir).unwrap();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, r#"
+.decl dep(dir: symbol, m: symbol)
+dep(dir, m) :- package_field(dir, "dependencies/react", m).
+.decl own(n: node)
+own(n) :- kind(n, "function_definition"), docof(n, d), doc(d, p, _), package_for(p, dir), dep(dir, _).
+.output own
+.decl any(n: node)
+any(n) :- kind(n, "function_definition"), package_for(_, dir), dep(dir, _).
+.output any
+.decl root(n: node)
+root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
+.output root
+.decl none(n: node)
+none(n) :- kind(n, "function_definition").
+.output none
+.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
+.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
+.decl tgt(d: number, s: symbol, t: symbol)
+tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
+.decl resolved(n: node, q: symbol)
+resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), tsx_names__exports(t, x, q).
+.output resolved
+.decl other(n: node, q: symbol)
+other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
+.output other
+"#).unwrap();
+    let v = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
+    let rels = ["own", "any", "root", "none", "resolved", "other"].map(str::to_owned).into_iter().collect();
+    let scopes = settings_scopes(&placed, &rels);
+    assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
+    assert_eq!(scopes.get("none"), None, "{scopes:?}");
+    // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
+    assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
+    assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0431 R11 (step 6): a file's programs are made once, at its parse, and kept with its tape. A fresh run
 /// makes the HTML file's script at its parse and the batch reads it off the file's record; a run of another program
 /// (no memo hit) finds the file's tape in the store and its script with it, parsing nothing; a tape whose record is
@@ -2639,6 +2947,11 @@ calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p),
     assert!(bytes <= base + q266(2), "a file's programs are read where they lie ({bytes} bytes uploaded, {base} with none)");
     assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
     assert_eq!(on_cpu[0][1], on_cpu[1][1], "both scripts are the file's: {on_cpu:?}");
+    // Each call's line is its host's: `f(1)` on line 3, `g(2)` on line 5 (an embedded program's places read through its
+    // segments, decision 0665).
+    let mut lines: Vec<&str> = on_cpu.iter().map(|r| r[2].as_str()).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, ["3", "5"], "the calls' host lines: {on_cpu:?}");
     assert_eq!(on_metal, on_cpu, "a file's programs: the device's rows are the CPU's");
 }
 

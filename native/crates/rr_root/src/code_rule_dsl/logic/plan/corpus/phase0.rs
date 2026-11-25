@@ -47,6 +47,10 @@ fn bootstrap_spelling(s: &str) -> std::borrow::Cow<'_, str> {
     s.into()
 }
 
+/// A path bootstrap.rerail gives, as the host spells it. A pack's table beside the library keeps its include's
+/// spelling (`lib/../packs/…`): bootstrap takes a file under the library for a module (`p0_seed_reaches`), and the
+/// table is one (decision 0639 §2). Where a module's files meet a program's canonical list (`Library::scope`), both
+/// are spelled once (`rr::one_spelling`).
 fn host_spelling(s: &str) -> String {
     #[cfg(windows)]
     if s.contains('/') && std::path::Path::new(s).is_absolute() {

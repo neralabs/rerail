@@ -217,6 +217,38 @@ noted(c, x) :- comment(c, x).
         assert_eq!(deferred("remark(x, l, k) :- noted(c, x), defined(d, x), field(d, \"body\", c), line(c, l), col(c, k)."), (true, Vec::new()), "within one document");
     }
 
+    /// A constant's join (decision 0665: of facts and settings alone, React's `deps_on`) is left as written: a file's
+    /// request would make the constant read every file's rows, while it is the same for every file and made once. The
+    /// same join over a file's rows is driven by its readers.
+    #[test]
+    fn a_constants_join_is_not_restricted_by_its_readers_requests() {
+        let deferred = |package_dep: &str| {
+            let v = parse(&format!(r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl package_for(path: symbol, dir: symbol)
+.decl package_field(dir: symbol, key: symbol, v: symbol)
+.decl kind(n: node, k: symbol)
+.decl text(n: node, x: symbol)
+.input doc, package_for, package_field, kind, text
+.decl dep_package(m: symbol, r: symbol)
+dep_package("react", "react"). dep_package("vue", "other").
+.decl package_dep(dir: symbol, m: symbol)
+{package_dep}
+.decl deps_on(dir: symbol, r: symbol)
+deps_on(dir, r) :- package_dep(dir, m), dep_package(m, r).
+.decl other_jsx(d: number)
+other_jsx(d) :- doc(d, p, _), package_for(p, dir), deps_on(dir, "other").
+.output other_jsx
+"#));
+            let (made, plan) = rewritten(&v);
+            (F::declared_names(&*made).into_iter().any(|r| r.starts_with(DEFERRED_PAIRS)), plan.constants)
+        };
+        assert_eq!(deferred("package_dep(dir, m) :- package_field(dir, \"dependencies\", m)."), (false, vec!["deps_on".to_owned()]), "settings alone");
+        let (driven, constants) = deferred("package_dep(dir, m) :- kind(n, \"import\"), text(n, m), doc(_, dir, _).");
+        assert!(constants.is_empty(), "{constants:?}");
+        let _ = driven;
+    }
+
     /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
     /// request, a union over the readers, restrict nothing: the join is left as written. Readers that each narrow
     /// the keys still drive it.
@@ -256,6 +288,44 @@ a(c) :- marked(c), exc_call(c, _).
         }
     }
 
+    /// A request keeps the document its dropped read ties (decision 0652): `pair(a, f)` holds one call's two nodes in
+    /// every row, and its reader joins `f`'s path with `a`'s text, a value. Asked for by `a` alone, the request drops
+    /// `pair`, and with it the tie: every name met every path of the corpus (UP008's `super_first`). Given `pair`'s
+    /// columns as one document's, the request says `@doc(a) = @doc(f)`, and the split places it in the chunks.
+    #[test]
+    fn a_request_keeps_the_document_its_dropped_read_ties() {
+        let v = parse(
+            r#"
+            .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+            .decl child(p: node, c: node, i: number)
+            .decl text(n: node, s: symbol)
+            .input node, child, text
+            .decl pair(a: node, f: node)
+            pair(a, f) :- node(_, c, "call", _, _), child(c, a, 0), child(c, f, 1).
+            .decl path(f: node, p: symbol)
+            path(f, p) :- node(_, f, "class", _, _), text(f, p).
+            .decl named(a: node, f: node)
+            named(a, f) :- pair(a, f), path(f, p), text(a, p).
+            .output named
+        "#,
+        );
+        let first: &[usize] = &[0];
+        let requests = vec![("pair".to_owned(), first)];
+        let every = |_: &str, _: &[usize], _: &Version, _: &[upstream::Proof]| true;
+        let request = format!("{DEFERRED_PAIRS}pair");
+        let split = |p: &Program<'_>| crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(p.made.as_ref().unwrap()).unwrap();
+        let mut tied = Program::of(&v);
+        let same_doc = BTreeMap::from([("pair".to_owned(), rerail_blocks::vector![0, 1])]);
+        assert_eq!(upstream::install_requests(&mut tied, &requests, DEFERRED_PAIRS, &same_doc, &every).unwrap(), [true]);
+        let rules = tied.shown(Some(&request));
+        assert!(!rules.is_empty() && rules.iter().all(|r| r.contains("@doc($a) = @doc($f)")), "{rules:#?}");
+        assert!(split(&tied).local.contains(&request), "{:?}", split(&tied).causes.get(&request));
+        let mut open = Program::of(&v);
+        assert_eq!(upstream::install_requests(&mut open, &requests, DEFERRED_PAIRS, &Default::default(), &every).unwrap(), [true]);
+        assert!(!split(&open).local.contains(&request), "without the tie the request meets every file's paths");
+        assert_eq!(execute(tied.made.as_ref().unwrap(), "deferred-tied"), execute(&v, "deferred-tied-control"));
+    }
+
     #[test]
     fn requests_installed_in_rounds_are_those_installed_one_at_a_time() {
         // `wide`'s one reader is `awide`'s producer, which names `wide`'s key only once `awide`'s install guards it: so
@@ -278,10 +348,10 @@ a(c) :- marked(c), exc_call(c, _).
         let requests: Vec<(String, &[usize])> = ["awide", "wide", "wide2"].iter().map(|r| (r.to_string(), both)).collect();
         let every = |_: &str, _: &[usize], _: &Version, _: &[upstream::Proof]| true;
         let mut rounds = Program::of(&v);
-        let installed = upstream::install_requests(&mut rounds, &requests, DEFERRED_PAIRS, &every).unwrap();
+        let installed = upstream::install_requests(&mut rounds, &requests, DEFERRED_PAIRS, &Default::default(), &every).unwrap();
         let mut alone = Program::of(&v);
         let one_at_a_time: Vec<bool> =
-            requests.iter().flat_map(|r| upstream::install_requests(&mut alone, std::slice::from_ref(r), DEFERRED_PAIRS, &every).unwrap()).collect();
+            requests.iter().flat_map(|r| upstream::install_requests(&mut alone, std::slice::from_ref(r), DEFERRED_PAIRS, &Default::default(), &every).unwrap()).collect();
         assert_eq!(installed, one_at_a_time, "{:#?}", alone.shown(None));
         assert_eq!(installed, [true, true, true]);
         assert_eq!(rounds.shown(None), alone.shown(None));

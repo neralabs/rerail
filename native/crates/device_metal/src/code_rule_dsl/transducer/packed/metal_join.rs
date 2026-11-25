@@ -159,6 +159,13 @@ pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
 /// `rx_group(x, re, name)`: the range of X that regex `re`'s group `name` captures, by its program (the stage's
 /// automaton, `text::table::GroupProgram`, decision 0688); no row where `re` does not match or the group took no part.
 pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
+/// A node's text (key 5's node), read where its document's source lies through the stage's `node` view (decision
+/// 0287 §2): `rr_node_text_any`'s at any length; `rr_node_text`'s past `text`'s inline bound alone, no row shorter. A
+/// node the directory does not hold (another batch's, a comment span) sets `TEXTFN_UNHELD`: the stratum on the host.
+pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT_ANY: u32 = 15;
+pub(in crate::code_rule_dsl) const TEXTFN_NODE_TEXT: u32 = 16;
+// `row_text_one`'s bound for `TEXTFN_NODE_TEXT` (its `256u`) is `text`'s inline bound.
+const _: () = assert!(crate::code_rule_dsl::facts::vtab::syntax::core_rr::TEXT_INLINE == 256);
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.
 pub(in crate::code_rule_dsl) const TEXTFN_UNHELD: u32 = 4;

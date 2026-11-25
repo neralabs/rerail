@@ -180,7 +180,7 @@ selected(d,l,t) :- candidate(d,l,t).
 finding(d,l) :- selected(d,l,t), contains("inspect",t).
 .output finding
 "##).unwrap();
-    assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched");
+    assert_eq!(vocabulary.tests.len(), 2, "both line predicates must be batched: {:?}\n{}", vocabulary.tests.iter().map(|t| &t.0).collect::<Vec<_>>(), rules_of(&program));
     let rendered = rules_of(&program);
     assert!(!rendered.contains("@prefix") && !rendered.contains("@contains"), "{rendered}");
     // Numbered by their content: `prefix` and `contains` in either order.

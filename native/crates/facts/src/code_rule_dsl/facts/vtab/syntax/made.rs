@@ -49,22 +49,23 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 /// A batch's views' directory with its search layer's keys (`view_reads::ViewDir`, decision 0353 step 3 on the CPU), in
 /// `block`: `n` rows, each its document's key, `keys` in order; the first rows are written when counted
 /// (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed: row
-/// `i`'s tape in home `2i`, its lines in `2i + 1`, the 16z cache in `2n` (`ViewDir::cache` is `2n + 1` once it is
-/// made). Beside it, each document's views' counts as the documents' table gave them (`Given`, `[counts, 1]`, or
+/// `i`'s tape in home `3i`, its lines in `3i + 1`, its source in `3i + 2`, the 16z cache in `3n` (`ViewDir::cache` is
+/// `3n + 1` once it is made). Beside it, each document's views' counts as the documents' table gave them (`Given`, `[counts, 1]`, or
 /// zeros where none was given). Its offset in the block, and the given counts'.
 pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize) -> (usize, usize) {
     use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
     let rows: *mut ViewRow = block.alloc_t(n.max(1));
     let given: *mut Given = block.alloc_t(n.max(1));
-    let homes: *mut ViewHome = block.alloc_t(2 * n + 1);
+    let homes: *mut ViewHome = block.alloc_t(HOMES * n + 1);
     // Its documents are in key order (`Docs::new`, `Docs::grown`): their order by key is their rows'.
     let by_key: *mut u32 = block.alloc_t(n.max(1));
     let dir: *mut ViewDir = block.alloc_t(1);
     let mut k = 0;
     for (key, counts) in docs.take(n) {
-        // SAFETY: row `k` of the rows and the given counts just allocated in `block`, and its two homes, and its place in the order by key.
+        // SAFETY: row `k` of the rows and the given counts just allocated in `block`, and its homes, and its place in the order by key.
         unsafe {
-            rows.add(k).write(ViewRow { key, homes: [2 * k as u32, 2 * k as u32 + 1], ..Default::default() });
+            let h = (HOMES * k) as u32;
+            rows.add(k).write(ViewRow { key, homes: [h, h + 1, h + 2], ..Default::default() });
             given.add(k).write(counts.map_or([0; COUNTS + 1], |c| {
                 let mut g = [1; COUNTS + 1];
                 // copy: not block data (a document's view counts as given, into its directory row)
@@ -72,21 +73,25 @@ pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<V
                 g
             }));
             by_key.add(k).write(k as u32);
-            homes.add(2 * k).write(ViewHome::default());
-            homes.add(2 * k + 1).write(ViewHome::default());
+            for j in 0..HOMES {
+                homes.add(HOMES * k + j).write(ViewHome::default());
+            }
         }
         k += 1;
     }
     assert_eq!(k, n, "a key for every document");
     // SAFETY: the cache's home, just allocated.
-    unsafe { homes.add(2 * n).write(ViewHome::default()) };
+    unsafe { homes.add(HOMES * n).write(ViewHome::default()) };
     let at = block.offset_of(dir);
     // SAFETY: the directory just allocated in `block`.
     unsafe {
-        dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: 2 * n as u32 + 1, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, by_key: block.offset_of(by_key) as u64, ..Default::default() })
+        dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: (HOMES * n) as u32 + 1, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, by_key: block.offset_of(by_key) as u64, ..Default::default() })
     };
     (at, block.offset_of(given))
 }
+
+/// A directory row's homes (`ViewRow::homes`): its tape's, its lines', its source's.
+pub(super) const HOMES: usize = 3;
 
 /// A document's views' counts as given (`directory`): the counts, then 1 where given.
 type Given = [u32; COUNTS + 1];
@@ -206,12 +211,19 @@ pub(super) struct Context {
     /// The first failure making a document or a group (a verdict raised, too many positions): every source of the
     /// batch reports it (`Source::failure`), so the statement reading it fails rather than read the rows as absent.
     pub(super) failure: parking_lot::Mutex<Option<String>>,
+    /// The store's atoms, where the batch reads the `op` view: each entry's codes' names are interned into its table
+    /// (`view_docs::ViewEntry::new`, `ViewDoc::names`). None where it does not, so no name is interned for it.
+    pub(super) names: Option<Arc<dyn crate::content_store::AtomTable>>,
 }
 
 impl Docs {
     /// The cache their 16z blocks are decoded into (`super::batch_cache`): the batch's.
     pub(super) fn cache(&self) -> Option<&Arc<rerail_tape_format::f16::ZCache>> {
         self.context.cache.as_ref()
+    }
+    /// The atoms the entries' names are interned in, where the batch reads `op` (`Context::names`).
+    pub(super) fn names(&self) -> Option<&dyn crate::content_store::AtomTable> {
+        self.context.names.as_deref()
     }
 
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
@@ -1618,8 +1630,23 @@ impl Batch {
         at.into_iter().map(|g| Arc::clone(&s.groups[g as usize])).collect()
     }
 
-    /// The batch's vocabulary, every document made: its strings and their symbols, each string once.
+    /// The batch's vocabulary, every document made: its strings and their symbols, each string once, and the strings
+    /// `op` reads as its entries' names (`op_vocabulary`).
     pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
+        let (mut strings, mut symbols) = self.made_vocabulary();
+        let have: HashSet<u32> = symbols.iter().copied().collect();
+        let (ops, atoms) = self.op_vocabulary();
+        for (s, a) in ops.into_iter().zip(atoms) {
+            if !have.contains(&a) {
+                strings.push(s);
+                symbols.push(a);
+            }
+        }
+        (strings, symbols)
+    }
+
+    /// The strings the batch's documents and its views interned, every document made, and their symbols.
+    fn made_vocabulary(&self) -> (Vec<String>, Vec<u32>) {
         if self.rows.complete.get().is_none() {
             profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || {
                 let unmade = self.rows.state.lock().of.iter().filter(|g| g.is_none()).count();
@@ -1686,8 +1713,8 @@ pub(super) struct MadeRows {
 /// two, and the planner led joins with it (ab189: `rr_ast_12_1` measured on 2 of 40 documents, 2 rows, estimated 40
 /// where 455 were; the joins' own CPU 2.9 s more on the M3's 300 files). A batch of fewer is its own sample: measured
 /// exactly, on its groups' rows, with no whole read.
-const SAMPLE_EVERY: usize = 16;
-const SAMPLE_DOCS: usize = 32;
+pub(super) const SAMPLE_EVERY: usize = 16;
+pub(super) const SAMPLE_DOCS: usize = 32;
 
 impl MadeRows {
     fn template(&self) -> &dyn Source {
@@ -1800,30 +1827,14 @@ impl MadeRows {
     /// `hint`: the step's cursor's (`ProbeCursor::hint`): the last probe's document plus one and the row its search
     /// ended at, each checked before it is used.
     fn read_one(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32; 2], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        let by = self.by();
-        if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) || columns.len() > 16 {
+        if columns.len() > 16 {
             return false;
         }
-        let Some(key) = by.document(value) else { return false };
-        let docs = &self.batch.docs;
-        let last = hint[0].wrapping_sub(1) as usize;
-        let doc = if last < docs.len() && docs.key(last) == key {
-            last
-        } else {
-            let Some(doc) = docs.position(key) else { return false };
-            *hint = [doc as u32 + 1, u32::MAX];
-            doc
-        };
-        // The document's group as it went on: read with no lock, nothing counted.
+        let Some(Some(doc)) = self.doc_of(column, value, hint) else { return false };
         let p = match self.batch.rows.published[doc].get() {
             Some(p) => p,
             None => {
-                let before = self.batch.rows.groups();
-                self.batch.ensure(&[doc]);
-                if self.batch.rows.groups() > before {
-                    profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
-                }
-                let Some(p) = self.batch.rows.published[doc].get() else { return false };
+                let Some(p) = self.made_group(doc, column) else { return false };
                 p
             }
         };
@@ -1834,6 +1845,42 @@ impl MadeRows {
             each(row, &v[..columns.len()]);
         });
         true
+    }
+    /// The group of the document that `value` of the document column names, made if it is not (the membership
+    /// test's): `None` for another column or a value that names no document, `Some(None)` for a document the batch
+    /// has not.
+    fn group_of(&self, column: usize, value: i64, hint: &mut [u32; 2]) -> Option<Option<&Arc<Published>>> {
+        Some(match self.doc_of(column, value, hint)? {
+            Some(doc) => self.batch.rows.published[doc].get().or_else(|| self.made_group(doc, column)),
+            None => None,
+        })
+    }
+    /// The document that `value` of the document column names (`read_one`'s and `group_of`'s): `None` for another
+    /// column or a value that names no document, `Some(None)` for a document the batch has not. `hint`: the last
+    /// probe's document plus one, checked first.
+    fn doc_of(&self, column: usize, value: i64, hint: &mut [u32; 2]) -> Option<Option<usize>> {
+        let by = self.by();
+        if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) {
+            return None;
+        }
+        let key = by.document(value)?;
+        let docs = &self.batch.docs;
+        let last = hint[0].wrapping_sub(1) as usize;
+        if last < docs.len() && docs.key(last) == key {
+            return Some(Some(last));
+        }
+        let Some(doc) = docs.position(key) else { return Some(None) };
+        *hint = [doc as u32 + 1, u32::MAX];
+        Some(Some(doc))
+    }
+    /// Document `doc`'s group, made by this probe of `column` (decision 0494), as it went on: read with no lock.
+    fn made_group(&self, doc: usize, column: usize) -> Option<&Arc<Published>> {
+        let before = self.batch.rows.groups();
+        self.batch.ensure(&[doc]);
+        if self.batch.rows.groups() > before {
+            profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
+        }
+        self.batch.rows.published[doc].get()
     }
     /// Whether every read of `column` is routed (`route`): its document column (not a host's, whose guests may not
     /// be known), a node of the row's own document, or its document's key.
@@ -1998,6 +2045,18 @@ impl Source for MadeRows {
     }
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
         self.target().for_rows(columns, each)
+    }
+    /// By the document column, the document's group's rows of the value, each compared where it lies (`group_of`,
+    /// `each_match`): no row's values copied out, no match handed on. Another column's test is the matches'.
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor) -> Option<bool> {
+        // A document the batch has not: no rows.
+        let Some(p) = self.group_of(column, value, &mut cursor.hint)? else { return Some(false) };
+        let (g, r) = (&p.group, &p.rels[self.rel]);
+        let mut found = false;
+        g.each_match(self.rel, column, r, value, &mut cursor.hint[1], |row| {
+            found = found || columns.iter().zip(want).all(|(&c, &w)| Source::value(r.as_ref(), row, c) == w);
+        });
+        Some(found)
     }
     /// By the document column, the step's cursor leads: the last probe's document and row (`read_one`).
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut crate::code_rule_dsl::facts::vtab::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
@@ -2472,7 +2531,8 @@ impl TextTest {
     fn sample(&self) -> Option<(usize, usize)> {
         *self.sampled.get_or_init(|| {
             let (_, covered) = self.batch.sample_groups()?;
-            let symbols: Vec<i64> = self.batch.shared.lock().vocabulary.iter().map(|&a| i64::from(a)).collect();
+            let mut symbols: Vec<i64> = self.batch.shared.lock().vocabulary.iter().map(|&a| i64::from(a)).collect();
+            symbols.extend(self.batch.op_vocabulary().1.into_iter().map(i64::from));
             let passed = self.probe(&symbols).len();
             profile::decision("a text test measured on a sample of its batch's documents (decision 0494)", || format!("{}: {covered} of {} documents, {passed} of {} strings", self.tested.tests.tests[self.k].0, self.batch.docs.len(), symbols.len()));
             // At least one, as a lazy batch's estimate is: a sample that passes none says it passes few, not none.

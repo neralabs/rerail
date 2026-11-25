@@ -89,7 +89,7 @@ impl ProgramPass for RetypeHelpers {
             for rel in helpers {
                 let width = decls[&rel].len();
                 for i in 0..width {
-                    if decls[&rel][i].1 != "sym" {
+                    if !matches!(decls[&rel][i].1.as_str(), "sym" | "symbol") {
                         continue;
                     }
                     let (mut found, mut symbol) = (None::<String>, false);

@@ -105,7 +105,7 @@ impl Family {
     }
 }
 
-/// Punctuation `op_at` leaves out: brackets, quotes and separators are structure, not operators.
+/// Punctuation a node's tokens leave out (`tree_digest`'s): brackets, quotes and separators are structure, not operators.
 pub(super) fn is_punct(t: &str) -> bool {
     matches!(t, "(" | ")" | "[" | "]" | "{" | "}" | "," | ";" | ":" | "." | "\"" | "'" | "`")
 }
@@ -192,6 +192,31 @@ pub fn node_str(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
         return None;
     }
     literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).str
+}
+
+/// Tape node `id`'s `name(n, s)` in `core.rerail`'s shape: an identifier's text, or a dotted chain's (`name`), or an
+/// rr `variable`'s text; none for a comment. What `CoreRows::node` makes and `@rr_node_name` reads (decision 0353 step 3).
+pub fn node_name(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
+    let (kind, text) = (dialect.name(f, id), f.text(id));
+    if is_comment(kind) {
+        return None;
+    }
+    name(kind, text).or_else(|| (dialect.family == Family::Rr && kind == "variable").then(|| text.to_owned()))
+}
+
+/// Tape node `id`'s `comment(n, s)`: a comment's text without its marker; none for another node (`@rr_node_comment`).
+pub fn node_comment<'f>(f: FactsIn<'f>, dialect: &Dialect, id: u32) -> Option<&'f str> {
+    is_comment(dialect.name(f, id)).then(|| comment_body(f.text(id)))
+}
+
+/// Tape node `id`'s `strprefix(n, p)`: a literal's prefix letters, lowercased; none for a comment or a node that is no
+/// literal with a prefix (`@rr_node_strprefix`).
+pub fn node_strprefix(f: FactsIn<'_>, dialect: &Dialect, id: u32) -> Option<String> {
+    let kind = dialect.name(f, id);
+    if is_comment(kind) {
+        return None;
+    }
+    literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).prefix
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
@@ -490,11 +515,7 @@ pub(super) struct CoreRows {
     /// The values of the format string document being read (decision 0176: `literal::format_tape::values`), by
     /// node id, with the document's source they were read off: one parse a document, not one a node.
     format_values: Option<(std::sync::Arc<crate::code_rule_dsl::tape::Text>, Vec<Option<(String, &'static str)>>)>,
-    /// The nodes whose `op` and `op_at` rows are made (`Projection::op_nodes`); `None` every node.
-    pub(super) op_nodes: Option<super::TextNodes>,
-    /// `op_nodes` as the walked document's dialect's codes (`for_dialect`).
-    op_codes: Option<super::NodesOf>,
-    op_at: Vector<[i64; 3]>,
+
     name: Vector<[i64; 2]>,
     str: Vector<[i64; 2]>,
     strprefix: Vector<[i64; 2]>,
@@ -516,7 +537,7 @@ pub(super) struct CoreRows {
 impl CoreRows {
     /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
     pub(super) fn bytes(&self) -> usize {
-        std::mem::size_of_val(self.op_at.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
+        std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.str.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice()) + std::mem::size_of_val(self.value.as_slice()) + std::mem::size_of_val(self.comment.as_slice()) + std::mem::size_of_val(self.syntax_error.as_slice()) + std::mem::size_of_val(self.source.as_slice()) + std::mem::size_of_val(self.src_line.as_slice()) + std::mem::size_of_val(self.line_count.as_slice()) + std::mem::size_of_val(self.str_part.as_slice()) + std::mem::size_of_val(self.str_part_start.as_slice()) + std::mem::size_of_val(self.str_part_word.as_slice()) + std::mem::size_of_val(self.def_digest.as_slice()) + std::mem::size_of_val(self.ast_match.as_slice())
     }
 }
 
@@ -527,15 +548,11 @@ impl CoreRows {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Visits {
     All,
-    /// Those whose ops (`op`, `op_nodes`) a rule reads: `node` makes no other row.
-    Read,
     None,
 }
 
 #[derive(Default)]
 pub(super) struct Skip {
-    /// `op`, `op_at`.
-    pub(super) ops: bool,
     pub(super) comment: bool,
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type`.
@@ -641,39 +658,21 @@ impl TextRows {
 }
 
 impl CoreRows {
-    /// Whether a rule reads node `id`'s `op` or `op_at` rows (`op_nodes`).
-    fn reads_op(&self, p: &Projected, dialect: &Dialect, id: u32) -> bool {
-        self.op_nodes.as_ref().is_none_or(|nodes| match self.op_codes.as_ref().filter(|c| c.is_of(dialect.tag)) {
-            Some(codes) => codes.reads(nodes, p.f(), id, dialect),
-            None => nodes.reads(p.f(), id, dialect),
-        })
-    }
-
-    /// `op_nodes` resolved to `dialect`'s codes, for a walk of one of its documents.
-    pub(super) fn for_dialect(&mut self, dialect: &Dialect) {
-        if let Some(nodes) = &self.op_nodes && !self.op_codes.as_ref().is_some_and(|c| c.is_of(dialect.tag)) {
-            self.op_codes = Some(nodes.of_dialect(dialect));
-        }
-    }
-
-    /// The nodes `node` visits. Where it makes no row but the ops, and the rules read only some nodes' (`op_nodes`),
-    /// those nodes; where it makes none, no node. A phase reading the ops of a few kinds' nodes (`op(m, "|")` of a
-    /// `binary_operator`) visits those. No node is visited for its text: `text` is a view (`TextRows`).
+    /// The nodes `node` visits: every node where it makes a row of one, else none. No node is visited for its
+    /// text (`text` is a view, `TextRows`) or its operators (`op` is a view, `op_at` a node read: `tree::node_operators`).
     pub(super) fn visits(&self, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_these = s.comment && s.name && s.literal_rows
+        // A literal's value (`rr_value_lit`, `value`'s eager half) is made at every node too: where `name` and
+        // `comment` are node reads (decision 0353 row 7) and only it is made, a walk of no node made none.
+        let only_these = s.comment && s.name && s.literal_rows && s.literal_value
             && !(wants_parts || wants_part_starts || wants_words);
-        if !only_these || !s.ops && self.op_nodes.is_none() {
-            return Visits::All;
-        }
-        if s.ops { Visits::None } else { Visits::Read }
+        if only_these { Visits::None } else { Visits::All }
     }
 
     /// The per-node relations the walk makes, as the profile names them (`node rows`' spans).
     pub(super) fn making(&self, wants_parts: bool, wants_part_starts: bool, wants_words: bool, long_texts: bool) -> String {
         let s = &self.skip;
         let named = [
-            (!s.ops, "op"),
             (!s.comment, "comment"),
             (!s.name, "name"),
             (!s.literal, "literal"),
@@ -688,52 +687,34 @@ impl CoreRows {
         if made.is_empty() { "none".into() } else { made.join(", ") }
     }
 
-    /// Whether `visits` takes node `local` of `p`.
-    pub(super) fn visited(&self, visits: Visits, p: &Projected, dialect: &Dialect, id: u32) -> bool {
+    /// Whether `visits` takes a node.
+    pub(super) fn visited(&self, visits: Visits) -> bool {
         match visits {
             Visits::All => true,
             Visits::None => false,
-            Visits::Read => self.reads_op(p, dialect, id),
         }
     }
 
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
     /// `id` is its tape node (`Projected::node`) and `n` its id (`Projected::global`), which the caller's walk holds.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub(super) fn node(&mut self, p: &Projected, dialect: &Dialect, local: u32, id: u32, n: i64, string: &mut dyn FnMut(&str) -> usize, wants_parts: bool, wants_part_starts: bool, wants_words: bool) {
         let f = p.f();
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op_at`: the anonymous children the tape stores that are no punctuation, in order, Python's two-word
-        // operators as one ("not in", "is not"). `op`, every anonymous child and each two-word operator, is the
-        // projection's view (`View::Op`: `Item::Op`, `Item::OpPair`): no row is made.
-        let mut ops: Vec<String> = Vec::new();
-        let op_read = !self.skip.ops && self.reads_op(p, dialect, id);
-        for &c in children.iter().filter(|&&c| op_read && !f.named(c)) {
-            let t = dialect.name(f, c);
-            if !is_punct(t) {
-                let two = dialect.family == Family::Python && matches!((ops.last().map(String::as_str), t), (Some("not"), "in") | (Some("is"), "not"));
-                match ops.last_mut() {
-                    Some(last) if two => *last = format!("{last} {t}"),
-                    _ => ops.push(t.to_owned()),
-                }
-            }
-        }
-        for (i, t) in ops.iter().enumerate() {
-            self.op_at.push([n, i as i64, string(t) as i64]);
-        }
+        // `op` is the projection's view (`View::Op`: `Item::Op`), `op_at` `tree::node_operators`': no row is made.
         if is_comment(kind) {
-            if !self.skip.comment {
-                self.comment.push([n, string(comment_body(text)) as i64]);
+            if !self.skip.comment
+                && let Some(body) = node_comment(f, dialect, id)
+            {
+                self.comment.push([n, string(body) as i64]);
             }
         } else {
-            if self.skip.name {
-            } else if let Some(s) = name(kind, text) {
+            if !self.skip.name
+                && let Some(s) = node_name(f, dialect, id)
+            {
                 self.name.push([n, string(&s) as i64]);
-            } else if dialect.family == Family::Rr && kind == "variable" {
-                self.name.push([n, string(text) as i64]);
             }
             let read_literal = !self.skip.literal;
             let interpolated = read_literal && interpolated(f, dialect, kind, &children);
@@ -895,7 +876,7 @@ impl CoreRows {
         let mut value_type: Vector<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         vec![
-            ("op_at", make(&["n", "i", "s"], &self.op_at, [false, false, true], atom)),
+
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),
             ("strprefix", node_sym(&self.strprefix)),

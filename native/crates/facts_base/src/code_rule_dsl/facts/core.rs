@@ -353,16 +353,23 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
 /// A parsed tape's stored bytes in their home and the image read there (decision 0353 step 4a): written straight
 /// into a slab's room, which the store's writer and every reader take. A host whose tape is not placed (no device,
 /// or the pool refused the room) keeps the parser's image, and the writer its bytes.
-/// A tape still queued for the writer, read where it is: the room this process placed it in (decision 0353 step 4a),
-/// else its bytes read into a tape of its own.
-// copy (0353 step 4a): a queued tape not in a room (a frame of a gathered segment, decompressed) is read into a vector.
+/// A tape still queued for the writer, read where it is (decision 0353 step 4a): the home its parse gave it (a slab's
+/// room, or its own bytes where no device reads tapes), shared; a store's decompressed frame held as it is where no
+/// device reads tapes; else written into a room the device reads.
 fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<crate::code_rule_dsl::tape::TapeImage, String> {
     use crate::code_rule_dsl::tape::TapeImage;
-    if let crate::content_store::ObjectBytes::Tape(held) = stored
-        && let Ok(home) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<rerail_tape_format::home::Home>()
-        && home.placed()
-    {
-        return TapeImage::from_home((*home).clone(), grammar);
+    use crate::content_store::ObjectBytes;
+    use rerail_tape_format::home::Home;
+    match stored {
+        ObjectBytes::Tape(held) => {
+            if let Ok(home) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<Home>() {
+                return TapeImage::from_home((*home).clone(), grammar);
+            }
+        }
+        ObjectBytes::Heap(bytes) if !crate::code_rule_dsl::tape::placed::reads_tapes() => {
+            return TapeImage::from_home(Home::from(Arc::clone(bytes)), grammar);
+        }
+        _ => {}
     }
     // A parse's image the writer took as it lies (`placed_parse` with no device room): the image itself.
     if let crate::content_store::ObjectBytes::Tape(held) = stored
@@ -371,8 +378,17 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
         return Ok(image.0.clone());
     }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
-    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape not in a room, read into a vector (queued_image)");
-    APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
+    // copy (0353 step 4a): a queued tape in no room (a gathered segment's entry, mapped or decompressed) written into
+    // the room a device reads it in. It goes when a segment's load writes its frames there.
+    const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape in no room written into one (queued_image)");
+    let home = APART.time(|| {
+        let home = crate::code_rule_dsl::tape::placed::place(stored.len(), |out| {
+            out.copy_from_slice(stored);
+            Ok(())
+        });
+        (home, stored.len())
+    });
+    TapeImage::from_home(home.map_err(|e| e.to_string())?, grammar)
 }
 
 /// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.
@@ -399,7 +415,8 @@ fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crat
         return Ok((Arc::new(crate::code_rule_dsl::tape::StoredImage(image.clone())), image));
     }
     let home = image.place_stored()?;
-    if !home.placed() {
+    // Written in its room by its parser (`placed::rooms`), or in no room: the image is the one read.
+    if !home.placed() || image.placed() {
         return Ok((Arc::new(home), image));
     }
     let mut primary = TapeImage::from_home(home.clone(), grammar)?;
@@ -884,6 +901,10 @@ impl<'a> FactsIn<'a> {
             let e = t.table().entry(code);
             (self.atom(e), e.field)
         })
+    }
+    /// The node's tape code (its table's number, `tape_number`): what `code_entry` and an entry's tables by code take.
+    pub fn tape_code(&self, id: u32) -> u32 {
+        on_tape!(self, |t| t.code(id as usize))
     }
     /// The node's kind atom.
     pub fn kind(&self, id: u32) -> u32 {

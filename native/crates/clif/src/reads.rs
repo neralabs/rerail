@@ -164,6 +164,8 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_tape", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::tape },
     Read { family: Family::View, name: "view_depth", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::depth },
     Read { family: Family::View, name: "view_order", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::order },
+    // `op` read in place (decision 0353 row 7, the hub's `Item::Op` rows): after `view_order`, as `VIEWS` has it.
+    Read { family: Family::View, name: "view_op", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::op },
     // The views' directory's searches (decision 0353 step 3 on the CPU, step 2): the descriptor is the directory, in
     // its batch's block; each takes its caller's memo. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "dir_doc_of_row", params: &[I32, I32, I32], ret: I32, hot: false, body: crate::view_reads::dir_doc_of_row },
@@ -177,6 +179,14 @@ pub const READS: &[Read] = &[
     // A string's atom by its hash in a directory of runs of atoms (decision 0666): the descriptor is an
     // `AtomsDirRoot`. Last, so no other read's number moves.
     Read { family: Family::Relation, name: "atoms_find", params: &[I64, I32, I32], ret: I32, hot: false, body: crate::atoms_reads::atoms_find },
+    // A node's text read in place (decision 0287 §2): its bytes' range in its document's own source. After the reads
+    // above, so no earlier read's number moves.
+    Read { family: Family::View, name: "view_text_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::text_span },
+    // A line's text read in place (decision 0353 row 7): its bytes' range in its document's own source, and its
+    // terminator's length, read off the source's bytes (a read of the lines' family whose base is the source's).
+    Read { family: Family::View, name: "view_line_span", params: &[I32], ret: I64, hot: false, body: crate::view_reads::line_span },
+    Read { family: Family::View, name: "view_line_terminated", params: &[I32], ret: I32, hot: false, body: crate::view_reads::line_terminated },
+    Read { family: Family::Lines, name: "lines_terminator_length", params: &[I32], ret: I32, hot: false, body: terminator_length },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -2760,6 +2770,43 @@ fn lines_line(b: &mut B<'_, '_>) -> Value {
     let x = b.arg(0);
     let line = line_in(b, x);
     b.f.ins().iadd_imm(line, 1)
+}
+
+/// `lines_terminator_length(last)`: the length of the line terminator whose last byte is byte `last` of a source, its
+/// base this read's pointer (`newlines::length_ending_at`: CRLF and NEL's two bytes, LS's and PS's three, else one):
+/// its bytes alone say it, whatever the language's set. A line's text ends that many bytes before one past `last`.
+fn terminator_length(b: &mut B<'_, '_>) -> Value {
+    let last = b.arg(0);
+    let zero = b.c32(0);
+    let x = b.u8(zero, last);
+    let one = b.c32(1);
+    let after_first = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, last, 1);
+    b.either(I32, after_first, |b| {
+        let at = b.f.ins().iadd_imm(last, -1);
+        let zero = b.c32(0);
+        let p1 = b.u8(zero, at);
+        let is = |b: &mut B<'_, '_>, v: Value, k: i64| b.f.ins().icmp_imm(IntCC::Equal, v, k);
+        let (lf, cr) = (is(b, x, 0x0a), is(b, p1, 0x0d));
+        let crlf = b.f.ins().band(lf, cr);
+        let (nel, c2) = (is(b, x, 0x85), is(b, p1, 0xc2));
+        let nel = b.f.ins().band(nel, c2);
+        let two = b.f.ins().bor(crlf, nel);
+        let (a8, a9, e80) = (is(b, x, 0xa8), is(b, x, 0xa9), is(b, p1, 0x80));
+        let sep = b.f.ins().bor(a8, a9);
+        let sep = b.f.ins().band(sep, e80);
+        let after_second = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, last, 2);
+        let sep = b.f.ins().band(sep, after_second);
+        let three = b.either(I32, sep, |b| {
+            let at = b.f.ins().iadd_imm(last, -2);
+            let zero = b.c32(0);
+            let p2 = b.u8(zero, at);
+            let e2 = b.f.ins().icmp_imm(IntCC::Equal, p2, 0xe2);
+            let (three, one) = (b.c32(3), b.c32(1));
+            b.f.ins().select(e2, three, one)
+        }, |b| b.c32(1));
+        let two_v = b.c32(2);
+        b.f.ins().select(two, two_v, three)
+    }, |_| one)
 }
 
 /// `lines_count()`: the document's lines, one more than its line ends (`LineTable::count`).

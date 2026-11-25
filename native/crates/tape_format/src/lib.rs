@@ -283,6 +283,8 @@ pub struct Sixteen {
     pub z: bool,
     pub blocks: bool,
     pub number: std::sync::Arc<dyn Fn(u32) -> Option<u32> + Send + Sync>,
+    /// Where the tape goes: rooms every reader reads it in (decision 0353 step 4a), or `None`, a vector of its own.
+    pub rooms: Option<std::sync::Arc<dyn home::Rooms>>,
 }
 
 /// A node's key named as its grammar names it: what a parser without the grammar (a lean parser's own tests and
@@ -313,6 +315,7 @@ impl Named {
             z: false,
             blocks: true,
             number: std::sync::Arc::new(move |key| lang.number_named(&name(key)?)),
+            rooms: None,
         });
         Named { target }
     }
@@ -588,7 +591,8 @@ impl<L: Layout> Writer<L> {
                 return self;
             }
         };
-        let w = std::mem::ManuallyDrop::new(f16::Writer::reused(t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap));
+        // The thread's writer, used again (t60 step 5), its tape written in the target's rooms (0353 row 17).
+        let w = std::mem::ManuallyDrop::new(f16::Writer::reused_in(t.rooms.clone(), t.lang, src, t.terminators, t.tag, t.z, t.blocks, self.cap));
         self.sixteen = Ok(Box::new(Passing { w, number: t.number, numbers: Vector::new(), open: Vector::new(), bad: None, lost: Default::default() }));
         // The columns hold the window: the nodes since the last commit (more grow it).
         if self.cap > WINDOW {
@@ -1461,6 +1465,11 @@ impl<L: Layout> Writer<L> {
     /// size and end exactly; `Ok(Err)` where the writer writes no tape, or the nodes are not a format 16 tape (a code
     /// the language's table lacks, an edit before a commit, a node past format 16's bounds).
     pub fn finish_16(&mut self) -> Result<Result<f16::Finished, String>, Redo> {
+        self.finish_16_with(None)
+    }
+
+    /// `finish_16`, the tape's auxiliary index made by `aux` and laid where the tape lies (`f16::Writer::finish_with`).
+    pub fn finish_16_with(&mut self, aux: Option<f16::AuxMaker<'_>>) -> Result<Result<f16::Finished, String>, Redo> {
         debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let w = self.layout.widths();
@@ -1486,7 +1495,7 @@ impl<L: Layout> Writer<L> {
             return Ok(Err(format!("node {node} read after its commit")));
         }
         s.close_to(self.n);
-        Ok(s.w.finish())
+        Ok(s.w.finish_with(aux))
     }
 }
 
@@ -1514,7 +1523,7 @@ mod tests {
             let (kind, field) = (k & 0x3ff, k >> KIND_BITS & 0x3f);
             (k >> 16 == 0 && kind < 16 && field < 8).then_some(kind + 16 * field)
         };
-        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number) })
+        Ok(Sixteen { lang: lang(), terminators: newlines::Terminators::Lf, tag: 1, z, blocks: true, number: std::sync::Arc::new(number), rooms: None })
     }
 
     /// The rows of the tape `w` finishes.
@@ -1618,7 +1627,7 @@ mod tests {
             f16::Lang::new(CodeTable::new(entries), [1, 1, 1], 1).unwrap()
         });
         let number = |k: u32| (k >> 16 == 0 && k & 0x3ff < 16 && k >> 10 < 8).then(|| (k & 0x3ff) + 16 * (k >> 10));
-        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number) });
+        let target = || Ok(Sixteen { lang, terminators: newlines::Terminators::Lf, tag: 1, z: false, blocks: true, number: std::sync::Arc::new(number), rooms: None });
         let src = vec![b' '; 200_000];
         // 0: the calls joined; 1: the joined calls; 2: the plain ones (no chain, no node passed on).
         let build = |way: u8| {

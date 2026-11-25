@@ -136,6 +136,9 @@ pub struct ProbeCursor {
     /// A second key column's value of this probe, `(column, value)`, which the source may keep its matches to (a
     /// child by its place: `child(p, c, i)` by `p` and `i`). A hint too: the caller checks every key column.
     pub also: Option<(usize, i64)>,
+    /// Where the last probe's id was found in its document (a view of the tape): its slot's entry in the granule
+    /// table, and its select's group. Hints, checked before use; any value gives the same rows.
+    pub near: [u32; 2],
     /// The read's memo of the node id a probe last found, where the source reads nodes (`NodeMemo`): one cell the
     /// join gives each of its steps' cursors, as a rule's body probes several views by the same node in turn, each
     /// from inside the step before's read. None: the probe's own (a lookup alone).
@@ -197,8 +200,10 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 
 /// The functions that read a node's text, value or order from the run's batch (`Source::node_read`): their values are
 /// the run's, so `functions::eval` gives none. `rr_node_order` is a node's preorder key, `node_order`'s `k`: what a
-/// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join.
-pub const NODE_READS: [&str; 5] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_order"];
+/// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join. `name`, `comment`, `strprefix`, `op_at`
+/// and T's `text`, `intval` and `op` are core.rerail's and T's per-node values, read where a rule binds the node
+/// (decision 0353 step 3).
+pub const NODE_READS: [&str; 12] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_name", "rr_node_comment", "rr_node_strprefix", "rr_node_op_at", "rr_node_intval", "rr_node_op_t", "rr_node_t_text", "rr_node_order"];
 
 /// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
 /// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
@@ -273,12 +278,13 @@ pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> { None }
-    /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), for a binding of
-    /// `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
-    fn node_read(&self, _name: &str, _n: i64) -> Option<rusqlite::types::Value> { None }
+    /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), its further arguments `more`
+    /// (`op_at`'s place), for a binding of `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source
+    /// or function.
+    fn node_read(&self, _name: &str, _n: i64, _more: &[i64]) -> Option<rusqlite::types::Value> { None }
     /// `node_read`, a text lent where the source holds it, with none made: what a join's walk reads
     /// (`NodeRead::Text`).
-    fn node_read_ref(&self, name: &str, n: i64) -> Option<NodeRead<'_>> { self.node_read(name, n).map(NodeRead::Value) }
+    fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<NodeRead<'_>> { self.node_read(name, n, more).map(NodeRead::Value) }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -352,6 +358,12 @@ pub trait Source: Send + Sync {
     /// checked, never trusted: any value gives the same rows.
     fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
+    }
+    /// Whether some row with `value` in `column` has `want` in `columns` (a membership step's test, `exists`), read
+    /// as `lookup_read_at` would find it, without a row or its values handed on: `None` where the source has no such
+    /// test (the caller reads the matches instead).
+    fn test_at(&self, _column: usize, _value: i64, _columns: &[usize], _want: &[i64], _cursor: &mut ProbeCursor) -> Option<bool> {
+        None
     }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
@@ -468,6 +480,13 @@ pub trait Source: Send + Sync {
     /// binding's rows walked there (`metal_join::Batch::by_has`). `None` for any other source.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn has_walk(&self) -> Option<HasWalk> {
+        None
+    }
+    /// The `node` view of the batch whose nodes' texts this source reads (`node_read`), where the device reads every
+    /// one of its documents' sources in place (decision 0287 §2, `ViewsInPlace::sources`): its rows and directory,
+    /// through which a stage reads a node's text where it lies. `None` for any other source.
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn node_view(&self) -> Option<(usize, ViewInPlace)> {
         None
     }
     /// A view the device reads in place (decision 0353 step 4): its code (`syntax::device_chunk::VIEW_*`), its rows,

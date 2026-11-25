@@ -294,17 +294,14 @@ pub fn demand_rows(d: &TextDemand) -> Vec<crate::code_rule_dsl::logic::program_i
     let mut out: Vec<crate::code_rule_dsl::logic::program_image::manager::Row> = vec![vec![s("negated"), Value::Int(d.negated_any as i64)]];
     out.extend(d.long.iter().map(|k| vec![s("long"), s(k)]));
     out.extend(d.any.iter().map(|&(r, p)| vec![s("any"), Value::Int(r as i64), Value::Int(p as i64)]));
-    // The nodes whose text (`read`) and whose ops (`op`) a rule reads: a row of the tag, then one a name of each set.
-    for (tag, nodes) in [("read", &d.read), ("op", &d.op)] {
-        if let Some(n) = nodes {
-            out.push(vec![s(tag)]);
-            for (set, names) in [("kind", &n.kinds), ("field", &n.fields), ("parent", &n.parents), ("parent field", &n.parent_fields), ("value", &n.values)] {
-                out.extend(names.iter().map(|x| vec![s(tag), s(set), s(x)]));
-            }
+    // The nodes whose text a rule reads (`read`): a row of the tag, then one a name of each set.
+    if let Some(n) = &d.read {
+        out.push(vec![s("read")]);
+        for (set, names) in [("kind", &n.kinds), ("field", &n.fields), ("parent", &n.parents), ("parent field", &n.parent_fields), ("value", &n.values)] {
+            out.extend(names.iter().map(|x| vec![s("read"), s(set), s(x)]));
         }
     }
     out.extend(d.wide.iter().map(|w| vec![s("wide"), s(w)]));
-    out.extend(d.op_wide.iter().map(|w| vec![s("op wide"), s(w)]));
     out
 }
 
@@ -319,7 +316,7 @@ pub fn demand_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manage
         Value::Int(x) => usize::try_from(*x).ok(),
         _ => None,
     };
-    let mut d = TextDemand { long: BTreeSet::new(), any: Vec::new(), negated_any: 0, read: None, wide: None, op: None, op_wide: None };
+    let mut d = TextDemand { long: BTreeSet::new(), any: Vec::new(), negated_any: 0, read: None, wide: None };
     for r in rows {
         match (text(r.first()?)?.as_str(), &r[1..]) {
             ("negated", [n]) => d.negated_any = int(n)?,
@@ -328,9 +325,8 @@ pub fn demand_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manage
             }
             ("any", [r, p]) => d.any.push((int(r)?, int(p)?)),
             ("read", []) => d.read = Some(TextNodes::default()),
-            ("op", []) => d.op = Some(TextNodes::default()),
-            (tag @ ("read" | "op"), [set, x]) => {
-                let n = if tag == "read" { d.read.as_mut()? } else { d.op.as_mut()? };
+            ("read", [set, x]) => {
+                let n = d.read.as_mut()?;
                 let names = match text(set)?.as_str() {
                     "kind" => &mut n.kinds,
                     "field" => &mut n.fields,
@@ -342,7 +338,6 @@ pub fn demand_of_rows(rows: &[crate::code_rule_dsl::logic::program_image::manage
                 names.insert(text(x)?);
             }
             ("wide", [w]) => d.wide = Some(text(w)?),
-            ("op wide", [w]) => d.op_wide = Some(text(w)?),
             _ => return None,
         }
     }
@@ -675,6 +670,8 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             match fixed {
                 _ if text.neg() && short_constant(v, text) => {}
                 Some(k) => kinds.extend(k),
+                // A span's text is read whole (`span_text_demand`), not a node's within the bound: no twin reads it.
+                None if span(rule, s) => {}
                 None if !redefined.contains("field") && leaf_field(v, rule, s) || short_constant(v, text) => {}
                 // A span's text is read at any length (`text_spans`): no twin stands in for it.
                 None if span(rule, s) => {}
@@ -687,32 +684,7 @@ pub fn text_kind_demand(v: &Version, matchers: &Matchers) -> TextDemand {
             }
         }
     }
-    // The nodes whose ops a rule reads (`op(n, o)`, `op_at(n, i, o)`, positive or negated: a node without its rows has
-    // no op to test), narrowed as a text read is, but by a constant (an op is no node's text). A program that gives
-    // `op` or `op_at` rules of its own reads every node's.
-    let (mut op, mut op_wide): (Option<TextNodes>, Option<String>) = (Some(TextNodes::default()), None);
-    if rules.iter().any(|r| matches!(head_of(*r), "op" | "op_at")) {
-        (op, op_wide) = (None, Some("a rule of the program's own `op`".to_owned()));
-    }
-    let narrows = op.is_some();
-    'rules: for &rule in rules.iter().filter(|_| narrows) {
-        for a in rule.body().filter_map(|l| l.atom()).filter(|a| matches!(v.rel_name(a.rel()), "op" | "op_at")) {
-            let narrowed = match a.args().next() {
-                Some(TermRef::Var(s)) => own_nodes(rule, s).or_else(|| first_read(&nodes_of, &read_from(rule, s))),
-                _ => None,
-            };
-            let (Some(nodes), Some(n)) = (&mut op, narrowed) else {
-                op_wide = Some(format!("{}, reading {}(…)", head_of(rule), v.rel_name(a.rel())));
-                op = None;
-                break 'rules;
-            };
-            nodes.kinds.extend(n.kinds);
-            nodes.fields.extend(n.fields);
-            nodes.parents.extend(n.parents);
-            nodes.parent_fields.extend(n.parent_fields);
-        }
-    }
-    TextDemand { long: kinds, any, negated_any, read, wide, op, op_wide }
+    TextDemand { long: kinds, any, negated_any, read, wide }
 }
 
 /// The constraints on the node `$name` matches in a matcher's rule, read where its pattern sits.

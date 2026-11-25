@@ -108,7 +108,8 @@ UKL_COLD int64_t vread_dir(uint32_t kind, UKL_GLOBAL const ViewDir* d, uint32_t 
         case 8u: return (int64_t)clif_view_loc_docof(c, e->entry, t, v, l, la, i, col);
         case 9u: return (int64_t)clif_view_tape(c, e->entry, t, v, l, la, i, col);
         case 10u: return (int64_t)clif_view_depth(c, e->entry, t, v, l, la, i, col);
-        default: return (int64_t)clif_view_order(c, e->entry, t, v, l, la, i, col);
+        case 11u: return (int64_t)clif_view_order(c, e->entry, t, v, l, la, i, col);
+        default: return (int64_t)clif_view_op(c, e->entry, t, v, l, la, i, col);
     }
 }
 
@@ -709,6 +710,51 @@ UKL_INLINE Txt txt_of(StageP s, Longs L, uint32_t t, JSPACE const uint8_t* D, JS
         x.b = sym_text(D, key_value(s, L, t, k + 1), &x.bl, unheld);
         x.dot = (kind == 1 && x.al > 0) ? 1 : 0;
     }
+    return x;
+}
+
+// Node `key`'s text, read where its document's source lies (decision 0287 §2): its document by the directory's search
+// on its key (`clif_dir_doc_of_key`), its numbered node (`clif_view_number`), its bytes' range in its own source
+// (`clif_view_text_span`), read at the source's home (`view_source`). The stage's `node` view binds the directory
+// (`Stage::v_dir`). With `lines` (`rr_node_text_any`'s), a document's `source` span or a `src_line` span (decision
+// 0353 row 7) is its line's bytes there (without, `none`: no row)
+// (`clif_view_line_span`), its terminator's length read off the source's bytes where it has one
+// (`clif_view_line_terminated`, `clif_lines_terminator_length`). A node the directory does not hold (another batch's,
+// a comment span, a match's span, no node) sets `unheld`: the stratum runs on the host.
+UKL_INLINE Txt node_txt(StageP s, JSPACE const uint8_t* D, int64_t key, bool lines, UKL_PRIVATE bool* unheld, UKL_PRIVATE bool* none) {
+    Txt x;
+    x.a = D;
+    x.al = 0;
+    x.b = D;
+    x.bl = 0;
+    x.dot = 0;
+    UKL_GLOBAL const ViewDir* d = s->v_dir;
+    if (key < 0 || d == 0 || d->ndocs == 0u) { *unheld = true; return x; }
+    uint32_t m = clif_dir_doc_of_key(view_block(d), d->at, (uint32_t)((uint64_t)key >> 32), NONE);
+    if (m == NONE) { *unheld = true; return x; }
+    UKL_GLOBAL const ViewRow* e = &view_rows(d)[m];
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines_base(d, e);
+    uint32_t low = (uint32_t)((uint64_t)key & 0xfffffffful);
+    uint64_t line = clif_view_line_span(ch, e->entry, t, e->view, ls, e->lines, low);
+    // `rr_node_text_any`'s alone: the long-text twin (`rr_node_text`) has no row of a line, as the host's `long_text`.
+    if (line != ~(uint64_t)0 && !lines) { *none = true; return x; }
+    if (line != ~(uint64_t)0) {
+        uint32_t from = (uint32_t)(line >> 32), to = (uint32_t)line;
+        if (clif_view_line_terminated(ch, e->entry, t, e->view, ls, e->lines, low) != 0u) {
+            to -= clif_lines_terminator_length(view_home(d, e->homes[2], 0), e->source, to - 1u);
+        }
+        x.a = (JSPACE const uint8_t*)view_source(d, e) + from;
+        x.al = to >= from ? to - from : 0u;
+        return x;
+    }
+    uint32_t l = clif_view_number(ch, e->entry, t, e->view, ls, e->lines, low);
+    if (l == NONE) { *unheld = true; return x; }
+    uint64_t span = clif_view_text_span(ch, e->entry, t, e->view, ls, e->lines, l);
+    uint32_t from = (uint32_t)(span >> 32), to = (uint32_t)span;
+    x.a = (JSPACE const uint8_t*)view_source(d, e) + from;
+    x.al = to >= from ? to - from : 0u;
     return x;
 }
 
@@ -1469,9 +1515,20 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
         }
         return;
     }
+    // A node's text (`TEXTFN_NODE_TEXT_ANY`, `TEXTFN_NODE_TEXT`): X is key 5's node's, read where its source lies.
+    uint32_t fn = (s->agg[0] >> 16) & 255;
+    bool node_text = op == 4 && (fn == 15u || fn == 16u);
     for (uint32_t row = sg; row < n; row += groups) {
-        bool unheld = false;
-        Txt x = txt_of(s, L, row, D, A, 0, s->agg[1] & 15, &unheld);
+        bool unheld = false, none = false;
+        Txt x = node_text ? node_txt(s, D, key_value(s, L, row, 5), fn == 15u, &unheld, &none) : txt_of(s, L, row, D, A, 0, s->agg[1] & 15, &unheld);
+        if (none) {
+            // No row: a line's span read by the long-text twin.
+            if (lane == 0) {
+                V[row] = -1;
+                counts[row] = 0;
+            }
+            continue;
+        }
         if (unheld) {
             // A symbol the atoms directory does not hold: `TEXTFN_UNHELD`, the stratum on the host.
             if (lane == 0) {
@@ -1523,7 +1580,7 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 continue;
             }
         }
-        Txt y = txt_of(s, L, row, D, A, 2, (s->agg[1] >> 4) & 15, &unheld), z = y;
+        Txt y = node_text ? x : txt_of(s, L, row, D, A, 2, (s->agg[1] >> 4) & 15, &unheld), z = y;
         uint32_t f = (s->agg[0] >> 16) & 255;
         uint32_t lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0, pad = 0;
         uint64_t u = 0;
@@ -1603,6 +1660,19 @@ UKL_INLINE void row_text_one(Longs L, JSPACE uint32_t* A, JSPACE const uint32_t*
                 continue;
             }
             len = to - from;
+        } else if (f == 15 || f == 16) {
+            // A node's text whole; `rr_node_text`'s only past `text`'s inline bound (`core_rr::TEXT_INLINE`, 256 bytes):
+            // no row for a shorter one, as the host's `long_text` has none.
+            if (f == 16 && lx <= 256u) {
+                if (lane == 0) {
+                    V[row] = -1;
+                    counts[row] = 0;
+                }
+                continue;
+            }
+            from = 0;
+            to = lx;
+            len = lx;
         } else if (f == 6) {
             // replace_all of a literal pattern (key 2) by key 4's text.
             y = txt_of(s, L, row, D, A, 2, 0, &unheld);

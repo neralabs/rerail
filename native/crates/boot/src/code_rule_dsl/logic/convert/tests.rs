@@ -18,9 +18,31 @@ fn pack() -> PathBuf {
     pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates")
 }
 
-/// The authored overlay's files (`convert` module doc): `<rule-id>.rerail`.
+/// The authored overlay's files (`convert` module doc): `<rule-id>.rerail`. Each is the staged copy where the tree
+/// stages one (`publish/`, what `npm run fixtures:stage` wrote for the next archive: the tree's code reads it, as 0612's
+/// `src_line` for `tape_line`), else the pulled one: a directory of links to them, made once a process.
 fn authored() -> PathBuf {
-    pack().join("datalog").join("authored")
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let pulled = pack().join("datalog").join("authored");
+        let staged = crate::source_tree::native().join("../packs/data-layer/upstream/lint/publish/authored/packs/data-layer/candidates/datalog/authored");
+        if !staged.is_dir() {
+            return pulled;
+        }
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("authored-staged");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let names: BTreeSet<std::ffi::OsString> = [&pulled, &staged].iter().flat_map(|d| std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name())).collect();
+        for name in names {
+            let from = if staged.join(&name).exists() { staged.join(&name) } else { pulled.join(&name) };
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&from, dir.join(&name)).unwrap();
+            #[cfg(not(unix))]
+            std::fs::copy(&from, dir.join(&name)).unwrap();
+        }
+        dir
+    })
+    .clone()
 }
 
 /// What one rule's conversion gave: its program, and per clause whether it converted or is authored, and why not.

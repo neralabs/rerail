@@ -70,8 +70,11 @@ const SPAN_FIRST: u32 = SLOTS - SPAN_SLOTS;
 /// Slots of `Extra`'s spans (`ExtraSpan`): one for the lines, one for the comments, `MATCH_SLOTS` for the matches,
 /// below the positions'. Sixteen in all, so the granules' slots (and every node's id) are as they were.
 const MATCH_SLOTS: u32 = 14;
-pub const EXTRA_SLOTS: u32 = 2 + MATCH_SLOTS;
+pub const EXTRA_SLOTS: u32 = rerail_clif::ids::EXTRA_SLOTS;
+const _: () = assert!(EXTRA_SLOTS == 2 + MATCH_SLOTS, "the lines', the comments' and the matches' slots");
 const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
+// The lines' slot, which the views' reads decode a line's id by (`view_line_span`): the extra spans' first.
+const _: () = assert!(EXTRA_FIRST + ExtraSpan::Line.first() == rerail_clif::ids::LINE_SLOT, "a line's slot is the views' reads'");
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 
@@ -112,6 +115,12 @@ pub fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
 /// Whether an id's low bits are one of `Extra`'s spans' (`extra_low`): past the granules', below the positions'.
 pub fn is_extra(low: u32) -> bool {
     (EXTRA_FIRST..SPAN_FIRST).contains(&(low >> INDEX_BITS))
+}
+
+/// The line (from 1; 0 the whole source) of a `Line` span's low bits, as `extra_low(ExtraSpan::Line, l)` made them.
+pub fn line_of(low: u32) -> Option<u32> {
+    let first = EXTRA_FIRST + ExtraSpan::Line.first();
+    (low >> INDEX_BITS == first).then_some(low % INDEX)
 }
 
 /// The comment number (from 1) of a `Comment` span's low bits, as `extra_low(ExtraSpan::Comment, i)` made them.
@@ -1035,8 +1044,13 @@ impl Table {
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number (`num_number_of`).
     #[inline]
     pub fn number_of(&self, r: &Ranks, low: u32) -> Option<(Item, u32)> {
+        self.number_of_near(r, low, &mut { rerail_clif::ids::NONE })
+    }
+
+    /// `number_of`, its slot's entry first looked for at `hint` (`Numbering::number_of_near`): probes in key order.
+    pub fn number_of_near(&self, r: &Ranks, low: u32, hint: &mut u32) -> Option<(Item, u32)> {
         // SAFETY: as `low_of`.
-        let (item, k) = unsafe { r.numbering().number_of(low) }?;
+        let (item, k) = unsafe { r.numbering().number_of_near(low, hint) }?;
         Some((if item == 0 { Item::Node } else { Item::Token }, k))
     }
 

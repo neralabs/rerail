@@ -143,3 +143,8 @@ Each has its test before the code that meets it.
 
 - A run of many files holds every file's tape mapped for the cross part. Their bytes are the tape store's, mapped,
   not the heap's; the peak is measured in step 5.
+
+**Amended by 0689** (2026-11-25): where every cross-part `text` atom reads a bound node or line, the corpus batch
+makes no `text` row. The versions, the semi-join's held rows and the statistics read `text` by probes of the tape
+(`ProbedText`), and a step that binds no column a made-on-lookup relation or a batch view is probed by is priced as
+reading every row.

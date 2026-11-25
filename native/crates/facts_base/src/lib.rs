@@ -133,3 +133,18 @@ pub mod code_rule_dsl {
     use std::sync::Arc;
 }
 // cratify: mounts end
+
+/// This crate's own test binary, which boot does not load: the store registered with the observer below it
+/// (`content_store::observer_store::base::STORE`) as the binary loads, as boot registers it: the kept project settings
+/// (`repository::kept_settings`, decision 0665) read and write through it.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        rerail_store::content_store::observer_store::register();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

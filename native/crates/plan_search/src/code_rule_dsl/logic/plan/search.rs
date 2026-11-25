@@ -389,6 +389,12 @@ pub struct Stats {
     /// (relation, column) → a lookup's CPU as a multiple of a derived relation's, where its source says it is not
     /// one (`Source::lookup_cost`, decision 0312): placement prices the step by it.
     pub lookup: rerail_section::TextMap<Vec<(String, f64)>>,
+    /// relation → the only columns a lookup of it reads by, where its source makes its rows per value looked up
+    /// (`Source::made_on_lookup`, its `indexed` columns), and the work of making a row (a made-on-lookup source's
+    /// scan's, `Source::scan_cost`; a view's, one): a step that binds none of the columns reads every row (`setfix`'s
+    /// index of them), and is priced so (`Model::plan_rule`'s `scan_cost`, by the relation's `card`). The cross part's
+    /// `text` read by node alone (decision 0689): a recheck led by its string read every file's tape.
+    pub probed_by: rerail_section::TextMap<(Vec<String>, f64)>,
     /// The tree's fielded edges by kind (`Own::fields`, `stat_edge`'s field): Q44's correlation of a node's kind with
     /// the fields it has or is.
     pub fields: std::sync::Arc<Fielded>,
@@ -516,6 +522,7 @@ impl Stats {
             steps_cache: StepsCache::default(),
             kindsets: kindsets.into_iter().collect(),
             lookup: Default::default(),
+            probed_by: Default::default(),
             fields: Default::default(),
             shapes: Default::default(),
             prepared: Default::default(),
@@ -607,6 +614,38 @@ impl Stats {
         if !costs.is_empty() {
             self.lookup = self.lookup.with([(rel.to_owned(), costs)]);
         }
+        self.probed_by(rel, source, false);
+    }
+
+    /// The columns a lookup of `rel` reads by, where its source makes its rows per value looked up
+    /// (`Source::made_on_lookup`), or, `of_batch`, where it is a view of a batch's documents (`Source::syntax_batch`):
+    /// its `indexed` or sorted ones (`probed_by`). A cross part's view read by another column is an index of every row,
+    /// which makes every document (Q332: a recheck led by a line number made a warm run's every file, decision 0689).
+    pub fn probed_by(&mut self, rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, of_batch: bool) {
+        if source.made_on_lookup() || (of_batch && source.syntax_batch().is_some()) {
+            let by: Vec<String> = source
+                .columns()
+                .into_iter()
+                .enumerate()
+                .filter(|&(c, _)| source.indexed(c) || source.sorts_rows(c))
+                .map(|(_, col)| crate::code_rule_dsl::facts::core::input_column_name(rel, &col).map_or(col, str::to_owned))
+                .collect();
+            // Asked nothing that makes a document: a batch's view's estimate made every document (Q332).
+            let per_row = if source.made_on_lookup() { source.scan_cost().max(1.0) } else { 1.0 };
+            self.probed_by = self.probed_by.with([(rel.to_owned(), (by, per_row))]);
+        }
+    }
+
+    /// The work of a step on `rel` whose columns `bound` (in `col`'s names) are bound, where it reads every row of a
+    /// source made on lookup (`probed_by`): it binds none of the columns a lookup of it reads by. None: it does not.
+    pub fn every_made_row(&self, rel: &str, bound: &mut dyn Iterator<Item = String>) -> Option<f64> {
+        let rerail_section::Tuple2(by, per_row) = self.probed_by.get(rel)?;
+        for c in bound {
+            if by.iter().any(|b| b.as_str() == c.as_str()) {
+                return None;
+            }
+        }
+        Some(self.card.get(rel).copied().unwrap_or(1000.0).max(1.0) * per_row)
     }
 
     /// A scan of `rel`'s work a row out, as a multiple of a derived relation's: one unless its source said.
@@ -704,6 +743,7 @@ impl Stats {
             steps_cache: StepsCache::default(),
             kindsets: pf.kindsets().iter().map(|rerail_section::Tuple2(k, ks)| (pf.text(*k).to_owned(), ks.iter().map(|&a| pf.text(a).to_owned()).collect())).collect(),
             lookup: Default::default(),
+            probed_by: Default::default(),
             fields: Arc::new(Fielded::of(of("edge").filter(|r| !matches!(r[3], SqlValue::Null)).map(|r| (text(&r[0]), text(&r[1]), text(&r[3]), int(&r[2]) as f64)))),
             shapes: Default::default(),
             prepared: Default::default(),
@@ -933,6 +973,7 @@ impl Model {
             steps_cache: StepsCache::default(),
             kindsets: st.kindsets.clone(),
             lookup: st.lookup.clone(),
+            probed_by: st.probed_by.clone(),
             fields: st.fields.clone(),
             shapes: st.shapes.clone(),
             prepared: st.prepared.clone(),
@@ -4368,9 +4409,14 @@ impl Model {
         let pre = b.bound_before();
         // A scan's work a row it gives (`Source::scan_cost`): a positive atom with no column bound, of a source whose
         // scan reads more than it gives (a text test of a batch not made: every string of it). One elsewhere.
+        // A step on a source made on lookup that binds none of the columns it is looked up by (`Stats::probed_by`)
+        // reads every row, which the source makes: each row it gives costs making them all (decision 0689).
         let scan_cost = |l: usize, bound: &VarSet| -> f64 {
             match b.view(l) {
                 Lit::Atom(a) if !a.neg() && b.args(l).iter().all(|&t| b.constant(t).is_none() && !matches!(t, TermRef::Var(v) if bound.contains(v))) => stats.scan_cost(b.rel(a)),
+                Lit::Atom(a) if !a.neg() => stats
+                    .every_made_row(b.rel(a), &mut b.args(l).iter().enumerate().filter(|&(_, &t)| b.constant(t).is_some() || matches!(t, TermRef::Var(v) if bound.contains(v))).map(|(c, _)| self.col(b.rel(a), c)))
+                    .unwrap_or(1.0),
                 _ => 1.0,
             }
         };

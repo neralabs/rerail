@@ -634,6 +634,11 @@ impl Value {
 /// facts and no rules (`guest_policy("library", "off")`, a library's setting) holds or not. A positive one that holds,
 /// or a negated one that does not, is dropped from its body; a rule with one that cannot hold goes. The rows are the
 /// facts only when some are stated and no rule, input or engine relation adds to them.
+///
+/// The run's own relations (`file_local::run_stated`: its options and its settings, decision 0665) are stated whole
+/// once the run gives them as facts, none or some: `env("python.venv", e)` of a run with no settings cannot hold.
+/// A test of variables too is decided where no row has its constants: `option_item("pydocstyle.ignore-decorators",
+/// _, q)` of a run that lists no decorator cannot hold, whatever `q`; one that has such a row is left to the run.
 #[derive(Default)]
 pub struct DecidedFactTests(pub usize);
 
@@ -643,7 +648,9 @@ impl ProgramPass for DecidedFactTests {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
         let derived: HashSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
-        let stated = |rel: &str| f.has_facts(rel) && !derived.contains(rel) && !fixed(&f, rel) && !(f.is_input(rel) || f.native(rel).is_some());
+        let stated = |rel: &str| {
+            (f.has_facts(rel) || crate::code_rule_dsl::typing::file_local::run_stated(rel)) && !derived.contains(rel) && !fixed(&f, rel) && !(f.is_input(rel) || f.native(rel).is_some())
+        };
         // Per rule: `None` where it goes, else the literals that go.
         let mut decided: Vec<Option<HashSet<u32>>> = Vec::new();
         let mut any = false;
@@ -656,8 +663,12 @@ impl ProgramPass for DecidedFactTests {
                 if !stated(rel) {
                     continue;
                 }
-                let Some(row) = a.args().map(cell_of).collect::<Option<Vec<Cell>>>() else { continue };
-                let present = f.facts(rel).is_some_and(|x| x.rows().any(|r| r.eq(row.iter().copied())));
+                let row: Vec<Option<Cell>> = a.args().map(cell_of).collect();
+                let present = f.facts(rel).is_some_and(|x| x.rows().any(|r| r.zip(&row).all(|(c, t)| t.is_none_or(|t| c == t))));
+                // A test of variables that some row has its constants is left to the run.
+                if present && row.iter().any(Option::is_none) {
+                    continue;
+                }
                 if present != a.neg() {
                     drop.insert(l.node());
                 } else {
@@ -703,8 +714,32 @@ impl ProgramPass for DecidedFactTests {
             }
             emptied = empty_among(&alive, before);
         }
+        // A request the world answers keeps its rules as written where none would be left: they hold no row, and
+        // the world's answer reads its table (decision 0665: with no `env`, `rr_file_req` of `pyvenv.cfg`).
+        let engine_asks = |rel: &str| request(rel) || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(_, q)| *q == rel);
+        let live_now = live(&alive);
+        for (i, r) in rules.iter().enumerate() {
+            let head = v.rel_name(r.head().rel());
+            if !alive[i] && engine_asks(head) && !live_now.contains(head) {
+                alive[i] = true;
+                drops[i].clear();
+            }
+        }
+        // An output whose every rule went is the run's still, with no row: an empty fact list, as an empty folded
+        // constant is, so every path makes its table (a constants' run's copy of a constant of the settings).
+        let outputs: HashSet<String> = v.output_names().into_iter().collect();
+        let live_now = live(&alive);
+        let emptied: BTreeSet<String> = rules
+            .iter()
+            .map(|r| v.rel_name(r.head().rel()))
+            .filter(|h| outputs.contains(*h) && !live_now.contains(*h) && f.facts(h).is_none())
+            .map(str::to_owned)
+            .collect();
         let input = w.input().clone();
         let b = w.derive()?;
+        for rel in &emptied {
+            b.fields().set_facts(rel, &[]);
+        }
         for ((r, keep), drop) in input.rules().zip(alive).zip(drops) {
             if !keep {
                 continue;
@@ -1218,8 +1253,13 @@ impl ProgramPass for InlineFilters {
             let [r] = rules else { return false };
             let mut bound = BTreeSet::new();
             let mut atoms = 0;
+            let head = head_slots(*r);
             for l in r.body() {
                 match l.view() {
+                    // Each domain atom shares a variable with the head, so a copy reads it keyed by what its reader
+                    // binds. One that shares none (`note(v) :- comment(_, w), v = @replace_all(w, …)`) would copy a
+                    // scan of every document's rows into each reader: a join of two documents (decision 0665).
+                    Lit::Atom(a) if !a.neg() && a.rel() != r.head().rel() && atom_slots(a).iter().all(|x| !head.contains(x)) => return false,
                     Lit::Atom(a) if !a.neg() && a.rel() != r.head().rel() => {
                         bound.extend(atom_slots(a));
                         atoms += 1;
@@ -1253,7 +1293,6 @@ impl ProgramPass for InlineFilters {
                 }
             }
             let cmps_bound = r.body().all(|l| !matches!(l.view(), Lit::Cmp { .. }) || lit_slots(l).is_subset(&bound));
-            let head = head_slots(*r);
             let computes = r.head().args().any(|t| matches!(t, TermRef::Call(..))) || !head.is_subset(&from_domain);
             computes && cmps_bound && head.is_subset(&bound)
         };

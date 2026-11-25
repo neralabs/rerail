@@ -36,6 +36,7 @@ native/crates/adapters/src/code_rule_dsl/value/names.rs::TABLE	stays	computed on
 native/crates/atoms/src/lib.rs::GIVEN	stays	a test's counter
 native/crates/atoms/src/lib.rs::SMALL_BLOCKS	stays	a test hook (`test-hooks`): the store's test binary sets it as it loads
 native/crates/blocks/src/alloc.rs::POLICY	stays	code registered at load: the one policy accel installs, the first installed staying
+native/crates/blocks/src/alloc.rs::RUN_DEVICE	stays	code a crate above registers at load
 native/crates/blocks/src/ledger.rs::BLOCKS	stays	the process's mapped blocks and leases by address, each with its ledger (decision 0487 R8): what memory is, not what a run has
 native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, counted as the OS counts them (address space is the process's)
 native/crates/blocks/src/windows.rs::HANDLER	stays	code registered at load (the one fault handler a Windows process has, which commits a reservation's pages as they are touched)
@@ -45,6 +46,7 @@ native/crates/boot/src/code_rule_dsl/boot.rs::MIBS	stays	jemalloc's control ids 
 native/crates/boot/src/code_rule_dsl/boot.rs::ONCE	stays	the providers registered once a process (code registered at load: `boot::install`)
 native/crates/boot/src/code_rule_dsl/logic/rr/testing.rs::RUNS	stays	a process-unique number naming a work directory (with the pid): runs only ever get distinct values, as from the pid
 native/crates/boot/src/code_rule_dsl/workspace/fixtures.rs::WORKSPACE_TEST_SLOT	stays	a test lock
+native/crates/boot/src/lib.rs::GLOBAL	stays	the allocator (code registered at load): the engine's (`native/src/lib.rs`), declared by the crate's own test binary
 native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/expand.rs::UKL	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/lib.rs::LOWERED	stays	computed once from the engine's own grammar
@@ -106,7 +108,6 @@ native/crates/facts_base/src/code_rule_dsl/facts/grammar_shape.rs::GRAMMAR	stays
 native/crates/facts_base/src/code_rule_dsl/facts/grammar_shape.rs::KEPT	stays	computed from the engine's own grammar, per kind
 native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::AXIS_SOLVE	stays	compiled once from the engine's own code
 native/crates/facts_base/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
-native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::HEAP_PEAK	stays	the allocator's per-thread peak a crate above registers once (decision 0469)
 native/crates/facts_base/src/code_rule_dsl/facts/rows.rs::ON	stays	whether a relation's chunks are sealed (RERAIL_SEAL_CHUNKS, decision 0622): the process's environment, read once
@@ -120,6 +121,7 @@ native/crates/facts_base/src/code_rule_dsl/logic/strings.rs::FUNCTORS	stays	code
 native/crates/facts_base/src/code_rule_dsl/logic/strings/functions.rs::PY_REPR	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/logic/strings/functions.rs::TO_PRECISION	stays	code a crate above registers at load
 native/crates/facts_base/src/code_rule_dsl/text.rs::NAMES	stays	counter names leaked once each (`&'static str`), from the engine's own text productions: an append-only interner of the engine's names
+native/crates/facts_base/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: its test binary registers the store)
 native/crates/forte/src/code_rule_dsl/blade/forte/directives/mod.rs::DEFAULTS	stays	computed once from the engine's constants
 native/crates/json_rules/src/code_rule_dsl/logic/json_rules/translate.rs::E	stays	a constant
 native/crates/kotlin_lean/src/lex.rs::BIN	stays	a byte class of a literal
@@ -187,7 +189,7 @@ native/crates/lang_python/src/code_rule_dsl/scope/python.rs::PYTHON	stays	comput
 native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT	stays	a regex of a literal
 native/crates/lang_python/src/code_rule_dsl/suppress/nosec.rs::NOSEC_COMMENT_TESTS	stays	a regex of a literal
 native/crates/lang_python/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
-native/crates/lang_sql/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
+native/crates/lang_sql/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: SQL's language pack registered, as every language crate's)
 native/crates/lean_tapes/src/code_rule_dsl/tape/ecma_lean.rs::JAVASCRIPT	stays	code registered at load
 native/crates/lean_tapes/src/code_rule_dsl/tape/ecma_lean.rs::TSX	stays	code registered at load
 native/crates/lean_tapes/src/code_rule_dsl/tape/ecma_lean.rs::TYPESCRIPT	stays	code registered at load
@@ -406,5 +408,5 @@ native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)
 native/src/lib.rs::ONCE	stays	a hook registered once
 native/src/lib.rs::SQLITE_ALLOCATOR	stays	code registered at load
 native/src/model.rs::SHARED_MODELS	shared	the loaded embedding models: shared by design
-native/src/os_warning.rs::ONCE	stays	the warning written once a process
+native/src/os_warning.rs::ONCE	stays	the macOS allocator warning written once a process (a message, no data)
 native/src/process.rs::LAUNCHED	stays	this process's children's handles (Windows): an OS object of the process

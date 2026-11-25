@@ -778,22 +778,22 @@ impl Source for Layered {
     /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too, so a host file's
     /// key names its guests' parts as well: the first of them that holds the node answers. The base is asked, then
     /// each part that holds `n`'s key, where they lie: no list of them is made.
-    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
-        if let Some(v) = self.base.node_read(name, n) {
+    fn node_read(&self, name: &str, n: i64, more: &[i64]) -> Option<rusqlite::types::Value> {
+        if let Some(v) = self.base.node_read(name, n, more) {
             return Some(v);
         }
         let parts = self.values.parts.load();
         let p = parts.get(self.name.as_str())?;
-        p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n))
+        p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more))
     }
     /// `node_read`, the base's text lent; a part's is made (the parts are read under their list's guard).
-    fn node_read_ref(&self, name: &str, n: i64) -> Option<super::super::NodeRead<'_>> {
-        if let Some(v) = self.base.node_read_ref(name, n) {
+    fn node_read_ref(&self, name: &str, n: i64, more: &[i64]) -> Option<super::super::NodeRead<'_>> {
+        if let Some(v) = self.base.node_read_ref(name, n, more) {
             return Some(v);
         }
         let parts = self.values.parts.load();
         let p = parts.get(self.name.as_str())?;
-        p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n)).map(super::super::NodeRead::Value)
+        p.by_key.parts((n >> 32) as u32, p.list.len()).find_map(|i| p.list[i].src.node_read(name, n, more)).map(super::super::NodeRead::Value)
     }
     fn as_any(&self) -> Option<&dyn std::any::Any> {
         Some(self)
@@ -962,6 +962,35 @@ impl Source for Layered {
             })
         }
         true
+    }
+    /// The base's test; where the relation has parts that may hold the value, `None` (the matches are read).
+    fn test_at(&self, column: usize, value: i64, columns: &[usize], want: &[i64], cursor: &mut super::super::ProbeCursor) -> Option<bool> {
+        if self.values.admitted.load(Ordering::Acquire) == 0 {
+            return self.base.test_at(column, value, columns, want, cursor);
+        }
+        let all = self.values.parts.load();
+        let Some(p) = all.get(self.name.as_str()).filter(|p| p.total > 0) else {
+            return self.base.test_at(column, value, columns, want, cursor);
+        };
+        if self.made.is_some() {
+            return None;
+        }
+        if self.base.test_at(column, value, columns, want, cursor)? {
+            return Some(true);
+        }
+        // Each part that may hold the value, read as `lookup_read_at` reads it (a value's rows are few).
+        let mut found = false;
+        p.of(value, self.base.keys_documents(column), &mut |part| {
+            if found {
+                return;
+            }
+            let mut each = |_: usize, got: &[i64]| found |= got == want;
+            if !part.src.lookup_read(column, value, columns, &mut each) {
+                let rows = part.src.lookup(column, &[value]).unwrap_or_else(|| (0..part.src.len()).filter(|&r| part.src.value(r, column) == value).collect());
+                found = rows.into_iter().any(|r| columns.iter().zip(want).all(|(&c, &w)| part.src.value(r, c) == w));
+            }
+        });
+        Some(found)
     }
     fn keys_documents(&self, column: usize) -> bool {
         self.base.keys_documents(column)
