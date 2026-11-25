@@ -285,10 +285,51 @@ describe("the engine's Git installation learnt without blocking", () => {
     expect(told).toEqual([expect.stringContaining("Git did not say which system config file it reads (Git did not answer in time)")]);
   });
 
-  it("never fails, and makes nothing, where Git is missing", async () => {
-    const { learnGitAccess, standingGitAccess, asks } = await freshGitAccess();
+  it("takes a missing Git as Git's answer in a daemon: one ask, one notice, and every read after takes that owner", async () => {
+    const { askGitWithoutBlocking, gitAsksEnded, nativeGitAccess: read, standingGitAccess, asks } = await freshGitAccess();
     asks.mockRejectedValue(new GitUnavailableError(["git"]));
-    await expect(learnGitAccess()).resolves.toBeUndefined();
-    expect(standingGitAccess()).toBeUndefined();
+    const daemon = new AbortController();
+    try {
+      const told = await stderrOf(async () => {
+        askGitWithoutBlocking(daemon.signal);
+        await gitAsksEnded();
+        // Each read in its own turn, after any ask it started has ended.
+        for (let reads = 0; reads < 3; reads += 1) {
+          expect(read()).toBe(standingGitAccess());
+          await gitAsksEnded();
+        }
+      });
+      expect({ asks: asks.mock.calls.length, system: standingGitAccess()?.systemConfig, told }).toEqual({
+        asks: 1,
+        system: null,
+        told: [expect.stringContaining("Git did not say which system config file it reads (Git is not installed where Rerail looks for it: git)")],
+      });
+    } finally {
+      daemon.abort();
+    }
+  });
+
+  it("says why an ask failed other than for no Git, and in a daemon asks again once it is due, never at each read", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { askGitWithoutBlocking, gitAsksEnded, nativeGitAccess: read, asks } = await freshGitAccess();
+    asks.mockRejectedValue(new Error("a fault in the call"));
+    const daemon = new AbortController();
+    try {
+      const told = await stderrOf(async () => {
+        askGitWithoutBlocking(daemon.signal);
+        await gitAsksEnded();
+        for (let reads = 0; reads < 3; reads += 1) {
+          expect(read().systemConfig).toBeNull();
+          await gitAsksEnded();
+        }
+        expect(asks).toHaveBeenCalledTimes(1);
+        vi.setSystemTime(Date.now() + GIT_ASK_AGAIN_MS);
+        read();
+        await gitAsksEnded();
+      });
+      expect({ asks: asks.mock.calls.length, told }).toEqual({ asks: 2, told: Array.from({ length: 2 }, () => "rerail: could not learn which config files Rerail's Git reads: a fault in the call\n") });
+    } finally {
+      daemon.abort();
+    }
   });
 });

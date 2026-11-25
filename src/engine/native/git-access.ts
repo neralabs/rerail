@@ -49,11 +49,17 @@ export function readGitInstallation(run: typeof runGit = runGit): GitInstallatio
 
 /**
  * {@link readGitInstallation} with its two asks run as Git processes no thread waits on, one after the other; undefined
- * once `options.signal` is aborted, whose asks did not run to their end. Rejects where Git is missing.
+ * once `options.signal` is aborted, whose asks did not run to their end. Where Git is missing it reports so, settled, as
+ * {@link readGitInstallation} does.
  */
 async function readGitInstallationWithoutBlocking(options: GitReadOptions): Promise<GitInstallationReport | undefined> {
   const folder = tmpdir();
-  const system = await runGitAsync(folder, SYSTEM_ASK, { ...ASK, ...options });
+  let system: GitResult;
+  try {
+    system = await runGitAsync(folder, SYSTEM_ASK, { ...ASK, ...options });
+  } catch (error) {
+    return withoutGit(error);
+  }
   const listing = await runGitAsync(folder, LISTING_ASK, { ...ASK, ...options });
   return options.signal?.aborted === true ? undefined : installationReport(system, listing);
 }
@@ -198,11 +204,22 @@ const learning = new Map<"installation", SharedRead<void>>();
  * Makes the process's owner ({@link nativeGitAccess}) unless its answer stands, from asks run as Git processes no thread
  * waits on, so {@link standingGitAccess} gives it after. Callers meanwhile share one ask; where another caller's signal
  * stopped it, a caller whose own signal is live asks again, and a caller whose own signal is aborted returns without
- * waiting for it. It never fails: where no engine loads, Git is missing or `options.signal` is aborted, it makes nothing.
+ * waiting for it. Where Git is missing it makes the owner {@link readGitInstallation} makes there. It never fails: where
+ * `options.signal` is aborted it makes nothing, and any other failure is {@link askFailed}.
  */
 export async function learnGitAccess(options: GitReadOptions = {}): Promise<void> {
   if (standingGitAccess() !== undefined) return;
-  await sharedRead(learning, "installation", options, async () => await learnedGitAccess(options).catch(() => undefined));
+  await sharedRead(learning, "installation", options, async () => await learnedGitAccess(options).catch(askFailed));
+}
+
+/**
+ * An ask of Git's installation failed other than for no Git (no engine loads, the engine refused Git's answer): stderr,
+ * the daemon's log, says why, and an owner made takes the fallback as after an ask Git did not answer, so a read asks
+ * again only once {@link GIT_ASK_AGAIN_MS} has passed, not at each read. No fact says sooner that a new ask would answer.
+ */
+function askFailed(error: unknown): void {
+  process.stderr.write(`rerail: could not learn which config files Rerail's Git reads: ${error instanceof Error ? error.message : String(error)}\n`);
+  if (processOwner?.standing() === undefined) processOwner?.take({ installation: {}, settled: false });
 }
 
 /**
@@ -211,10 +228,10 @@ export async function learnGitAccess(options: GitReadOptions = {}): Promise<void
  */
 async function learnedGitAccess(options: GitReadOptions): Promise<void> {
   if (standingGitAccess() !== undefined) return;
-  const binding = loadNativeBinding();
+  // Made before the asks, so an ask that fails has an owner take the fallback ({@link askFailed}).
+  processOwner ??= gitAccessKeeper(loadNativeBinding(), Date.now);
   const report = await readGitInstallationWithoutBlocking(options);
   if (report === undefined) return;
-  processOwner ??= gitAccessKeeper(binding, Date.now);
   // A blocking ask that answered meanwhile stands: its owner stays, and the readers that opened under it.
   if (processOwner.standing() === undefined) processOwner.take(report);
 }
