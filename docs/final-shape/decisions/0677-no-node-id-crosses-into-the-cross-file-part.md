@@ -171,7 +171,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
    Class hierarchy (3a), class members and a Django model read by its symbol (3b): **done (2026-11-24)**, § Fix 3:
    built. A model's `Meta` options and managers (3c), and its hooks (3d): **done (2026-11-25)**, § Fix 3c: built,
-   § Fix 3d: built. Points-to, `plp_anycand` and `item_parts` remain.
+   § Fix 3d: built. Points-to, `plp_anycand` and `item_parts` remain. Points-to's design (values as symbols, its flows
+   a phase over terms, the call-graph readers over symbols in their own cross part) is note t55.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
