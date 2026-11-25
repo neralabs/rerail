@@ -7168,7 +7168,7 @@ fn run_observed_within(
                         kept_rows.push(row.clone());
                     }
                 }
-                exports.borrow_mut().install(rel, width, cone_rounds::of_rows(width, kept_rows.iter()));
+                exports.borrow_mut().install(rel, width, cone_rounds::of_rows(width, kept_rows.iter().map(|r| &r[..])));
             }
             crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0145)", || format!("{} documents loaded and taken back: no load the run's own rows ask for names them", gone.len()));
         }

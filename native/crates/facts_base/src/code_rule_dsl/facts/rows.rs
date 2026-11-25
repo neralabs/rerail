@@ -2011,8 +2011,8 @@ impl Part {
         if crate::code_rule_dsl::prof::on() {
             let from = if self.held.facts.is_shared() { "a shared" } else { "its own" };
             let bytes = 8 * k * (rows as usize + pre as usize);
-            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, bytes", self.life), bytes);
-            crate::code_rule_dsl::prof::count_named(format!("facts.moved for growth: from {from} block, {:?}, {k} columns, moves", self.life), 1);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("facts.moved for growth: from {from} block, {:?}, {k} columns, bytes", self.life), bytes);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("facts.moved for growth: from {from} block, {:?}, {k} columns, moves", self.life), 1);
         }
         // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
         moved.copy_from(self, 0, rows);
@@ -2128,8 +2128,8 @@ impl Part {
         // part alone holds the relation.
         let (raw, sealed) = unsafe { self.rel().rows.seal(&self.facts.block) };
         if raw > 0 && crate::code_rule_dsl::prof::on() {
-            crate::code_rule_dsl::prof::count_named(format!("{what}_raw_bytes"), raw);
-            crate::code_rule_dsl::prof::count_named(format!("{what}_bytes"), sealed);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("{what}_raw_bytes"), raw);
+            crate::code_rule_dsl::prof::count_named_args(format_args!("{what}_bytes"), sealed);
         }
     }
 

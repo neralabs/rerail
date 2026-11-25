@@ -349,10 +349,10 @@ fn matched(
         profile::decision("ast matcher wave lane", || (if run.metal { "metal" } else { "cpu" }).to_owned());
         if crate::code_rule_dsl::prof::on() {
             for (m, ns) in matchers.list.iter().zip(&run.roots_cpu) {
-                crate::code_rule_dsl::prof::count_named(format!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.roots_us.{}", m.rel), (*ns / 1000) as usize);
             }
             for (m, per) in matchers.list.iter().zip(&found) {
-                crate::code_rule_dsl::prof::count_named(format!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.roots_n.{}", m.rel), per.iter().map(BTreeSet::len).sum());
             }
         }
         if !run.limited.is_empty() {
@@ -431,7 +431,7 @@ fn matched(
             let found_n = found_rows.iter().map(Vec::len).sum::<usize>() / (1 + m.captures.len());
             // What the host's confirmation costs each relation: its roots, the rows kept and the pool's CPU.
             if crate::code_rule_dsl::prof::on() {
-                crate::code_rule_dsl::prof::count_named(format!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
+                crate::code_rule_dsl::prof::count_named_args(format_args!("wave.captures_us.{}", m.rel), (cpu / 1000) as usize);
                 profile::decision("ast captures by W at each root: roots, rows, captures, CPU ms", || {
                     format!("{}: {roots} roots, {} rows, {} captures, {:.1} ms", m.rel, found_n, m.captures.len(), cpu as f64 / 1e6)
                 });

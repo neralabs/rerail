@@ -4379,7 +4379,7 @@ impl Batch {
         // What each of the batch's relations holds (0353 step 3's row 7 is these rows): its bytes of values, by name.
         if crate::code_rule_dsl::logic::profile::on() {
             for (name, r) in &relations {
-                crate::code_rule_dsl::prof::count_named(format!("batch relation {name} (bytes of values)"), 8 * Source::len(r) * Source::columns(r).len());
+                crate::code_rule_dsl::prof::count_named_args(format_args!("batch relation {name} (bytes of values)"), 8 * Source::len(r) * Source::columns(r).len());
             }
         }
         let used = keeps.then(|| {

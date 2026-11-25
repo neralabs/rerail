@@ -2,7 +2,7 @@
 //! (shared with the engine's crates); here are the engine's memory readings.
 
 #[allow(unused_imports)]
-pub use rerail_prof::{Stage, count, count_named, on, report, stages, time};
+pub use rerail_prof::{Stage, count, count_named, count_named_args, on, report, stages, time};
 #[cfg(target_family = "wasm")]
 pub use rerail_prof::single_thread_cpu;
 #[cfg(windows)]
