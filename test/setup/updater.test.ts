@@ -80,6 +80,16 @@ describe("semantic version ordering", () => {
     expect(compareSemver("1.2.0", "1.2.0-beta.11")).toBe(1);
     expect(() => compareSemver("v1.2.0", "1.2.0")).toThrow("invalid semantic version");
   });
+
+  it("finds a newer release as the tray's update item asks, as the dashboard's isNewerVersion does", () => {
+    // The daemon's tray is handed `isNewer` as `compareSemver(latest, running) > 0` (cli/daemon-entry.ts).
+    const isNewer = (latest: string, running: string): boolean => compareSemver(latest, running) > 0;
+    expect(isNewer("0.2.3", "0.2.2")).toBe(true);
+    expect(isNewer("0.2.3", "0.2.3-next.1")).toBe(true);
+    expect(isNewer("0.2.3-next.2", "0.2.3-next.1")).toBe(true);
+    expect(isNewer("0.2.3", "0.2.3")).toBe(false);
+    expect(isNewer("0.2.3-next.1", "0.2.3")).toBe(false);
+  });
 });
 
 describe("managed launcher shims", () => {
