@@ -12,6 +12,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
+import { ENGINE_READER_ANSWER_MS, ENTRY_POINTS, PACKAGE_ROOT } from "../../src/engine/index.js";
 import type * as DaemonWaits from "../../src/runtime/daemon/daemon-waits.js";
 import {
   type DaemonHealth,
@@ -45,6 +46,7 @@ import {
   launchDetached,
   lookupDaemon,
   MACHINE_WITHOUT_ENGINE,
+  machineWithoutEngine,
   openDashboard,
   openInBrowser,
   OtherDaemonKeptError,
@@ -1823,19 +1825,19 @@ describe("a state file Windows left behind", () => {
   // earlier starts no process for it: neither the second Windows PowerShell costs nor one a policy blocks.
   // The uninstall stops the daemon on this machine as a process that loads no engine reads it: it deletes the engine's
   // folder next, and Windows keeps a loaded DLL from being deleted.
-  it("gives a process that must not load the engine a machine that reads a process's start without it", () => {
-    expect(MACHINE_WITHOUT_ENGINE.processStartedAt).toBe(processStartedAt);
+  it("gives a process that must not load the engine this machine's platform for its reads", () => {
+    expect(MACHINE_WITHOUT_ENGINE.platform).toBe(process.platform);
   });
 
-  // The uninstall ends such a daemon through Windows PowerShell, which on a cold or loaded machine takes seconds to start
-  // before it can end the process: it gets the stop's wait for a daemon to end, then the kill's wait for the exit.
-  it("ends a daemon whose engine has no proof through a Windows PowerShell that takes 6 s to end it", { timeout: 30_000 }, async () => {
-    const stateFile = join(home, DAEMON_STATE_FILE);
-    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
-    const bounds: unknown[] = [];
-    vi.mocked(childProcess.spawnSync).mockImplementationOnce(((_program: string, _args: readonly string[], options: childProcess.SpawnSyncOptions) => {
-      bounds.push(options.timeout);
-      return runSync(process.execPath, ["-e", "setTimeout(() => process.stdout.write('asked\\r\\nended\\r\\n'), 6_000)"], options);
+  /**
+   * The uninstall's machine ends a daemon whose engine has no proof (`endProcessStartedBy`) on `machine`, the rest of it
+   * `olderEngine`'s, whose pid runs until that end says `ended`. Each process the end starts is `spawnSync`'s, run by
+   * `start`, with its program, arguments and bound going to `starts`.
+   */
+  async function stopOlderOnUninstallMachine(start: (options: childProcess.SpawnSyncOptions, program: string) => childProcess.SpawnSyncReturns<string>, starts: unknown[]): Promise<StopDaemonResult> {
+    vi.mocked(childProcess.spawnSync).mockImplementation(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      starts.push({ program, args, timeout: options.timeout });
+      return start(options, program);
     }) as unknown as typeof childProcess.spawnSync);
     let running = true;
     const machine: DaemonMachine = {
@@ -1845,15 +1847,60 @@ describe("a state file Windows left behind", () => {
         return true;
       },
       endProcessStartedBy: (pid, startedAt, waitMs) => {
-        const end = MACHINE_WITHOUT_ENGINE.endProcessStartedBy(pid, startedAt, waitMs);
+        const end = machineWithoutEngine("win32").endProcessStartedBy(pid, startedAt, waitMs);
         running = end !== "ended";
         return end;
       },
     };
-    await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT })));
-    expect(await stopDaemon(home, machine)).toBe("stopped");
-    expect(bounds).toEqual([15_000]);
-    expect(existsSync(stateFile)).toBe(false);
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT })));
+    try {
+      return await stopDaemon(home, machine);
+    } finally {
+      vi.mocked(childProcess.spawnSync).mockReset();
+    }
+  }
+
+  // The uninstall ends such a daemon through the engine in a child Node process, which has exited before the uninstall
+  // deletes the engine's folder: the child gets the kill's wait for the exit on top of its own bound.
+  it("ends a daemon whose engine has no proof through the engine in a child process on the uninstall's machine", async () => {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    const starts: unknown[] = [];
+    const result = await stopOlderOnUninstallMachine(options => runSync(process.execPath, ["-e", "process.stdout.write('{\"end\":\"ended\"}\\n')"], { ...options, encoding: "utf8" }), starts);
+    expect(result).toBe("stopped");
+    const args = [join(PACKAGE_ROOT, ENTRY_POINTS.processReader), "end", String(DEAD_PID), String(OLDER_STARTED_AT), "5000"];
+    expect(starts).toEqual([{ program: process.execPath, args, timeout: ENGINE_READER_ANSWER_MS + 5_000 }]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
+  });
+
+  // A child ended at its bound may have ended the process or not: while its pid runs, the stop keeps the record and says
+  // that the read did not answer, apart from an end that could not open or read the process.
+  it("keeps the record and says the end did not answer when the uninstall's child never answers the end of a daemon whose engine has no proof", async () => {
+    const ended = Object.assign(new Error("spawnSync node ETIMEDOUT"), { code: "ETIMEDOUT" });
+    const starts: unknown[] = [];
+    const never = (): childProcess.SpawnSyncReturns<string> => ({ pid: 0, output: [null, "", ""], stdout: "", stderr: "", status: null, signal: "SIGTERM", error: ended });
+    await expect(stopOlderOnUninstallMachine(never, starts)).rejects.toThrow(
+      new RegExp(`read of when pid ${DEAD_PID}, which .+ names, started did not answer within 35 s, so Rerail could not tell whether it is this home's daemon, or whether it ended it\\. See its command line`, "u"),
+    );
+    expect(starts).toHaveLength(1);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(true);
+  });
+
+  // An install whose engine is missing or does not load must still be removable: the child then exits without an answer,
+  // and the end goes through Windows PowerShell as before, given the stop's 10 s for PowerShell's own start on top of
+  // the kill's wait for the exit, the wait the child was given.
+  it("ends a daemon whose engine has no proof through Windows PowerShell on the uninstall's machine when the child gives no answer", async () => {
+    const starts: unknown[] = [];
+    const exited = (stdout: string, status: number): childProcess.SpawnSyncReturns<string> => ({ pid: 1, output: [null, stdout, ""], stdout, stderr: "", status, signal: null });
+    const powerShell = /\\powershell\.exe$/iu;
+    const result = await stopOlderOnUninstallMachine((_options, program) => (powerShell.test(program) ? exited("asked\r\nended\r\n", 0) : exited("", 3)), starts);
+    expect(result).toBe("stopped");
+    const waitMs = 5_000;
+    const args = [join(PACKAGE_ROOT, ENTRY_POINTS.processReader), "end", String(DEAD_PID), String(OLDER_STARTED_AT), String(waitMs)];
+    expect(starts).toEqual([
+      { program: process.execPath, args, timeout: ENGINE_READER_ANSWER_MS + waitMs },
+      { program: expect.stringMatching(powerShell), args: expect.any(Array), timeout: 10_000 + waitMs },
+    ]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
   });
 
   it.runIf(process.platform === "win32")("finds a daemon whose engine has no proof on this machine, starting no process for it", async () => {
@@ -2429,7 +2476,7 @@ describe("a record whose live pid is not the home's daemon", () => {
     platform: NodeJS.Platform,
     signals: Array<string | number | undefined>,
     lockHeld: () => boolean | undefined,
-    started: () => number | undefined = () => undefined,
+    started: () => ReturnType<DaemonMachine["processStartedAt"]> = () => undefined,
   ): DaemonMachine {
     let running = true;
     return fakeMachine(platform, {
@@ -2586,6 +2633,17 @@ describe("a record whose live pid is not the home's daemon", () => {
     const reused = withHolderStarted(machineWith(platform, signals, () => true, anHourLater), holderRecordWritten() + 3_600_000);
     expect(await lookupDaemon(home, reused)).toEqual({ status: "absent", notDaemon: LIVE_PID });
     expect(signals).toEqual([]);
+  });
+
+  // A read of the recorded pid's start that did not answer leaves the lock's holder record to decide, as a read that
+  // gave nothing does.
+  it("removes the record when another live process wrote the home's holder record and the lock is held, though the recorded pid's start read did not answer", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    await holdHome(home, OTHER_PID);
+    await writeFile(stateFile, JSON.stringify(state("win32")));
+    const machine = withHolderStarted(machineWith("win32", [], () => true, () => "unanswered"), holderRecordWritten() - 1_000);
+    expect(await lookupDaemon(home, machine)).toEqual({ status: "absent", notDaemon: LIVE_PID });
+    expect(existsSync(stateFile)).toBe(false);
   });
 
   // The holder record was written an hour ago and the process its pid names started half an hour ago, so before now: it
@@ -3213,13 +3271,18 @@ describe("a record whose live pid is not the home's daemon", () => {
    * Stops the daemon a lookup found in `home`, which its start proves until its SIGTERM, which it outlives, as a busy one
    * on Linux does until its handler runs; its start cannot be read after that. The holder record beside the home's lock
    * names it, and the lock is asked of the files in `home` as Rerail asks it, or, with `heldUntilSignal`, is held until
-   * the SIGTERM and free after. Every signal sent goes to `sent`.
+   * the SIGTERM and free after. Every signal sent goes to `sent`. A read of its start after the SIGTERM gives `afterSignal`.
    */
-  const stopOutlivingDaemon = async (platform: NodeJS.Platform, sent: Array<string | number | undefined>, heldUntilSignal = false): Promise<StopDaemonResult> => {
+  const stopOutlivingDaemon = async (
+    platform: NodeJS.Platform,
+    sent: Array<string | number | undefined>,
+    heldUntilSignal = false,
+    afterSignal: ReturnType<DaemonMachine["processStartedAt"]> = undefined,
+  ): Promise<StopDaemonResult> => {
     const lock = await vi.importActual<typeof import("../../src/engine/native/home-daemon-lock.js")>("../../src/engine/native/home-daemon-lock.js");
     await holdHome(home, LIVE_PID);
     await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
-    const base = machineWith(platform, [], () => undefined, () => (sent.includes("SIGTERM") ? undefined : STARTED_AT - 500));
+    const base = machineWith(platform, [], () => undefined, () => (sent.includes("SIGTERM") ? afterSignal : STARTED_AT - 500));
     const { machine, undo } = clockOnEachLook({
       ...base,
       homeDaemonLockHeld: asked => (heldUntilSignal ? !sent.includes("SIGTERM") : lock.homeDaemonLockHeld(asked)),
@@ -3265,6 +3328,24 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopOutlivingDaemon(platform, sent, true)).toBe("stopped");
     expect(sent).toEqual(["SIGTERM", "SIGKILL"]);
     expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
+  });
+
+  // A read of the start that did not answer leaves the daemon open as a read that answered with nothing does: the lock
+  // that proved it when the stop began still decides, and the stop ends it as main does.
+  it("sends SIGTERM, then SIGKILL, when the daemon held the home's lock as the stop asked and the read of its start does not answer after it let go of it", async () => {
+    const sent: Array<string | number | undefined> = [];
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.lock"), "");
+    expect(await stopOutlivingDaemon("win32", sent, true, "unanswered")).toBe("stopped");
+    expect(sent).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  // With nothing else to decide, the stop sends no SIGKILL, keeps every record, and says that the read did not answer.
+  it("sends no SIGKILL, keeps every record and says the read did not answer when the daemon outlives its SIGTERM and the read of its start does not answer", async () => {
+    const sent: Array<string | number | undefined> = [];
+    await expect(stopOutlivingDaemon("win32", sent, false, "unanswered")).rejects.toThrow(new RegExp(`read of when pid ${LIVE_PID}, which .+ names, started did not answer within 30 s`, "u"));
+    expect(sent).toEqual(["SIGTERM"]);
+    expect(JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8"))).toMatchObject({ pid: LIVE_PID });
   });
 
   // A PowerShell that never answers stands in for the start's read on Windows, and the proof is silent at once, so the
@@ -3369,6 +3450,95 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
     expect(JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8"))).toMatchObject({ pid: LIVE_PID });
     expect(reads.map(({ boundMs }) => boundMs)).toEqual([10_000, 10_000]);
+  });
+
+  /** A process start a case answers for: its program, its arguments, and the bound it was given. */
+  interface Start {
+    program: string;
+    args: string[];
+    timeout: number;
+  }
+
+  /** What `spawnSync` gives for a process that printed `stdout` and exited with `status`. */
+  const exited = (stdout: string, status = 0): childProcess.SpawnSyncReturns<string> => ({ pid: 1, output: [null, stdout, ""], stdout, stderr: "", status, signal: null });
+  /** What `spawnSync` gives for a process it ended at its bound: it never answered. */
+  const neverAnswered = (program: string): childProcess.SpawnSyncReturns<string> => ({
+    pid: 0, output: [null, "", ""], stdout: "", stderr: "", status: null, signal: "SIGTERM",
+    error: Object.assign(new Error(`spawnSync ${program} ETIMEDOUT`), { code: "ETIMEDOUT" }),
+  });
+  const isPowerShell = (program: string): boolean => /\\powershell\.exe$/iu.test(program);
+  /** The start the process reader's child prints for `LIVE_PID`: before the record, so the record's daemon. */
+  const readerStart = (): childProcess.SpawnSyncReturns<string> => exited(`${JSON.stringify({ startedAt: STARTED_AT - 500 })}\n`);
+
+  /**
+   * Stops the busy daemon `LIVE_PID` names, which the home's lock does not prove, on the uninstall's machine for Windows
+   * (`machineWithoutEngine`), the rest of it this file's stand-ins. Each process a read starts, the process reader's Node
+   * or Windows PowerShell, gets what `answer` gives for its program, and goes to `starts`.
+   */
+  async function stopOnUninstallMachine(answer: (program: string) => childProcess.SpawnSyncReturns<string>, signals: Array<string | number | undefined>, starts: Start[]): Promise<StopDaemonResult> {
+    vi.mocked(childProcess.spawnSync).mockImplementation(((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => {
+      starts.push({ program, args: [...args], timeout: Number(options.timeout) });
+      return answer(program);
+    }) as unknown as typeof childProcess.spawnSync);
+    try {
+      await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state("win32")));
+      const { processStartedAt: read, endProcessStartedBy: end } = machineWithoutEngine("win32");
+      return await stopDaemon(home, { ...machineWith("win32", signals, () => undefined), processStartedAt: read, endProcessStartedBy: end });
+    } finally {
+      vi.mocked(childProcess.spawnSync).mockReset();
+    }
+  }
+
+  // The uninstall reads the daemon's start through the engine in a child Node process, so a Windows PowerShell that never
+  // answers, as on a machine too busy to start it within the stop's 10 s, plays no part in the verdict.
+  it("stops a busy daemon the home's lock does not prove on the uninstall's machine while Windows PowerShell never answers", async () => {
+    const signals: Array<string | number | undefined> = [];
+    const starts: Start[] = [];
+    expect(await stopOnUninstallMachine(program => (isPowerShell(program) ? neverAnswered(program) : readerStart()), signals, starts)).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
+    // The lookup's read and the check's just before the SIGTERM, each the process reader's, with only its own bound.
+    const read: Start = { program: process.execPath, args: [join(PACKAGE_ROOT, ENTRY_POINTS.processReader), "start", String(LIVE_PID)], timeout: ENGINE_READER_ANSWER_MS };
+    expect(starts).toEqual([read, read]);
+  });
+
+  // A child ended at its bound read nothing, as a PowerShell ended at its bound did, but the stop says that the read did
+  // not answer, apart from a start that answered and proved nothing; and it does not take the child for one that could
+  // not read, so it starts no PowerShell after it.
+  it("ends nothing, keeps the record and says the read of its start did not answer when the uninstall's child never answers", async () => {
+    const signals: Array<string | number | undefined> = [];
+    const starts: Start[] = [];
+    await expect(stopOnUninstallMachine(neverAnswered, signals, starts)).rejects.toThrow(new RegExp(
+      `^Rerail's read of when pid ${LIVE_PID}, which .+ names, started did not answer within 30 s, so Rerail could not tell whether it is this home's daemon and ended nothing\\. See its command line`,
+      "u",
+    ));
+    expect(signals).toEqual([]);
+    expect(JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8"))).toMatchObject({ pid: LIVE_PID });
+    expect(starts.map(({ program }) => program)).toEqual([process.execPath, process.execPath]);
+  });
+
+  // An install whose engine is missing or does not load must still be removable: the child then exits without an answer,
+  // and the read goes through Windows PowerShell as before, within what is left of the stop's 10 s. Each child takes
+  // 4 s of the case's clock before it exits, so each PowerShell read gets the 6 s left.
+  it("reads the start through Windows PowerShell on the uninstall's machine when the child gives no answer, as when the engine does not load", async () => {
+    const signals: Array<string | number | undefined> = [];
+    const starts: Start[] = [];
+    const filetime = String((BigInt(STARTED_AT - 500) + 11_644_473_600_000n) * 10_000n);
+    const childMs = 4_000;
+    const answer = (program: string): childProcess.SpawnSyncReturns<string> => {
+      if (isPowerShell(program)) return exited(`${filetime}\r\n`);
+      vi.setSystemTime(Date.now() + childMs);
+      return exited("", 3);
+    };
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      expect(await stopOnUninstallMachine(answer, signals, starts)).toBe("stopped");
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(starts.map(({ program }) => (isPowerShell(program) ? "powershell" : "reader"))).toEqual(["reader", "powershell", "reader", "powershell"]);
+    expect(starts.filter(({ program }) => isPowerShell(program)).map(({ timeout }) => timeout)).toEqual([10_000 - childMs, 10_000 - childMs]);
   });
 
   // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM. With no start read,
