@@ -236,21 +236,26 @@ Built as the user narrowed P§12 (above): two states, layers as storage.
   `Trace` holds only the block and its layers' offsets (bookkeeping of the operation graph).
 - **The state** is `View::full` of the last layer, read down the chain: `View` widened to n layers (`View::chained`;
   `Relation::live_down`, a row live when no layer from its own up killed it; `Read::live_word` the same a word at a
-  time; `ViewColumn` reads down the chain). An ordered scan and a probe of a chained view are not built: they refuse.
-  The old engine's views and forks read as before (a full relation, a base and delta, a fork with no kills).
+  time; `ViewColumn` reads down the chain). Its ordered scan is `View::layered` and its probe `View::layered_probe`:
+  each layer's own rows in order (a range of its sorted rows, or its index's bucket), live in the state, merged on the
+  sort column, the lower layer first on a tie. `ordered_iter` and `probe_iter`, the old engine's hot paths, are left
+  as they were and refuse a chain, naming these. The old engine's views and forks read as before.
 - **The change** is `View::bistate` of the last layer: 0678's `Bistate`, the one definition, before the state below and
   after the state with the layer. Its gone rows are the layer's `changed` ids, so it is read in its size;
   `is_identity` answers from the counts alone (no id flipped and no row of its own) before any row is read.
 - **`LayerW`** is `RelW` on the open layer: rows pushed, rows of the state killed.
 - **Freeze over a chain.** `freeze_in` of a continuation given its base finds a pushed row's duplicate in any layer
-  below (each layer's row index, or its sort range for an ordered one), live in the state below; a row killed and
+  below (each layer's row index, else its sort column's range, as the two-level freeze does: `find_index` finds only
+  bucketed indexes), live in the state below; a row killed and
   pushed again in one layer is brought back (its kill cancelled), so the change is the least one. Such a layer gets a
   row index too. A freeze with no base, or of a relation that is not a continuation, is unchanged.
 - **Partitions** on a column the trace names (the module, for P2), with the partition index on each layer. Beside each
   layer, `consolidate` writes `parts(part, digest, added, gone)`, the digest's move a sum of `row_digest` (no order
-  needed), and `gone(part, id)`, the layer's kills by partition, each frozen with an index on the partition: derived
-  facts written once where computed. `restrict(p)` reads partition `p`'s rows of the last change only, through those
-  indexes; `part_digest(p)` sums the layers' moves; `part_ids(p)` reads the state's rows in `p`.
+  needed), and `gone(part, id)`, the layer's kills by partition, each pushed in partition order so its freeze keeps
+  it sorted on the partition (a freeze keeps rows sorted on the column they arrive in order on: `gone` pushed in id
+  order stayed sorted on the id): derived facts written once where computed. `restrict(p)` reads partition `p`'s rows
+  of the last change through those indexes and says how many ids it touched (whole buckets and ranges);
+  `part_digest(p)` sums the layers' moves; `part_ids(p)` is `layered_probe` on the partition index.
 - **`consolidate`** is an operation (`delta_exec::trace::CONSOLIDATE`): one slot, the trace's block, read and written;
   params `ConsolidateP` (the layer's offsets, the sort and partition columns); its twin
   `rerail_delta_twins::trace::consolidate` calls blocks' `trace::consolidate` with a scratch of the call's own.
@@ -264,15 +269,20 @@ Checks (Relax, local):
   killed) and kills, 4 seeds unsorted and 3 sorted on the partition column; each round's state is the model set, its
   before the previous one, its change passes `bistate::check` (L1) and `is_least`. With the chain dedup turned off the
   three trace tests fail (tried, restored).
-- [x] A change restricted to a partition is that partition's added and gone ids, read through its indexes alone (the
-  ids it reads are the ids it returns; counted by `restrict`, not measured); its digest is its rows' digest.
+- [x] A change restricted to a partition is that partition's added and gone ids. On a trace sorted on its partition
+  it touches exactly those ids; on one that is not, its bucket's, and a small partition's change beside a big one
+  touches fewer than 10 ids of a layer of 102 (`a_small_partition_s_change_does_not_read_a_big_one`). Counted by
+  `restrict` itself: the Work counters are B3's. Its digest is its rows' digest. The count first showed `restrict`
+  scanning `gone` (an ordered index is not `find_index`'s, and `gone` stayed sorted on the id): both fixed.
+- [x] `layered` gives each live row once, in order on the sort column; `layered_probe` on the partition index gives
+  the partition's rows (`part_ids`, both the bucket and the ordered case).
 - [x] A round that changes nothing (nothing pushed, only rows held, a row killed and pushed again) is the identity by
   its counts, with no row of its own and no partition changed.
 - [x] `consolidate` runs as an operation on the trace's block, in place; a reader holding the block refuses its start.
 - [x] One `Bistate`, in `blocks`; no frontier API in the trace; its layers continue `Relation`s; no second trace or
   bistate in `delta_exec` or the twins (`check_delta_exec_shape.py` section `b2`; tried against a second `Bistate` and
   a `fork`: both named).
-- [x] blocks `--lib` 124/124 (its relation and bistate tests unchanged); delta_exec `--lib` 11/11.
+- [x] blocks `--lib` 125/125 (its relation and bistate tests unchanged); delta_exec `--lib` 11/11.
 
 ## Operations: the execution shape (2026-11-25, being designed)
 

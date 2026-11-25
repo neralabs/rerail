@@ -27,7 +27,7 @@ use crate::bistate::Bistate;
 use crate::relation::{RelW, Relation, Spec, View, freeze_in, leading, row_digest};
 use crate::scratch::Scratch;
 use crate::key_hash;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 /// The run's open layer: rows pushed, rows of the state killed (P§12's `LayerW`). `consolidate` freezes it.
@@ -51,14 +51,15 @@ pub struct Consolidate {
     pub partition: Option<u16>,
 }
 
-/// `parts`' columns: the partition, its digest's move, rows added, rows gone.
+/// `parts`' columns: the partition, its digest's move, rows added, rows gone. Sorted on the partition, so a
+/// partition's rows are one range (its index is that order).
 pub fn parts_spec() -> Spec {
-    Spec { widths: vec![8, 8, 4, 4], sort: None, indexes: vec![vec![0]], min_log: crate::rows::MIN_LOG }
+    Spec { widths: vec![8, 8, 4, 4], sort: Some(0), indexes: vec![vec![0]], min_log: crate::rows::MIN_LOG }
 }
 
-/// `gone`'s columns: the partition, the id killed.
+/// `gone`'s columns: the partition, the id killed. Sorted on the partition, as `parts`.
 pub fn gone_spec() -> Spec {
-    Spec { widths: vec![8, 4], sort: None, indexes: vec![vec![0]], min_log: crate::rows::MIN_LOG }
+    Spec { widths: vec![8, 4], sort: Some(0), indexes: vec![vec![0]], min_log: crate::rows::MIN_LOG }
 }
 
 /// The relation at `at` in `block`.
@@ -84,21 +85,28 @@ pub fn consolidate(block: &Block, c: &Consolidate, scratch: &Scratch) {
 
     let part = |id: u32| c.partition.map_or(0, |p| rel.get(id, p as usize));
     let digest = |id: u32| row_digest((0..a).map(|col| rel.get(id, col)));
-    let mut parts: HashMap<i64, (u64, u32, u32)> = HashMap::new();
+    // By partition, in its order: `parts` and `gone` are pushed in it, so their freeze keeps them sorted on it.
+    let mut parts: BTreeMap<i64, (u64, u32, u32)> = BTreeMap::new();
+    let mut gone: BTreeMap<i64, Vec<u32>> = BTreeMap::new();
     for id in rel.ids() {
         let e = parts.entry(part(id)).or_default();
         e.0 = e.0.wrapping_add(digest(id));
         e.1 += 1;
     }
-    let lock = Mutex::new(());
-    let (pr, gr) = (rel_at(block, c.layer.parts), rel_at(block, c.layer.gone));
-    let gw = RelW { block, rel: gr, lock: &lock };
     for &id in rel.changed.as_slice() {
         let p = part(id);
         let e = parts.entry(p).or_default();
         e.0 = e.0.wrapping_sub(digest(id));
         e.2 += 1;
-        gw.push(&[p, i64::from(id)]);
+        gone.entry(p).or_default().push(id);
+    }
+    let lock = Mutex::new(());
+    let (pr, gr) = (rel_at(block, c.layer.parts), rel_at(block, c.layer.gone));
+    let gw = RelW { block, rel: gr, lock: &lock };
+    for (p, ids) in gone {
+        for id in ids {
+            gw.push(&[p, i64::from(id)]);
+        }
     }
     let pw = RelW { block, rel: pr, lock: &lock };
     for (p, (d, added, gone)) in parts {
@@ -109,20 +117,25 @@ pub fn consolidate(block: &Block, c: &Consolidate, scratch: &Scratch) {
 }
 
 /// The ids of `rel`'s own rows whose column `col` is `v`, by its index on `col` (a range when it is the sort
-/// column's, else a bucket checked against `v`), or a scan of its own rows when it has none.
-fn own_with(rel: &Relation, col: u16, v: i64) -> Vec<u32> {
+/// column's, else a bucket checked against `v`), or a scan of its own rows when it has none; and how many ids it
+/// touched (the range, the whole bucket, or every own row).
+fn own_with(rel: &Relation, col: u16, v: i64) -> (Vec<u32>, usize) {
+    // An index on the sort column is that order (`find_index` finds only bucketed ones).
+    if rel.sort_col() == Some(col as usize) {
+        let r = leading(rel, &[col], &[v]);
+        return ((r.start + rel.base_rows..r.end + rel.base_rows).collect(), r.len());
+    }
     match rel.find_index(&[col], rel.rows.len()) {
-        Some(x) if rel.index_at(x).ordered == 1 => {
-            let r = leading(rel, &[col], &[v]);
-            (r.start + rel.base_rows..r.end + rel.base_rows).collect()
+        Some(x) => {
+            let g = rel.group(x, key_hash(&[v]));
+            (g.iter().copied().filter(|&id| rel.own(id, col as usize) == v).collect(), g.len())
         }
-        Some(x) => rel.group(x, key_hash(&[v])).iter().copied().filter(|&id| rel.own(id, col as usize) == v).collect(),
-        None => rel.ids().filter(|&id| rel.own(id, col as usize) == v).collect(),
+        None => (rel.ids().filter(|&id| rel.own(id, col as usize) == v).collect(), rel.rows.len() as usize),
     }
 }
 
 /// One partition's part of the last commit's change (`Trace::restrict`): its ids added and gone, and how many ids its
-/// reads touched.
+/// reads touched (whole buckets and ranges; every own row, were there no index).
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct PartChange {
     pub added: Vec<u32>,
@@ -224,7 +237,7 @@ impl Trace {
     pub fn part_digest(&self, p: i64) -> u64 {
         self.layers.iter().fold(0u64, |d, l| {
             let parts = rel_at(&self.block, l.parts);
-            own_with(parts, 0, p).into_iter().fold(d, |d, id| d.wrapping_add(parts.own(id, 1) as u64))
+            own_with(parts, 0, p).0.into_iter().fold(d, |d, id| d.wrapping_add(parts.own(id, 1) as u64))
         })
     }
 
@@ -234,18 +247,17 @@ impl Trace {
         let Some(l) = self.layers.last() else { return PartChange::default() };
         let (rows, gone) = (rel_at(&self.block, l.rows), rel_at(&self.block, l.gone));
         let pc = self.partition.expect("a partitioned trace");
-        let added = own_with(rows, pc, p);
-        let gone_ids: Vec<u32> = own_with(gone, 0, p).into_iter().map(|g| gone.own(g, 1) as u32).collect();
-        let read = added.len() + gone_ids.len();
-        PartChange { added, gone: gone_ids, read }
+        let (added, ra) = own_with(rows, pc, p);
+        let (gone_at, rg) = own_with(gone, 0, p);
+        PartChange { added, gone: gone_at.into_iter().map(|g| gone.own(g, 1) as u32).collect(), read: ra + rg }
     }
 
-    /// Partition `p`'s live ids in the committed state: each layer's own rows in `p`, by its partition index, live
-    /// in the state.
+    /// Partition `p`'s live ids in the committed state, in order: a probe of each layer's partition index (its first),
+    /// live in the state (`View::layered_probe`).
     pub fn part_ids(&self, p: i64) -> Vec<u32> {
-        let Some(top) = self.layers.last().map(|l| rel_at(&self.block, l.rows)) else { return Vec::new() };
-        let pc = self.partition.expect("a partitioned trace");
-        self.layers.iter().flat_map(|l| own_with(rel_at(&self.block, l.rows), pc, p)).filter(|&id| top.live_down(id)).collect()
+        assert!(self.partition.is_some(), "a partitioned trace");
+        let key = [p];
+        self.state().map(|s| s.layered_probe(0, &key).collect()).unwrap_or_default()
     }
 }
 
@@ -322,6 +334,16 @@ mod tests {
             assert_eq!(t.layers().len(), r + 1);
             let after = t.state().expect("committed");
             assert_eq!(rows_of(&after), flat, "round {r}: the state reads as the flat set");
+            let in_order: Vec<u32> = after.layered().collect();
+            let mut ids: Vec<u32> = after.live_ids().map(RowId::get).collect();
+            assert_eq!(in_order.len(), ids.len(), "round {r}: an ordered read gives each live row once");
+            if let Some(c) = sort {
+                assert!(in_order.windows(2).all(|w| after.get(w[0], c as usize) <= after.get(w[1], c as usize)), "round {r}: in order");
+            }
+            let mut sorted = in_order.clone();
+            sorted.sort_unstable();
+            ids.sort_unstable();
+            assert_eq!(sorted, ids, "round {r}: an ordered read gives the live rows");
             let change = t.change().expect("committed");
             assert_eq!(change.before().map(rows_of).unwrap_or_default(), before, "round {r}: before is the state it found");
             bistate::check(&change);
@@ -333,7 +355,13 @@ mod tests {
                 let want_gone: Vec<u32> = change.gone().filter(|id| change.before().expect("before").get(id.get(), 0) == p).map(RowId::get).collect();
                 let got = t.restrict(p);
                 assert_eq!((got.added, got.gone), (want_added.clone(), want_gone.clone()), "round {r}: partition {p}'s change");
-                assert_eq!(got.read, want_added.len() + want_gone.len(), "round {r}: partition {p}'s change reads its rows alone");
+                if sort == Some(0) {
+                    // Sorted on the partition: its rows are one range in each, and only they are read.
+                    assert_eq!(got.read, want_added.len() + want_gone.len(), "round {r}: partition {p}'s change reads its rows alone");
+                } else {
+                    // A bucket of the partition index: its rows, and any of a partition hashed with it.
+                    assert!(got.read >= want_added.len() + want_gone.len(), "round {r}: partition {p}'s bucket holds its rows");
+                }
                 let digest = flat.iter().filter(|x| x.0 == p).fold(0u64, |d, &(a, b)| d.wrapping_add(row_digest([a, b].into_iter())));
                 assert_eq!(t.part_digest(p), digest, "round {r}: partition {p}'s digest is its rows'");
                 let ids: BTreeSet<(i64, i64)> = t.part_ids(p).into_iter().map(|id| (after.get(id, 0), after.get(id, 1))).collect();
@@ -358,6 +386,25 @@ mod tests {
         for seed in [3, 11, 0xbeef] {
             random_chain(Some(0), seed);
         }
+    }
+
+    /// A change restricted to a small partition does not read a big one's rows: the partition index's bucket, not a
+    /// scan, on a trace not sorted on its partition.
+    #[test]
+    fn a_small_partition_s_change_does_not_read_a_big_one() {
+        let block = Arc::new(Block::anon(kind::FACTS, 16 << 20).with_free_list());
+        let mut t = Trace::new(block, vec![8, 8], None, Some(0));
+        let mut rows: Vec<(i64, i64)> = (0..200).map(|v| (0, v)).collect();
+        rows.extend([(1, 0), (1, 1)]);
+        round(&mut t, &rows, &[]);
+        let kill: Vec<u32> = (0..100).collect();
+        round(&mut t, &[(0, 500), (0, 501), (1, 2)], &kill);
+        let small = t.restrict(1);
+        assert_eq!((small.added.len(), small.gone.len()), (1, 0));
+        assert!(small.read < 10, "partition 1's change touched {} ids of a layer of 102", small.read);
+        let big = t.restrict(0);
+        assert_eq!((big.added.len(), big.gone.len()), (2, 100));
+        assert_eq!(big.read, 102, "partition 0's rows: its range in gone, its bucket in the layer");
     }
 
     /// A round that changes nothing (no row, only rows the state holds, a row killed and pushed again) is the

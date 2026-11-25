@@ -1371,13 +1371,15 @@ pub fn freeze_in(block: &Block, rel: &Relation, spec: &Spec, base: Option<&Relat
             for (c, k) in key.iter_mut().enumerate().take(a) {
                 *k = val(c, i);
             }
-            let found = match l.find_index(&every, l.rows.len()) {
-                Some(x) if l.index_at(x).ordered == 1 => {
-                    let r = leading(l, &every, &key[..a]);
+            // Its row index's bucket, else its sort column's range (an index on the sort column is that order, and
+            // `find_index` finds only bucketed ones), else its own rows.
+            let found = match (l.find_index(&every, l.rows.len()), l.sort_col()) {
+                (Some(x), _) => l.group(x, key_hash(&key[..a])).iter().copied().find(|&id| same(id) && live_before(id)),
+                (None, Some(c)) => {
+                    let r = leading(l, &[c as u16], &key[c..c + 1]);
                     (r.start + l.base_rows..r.end + l.base_rows).find(|&id| same(id) && live_before(id))
                 }
-                Some(x) => l.group(x, key_hash(&key[..a])).iter().copied().find(|&id| same(id) && live_before(id)),
-                None => l.ids().find(|&id| same(id) && live_before(id)),
+                (None, None) => l.ids().find(|&id| same(id) && live_before(id)),
             };
             if found.is_some() {
                 return found;
@@ -1683,7 +1685,7 @@ impl<'a> View<'a> {
     /// `ordered`, read in place: no allocation.
     pub fn ordered_iter(&self) -> impl Iterator<Item = u32> + '_ {
         assert!(self.top.is_frozen(), "an ordered read needs a frozen relation");
-        assert!(!self.chained(), "an ordered read of a trace's layers is not built yet");
+        assert!(!self.chained(), "a trace's layers are read in order by `layered`");
         let own = self.top.base_rows..self.top.base_rows + self.top.rows.len();
         let based = 0..self.base.map_or(0, |b| b.rows.len());
         Merge::new(self, based.filter(|&id| self.live(id)), own)
@@ -1707,7 +1709,7 @@ impl<'a> View<'a> {
 
     /// `probe`, read in place: both groups filtered and merged as they are walked, no allocation.
     pub fn probe_iter<'k>(&'k self, i: usize, key: &'k [i64]) -> Probe<'k> {
-        assert!(!self.chained(), "a probe of a trace's layers is not built yet");
+        assert!(!self.chained(), "a trace's layers are probed by `layered_probe`");
         let ix = self.top.index_at(i);
         let cols = &ix.key[..ix.ncols as usize];
         let (own, based, exact) = if ix.ordered == 1 {
@@ -1722,6 +1724,34 @@ impl<'a> View<'a> {
         let own0 = self.top.rows.reader(cols[0] as usize);
         let base0 = self.base.map_or(own0, |b| b.rows.reader(cols[0] as usize));
         Probe { v: *self, key, cols, own0, base0, exact, own, based, ha: None, hb: None, primed: false }
+    }
+
+    /// A trace's state (`chained`) read in order: each layer's own rows (sorted in place on the sort column) live in
+    /// the state, merged on it, the lower layer first on a tie (`ordered`'s order for n layers).
+    pub fn layered(&self) -> Layered<'a> {
+        Layered::new(*self, None, |l| Ids::Range(l.ids()))
+    }
+
+    /// A trace's state probed: the live rows whose index-`i` columns equal `key`, in `layered`'s order. Each layer's
+    /// rows come from its own index `i` (every layer of a trace has the same indexes): a range of its sorted rows for
+    /// an ordered one, else a bucket checked against the key.
+    pub fn layered_probe<'k>(&self, i: usize, key: &'k [i64]) -> Layered<'k>
+    where
+        'a: 'k,
+    {
+        let ix = self.top.index_at(i);
+        let cols: &'a [u16] = &ix.key[..ix.ncols as usize];
+        let exact = ix.ordered == 1;
+        Layered::new(*self, (!exact).then_some((cols, key)), move |l| {
+            let lx = l.index_at(i);
+            assert_eq!(&lx.key[..lx.ncols as usize], cols, "a trace's layers have the same indexes");
+            if exact {
+                let r = leading(l, cols, key);
+                Ids::Range(l.base_rows + r.start..l.base_rows + r.end)
+            } else {
+                Ids::Slice(l.group(i, key_hash(key)).iter())
+            }
+        })
     }
 
     /// A digest of the live rows: the same for the same set, whatever wrote it, in any order (a sum of each row's
@@ -1821,6 +1851,63 @@ impl Iterator for Probe<'_> {
             self.hb = self.next_own();
             y
         }
+    }
+}
+
+/// A trace's state read in order (`View::layered`, `View::layered_probe`): each layer's ids, live in the state and
+/// matching the key, merged on the sort column. A trace keeps about log n layers, so each step takes the least of
+/// their heads.
+pub struct Layered<'k> {
+    v: View<'k>,
+    /// A bucket's key: its columns and values, checked on each id.
+    key: Option<(&'k [u16], &'k [i64])>,
+    /// Each layer, bottom first: its ids, and its next one.
+    layers: Vec<(&'k Relation, Ids<'k>, Option<u32>)>,
+    primed: bool,
+}
+
+impl<'k> Layered<'k> {
+    fn new(v: View<'k>, key: Option<(&'k [u16], &'k [i64])>, ids: impl Fn(&'k Relation) -> Ids<'k>) -> Layered<'k> {
+        assert!(v.chained() || (v.base.is_none() && !v.top.continues()), "a trace's state, or one full relation");
+        assert!(v.top.is_frozen(), "an ordered read needs a frozen relation");
+        let mut layers = Vec::new();
+        let mut r = Some(v.top);
+        while let Some(l) = r {
+            layers.push((l, ids(l), None));
+            r = l.base();
+        }
+        layers.reverse();
+        Layered { v, key, layers, primed: false }
+    }
+
+    fn advance(&mut self, j: usize) {
+        let (top, key) = (self.v.top, self.key);
+        let (l, ids, head) = &mut self.layers[j];
+        *head = ids.find(|&id| top.live_down(id) && key.is_none_or(|(cols, k)| cols.iter().zip(k).all(|(&c, &v)| l.own(id, c as usize) == v)));
+    }
+}
+
+impl Iterator for Layered<'_> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<u32> {
+        if !self.primed {
+            self.primed = true;
+            for j in 0..self.layers.len() {
+                self.advance(j);
+            }
+        }
+        let mut best: Option<(usize, u32)> = None;
+        for (j, &(_, _, head)) in self.layers.iter().enumerate() {
+            if let Some(id) = head
+                && best.is_none_or(|(_, b)| self.v.cmp(id, b) == Ordering::Less)
+            {
+                best = Some((j, id));
+            }
+        }
+        let (j, id) = best?;
+        self.advance(j);
+        Some(id)
     }
 }
 
