@@ -107,9 +107,9 @@
         let gpu = cfg!(any(target_os = "macos", target_os = "linux", windows)) && ex(true).lanes().contains(&rerail_accel::Lane::Gpu);
         let mut runs = vec![(false, Some(rerail_accel::Lane::Cpu)), (true, None)];
         if gpu {
-            // The set's kernels compile on a thread of their own (the cores run it meanwhile): the GPU's run is
-            // after.
-            #[cfg(target_os = "macos")]
+            // The set's kernels compile on a thread of their own, on every device (the cores run it meanwhile): the
+            // GPU's run is after.
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             {
                 let natives: Vec<&crate::code_rule_dsl::transducer::packed::native_ir::BlockNative> = filters.iter().map(|f| f.native()).collect();
                 compiled(&natives);
