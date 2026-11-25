@@ -39,8 +39,8 @@ default_component(d, f) :- default_export(d, f), (kind(f, "function_declaration"
 default_component(d, c) :- default_export(d, k), (kind(k, "class_declaration") ; kind(k, "class")),
     default_import(d, "next/document", x), class_kind(c), superclass(c, x), docof(c, d).
 // export default Doc / export default withX(Doc): the first token names it (the plugin's token scan).
-default_component(d, c) :- default_export(d, v), !declared(v), match("(?<x>[A-Za-z_$][A-Za-z0-9_$]*).*", v),
-    named_decl(c, x), docof(c, d).
+default_component(d, c) :- default_export(d, v), !declared(v), text(v, t),
+    match("(?<x>[A-Za-z_$][A-Za-z0-9_$]*).*", t), named_decl(c, x), docof(c, d).
 .decl default_export(d: number, v: node)  // `export default v`
 default_export(d, v) :- kind(e, "export_statement"), op(e, "default"), (field(e, "declaration", v) ; field(e, "value", v)),
     docof(e, d).

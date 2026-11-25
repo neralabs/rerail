@@ -20,9 +20,12 @@ key_of("using", "using"). key_of("await using", "awaitUsing").
 class_of("initialized"). class_of("uninitialized").
 // mode(k, c, m): kind k's declarators of class c are checked in mode m; c = "all" when both classes have m.
 .decl mode(k: symbol, c: symbol, m: symbol)
-// The string form, ["error", "never"], sets every kind and class. No options at all means "always".
+// The string form, ["error", "never"], sets every kind and class. None of the rule's options means "always" (the
+// engine adds options of its own, `dialect` and `reuse`, so "no option at all" never holds).
 mode(k, c, m)        :- key_of(k, _), class_of(c), option("option", m).
-mode(k, c, "always") :- key_of(k, _), class_of(c), !option(_, _).
+mode(k, c, "always") :- key_of(k, _), class_of(c), count : { own_option(n), option(n, _) } = 0.
+.decl own_option(n: symbol)
+own_option("option"). own_option("separateRequires"). own_option(c) :- class_of(c). own_option(key) :- key_of(_, key).
 // The object form: { var: "never" } sets both of var's classes; { initialized: "never" } sets that class for
 // every kind, over the kind's own setting. A kind the object leaves out is not checked.
 mode(k, c, m)        :- key_of(k, key), option(key, m), class_of(c), !option(c, _).
@@ -74,19 +77,55 @@ claims(e, "initialized")   :- declarator(e, v, _), initialized(v), !apart(v), de
 claims(e, "require")       :- declarator(e, v, _), apart(v), decl(e, k), mode(k, "initialized", "always").
 .decl apart(v: node)
 apart(v) :- require_call(v), option("separateRequires", "true").
-.decl same(d: node, e: node, k: symbol)  // d and e declare kind k in one scope
-same(d, e, k) :- decl(d, k), decl_scope(d, s), decl(e, k), decl_scope(e, s), d != e.
 // crowded(d): an earlier declaration e already holds d's place, so d should join it (ESLint's hasOnlyOneStatement
 // is false). Only an e that was not crowded itself claims anything: ESLint records a declaration's classes only
-// when it passes. Hence `ordered by earlier`: crowded at d reads crowded at earlier e.
-.decl crowded(d: node) ordered by earlier
-// Both classes always: any claim but a require, unless d has a require (requires may stand alone).
-crowded(d) :- same(d, e, k), earlier(e, d), !crowded(e), mode(k, "all", "always"), claims(e, c), c != "require",
-    !requires(d).
-crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), declares(d, "uninitialized"), claims(e, "uninitialized").
-crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), declares(d, "initialized"), claims(e, "initialized"),
-    !requires(d).
-crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), requires(d), claims(e, "require").
+// when it passes. So d is crowded when a class it conflicts with was claimed, in its scope and kind, before it.
+//
+// The claims made so far only grow, over three classes, and a declaration passes or not by them alone. So the
+// claiming declarations are found in rounds, without reading crowded back (ESLint's walk, unrolled; check-rr does
+// not lower `ordered by earlier` on a relation used under `!`): round 1's is the group's first declaration that
+// claims anything; round n+1's, the first one after round n's that no claim so far crowds and that claims a class
+// not yet claimed. Each round claims a class more, so three rounds claim every class there is.
+.decl group(d: node, s: node, k: symbol)  // declaration d of kind k in scope s
+group(d, s, k) :- decl(d, k), decl_scope(d, s).
+// conflict(d, c): an earlier claim of c crowds d. Both classes always: any claim but a require, unless d has a
+// require (requires may stand alone).
+.decl conflict(d: node, c: symbol)
+conflict(d, c) :- decl(d, k), mode(k, "all", "always"), !requires(d), (c = "uninitialized" ; c = "initialized").
+conflict(d, "uninitialized") :- declares(d, "uninitialized").
+conflict(d, "initialized") :- declares(d, "initialized"), !requires(d).
+conflict(d, "require") :- requires(d).
+// at(d, o): d starts at byte o; the order "first" and "after" read (visit_index has rows for Python only).
+.decl at(d: node, o: number)
+at(d, o) :- group(d, _, _), node(_, d, _, o, _).
+.decl first1(s: node, k: symbol, e: node)
+first1(s, k, e) :- group(_, s, k), o = min j : { group(x, s, k), claims(x, _), at(x, j) }, group(e, s, k), at(e, o).
+.decl claim1(s: node, k: symbol, c: symbol, e: node)
+claim1(s, k, c, e) :- first1(s, k, e), claims(e, c).
+.decl has1(s: node, k: symbol, c: symbol)
+has1(s, k, c) :- claim1(s, k, c, _).
+.decl hit1(d: node)
+hit1(d) :- group(d, s, k), conflict(d, c), has1(s, k, c).
+.decl next2(s: node, k: symbol, d: node)
+next2(s, k, d) :- first1(s, k, e), at(e, a), group(d, s, k), at(d, b), a < b, !hit1(d), claims(d, c), !has1(s, k, c).
+.decl first2(s: node, k: symbol, e: node)
+first2(s, k, e) :- next2(s, k, _), o = min j : { next2(s, k, x), at(x, j) }, next2(s, k, e), at(e, o).
+.decl claim2(s: node, k: symbol, c: symbol, e: node)
+claim2(s, k, c, e) :- claim1(s, k, c, e).
+claim2(s, k, c, e) :- first2(s, k, e), claims(e, c), !has1(s, k, c).
+.decl has2(s: node, k: symbol, c: symbol)
+has2(s, k, c) :- claim2(s, k, c, _).
+.decl hit2(d: node)
+hit2(d) :- group(d, s, k), conflict(d, c), has2(s, k, c).
+.decl next3(s: node, k: symbol, d: node)
+next3(s, k, d) :- first2(s, k, e), at(e, a), group(d, s, k), at(d, b), a < b, !hit2(d), claims(d, c), !has2(s, k, c).
+.decl first3(s: node, k: symbol, e: node)
+first3(s, k, e) :- next3(s, k, _), o = min j : { next3(s, k, x), at(x, j) }, next3(s, k, e), at(e, o).
+.decl claim3(s: node, k: symbol, c: symbol, e: node)
+claim3(s, k, c, e) :- claim2(s, k, c, e).
+claim3(s, k, c, e) :- first3(s, k, e), claims(e, c), !has2(s, k, c).
+.decl crowded(d: node)
+crowded(d) :- group(d, s, k), conflict(d, c), claim3(s, k, c, e), at(e, a), at(d, b), a < b.
 // Reported as "combine" when both classes are always, else by d's classes in always mode. A for head's
 // variable is not reported for "uninitialized" alone.
 COMBINE(t, k, "all") :- crowded(d), decl(d, k), keyword(d, t), mode(k, "all", "always").

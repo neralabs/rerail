@@ -1,0 +1,36 @@
+.policy "complexity-cyclomatic-java" revision 2
+.description "Keep Java methods and constructors to 6 or fewer paths (cyclomatic complexity), counting each if, for, while, catch, switch, ternary and && or ||, so they stay easy to read and test."
+.language java
+.mode steer
+.scope include "**/*.java"
+.scope exclude "**/generated/**", "**/generated-sources/**", "**/generated-test-sources/**", "**/generated-src/**", "**/src/test/**", "**/src/*Test/**", "**/src/testFixtures/**", "**/*Test.java", "**/*Tests.java", "**/*TestCase.java", "**/*IT.java", "**/*ITCase.java"
+
+#include "complexity/cyclomatic.rerail"
+//   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
+
+// The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, for, for-each, while, do, catch, ternary,
+// && and ||, and a switch once when it has a `case` (only `default`: 0). A method, constructor or record's compact
+// constructor is scored on its own, a method of an anonymous or local class too; a lambda's conditions count toward
+// the method around it. Reported over the method:
+//   int grade(int s) { if (a) {…} else if (b && c) {…} for (…) {…} while (…) {…} return d ? 1 : 2; }
+//   -> `grade` has cyclomatic complexity 7, over the ceiling of 6.
+// A method without a body (abstract, an interface's) scores 1 and is never reported. Code in an initializer block or
+// a field's initializer belongs to no method and counts nowhere.
+.violation complexity(at: node, msg: symbol) code "CYCLOMATIC_COMPLEXITY" "{msg}"
+complexity(f, msg) :- cc_report(f, msg).
+
+cc_boundary("method_declaration"). cc_boundary("constructor_declaration").
+cc_boundary("compact_constructor_declaration").
+
+cc_decision(n, 0) :- kind(n, k), cc_java_statement(k).
+cc_decision(n, 0) :- kind(n, "binary_expression"), (op(n, "&&") ; op(n, "||")).
+// switch (x) { case 1: … default: … } and case 1 -> …: once, as a statement or an expression.
+cc_decision(n, 0) :- kind(n, "switch_expression"), child(n, b, _), kind(b, "switch_block"), child(b, g, _),
+    (kind(g, "switch_block_statement_group") ; kind(g, "switch_rule")), child(g, l, _), kind(l, "switch_label"),
+    text(l, t), prefix("case", t).
+.decl cc_java_statement(k: symbol)
+cc_java_statement("if_statement"). cc_java_statement("for_statement"). cc_java_statement("enhanced_for_statement").
+cc_java_statement("while_statement"). cc_java_statement("do_statement"). cc_java_statement("catch_clause").
+cc_java_statement("ternary_expression").
+
+cc_name(f, x) :- cc_boundary(k), kind(f, k), field(f, "name", n), text(n, x).
