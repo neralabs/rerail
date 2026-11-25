@@ -124,18 +124,19 @@ jobs:
       provider: bedrock
       model: ${{ vars.REVIEWER_MODEL }}
       aws_region: us-east-1
-      # Rerail module (trial): beside the review, a Rerail scan checks the pull request against this repo's own
-      # rule pack (packs/rerail, taken from the base branch only and approved there) and the complexity rule pack,
-      # with the rules from the base branch, and marks each violation new or existing. A separate rules pass
-      # recommends which new violations to post; a new violation of a steer rule can be a blocker that names its
-      # rule. The review itself never sees the scan. Rerail is the published npm release; the scan result is sent
-      # to the Rerail remote (send_results), in a job that holds only the remote's URL and token. To turn it off,
-      # remove these five inputs and the two RESULTS_SINK secrets. The two pack inputs stay until the Rerail here
-      # reads .rerail/packs.json (neralabs/rerail#736, after 0.1.5): left empty before that, only .rerail/rules/ runs.
+      # Rerail module (trial): beside the review, a Rerail scan checks the pull request against the packs this repo
+      # lists in .rerail/packs.json (the complexity pack, at the options its entry sets, and its own packs/rerail),
+      # read from the base branch only, so a pull request can't change the rules it is judged by; packs/rerail is
+      # approved there. It marks each violation new or existing. A separate rules pass recommends which new
+      # violations to post; a new violation of a steer rule can be a blocker that names its rule. The review itself
+      # never sees the scan. The scan result is sent to the Rerail remote (send_results), in a job that holds only
+      # the remote's URL and token. To turn it off, remove these three inputs and the two RESULTS_SINK secrets.
+      # rerail_package: the published Rerail to scan with. 0.2.0 is the first that reads .rerail/packs.json and a
+      # pack's config; 0.2.1 is the current release. The reviewer's own default still pins 0.1.5, which reads neither
+      # and would run no packs here. Drop this input once the reviewer pins 0.2.0 or later. No rerail_packs or
+      # rerail_repo_packs: either would replace the file's packs.
       modules: rerail
-      rerail_package: "@neralabs/rerail@0.1.5"
-      rerail_packs: complexity
-      rerail_repo_packs: packs/rerail
+      rerail_package: "@neralabs/rerail@0.2.1"
       send_results: true
     # Named, not `secrets: inherit`: the reviewer gets these and nothing else this repo can see.
     secrets:

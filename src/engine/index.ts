@@ -124,7 +124,7 @@ export { LOCKS_DIR } from "./native/file-lock.js";
 export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
-export { endProcessStartedByPowerShell, processStartedAt } from "./process-liveness.js";
+export { endProcessStartedByPowerShell, ENGINE_READER_ANSWER_MS, processStartedAt } from "./process-liveness.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
 export { leaveUntaken, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, UNTAKEN_WATCH_MARK, untakenFolderId, type UntakenPass } from "./storage/untaken-events.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
