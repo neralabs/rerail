@@ -1,0 +1,157 @@
+.policy "react-practice-then-without-stale-guard" revision 2
+.description "Ignore stale results when an effect with dependencies writes a .then result to state; an earlier, slower response can overwrite the state of the latest run."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+
+// A React practice rule (no upstream linter). An effect that requests with a dependency and writes the `.then`
+// result to state races itself: when the dependency changes, an earlier, slower response lands last.
+//   useEffect(() => { load(id).then(setUser); }, [id]);                             reported, at the .then call
+//   useEffect(() => { load(id).then((u) => setUser(u.data)); }, [id]);             reported
+//   useEffect(() => { let ignore = false; load(id).then((u) => { if (!ignore) setUser(u); });
+//     return () => { ignore = true; }; }, [id]);                                     not: the documented guard
+//   load(id, { signal }) with `return () => controller.abort()`                       not: aborted
+//   if (cancelled.current) return; … ref.current = true                               not: a ref guard
+//   if (!user) load(id).then(setUser)  or  deps [id, user]                            not: reads its own state
+//   setCache((c) => ({ ...c, [id]: r }))                                              not: keyed by the dependency
+// The request is some call in the promise expression whose argument reads a dependency of the effect (directly,
+// or through an effect-local variable computed from one); `Promise.resolve(…)` is none, and in a chain only a
+// `.then` with no state-writing `.then` inside its receiver counts. A setter is useState's or useReducer's second
+// element, or a name bound to one.
+#include "tsx/react-practice-b.rerail"
+
+rp_hook_ask("useEffect"). rp_hook_ask("useLayoutEffect"). rp_hook_ask("useState"). rp_hook_ask("useReducer").
+
+.violation stale(at: node, s: symbol) code "THEN_WITHOUT_STALE_GUARD"
+    "Ignore stale results: add let ignore = false to this effect, return () => {{ ignore = true }}, and in this .then call {s} and other setters only if !ignore."
+stale(t, s) :- tws_writes(t, s), tws_effect_cb(cb), within(t, cb), tws_dep_promise(t), !tws_static_promise(t),
+    !tws_inner_write(t), !tws_flag_guard(t), !tws_abort_guard(t), !tws_ref_guard(t), !tws_local_guard(t),
+    !tws_reads_current(t), !tws_state_if(t, s), !tws_state_dep(t, s), !tws_keyed(t, s), docof(t, d), react_doc(d).
+
+// ---- effects -------------------------------------------------------------------------------------------------------
+.decl tws_effect_args(l: node)  // the argument list of useEffect or useLayoutEffect
+tws_effect_args(l) :- kind(c, "call_expression"), field(c, "function", f), rp_hook(f, x, "esm"),
+    (x = "useEffect" ; x = "useLayoutEffect"), child(c, l, _), kind(l, "arguments").
+.decl tws_effect_cb(cb: node)  // its first argument, an arrow or function expression
+tws_effect_cb(cb) :- tws_effect_args(l), child(c, l, _), call_arg(c, cb, 0), (kind(cb, "arrow_function") ; kind(cb, "function_expression")).
+.decl tws_deps(l: node, a: node)  // its dependency array, the second argument
+tws_deps(l, a) :- tws_effect_args(l), child(c, l, _), call_arg(c, a, 1), kind(a, "array").
+
+// ---- state writes in .then ---------------------------------------------------------------------------------------------
+.decl tws_setter_ref(r: node)  // r names a state setter, or a name bound to one
+tws_setter_ref(r) :- kind(r, "identifier"), ref_site(r, p), rp_state_setter(p, x, "esm"), (x = "useState" ; x = "useReducer").
+tws_setter_ref(r) :- kind(r, "identifier"), ref_site(r, s), binding_value(s, v), kind(v, "identifier"), tws_setter_ref(v).
+.decl tws_then_call(t: node)
+tws_then_call(t) :- kind(t, "call_expression"), field(t, "function", m), kind(m, "member_expression"), field(m, "property", p),
+    text(p, "then").
+.decl tws_then_cb(f: node)  // a callback passed to .then
+tws_then_cb(f) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), child(l, f, _), kind(l, "arguments"),
+    child(t, l, _), tws_then_call(t).
+// tws_writes(t, s): .then call t is given setter s, or a callback that calls s with something it received.
+.decl tws_writes(t: node, s: symbol)
+tws_writes(t, s) :- tws_then_call(t), field(t, "arguments", l), child(l, w, _), tws_writer(w, s).
+.decl tws_writer(w: node, s: symbol)
+tws_writer(w, s) :- kind(w, "identifier"), tws_setter_ref(w), text(w, s).
+tws_writer(w, s) :- tws_then_cb(w), has(w, c, "call_expression"), field(c, "function", g), kind(g, "identifier"),
+    tws_setter_ref(g), text(g, s), field(c, "arguments", l), has(l, r, tws_name_kind), tws_result_ref(r).
+.decl tws_name_kind(k: symbol)
+tws_name_kind("identifier"). tws_name_kind("shorthand_property_identifier").
+.decl tws_result_ref(r: node)  // r reads a name the .then callback itself declares
+tws_result_ref(r) :- ref_site(r, s), nearest(s, g, function_kind), tws_then_cb(g).
+
+// ---- the request ---------------------------------------------------------------------------------------------------
+// The receiver of .then holds, outside nested functions, an argument list that reads a dependency.
+.decl tws_dep_promise(t: node)
+tws_dep_promise(t) :- tws_writes(t, _), tws_receiver(t, o), within_stop(l, o, function_kind), kind(l, "arguments"),
+    within_stop(x, l, function_kind), tws_dep_arg(x).
+.decl tws_receiver(t: node, o: node)
+tws_receiver(t, o) :- field(t, "function", m), field(m, "object", o).
+.decl tws_dep_kind(k: symbol)
+tws_dep_kind("identifier"). tws_dep_kind("member_expression"). tws_dep_kind("shorthand_property_identifier").
+// tws_dep_ref(n): n is written as an element of an enclosing effect's dependency array, one that may change: not a
+// setter, dispatch, a ref, `.current`, or an API client.
+.decl tws_dep_ref(n: node)
+tws_dep_ref(n) :- tws_deps(l, a), child(a, e, _), text(e, x), !tws_stable_dep(x), within(n, l), kind(n, k), tws_dep_kind(k),
+    text(n, x).
+.decl tws_stable_dep(x: symbol)
+tws_stable_dep(x) :- tws_deps(_, a), child(a, e, _), text(e, x),
+    match("set[A-Z][A-Za-z0-9_$]*|dispatch|[\\s\\S]*Ref|[\\s\\S]*\\.current|api|client|storage|supabase|sdk|db|http|[\\s\\S]*(Api|Client|Manager|Service|Storage|Sdk)", x).
+// tws_dep_arg(x): x, not a callee, is a dependency, or an effect-local variable whose value reads one.
+.decl tws_dep_arg(x: node)
+tws_dep_arg(x) :- tws_dep_ref(x), !tws_callee(x).
+tws_dep_arg(x) :- kind(x, "identifier"), !tws_callee(x), ref_site(x, s), (kind(s, "variable_declarator"), d = s ; pattern_name(s, _, d)),
+    nearest(d, g, function_kind), tws_effect_cb(g), field(d, "value", v), has(v, y, tws_dep_kind), tws_dep_ref(y).
+.decl tws_callee(x: node)
+tws_callee(x) :- field(c, "function", x), kind(c, "call_expression").
+.decl tws_static_promise(t: node)  // Promise.resolve(…).then, Promise.reject(…).then
+tws_static_promise(t) :- tws_receiver(t, o), kind(o, "call_expression"), field(o, "function", g), text(g, s),
+    match("Promise\\s*\\.\\s*(resolve|reject)", s).
+.decl tws_inner_write(t: node)  // an earlier .then of the chain already writes state
+tws_inner_write(t) :- tws_receiver(t, o), has(o, i, "call_expression"), tws_writes(i, _).
+
+// ---- guards --------------------------------------------------------------------------------------------------------
+// `let ignore = false` in the effect, read in the .then call, and set by the cleanup the effect returns.
+.decl tws_flag_guard(t: node)
+tws_flag_guard(t) :- tws_writes(t, _), has(t, i, "identifier"), !tws_assigned(i), ref_site(i, d), kind(d, "variable_declarator"),
+    field(d, "value", v), (kind(v, "true") ; kind(v, "false")), child(ld, d, _), kind(ld, "lexical_declaration"), op(ld, "let"),
+    nearest(d, cb, function_kind), tws_effect_cb(cb), text(i, g), tws_cleanup_assigns(cb, g).
+.decl tws_assigned(i: node)
+tws_assigned(i) :- field(a, "left", i), kind(a, "assignment_expression").
+.decl tws_cleanup_assigns(cb: node, g: symbol)  // a return of effect cb hands back a function that assigns g
+tws_cleanup_assigns(cb, g) :- tws_effect_cb(cb), tws_cleanup(cb, f), has(f, a, "assignment_expression"), field(a, "left", l),
+    text(l, g).
+.decl tws_cleanup(cb: node, f: node)  // `return () => …`, `return function …`, or `return name` bound to one
+tws_cleanup(cb, f) :- tws_effect_cb(cb), within_stop(r, cb, function_kind), kind(r, "return_statement"), child(r, f, _),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")).
+tws_cleanup(cb, f) :- tws_effect_cb(cb), within_stop(r, cb, function_kind), kind(r, "return_statement"), child(r, i, _),
+    kind(i, "identifier"), ref_site(i, s), binding_value(s, f), (kind(f, "arrow_function") ; kind(f, "function_expression")).
+// An AbortSignal passed to the request (`signal`, or a name bound to `new AbortController()`) and a cleanup that aborts.
+.decl tws_abort_guard(t: node)
+tws_abort_guard(t) :- tws_writes(t, _), tws_receiver(t, o), within_stop(n, o, function_kind), tws_signal(n),
+    tws_effect_cb(cb), within(t, cb), tws_cleanup(cb, f), has(f, c, "call_expression"), field(c, "function", g),
+    kind(g, "member_expression"), field(g, "property", p), text(p, "abort").
+.decl tws_signal(n: node)
+tws_signal(n) :- (kind(n, "identifier") ; kind(n, "property_identifier") ; kind(n, "shorthand_property_identifier")),
+    text(n, "signal").
+tws_signal(n) :- kind(n, "identifier"), ref_site(n, s), binding_value(s, v), kind(v, "new_expression"), text(v, x),
+    match("new\\s+AbortController\\b[\\s\\S]*", x).
+// A ref guard in the effect: `if (…x.current…) return;` and `x.current = true`.
+.decl tws_ref_guard(t: node)
+tws_ref_guard(t) :- tws_writes(t, _), tws_effect_cb(cb), within(t, cb), tws_current_return(cb), tws_current_true(cb).
+.decl tws_current_return(cb: node)
+tws_current_return(cb) :- tws_effect_cb(cb), within_stop(i, cb, function_kind), kind(i, "if_statement"), field(i, "condition", cd),
+    has(cd, m, "member_expression"), field(m, "property", p), text(p, "current"), field(i, "consequence", q),
+    (kind(q, "return_statement") ; child(q, r, _), kind(r, "return_statement")).
+.decl tws_current_true(cb: node)
+tws_current_true(cb) :- tws_effect_cb(cb), within_stop(a, cb, function_kind), kind(a, "assignment_expression"),
+    field(a, "left", l), kind(l, "member_expression"), field(l, "property", p), text(p, "current"), field(a, "right", v),
+    kind(v, "true").
+// The .then callback checks, in an if, a value of the effect other than a boolean flag.
+.decl tws_local_guard(t: node)
+tws_local_guard(t) :- tws_writes(t, _), field(t, "arguments", l), child(l, f, _), tws_then_cb(f), within_stop(i, f, function_kind),
+    kind(i, "if_statement"), field(i, "condition", cd), has(cd, x, "identifier"), ref_site(x, s), nearest(s, g, function_kind),
+    tws_effect_cb(g), !tws_flag_decl(s).
+.decl tws_flag_decl(s: node)
+tws_flag_decl(s) :- kind(s, "variable_declarator"), field(s, "value", v), (kind(v, "true") ; kind(v, "false")).
+.decl tws_reads_current(t: node)  // the .then arguments read a ref
+tws_reads_current(t) :- tws_writes(t, _), field(t, "arguments", l), has(l, m, "member_expression"), field(m, "property", p),
+    text(p, "current").
+// The write depends on the state it sets: under `if (…state…)` within the effect, or the state is a dependency.
+.decl tws_state_if(t: node, s: symbol)
+tws_state_if(t, s) :- tws_writes(t, s), nearest(t, cb, tws_effect_cb), within(t, i), kind(i, "if_statement"), within(i, cb),
+    field(i, "condition", cd), has(cd, x, "identifier"), tws_state_of(x, s).
+.decl tws_state_dep(t: node, s: symbol)
+tws_state_dep(t, s) :- tws_writes(t, s), within(t, l), tws_deps(l, a), child(a, x, _), kind(x, "identifier"), !text(x, s),
+    tws_state_of(x, s).
+.decl tws_state_of(x: node, s: symbol)  // x is a variable of `const [x, s] = …`, or of any array pattern listing s
+tws_state_of(x, s) :- ref_site(x, p), pattern_name(p, _, d), field(d, "name", ap), kind(ap, "array_pattern"), child(ap, e, _),
+    text(e, s).
+// A keyed write: s(… [dep] …) or s(… m.set(dep, …) …).
+.decl tws_keyed(t: node, s: symbol)
+tws_keyed(t, s) :- tws_writes(t, s), field(t, "arguments", l), has(l, c, "call_expression"), field(c, "function", g),
+    kind(g, "identifier"), text(g, s), field(c, "arguments", ca), tws_keyed_arg(ca).
+.decl tws_keyed_arg(ca: node)
+tws_keyed_arg(ca) :- has(ca, k, "computed_property_name"), has(k, y, tws_dep_kind), tws_dep_ref(y).
+tws_keyed_arg(ca) :- has(ca, c, "call_expression"), field(c, "function", g), kind(g, "member_expression"), field(g, "property", p),
+    text(p, "set"), call_arg(c, a, 0), tws_dep_ref(a).

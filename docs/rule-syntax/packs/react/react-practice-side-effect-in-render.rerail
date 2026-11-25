@@ -1,0 +1,165 @@
+.policy "react-practice-side-effect-in-render" revision 2
+.description "Don't navigate, send analytics events or dispatch store actions in the body of a component or hook; do it in an event handler or an effect, since render can run many times."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+
+// A React practice rule (no upstream linter). Render may run many times before React commits, so a side effect
+// called in a component's or Hook's own body fires early or repeatedly. Three kinds, each its code:
+//   const router = useRouter(); if (out) router.replace("/login");      NAVIGATION_IN_RENDER
+//   const navigate = useNavigate(); navigate("/x");  props.navigation.navigate("Home")   NAVIGATION_IN_RENDER
+//   trackEvent("view"); analytics.track("view")                          ANALYTICS_IN_RENDER (not react-tracked's)
+//   const dispatch = useDispatch(); dispatch(load())                     DISPATCH_IN_RENDER
+//   useEffect(() => { router.replace("/login"); }, [])                    not: inside an effect (a nested function)
+//   const go = () => router.push("/a")  or  onClick={() => router.push("/a")}   not: a handler
+// Render code is the body of a Hook (`function useX`, `const useX = …`), or of a component that renders (JSX, or a
+// Hook call) and is named in PascalCase or wrapped in memo/forwardRef or an HOC chain stored under such a name or
+// exported default; also a useMemo/useState/useReducer callback inside one. Async functions are not render code. The
+// call's value must be discarded: a statement, a JSX child, the right of && || ??, a ?: branch, `void`. The router
+// Hooks are those of any package but the Vue, Solid, Svelte, Angular and Preact routers and stores; a file marked
+// "use server" is skipped.
+#include "tsx/react-practice-b.rerail"
+
+.violation navigation(at: node, x: symbol) code "NAVIGATION_IN_RENDER"
+    "Move `{x}(…)` out of render into the event handler that causes it or a useEffect on its condition; render can run more often than React commits, so it can navigate early or twice."
+navigation(c, x) :- ser_call(c, f), ser_nav_callee(f), text(f, x).
+.violation analytics(at: node, x: symbol) code "ANALYTICS_IN_RENDER"
+    "Send `{x}(…)` from a useEffect keyed on what it reports, or from the event handler that causes it; render can run more often than React commits, so it can fire repeatedly."
+analytics(c, x) :- ser_call(c, f), ser_track_callee(f), text(f, x).
+.violation dispatch(at: node, x: symbol) code "DISPATCH_IN_RENDER"
+    "Call `{x}(…)` from the event handler that causes it or a useEffect on its condition; dispatching during render updates other components mid-render and can repeat."
+dispatch(c, x) :- ser_call(c, f), kind(f, "identifier"), ser_decl(f, d), field(d, "value", v), ser_hook_call(v, "dispatch"),
+    text(f, x).
+
+// ser_call(c, f): c, with callee f, runs in render and its value is discarded.
+.decl ser_call(c: node, f: node)
+ser_call(c, f) :- kind(c, "call_expression"), field(c, "function", f), ser_discarded(c), nearest(c, g, function_kind),
+    (ser_render_fn(g) ; ser_init_fn(g)), docof(c, d), react_doc(d), !ser_use_server(d).
+.decl ser_use_server(d: number)  // a top-level "use server" statement
+ser_use_server(d) :- kind(p, "program"), docof(p, d), child(p, s, _), kind(s, "expression_statement"), text(s, t),
+    match("[\"']use server[\"'][\\s\\S]*", t).
+
+// ---- render code ---------------------------------------------------------------------------------------------------
+.decl ser_named_fn(f: node, x: symbol)  // function f is declared as x, or stored as x: `const x = () => …`
+ser_named_fn(f, x) :- (kind(f, "function_declaration") ; kind(f, "generator_function_declaration")), field(f, "name", n),
+    kind(n, "identifier"), text(n, x).
+ser_named_fn(f, x) :- (kind(f, "function_expression") ; kind(f, "generator_function") ; kind(f, "arrow_function")),
+    field(v, "value", f), kind(v, "variable_declarator"), field(v, "name", n), kind(n, "identifier"), text(n, x).
+.decl ser_render_fn(f: node)
+ser_render_fn(f) :- ser_named_fn(f, x), glob("use[A-Z0-9]*", x), !op(f, "async").
+ser_render_fn(f) :- ser_named_fn(f, x), glob("[A-Z]*", x), !op(f, "async"), ser_renders(f).
+ser_render_fn(f) :- ser_memo_cb(f), !op(f, "async"), ser_renders(f).
+.decl ser_renders(f: node)  // JSX or a Hook call anywhere inside
+ser_renders(f) :- function_node(f), (has(f, _, "jsx_element") ; has(f, _, "jsx_self_closing_element")).
+ser_renders(f) :- function_node(f), has(f, c, "call_expression"), field(c, "function", g), text(g, t),
+    match("([A-Za-z0-9_$]+\\.)?use[A-Z0-9][\\s\\S]*", t).
+// A useMemo, useState or useReducer callback in render code.
+.decl ser_init_fn(f: node)
+ser_init_fn(f) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), child(l, f, _), kind(l, "arguments"),
+    child(c, l, _), kind(c, "call_expression"), field(c, "function", g), text(g, t),
+    match("([A-Za-z0-9_$]+\\.)?(useMemo|useState|useReducer)", t), nearest(c, h, function_kind), ser_render_fn(h).
+// A component without a name of its own: memo(() => …), forwardRef(function (…) {…}), or any callback of a call
+// chain stored under a PascalCase name or exported default: `const Page = withAuth(() => …)`.
+.decl ser_memo_cb(f: node)
+ser_memo_cb(f) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), child(l, f, _), kind(l, "arguments"),
+    child(c, l, _), kind(c, "call_expression"), field(c, "function", g), ser_memo_callee(g).
+ser_memo_cb(f) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), child(l, f, _), kind(l, "arguments"),
+    child(c, l, _), kind(c, "call_expression"), ser_chain_top(c, t), ser_component_slot(t).
+.decl ser_climb(c: node, p: node)  // p is c, or an ancestor of it reached through calls and argument lists
+ser_climb(c, c) :- kind(c, "call_expression"), field(c, "arguments", l), child(l, f, _),
+    (kind(f, "arrow_function") ; kind(f, "function_expression")).
+ser_climb(c, p) :- ser_climb(c, q), child(p, q, _), (kind(p, "call_expression") ; kind(p, "arguments")).
+.decl ser_chain_top(c: node, t: node)  // t is the first ancestor of c that is neither
+ser_chain_top(c, t) :- ser_climb(c, q), child(t, q, _), !kind(t, "call_expression"), !kind(t, "arguments").
+.decl ser_component_slot(t: node)
+ser_component_slot(t) :- kind(t, "variable_declarator"), field(t, "name", n), text(n, x), glob("[A-Z]*", x).
+ser_component_slot(t) :- kind(t, "export_statement"), text(t, s), match("export\\s+default\\b[\\s\\S]*", s).
+// memo and forwardRef, React's: imported from it, React.memo, or taken off React.
+.decl ser_memo_callee(g: node)
+ser_memo_callee(g) :- kind(g, "identifier"), ref_site(g, sp), kind(sp, "import_specifier"), import_binding(sp, _, m, x),
+    rp_react_module(m), (x = "memo" ; x = "forwardRef").
+ser_memo_callee(g) :- kind(g, "member_expression"), field(g, "object", o), rp_react_object(o, h), h != "require",
+    field(g, "property", p), kind(p, "property_identifier"), (text(p, "memo") ; text(p, "forwardRef")).
+ser_memo_callee(g) :- kind(g, "identifier"), (text(g, "memo") ; text(g, "forwardRef")), ser_decl(g, d), field(d, "value", v),
+    rp_react_object(v, h), h != "require".
+
+// ---- discarded values ----------------------------------------------------------------------------------------------
+// The call's value goes nowhere: a statement, a JSX child (not an attribute's value), the right of && || ??, a ?:
+// branch, `void`, parentheses; each of these in turn inside a statement or JSX expression, through such operators.
+.decl ser_discarded(n: node)
+ser_discarded(n) :- ser_effect_call(n), child(p, n, _), kind(p, "expression_statement").
+ser_discarded(n) :- ser_effect_call(n), child(p, n, _), kind(p, "jsx_expression"), !ser_attr_value(p).
+ser_discarded(n) :- ser_effect_call(n), field(b, "right", n), kind(b, "binary_expression"),
+    (op(b, "&&") ; op(b, "||") ; op(b, "??")), ser_discarded_expr(b).
+ser_discarded(n) :- ser_effect_call(n), kind(t, "ternary_expression"), (field(t, "consequence", n) ; field(t, "alternative", n)),
+    ser_discarded_expr(t).
+ser_discarded(n) :- ser_effect_call(n), child(u, n, _), kind(u, "unary_expression"), op(u, "void"), ser_discarded_expr(u).
+ser_discarded(n) :- ser_effect_call(n), child(p, n, _), kind(p, "parenthesized_expression"), ser_discarded_expr(p).
+.decl ser_attr_value(j: node)
+ser_attr_value(j) :- child(a, j, _), kind(a, "jsx_attribute").
+.decl ser_discarded_expr(n: node)
+ser_discarded_expr(n) :- child(p, n, _), (kind(p, "expression_statement") ; kind(p, "jsx_expression")).
+ser_discarded_expr(n) :- child(p, n, _), (kind(p, "binary_expression") ; kind(p, "ternary_expression") ;
+    kind(p, "parenthesized_expression") ; kind(p, "unary_expression"), op(p, "void")), ser_discarded_expr(p).
+// The calls worth asking about: those of a callee one of the three kinds names.
+.decl ser_effect_call(c: node)
+ser_effect_call(c) :- kind(c, "call_expression"), field(c, "function", f),
+    (ser_nav_callee(f) ; ser_track_callee(f) ; kind(f, "identifier"), ser_decl(f, d), field(d, "value", v),
+    ser_hook_call(v, "dispatch")).
+
+// ---- the Hooks the effects come from ---------------------------------------------------------------------------------
+// ser_hook_call(c, k): c calls (through parentheses, as, satisfies, !) an imported router (k "router": useRouter,
+// useHistory, useNavigation), navigate (useNavigate) or dispatch (useDispatch, useAppDispatch) Hook of a React package.
+.decl ser_hook_call(c: node, k: symbol)
+ser_hook_call(c, k) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), ref_site(f, sp),
+    kind(sp, "import_specifier"), import_binding(sp, _, m, x), ser_hook_kind(x, k), !ser_foreign(m).
+// The JSON counts a comment as the wrapper's first child here: `(/* c */ useRouter())` is no Hook call.
+ser_hook_call(w, k) :- rp_inner(w, e), child(w, e, 0), ser_hook_call(e, k).
+.decl ser_hook_kind(x: symbol, k: symbol)
+ser_hook_kind("useRouter", "router"). ser_hook_kind("useHistory", "router"). ser_hook_kind("useNavigation", "router").
+ser_hook_kind("useNavigate", "navigate"). ser_hook_kind("useDispatch", "dispatch"). ser_hook_kind("useAppDispatch", "dispatch").
+.decl ser_foreign(m: symbol)  // a router or store of another framework
+ser_foreign(m) :- import_binding(_, _, m, _), match("(vue-router|@solidjs/router|solid-app-router|@angular/router|preact-router|preact-iso|wouter-preact|@tanstack/(vue|solid|svelte|angular)-router|vuex|pinia|@reduxjs/vue-redux|vue-redux|solid-redux|@reduxjs/angular-redux)(/[\\s\\S]*)?", m).
+// ser_decl(r, d): identifier r names a variable declared by declarator d, plainly or by destructuring.
+.decl ser_decl(r: node, d: node)
+ser_decl(r, d) :- kind(r, "identifier"), ref_site(r, s), kind(s, "variable_declarator"), d = s.
+ser_decl(r, d) :- kind(r, "identifier"), ref_site(r, s), pattern_name(s, _, d).
+
+// ---- navigation ------------------------------------------------------------------------------------------------------
+.decl ser_nav(x: symbol)
+ser_nav("push"). ser_nav("replace"). ser_nav("back"). ser_nav("forward"). ser_nav("go"). ser_nav("goBack").
+ser_nav("goForward"). ser_nav("navigate"). ser_nav("reset"). ser_nav("pop"). ser_nav("popToTop"). ser_nav("dispatch").
+.decl ser_nav_callee(f: node)
+// router.push(…) with `const router = useRouter()`, or useRouter().push(…).
+ser_nav_callee(f) :- kind(f, "member_expression"), field(f, "property", p), text(p, x), ser_nav(x), field(f, "object", o),
+    (ser_decl(o, d), field(d, "value", v), ser_hook_call(v, "router") ; ser_hook_call(o, "router")).
+// push(…) with `const { push } = useRouter()`, or go(…) with `const { push: go } = useRouter()`.
+ser_nav_callee(f) :- kind(f, "identifier"), text(f, x), ser_nav(x), ser_decl(f, d), field(d, "name", pat),
+    kind(pat, "object_pattern"), field(d, "value", v), ser_hook_call(v, "router").
+ser_nav_callee(f) :- kind(f, "identifier"), ser_decl(f, d), field(d, "value", v), ser_hook_call(v, "router"),
+    ref_site(f, p), field(pp, "value", p), kind(pp, "pair_pattern"), field(pp, "key", k), text(k, x), ser_nav(x).
+// navigation.navigate(…) or props.history.push(…), from a parameter.
+ser_nav_callee(f) :- kind(f, "member_expression"), field(f, "property", p), text(p, x), ser_nav(x), field(f, "object", o),
+    ser_nav_object(o).
+// navigate(…) with `const navigate = useNavigate()`.
+ser_nav_callee(f) :- kind(f, "identifier"), ser_decl(f, d), field(d, "value", v), ser_hook_call(v, "navigate").
+.decl ser_nav_object(o: node)
+ser_nav_object(o) :- kind(o, "identifier"), (text(o, "navigation") ; text(o, "history")), ser_param(o).
+ser_nav_object(o) :- kind(o, "member_expression"), field(o, "property", p), (text(p, "navigation") ; text(p, "history")),
+    field(o, "object", i), kind(i, "identifier"), ser_param(i).
+.decl ser_param(r: node)  // r names a parameter declared in a parameter list
+ser_param(r) :- ref_site(r, s), inside(s, _, "formal_parameters").
+
+// ---- analytics -------------------------------------------------------------------------------------------------------
+// track(…), trackEvent(…), analytics.track(…); not react-tracked's or proxy-compare's.
+.decl ser_track_callee(f: node)
+ser_track_callee(f) :- kind(f, "identifier"), text(f, x), ser_track_name(x), !ser_tracked(f).
+ser_track_callee(f) :- kind(f, "member_expression"), field(f, "property", p), text(p, x), ser_track_name(x),
+    field(f, "object", o), !ser_tracked(o).
+.decl ser_track_name(x: symbol)
+ser_track_name(x) :- (kind(n, "identifier") ; kind(n, "property_identifier")), text(n, x),
+    match("track([A-Z0-9_][A-Za-z0-9_$]*)?", x).
+.decl ser_tracked(r: node)
+ser_tracked(r) :- kind(r, "identifier"), ref_site(r, s), inside(s, i, "import_statement"), field(i, "source", src),
+    str(src, m), (m = "react-tracked" ; m = "proxy-compare").

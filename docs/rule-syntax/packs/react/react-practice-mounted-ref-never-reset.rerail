@@ -1,0 +1,67 @@
+.policy "react-practice-mounted-ref-never-reset" revision 2
+.description "Set a mount ref back to true in the effect's setup when its cleanup sets it false; a Strict Mode re-run or an Activity re-show otherwise leaves it false for good."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+
+// A React practice rule (no upstream linter). A mount ref starts true (`useRef(true)`) and an effect's cleanup sets it
+// false; nothing sets it true again, so after Strict Mode's extra cleanup and setup, or an <Activity> hide and show, it
+// stays false and every `if (isMounted.current)` after that is skipped:
+//   const isMounted = useRef(true); useEffect(() => () => { isMounted.current = false; }, []);      reported
+//   … useEffect(() => { isMounted.current = true; return () => { isMounted.current = false; }; }, []) not: set true
+//   const isFirstMount = useRef(true); …                     not: first/initial refs are meant to stay false
+//   track(isMounted) or <Child flag={isMounted} />           not: the ref is passed on, and may be reset there
+// The ref's name holds "mount" (not "amount"); the cleanup is a function the effect callback returns (directly, or
+// through parentheses or a ?: branch), and the assignment sits in it, outside any nested function.
+#include "tsx/react-practice-b.rerail"
+
+.violation never_reset(at: node, x: symbol) code "MOUNTED_REF_NEVER_RESET"
+    "This cleanup sets {x} false and nothing in this component sets it true, so a Strict Mode re-run or Activity re-show leaves it false. Set it true in the effect's setup, or drop the ref and its checks."
+never_reset(a, x) :- mrn_current_write(a, o, x), field(a, "right", v), kind(v, "false"), mrn_mount_name(x), ref_site(o, site),
+    binding_value(site, init), mrn_ref_true(init), nearest(a, f, function_kind), mrn_cleanup(f), !mrn_kept_true(a, x),
+    docof(a, d), react_doc(d).
+
+// mrn_current_write(a, o, x): a is `x.current = …`, o the identifier x.
+.decl mrn_current_write(a: node, o: node, x: symbol)
+mrn_current_write(a, o, x) :- kind(a, "assignment_expression"), field(a, "left", l), kind(l, "member_expression"),
+    field(l, "property", p), text(p, "current"), field(l, "object", o), kind(o, "identifier"), text(o, x).
+.decl mrn_mount_name(x: symbol)
+mrn_mount_name(x) :- mrn_current_write(_, _, x), match("(?i)(mount|.*[^a]mount).*", x), !match("(?i).*(first|initial).*", x).
+
+// useRef(true), its one argument `true`; parentheses, `as` and `satisfies` around it are looked through.
+rp_hook_ask("useRef"). rp_hook_ask("useEffect"). rp_hook_ask("useLayoutEffect").
+.decl mrn_ref_true(v: node)
+mrn_ref_true(v) :- kind(v, "call_expression"), field(v, "function", f), rp_hook(f, "useRef", "esm"), call_arg(v, t, 0),
+    kind(t, "true"), call_arg_count(v, 1).
+mrn_ref_true(w) :- rp_inner(w, v), !kind(w, "non_null_expression"), mrn_ref_true(v).
+
+// The effect callback: the first argument of useEffect or useLayoutEffect, an arrow or function expression.
+.decl mrn_effect_cb(cb: node)
+mrn_effect_cb(cb) :- (kind(cb, "arrow_function") ; kind(cb, "function_expression")), mrn_effect_arg(cb).
+.decl mrn_effect_arg(a: node)
+mrn_effect_arg(a) :- kind(c, "call_expression"), field(c, "function", f), rp_hook(f, x, "esm"),
+    (x = "useEffect" ; x = "useLayoutEffect"), call_arg(c, a, 0).
+mrn_effect_arg(a) :- child(p, a, 0), kind(p, "parenthesized_expression"), mrn_effect_arg(p).
+// The cleanup: a function the effect callback returns.
+.decl mrn_cleanup(f: node)
+mrn_cleanup(f) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), mrn_returned(f).
+.decl mrn_returned(n: node)
+mrn_returned(n) :- child(r, n, _), kind(r, "return_statement"), nearest(r, cb, function_kind), mrn_effect_cb(cb).
+mrn_returned(n) :- mrn_effect_cb(cb), kind(cb, "arrow_function"), field(cb, "body", n).
+mrn_returned(n) :- child(p, n, _), kind(p, "parenthesized_expression"), mrn_returned(p).
+mrn_returned(n) :- kind(t, "ternary_expression"), (field(t, "consequence", n) ; field(t, "alternative", n)), mrn_returned(t).
+
+// mrn_kept_true(a, x): a function around the cleanup declares x and, anywhere in it, sets x.current to anything but
+// false, or passes x on as an argument or a JSX expression.
+.decl mrn_kept_true(a: node, x: symbol)
+mrn_kept_true(a, x) :- mrn_candidate(a, x), within(a, g), function_node(g), has(g, d, "variable_declarator"),
+    field(d, "name", n), text(n, x), (mrn_set_other(g, x) ; mrn_passed(g, x)).
+.decl mrn_candidate(a: node, x: symbol)
+mrn_candidate(a, x) :- mrn_current_write(a, _, x), field(a, "right", v), kind(v, "false"), mrn_mount_name(x).
+.decl mrn_set_other(g: node, x: symbol)
+mrn_set_other(g, x) :- mrn_candidate(a, x), within(a, g), function_node(g), has(g, b, "assignment_expression"),
+    mrn_current_write(b, _, x), field(b, "right", v), !kind(v, "false").
+.decl mrn_passed(g: node, x: symbol)
+mrn_passed(g, x) :- mrn_candidate(a, x), within(a, g), function_node(g), has(g, i, "identifier"), text(i, x),
+    child(l, i, _), (kind(l, "arguments") ; kind(l, "jsx_expression")).
