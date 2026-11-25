@@ -836,9 +836,12 @@ interface WorktreeDiscovery {
   readonly unchecked: Map<string, WalkGap>;
 }
 
-/** Why a worktree is in `WorktreeDiscovery.unchecked`, and what a person runs to check it. */
+/**
+ * Why a worktree is in `WorktreeDiscovery.unchecked`, and what a person runs to check it. Its code keys the place
+ * (`reasonKind`), so other words for it are the same place on the session's record.
+ */
 const UNCHECKED_BEFORE_FIRST_READ =
-  "Files changed here before Rerail first read this worktree were not checked; `rerail scan --repo <this worktree> --scope git-diff` checks them";
+  "UNCHECKED_FIRST_READ: Files changed here before Rerail first read this worktree were not checked; `rerail scan --repo <this worktree> --scope git-diff` checks them";
 
 /**
  * The place of a call's writes outside the session folder in its own checkout, which a walk of the other worktrees reads
@@ -1605,8 +1608,8 @@ export const MAX_TOLD_AT_ONCE = 100;
 const UNTOLD_GAPS = `The walks could not check more than ${MAX_TOLD_GAPS} places; the rest are not recorded`;
 /**
  * What tells one gap from another (`DiscoveryGap.key`): its path (`""` for a walk that failed whole) and its reason's
- * kind, the error code that opens a filesystem error's text (`EACCES: permission denied, opendir '…'`), else the reason
- * whole, as for a file too large to read.
+ * kind, the code that opens a filesystem error's text (`EACCES: permission denied, opendir '…'`) or Rerail's own
+ * (`UNCHECKED_FIRST_READ: Files changed here…`), else the reason whole, as for a file too large to read.
  */
 function gapKey(path: string | undefined, kind: string): string {
   return JSON.stringify([path ?? "", kind]);

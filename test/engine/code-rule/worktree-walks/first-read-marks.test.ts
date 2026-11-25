@@ -25,8 +25,8 @@ vi.mock("node:fs/promises", async importOriginal => {
   return { ...actual, lstat: held };
 });
 
-/** The reason the record gives, as a person reads it beside the worktree's path. */
-const NOT_CHECKED = "Files changed here before Rerail first read this worktree were not checked; `rerail scan --repo <this worktree> --scope git-diff` checks them";
+/** The reason the record gives, as a person reads it beside the worktree's path: its code, then what to run. */
+const NOT_CHECKED = "UNCHECKED_FIRST_READ: Files changed here before Rerail first read this worktree were not checked; `rerail scan --repo <this worktree> --scope git-diff` checks them";
 
 const bridges: CodeRuleBridge[] = [];
 const folders: string[] = [];
@@ -82,8 +82,9 @@ interface Seen {
 }
 
 /**
- * Sessions on `root` that watch the worktrees `roots` lists, through one shared walk, each with what it was told. A
- * worktree is listed once `roots` names it: `add` adds one at `place` and lists it, `remove` removes it and unlists it.
+ * Sessions on `root` that watch the worktrees `roots` lists, through one shared walk, each with what it was told, which
+ * is the session's record a bridge reads as it opens. A worktree is listed once `roots` names it: `add` adds one at
+ * `place` and lists it, `remove` removes it and unlists it.
  */
 async function sessions(root: string) {
   const place = join(await folder(), "w");
@@ -103,6 +104,7 @@ async function sessions(root: string) {
     const bridge = new CodeRuleBridge(root, auditor, {
       worktreeWalkGapMs: 0, worktreeWalks: walks,
       onDiscoveryGaps: gaps => { seen.told.set(sessionId, [...seen.told.get(sessionId) ?? [], ...gaps]); },
+      recordedDiscoveryGaps: (session, limit) => (seen.told.get(session) ?? []).slice(0, limit),
       ...(resume === undefined ? {} : { resume }),
     });
     bridges.push(bridge);
@@ -187,6 +189,21 @@ describe("a worktree's first read", () => {
     const marked = [{ path: named, reason: NOT_CHECKED }];
     expect({ audited: seen.audited, first: places(seen, "session-1"), second: places(seen, "session-2") })
       .toEqual({ audited: [], first: marked, second: marked });
+  });
+
+  // A place is its path and its reason's code: the place a record holds under that code in other words, as a Rerail
+  // whose sentence reads otherwise wrote it, is this place, so a reopened session records it once.
+  it("records nothing again for a session whose record holds the worktree under the reason's code in other words", async () => {
+    const root = await repository();
+    const { open, add, seen, named } = await sessions(root);
+    const worktree = await add();
+    const older = { boundary: "turn" as const, path: named, reason: "UNCHECKED_FIRST_READ: Other words", key: "" };
+    seen.told.set("session-1", [older]);
+    const bridge = await open("session-1");
+    await atFirstRead(worktree, async () => { await writeFile(join(worktree, "src", "editor.py"), "violation\n"); }, bridge);
+    const { failures } = await bridge.checkpoint("turn");
+    expect({ record: places(seen, "session-1"), said: failures.map(failure => failure.message) })
+      .toEqual({ record: [{ path: named, reason: older.reason }], said: [`${named}: ${NOT_CHECKED}`] });
   });
 
   it("marks nothing and records nothing of the files Git writes as the session's command adds the worktree", async () => {
