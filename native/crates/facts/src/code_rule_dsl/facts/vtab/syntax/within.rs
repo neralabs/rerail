@@ -830,6 +830,11 @@ impl Within {
         })
     }
 
+    /// What column `column` holds: both the batch's nodes, in every mode.
+    pub(super) fn col_kind(&self, column: usize) -> Option<super::made::ColKind> {
+        (column < 2).then_some(super::made::ColKind::Node)
+    }
+
     fn names(&self) -> [&'static str; 2] {
         match self.mode {
             Mode::Tree | Mode::Axis(_) => ["n", "a"],
@@ -997,6 +1002,9 @@ impl Source for Within {
     }
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
+    }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.col_kind(column).map(|k| self.batch.bounds_of(k))
     }
     /// Every pair once: a scan makes each node's containers, ids `0..len`. A solvable axis's are its solve's pairs,
     /// counted exactly from the tree (`shape`) until something reads them: a guest round digests each input by its
