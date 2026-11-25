@@ -1,11 +1,12 @@
 import { existsSync, mkdtempSync, statSync, type PathLike, type StatSyncOptions } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { packCompileChecks } from "../../../src/engine/catalog/pack-compile-checks.js";
 import { nativeGitAccess } from "../../../src/engine/native/git-access.js";
 import { isWorkspaceBusy, loadNativeBinding, nativeHealth, nativePlatformSuffix, resolveNativeBindingPath } from "../../../src/engine/native/native.js";
 import { PACKAGE_ROOT } from "../../../src/engine/package-root.js";
+import { linkFolder } from "../../support/platform/links.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 vi.mock("node:fs", { spy: true });
@@ -119,6 +120,42 @@ describe("the catalog's engine stamp", () => {
     expect(() => loadNativeBinding()).toThrow(/RERAIL_ENGINE_PATH does not exist/);
     expect(packCompileChecks(home).verdict(PACK)).toBeUndefined();
     vi.unstubAllEnvs();
+    expect(packCompileChecks(home).verdict(PACK)).toEqual(VERDICT);
+  });
+
+  // Node loads a file under one name once, and hands back that engine at every later load of the name.
+  it("names the file as this process first loaded it where an engine loaded through RERAIL_ENGINE_PATH goes, though a build has replaced the file", () => {
+    const home = homeWithVerdict();
+    const held = resolveNativeBindingPath();
+    vi.stubEnv("RERAIL_ENGINE_PATH", held);
+    loadNativeBinding();
+    vi.mocked(statSync).mockImplementation(rebuiltAt(held, held));
+    vi.unstubAllEnvs();
+    loadNativeBinding();
+    expect(packCompileChecks(home).verdict(PACK)).toEqual(VERDICT);
+  });
+
+  it("names the file as this process first loaded it while an engine loaded through RERAIL_ENGINE_PATH is held and the variable is gone", () => {
+    const home = homeWithVerdict();
+    const held = resolveNativeBindingPath();
+    vi.stubEnv("RERAIL_ENGINE_PATH", held);
+    loadNativeBinding();
+    vi.mocked(statSync).mockImplementation(rebuiltAt(held, held));
+    vi.unstubAllEnvs();
+    expect(packCompileChecks(home).verdict(PACK)).toEqual(VERDICT);
+  });
+
+  it("names the file as this process first loaded it where RERAIL_ENGINE_PATH reaches it through a link, though a build has replaced it", () => {
+    const home = homeWithVerdict();
+    const binding = loadNativeBinding();
+    const held = resolveNativeBindingPath();
+    linkFolder(dirname(held), join(home, "engine"));
+    const linked = join(home, "engine", basename(held));
+    vi.stubEnv("RERAIL_ENGINE_PATH", linked);
+    vi.mocked(statSync).mockImplementation(rebuiltAt(linked, held));
+    expect(packCompileChecks(home).verdict(PACK)).toEqual(VERDICT);
+    // Node names a module by its file with every link resolved, so the engine it loaded first comes back.
+    expect(loadNativeBinding()).toBe(binding);
     expect(packCompileChecks(home).verdict(PACK)).toEqual(VERDICT);
   });
 });
