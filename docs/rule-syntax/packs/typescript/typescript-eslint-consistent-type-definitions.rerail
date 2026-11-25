@@ -1,4 +1,4 @@
-.policy "typescript-eslint-consistent-type-definitions" revision 6
+.policy "typescript-eslint-consistent-type-definitions" revision 7
 .description "Use an interface instead of a type alias to define TypeScript object types."
 .language typescript
 .mode steer
@@ -28,10 +28,13 @@ consistent_type_definitions(n, "typeOverInterface", "Use a `type` instead of an 
     option("option", "type"), kind(i, "interface_declaration"), field(i, "name", n).
 
 // object_alias(a, n, b): `type n = b`, b an object type literal (parentheses aside, as TSESTree has none),
-// not a mapped type: `type M = { [K in X]: T }` stays.
+// not a mapped type: `type M = { [K in X]: T }` stays, and so does `type M = { [K in X] }`, which tree-sitter
+// reads as an object type holding an error around the `K in X` clause.
 .decl object_alias(a: node, n: node, b: node)
 object_alias(a, n, b) :- kind(a, "type_alias_declaration"), field(a, "name", n), field(a, "value", v), type_child(v, b),
-    type_literal(b).
+    type_literal(b), !broken_mapped(b).
+.decl broken_mapped(b: node)
+broken_mapped(b) :- kind(b, "object_type"), child(b, e, _), kind(e, "ERROR"), child(e, c, _), kind(c, "mapped_type_clause").
 
 // type T<X> = { a: X };  →  interface T<X> { a: X }: the keyword changes, the `=` and a final `;` go.
 // The kind implies `type` and `=` (the tape keeps neither): the first word, and the last `=` before the value.

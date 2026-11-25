@@ -1,4 +1,4 @@
-.policy "typescript-eslint-class-literal-property-style" revision 7
+.policy "typescript-eslint-class-literal-property-style" revision 8
 .description "Use a readonly field instead of a getter that just returns a literal value, unless a subclass overrides that getter as an accessor."
 .language typescript
 .mode steer
@@ -36,10 +36,11 @@ plain_template(t) :- kind(t, "template_string"), !has(t, _, "template_substituti
 key_node(m, k) :- field(m, "name", k), !kind(k, "computed_property_name").
 key_node(m, k) :- field(m, "name", n), kind(n, "computed_property_name"), child(n, k, _), !kind(k, "comment").
 
-// literal_getter(g, v): `get a() { return v; … }`, the first statement returning a literal; not `override`, and
-// no `set a(…)` beside it.
+// literal_getter(g, v): `get a() { return v; … }` in a class (an object literal's getter is no MethodDefinition), the
+// first statement returning a literal; not `override`, and no `set a(…)` beside it.
 .decl literal_getter(g: node, v: node)
-literal_getter(g, v) :- kind(g, "method_definition"), op(g, "get"), !kid(g, "override_modifier"),
+literal_getter(g, v) :- kind(g, "method_definition"), op(g, "get"), child(c, g, _), kind(c, "class_body"),
+    !kid(g, "override_modifier"),
     field(g, "body", b), first_stmt(b, s), kind(s, "return_statement"), child(s, v, _), !kind(v, "comment"),
     literal(v), !has_setter(g).
 .decl first_stmt(b: node, s: node)
