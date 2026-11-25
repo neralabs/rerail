@@ -866,3 +866,55 @@ fn a_position_read_in_the_cross_file_part_is_found() {
     assert_eq!(split.positions, [("kinds".to_owned(), "line".to_owned())], "{:?}", split.positions);
     assert!(positions_checked(&split.positions, true).is_err());
 }
+
+/// The explainer's cases (the authors' page on per-file and cross-file rules): each as the split reads it, with the
+/// message the checks give. Each case's relation is read by an output of its own, so it is checked as a relation the
+/// cross-file part reads on.
+#[test]
+fn the_explainers_cases_split_as_it_says() {
+    let inputs = ".decl call_name(c: node, x: symbol)\n.input call_name\n.decl def_name(f: node, x: symbol)\n.input def_name\n\
+                  .decl text(n: node, t: symbol)\n.input text\n.decl docof(n: node, d: number)\n.input docof\n\
+                  .decl within(n: node, a: node)\n.input within\n";
+    // (relation, its rules, an output reading it)
+    let cases: &[(&str, &str, &str)] = &[
+        ("local_call", "local_call(c, f) :- call_name(c, x), def_name(f, x).", "local_call(a, _)"),
+        ("local_call_same", "local_call_same(c, f) :- call_name(c, x), def_name(f, x), docof(c, d), docof(f, d).", "local_call_same(a, _)"),
+        ("start_zero", "zero_number(t) :- node(_, n, \"integer\", _, _), text(n, t), t = \"0\".\n\
+                        start_zero(s) :- call_name(s, v), zero_number(v).", "start_zero(a)"),
+        ("lone_main", "lone_main(f) :- def_name(f, \"main\"), k = count : { def_name(_, \"main\") }, k = 1.", "lone_main(a)"),
+        ("pair", "pair(a, b) :- node(_, a, \"class\", _, _), node(_, b, \"def\", _, _), @doc(a) = @doc(b).", "pair(a, _)"),
+        ("pair_docof", "pair_docof(a, b) :- node(_, a, \"class\", _, _), node(_, b, \"def\", _, _), docof(a, d), docof(b, d).", "pair_docof(a, _)"),
+        ("pair_within", "pair_within(a, b) :- node(_, a, \"class\", _, _), within(b, a).", "pair_within(a, _)"),
+        ("def_key", "def_key(k, x) :- def_name(f, x), k = @to_string(f).", "def_key(_, x), def_name(a, x)"),
+        ("pair_path", "pair_path(a, b) :- node(_, a, \"class\", _, _), node(_, b, \"def\", _, _), docof(a, d), doc(d, p, _), docof(b, e), doc(e, p, _).", "pair_path(a, _)"),
+        ("pair_cmp", "pair_cmp(a, b) :- node(_, a, \"class\", _, _), node(_, b, \"def\", _, _), a < b.", "pair_cmp(a, _)"),
+    ];
+    let decls = ".decl local_call(c: node, f: node)\n.decl local_call_same(c: node, f: node)\n.decl zero_number(t: symbol)\n\
+                 .decl start_zero(s: node)\n.decl lone_main(f: node)\n.decl pair(a: node, b: node)\n.decl pair_docof(a: node, b: node)\n\
+                 .decl pair_within(a: node, b: node)\n.decl def_key(k: symbol, x: symbol)\n.decl pair_path(a: node, b: node)\n\
+                 .decl pair_cmp(a: node, b: node)\n.decl doc(d: number, p: symbol, x: number)\n.input doc\n";
+    let mut text = format!("{inputs}{decls}");
+    let mut outputs = Vec::new();
+    for (name, rules, read) in cases {
+        text.push_str(&format!("{rules}\n.decl o_{name}(a: node)\no_{name}(a) :- {read}.\n"));
+        outputs.push(format!("o_{name}"));
+    }
+    text.push_str(&format!(".output {}\n", outputs.join(", ")));
+    let split = invariant_split(&text);
+    let local = |r: &str| split.file_local.contains(r);
+    let cause = |r: &str| split.causes.get(r).cloned().unwrap_or_default();
+    // Same file, said four ways the split reads.
+    assert!(local("local_call_same") && local("pair") && local("pair_docof") && local("pair_within"), "{:?}", split.causes);
+    // Two documents: by a value, a path, a comparison alone; and a read with no location.
+    assert_eq!(cause("local_call"), "joins 2 documents: {c} {f}");
+    assert_eq!(cause("pair_path"), "joins 2 documents: {a d} {b e}");
+    assert_eq!(cause("pair_cmp"), "joins 2 documents: {a} {b}");
+    assert_eq!(cause("lone_main"), "reads def_name with no location");
+    let refused: Vec<String> = undeclared_crossings(&split).unwrap().into_iter().map(|(r, _)| r).collect();
+    assert_eq!(refused, ["local_call", "lone_main", "pair_cmp", "pair_path"]);
+    // A table of values is a union of each file's rows; its reader carries its node across, under the table.
+    assert_eq!(cause("start_zero"), "reads zero_number with no location");
+    let nodes: std::collections::BTreeMap<&str, Option<&str>> = split.nodes.iter().map(|c| (c.rel.as_str(), c.under.as_deref())).collect();
+    assert_eq!(nodes.get("start_zero"), Some(&Some("zero_number")));
+    assert!(split.nodes.iter().any(|c| c.rel == "def_key" && c.why.starts_with("holds a node in def_key.k")), "{:?}", split.nodes);
+}
