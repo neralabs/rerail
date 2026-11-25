@@ -215,7 +215,7 @@ kernels (23, on six axes). On it the user decided (2026-11-25):
 
 - E4: "no idea, be thorough". The survey was done again (the page's revision 4, §4): every `.uglykl` file, the
   UKL library, the kernels inside Rust sources, MLDB's forest and Metal kernels, the CPU executors' forms and the
-  decisions on how work runs. It found 46 shapes in seven families, placed on six axes (how work is found, an item's
+  decisions on how work runs. It found 46 shapes in seven families (47 once revision 5 restored uneven segments, which the earlier list had), placed on six axes (how work is found, an item's
   unit, what is shared inside it, what joins the units, where output goes, the bounds). The seventh family is how the
   executor places work (batches, morsels, handoffs, splits, the scoreboard), not an operation's shape.
 - F1 (a search with several valid answers): "so may a CPU search, so what? ANything numeric can vary. The results
@@ -234,3 +234,18 @@ tables exist as the job address tables (0100 §9), the slabs' address lists (047
 replicas (0440 §7.2). The operation layer is to use them as they are, adding three things: slots pinned from an
 operation's signature when it starts (the step 0491 leaves below it), references to earlier generations as
 `Frozen` handles kept by the operation graph, and a descriptor table a launch and device.
+
+On revision 4 the user said (2026-11-25): "You're missing a second kind of cache. You have shown how we write caches
+in datalog. However, the input to the delta operations also has a "cache", which is an in-memory data structure
+where any auxiliary information like indexes that we don't want to regenerate can be kept. This is mutable and needs
+to come in as one or more blocks."
+
+That cache is the agreed contract's operator cache (P§2, L5: it changes cost, never answers; P§11.3: mutated in
+place, its header naming the state it describes, with an open mark). Revision 5 of the Operations page gives it its
+place: one or more `Mutable` blocks an operator, kept in memory across runs, partitioned by file for a per-file
+operator, taken by the operator's operations as read or read-write slots under the region checks, opened and
+committed by two operations (`cache_open` resets it to ∅ when the header is open or names another state;
+`cache_commit` writes the after state last). It holds what an operator reads to go fast and could make again:
+indexes a plan asks for that a layer lacks (written by `order`), lines and the joins' memo, statistics past a
+layer's sketch, the versions chosen, slow lookups. What answers read (kept rows, levels, derivation counts) stays
+data, in traces. The caches written in datalog (0103) are the other kind.
