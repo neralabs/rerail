@@ -5,14 +5,18 @@
 .scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
 // react-hooks/refs (React Compiler): `ref.current` is not state; React does not re-render when it changes, so
-// render code must neither read nor write it. Refs are useRef's results and any name `ref` or ending in `Ref`.
+// render code must neither read nor write it. The compiler reports where a ref's value is used, not where it is
+// loaded: in JSX, a return, an argument, a condition, an operand, a stored value, a method's receiver, a literal.
 //   return <b>{countRef.current}</b>;                          reported: a read during render
+//   const prev = ref.current;  if (prev.length > 0) …          reported at the use of prev, not at its load
 //   ref.current = value;                                        reported: a write during render
 //   if (ref.current == null) { ref.current = make(); }          not: lazy initialisation is allowed
-//   const read = () => ref.current; return <b>{read()}</b>;     reported at read(): it reads during render
-//   items.map(() => ref.current)                                reported at the callback: map calls it now
 //   useEffect(() => { ref.current = v; });  <b onClick={() => ref.current.focus()}/>   not: they run later
-// The compiler also tracks refs through props objects, aliases and returned values; this rule does not (NOTES).
+//   new MutationObserver(onResize)   (onResize reads a ref)     reported: render code hands it to a caller
+//   measure(boxRef)                                             reported: the ref itself handed to a caller
+// Refs are useRef's results and any name `ref` or ending in `Ref`. An object whose member is passed as a JSX `ref`
+// is taken for a ref holder too: after `<div ref={splitter.ref}>`, `splitter.sizes` read in render is reported.
+// Render code is the compiled function's own code, and useMemo callbacks and functions called in place there.
 #include "tsx/react-compiler.rerail"
 
 .violation refs(at: node, msg: symbol)
@@ -20,40 +24,388 @@
     "{msg}"
     suppress eslint "react-hooks/refs"
     suppress oxlint "refs"
-refs(m, x) :- rc_current(m), rc_own(m, h), rc_render_fn(h, _), !lazy_init(m), !memo_dep(m), how(m, w), says(w, x).
-refs(k, x) :- rc_called_fn(k, g, _), touches(g), says("read", x).
-refs(g, x) :- rc_fn(g), touches(g), deparen(a, g), child(l, a, _), kind(l, "arguments"), field(c, "arguments", l),
-    !rc_hook_call(c), rc_own(c, h), rc_render_fn(h, _), says("read", x).
-
-// memo_dep(m): m is in the dependency list of useMemo or useCallback, which the compiler drops (it memoizes
-// by its own analysis): useCallback(() => …, [ref.current]).
-.decl memo_dep(m: node)
-memo_dep(m) :- (rc_react_call(c, "useMemo") ; rc_react_call(c, "useCallback")), call_arg(c, l, 1), within(m, l).
-.decl touches(g: node)  // g's own code reads or writes a ref's current
-touches(g) :- rc_current(m), rc_own(m, g).
-.decl how(m: node, w: symbol)  // "write" for `r.current = …`, `+=` and `++`, else "read"; `+=` reads as well
-how(m, "write") :- written(m).
-how(m, "read") :- rc_current(m), !written(m).
-how(m, "read") :- rc_current(m), kind(a, "augmented_assignment_expression"), field(a, "left", m).
-.decl written(m: node)
-written(m) :- rc_current(m), (kind(a, "assignment_expression"), field(a, "left", m) ;
-    kind(a, "augmented_assignment_expression"), field(a, "left", m) ; kind(a, "update_expression"), field(a, "argument", m)).
-// lazy_init(m): `if (r.current == null) { r.current = … }`: the null test, and writes to r inside the branch.
-// A test by `!r.current` is a read; the writes under it are allowed.
-.decl lazy_init(m: node)
-lazy_init(m) :- null_test(_, m).
-lazy_init(m) :- guard(i, o), field(i, "consequence", b), within(m, b), written(m), !how(m, "read"),
-    field(m, "object", o2), text(o2, x), text(o, x).
-.decl guard(i: node, o: node)  // if statement i tests ref o's current for null or falsiness
-guard(i, o) :- (null_test(i, t) ; not_test(i, t)), field(t, "object", o).
-.decl null_test(i: node, t: node)  // if (r.current == null), === null, == undefined
-null_test(i, t) :- kind(i, "if_statement"), field(i, "condition", c), child(c, b, 0), kind(b, "binary_expression"),
-    (op(b, "==") ; op(b, "===")), field(b, "left", t), rc_current(t), field(b, "right", n),
-    (kind(n, "null") ; kind(n, "undefined")).
-.decl not_test(i: node, t: node)  // if (!r.current)
-not_test(i, t) :- kind(i, "if_statement"), field(i, "condition", c), child(c, u, 0), kind(u, "unary_expression"),
-    op(u, "!"), field(u, "argument", t), rc_current(t).
+refs(l, m) :- read_use(_, l), says("read", m).
+refs(l, m) :- ref_write(_, l), says("write", m).
+refs(l, m) :- ref_update(_, l), says("write", m).
+refs(l, m) :- null_check(_, l), says("read", m).
+refs(u, m) :- negation_use(u), says("read", m).
+refs(x, m) :- literal_mixed(x), says("read", m).
+refs(x, m) :- fn_handed(x), says("read", m).
+refs(x, m) :- ref_handed(x), says("read", m).
 
 .decl says(w: symbol, m: symbol)
 says("read", "Move this read of a ref's current value into an effect or event handler, or keep the value in state; rendering must not depend on a ref.").
 says("write", "Move this ref write into an effect or event handler; while rendering, write a ref only to initialise it once inside a null check.").
+
+// ---- render code ------------------------------------------------------------------------------------------------
+// at_render(n): n's own function is compiled, or a useMemo callback or an immediately called function in render
+// code. at_top(n): n's own function is the compiled function itself.
+.decl at_render(n: node)
+at_render(n) :- rc_own(n, g), (rc_compiled(g) ; inlined(g)).
+.decl at_top(n: node)
+at_top(n) :- rc_own(n, g), rc_compiled(g).
+.decl inlined(g: node)
+inlined(g) :- fn_value(g), child(l, g, 0), kind(l, "arguments"), field(c, "arguments", l), rc_react_call(c, "useMemo"),
+    at_render(g).
+inlined(g) :- fn_value(g), child(p, g, 0), kind(p, "parenthesized_expression"), field(c, "function", p),
+    kind(c, "call_expression"), at_render(g).
+.decl fn_value(g: node)  // an arrow or function expression
+fn_value(g) :- kind(g, "arrow_function") ; kind(g, "function_expression").
+.decl wrapper(x: node)  // x!, (x), x as T, x satisfies T: the value of their first child
+wrapper(x) :- kind(x, k), (k = "non_null_expression" ; k = "parenthesized_expression" ; k = "as_expression" ;
+    k = "satisfies_expression").
+.decl logical(x: node)
+logical(x) :- kind(x, "binary_expression"), (op(x, "&&") ; op(x, "||") ; op(x, "??")).
+.decl mem_load(x: node)  // a.b or a[b]
+mem_load(x) :- kind(x, "member_expression") ; kind(x, "subscript_expression").
+
+// ---- refs -------------------------------------------------------------------------------------------------------
+// ref_obj(o): a ref: useRef(…), a name bound to it, or a local named `ref` or `…Ref`.
+.decl ref_obj(o: node)
+ref_obj(o) :- rc_react_call(o, "useRef").
+ref_obj(o) :- kind(o, "identifier"), ref_site(o, s), rc_own(s, _), (use_ref_site(s) ; ref_name(o)).
+ref_obj(o) :- wrapper(o), child(o, x, 0), ref_obj(x).
+.decl use_ref_site(s: node)
+use_ref_site(s) :- kind(s, "variable_declarator"), field(s, "value", c), rc_react_call(c, "useRef").
+// typed_ref(o): a ref the compiler has typed as one: useRef's value, a `…Ref` name read as `x.current`, or a name
+// passed as a JSX `ref`.
+.decl typed_ref(o: node)
+typed_ref(o) :- rc_react_call(o, "useRef").
+typed_ref(o) :- named_read(o), ref_site(o, s), rc_own(s, _), (use_ref_site(s) ; ref_name(o), current_of(s) ;
+    jsx_ref_of(s)).
+typed_ref(o) :- wrapper(o), child(o, x, 0), typed_ref(x).
+.decl ref_name(o: node)
+ref_name(o) :- named_read(o), (text(o, "ref") ; glob("?*Ref", o)).
+.decl current_of(s: node)  // some read of s is `s.current`
+current_of(s) :- ref_site(r, s), field(m, "object", r), kind(m, "member_expression"), field(m, "property", p),
+    text(p, "current").
+.decl jsx_ref_of(s: node)  // some read of s is a JSX `ref={s}`
+jsx_ref_of(s) :- ref_site(r, s), jsx_ref_value(r).
+.decl jsx_ref_value(r: node)
+jsx_ref_value(r) :- child(j, r, _), kind(j, "jsx_expression"), child(a, j, _), kind(a, "jsx_attribute"), child(a, n, 0),
+    text(n, "ref").
+.decl named_read(x: node)
+named_read(x) :- kind(x, "identifier") ; kind(x, "shorthand_property_identifier").
+
+// ---- a ref's value ----------------------------------------------------------------------------------------------
+// Each value carries the place the compiler reports it at (l): the `r.current` it was loaded from, kept through a
+// const holding it and through the ?: and && || ?? that pass it on; a value it no longer follows is reported where
+// it is read. `const id = idRef.current; … <b id={id}/>` is reported at the first line.
+// rv_direct(x, l): `r.current`, through wrappers. rv_fresh(x, l): also a branch of ?: or an operand of && || ??.
+.decl rv_direct(x: node, l: node)
+rv_direct(x, x) :- kind(x, "member_expression"), field(x, "property", p), text(p, "current"), field(x, "object", o),
+    ref_obj(o).
+rv_direct(x, l) :- wrapper(x), child(x, y, 0), rv_direct(y, l).
+.decl rv_fresh(x: node, l: node)
+rv_fresh(x, l) :- rv_direct(x, l).
+rv_fresh(x, l) :- wrapper(x), child(x, y, 0), rv_fresh(y, l).
+rv_fresh(x, l) :- passes(x, y), rv_fresh(y, l).
+.decl passes(x: node, y: node)  // ?: passes on its branches, && || ?? their operands
+passes(x, y) :- kind(x, "ternary_expression"), (field(x, "consequence", y) ; field(x, "alternative", y)).
+passes(x, y) :- logical(x), (field(x, "left", y) ; field(x, "right", y)).
+// rv(x, l): x holds or reads a ref's value: rv_fresh, a member of a typed ref other than current (`r.foo`), a member
+// of such a value, a member of a ref holder, a const holding one (alias_*).
+.decl rv(x: node, l: node)
+rv(x, l) :- rv_fresh(x, l).
+rv(x, x) :- kind(x, "member_expression"), field(x, "property", p), !text(p, "current"), field(x, "object", o),
+    typed_ref(o).
+rv(x, l) :- mem_load(x), field(x, "object", o), rv_base(o, l).
+rv(x, x) :- holder_load(x).
+rv(x, l) :- wrapper(x), child(x, y, 0), rv(y, l).
+rv(x, l) :- passes(x, y), rv_known(y, l).
+rv(x, x) :- passes(x, y), rv(y, _), !known_branch(x).
+rv(x, l) :- alias_fresh(x, l).
+rv(x, x) :- alias_lost(x).
+.decl is_rv(x: node)
+is_rv(x) :- rv(x, _).
+.decl rv_known(x: node, l: node)  // a value the compiler still follows: rv_fresh, or a const holding one
+rv_known(x, l) :- rv_fresh(x, l) ; alias_fresh(x, l).
+.decl known_branch(x: node)
+known_branch(x) :- passes(x, y), rv_known(y, _).
+// rv_base(x, l): what a member read on x reads from a ref.
+.decl rv_base(x: node, l: node)
+rv_base(x, l) :- alias_phi(x, l).
+rv_base(x, x) :- alias_lost(x).
+rv_base(x, l) :- rv(x, l), !kind(x, "identifier").
+
+// A const of render code holding a ref's value: `const prev = ref.current`. Its reads are the value's uses.
+.decl alias_of(x: node, v: node)  // x reads a const whose value v mentions current
+alias_of(x, v) :- named_read(x), ref_site(x, s), kind(s, "variable_declarator"), field(s, "name", n),
+    kind(n, "identifier"), at_render(s), field(s, "value", v), contains("current", v).
+.decl alias_typed(x: node, l: node)
+alias_typed(x, l) :- alias_of(x, v), rv_direct(v, l).
+.decl alias_phi(x: node, l: node)
+alias_phi(x, l) :- alias_of(x, v), rv_fresh(v, l), !rv_direct(v, _).
+.decl alias_chain(x: node)
+alias_chain(x) :- alias_of(x, v), rv(v, _), !rv_fresh(v, _).
+.decl alias_destructured(x: node)  // const { a } = ref.current: a
+alias_destructured(x) :- named_read(x), ref_site(x, s), nearest(s, d, "variable_declarator"), field(d, "name", n),
+    (kind(n, "object_pattern") ; kind(n, "array_pattern")), within(s, n), at_render(d), field(d, "value", v),
+    rv(v, _).
+.decl alias_fresh(x: node, l: node)
+alias_fresh(x, l) :- alias_phi(x, l).
+alias_fresh(x, l) :- alias_typed(x, l), !load_object(x), !read_before(x).
+.decl alias_lost(x: node)
+alias_lost(x) :- alias_chain(x) ; alias_destructured(x).
+alias_lost(x) :- alias_typed(x, _), (load_object(x) ; read_before(x)).
+.decl load_object(x: node)
+load_object(x) :- field(m, "object", x), mem_load(m).
+// read_before(x): earlier in x's function, render code reads a member of the same name: `prev.length … prev`.
+.decl read_before(x: node)
+read_before(x) :- alias_typed(x, _), text(x, t), rc_own(x, g), mem_load(m), field(m, "object", o),
+    kind(o, "identifier"), text(o, t), within(m, g), at_render(m), node(d, m, _, i, _), node(d, x, _, j, _), i < j.
+
+// A ref holder: after `<div ref={splitter.ref}>` the compiler types splitter as a ref, so reading its members
+// while rendering reads a ref. holder_load(m): m reads a member of such a name, in a function that passes the
+// name's member as a JSX ref, and m comes after that attribute, or in the element that has it, or the function
+// reads no ref's current and loads nothing from the name after the attribute.
+.decl holder_load(m: node)
+holder_load(m) :- mem_load(m), field(m, "object", o), kind(o, "identifier"), ref_site(o, s), holder(s), at_render(m),
+    rc_own(m, g), text(o, t), ref_attr(a, t, g),
+    (node(d, a, _, _, e), node(d, m, _, i, _), e <= i ; in_element(m, t) ; !reads_current(g), !load_after(a, t, g)).
+.decl holder(s: node)  // some read of s is `s.x` passed as a JSX ref
+holder(s) :- ref_site(r, s), field(m, "object", r), kind(m, "member_expression"), !has(m, _, "optional_chain"),
+    jsx_ref_value(m).
+.decl ref_attr(a: node, t: symbol, g: node)  // a is `ref={t.x}` in g's own code
+ref_attr(a, t, g) :- kind(a, "jsx_attribute"), child(a, n, 0), text(n, "ref"), child(a, j, _), kind(j, "jsx_expression"),
+    child(j, m, _), kind(m, "member_expression"), !has(m, _, "optional_chain"), field(m, "object", o),
+    kind(o, "identifier"), text(o, t), rc_own(a, g).
+.decl load_after(a: node, t: symbol, g: node)  // g's own code loads a member of t after attribute a
+load_after(a, t, g) :- ref_attr(a, t, g), mem_load(m), field(m, "object", o), kind(o, "identifier"), text(o, t),
+    rc_own(m, g), node(d, a, _, _, e), node(d, m, _, i, _), e <= i.
+// in_element(m, t): m is the value of a JSX expression in an element with `ref={t.x}`, whose children load a
+// member of t after it.
+.decl in_element(m: node, t: symbol)
+in_element(m, t) :- jsx_slot(m, j), nearest(j, el, jsx_el_kind), rc_own(m, g), ref_attr(a, t, g), within(a, el),
+    mem_load(m2), field(m2, "object", o2), text(o2, t), within(m2, el), node(d, a, _, _, e), node(d, m2, _, i, _),
+    e <= i.
+.decl jsx_slot(m: node, j: node)  // m, through member reads, is the value of JSX expression j
+jsx_slot(m, j) :- child(j, m, _), kind(j, "jsx_expression").
+jsx_slot(m, j) :- field(p, "object", m), mem_load(p), jsx_slot(p, j).
+.decl jsx_el_kind(k: symbol)
+jsx_el_kind("jsx_element"). jsx_el_kind("jsx_self_closing_element").
+.decl reads_current(g: node)  // g's own code reads a ref's current, or a member of a typed ref
+reads_current(g) :- kind(m, "member_expression"), rc_own(m, g), field(m, "object", o), ref_obj(o),
+    (field(m, "property", p), text(p, "current") ; typed_ref(o)).
+
+// ---- where a value is used ----------------------------------------------------------------------------------------
+// read_use(x, l): ref value x, loaded at l, is used where render code is reported.
+.decl read_use(x: node, l: node)
+read_use(x, l) :- rv(x, l), use_kind(x), at_render(x), read_slot(x).
+read_use(x, l) :- rv(x, l), use_kind(x), at_top(x), top_slot(x).
+read_use(x, l) :- rv(x, l), (use_kind(x) ; kind(x, "shorthand_property_identifier")), at_render(x), literal_slot(x).
+read_use(x, l) :- lit_known(x, l), at_render(x), literal_slot(x).
+read_use(x, x) :- lit_lost_member(x), at_render(x), literal_slot(x).
+.decl use_kind(x: node)
+use_kind(x) :- kind(x, k), (k = "member_expression" ; k = "subscript_expression" ; k = "identifier" ;
+    k = "non_null_expression" ; k = "parenthesized_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "ternary_expression" ; k = "binary_expression").
+.decl read_slot(x: node)
+// JSX: <b>{x}</b>, <b {...x}/>, <b a={x}/>
+read_slot(x) :- child(j, x, _), kind(j, "jsx_expression").
+read_slot(x) :- child(s, x, _), kind(s, "spread_element"), child(j, s, _), kind(j, "jsx_expression").
+// an argument: f(x), new F(x)
+read_slot(x) :- child(l, x, _), kind(l, "arguments"), child(c, l, _),
+    (kind(c, "call_expression") ; kind(c, "new_expression")).
+// a condition: if (x), while (x), x ? … : …, x && …
+read_slot(x) :- child(p, x, _), kind(p, "parenthesized_expression"), child(s, p, _), branch_kind(s).
+read_slot(x) :- kind(t, "ternary_expression"), field(t, "condition", x).
+read_slot(x) :- logical(b), field(b, "left", x).
+// an operand: x + 1, !x, `${x}`, kept alive
+read_slot(x) :- child(b, x, _), kind(b, "binary_expression"), !logical(b), !null_compare(b), alive(b).
+read_slot(x) :- child(b, x, _), null_compare(b), !guard_ref_test(b), alive(b).
+read_slot(x) :- child(u, x, _), kind(u, "unary_expression"), alive(u).
+read_slot(x) :- child(t, x, _), kind(t, "template_substitution"), child(s, t, _), kind(s, "template_string"), alive(s).
+// a stored value: o.a = x
+read_slot(x) :- kind(a, "assignment_expression"), field(a, "right", x), field(a, "left", l), mem_load(l).
+// a method's receiver, a callee, an optional test
+read_slot(x) :- field(m, "object", x), kind(m, "member_expression"), !has(m, _, "optional_chain"),
+    field(c, "function", m), kind(c, "call_expression"), !has(c, _, "optional_chain").
+read_slot(x) :- field(c, "function", x), kind(c, "call_expression"), !has(c, _, "optional_chain"),
+    !callee_of_value(x).
+read_slot(x) :- field(m, "object", x), kind(m, "member_expression"), has(m, _, "optional_chain").
+read_slot(x) :- field(c, "function", x), kind(c, "call_expression"), has(c, _, "optional_chain").
+.decl callee_of_value(x: node)  // x is `v.f` or `v[k]` with v a ref's value: its receiver is what is reported
+callee_of_value(x) :- mem_load(x), field(x, "object", o), is_rv(o).
+.decl top_slot(x: node)  // return x, () => x of the compiled arrow
+top_slot(x) :- child(r, x, _), kind(r, "return_statement").
+top_slot(x) :- field(f, "body", x), kind(f, "arrow_function"), rc_compiled(f).
+.decl literal_slot(x: node)  // an element of an array or object literal that is used, not a memo's dependencies
+literal_slot(x) :- child(a, x, _), kind(a, "array"), alive(a), !memo_deps(a).
+literal_slot(x) :- child(p, x, _), kind(p, "pair"), field(p, "value", x), child(o, p, _), kind(o, "object"), alive(o),
+    !memo_deps(o).
+literal_slot(x) :- kind(x, "shorthand_property_identifier"), child(o, x, _), kind(o, "object"), alive(o), !memo_deps(o).
+.decl branch_kind(s: node)
+branch_kind(s) :- kind(s, k), (k = "if_statement" ; k = "while_statement" ; k = "do_statement" ; k = "switch_statement").
+// alive(n): n's value goes somewhere: not a statement of its own, a sequence, or an unread const.
+.decl alive(n: node)
+alive(n) :- child(p, n, _), !dead_parent(p, n).
+.decl dead_parent(p: node, n: node)
+dead_parent(p, n) :- child(p, n, _), (kind(p, "expression_statement") ; kind(p, "sequence_expression")).
+dead_parent(p, n) :- kind(p, "variable_declarator"), field(p, "value", n), field(p, "name", i), kind(i, "identifier"),
+    !ref_site(_, p).
+.decl memo_deps(a: node)  // an argument of useMemo or useCallback
+memo_deps(a) :- child(l, a, _), kind(l, "arguments"), field(c, "arguments", l),
+    (rc_react_call(c, "useMemo") ; rc_react_call(c, "useCallback")).
+
+// ---- literals holding ref values ----------------------------------------------------------------------------------
+// An array or object literal inside another holds what its elements hold. Its elements' values are known to the
+// compiler when each one is (lit_known), else they are lost and the literal is reported where it stands; a lost
+// literal passed to a call, rendered or returned is reported too (literal_mixed).
+//   values={[[Ctx, { onExitRef: props.onExitRef }]]}         (props holds a ref) the inner literals are reported
+//   useState({ action: history.action })   (history = historyRef.current, read again)   reported at the object
+.decl struct_value(y: node, l: node)  // y, an element (not itself a literal), holds a ref value loaded at l
+struct_value(y, l) :- in_literal(_, y), !literal_kind(y), (child(a, y, _), kind(a, "array") ; kind(p, "pair"),
+    field(p, "value", y) ; kind(y, "shorthand_property_identifier")), rv(y, l).
+.decl literal_kind(y: node)
+literal_kind(y) :- kind(y, "array") ; kind(y, "object") ; kind(y, "pair").
+.decl lit_lost(x: node)  // literal x holds a value the compiler no longer follows
+lit_lost(x) :- in_literal(x, y), struct_value(y, _), !rv_known(y, _).
+.decl member_pos(x: node)  // an element of an array, or the value of an object's pair
+member_pos(x) :- child(a, x, _), kind(a, "array").
+member_pos(x) :- kind(p, "pair"), field(p, "value", x), child(o, p, _), kind(o, "object").
+.decl lit_known(x: node, l: node)
+lit_known(x, l) :- (kind(x, "array") ; kind(x, "object")), member_pos(x), in_literal(x, y), struct_value(y, l),
+    rv_known(y, l), !lit_lost(x).
+.decl lit_lost_member(x: node)
+lit_lost_member(x) :- (kind(x, "array") ; kind(x, "object")), member_pos(x), in_literal(x, y), struct_value(y, _),
+    lit_lost(x).
+.decl literal_mixed(x: node)
+literal_mixed(x) :- (kind(x, "array") ; kind(x, "object")), !memo_deps(x), lit_lost(x), at_render(x),
+    (child(l, x, _), kind(l, "arguments") ; child(j, x, _), kind(j, "jsx_expression") ;
+     child(r, x, _), kind(r, "return_statement"), at_top(x)).
+
+// ---- tests and writes -------------------------------------------------------------------------------------------
+.decl nullish(n: node)  // null, undefined
+nullish(n) :- kind(n, "null") ; kind(n, "undefined") ; kind(n, "identifier"), text(n, "undefined").
+.decl null_compare(b: node)  // x == null, null !== x, x === undefined
+null_compare(b) :- kind(b, "binary_expression"), (op(b, "==") ; op(b, "!=") ; op(b, "===") ; op(b, "!==")),
+    (field(b, "left", n) ; field(b, "right", n)), nullish(n).
+.decl guard_ref_test(b: node)  // a null test of r.current
+guard_ref_test(b) :- null_compare(b), (field(b, "left", x) ; field(b, "right", x)), rv_direct(x, _).
+// null_check(b): a null test of r.current whose result is used, outside an if's own condition.
+.decl null_check(b: node, l: node)
+null_check(b, l) :- guard_ref_test(b), (field(b, "left", x) ; field(b, "right", x)), rv_direct(x, l), at_render(b),
+    !if_condition(b),
+    (alive(b) ; kind(t, "ternary_expression"), field(t, "condition", b) ; logical(c), field(c, "left", b)).
+.decl if_condition(b: node)
+if_condition(b) :- child(p, b, _), kind(p, "parenthesized_expression"), child(i, p, _), kind(i, "if_statement").
+// negation_use(u): !r.current, rendered, passed, returned or tested by ?:.
+.decl negation_use(u: node)
+negation_use(u) :- kind(u, "unary_expression"), op(u, "!"), field(u, "argument", x), rv_direct(x, _), at_render(u),
+    (child(p, u, _), (kind(p, "jsx_expression") ; kind(p, "arguments") ; kind(p, "return_statement")) ;
+     kind(t, "ternary_expression"), field(t, "condition", u)).
+
+// ref_write(a, l): `r.current = v` in render code, unless inside an if that tests r.current for null or falsiness
+// (lazy initialisation); a write to a member of a ref's value (`r.current.x = v`) is always reported. l is where:
+// the written `r.x`, or where the value was loaded.
+.decl ref_write(a: node, l: node)
+ref_write(a, l) :- kind(a, "assignment_expression"), field(a, "left", l), ref_target(l, w), at_render(a),
+    !guarded(a, w).
+ref_write(a, l) :- kind(a, "assignment_expression"), field(a, "left", t), value_target(t, l), at_render(a).
+.decl ref_target(l: node, w: symbol)  // l is `r.x` on a ref r named w
+ref_target(l, w) :- kind(l, "member_expression"), field(l, "object", o), ref_obj(o), text(o, w).
+.decl value_target(t: node, l: node)  // t is `v.x` or `v[k]` on a ref's value v loaded at l
+value_target(t, l) :- mem_load(t), field(t, "object", o), rv_base(o, l).
+.decl guarded(a: node, w: symbol)  // an if around a, in its function, tests w's current
+guarded(a, w) :- ref_target(_, w), rc_own(a, g), kind(i, "if_statement"), within(a, i), within(i, g),
+    field(i, "condition", c), guard_test(c, w).
+.decl guard_test(c: node, w: symbol)  // r.current == null, !r.current, (…) of one, on ref w
+guard_test(c, w) :- null_compare(c), (field(c, "left", x) ; field(c, "right", x)), guard_ref(x, w).
+guard_test(c, w) :- kind(c, "unary_expression"), op(c, "!"), field(c, "argument", x), guard_ref(x, w).
+guard_test(c, w) :- kind(c, "parenthesized_expression"), child(c, x, 0), guard_test(x, w).
+.decl guard_ref(x: node, w: symbol)
+guard_ref(x, w) :- kind(x, "member_expression"), field(x, "object", o), kind(o, "identifier"), text(o, w),
+    (field(x, "property", p), text(p, "current") ; typed_ref(o)).
+// ref_update(u, l): `r.current += 1`, `r.current++`, or the same on a member of a ref's value, in render code.
+.decl ref_update(u: node, l: node)
+ref_update(u, l) :- updated(u, l), at_render(u), ref_target(l, _).
+ref_update(u, l) :- updated(u, t), at_render(u), value_target(t, l).
+.decl updated(u: node, l: node)
+updated(u, l) :- kind(u, "augmented_assignment_expression"), field(u, "left", l).
+updated(u, l) :- kind(u, "update_expression"), field(u, "argument", l).
+
+// ---- functions that use refs, and refs, handed on ---------------------------------------------------------------
+// reads_refs(g): function g's own code uses a ref's value where render code would be reported (without the
+// liveness tests), writes or updates a ref, or calls by name a function that does.
+.decl reads_refs(g: node)
+reads_refs(g) :- (fn_value(g) ; kind(g, "function_declaration")), rc_own(n, g),
+    (is_rv(n), (use_kind(n) ; kind(n, "shorthand_property_identifier")), inner_slot(n) ;
+     kind(n, "assignment_expression"), field(n, "left", l), (ref_target(l, _) ; value_target(l, _)) ;
+     updated(n, l), (ref_target(l, _) ; value_target(l, _)) ;
+     kind(n, "call_expression"), field(n, "function", i), kind(i, "identifier"), fn_name_reads(i)).
+.decl inner_slot(x: node)
+inner_slot(x) :- read_slot(x).
+inner_slot(x) :- child(b, x, _), kind(b, "binary_expression"), !logical(b).
+inner_slot(x) :- child(u, x, _), (kind(u, "unary_expression") ; kind(u, "template_substitution") ;
+    kind(u, "return_statement") ; kind(u, "array")).
+inner_slot(x) :- field(f, "body", x), kind(f, "arrow_function").
+inner_slot(x) :- kind(p, "pair"), field(p, "value", x).
+inner_slot(x) :- kind(x, "shorthand_property_identifier"), child(o, x, _), kind(o, "object").
+// fn_name_reads(i): name i is a local function that reads refs: `const f = () => …`, `function f() {…}`, or
+// `const f = useCallback(() => …, deps)`.
+.decl fn_name_reads(i: node)
+fn_name_reads(i) :- named_read(i), ref_site(i, s), rc_own(s, _), fn_site_reads(s).
+.decl fn_site_reads(s: node)
+fn_site_reads(s) :- kind(s, "variable_declarator"), field(s, "name", n), kind(n, "identifier"), field(s, "value", v),
+    (fn_value(v), reads_refs(v) ; rc_react_call(v, "useCallback"), call_arg(v, a, 0), fn_value(a), reads_refs(a)).
+fn_site_reads(s) :- kind(s, "function_declaration"), reads_refs(s).
+// holds_effect(x): an array or object literal holding such a function (at any depth of literals), or a const of
+// render code whose value does.
+.decl holds_effect(x: node)
+holds_effect(x) :- (kind(x, "array") ; kind(x, "object")), in_literal(x, y), (fn_value(y), reads_refs(y) ;
+    fn_name_reads(y)).
+holds_effect(x) :- kind(x, "identifier"), ref_site(x, s), kind(s, "variable_declarator"), field(s, "name", n),
+    kind(n, "identifier"), at_render(s), field(s, "value", v), effect_expr(v).
+.decl in_literal(x: node, y: node)  // y is an element of literal x, through nested arrays, objects and pairs
+in_literal(x, y) :- (kind(x, "array") ; kind(x, "object")), child(x, y, _).
+in_literal(x, y) :- in_literal(x, z), (kind(z, "array") ; kind(z, "object") ; kind(z, "pair")), child(z, y, _).
+.decl effect_expr(v: node)
+effect_expr(v) :- (kind(v, "array") ; kind(v, "object")), holds_effect(v).
+effect_expr(v) :- fn_value(v), reads_refs(v).
+effect_expr(v) :- kind(v, "identifier"), fn_name_reads(v).
+effect_expr(v) :- (kind(v, "parenthesized_expression"), child(v, y, 0) ; kind(v, "ternary_expression"),
+    (field(v, "consequence", y) ; field(v, "alternative", y)) ; logical(v), (field(v, "left", y) ; field(v, "right", y))),
+    effect_expr(y).
+.decl effect_fn(x: node)  // x is, names or holds a function that reads refs
+effect_fn(x) :- fn_value(x), reads_refs(x).
+effect_fn(x) :- fn_name_reads(x).
+effect_fn(x) :- holds_effect(x).
+// may_call_arg(x): x is an argument of `new …(…)`, or of a call that is not a hook's (useState and useReducer
+// aside) nor a method of a ref's value.
+.decl may_call_arg(x: node)
+may_call_arg(x) :- child(l, x, _), kind(l, "arguments"), child(c, l, _),
+    (kind(c, "new_expression") ; kind(c, "call_expression"), field(c, "function", f), !method_of_value(f),
+     (!rc_hook_ref(f) ; rc_react_call(c, "useState") ; rc_react_call(c, "useReducer"))).
+.decl method_of_value(f: node)
+method_of_value(f) :- kind(f, "member_expression"), field(f, "object", o), is_rv(o).
+// fn_handed(x): render code hands on, tests or calls a method of a function that reads refs.
+.decl fn_handed(x: node)
+fn_handed(x) :- may_call_arg(x), at_render(x), (fn_value(x) ; kind(x, "identifier") ; kind(x, "array") ;
+    kind(x, "object")), effect_fn(x).
+fn_handed(x) :- (fn_value(x) ; kind(x, "identifier")), at_render(x), tested(x), effect_fn(x).
+fn_handed(x) :- (fn_value(x) ; kind(x, "identifier") ; kind(x, "array") ; kind(x, "object")), at_render(x),
+    field(m, "object", x), kind(m, "member_expression"), !has(m, _, "optional_chain"), field(c, "function", m),
+    kind(c, "call_expression"), !rc_hook_ref(m), effect_fn(x).
+.decl tested(x: node)  // a condition, a test of && || ??, or an operand
+tested(x) :- child(p, x, _), kind(p, "parenthesized_expression"), child(s, p, _), branch_kind(s).
+tested(x) :- kind(t, "ternary_expression"), field(t, "condition", x).
+tested(x) :- logical(b), field(b, "left", x).
+tested(x) :- child(b, x, _), kind(b, "binary_expression"), !logical(b).
+tested(x) :- child(u, x, _), (kind(u, "unary_expression") ; kind(u, "template_substitution")).
+// ref_handed(x): render code hands a ref itself, or a literal holding refs, to code that may call into it, unless
+// the call makes a ref (`ref={merge(a, b)}`, `const fooRef = merge(a, b)`).
+.decl ref_handed(x: node)
+ref_handed(x) :- kind(x, "identifier"), may_call_arg(x), at_render(x), typed_ref(x), call_of(x, c), !makes_ref(c).
+ref_handed(x) :- (kind(x, "array") ; kind(x, "object")), may_call_arg(x), at_render(x), call_of(x, c), !makes_ref(c),
+    child(x, y, _), (named_read(y), typed_ref(y) ; kind(y, "pair"), field(y, "value", z), kind(z, "identifier"),
+    typed_ref(z)), !holds_reader_pair(x).
+.decl call_of(x: node, c: node)  // x is an argument of c
+call_of(x, c) :- child(l, x, _), kind(l, "arguments"), child(c, l, _).
+.decl makes_ref(c: node)
+makes_ref(c) :- jsx_ref_value(c).
+makes_ref(c) :- kind(d, "variable_declarator"), field(d, "value", c), field(d, "name", n), kind(n, "identifier"),
+    (jsx_ref_of(d) ; ref_name(n), current_of(d)).
+.decl holds_reader_pair(x: node)  // object x has a pair whose value is a function that reads refs
+holds_reader_pair(x) :- child(x, p, _), kind(p, "pair"), field(p, "value", v), (fn_value(v), reads_refs(v) ;
+    fn_name_reads(v)).

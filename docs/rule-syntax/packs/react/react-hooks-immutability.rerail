@@ -88,7 +88,7 @@ frozen_change(r, g) :- mutated(_, r), ref_site(r, s), hoisted(s, f), !reassigned
 .decl hoisted(s: node, f: node)
 hoisted(s, f) :- hoisted_ref(s, f).
 hoisted(s, f) :- kind(s, "variable_declarator"), field(s, "name", n), kind(n, "identifier"), field(s, "value", v),
-    chain_root(v, h), ref_site(h, hs), hoisted_ref(hs, f).
+    write_root(v, h), ref_site(h, hs), hoisted_ref(hs, f).
 .decl hoisted_ref(s: node, f: node)
 hoisted_ref(s, f) :- kind(s, "variable_declarator"), field(s, "value", c), rc_react_call(c, "useRef"), rc_own(s, f),
     rc_compiled(f), ref_site(r, s), node(e, r, _, i, _), node(e, s, _, j, _), i < j, rc_hook_call(hc), within(hc, f),
@@ -121,19 +121,19 @@ render_fn(h, f) :- rc_compiled(f), rc_own(h, f), rc_fn_at(s, h), ref_site(r, s),
 // `a.b ||= c` writes only when needed, and the compiler does not count it.
 .decl mutated(m: node, r: node)
 mutated(m, r) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression"), !logical_assign(a)),
-    field(a, "left", m), chain_root(m, r).
-mutated(m, r) :- kind(a, "update_expression"), field(a, "argument", m), chain_root(m, r).
-mutated(m, r) :- kind(a, "unary_expression"), op(a, "delete"), field(a, "argument", m), chain_root(m, r).
+    field(a, "left", m), write_root(m, r).
+mutated(m, r) :- kind(a, "update_expression"), field(a, "argument", m), write_root(m, r).
+mutated(m, r) :- kind(a, "unary_expression"), op(a, "delete"), field(a, "argument", m), write_root(m, r).
 .decl logical_assign(a: node)
 logical_assign(a) :- op(a, "||=") ; op(a, "&&=") ; op(a, "??=").
-.decl chain_root(m: node, r: node)  // a.b.c, a[0].b, a!.b, (a as T).b: r is a
-chain_root(m, r) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", o),
-    chain_step(o, r).
-.decl chain_step(o: node, r: node)
-chain_step(o, o) :- kind(o, "identifier").
-chain_step(o, r) :- chain_root(o, r).
-chain_step(o, r) :- kind(o, k), (k = "non_null_expression" ; k = "parenthesized_expression" ; k = "as_expression" ;
-    k = "satisfies_expression"), child(o, x, 0), chain_step(x, r).
+.decl write_root(m: node, r: node)  // a.b.c, a[0].b, a!.b, (a as T).b: r is a
+write_root(m, r) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", o),
+    write_step(o, r).
+.decl write_step(o: node, r: node)
+write_step(o, o) :- kind(o, "identifier").
+write_step(o, r) :- write_root(o, r).
+write_step(o, r) :- kind(o, k), (k = "non_null_expression" ; k = "parenthesized_expression" ; k = "as_expression" ;
+    k = "satisfies_expression"), child(o, x, 0), write_step(x, r).
 // frozen(s, f): binding s of compiled f holds a frozen value.
 .decl frozen(s: node, f: node)
 frozen(s, f) :- frozen_param(s, f).
@@ -154,7 +154,7 @@ hook_part(m) :- (kind(m, "member_expression") ; kind(m, "subscript_expression"))
 // an alias or a part of one: const { a } = props, const t = state.items. A ref is not frozen, nor what it holds:
 // `const el = ref.current; el.style.height = h` changes the element, not a value React gave the component.
 frozen(s, f) :- frozen(s0, f), !rc_ref_site(s0), kind(d, "variable_declarator"), within(d, f), field(d, "value", v0),
-    deparen(v0, v), (kind(v, "identifier"), r = v ; chain_root(v, r)), ref_site(r, s0), bound(d, s).
+    deparen(v0, v), (kind(v, "identifier"), r = v ; write_root(v, r)), ref_site(r, s0), bound(d, s).
 // bound(d, s): declarator d binds s: itself for a plain name, else each name in its pattern but a rest, which
 // is a fresh copy: `const { a, ...rest } = props` freezes a, and rest may be changed.
 .decl bound(d: node, s: node)
@@ -241,15 +241,15 @@ memo_object(o, b, f) :- rc_memo_callback(g, c), rc_own(c, f), rc_compiled(f), fi
     kind(o, "object").
 // memo_entry(o, e, h): entry e of o holds function h: `k: () => …`, `k: name`, `name`, a name of a const function.
 .decl memo_entry(o: node, e: node, h: node)
-memo_entry(o, e, h) :- memo_object(o, _, _), child(o, e, _), kind(e, "pair"), field(e, "value", h), fn_expr(h).
+memo_entry(o, e, h) :- memo_object(o, _, _), child(o, e, _), kind(e, "pair"), field(e, "value", h), fn_value(h).
 memo_entry(o, e, h) :- memo_object(o, _, _), child(o, e, _), (kind(e, "pair"), field(e, "value", v),
     kind(v, "identifier") ; kind(e, "shorthand_property_identifier"), v = e), const_fn(v, h).
-.decl fn_expr(h: node)
-fn_expr(h) :- kind(h, "arrow_function") ; kind(h, "function_expression").
+.decl fn_value(h: node)  // an arrow or function expression
+fn_value(h) :- kind(h, "arrow_function") ; kind(h, "function_expression").
 .decl const_fn(v: node, h: node)  // name v resolves to a declarator whose value is function h
-const_fn(v, h) :- ref_site(v, s), kind(s, "variable_declarator"), field(s, "value", h), fn_expr(h).
+const_fn(v, h) :- ref_site(v, s), kind(s, "variable_declarator"), field(s, "value", h), fn_value(h).
 .decl memo_fn(gf: node, b: node)  // gf is a const function declared directly in memo body b
-memo_fn(gf, b) :- field(d, "value", gf), fn_expr(gf), kind(d, "variable_declarator"), child(l, d, _),
+memo_fn(gf, b) :- field(d, "value", gf), fn_value(gf), kind(d, "variable_declarator"), child(l, d, _),
     kind(l, "lexical_declaration"), child(b, l, _).
 .decl later_reassigning(o: node, e: node)  // an entry after e reassigns
 later_reassigning(o, e) :- memo_entry(o, e, _), precedes(e, e2), memo_entry(o, e2, h2), reassigns(h2).
