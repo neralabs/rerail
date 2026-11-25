@@ -1,0 +1,22 @@
+# The twins' rules (decision 0686, B1): a twin is a function of its pinned blocks and its params alone. Rust data
+# structures inside one are allowed for now (the user, 2026-11-25); state that outlives a call, or reads the world, is
+# not. scripts/check/check_delta_exec_shape.py refuses the same names.
+disallowed-macros = [
+    { path = "std::thread_local", reason = "a twin keeps no state between calls" },
+]
+disallowed-types = [
+    { path = "std::sync::OnceLock", reason = "a twin keeps no state between calls" },
+    { path = "std::sync::LazyLock", reason = "a twin keeps no state between calls" },
+    { path = "std::cell::OnceCell", reason = "a twin keeps no state between calls" },
+    { path = "std::sync::Mutex", reason = "a twin shares nothing" },
+    { path = "std::sync::RwLock", reason = "a twin shares nothing" },
+    { path = "std::time::Instant", reason = "time is not a twin's input" },
+    { path = "std::time::SystemTime", reason = "time is not a twin's input" },
+]
+disallowed-methods = [
+    { path = "rerail_blocks::scratch::with", reason = "a thread's scratch outlives the call: make a Scratch of the call's own" },
+    { path = "std::env::var", reason = "the environment is not a twin's input" },
+    { path = "std::fs::read", reason = "files come through the file layer, as slots" },
+    { path = "std::fs::File::open", reason = "files come through the file layer, as slots" },
+    { path = "std::process::Command::new", reason = "a twin runs nothing" },
+]

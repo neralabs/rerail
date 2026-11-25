@@ -89,24 +89,29 @@ def m0(failures: list) -> None:
 
 
 def b1(failures: list) -> None:
-    """B1, operations on blocks: a twin is a pure function of its slots and params (Operations §3). Its crate is
-    no_std with no alloc and no dependencies, and names no static, heap type, lock, cell, atomic or unsafe."""
+    """B1, operations on blocks: a twin is a function of its pinned slots and params alone (Operations §3). Rust data
+    structures inside a call are allowed for now (the user, 2026-11-25); nothing may outlive a call or come from
+    outside it. The twins' crate forbids unsafe, depends on blocks alone, and names no static, thread-local,
+    Once/Lazy cell, lock or atomic, no thread's scratch, and no file, environment, process, network or time. Its
+    clippy.toml disallows the same by path."""
     lib = TWINS / "src/lib.rs"
-    src = lib.read_text()
-    for attr in ("#![no_std]", "#![forbid(unsafe_code)]"):
-        if attr not in src:
-            failures.append(f"{lib.relative_to(ROOT)}: the twins' crate lacks {attr}")
+    if "#![forbid(unsafe_code)]" not in lib.read_text():
+        failures.append(f"{lib.relative_to(ROOT)}: the twins' crate lacks #![forbid(unsafe_code)]")
+    if not (TWINS / "clippy.toml").exists():
+        failures.append(f"{TWINS.relative_to(ROOT)}: the twins' crate lacks its clippy.toml")
     manifest = (TWINS / "Cargo.toml").read_text()
     deps = manifest.split("[dependencies]", 1)[1] if "[dependencies]" in manifest else ""
     deps = re.split(r"^\[", deps, flags=re.M)[0]
-    if re.search(r"^\s*[\w-]+\s*=", deps, flags=re.M):
-        failures.append(f"{(TWINS / 'Cargo.toml').relative_to(ROOT)}: the twins' crate has a dependency")
+    for name in re.findall(r"^\s*([\w-]+)\s*=", deps, flags=re.M):
+        if name != "rerail-blocks":
+            failures.append(f"{(TWINS / 'Cargo.toml').relative_to(ROOT)}: the twins' crate depends on {name} (blocks alone)")
     forbidden = [
-        (r"\bstatic\b", "a static (a twin reads only its slots and params)"),
-        (r"\balloc\b|\bstd\b|\bVec\b|\bBox\b|\bString\b|\bRc\b|\bArc\b|\bHashMap\b|\bBTreeMap\b",
-         "the heap or std (no alloc)"),
-        (r"thread_local|\bMutex\b|\bRwLock\b|\bOnce\w*|\bCell\b|\bRefCell\b|\bAtomic\w*|\bunsafe\b",
-         "a lock, a cell, an atomic or unsafe (state sneaked in)"),
+        (r"\bstatic\b", "a static (state outliving a call)"),
+        (r"thread_local|\bOnce\w*|\bLazy\w*|lazy_static|once_cell", "a thread-local or a once/lazy cell (state outliving a call)"),
+        (r"\bMutex\b|\bRwLock\b|\bCondvar\b|\bAtomic\w*", "a lock or an atomic (shared state)"),
+        (r"scratch::with\b", "a thread's scratch (it outlives the call: make a Scratch of the call's own)"),
+        (r"std::(fs|env|net|process|time)\b|\bInstant\b|\bSystemTime\b", "the world (files, environment, processes, network, time)"),
+        (r"\bunsafe\b", "unsafe"),
     ]
     for path in sorted((TWINS / "src").rglob("*.rs")):
         code = strip_rust(path.read_text())

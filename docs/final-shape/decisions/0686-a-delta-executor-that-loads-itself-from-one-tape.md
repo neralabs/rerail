@@ -202,6 +202,21 @@ Checks, each passed under Relax on this machine (`relax test rerail-delta-exec -
 - Also: a slot takes its kind of block and the params their declared size; the twin is the one reference and comes
   first; params give UKL their layout.
 
+## The twins may use std, for now (2026-11-25)
+
+B2's `consolidate` writes a frozen layer, whose layout and freeze only `blocks` (std) holds; Operations §3 put the
+twins in a no_std, no-alloc crate with no dependencies. The user: "Leave std in for now. So long as the interface is
+accepted and there aren't stupid things like global caches, using Rust data structures internally is going to be slow
+but not wrong. Do make sure that we use linters and comments to ensure that the rules are respected, though."
+
+So `rerail-delta-twins` depends on `blocks` alone, and a twin's `Slot` is its pinned block (`BlockPin`): it reads a
+block's structures in place and writes only a write slot's. Inside a call it may use Rust data structures and blocks'
+code. Nothing may outlive a call or come from outside it: no `static`, thread-local, `Once`/`Lazy` cell, lock or
+atomic of its own, no thread's scratch (`scratch::with`), no file, environment, process, network or time, no
+`unsafe`. The crate's doc states the rules; `check_delta_exec_shape.py` (section `b1`) refuses each (tried against a
+crate holding each one); the crate's `clippy.toml` disallows them by path (written, not run: clippy is a build
+outside the narrow Relax runs).
+
 ## B2's trace: two states, layers as storage (2026-11-25)
 
 P§12 gives a trace any frontier (`at`, `between`, `fork`, named `pin`s). The user on 2026-11-24 (0678): "Nothing

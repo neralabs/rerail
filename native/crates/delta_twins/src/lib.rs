@@ -1,35 +1,48 @@
 //! The Rust twins of the delta executor's operations (decision 0686; *0686: Operations* §3).
 //!
-//! An operation is a pure function of its blocks and its params: what it writes depends on them and on nothing else.
-//! Its twin is that function in plain Rust, registered as the operation's reference version, against which every
-//! other version (UKL, compiled) is checked. So this crate is `#![no_std]` with no `alloc` and no dependencies: a twin
-//! cannot name a `Vec`, a map, a lock or a thread-local, and the shape check (`check_delta_exec_shape.py`) refuses a
-//! `static` and `unsafe` here. Everything a twin reads or writes is a slot's bytes, read in place.
+//! An operation is a function of its blocks and its params: what it writes depends on them and on nothing else. Its
+//! twin is that function in plain Rust, registered as the operation's reference version, against which every other
+//! version (UKL, compiled) is checked.
+//!
+//! **The rules.** A twin is `TwinFn`: its slots, pinned by the executor from its signature, and its params' bytes.
+//! It reads only those, and writes only its write slots' blocks. Rust data structures inside a call are allowed for
+//! now (the user, 2026-11-25: "using Rust data structures internally is going to be slow but not wrong"), and so is
+//! the blocks crate's code (a relation's freeze, its layouts, read in place). Nothing may outlive a call or come from
+//! outside it: no `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's scratch
+//! (`rerail_blocks::scratch::with`: make a `Scratch` of the call's own); no file, environment, process, network or
+//! time. `unsafe` is forbidden. `check_delta_exec_shape.py` refuses each of these here, and this crate's
+//! `clippy.toml` disallows them by path.
 //!
 //! A params struct is declared once, here, by `params!`; the executor gives UKL its declaration from `Params::FIELDS`.
 
-#![no_std]
 #![forbid(unsafe_code)]
 
-/// One slot's block as a twin sees it: all its bytes, header first, as the executor pinned it (read, or written).
+use rerail_blocks::region::BlockPin;
+
+/// One slot's block as a twin sees it: pinned by the executor, to read or to write (`BlockPin`). A twin reads a
+/// block's structures through `pin.block()` and its bytes through `pin.bytes()`, and writes only a `Write` slot's.
 pub enum Slot<'a> {
-    Read(&'a [u8]),
-    Write(&'a mut [u8]),
+    Read(&'a BlockPin),
+    Write(&'a mut BlockPin),
 }
 
 impl Slot<'_> {
-    pub fn bytes(&self) -> &[u8] {
+    pub fn pin(&self) -> &BlockPin {
         match self {
-            Slot::Read(b) => b,
-            Slot::Write(b) => b,
+            Slot::Read(p) => p,
+            Slot::Write(p) => p,
         }
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        self.pin().bytes()
     }
 
     /// The bytes to write: `None` for a slot pinned to read.
     pub fn bytes_mut(&mut self) -> Option<&mut [u8]> {
         match self {
             Slot::Read(_) => None,
-            Slot::Write(b) => Some(b),
+            Slot::Write(p) => p.bytes_mut(),
         }
     }
 }

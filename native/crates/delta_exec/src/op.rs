@@ -7,8 +7,8 @@
 //! nothing else.
 //!
 //! Each operation has registered **versions** (`Version`, Operations §3, E3), chosen by their metadata. Its Rust
-//! twin (`rerail_delta_twins`, no_std, no alloc) is its reference: registered first, and the one every other version
-//! is checked against.
+//! twin (`rerail_delta_twins`: a function of its pinned blocks and params alone, no state outliving a call) is its
+//! reference: registered first, and the one every other version is checked against.
 //!
 //! **Starting** an operation pins every slot from its signature through the blocks' own regions (0491's checks,
 //! `rerail_blocks::region::pin_block`), naming the operation: a second writer, a writer beside a reader, or a write of
@@ -307,10 +307,7 @@ pub fn run_cpu(reg: &Registry, op: OpId, blocks: &[&Arc<Block>], params: &[u8]) 
             .map_err(|e| format!("{} could not start: slot {i} ({}): {e}", sig.name, spec.name))?;
         pins.push(pin);
     }
-    let mut slots: Vec<Slot<'_>> = pins
-        .iter_mut()
-        .map(|p| if p.writes() { Slot::Write(p.bytes_mut().expect("a write pin")) } else { Slot::Read(p.bytes()) })
-        .collect();
+    let mut slots: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
     twin(&mut slots, params);
     Ok(())
 }

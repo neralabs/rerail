@@ -3809,6 +3809,10 @@ dependencies = [
 [[package]]
 name = "rerail-delta-twins"
 version = "0.1.0"
+dependencies = [
+ "rerail-blocks",
+ "rerail-delta-twins",
+]
 
 [[package]]
 name = "rerail-demand-catalog"
