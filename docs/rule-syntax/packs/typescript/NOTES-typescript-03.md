@@ -7,7 +7,8 @@ Ground truth: ESLint 9.39 with typescript-eslint 8.74.0 (`@typescript-eslint/par
 "error" with its default options), run on a fleet box over the suite's `fixtures` (2,397 files) and
 `rerail-typescript` (602 files) corpora and on the hand-written cases below, compared by (path, line) with
 `--no-inline-config` (for no-unused-vars on rerail-typescript also with inline config: the same 80 keys). The
-translations now report what ESLint reports on both corpora, line for line. Each translation's revision is one up.
+translations now report what ESLint reports on both corpora, line for line. Each changed translation's revision is one
+up; parameter-properties needed no change.
 
 ## Results
 
