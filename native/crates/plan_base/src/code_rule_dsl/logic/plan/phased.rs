@@ -49,3 +49,21 @@ pub fn is_phased(rel: &str) -> bool {
     analysis_history::is_input(rel) || git::INPUTS.contains(&rel) || source_languages::is_input(rel)
         || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
 }
+
+/// The prefix of a stage's name (decision 0675): a phase cut from the program it runs before, `staged_<digest>`.
+pub const STAGE: &str = "staged_";
+
+/// A stage's probe (decision 0675 §3): the values a reader of a phase's export fixes, per file.
+pub const PROBE: &str = "rr_probe_";
+
+/// Whether `rel` is a stage's export (`staged_<digest>__<relation>`, decision 0675).
+pub fn is_stage_export(rel: &str) -> bool {
+    rel.starts_with(STAGE) && is_phased(rel)
+}
+
+/// Whether `rel` is an earlier phase's export read by probes (decision 0675 §3): a stage's or a phase program's
+/// (`<phase>__<export>`), not phase 1's (`observer__…`: the run's files) nor the runner's other inputs. A reader
+/// takes it as a placeless input, and a file's memo entry is keyed by the rows of it its probes read.
+pub fn is_probed(rel: &str) -> bool {
+    is_phased(rel) && rel.split_once(SEP).is_some_and(|(p, _)| p != "observer" && p != "sources")
+}

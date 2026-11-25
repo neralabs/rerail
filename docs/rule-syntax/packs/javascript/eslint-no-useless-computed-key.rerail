@@ -48,5 +48,7 @@ in_object(h) :- (kind(h, "pair") ; kind(h, "method_definition")), child(o, h, _)
 plain_key(h, l) :- useless(h, l, k), !has(k, _, "comment"), text(l, t), !space(k, l) => replace(k, `$t`).
 plain_key(h, l) :- useless(h, l, k), !has(k, _, "comment"), text(l, t), space(k, l) => replace(k, ` $t`).
 .decl space(k: node, l: node)
-space(k, l) :- useless(_, l, k), touching(t, k), text(t, a), text(l, b), cannot_touch(a, b).
-touch_pair(a, b) :- useless(_, l, k), touching(t, k), text(t, a), text(l, b).
+// a: the code before `[`, which touches it (`touching(k, a)`); b: the literal's text, which takes the bracket's place.
+space(k, l) :- useless(_, l, k), touching(k, a), text(l, b), cannot_touch(a, b).
+touch_pair(a, b) :- useless(_, l, k), touching(k, a), text(l, b).
+layout_at(k) :- useless(_, _, k).

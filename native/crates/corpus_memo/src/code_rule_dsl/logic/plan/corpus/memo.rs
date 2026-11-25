@@ -49,13 +49,26 @@ pub const VALUES: &str = "values:";
 /// a value `@parse` or `@splice` asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answered {
-    /// The string at node `at`, parsed as `grammar`.
-    Embed { at: i64, grammar: String },
+    /// The string at node `at`, parsed as `grammar`; `source`, its tape value's source (the text's sha256), where one
+    /// was made: a hit names it (`Parses::name_kept`) without its host's tree. Held in the row's text column, empty for
+    /// none (as an entry made before kept it).
+    Embed { at: i64, grammar: String, source: Option<[u8; 32]> },
     /// `@parse`'s or `@splice`'s request.
     Value(super::guests::Request),
 }
 
 impl Answered {
+    /// Its tape value's grammar and source, where the row names one: an `@parse` value's text's sha256, or an
+    /// embedded string's (`Guests::value_source`).
+    pub fn source(&self) -> Option<(&str, [u8; 32])> {
+        use sha2::Digest as _;
+        match self {
+            Self::Embed { grammar, source, .. } => source.map(|d| (grammar.as_str(), d)),
+            Self::Value(super::guests::Request::Parse { grammar, text, .. }) => Some((grammar.as_str(), sha2::Sha256::digest(text.as_bytes()).into())),
+            Self::Value(super::guests::Request::Splice { .. }) => None,
+        }
+    }
+
     /// The node it was asked at: the files that own its document keep it.
     pub fn at(&self) -> i64 {
         match self {
@@ -74,8 +87,12 @@ impl Answered {
     /// Its row of `rows`.
     pub fn push(&self, rows: &mut super::super::output::Rows) {
         use super::super::output::Cell;
+        let hex;
         let (kind, a, b) = match self {
-            Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
+            Self::Embed { grammar, source, .. } => {
+                hex = source.map(|d| d.iter().map(|b| format!("{b:02x}")).collect::<String>()).unwrap_or_default();
+                (0, grammar.as_str(), hex.as_str())
+            }
             Self::Value(super::guests::Request::Parse { grammar, text, .. }) => (1, grammar.as_str(), text.as_str()),
             Self::Value(super::guests::Request::Splice { with, .. }) => (2, with.as_str(), ""),
         };
@@ -87,7 +104,16 @@ impl Answered {
         use super::super::output::Cell;
         (0..rows.len())
             .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
-                (Cell::Int(0), Cell::Int(at), Cell::Text(g), _) => Some(Self::Embed { at, grammar: g.to_owned() }),
+                (Cell::Int(0), Cell::Int(at), Cell::Text(g), t) => {
+                    let source = match t {
+                        Cell::Text(h) if h.len() == 64 => {
+                            let mut d = [0u8; 32];
+                            d.iter_mut().enumerate().all(|(i, b)| u8::from_str_radix(&h[2 * i..2 * i + 2], 16).map(|x| *b = x).is_ok()).then_some(d)
+                        }
+                        _ => None,
+                    };
+                    Some(Self::Embed { at, grammar: g.to_owned(), source })
+                }
                 (Cell::Int(1), Cell::Int(at), Cell::Text(g), Cell::Text(t)) => Some(Self::Value(super::guests::Request::Parse { at, grammar: g.to_owned(), text: t.to_owned() })),
                 (Cell::Int(2), Cell::Int(node), Cell::Text(w), _) => Some(Self::Value(super::guests::Request::Splice { node, with: w.to_owned() })),
                 _ => None,
@@ -217,9 +243,14 @@ impl Strata {
             if reached.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r)) {
                 hash.update(options.to_string().as_bytes());
             }
-            // A phase's export read as a setting (`file_local::setting_input`, `tsx_names`'s) keys a file's entry by the
-            // rows that file can read of it (`SettingsDigests::identities`), not by all of them.
-            let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r)).collect();
+            // A setting (`file_local::setting_input`) keys a file's entry by the rows that file can read of it
+            // (`SettingsDigests::identities`), not by all of them.
+            // A stage's export (decision 0675) keys it by the rows of it the file reads, at its probes (`StageDigests`).
+            let by_rows: Vec<&str> = reached
+                .iter()
+                .map(String::as_str)
+                .filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r) && !crate::code_rule_dsl::logic::plan::phased::is_probed(r))
+                .collect();
             out.insert(rel.clone(), with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r]))));
         }
         out
@@ -263,9 +294,8 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             None
         }
     };
-    // A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name: read
-    // at its own path (`package_for(p, dir)`, `tsx_names__target_at(p, s, t)`), or carried in a column of a derived
-    // relation made from them (`named`: `target(d, s, t)` from `tsx_names__target_at` at its own path).
+    // A rule's own paths (its document's, `doc(d, p, _)`), and the folders its own file's rows name: read at its own
+    // path (`package_for(p, dir)`), or carried in a column of a derived relation made from them (`named`).
     let anchors = |rule: &crate::code_rule_dsl::logic::program_image::RuleRef<'_>, named: &HashMap<String, BTreeSet<usize>>| {
         let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()).collect();
         let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
@@ -432,6 +462,162 @@ impl SettingsDigests {
                         hash.update(id);
                         hash.update(if *scope == SettingsScope::All { all } else { own });
                         hash.finalize().into()
+                    }
+                };
+                (rel.clone(), id)
+            })
+            .collect()
+    }
+}
+
+/// A value of a stage's export's row or of a probe's, as one key's bytes: a text by its content, a number by its value.
+fn key_bytes(out: &mut Vec<u8>, text: Option<&str>, int: i64) {
+    match text {
+        Some(t) => {
+            out.push(b's');
+            out.extend_from_slice(&(t.len() as u64).to_le_bytes());
+            out.extend_from_slice(t.as_bytes());
+        }
+        None => {
+            out.push(b'i');
+            out.extend_from_slice(&int.to_le_bytes());
+        }
+    }
+}
+
+/// The stages' exports (decision 0675 §3), each indexed by the columns its probes fix: a file's entry is kept under
+/// the rows of an export at the values its probes (file-local outputs of its own rows) hold, not under every row.
+#[derive(Default)]
+pub struct StageDigests {
+    /// Each probe: its export, and the export's rows by the probe's columns' values, each row's digest.
+    probes: BTreeMap<String, (String, HashMap<Vec<u8>, Vec<[u8; 32]>>)>,
+    /// Each export read whole somewhere, by the digest of every row.
+    whole: BTreeMap<String, [u8; 32]>,
+    /// Each memoised relation's exports reached, in order.
+    reach: BTreeMap<String, Vec<String>>,
+}
+
+impl StageDigests {
+    /// Of the phases' rows (`phased`), the probes (`(probe, export, columns)`), the exports read whole, and the
+    /// memoised relations' identities' leaves (`Strata`). A probe the file-local part does not output (`local`) keys
+    /// nothing: its export is read whole, as is one a memoised relation reaches with no probe of it.
+    pub fn of(
+        phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>,
+        probes: &[(String, String, Vec<usize>)],
+        whole: &BTreeSet<String>,
+        strata: &Strata,
+        local: &dyn Fn(&str) -> bool,
+    ) -> Self {
+        use crate::code_rule_dsl::logic::front::Value;
+        let row_key = |row: &[Value], cols: &[usize]| {
+            let mut k = Vec::new();
+            for &c in cols {
+                match row.get(c) {
+                    Some(Value::Str(t)) => key_bytes(&mut k, Some(t), 0),
+                    Some(Value::Int(i)) => key_bytes(&mut k, None, *i),
+                    Some(other) => key_bytes(&mut k, Some(&format!("{other:?}")), 0),
+                    None => {}
+                }
+            }
+            k
+        };
+        let digest = |row: &[Value]| -> [u8; 32] {
+            let mut h = Sha256::new();
+            h.update(row_key(row, &(0..row.len()).collect::<Vec<_>>()));
+            h.finalize().into()
+        };
+        let mut out = StageDigests::default();
+        let mut whole = whole.clone();
+        whole.extend(probes.iter().filter(|(p, _, _)| !local(p)).map(|(_, e, _)| e.clone()));
+        let probes: Vec<&(String, String, Vec<usize>)> = probes.iter().filter(|(p, _, _)| local(p)).collect();
+        for (rel, (_, leaves)) in &strata.by_rel {
+            let reached: Vec<String> = leaves.iter().filter(|l| phased.contains_key(l.as_str()) && crate::code_rule_dsl::logic::plan::phased::is_probed(l)).cloned().collect();
+            for e in &reached {
+                if !probes.iter().any(|(_, x, _)| x == e) {
+                    whole.insert(e.clone());
+                }
+            }
+            if !reached.is_empty() {
+                out.reach.insert(rel.clone(), reached);
+            }
+        }
+        for (probe, export, cols) in probes {
+            let mut by: HashMap<Vec<u8>, Vec<[u8; 32]>> = HashMap::new();
+            for row in phased.get(export).into_iter().flatten() {
+                by.entry(row_key(row, cols)).or_default().push(digest(row));
+            }
+            for rows in by.values_mut() {
+                rows.sort_unstable();
+            }
+            out.probes.insert(probe.clone(), (export.clone(), by));
+        }
+        for export in &whole {
+            let mut rows: Vec<[u8; 32]> = phased.get(export).into_iter().flatten().map(|r| digest(r)).collect();
+            rows.sort_unstable();
+            let mut h = Sha256::new();
+            rows.iter().for_each(|r| h.update(r));
+            out.whole.insert(export.clone(), h.finalize().into());
+        }
+        out
+    }
+
+    /// Whether no memoised relation reads a stage.
+    pub fn is_empty(&self) -> bool {
+        self.reach.is_empty()
+    }
+
+    /// `ids` for `entry`'s file: each relation reaching a stage's export under the export's rows at the entry's
+    /// probes (every row, where the export is read whole).
+    pub fn identities(&self, ids: &BTreeMap<String, [u8; 32]>, entry: &Entry) -> BTreeMap<String, [u8; 32]> {
+        let mut by_export: HashMap<String, [u8; 32]> = HashMap::new();
+        let mut of_export = |export: &str| -> [u8; 32] {
+            *by_export.entry(export.to_owned()).or_insert_with(|| {
+                let mut h = Sha256::new();
+                h.update(b"rerail.stage-rows-of-a-file/v1\0");
+                if let Some(w) = self.whole.get(export) {
+                    h.update(w);
+                }
+                for (probe, (e, by)) in self.probes.iter().filter(|(_, (e, _))| e == export) {
+                    let _ = e;
+                    let Some((_, rows)) = entry.outputs.get(probe) else { continue };
+                    let mut keys: Vec<Vec<u8>> = (0..rows.len())
+                        .map(|i| {
+                            let mut k = Vec::new();
+                            for c in 1..rows.width() {
+                                match rows.cell(i, c) {
+                                    super::super::output::Cell::Text(t) => key_bytes(&mut k, Some(t), 0),
+                                    super::super::output::Cell::Int(x) => key_bytes(&mut k, None, x),
+                                }
+                            }
+                            k
+                        })
+                        .collect();
+                    keys.sort_unstable();
+                    keys.dedup();
+                    h.update(probe.as_bytes());
+                    for k in &keys {
+                        h.update(k);
+                        for row in by.get(k).into_iter().flatten() {
+                            h.update(row);
+                        }
+                        h.update([0xff]);
+                    }
+                }
+                h.finalize().into()
+            })
+        };
+        ids.iter()
+            .map(|(rel, id)| {
+                let id = match self.reach.get(rel) {
+                    None => *id,
+                    Some(exports) => {
+                        let mut h = Sha256::new();
+                        h.update(b"rerail.corpus-local-identity-stages/v1\0");
+                        h.update(id);
+                        for e in exports {
+                            h.update(of_export(e));
+                        }
+                        h.finalize().into()
                     }
                 };
                 (rel.clone(), id)

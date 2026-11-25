@@ -73,7 +73,8 @@ dar_non_atomic(o) :- decorator(o, e), (n = e ; within(n, e)), dar_non_atomic_ref
 .decl dar_non_atomic_member(k: node)
 dar_non_atomic_member(k) :- kind(k, "class_definition"), field(k, "body", b), within(n, b), dar_non_atomic_ref(n).
 // dar_non_atomic_wrapped(f): some file wraps f by call, `path("x/", non_atomic_requests(views.f))`.
-.decl dar_non_atomic_wrapped(f: node)
+// Cross-file (decision 0652): the wrapping call is in another file than f.
+.decl dar_non_atomic_wrapped(f: node) cross_file
 dar_non_atomic_wrapped(f) :- kind(c, "call"), field(c, "function", n), dar_non_atomic_ref(n), posarg(c, 0, a),
     sym_of(a, q), qualname(f, q).
 // dar_on_commit(oc): oc is `transaction.on_commit(...)`, or `.on_commit(...)` on a connection

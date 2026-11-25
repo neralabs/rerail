@@ -83,7 +83,8 @@ sfu_atomic_cm(g) :- kind(y, "yield"), sfu_in_atomic(y), nearest(y, g, dj_region_
 // `dispatch` (it calls every handler) or f's name, or a decorator of the run whose wrapper calls the decorated function
 // in a transaction (Weblate's `@source_operation_method`: `with source_operation(component): return method(...)`), or
 // a context manager used as a decorator that opens one (saleor's `@traced_atomic_transaction()`).
-.decl sfu_atomic_def(f: node)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl sfu_atomic_def(f: node) cross_file
 sfu_atomic_def(f) :- dj_atomic_def(f).
 sfu_atomic_def(f) :- kind(f, "function_definition"), decorator(f, e), sfu_method_atomic(e).
 sfu_atomic_def(f) :- kind(f, "function_definition"), nearest(f, k, scope), kind(k, "class_definition"), decorator(k, e),

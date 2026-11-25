@@ -2467,6 +2467,131 @@ fn a_files_entry_is_kept_under_its_own_imports_resolution() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0675: a cross-file relation of names a per-file rule reads is staged before the program, and a file's
+/// memo entry is keyed by the rows of it the file reads. `defined(x)` holds every file's function names; `used` reads
+/// it at a call's own name. `b.py` calls `g`, `c.py` calls `h`, which `d.py` defines. Adding `g` to `a.py` misses
+/// `a.py` (edited) and `b.py` (its probe `g` has a row now) alone: `c.py` and `d.py` are read from the memo, and the
+/// rows are a fresh run's.
+#[test]
+fn a_files_entry_is_kept_under_the_stages_rows_it_reads() {
+    const PROGRAM: &str = r#"
+.decl defined(x: symbol)
+defined(x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl used(n: node, p: symbol, x: symbol)
+used(n, p, x) :- kind(n, "call"), field(n, "function", f), text(f, x), defined(x), docof(n, d), doc(d, p, _).
+.output used
+"#;
+    let files = [("a.py", "def f():\n    pass\n"), ("b.py", "g()\n"), ("c.py", "h()\n"), ("d.py", "def h():\n    pass\n")];
+    let edit = ("a.py", "def f():\n    pass\n\ndef g():\n    pass\n");
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let run = |dir: &std::path::Path| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let report = super::run(PROGRAM, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut rows: Vec<Vec<String>> = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("used").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[1..].to_vec()).collect();
+        rows.sort();
+        (report, rows)
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let dir = make("staged-memo", &[]);
+    let (first, rows) = run(&dir);
+    assert_eq!(rows, [row("c.py", "h")], "{rows:?}");
+    assert!(first.phase_runs.iter().any(|r| r.name.starts_with(crate::code_rule_dsl::logic::plan::phased::STAGE) && r.exports.iter().any(|(e, n)| e == "defined" && *n == 2)), "`defined` is staged: {:?}", first.phase_runs.iter().map(|r| (&r.name, &r.exports)).collect::<Vec<_>>());
+    std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
+    let (edited, rows) = run(&dir);
+    assert_eq!(rows, [row("b.py", "g"), row("c.py", "h")], "g is defined now: {rows:?}");
+    assert_eq!(edited.memo.0, edited.files - 2, "a.py and b.py, whose probe g changed, alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = make("staged-memo-fresh", &[edit]);
+    assert_eq!(rows, run(&fresh).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0675 §1: a read leaving every location column open asks whether any file has such a row
+/// (`def(_, x)`: is `x` a function anywhere). The engine reads it from a relation of the names it fixes, which is staged:
+/// `called` is per-file, an edit adding `g` misses `a.py` and `b.py` (whose probe `g` has a row now) alone, and the rows
+/// are a fresh run's.
+#[test]
+fn an_existence_read_is_staged_as_a_relation_of_names() {
+    const PROGRAM: &str = r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl called(n: node, p: symbol, x: symbol)
+called(n, p, x) :- kind(n, "call"), field(n, "function", f), text(f, x), def(_, x), docof(n, d), doc(d, p, _).
+.output called
+"#;
+    let files = [("a.py", "def f():\n    pass\n"), ("b.py", "g()\n"), ("c.py", "h()\n"), ("d.py", "def h():\n    pass\n")];
+    let edit = ("a.py", "def f():\n    pass\n\ndef g():\n    pass\n");
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let run = |dir: &std::path::Path| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let report = super::run(PROGRAM, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let mut rows: Vec<Vec<String>> = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("called").map(|r| r.shown()).unwrap_or_default().into_iter().map(|r| r[1..].to_vec()).collect();
+        rows.sort();
+        (report, rows)
+    };
+    let row = |p: &str, x: &str| vec![p.to_owned(), x.to_owned()];
+    let dir = make("existence-memo", &[]);
+    let (first, rows) = run(&dir);
+    assert_eq!(rows, [row("c.py", "h")], "{rows:?}");
+    let any = format!("{}def_1", super::phases::ANY);
+    assert!(first.phase_runs.iter().any(|r| r.name.starts_with(crate::code_rule_dsl::logic::plan::phased::STAGE) && r.exports.iter().any(|(e, n)| *e == any && *n == 2)), "`{any}` is staged: {:?}", first.phase_runs.iter().map(|r| (&r.name, &r.exports)).collect::<Vec<_>>());
+    std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
+    let (edited, rows) = run(&dir);
+    assert_eq!(rows, [row("b.py", "g"), row("c.py", "h")], "g is defined now: {rows:?}");
+    assert_eq!(edited.memo.0, edited.files - 2, "a.py and b.py, whose probe g changed, alone miss: {:?} of {}", edited.memo, edited.files);
+    let fresh = make("existence-memo-fresh", &[edit]);
+    assert_eq!(rows, run(&fresh).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A declared input nothing gives (`node-resolve.rerail`'s `spec_resolved`, a proposed core input) is empty: a
+/// file-local rule reads it so, positive and negated, as the cross-file part does (decision 0675: the Node pack's
+/// readers of it are per-file once the names they read are staged).
+#[test]
+fn a_declared_input_nothing_gives_is_empty_in_a_files_part() {
+    const PROGRAM: &str = r#"
+.decl given(n: node, f: symbol)
+.input given
+.decl free(n: node)
+free(n) :- kind(n, "call"), !given(n, _).
+.decl taken(n: node, f: symbol)
+taken(n, f) :- kind(n, "call"), given(n, f).
+.output free, taken
+"#;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("given-nothing");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws").join("a.py"), "f()\ng()\n").unwrap();
+    crate::install_store_functions();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    super::run(PROGRAM, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    assert_eq!(outputs.get("free").map(|r| r.shown().len()), Some(2), "every call is free");
+    assert_eq!(outputs.get("taken").map_or(0, |r| r.shown().len()), 0, "none is taken");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0665: a rule over another file's rows, read through an option (`doc_ignored`: a decorator the
 /// `pydocstyle.ignore-decorators` option lists, resolved across files), and a constant of the run's settings
 /// (`py_version`: `env`, else a file read, else a default). The option's name reaches `option_item` from its
@@ -2545,9 +2670,9 @@ fn an_option_the_run_does_not_set_is_decided_before_the_run() {
 }
 
 /// Decision 0665: which settings a memoised relation's rows can read. A read keyed by the file's own path, or by a
-/// folder or target its own path's row names (directly, through a relation keyed by it, or carried by a relation
-/// derived from its own rows), is the file's own; one through another key (a constant folder, any file's row) is
-/// every file's.
+/// folder its own path's row names (directly, or through a relation keyed by it), is the file's own; one through
+/// another key (a constant folder, any file's row) is every file's. A phase's exports are no settings (decision 0675:
+/// probes key them, `a_files_entry_is_kept_under_its_own_imports_resolution`).
 #[test]
 fn a_relation_reads_its_own_files_settings_only_through_its_own_path() {
     use crate::code_rule_dsl::logic::plan::corpus::memo::{SettingsScope, settings_scopes};
@@ -2569,28 +2694,15 @@ root(n) :- kind(n, "function_definition"), package_field(".", "type", "module").
 .decl none(n: node)
 none(n) :- kind(n, "function_definition").
 .output none
-.decl tsx_names__target_at(p: symbol, s: symbol, t: symbol)
-.decl tsx_names__exports(m: symbol, x: symbol, q: symbol)
-.decl tgt(d: number, s: symbol, t: symbol)
-tgt(d, s, t) :- doc(d, p, _), tsx_names__target_at(p, s, t).
-.decl resolved(n: node, q: symbol)
-resolved(n, q) :- kind(n, "identifier"), text(n, x), docof(n, d), tgt(d, s, t), tsx_names__exports(t, x, q).
-.output resolved
-.decl other(n: node, q: symbol)
-other(n, q) :- kind(n, "identifier"), text(n, x), tsx_names__exports(_, x, q).
-.output other
 "#).unwrap();
     let v = crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap();
     let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v);
-    let rels = ["own", "any", "root", "none", "resolved", "other"].map(str::to_owned).into_iter().collect();
+    let rels = ["own", "any", "root", "none"].map(str::to_owned).into_iter().collect();
     let scopes = settings_scopes(&placed, &rels);
     assert_eq!(scopes.get("own"), Some(&SettingsScope::OwnFile), "{scopes:?}");
     assert_eq!(scopes.get("any"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("root"), Some(&SettingsScope::All), "{scopes:?}");
     assert_eq!(scopes.get("none"), None, "{scopes:?}");
-    // A target its own path's row names, carried by a derived relation (`tgt`), keys its exports' read as its own.
-    assert_eq!(scopes.get("resolved"), Some(&SettingsScope::OwnFile), "{scopes:?}");
-    assert_eq!(scopes.get("other"), Some(&SettingsScope::All), "{scopes:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

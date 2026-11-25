@@ -60,7 +60,8 @@ rmw_model(f, o, mc) :- kind(a, "assignment"), nearest(a, f, fdef), field(a, "lef
 rmw_model(f, o, mc) :- kind(s, "for_statement"), nearest(s, f, fdef), field(s, "left", l), kind(l, "identifier"),
     text(l, o), field(s, "right", r), unparen(r, q), dj_qs_model(q, mc).
 // rmw_class(e, mc): e names model class mc of the run.
-.decl rmw_class(e: node, mc: node)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl rmw_class(e: node, mc: node) cross_file
 rmw_class(e, mc) :- sym_of(e, q), class_def(mc, q), dj_model(mc).
 
 // rmw_numeric(mc, x): model mc has numeric field x (python/django's dj_number_field, or a DurationField), declared in

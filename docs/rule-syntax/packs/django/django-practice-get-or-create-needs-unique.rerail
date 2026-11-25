@@ -36,7 +36,8 @@ goc_chain("all"). goc_chain("using"). goc_chain("select_for_update").
 .decl goc_root(q: node, r: node)
 goc_root(q, o) :- dj_manager(q), attr_of(q, o, _).
 goc_root(q, r) :- kind(q, "call"), field(q, "function", f), attr_of(f, o, m), goc_chain(m), goc_root(o, r).
-.decl goc_call(c: node, m: symbol, mc: node)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl goc_call(c: node, m: symbol, mc: node) cross_file
 goc_call(c, m, mc) :- goc_method(m), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), goc_root(o, r),
     sym_of(r, q), class_def(mc, q), dj_model(mc).
 goc_call(c, m, mc) :- goc_method(m), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), goc_root(o, r),
@@ -87,7 +88,8 @@ goc_unknown(c) :- goc_call(c, _, mc), goc_meta_opt(mc, "managed", v), !text(v, "
 // goc_meta_opt(mc, k, v): `k = v` in the Meta options of model mc: its own Meta, an abstract base's it inherits
 // (goc_meta_from), or those of a concrete base (multi-table inheritance or a proxy: that table's constraints hold
 // for mc's rows too).
-.decl goc_meta_opt(mc: node, k: symbol, v: node)
+// Cross-file (decision 0652): a model's base class is often in another file.
+.decl goc_meta_opt(mc: node, k: symbol, v: node) cross_file
 goc_meta_opt(mc, k, v) :- dj_model(mc), goc_meta_of(mc, k, v).
 goc_meta_opt(mc, k, v) :- dj_model(mc), goc_meta_from(mc, cb), goc_abstract(cb), goc_meta_of(cb, k, v).
 goc_meta_opt(mc, k, v) :- dj_model(mc), class_base(mc, bq), class_def(cb, bq), !goc_abstract(cb),
@@ -96,7 +98,8 @@ goc_meta_opt(mc, k, v) :- dj_model(mc), class_base(mc, bq), class_def(cb, bq), !
 // (and so inherits its bases' Meta attribute), or c's Meta subclasses b's own Meta (`class Meta(B.Meta)`, its
 // class_base the qualified name of the Meta class b declares); through a chain of such classes. A base b that declares
 // no Meta is concrete, and its options reach c through goc_meta_opt's concrete-base clause instead.
-.decl goc_meta_from(c: node, b: node)
+// Cross-file (decision 0652): a model's base class is often in another file.
+.decl goc_meta_from(c: node, b: node) cross_file
 goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), !goc_meta_class(c, _).
 goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), goc_meta_class(c, mt), class_base(mt, mq),
     goc_meta_class(cb, bm), class_def(bm, mq).

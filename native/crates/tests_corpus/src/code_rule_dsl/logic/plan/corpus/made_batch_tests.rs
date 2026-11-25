@@ -268,7 +268,8 @@ fn r7_a_run_after_an_edit_makes_no_document() {
 /// A removal join that reads `docof` as it was, its node bound, makes no document: the node's document is its id's
 /// (decision 0083 §3), so `d` is computed from the node, never probed in the old version, which made each node's
 /// document (ep2's insert: a removal join over `future_annotations`'s gone row made 121 documents, 0.74 s). Here
-/// `called` is cross-file (an identifier naming a function any file defines; an output, so not inlined into its
+/// `called` is cross-file (an identifier naming a function any file defines, declared so: the definition's node is
+/// kept, so its names are no relation of names a stage takes, decision 0675; an output, so not inlined into its
 /// reader, decision 0099), so `late` is too, and an edit takes
 /// a.py's `__future__` import away: its `lead` row goes, and the removal join walks `called`, every file's, through
 /// `docof`. The walk computes each node's document (the decision says so), and the edit makes a.py's document alone:
@@ -279,10 +280,10 @@ fn a_removal_join_computes_docof_from_the_node() {
     const LATE: &str = r#"
 .decl lead(d: number)
 lead(d) :- kind(i, "future_import_statement"), docof(i, d).
-.decl defined(t: symbol)
-defined(t) :- kind(f, "function_definition"), field(f, "name", x), text(x, t).
-.decl called(n: node)
-called(n) :- kind(c, "call"), field(c, "function", n), text(n, t), defined(t).
+.decl defined(f: node, t: symbol)
+defined(f, t) :- kind(f, "function_definition"), field(f, "name", x), text(x, t).
+.decl called(n: node) cross_file
+called(n) :- kind(c, "call"), field(c, "function", n), text(n, t), defined(_, t).
 .decl late(n: node)
 late(n) :- called(n), docof(n, d), lead(d).
 .output called, late

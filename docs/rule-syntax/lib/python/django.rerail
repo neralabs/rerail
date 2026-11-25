@@ -150,7 +150,8 @@ dj_fk(c, x) :- dj_field(c, x, _, t), dj_fk_class(t).
 // dj_model_super(c, b): class b of the run is among model c's bases, directly or through other classes of the run:
 // the classes whose fields c inherits. A linear closure from the models, as dj_model_q.
 //   class Novel(Book): ...                          dj_model_super(<Novel>, <Book>)
-.decl dj_model_super(c: node, b: node)
+// Cross-file (decision 0652): a base class is often in another file than its model.
+.decl dj_model_super(c: node, b: node) cross_file
 dj_model_super(c, b) :- dj_model(c), class_base(c, q), class_def(b, q).
 dj_model_super(c, b) :- dj_model_super(c, m), class_base(m, q), class_def(b, q).
 // dj_has_field(c, x, call, t): model c has field x, a call of field class t, declared in its body or in a class of
@@ -206,7 +207,8 @@ dj_qs_root(p, r) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs_ro
 // dj_qs_class(q, mq): the same, by the model class's qualified name.
 //   Book.objects.filter(a=1)                        dj_qs_model(<the chain>, <class Book>),
 //                                                   dj_qs_class(<the chain>, "shop.models.Book")
-.decl dj_qs_model(q: node, c: node)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl dj_qs_model(q: node, c: node) cross_file
 dj_qs_model(q, c) :- dj_qs_root(q, r), sym_of(r, mq), class_def(c, mq), dj_model(c).
 .decl dj_qs_class(q: node, mq: symbol)
 dj_qs_class(q, mq) :- dj_qs_model(q, c), class_def(c, mq).
@@ -237,7 +239,8 @@ dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, "self"), dj_model_
 dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, o), look(r, o, h), asg(h, o, v, _),
     dj_instance_value(v, mq).
 // dj_instance_value(v, mq): expression v makes or fetches one instance of model class mq.
-.decl dj_instance_value(v: node, mq: symbol)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl dj_instance_value(v: node, mq: symbol) cross_file
 dj_instance_value(v, mq) :- unparen(v, c), dj_fetch_call(c, mq).
 dj_instance_value(v, mq) :- unparen(v, w), kind(w, "await"), child(w, c, 0), dj_fetch_call(c, mq).
 dj_instance_value(v, mq) :- unparen(v, c), kind(c, "call"), field(c, "function", fn), sym_of(fn, mq), class_def(k, mq),
@@ -335,7 +338,8 @@ dj_plain_def(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g,
 // a task class `base=X`, where X's own (or inherited) apply_async or delay calls transaction.on_commit (pretix's
 // TransactionAwareTask); or the run's Celery app makes such a class every task's class (addons-server's AMOTask,
 // `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit.
-.decl dj_task_waits_for_commit(c: node)
+// Cross-file (decision 0652): the task's definition, and the app, are in other files than the call.
+.decl dj_task_waits_for_commit(c: node) cross_file
 dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
     (m = "delay" ; m = "apply_async"), sym_of(o, q), kind(g, "function_definition"), qualname(g, q), decorator(g, e),
     kind(e, "call"), call_arg(e, _, "base", bv), sym_of(bv, bq), dj_deferring_task_class(bq).

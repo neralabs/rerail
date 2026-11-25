@@ -132,7 +132,8 @@ ghw_fetch_call(c, h, q) :- kind(c, "call"), owner(c, h), field(c, "function", fn
     kind(s, "identifier"), text(s, "self"), nearest(h, k, scope), kind(k, "class_definition"), class_def(k, kq),
     ghw_view_model(kq, q).
 // ghw_model_ref(a, q): a names model class q, or a queryset over it.
-.decl ghw_model_ref(a: node, q: symbol)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl ghw_model_ref(a: node, q: symbol) cross_file
 ghw_model_ref(a, q) :- sym_of(a, q), class_def(k, q), dj_model(k).
 ghw_model_ref(a, q) :- dj_qs_class(a, q).
 // ghw_view_model(kq, q): view class kq, or a base of the run, says `model = Q` or `queryset = Q.objects…`.

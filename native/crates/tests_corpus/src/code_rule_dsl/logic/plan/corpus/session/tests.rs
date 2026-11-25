@@ -1033,8 +1033,8 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
 /// 0597 rung 2.11: a pass runs only on what changed in its inputs (rule 7, 0563 B). In a session, an edit that changes
 /// no root and no relation the context reads `.from` (b.py's own line) changes no input of the context, so none of its
 /// cross strata runs. Renaming the class the annotation names (a.py's `Foo`, the annotation's text unchanged) changes
-/// what the context reads `.from` its host (`defined`, a cross-file relation, so the context's `resolved` is the cross
-/// part's), and the row goes. Each run's rows are a full run's.
+/// what the context reads `.from` its host (`defined`, a relation of every file's names, staged before the program,
+/// decision 0675: its export changes), and the row goes. Each run's rows are a full run's.
 #[test]
 fn a_contexts_strata_run_only_on_changes_to_its_roots_and_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-context");
@@ -1082,12 +1082,13 @@ quoted_resolved(x) :- res(x).
     std::fs::write(src.join("b.py"), "y = 2\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");
-    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_pass_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
+    let defined = |c: &str| c == "defined_at" || c.ends_with("__defined");
+    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_pass_quoted") || defined(c)), "no input of the context changed: {:?}", report.cross_changed);
     std::fs::write(src.join("a.py"), "class Bar: ...\nx: \"Foo\" = 1\n").unwrap();
     let report = run();
     assert_eq!(rows(), full(), "the session's rows are a full run's");
     assert!(rows().is_empty(), "Foo names no class now: {:?}", rows());
-    assert!(report.cross_changed.iter().any(|c| c == "defined_at"), "what the context reads .from changed: {:?}", report.cross_changed);
+    assert!(report.cross_changed.iter().any(|c| defined(c)), "what the context reads .from changed: {:?}", report.cross_changed);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }

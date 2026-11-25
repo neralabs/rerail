@@ -52,7 +52,8 @@ bwh_skips("update", "save"). bwh_skips("bulk_create", "save"). bwh_skips("bulk_u
 bwh_skips("delete", "delete").
 
 // bwh_method(mq, x, f): model class mq, or a class it inherits from in the run, defines method x as f.
-.decl bwh_method(mq: symbol, x: symbol, f: node)
+// Cross-file (decision 0652): the method may be a base class's, in another file than the model.
+.decl bwh_method(mq: symbol, x: symbol, f: node) cross_file
 bwh_method(mq, x, f) :- class_def(mc, mq), dj_model(mc), (x = "save" ; x = "delete"), method(mq, x, f).
 bwh_method(mq, x, f) :- class_def(mc, mq), dj_model(mc), (x = "save" ; x = "delete"), subclass(mq, b), method(b, x, f).
 // bwh_bare_super(f): f's body, its docstring aside, is one statement calling the base class's method of f's name,
@@ -93,7 +94,8 @@ bwh_place(n, p) :- docof(n, d), doc(d, path, _), line(n, l), p = cat(path, ":", 
 
 // bwh_in_hook(c, mq): c runs inside one of mq's own save()/delete() methods or one of its receivers (a decorated
 // def, or the def a `.connect(fn, …)` names), which write in bulk on purpose (to skip the hooks they are).
-.decl bwh_in_hook(c: node, mq: symbol)
+// Cross-file (decision 0652): a connected receiver is named by its qualified name, in another file.
+.decl bwh_in_hook(c: node, mq: symbol) cross_file
 bwh_in_hook(c, mq) :- bwh_method(mq, _, f), within(c, f).
 bwh_in_hook(c, mq) :- bwh_receiver(mq, _, _, f, _), kind(f, "function_definition"), within(c, f).
 bwh_in_hook(c, mq) :- bwh_receiver(mq, _, _, k, k), kind(k, "call"), bwh_connected(k, a), sym_of(a, q), qualname(f, q),

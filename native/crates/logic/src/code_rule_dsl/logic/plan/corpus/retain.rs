@@ -1698,6 +1698,10 @@ pub(in crate::code_rule_dsl) struct InKept {
 }
 
 impl InKept {
+    /// The space its entries were bound from before the first wave (decision 0401 F3), if any.
+    pub(in crate::code_rule_dsl) fn bound(&self) -> Option<&Arc<kept_read::Bound>> {
+        self.bound.as_ref()
+    }
     /// The digest input `rel` is kept at, when it is kept.
     pub(in crate::code_rule_dsl) fn input_digest(&self, rel: &str) -> Option<u64> {
         self.inputs.get(rel).map(|(d, _)| *d)
@@ -2018,6 +2022,19 @@ fn base_documents_ident(binds: &[u8; 32]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// The documents' table's own: of `binds` and the memo plan it is written under. Two programs over the same base
+/// relations (a stage and the program it was cut from, decision 0675) each hold the rows a document held under their
+/// own plan: one table for both was each one's in turn, and each run read the other's, every input hashed whole and a
+/// warm run writing the table again.
+fn base_table_ident(binds: &[u8; 32], plan: u64) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail.base-documents/v2\0");
+    h.update(binds);
+    h.update(plan.to_le_bytes());
+    h.finalize().into()
+}
+
 /// A file of the documents' table: its path, document key and content (`Stored`, or `Unstored` by its digest when
 /// the store did not hold it yet as the table was written).
 pub(in crate::code_rule_dsl) type BaseDocument = (String, i64, super::memo::Content);
@@ -2044,15 +2061,15 @@ pub(in crate::code_rule_dsl) struct BaseTable {
 
 /// The documents' table the store's frames in `space` keep for the cross part of `binds`, as a `BaseTable`; `None`
 /// when there is none. Read before the first wave.
-pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32]) -> Result<Option<BaseTable>> {
+pub(in crate::code_rule_dsl) fn base_documents(store: &ContentStore, space: [u8; 32], binds: [u8; 32], plan: u64) -> Result<Option<BaseTable>> {
     let Some(bound) = kept_read::Bound::of(store, &space).map_err(|e| Error::Plan(e.to_string()))? else { return Ok(None) };
-    base_documents_in(store, &bound, binds)
+    base_documents_in(store, &bound, binds, plan)
 }
 
 /// The documents' table of `base_documents`, read from a space already bound (a kept part's, `InKept::bound_space`):
 /// a run inside another's waves reads it there, where it reads no store.
-pub(in crate::code_rule_dsl) fn base_documents_in(store: &ContentStore, bound: &Arc<kept_read::Bound>, binds: [u8; 32]) -> Result<Option<BaseTable>> {
-    let Some(entry) = bound.entry(BASE_DOCUMENTS, &base_documents_ident(&binds), DOCS_PART) else { return Ok(None) };
+pub(in crate::code_rule_dsl) fn base_documents_in(store: &ContentStore, bound: &Arc<kept_read::Bound>, binds: [u8; 32], plan: u64) -> Result<Option<BaseTable>> {
+    let Some(entry) = bound.entry(BASE_DOCUMENTS, &base_table_ident(&binds, plan), DOCS_PART) else { return Ok(None) };
     let plan = entry.reads().into_iter().find(|(r, _)| r == MEMO_PLAN_READ).map(|(_, tag)| tag);
     Ok(documents_table(store, &entry)?.map(|docs| BaseTable { docs, plan, digest: entry.digest() }))
 }
@@ -2443,7 +2460,7 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
             super::memo::Content::Held(_) => unreachable!("refused above"),
         }
     }
-    let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_documents_ident(&binds) };
+    let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_table_ident(&binds, plan) };
     let mut types = vec![b'i'; crate::content_store::PLACED_WORDS];
     types[0] = b's';
     let what = crate::content_store::kept_facts::KeptWhat::Documents { rows, tape };

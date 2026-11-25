@@ -594,7 +594,8 @@ subclass(q, b) :- subclass(q, m), subclass(m, b).
 method(cq, x, f) :- class_def(c, cq), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, x).
 // mro_method(cq, x, f): what `cq().x` may resolve to: its own method, else one from any ancestor. This is an
 // approximation of Python's MRO: with no own method it takes every ancestor's x (may), not the first in C3 order.
-.decl mro_method(cq: symbol, x: symbol, f: node)
+// An ancestor's method is in the ancestor's file: it joins two documents (decision 0652).
+.decl mro_method(cq: symbol, x: symbol, f: node) cross_file
 mro_method(cq, x, f) :- method(cq, x, f).
 mro_method(cq, x, f) :- class_def(_, cq), !method(cq, x, _), subclass(cq, b), method(b, x, f).
 // assigned_attr(f, obj, attr, rhs): in function f, `obj.attr = rhs` where obj is a plain name (typically

@@ -334,6 +334,9 @@ pub struct Guests {
     values: HashMap<(String, String), i64>,
     /// Each value's files: those whose rules asked for it (O96). `memo` attributes its rows to each.
     files: HashMap<i64, BTreeSet<i64>>,
+    /// Each tape value's source, by its key: its text's sha256, as `parse` stores it. A memo entry keeps it with the
+    /// request (`memo::Answered::Embed`), so a hit names the source without its host's tree.
+    sources: HashMap<u32, [u8; 32]>,
     /// Made, and given no guest (no text to parse, or no grammar), this chunk.
     pub(super) refused: usize,
     /// The documents the chunk's program can see (`guests_seen`): a guest past them is not made.
@@ -507,6 +510,11 @@ impl Guests {
         Ok(got)
     }
 
+    /// Tape value `key`'s source: its text's sha256 (`parse`'s), where it is a string's tape value made in this chunk.
+    pub fn value_source(&self, key: u32) -> Option<[u8; 32]> {
+        self.sources.get(&key).copied()
+    }
+
     /// `@parse`'s or `@splice`'s value (`request`), asked inside the chunk's fixpoint (decision 0431 §8, Q325): made and
     /// added to `docs`, or `None` where it was asked before, made before (its askers then grow), or makes no value.
     pub fn admit_value(&mut self, docs: &mut Vec<Document>, request: Request, parses: &Parses<'_>) -> Result<Option<Document>, String> {
@@ -593,6 +601,10 @@ impl Guests {
         }
         let Some((facts, root, digest)) = parse(&host.path, label, fragment, text.clone(), parses)? else { return Ok(Got::Not) };
         let key = self.key_for(&[b"tape", grammar_name.as_bytes(), identity.as_bytes()], range, &host.path);
+        {
+            use sha2::Digest as _;
+            self.sources.insert(key, sha2::Sha256::digest(text.as_bytes()).into());
+        }
         self.values.insert((grammar_name.to_owned(), identity), i64::from(key));
         self.files.insert(i64::from(key), files);
         let none = Placement::At([0, 0]);
@@ -886,6 +898,20 @@ impl<'a> Parses<'a> {
     /// The parses of a run whose tapes are kept in `store`.
     pub fn new(store: Option<ValueStore<'a>>) -> Self {
         Self { store, ..Self::default() }
+    }
+
+    /// A tape value a memo hit holds (`memo::Answered::source`), its text's digest and grammar: its source named for
+    /// the manifest where the root's last runs' tapes hold it, as `parse` names one it finds. Read from what was
+    /// found before the waves: no write (a warm run makes none). Whether it was.
+    pub fn name_kept(&self, grammar_name: &str, digest: [u8; 32]) -> bool {
+        let Some(s) = &self.store else { return false };
+        let Some(tag) = grammar(grammar_name).and_then(|(label, fragment)| tape_tag_of(label, fragment)) else { return false };
+        let hash = crate::content_store::HashKey::from_sha256_digest(digest);
+        let found = if s.run_tag == Some(tag) { s.by_text.get(&hash) } else { s.others.get(&(hash, tag)) };
+        if let Some((source, _)) = found {
+            s.late.lock().expect("the late sources").push(*source);
+        }
+        found.is_some()
     }
 
     /// The texts this run parsed.

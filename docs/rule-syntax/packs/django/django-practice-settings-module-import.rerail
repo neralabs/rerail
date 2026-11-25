@@ -29,7 +29,8 @@ SettingsModuleImport(a, m, "its values as `settings.NAME`") :- import_alias(i, a
     smi_reported_doc(i).
 
 // smi_doc(d): document d is a project settings module.
-.decl smi_doc(d: number)
+// Cross-file (decision 0652): DJANGO_SETTINGS_MODULE names a module in another file.
+.decl smi_doc(d: number) cross_file
 smi_doc(d) :- kind(a, k), (k = "assignment" ; k = "augmented_assignment"), field(a, "left", l), text(l, "INSTALLED_APPS"),
     nearest(a, s, scope), kind(s, "module"), docof(a, d).
 smi_doc(d) :- smi_dsm(c, v), docof(c, dc), smi_mod(dc, mc), smi_resolves(mc, v, q), smi_mod(d, q).

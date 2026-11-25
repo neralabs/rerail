@@ -28,7 +28,8 @@ TaskArgModelInstance(a, t, x) :- tam_task_call(c, t), tam_arg(c, a), tam_instanc
 // tam_task_call(c, t): call c sends task t: `t.delay(...)`, `t.apply_async(...)`, `t.s(...)`, `t.si(...)`.
 .decl tam_send(m: symbol)
 tam_send("delay"). tam_send("apply_async"). tam_send("s"). tam_send("si").
-.decl tam_task_call(c: node, t: symbol)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl tam_task_call(c: node, t: symbol) cross_file
 tam_task_call(c, x) :- kind(c, "call"), field(c, "function", fn), attr_of(fn, o, m), tam_send(m), sym_of(o, q),
     qualname(f, q), tam_task_def(f), def_name(f, x).
 // tam_task_def(f): def f is decorated as a task: `@shared_task`, `@app.task(...)`, `@task`.
@@ -48,7 +49,8 @@ tam_arg(c, a) :- field(c, "function", fn), attr_of(fn, _, "apply_async"), (posar
     kind(m, "dictionary"), child(m, p, _), kind(p, "pair"), field(p, "value", a).
 
 // tam_instance(a): expression a holds a model instance.
-.decl tam_instance(a: node)
+// Cross-file (decision 0652): the model class of a proven type or an annotation is in another file.
+.decl tam_instance(a: node) cross_file
 tam_instance(a) :- unparen(a, e), tam_instance_value(e).
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, "self"), look(e, "self", f), dj_model_method(_, f, _),
     param(f, "self", 0).
@@ -63,7 +65,8 @@ tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, 
     nearest(l, s, scope), field(l, "left", t), kind(t, "identifier"), text(t, x), field(l, "right", r), unparen(r, q),
     dj_qs(q), !tam_rows(q), field(l, "body", b), within(e, b).
 // tam_instance_value(v): v makes or fetches one model instance (python/django's dj_row_method).
-.decl tam_instance_value(v: node)
+// Cross-file (decision 0652): a name resolved to its definition, in another file than the reference.
+.decl tam_instance_value(v: node) cross_file
 tam_instance_value(v) :- dj_qs_call(v, m), dj_row_method(m), field(v, "function", f), attr_of(f, o, _), !tam_rows(o).
 // tam_rows(q): queryset q went through values()/values_list(), so its get() returns a dict or a tuple, not a model.
 .decl tam_rows(q: node)
