@@ -2327,7 +2327,9 @@ impl TapeDoc {
 
     pub fn transducer_kind(&self, node: u32) -> u16 {
         read!("kind");
-        kind_of(self.entry(node))
+        let t = self.t();
+        let (kind, _, flags) = t.table().kind_field(t.code(node as usize));
+        if flags & CODE_ERROR != 0 { ERROR_SYMBOL } else { kind }
     }
 
     /// Whether a node of the document may have kind `kind` (`transducer_kind`'s), by its image's presence (decision
@@ -2373,7 +2375,8 @@ impl TapeDoc {
 
     pub fn transducer_field(&self, node: u32) -> u16 {
         read!("field");
-        self.entry(node).field
+        let t = self.t();
+        t.table().kind_field(t.code(node as usize)).1
     }
 
     pub fn transducer_flags(&self, node: u32) -> u8 {

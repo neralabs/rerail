@@ -165,15 +165,23 @@ pub enum Place {
 /// A document as its views' reads take it: its entry, its tape, and its line index (decision 0612: its language's
 /// one, `newlines`, with its word's room after it), where its directory row places them; and its source where it
 /// lies, whose bytes say where a line's text ends (its terminator's length: `Report`'s end column).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Doc<'a> {
     pub entry: &'a ViewDoc,
     pub tape: Tape<'a>,
     pub lines: &'a [u8],
     pub source: &'a [u8],
+    /// The numbered node last selected and its tape node (`tape_node`): a row's columns read one after another
+    /// select its node once. `u32::MAX`: none yet.
+    last: std::cell::Cell<(u32, u32)>,
 }
 
 impl<'a> Doc<'a> {
+    /// The document's reads, through its directory row's `entry`.
+    #[inline]
+    pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8]) -> Doc<'a> {
+        Doc { entry, tape, lines, source, last: std::cell::Cell::new((u32::MAX, 0)) }
+    }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
         // SAFETY: the entry's numbering, one, set where the entry was made (`ViewEntry::new`) to its projection's in
@@ -188,8 +196,14 @@ impl<'a> Doc<'a> {
     /// Numbered node `l`'s tape node (`num_select`).
     #[inline]
     pub fn tape_node(&self, l: u32) -> u32 {
+        let (at, x) = self.last.get();
+        if at == l {
+            return x;
+        }
         // SAFETY: the entry's numbering (`numbering`).
-        unsafe { self.numbering().select(0, l) }
+        let x = unsafe { self.numbering().select(0, l) };
+        self.last.set((l, x));
+        x
     }
     /// The numbered nodes before tape node `x` (`num_rank`).
     #[inline]
