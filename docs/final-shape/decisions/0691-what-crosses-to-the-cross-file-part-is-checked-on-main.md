@@ -122,6 +122,15 @@ Found on the way and fixed:
      not new crossings: main's maintained split had kept them file-local where a whole split does not. `fn_component`
      reads `cap_name(x)` by value, which places no document, and the old cone left `cap_name` out. The branch's
      rewrites (`fn_component` inlines the test) come with its later fixes.
+4. **Rule rewrites that need no engine change** (the branch's 0665 `cap_name`, 0677 fix 3g, tails 1 and 2):
+   - React's `cap_name` is a test of the name's own text where `fn_component` reads it;
+   - a `/* global */` comment's items are split in its own file;
+   - the TSX libraries' text helpers and the Python libraries' value tables are keyed by node.
+   - Node list: 3,121 → 3,083 (JavaScript 45 → 31, Python 189 → 171, TypeScript 32 → 26). 8 relations are new,
+     each now entering directly under a root that is still open: Python's `resolve_export` (6), TypeScript's
+     `package_for` and `no_redeclare`. React's 55 now root at module resolution (`symbol`, `jsx_source_runtime`,
+     `package_for`, `resolve_base`, `tsconfig_for`), as Node's do at `fixed_ext`: the branch's 0665 settings and its
+     `tsx_names` phase.
 
 ## Consequences
 

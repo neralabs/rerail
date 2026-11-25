@@ -16,7 +16,8 @@
 // ESLint's own regex on the literal's source: skip characters and whole escapes, lazily, up to the first octal
 // escape. Its two forms are two groups, one per rule: a group that takes no part in the match gives no row.
 //   '\08\1': the first escape is `\0` before 8, so the message names \0, not \1
-no_octal_escape(s, D) :- kind(s, "string"),
-    match("(?:[^\\\\]|\\\\[\\s\\S])*?\\\\(?:(?<D>[0-3][0-7]{1,2}|[4-7][0-7]|[1-7])|0[89])[\\s\\S]*", s).
-no_octal_escape(s, Z) :- kind(s, "string"),
-    match("(?:[^\\\\]|\\\\[\\s\\S])*?\\\\(?:(?:[0-3][0-7]{1,2}|[4-7][0-7]|[1-7])|(?<Z>0)[89])[\\s\\S]*", s).
+// On a node a group is a span: the message names its text, not the span.
+no_octal_escape(s, t) :- kind(s, "string"),
+    match("(?:[^\\\\]|\\\\[\\s\\S])*?\\\\(?:(?<D>[0-3][0-7]{1,2}|[4-7][0-7]|[1-7])|0[89])[\\s\\S]*", s), text(D, t).
+no_octal_escape(s, t) :- kind(s, "string"),
+    match("(?:[^\\\\]|\\\\[\\s\\S])*?\\\\(?:(?:[0-3][0-7]{1,2}|[4-7][0-7]|[1-7])|(?<Z>0)[89])[\\s\\S]*", s), text(Z, t).

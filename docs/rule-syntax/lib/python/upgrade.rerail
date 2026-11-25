@@ -16,7 +16,7 @@
 //   up_kwarg(c, k, ka)       `k=v` is one of c's keywords, ka the whole `k=v`
 //   up_argc(c, n)            c has n arguments of every kind
 //   (counts and keywords: python/ruff's call_nargs, call_nkwargs, call_kw, call_splat, call_kwsplat)
-//   identifier(x)            (python/pyflakes) x is a Python identifier that is not a keyword
+//   identifier_str(s)        (python/pyflakes) str literal s's value is a Python identifier that is not a keyword
 //   functional_def(s, x, c, what)  statement s is `x = what(…)`, c the call, what a typing member by typing_ref
 //
 // Python background

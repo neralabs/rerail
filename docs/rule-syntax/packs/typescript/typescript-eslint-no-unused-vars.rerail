@@ -222,3 +222,34 @@ array_cue(id) :- array_name(id), option("destructuredArrayIgnorePattern", _).
 global_read(c, x) :- global_item(c, x, _, _), docof(c, d), unresolved(r, x), docof(r, d), reads(r).
 .decl script_declared(c: node, x: symbol)  // a script's top level declares x: that is the global's definition
 script_declared(c, x) :- global_item(c, x, _, _), docof(c, d), program(d, p), source_type(d, "script"), variable(p, x, _, _).
+
+// `/* global */` comments, item by item (lib/tsx/eslint-b-scope's global_item): an item with a setting (`b: readonly`)
+// is b, an `off` item declares nothing, and an item after a line break of the comment is on that line. Two files: each
+// comment's items are its own file's.
+.test global_comment_items_are_read_in_their_file exactly
+    .fixture "src/one.js" ```
+        /* global Array */
+        /* globals a, b: readonly,
+           c:off */
+        var a = 1;
+        var b = 2;
+        var c = 3;
+        /*global d*/
+        function d() {}
+        ```
+    .fixture "src/two.js" ```
+        /* global Map, e */
+        var e;
+        let Map = 1;
+        ```
+    .expect _ at "src/one.js":1
+    .expect _ at "src/one.js":2
+    .expect _ at "src/one.js":4
+    .expect _ at "src/one.js":5
+    .expect _ at "src/one.js":6
+    .expect _ at "src/one.js":7
+    .expect _ at "src/one.js":8
+    .expect _ at "src/two.js":1
+    .expect _ at "src/two.js":2
+    .expect _ at "src/two.js":3
+.end
