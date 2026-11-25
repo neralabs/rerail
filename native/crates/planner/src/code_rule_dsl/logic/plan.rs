@@ -199,10 +199,8 @@ impl Fx<'_> {
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         let _span = super::profile::span(|| "engine live statistics".into());
         if self.direct {
-            return Ok(super::native::component::live(self.db, name)?
-                .into_iter()
-                .map(LiveRel::of_native)
-                .collect());
+            // Made in the thread's long-lived room: the model keeps them for the run (decision 0342 amended).
+            return rerail_blocks::maps::long(|| Ok(super::native::component::live(self.db, name)?.into_iter().map(LiveRel::of_native).collect()));
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
@@ -218,10 +216,7 @@ impl Fx<'_> {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on"))) {
             seen.clear();
         }
-        Ok(super::native::component::live_changed(self.db, name, seen)?
-            .into_iter()
-            .map(|l| l.map(LiveRel::of_native))
-            .collect())
+        rerail_blocks::maps::long(|| Ok(super::native::component::live_changed(self.db, name, seen)?.into_iter().map(|l| l.map(LiveRel::of_native)).collect()))
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
         let _span = super::profile::span(|| "engine reprobe".into());
@@ -4002,7 +3997,9 @@ impl<'a> Run<'a, '_> {
             let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
             for ((o, &rule), line) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).zip(&order_rules).zip(&steps) {
                 if !idle(line) {
-                    observe(&mut self.model.stats, rule, o, line);
+                    // The run's observations live through it: made in the thread's long-lived room (decision 0342
+                    // amended), not on its stack.
+                    rerail_blocks::maps::long(|| observe(&mut self.model.stats, rule, o, line));
                 }
             }
             // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
@@ -8749,6 +8746,23 @@ pub fn decode_bound(
 /// `outputs` the outputs to decode; `is_input` and `arity` the program's (its inputs, its declarations' widths).
 #[allow(clippy::too_many_arguments)]
 fn decoded_outputs(
+    outputs_of: &[&str],
+    is_input: &dyn Fn(&str) -> bool,
+    types: &dyn Fn(&str) -> Option<Vec<String>>,
+    db: &Connection,
+    lowered: Option<lower::Lowering<'_>>,
+    facts: &str,
+    atoms: bool,
+    kept: &BTreeSet<String>,
+    native: &BTreeSet<String>,
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vector<usize>>)> {
+    // The run's outputs live to its end: made in the thread's long-lived room (decision 0342 amended 2026-11-24). On
+    // the stack they held every region the run took after them.
+    rerail_blocks::maps::long(|| decoded_outputs_within(outputs_of, is_input, types, db, lowered, facts, atoms, kept, native))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decoded_outputs_within(
     outputs_of: &[&str],
     is_input: &dyn Fn(&str) -> bool,
     types: &dyn Fn(&str) -> Option<Vec<String>>,

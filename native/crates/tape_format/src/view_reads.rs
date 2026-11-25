@@ -128,6 +128,27 @@ impl<'a> Tape<'a> {
         }
         i
     }
+    /// Named node `node`'s place among its parent's named children that are no comment (`tape_place_past_comments`,
+    /// `aux_index::place_past_comments`: T's shape's places): as `place`, the comments before the every-K-th named
+    /// sibling taken off, and the steps after it counting no comment. `NONE` where the home holds no index.
+    pub fn place_past_comments(&self, node: u32) -> u32 {
+        use crate::aux_index::K;
+        let Some(aux) = self.aux() else { return NONE };
+        let p = self.parent(node);
+        if p == NONE {
+            return 0;
+        }
+        let (mut i, mut c) = match aux.eighth_past_comments(p, node) {
+            None => (0, p + 1),
+            Some((k, e, q)) => (k * K - q, e),
+        };
+        while c < node {
+            let code = self.number(c);
+            i += u32::from(aux.named(code) && !aux.comment(code));
+            c = self.end_of(c);
+        }
+        i
+    }
 }
 
 /// Which place a `Loc` view's second column holds (`view_loc_*`), and core.rerail's `rr_report_location`.
@@ -144,15 +165,23 @@ pub enum Place {
 /// A document as its views' reads take it: its entry, its tape, and its line index (decision 0612: its language's
 /// one, `newlines`, with its word's room after it), where its directory row places them; and its source where it
 /// lies, whose bytes say where a line's text ends (its terminator's length: `Report`'s end column).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Doc<'a> {
     pub entry: &'a ViewDoc,
     pub tape: Tape<'a>,
     pub lines: &'a [u8],
     pub source: &'a [u8],
+    /// The numbered node last selected and its tape node (`tape_node`): a row's columns read one after another
+    /// select its node once. `u32::MAX`: none yet.
+    last: std::cell::Cell<(u32, u32)>,
 }
 
 impl<'a> Doc<'a> {
+    /// The document's reads, through its directory row's `entry`.
+    #[inline]
+    pub fn new(entry: &'a ViewDoc, tape: Tape<'a>, lines: &'a [u8], source: &'a [u8]) -> Doc<'a> {
+        Doc { entry, tape, lines, source, last: std::cell::Cell::new((u32::MAX, 0)) }
+    }
     #[inline(always)]
     fn numbering(&self) -> &'a Numbering {
         // SAFETY: the entry's numbering, one, set where the entry was made (`ViewEntry::new`) to its projection's in
@@ -167,8 +196,14 @@ impl<'a> Doc<'a> {
     /// Numbered node `l`'s tape node (`num_select`).
     #[inline]
     pub fn tape_node(&self, l: u32) -> u32 {
+        let (at, x) = self.last.get();
+        if at == l {
+            return x;
+        }
         // SAFETY: the entry's numbering (`numbering`).
-        unsafe { self.numbering().select(0, l) }
+        let x = unsafe { self.numbering().select(0, l) };
+        self.last.set((l, x));
+        x
     }
     /// The numbered nodes before tape node `x` (`num_rank`).
     #[inline]
@@ -227,9 +262,20 @@ impl<'a> Doc<'a> {
         match col {
             0 => self.parent_id(l, self.tape_node(l)),
             1 => self.node_id(l),
-            // Read in the tape's auxiliary index where the entry says so (decision 0656 step 4), else its `places`.
-            _ if self.entry.places_by_index != 0 => i64::from(self.tape.place(self.tape_node(l))),
-            _ => i64::from(self.items(&self.entry.places)[l as usize]),
+            // An outermost anchor's, its rank among the anchors; any other's read in the tape's auxiliary index, as the
+            // entry's shape numbers places (decision 0656 step 4).
+            _ => {
+                let x = self.tape_node(l);
+                let anchor = rerail_clif::view_reads::ANCHOR_ITEM as u32;
+                i64::from(if self.is(anchor, x) {
+                    // SAFETY: as `tape_node`.
+                    unsafe { self.numbering().rank(anchor, x) }
+                } else if self.entry.place == rerail_clif::view_reads::PLACE_PAST_COMMENTS {
+                    self.tape.place_past_comments(x)
+                } else {
+                    self.tape.place(x)
+                })
+            }
         }
     }
     /// The numbered node of the `field` view's row `i`, and its tape node.

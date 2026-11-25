@@ -66,3 +66,21 @@ The user then approved note t60's plan and the choices in its §7 ("go ahead").
 This narrows 0628: operation memory is not a run data structure, because no reader outside its operation reads it.
 
 The work order and the call sites, with each one's class and fix, are in note t60 (§5, §6).
+
+## With 0342's stack (merge of Typing-support, 4d6ed1c0f8, 2026-11-25)
+
+Typing-support amended 0342 on 2026-11-24 (the user's): a run's structures made with no room go on a stack a thread
+(`scratch::Stack`, `StackRoom`, the default room). Large regions go to free-listed blocks, and what is known to live
+long goes to the thread's long room (`maps::long`). `scratch::with` is a nested use of that stack.
+
+The merge keeps both records:
+
+- **Point 7's interim is 0342's stack, not the run room.** A `Vector` made with no room takes the calling thread's
+  stack. The run room no longer stands in until step 7, and `install_run_room` is gone.
+- **Operation memory is 0687's**: `Inline` (`InlineVec`) and `Frame` (`op`, `FrameVec`). An operation's own arrays
+  are made there, never as a `Vector` with no room.
+- **0342's census decides what lives long**: a structure that outlives its operation, and is not data in a relation's
+  block, is made within `maps::long`.
+
+The frame is still an arena of its own (heap chunks a thread), beside 0342's stack: two stacks a thread. Note t60 §9
+is the work that makes them one.

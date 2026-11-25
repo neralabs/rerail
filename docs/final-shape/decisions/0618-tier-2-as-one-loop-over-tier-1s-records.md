@@ -44,6 +44,12 @@ form (`bitlex_rust::tier2`): a method per rule, and a level's call a Rust call.
 
 `.rerail`'s `Compiled::rust` is now the loop form, and `rerail-rr-aot`'s `tier2.rs` is generated from it.
 
+**Amended (2026-11-23, 0623, "One structure, two lowerings"):** the one loop is the device's lowering of tier 2, not
+the only one. The CPU's is calls (`records::tier2_calls`): the same levels, each a method; a level's call a call that
+saves in locals what the loop's call pushes, where the same sets say the level changes it; the code after a call the
+code that follows. `Compiled::rust` and `tier2.rs` are the calls form; `Compiled::rust_loop` and `rerail-rr-aot`'s
+`tier2_loop.rs` the loop, whose tapes the tests check equal to the calls'.
+
 ## Checked
 
 On a Linux arm64 farm host:

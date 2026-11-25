@@ -251,6 +251,12 @@ impl Values {
     /// The next `parts` is made from the last: a relation the value adds rows to is made again from its last (its
     /// last block of parts and the shards of the keys it adds copied, `Blocks`, `Keys`), the others shared.
     pub fn add(&self, own: &[u32], hosts: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
+        // Its parts' keys live with the chunk: made in the thread's long-lived room (decision 0342 amended 2026-11-24).
+        // Made on whichever thread answered a request, on its stack they held it under them for the chunk.
+        rerail_blocks::maps::long(|| self.add_within(own, hosts, sources))
+    }
+
+    fn add_within(&self, own: &[u32], hosts: &[u32], sources: Vec<(String, Arc<dyn Source>)>) {
         let _adding = self.adding.lock();
         let mut parts: FxHashMap<String, Arc<Parts>> = (**self.parts.load()).clone();
         // The keys a part is found by in a lookup by document (`Parts::of`): the values' and their hosts', and its
@@ -504,7 +510,7 @@ impl Layered {
     /// The batch's rows, where a value's rows are numbered past them (never for a base made on lookup, whose values'
     /// rows are at `MADE_AT`).
     fn base_len(&self) -> usize {
-        *self.base_len.get_or_init(|| self.base.len())
+        *crate::code_rule_dsl::logic::profile::once(&self.base_len, "batch: a layered relation's rows", || self.base.len())
     }
     /// The batch's source.
     pub fn base(&self) -> &Arc<dyn Source> {
@@ -664,10 +670,10 @@ impl Source for Layered {
         self.base.syntax_batch()
     }
     /// A chunk's layered binding (decision 0431 §8): a node is read through the batch that holds its document, the
-    /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too (`sources_of`), so a host file's
-    /// key names its guests' parts as well: the first of them that holds the node answers.
-    /// The base's read, else the first part's that holds `n`'s key: asked where they lie, no list of them made.
-    fn node_read(&self, name: &str, n: i64) -> Option<String> {
+    /// chunk's or a tape value's. A value's parts are keyed by their hosts' keys too, so a host file's
+    /// key names its guests' parts as well: the first of them that holds the node answers. The base is asked, then
+    /// each part that holds `n`'s key, where they lie: no list of them is made.
+    fn node_read(&self, name: &str, n: i64) -> Option<rusqlite::types::Value> {
         if let Some(v) = self.base.node_read(name, n) {
             return Some(v);
         }

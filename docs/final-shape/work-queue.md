@@ -11276,3 +11276,68 @@ Relax: the engine checks clean; accel's closure tests 2/2 and the setfix device 
   - headless-scan (67 of 161) needs a current native addon. The worktree's is from Nov 22, and Relax builds none.
   - store-base `the_image_is_the_one_the_loader_names` under Relax.
   - The earlier list stands: accel-gpu `concurrent_levels`, the store suite's memory, the tests-corpus template under Relax, napi's constructor registry, kotlin_parser, json_tapes, device-metal parity, and the packs.tsv re-bless.
+
+### Q541. Roll-up 114 (Parser-generators-final-shape a40d598290 onto Pulling-it-all-together): what the merge chose
+
+- Parser-generators-final-shape (a40d598290; decisions 0623, 0650, 0655, 0668): statements that recover (an ERROR leaf), comments kept apart from the tokens (`xs`, `pass_comments`), tier 2 as calls (`rust`) and as one loop (`rust_loop`, the device's form, 0618), and tier 1's rewrite for rr (classes by lean's table, numbers as lean's two digit runs, floats from their records).
+- The branch was on format 15; the hub is on format 16 alone (0626, 0631). The branch's work is carried onto format 16, as the hub's own 0626 port of this parser did:
+  - The ERROR leaf is numbered as the table's ERROR code (`Entry{kind: ERROR_CODE, field 0, flags CODE_ERROR}`). The interpreter's `ERROR_LEAF` maps through the new `stream::entry_of`. The JIT's `ERROR_ROW` slot (now in `stream_ir`, re-exported from `native_cpu_tape`) maps through `numbers_by_key` and `CompiledStream::numbers_by`.
+  - The JIT's recovery ran only on format 15 (it refused format 16 runs). On format 16 the ops take nodes as they are committed, so a recovery that cuts back to its mark would find those nodes passed. `commit` now passes no node past a set mark's node count while the grammar recovers. Grammars without recovery compile as before.
+  - A direct run (each node passed at its own word) is not taken where the grammar recovers (`stream_facts::direct_keys`).
+  - `recover_statement` keeps the commit point and the nodes passed (`Mem::Coded`, `Mem::Codes`) across the cut. Format 15's `cut_to`, `blocks_from`, `commit` and `finish` are not taken.
+  - `bitlex_rust`'s `P::new` takes the finish's target: `Writer::new(widths, n + n / 2 + xs.len() + 8).to(target, src)`, then `pass_comments`. rr_aot's `parse_loop` takes a `Finish`, as `parse` does.
+  - `pp_expand`: the hub's code. Its large error is boxed (`Box<Result<Expanded, Error>>`).
+- rr_parser's tests are on format 16: `interp_tape` and the tapes compared are `Tape`s, an ERROR is a tape's fault, and the lean tape is a `Result`. The corpus test prints the first node that differs, where the branch printed a byte.
+- rr_aot's `tier1.rs`, `tier2.rs` and `tier2_loop.rs` are regenerated (`RERAIL_BLESS=1`). `tier1.rs` and `tier2.rs` are byte for byte the branch's. `tier2_loop.rs` differs only in the writer's target and the redo check.
+- kotlin_aot's `tier2.rs` stays the hub's. Its generator test (`kotlin_parser::rust_is_current`) panics under Relax before it writes anything, as it did before this merge (roll-up 111's run): a `str` that Relax's std reads as broken UTF-8 in `Expr`'s `Debug`. bitlex has no `unsafe`, so this is a Relax defect. kotlin_aot builds as it is.
+- Checked with Relax, RERAIL_GPU=cpu:
+  - one check over compiler, rr-aot, rr-parser, kotlin-aot, kotlin-parser, json-aot, cpu-stream, metal, parser-tests, slabs and bitlex: no errors;
+  - rr-parser, whole crate at four threads: 55 pass, the eight recovery tests among them. 3 fail in tier 1's generator at `bitlex_lex_rust.rs:272` ("index 69 is not a char boundary; it is inside '_'"): a Relax defect, seen since roll-up 86. Run alone, all three pass.
+  - Not run: the ignored corpus test `corpus_edited_tapes_are_the_lean_tapes` passed Relax's 580 s cap.
+
+### Q542. Roll-up 115 (final-rerail-shape fc3b677a1a onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape (9 commits, to fc3b677a1a):
+  - d154b8984f: a sorted search under key runs.
+  - 4b125c04ca: a view's probe by a node's id reuses the last id's place.
+  - t56 steps 1–7: a walk's step is charged its own time; one sorted-order search in rerail-blocks (`rerail_blocks::order`), which a relation's column index and the setfix runs share; probes by fences and prints; an order's leading key columns are exact; a lab of the join's loop.
+- The NODE hint (4b125c04ca), as the user decided: its saving is carried into the hub's per-read memo, with no thread-local.
+  - The memo is `vtab::NodeMemo`: the documents' address, the id, its document, local id and tape node, and the projection's address. It is checked against all of these, as the thread-local was.
+  - The repeats are different steps probing the same node in turn (`kind(n, k)`, then `text(n, s)`), each from inside the read of the step before. So the cursor holds a shared cell (`ProbeCursor::node`), and a join gives one cell to all its steps' cursors (`LastProbe::for_steps`). A lookup alone keeps a cell of its own, with no allocation.
+  - `Batch::node_hint` and `Batch::tape_node` read and fill it. The hub's `node(n, memo)` and `node_near` stay.
+  - The saving is not measured here.
+- A column's index: the branch's design (ids, fences and prints in the relation's block; a column pushed in order keeps no ids, searched through `rerail_blocks::order`). The hub had folded `BlockVec` into `Vector` (4de2121865), so the arrays are `Vector`s placed by `rows::collect_in`. `rows_between` returns the hub's `Vector`.
+- `exact_cols` serves the join's step and `holds` both. It has the hub's join indirection (`j.src_in`), the branch's leading key columns of an order, and the hub's test of a view by several columns. The caller says whether its probe is a membership test (the step: no binds, tests, fusion or ranges; `holds`: no tests).
+- The step clock: the hub's `Vector`, with the branch's accounted-time fields. `made.rs`: the hub's make (which returns the used rows) inside the branch's "batch: rows made" span.
+- Moved files: the branch's edits to `made.rs`, `values.rs` and `cands.rs` are carried to their crates' places (crate split 9a). `runs::split_at_pos` is `rerail_blocks::order::split_at_pos`.
+- The branch's tests on the hub's APIs:
+  - `cut_tests`' `Source::lookup` returns `Vector`;
+  - `a_text_reads_cost` admits a `vec![value]`;
+  - the loop lab takes its source from the measured join (`join_rule_with`), with the hub's `candidates` and `Rows::each`.
+- On the way: costs' `join_steps.rs` had an unused `Vector` import (since roll-up 113).
+- Checked with Relax, RERAIL_GPU=cpu:
+  - a check over blocks, prof, facts-base, facts, setfix, engine and tests-lang: no type errors in the merged code. Relax still reports its own errors: the sessions_base `translate` visibility defect (since roll-up 112), napi's constructor registry, and a Relax bus error in the engine pass.
+  - tests: setfix 137; facts-base 83; blocks 88; tests-lang `vtab::syntax` 89.
+
+### Q543. Roll-up 116 (final-rerail-shape-phased-facts 4e85066eb9 onto Pulling-it-all-together): what the merge chose
+
+- final-rerail-shape-phased-facts (4 commits, to 4e85066eb9; decision 0656 step 4):
+  - 07e2162656: text by node, through the index;
+  - 613cab1ba9: the places column removed; a place is read in the tape's auxiliary index, among the named siblings (core.rerail's shape) or past the comments (T's; `PlaceAmong`);
+  - 827049b60e: `text` is a view (`View::Text`, `Item::Text`): no row made, read by its string in the documents whose index can hold it;
+  - 4e85066eb9: docs.
+- `text`: the branch's view replaces the hub's 0353 step 3 path (`Batch::tape_text`, `CoreRows::text_row`, `keeps_text`, `token_like`, `made::TAPE_ROWS`). Both read a node's text off its tape with no rows made, so there is one mechanism: the view. Its rule for which nodes have text (`TextRows::has`: the inline bound, the kinds read at any length, comments, leaves, prefixed literals) is the hub's.
+- The views' directory: `text` has a slot of its own (`view_reads::TEXT`, after `END`; `TAPE` follows it). A document's counts are 12: the hub's `parented` is 10, and the branch's `text_rows` is 11. A text row's first rows come from the directory (`firsts`), as every view's do. `text` is the host's alone, with no kernel read (`kernel_view`).
+- Places: the hub's Rust view reads (`tape_format::view_reads`) read `child`'s place as the branch's CLIF read does. An outermost anchor reads its rank among the anchors. Any other node reads `Tape::place`, or the new `Tape::place_past_comments`, as the document's entry says (`ViewDoc::place`). `places_by_index` and the places column are gone.
+- The hub's lookups keep their memo (`lookup_runs`, `read_matches`). The branch's view arms are added there: text by its string, unit -1 for the roots, a text row found as a place.
+- The UKL headers (ids.h, view.h, body/view_reads.h) are regenerated from the CLIF (`RERAIL_WRITE_READS=1`). relation.h was stale against its generator on the hub, and is regenerated too.
+- Tests:
+  - `a_probe_makes_the_document_it_names_alone` keeps both sides' checks. With the documents' counts given, `text` makes no rows; then a `name` probe makes its document's rows.
+  - The hub's 0353 step 3 test now compares the view's probe by node with an eager batch's.
+  - `a_batch_answers_may_hold_rows_…` probes `name` (a made relation), since `text` is no longer one.
+  - The views-read-both-ways test checks each document's place kind by shape.
+- Fixed on the way: ukl-vec's test target did not compile on the hub. Since 0631, `f16::numbers` and `write_from_present` were test-only inside tape-format. They are now behind `test-hooks` too, which ukl-vec and gpu enable.
+- Checked with Relax, RERAIL_GPU=cpu:
+  - a check over clif, tape-format, lang, facts-base, facts, tests-lang, ukl, setfix, gpu and engine: no errors but the sessions_base `translate` visibility defect (Relax's, since roll-up 112);
+  - tests: clif 17; tape-format 51; facts-base 83; lang 78; facts 14; ukl-vec 51; tests-lang `vtab::syntax` 90 and the rest 86; tests-transducer `packed` 36; tests-tape `persisted_image_round_trips_without_parsing`.
+  - tests-tape whole passed the 12 GB cap (the suite's memory growth, open).

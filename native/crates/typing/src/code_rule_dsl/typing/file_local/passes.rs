@@ -88,7 +88,7 @@ impl ProgramPass for MoveCrossFile {
         self.0.join("\n").into_bytes()
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
+        let words: Vec<(&str, &str)> = self.0.iter().flat_map(|r| [(r.as_str(), super::CROSS_FILE), (r.as_str(), super::MOVED_CROSS_FILE)]).collect();
         w.on()?.fields().add_qualifiers(&words);
         Ok(())
     }
@@ -303,6 +303,8 @@ pub(super) struct Round<'v> {
     pub(super) undeclared: Vec<String>,
     pub(super) rules: Vec<Made<'v>>,
     pub(super) no_inline: Vec<String>,
+    /// Relations that choose an evaluation, not rows (`file_local::STRATEGY`).
+    pub(super) strategy: Vec<String>,
     /// Relations it makes nullary (decision 0488's pair caches' guards).
     pub(super) nullary: Vec<String>,
 }
@@ -391,6 +393,10 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
     }
     if !round.no_inline.is_empty() {
         let words: Vec<(&str, &str)> = round.no_inline.iter().map(|k| (k.as_str(), "no_inline")).collect();
+        b.fields().add_qualifiers(&words);
+    }
+    if !round.strategy.is_empty() {
+        let words: Vec<(&str, &str)> = round.strategy.iter().map(|k| (k.as_str(), super::STRATEGY)).collect();
         b.fields().add_qualifiers(&words);
     }
     Ok(())

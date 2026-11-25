@@ -1587,7 +1587,7 @@ fn expand_sized_once(unit: &Unit, lay: &Layout, sizes: &mut Sizes) -> Result<Exp
         let arena = Arena::new();
         let m = match r.make(&arena) {
             Ok(m) => m,
-            Err(done) => return done,
+            Err(done) => return *done,
         };
         match arena.lease() {
             Ok(()) => {}
@@ -1633,7 +1633,7 @@ pub fn expand_batch(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<V
             }
             match runs[k].make(&arena) {
                 Ok(m) => made.push((k, m)),
-                Err(done) => out[k] = Some(done),
+                Err(done) => out[k] = Some(*done),
             }
         }
         if made.is_empty() {
@@ -1723,7 +1723,7 @@ impl<'u> Runs<'u> {
     }
 
     /// The next run's stores in `arena`; or the unit's answer, where they are past the device's room.
-    fn make(&mut self, arena: &Arena) -> Result<Made, Result<Expanded, Error>> {
+    fn make(&mut self, arena: &Arena) -> Result<Made, Box<Result<Expanded, Error>>> {
         let (unit, lay) = (self.unit, self.lay);
         self.x = self.x.fit(self.p1.top);
         let rung = self.x.rung;
@@ -1736,8 +1736,8 @@ impl<'u> Runs<'u> {
         })();
         let (front, defs, vis, exp) = match made {
             Ok(m) => m,
-            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Ok(self.short.take().unwrap())),
-            Err(e) => return Err(Err(e)),
+            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Box::new(Ok(self.short.take().unwrap()))),
+            Err(e) => return Err(Box::new(Err(e))),
         };
         let mut l = Lay::new();
         front.lay(&mut l, TO_ALL);

@@ -125,6 +125,8 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_AST_PART_PARENTS",
     "RERAIL_RULE_ORDER",
+    // The split (`file_local::assemble`): a cross part reading positions is refused (decision 0649).
+    "RERAIL_STRICT_POSITIONS",
 ];
 
 pub mod owner {
@@ -1451,13 +1453,14 @@ fn refuse_unplaced(out: &Path) -> Result<()> {
 pub struct Corpus;
 
 impl Runner for Corpus {
-    fn run_handed(&self, programs: &[&str], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report> {
-        run_handed(programs, read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
+    fn run_handed(&self, programs: &[&str], parsed: &[crate::code_rule_dsl::logic::settings::Parsed], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, sources: Option<&texts::Sources>, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing, options: &serde_json::Value, image: Option<&mut Vec<u8>>, phase: FactPhase<'_>) -> Result<Report> {
+        run_handed(programs, parsed, read, sources, root, t_facts, out, modes, binding, chunk_nodes, typing, options, image, phase)
     }
 }
 
 pub fn run_handed(
     programs: &[&str],
+    parsed: &[crate::code_rule_dsl::logic::settings::Parsed],
     read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     sources: Option<&texts::Sources>,
     root: &Path,
@@ -1518,7 +1521,7 @@ pub fn run_handed(
     // Each text read once here (`Texts`): its seed and its graph, its names when the cutoff asks.
     let texts = match read {
         Some(read) => Texts::of_read(programs, read),
-        None => Texts::of(programs)?,
+        None => Texts::of_parsed(programs, parsed)?,
     };
     let texts = Texts {
         sources,
@@ -1648,15 +1651,16 @@ pub fn run_handed(
 
 /// The run's message templates, by (policy, clause): its texts' (`rr::message_templates`), which a program read from
 /// the store may predate; then the program's own `.message` settings, by clause, for a finding no text declares.
-fn message_templates(programs: &[&str], settings: &[(String, String)]) -> HashMap<(String, String), String> {
+fn message_templates(programs: &[&str], files: &[Option<Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFile>>], settings: &[(String, String)]) -> HashMap<(String, String), String> {
     let mut templates: HashMap<(String, String), String> = HashMap::new();
     for (_, text) in settings.iter().filter(|(k, _)| k == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
         if let Some((clause, template)) = crate::code_rule_dsl::logic::rr::setting_template(text) {
             templates.entry((String::new(), clause)).or_insert(template);
         }
     }
-    for text in programs {
-        for (policy, clause, template) in crate::code_rule_dsl::logic::rr::message_templates(text) {
+    // Off each text's parse, the run's (`Texts::files`).
+    for (i, text) in programs.iter().enumerate() {
+        for (policy, clause, template) in crate::code_rule_dsl::logic::rr::message_templates_of(text, files.get(i).and_then(Option::as_ref)) {
             templates.insert((policy, clause), template);
         }
     }
@@ -1774,7 +1778,7 @@ fn run_observed_within(
     let setting = crate::code_rule_dsl::logic::profile::span(|| "the run's settings".into());
     let read = given.read;
     // The texts as the run's keys read them, messages masked (`texts_digest`, decision 0225 §3), each masked once.
-    let masked_texts = masked(programs);
+    let masked_texts = masked_of(programs, &given.files);
     let masked: &[&str] = &masked_texts.iter().map(|t| t.as_ref()).collect::<Vec<_>>();
     let (settings, metadata_without_env) = run_settings(programs, masked, &given.graphs, read, root, options)?;
     if !metadata_without_env {
@@ -2683,6 +2687,8 @@ fn run_observed_within(
             let domains = lower::domains_of(&version)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
+            // No relation is cross-file without a declaration (decision 0652).
+            crate::code_rule_dsl::typing::file_local::crossings_checked(&split).map_err(Error::Plan)?;
             // The run's program: the image alone; no tree is kept.
             let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), domains, ops, dialect);
             drop(_step);
@@ -3246,6 +3252,21 @@ fn run_observed_within(
             let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
             counts.delta(&flat(source.as_ref()), &[], width);
             let measured = counts.statistics(&|_| true);
+            repository.push((rel.clone(), source, measured));
+        }
+        // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
+        // `npm_ignored`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
+        // input like any other (decision 0652 moves such readers there), so it is bound, empty.
+        let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        for rel in unbound {
+            let own = projection.columns(rel).is_none() && head.find(rel).and_then(|a| head.facts(a)).is_none();
+            let Some(cols) = head.columns_of(rel).filter(|_| own) else { continue };
+            // Its columns by position (`c0`, …), as a phase's export's (`atoms_source`): the cross part reads a
+            // relation core does not shape by position.
+            let names: Vec<String> = (0..cols.len()).map(|c| format!("c{c}")).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(crate::code_rule_dsl::facts::vtab::Relation::new(&names));
+            let measured = syntax::statistics(source.as_ref());
             repository.push((rel.clone(), source, measured));
         }
         repository
@@ -5310,7 +5331,10 @@ fn run_observed_within(
         // and its frontier relations' tape rows.
         let by_name: Vec<String> = if keeping { local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)).map(|r| r.replace(guests::KEPT_ROOTS, guests::FRESH_ROOTS).replace(guests::KEPT, guests::TAPE)).collect() } else { Vec::new() };
         let mut sources = sources;
-        if keeping {
+        // Bound in every chunk, empty where it admits no tape value (no request answered in its fixpoint): an input
+        // the program declares has a source, and so its statistics. Bound only where values were admitted, a chunk
+        // that admits none left a pass's kept rows unbound, and its plan failed ("no statistics for …_rr_kept").
+        {
             for rel in local.version.inputs().map(|a| local.version.text(a)).filter(|r| guests::kept_input(r)) {
                 if !sources.iter().any(|(r, _)| r == rel) {
                     sources.push((rel.to_owned(), flat_source(local.version.columns_of(rel).map_or(1, |c| c.len()), &[])));
@@ -9525,7 +9549,7 @@ fn run_observed_within(
             let messaged: Vec<Arc<output::Rows>>;
             let parts: &[Arc<output::Rows>] = if crate::code_rule_dsl::logic::rr::is_diagnostic(rel) {
                 // The wording is the handed program's where one was handed (a reused combine's may be of an earlier wording).
-                let templates = templates.get_or_init(|| message_templates(programs, &given.read.map_or_else(|| head_settings.clone(), |read| ProgramFields::settings(&**read))));
+                let templates = templates.get_or_init(|| message_templates(programs, &given.files, &given.read.map_or_else(|| head_settings.clone(), |read| ProgramFields::settings(&**read))));
                 let holes = head.columns_of(rel).map_or(0, |d| d.iter().filter(|(c, _)| c.starts_with(crate::code_rule_dsl::logic::rr::lower::findings::HOLE)).count());
                 messaged = parts.iter().map(|p| Arc::new(compose_messages(p, holes, templates))).collect();
                 &messaged

@@ -9,8 +9,13 @@
 //!   `.git`, `node_modules`, `target`, …) skipped.
 //! - `package(dir, name)`, `package_field(dir, key, v)`: each `package.json`'s name and string-valued members, keys
 //!   as paths from the root (`engines/node`); `package_for(path, dir)`: a document's nearest `package.json`.
+//! - `tsconfig(dir, base_url)`, `tsconfig_path(dir, pattern, target)`: each `tsconfig.json` or `jsconfig.json`'s
+//!   `compilerOptions`, its `extends` chain merged beneath it (a path, relative or from the root, `.json` added where
+//!   it names no file); `baseUrl` from the root (the configuration's folder where none is set), each `paths` target
+//!   as written. `tsconfig_for(path, dir)`: a document's nearest `tsconfig.json`, else `jsconfig.json`. The files
+//!   are JSONC: comments and trailing commas are dropped before they are read.
 //!
-//! `tsconfig*`, `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
+//! `git_*` and `signed_list` are not read yet (open item O80). `input_error`'s `missing` rows are made
 //! where the `.input` files are (`logic::plan::corpus::external_inputs`).
 
 use rerail_blocks::vector::Vector;
@@ -32,6 +37,9 @@ pub struct Rows {
     pub(crate) package: Vec<(String, String)>,
     pub(crate) package_field: Vec<(String, String, String)>,
     pub(crate) package_for: Vec<(String, String)>,
+    pub(crate) tsconfig: Vec<(String, String)>,
+    pub(crate) tsconfig_for: Vec<(String, String)>,
+    pub(crate) tsconfig_path: Vec<(String, String, String)>,
 }
 
 fn scalar(v: &Value) -> String {
@@ -121,8 +129,8 @@ fn strings(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// `file`, `package`, `package_field` and `package_for` of the tree under `root`, for documents `docs` (paths
-/// relative to it).
+/// `file`, `package`, `package_field`, `package_for` and the `tsconfig*` rows of the tree under `root`, for documents
+/// `docs` (paths relative to it).
 pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
     let mut packages: BTreeMap<String, Option<Value>> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
@@ -134,6 +142,147 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
     rows.file.sort();
     package_rows(&packages, rows);
     package_for_rows(docs, &packages, rows);
+    tsconfig_rows(root, docs, rows);
+}
+
+/// The names a project configuration has, the first found in a folder governing it.
+const TSCONFIG_NAMES: [&str; 2] = ["tsconfig.json", "jsconfig.json"];
+/// How many `extends` a configuration chain follows.
+const MAX_EXTENDS: usize = 8;
+
+/// `a/b/../c` as `a/c`: `.` and `..` segments resolved, never above the root.
+fn normalize(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for seg in path.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            s => out.push(s),
+        }
+    }
+    out.join("/")
+}
+
+/// `dir` joined with `rel` (`rel` from the root where it starts with `/`), normalized.
+fn join(dir: &str, rel: &str) -> String {
+    if rel.starts_with('/') { normalize(rel) } else { normalize(&format!("{dir}/{rel}")) }
+}
+
+/// JSONC as JSON: `//` and `/* */` comments and a comma before `}` or `]` dropped, strings kept as they are.
+fn jsonc(text: &str) -> String {
+    let b = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    let mut start = 0;
+    let mut in_str = false;
+    while i < b.len() {
+        match b[i] {
+            b'\\' if in_str => i += 1,
+            b'"' => in_str = !in_str,
+            b'/' if !in_str && b.get(i + 1) == Some(&b'/') => {
+                out.push_str(&text[start..i]);
+                i = memchr::memchr(b'\n', &b[i..]).map_or(b.len(), |n| i + n);
+                start = i;
+                continue;
+            }
+            b'/' if !in_str && b.get(i + 1) == Some(&b'*') => {
+                out.push_str(&text[start..i]);
+                i = memchr::memmem::find(&b[i + 2..], b"*/").map_or(b.len(), |n| i + 2 + n + 2);
+                start = i;
+                continue;
+            }
+            b',' if !in_str => {
+                let next = b[i + 1..].iter().position(|c| !c.is_ascii_whitespace()).map(|n| b[i + 1 + n]);
+                if matches!(next, Some(b'}' | b']')) {
+                    out.push_str(&text[start..i]);
+                    start = i + 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out.push_str(&text[start.min(text.len())..]);
+    out
+}
+
+/// The `compilerOptions` of the configuration at `file` (from the root), the chain it `extends` merged beneath its
+/// own, with `baseUrl` resolved from the root where each configuration of the chain sets it. `None` where it cannot
+/// be read.
+fn compiler_options(root: &Path, file: &str, depth: usize) -> Option<serde_json::Map<String, Value>> {
+    let text = std::fs::read_to_string(root.join(file)).ok()?;
+    let json: Value = serde_json::from_str(&jsonc(&text)).ok()?;
+    let dir = file.rsplit_once('/').map_or("", |(d, _)| d);
+    let mut merged = serde_json::Map::new();
+    if depth < MAX_EXTENDS {
+        let extends = match json.get("extends") {
+            Some(Value::String(e)) => vec![e.clone()],
+            Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).map(str::to_owned).collect(),
+            _ => Vec::new(),
+        };
+        for e in extends.iter().filter(|e| e.starts_with('.') || e.starts_with('/')) {
+            let mut base = join(dir, e);
+            if !root.join(&base).is_file() {
+                base.push_str(".json");
+            }
+            if let Some(opts) = compiler_options(root, &base, depth + 1) {
+                merged.extend(opts);
+            }
+        }
+    }
+    if let Some(Value::Object(own)) = json.get("compilerOptions") {
+        for (k, v) in own {
+            let v = match (k.as_str(), v) {
+                ("baseUrl", Value::String(u)) => Value::String(join(dir, u)),
+                _ => v.clone(),
+            };
+            merged.insert(k.clone(), v);
+        }
+    }
+    Some(merged)
+}
+
+/// `tsconfig`, `tsconfig_path` of each project configuration in the tree, and `tsconfig_for` of each document.
+fn tsconfig_rows(root: &Path, docs: &[String], rows: &mut Rows) {
+    let name = |f: &str| f.rsplit_once('/').map_or(f, |(_, n)| n).to_owned();
+    let mut configs: BTreeMap<String, String> = BTreeMap::new();
+    for f in &rows.file {
+        let n = name(f);
+        if let Some(rank) = TSCONFIG_NAMES.iter().position(|c| *c == n) {
+            let dir = f.rsplit_once('/').map_or("", |(d, _)| d).to_owned();
+            let keep = configs.get(&dir).is_none_or(|have| TSCONFIG_NAMES.iter().position(|c| *c == name(have)) > Some(rank));
+            if keep {
+                configs.insert(dir, f.clone());
+            }
+        }
+    }
+    for (dir, file) in &configs {
+        let Some(opts) = compiler_options(root, file, 0) else { continue };
+        let base = opts.get("baseUrl").and_then(Value::as_str).map_or_else(|| dir.clone(), str::to_owned);
+        rows.tsconfig.push((dir.clone(), base));
+        if let Some(Value::Object(paths)) = opts.get("paths") {
+            for (pattern, targets) in paths {
+                for t in targets.as_array().into_iter().flatten().filter_map(Value::as_str) {
+                    rows.tsconfig_path.push((dir.clone(), pattern.clone(), t.to_owned()));
+                }
+            }
+        }
+    }
+    for path in docs {
+        let mut d = path.rsplit_once('/').map_or("", |(d, _)| d);
+        loop {
+            if configs.contains_key(d) {
+                rows.tsconfig_for.push((path.clone(), d.to_owned()));
+                break;
+            }
+            if d.is_empty() {
+                break;
+            }
+            d = d.rsplit_once('/').map_or("", |(p, _)| p);
+        }
+    }
 }
 
 /// A folder's entries in name order; none where it cannot be read.
@@ -200,7 +349,7 @@ pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Val
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
     }
-    if ["file", "package", "package_field", "package_for"].iter().any(|r| reads(r)) {
+    if ["file", "package", "package_field", "package_for", "tsconfig", "tsconfig_for", "tsconfig_path"].iter().any(|r| reads(r)) {
         tree(root, docs, &mut rows);
     }
     let mut texts: Vec<&str> = Vec::new();
@@ -210,6 +359,8 @@ pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Val
     rows.package.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.package_field.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     rows.package_for.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
+    rows.tsconfig.iter().chain(&rows.tsconfig_for).for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
+    rows.tsconfig_path.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     let atoms = store.intern_atoms(&texts)?;
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
@@ -235,6 +386,12 @@ pub fn relations(store: &dyn FactStore, root: &Path, docs: &[String], opts: &Val
     make("package_field", &["dir", "key", "v"], field);
     let pfor: Vec<Vector<i64>> = rows.package_for.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
     make("package_for", &["path", "dir"], pfor);
+    let tsconfig: Vec<Vector<i64>> = rows.tsconfig.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
+    make("tsconfig", &["dir", "base_url"], tsconfig);
+    let tfor: Vec<Vector<i64>> = rows.tsconfig_for.iter().map(|_| rerail_blocks::vector![sym(), sym()]).collect();
+    make("tsconfig_for", &["path", "dir"], tfor);
+    let tpath: Vec<Vector<i64>> = rows.tsconfig_path.iter().map(|_| rerail_blocks::vector![sym(), sym(), sym()]).collect();
+    make("tsconfig_path", &["dir", "pattern", "target"], tpath);
     Ok(out)
 }
 

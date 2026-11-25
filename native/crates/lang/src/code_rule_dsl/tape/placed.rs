@@ -33,9 +33,15 @@ impl Room for SlabRoom {
     }
 }
 
-/// The device the slabs are on, if there is one: the process's, whatever its backend (decision 0440 step C).
+/// The device the slabs are on, where this run reads tapes on one: the process's, whatever its backend (decision 0440
+/// step C), unless the run is bound to the CPU (`rerail_blocks::alloc::run_device` is `No`). A CPU run's tapes and
+/// sources are read by the host alone, so they take no room of the device's pool and are copied into none: a CPU run
+/// leased the residency's 64 MB slab for them (t57 §8, the cost case `a_cpu_run_leases_no_device_memory`).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn device() -> Option<&'static rerail_device::device::Device> {
+    if rerail_blocks::alloc::run_device() == rerail_blocks::alloc::Device::No {
+        return None;
+    }
     rerail_slabs::device().ok()
 }
 
@@ -79,7 +85,8 @@ pub fn home_of(room: Option<&std::sync::Arc<dyn Room>>, bytes: &[u8]) -> HomeOf 
     }
 }
 
-/// `len` bytes written by `fill` into their home: a slab's room where the device's pool gives one, else a vector.
+/// `len` bytes written by `fill` into their home: a slab's room where the run reads tapes on a device (`device`) and
+/// its pool gives one, else a vector.
 pub fn place(len: usize, fill: impl FnOnce(&mut [u8]) -> std::io::Result<()>) -> std::io::Result<Home> {
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     if device().is_some()

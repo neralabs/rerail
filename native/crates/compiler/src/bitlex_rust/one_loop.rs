@@ -1084,6 +1084,9 @@ impl Lp<'_, '_> {
         self.levels.borrow_mut().insert(rule.to_owned(), first);
         let root = self.at_root.replace(false);
         let Some(Stmt::Node { body, .. }) = self.g.rules.get(rule) else { return self.err(format!("`{rule}`: no node")) };
+        if self.g.endings.iter().any(|e| e.0 == rule) {
+            return self.err(format!("`{rule}`: an ending, which the one loop does not write"));
+        }
         // Bracketed, `O [M] C`: each call took `O C` as the level empty, so here `M` is there.
         let there;
         let body = match body {
@@ -1327,6 +1330,13 @@ fn run_last(x: &[u64], s: usize) -> usize {
     }
 }
 "#;
+
+/// Tier 2 of the grammar as calls over tier 1's records (the CPU's form, `records::tier2_calls`), with the mark bits its
+/// code reads of a record's code; none where the grammar is no records form.
+pub fn tier2_calls_reads(x: &Input<'_>) -> Option<Result<(String, u32), String>> {
+    let g = G::new(x);
+    (!x.marks.is_empty() || !x.extras.is_empty() || !g.flags.is_empty() || !g.readings.is_empty()).then(|| records::tier2_calls(x))
+}
 
 /// Tier 2 of the grammar as one loop (the module's doc), or why it is not written.
 pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
@@ -1575,7 +1585,10 @@ pub(super) fn drop_uncalled(mut out: String, parts: &[String]) -> String {
             }
         }
         if !dropped {
-            return out.replace("\n\n\n\n", "\n\n").replace("\n\n\n", "\n\n");
+            while out.contains("\n\n\n") {
+                out = out.replace("\n\n\n", "\n\n");
+            }
+            return out;
         }
     }
 }

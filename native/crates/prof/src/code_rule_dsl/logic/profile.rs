@@ -710,6 +710,9 @@ pub struct Open {
     children_rise: u64,
     /// Its id in the heap sampler (`rerail_prof::heap::intern`; 0 off).
     heap: u32,
+    /// The tick counter and this thread's account (`ACCOUNTED`) when it opened: it closes accounting for its time.
+    ticks: u64,
+    accounted: (u64, f64),
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
@@ -1361,6 +1364,69 @@ pub fn statement(text: Option<String>) {
 /// An open span; it closes when dropped.
 pub struct Span(bool);
 
+/// The processor's tick counter: the virtual counter on ARM (24 MHz on Apple's), the time-stamp counter on x86. A
+/// fine-grained clock (a walk's steps, `setfix::StepClock`) reads it where a thread-CPU clock read (a few hundred ns)
+/// would cost more than what it times; its unit cancels when its ticks are scaled to the thread's CPU.
+#[inline(always)]
+pub fn ticks() -> u64 {
+    #[cfg(target_arch = "aarch64")]
+    {
+        let t: u64;
+        // SAFETY: reads the virtual counter, which user code may read on every platform the engine runs on.
+        unsafe { std::arch::asm!("mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack, preserves_flags)) };
+        t
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        // SAFETY: the time-stamp counter is readable from user code.
+        unsafe { core::arch::x86_64::_rdtsc() }
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        0
+    }
+}
+
+thread_local! {
+    /// This thread's time that a closed scope accounts for (t56 step 1): the ticks and CPU of every span closed, and
+    /// every walk's steps (`setfix::StepClock`) ended, on it. A scope closing sets it to its value at the scope's open
+    /// plus the scope's whole time, so what ran inside it, nested to any depth, is counted once. A scope enclosing
+    /// another subtracts what this grew by while it ran: a probe's step is not charged a batch made inside the probe
+    /// (a span), a wait for another thread's make, or another join a waiting thread ran from the pool.
+    static ACCOUNTED: std::cell::Cell<(u64, f64)> = const { std::cell::Cell::new((0, 0.0)) };
+}
+
+/// This thread's accounted ticks (`ACCOUNTED`), read at a walk's every step switch.
+#[inline(always)]
+pub fn accounted_ticks() -> u64 {
+    ACCOUNTED.with(|a| a.get().0)
+}
+
+/// This thread's accounted ticks and CPU (`ACCOUNTED`).
+#[inline]
+pub fn accounted() -> (u64, f64) {
+    ACCOUNTED.with(std::cell::Cell::get)
+}
+
+/// A scope closes that opened when the account read `at_open` and ran `ticks` and `cpu` (both inclusive): it now
+/// accounts for all of it.
+#[inline]
+pub fn account_scope(at_open: (u64, f64), ticks: u64, cpu: f64) {
+    ACCOUNTED.with(|a| a.set((at_open.0.wrapping_add(ticks), at_open.1 + cpu)));
+}
+
+/// `cell`'s value, made by `make` if it is not yet: where it is not (the first read, which makes it, or a read that
+/// waits for another thread's), in a span named `what`, so that a read's step is not charged the make or the wait
+/// (t56 step 1). The read of a made value is `OnceLock::get`'s.
+#[inline]
+pub fn once<'a, T>(cell: &'a std::sync::OnceLock<T>, what: &'static str, make: impl FnOnce() -> T) -> &'a T {
+    if let Some(v) = cell.get() {
+        return v;
+    }
+    let _span = span(|| what.to_owned());
+    cell.get_or_init(make)
+}
+
 /// This thread's innermost open span's path (only when profiling): a worker the thread starts opens its spans under
 /// it (`span_at`), so the worker's work is charged to what started it (a phase's run, say).
 pub fn here() -> Option<String> {
@@ -1511,7 +1577,7 @@ fn open(path: String) -> Span {
             0
         };
         rerail_prof::heap::set_span(heap);
-        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
+        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap, ticks: ticks(), accounted: accounted() });
     });
     Span(true)
 }
@@ -1538,6 +1604,7 @@ impl Drop for Span {
             };
             rerail_prof::heap::set_span(after);
             let total = now - open.start;
+            account_scope(open.accounted, ticks().wrapping_sub(open.ticks), total);
             if s.opens.is_empty() {
                 s.covered += total;
                 s.between = Some((open.path.clone(), now));

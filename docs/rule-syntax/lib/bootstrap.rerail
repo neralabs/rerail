@@ -58,12 +58,14 @@ p0_doc(d, @replace_all(f, "\\\\", "/")) :- doc(d, f, _), env("rerail.windows_pat
 p0_names(i, f, at, n) :- kind(i, "include"), field(i, "path", p), str(p, n), docof(i, d), p0_doc(d, f), node(d, i, _, at, _).
 .decl p0_declares_doc(i: node, f: symbol)
 p0_declares_doc(i, f) :- kind(i, "declaration"), field(i, "name", n), text(n, "doc"), docof(i, d), p0_doc(d, f).
-.decl p0_file_t_shape(path: symbol)
+// By path, across the loaded documents (decision 0652).
+.decl p0_file_t_shape(path: symbol) cross_file
 p0_file_t_shape(f) :- p0_file(f), p0_declares_doc(_, f).
 
 // What each text and each loaded module names. A text names `core.rerail` first unless it is in T's shape.
 // The engine requests components.rerail as a file seed only when a program consumes its relations.
-.decl p0_from(from: symbol, at: number, name: symbol)
+// Each text or module by its path: includes resolve across files (decision 0652).
+.decl p0_from(from: symbol, at: number, name: symbol) cross_file
 p0_from(t, at, n) :- p0_ask(t, at, n).
 p0_from(t, -1, "core.rerail") :- p0_text(t), !p0_t_shape(t).
 p0_from(f, -1, "core.rerail") :- p0_file(f), loaded(_, f, "rr"), !p0_file_t_shape(f).
@@ -98,7 +100,7 @@ load(c, c, "rr") :- p0_resolved(_, _, _, c).
 .decl p0_decl(i: node, f: symbol, name: symbol)
 p0_decl(i, f, s) :- kind(i, "declaration"), field(i, "name", n), text(n, s), match(".+__.+", s), docof(i, d), p0_doc(d, f).
 .decl p0_text_phase(t: symbol, phase: symbol)
-.decl p0_phase_named(from: symbol, phase: symbol)
+.decl p0_phase_named(from: symbol, phase: symbol) cross_file   // by path, as p0_from (decision 0652)
 p0_phase_named(f, p) :- p0_decl(_, f, s), match("(?<p>[^_]+(?:_[^_]+)*)__.+", s), !prefix("typing_", p), !prefix("rr_", p).
 p0_phase_named(t, p) :- p0_text_phase(t, p).
 .decl p0_phase_lib(dir: symbol)

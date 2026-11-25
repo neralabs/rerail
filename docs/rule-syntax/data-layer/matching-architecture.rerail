@@ -467,7 +467,8 @@ ma_in_returns(f, c) :- ma_def(f, _, _), field(f, "return_type", t), within(c, t)
 .decl ma_owner(d: number)
 ma_owner(d) :- ma_doc(d), path_part(d, "l5250_matching"), doc(d, p, _), !prefix("conform/", p), file_name(d, f),
     f != "l5250_matching".
-.decl ma_branch_aware()
+// Cross-file: whether any owner file names the policy (decision 0652).
+.decl ma_branch_aware() cross_file
 ma_branch_aware() :- ma_owner(d), ma_text(d, t), contains("BranchAwareIndexPolicy", t).
 .violation MA033(at: span) "Authoritative matching maintenance must use the shared branch-aware index policy in production ownership"
 MA033(@place("l5250_matching/maintenance.py", 1)) :- ma_owner(_), !ma_branch_aware().

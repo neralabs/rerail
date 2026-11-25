@@ -156,10 +156,6 @@ pub struct Facts {
     grammar: Option<Arc<crate::code_rule_dsl::tape::Grammar>>,
     /// The ERROR and MISSING nodes, ascending, found on first ask (a scan of the codes): few, and most files have none.
     errors: std::sync::OnceLock<Vector<u32>>,
-    /// Its index's bytes (decision 0656 step 4, `DocIndex`), built on the first read that needs it where its tape's
-    /// home holds none (a format 15 tape, one stored before layout 8); a home's own is read where it lies
-    /// (`FactsIn::index`).
-    index: std::sync::OnceLock<Vec<u8>>,
     /// Computed only for a demanded Python syntax verdict; shared by every projection of this tape. `Err`: `ast.parse`
     /// raises another exception than `SyntaxError` (`facts::vtab::syntax::python_syntax`).
     pub python_syntax: std::sync::OnceLock<Result<Option<(u32, String)>, String>>,
@@ -368,6 +364,12 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
     {
         return TapeImage::from_home((*home).clone(), grammar);
     }
+    // A parse's image the writer took as it lies (`placed_parse` with no device room): the image itself.
+    if let crate::content_store::ObjectBytes::Tape(held) = stored
+        && let Ok(image) = (Arc::clone(held) as Arc<dyn std::any::Any + Send + Sync>).downcast::<crate::code_rule_dsl::tape::StoredImage>()
+    {
+        return Ok(image.0.clone());
+    }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
     const APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(17, "4a", "a queued tape not in a room, read into a vector (queued_image)");
     APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
@@ -383,8 +385,19 @@ fn placed_where_read(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc
     Ok(image)
 }
 
+/// A parse's tape and the bytes the store's writer takes: in a slab's room where a device reads tapes (one write, read
+/// there by the host and the device), else the image as the parser made it, its bytes taken where they lie
+/// (`StoredImage`): a CPU run copied every tape into a vector for the writer alone (t57 §8, the cost case
+/// `a_tape_is_not_copied_into_its_room`).
 fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<(crate::content_store::TapeBytes, crate::code_rule_dsl::tape::TapeImage), String> {
     use crate::code_rule_dsl::tape::TapeImage;
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    let roomless = crate::code_rule_dsl::tape::placed::device().is_none();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    let roomless = true;
+    if roomless {
+        return Ok((Arc::new(crate::code_rule_dsl::tape::StoredImage(image.clone())), image));
+    }
     let home = image.place_stored()?;
     if !home.placed() {
         return Ok((Arc::new(home), image));
@@ -718,7 +731,6 @@ pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> 
         tape: Some(Arc::clone(doc.doc_tape())),
         grammar: Some(Arc::clone(doc.grammar())),
         errors: Default::default(),
-        index: Default::default(),
         python_syntax: Default::default(),
         programs: None,
         tape_verdict: false,
@@ -738,7 +750,7 @@ pub fn from_image(source: Arc<crate::code_rule_dsl::tape::Text>, grammar: &Arc<c
 
 /// The facts of `tape` (checked), of `source` in `grammar`'s dialect.
 fn holding(tape: Arc<crate::code_rule_dsl::tape::formats::DocTape>, source: Arc<crate::code_rule_dsl::tape::Text>, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>, tag: u8, lines: Arc<LineTable>) -> Facts {
-    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag, source, lines, tape: Some(tape), grammar: Some(Arc::clone(grammar)), errors: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The tape tag of a text-only document's facts (`text`): no dialect has it.
@@ -748,13 +760,13 @@ pub const TEXT: u8 = u8::MAX;
 /// for a file with no language (`lines::terminators_of(None)`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
 pub fn text(source: Arc<crate::code_rule_dsl::tape::Text>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators_of(None)));
-    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source, lines, tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// The text document of parsed file `f` (decision 0512: a file the run reads for its programs): its source and line
 /// table, shared, and no tree.
 pub fn text_of(f: &Facts) -> Facts {
-    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), index: Default::default(), python_syntax: Default::default(), programs: None, tape_verdict: false }
+    Facts { tag: TEXT, source: Arc::clone(&f.source), lines: Arc::clone(&f.lines), tape: None, grammar: None, errors: std::sync::OnceLock::from(rerail_blocks::vector::Vector::new()), python_syntax: Default::default(), programs: None, tape_verdict: false }
 }
 
 /// Counts a read of the facts' `$part` of node `$node` (E17, `tape::reads`); nothing without `tape-reads`.
@@ -973,23 +985,22 @@ impl<'a> FactsIn<'a> {
     pub fn token_text(&self, token: &Token) -> &'a str {
         &self.facts.source[token.start as usize..token.end as usize]
     }
-    /// The document's index (decision 0656 step 4): its tape home's, read where it lies, else built once for it
-    /// (`DocIndex::build`). Every count, listed code, text test and place the facts answer from it goes through it.
+    /// The document's index (decision 0656 step 4), read in its tape's home, where every tape holds one
+    /// (`TapeImage::doc_index`). Every count, listed code, text test, term and place the facts answer from it goes
+    /// through it.
     pub fn index(&self) -> rerail_tape_format::doc_index::DocIndex<'a> {
-        use rerail_tape_format::doc_index::DocIndex;
         let facts: &'a Facts = self.facts;
-        if let Some(x) = facts.tape.as_deref().and_then(|t| t.image().aux_bytes()).and_then(|b| DocIndex::read(b).ok()) {
-            return x;
-        }
-        let bytes = facts.index.get_or_init(|| {
-            let _span = crate::code_rule_dsl::logic::profile::span(|| "a document's index, built (its home holds none)".into());
-            let grammar = facts.grammar.as_ref().expect("a document's index, of facts with a tape");
-            on_tape!(self, |t| {
-                let named = crate::code_rule_dsl::tape::formats::named_codes(t.table(), grammar.lang);
-                DocIndex::build(&t, facts.source.as_bytes(), &named).unwrap_or_else(|e| panic!("a document's index: {e}"))
-            })
-        });
-        DocIndex::read(bytes).expect("the index built")
+        facts.tape.as_deref().expect("a document's index, of facts with a tape").image().doc_index()
+    }
+    /// Named node `id`'s place among its parent's named children that are no comment (T's shape's places), read in
+    /// the document's index (`DocIndex::place_past_comments`).
+    pub fn place_past_comments(&self, id: u32) -> u32 {
+        let index = self.index();
+        on_tape!(self, |t| index.place_past_comments(&t, id))
+    }
+    /// Node `id`'s code in its tape's table (what its index keys codes by).
+    pub fn code(&self, id: u32) -> u32 {
+        on_tape!(self, |t| t.code(id as usize))
     }
     /// Named node `id`'s place among its parent's named children (0 for the first, and the root's), read in the
     /// document's index (`DocIndex::place`).
@@ -1289,6 +1300,9 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "package" => &["dir", "name"],
         "package_field" => &["dir", "key", "v"],
         "package_for" => &["path", "dir"],
+        "tsconfig" => &["dir", "base_url"],
+        "tsconfig_for" => &["path", "dir"],
+        "tsconfig_path" => &["dir", "pattern", "target"],
         "pkg" => &["d", "p"],
         "unpackaged" | "tape_error" => &["d"],
         "path_part" | "file_name" => &["d", "s"],

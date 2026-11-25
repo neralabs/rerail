@@ -27,6 +27,7 @@
 #define UKL_AUX_COUNTS 5u
 #define UKL_AUX_RARE 6u
 #define UKL_AUX_NAMED 7u
+#define UKL_AUX_COMMENTS 8u
 
 #define UKL_AUX_ARGS UKL_GLOBAL const uint8_t* s
 
@@ -268,6 +269,45 @@ UKL_INLINE uint64_t ukl_aux_eighth_at_or_before(UKL_AUX_ARGS, uint32_t parent, u
     if (lo == first)
         return UKL_AUX_NONE;
     return ((uint64_t)(lo - first) << 32) | ukl_aux_pair_node(s, sec, lo - 1u);
+}
+
+// ---- COMMENTS ----
+
+// Whether code `code` is a comment (0 past the table, or no COMMENTS).
+UKL_INLINE uint32_t ukl_aux_comment(UKL_AUX_ARGS, uint32_t code)
+{
+    uint32_t sec = ukl_aux_section(s, UKL_AUX_COMMENTS);
+    if (sec == 0u || code / 64u >= ukl_aux_u32(s, sec))
+        return 0u;
+    return (uint32_t)((ukl_aux_u64(s, sec + 16u + 8u * (code / 64u)) >> (code % 64u)) & 1u);
+}
+
+// The SIBLINGS entry of the last of `parent`'s every-K-th children at or before `node`: its k in the high 32 bits
+// and the entry in the low, or `UKL_AUX_NONE` in the low bits where none is.
+UKL_INLINE uint64_t ukl_aux_entry_at_or_before(UKL_AUX_ARGS, uint32_t parent, uint32_t node)
+{
+    uint32_t sec = ukl_aux_section(s, UKL_AUX_SIBLINGS);
+    if (sec == 0u)
+        return UKL_AUX_NONE;
+    uint32_t first = ukl_aux_family(s, sec, parent);
+    uint32_t lo = first, hi = ukl_aux_family(s, sec, parent == UKL_AUX_NONE ? parent : parent + 1u);
+    while (lo < hi) {
+        uint32_t mid = (lo + hi) / 2u;
+        if (ukl_aux_pair_node(s, sec, mid) <= node)
+            lo = mid + 1u;
+        else
+            hi = mid;
+    }
+    if (lo == first)
+        return UKL_AUX_NONE;
+    return ((uint64_t)(lo - first) << 32) | (lo - 1u);
+}
+
+// The comments among SIBLINGS entry `e`'s family's named children before its node (COMMENTS' count at it).
+UKL_INLINE uint32_t ukl_aux_comments_before(UKL_AUX_ARGS, uint32_t e)
+{
+    uint32_t sec = ukl_aux_section(s, UKL_AUX_COMMENTS);
+    return ukl_aux_u32(s, sec + ukl_aux_u32(s, sec + 8u) + 4u * e);
 }
 
 // ---- COUNTS and RARE ----

@@ -433,3 +433,31 @@ PostHog on m1max with the probe off, against HEAD with the probe compiled in:
 |---|---|---|---|---|---|
 | Before | 3.338 T | 319 s | 79.1 s | 7.16 GB | 29,930 |
 | After | 3.215 T (−3.7%) | 308 s | 75.4 s | 7.17 GB | 29,930 |
+
+## 9. One codebase with Typing-support and the hub (2026-11-25)
+
+This branch merged Typing-support at 4d6ed1c0f8. That commit holds the hub (final-rerail-shape) at 67a14fbb5d, so
+the merge brought in both lines.
+
+The hub and Typing-support changed the same memory independently:
+
+- **0342 amended twice (Typing-support, 2026-11-24).**
+  - A stack per thread is the default room.
+  - Large regions go to the thread's free-listed blocks.
+  - The thread's long room (`maps::long`) holds what the census finds outlives its work.
+  - `scratch::with` makes nested uses of that same stack.
+- **The hub's 359dc17781** is 0684's change, made a second time. Its names are kept (0684, "Merged").
+
+How 0687 sits with 0342 is recorded in 0687 ("With 0342's stack"). The work it leaves, in order:
+
+1. **One stack per thread.** The frame's arena takes its chunks from `scratch::Stack`, each chunk a region with one
+   header, and bumps without headers inside the chunk. The frame's bytes then lie in a block (`place_of`), the
+   `OpScratch` class of §2 for any frame, so `op_on` is not needed. The bar is the step 1 benchmark: 4.6 ns for a
+   32-byte array.
+2. **One survey tool.** The probe (`RERAIL_PROBE_SCRATCH`) and 0342's census (`RERAIL_ANON_CENSUS`) count the same
+   regions. The census takes the probe's heap counts and lifetimes, and the probe goes.
+3. **Step 7 is reworded.** Each remaining `Vector` made with no room in an operation becomes a frame or inline
+   array. One that outlives its operation goes in `maps::long`, or is data in a relation's block. The stack stays
+   the default room, for everything else.
+4. **Measure again on cold PostHog.** The run is the merged engine against `de8d639702`: instructions, peak and
+   findings (29,930). 0342's own figures are for one-file edits of corpus0.

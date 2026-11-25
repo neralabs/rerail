@@ -1414,7 +1414,7 @@ use rerail_blocks::vector::Vector;
             // `literal_key` does) a made text, the function's text made of it.
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 {} v1\nfunc str_between v0 v3 {} {}\nhead v1 v2", sym("<"), sym("<"), sym("")),
             format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_concat v3 {} v2\nfunc str_concat v4 v3 {}\nfunc str_between v2 v4 {} {}\nhead v4 v1", sym("("), sym(",)"), sym("("), sym(",)")),
-            // A regex's capture groups (decision 0668), as `match("(?<d>…)", s)` lowers them: a path's directory and
+            // A regex's capture groups (decision 0688), as `match("(?<d>…)", s)` lowers them: a path's directory and
             // its first part's rest (the C includes' splits), a lazy repeat before a greedy one, a group in a repeat
             // (its last part), a group of a multi-byte class; no row where the regex does not match or the group
             // took no part. One made into a cat after it.

@@ -140,7 +140,7 @@ enum RowAuto {
     Test { table: Arc<crate::code_rule_dsl::text::table::Table>, key: String },
     /// `replace_all` of regex `pattern` by `with` (symbols).
     Replace { pattern: i64, with: i64 },
-    /// `rx_group` of regex `pattern`'s group `name` (symbols): its program (decision 0668).
+    /// `rx_group` of regex `pattern`'s group `name` (symbols): its program (decision 0688).
     Group { pattern: i64, name: i64 },
 }
 
@@ -1080,7 +1080,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                     Key::Const(c) => Some(c),
                     Key::Slot(x) => known.get(&x).copied(),
                 };
-                // A capture group's program is the stage's automaton (decision 0668): its regex and group constants.
+                // A capture group's program is the stage's automaton (decision 0688): its regex and group constants.
                 let auto = if f == mj::TEXTFN_RX_GROUP {
                     let (Some(pattern), Some(group)) = (konst(&args[1]), konst(&args[2])) else {
                         return Err("the function rx_group of a regex or group name that is not a constant has no device form".into());

@@ -23,7 +23,19 @@ pub mod alloc;
 pub mod atoms;
 pub mod block;
 pub mod bloom;
+#[cfg(target_vendor = "apple")]
+mod census;
+#[cfg(not(target_vendor = "apple"))]
+mod census {
+    pub(crate) const STACK: u64 = 0;
+    pub(crate) const LARGE: u64 = 1;
+        pub(crate) const LONG: u64 = 3;
+    pub(crate) fn counted(_: u64, _: &'static str, _: usize) -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+}
 pub mod chunk;
+pub mod long;
 pub mod col;
 #[cfg(any(unix, windows))]
 pub mod deferrable;
@@ -47,6 +59,7 @@ pub mod ranged;
 pub mod program;
 pub mod refs;
 pub mod region;
+pub mod order;
 pub mod relation;
 pub mod rows;
 pub mod scratch;

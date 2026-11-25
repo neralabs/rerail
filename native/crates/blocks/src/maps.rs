@@ -42,7 +42,14 @@ pub fn region_of(mut m: Mutable<u8>, keep: Keep) -> Region {
 /// Where a room's region lies: its block and its first byte's offset there (none for a region not in a block, a
 /// crate's own test's on the heap).
 pub fn place_of(r: &Region) -> Option<(&Arc<Block>, usize)> {
-    r.owner().downcast_ref::<Held>().map(|h| (h.0.region().block(), h.0.region().at()))
+    let owner = r.owner();
+    if let Some(h) = owner.downcast_ref::<Held>() {
+        return Some((h.0.region().block(), h.0.region().at()));
+    }
+    if let Some(l) = owner.downcast_ref::<crate::long::InLong>() {
+        return Some(l.place());
+    }
+    owner.downcast_ref::<crate::scratch::OnStack>().map(|s| s.place())
 }
 
 /// Where a vector lies (`rerail_vector::vector::Vector`): its block and its first `T`'s offset there.
@@ -64,10 +71,107 @@ impl Room for InBlock {
     }
 }
 
-/// The run's room: where a structure made with no room (`Default`) lives. The engine installs the facts layer's
-/// (`rows::run_room`: the run's open relation block) at load (`rerail_vector::install_default_room`); a crate's own
-/// tests, below it, take the heap's.
-pub use rerail_vector::{default_room, install_default_room};
+/// Free-listed blocks a thread keeps for its large regions (`scratch::LARGE` bytes and more, which its stack and its
+/// long room send to it: `FreeRoom::large`; decision 0342: big pieces, not millions of small ones), the next leased
+/// when one is full; a block goes when its last region does. Its lock is its thread's but for a free from another.
+pub struct FreeRoom {
+    open: std::sync::Mutex<Option<Arc<Block>>>,
+    /// The bytes each block reserves (address space; pages are touched as used).
+    block: usize,
+}
+
+/// A freed chunk under this many bytes keeps its pages for the next (`Block::keeping_pages_below`): a growing
+/// vector's regions, made and freed in turn, gave theirs to the OS and took them back at every step.
+const LARGE_RESIDENT: usize = 256 << 10;
+
+/// The bytes a thread's large room's block reserves.
+const LARGE_BLOCK: usize = 64 << 20;
+
+impl FreeRoom {
+    /// A thread's room for its large regions.
+    pub fn large() -> Self {
+        FreeRoom { open: std::sync::Mutex::new(None), block: LARGE_BLOCK }
+    }
+}
+
+impl Room for FreeRoom {
+    fn region(&self, bytes: usize, align: usize, name: &'static str) -> Region {
+        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(b) = &*open
+            && let Some(r) = Mutable::alloc_aligned(b, bytes, align, name)
+        {
+            return region_of(r, self.counted(name, bytes));
+        }
+        // Room for the chunk the free list takes for `bytes` (its class, a power of two), aligned to its size up to
+        // `ALIGN_MAX` past the block's first byte, and a page.
+        let size = crate::free::class_of(bytes).1;
+        let need = size + align.max(size.min(crate::free::ALIGN_MAX)) + 4096;
+        let b = Arc::new(Block::anon(crate::block::kind::FACTS, self.block.max(need)).with_free_list().keeping_pages_below(LARGE_RESIDENT));
+        let r = Mutable::alloc_aligned(&b, bytes, align, name).unwrap_or_else(|| panic!("a new block holds no {bytes} bytes for {name}"));
+        *open = Some(b);
+        region_of(r, self.counted(name, bytes))
+    }
+}
+
+impl FreeRoom {
+    /// The census's token for a region of it (`RERAIL_ANON_CENSUS`), when the census runs.
+    fn counted(&self, name: &'static str, bytes: usize) -> Keep {
+        crate::census::counted(crate::census::LARGE, name, bytes)
+    }
+}
+
+/// The room of a structure made with no room: its owner's while it makes it (`within`), else the calling thread's stack
+/// (`scratch::StackRoom`).
+pub fn default_room() -> Arc<dyn Room> {
+    run_room()
+}
+
+/// Installs the run's room as every crate's (`rerail_vector::default_room`): the engine's, at load (boot's, once a
+/// process). A crate's own tests, run without it, make their vectors with no room on the heap.
+pub fn install() {
+    rerail_vector::install_default_room("rerail-blocks", run_room);
+}
+
+thread_local! {
+    /// The room an owner's structures take on this thread while it makes them (`within`).
+    static WITHIN: std::cell::RefCell<Option<Arc<dyn Room>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with `room` the room of every structure made on this thread with no room (`default_room`): an owner's
+/// family made in its room (a writer's parts, an image's tables), where a structure that outlives what is made after
+/// it belongs, not on the thread's stack (decision 0342, amended 2026-11-24). Scopes nest; the one before comes back
+/// at the end, a panic's included.
+pub fn within<R>(room: &Arc<dyn Room>, f: impl FnOnce() -> R) -> R {
+    struct Back(Option<Arc<dyn Room>>);
+    impl Drop for Back {
+        fn drop(&mut self) {
+            let _ = WITHIN.try_with(|w| *w.borrow_mut() = self.0.take());
+        }
+    }
+    let _back = Back(WITHIN.with(|w| w.borrow_mut().replace(room.clone())));
+    f()
+}
+
+/// Runs `f` with the calling thread's long-lived room the room of every structure made with no room (`within`): what
+/// is known to outlive the work it is made in (decision 0342, amended 2026-11-24: one long-lived room a thread).
+pub fn long<R>(f: impl FnOnce() -> R) -> R {
+    thread_local! { static LONG: Arc<dyn Room> = Arc::new(crate::long::LongRoom::new()); }
+    match LONG.try_with(Arc::clone) {
+        Ok(room) => within(&room, f),
+        Err(_) => f(),
+    }
+}
+
+fn run_room() -> Arc<dyn Room> {
+    if let Some(room) = WITHIN.try_with(|w| w.borrow().clone()).ok().flatten() {
+        return room;
+    }
+    // The calling thread's stack (decision 0342, amended 2026-11-24): its handle made once a thread.
+    thread_local! {
+        static STACK: Arc<dyn Room> = Arc::new(crate::scratch::StackRoom);
+    }
+    STACK.try_with(Arc::clone).unwrap_or_else(|_| Arc::new(crate::scratch::StackRoom))
+}
 
 /// One structure's region: its first byte, kept beside the handle so a read is one load.
 struct Mem {
@@ -1245,6 +1349,33 @@ impl<T: Pod> std::ops::Deref for Rec<T> {
 mod tests {
     use super::*;
 
+    /// A structure made with no room inside an owner's scope (`within`) takes the owner's room; outside it, the
+    /// thread's stack; the scope before comes back at its end, nested or after a panic.
+    #[test]
+    fn a_structure_made_within_an_owner_takes_its_room() {
+        let owner = Arc::new(Block::anon(crate::block::kind::FACTS, 1 << 20));
+        let room: Arc<dyn Room> = Arc::new(InBlock(owner.clone()));
+        let in_owner = || {
+            let r = default_room().region(64, 8, "a test's");
+            Arc::ptr_eq(place_of(&r).expect("placed").0, &owner)
+        };
+        assert!(within(&room, in_owner), "the owner's block");
+        assert!(within(&room, || within(&room, in_owner) && in_owner()), "nested, and the outer scope after");
+        assert!(!in_owner(), "outside the scope, the thread's stack");
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| within(&room, || panic!("inside"))));
+        assert!(!in_owner(), "a panic's end restores the scope before");
+    }
+
+    /// What is made `long` lies in the thread's long-lived room (decision 0342, amended 2026-11-24), and the stack
+    /// is the room again after it.
+    #[test]
+    fn what_is_made_long_lies_in_the_threads_long_room() {
+        let r = long(|| default_room().region(64, 8, "a test's"));
+        assert!(r.owner().downcast_ref::<crate::long::InLong>().is_some(), "made long: a long room's slot");
+        let s = default_room().region(64, 8, "a test's");
+        assert!(s.owner().downcast_ref::<crate::scratch::OnStack>().is_some(), "after it: the stack");
+    }
+
     /// An id table in a block (`IdTable`, a set of row ids found by their rows' hashes) finds each id through growth,
     /// removals that move ids probed past the removed one back, and an id written again in its slot; ids whose hashes
     /// collide are told apart by their rows. (The engine's other id set in a block, `facts::rows::IdSet`, was merged
@@ -1275,6 +1406,17 @@ mod tests {
 
     fn room() -> Arc<dyn Room> {
         Arc::new(InBlock(Arc::new(Block::anon(kind::FACTS, 1 << 24).with_free_list())))
+    }
+
+    /// A region past half a new block's size, just over a power of two (the strings' table: 33,554,500 bytes), takes
+    /// a block of its own that holds the free list's chunk for it, aligned to its size.
+    #[test]
+    fn an_anonymous_room_holds_a_region_past_a_power_of_two() {
+        let room = FreeRoom::large();
+        for bytes in [(32 << 20) + 68, (64 << 20) + 1, 100] {
+            let r = room.region(bytes, 8, "a test's region");
+            assert_eq!(r.len(), bytes);
+        }
     }
 
     #[test]

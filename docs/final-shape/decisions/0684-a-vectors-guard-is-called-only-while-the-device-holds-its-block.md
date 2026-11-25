@@ -36,11 +36,11 @@ M3, cold PostHog, CPU, profiling build. Findings were the same in each run: 29,9
 
 R4 stays as it is. Only reaching the guard gets cheaper.
 
-- `Guard::uses` gives the guard's count of the device's queued uses of its block. For the ledger, that is
+- `Guard::queued` gives the guard's count of the device's queued uses of its block. For the ledger, that is
   `chunk_uses`, which its own check reads first.
-- `Region::guarded` keeps a pointer to that count, alongside the guard it holds. A region with no guard points at a
-  static zero.
-- `Vector::check` reads the count inline (`Region::device_uses`). It calls the guard only while a use is queued, and
+- `Region::guarded` keeps a pointer to that count, alongside the guard it holds. A region with no guard holds a null
+  pointer, and reads none queued.
+- `Vector::check` reads the count inline (`Region::device_queued`). It calls the guard only while a use is queued, and
   then the guard checks exactly as before.
 
 ## Left
@@ -59,3 +59,11 @@ The rest of the merge's 0.97 T is elsewhere. Candidates, from the same profiles:
 
 `rerail-vector`, `rerail-blocks` and `rerail-facts-base`, on the Linux CPU backend: 169 of 169, R4's ledger tests
 included (`a_cpu_write_under_a_queued_gpu_use_fails`).
+
+## Merged with the hub's (2026-11-25)
+
+The hub made the same change on its own, in 359dc17781 ("A region asks its guard only while the device has uses of
+its block queued"). Its names are kept, so that there is one definition: `Guard::queued`, `Region::device_queued`,
+and a null pointer where there is no guard, where this record had a static count of zero. The behaviour is the same,
+and the hub's change adds the test this record lacked: `a_guarded_region_asks_its_guard_only_while_uses_are_queued`
+(rerail-blocks).

@@ -46,12 +46,20 @@ use Class::*;
 /// Every thread-local outside the tests: `(file under native/, name, class, why)` (Carried ones need no why: they
 /// are carried).
 pub const STATE: &[(&str, &str, Class, &str)] = &[
-    ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
+    ("crates/blocks/src/census.rs", "ID", Thread, "this thread's number in the anonymous room's census (a measuring aid, off by default)"),
+    ("crates/blocks/src/census.rs", "N", Thread, "the census's next thread number, read once by `ID`'s first use on a thread"),
+    ("crates/blocks/src/maps.rs", "STACK", Thread, "this thread's handle on its stack's room (`scratch::StackRoom`): the same on any thread"),
+    ("crates/blocks/src/maps.rs", "WITHIN", Call, "the owner's room of the structures a call makes while it runs (`maps::within`); work it hands to another thread takes that thread's stack"),
+    ("crates/blocks/src/maps.rs", "LONG", Thread, "this thread's long-lived room (`long::LongRoom`, `maps::long`): what outlives the work it is made in"),
+    ("crates/blocks/src/scratch.rs", "ID", Thread, "this thread's number, the owner a stack's regions are popped by"),
+    ("crates/blocks/src/scratch.rs", "LARGE_ROOM", Thread, "this thread's free-listed blocks for its large regions (`maps::FreeRoom::large`)"),
+    ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's stack (decision 0342, amended 2026-11-24): its small structures' and its scratch uses' memory"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/ukl_vec/src/exec.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
     ("crates/ukl_vec/src/fiber.rs", "POOL", Thread, "this thread's spare fiber stacks, each emptied at its next use"),
     ("crates/ukl_vec/src/fiber.rs", "PREPARED", Thread, "the fibers this thread prepared, a count of its own work its tests read"),
     ("crates/ukl_vec/src/run.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
+    ("crates/vector/src/lib.rs", "FOUND", Thread, "the run's room provider, kept once found (`default_room`): registered once at load, the same on any thread"),
     ("crates/compiler/src/pp_words.rs", "HOST_RUNS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/test_pool.rs", "LEDGERS", Thread, "this thread's share of the test pool"),
