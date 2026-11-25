@@ -1,0 +1,4 @@
+[
+  { "id": "complexity-cyclomatic-rust", "status": "same" },
+  { "id": "complexity-cyclomatic-vue", "status": "same" }
+]
