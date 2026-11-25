@@ -280,6 +280,9 @@ without hooks or network.
   start the first `git.exe` on `PATH` to find the system config file. The
   opener starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
+  Where Rerail's Git names no system file (no Git, a Git before 2.26, an ask that did not finish), and in the daemon
+  until Git answers the two asks it makes as it starts, the system file is gix's `/etc/gitconfig` on Linux and macOS
+  and none on Windows (`src/engine/native/git-access.ts`).
   It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). In a
   linked worktree it reads the includes Git reads there; where gix's own open fails on an include that only the main
   checkout's condition selects, it opens that worktree again with includes off only in a repository the user owns,
