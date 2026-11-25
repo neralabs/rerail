@@ -20,6 +20,7 @@ import {
   type NativePackageFactsReader,
   type NativeRepositoryIndexOptions,
 } from "../native/native.js";
+import type { GitIgnoreLook } from "../native/git-ignore-answers.js";
 import type { CodeRuleDslCatalog, CompiledCodeRuleDslEntry } from "./code-rule-dsl-catalog.js";
 import {
   type CodeRuleEdit,
@@ -61,7 +62,6 @@ import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch } from "../file-replace.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
-import type { GitIgnoreLook } from "../native/git-ignore-answers.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
