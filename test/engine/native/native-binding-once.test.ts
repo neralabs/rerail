@@ -84,11 +84,18 @@ function homeWithVerdict(): string {
   return home;
 }
 
+/**
+ * The builds `rebuiltAt` has faked. Each reads as a file of its own: a loader that read one into its record in a case
+ * that failed must not find that time and size again in a later case.
+ */
+let builds = 0;
+
 /** `statSync`, but reading `path` as a file a build wrote after this process loaded `held`: a later time, another size. */
 function rebuiltAt(path: string, held: string): typeof statSync {
+  builds += 1;
   const rebuilt = actual.statSync(held);
-  rebuilt.mtimeMs += 1_000;
-  rebuilt.size += 1;
+  rebuilt.mtimeMs += 1_000 * builds;
+  rebuilt.size += builds;
   return ((file: PathLike, options?: StatSyncOptions) => (String(file) === path ? rebuilt : actual.statSync(file, options))) as typeof statSync;
 }
 
