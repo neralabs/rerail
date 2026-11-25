@@ -1045,6 +1045,7 @@ impl Rel {
         // rows derived here (which may repeat them) or into a lattice (which folds each), they are read with those
         // instead.
         let placed = std::mem::take(&mut f.placed);
+        let in_order = std::mem::take(&mut f.in_order);
         // A lattice relation's rows the device folded, with its key map (decision 0384 step 5): taken as they lie,
         // the map its own, into a relation with none yet (a device fixpoint's heads start empty).
         if let Some(map) = f.map.take()
@@ -1092,8 +1093,9 @@ impl Rel {
         } else if !placed.is_empty() {
             let k = self.k;
             let from = self.n;
-            for (p, rounds) in placed {
+            for (lot, (p, rounds)) in placed.into_iter().enumerate() {
                 let m = p.len() as usize;
+                let lot_from = self.n;
                 match p {
                     Placed::Part(p) => self.data.append_part(p),
                     // SAFETY: the writer finished, and wrote every value of the rows `n` counts.
@@ -1105,6 +1107,10 @@ impl Rel {
                         self.level.push(self.lbase + round + 1);
                     }
                     self.n += 1;
+                }
+                // Written in the first order: known sorted, its orders take it in place.
+                if in_order.contains(&lot) {
+                    self.sorted.note(&self.data, k, &self.idx[0].cols, lot_from as u32, self.n as u32);
                 }
             }
             if pend {
@@ -1356,6 +1362,9 @@ pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, break
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
                    /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
                    placed: Vec<(Placed, Option<Vec<u32>>)>,
+                   /// The lots of `placed` written in the relation's first order (t58 increment A): taken as rows known
+                   /// sorted (`Sorted::note`), so no order of them is sorted on the host.
+                   in_order: Vec<usize>,
                    /// A lattice relation's key map the device folded its placed rows through (decision 0384 step 5):
                    /// the relation takes it as its own with them.
                    map: Option<keys::KeyMap> }
@@ -1405,6 +1414,14 @@ pub struct Derivations(pub std::sync::Mutex<std::collections::BTreeMap<String, (
 impl Fresh {
     /// Rows another writer wrote in place (`placed`): distinct, none held by the relation; with `rounds`, each row's
     /// round of the device's fixpoint (its level, as `add_leveled`'s).
+    /// `place`'s, the rows written in the relation's first order (t58 increment A, the device's sorted dedup): the
+    /// relation notes them so, and sorts nothing of them.
+    pub fn place_in_order(&mut self, placed: Placed) {
+        if placed.len() > 0 {
+            self.in_order.push(self.placed.len());
+            self.placed.push((placed, None));
+        }
+    }
     pub fn place(&mut self, placed: Placed, rounds: Option<Vec<u32>>) {
         debug_assert!(rounds.as_ref().is_none_or(|r| r.len() == placed.len() as usize), "a round per row");
         if placed.len() > 0 {

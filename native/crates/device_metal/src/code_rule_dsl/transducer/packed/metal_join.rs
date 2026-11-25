@@ -2278,6 +2278,15 @@ impl Batch {
         self.queue(job)
     }
 
+    /// `dedup_less`, its rows made distinct and written in `key`'s order (t58 increment A): sorted by their keys in
+    /// the level's wide sort, each kept where its key is not the one before it's. The order is the head's first, so
+    /// the host takes the rows as they lie and sorts nothing.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn dedup_sorted(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
+                                                 held: Option<(&DevRel, LatMap<'_>)>, key: &SortKey) -> Result<(), Error> {
+        self.dedup_with(table, cols, in_slot, out_slot, totals, out, held, Some(key))
+    }
+
     /// `table`'s distinct rows over slots `cols` (at most 16) into `out` (a column per slot of `cols`, in that order,
     /// the same capacity), their count into `totals[out_slot]`; the first of equal rows is kept, and the order kept.
     /// Queued in the batch's level, as a stage is: a stratum's heads' dedups launch together.
@@ -2291,6 +2300,12 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn dedup_less(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
                                                held: Option<(&DevRel, LatMap<'_>)>) -> Result<(), Error> {
+        self.dedup_with(table, cols, in_slot, out_slot, totals, out, held, None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn dedup_with(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table,
+                  held: Option<(&DevRel, LatMap<'_>)>, key: Option<&SortKey>) -> Result<(), Error> {
         assert!(cols.len() <= 16 && out.room() == table.room());
         let places = (2 * table.room()).next_power_of_two().max(16);
         let mut d = [0u32; 32];
@@ -2315,18 +2330,35 @@ impl Batch {
             }
             None => None,
         };
+        // Sorted (t58 increment A): its keys in the level's wide sort, no places.
+        if let Some(k) = key {
+            d[25] = 1;
+            assert!(k.parts.len() <= 16 && k.bits <= 64 && k.parts.iter().all(|&(c, _, _)| (c as usize) < cols.len()));
+        }
         // Its places placed with its input where that is placed: twice its rows, a power of two (5d); and as many
-        // again past them, each row's place (`dedup_claim_one`'s, its mark's).
-        let p = Held::new(if table.placed() { 16 } else { 2 * 4 * places })?;
+        // again past them, each row's place (`dedup_claim_one`'s, its mark's). A sorted one has none.
+        let p = Held::new(if table.placed() || key.is_some() { 16 } else { 2 * 4 * places })?;
         let n = table.room() + 1;
         let mut job = Job::new(JobKind::Dedup, 0, Stage::default());
         job.dedup = Some(d);
         job.reads_placed(table, &[(3, DD_CAP)]);
         job.makes_placed(out, &[(3, DD_OCAP)]);
-        job.h_place = table.placed().then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
+        job.h_place = (table.placed() && key.is_none()).then_some(HPlace { block: 3, places: Some(DD_PLACES), mask: DD_MASK, arrays: 2 });
         job.desc.l = table.reach_by(&mut job, false)?;
         job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
         job.desc.h = job.reach(&p.buffer, 0, true)?;
+        if let Some(k) = key {
+            // `HeadKeyP`: tagged, its parts, its rank's shift and its rank (its level's, `flush`); each part its
+            // column, bits, least's words.
+            let mut w = [0u32; 72];
+            w[0] = u32::from(k.tagged);
+            w[1] = k.parts.len() as u32;
+            for (i, &(c, bits, lo)) in k.parts.iter().enumerate() {
+                w[4 + 4 * i..8 + 4 * i].copy_from_slice(&[c, bits, lo as u64 as u32, (lo as u64 >> 32) as u32]);
+            }
+            job.p = Some(w.iter().flat_map(|x| x.to_ne_bytes()).collect());
+            (job.wide, job.key_bits) = (table.room(), k.bits);
+        }
         job.desc.o = out.reach_by(&mut job, true)?;
         let (mut reads, mut writes) = (vec![table.key(job.desc.l), job.desc.totals], vec![out.key(job.desc.o), job.desc.totals]);
         if let Some((r, hb)) = hb {
@@ -2336,8 +2368,8 @@ impl Batch {
             writes.push(job.desc.vc);
             job.own.push(hb);
         }
-        // Its clear a thread for 4 places (`dedup_clear_one`).
-        (job.n, job.count, job.scatter, job.clear, job.claim) = (n, n, n, places / 4, table.room());
+        // Its clear a thread for 4 places (`dedup_clear_one`); a sorted one's keys instead (`dedup_key_one`).
+        (job.n, job.count, job.scatter, job.clear, job.claim) = if key.is_some() { (n, n, n, 0, 0) } else { (n, n, n, places / 4, table.room()) };
         job.m = (Some(job.desc.totals + 4 * in_slot as u64), table.room());
         job.own.push(p);
         job.order(&reads, &writes);
@@ -2712,6 +2744,23 @@ impl Batch {
             return Ok(());
         }
         let mut jobs = std::mem::take(&mut self.queued);
+        // The level's sorted dedups (t58 increment A): one wide sort of all their keys, each one's under its rank in
+        // the level, above the widest key's bits (`HeadKeyP::rank_shift`, `rank`).
+        let wide_jobs: Vec<usize> = (0..jobs.len()).filter(|&i| jobs[i].wide > 0).collect();
+        let wide_bits = wide_jobs.iter().map(|&i| jobs[i].key_bits).max().unwrap_or(0);
+        let rank_bits = usize::BITS - wide_jobs.len().saturating_sub(1).leading_zeros();
+        if wide_bits + rank_bits > 64 {
+            return Err(Error::BackendCapacity);
+        }
+        let wide_passes = (wide_bits + rank_bits).div_ceil(8).max(1) as usize;
+        for (rank, &i) in wide_jobs.iter().enumerate() {
+            let shift = if rank_bits == 0 { 64 } else { wide_bits };
+            let p = jobs[i].p.as_mut().expect("a sorted dedup's key");
+            p[8..12].copy_from_slice(&shift.to_ne_bytes());
+            p[12..16].copy_from_slice(&(rank as u32).to_ne_bytes());
+            // Its sorted keys in the region's second pair after an odd number of passes (`HeadKeyP::odd`).
+            p[HK_ODD.0 as usize..HK_ODD.0 as usize + 4].copy_from_slice(&((wide_passes % 2) as u32).to_ne_bytes());
+        }
         // The parameter blocks, each at 16 bytes, in one buffer.
         let mut params: Vec<u8> = Vec::new();
         let mut put = |b: &[u8]| -> u64 {
@@ -2810,6 +2859,11 @@ impl Batch {
         let passes = bits / 8;
         // Where the sorted keys and places end: in the first pair after an even number of passes.
         let sorted = sort.as_ref().map(|(a, b, ..)| if passes % 2 == 0 { a } else { b });
+        // The wide sort's (t58 increment A): its sorted dedups' keys end to end, 64 bits each with its place, in a
+        // region of the arena its level's size script claims from the rows counted (`WideAt`); as many passes as its
+        // keys' and ranks' bits take, a byte each. Its rows as guessed: its items and its arena's bytes.
+        let wide_rows: usize = wide_jobs.iter().map(|&i| jobs[i].wide).sum();
+        let wide = (!wide_jobs.is_empty()).then(|| wide_rows.div_ceil(SORT_TILE).max(1));
         let (mut kb, mut eb, mut total) = (0usize, 0usize, 0usize);
         let first_job = prog.descs.len();
         for (j, at) in jobs.iter().zip(&placed) {
@@ -2855,7 +2909,8 @@ impl Batch {
             for (i, j) in jobs.iter().enumerate() {
                 for &(k, what, threads) in kinds {
                     // A fold's map left as it is has no pass to empty or grow it.
-                    if j.kind == k && !(k == JobKind::Lattice && threads(j) == 0) {
+                    // A sorted dedup has no places to clear or claim, and an unsorted one no keys (t58 increment A).
+                    if j.kind == k && !(matches!(k, JobKind::Lattice | JobKind::Dedup) && threads(j) == 0) {
                         let n = if what == PK_ROW_TEXT { threads(j).div_ceil(rows_a_group).max(1) } else { groups(threads(j)) };
                         // Its items as many as its rows' count needs, where its kernel's threads past them do nothing;
                         // else all of them (`per` 0).
@@ -2885,7 +2940,10 @@ impl Batch {
             None => None,
         };
         let sizes = hist_scan.map(|h| SortSizes { first: sort_first, passes: passes as usize, hist: h, tiles: sort.as_ref().map_or(1, |s| s.3) });
-        let sized = level_sizes(prog, &jobs, first_job, total, pa, &placed, sizes)?;
+        // The wide sort's passes after the index sort's.
+        let wide_first = sort_first + if sort.is_some() { passes as usize } else { 0 };
+        let wide_sizes = wide.map(|tiles| SortSizes { first: wide_first, passes: wide_passes, hist: prog.scan_levels_sized(ScanData::Script, 256 * tiles), tiles });
+        let sized = level_sizes(prog, &jobs, first_job, total, pa, &placed, sizes, wide_sizes)?;
         job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
         if let (Some((a, b, hist, tiles)), Some(f)) = (&sort, sorted) {
             job_phase(prog, &[(JobKind::Index, PK_IX_KEY, |j| j.count)]);
@@ -2900,7 +2958,7 @@ impl Batch {
                     hist: ha,
                     out_keys: address(&to[0].buffer)?,
                     out_values: address(&to[1].buffer)?,
-                    w: SortWords { n: ix_rows as u32, shift: 8 * pass, tiles: *tiles as u32, pad: 0 },
+                    w: SortWords { n: ix_rows as u32, shift: 8 * pass, tiles: *tiles as u32, wide: 0 },
                     pad2: 0,
                 });
                 // Its tiles as many as its keys as claimed need (its level's size script's).
@@ -2919,8 +2977,26 @@ impl Batch {
             // Its marks (decision 0671), of its rows and buckets placed.
             job_phase(prog, &[(JobKind::Index, PK_IX_MARK, |j| j.count)]);
         }
-        job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Map, PK_MAP, |j| j.count)]);
+        job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLEAR, |j| j.clear), (JobKind::Dedup, PK_DEDUP_KEY, |j| j.wide), (JobKind::Map, PK_MAP, |j| j.count)]);
         job_phase(prog, &[(JobKind::Dedup, PK_DEDUP_CLAIM, |j| j.claim)]);
+        // The wide sort's passes (t58 increment A), as the index sort's: each pass's tiles' histograms, their scan,
+        // its tiles' keys and places at their places.
+        // Its region and its keys are its size script's (`SortWords::wide`, `n`): its pointers none.
+        if let (Some(tiles), Some(ws)) = (wide, wide_sizes) {
+            for pass in 0..wide_passes {
+                debug_assert_eq!(prog.sorts.len(), wide_first + pass, "the wide sort's passes where its size script set them");
+                let x = prog.sorts.len() as u32;
+                prog.sorts.push(SortPass { keys: 0, values: 0, hist: 0, out_keys: 0, out_values: 0, w: SortWords { n: 0, shift: 8 * pass as u32, tiles: tiles as u32, wide: 0 }, pad2: 0 });
+                for kind in [PK_RADIX_HIST, PK_RADIX_SCATTER] {
+                    if kind == PK_RADIX_SCATTER {
+                        prog.scan_sized_phases(ws.hist, 256 * tiles);
+                    }
+                    prog.phase_of((0..tiles).map(|g| (kind, x, g as u32)).collect(), vec![SegAt { count: 0, first: 0, items: tiles as u32, per: 1, plus: 0 }]);
+                    prog.seg_late.push((prog.segs.len() - 1, Late::Sort(x as usize, word_at!(SortPass, w.tiles))));
+                }
+            }
+            prog.arena += units(24 * wide_rows.max(1) + 4 * (256 * tiles + 1));
+        }
         job_phase(prog, &[
             (JobKind::Stage, PK_STAGE_COUNT, |j| j.count),
             (JobKind::Scan, PK_SCAN_COUNT, |j| j.count),
@@ -3269,8 +3345,10 @@ fn units(bytes: usize) -> usize {
 /// row's values and a dedup's places placed by it; then the level's counts claimed (each job's its input's room and
 /// one), each job's first word, and the scan's three levels' values, sums and counts. None for a level of neither.
 /// `pa`: the level's parameter blocks' address; `placed`: each job's blocks in it.
-fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize, pa: u64, placed: &[[Option<u64>; 5]], sort: Option<SortSizes>) -> Result<Option<usize>, Error> {
-    if total == 0 && sort.is_none() && jobs.iter().all(|j| j.l_place.is_none() && j.d_place.is_none() && j.o_rows.is_none()) {
+#[allow(clippy::too_many_arguments)]
+fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize, pa: u64, placed: &[[Option<u64>; 5]], sort: Option<SortSizes>, wide: Option<SortSizes>)
+               -> Result<Option<usize>, Error> {
+    if total == 0 && sort.is_none() && wide.is_none() && jobs.iter().all(|j| j.l_place.is_none() && j.d_place.is_none() && j.o_rows.is_none()) {
         return Ok(None);
     }
     let first = prog.script.len();
@@ -3362,6 +3440,43 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
         }
         prog.op(OpAt::of(SZ_MUL, r, r, 0).c(Late::Abs(256)));
         size_scan(prog, top, r, 256 * ss.tiles, |level, f| Late::Scan(ss.hist + level, f));
+    }
+    if let Some(ws) = wide {
+        // The level's sorted dedups' keys end to end (t58 increment A): each one's first (`eb`), its rows as its
+        // input's count says (the device's: its input's room is too); then its region claimed for them (`WideAt`:
+        // 24 bytes a key, and its tiles' histograms), its first word and its keys into each pass and each dedup, and
+        // its histograms' scan, from their place in it.
+        let (sum, r, rg, b) = (12u32, 13u32, 11u32, 4u32);
+        prog.op(OpAt::of(SZ_CONST, sum, 0, 0).c(Late::Abs(0)));
+        for (i, j) in jobs.iter().enumerate().filter(|(_, j)| j.wide > 0) {
+            prog.op(OpAt::of(SZ_PUT32, sum, 0, 0).w(desc(i, word_at!(JobDesc, at.eb))));
+            let (word, _) = j.rows_word().expect("a dedup's rows' word");
+            prog.op(OpAt::of(SZ_LOAD, r, 0, 0).w(Late::Abs(word)));
+            prog.op(OpAt::of(SZ_ADD, sum, sum, r));
+        }
+        prog.op(OpAt::of(SZ_DIVUP, r, sum, 0).c(Late::Abs(SORT_TILE as u64)));
+        prog.op(OpAt::of(SZ_MAX, r, r, 0).c(Late::Abs(1)));
+        prog.op(OpAt::of(SZ_MUL, b, r, 0).c(Late::Abs(4 * 256)));
+        prog.op(OpAt::of(SZ_ADD, b, b, ZERO).c(Late::Abs(4)));
+        prog.op(OpAt::of(SZ_MUL, rg, sum, 0).c(Late::Abs(24)));
+        prog.op(OpAt::of(SZ_ADD, b, b, rg));
+        claim(prog, top, rg, b, 4, true);
+        for x in ws.first..ws.first + ws.passes {
+            prog.op(OpAt::of(SZ_PUT32, sum, 0, 0).w(Late::Sort(x, word_at!(SortPass, w.n))));
+            prog.op(OpAt::of(SZ_PUT32, r, 0, 0).w(Late::Sort(x, word_at!(SortPass, w.tiles))));
+            prog.op(OpAt::of(SZ_PUT32, rg, 0, 0).w(Late::Sort(x, word_at!(SortPass, w.wide))));
+        }
+        for (i, _) in jobs.iter().enumerate().filter(|(_, j)| j.wide > 0) {
+            prog.op(OpAt::of(SZ_PUT32, rg, 0, 0).w(desc(i, word_at!(JobDesc, at.h_at))));
+            prog.op(OpAt::of(SZ_PUT32, sum, 0, 0).w(site(i, 4, HK_TOTAL)));
+        }
+        // Its histograms past its keys and places: its first word less one, and six words a key.
+        prog.op(OpAt::of(SZ_MUL, b, sum, 0).c(Late::Abs(6)));
+        prog.op(OpAt::of(SZ_ADD, b, b, rg));
+        prog.op(OpAt::of(SZ_SUB, b, b, R_ONE));
+        prog.op(OpAt::of(SZ_PUT32, b, 0, 0).w(Late::Scan(ws.hist, word_at!(ScanLevel, w.at))));
+        prog.op(OpAt::of(SZ_MUL, r, r, 0).c(Late::Abs(256)));
+        size_scan(prog, top, r, 256 * ws.tiles, |level, f| Late::Scan(ws.hist + level, f));
     }
     if total > 0 {
         // Each job's counts: its rows' and one, where its rows are a word's (its count phase's items: the rows its
@@ -3872,6 +3987,21 @@ const PK_COPY: u32 = 1;
 const PK_IX_KEY: u32 = 2;
 const PK_RADIX_HIST: u32 = 3;
 const PK_RADIX_SCATTER: u32 = 4;
+/// A sorted dedup's keys (t58 increment A, `dedup_key_one`).
+const PK_DEDUP_KEY: u32 = 31;
+
+/// `HeadKeyP`'s level's keys and its passes' parity (its size script's, `flush`'s).
+const HK_TOTAL: WordAt = WordAt::word(68);
+const HK_ODD: WordAt = WordAt::word(69);
+
+/// A sorted dedup's key (t58 increment A, `join_stages.uglykl`'s `HeadKeyP`): the order's leading column's 16-bit
+/// tag where `tagged`, then each part, most significant first: (column of the dedup's `cols`, bits, least).
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::code_rule_dsl) struct SortKey {
+    pub tagged: bool,
+    pub parts: Vec<(u32, u32, i64)>,
+    pub bits: u32,
+}
 const PK_IX_PLACE: u32 = 5;
 const PK_DEDUP_CLEAR: u32 = 6;
 const PK_DEDUP_CLAIM: u32 = 7;
@@ -3901,7 +4031,7 @@ const PK_IX_MARK: u32 = 30;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.
-const ROWS_ITEMS: [u32; 16] = [PK_COPY, PK_MAP, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
+const ROWS_ITEMS: [u32; 17] = [PK_COPY, PK_MAP, PK_DEDUP_KEY, PK_DEDUP_CLAIM, PK_STAGE_COUNT, PK_SCAN_COUNT, PK_WITNESS_COUNT, PK_DEDUP_MARK, PK_STAGE_SCATTER, PK_SCAN_SCATTER,
                                PK_ROW_SCATTER, PK_DEDUP_SCATTER, PK_LAT_CLAIM, PK_LAT_BEST, PK_IX_KEY, PK_IX_PLACE, PK_IX_MARK];
 
 /// A job's items in a phase as many as a count on the device needs (`join_stages`' `Seg`).
@@ -4207,7 +4337,8 @@ struct SortWords {
     n: u32,
     shift: u32,
     tiles: u32,
-    pad: u32,
+    /// Its keys are 64 bits (the level's wide sort, a sorted dedup's: t58 increment A), else 32.
+    wide: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<SortPass>() == 64);
@@ -4426,6 +4557,10 @@ struct Job {
     claim: usize,
     /// An index's buckets, its keys' span in the level's sort.
     buckets: usize,
+    /// A sorted dedup's (t58 increment A): its rows at most, its keys' span in the level's wide sort; and its key's
+    /// bits, below its rank's. 0: not one.
+    wide: usize,
+    key_bits: u32,
     /// A lattice fold's key map's slots to empty, and its old map's to place again (0: none).
     lattice: [usize; 2],
     /// A copy's rows written: its destination's address, and its rows from and to.
@@ -4524,6 +4659,8 @@ impl Job {
             clear: 0,
             claim: 0,
             buckets: 0,
+            wide: 0,
+            key_bits: 0,
             lattice: [0; 2],
             span: None,
             rows: None,

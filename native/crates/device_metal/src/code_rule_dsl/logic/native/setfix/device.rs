@@ -2408,8 +2408,8 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     drop(_h);
     rep.decode_cpu += thread_cpu() - d0;
     // The placed heads' rows into the store: their parts, as the device wrote them.
-    for (h, part) in placed.into_parts() {
-        fresh[h].place(part, None);
+    for (h, part, sorted) in placed.into_parts() {
+        if sorted { fresh[h].place_in_order(part) } else { fresh[h].place(part, None) }
     }
     Ok(out)
 }
@@ -2417,7 +2417,8 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
 /// The heads whose rows `place` wrote in place, and where it wrote them.
 #[derive(Default)]
 struct PlacedHeads {
-    parts: Vec<(usize, super::Placed)>,
+    /// Each head's rows placed, and whether they are in its first order (t58 increment A: the host takes them so).
+    parts: Vec<(usize, super::Placed, bool)>,
     heads: Vec<usize>,
 }
 
@@ -2425,7 +2426,7 @@ impl PlacedHeads {
     fn contains(&self, head: &usize) -> bool {
         self.heads.contains(head)
     }
-    fn into_parts(self) -> Vec<(usize, super::Placed)> {
+    fn into_parts(self) -> Vec<(usize, super::Placed, bool)> {
         self.parts
     }
 }
@@ -2484,7 +2485,8 @@ unsafe fn written(room: super::Placed, n: usize) -> super::Placed {
 /// bound; and what the work read, held until the program is done.
 struct PrePlaced {
     heads: Vec<usize>,
-    pending: Vec<(usize, super::Placed, usize, mj::Words)>,
+    /// Each head's room, its count's slot and words, and whether its rows are in its first order (t58 increment A).
+    pending: Vec<(usize, super::Placed, usize, mj::Words, bool)>,
     _hold: (Vec<mj::Table>, Vec<(mj::DevRel, mj::DevIndex)>),
 }
 
@@ -2492,14 +2494,14 @@ impl PrePlaced {
     /// Its heads' rows as the finished program wrote them.
     fn claim(self, rep: &mut Report) -> PlacedHeads {
         let mut placed = PlacedHeads { heads: self.heads, parts: Vec::new() };
-        for (h, room, slot, words) in self.pending {
+        for (h, room, slot, words, sorted) in self.pending {
             let n = words.get(slot) as usize;
             // SAFETY: the program is finished, and its gate held each head's rows within the room `head_room`
             // reserved; `place_rows` wrote every column of rows `0..n`.
             let part = unsafe { written(room, n) };
             rep.distinct += n as u64;
             rep.placed += n as u64;
-            placed.parts.push((h, part));
+            placed.parts.push((h, part, sorted));
         }
         placed
     }
@@ -2590,8 +2592,10 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
     heads.sort_unstable();
     heads.dedup();
     let (reaches, _) = reach(&rules[..runs.len()], &heads, store);
+    // Each head's bounds, for its rows' sort key (t58 increment A).
+    let bounds = head_bounds(&rules[..runs.len()], store);
     let mut pre = PrePlaced { heads: Vec::new(), pending: Vec::new(), _hold: (Vec::new(), Vec::new()) };
-    let mut made: Vec<(usize, mj::Table, Option<usize>, mj::Words, usize)> = Vec::new();
+    let mut made: Vec<(usize, mj::Table, Option<usize>, mj::Words, usize, bool)> = Vec::new();
     for h in heads {
         let rel = &store.rels[h];
         let k = rel.k;
@@ -2629,8 +2633,21 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
         }).collect();
         b.append_rows(&srcs, &union, (&words, 0)).map_err(e)?;
         let all: Vec<usize> = (0..k).collect();
-        // Made distinct: one rule's rows are already.
-        let (rows, slot) = if from.len() > 1 {
+        // Its rows' key in its first order, where its bounds pack it in 64 bits (t58 increment A): made distinct in
+        // that order, so the host takes them as they lie (the stage less its held rows, and the place, keep it).
+        let (order, tagged) = rel.first_order();
+        let key = bounds.get(&h).and_then(|bd| HeadKey::of(order, tagged, bd)).map(|hk| mj::SortKey {
+            tagged: hk.tagged,
+            parts: hk.parts.iter().map(|&(c, lo, w)| (c as u32, w, lo)).collect(),
+            bits: hk.bits,
+        });
+        // Made distinct: one rule's rows are already, unless sorted.
+        let (rows, slot) = if let Some(key) = &key {
+            let distinct = b.table(k, guess).map_err(e)?;
+            b.dedup_sorted(&union, &all, 0, 1, &words, &distinct, None, key).map_err(e)?;
+            pre._hold.0.push(union);
+            (distinct, Some(1))
+        } else if from.len() > 1 {
             let distinct = b.table(k, guess).map_err(e)?;
             b.dedup(&union, &all, 0, 1, &words, &distinct).map_err(e)?;
             pre._hold.0.push(union);
@@ -2660,22 +2677,22 @@ fn encode_place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], stor
             }
             _ => (rows, slot),
         };
-        made.push((h, rows, slot, words, bound));
+        made.push((h, rows, slot, words, bound, key.is_some()));
     }
     if pre.heads.is_empty() {
         return Ok(None);
     }
     // The gate: each head's rows within the room reserved for them, before any is written there.
-    let checks: Vec<(mj::At<'_>, Option<mj::At<'_>>, usize)> = made.iter().map(|(_, _, slot, words, bound)| (mj::At::Word(words, slot.unwrap_or(0)), None, *bound)).collect();
+    let checks: Vec<(mj::At<'_>, Option<mj::At<'_>>, usize)> = made.iter().map(|(_, _, slot, words, bound, _)| (mj::At::Word(words, slot.unwrap_or(0)), None, *bound)).collect();
     b.gate(&checks).map_err(e)?;
     drop(checks);
-    for (h, rows, slot, words, bound) in made {
+    for (h, rows, slot, words, bound, sorted) in made {
         let k = store.rels[h].k;
         let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, bound)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         b.place_rows(mj::Rows::Table(&rows), bound, slot, &words, &ident, dst, at).map_err(|e| format!("{e:?}: a head's rows placed"))?;
         pre._hold.0.push(rows);
-        pre.pending.push((h, room, slot.unwrap_or(0), words));
+        pre.pending.push((h, room, slot.unwrap_or(0), words, sorted));
     }
     Ok(Some(pre))
 }
@@ -2779,7 +2796,7 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
         let part = unsafe { written(room, n) };
         rep.distinct += n as u64;
         rep.placed += n as u64;
-        placed.parts.push((h, part));
+        placed.parts.push((h, part, false));
     }
     Ok(placed)
 }

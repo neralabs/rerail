@@ -136,6 +136,11 @@ where
     }
 }
 
+/// Whether the relation holds row `x` of a dedup's table (`dedup_held`): one row's walk of the map, as a lane's.
+pub(super) unsafe fn dedup_held_row(t: *const i64, rel: *const u8, hb: *const u8, d: &Dedup, x: u32) -> bool {
+    Rows::<{ stage_lanes::LANES }>::of(d, t, x, 1).held(d, rel, hb, first(1)).test(0)
+}
+
 /// Rows `x0..x1` of a dedup (all below its rows) claim their places: each lane's compare-and-swap from its hash's
 /// place, as `dedup_claim_one`.
 pub(super) unsafe fn dedup_claim_lanes<const N: usize>(t: *const i64, p: *mut u32, d: &Dedup, mask: u32, x0: u32, x1: u32)

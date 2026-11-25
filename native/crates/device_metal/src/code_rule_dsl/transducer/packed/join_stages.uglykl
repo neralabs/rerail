@@ -1329,8 +1329,9 @@ UKL_INLINE void scan_scatter_one(Longs L, Longs R, JSPACE uint32_t* totals, JSPA
 // `seen` (decision 0567): its rows less those a relation holds, through the relation's map (`h_at` in its map's
 // block, `hmask + 1` places of 3 words, a row of the relation a place, as a fold's key map is laid out); its rows out
 // placed in the map as the rows they become (its rows past `r_rows_at`'s length, in their order).
+// `sorted` (t58 increment A): its rows made distinct in the head's first order instead (`dedup_key_one`): no places.
 typedef struct Dedup { uint32_t cap; uint32_t in_slot; uint32_t out_slot; uint32_t ncols; uint32_t mask; uint32_t cols[16]; uint32_t ocap; uint32_t places;
-                       uint32_t seen; uint32_t hmask; uint32_t pad; uint64_t r_at, r_rows_at, h_at; } Dedup;
+                       uint32_t seen; uint32_t hmask; uint32_t sorted; uint64_t r_at, r_rows_at, h_at; } Dedup;
 UKL_STATIC_ASSERT(sizeof(Dedup) == 128, "Dedup: size");
 typedef JSPACE const Dedup* DedupP;
 
@@ -1419,6 +1420,72 @@ UKL_INLINE void dedup_mark_one(Longs T, JSPACE const uint32_t* totals, JSPACE co
     uint32_t keep = (uint32_t)(at != NONE && P[at] == x);
     if (keep != 0u && d->seen != 0u && dedup_held(T, R, HB, d, x)) keep = 0u;
     counts[x] = keep;
+}
+
+// A head's rows made distinct in its first order (t58 increment A, `Dedup::sorted`), so the host takes them as they
+// lie and sorts nothing: each row's key (`HeadKeyP`: the order's leading column's 16-bit tag where it is tagged, then
+// each column of the order less its least, in the bits its bounds need, most significant first; the job's rank in
+// its level above them), with its place, sorted by the level's wide sort (every sorted dedup's keys end to end, each
+// one's from its first, `eb`); a row kept where its key is not the one before it's. The key holds every column, so
+// equal keys are equal rows. Its kept rows come out in the key's order. `part`: column (of `cols`), bits, least's low
+// and high words.
+// `total`: the level's wide sort's keys (its size script's); `odd`: its passes are odd, its sorted keys in its region's
+// second pair. Its region (`h_at`, claimed by its size script): keys A and B, places A and B, then its histograms.
+typedef struct HeadKeyP { uint32_t tagged; uint32_t nparts; uint32_t rank_shift; uint32_t rank; uint32_t part[16][4]; uint32_t total; uint32_t odd; uint32_t pad[2]; } HeadKeyP;
+UKL_STATIC_ASSERT(sizeof(HeadKeyP) == 288, "HeadKeyP: size");
+#define WIDE_KEYS(base, n, i) ((JSPACE uint64_t*)(base) + (uint64_t)(i) * (n))
+#define WIDE_PLACES(base, n, i) ((base) + 4ul * (n) + (uint64_t)(i) * (n))
+#define WIDE_HIST(base, n) ((base) + 6ul * (n))
+
+UKL_INLINE uint64_t head_key(Longs T, DedupP d, JSPACE const HeadKeyP* p, uint32_t x)
+{
+    uint64_t k = 0ul;
+    if (p->tagged != 0u) k = ((uint64_t)T[(uint64_t)d->cols[p->part[0][0]] * d->cap + x] * 0x9E3779B97F4A7C15ul) >> 48;
+    for (uint32_t i = 0u; i < p->nparts && i < 16u; i++) {
+        uint32_t w = p->part[i][1];
+        if (w == 0u) continue;
+        uint64_t base = (uint64_t)p->part[i][2] | ((uint64_t)p->part[i][3] << 32);
+        uint64_t v = (uint64_t)T[(uint64_t)d->cols[p->part[i][0]] * d->cap + x] - base;
+        k = w >= 64u ? v : (k << w) | v;
+    }
+    return p->rank_shift >= 64u ? k : k | ((uint64_t)p->rank << p->rank_shift);
+}
+
+// Row `x`'s key and its place, at the job's first key `eb` of the level's wide sort.
+UKL_INLINE void dedup_key_one(Longs T, JSPACE const uint32_t* totals, JSPACE uint64_t* keys, JSPACE uint32_t* places, DedupP d, JSPACE const HeadKeyP* p, uint32_t eb, uint32_t x)
+{
+    uint32_t n = ukl_min(totals[d->in_slot], d->cap);
+    if (x >= n) return;
+    keys[eb + x] = head_key(T, d, p, x);
+    places[eb + x] = eb + x;
+}
+
+// Sorted place `t`: kept where its key is not the one before it's (and, `seen`, the relation does not hold its row).
+UKL_INLINE void dedup_mark_sorted_one(Longs T, JSPACE const uint32_t* totals, JSPACE const uint64_t* keys, JSPACE const uint32_t* places, JSPACE uint32_t* counts,
+                                      JSPACE const uint8_t* R, JSPACE const uint8_t* HB, DedupP d, uint32_t eb, uint32_t t)
+{
+    if (t > d->cap) return;
+    uint32_t n = ukl_min(totals[d->in_slot], d->cap);
+    if (t >= n) { counts[t] = 0; return; }
+    uint32_t keep = (uint32_t)(t == 0u || keys[eb + t] != keys[eb + t - 1u]);
+    if (keep != 0u && d->seen != 0u && dedup_held(T, R, HB, d, places[eb + t] - eb)) keep = 0u;
+    counts[t] = keep;
+}
+
+// Sorted place `t`'s row, where it was kept: its row in the order of their keys.
+UKL_INLINE void dedup_scatter_sorted_one(Longs T, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, JSPACE const uint8_t* R, JSPACE uint8_t* HB, DedupP d,
+                                         JSPACE const uint32_t* places, uint32_t eb, uint32_t t)
+{
+    uint32_t o0 = offsets[0];
+    uint32_t n = ukl_min(totals[d->in_slot], d->cap);
+    if (t == 0) totals[d->out_slot] = (offsets[n] - o0);
+    if (t >= n) return;
+    uint32_t at = (offsets[t] - o0);
+    if ((offsets[t + 1] - o0) == at) return;
+    if (at >= d->ocap) return;
+    uint32_t x = places[eb + t] - eb;
+    for (uint32_t c = 0; c < d->ncols && c < 16; c++) O[(uint64_t)c * d->ocap + at] = T[(uint64_t)d->cols[c] * d->cap + x];
+    if (d->seen != 0u) dedup_place(T, HB, d, x, clif_rows_len(R, d->r_rows_at) + at);
 }
 
 UKL_INLINE void dedup_scatter_one(Longs T, JSPACE uint32_t* totals, JSPACE const uint32_t* offsets, JSPACE int64_t* O, JSPACE const uint8_t* R, JSPACE uint8_t* HB, DedupP d, uint32_t x)
@@ -1915,6 +1982,11 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define UKL_RADIX_KEY uint32_t
 #define UKL_RADIX_SPACE JSPACE
 #include <ukl/body/radix_tile.h>
+// The wide sort's (`SortWords::wide`): a sorted dedup's keys (t58 increment A).
+#define UKL_RADIX_NAME(f) f##_u64_prog
+#define UKL_RADIX_KEY uint64_t
+#define UKL_RADIX_SPACE JSPACE
+#include <ukl/body/radix_tile.h>
 
 // What an item runs (`Program`'s `Item::what >> 24`).
 #define PK_COPY 1u
@@ -1949,6 +2021,7 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_ROUND 28u
 #define PK_SIZE 29u
 #define PK_IX_MARK 30u
+#define PK_DEDUP_KEY 31u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
 // segment and one (`Seg`; 0: none).
@@ -1976,8 +2049,9 @@ UKL_STATIC_ASSERT(sizeof(ScanLevel) == 32, "ScanLevel: size");
 // A sort's pass: its keys and places in, its histograms (scanned: each digit's offset for each tile), out.
 // A sort pass's words (a word record): its keys, the byte it sorts by, its tiles. A level's size script sets its keys
 // and tiles from its indexes' rows as claimed (decision 0603 step 5e): read as words, coherent.
-typedef struct SortWords { uint32_t n, shift, tiles, pad; } SortWords;
-UKL_WORD_RECORD(SortWords, n, shift, tiles, pad);
+// `wide`: its keys are 64 bits (a sorted dedup's, t58 increment A), else 32.
+typedef struct SortWords { uint32_t n, shift, tiles, wide; } SortWords;
+UKL_WORD_RECORD(SortWords, n, shift, tiles, wide);
 typedef struct SortPass {
     JSPACE uint32_t* keys;
     JSPACE uint32_t* values;
@@ -2114,7 +2188,18 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         a.n = sw[UKL_WORD_INDEX(SortWords, n)];
         a.shift = sp.w.shift;
         a.tiles = sw[UKL_WORD_INDEX(SortWords, tiles)];
-        if (kind == PK_RADIX_HIST) ukl_radix_hist_tile_u32_prog(sp.keys, sp.hist, a, m.h, g, l, JOIN_TG);
+        // The wide sort's (t58 increment A): its region the arena's, from its size script's word; its tiles as many as
+        // its keys claimed, an item each stride.
+        uint32_t wat = sw[UKL_WORD_INDEX(SortWords, wide)];
+        if (wat != 0u) {
+            JSPACE uint32_t* wb = counts + (wat - 1u);
+            uint32_t f = (a.shift / 8u) % 2u, tstep = step / JOIN_TG;
+            for (uint32_t tile = g; tile < a.tiles && tile < JOIN_TURNS; tile += tstep) {
+                if (kind == PK_RADIX_HIST) ukl_radix_hist_tile_u64_prog(WIDE_KEYS(wb, a.n, f), WIDE_HIST(wb, a.n), a, m.h, tile, l, JOIN_TG);
+                else ukl_radix_scatter_tile_u64_prog(WIDE_KEYS(wb, a.n, f), WIDE_PLACES(wb, a.n, f), WIDE_HIST(wb, a.n), WIDE_KEYS(wb, a.n, 1u - f), WIDE_PLACES(wb, a.n, 1u - f), a, m.counts, m.before, m.base, m.digits, tile, l, JOIN_TG __UKL_ARGS);
+                if (tstep == 0u) break;
+            }
+        } else if (kind == PK_RADIX_HIST) ukl_radix_hist_tile_u32_prog(sp.keys, sp.hist, a, m.h, g, l, JOIN_TG);
         else ukl_radix_scatter_tile_u32_prog(sp.keys, sp.values, sp.hist, sp.out_keys, sp.out_values, a, m.counts, m.before, m.base, m.digits, g, l, JOIN_TG __UKL_ARGS);
         return true;
     }
@@ -2146,6 +2231,13 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_IX_MARK: ix_mark_one((JSPACE const uint8_t*)L, (JSPACE const uint32_t*)V, j->A, j->counters, (JSPACE const IxP*)j->P, JOB_WORD(jw, kb), JOB_WORD(jw, eb), t); break;
         case PK_DEDUP_CLEAR: dedup_clear_one(H, j->totals, j->dd, t); break;
         case PK_DEDUP_CLAIM: dedup_claim_one(L, j->totals, H, j->dd, t); break;
+        // A sorted dedup's (t58 increment A): `H` its keys in, `W[0]` its places in; `W[1]`, `W[2]` its keys and places
+        // sorted.
+        case PK_DEDUP_KEY: {
+            uint32_t wn = ((JSPACE const HeadKeyP*)j->P)->total;
+            dedup_key_one(L, j->totals, WIDE_KEYS(H, wn, 0u), WIDE_PLACES(H, wn, 0u), j->dd, (JSPACE const HeadKeyP*)j->P, JOB_WORD(jw, eb), t);
+            break;
+        }
         case PK_MAP: stage_map_one(O, j->totals, j->s, t); break;
         case PK_STAGE_COUNT: stage_count_one(L, j->R, j->totals, j->counters, c, V, j->A, j->D, j->F, j->s, t); break;
         case PK_SCAN_COUNT: scan_count_one(L, j->R, j->counters, c, j->totals, j->s, t); break;
@@ -2153,11 +2245,23 @@ UKL_INLINE bool prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         case PK_ROW_TEXT:
             row_text_one(L, j->A, j->totals, j->counters, c, V, j->G, j->S, j->P, j->D, j->VC, ctl, j->s, g * (JOIN_TG / SGW) + l / SGW, l % SGW __UKL_ARGS);
             break;
-        case PK_DEDUP_MARK: dedup_mark_one(L, j->totals, H, c, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t); break;
+        case PK_DEDUP_MARK:
+            if (j->dd->sorted != 0u) {
+                JSPACE const HeadKeyP* hk = (JSPACE const HeadKeyP*)j->P;
+                dedup_mark_sorted_one(L, j->totals, WIDE_KEYS(H, hk->total, hk->odd), WIDE_PLACES(H, hk->total, hk->odd), c, (JSPACE const uint8_t*)j->S, j->VC, j->dd, JOB_WORD(jw, eb), t);
+            }
+            else dedup_mark_one(L, j->totals, H, c, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t);
+            break;
         case PK_STAGE_SCATTER: stage_scatter_one(L, j->R, j->totals, c, O, V, j->A, j->counters, j->D, j->F, j->ws, t); break;
         case PK_SCAN_SCATTER: scan_scatter_one(L, j->R, j->totals, c, O, j->s, t); break;
         case PK_ROW_SCATTER: row_scatter_one(L, V, j->totals, c, O, j->s, t); break;
-        case PK_DEDUP_SCATTER: dedup_scatter_one(L, j->totals, c, O, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t); break;
+        case PK_DEDUP_SCATTER:
+            if (j->dd->sorted != 0u) {
+                JSPACE const HeadKeyP* hk = (JSPACE const HeadKeyP*)j->P;
+                dedup_scatter_sorted_one(L, j->totals, c, O, (JSPACE const uint8_t*)j->S, j->VC, j->dd, WIDE_PLACES(H, hk->total, hk->odd), JOB_WORD(jw, eb), t);
+            }
+            else dedup_scatter_one(L, j->totals, c, O, (JSPACE const uint8_t*)j->S, j->VC, j->dd, t);
+            break;
         // A fold's buffers: `L` its rows, `A` its places, `totals` the best row a place, `H` its flags, `S` the relation's
         // block, `VC` its key map's, `G` the old map's, `O` the changed rows, `counters` theirs, `V` the arena.
         case PK_LAT_HCLEAR: lat_hclear_one(j->VC, (JSPACE const LatP*)j->P, t); break;
