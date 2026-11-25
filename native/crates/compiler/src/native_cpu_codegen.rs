@@ -175,12 +175,28 @@ pub fn define_reads(module: &mut JITModule) -> Result<(), Box<ModuleError>> {
 /// reach), so a call of its own functions is a direct branch (`colocated`); else every call is
 /// long-range, as `define_function`'s.
 pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, near: bool) -> Result<Vec<Context>, Box<ModuleError>> {
+    define_functions_inlining(module, items, near, &[], &|_| {})
+}
+
+/// `define_functions`, with the items named in `hot` the module's hot helpers (decision 0310): every call of one
+/// inlined, in the same pass as the tape's hot reads.
+pub fn define_functions_inlining(module: &mut JITModule, items: Vec<(FuncId, Context)>, near: bool, hot: &[FuncId], after: &dyn Fn(&mut cranelift_codegen::ir::Function)) -> Result<Vec<Context>, Box<ModuleError>> {
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
+    // The hot helpers' bodies, legalized, as the inliner takes a callee.
+    let mut helpers = std::collections::HashMap::new();
+    for (id, context) in &items {
+        if hot.contains(id) {
+            let mut c = Context::for_function(context.func.clone());
+            c.legalize(module.isa()).map_err(|e| Box::new(ModuleError::Compilation(e)))?;
+            helpers.insert(*id, c.func);
+        }
+    }
     for (_, context) in &mut items {
-        // The tape's hot reads each calls, inlined (decision 0310); then the flow graph made again, as the function
-        // changed since it was made (`clif_fold`, and the inlining).
-        rerail_clif::inline::reads(module, context)?;
+        // The tape's hot reads each calls, and the module's hot helpers, inlined (decision 0310); then the flow graph
+        // made again, as the function changed since it was made (`clif_fold`, and the inlining).
+        rerail_clif::inline::with_helpers(module, context, &helpers)?;
+        after(&mut context.func);
         // Each switch a tree of compares, as rustc lowers a match (0322): after the inlining, so
         // an inlined read's switches are lowered too.
         switch_trees(&mut context.func);

@@ -1378,7 +1378,7 @@ fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: 
         f.ins().brif(bit, set, &[], next, &[]);
         f.switch_to_block(set);
         f.set_cold_block(set);
-        let holds = token_pattern(f, e, m, extra_bit, lazy, heads);
+        let holds = token_pattern(f, e, m, extra_bit, lazy, Some(c), heads);
         f.ins().brif(holds, refused, &[], next, &[]);
         f.switch_to_block(next);
     }
@@ -1444,7 +1444,22 @@ fn elem_test(f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenEl
         }
         f.switch_to_block(other);
     }
-    if !el.words.is_empty() {
+    // Three words or more within 64 codes of each other: one test of a set's bit, as a match on them compiles.
+    let (lo, hi) = (el.words.iter().min().copied().unwrap_or(0), el.words.iter().max().copied().unwrap_or(0));
+    if el.words.len() > 2 && hi - lo < 64 {
+        let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
+        let w = f.ins().band_imm(w, 0xff);
+        let at = f.ins().iadd_imm(w, -(i64::from(lo) + 1));
+        let near = f.ins().icmp_imm(IntCC::UnsignedLessThan, at, 64);
+        let set = f.ins().iconst(types::I64, el.words.iter().fold(0u64, |a, &s| a | 1 << (s - lo)) as i64);
+        let bit = f.ins().ushr(set, at);
+        let bit = f.ins().band_imm(bit, 1);
+        let zero = f.ins().iconst(types::I64, 0);
+        let bit = f.ins().select(near, bit, zero);
+        let other = f.create_block();
+        f.ins().brif(bit, ok_to, &[], other, &[]);
+        f.switch_to_block(other);
+    } else if !el.words.is_empty() {
         let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
         let w = f.ins().band_imm(w, 0xff);
         for &s in &el.words {
@@ -1467,13 +1482,21 @@ fn elem_test(f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenEl
     f.switch_to_block(ok);
 }
 
-fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, heads: &mut Vec<(Block, Step)>) -> Value {
+/// `code`: the token's code where the caller holds it (`Mem::Taken`, where `TOKEN` keeps it there): the element at
+/// offset 0 is tested on it first, before any record is read, as the lean parser asks the token's kind before it peeks.
+fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, code: Option<Value>, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
+    let (no, yes) = (f.create_block(), f.create_block());
+    // The token's own element on the code held, where it reads no lazy mark: a token of another kind fails here.
+    let asked = lazy.map_or(0, Lazy::bits);
+    let first = code.and_then(|c| m.elems.iter().position(|el| el.offset == 0 && !el.run && (el.without | el.with) & asked == 0).map(|i| (i, c)));
+    if let Some((i, c)) = first {
+        elem_test(f, c, &m.elems[i], no);
+    }
     let codes = (e.ctx)(f, CODES);
     let n = (e.ctx)(f, NSTARTS);
     let next = (e.get)(f, Mem::Next);
     let here = f.ins().iadd_imm(next, -1);
-    let (no, yes) = (f.create_block(), f.create_block());
     let stride = (e.ctx)(f, RECORD_STRIDE);
     let code_at = |f: &mut FunctionBuilder<'_>, j: Value| {
         let off = f.ins().imul(j, stride);
@@ -1490,7 +1513,6 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     };
     // An element's test of record `j`, code `c`: a lazy mark it reads (`with M`, `without M`) asked of the bytes there
     // (`lazy_mark`), the rest of the code (`elem_test`).
-    let asked = lazy.map_or(0, Lazy::bits);
     let starts = (e.ctx)(f, STARTS);
     let test = |f: &mut FunctionBuilder<'_>, j: Value, c: Value, el: &crate::program::TokenElem, fail: Block, heads: &mut Vec<(Block, Step)>| {
         let ask = (el.without | el.with) & asked;
@@ -1580,6 +1602,9 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     let run = rest.iter().position(|e| e.run).unwrap_or(rest.len());
     let mut at = here;
     for el in rest.iter().take(run) {
+        if el.offset == 0 && first.is_some_and(|(i, _)| std::ptr::eq(*el, &m.elems[i])) {
+            continue;
+        }
         if el.offset == 0 {
             let c = code_at(f, here);
             test(f, here, c, el, no, heads);
@@ -1673,11 +1698,11 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
 /// Whether the token marks of one order hold (`program::patterns_hold`), from entry `first` of
 /// `marks`: each entry's `token_pattern`, none of the `unless` ones and, where there are others,
 /// one of them. 1 or 0.
-fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize, extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, heads: &mut Vec<(Block, Step)>) -> Value {
+fn token_patterns(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, marks: &[crate::program::TokenMark], first: usize, extra_bit: Option<u8>, lazy: Option<&Lazy<'_>>, code: Option<Value>, heads: &mut Vec<(Block, Step)>) -> Value {
     let order = marks[first].order;
     let (mut none_of, mut one_of): (Option<Value>, Option<Value>) = (None, None);
     for m in marks[first..].iter().take_while(|m| m.order == order) {
-        let v = token_pattern(f, e, m, extra_bit, lazy, heads);
+        let v = token_pattern(f, e, m, extra_bit, lazy, code, heads);
         if m.unless {
             none_of = Some(none_of.map_or(v, |a| f.ins().bor(a, v)));
         } else {
@@ -3545,7 +3570,7 @@ fn recover_statement(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ctx: Value, t
     for past in [false, true] {
         for p in r.recover.iter().filter(|p| p.past == past) {
             let m = crate::program::TokenMark { order: 0, elems: p.elems.clone(), refuses: false, unless: false };
-            let mut holds = token_pattern(f, &at_k, &m, r.extra_bit, None, heads);
+            let mut holds = token_pattern(f, &at_k, &m, r.extra_bit, None, None, heads);
             if p.first {
                 // First on its line: the record's the file's first, or a line end since the record before.
                 let (lines, other) = (f.create_block(), f.create_block());
@@ -4756,6 +4781,9 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         // the others all set (tested by their masks); at the stream's end, the bits of the
         // marks the end has. A mark the record holds is then one bit test.
         let in_code = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.mark_bits());
+        // `TOKEN` keeps the token's code in `Taken` (from tier 1's records, not made here): a mark tests its token's
+        // element on it (`token_pattern`).
+        let taken_code = table.fetch.is_none() && native.block_programs.first().is_some_and(|b| b.records.is_some());
         let alone_bits: i64 = native.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| i64::from(r.alone));
         let mut end_bits: i64 = (if in_code >= 64 { 0 } else { -1i64 << in_code }) | alone_bits;
         for b in words {
@@ -5960,7 +5988,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                         let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a token mark does not refuse");
                                         let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
                                         let lazy = native.block_programs.first().and_then(Lazy::of);
-                                        let v = token_patterns(g, &env, &marks, first, bit, lazy.as_ref(), hs);
+                                        let code = taken_code.then(|| (env.get)(g, Mem::Taken));
+                                        let v = token_patterns(g, &env, &marks, first, bit, lazy.as_ref(), code, hs);
                                         g.ins().return_(&[v]);
                                     })?;
                                     word_fns.insert(key, made);
@@ -5970,7 +5999,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                 call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0]
                             } else {
                                 let lazy = native.block_programs.first().and_then(Lazy::of);
-                                token_patterns(&mut f, &env, &marks, first, bit, lazy.as_ref(), &mut heads)
+                                let code = taken_code.then(|| mget(&mut f, Mem::Taken));
+                                token_patterns(&mut f, &env, &marks, first, bit, lazy.as_ref(), code, &mut heads)
                             };
                             f.ins().brif(r, follows, &[], skip, &[]);
                             f.switch_to_block(follows);
@@ -7183,7 +7213,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         f.finalize();
         }
         if !pinned_ctx {
-            state_in_registers(&mut func);
+            state_in_registers(&mut func, false);
         }
         drop_dead_params(&mut func);
         drop_unused(&mut func);
@@ -7293,6 +7323,12 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     } else {
         None
     };
+    // The words' functions are the JIT's hot helpers (decision 0310): every call of one inlined from its one body, in
+    // the pass that inlines the tape's hot reads, as rustc inlines the lean parser's helpers into its rules. A local
+    // check is not: it is a loop over the token's words, and inlined into a loop of its caller's (JSON's string) it
+    // takes the registers that loop's state is held in.
+    let hot_words: Vec<cranelift_module::FuncId> = word_fns.iter().filter(|(k, _)| !matches!(k, WordFn::Check { .. })).map(|(_, w)| w.0).collect();
+    let calls_left = std::cell::Cell::new(0usize);
     let mut word_fns: Vec<_> = word_fns.into_values().collect();
     word_fns.sort_by_key(|w| w.0.as_u32());
     // A format 16 run's word code calls the writer's ops too (a failure, `Table::uncode`).
@@ -7342,7 +7378,31 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
-    let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
+    let defined = crate::native_cpu_codegen::define_functions_inlining(&mut module, items, cut.near, &hot_words, &|func| {
+        // With `ctx` pinned, the state's fields kept in registers once the words are inlined: a word's body loads
+        // what the word before stored, and no call is left between them.
+        if pinned_ctx {
+            state_in_registers(func, true);
+        }
+        // The calls left once the words are inlined: tier 2's own calls in its machine code (`own_calls`).
+        let left = func.layout.blocks().flat_map(|b| func.layout.block_insts(b)).filter(|&i| func.dfg.insts[i].opcode() == cranelift_codegen::ir::Opcode::Call).count();
+        calls_left.set(calls_left.get() + left);
+        // An inlined word's instructions carry no place (Cranelift's inliner drops the callee's): each takes the place
+        // of the instruction before it in the layout, the word that called it, for the profile (`word_ranges`).
+        let mut last = cranelift_codegen::ir::SourceLoc::default();
+        let blocks: Vec<Block> = func.layout.blocks().collect();
+        for b in blocks {
+            let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(b).collect();
+            for i in insts {
+                let here = func.srcloc(i);
+                if here.is_default() {
+                    func.set_srcloc(i, last);
+                } else {
+                    last = here;
+                }
+            }
+        }
+    }).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
         }
@@ -7377,8 +7437,6 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         disassembly.push_str(&c.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
         code_bytes.extend_from_slice(c.compiled_code().map_or(&[][..], |code| code.code_buffer()));
     }
-    // A call's line, its source location (`@` and the word's place) before it or not.
-    let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" call ")).count();
     module.finalize_definitions().map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2's module: {e:?}");
@@ -7388,7 +7446,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     let code = module.get_finalized_function(id);
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
-    let own_calls = calls;
+    let own_calls = calls_left.get();
     let table_passes = crate::clif_text::callees(&clif).iter().filter(|n| passes.contains(n)).count();
     let row_calls = crate::clif_text::callees(&clif).iter().filter(|n| row_fns.contains(n)).count();
     let direct = direct.is_some();
@@ -7552,10 +7610,20 @@ fn constant_fields(func: &mut cranelift_codegen::ir::Function, access: &dyn Fn(&
 /// The fields are `ctx`'s, at fixed offsets from its address (the function's first argument);
 /// the tape's buffers are elsewhere. A function where `ctx` goes anywhere but a load's or a
 /// store's address, or a call, is left as it is.
-fn state_in_registers(func: &mut cranelift_codegen::ir::Function) {
+fn state_in_registers(func: &mut cranelift_codegen::ir::Function, pinned: bool) {
     use cranelift_codegen::ir::{InstructionData, Opcode};
     let Some(entry) = func.layout.entry_block() else { return };
-    let ctx = func.dfg.block_params(entry)[0];
+    // `ctx`: the entry's first argument; or `pinned`, in the pinned register through the run, any read of it (a word's
+    // body inlined reads it again).
+    let param = func.dfg.block_params(entry).first().copied();
+    let is_ctx = |func: &cranelift_codegen::ir::Function, v: Value| -> bool {
+        let v = func.dfg.resolve_aliases(v);
+        if pinned {
+            matches!(func.dfg.value_def(v), cranelift_codegen::ir::ValueDef::Result(i, _) if func.dfg.insts[i].opcode() == Opcode::GetPinnedReg)
+        } else {
+            Some(v) == param
+        }
+    };
     // Field `k` at offset `8k`: a full load or store of it, or another access of it.
     const FIELDS: i32 = STATE / 8 + Mem::COUNT as i32;
     const _: () = assert!(FIELDS <= 64);
@@ -7567,23 +7635,24 @@ fn state_in_registers(func: &mut cranelift_codegen::ir::Function) {
             return Access::All;
         }
         match *data {
-            InstructionData::Load { opcode, arg, offset, .. } if func.dfg.resolve_aliases(arg) == ctx => {
+            InstructionData::Load { opcode, arg, offset, .. } if is_ctx(func, arg) => {
                 let off = i32::from(offset);
-                let Some(k) = field_of(off) else { return Access::All };
+                // A field past the state (a column's address, the mark's words): not the state's.
+                let Some(k) = field_of(off) else { return if off >= 8 * FIELDS { Access::None } else { Access::All } };
                 let full = opcode == Opcode::Load && off % 8 == 0 && func.dfg.value_type(func.dfg.inst_results(inst)[0]) == types::I64;
                 if full { Access::Load(k) } else { Access::Reads(1 << k) }
             }
-            InstructionData::Store { opcode, args, offset, .. } if func.dfg.resolve_aliases(args[1]) == ctx => {
+            InstructionData::Store { opcode, args, offset, .. } if is_ctx(func, args[1]) => {
                 let off = i32::from(offset);
-                let Some(k) = field_of(off) else { return Access::All };
-                if func.dfg.resolve_aliases(args[0]) == ctx {
+                if is_ctx(func, args[0]) {
                     return Access::All;
                 }
+                let Some(k) = field_of(off) else { return if off >= 8 * FIELDS { Access::None } else { Access::All } };
                 let full = opcode == Opcode::Store && off % 8 == 0 && func.dfg.value_type(args[0]) == types::I64;
                 if full { Access::Store(k, args[0]) } else { Access::Clobbers(k) }
             }
             _ => {
-                if func.dfg.inst_values(inst).any(|v| func.dfg.resolve_aliases(v) == ctx) {
+                if func.dfg.inst_values(inst).any(|v| is_ctx(func, v)) {
                     Access::All
                 } else {
                     Access::None
@@ -7595,7 +7664,7 @@ fn state_in_registers(func: &mut cranelift_codegen::ir::Function) {
     // `ctx` as a branch's argument: another name for it, which this does not follow.
     for &b in &blocks {
         for inst in func.layout.block_insts(b) {
-            if func.dfg.insts[inst].opcode().is_branch() && func.dfg.inst_values(inst).any(|v| func.dfg.resolve_aliases(v) == ctx) {
+            if func.dfg.insts[inst].opcode().is_branch() && func.dfg.inst_values(inst).any(|v| is_ctx(func, v)) {
                 return;
             }
         }

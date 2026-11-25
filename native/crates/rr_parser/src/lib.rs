@@ -2922,7 +2922,9 @@ pub mod tests {
                 "tier2" => batches.iter().zip(&mut tapes).for_each(|(b, t)| {
                     let _ = p.words(b, t);
                 }),
-                other => panic!("RR_FORM={other}: lean, lexer, tier1 or tier2"),
+                // The JIT whole, as `rr_aot_against_jit` times it: tier 1, the tape, tier 2, the image.
+                "image" => ours.iter().for_each(|f| n += p.image(f.as_bytes()).map_or(0, |i| i.len())),
+                other => panic!("RR_FORM={other}: lean, lexer, tier1, tier2 or image"),
             }
             rounds += 1;
         }
