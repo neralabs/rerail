@@ -339,7 +339,10 @@ fn matched(
             return Err(StoreError::Invalid("ast matcher wave: not a program's result".into()));
         };
         let r = r.0.downcast::<WaveFound>().map_err(|_| StoreError::Invalid("ast matcher wave: a result of another type".into()))?;
-        let (found, run, wall) = r.as_ref().clone().map_err(|e| StoreError::Invalid(format!("ast matcher wave: {e}")))?;
+        // Taken whole where this is its one holder: copied, each document's set of each matcher was made again
+        // (1.31 M on cold PostHog).
+        let r = std::sync::Arc::try_unwrap(r).unwrap_or_else(|r| r.as_ref().clone());
+        let (found, run, wall) = r.map_err(|e| StoreError::Invalid(format!("ast matcher wave: {e}")))?;
         if run.metal {
             profile::device("ast matcher wave", run.command_buffers as u64, run.device, wall, nodes);
         }
