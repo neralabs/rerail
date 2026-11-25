@@ -53,7 +53,7 @@ pub struct Key(pub String);
 impl Plan {
     /// The plan as text: what the key digests. Literals are hex, so the text is unambiguous.
     pub(in crate::code_rule_dsl) fn canonical(&self) -> String {
-        let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let hex = |bytes: &[u8]| rerail_prof::code_rule_dsl::prof::lower_hex(&bytes[..]);
         match self {
             Self::Always => "always".to_owned(),
             Self::Never => "never".to_owned(),
@@ -65,7 +65,7 @@ impl Plan {
 
     pub(in crate::code_rule_dsl) fn key(&self) -> Key {
         let digest = Sha256::digest(self.canonical().as_bytes());
-        Key(format!("text1:{}", digest[..12].iter().map(|b| format!("{b:02x}")).collect::<String>()))
+        Key(format!("text1:{}", rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..12])))
     }
 
     /// The regex of an automaton plan, anchors included.

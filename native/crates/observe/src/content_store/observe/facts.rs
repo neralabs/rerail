@@ -612,5 +612,5 @@ pub(super) fn all_canonical(facts: &Facts) -> Vec<String> {
 
 /// A digest as hex (empty for none).
 fn hex_of(d: &[u8]) -> String {
-    d.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(d)
 }

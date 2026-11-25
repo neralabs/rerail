@@ -574,7 +574,7 @@ impl Prepared {
 }
 
 pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&bytes[..])
 }
 
 pub fn unhex(text: &str) -> Option<[u8; 32]> {

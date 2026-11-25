@@ -387,7 +387,7 @@ pub fn program_digest(v: &crate::code_rule_dsl::logic::program_image::Version) -
     let digest: [u8; 32] = hash.finalize().into();
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
-        let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
+        let name: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..6]);
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), v.show());
     }
     digest

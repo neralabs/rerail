@@ -593,7 +593,7 @@ pub fn holds_helper(name: &str, stems: &[&str]) -> bool {
 /// The first 128 bits of `bytes`' SHA-256, in hex: a helper's name's digest (decision 0639, Collisions 1).
 fn name_digest(bytes: &[u8]) -> String {
     use sha2::Digest;
-    sha2::Sha256::digest(bytes)[..16].iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(bytes)[..16])
 }
 
 /// A module's own digest, as its walk wrote it: its rules (each head and template), its declarations, its header's

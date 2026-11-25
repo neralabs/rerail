@@ -904,7 +904,7 @@ pub fn interface_digest(path: &Path) -> Option<String> {
         h.update((s.text().len() as u64).to_le_bytes());
         h.update(s.text().as_bytes());
     }
-    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    Some(rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()[..]))
 }
 pub const LOWERED: &str = "p0_module_lowered";
 
@@ -943,7 +943,7 @@ pub fn planned_key(key: &str) -> Option<crate::content_store::HashKey> {
 
 fn image_digest(bytes: &[u8]) -> String {
     use sha2::Digest as _;
-    sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(bytes)[..])
 }
 
 /// The module of plan key `key`, with its image's digest, as this process made or read it for the store the run
@@ -1749,7 +1749,7 @@ fn resolve_shared(statements: Statements) -> Result<(SharedFiles, Statements, Ve
     // The plan holds every file the text reads, each in one module.
     let planned: BTreeSet<&Path> = plan.iter().flat_map(|m| m.files.lines().map(Path::new)).collect();
     if let Some((path, digest, _)) = files.iter().find(|(p, _, _)| !planned.contains(p.as_path())) {
-        let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let hex: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..]);
         let modules: Vec<&String> = g.plan.keys().collect();
         return Err(Error::Syntax(format!("{}: in no module of phase 0's plan (decision 0639 §1): its digest {hex}, the plan's modules {modules:?}", path.display())));
     }
@@ -1781,7 +1781,7 @@ impl PlannedModule {
 /// Graph `g`'s modules in link order (decision 0639 §1: by rank, then by name), each as its lowering request names it.
 fn plan_of(g: &super::plan::corpus::phase0::Graph) -> Result<Vec<PlannedModule>, Error> {
     use super::plan::corpus::phase0::PlanModule;
-    let hex = |d: &[u8; 32]| d.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let hex = |d: &[u8; 32]| rerail_prof::code_rule_dsl::prof::lower_hex(&d[..]);
     // Each digest's files, by path: a module's name lists its files' digests.
     let mut at: std::collections::BTreeMap<String, Vec<&Path>> = std::collections::BTreeMap::new();
     for (p, d) in &g.digests {
@@ -2033,7 +2033,7 @@ impl LibraryFile {
     #[allow(dead_code)]
     pub fn fact(&self) -> Option<String> {
         let hash = self.sha256?;
-        let hex = hash.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let hex = rerail_prof::code_rule_dsl::prof::lower_hex(&hash[..]);
         Some(format!("library_file({}, \"sha256:{hex}\").", quote(&self.path.to_string_lossy())))
     }
 }
