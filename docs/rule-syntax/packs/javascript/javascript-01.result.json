@@ -1,0 +1,42 @@
+[
+  {
+    "id": "eslint-accessor-pairs",
+    "status": "same"
+  },
+  {
+    "id": "eslint-default-case",
+    "status": "same"
+  },
+  {
+    "id": "eslint-id-length",
+    "status": "same"
+  },
+  {
+    "id": "eslint-max-classes-per-file",
+    "status": "different",
+    "reason": "fixtures max-classes-per-file/004.js: `/* eslint-disable rule-to-test/max-classes-per-file */` names another rule, and ESLint 10.11 reports 3:1 File has too many classes (2), as the translation does. The original's run suppresses it: its oxlint suppression matches a directive by the bare name after the last `/` (native/src/code_rule_dsl/suppress/oxlint.rs). Both declare the same suppressions; the runs' suppression handling differs, not the rule.",
+    "right": "translation",
+    "counts": {
+      "examples": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      },
+      "fixtures": {
+        "originalOnly": 0,
+        "translationOnly": 1
+      },
+      "rerail-typescript": {
+        "originalOnly": 0,
+        "translationOnly": 0
+      }
+    }
+  },
+  {
+    "id": "eslint-max-statements",
+    "status": "same"
+  },
+  {
+    "id": "eslint-no-duplicate-imports",
+    "status": "same"
+  }
+]

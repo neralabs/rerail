@@ -5,7 +5,7 @@
 .scope include "**/*"
 
 #include "tsx/eslint-a-functions.rerail"
-//   function_node, fn_name_kind, fn_start, limit
+//   function_node, fn_name_kind, fn_head, limit
 #include "tsx/statements.rerail"
 //   block_stmt, namespace_body, var_scope (functions, static blocks and the program)
 
@@ -15,13 +15,14 @@
 // A class static block counts its own statements and is never reported. `ignoreTopLevelFunctions` (the
 // second option) spares a function in no other function or static block, but only
 // when it is the file's only top-level function; with two or more, each is checked as usual.
-.violation max_statements(at: node, name: symbol, k: number, m: number) code "max-statements"
+// ESLint reports getFunctionHeadLoc: an arrow at its `=>`, a method or property's function at its holder.
+.violation max_statements(at: loc, name: symbol, k: number, m: number) code "max-statements"
     "{name} has too many statements ({k}). Maximum allowed is {m}."
     suppress eslint "max-statements"
     suppress oxlint "max-statements"
 limit_rule("max", 10).
 max_statements(at, s, k, m) :- statements(f, k), limit("max", 10, m), k > m, !spared(f),
-    fn_name_kind(f, s), fn_start(f, at).
+    fn_name_kind(f, s), fn_head(f, at).
 
 // statements(f, k): the statements of the blocks f owns. A block belongs to its nearest function or static
 // block; a TypeScript namespace body is not a block statement.

@@ -23,9 +23,10 @@ duplicate(x, cat("Merge this re-export into the earlier re-export from '", m, "'
 duplicate(x, cat("Replace this re-export from '", m, "' by exporting the names already imported from it.")) :-
     dup(x, "export", _, "import", m).
 
-// dup(x, a, p, b, m): declaration x (an a) repeats the earlier declaration p (a b) of module m.
+// dup(x, a, p, b, m): declaration x (an a) repeats the earlier declaration p (a b) of module m. Order is by start
+// offset: `earlier` gives no rows for these statements in run-policies (NOTES-javascript-01).
 .decl dup(x: node, a: symbol, p: node, b: symbol, m: symbol)
-dup(x, a, p, b, m) :- decl(x, a, m), decl(p, b, m), docof(x, d), docof(p, d), earlier(p, x), mergeable(x, p),
+dup(x, a, p, b, m) :- decl(x, a, m), decl(p, b, m), node(d, p, _, s, _), node(d, x, _, t, _), s < t, mergeable(x, p),
     (!option("allowSeparateTypeImports", "true") ; typed(x), typed(p) ; !typed(x), !typed(p)).
 
 // decl(x, "import" | "export", m): an import, or with includeExports a re-export, of module m (trimmed; "" is no
