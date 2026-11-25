@@ -400,6 +400,22 @@ impl LongTexts {
         Self { nodes, batch: Arc::clone(batch), docs, counted: std::sync::OnceLock::new() }
     }
 
+    /// Whether its nodes' rows are made (a source not made by `MadeRows` always is).
+    fn made(&self) -> bool {
+        self.nodes.as_any().and_then(|a| a.downcast_ref::<made::MadeRows>()).is_none_or(made::MadeRows::is_done)
+    }
+
+    /// Its one column's statistics: the made rows' own (`estimate`: or their estimate), once made; before, counted on
+    /// the tape (the nodes' sampled statistics make documents).
+    fn tape_statistics(&self, estimate: bool) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let known = if estimate { self.nodes.estimated_statistics() } else { self.nodes.statistics() };
+        if self.made() && let Some(known) = known {
+            return Some(known);
+        }
+        let n = self.estimated_len() as i64;
+        Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
+    }
+
     /// How many rows it has, counted on the tape as the batch's rows are made (each node of a document of a grammar
     /// whose text is past the inline bound), with no row made: its group's rows are made only where they are read.
     fn tape_len(&self) -> usize {
@@ -541,13 +557,14 @@ impl Source for LongTexts {
     /// counts is its rows. Measured as rows (`sampled_statistics_unanswered`), the measure made its whole group's
     /// rows, every relation's of every document's (the M3's 300-file peak held 77 MB of them, and a 158 MB block).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        // The made rows' own, once made; before, counted on the tape (the nodes' sampled statistics make documents).
-        let made = self.nodes.as_any().and_then(|a| a.downcast_ref::<made::MadeRows>()).is_none_or(made::MadeRows::is_done);
-        if made && let Some(known) = self.nodes.statistics() {
-            return Some(known);
+        // A lazy batch's count is its given counts' estimate (`estimated_len`): an estimate's.
+        if self.batch.lazy() && !self.made() {
+            return None;
         }
-        let n = self.estimated_len() as i64;
-        Some(self.nodes.columns().into_iter().map(|c| (c, n, n, n, n)).collect())
+        self.tape_statistics(false)
+    }
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.tape_statistics(true)
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.nodes.estimated_matches(column, batch)
@@ -6137,9 +6154,10 @@ fn out_with_within(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, 
 }
 
 /// The planner's statistics of `source` (`stat_col`'s rows, ndv, sq and sqd per column, `sqd` by
-/// document `d = id >> 32`), for a relation made at bind time rather than at ingestion.
+/// document `d = id >> 32`), for a relation made at bind time rather than at ingestion: its estimate where it gives one
+/// (`Source::estimated_statistics`).
 pub fn statistics(source: &dyn Source) -> Vec<(String, i64, i64, i64, i64)> {
-    if let Some(known) = source.statistics() {
+    if let Some(known) = source.estimated_statistics() {
         return known;
     }
     measured(source)

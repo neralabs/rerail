@@ -481,10 +481,18 @@ pub trait Source: Send + Sync {
     /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
     /// less than that many lookups cost chooses to.
     fn expect_lookups(&self, _column: usize, _keys: f64) {}
-    /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without
-    /// reading every row: a source whose rows are made on lookup.
+    /// The relation's statistics (`syntax::statistics`'s rows) where the source knows them exactly without reading
+    /// every row: a source whose rows are made on lookup (`within`'s, from the tree), or one counted where it lies. A
+    /// run counts and keeps them as the relation's: an estimate is `estimated_statistics`'.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         None
+    }
+    /// The planner's statistics: `statistics`, or before them an estimate made with no row of the whole made (a
+    /// sample of its documents, `made::MadeRows::sampled`). Only a plan reads them: the chunks' counts and the kept
+    /// statistics read `statistics`, and took a sample's for a count (a text test's passing strings went unioned by
+    /// no chunk, and the cross part's scan of one made every document: 27 s of `all`'s CPU, 2026-11-24).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.statistics()
     }
     /// How many rows hold each value `v` in column `c`, for each `(c, v)` of `wanted`, where the source keeps them
     /// (its rows do not change): `None` when the caller counts them.

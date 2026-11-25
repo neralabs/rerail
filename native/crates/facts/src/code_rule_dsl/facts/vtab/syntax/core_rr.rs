@@ -691,10 +691,10 @@ impl CoreRows {
                 }
                 lit.value = self.format_values.as_ref().and_then(|(_, v)| v.get(id as usize).cloned().flatten());
             }
-            if let Some(prefix) = &lit.prefix {
-                if !self.skip.literal_rows {
-                    self.strprefix.push([n, string(prefix) as i64]);
-                }
+            if let Some(prefix) = &lit.prefix
+                && !self.skip.literal_rows
+            {
+                self.strprefix.push([n, string(prefix) as i64]);
             }
             if !self.skip.str && let Some(v) = &lit.str {
                 self.str.push([n, string(v) as i64]);

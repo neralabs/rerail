@@ -322,7 +322,11 @@ impl Source for Places {
     /// Counted in an array in a block of the run's (`place_statistics`). Counted as a view's rows by `RelStats`, its counts took 48 bytes a row on the heap (`line`'s and `col`'s 49.5 MB each at the
     /// M3's 300-file peak, ab160).
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
-        place_statistics(self)
+        place_statistics(self, false)
+    }
+    /// `statistics`, or with its spans not made, their sample's added (`place_statistics`).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        place_statistics(self, true)
     }
     fn failure(&self) -> Option<String> {
         self.view.failure().or_else(|| self.spans.failure())
@@ -384,7 +388,9 @@ impl Pairs {
 /// walk of the spans made the whole batch: `col`'s measure did, ab175). Rows add; the second column's values (lines,
 /// columns, documents) are the view's mostly, the spans' among them, so its distinct values are the more of the two's,
 /// and its postings' squares add with their cross term at its most (each value's postings in both, in proportion).
-fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+/// With its spans not made, only an estimate (`estimate`) counts them, on their sample: the exact statistics are
+/// counted where the spans lie (the chunks'), and a walk of them here would make them.
+fn place_statistics(p: &Places, estimate: bool) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     let names = p.columns();
     // `text`'s second column is a text: counted by value, every text of the batch would be interned to measure it.
     if names.len() != 2 || names[1] == "s" {
@@ -392,7 +398,10 @@ fn place_statistics(p: &Places) -> Option<Vec<(String, i64, i64, i64, i64)>> {
     }
     let mut view = Pairs::new();
     let unmade = p.spans.as_any().and_then(|a| a.downcast_ref::<super::made::MadeRows>()).is_some_and(|s| !s.is_done());
-    let sampled = if unmade { p.spans.statistics() } else { None };
+    if unmade && !estimate {
+        return None;
+    }
+    let sampled = if unmade { p.spans.estimated_statistics() } else { None };
     p.view.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));
     if sampled.is_none() {
         p.spans.for_rows(&[0, 1], &mut |_, row| view.add(row[0], row[1]));

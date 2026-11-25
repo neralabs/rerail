@@ -291,7 +291,7 @@ pub fn reused(given: &super::Texts<'_>, key: &[u8; 32], root: &Path, out: &Path,
 /// The kept outputs of the run's frame `key`, given its texts where they are read (`reused`), or none: a command's
 /// frame led to it (`command`), whose rule files, as recorded, make the same texts and graphs.
 #[allow(clippy::too_many_arguments)]
-fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &Path, typing: &Typing, options: &serde_json::Value, captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
     // A run an analysis run owns (decision 0547) publishes what it recorded as the owner finishes: a hit re-owns the
     // manifests the recorded run wrote (`own_recorded_manifests`), below. Skipped instead, every `logic` command's
     // warm run evaluated again (each begins an analysis run).
@@ -356,7 +356,7 @@ fn applied(given: Option<&super::Texts<'_>>, key: &[u8; 32], root: &Path, out: &
     let mut report = Report { plans, ..Report::default() };
     let name = crate::code_rule_dsl::logic::plan::output::FILE;
     let bytes = &kept.image;
-    if let Some(target) = captured.as_deref_mut() {
+    if let Some(target) = captured {
         target.extend_from_slice(bytes);
     } else {
         crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;

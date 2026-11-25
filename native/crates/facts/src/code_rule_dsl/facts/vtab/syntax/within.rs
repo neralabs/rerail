@@ -598,7 +598,7 @@ impl Within {
         // Per tag and slot a bit: the host's `member`, ERROR at slot 0 (`kind_atom`), as the kernel reads an atom.
         let bits = (self.mode != Mode::Tree).then_some(&self.members[..]).filter(|b| b.len() == 256 * KIND_STRIDE as usize / 32);
         let inside = matches!(self.mode, Mode::Axis(Axis::Inside) | Mode::Tree);
-        match solve(&node, nodes, &self.batch.block, views.at, bits.as_deref(), inside) {
+        match solve(&node, nodes, &self.batch.block, views.at, bits, inside) {
             Ok(c) => Some(c),
             Err(why) => {
                 crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0289)", || format!("solved on the host: {why}"));
@@ -638,7 +638,7 @@ impl Within {
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
         let slot = p.f().kind(p.node(local)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
-        self.has_slot(p.tag(), slot as u32)
+        self.has_slot(p.tag(), slot)
     }
 
     /// Whether kind slot `slot` of tag `tag` is in the axis's set (its bit in `members`).

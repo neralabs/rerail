@@ -323,7 +323,7 @@ impl Answers {
     /// Records an answer: `rel`'s `keys` asked, and what was given.
     pub(in crate::code_rule_dsl) fn record(&mut self, rel: &str, keys: &crate::code_rule_dsl::logic::native::component::Asked, given: &[(String, Vec<Vector<i64>>)]) {
         // The keys answered so far, across rounds: a set the rounds test against (derived, not the request's rows).
-        self.asked.extend(keys.iter().map(|k| (rel.to_owned(), k.to_vec().into_iter().collect())));
+        self.asked.extend(keys.iter().map(|k| (rel.to_owned(), k.iter().copied().collect())));
         for (r, rows) in given {
             self.rows.entry(r.clone()).or_default().extend(rows.iter().cloned());
         }

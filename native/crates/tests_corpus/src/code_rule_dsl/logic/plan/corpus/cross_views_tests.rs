@@ -555,3 +555,57 @@ fn cold_counted(made: &BTreeSet<String>) -> bool {
     let how = [": counted", ": counted at the held nodes", ": counted by the chunks, where their rows lay", ": counted by the chunks at their held nodes", own];
     !made.is_empty() && made.iter().all(|x| how.iter().any(|h| x.ends_with(h)))
 }
+
+/// A text test the cross part reads is unioned by the chunks (decision 0494): each counts its files' passing strings,
+/// the run's statistics of it are theirs, and they are given to the corpus batch, whose whole read of it takes them and
+/// makes no document. A
+/// test estimated on a sample (`Source::estimated_statistics`) is not one whose statistics its structure gives: taken
+/// for one, no chunk unioned it, and the cross part's scan of a path test made every document of `all` (27 s of its
+/// CPU, 2026-11-24).
+#[test]
+fn a_text_test_the_cross_part_reads_is_unioned_by_the_chunks() {
+    use crate::code_rule_dsl::logic::profile;
+    const TESTED: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used_in(d: number, x: symbol)
+used_in(d, x) :- uses(n, f), def(f, x), docof(n, d).
+// A document's path, read across files whole (`packages`): an input of the cross part. `home` joins it and a test of
+// it to a cross-file relation by a document's number alone, so no node keys a file-local helper of them and the cross
+// part reads the test: `export_names`' second rule's shape.
+.decl dpath(d: number, p: symbol)
+dpath(d, p) :- doc(d, p, _).
+.decl packages(p: symbol)
+packages(p) :- dpath(_, p), @rx_matches(p, "[.]py$") = 1.
+.decl home(d: number, p: symbol, x: symbol)
+home(d, p, x) :- used_in(d, x), dpath(d, p), @rx_matches(p, "^[bc][.]py$") = 1.
+.output home
+.output packages
+"#;
+    let mut c = Corpus::with("text-test-unioned", TESTED, &["home", "packages"]);
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let made = {
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::take_decisions();
+        let (_, rows) = c.run();
+        every_output_has_rows(&rows);
+        profile::take_decisions()
+    };
+    profile::set(false);
+    let tests: Vec<&String> = made.keys().filter(|(t, x)| t == "the base relations' statistics (decision 0458)" && x.starts_with("strtest_")).map(|(_, x)| x).collect();
+    assert!(!tests.is_empty(), "the cross part reads a text test: {:?}", made.keys().filter(|(t, x)| t.contains("0458") || t.contains("text") || x.contains("strtest")).collect::<Vec<_>>());
+    for x in &tests {
+        assert!(x.ends_with(": counted by the chunks, where their rows lay"), "a text test's statistics are the chunks' union: {x}");
+    }
+    // The union is the corpus batch's: a whole read of the test there takes it, and makes no document.
+    let given: BTreeSet<&str> = made.keys().filter(|(t, _)| t == "a text test's passing strings given (decision 0494)").filter_map(|(_, x)| x.split(':').next()).collect();
+    for x in &tests {
+        let rel = x.split(':').next().unwrap_or_default();
+        assert!(given.contains(rel), "{rel}: the chunks' passing strings are given to the corpus batch: {given:?}");
+    }
+}

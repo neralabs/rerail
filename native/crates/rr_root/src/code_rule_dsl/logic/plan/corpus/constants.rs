@@ -318,7 +318,7 @@ fn frame_key(key: &str) -> [u8; 32] {
 fn kept(frame: &[u8; 32], root: &Path, prog: &Version) -> Option<(Derived, Vector<[u8; 32]>)> {
     let kept = super::phases::reading_store().and_then(|store| super::frame::get(&store, frame))?;
     let mut leaves = super::leaves::Leaves::new(root, prog);
-    kept.reads.iter().all(|c| leaves.still(c)).then(|| ((kept.image, kept.reads), kept.plans))
+    kept.reads.iter().all(|c| leaves.still(c)).then_some(((kept.image, kept.reads), kept.plans))
 }
 
 /// Keeps the constants' rows and their run's leaves and plans as the frame `frame`.

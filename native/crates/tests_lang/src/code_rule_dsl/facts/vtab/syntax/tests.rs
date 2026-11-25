@@ -3067,9 +3067,13 @@ fn places_are_measured_before_their_spans_are_made() {
     let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let sources = shaped(&store, docs, &projection).unwrap();
     let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name} bound")).1);
+    // Before any is measured: a measure of one reads its rows, which makes the batch's rows of every relation.
+    for name in ["line", "col"] {
+        assert!(of(name).statistics().is_none(), "{name}: a sample is an estimate, not the relation's statistics");
+    }
     for name in ["line", "col"] {
         let s = of(name);
-        let got = s.statistics().expect("the view's counted, the spans' sampled");
+        let got = s.estimated_statistics().expect("the view's counted, the spans' sampled");
         let want = measured(&*s);
         assert_eq!(got[0].1, want[0].1, "{name}: the documents are alike, so the sample's rows scale to the batch's");
     }
@@ -3129,7 +3133,8 @@ fn a_relation_with_no_counts_is_measured_on_a_sample_of_its_documents() {
     let sources = made_sources(&batch);
     let of = |name: &str| Arc::clone(&sources.iter().find(|(n, _, _)| *n == name).unwrap().2);
     let (pkg, text) = (of("pkg"), of("name"));
-    let got = [pkg.statistics().expect("sampled"), text.statistics().expect("sampled")];
+    assert!(pkg.statistics().is_none() && text.statistics().is_none(), "a sample is an estimate: the relation's statistics are counted");
+    let got = [pkg.estimated_statistics().expect("sampled"), text.estimated_statistics().expect("sampled")];
     let estimates = [pkg.estimated_len(), text.estimated_len()];
     assert_eq!(batch.groups(), 1, "one group of the sample's documents");
     assert_eq!(batch.documents_with_rows(), 64, "one document in 16 made");

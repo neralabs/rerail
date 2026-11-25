@@ -695,7 +695,7 @@ mod partition_tests {
         shuffled.swap(1, 20);
         shuffled.swap(4, 12);
         let mut h = 0x9e37_79b9u64;
-        let scattered: Vec<i64> = (0..300).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; (h % 7) as i64 + 2 << 32 | (h >> 20) as i64 % 90 }).collect();
+        let scattered: Vec<i64> = (0..300).map(|_| { h ^= h << 13; h ^= h >> 7; h ^= h << 17; (((h % 7) as i64 + 2) << 32) | ((h >> 20) as i64 % 90) }).collect();
         for (values, is_runs) in [(runs, true), (shuffled, false), (scattered, false)] {
             let mut r = Relation::new(&["n", "s"]);
             r.push(&[-5, 0]);
@@ -1554,7 +1554,6 @@ fn session_group() -> usize {
 /// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the
 /// one group's rows when one group holds them all (a batch read whole); before, what is known without making a
 /// document, and a probe of the first column makes the documents it names.
-
 pub(super) struct MadeRows {
     pub(super) batch: Arc<Batch>,
     pub(super) rel: usize,
@@ -1942,7 +1941,7 @@ impl Source for MadeRows {
         match (self.done(), self.batch.rows.counted(self.rel)) {
             (Some(t), _) => t.len() > 0,
             (None, Some(n)) => n > 0,
-            (None, None) => self.batch.docs.len() > 0,
+            (None, None) => !self.batch.docs.is_empty(),
         }
     }
     /// Before its rows are made, its counts as given, else `doc`'s its documents' (a row a file): the target's estimate
@@ -2074,8 +2073,12 @@ impl Source for MadeRows {
             t.expect_lookups(_column, _keys)
         }
     }
-    /// The made relation's, or before its rows are made, its sample's (`sampled`).
+    /// The made relation's, once its rows are made.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.done().and_then(|t| t.statistics())
+    }
+    /// The made relation's, or before its rows are made, its sample's (`sampled`).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         match self.done() {
             Some(t) => t.statistics(),
             None => self.sampled(),
@@ -2379,6 +2382,7 @@ impl TextTest {
             let r = Relation::from_rows(&["s"], &mut passed.iter().map(|&v| std::iter::once(v).collect()));
             return self.whole.get_or_init(|| r);
         }
+        profile::decision("a text test read whole (decision 0494)", || format!("{}: the batch's every string scanned, its {} documents made", self.tested.tests.tests[self.k].0, self.batch.docs.len()));
         self.tested.scan(&self.batch, &self.scanned);
         let s = self.tested.state.lock();
         let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| rerail_blocks::vector![v]));
@@ -2444,8 +2448,13 @@ impl Source for TextTest {
             None => self.sampled().unwrap_or_else(|| self.whole().len()),
         }
     }
-    /// A key of strings: each passing string one row. Before the scan, its rows as sampled (`sampled`).
+    /// A key of strings: each passing string one row, once scanned.
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let n = self.whole.get()?.len() as i64;
+        Some(vec![("s".to_owned(), n, n, n, n)])
+    }
+    /// `statistics`; before the scan, its rows as sampled (`sampled`).
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let n = match self.whole.get() {
             Some(w) => w.len(),
             None if self.batch.lazy() => return None,

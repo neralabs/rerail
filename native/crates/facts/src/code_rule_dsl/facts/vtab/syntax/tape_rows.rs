@@ -491,7 +491,7 @@ impl Gap {
     /// Each row's gap, `(tape node, from, to)` in bytes of the source, in the tape's order of their parents.
     fn walk(&self, p: &Projected, each: &mut dyn FnMut(u32, u32, u32)) {
         let f = p.f();
-        if f.len() > 0 && p.local_of_node(0) != NONE {
+        if !f.is_empty() && p.local_of_node(0) != NONE {
             match self.0 {
                 Side::Before => each(0, 0, f.start(0)),
                 Side::After => each(0, f.end(0), p.facts.source.len() as u32),
@@ -833,7 +833,7 @@ impl TreeDigest {
             // Every node's 64 digits in one buffer, each a slice of it.
             let mut digits: Vec<u8> = vec![b'0'; 64 * p.len() as usize];
             Self::hexes(at, &mut |l, h| digits[64 * l as usize..64 * (l as usize + 1)].copy_from_slice(h.as_bytes()));
-            let texts: Vec<&str> = digits.chunks_exact(64).map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
+            let texts: Vec<&str> = digits.as_chunks::<64>().0.iter().map(|d| std::str::from_utf8(d).expect("hex digits")).collect();
             interned(at, &texts, "a document's digests")
         })
     }

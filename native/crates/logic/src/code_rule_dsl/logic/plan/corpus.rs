@@ -2836,7 +2836,7 @@ fn run_observed_within(
     // Which groups they are is a function of the tests, kept with the program.
     let group_keys = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the text tests' groups of automata".into());
-        super::kept_analyses::kept_value(source, "text tests' groups", 1, &[], || vocabulary.group_keys(), |keys| keys.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.as_str().into())].into()).collect(), |rows| rows.iter().map(|r| match r.first() { Some(crate::code_rule_dsl::logic::front::Value::Str(k)) => Some(k.to_string()), _ => None }).collect())
+        super::kept_analyses::kept_value(source, "text tests' groups", 1, &[], || vocabulary.group_keys(), |keys| keys.iter().map(|k| vec![crate::code_rule_dsl::logic::front::Value::Str(k.as_str().into())]).collect(), |rows| rows.iter().map(|r| match r.first() { Some(crate::code_rule_dsl::logic::front::Value::Str(k)) => Some(k.to_string()), _ => None }).collect())
     };
     let groups = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the groups' images, read".into()); Arc::new(crate::code_rule_dsl::logic::rr::HeldDfas::read(crate::code_rule_dsl::logic::rr::ImageDfas(crate::code_rule_dsl::logic::rr::image_store()), &group_keys)) };
     let dense = groups.stored() || docs.len() >= DENSE_TEXT_DOCS;
@@ -3339,7 +3339,7 @@ fn run_observed_within(
                     Order::Back => "node_order",
                     Order::Climbs | Order::Falls | Order::Same => continue,
                 };
-                if comp.iter().all(|r| derived_here(r)) {
+                if comp.iter().all(&derived_here) {
                     keys.insert(key.to_owned());
                 }
             }
@@ -7626,6 +7626,7 @@ fn run_observed_within(
     {
         for (rel, (n, set)) in &chunk_counts.unions {
             if let (true, Some(set), Some(k)) = (*n == docs.len(), set, cross_vocabulary.tests.iter().position(|(t, _)| t == rel)) {
+                crate::code_rule_dsl::logic::profile::decision("a text test's passing strings given (decision 0494)", || format!("{rel}: {} strings, the chunks' over the {n} files", set.len()));
                 batch.give_passed(k, set.iter().copied().collect());
             }
         }
@@ -10981,7 +10982,7 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
 
 #[doc(hidden)]
 pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64, i64, i64)> {
-    if let Some(known) = source.statistics() { return known; }
+    if let Some(known) = source.estimated_statistics() { return known; }
     // Sampling must not force a lookup-driven producer to enumerate its domain.
     if source.made_on_lookup() { return Vec::new(); }
     let rows = source.len();
@@ -11008,7 +11009,7 @@ pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source
 /// of its rows.
 #[doc(hidden)]
 pub fn sampled_statistics_unanswered(rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, shapes: &super::shapes::Shapes, counts: super::shapes::Counts) -> Vec<(String, i64, i64, i64, i64)> {
-    if let Some(known) = source.statistics() { return known; }
+    if let Some(known) = source.estimated_statistics() { return known; }
     if source.made_on_lookup() { return Vec::new(); }
     let rows = source.len();
     let names = source.columns();

@@ -713,6 +713,9 @@ impl Source for Layered {
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         self.base.statistics()
     }
+    fn estimated_statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        self.base.estimated_statistics()
+    }
     /// The base's counts: the values admitted past its rows are a few (a chunk's tape values), and a count read
     /// across the rows made the base's batch whole.
     fn value_counts(&self, wanted: &[(usize, i64)]) -> Option<Vector<i64>> {
