@@ -859,6 +859,25 @@ mod tests {
         assert!(fails(|| r.reads(&b)));
     }
 
+    /// A region of a block asks its guard only while the device has uses of the block queued (`device_queued`, an
+    /// inline load): with none, a CPU access makes no call; with one, the guard checks it, and still refuses.
+    #[test]
+    fn a_guarded_region_asks_its_guard_only_while_uses_are_queued() {
+        let b = listed();
+        let at = b.try_alloc_chunk(4096, 64).unwrap();
+        let guard: Arc<dyn rerail_vector::Guard> = b.ledger().clone();
+        // SAFETY: the chunk's bytes are this test's alone while the region lives.
+        let region = unsafe { rerail_vector::Region::new(b.ptr::<u8>(at), 4096, Box::new(())) }.guarded(guard, at);
+        assert!(!region.device_queued());
+        let r = Fence::new();
+        r.reads_chunk(&b, at, 4096);
+        assert!(region.device_queued());
+        let (g, off) = region.guard().expect("a guard");
+        assert!(fails(|| g.cpu_write(*off + 8, 8)));
+        r.complete();
+        assert!(!region.device_queued());
+    }
+
     struct Watched {
         base: *mut u8,
         len: usize,
@@ -1087,5 +1106,8 @@ impl rerail_vector::Guard for Ledger {
     #[inline]
     fn cpu_write(&self, at: usize, len: usize) {
         Ledger::cpu_write(self, at, len)
+    }
+    fn queued(&self) -> &std::sync::atomic::AtomicUsize {
+        &self.chunk_uses
     }
 }

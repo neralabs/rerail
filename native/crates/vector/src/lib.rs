@@ -38,6 +38,9 @@ pub struct Region {
     len: usize,
     owner: Box<dyn Any + Send + Sync>,
     guard: Option<(Arc<dyn Guard>, usize)>,
+    /// The guard's count of queued device uses (`Guard::queued`), read where the region is read: a CPU access calls
+    /// the guard only while the device has uses queued. Null with no guard; else it lives as long as `guard`'s Arc.
+    queued: *const std::sync::atomic::AtomicUsize,
     share: Option<fn(&Region) -> Region>,
 }
 
@@ -46,6 +49,8 @@ pub struct Region {
 pub trait Guard: Send + Sync {
     fn cpu_read(&self, at: usize, len: usize);
     fn cpu_write(&self, at: usize, len: usize);
+    /// The device's queued uses of the block: none, and no CPU access needs the check.
+    fn queued(&self) -> &std::sync::atomic::AtomicUsize;
 }
 
 // SAFETY: the region's bytes are its holder's alone, written through `&mut self` or as atomics.
@@ -58,11 +63,12 @@ impl Region {
     /// # Safety
     /// `ptr..ptr + len` is writable, aligned as asked, and this region's alone while `owner` lives.
     pub unsafe fn new(ptr: *mut u8, len: usize, owner: Box<dyn Any + Send + Sync>) -> Region {
-        Region { ptr, len, owner, guard: None, share: None }
+        Region { ptr, len, owner, guard: None, queued: std::ptr::null(), share: None }
     }
 
     /// It, each CPU read and write checked by `guard`, its first byte at `at` of the guard's block.
     pub fn guarded(mut self, guard: Arc<dyn Guard>, at: usize) -> Region {
+        self.queued = guard.queued();
         self.guard = Some((guard, at));
         self
     }
@@ -71,6 +77,14 @@ impl Region {
     pub fn shared_by(mut self, share: fn(&Region) -> Region) -> Region {
         self.share = Some(share);
         self
+    }
+
+    /// Whether the device has uses of its block queued: only then does a CPU access ask its guard (an inline load,
+    /// not a call through the guard).
+    #[inline(always)]
+    pub fn device_queued(&self) -> bool {
+        // SAFETY: `queued` is the guard's, which `self.guard` keeps alive.
+        !self.queued.is_null() && unsafe { (*self.queued).load(std::sync::atomic::Ordering::Relaxed) } != 0
     }
 
     /// Its guard and its first byte's offset in the guard's block.

@@ -110,6 +110,7 @@ impl<T: Pod> Vector<T> {
     #[track_caller]
     fn check(&self, from: usize, n: usize, write: bool) {
         if let Some(m) = &self.mem
+            && m.device_queued()
             && let Some((g, at)) = m.guard()
         {
             let (at, len) = (at + from * size_of::<T>(), (n * size_of::<T>()).max(1));
