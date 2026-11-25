@@ -236,6 +236,9 @@ describe("rules written in .rerail, against a daemon of this build", () => {
   it("steers a one-file rule and a rule that reads another file at the next boundary, records a Log rule's finding without steering it, and keeps each span", async () => {
     const session = new Session("rr-rules-session");
     await session.start();
+    // A turn's end that comes while the session's code rules still open goes on without them, so it starts no run: the
+    // first pass once they are open gathers the writes, and their run then waits for the quiet period, an hour here.
+    await session.awaitCodeRules();
     for (const [path, content] of [["app/views.py", VIEWS], ["app/report.py", REPORT], ["app/main.py", MAIN]] as const)
       expect((await session.write(path, content)).stderr).toBe("");
     const stop = await session.endTurn();
@@ -262,6 +265,8 @@ describe("rules written in .rerail, against a daemon of this build", () => {
   it("does not run a rule turned off where the file was written", async () => {
     const session = new Session("rr-rule-off-session");
     await session.start();
+    // As above: the turn's end starts the run only once the session's code rules are open.
+    await session.awaitCodeRules();
     await session.write("app/off/check.py", OFF);
     await session.endTurn();
     const audit = await rerailAuditOf("app/off/check.py");
