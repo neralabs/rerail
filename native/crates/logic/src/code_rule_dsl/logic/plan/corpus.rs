@@ -2927,6 +2927,19 @@ fn run_observed_within(
         };
         super::text_demand::projection_with(source, read.clone(), matchers, demand, spans)
     };
+    // The cross part's `text`, read by node alone where each of its atoms reads a node its rule binds (decision 0689):
+    // no document's `text` rows made, each probe read off the tape, its versions an edit's documents'.
+    let cross_text_probed = projection.shape == syntax::Shape::Core && {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "whether the cross part reads text by node alone".into());
+        let names: BTreeSet<String> = matchers.iter().map(|(rel, _, _)| rel.clone()).collect();
+        let probed = preparation::text::cross_text_by_node(source, &cross_version, &names);
+        // The heads read so: `text_rows_kept`'s "read as rows" line names them too, as the lowering, before the split, left them.
+        crate::code_rule_dsl::logic::profile::decision("text read by node alone (decision 0689)", || match &probed {
+            Ok(heads) => format!("the cross part's: read by node, off the tape, by {}", heads.iter().cloned().collect::<Vec<_>>().join(", ")),
+            Err(why) => format!("the cross part's: made as rows ({why})"),
+        });
+        probed.is_ok()
+    };
     let base_rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection's digest".into()); projection.rows_digest() };
     let memo_ids = {
         let rels: BTreeSet<String> = split.exports.iter().cloned().chain(local_v.outputs().map(|o| local_v.text(o).to_owned())).collect();
@@ -7360,6 +7373,7 @@ fn run_observed_within(
             // though no file-local rule reads them.
             reads.extend(measure_keys.iter().cloned());
         }
+        p.text_probed = cross_text_probed;
         p
     };
     let cross_vocabulary = if vocabulary.tests.iter().any(|(t, _)| cross_reads.contains(t)) {
@@ -8586,6 +8600,9 @@ fn run_observed_within(
         if !cross_stats.knows(&rel) {
             cross_stats.measured(&rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
         }
+        // A relation made per value looked up (`text` read by node alone, decision 0689), or a view of the corpus
+        // batch: a step reading it by another column is priced as the read of every row it is (every document made).
+        cross_stats.probed_by(&rel, source.as_ref(), true);
         cross_inputs.push((rel.clone(), Arc::clone(&source)));
         modules.bind(db, &rel, source)?;
     }

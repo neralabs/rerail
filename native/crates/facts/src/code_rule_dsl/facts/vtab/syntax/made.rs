@@ -1507,6 +1507,12 @@ impl Batch {
                 added.insert(s.to_owned());
             }
         });
+        // `text` read by node alone made no row of its texts: they are its strings (decision 0689).
+        super::probed_text::strings(self, &mut |s| {
+            if !added.contains(s) {
+                added.insert(s.to_owned());
+            }
+        });
         let shared = self.shared.lock();
         // Its strings are the held batches' too (decision 0616): those its live groups' rows used, where each group
         // kept them; else the shared vocabulary.
@@ -1560,8 +1566,8 @@ pub(super) struct MadeRows {
 /// two, and the planner led joins with it (ab189: `rr_ast_12_1` measured on 2 of 40 documents, 2 rows, estimated 40
 /// where 455 were; the joins' own CPU 2.9 s more on the M3's 300 files). A batch of fewer is its own sample: measured
 /// exactly, on its groups' rows, with no whole read.
-const SAMPLE_EVERY: usize = 16;
-const SAMPLE_DOCS: usize = 32;
+pub(super) const SAMPLE_EVERY: usize = 16;
+pub(super) const SAMPLE_DOCS: usize = 32;
 
 impl MadeRows {
     fn template(&self) -> &dyn Source {

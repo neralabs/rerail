@@ -1851,6 +1851,68 @@ fn a_line_spans_text_is_read_off_the_source_as_its_rows_give_it() {
     }
 }
 
+/// Decision 0689: `text` read by node alone (`Projection::text_probed`, the cross part's) has the rows the groups make
+/// of it of every node and every `source` and `src_line` span (the ids the cross part reads it of), none made: each
+/// one's probe gives its made row (none where it has none), its count is theirs, and a read of every row (an edit's
+/// version) gives them all.
+#[test]
+fn text_read_by_node_alone_is_the_rows_a_group_makes() {
+    let store = ContentStore::open(&temp("probed-text")).unwrap();
+    let reads: BTreeSet<String> = ["node", "source", "src_line", "text"].map(str::to_owned).into_iter().collect();
+    use crate::code_rule_dsl::logic::front::ast::SpanIn;
+    let made = Projection { reads: Some(reads), text_spans: Some([SpanIn::Source, SpanIn::Line].into_iter().collect()), ..Projection::core() };
+    let probed = Projection { text_probed: true, ..made.clone() };
+    let texts = ["import os\n\ndef f(x):\n    return x + 1  # one\r\ny = 'z'", "", "class C:\n    \"\"\"doc\"\"\"\n    def m(self):\n        return [i for i in self]\n"];
+    let docs = || texts.iter().enumerate().map(|(i, t)| document(i as u32 + 1, &format!("m{i}.py"), "python", t)).collect::<Vec<_>>();
+    let (a, b) = (shaped(&store, docs(), &made).unwrap(), shaped(&store, docs(), &probed).unwrap());
+    let source = |all: &[(&str, Arc<dyn Source>)], name: &str| Arc::clone(&all.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("no {name}")).1);
+    let (rows, text) = (source(&a, "text"), source(&b, "text"));
+    let node = source(&b, "node");
+    let (src, lines) = (source(&b, "source"), source(&b, "src_line"));
+    let mut ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+    ids.extend((0..src.len()).map(|r| src.value(r, 1)));
+    ids.extend((0..lines.len()).map(|r| lines.value(r, 2)));
+    let held: BTreeSet<i64> = ids.iter().copied().collect();
+    let want: BTreeSet<(i64, i64)> = (0..rows.len()).map(|r| (rows.value(r, 0), rows.value(r, 1))).filter(|(n, _)| held.contains(n)).collect();
+    assert!(want.len() > 40, "{} rows", want.len());
+    assert!(want.iter().any(|(n, _)| n >> 32 == 1 && !(0..node.len()).any(|r| node.value(r, 1) == *n)), "a span's row among them");
+    // Every node's and every span's probe: its row, or none where the groups made none.
+    for &n in &ids {
+        let got: BTreeSet<(i64, i64)> = text.lookup(0, &[n]).unwrap().into_iter().map(|r| (text.value(r, 0), text.value(r, 1))).collect();
+        let row: BTreeSet<(i64, i64)> = want.iter().filter(|(m, _)| *m == n).copied().collect();
+        assert_eq!(got, row, "id {n}");
+    }
+    assert_eq!(text.len(), want.len(), "its rows, counted on the tape");
+    let every: BTreeSet<(i64, i64)> = (0..text.len()).map(|r| (text.value(r, 0), text.value(r, 1))).collect();
+    assert_eq!(every, want, "every row, read in turn");
+    // The changed documents' rows (an edit's `Before`): each of document 1's.
+    let one: BTreeSet<(i64, i64)> = text.rows_of_documents(&[1].into_iter().collect()).unwrap().into_iter().map(|r| (text.value(r, 0), text.value(r, 1))).collect();
+    assert_eq!(one, want.iter().filter(|(n, _)| n >> 32 == 1).copied().collect(), "document 1's rows");
+}
+
+/// Decision 0689: the cross part reads `text` by node alone where each of its `text` atoms reads a node its rule
+/// binds, by the node columns of every derived relation, a cross-file one's too (`cross_text_by_node`). Not where one
+/// reads a value no node column binds.
+#[test]
+fn the_cross_parts_text_is_read_by_node_where_each_atom_reads_a_bound_node() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rerail")).unwrap();
+    let decls = "\n.decl used(n: node) cross_file\nused(n) :- kind(n, \"integer\").\n.decl said(n: node, t: symbol)\n";
+    for (rules, probed) in [
+        ("said(n, t) :- used(n), text(n, t).", true),
+        ("said(n, t) :- used(n), !text(n, \"0\"), text(n, t).", true),
+        ("said(n, t) :- used(n), child(n, m, _), text(m, t).", true),
+        // A text bound by its value: a lookup by value.
+        ("said(n, t) :- used(n), text(m, \"1\"), t = \"1\".", false),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse_version(&format!("{prelude}{decls}{rules}\n.output said\n")).unwrap();
+        let got = crate::code_rule_dsl::logic::plan::corpus::preparation::text::cross_text_by_node(&program, &program, &Default::default());
+        assert_eq!(got.is_ok(), probed, "{rules}: {got:?}");
+        if let Ok(heads) = got {
+            assert_eq!(heads.into_iter().collect::<Vec<_>>(), ["said"], "{rules}: the heads read so");
+        }
+    }
+}
+
 /// Decision 0353 step 3: an atom of another per-node relation of `core.rerail` (`name`, `comment`, `strprefix`) of a
 /// node the rest of the body binds reads the node's value (`@rr_node_name`, ...), as `text`'s does. (`structural_*` is
 /// a view of the tape, looked up by its node in place: no read.) Its own atom binds no node: `name(n, "x")` alone is a lookup by value,

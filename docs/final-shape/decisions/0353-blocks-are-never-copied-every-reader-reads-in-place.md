@@ -1035,6 +1035,12 @@ violations, each of the 661 relations' row counts as before; the "text read as r
 `after` and its span aggregate read their lines off the source; p279's `coding` reads a regex capture's span). On
 the device the same read runs where the source lies (0287 §2, `view_line_span`).
 
+**Row 7 in the cross part: `text` read by node** (2026-11-25, decision 0689). The cross part's `text` was the last
+`text` made as rows on the bench: the corpus batch made every document's, for the 6 heads whose rules read a node a
+cross-file relation binds. Where every cross-part `text` atom reads a bound node or line, the corpus batch makes none
+(`ProbedText`): a probe reads the row off the tape, as a group would make it. The bench's 661 relations are the same
+row for row, and its decision line names the 6 heads.
+
 **Step 4: the GPU reads every view in place** (2026-11-22). The chunk is gone: `device_chunk::build`, its node
 columns and codes (row 3), `expand_view` and the views made from them (row 4), and the line starts and spans copied
 beside them (row 14). `chunk_views.uglykl` is deleted. A view the batch's directory does not read in place is not

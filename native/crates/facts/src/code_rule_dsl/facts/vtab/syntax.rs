@@ -64,6 +64,7 @@ pub mod ranks;
 pub mod tokens;
 /// A batch's documents and rows, each made when first read (decision 0494).
 pub mod made;
+mod probed_text;
 mod cells;
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub mod device_chunk;
@@ -121,6 +122,10 @@ pub struct Projection {
     pub derived: BTreeSet<String>,
     /// `rx_spans` compiled, once for the run's projection, not again for every batch it binds.
     pub compiled_rx: CompiledSpans,
+    /// `text` is read by node alone (decision 0689): each rule reads it of a node or a span of a document's own text
+    /// that it binds. No document's `text` rows are made; each probe reads its row off the tape (`ProbedText`). The
+    /// cross part's, where every `text` atom left reads a node its rule binds (`text::cross_text_by_node`).
+    pub text_probed: bool,
 }
 
 /// A projection's `rx_span` patterns compiled: each one's regex and, over a document's source or lines, its block
@@ -177,7 +182,7 @@ fn compile_spans(patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, S
 
 impl Projection {
     pub fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new(), compiled_rx: CompiledSpans::default() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new(), compiled_rx: CompiledSpans::default(), text_probed: false }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -192,6 +197,10 @@ impl Projection {
         let mut h = Sha256::new();
         h.update(b"rerail.projection-rows/v1\0");
         h.update(format!("{:?}\0{:?}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}\0{:?}\0{:?}\0{}", self.shape, self.rx_spans, self.ast_patterns, self.text_spans, self.token_text, self.node_anchors, self.long_text, self.long_text_any, self.text_nodes, self.partial, self.verdict).as_bytes());
+        // A projection whose `text` makes no row (decision 0689); none of the chunks' is.
+        if self.text_probed {
+            h.update(b"\0text probed");
+        }
         h.finalize().into()
     }
     /// Whether a guest of `grammar` that does not parse keeps its partial tree.
@@ -207,7 +216,7 @@ impl Projection {
         let shape = if core_shape { Shape::Core } else { Shape::T };
         let verdict = shape == Shape::T && error_triple;
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default() }
+        Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default(), text_probed: false }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
@@ -628,7 +637,14 @@ impl Source for LongTexts {
 pub(super) type Make = fn(&[&str], &mut dyn Iterator<Item = Vector<i64>>) -> Relation;
 
 fn as_source(name: &str, rows: Arc<dyn Source>, batch: &Arc<Batch>) -> Arc<dyn Source> {
-    if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { rows }
+    if name == LONG_TEXT_NODES {
+        Arc::new(LongTexts::new(rows, batch))
+    } else if name == "text" && batch.projection.text_probed && batch.shape == Shape::Core {
+        // Read by node alone, off the tape (decision 0689): its groups made no row.
+        Arc::new(probed_text::ProbedText::new(batch))
+    } else {
+        rows
+    }
 }
 
 /// The batch's relations, each over its groups (`made::MadeRows`, decision 0494), but those of the batch's own the
@@ -3824,6 +3840,8 @@ impl Batch {
         let mut visited = 0usize;
         let span_text = [crate::code_rule_dsl::logic::front::ast::SpanIn::Source, crate::code_rule_dsl::logic::front::ast::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
         let mut extra = Extra::new(reads, matches, shape, span_text);
+        // `text` read by node alone: no span's row made either (decision 0689, `ProbedText`).
+        extra.text &= !projection.text_probed;
         let mut tree = tree::Tree::new(reads);
         // `core.rerail`'s (decision 0046).
         let mut c = core_rows_for(projection);
@@ -3843,9 +3861,11 @@ impl Batch {
         let value_lit_only = wants_any(&["rr_value_lit"]) && !wants_any(&["str", "strprefix", "value", "static_value", "value_type"]);
         let wants_long_text_nodes = projection.wants("rr_long_text_node");
         let mut long_text_nodes = Vec::new();
-        let wants_text = core && projection.wants("text");
-        let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source);
-        let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);
+        // `text` read by node alone makes no row (decision 0689: `ProbedText`).
+        let made_text = core && !projection.text_probed;
+        let wants_text = made_text && projection.wants("text");
+        let wants_source_text = made_text && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source);
+        let wants_line_text = made_text && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);
         // Asked once for the batch, not per node (a lookup in the program's set of read relations).
         let (wants_parts, wants_part_starts, wants_words) = (projection.wants("str_part"), projection.wants("str_part_start"), projection.wants("str_part_word"));
         // Only a program that reads it: every node's hash is a symbol.
