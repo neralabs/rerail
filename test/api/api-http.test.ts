@@ -675,7 +675,7 @@ describe("Rerail API over HTTP", () => {
     expect((await app.request("/api/repositories", { headers: { origin: "https://evil.example", host: PAGE_HOST } })).status).toBe(200);
   });
 
-  it("documents conditional responses and the agent refusal", async () => {
+  it("documents conditional responses, the agent refusal and a write not confirmed on the disk", async () => {
     const document = await getJson<{ paths: Record<string, Record<string, { operationId: string; responses: Record<string, unknown> }>> }>("/openapi.json");
 
     expect(document.paths["/api/repository/rules"]?.get?.operationId).toBe("repository_rules_get");
@@ -684,6 +684,9 @@ describe("Rerail API over HTTP", () => {
     }
     expect(document.paths["/api/repository/settings"]?.put?.responses["304"]).toBeUndefined();
     expect(document.paths["/api/repository/settings"]?.put?.responses["403"]).toBeDefined();
+    expect(document.paths["/api/repository/settings"]?.put?.responses["503"]).toMatchObject({
+      description: expect.stringContaining("not-on-disk: the write was made but could not be confirmed on the disk"),
+    });
     for (const removed of ["/api/rules", "/api/rules/{id}", "/api/rule-context"]) expect(document.paths[removed]).toBeUndefined();
   });
 
