@@ -6,8 +6,9 @@
  *
  * An answer holds until a fact ends it, each read at most once per walk (`GitIgnoreLook`), none by a timer:
  * - the checkout's Git index changed (Git's checksum at the index file's end, or the digest of its bytes where Git
- *   writes none): a path the index tracks is never ignored, and the matcher reads its rules again with the index;
- *   every answer of the checkout ends, and answers are kept again. An index that cannot be read keeps none;
+ *   writes none, taken again once the file's stamp changed): a path the index tracks is never ignored, and the matcher
+ *   reads its rules again with the index; every answer of the checkout ends, and answers are kept again. An index that
+ *   cannot be read keeps none;
  * - a `.gitignore` on the way to the path changed, appeared or went (its text, folder by folder from the checkout's
  *   root): the answers of that folder and the folders below it end, and the matcher is told to read the folders'
  *   files again as questions enter them (`sourcesUnchanged`), as it does once a question leaves a folder; where it says
@@ -18,7 +19,7 @@
  * - the path's kind: a folder's answer and a file's at one path are kept apart.
  */
 import { createHash } from "node:crypto";
-import { closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { type BigIntStats, closeSync, fstatSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { NativeGitIgnoreMatcher } from "./native.js";
 
@@ -26,6 +27,13 @@ import type { NativeGitIgnoreMatcher } from "./native.js";
 const CHECKSUM_BYTES = 32;
 /** A SHA-1 checksum's length: where Git writes no checksum (`index.skipHash`), the index ends with at least this many zero bytes. */
 const SHA1_BYTES = 20;
+/**
+ * How far the clock must have left an index file's times when its bytes are read, in nanoseconds, for the file's stamp
+ * to tell it from every later write (`IndexDigest`): the coarsest step a file system keeps times to, FAT's 2 s (ext4
+ * and NTFS keep 1 to 100 ns), and one tick of the clock file times come from, which `Date.now` can run ahead of
+ * (Windows's default tick is 1/64 s; Linux's coarse clock ticks every 1 to 10 ms).
+ */
+const STAMP_TELLS_AFTER_NS = 2_015_625_000n;
 
 /** The answers of one folder's entries, with its `.gitignore` as they were learnt (`rulesOf`). */
 export interface FolderAnswers {
@@ -76,12 +84,12 @@ function indexFileOf(root: string): string | undefined {
 /**
  * What tells the index file at `path` from every other: Git's checksum at its end, which Git computes over every byte
  * before it, or the SHA-256 of its bytes where Git wrote zero bytes in its place (`index.skipHash`, which
- * `feature.manyFiles` turns on); "none" where there is no file; undefined where it cannot be read. A stamp of the file's
- * identity, size and times is not enough: ext4 gives a freed inode number to the next new file at once, so two writes
- * of one size within one tick of the file clock can leave all four as they were. Both reads go through one open, so
- * they read one file while Git renames a new index over it.
+ * `feature.manyFiles` turns on), as `digest` keeps it; "none" where there is no file; undefined where it cannot be
+ * read. A stamp of the file's identity, size and times alone is not enough: ext4 gives a freed inode number to the
+ * next new file at once, so two writes of one size within one tick of the file clock can leave all four as they were.
+ * Every read goes through one open, so they read one file while Git renames a new index over it.
  */
-function indexStamp(path: string): string | undefined {
+function indexStamp(path: string, digest: IndexDigest): string | undefined {
   let descriptor: number;
   try {
     descriptor = openSync(path, "r");
@@ -89,7 +97,7 @@ function indexStamp(path: string): string | undefined {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? "none" : undefined;
   }
   try {
-    return openStamp(descriptor);
+    return openStamp(descriptor, digest);
   } catch {
     return undefined;
   } finally {
@@ -98,12 +106,40 @@ function indexStamp(path: string): string | undefined {
 }
 
 /** `indexStamp` of the open index file `descriptor`. */
-function openStamp(descriptor: number): string {
-  const { size } = fstatSync(descriptor);
+function openStamp(descriptor: number, digest: IndexDigest): string {
+  const stats = fstatSync(descriptor, { bigint: true });
+  const size = Number(stats.size);
   const end = Buffer.alloc(Math.min(size, CHECKSUM_BYTES));
   readSync(descriptor, end, 0, end.length, size - end.length);
   if (end.subarray(-SHA1_BYTES).some(byte => byte !== 0)) return `checksum ${size} ${end.toString("hex")}`;
-  return `digest ${createHash("sha256").update(readFileSync(descriptor)).digest("hex")}`;
+  return `digest ${digest.of(descriptor, stats)}`;
+}
+
+/**
+ * The digest of an index file with no checksum, kept with the stamp of the file it was read from: its device, inode,
+ * size and times, from the handle the bytes are read through. The stamp is kept only where the clock had left both
+ * times by `STAMP_TELLS_AFTER_NS` before the bytes were read, so every later write gives the file other times; inside
+ * that, the next walk reads and hashes the bytes again. The engine keeps its own index by such a stamp (`FileStamp` in
+ * `native/src/git_ignore.rs`), which it does not export.
+ */
+class IndexDigest {
+  #stamp: string | undefined;
+  #digest = "";
+
+  /**
+   * The SHA-256 of the bytes of the open index file `descriptor`, whose stat is `stats`: the one kept while the file
+   * keeps its stamp, else read now.
+   */
+  of(descriptor: number, stats: BigIntStats): string {
+    const stamp = `${stats.dev} ${stats.ino} ${stats.size} ${stats.mtimeNs} ${stats.ctimeNs}`;
+    if (stamp === this.#stamp) return this.#digest;
+    // The clock is read before the bytes, so a write the read misses comes after this reading.
+    const now = BigInt(Date.now()) * 1_000_000n;
+    const tells = [stats.mtimeNs, stats.ctimeNs].every(time => now > time + STAMP_TELLS_AFTER_NS);
+    this.#digest = createHash("sha256").update(readFileSync(descriptor)).digest("hex");
+    this.#stamp = tells ? stamp : undefined;
+    return this.#digest;
+  }
 }
 
 /** The folder holding `path` (`/`-separated, relative to the checkout), "" for an entry of the checkout's root. */
@@ -118,6 +154,8 @@ export class GitIgnoreAnswers {
   readonly #matcher: NativeGitIgnoreMatcher;
   /** The index's stamp the answers were learnt under (`indexStamp`). */
   #index: string | undefined;
+  /** The digest of the index's bytes where Git writes no checksum, with the file's stamp it was taken under. */
+  readonly #digest = new IndexDigest();
   readonly #folders = new Map<string, FolderAnswers>();
   /** False from a change of the rules the matcher reads only with a new index, until the index changes. */
   #keeps = true;
@@ -164,7 +202,7 @@ export class GitIgnoreAnswers {
    */
   check(): CheckedInWalk | undefined {
     const file = indexFileOf(this.#root);
-    const index = file === undefined ? undefined : indexStamp(file);
+    const index = file === undefined ? undefined : indexStamp(file, this.#digest);
     if (index !== this.#index) {
       this.#folders.clear();
       this.#index = index;

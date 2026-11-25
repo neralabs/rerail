@@ -306,8 +306,8 @@ without hooks or network.
   caller's thread with no limit of their own: a question's disk reads are a stat of the index and the `.gitignore` of a
   folder the walk has just listed. A walk asks the engine about a path only where no answer is kept for its checkout
   (`GitIgnoreAnswers`), and reads on the same thread, once per walk, the end of each checkout's index (all of it where
-  Git writes no checksum there) and the `.gitignore` of each folder it asks about. The repository index walk
-  opens its rules under the same 10 s limit.
+  Git writes no checksum there, until a walk reads it 2 s or more after it last changed) and the `.gitignore` of each
+  folder it asks about. The repository index walk opens its rules under the same 10 s limit.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
 - **Embedding model** SHA-256 is checked against `model/manifest.json` before loading (`native/src/model.rs`).
