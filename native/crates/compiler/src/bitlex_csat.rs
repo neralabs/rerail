@@ -382,6 +382,11 @@ impl ClauseOcc {
     pub fn longest(&self) -> usize {
         self.longest
     }
+
+    /// Its occurrence lists' entries (two words each).
+    pub fn entries(&self) -> usize {
+        self.occ.len() / 2
+    }
 }
 
 fn var(l: Lit) -> usize {

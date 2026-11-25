@@ -105,6 +105,27 @@ fn shared_room() -> usize {
     std::env::var("RERAIL_CSAT_SHARED_WORDS").ok().and_then(|w| w.parse().ok()).unwrap_or(SHARED_WORDS).saturating_sub(HEADER + 2 * BQ)
 }
 
+/// The words every occurrence entry's atomics hit (Algorithm 1, lines 4 and 9): the search's long clauses' words
+/// and its bitmap. Past the device's cache, resident searches evict each other's (decision 0670): 512 copies of the
+/// hard dump (26,318 long clauses, 31,841 variables, 113 KB of these) took 85 s in 512 slots, 25.7 s in 384, 21.3 s
+/// in 320, 16.6 s in 192, 14.0 s in 263; the Spark's L2 (24 MB) holds 222. Its variables' words are written only
+/// where a literal is pushed, and its occurrence lists are read once an entry, so neither sets the bound (all
+/// together, 4 MB a search, would allow 6 slots).
+fn hot_words(vars: usize, longs: usize) -> usize {
+    longs + (2 * (vars + 1)).div_ceil(32)
+}
+
+/// The slots resident at once for searches of `hot` words each: as many as the device's cache holds
+/// (`Device::cache_bytes`), at least one; no bound where the device does not say. `RERAIL_CSAT_RESIDENT` sets it (a
+/// measurement aid).
+fn resident(hot: usize) -> usize {
+    if let Some(n) = std::env::var("RERAIL_CSAT_RESIDENT").ok().and_then(|v| v.parse::<usize>().ok()) {
+        return n.max(1);
+    }
+    let cache = rerail_gpu::shared::get().and_then(|s| s.device.cache_bytes());
+    cache.map_or(SLOTS, |c| (c as usize / (4 * hot.max(1))).max(1))
+}
+
 /// A formula's widest gate's width and 2 (at least 4): the room of a conflict's clause or an explanation.
 fn wide(gates: &crate::bitlex_csat::Gates) -> usize {
     (0..gates.len()).map(|g| gates.args(g).len()).max().unwrap_or(0).max(2) + 2
@@ -160,6 +181,8 @@ pub struct Desc {
     vars: usize,
     resume: bool,
     carries: bool,
+    /// The words its search's atomics hit (`hot_words`): what the slots resident at once keep in the cache.
+    hot: usize,
     slot_words: usize,
     block: FormulaBlock,
     /// The formula's plain and carried clauses' index (`ClauseOcc`), in the block: the batch holds it while the
@@ -290,6 +313,7 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
         words: d,
         resume: f.resume.is_some(),
         carries: cv != 0,
+        hot: hot_words(f.vars, longs),
         vars: f.vars,
         slot_words: state_words(f.vars, f.clauses.len() + carried, wide, longs),
         block: b.clone(),
@@ -382,7 +406,12 @@ impl Batch {
         let models = descs.iter().map(|d| (d.vars + 1).div_ceil(32)).sum();
         let carries = descs.iter().filter(|d| d.carries).count() * (1 + CARRY_ROOM);
         let slot_words = descs.iter().map(|d| d.slot_words).max().unwrap_or(1);
-        let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(descs.len());
+        let hot = descs.iter().map(|d| d.hot).max().unwrap_or(1);
+        let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(resident(hot)).min(descs.len());
+        if std::env::var_os("RERAIL_DEVICE_SOLVE_TRACE").is_some() {
+            let cache = rerail_gpu::shared::get().and_then(|s| s.device.cache_bytes());
+            eprintln!("gpu slots: {slots}, a search's hot words {hot}, the device's cache {cache:?} bytes");
+        }
         let mut b = Batch::open(&first.block, descs.len(), models, carries, slot_words, slots)?;
         for d in descs {
             b.add(d)?.map_err(|_| "the prover's GPU: a batch without the room its formulas took")?;
@@ -799,7 +828,7 @@ impl Service {
                         let slot_words = 2 * d.slot_words;
                         // A measurement aid: `RERAIL_PROVER_STATE_MB`, the slots' states at most.
                         let state_bytes = std::env::var("RERAIL_PROVER_STATE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(STATE_BYTES, |m| m << 20);
-                        let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS);
+                        let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(resident(d.hot));
                         let models = MODEL_ROOM.max((d.vars + 1).div_ceil(32));
                         let t_open = std::time::Instant::now();
                         let batch = Batch::open(&d.block, BATCH_ROOM, models, BATCH_ROOM * (1 + CARRY_ROOM), slot_words, slots)?;

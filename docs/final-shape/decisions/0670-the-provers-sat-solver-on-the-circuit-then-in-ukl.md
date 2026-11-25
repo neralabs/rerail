@@ -650,3 +650,17 @@ formula").
   1,510 conflicts and 199,509 rounds (916 and 106,437), 1 copy 2.5 s (1.65 s); 256 copies 6.3 s; 512 copies 48–59 s
   in 512 slots, but 14.0 s in 263 slots (21.8 s): every part's cycles grow about ninefold from 256 resident searches
   to 512, the searches' own words (a word a long clause, the bitmap) past what the GPU's cache holds.
+- **Resident searches capped by the device's cache** (the user, 2026-11-25: "so do it"). A batch's slots are at
+  most the device's cache over a search's hot words (`resident`, `hot_words`): its long clauses' words and its
+  bitmap, the words every occurrence entry's atomics hit (lines 4 and 9). The device says its cache
+  (`Device::cache_bytes`: CUDA's `L2_CACHE_SIZE`, OpenCL's `GLOBAL_MEM_CACHE_SIZE`; Metal does not say, and there
+  nothing changes). The hard dump has 26,318 long clauses and 31,841 variables, 28,309 words a search; the Spark's
+  24 MB L2 holds 222. Its variables' words (written only where a literal is pushed) and its occurrence lists (read
+  once an entry) are left out: with them a search is 4 MB, and the cap would be 6 slots where 256 ran well.
+  `RERAIL_CSAT_RESIDENT` sets the cap (a measurement aid).
+- Measured (the Spark; other sessions' compiles ran on it, and its memory is the GPU's, so the runs alternated in
+  the same minutes): 512 copies of the hard dump, 222 slots 32.9 and 33.9 s, 512 slots 96.7 and 70.2 s. A sweep
+  in quieter minutes: 512 slots 85 s, 384 25.7 s, 320 21.3 s, 263 14.0 s, 192 16.6 s. The device's tests on both
+  paths; cold Kotlin with the device alone, the shipped bytes, its 10,491 solves 298 ms each from handed in to
+  answered (815 ms in the run before the cap, other minutes); its 36 searches of over 100 ms at once 8.0 s (under
+  the cap, unchanged).

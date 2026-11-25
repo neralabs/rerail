@@ -48,6 +48,7 @@ const CL_DEVICE_MAX_WORK_GROUP_SIZE: ClUint = 0x1004;
 const CL_DEVICE_HOST_UNIFIED_MEMORY: ClUint = 0x1035;
 const CL_DEVICE_MEM_BASE_ADDR_ALIGN: ClUint = 0x1019;
 const CL_DEVICE_MAX_MEM_ALLOC_SIZE: ClUint = 0x1010;
+const CL_DEVICE_GLOBAL_MEM_CACHE_SIZE: ClUint = 0x101E;
 const CL_DEVICE_EXTENSIONS: ClUint = 0x1030;
 /// `cl_intel_required_subgroup_size`: the sub-group sizes a kernel may require (`size_t`s).
 const CL_DEVICE_SUB_GROUP_SIZES_INTEL: ClUint = 0x4108;
@@ -326,6 +327,8 @@ struct DeviceInner {
     base_align: u64,
     /// The largest buffer (`CL_DEVICE_MAX_MEM_ALLOC_SIZE`).
     max_alloc: u64,
+    /// Its global memory's cache, in bytes (`CL_DEVICE_GLOBAL_MEM_CACHE_SIZE`; 0 where it does not say).
+    cache: u64,
     /// Where its buffers are host allocations with an address (`usm`).
     usm: Option<Usm>,
     /// Whether the driver holds its own image of a buffer over host pages (device memory, or NVIDIA's on a GB10,
@@ -379,20 +382,22 @@ impl ClDevice {
         let base_align = (u32::from_ne_bytes(ba[..4].try_into().unwrap()) as u64 / 8).max(1);
         let ma = device_info_bytes(a, device, CL_DEVICE_MAX_MEM_ALLOC_SIZE);
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
+        let cb = device_info_bytes(a, device, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE);
+        let cache = if cb.len() >= 8 { u64::from_ne_bytes(cb[..8].try_into().unwrap()) } else { 0 };
         let subgroups = native_subgroups(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced: false }));
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, cache, usm: None, synced: false }));
         // A driver whose kernels' writes reach the host's pages only through a map is made current at each
         // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
         // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
         let synced = !unified || std::env::var_os("RERAIL_OPENCL_SYNCED").is_some() || probe.reads_host_pages_in_place().is_err();
         drop(probe);
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced }));
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, cache, usm: None, synced }));
         if synced {
             return Ok(d);
         }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, usm: Some(usm), synced }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, cache, usm: Some(usm), synced }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -480,6 +485,11 @@ impl ClDevice {
     /// The largest buffer the device makes.
     pub fn max_alloc(&self) -> u64 {
         self.0.max_alloc
+    }
+
+    /// Its global memory's cache, in bytes (0 where it does not say).
+    pub fn cache(&self) -> u64 {
+        self.0.cache
     }
 
     /// The largest threadgroup, and so the emulated SIMD group's scratch (`UKL_TG_MAX`).

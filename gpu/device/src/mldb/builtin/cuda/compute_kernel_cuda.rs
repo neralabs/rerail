@@ -85,6 +85,7 @@ const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
 const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN: i32 = 97;
 const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES: i32 = 100;
 const CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM: i32 = 91;
+const CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE: i32 = 38;
 const CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED: CUresult = 712;
 const CU_MEMHOSTREGISTER_PORTABLE: u32 = 0x01;
 const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
@@ -214,6 +215,8 @@ pub struct CudaDevice {
     /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`):
     /// then a wrap may span several registrations (`Registered`).
     host_pointer: bool,
+    /// Its L2 cache, in bytes (`L2_CACHE_SIZE`; 0 where it does not say).
+    pub l2_bytes: u64,
 }
 
 unsafe impl Send for CudaDevice {}
@@ -255,9 +258,10 @@ impl CudaDevice {
             let max_shared_per_block = attr(CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)? as u32;
             let pageable = attr(CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES).unwrap_or(0) != 0;
             let host_pointer = attr(CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM).unwrap_or(0) != 0;
+            let l2_bytes = attr(CU_DEVICE_ATTRIBUTE_L2_CACHE_SIZE).unwrap_or(0).max(0) as u64;
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
-            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer })
+            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer, l2_bytes })
         }
     }
 
