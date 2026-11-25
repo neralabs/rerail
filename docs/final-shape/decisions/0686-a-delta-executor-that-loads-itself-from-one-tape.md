@@ -116,13 +116,15 @@ delta operator built from operations over blocks, right cold, unchanged and edit
 - **B1** operations on blocks, as much as L1 needs: signatures of at most 30 slots, pinned through 0491's regions;
   the version registry; the twins (`no_std`, no alloc); a CPU executor.
 - **B2** the program trace: `Trace`, `Frontier`, `Bistate`, `LayerW`, partitions by module with digests,
-  `consolidate`; one bistate definition in `blocks`. Roll-up after the target.
+  `consolidate`; one bistate definition in `blocks`: a layer is `blocks::relation::Relation`, and `View` generalized to
+  n layers is `Version` and `Bistate` behind P§12's `Read` (P§13). Roll-up after the target.
 - **B3** the operator contract: `DeltaOp` as P§12 item 7, the cache's blocks and header (`cache_open`,
   `cache_commit`), the reference and the harness (L1 to L5).
 - **B4** l0's tape through the file layer as it is (observer, `read_placed` into a slab room, the rr parse into a
-  room); the tape port's bistate; `Text`'s `String` gone. Any change to an existing crate goes to the user first.
-- **B5** symbols, L1's facts in: `intern` into the atoms block; no interning inside a view's read.
-- **B6** L1 as a `DeltaOp` with B§4's ports, the `k0_pass` operation, `boot()`: the target.
+  room); the tape a blob by content, its views `Read` states (B§7); the tape port's bistate; `Text`'s `String` gone. Any change to an existing crate goes to the user first.
+- **B5** symbols, L1's facts in: B§7's Intern answerer (Pure, text ↔ symbol) as the `intern` operation, into the atoms block; no interning inside a view's read.
+- **B6** L1 as a `DeltaOp` with B§4's ports, the `k0_pass` operation, run as B§8's `run` begins (the tape as a world
+  read, then `k0_pass(tape.since(last), last)`): the target.
 
 After the target: the self-reading check (B§5), whose milestones (a rule body, Δwave, Δfix, Δphase, roll-up,
 planning) are written once B6 passes; then loads, the loop, program δ and the first K1 feature. *0686: Rebuild Plan*
