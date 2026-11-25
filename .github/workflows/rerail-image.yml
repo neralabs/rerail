@@ -37,7 +37,9 @@ permissions:
 jobs:
   image:
     name: Build, check and push ghcr.io/neralabs/rerail:${{ inputs.version }}
-    # One at a time, so two runs never read npm's `next` and then move `:next` in the wrong order.
+    # One at a time, so two runs never read npm's `next` and then move `:next` in the wrong order. GitHub keeps one run
+    # waiting per group: a newer one cancels it, so `:next` still ends on the newest version, and the cancelled
+    # version's `:<version>` is built by hand if wanted.
     concurrency:
       group: rerail-image
       cancel-in-progress: false
@@ -90,8 +92,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
 
+      # The digest in the run summary is what `:next` is moved to, for checking what the reviewer pulled.
       - name: Push ${{ inputs.version }}
-        run: docker push "${IMAGE}:${VERSION}"
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE}:${VERSION}"
+          digest="$(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:${VERSION}")"
+          echo "Pushed \`${IMAGE}:${VERSION}\`: \`${digest}\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Move next to ${{ inputs.version }}
         run: |
@@ -104,3 +111,4 @@ jobs:
           docker tag "${IMAGE}:${VERSION}" "${IMAGE}:next"
           docker push "${IMAGE}:next"
           echo "::notice::${IMAGE}:next is Rerail ${VERSION}"
+          echo "Moved \`${IMAGE}:next\` to ${VERSION}." >> "$GITHUB_STEP_SUMMARY"

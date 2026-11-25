@@ -288,7 +288,10 @@ exact version in Node 24 (`scripts/release/image/Dockerfile`) and pushes it as `
   never moves it back.
 - **Nothing waits on it.** A failed image holds back no publish and no promotion.
 - **A failed image is built again by hand:** `gh workflow run rerail-image.yml --ref main -f version=<version>`, once
-  the cause is fixed on `main`. The same command builds the image of a release published before the job existed.
+  the cause is fixed on `main`. The same command builds an image the run skipped (its **Published dist-tags** job
+  failed), one a newer release's image cancelled while it waited, and the image of a release published before the job
+  existed.
+- **Each push's digest is in the run summary,** so what `:next` pointed at can be checked later.
 
 The package must be public, since the reviewer pulls it with no credentials. GitHub makes a new container package
 private: after its first push, an organization owner sets its visibility to public in the package's settings.
