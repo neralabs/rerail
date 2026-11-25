@@ -67,10 +67,12 @@ The 300-file bench, on the M1 Max, CPU, one run each, against HEAD's run of the 
 - 463 violations. All 661 output relations are identical, row for row, compared as sorted CSV.
 - The decision line: "the cross part's: read by node, off the tape, by p297_rr_h_agg_…, q13_same_leaf, q4_same_leaf,
   q6_same_leaf, rr_diagnostic_33ab31c6…, rr_diagnostic_8dba1432…".
-- The cross phase took 3.48 s CPU, from 3.74 s. Statistics took 1.31 s, from 1.38 s.
-- `combine` took 0.74 s, against 0.72 s, on the new binary's second run. Its first run took 2.47 s. That run's
-  combine spans were the 317 programs lowered ("a program's version in scope: its image, or lowered"), not taken as
-  kept images: a new binary's first run lowers them, and the next reuses them. Compare second runs.
+- CPU, the new binary's second run against HEAD's: cross 3.78 s (3.74 s), statistics 1.43 s (1.38 s), combine
+  0.74 s (0.72 s), prepare 2.72 s (2.59 s). No phase changes measurably. The same binary's two runs differ by 0.3 s
+  in cross alone (3.48 s, 3.78 s). The bench's corpus is 300 files, and this change moves where `text` is read, not how
+  much is read.
+- The new binary's first run took 2.47 s in combine: its spans were the 317 programs lowered ("a program's version in
+  scope: its image, or lowered"), not taken as kept images, as a new binary's first run does. Compare second runs.
 
 ## Tests
 
