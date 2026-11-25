@@ -250,3 +250,31 @@ test("multi-repo: the whole-pack switch writes to the repository the page shows,
   await page.reload();
   await expect(packSwitch(page, "TypeScript")).toHaveAttribute("aria-checked", "true");
 });
+
+test("multi-repo: switching repository while the published packs are read asks again for the repository shown", async ({ page, rerail }) => {
+  const { manifest } = await rerail.scenario("multi-repo");
+  const billing = manifest.repositories.find(repo => repo.repositoryKey !== manifest.primary.repositoryKey)!;
+  const django = {
+    id: "django", name: "Django", category: "framework", covers: "Django rules.", publisher: "rerail", packageName: "@neralabs/rerail-pack-django",
+    installedVersion: null, version: "0.2.0", ruleCount: 25,
+  };
+  // The first repository's read stays out, as a first read of npm does, until the test ends.
+  let release = (): void => undefined;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/rule-packs/published?**", async route => {
+    const repository = new URL(route.request().url()).searchParams.get("repository");
+    if (repository !== billing.repositoryKey) await held;
+    await route.fulfill({ json: { repositoryKey: repository, checkoutPath: "/unused", readAt: 1, packs: [django] } }).catch(() => undefined);
+  });
+  await page.goto(await rerail.dashboard("multi-repo", { hash: "packs" }));
+  await expect(page.locator("#content .pubnote")).toHaveText("Reading the other rule packs published on npm…");
+
+  const pill = page.locator("#repopick .repopill");
+  await expect(pill).toHaveText(manifest.primary.displayName);
+  await pill.click();
+  await page.locator(`#repolayer .repomenu [role="option"][data-i="${billing.repositoryKey}"]`).click();
+  await page.locator('#sidenav [data-i="packs"]').click();
+  await expect(page.locator("#content .prow2.pub").filter({ has: page.locator("b", { hasText: /^Django$/u }) })).toBeVisible();
+  await expect(page.locator("#content .pubnote")).toHaveCount(0);
+  release();
+});

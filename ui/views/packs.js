@@ -218,8 +218,11 @@ export function enter() {
   recommendationsFor(scope).then(invalidate, error => readFailed(scope, view, `Couldn’t read ${repo} to pick rule packs`, error));
 }
 
-/** Whether a read of the published packs is out, so a visit while it is does not ask again. */
-let readingPublished = false;
+/**
+ * The scope whose published packs are being read, so a visit while that read is out does not ask again. A read still
+ * out for another repository holds no visit back: its answer is dropped, so the repository shown asks for its own.
+ */
+let readingPublished = null;
 
 /**
  * The published packs, asked for on each visit to the catalog: the daemon answers with the list it holds at once, and
@@ -227,10 +230,10 @@ let readingPublished = false;
  * a failure, the page says it is reading again.
  */
 function readPublished(scope) {
-  if (readingPublished) return;
-  readingPublished = true;
+  if (readingPublished !== null && inScope(readingPublished)) return;
+  readingPublished = scope;
   if (data.publishedPacks?.unread) data.publishedPacks = null;
-  publishedPacksFor(scope).finally(() => { readingPublished = false; }).then(invalidate);
+  publishedPacksFor(scope).finally(() => { if (readingPublished === scope) readingPublished = null; }).then(invalidate);
 }
 
 /**
