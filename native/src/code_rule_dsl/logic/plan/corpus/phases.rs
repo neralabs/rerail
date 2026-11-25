@@ -418,8 +418,15 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         // reads run first (struct, then types), and are listed with the reader's, in the order they ran, each once.
         let out = scratch.join(format!("phase-{name}"));
         // Its exports are its outputs: the program read, given them (decision 0249), not its text with an `.output`
-        // after it read again.
+        // after it read again. A phase naming no language runs in its reader's (as phase 1 does): a library read by
+        // programs of several languages (tsx/names.rerail, by TypeScript's and Vue's) resolves over the reader's
+        // documents (decision 0665). The reader's dialect is in the options both runs share.
         let mut handed = program.clone();
+        if !handed.settings.iter().any(|(k, _)| k == "language")
+            && let Some(language) = prog.settings.iter().find(|(k, _)| k == "language")
+        {
+            handed.settings.push(language.clone());
+        }
         handed.outputs.extend(declared.exports.iter().cloned());
         let (upstream, upstream_runs) = self::facts(&program, root, scratch, modes, binding, chunk_nodes, typing, options)?;
         for r in upstream_runs {

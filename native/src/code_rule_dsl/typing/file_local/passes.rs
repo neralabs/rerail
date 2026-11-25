@@ -47,6 +47,31 @@ impl Locate {
     }
 }
 
+/// Every relation the chunks hand on made to name its document per row, so a file's rows can be memoised (decision
+/// 0052): `Locate`, and a relation a round leaves (its rows name no document) moved to the cross-file part
+/// (`MoveCrossFile`, decision 0290), with every file-local relation that reads it, and the program located again,
+/// until every row handed on is located. The relations located; the `Err` names the moved relations where a round
+/// blocks one the moves cannot place.
+pub fn locate_all(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<Vec<String>, Vec<String>> {
+    let mut moved: Vec<String> = Vec::new();
+    let mut located: Vec<String> = Vec::new();
+    loop {
+        let mut locate = Locate::default();
+        p.program(&mut locate);
+        located.extend(locate.located);
+        if locate.blocked.is_empty() {
+            return Ok(located);
+        }
+        let fresh: Vec<String> = locate.blocked.into_iter().filter(|r| !moved.contains(r)).collect();
+        if fresh.is_empty() {
+            moved.sort();
+            return Err(moved);
+        }
+        moved.extend(fresh.iter().cloned());
+        p.program(&mut MoveCrossFile(fresh));
+    }
+}
+
 /// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
 /// qualified `CROSS_FILE` (decision 0290) and `MOVED_CROSS_FILE` (a move, not a declaration: decision 0652). The split
 /// then holds them cross-file, with their file-local readers, and the program is located again (`preparation::run`).
@@ -112,10 +137,13 @@ impl ProgramPass for Locate {
         let docof = f.is_input("docof");
         // `doc`'s width, where it is an input: a path key's row names its document through it (decision 0665).
         let doc_width = f.columns("doc").filter(|_| f.is_input("doc")).map(|c| c.len());
+        // The columns a row's document is found through, by `doc(d, p, …)`: `doc`'s path, and the path keys that hold a
+        // path as it is (`FileLocal::paths`). A name built from a path (`cat(p, "::", q)`) is a key the split places by,
+        // but `doc` holds no such name: a row relayed by one was found in no document, and dropped.
         let path_keys = |rel: &str| -> Vec<usize> {
             match super::path_key_column(rel) {
                 Some(c) if !f.derives(rel) => vec![c],
-                _ => split.path_keys.get(rel).cloned().unwrap_or_default(),
+                _ => split.paths.get(rel).cloned().unwrap_or_default(),
             }
         };
         let node_declared = f.declared("node");
@@ -132,15 +160,20 @@ impl ProgramPass for Locate {
         let mut items: Vec<Item<'_>> = rules.iter().map(|&r| Item::Keep(r)).collect();
         let mut ats: Vec<(String, Vec<(String, String)>)> = Vec::new();
         let mut names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
-        // The relayed targets, by name: the cross-file part's reads of each are made reads of its `at`.
-        let mut relayed: HashMap<String, usize> = HashMap::new();
+        // The relayed targets, by name, with their `at`'s name: the cross-file part's reads of each are made reads of it.
+        // `rewired`: a relay an earlier round made is read by a cross-file rule a later round's move made (0290).
+        let mut relayed: HashMap<String, String> = HashMap::new();
+        let mut rewired = false;
         for rel in &targets {
             let read_locally = readers.get(rel.as_str()).is_some_and(|&n| n > 0);
             // Read locally but keyed by a path: each row's document is its path's (decision 0665).
-            let key = split.path_keys.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));
-            // A relay made in an earlier round (`r_at…(d, …) :- r(…), doc(…)`) is not made again: the relation is located
-            // (a later round runs when another relation was left, as in a pack's batch).
-            if key.is_some() && rules.iter().any(|r| head(r).starts_with(&format!("{rel}_at")) && reads(r).contains(rel.as_str()) && reads(r).contains("doc")) {
+            let key = split.paths.get(rel.as_str()).and_then(|c| c.first().copied()).filter(|_| read_locally && !f.lattice(rel));
+            // A relay made in an earlier round (`r_at…(d, …) :- r(…), doc(…)`) is not made again: a cross-file rule that
+            // reads the target now (a reader a later round's move took to the cross-file part, `MoveCrossFile`) reads it.
+            let earlier = rules.iter().find(|r| head(r).starts_with(&format!("{rel}_at")) && reads(r).contains(rel.as_str()) && reads(r).contains("doc"));
+            if let (Some(_), Some(r)) = (key, earlier) {
+                relayed.insert(rel.clone(), head(r).to_owned());
+                rewired = true;
                 continue;
             }
             if let (Some(col), Some(doc_width), Some(cols)) = (key, doc_width, f.columns(rel)) {
@@ -152,8 +185,8 @@ impl ProgramPass for Locate {
                 at_cols.extend(cols.iter().map(|(n, t)| ((*n).to_owned(), (*t).to_owned())));
                 names.insert(at.clone());
                 let k = ats.len();
+                relayed.insert(rel.clone(), at.clone());
                 ats.push((at, at_cols));
-                relayed.insert(rel.clone(), k);
                 items.push(Item::Relay { rel: rel.clone(), at: k, width: cols.len(), col, doc_width });
                 self.located.push(rel.clone());
                 continue;
@@ -218,7 +251,7 @@ impl ProgramPass for Locate {
             items.push(Item::ReadAt { rel: rel.clone(), at: k, width: cols.len() });
             self.located.push(rel.clone());
         }
-        if self.located.is_empty() {
+        if self.located.is_empty() && !rewired {
             return Ok(());
         }
         let input = w.input().clone();
@@ -242,7 +275,7 @@ impl ProgramPass for Locate {
                             L::Atom(a) if relayed.contains_key(v.rel_name(a.rel())) => {
                                 let mut args = vec![T::Wild];
                                 args.extend(a.args().map(|t| t_of(&input, r, t)));
-                                rb.atom_with(ats[relayed[v.rel_name(a.rel())]].0.as_str(), &args, a.neg(), a.gated())
+                                rb.atom_with(relayed[v.rel_name(a.rel())].as_str(), &args, a.neg(), a.gated())
                             }
                             _ => rb.lit(&input, r, l),
                         };

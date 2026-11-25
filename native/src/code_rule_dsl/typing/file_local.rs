@@ -190,7 +190,7 @@ pub use on_version::FileLocal;
 mod passes;
 pub mod node_crossings;
 pub use node_crossings::NodeCrossing;
-pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins};
+pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, locate_all};
 pub mod export_demand;
 pub use export_demand::{DemandExports, demand_exports};
 pub use split_memo::forget as forget_splits;
@@ -220,14 +220,27 @@ pub(crate) fn option_input(rel: &str) -> bool {
 /// them. Placeless to the split, as the options are: a per-file rule joins them and stays per-file. Bound whole beside
 /// every chunk, a setting keyed by a file's path (`SETTINGS_BY_PATH`) holds every file's row, so its path places no
 /// document; which rows a file's results can read, and so its memo entry's key, is `corpus::memo::settings_scopes`'.
+/// The module resolution the phase `tsx_names` hands on is read so too (decision 0665): each file's targets by its
+/// path, each target's exports and whether it is a workspace module by the target. A source file's edit can change
+/// them, but only the files whose own rows, or their targets' rows, changed read a change: a file's memo entry is
+/// keyed by those rows (`settings_scopes`), as one under a `package.json` is by its package's, and the phase, run
+/// again first, hands on the new rows (0083 §2.3's every-file miss is a read of every file's rows, which this is not).
 pub fn setting_input(rel: &str) -> bool {
     matches!(rel, "package" | "package_field" | "package_export" | "tsconfig" | "tsconfig_path" | "package_for" | "tsconfig_for" | "env")
+        || SETTINGS_BY_PATH.iter().any(|(r, _)| *r == rel)
+        || SETTINGS_BY_FOLDER.contains(&rel)
 }
 
-/// The settings with a row per file (decision 0665): `package_for(path, dir)`, `tsconfig_for(path, dir)`, keyed by
-/// its path in column 0. `SETTINGS_BY_FOLDER` holds those keyed by the folder such a row names, in column 0.
-pub const SETTINGS_BY_PATH: [&str; 2] = ["package_for", "tsconfig_for"];
-pub const SETTINGS_BY_FOLDER: [&str; 4] = ["package", "package_field", "tsconfig", "tsconfig_path"];
+/// The settings with a row per file (decision 0665), keyed by its path in column 0, and the column that names the
+/// folder (`package_for(path, dir)`, `tsconfig_for(path, dir)`) or target (`tsx_names__target_at(path, spec, t)`)
+/// whose rows it reads. `SETTINGS_BY_FOLDER` holds those keyed by such a folder or target, in column 0.
+pub const SETTINGS_BY_PATH: [(&str, usize); 3] = [("package_for", 1), ("tsconfig_for", 1), ("tsx_names__target_at", 2)];
+pub const SETTINGS_BY_FOLDER: [&str; 6] = ["package", "package_field", "tsconfig", "tsconfig_path", "tsx_names__exports", "tsx_names__module"];
+
+/// The folder or target column of a setting keyed by a file's path (`SETTINGS_BY_PATH`).
+pub fn setting_by_path(rel: &str) -> Option<usize> {
+    SETTINGS_BY_PATH.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c)
+}
 
 /// The column of a base relation that holds a file's path (decision 0665): `doc`'s. A path names one document (a guest
 /// shares its host's, and its chunk), and a chunk holds its own documents' `doc` rows alone, so a variable bound there

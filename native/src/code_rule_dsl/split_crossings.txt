@@ -3,7 +3,9 @@ data-layer annotations
 data-layer CONN301
 data-layer cpl_missing
 data-layer cpl_msg
+data-layer er_edge
 data-layer er_facade_site
+data-layer er_skip
 data-layer la_eager_delegate
 data-layer ma_branch_aware
 data-layer pos_allow_broken
@@ -15,7 +17,9 @@ data-layer:alone annotations
 data-layer:alone CONN301
 data-layer:alone cpl_missing
 data-layer:alone cpl_msg
+data-layer:alone er_edge
 data-layer:alone er_facade_site
+data-layer:alone er_skip
 data-layer:alone la_eager_delegate
 data-layer:alone ma_branch_aware
 data-layer:alone pos_allow_broken
@@ -27,4 +31,3 @@ django sfu_atomic_def
 javascript types_apart
 python copy_only
 python PERF401
-vue vprop_name

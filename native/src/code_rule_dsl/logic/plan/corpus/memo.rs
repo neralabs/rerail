@@ -186,7 +186,9 @@ impl Strata {
             if reached.iter().any(|r| crate::code_rule_dsl::typing::file_local::option_input(r)) {
                 hash.update(options.to_string().as_bytes());
             }
-            let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r)).collect();
+            // A phase's export read as a setting (`file_local::setting_input`, `tsx_names`'s) keys a file's entry by the
+            // rows that file can read of it (`SettingsDigests::identities`), not by all of them.
+            let by_rows: Vec<&str> = reached.iter().map(String::as_str).filter(|r| phased.contains_key(*r) && !crate::code_rule_dsl::typing::file_local::setting_input(r)).collect();
             out.insert(rel.clone(), with_rows(hash.finalize().into(), by_rows.iter().map(|r| (*r, &phased[*r]))));
         }
         out
@@ -211,7 +213,7 @@ pub enum SettingsScope {
 /// path, a variable its head drops) is of every file's rows, and so is a memoised relation still keyed by one.
 pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> BTreeMap<String, SettingsScope> {
     use crate::code_rule_dsl::logic::program_image::TermRef;
-    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, SETTINGS_BY_PATH};
+    use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
     /// A relation's reads of the settings: of any file's, of its own file's, and keyed by its columns' paths or folders.
     #[derive(Clone, Default, PartialEq)]
     struct Reach {
@@ -224,12 +226,48 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
     let base = |rel: &str| -> Option<Reach> {
         if SETTINGS_BY_FOLDER.contains(&rel) {
             Some(Reach { folder: [0].into(), ..Reach::default() })
-        } else if SETTINGS_BY_PATH.contains(&rel) {
+        } else if setting_by_path(rel).is_some() {
             Some(Reach { path: [0].into(), ..Reach::default() })
         } else {
             None
         }
     };
+    // A rule's own paths (its document's, `doc(d, p, _)`), and the folders or targets its own file's rows name: read
+    // at its own path (`package_for(p, dir)`, `tsx_names__target_at(p, s, t)`), or carried in a column of a derived
+    // relation made from them (`named`: `target(d, s, t)` from `tsx_names__target_at` at its own path).
+    let anchors = |rule: &crate::code_rule_dsl::logic::program_image::RuleRef<'_>, named: &HashMap<String, BTreeSet<usize>>| {
+        let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).filter(|a| !a.neg()).collect();
+        let own: HashSet<_> = atoms.iter().filter(|a| v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
+        let mut folders: HashSet<_> = atoms
+            .iter()
+            .filter_map(|a| setting_by_path(v.rel_name(a.rel())).map(|c| (a, c)))
+            .filter(|(a, _)| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
+            .filter_map(|(a, c)| a.args().nth(c).and_then(|t| t.var()))
+            .collect();
+        for a in &atoms {
+            if let Some(cols) = named.get(v.rel_name(a.rel())) {
+                folders.extend(cols.iter().filter_map(|&c| a.args().nth(c).and_then(|t| t.var())));
+            }
+        }
+        (own, folders)
+    };
+    // `named` first, to its fixed point: a read is decided by its key's anchor, which must be known when it is.
+    let mut named: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    loop {
+        let mut changed = false;
+        for rule in v.rules() {
+            let (_, folders) = anchors(&rule, &named);
+            let cols: BTreeSet<usize> = rule.head().args().enumerate().filter(|(_, t)| t.var().is_some_and(|x| folders.contains(&x))).map(|(j, _)| j).collect();
+            let head = v.rel_name(rule.head().rel());
+            if !cols.is_empty() && !named.get(head).is_some_and(|had| had.is_superset(&cols)) {
+                named.entry(head.to_owned()).or_default().extend(cols);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
     let mut reach: HashMap<String, Reach> = HashMap::new();
     loop {
         let mut changed = false;
@@ -237,14 +275,7 @@ pub fn settings_scopes(local: &crate::code_rule_dsl::logic::plan::body::Placed, 
             let head = v.rel_name(rule.head().rel());
             let head_at = |t: TermRef<'_>| -> Option<usize> { t.var().and_then(|s| rule.head().args().position(|h| h.var() == Some(s))) };
             let atoms: Vec<_> = rule.body().filter_map(|l| l.atom()).collect();
-            // Its document's paths, and the folders their settings rows name.
-            let own: HashSet<_> = atoms.iter().filter(|a| !a.neg() && v.rel_name(a.rel()) == "doc").filter_map(|a| a.args().nth(1).and_then(|t| t.var())).collect();
-            let folders: HashSet<_> = atoms
-                .iter()
-                .filter(|a| !a.neg() && SETTINGS_BY_PATH.contains(&v.rel_name(a.rel())))
-                .filter(|a| a.args().next().and_then(|t| t.var()).is_some_and(|p| own.contains(&p)))
-                .filter_map(|a| a.args().nth(1).and_then(|t| t.var()))
-                .collect();
+            let (own, folders) = anchors(&rule, &named);
             let mut got = reach.get(head).cloned().unwrap_or_default();
             for a in &atoms {
                 let rel = v.rel_name(a.rel());
@@ -293,13 +324,15 @@ pub struct SettingsDigests {
     all: [u8; 32],
     /// Each setting keyed by a path, its rows by that path; keyed by a folder, by that folder: (relation, row).
     by_path: HashMap<i64, Vec<(usize, Vec<i64>)>>,
+    /// The folder or target column of each relation keyed by a path (`file_local::setting_by_path`), by its index.
+    hop: HashMap<usize, usize>,
     by_folder: HashMap<i64, Vec<(usize, Vec<i64>)>>,
 }
 
 impl SettingsDigests {
     /// Of `rels`: each setting the run binds, by name.
     pub fn of(rels: &[(&str, &dyn crate::code_rule_dsl::facts::vtab::Source)]) -> Self {
-        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, SETTINGS_BY_PATH};
+        use crate::code_rule_dsl::typing::file_local::{SETTINGS_BY_FOLDER, setting_by_path};
         let mut out = SettingsDigests::default();
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings/v1\0");
@@ -314,7 +347,8 @@ impl SettingsDigests {
             for row in &rows {
                 row.iter().for_each(|x| hash.update(x.to_le_bytes()));
             }
-            let keyed = if SETTINGS_BY_PATH.contains(name) {
+            let keyed = if let Some(c) = setting_by_path(name) {
+                out.hop.insert(k, c);
                 Some(&mut out.by_path)
             } else if SETTINGS_BY_FOLDER.contains(name) {
                 Some(&mut out.by_folder)
@@ -344,7 +378,7 @@ impl SettingsDigests {
         let mut hash = Sha256::new();
         hash.update(b"rerail.settings-of-a-file/v1\0");
         let own = self.by_path.get(&path).map(Vec::as_slice).unwrap_or_default();
-        let folders: BTreeSet<i64> = own.iter().filter_map(|(_, r)| r.get(1).copied()).collect();
+        let folders: BTreeSet<i64> = own.iter().filter_map(|(k, r)| r.get(*self.hop.get(k)?).copied()).collect();
         for (k, row) in own.iter().chain(folders.iter().flat_map(|f| self.by_folder.get(f).into_iter().flatten())) {
             hash.update((*k as u64).to_le_bytes());
             row.iter().for_each(|x| hash.update(x.to_le_bytes()));

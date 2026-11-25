@@ -151,6 +151,39 @@ Found on the way and fixed:
      joins' constants (oscar's `product_demand`), parts' path-key words.
    - Lists: split 34 → 29, node 3,083 → 3,031 (JavaScript 31 → 8, TypeScript 26 → 14, Node 20 → 11, React 55 → 47;
      python-main +4, fast003's helpers, now declared and holding a node).
+6. **Module resolution is the phase `tsx_names`; the split places built names, keyed families and scopes** (the
+   branch's 94e9aafd78, 6be2b4b88f's split, 1a9517d64a (0676), and 1d2efb9bd2's three engine fixes).
+   - TypeScript's and JavaScript's import resolution runs first as the phase `tsx_names`
+     (`typing/programs/tsx_names.rerail`) and hands on symbols alone: `target_at` by the importing file's path,
+     `exports`, `module`. `tsx/names.rerail` reads them as settings, so a file's memo entry is keyed by its own
+     imports' rows (`SETTINGS_BY_PATH` carries the target column). A phase naming no language runs in its reader's.
+   - Found on the way: the phase's own cross-file part read every file's import nodes (`target` held one under
+     `resolve_base`). Its resolution now reads each file's statements as rows of a document and symbols
+     (`spec_in`, `export_from_in`, `star_export_in`, `own_export`), so no node crosses with it.
+   - A variable built from a placed one that leads its string (`rx_group`, `replace_all`, `concat`) is placed by it,
+     a key with no location (6be2b4b88f). A scope `nearest` finds is a location, and a keyed family of values read
+     where its root holds is per-file (0676).
+   - `FileLocal::paths`: the path keys that hold a path as it is. `locate` finds a row's document only through one of
+     those; a name built from a path is a key the split places by, but `doc` holds no such name, so a row relayed by
+     one was found in no document and dropped. A relay an earlier `locate_all` round made is read by the cross part's
+     readers a later round moved (the branch's fix of what fix 5 found). The preparation's locate loop is
+     `file_local::locate_all`.
+   - Rule texts (not the data layer): React's file gate joins its JSX library table in the file's own rule
+     (`jsx_source_runtime` read every file's `@jsxImportSource`), and Vue's namespace step is keyed by the element
+     (`vns_step` read every file's element names).
+   - `gate/executor-coverage/packs.tsv`: `@glob_sub`, `@package_of`, `@qname` and `@join` now count under the
+     engine's phase program. Written from the static census alone, with no executor run.
+   - Lists: split 29 → 32 (Vue 1 → 0; the data layer +2, alone and batched), node 3,031 → 2,939 (React 47 → 2, Vue 16 → 4, TypeScript 14 → 8, JavaScript 8 → 7, the
+     data layer 103 → 89 and 104 → 90).
+   - Added, each a consequence named here, not a new rule:
+     - The data layer's `er_edge` and `er_skip` (eager-resolve). The paths fix moves them cross-file, where before
+       their rows were relayed by a built name and dropped. The branch's matching rewrite of `eager-resolve.rerail`
+       is data-layer text, not ported.
+     - React's `sandbox_token`, under `sandbox_value`'s `match_all` table (`rr_ctx`/`rr_mall`, a lowering's value
+       view, not covered here). It was hidden while `iframe` crossed under `jsx_source_runtime`.
+   - Not ported, as not split work: the branch's run options decided before the run (9dccfd0b30, on constant-folding
+     passes main lacks), the configuration files' kept rows (12b6ba7e77, 4e11f91949), embedders' places read in place
+     (362ad19b9f), and the kept-facts staging lock in fc57da4d1a.
 
 ## Consequences
 
@@ -161,8 +194,8 @@ Found on the way and fixed:
 
 ## Open
 
-- The split's gaps still to port: 0652's follow-up (`row_documents`, `same_document_ties`: SIM113), 0665's placeless
-  settings and path keys, 0676's `nearest`.
+- The split's gaps still to port: 0652's follow-up (`same_document_ties`: SIM113).
+- A lowering's value view (`match_all`'s `rr_ctx`/`rr_mall`) is not covered by its readers (React's `sandbox_token`).
 - Producers for `spec_resolved` (from main's `import_target` resolver) and `npm_ignored` (package.json `files`,
   `.npmignore`, `.gitignore`).
 - `resolve_export`'s family needs Python's names as a phase over symbols (oscar's `py_names`), an engine change of its
