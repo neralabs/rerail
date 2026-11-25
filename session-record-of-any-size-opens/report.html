@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 1103 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #1103</div>
+  <h1>A session&#x27;s record past 512 MB opens after a restart</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>May a session&#x27;s open read its record a line at a time, and keep of it only what the open reads?</p>
+  <ol><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A session whose record passed 536,870,888 characters opens again after a restart.</li><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>An open holds no closed call&#x27;s before-texts, and no hook host&#x27;s sample texts.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> approve it: at <code>main</code> and in 0.2.1 every event of such a session fails after a restart; here it opens with the same entries, and its case costs 1.3 s.</p>
+  <div class="big">
+    <div><b class="w">715 lines</b><span>in 8 files. 357 ship, 358 are tests and text.</span></div><div><b class="w">High-risk path review</b><span>It edits <code>src/engine/storage/</code>, which a maintainer approves.</span></div><div><b class="w">Waits on nothing</b><span>No CI run at this head yet: not pushed.</span></div><div><b class="w">3 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/1103">GitHub</a> on 25 November 2026, at head 416732add6.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>Session reopens</b></td><td class="in" data-l="Intended">A session takes its ledger back at its next open, &quot;as after an idle close or a daemon restart&quot;. <span class="tagx">a test&#x27;s name</span></td><td class="fo" data-l="Found">A record of 600 MB: 4 of 4 events answered <code>400 Invalid string length</code> after a restart. <span class="tagx">the loop, 2 versions</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 1.</b> and reads the record a line at a time from the same handle.</td></tr><tr><td class="k"><span class="lb">B</span><b>What an open holds</b></td><td class="in" data-l="Intended">An open restores the calls still open with their before-texts; a hook host keeps no samples in memory. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">With the line reader alone, an open of a 2 GB record took the daemon to 4,686 MB. <span class="tagx">one run each</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 2.</b> and drops what no reader of the entries takes, as each line is read.</td></tr><tr><td class="k"><span class="lb">B</span><b>Torn line on Windows</b></td><td class="in" data-l="Intended">A last line a write left unfinished is cut off before the next line. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">On Windows 11 the open fails with <code>EPERM: operation not permitted, ftruncate</code>. <span class="tagx">the torn-line case</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and cuts the line through a write handle of its own first.</td></tr><tr><td class="k"><span class="lb">C</span><b>Bundle steers</b></td><td class="in" data-l="Intended">The bundle lists the steers the session&#x27;s ledger holds. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">Past the limit the read throws, is caught, and the ledger counts as not found. <span class="tagx">our reading</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and reads it a line at a time.</td></tr></tbody></table>
+<figcaption>A session open 16 days, met on 25 November 2026; shown at <code>main</code> d54013c841 on Linux x64 and Windows 11, and in 0.2.1.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. Session reopens</td><td data-l="Where main states the intent"><code>test/runtime/session-samples.test.ts</code>: &quot;stay in its ledger when the session opens again from it, as after an idle close or a daemon restart&quot;. <code>#openLedger</code> in <code>src/runtime/runtime.ts</code> reads the ledger through <code>readLines</code>.</td><td data-l="The cause, and what was measured"><code>readLines</code> read the file through <code>readLedgerFile</code>, <code>handle.readFile(&quot;utf8&quot;)</code>, into one string; past 536,870,888 characters Node throws <code>RangeError: Invalid string length</code>, and every event of the session fails at its open.</td></tr><tr><td class="k">B. What an open holds</td><td data-l="Where main states the intent"><code>unresolvedCodeRuleCalls</code>: &quot;Code-rule calls recorded without a matching result&quot;; <code>MutableContentSource</code>: &quot;One that does not keep them (a hook host&#x27;s session, <code>keepsSamples</code>) holds none&quot;.</td><td data-l="The cause, and what was measured"><code>validatedLedger</code> ran over all values once the whole file was read, and <code>compactValidated</code> copied each entry; <code>ledger.entries</code> kept a closed call&#x27;s before-texts and a hook host&#x27;s sample texts through the open.</td></tr><tr><td class="k">B. Torn line on Windows</td><td data-l="Where main states the intent"><code>readLines</code> sets <code>truncateTo</code>; <code>appendJsonLine</code> in <code>src/runtime/runtime.ts</code> truncated to it through the handle it opened with <code>O_APPEND</code>.</td><td data-l="The cause, and what was measured">On Windows a handle opened to append holds append rights only, and a truncate needs write rights.</td></tr><tr><td class="k">C. Bundle steers</td><td data-l="Where main states the intent"><code>readSteers</code> in <code>src/cli/support-bundle.ts</code>: &quot;The steers as delivered, from the session&#x27;s ledger&quot;, read through <code>readFileSync(path, &quot;utf8&quot;)</code>.</td><td data-l="The cause, and what was measured"><code>readQuietly</code> returns undefined on any error, so a ledger past Node&#x27;s string limit reads as missing.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 311" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Records read line by line, high risk, 119 lines; B, Session open keeps less, medium risk, 180 lines; C, Support bundle reads lines, low risk, 58 lines. Read first: file-lines.ts, runtime.ts, ledger-paths.ts. To skim: 357 lines of tests and 1 line of the release note." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk high"/><text x="49" y="38" class="t s">High risk, 119 lines</text><text x="128" y="59" text-anchor="end" class="t s">file-lines.ts</text><g><title>file-lines.ts: 83 changed lines, high risk</title><path d="M134 50h20.9a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-20.9z" class="rk high"/></g><text x="163.9" y="59" class="t n">83</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">ledger-paths.ts</text><g><title>ledger-paths.ts: 36 changed lines, high risk</title><path d="M134 67h6.8a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-6.8z" class="rk high"/></g><text x="149.8" y="76" class="t n">36</text><text x="336" y="76" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="72" r="8.5" class="nc"/><text x="254" y="76" text-anchor="middle" class="t b inv">3</text><rect x="4.5" y="90.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="104" text-anchor="middle" class="t b">B</text><rect x="30" y="95" width="14" height="10" rx="2" class="rk med"/><text x="49" y="104" class="t s">Medium risk, 180 lines</text><text x="128" y="125" text-anchor="end" class="t s">runtime.ts</text><g><title>runtime.ts: 180 changed lines, medium risk</title><path d="M134 116h50a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-50z" class="rk med"/></g><text x="193" y="125" class="t n">180</text><text x="336" y="125" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="121" r="8.5" class="nc"/><text x="254" y="125" text-anchor="middle" class="t b inv">2</text><rect x="4.5" y="139.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="153" text-anchor="middle" class="t b">C</text><rect x="30" y="144" width="14" height="10" rx="2" class="rk low"/><text x="49" y="153" class="t s">Low risk, 58 lines</text><text x="128" y="174" text-anchor="end" class="t s">support-bundle.ts</text><g><title>support-bundle.ts: 58 changed lines, low risk</title><path d="M134 165h13.4a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-13.4z" class="rk low"/></g><text x="156.4" y="174" class="t n">58</text><line x1="4" y1="188" x2="336" y2="188" class="ar thin"/><text x="4" y="208" class="t b">Skim: tests and text</text><text x="128" y="228" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 109 changed lines, skim</title><path d="M134 219h28.7a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-28.7z" class="rk skim"/></g><text x="171.7" y="228" class="t n">109</text><text x="128" y="245" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 239 changed lines, skim</title><path d="M134 236h67.7a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-67.7z" class="rk skim"/></g><text x="210.7" y="245" class="t n">239</text><text x="128" y="262" text-anchor="end" class="t s">tests of C</text><g><title>Tests of change C: 9 changed lines, skim</title><path d="M134 253h0a2.7 2.7 0 0 1 2.7 2.7v5.6a2.7 2.7 0 0 1 -2.7 2.7h-0z" class="rk skim"/></g><text x="141.7" y="262" class="t n">9</text><text x="128" y="279" text-anchor="end" class="t s">release note</text><g><title>The release note: 1 line</title><path d="M134 270h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk skim"/></g><text x="139.3" y="279" class="t n">1</text><rect x="4" y="295" width="14" height="10" rx="2" class="rk high"/><text x="22" y="304" class="t s">High</text><rect x="62.8" y="295" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="304" class="t s">Medium</text><rect x="133" y="295" width="14" height="10" rx="2" class="rk low"/><text x="151" y="304" class="t s">Low risk</text><rect x="214.6" y="295" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="304" class="t s">Skim</text></svg>
+<figcaption>Most lines are the session open in <code>runtime.ts</code>; the reader itself is 83.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>file-lines.ts</code>: <code>LineSplitter.push</code>, <code>eachLine</code></b><span class="min">6 min</span><span class="x">Does each line, and the last line&#x27;s byte offset, come out as a decode of the whole file gives?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>runtime.ts</code>: <code>readLines</code>, <code>readSessionLedger</code>, <code>KeptLedger</code>, <code>appendJsonLine</code></b><span class="min">8 min</span><span class="x">Does any reader of an open&#x27;s entries need a closed call&#x27;s before-text or a hook host&#x27;s sample text?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>ledger-paths.ts</code>: <code>openLedgerToRead</code>, <code>readLedgerLines</code></b><span class="min">2 min</span><span class="x">Do the folder checks and the no-follow open run before the first read, as for <code>readLedgerFile</code>?</span></div></li><li><div><b><code>support-bundle.ts</code>: <code>readSteers</code>, <code>ledgerSteers</code>, <code>deliveredSteer</code></b><span class="min">2 min</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">4 min</span><span class="x">One case writes 537,919,488 bytes in lines <code>rerail scrub</code> pads, then opens the session; the reader cases feed reads of 1 to 16 bytes.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 269" role="img" aria-label="The changes by risk, high on top, against six checks. A, Line reader, high risk: the first five checks hold. B, Session open, medium risk: the first five checks hold. C, Bundle steers, low risk: the first five checks hold. CI at this head does not hold yet for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx hib"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk high"/><text x="28" y="34" class="t s b">High risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Line reader</text><g><title>Line reader, fails without the fix: At `main` the record case fails with `RangeError: Invalid string length` on Linux x64 and Windows 11, through this reader&#x27;s caller; here it passes.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Line reader, independent review: Mutants of the reader&#x27;s 4 deciding lines (bytes held across reads, the last line&#x27;s start, the copy of a read&#x27;s rest, the no-follow open) each fail a case on Linux x64.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Line reader, users lose nothing: Each line and the last come out as a decode of the whole file gives, in reads of 1 to 16 bytes and 1 MiB; the folder checks and the no-follow open are `readLedgerFile`&#x27;s.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Line reader, rules scan: nothing new: Rules review against `main` d54013c841, Rerail built from `main`: no new finding; `push` at 4, every function at 3 or under otherwise.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Line reader, Windows 11: no new failure: Windows 11: the 3 changed test files 30 of 30 runs with the engine of this native tree.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Line reader, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed.</title><circle cx="320" cy="52" r="7.4" class="mo"/></g><rect x="1" y="75" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="80" width="14" height="10" rx="2" class="rk med"/><text x="28" y="89" class="t s b">Medium risk</text><rect x="8.5" y="97.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="111" text-anchor="middle" class="t b">B</text><text x="34" y="111" class="t b">Session open</text><g><title>Session open, fails without the fix: At `main` the torn-line case fails with `EPERM` on Windows 11; the cases on what an open keeps (before-texts, sample texts, an OMP session&#x27;s samples, the last watermark snapshot) read the new `readSessionLedger`.</title><circle cx="150" cy="107" r="8" class="mh"/><path d="M146 107l3 3l5 -6" class="mt"/></g><g><title>Session open, independent review: Mutants of its 9 deciding lines each fail a case on Linux x64; the tenth, the cut through a handle of its own, is `main`&#x27;s code, which fails on Windows 11.</title><circle cx="184" cy="107" r="8" class="mh"/><path d="M180 107l3 3l5 -6" class="mt"/></g><g><title>Session open, users lose nothing: Only a call still open is begun again with its before-texts (`unresolvedCodeRuleCalls`); a hook host keeps no samples; OMP and Pi keep theirs; the 18 importing test files pass on both systems.</title><circle cx="218" cy="107" r="8" class="mh"/><path d="M214 107l3 3l5 -6" class="mt"/></g><g><title>Session open, rules scan: nothing new: Rules review: `add` at 6, `#close` at 4, `readLines` from 5 to 4; no new finding.</title><circle cx="252" cy="107" r="8" class="mh"/><path d="M248 107l3 3l5 -6" class="mt"/></g><g><title>Session open, Windows 11: no new failure: Windows 11: its cases 30 of 30 runs; the loop at this head served 4 of 4 events.</title><circle cx="286" cy="107" r="8" class="mh"/><path d="M282 107l3 3l5 -6" class="mt"/></g><g><title>Session open, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed.</title><circle cx="320" cy="107" r="7.4" class="mo"/></g><rect x="1" y="130" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="135" width="14" height="10" rx="2" class="rk low"/><text x="28" y="144" class="t s b">Low risk</text><rect x="8.5" y="152.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="166" text-anchor="middle" class="t b">C</text><text x="34" y="166" class="t b">Bundle steers</text><g><title>Bundle steers, fails without the fix: A steer on a ledger&#x27;s last line with no newline is found; leaving that line out fails the case.</title><circle cx="150" cy="162" r="8" class="mh"/><path d="M146 162l3 3l5 -6" class="mt"/></g><g><title>Bundle steers, independent review: Its one deciding line, the last line&#x27;s steer, fails a case when changed.</title><circle cx="184" cy="162" r="8" class="mh"/><path d="M180 162l3 3l5 -6" class="mt"/></g><g><title>Bundle steers, users lose nothing: The same steers as `main` for a ledger under the limit; a ledger that cannot be read is not found, as at `main`.</title><circle cx="218" cy="162" r="8" class="mh"/><path d="M214 162l3 3l5 -6" class="mt"/></g><g><title>Bundle steers, rules scan: nothing new: Rules review: `readSteers` from 8 to 3, `deliveredSteer` at 6.</title><circle cx="252" cy="162" r="8" class="mh"/><path d="M248 162l3 3l5 -6" class="mt"/></g><g><title>Bundle steers, Windows 11: no new failure: Windows 11: `support-bundle.test.ts` 30 of 30 runs.</title><circle cx="286" cy="162" r="8" class="mh"/><path d="M282 162l3 3l5 -6" class="mt"/></g><g><title>Bundle steers, CI at this head: No CI run at this head on GitHub yet: the branch is not pushed.</title><circle cx="320" cy="162" r="7.4" class="mo"/></g><text x="8" y="199" class="t s">1  fails without the fix</text><text x="168" y="199" class="t s">2  independent review</text><text x="8" y="215" class="t s">3  users lose nothing</text><text x="168" y="215" class="t s">4  rules scan: nothing new</text><text x="8" y="231" class="t s">5  Windows 11: no new failure</text><text x="168" y="231" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="255" r="8" class="mh"/><path d="M10 255l3 3l5 -6" class="mt"/></g><text x="28" y="259" class="t s">holds</text><g><title>does not hold yet</title><circle cx="92" cy="255" r="7.4" class="mo"/></g><text x="106" y="259" class="t s">not yet</text></svg>
+<figcaption>Start at the line reader: every session&#x27;s open reads through it.</figcaption></figure>
+<details class="ev"><summary>Each limit, and each check that does not hold yet</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>Its limit, or why it does not hold yet</th></tr></thead><tbody><tr><td class="k">A to C</td><td data-l="Check">CI at this head</td><td data-l="Its limit, or why it does not hold yet">No CI run at this head on GitHub yet: the branch is not pushed.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>Records read line by line</b><span class="chip high"><i></i>High risk</span><span class="sx">Record of 600 MB after a restart: 4 of 4 events answered 400 at <code>main</code>, served here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>After an update, <code>rerail daemon stop</code> or a reboot, a session whose record passed 536,870,888 characters gets every hook event answered 400, nothing recorded or checked, with no word in the coding agent.</dd>
+<dt>Who meets it</dt><dd>A session open for weeks: one open 16 days with about 54,000 tool calls wrote 655 MB, about 12 KB a call.</dd>
+<dt>What it does</dt><dd><code>eachLine</code> reads the file in 1 MiB reads from the no-follow handle and hands each line on as it is read, holding one line&#x27;s bytes at most; <code>readLedgerLines</code> runs the records folder&#x27;s checks first, as <code>readLedgerFile</code> does.</dd>
+<dt>Risk</dt><dd>High: every session&#x27;s open reads through it, and a wrong cut would lose or corrupt entries.</dd>
+<dt>Check</dt><dd>That <code>LineSplitter.push</code> copies what it keeps past a read, decodes a line only once its newline is read, and that <code>start</code> is the byte offset of the last line.</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="A session with a record of about 600 MB, after the daemon restarts: at main 0 of its 4 hook events are served, each answered 400 Invalid string length; with this change 4 of 4 are served, on Windows 11." class="dg pic"><text x="4" y="17" class="t b">Events served after the restart</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Events served after the restart, main: 0 of 4</title><path d="M80 24h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk was"/></g><text x="88" y="34" class="t n">0 of 4</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Events served after the restart, this change: 4 of 4</title><path d="M80 41h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk now"/></g><text x="276" y="51" class="t n">4 of 4</text></svg><figcaption>Method: The loop: a Claude Code session through the built hook and daemon, its record grown with copies of its own lines to 600 MB, the daemon stopped and started, then 4 of its events; at <code>main</code> on Linux x64 and Windows 11, here on Windows 11.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Session open keeps less</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">One open of the loop&#x27;s record: 47,905 closed calls&#x27; before-texts and 98,804 sample texts no longer held.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>The open read every value, then copied each into an entry, and held every closed call&#x27;s before-texts and a hook host&#x27;s sample texts, which nothing reads; on Windows a torn last line failed every later event.</dd>
+<dt>Who meets it</dt><dd>Every session&#x27;s open after a restart, the more so the longer the session; the Windows defect, a session whose record a crash left mid-line.</dd>
+<dt>What it does</dt><dd><code>readLines</code> hands each value to <code>take</code> as it is read; <code>readSessionLedger</code> takes each to its entry and <code>KeptLedger</code> lets a call&#x27;s before-texts go once its result is read or its id is taken, and drops a hook host&#x27;s sample text; <code>appendJsonLine</code> cuts a torn line through its own handle.</dd>
+<dt>Risk</dt><dd>Medium: an entry dropped that an open needed would restore a call without its before-texts or lose a sample an OMP session reads.</dd>
+<dt>Check</dt><dd>That <code>KeptLedger</code> closes a call at its result and at a later call of the same id, never at another, and that <code>#openLedger</code> keeps sample text for <code>keepsSamples</code> hosts.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="At the open of a Claude Code session&#x27;s 600 MB record of closed calls, main kept the before-texts of all 47,905 calls and the text of all 98,804 samples; with this change it keeps none of either, and their entries stay." class="dg pic"><text x="4" y="17" class="t b">Closed calls&#x27; before-texts held</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Closed calls&#x27; before-texts held, main: 47,905</title><path d="M80 24h88.1213a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-88.1213z" class="rk was"/></g><text x="178.121" y="34" class="t n">47,905</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Closed calls&#x27; before-texts held, this change: 0</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0</text><text x="4" y="75" class="t b">Hook host&#x27;s sample texts held</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Hook host&#x27;s sample texts held, main: 98,804</title><path d="M80 82h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="92" class="t n">98,804</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Hook host&#x27;s sample texts held, this change: 0</title><path d="M80 99h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="109" class="t n">0</text></svg><figcaption>Method: Counted from the record the loop grew with 0.2.1 (600,009,384 bytes): its <code>policy-call</code> and <code>sample</code> lines, all of closed calls; what <code>KeptLedger</code> keeps of them follows from its cases.</figcaption></figure></div></details><details class="card"><summary><span class="lb">C</span><b>Support bundle reads lines</b><span class="chip low"><i></i>Low risk</span><span class="sx">Bundle of such a session: no steers and a ledger not found at <code>main</code>, its steers here.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd><code>rerail support-bundle</code> for a session past the limit says its ledger was not found, so its steers&#x27; text is missing, in the very bundle a person makes for it.</dd>
+<dt>Who meets it</dt><dd>A person who makes a bundle for a session whose record passed 536,870,888 characters.</dd>
+<dt>What it does</dt><dd><code>ledgerSteers</code> reads the ledger with <code>eachLineSync</code>, the last line included, and <code>deliveredSteer</code> takes each <code>delivery</code> line as <code>readSteers</code> did.</dd>
+<dt>Risk</dt><dd>Low: what leaves in a bundle is unchanged; only how the file is read.</dd>
+<dt>Check</dt><dd>That a ledger that cannot be read still reads as not found, and the steers&#x27; cap is the same.</dd>
+</dl><figure><svg viewBox="0 0 340 70" role="img" aria-label="For a session whose ledger is past Node&#x27;s string limit, main&#x27;s bundle reports the ledger not found and no steers; with this change it reads the ledger and its steers." class="dg pic"><text x="4" y="17" class="t b">Ledger found for the session</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Ledger found for the session, main: not found</title><path d="M80 24h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk was"/></g><text x="88" y="34" class="t n">not found</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Ledger found for the session, this change: found</title><path d="M80 41h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk now"/></g><text x="276" y="51" class="t n">found</text></svg><figcaption>Method: By the code at <code>main</code>: <code>readFileSync(path, &quot;utf8&quot;)</code> throws past the limit and <code>readQuietly</code> returns undefined; the bundle at this size was not run.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Read a line at a time, read one Buffer, refuse past the limit, or rotate?</h3>
+<p><b>We chose</b> a line at a time from the same no-follow handle: a record&#x27;s size alone no longer fails an open.</p>
+<p><b>Would change our mind:</b> A maintainer who would bound the record itself; the reader stays right whatever bounds it later.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Read a line at a time <span class='tag new'>chosen</span></td><td data-l="What a user gets">A record past the limit opens; one line in memory at a time.</td><td data-l="Cost">A reader of 83 lines, shared with the support bundle.</td><td data-l="What it breaks">Nothing found.</td></tr><tr><td class="k">Read the file as one Buffer and split it</td><td data-l="What a user gets">Records up to 2 GiB open.</td><td data-l="Cost">The whole file in memory at each open.</td><td data-l="What it breaks"><code>readFile</code> refuses a file over 2 GiB (<code>ERR_FS_FILE_TOO_LARGE</code>): the same failure later.</td></tr><tr><td class="k">Refuse past the limit with a clear message</td><td data-l="What a user gets">The person learns which file to rename.</td><td data-l="Cost">Little code.</td><td data-l="What it breaks">The session still loses every check until a person acts.</td></tr><tr><td class="k">Rotate the record past a size</td><td data-l="What a user gets">A record that stays small.</td><td data-l="Cost">A snapshot of all an open reads as a new file&#x27;s first lines; the scrub, bundle and lost-events walk taught to read it.</td><td data-l="What it breaks">A design change, beyond this fix.</td></tr></tbody></table></div><p><b>Evidence.</b> At <code>main</code> and in 0.2.1 a 600 MB record failed every event after a restart; a Buffer read would carry it to 2 GiB and then fail the same way. Here a record of 537,919,488 bytes opens in 1.3 s on Linux x64, and the loop&#x27;s record in 7.9 s on Windows 11.</p></details></div>
+<div class="dblock"><h3>Keep every entry at an open, or only what the open reads?</h3>
+<p><b>We chose</b> drop a closed call&#x27;s before-texts and a hook host&#x27;s sample texts as each line is read.</p>
+<p><b>Would change our mind:</b> A reader of an open&#x27;s entries that needs either; none does at <code>main</code>.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Keep only what the open reads <span class='tag new'>chosen</span></td><td data-l="What a user gets">An open&#x27;s peak memory about halved at 600 MB and 2 GB.</td><td data-l="Cost">Two rules about which entries an open reads, each with its case.</td><td data-l="What it breaks">Nothing found.</td></tr><tr><td class="k">Keep every entry, as <code>main</code> did</td><td data-l="What a user gets">The same entries in memory as before.</td><td data-l="Cost">Memory that grows with the record: the before-texts and sample texts are about 96% of its bytes.</td><td data-l="What it breaks">At 2 GB the open took the daemon to 4,686 MB, near its 4,288 MB heap limit: a larger record would pass it.</td></tr><tr><td class="k">Drop only the closed calls&#x27; before-texts</td><td data-l="What a user gets">Less to review.</td><td data-l="Cost">Tool inputs and results, about three quarters of a hook host&#x27;s record, still held.</td><td data-l="What it breaks">Nothing, but memory still grows with the record.</td></tr></tbody></table></div><p><b>Evidence.</b> On one Linux x64 machine: with the line reader alone an open of 2 GB peaked at 4,686 MB of daemon memory, here 2,079 MB; at 600 MB, 2,103 against 1,159 MB; the opens took the same time, 7.3 to 7.8 s and about 22 s.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 216" role="img" aria-label="This change stands on main 80cfc21dec, and needs no other change; it merges with the open pull requests #1076 and #1095, which share none of its files, with no conflict." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at 80cfc21dec</text><text x="14" y="38" class="t s">by Git&#x27;s own merge</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">Records of any size open</text><text x="170" y="116" text-anchor="middle" class="t s">needs no other change</text><text x="4" y="146" class="t b">Trial merges with open work</text><rect x="4" y="154" width="108" height="58" rx="8" class="bx good"/><text x="12" y="171" class="t b">#1076</text><text x="12" y="187" class="t s">no shared file,</text><text x="12" y="201" class="t s">merges clean</text><rect x="116" y="154" width="108" height="58" rx="8" class="bx good"/><text x="124" y="171" class="t b">#1095</text><text x="124" y="187" class="t s">no shared file,</text><text x="124" y="201" class="t s">merges clean</text></svg></figure>
+<div><p>It stands alone on <code>main</code> 80cfc21dec, by Git&#x27;s own merge: it needs no other change and none needs it.</p>
+<details class="ev"><summary>The trial merges</summary><p>#1076 and #1095 are open and edit none of its files; Git merges this head with each and with <code>main</code>, exit 0.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>The record&#x27;s growth</b> is not bounded, about 12 KB a tool call; an open reads every line: 1.7 s at 100 MB, 21.8 s at 2 GB.</li>
+<li><b>Linux x64, 30 rounds</b> of the 3 changed test files run on GitHub&#x27;s runner, not on a machine of ours.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Three limits that stay</summary>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>A single line over 536,870,888 characters still fails an open: a tool result or before-text that size.</li>
+<li><code>rerail scrub</code> still reads a whole record as one Buffer; it has no string limit, and its memory grows with the file.</li>
+<li>An OMP or Pi session keeps its samples&#x27; text at an open, as its content source holds them while it runs.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Asks 1 and 2 rule on answers 1 and 2.</p>
+<ol class="lines">
+<li><div><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>May a session open from a record past 536,870,888 characters, read a line at a time?</b> We recommend yes: today every event of such a session fails.</div></li>
+<li><div><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>May an open drop a closed call&#x27;s before-texts and a hook host&#x27;s sample texts as it reads them?</b> We recommend yes: no reader of an open&#x27;s entries takes them.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the runs at <code>main</code>, 0.2.1 and here.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Linux x64</td><td data-l="What ran">The loop at <code>main</code> and with 0.2.1 from npm: a session&#x27;s record of 600,068,546 and 600,009,384 bytes, the daemon restarted, 4 events</td><td data-l="Result">4 of 4 answered <code>400 Invalid string length</code> on both; the second session served; daemon peak 1,544 and 2,291 MB.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The loop at <code>main</code> and at this head</td><td data-l="Result"><code>main</code>: 4 of 4 answered 400. Here: 4 of 4 served, the first, which opened the record, in 7.9 s.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">The case file on <code>main</code></td><td data-l="Result">The record case fails with <code>RangeError</code> on both; the torn-line case with <code>EPERM</code> on Windows 11.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The 3 changed test files, 30 rounds</td><td data-l="Result">30 of 30 passed.</td></tr><tr><td class="k">Linux x64, Windows 11</td><td data-l="What ran">The 18 importing test files here, the 16 of them at <code>main</code></td><td data-l="Result">All passed on both systems, at both.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">14 single-line changes to the deciding lines</td><td data-l="Result">Each fails a case.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>Sources</summary><p>The diff against <code>main</code> d54013c841 and the runs, read on 25 November 2026.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
