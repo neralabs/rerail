@@ -1561,13 +1561,12 @@ function hasErrorCode(error: unknown, code: string): boolean {
 }
 /**
  * A path removed while the walk examined it: ENOENT from its lstat, opendir, open or read, ENOTDIR from those where a
- * folder on its path, or the folder itself, was replaced by a file, or the real path of one being removed, which on
- * Windows can fail with EBADF.
+ * folder on its path, or the folder itself, was replaced by a file. The owner lookups the walk asks (`physicalPath`)
+ * answer for a path gone as they resolve it, whatever code its real path failed with, so any other failure of theirs,
+ * such as EBADF from a path still there, is the walk's to record.
  */
 function vanished(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const { code, syscall } = error as NodeJS.ErrnoException;
-  return code === "ENOENT" || code === "ENOTDIR" || (code === "EBADF" && syscall === "realpath");
+  return hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR");
 }
 /**
  * A path a folder's listing named that was gone when the walk examined it: nothing is left there to check, so it is no
