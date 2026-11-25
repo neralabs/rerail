@@ -27,9 +27,10 @@ no_confusing_non_null_assertion(n, id, m) :- confusing(n, l, o), text(l, x), mat
 layout_at(l) :- confusing(_, l, _).
 wrap_left(n, _, _) :- confusing(n, l, _) => insert_before(l, `(`), insert_after(l, `)`).
 
-// confusing(n, l, o): n is `l o …` with one of the operators; l is ESTree's left, without its parentheses.
+// confusing(n, l, o): n is `l o …` with one of the operators; l is ESTree's left, without its parentheses. A
+// plain assignment has no operator fact: its kind says `=`.
 .decl confusing(n: node, l: node, o: symbol)
-confusing(n, l, o) :- (kind(n, "binary_expression") ; kind(n, "assignment_expression")), op(n, o), says(o, _, _),
+confusing(n, l, o) :- (kind(n, "binary_expression"), op(n, o), says(o, _, _) ; kind(n, "assignment_expression"), o = "="),
     field(n, "left", w), deparen(w, l).
 
 .decl says(o: symbol, id: symbol, msg: symbol)

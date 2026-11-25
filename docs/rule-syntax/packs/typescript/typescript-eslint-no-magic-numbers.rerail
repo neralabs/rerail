@@ -26,27 +26,33 @@
 .violation no_magic_numbers(at: node, msg: symbol) code "@typescript-eslint/no-magic-numbers" "{msg}"
     suppress eslint "@typescript-eslint/no-magic-numbers"
     suppress biome "lint/style/noMagicNumbers"
-no_magic_numbers(f, cat("No magic number: ", cat(raw, "."))) :- signed(n, f, raw, _), estree_parent(f, p), !excused(f),
-    !ts_place(f, _), !kind(p, "variable_declarator"), !named(f, p).
-no_magic_numbers(at, cat("No magic number: ", cat(raw, "."))) :- signed(n, f, _, v), ts_place(f, o),
-    !option(o, "true"), !listed(v), ts_shown(n, at, raw).
-no_magic_numbers(f, "Number constants declarations must use 'const'.") :- signed(n, f, _, _), estree_parent(f, p),
+// Each body tests the tree first and reads a number's value (`signed`) last: rerail-engine drops a negated tree
+// test that follows an atom built on `value` (NOTES-typescript-02.md).
+no_magic_numbers(f, cat("No magic number: ", cat(raw, "."))) :- num(n, f), estree_parent(f, p), !excused(f),
+    !ts_place(f, _), !kind(p, "variable_declarator"), !named(f, p), signed(n, f, raw, _).
+no_magic_numbers(at, cat("No magic number: ", cat(raw, "."))) :- num(n, f), ts_place(f, o),
+    !option(o, "true"), !listed_num(f), ts_shown(n, at, raw).
+no_magic_numbers(f, "Number constants declarations must use 'const'.") :- num(_, f), estree_parent(f, p),
     !excused(f), !ts_place(f, _), kind(p, "variable_declarator"), option("enforceConst", "true"), estree_parent(p, d),
     !const_decl(d).
 .decl const_decl(d: node)
 const_decl(d) :- kind(d, "lexical_declaration"), op(d, "const").
 
-// signed(n, f, raw, v): literal n, or the unary -n / +n holding it, is the number f, written raw, of value v.
-// A BigInt's value ends in n (-2n), so it never equals a Number's.
+// num(n, f): literal n, or the unary -n / +n holding it, is the number f.
+.decl num(n: node, f: node)
+num(n, n) :- (number_lit(n) ; bigint_lit(n)), !sign(n, _, _).
+num(n, u) :- (number_lit(n) ; bigint_lit(n)), sign(n, u, _).
+// signed(n, f, raw, v): number f is written raw, of value v. A BigInt's value ends in n (-2n), so it never equals
+// a Number's.
 .decl signed(n: node, f: node, raw: symbol, v: symbol)
-signed(n, n, t, v) :- literal_value(n, v), text(n, t), !sign(n, _, _).
-signed(n, u, cat(o, t), sv) :- literal_value(n, v), text(n, t), sign(n, u, o),
+signed(n, n, t, v) :- num(n, n), text(n, t), literal_value(n, v).
+signed(n, u, cat(o, t), sv) :- sign(n, u, o), text(n, t), literal_value(n, v),
     (o = "+", sv = v ; o = "-", zero_value(v), sv = v ; o = "-", !zero_value(v), sv = cat("-", v)).
 // ts_shown(n, at, raw): where the TypeScript checks report: a `-` belongs to the number, a `+` does not
 // (`enum E { A = +3 }` is reported at 3, as "3").
 .decl ts_shown(n: node, at: node, raw: symbol)
-ts_shown(n, f, raw) :- signed(n, f, raw, _), !sign(n, _, "+").
-ts_shown(n, n, t) :- signed(n, _, _, _), sign(n, _, "+"), text(n, t).
+ts_shown(n, f, raw) :- num(n, f), !sign(n, _, "+"), signed(n, f, raw, _).
+ts_shown(n, n, t) :- sign(n, _, "+"), text(n, t).
 .decl zero_value(v: symbol)  // -0 is 0 to the ignore list (SameValueZero), and -0n is 0n
 zero_value("0"). zero_value("0n").
 .decl sign(n: node, u: node, o: symbol)
@@ -70,7 +76,7 @@ object_key(f) :- estree_parent(f, m), field(m, "name", f), object_method(m).
 
 // excused(f): ESLint's options and its fixed exceptions.
 .decl excused(f: node)
-excused(f) :- signed(_, f, _, v), listed(v).
+excused(f) :- listed_num(f).
 excused(f) :- option("ignoreDefaultValues", "true"), default_value(f).
 excused(f) :- option("ignoreClassFieldInitialValues", "true"), estree_parent(f, p), field_value(p, f).
 excused(f) :- option("ignoreArrayIndexes", "true"), estree_parent(f, p), kind(p, "subscript_expression"),
@@ -82,6 +88,8 @@ excused(f) :- estree_parent(f, p), (kind(p, "jsx_element") ; kind(p, "jsx_self_c
     kind(p, "jsx_text")).
 .decl listed(v: symbol)  // the ignore list has value v
 listed(v) :- signed(_, _, _, v), option_item("ignore", _, i), ignored(i, v).
+.decl listed_num(f: node)  // number f's value is in the ignore list
+listed_num(f) :- signed(_, f, _, v), listed(v).
 
 // ts_place(f, o): number f stands where TypeScript option o decides, checked in this order:
 //   enum E { A = 1 }      ignoreEnums                    type T = 1 | 2    ignoreNumericLiteralTypes
@@ -90,12 +98,12 @@ listed(v) :- signed(_, _, _, v), option_item("ignore", _, i), ignored(i, v).
 .decl ts_place(f: node, o: symbol)
 ts_place(f, "ignoreEnums") :- enum_value_of(f).
 ts_place(f, "ignoreNumericLiteralTypes") :- alias_literal(f), !enum_value_of(f).
-ts_place(f, "ignoreTypeIndexes") :- signed(_, f, _, _), !alias_literal(f), estree_parent(f, l), kind(l, "literal_type"),
+ts_place(f, "ignoreTypeIndexes") :- num(_, f), !alias_literal(f), estree_parent(f, l), kind(l, "literal_type"),
     nearest(l, a, type_climb_stop), kind(a, "lookup_type").
-ts_place(f, "ignoreReadonlyClassProperties") :- signed(_, f, _, _), estree_parent(f, p), field_value(p, f),
+ts_place(f, "ignoreReadonlyClassProperties") :- num(_, f), estree_parent(f, p), field_value(p, f),
     op(p, "readonly").
 .decl enum_value_of(f: node)
-enum_value_of(f) :- signed(_, f, _, _), estree_parent(f, p), kind(p, "enum_assignment").
+enum_value_of(f) :- num(_, f), estree_parent(f, p), kind(p, "enum_assignment").
 .decl alias_literal(f: node)
 alias_literal(f) :- estree_parent(f, l), kind(l, "literal_type"), nearest(l, a, union_climb_stop),
     kind(a, "type_alias_declaration").
