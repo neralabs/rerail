@@ -1174,6 +1174,36 @@ fn the_body_after_a_paste_is_kept() {
     shapes_agree(shapes);
 }
 
+/// A name pasted by a call, called by the arguments after that call's result (Boost's `BOOST_PP_VARIADIC_ELEM`:
+/// `BOOST_PP_CAT(BOOST_PP_VARIADIC_ELEM_, n)(__VA_ARGS__,)`), its variadic argument a call that gives commas.
+#[test]
+fn a_pasted_name_is_called_after_its_result() {
+    let d = "#define CAT(a, b) CAT_I(a, b)\n#define CAT_I(a, b) a ## b\n#define E(n, ...) CAT(E_, n)(__VA_ARGS__,)\n#define E_2(e0, e1, e2, ...) e2\n#define L 1, 4, 5, 6\n#define EN(l) EN_I(l)\n#define EN_I(l) l\n#define IIF(c, a, b) IIF_ ## c(a, b)\n#define IIF_0(a, b) b\n#define IIF_1(a, b) a\n#define NE(l) l\n#define EM(l)\n#define ENUM(l) IIF(0, EM, NE)(l)\n";
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", &*Box::leak(format!("{d}[E(2, 1, 4, 5) == 5]\n").into_boxed_str()))],
+        &[("main.c", &*Box::leak(format!("{d}[E(2, L) == 5]\n").into_boxed_str()))],
+        &[("main.c", &*Box::leak(format!("{d}[E(2, EN(L)) == 5]\n").into_boxed_str()))],
+        &[("main.c", &*Box::leak(format!("{d}[E(2, ENUM(L)) == 5] [E(2, ENUM((1, 4, 5))) == 5]\n").into_boxed_str()))],
+    ];
+    shapes_agree(shapes);
+}
+
+/// A macro's name passed in a tuple, the tuple spread into a call's arguments (`REM4 x`), and the name called by
+/// the body (Boost's `BOOST_PP_LIST_FOR_EACH_I_M`: `M_I(r, BOOST_PP_TUPLE_REM_4 x)`, `M_D(r, m, d, l, i) m(r, d, i, ...)`),
+/// the call made by a tail (`BOOST_PP_FOR_1_C`'s `BOOST_PP_IIF(c, m, EAT)(2, s)`).
+#[test]
+fn a_name_passed_in_a_tuple_is_called() {
+    let d = "#define REM4(a, b, c, e) a, b, c, e\n#define O(r, _, i, e) <i e>\n#define M(r, x) M_I(r, REM4 x)\n#define M_I(r, x_e) M_D(r, x_e)\n#define M_D(r, m, d, l, i) m(r, d, i, l)\n#define IIF(c, a, b) IIF_ ## c(a, b)\n#define IIF_0(a, b) b\n#define IIF_1(a, b) a\n#define EAT(a, b)\n#define F(c, s, m) IIF(c, m, EAT)(2, s)\n";
+    let shapes: &[&[(&str, &str)]] = &[
+        &[("main.c", &*Box::leak(format!("{d}#define X O, z, q, 0\n#define Y (O, z, q, 0)\n1[M_D(1, O, z, q, 0)] 2[M_I(1, X)] 3[M_I(1, REM4 (O, z, q, 0))] 4[M_I(1, REM4 Y)] 5[M(1, Y)]\n").into_boxed_str()))],
+        &[("main.c", &*Box::leak(format!("{d}[M(1, (O, z, q, 0))]\n").into_boxed_str()))],
+        &[("main.c", &*Box::leak(format!("{d}[IIF(1, M, EAT)(2, (O, z, q, 0))]\n").into_boxed_str()))],
+        &[("main.c", &*Box::leak(format!("{d}[F(1, (O, z, q, 0), M)] [F(0, (O, z, q, 0), M)]\n").into_boxed_str()))],
+        &[("main.c", &*Box::leak(format!("{d}#define L (O, z, q, 0)\n[F(1, L, M) F(1, L, M)]\n").into_boxed_str()))],
+    ];
+    shapes_agree(shapes);
+}
+
 /// The shapes of `shapes`, each in C and C++, expanded on the device, against the serial pass.
 fn shapes_agree(shapes: &[&[(&str, &str)]]) -> (usize, usize) {
     let (mut tokens, mut launches) = (0, 0);

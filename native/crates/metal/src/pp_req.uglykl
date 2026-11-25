@@ -1934,6 +1934,10 @@ UKL_INLINE uint32_t rx_scan(Ux u, Ar a, RxIn in, uint32_t r, uint32_t ln __UKL_P
                             rq(a, nr, RQ_LASTC) == 0u && rq(a, nr, RQ_OPEN) == RX_NONE) {
                             uint32_t el = rx_elen(a, oe);
                             if (el != RX_NONE && tt < el) pass = ukl_min(el - tt, e.len - t);
+                            // A piece ending inside the result: its last token may be a name its result's tail (a
+                            // `(` after it calls it, `M_D(r, m, ...) m(...)` with `m` one of a result's commas'
+                            // pieces), which the result's own reading had a token after: read, not passed.
+                            if (pass == e.len - t && tt + pass < el) pass--;
                         }
                     }
                 }
