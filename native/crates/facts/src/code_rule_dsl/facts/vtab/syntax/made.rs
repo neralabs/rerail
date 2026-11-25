@@ -1273,13 +1273,14 @@ pub(super) enum ColKind {
 
 impl Batch {
     /// Bounds of what a column of `kind` of the batch's rows holds, its documents made or not (`Source::col_bounds`).
-    /// A key: the least and greatest of the batch's (`Docs` are sorted by key). A node: every slot of the least's to
-    /// the greatest's, so one document's are 32 bits. `[MAX, MIN]` with no documents.
+    /// A key: the least and greatest of its documents' keys and their files' (a program's document and nodes are its
+    /// file's, decision 0431 §4: `Docs::file`, a key that need not be the batch's). A node: every slot of the
+    /// least's to the greatest's, so one document's are 32 bits. `[MAX, MIN]` with no documents.
     pub(super) fn bounds_of(&self, kind: ColKind) -> [i64; 2] {
-        let keys = match (self.docs.keys().first(), self.docs.keys().last()) {
-            (Some(&a), Some(&b)) => [i64::from(a), i64::from(b)],
-            _ => [i64::MAX, i64::MIN],
-        };
+        let keys = (0..self.docs.len()).fold([i64::MAX, i64::MIN], |[lo, hi], i| {
+            let (key, file) = (self.docs.key(i), self.docs.file(i));
+            [lo.min(i64::from(key.min(file))), hi.max(i64::from(key.max(file)))]
+        });
         match kind {
             ColKind::Key => keys,
             ColKind::Node if keys[0] > keys[1] => keys,
