@@ -155,8 +155,8 @@ def seen(kept, touch=False):
     tag = get_tag(kept)
     if tag:
         try:
-            mtime, size, written = (int(x) for x in tag.split())
-            if written == st.st_mtime_ns and size == st.st_size:
+            mtime, size, written, *ino = (int(x) for x in tag.split())
+            if written == st.st_mtime_ns and size == st.st_size and ino in ([], [st.st_ino]):
                 return [mtime, size]
         except ValueError:
             pass
@@ -199,8 +199,11 @@ def put(header, payload):
     tmp = f"{kept}.farm-{os.getpid()}-{threading.get_ident()}"
     with open(tmp, "wb") as f:
         f.write(payload)
-    written = os.stat(tmp).st_mtime_ns
-    tag = f"{header['mtime_ns']} {len(payload)} {written}".encode()
+    st = os.stat(tmp)
+    # Its inode too: a copy of it (macOS's clonefile and copyfile, so Rust's fs::copy) carries the
+    # attribute, its mtime and its size, and was then taken for the daemon's file and removed as
+    # unlisted (a build script's copy into its OUT_DIR, under a tree's own target, 2026-11-24).
+    tag = f"{header['mtime_ns']} {len(payload)} {st.st_mtime_ns} {st.st_ino}".encode()
     # The attribute before the mode: macOS refuses it on a read-only file (EACCES), and a tree's
     # git objects are read-only: every one failed, and the daemon dropped this agent each time
     # (2026-11-17).
@@ -214,7 +217,18 @@ def put(header, payload):
 
 
 def has_tag(path):
-    return get_tag(path, follow=False) is not None
+    """Whether `path` is a file the daemon wrote: its attribute, on the inode it was written to (a
+    tag written before the inode was kept: on any)."""
+    tag = get_tag(path, follow=False)
+    if tag is None:
+        return False
+    fields = tag.split()
+    if len(fields) < 4:
+        return True
+    try:
+        return int(fields[3]) == os.lstat(path).st_ino
+    except (OSError, ValueError):
+        return False
 
 
 def unlisted(header):

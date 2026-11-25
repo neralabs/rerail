@@ -39,6 +39,18 @@ def there(path):
 failures = []
 
 
+def mirror_tagged(path):
+    """Whether `path` carries the agent's attribute."""
+    if sys.platform == "darwin":
+        import subprocess
+        return subprocess.run(["xattr", "-p", "org.rerail.farm.sent", path], capture_output=True).returncode == 0
+    try:
+        os.getxattr(path, "user.org.rerail.farm.sent")
+        return True
+    except OSError:
+        return False
+
+
 def synced(h):
     """Waits until the agent has written every put so far: it answers in the order it reads."""
     h.ask({"op": "have", "paths": []}, timeout=30)
@@ -75,6 +87,14 @@ try:
     check("the kept file stays", os.path.exists(there(kept)))
     check("a file git ignores that is still here stays", os.path.exists(there(ignored)))
     check("a file the host made stays", os.path.exists(made))
+    # A command's copy of a file the agent wrote: macOS's copyfile (Rust's fs::copy, a build script's
+    # into its OUT_DIR) carries the attribute, the mtime and the size; it is the host's, and stays.
+    import shutil  # noqa: E402
+    copied = there(os.path.join(checkout, "target/debug/build/x/out/kept.rs"))
+    os.makedirs(os.path.dirname(copied))
+    (shutil.copy2 if sys.platform != "darwin" else lambda a, b: os.system(f"cp -p '{a}' '{b}'"))(there(kept), copied)
+    check("the copy carries the attribute (the case tested)", mirror_tagged(copied))
+    check("a prune leaves a command's copy of a sent file", h.prune(checkout, [kept, ignored]) == [] and os.path.exists(copied))
     check("what was removed is no longer counted as sent", deleted not in h.sent and kept in h.sent)
 
     # A file deleted here, named by a prune's walk, and then made and sent again before the removal:
