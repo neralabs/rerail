@@ -505,9 +505,10 @@ impl Source for Layered {
     fn text_column(&self, column: usize) -> bool {
         self.base.text_column(column)
     }
-    /// Its base's, joined with all a tape value admitted later can hold in a column of its kind: a value is a guest
-    /// document, its key in `GUEST_KEYS..2^31`. Not known where its base's column has no kind (`ColKind`): a value
-    /// admitted later may hold anything there.
+    /// Its base's, joined with all a tape value admitted later can hold in a column of its kind: any document's key
+    /// (`1..2^31`: a value is a guest, its key past `GUEST_KEYS`, but a code guest's document and nodes are its
+    /// file's, decision 0431 §4, a file this chunk need not hold). Not known where its base's column has no kind
+    /// (`ColKind`): a value admitted later may hold anything there.
     fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
         use super::made::ColKind;
         let base = self.base.as_any();
@@ -517,10 +518,10 @@ impl Source for Layered {
             .or_else(|| base.and_then(|b| b.downcast_ref::<super::made::MadeRows>()).and_then(|m| m.col_kind(column)))
             .or_else(|| base.and_then(|b| b.downcast_ref::<super::within::Within>()).and_then(|w| w.col_kind(column)))?;
         let [lo, hi] = self.base.col_bounds(column)?;
-        let guests = [i64::from(super::GUEST_KEYS), (1i64 << 31) - 1];
+        let keys = [1, (1i64 << 31) - 1];
         let [alo, ahi] = match kind {
-            ColKind::Key => guests,
-            ColKind::Node => [guests[0] << 32, (guests[1] << 32) | i64::from(u32::MAX)],
+            ColKind::Key => keys,
+            ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
             ColKind::Atom | ColKind::Place => [0, i64::from(u32::MAX)],
         };
         Some([lo.min(alo), hi.max(ahi)])

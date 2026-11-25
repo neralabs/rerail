@@ -396,6 +396,15 @@ fn a_syntax_sources_column_bounds_hold_its_rows() {
     let projection = Projection { shape: Shape::Core, reads: Some(["node", "text", "child", "line", "col", "name"].iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
     let core = shaped(&store, docs, &projection).unwrap();
     check(&core, [5, 1000], &["node.d", "node.n", "child.p", "child.c", "child.idx", "text.n", "line.n", "col.n", "name.n"]);
+    // A file's own tree alone (`Made::File`, decision 0512), under a hidden key: its document column is its file's
+    // (decision 0431 §4), a key the batch does not hold.
+    let mut tree = document(HIDDEN_KEYS + 5, "t.py", "python", src);
+    let whole = Placement::Copied { delta: 0, within: [0, src.len() as u32] };
+    tree.guest = Some(Arc::new(Guest { host: 7, file: 7, at: 7 << 32, grammar: "python".to_owned(), role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }));
+    let alone = shaped(&store, vec![tree], &projection).unwrap();
+    let node = &alone.iter().find(|(n, _)| *n == "node").unwrap().1;
+    assert!((0..node.len()).any(|r| node.value(r, 0) == 7), "the tree's nodes are its file's");
+    check(&alone, [7, i64::from(HIDDEN_KEYS) + 5], &["node.d", "node.n", "child.p", "child.c"]);
 }
 
 /// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
