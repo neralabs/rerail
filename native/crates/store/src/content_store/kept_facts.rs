@@ -409,6 +409,32 @@ impl RowsIn for PutRows<'_> {
             PutRows::Picked(rows) => rows.get(r, c),
         }
     }
+    /// A relation's chunk read row by row here (no call a value through the reader); a picked put's by its own read.
+    #[inline]
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        use rerail_blocks::packed::At;
+        match self {
+            PutRows::Rel { rel, ids, .. } => {
+                let one = |r: usize| {
+                    let id = ids.as_ref().map_or(r as u32, |ids| ids[r]);
+                    if rel.continues() { rel.get(id, c) } else { rel.rows.get(id, c) }
+                };
+                match at {
+                    At::From(r) => {
+                        for (j, o) in out.iter_mut().enumerate() {
+                            *o = one(r + j);
+                        }
+                    }
+                    At::Rows(rows) => {
+                        for (o, &r) in out.iter_mut().zip(rows) {
+                            *o = one(r as usize);
+                        }
+                    }
+                }
+            }
+            PutRows::Picked(rows) => rows.read(c, at, out),
+        }
+    }
 }
 
 /// `rows` with each atom column's ids mapped (a forked process's to the store's, `map`): each column's distinct ids
@@ -431,6 +457,15 @@ impl RowsIn for Mapped<'_> {
         match &self.tables[c] {
             Some(t) => t[&v],
             None => v,
+        }
+    }
+    #[inline]
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        self.rows.read(c, at, out);
+        if let Some(t) = &self.tables[c] {
+            for v in out.iter_mut() {
+                *v = t[v];
+            }
         }
     }
 }
@@ -1103,12 +1138,15 @@ impl super::ContentStore {
     }
 }
 
+/// A space's chain as mapped: the rows that named its files, and the mapping.
+type MappedChain = (ChainRows, Arc<KeptSpace>);
+
 /// Each space's chain as this process mapped it, by the store's file and the space, with the rows that named its
 /// files (`kept_space`): mapped again only when a commit changed them. A file a row names is never rewritten (a
 /// write makes a new file, and its row), so a mapping of the same rows reads what a new one would. The shared
 /// object's (decision 0442), shared by design by the runs on a store.
 #[derive(Default)]
-struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), (ChainRows, Arc<KeptSpace>)>>);
+struct MappedSpaces(std::sync::Mutex<HashMap<(PathBuf, [u8; 32]), MappedChain>>);
 
 impl super::ContentStore {
     /// Notes `space`'s chain as a write in a transaction of this process's left it (`written`, from `write_space`),

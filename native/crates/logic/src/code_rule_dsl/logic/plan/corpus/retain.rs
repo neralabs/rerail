@@ -3619,6 +3619,29 @@ impl rerail_blocks::packed::RowsIn for PickedRows {
         }
         x
     }
+    /// A chunk with the search's memo read once and kept once, not a value at a time.
+    fn read(&self, c: usize, at: rerail_blocks::packed::At<'_>, out: &mut [i64]) {
+        use rerail_blocks::packed::At;
+        use std::sync::atomic::Ordering::Relaxed;
+        let was = self.memo.load(Relaxed);
+        let mut memo = was;
+        let mut one = |r: usize| self.source.value_memo(self.ids.get(self.lo + r as u32, 0) as usize, c, &mut memo);
+        match at {
+            At::From(r) => {
+                for (j, o) in out.iter_mut().enumerate() {
+                    *o = one(r + j);
+                }
+            }
+            At::Rows(rows) => {
+                for (o, &r) in out.iter_mut().zip(rows) {
+                    *o = one(r as usize);
+                }
+            }
+        }
+        if memo != was {
+            self.memo.store(memo, Relaxed);
+        }
+    }
 }
 
 /// A derived relation lent to the keep (decision 0401 F6): its rows as one relation in its block, its dead bits and
