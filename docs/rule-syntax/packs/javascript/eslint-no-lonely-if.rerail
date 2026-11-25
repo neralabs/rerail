@@ -1,4 +1,4 @@
-.policy "eslint-no-lonely-if" revision 2
+.policy "eslint-no-lonely-if" revision 3
 .description "Use else if instead of an if that is the only statement inside an else block."
 .language typescript
 .mode steer
@@ -10,7 +10,7 @@
 // ESLint's no-lonely-if: an `if` that is the only statement of an else block, which could be an `else if`.
 //   if (a) f(); else { if (b) g(); }          → the inner if; fix: `if (a) f(); else if (b) g();`
 //   if (a) f(); else { if (b) g(); h(); }     fine: two statements
-//   if (a) {} else { if (b) g(); } else …     the braces are needed (needs_braces), so fine
+//   if (a) if (c) f(); else { if (b) g(); } else h();   fine: unbraced, the last else would move to `if (b)`
 // The fix replaces the block with the if. There is none when a comment sits in the block, or when the inner if's
 // body ends without `;` and the next token would run into it (`else { if (b) x = 1 } (c)()`).
 // No options.
@@ -20,9 +20,15 @@
     suppress oxlint "no-lonely-if"
     suppress biome "lint/style/useCollapsedElseIf"
     fix collapse "Write it as else if"
-no_lonely_if(x) :- lonely(b, x), !needs_braces(b).
+no_lonely_if(x) :- lonely(b, x), !needs_braces(b), !else_bound(b).
 .decl lonely(b: node, x: node)  // block b is an else body whose one statement is the if x
 lonely(b, x) :- body(_, b, "else"), single_statement(b, x), kind(x, "if_statement").
+// else_bound(b): ESLint's areBracesNecessary asks whether `else` is the token after the block, wherever it stands;
+// needs_braces asks it only of an if's own consequence. Here the block ends an inner if's else, which ends the
+// consequence of an outer if that has an else: the two end on one byte.
+.decl else_bound(b: node)
+else_bound(b) :- lonely(b, x), dangling_if(x), node(d, b, _, _, e), field(i, "consequence", c), field(i, "alternative", _),
+    node(d, c, _, _, e).
 
 // `else{if…}` has no space to keep after `else`, so one is added.
 collapse(x) :- lonely(b, x), !unfixable(b, x), !tight(b) => replace(b, `$x`).

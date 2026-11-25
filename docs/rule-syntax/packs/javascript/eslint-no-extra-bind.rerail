@@ -1,15 +1,15 @@
-.policy "eslint-no-extra-bind" revision 3
+.policy "eslint-no-extra-bind" revision 4
 .description "Remove bind() calls that do nothing because the function is an arrow function or never uses this."
 .language typescript
 .mode steer
 .scope include "**/*"
 
 #include "tsx/eslint-a-functions.rerail"
-//   deparen, static_prop, call_arg, this_owner
+//   deparen, static_prop, call_arg, this_frame, this_annotation
 
 // ESLint's no-extra-bind: `.bind(x)` called directly on a function that cannot use it: an arrow, or a
 // function whose own `this` never appears (an arrow inside it shares its `this`; a nested function, a class
-// field's initialiser and a static block have their own).
+// field's value and a static block have their own, as in ESLint 10).
 //   const f = function () { foo(); }.bind(bar);          → The function binding is unnecessary.
 //   const f = (() => this.x).bind(bar);                  the same
 //   const f = function () { this.foo(); }.bind(bar);     fine
@@ -20,7 +20,7 @@
     suppress eslint "no-extra-bind"
     suppress oxlint "no-extra-bind"
     fix unbind "Remove the unnecessary .bind()"
-no_extra_bind(p) :- bound(f, c, p), (kind(f, "arrow_function") ; count : { uses_this(f, t) } = 0).
+no_extra_bind(p) :- bound(f, _, p), (kind(f, "arrow_function") ; !uses_this(f)).
 
 // bound(f, c, p): call c is `f.bind(x)` with one argument that is not a spread; p is the `bind` key.
 .decl bound(f: node, c: node, p: node)
@@ -30,9 +30,16 @@ bound(f, c, p) :- kind(c, "call_expression"), field(c, "function", m), deparen(m
 .decl bind_key(e: node, p: node)  // `.bind` gives the name, `["bind"]` the string
 bind_key(e, p) :- kind(e, "member_expression"), field(e, "property", p).
 bind_key(e, p) :- kind(e, "subscript_expression"), field(e, "index", p).
-// uses_this(f, t): `this` t is function f's own: no other function, arrows aside, in between.
-.decl uses_this(f: node, t: node)
-uses_this(f, t) :- kind(t, "this"), this_owner(t, f), !kind(f, "arrow_function").
+// uses_this(f): a `this` in bound function f is f's own: no other `this` frame (common's this_frame: a function
+// other than an arrow, a class field's value, a static block) stands between them. A field's computed key is
+// not one:   function () { class C { x = this.y; } }.bind(b)   is reported, `[this.k] = 1` is not.
+// The body starts from bound(f) and within(t, f): a negated relation over the tree alone, `has(f) :-
+// this_owner(_, f)`, held for no f, so `!has(f)` (and `count : { this_owner(_, f) } = 0`) held for every one.
+.decl uses_this(f: node)
+uses_this(f) :- bound(f, _, _), !kind(f, "arrow_function"), kind(t, "this"), !this_annotation(t), within(t, f),
+    !shielded(t, f).
+.decl shielded(t: node, f: node)  // a frame of its own `this` stands between `this` t and f
+shielded(t, f) :- bound(f, _, _), kind(t, "this"), within(t, f), this_frame(r), within(t, r), within(r, f).
 
 // The function stays as written, parentheses included: `(() => a).bind(b)()` becomes `(() => a)()`.
 unbind(p) :- bound(_, c, p), call_arg(c, a, 0), pure(a), field(c, "function", m), deparen(m, e),
