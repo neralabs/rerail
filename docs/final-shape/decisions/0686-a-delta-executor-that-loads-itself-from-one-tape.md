@@ -106,11 +106,27 @@ one addition is B§6a, the stratification section the user asked for, as options
 
 Each starts only when the one before has passed every check; *0686: Rebuild Plan* §4 lists each check.
 
-- **M0** the clean slate. **M1** traces and bistates in `blocks` (P§12 items 2–5; geometric roll-up). **M2** the
-  operator contract and one harness for L1, L3, L4, L5. **M3** a rule body as composed steps. **M4** Δwave (L7 a
-  combinator; program δ by module). **M5** Δfixpoint (the wave repeated; levels for removals). **M6** Δanswer and the
-  World. **M7** Δphase (strata from `k_order`; the refusals). **M8** L1 as an operator, the export, B§8's loop.
-  **M9** program δ through the chain. **M10** the first K1 feature (the binding lowerer, four stratum files).
+- **M0** the clean slate (done).
+
+Rewritten 2026-11-25. The user, on the Operations page's revision 5: "okay, this is fine / but the milestones need to
+be targeted very directly and precisely towards having a single boot operation work". The target is L1, the request's
+"bootstrap level 1 operation" (B§4): `bootstrap-l0.rerail` on disk to P2's bistate in the program trace, one
+delta operator built from operations over blocks, right cold, unchanged and edited.
+
+- **B1** operations on blocks, as much as L1 needs: signatures of at most 30 slots, pinned through 0491's regions;
+  the version registry; the twins (`no_std`, no alloc); a CPU executor.
+- **B2** the program trace: `Trace`, `Frontier`, `Bistate`, `LayerW`, partitions by module with digests,
+  `consolidate`; one bistate definition in `blocks`. Roll-up after the target.
+- **B3** the operator contract: `DeltaOp` as P§12 item 7, the cache's blocks and header (`cache_open`,
+  `cache_commit`), the reference and the harness (L1 to L5).
+- **B4** l0's tape through the file layer as it is (observer, `read_placed` into a slab room, the rr parse into a
+  room); the tape port's bistate; `Text`'s `String` gone. Any change to an existing crate goes to the user first.
+- **B5** symbols, L1's facts in: `intern` into the atoms block; no interning inside a view's read.
+- **B6** L1 as a `DeltaOp` with B§4's ports, the `k0_pass` operation, `boot()`: the target.
+
+After the target: the self-reading check (B§5), whose milestones (a rule body, Δwave, Δfix, Δphase, roll-up,
+planning) are written once B6 passes; then loads, the loop, program δ and the first K1 feature. *0686: Rebuild Plan*
+§4 lists every check.
 
 Enforcement: `scripts/check/check_delta_exec_shape.py`, which gains a section per milestone, runs with the copy check
 before each commit; each milestone's commit and this record carry its checklist with evidence; any place where the
