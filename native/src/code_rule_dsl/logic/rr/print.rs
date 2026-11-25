@@ -280,6 +280,15 @@ fn print_written(prog: &Program) -> Result<String, Error> {
             }
         }
         write!(out, ".decl {}({})", relation(name), printed.join(", ")).expect("a string");
+        // The qualifiers the source states (`.decl r(…) cross_file`, decision 0652; 0099's `inline`, …), so the text
+        // reads back as the program: a word a pass adds (`locate`'s move) is not source and stays out.
+        let own = prog.qualifiers.get(name.as_str());
+        let moved = own.is_some_and(|q| q.contains(crate::code_rule_dsl::logic::front::ast::MOVED_CROSS_FILE));
+        for q in own.into_iter().flatten().filter(|q| crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q.as_str())) {
+            if !(moved && q == crate::code_rule_dsl::logic::front::ast::CROSS_FILE) {
+                write!(out, " {q}").expect("a string");
+            }
+        }
         if let Some(k) = lattice.and_then(|l| l.widen) {
             write!(out, " widen {k}").expect("a string");
         }

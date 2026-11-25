@@ -47,8 +47,8 @@ impl Locate {
 }
 
 /// `file_local::locate`'s move on the version: the relations a round of `Locate` left, their rows naming no document,
-/// qualified `CROSS_FILE` (decision 0290). The split then holds them cross-file, with their file-local readers, and the
-/// program is located again (`preparation::run`).
+/// qualified `CROSS_FILE` (decision 0290) and `MOVED_CROSS_FILE` (a move, not a declaration: decision 0652). The split
+/// then holds them cross-file, with their file-local readers, and the program is located again (`preparation::run`).
 pub struct MoveCrossFile(pub Vec<String>);
 
 impl ProgramPass for MoveCrossFile {
@@ -57,7 +57,7 @@ impl ProgramPass for MoveCrossFile {
         self.0.join("\n").into_bytes()
     }
     fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let words: Vec<(&str, &str)> = self.0.iter().map(|r| (r.as_str(), super::CROSS_FILE)).collect();
+        let words: Vec<(&str, &str)> = self.0.iter().flat_map(|r| [(r.as_str(), super::CROSS_FILE), (r.as_str(), super::MOVED_CROSS_FILE)]).collect();
         w.on()?.add_qualifiers(&words);
         Ok(())
     }

@@ -30,6 +30,12 @@ pub struct FileLocal {
     pub filters: BTreeSet<String>,
     pub causes: BTreeMap<String, String>,
     pub same_doc: BTreeMap<String, Vec<usize>>,
+    /// The undeclared crossings (decision 0652): each relation in the cross-file part, not declared `cross_file`, that
+    /// is there for a reason of its own: one of its rules places rows of two documents, or reads a document's rows with
+    /// no location, or it is made natively. Its value is the cause and the rule. Not one: a relation whose rules read a
+    /// cross-file relation (it follows that relation), or read no document's rows, or one document's rows plainly (a
+    /// union of each file's rows).
+    pub crossings: BTreeMap<String, String>,
     pub no_document: bool,
     keys: Keys,
 }
@@ -46,6 +52,7 @@ impl PartialEq for FileLocal {
             && self.filters == o.filters
             && self.causes.keys().eq(o.causes.keys())
             && self.same_doc == o.same_doc
+            && self.crossings.keys().eq(o.crossings.keys())
             && self.no_document == o.no_document
             && self.keys == o.keys
     }
@@ -342,8 +349,8 @@ impl<'v> Program<'v> {
                 _ => true,
             })
         };
-        // A relation `locate` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file
-        // (decision 0290).
+        // A relation `locate` moved (`CROSS_FILE`), its rows naming no document (decision 0290), or one declared
+        // `cross_file` (decision 0652): derived once over every file.
         let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE);
         let mut local_now: Vec<bool> = (0..n)
             .map(|r| {
@@ -360,7 +367,8 @@ impl<'v> Program<'v> {
                 match was(r as usize) {
                     Some(p) => p.causes.get(rel).map(|c| (rel.to_owned(), c.clone())),
                     None if cross_native(rel) => Some((rel.to_owned(), "made natively".to_owned())),
-                    None => moved(rel).then(|| (rel.to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
+                    None if self.f.qualified(rel, super::MOVED_CROSS_FILE) => Some((rel.to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
+                    None => moved(rel).then(|| (rel.to_owned(), "declared `cross_file`".to_owned())),
                 }
             })
             .collect();
@@ -398,8 +406,52 @@ impl<'v> Program<'v> {
             }
         }
         let local: BTreeSet<String> = derived().filter(|&r| local_now[r as usize]).map(|r| self.name(r).to_owned()).collect();
+        // The undeclared crossings (decision 0652): a cross-file relation's rule that reads no cross-file relation and,
+        // with every input naming no document taken as placeless, still does not place one document. Recorded only:
+        // where a relation is derived is the split's above, and preparation refuses these (`crossings_checked`).
+        let placeless_or_input: Vec<bool> = (0..n).map(|r| placeless[r] || (!rels.is_derived(r as u32) && rels.base_locs[r].is_empty())).collect();
+        let mut crossings: BTreeMap<String, String> = BTreeMap::new();
+        for r in derived() {
+            let (ru, rel) = (r as usize, self.name(r));
+            if local_now[ru] || moved(rel) {
+                continue;
+            }
+            if let Some(p) = was(ru) {
+                if let Some(c) = p.crossings.get(rel) {
+                    crossings.insert(rel.to_owned(), c.clone());
+                }
+                continue;
+            }
+            if cross_native(rel) {
+                crossings.insert(rel.to_owned(), "made natively".to_owned());
+                continue;
+            }
+            for &k in &rels.rules[ru] {
+                let form = forms.get(k);
+                let reads_cross = form.lits.iter().any(|l| matches!(l, Lit::Read { rel: x, .. } if rels.is_derived(*x) && !local_now[*x as usize] && !placeless[*x as usize]));
+                // Its reads of documents' rows. None: the run's inputs alone. One plain positive read: each row is one
+                // file's, a union (as the cross part reads the chunks' findings back). Neither is a crossing; documents
+                // meet only where a rule joins two reads of them, or aggregates one.
+                let documents: Vec<&Lit> = form
+                    .lits
+                    .iter()
+                    .filter(|l| match l {
+                        Lit::Read { rel: x, .. } => !placeless_or_input[*x as usize],
+                        Lit::Ast | Lit::Nearest(..) => true,
+                        Lit::Cmp => false,
+                    })
+                    .collect();
+                let union = matches!(documents.as_slice(), [] | [Lit::Read { neg: false, plain: true, .. }]);
+                if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &locs) {
+                    continue;
+                }
+                let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &locations).unwrap_or_else(|| "places more than one document".to_owned());
+                crossings.insert(rel.to_owned(), format!("{why}\n      {}", self.v.show_rule(self.rules[k]).chars().take(400).collect::<String>()));
+                break;
+            }
+        }
         // The same-document columns (`file_local::split_explained`) and the rest: `finish`.
-        self.finish(FileLocal { local, constants, locations, filters, causes, ..Default::default() }, self.keys())
+        self.finish(FileLocal { local, constants, locations, filters, causes, crossings, ..Default::default() }, self.keys())
     }
 
     /// Why `rule` places more than one document, from its text (`split_in`'s `rule_local`): `None` where it does

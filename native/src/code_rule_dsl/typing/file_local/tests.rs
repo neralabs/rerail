@@ -754,3 +754,115 @@ named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
     assert_ne!(of(&before, "first"), of(&after, "first"), "the edited rule's helper is renamed");
     assert_eq!(of(&before, "named"), of(&after, "named"), "another rule's is not");
 }
+
+/// The declarations and inputs the invariants' tests share (decisions 0649, 0652, 0677): nodes with their documents,
+/// kinds and lines.
+const INVARIANT_INPUTS: &str = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n\
+                                .decl line(n: node, l: number)\n.input line\n";
+
+/// The split of `text` (after `INVARIANT_INPUTS`), as a run makes it (`programs_of`, with `locate`'s moves).
+fn invariant_split(text: &str) -> Programs {
+    let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{INVARIANT_INPUTS}{text}")).unwrap();
+    locate(&mut program).unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).unwrap().finish().unwrap();
+    programs_of(v).unwrap()
+}
+
+/// `.decl r(…) cross_file` is read, kept by the program, and printed back (decision 0652): a printed program that lost
+/// it would split differently, read again. A relation `locate` moved prints without it: the move is not source.
+#[test]
+fn a_cross_file_declaration_is_read_and_printed_back() {
+    use crate::code_rule_dsl::logic::rr::{parse, print};
+    let text = format!("{INVARIANT_INPUTS}.decl kinds(k: symbol) cross_file\nkinds(k) :- node(d, _, k, _, _), node(e, _, k, _, _), d != e.\n.output kinds\n");
+    let program = parse(&text).unwrap();
+    assert!(program.qualified("kinds", CROSS_FILE) && !program.qualified("kinds", MOVED_CROSS_FILE));
+    let printed = print(&program).unwrap();
+    assert!(printed.contains(".decl kinds(k: symbol) cross_file"), "{printed}");
+    assert!(parse(&printed).unwrap().qualified("kinds", CROSS_FILE));
+    let mut moved_program = parse(&format!(
+        "{INVARIANT_INPUTS}.decl owner(d: number)\nowner(d) :- node(d, _, \"a\", _, _).\n.decl aware()\naware() :- owner(d), d > 0.\n\
+         .decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n"
+    ))
+    .unwrap();
+    locate(&mut moved_program).unwrap();
+    assert_eq!(moved(&moved_program), ["aware"]);
+    assert!(!print(&moved_program).unwrap().contains("cross_file"), "a move is not printed as a declaration");
+}
+
+/// A rule joining two documents' rows makes an undeclared crossing (decision 0652), refused under strict; declared
+/// `cross_file`, it is meant, and a relation reading it follows it and is no crossing of its own.
+#[test]
+fn an_undeclared_join_of_two_documents_is_refused() {
+    let join = "kinds(k) :- node(d, _, k, _, _), node(e, _, k, _, _), d != e.\n.decl found(k: symbol)\nfound(k) :- kinds(k), k != \"x\".\n.output found\n";
+    let undeclared = invariant_split(&format!(".decl kinds(k: symbol)\n{join}"));
+    assert_eq!(undeclared.crossings.keys().collect::<Vec<_>>(), ["kinds"], "{:?}", undeclared.crossings);
+    let refused = undeclared_crossings(&undeclared).unwrap();
+    assert_eq!(refused.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>(), ["kinds"]);
+    let err = crossings_checked(&undeclared, true).unwrap_err();
+    assert!(err.contains("kinds") && err.contains("0652"), "{err}");
+    assert!(crossings_checked(&undeclared, false).is_ok(), "reported, not refused, outside strict");
+    let declared = invariant_split(&format!(".decl kinds(k: symbol) cross_file\n{join}"));
+    assert!(declared.crossings.is_empty(), "{:?}", declared.crossings);
+    assert!(!declared.file_local.contains("kinds") && !declared.file_local.contains("found"));
+    crossings_checked(&declared, true).unwrap();
+}
+
+/// One document's rows read plainly by a cross-file rule are a union of each file's, not a join (decision 0652).
+#[test]
+fn a_plain_read_of_one_document_is_no_crossing() {
+    let split = invariant_split(
+        ".decl kinds(k: symbol) cross_file\nkinds(k) :- node(d, _, k, _, _), node(e, _, k, _, _), d != e.\n\
+         .decl named(n: node, k: symbol)\nnamed(n, k) :- node(_, n, k, _, _).\n\
+         .decl found(n: node)\nfound(n) :- named(n, k), kinds(k).\n.output found\n",
+    );
+    assert!(undeclared_crossings(&split).unwrap().is_empty(), "{:?}", split.crossings);
+}
+
+/// A relation of the cross-file part that holds a node is named (decision 0677), with where the node entered; keyed by
+/// a symbol, with the file's own rules relating its nodes to it, it is not. An output holding one is a finding's place.
+#[test]
+fn a_node_in_the_cross_file_part_is_named() {
+    let by_node = invariant_split(
+        ".decl pairs(a: node, b: node) cross_file\npairs(a, b) :- node(d, a, k, _, _), node(e, b, k, _, _), d != e.\n\
+         .decl found(n: node)\nfound(n) :- pairs(n, _).\n.output found\n",
+    );
+    let named: Vec<String> = by_node.nodes.iter().map(|c| c.named()).collect();
+    assert_eq!(named, ["pairs"], "{:?}", by_node.nodes);
+    assert!(by_node.nodes[0].why.contains("pairs.a"), "{}", by_node.nodes[0].why);
+    assert!(node_crossings::nodes_checked(&by_node.nodes, true).is_err());
+    let by_symbol = invariant_split(
+        ".decl kinds(k: symbol) cross_file\nkinds(k) :- node(d, _, k, _, _), node(e, _, k, _, _), d != e.\n\
+         .decl found(n: node)\nfound(n) :- node(_, n, k, _, _), kinds(k).\n.output found\n",
+    );
+    assert!(by_symbol.nodes.is_empty(), "{:?}", by_symbol.nodes);
+}
+
+/// A value computed from a node is a node's (`@cat`, `+`), but a node's document, text or digest is not (decision
+/// 0677's `VALUES_OF_A_NODE`): a column filled from one holds a node by inference, to a fixpoint over the rules.
+#[test]
+fn node_columns_are_inferred_from_what_fills_them() {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    let program = crate::code_rule_dsl::logic::rr::parse(&format!(
+        "{INVARIANT_INPUTS}.decl keyed(x: number)\nkeyed(x) :- node(_, n, _, _, _), x = n + 1.\n\
+         .decl again(x: number)\nagain(x) :- keyed(x).\n.decl docs(d: number)\ndocs(d) :- node(d, _, _, _, _).\n\
+         .output again, docs\n"
+    ))
+    .unwrap();
+    let (v, _) = Builder::of_program(&program).unwrap().finish().unwrap();
+    let placed = crate::code_rule_dsl::logic::plan::body::Placed::whole(v.clone());
+    let f = placed.fields().unwrap();
+    let nodes = node_crossings::NodeColumns::of(&v, &f);
+    assert!(nodes.holds("node", 1) && nodes.holds("keyed", 0) && nodes.holds("again", 0));
+    assert!(!nodes.holds("docs", 0) && !nodes.holds("node", 0));
+}
+
+/// The cross-file part's reads of a position (decision 0649) are found, but for an output's (a finding's place).
+#[test]
+fn a_position_read_in_the_cross_file_part_is_found() {
+    let split = invariant_split(
+        ".decl kinds(k: symbol, l: number) cross_file\nkinds(k, l) :- node(d, n, k, _, _), node(e, _, k, _, _), d != e, line(n, l).\n\
+         .decl found(n: node)\nfound(n) :- node(_, n, k, _, _), kinds(k, _), line(n, _).\n.output found\n",
+    );
+    assert_eq!(split.positions, [("kinds".to_owned(), "line".to_owned())], "{:?}", split.positions);
+    assert!(positions_checked(&split.positions, true).is_err());
+}

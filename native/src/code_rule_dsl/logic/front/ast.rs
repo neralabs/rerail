@@ -417,7 +417,14 @@ pub struct Again {
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
-pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach"];
+pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach", CROSS_FILE];
+
+/// The qualifier of a cross-file relation: declared (`.decl r(...) cross_file`, decision 0652), or given by `locate` to
+/// a relation whose rows name no document (decision 0290, `typing::file_local::locate`). The split holds it cross-file.
+pub const CROSS_FILE: &str = "cross_file";
+
+/// The qualifier `locate` gives a relation it moved, beside `CROSS_FILE`: a move, not a declaration (decision 0652).
+pub const MOVED_CROSS_FILE: &str = "moved_cross_file";
 
 impl Program {
     /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).

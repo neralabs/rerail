@@ -3694,6 +3694,8 @@ fn run_observed(
             lowered.domains = lower::domains_of(&version)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
+            // No relation is cross-file without a declaration (decision 0652).
+            crate::code_rule_dsl::typing::file_local::crossings_checked(&split, crate::code_rule_dsl::typing::file_local::strict_crossings()).map_err(Error::Plan)?;
             // Only the debug check below edits the tree: a build without debug assertions keeps it immutable.
             #[cfg(debug_assertions)]
             let mut program = program;
