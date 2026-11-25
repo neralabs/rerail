@@ -1,5 +1,5 @@
 import * as childProcess from "node:child_process";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -38,6 +38,36 @@ async function fakeNpm(body: string): Promise<string> {
   return bin;
 }
 
+/** A spawned child as `runCommand` sees one, whose events a test emits itself. */
+type FakeChild = EventEmitter & { stdout: PassThrough; stderr: PassThrough; exitCode: number | null; signalCode: NodeJS.Signals | null };
+
+/** Makes the next spawn return a child that `run` drives from the next tick, once the caller is listening, as Node's does. */
+function spawnsOnce(run: (child: FakeChild) => void): void {
+  vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
+    const child: FakeChild = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
+    process.nextTick(() => run(child));
+    return child as unknown as childProcess.ChildProcess;
+  });
+}
+
+function exit(child: FakeChild, code = 0): void {
+  child.exitCode = code;
+  child.emit("exit", code, null);
+}
+
+/** Ends `child`'s output and emits "close" once it is read to its end, as Node does. */
+async function close(child: FakeChild): Promise<void> {
+  child.stdout.end();
+  child.stderr.end();
+  await Promise.all([once(child.stdout, "end"), once(child.stderr, "end")]);
+  child.emit("close", child.exitCode, null);
+}
+
+function finish(child: FakeChild, code = 0): void {
+  exit(child, code);
+  void close(child);
+}
+
 describe("runNpm on Windows", () => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
   afterEach(() => {
@@ -47,11 +77,7 @@ describe("runNpm on Windows", () => {
 
   it("puts the requested node first on PATH, so the install scripts npm runs build for it", async () => {
     const node = fullyQualified(join(await binDirectory("node.exe"), "node.exe"));
-    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
-      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
-      return child as unknown as childProcess.ChildProcess;
-    });
+    spawnsOnce(finish);
     Object.defineProperty(process, "platform", { ...platform, value: "win32" });
     await runNpm(["rebuild", "better-sqlite3"], { node, env: { PATH: "/usr/bin" } });
     const [command, , options] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
@@ -64,11 +90,7 @@ describe("runNpm on Windows", () => {
   it.runIf(process.platform === "win32")("runs npm under the node.exe PATH finds, never a node.cmd shim before it, which no spawn without a shell starts", async () => {
     const shims = await binDirectory("node.cmd");
     const binaries = await binDirectory("node.exe");
-    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
-      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
-      return child as unknown as childProcess.ChildProcess;
-    });
+    spawnsOnce(finish);
     Object.defineProperty(process, "platform", { ...platform, value: "win32" });
     await runNpm(["rebuild", "better-sqlite3"], { node: "node", env: { PATH: `${shims};${binaries}`, PATHEXT: ".cmd;.exe" } });
     const [command] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
@@ -81,11 +103,7 @@ describe("runNpm on Windows", () => {
     const bin = await binDirectory("node.exe");
     const node = join(bin, "node.exe");
     vi.stubEnv("npm_execpath", "");
-    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
-      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
-      process.nextTick(() => child.emit("exit", 0, null));
-      return child as unknown as childProcess.ChildProcess;
-    });
+    spawnsOnce(finish);
     await inFolder(bin, async () => {
       await runNpm(["rebuild", "better-sqlite3"], { node: fromDriveRoot(node), env: { PATH: String.raw`C:\Windows` } });
       expect(windowsNpmCliPath(fromDriveRoot(node))).toBe(join(bin, "node_modules", "npm", "bin", "npm-cli.js"));
@@ -170,6 +188,28 @@ describe("runCommand", () => {
 
   it("leaves a command that finishes in time alone", async () => {
     await expect(runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "ok", stderr: "" });
+  });
+
+  // A process the command started writes once the command has exited (its input, a pipe the command held, ends then),
+  // so the output ends only after "exit": the answer is read to its end, as npm's must be when "exit" outruns its last
+  // output under load. Not on Windows: there the process the command started dies with it, in the job object libuv puts
+  // every child it starts in, and never writes.
+  it.skipIf(process.platform === "win32")("reads what is written after the command exits, to the end of its output", async () => {
+    const afterExit = "process.stdin.on('end', () => process.stdout.write('late')); process.stdin.resume()";
+    const command = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(afterExit)}], { stdio: ['pipe', 'inherit', 'inherit'] }); require('node:fs').writeSync(1, 'early '); process.exit(0)`;
+    await expect(runCommand(process.execPath, ["-e", command], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "early late", stderr: "" });
+  });
+
+  // A process the command started can hold its output open after the command exits, and "close" then waits for it. The
+  // command is named by its full path, since on Windows Rerail starts a program by no other name.
+  it("stops waiting on the output of a command that exited once its timeout has run", async () => {
+    spawnsOnce((child) => {
+      child.stderr.write("npm http fetch GET 200 one\n");
+      exit(child);
+    });
+    await expect(runCommand(process.execPath, ["view", "@neralabs/rerail"], { timeoutMs: 1_000 })).rejects.toThrow(
+      `${process.execPath} did not finish within 1 s and was stopped; its last output:\nnpm http fetch GET 200 one`,
+    );
   });
 });
 
