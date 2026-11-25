@@ -16,7 +16,7 @@
 //! Only the decisions are made here. A rule that places more than one document is explained by `split_in`'s rule
 //! check over the text, which names the documents' variables; it runs once per failing rule.
 
-use super::{CHUNK_VALUES, RuleIndex, base_locations, option_input, value_tapes, var_equalities};
+use super::{CHUNK_VALUES, RuleIndex, base_locations, option_input, setting_input, value_tapes, var_equalities};
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use rustc_hash::FxHashMap;
 
@@ -65,7 +65,7 @@ impl<'p> Rels<'p> {
         let test = |r: &str| r.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
         Rels {
             fact: names.iter().enumerate().map(|(i, r)| i >= n && prog.facts.contains_key(*r) && !inputs.contains(r)).collect(),
-            run_constant: names.iter().map(|r| option_input(r) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(r) && inputs.contains(r))).collect(),
+            run_constant: names.iter().map(|r| option_input(r) || setting_input(r) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(r) && inputs.contains(r))).collect(),
             chunk_value: names.iter().enumerate().map(|(i, r)| i >= n && CHUNK_VALUES.contains(r)).collect(),
             test: names.iter().map(|r| test(r)).collect(),
             text: names.iter().map(|r| crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| t == r).map(|(_, c)| *c)).collect(),

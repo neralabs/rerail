@@ -131,6 +131,26 @@ Found on the way and fixed:
      `package_for` and `no_redeclare`. React's 55 now root at module resolution (`symbol`, `jsx_source_runtime`,
      `package_for`, `resolve_base`, `tsconfig_for`), as Node's do at `fixed_ext`: the branch's 0665 settings and its
      `tsx_names` phase.
+5. **A file's path places its document; the project's settings are read per file** (the branch's 0665 core).
+   - `doc`'s path is a path key. The split places by locations and path keys (`FileLocal::path_keys`, `placing`),
+     and publishes locations alone.
+   - `locate` finds a path's document (`Doc::ByPath`). It relays a path-keyed relation that per-file rules also read,
+     and qualifies the cross part's read-back `READ_LOCATED`, which holds it cross-file.
+   - The settings (`package*`, `tsconfig*`, `env`) are placeless to the split, in the version's split and in main's
+     tree split alike.
+   - A file's memo entry is kept under the settings rows its relations can read (`memo::settings_scopes`,
+     `SettingsDigests`): its own package's, or every file's.
+   - Found on the way: a relation relayed in one `Locate` round was left by the next. A batch runs a second round
+     when another relation is left, so bounded-composed-graph-paths' `bcgp_block` was moved cross-file in the data
+     layer's batch, not alone. A relayed relation is now located.
+   - The branch's `pair_path` case in the explainer's test is per-file now: one path is one document.
+   - The JSON translator change of fix 3 stays (declaring a helper that reads a guest capture by text, and `$$$X`
+     binding nothing). Its four regenerated python-main rules replace hand edits that the translator did not
+     write, so `json_rules_pack_is_current` had failed since fix 2.
+   - Not ported: 0660's shared configuration reader (main's repository reads `tsconfig` with its own), the deferred
+     joins' constants (oscar's `product_demand`), parts' path-key words.
+   - Lists: split 34 → 29, node 3,083 → 3,031 (JavaScript 31 → 8, TypeScript 26 → 14, Node 20 → 11, React 55 → 47;
+     python-main +4, fast003's helpers, now declared and holding a node).
 
 ## Consequences
 

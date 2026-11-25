@@ -1,6 +1,5 @@
 # <pack> <relation>: relations cross-file without a declaration (decision 0652) still to fix; the list only shrinks (src/code_rule_dsl/tools.rs, pack_split_tests).
 data-layer annotations
-data-layer bcgp_lead
 data-layer CONN301
 data-layer cpl_missing
 data-layer cpl_msg
@@ -9,12 +8,10 @@ data-layer la_eager_delegate
 data-layer ma_branch_aware
 data-layer pos_allow_broken
 data-layer pos_bypass
-data-layer stale_entry
 data-layer static_tests
 data-layer violation
 data-layer vmi_backed
 data-layer:alone annotations
-data-layer:alone bcgp_lead
 data-layer:alone CONN301
 data-layer:alone cpl_missing
 data-layer:alone cpl_msg
@@ -23,9 +20,7 @@ data-layer:alone la_eager_delegate
 data-layer:alone ma_branch_aware
 data-layer:alone pos_allow_broken
 data-layer:alone pos_bypass
-data-layer:alone stale_entry
 data-layer:alone static_tests
-data-layer:alone violation
 data-layer:alone vmi_backed
 django call_target
 django sfu_atomic_def

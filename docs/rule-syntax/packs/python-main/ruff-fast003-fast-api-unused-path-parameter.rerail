@@ -173,7 +173,8 @@ fast003_pyd_base(n) :- kind(n, "class_definition"), field(n, "superclasses", c1)
     kind(c1, "argument_list"), child(c1, c2, _), fast003_ref_of(c2, "pydantic").
 
 // pyd_field(n, …): the JSON util `pyd-field`, called with `matches` and arguments K
-.decl fast003_pyd_field(n: node, k: node)
+// Cross-file: it reads a guest capture by text, any file's (decision 0652).
+.decl fast003_pyd_field(n: node, k: node) cross_file
 fast003_pyd_field(n, K) :- node(_, K, _, _, _), fast003_pyd_base(n), field(n, "body", c1),
     kind(c1, "block"), child(c1, c2, _), kind(c2, "expression_statement"),
     child(c2, c3, _), kind(c3, "assignment"), field(c3, "type", c4), kind(c4, "type"),
@@ -636,16 +637,15 @@ fast003_alt_1(n) :- ref_site(n, b22), (st23 = b22 ; within(b22, st23)),
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 //   K: metavariable of the calling rule, passed in (bound by the caller)
-.decl fast003_alt_2(n: node, k: loc)
+// Cross-file: it reads a guest capture by text, any file's (decision 0652).
+.decl fast003_alt_2(n: node, k: loc) cross_file
 fast003_alt_2(n, K) :- node(_, K, _, _, _), kind(n, "identifier"), node(_, n, _, _, _), N = n,
-    text(K, t1), text(N, t1), @doc(K) = @doc(N).
+    text(K, t1), text(N, t1).
 fast003_alt_2(n, K) :- node(_, K, _, _, _), kind(n, "typed_parameter"), child(n, c3, _),
-    kind(c3, "identifier"), node(_, c3, _, _, _), N = c3, text(K, t4), text(N, t4),
-    @doc(K) = @doc(N).
+    kind(c3, "identifier"), node(_, c3, _, _, _), N = c3, text(K, t4), text(N, t4).
 fast003_alt_2(n, K) :- node(_, K, _, _, _),
     (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
-    field(n, "name", c6), node(_, c6, _, _, _), N = c6, text(K, t7), text(N, t7),
-    @doc(K) = @doc(N).
+    field(n, "name", c6), node(_, c6, _, _, _), N = c6, text(K, t7), text(N, t7).
 
 // stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl fast003_stop_3(n: node)

@@ -11,7 +11,7 @@
 //! While the tree's split runs too (its passes are not yet on versions), a debug build checks the two agree
 //! (`file_local::programs_over`).
 
-use super::{CHUNK_VALUES, document_column, option_input};
+use super::{CHUNK_VALUES, document_column, option_input, path_key_column, setting_input};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
 use crate::code_rule_dsl::logic::program_image::manager::{Analysis, Cx, Delta, Reads};
 use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, NativeSpec, RelId, RuleRef, Slot, TermRef, Version};
@@ -50,6 +50,12 @@ pub struct FileLocal {
     /// its rules place them in one document through reads of such relations alone (`one_document`, a cross-file read
     /// taken where its own rows are each one document's). A demand that drops a read of one keeps its tie (0652).
     pub row_documents: BTreeMap<String, Vec<usize>>,
+    /// Each derived relation's path keys (decision 0665): columns every rule fills from a file's path (`doc`'s:
+    /// `path_key_column`) or from a location, beyond its `locations`. A path places a rule's
+    /// document as a location does, so the split joins through it; a memo reads a row's document off a location's
+    /// value, which a path is not, so `locations` (and `same_doc`, `row_documents`) leave it out, and `locate` names
+    /// the document a path key's row is of through `doc` (`passes::Locate`).
+    pub path_keys: BTreeMap<String, Vec<usize>>,
     pub no_document: bool,
     keys: Keys,
 }
@@ -71,14 +77,23 @@ impl PartialEq for FileLocal {
             && self.covered == o.covered
             && self.cover_deps == o.cover_deps
             && self.row_documents == o.row_documents
+            && self.path_keys == o.path_keys
             && self.no_document == o.no_document
             && self.keys == o.keys
     }
 }
 
 impl FileLocal {
-    /// What the parts are made of (`file_local::found`): the file-local relations and those of constants; none of
-    /// either for a program that reads no document, whose relations are all cross-file.
+    /// A derived relation's columns that place its row's document (decision 0665): its locations and its path keys.
+    pub fn placing(&self, rel: &str) -> Vec<usize> {
+        let mut c: Vec<usize> = self.locations.get(rel).into_iter().chain(self.path_keys.get(rel)).flatten().copied().collect();
+        c.sort_unstable();
+        c.dedup();
+        c
+    }
+
+    /// What the parts are made of (`programs_of`): the file-local relations and those of constants; none of either for
+    /// a program that reads no document, whose relations are all cross-file.
     pub fn found(&self) -> (BTreeSet<String>, BTreeSet<String>) {
         match self.no_document {
             true => Default::default(),
@@ -129,7 +144,7 @@ impl Analysis for FileLocal {
         // covered before or not file-local, is in it, with its readers.
         let valueless = |r: u32| {
             let rel = p.name(r);
-            p.rels.is_derived(r) && !self.nullable.contains_key(rel) && (self.covered.contains(rel) || !self.local.contains(rel) || self.locations.get(rel).is_none_or(|c| c.is_empty()))
+            p.rels.is_derived(r) && !self.nullable.contains_key(rel) && (self.covered.contains(rel) || !self.local.contains(rel) || self.placing(rel).is_empty())
         };
         while let Some(r) = work.pop() {
             for &k in p.rels.reading(r) {
@@ -213,7 +228,7 @@ impl<'v> Program<'v> {
 
     /// An input with one value for the whole run (`file_local::run_constant`).
     fn run_constant(&self, rel: &str) -> bool {
-        option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
+        option_input(rel) || setting_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && self.f.is_input(rel))
     }
 
     fn keys(&self) -> Keys {
@@ -279,7 +294,19 @@ impl<'v> Program<'v> {
         columns
     }
 
-    /// Whether no rule reads a document (`file_local::reads_no_document`).
+    /// A base relation's columns that place a rule's document (decision 0665): its locations (`base_locations`) and its
+    /// path key (`path_key_column`).
+    fn base_placing(&self, rel: &str) -> Vec<usize> {
+        let mut columns = self.base_locations(rel);
+        if let Some(c) = path_key_column(rel).filter(|c| !columns.contains(c)) {
+            columns.push(c);
+        }
+        columns
+    }
+
+    /// Whether no rule reads a document: every relation a rule reads is derived, a fact, or an input with one value for
+    /// the run (`run_constant`), and no rule matches an AST pattern or asks for the nearest of a node. Such a program
+    /// reads an earlier phase's exports and the run's options at most, and reads at least one of them.
     fn reads_no_document(&self) -> bool {
         let mut phased = false;
         let none = self.f.natives().is_empty()
@@ -330,14 +357,16 @@ impl<'v> Program<'v> {
         let forms = Forms::new(self);
         let constant = self.constants(&forms, &in_scope, prev.map(|p| &p.constants));
         let placeless: Vec<bool> = (0..n).map(|r| rels.fact[r] || constant[r] || rels.run_constant[r] || rels.chunk_value[r] || rels.test[r]).collect();
-        // A derived relation's location columns: those every rule fills from a location.
+        // A derived relation's placing columns: those every rule fills from a location or a file's path (decision
+        // 0665). The split places by these; what it publishes as locations is those filled from a location (`real`).
         let mut locs: Vec<Vec<usize>> = (0..n)
             .map(|r| {
                 if !rels.is_derived(r as u32) {
                     return Vec::new();
                 }
-                let kept = was(r).and_then(|p| p.locations.get(self.name(r as u32)).cloned());
-                kept.unwrap_or_else(|| (0..self.f.width(self.name(r as u32))).collect())
+                let rel = self.name(r as u32);
+                let kept = was(r).filter(|p| p.locations.contains_key(rel)).map(|p| p.placing(rel));
+                kept.unwrap_or_else(|| (0..self.f.width(rel)).collect())
             })
             .collect();
         let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize]).collect();
@@ -354,6 +383,31 @@ impl<'v> Program<'v> {
             let next = rels.heads_reading(changed.iter().map(|(r, _)| *r), |_| true);
             for (r, kept) in changed {
                 locs[r as usize] = kept;
+            }
+            round = next;
+        }
+        // The location columns among them: those every rule fills from a location alone (a node, a document), which a
+        // row's document is read off. A column filled from a path somewhere is a path key (`FileLocal::path_keys`).
+        let mut real: Vec<Vec<usize>> = (0..n)
+            .map(|r| match was(r) {
+                Some(p) => p.locations.get(self.name(r as u32)).cloned().unwrap_or_default(),
+                None => locs[r].clone(),
+            })
+            .collect();
+        let mut round: Vec<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && !real[r as usize].is_empty()).collect();
+        while !round.is_empty() {
+            let changed: Vec<(u32, Vec<usize>)> = round
+                .iter()
+                .filter_map(|&r| {
+                    let rules = &rels.rules[r as usize];
+                    let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_classes_over(rels, &real, &rels.base_real)).collect();
+                    let kept: Vec<usize> = real[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
+                    (kept != real[r as usize]).then_some((r, kept))
+                })
+                .collect();
+            let next = rels.heads_reading(changed.iter().map(|(r, _)| *r), |h| in_scope[h as usize]);
+            for (r, kept) in changed {
+                real[r as usize] = kept;
             }
             round = next;
         }
@@ -388,7 +442,13 @@ impl<'v> Program<'v> {
             round = next;
         }
         let derived = || (0..n as u32).filter(|&r| rels.is_derived(r));
-        let locations: BTreeMap<String, Vec<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
+        // The split places by `placing`; it publishes `locations` and `path_keys` (decision 0665).
+        let placing: BTreeMap<String, Vec<usize>> = derived().map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
+        let locations: BTreeMap<String, Vec<usize>> = derived().map(|r| (self.name(r).to_owned(), real[r as usize].clone())).collect();
+        let path_keys: BTreeMap<String, Vec<usize>> = derived()
+            .map(|r| (self.name(r).to_owned(), locs[r as usize].iter().copied().filter(|c| !real[r as usize].contains(c)).collect::<Vec<usize>>()))
+            .filter(|(_, c)| !c.is_empty())
+            .collect();
         let nullable: BTreeMap<String, Vec<usize>> = derived().filter(|&r| !nulls[r as usize].is_empty()).map(|r| (self.name(r).to_owned(), nulls[r as usize].clone())).collect();
         // String filters (decision 0037).
         // A covered view of values is in `filters` too (read as a test, below), but it is no string filter: outside the
@@ -426,9 +486,9 @@ impl<'v> Program<'v> {
                 _ => false,
             })
         };
-        // A relation `locate` moved (`CROSS_FILE`), its rows naming no document (decision 0290), or one declared
-        // `cross_file` (decision 0652): derived once over every file.
-        let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE);
+        // A relation `locate_all` moved (`CROSS_FILE`): its rows name no document, so it is derived once over every file
+        // (decision 0290). One the cross part reads back from its located form (`READ_LOCATED`, decision 0665).
+        let moved = |rel: &str| self.f.qualified(rel, super::CROSS_FILE) || self.f.qualified(rel, super::READ_LOCATED);
         let mut local_now: Vec<bool> = (0..n)
             .map(|r| {
                 rels.is_derived(r as u32)
@@ -445,6 +505,7 @@ impl<'v> Program<'v> {
                     Some(p) => p.causes.get(rel).map(|c| (rel.to_owned(), c.clone())),
                     None if cross_native(rel) => Some((rel.to_owned(), "made natively".to_owned())),
                     None if self.f.qualified(rel, super::MOVED_CROSS_FILE) => Some((rel.to_owned(), "its rows name no document (moved by `locate`)".to_owned())),
+                    None if self.f.qualified(rel, super::READ_LOCATED) => Some((rel.to_owned(), "read back from its located form (`locate`)".to_owned())),
                     None => moved(rel).then(|| (rel.to_owned(), "declared `cross_file`".to_owned())),
                 }
             })
@@ -519,7 +580,7 @@ impl<'v> Program<'v> {
             // The covered views of values, in the scope and out of it (where `valueless`, a candidate's, is not asked).
             let skip: Vec<bool> = (0..n).map(|r| covered_now[r] && local_now[r] && locs[r].is_empty()).collect();
             let read_as_tests: BTreeSet<String> = filters.iter().cloned().chain((0..n as u32).filter(|&r| skip[r as usize]).map(|r| self.name(r).to_owned())).collect();
-            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &read_as_tests, &locations, &nullable);
+            let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &read_as_tests, &placing, &nullable);
             let check = |k: usize| -> Option<(u32, String)> {
                 let head = rels.head[k];
                 if covered_now[head as usize] && local_now[head as usize] {
@@ -635,7 +696,7 @@ impl<'v> Program<'v> {
                 if reads_cross || union || form.one_document(r, rels, &placeless_or_input, &local_now, &filtering, &skip, &locs, &nulls) {
                     continue;
                 }
-                let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &locations, &nullable).unwrap_or_else(|| "places more than one document".to_owned());
+                let why = self.why_not_local(self.rules[k], &local_now, &constants, &filters, &placing, &nullable).unwrap_or_else(|| "places more than one document".to_owned());
                 crossings.insert(rel.to_owned(), format!("{why}\n      {}", self.v.show_rule(self.rules[k]).chars().take(400).collect::<String>()));
                 break;
             }
@@ -658,9 +719,10 @@ impl<'v> Program<'v> {
             }
             round = rels.heads_reading(leaving.into_iter(), |h| one_row[h as usize]);
         }
-        let row_documents: BTreeMap<String, Vec<usize>> = derived().filter(|&r| one_row[r as usize] && locs[r as usize].len() > 1).map(|r| (self.name(r).to_owned(), locs[r as usize].clone())).collect();
+        // Their location columns alone (decision 0665): a demand ties two by `@doc`, which a path is not.
+        let row_documents: BTreeMap<String, Vec<usize>> = derived().filter(|&r| one_row[r as usize] && real[r as usize].len() > 1).map(|r| (self.name(r).to_owned(), real[r as usize].clone())).collect();
         // The same-document columns and the rest: `finish`.
-        self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, covered, cover_deps, row_documents, ..Default::default() }, self.keys())
+        self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, covered, cover_deps, row_documents, path_keys, ..Default::default() }, self.keys())
     }
 
     /// Whether every reader of `r` covers it (decision 0652). Each reader is a file-local rule reading `r` in a plain
@@ -772,7 +834,7 @@ impl<'v> Program<'v> {
                 && !a.neg()
             {
                 let rel = v.rel_name(a.rel());
-                let columns = if self.f.derives(rel) { locations.get(rel).cloned().unwrap_or_default() } else { self.base_locations(rel) };
+                let columns = if self.f.derives(rel) { locations.get(rel).cloned().unwrap_or_default() } else { self.base_placing(rel) };
                 let args: Vec<TermRef<'_>> = a.args().collect();
                 strict.extend(columns.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(|s| v.text(rule.var(s)).to_owned()));
             }
@@ -839,9 +901,14 @@ impl<'v> Program<'v> {
             if derived && !local(rel) {
                 return Some(format!("reads cross-file {rel}"));
             }
-            let columns = if derived { locations[rel].clone() } else { self.base_locations(rel) };
+            let columns = if derived { locations[rel].clone() } else { self.base_placing(rel) };
             let args: Vec<TermRef<'_>> = atom.args().collect();
             let mut vars: BTreeSet<String> = columns.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(var).collect();
+            // `one_document`'s path written out (decision 0665): each string one document's.
+            vars.extend(columns.iter().filter_map(|&c| match args.get(c) {
+                Some(TermRef::Str(x)) => Some(format!("rr_value_path:{}", x.0)),
+                _ => None,
+            }));
             if atom.neg() {
                 vars = vars.into_iter().map(|x| nullable_row.get(&x).cloned().unwrap_or(x)).collect();
             }
@@ -1157,7 +1224,10 @@ struct Rels<'v> {
     /// (`match_all`).
     functional: Vec<bool>,
     text: Vec<Option<&'static [usize]>>,
+    /// A base relation's columns that place its document: its locations and its path key (`Program::base_placing`).
     base_locs: Vec<Vec<usize>>,
+    /// Its locations alone (`Program::base_locations`): what a row's document is read off.
+    base_real: Vec<Vec<usize>>,
     candidate: Vec<bool>,
     output: Vec<bool>,
     /// A derived relation's rules, by index in the program's order.
@@ -1203,7 +1273,8 @@ impl<'v> Rels<'v> {
             test: (0..n).map(|r| (derived[r] || read[r]) && test(name(r))).collect(),
             functional: (0..n).map(|r| derived[r] && functional(name(r))).collect(),
             text: (0..n).map(|r| if derived[r] || read[r] { crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| *t == name(r)).map(|(_, c)| *c) } else { None }).collect(),
-            base_locs: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { Vec::new() }).collect(),
+            base_locs: (0..n).map(|r| if base(r) { p.base_placing(name(r)) } else { Vec::new() }).collect(),
+            base_real: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { Vec::new() }).collect(),
             candidate: (0..n).map(|r| derived[r] && f.native(name(r)).is_none() && !f.lattice(name(r)) && !f.is_input(name(r))).collect(),
             output: (0..n).map(|r| derived[r] && f.is_output(name(r))).collect(),
             rules: by_head,
@@ -1215,7 +1286,7 @@ impl<'v> Rels<'v> {
     }
 
     fn empty() -> Rels<'v> {
-        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), run_constant: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), functional: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), output: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
+        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), run_constant: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), functional: Vec::new(), text: Vec::new(), base_locs: Vec::new(), base_real: Vec::new(), candidate: Vec::new(), output: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
     }
 
     fn is_derived(&self, r: u32) -> bool {
@@ -1316,7 +1387,9 @@ impl ValueTapes {
 
 /// A body literal as the split reads it (`shape::Lit`).
 enum Lit {
-    Read { neg: bool, plain: bool, rel: u32, args: Vec<Option<u32>>, binder: bool, tapes: Vec<u32> },
+    /// A read: its variables by argument, and its string constants by argument (decision 0665: a path written out,
+    /// `bcgp_line("a.py", l, sp)`), each numbered among the rule's (`Form::paths`).
+    Read { neg: bool, plain: bool, rel: u32, args: Vec<Option<u32>>, consts: Vec<Option<u32>>, binder: bool, tapes: Vec<u32> },
     Ast,
     Nearest(u32, u32),
     Cmp,
@@ -1347,6 +1420,10 @@ struct Form {
     splices: Vec<(u32, u32)>,
     ids: usize,
     binders: u32,
+    /// The first id of the rule's string constants (`Lit::Read`'s `consts`), numbered after the literals: a string in
+    /// a column that places a document is a file's path (a location is a node or a number), so each names one
+    /// document, the same for every atom that writes it (decision 0665).
+    paths: u32,
 }
 
 impl Form {
@@ -1384,6 +1461,7 @@ impl Form {
         };
         let splices: Vec<(u32, u32)> = placed.splices.iter().map(|&(s, t)| (class[s.0 as usize], tape(t))).collect();
         let mut lits = Vec::new();
+        let mut strings: BTreeMap<u32, u32> = BTreeMap::new();
         for (index, l) in rule.body().enumerate() {
             lits.push(match l.view() {
                 lv @ (L::Atom(_) | L::Agg { .. }) => {
@@ -1405,6 +1483,16 @@ impl Form {
                         plain,
                         rel: a.rel().0,
                         args: args.iter().map(|t| t.var().map(|s| s.0)).collect(),
+                        consts: args
+                            .iter()
+                            .map(|t| match t {
+                                TermRef::Str(x) => {
+                                    let k = strings.len() as u32;
+                                    Some(*strings.entry(x.0).or_insert(k))
+                                }
+                                _ => None,
+                            })
+                            .collect(),
                         binder: placed.by_binder.values().any(|b| *b == index),
                         tapes: stand,
                     }
@@ -1419,8 +1507,9 @@ impl Form {
             });
         }
         let binders = (n + tapes.len()) as u32;
-        let ids = binders as usize + lits.len();
-        Form { named, class, lits, splices, ids, binders }
+        let paths = binders + lits.len() as u32;
+        let ids = paths as usize + strings.len();
+        Form { named, class, lits, splices, ids, binders, paths }
     }
 
     /// The slot a head argument is, when the body names it.
@@ -1440,10 +1529,15 @@ impl Form {
     }
 
     fn placed_classes(&self, rels: &Rels<'_>, locs: &[Vec<usize>]) -> Bits {
+        self.placed_classes_over(rels, locs, &rels.base_locs)
+    }
+
+    /// `placed_classes` with the base relations' columns `base`: their placing columns, or their locations alone.
+    fn placed_classes_over(&self, rels: &Rels<'_>, locs: &[Vec<usize>], base: &[Vec<usize>]) -> Bits {
         let mut out = Bits::new(self.ids);
         for l in &self.lits {
             if let Lit::Read { neg: false, rel, args, .. } = l {
-                let columns = if rels.is_derived(*rel) { &locs[*rel as usize] } else { &rels.base_locs[*rel as usize] };
+                let columns = if rels.is_derived(*rel) { &locs[*rel as usize] } else { &base[*rel as usize] };
                 for &c in columns {
                     if let Some(Some(v)) = args.get(c) {
                         out.set(self.class[*v as usize]);
@@ -1532,7 +1626,7 @@ impl Form {
         let mut group: Vec<u32> = Vec::new();
         for (index, l) in self.lits.iter().enumerate() {
             match l {
-                Lit::Read { neg, plain, rel, args, binder, tapes } => {
+                Lit::Read { neg, plain, rel, args, consts, binder, tapes } => {
                     let r = *rel;
                     let derived = rels.is_derived(r);
                     // A function of strings where it is per-file is read as a test is.
@@ -1545,6 +1639,8 @@ impl Form {
                     let columns = if derived { &locs[r as usize] } else { &rels.base_locs[r as usize] };
                     group.clear();
                     group.extend(columns.iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])));
+                    // A path written out places the one document of that path (decision 0665).
+                    group.extend(columns.iter().filter_map(|&c| consts.get(c).copied().flatten().map(|k| self.paths + k)));
                     if *neg {
                         for k in group.iter_mut() {
                             if let Some(&(_, anchor)) = nullable_row.iter().find(|(x, _)| x == k) {
