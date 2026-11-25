@@ -145,10 +145,14 @@ async function clockAfter(file: string, ms: number): Promise<void> {
   vi.setSystemTime(Number((mtimeNs > ctimeNs ? mtimeNs : ctimeNs) / 1_000_000n) + ms);
 }
 
-/** How many times the whole of an open file was read from this call on: a walk reads an index with no checksum so. */
+/**
+ * How many times the bytes of a whole open file were read from this call on, as a walk reads an index with no
+ * checksum; Git's small files that name a worktree's folders are read open as text, which this leaves out.
+ */
 function wholeReads(): () => number {
   const from = vi.mocked(readFileSync).mock.calls.length;
-  return () => vi.mocked(readFileSync).mock.calls.slice(from).filter(([file]) => typeof file === "number").length;
+  const bytes = ([file, options]: Parameters<typeof readFileSync>): boolean => typeof file === "number" && options === undefined;
+  return () => vi.mocked(readFileSync).mock.calls.slice(from).filter(bytes).length;
 }
 
 describe("Git's ignore answers kept per checkout", () => {
