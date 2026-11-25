@@ -683,6 +683,12 @@ fn populate_with(
             base_readers.rows(path, io, pointer, records, Vec::new(), columns, base)
         } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
         program.b.fields().retain_inputs(|name| name != rel);
+        // A repository file missing or holding no rows is stated empty: a fact of the run with no rows, as its readers
+        // read it, which the split takes as a constant, never a relation with neither rows nor a place (decision 0686).
+        // An unreadable base revision is incomplete, not empty: its readers are withheld (`withhold`).
+        if !at_base && !result.as_ref().is_ok_and(|rows| !rows.is_empty()) && program.b.fields().fact_rows(rel).is_empty() {
+            program.b.fields().set_facts(rel, &[]);
+        }
         match result {
             Ok(rows) => program.b.fields().add_facts(rel, &rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>()),
             Err(error) if at_base => {
@@ -886,6 +892,31 @@ grew(e) :- now_entry(e), !was(_, e).
         assert_eq!(error_kinds(&program), [r#"Str("allow.txt@base") Str("missing")"#]);
         assert!(!heads(&program).iter().any(|h| h == "grew"), "a rule reading the base through ! is withheld");
         assert!(heads(&program).iter().any(|h| h == "now_entry"));
+    }
+
+    /// An input whose file is missing, or holds no rows, is stated empty: a fact of the run with no rows, as a
+    /// readable file's rows are, never a relation with neither rows nor a place. The split takes it as a constant, so
+    /// a per-file rule reading it stays per-file (swallowed-exceptions' `ignored` over a tree without its ignores
+    /// file, pure-lazy-runtime-purity's allowlist without its directory: decision 0686).
+    #[test]
+    fn an_input_file_missing_or_empty_is_stated_empty() {
+        const PROGRAM: &str = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl ignored(p: symbol, l: symbol)
+.input ignored(IO=file, filename="ignores.txt")
+.decl kept(n: node)
+kept(n) :- node(d, n, "call", _, _), doc(d, p, _), !ignored(p, "1").
+.output kept
+"#;
+        let reads: [(&str, ReadResult<String>); 2] = [("missing", Err(Failure { kind: "missing", detail: "no such file".into() })), ("empty", Ok(String::new()))];
+        for (why, read) in reads {
+            let program = populated(&version(PROGRAM), &mut |_| read.clone(), &mut none, &mut no_base).unwrap();
+            assert_eq!(facts(&program, "ignored"), Some(Vec::new()), "{why}: stated empty");
+            let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::typing::file_local::FileLocal>(&program).unwrap();
+            assert!(split.local.contains("kept"), "{why}: kept is per-file: {:?}", split.causes);
+        }
     }
 
     #[test]

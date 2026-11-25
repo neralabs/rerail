@@ -1958,3 +1958,92 @@ mark(at) :- kind(at, "call"), "a" = "b".
     assert_eq!(split.locations.get("mark").map(Vec::as_slice), Some(&[0][..]), "{:?} {:?}", split.locations.get("mark"), split.nullable.get("mark"));
     assert!(split.crossings.is_empty(), "{:?}", split.crossings);
 }
+
+/// Decision 0686: a flag over every file that only gates per-file work is applied last. `docin(d)` (as
+/// pure-lazy-runtime-purity's `plp_docin`: the candidate files, else every file when there is none) is cross-file, and
+/// every rule reading it reads it at its own document. Each file derives the relations above it twice, once under each
+/// of its values (`flag_copy`), and the cross-file part takes, for each row read outside them, the copy of its
+/// document's value: `inrec`'s copies, `colored`'s, `an`'s and `found`'s are per-file, a negated read of one
+/// (`!colored`), an aggregate over one, and a rule the flag does not gate (`an(n, 2)`) among them. A nullary flag read
+/// directly (`!any()`) is applied last too. A reader of the flag at another document (`remote`, at document 0) keeps
+/// it from being applied last.
+#[test]
+fn a_flag_over_every_file_gating_per_file_work_is_applied_last() {
+    let program = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.decl docof(n: node, d: number)
+.decl named(n: node, x: symbol)
+.decl option(k: symbol, v: symbol)
+.input node, doc, docof, named, option
+.decl shared(n: node) cross_file
+shared(n) :- named(n, x), named(m, x), n != m.
+.decl cand(d: number)
+cand(d) :- shared(n), docof(n, d).
+.decl any()
+any() :- cand(_).
+.decl docin(d: number)
+docin(d) :- cand(d).
+docin(d) :- doc(d, _, _), !any().
+.decl inrec(n: node)
+inrec(n) :- node(d, n, "def", _, _), docin(d).
+.decl colored(n: node)
+colored(n) :- inrec(n), named(n, "seed").
+colored(m) :- colored(n), node(d, n, _, _, _), node(d, m, "def", _, _), inrec(m).
+.decl an(n: node, s: number)
+an(n, 0) :- colored(n).
+an(n, 1) :- inrec(n), !colored(n).
+an(n, 2) :- option("mode", "src"), node(_, n, "def", _, _).
+.decl found(n: node, s: number)
+found(n, s) :- an(n, s), k = count : { an(n, _) }, k = 1.
+.decl lonely(n: node)
+lonely(n) :- node(_, n, "def", _, _), !any().
+.decl both(n: node)
+both(n) :- found(n, _), shared(n).
+.decl either(n: node)
+either(n) :- found(n, _).
+either(n) :- either(m), shared(n), named(n, x), named(m, x).
+.output found, lonely, both, either
+"#;
+    let v = read(program);
+    let whole = split_of(&v);
+    for r in ["inrec", "colored", "an", "found", "lonely"] {
+        assert!(!whole.local.contains(r), "the case: {r} is cross-file through the flag: {:?}", whole.causes);
+    }
+    let (gated, last) = FileLocal::flags_applied_last(&v).unwrap();
+    let gated = gated.expect("a flag is applied last");
+    let set = |xs: &[&str]| xs.iter().map(|x| x.to_string()).collect::<std::collections::BTreeSet<String>>();
+    assert_eq!(last.flags.get("docin"), Some(&set(&["inrec", "colored", "an", "found"])), "{:?} {:?}", last.flags, last.refused);
+    assert_eq!(last.flags.get("any"), Some(&set(&["lonely"])), "{:?} {:?}", last.flags, last.refused);
+    assert_eq!(last.flags.len(), 2, "{:?}", last.flags);
+    let split = split_of(&gated);
+    for r in ["inrec", "colored", "an", "found", "lonely"] {
+        for b in [false, true] {
+            let copy = flag_copy(r, b);
+            // A copy no rule derives under its value is stated empty: a fact.
+            let derived = gated.rules().any(|q| gated.rel_name(q.head().rel()) == copy);
+            assert!(if derived { split.local.contains(&copy) } else { !split.causes.contains_key(&copy) }, "{copy} is per-file: {:?}", split.causes.get(&copy));
+        }
+    }
+    // Under `docin` false, `inrec` has no rule: it is stated empty, and `an(n, 2)` alone derives.
+    assert!(!gated.rules().any(|r| gated.rel_name(r.head().rel()) == flag_copy("inrec", false)), "inrec under false has no rule");
+    assert!(gated.rules().any(|r| gated.rel_name(r.head().rel()) == flag_copy("an", false)), "an(n, 2) under false");
+    // The outputs keep their names, taken in the cross-file part from the copy of the flag's value.
+    for r in ["found", "lonely"] {
+        assert!(!split.local.contains(r), "{r} is the cross-file part's choice");
+        assert!(gated.rules().filter(|q| gated.rel_name(q.head().rel()) == r).all(|q| reads(&gated, q).iter().any(|x| x == "docin" || x == "any")), "{r} reads the flag");
+    }
+    assert_eq!(split.crossings.keys().collect::<Vec<_>>(), whole.crossings.keys().collect::<Vec<_>>(), "no crossing made");
+    // A rule reading a flag's choice and another cross-file relation is named cross-file by the other: it is so
+    // whatever the flag.
+    assert_eq!(split.causes.get("both").map(String::as_str), Some("reads cross-file shared"), "{:?}", split.causes.get("both"));
+    // And a relation one rule of which reads only a flag's choice, another itself and a cross-file relation: named by
+    // the cross-file relation.
+    assert_eq!(split.causes.get("either").map(String::as_str), Some("reads cross-file shared"), "{:?}", split.causes.get("either"));
+
+    // A reader of the flag at another document than its own: no flag applied last.
+    let remote = format!("{program}.decl remote(n: node)\nremote(n) :- node(_, n, \"def\", _, _), docin(0).\n.output remote\n");
+    let (_, last) = FileLocal::flags_applied_last(&read(&remote)).unwrap();
+    assert!(!last.flags.contains_key("docin"), "{:?}", last.flags);
+    assert!(last.refused.get("docin").is_some_and(|c| c.contains("remote")), "{:?}", last.refused);
+}

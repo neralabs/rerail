@@ -1822,6 +1822,12 @@ fn run_observed_within(
     let mut shape = shape::Shape::of(&v);
     let git_metadata_only = crate::git_workspace::snapshot::contains(root) && git::metadata_only(&v);
     drop(combining);
+    // A flag over every file that only gates per-file work is applied last (decision 0686): each file derives the
+    // relations above it under each of its values, and the cross-file part takes each row from its document's value.
+    if let Some(gated) = phases::flags_last(&v, options)? {
+        v = gated;
+        shape = shape::Shape::of(&v);
+    }
     // The cross-file relations of names its per-file rules read are staged (decision 0675): a phase cut from the
     // program, run first with the phases, whose exports the program left reads as placeless inputs.
     let _stage = match phases::stage(&v, options)? {

@@ -650,6 +650,22 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     Ok(Some((left, Staged { _bound: bound, name, exports, probes, whole })))
 }
 
+/// `v` with each flag over every file that only gates per-file work applied last (decision 0686,
+/// `FileLocal::flags_applied_last`), if one is. Not in a phase's or the constants' own run, nor with `RERAIL_FLAGS_LAST=off`.
+pub fn flags_last(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result<Option<std::sync::Arc<Version>>> {
+    if options.get(super::constants::OWN).is_some() || declared(&**v).is_some() || std::env::var("RERAIL_FLAGS_LAST").is_ok_and(|s| s == "off") {
+        return Ok(None);
+    }
+    let (gated, last) = crate::code_rule_dsl::typing::file_local::FileLocal::flags_applied_last(v).map_err(Error::Plan)?;
+    for (flag, cone) in &last.flags {
+        crate::code_rule_dsl::logic::profile::decision("flags applied last", || format!("{flag}: {} relations derived under each value ({})", cone.len(), cone.iter().take(6).cloned().collect::<Vec<_>>().join(", ")));
+    }
+    for (flag, why) in &last.refused {
+        crate::code_rule_dsl::logic::profile::decision("flags applied last", || format!("{flag}: {why}"));
+    }
+    Ok(gated)
+}
+
 /// The prefix of an existence read's relation (`existence_reads`).
 pub const ANY: &str = "rr_any_";
 

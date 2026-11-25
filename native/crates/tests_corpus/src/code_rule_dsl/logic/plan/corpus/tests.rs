@@ -2565,6 +2565,97 @@ called(n, p, x) :- kind(n, "call"), field(n, "function", f), text(f, x), def(_, 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0686: a flag over every file that only gates per-file work is applied last. `docin(d)` holds the files
+/// defining a name another file defines too, else, when there is none, every file (pure-lazy-runtime-purity's
+/// `plp_docin`). Each file derives `inrec`, `checked` and `unchecked` under both of the flag's values, per-file (the
+/// run's split, `RERAIL_SPLIT_DUMP`, names no copy), and the cross-file part takes each row from its document's value.
+/// An edit that turns the flag over for every file (b.py no longer shares `f`) gives every file's rows under the other
+/// value, and the rows are a fresh run's.
+#[test]
+fn a_flag_over_every_file_is_applied_last() {
+    const PROGRAM: &str = r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", i), text(i, x).
+.decl shared(n: node) cross_file
+shared(n) :- def(n, x), def(m, x), n != m.
+.decl cand(d: number)
+cand(d) :- shared(n), docof(n, d).
+.decl any()
+any() :- cand(_).
+.decl docin(d: number)
+docin(d) :- cand(d).
+docin(d) :- doc(d, _, _), !any().
+.decl inrec(n: node)
+inrec(n) :- def(n, _), docof(n, d), docin(d).
+.decl checked(n: node, p: symbol, x: symbol)
+checked(n, p, x) :- inrec(n), def(n, x), docof(n, d), doc(d, p, _).
+.decl unchecked(n: node, p: symbol, x: symbol)
+unchecked(n, p, x) :- def(n, x), !inrec(n), docof(n, d), doc(d, p, _).
+.output checked, unchecked
+"#;
+    let files = [("a.py", "def f():\n    pass\n\ndef h():\n    pass\n"), ("b.py", "def f():\n    pass\n"), ("c.py", "def g():\n    pass\n")];
+    let edit = ("b.py", "def k():\n    pass\n");
+    let make = |name: &str, edits: &[(&str, &str)]| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        for (path, text) in files.iter().chain(edits) {
+            let to = dir.join("ws").join(path);
+            std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+            std::fs::write(to, text).unwrap();
+        }
+        dir
+    };
+    let run = |dir: &std::path::Path| -> Vec<(String, Vec<String>)> {
+        crate::install_store_functions();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        // SAFETY: nextest runs each test in a process of its own.
+        unsafe { std::env::set_var("RERAIL_SPLIT_DUMP", dir.join("split.txt")) };
+        super::run(PROGRAM, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+        let mut rows: Vec<(String, Vec<String>)> = ["checked", "unchecked"]
+            .iter()
+            .flat_map(|o| outputs.get(o).map(|r| r.shown()).unwrap_or_default().into_iter().map(move |r| (o.to_string(), r[1..].to_vec())))
+            .collect();
+        rows.sort();
+        rows
+    };
+    let row = |o: &str, p: &str, x: &str| (o.to_owned(), vec![p.to_owned(), x.to_owned()]);
+    let dir = make("flag-last", &[]);
+    let rows = run(&dir);
+    assert_eq!(rows, [row("checked", "a.py", "f"), row("checked", "a.py", "h"), row("checked", "b.py", "f"), row("unchecked", "c.py", "g")], "{rows:?}");
+    // The run's split: no copy of the gated relations is cross-file.
+    let causes: String = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.to_string_lossy().ends_with(".causes.txt"))
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .collect();
+    assert!(!causes.is_empty(), "no split dumped");
+    let local: String = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.to_string_lossy().ends_with(".local.rerail"))
+        .map(|p| std::fs::read_to_string(p).unwrap())
+        .collect();
+    for r in ["inrec", "checked"] {
+        let copy = crate::code_rule_dsl::typing::file_local::flag_copy(r, true);
+        assert!(local.contains(&format!("{copy}(")), "{copy} is derived in the files' part:\n{local}");
+    }
+    for r in ["inrec", "checked", "unchecked"] {
+        for b in [false, true] {
+            let copy = crate::code_rule_dsl::typing::file_local::flag_copy(r, b);
+            assert!(!causes.lines().any(|l| l.split('\t').next() == Some(copy.as_str())), "{copy} is cross-file:\n{causes}");
+        }
+    }
+    std::fs::write(dir.join("ws").join(edit.0), edit.1).unwrap();
+    let rows = run(&dir);
+    assert_eq!(rows, [row("checked", "a.py", "f"), row("checked", "a.py", "h"), row("checked", "b.py", "k"), row("checked", "c.py", "g")], "no file shares a name: every file is in: {rows:?}");
+    let fresh = make("flag-last-fresh", &[edit]);
+    assert_eq!(rows, run(&fresh), "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A declared input nothing gives (`node-resolve.rerail`'s `spec_resolved`, a proposed core input) is empty: a
 /// file-local rule reads it so, positive and negated, as the cross-file part does (decision 0675: the Node pack's
 /// readers of it are per-file once the names they read are staged).

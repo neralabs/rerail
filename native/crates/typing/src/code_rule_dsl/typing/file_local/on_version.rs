@@ -12,6 +12,9 @@ use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit as L, NativeSpec, Re
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
 
+mod flags_last;
+pub use flags_last::{FLAG_COPY, LastFlags, flag_copy};
+
 /// The relations a program derives within one document (list step 29's split, R0): a relation is file-local when
 /// each of its rules joins only one document's rows. A rule is when every relation it reads (positive, negated or
 /// aggregated) is a base relation, a constant one, or file-local, each with a location (a node, or a document) of the
@@ -1195,6 +1198,18 @@ impl<'v> Program<'v> {
             next.dedup();
             dirty = Some(next);
             if !left {
+                // A cause naming a flag's choice between its copies (decision 0686) is the flag's, not the relation's:
+                // where another of its rules fails for another reason, that is named, the reason it stays cross-file
+                // whatever the flag (`plp_colored`: its walk over `pc_edge`, not `plp_in_rec`).
+                let reads_copy = |r: RelId| rels.rules[r.0 as usize].iter().any(|&k| self.rules[k].reads().any(|a| self.name(a.rel().0).starts_with(FLAG_COPY)));
+                let a_choice = |why: &str| why.strip_prefix("reads cross-file ").and_then(|x| self.v.rel(x)).is_some_and(reads_copy);
+                for r in (0..n as u32).filter(|&r| in_scope[r as usize] && !local_now[r as usize]) {
+                    if causes.get(self.name(r)).is_some_and(|c| a_choice(c))
+                        && let Some(other) = rels.rules[r as usize].iter().filter_map(|&k| explain(k, &local_now)).find(|w| !a_choice(w))
+                    {
+                        causes.insert(self.name(r).to_owned(), other);
+                    }
+                }
                 break;
             }
         }
@@ -1676,6 +1691,22 @@ impl<'v> Program<'v> {
         let head = v.rel_name(rule.head().rel());
         let var = |s: Slot| v.text(rule.var(s)).to_owned();
         let local = |rel: &str| v.rel(rel).is_some_and(|r| local_now[r.0 as usize]);
+        // A cross-file read that is a flag's choice between its copies (decision 0686) is cross-file because the flag
+        // is, and a read of the head itself because the head is: where the rule reads another cross-file relation,
+        // that one is named, the reason the rule stays cross-file whatever the flag (`plp_colored`: `pc_edge` across
+        // files, not `plp_in_rec`, the flag's choice, nor `plp_colored`).
+        let choice = |r: RelId| self.rels.rules[r.0 as usize].iter().any(|&k| self.rules[k].reads().any(|a| v.rel_name(a.rel()).starts_with(FLAG_COPY)));
+        if let Some(x) = rule.body().find_map(|l| match l.view() {
+            L::Atom(a) | L::Agg { atom: a, .. } if self.f.derives(v.rel_name(a.rel())) && !local(v.rel_name(a.rel())) && !constants.contains(v.rel_name(a.rel())) && !filters.contains(v.rel_name(a.rel())) && !self.rels.placeless_input[a.rel().0 as usize] => Some(a.rel()),
+            _ => None,
+        }) && (choice(x) || x == rule.head().rel())
+            && let Some(y) = rule.body().find_map(|l| match l.view() {
+                L::Atom(a) | L::Agg { atom: a, .. } if self.f.derives(v.rel_name(a.rel())) && !local(v.rel_name(a.rel())) && !constants.contains(v.rel_name(a.rel())) && !filters.contains(v.rel_name(a.rel())) && !self.rels.placeless_input[a.rel().0 as usize] && !choice(a.rel()) && a.rel() != rule.head().rel() => Some(a.rel()),
+                _ => None,
+            })
+        {
+            return Some(format!("reads cross-file {}", v.rel_name(y)));
+        }
         let placed = ValueTapes::of(v, rule);
         let tape = |c: u32| format!("rr_value_tape:{}", var(Slot(c)));
         let mut groups: Vec<BTreeSet<String>> = Vec::new();
