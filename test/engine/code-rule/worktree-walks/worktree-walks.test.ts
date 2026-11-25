@@ -754,6 +754,7 @@ describe("a walk of the other worktrees with change notices", () => {
   // A kept read pairs what the walk read before with Git's listing of the worktree now. A file the session's command
   // changed there before that read, put back to HEAD's text for the listing and written again after it (`git stash`,
   // then `git stash pop`), is one Git names as holding that text, though the kept read and the file hold the command's.
+  // The command still runs as the session first sees the worktree, so no walk of the session answered for it before.
   it("records a file its command changed in a worktree it first sees from a kept read, put back for the walk's listing and written again", async () => {
     const { main, worktrees, checkouts } = await repository(["w1"]);
     const walks = noticedWalks();
@@ -763,11 +764,13 @@ describe("a walk of the other worktrees with change notices", () => {
     const added = join(dirname(main), "w2");
     git(main, "worktree", "add", "--quiet", "--detach", added);
     const file = join(added, "src", "a.py");
-    await shell(seer.bridge, "shell-1", () => writeFile(file, "old\nmine\n"), added);
+    await seer.bridge.begin("shell-1", "shell", { command: "./run.sh" }, undefined, added);
+    await writeFile(file, "old\nmine\n");
     checkouts.push(added);
     await turn(other);
     named.push(added);
     counted.aroundListing.set(added, { before: () => writeFileSync(file, "old\n"), after: () => writeFileSync(file, "old\nmine\n") });
+    await seer.bridge.finish("shell-1");
     await turn(seer);
     expect(audited(seer).flatMap(([paths]) => paths)).toContain("written ../w2/src/a.py");
   });
