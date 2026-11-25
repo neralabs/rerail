@@ -1,4 +1,4 @@
-.policy "typescript-eslint-parameter-properties" revision 3
+.policy "typescript-eslint-parameter-properties" revision 4
 .description "Declare class properties explicitly instead of using TypeScript constructor parameter properties; it keeps a class's fields visible in one place."
 .language typescript
 .mode steer
@@ -46,11 +46,16 @@ param_property(p, x, m) :- (kind(p, "required_parameter") ; kind(p, "optional_pa
     (has_access(p) ; op(p, "readonly") ; child(p, o, _), kind(o, "override_modifier")).
 
 // ---- prefer "parameter-property" ----
-// bare_field(b, f, x): field f of class body b has the plain name x, no value and no allowed modifier set.
+// bare_field(b, f, x): field f of class body b is named by the identifier x (`x` or `[x]`: the rule reads the key,
+// not whether it is computed), has no value and no allowed modifier set. `abstract x` and `accessor x` are no
+// PropertyDefinition.
 .decl bare_field(b: node, f: node, x: symbol)
 bare_field(b, f, x) :- prefer_params(), child(b, f, _), kind(b, "class_body"), kind(f, "public_field_definition"),
-    field(f, "name", n), kind(n, "property_identifier"), text(n, x), !field(f, "value", _), modifiers(f, m),
-    !option_item("allow", _, m).
+    !op(f, "abstract"), !op(f, "accessor"), field(f, "name", n), field_ident(n, x), !field(f, "value", _),
+    modifiers(f, m), !option_item("allow", _, m).
+.decl field_ident(n: node, x: symbol)
+field_ident(n, x) :- kind(n, "property_identifier"), text(n, x).
+field_ident(n, x) :- kind(n, "computed_property_name"), child(n, e, 0), deparen(e, i), kind(i, "identifier"), text(i, x).
 // name_param(k, q, x): constructor k's parameter q is the plain name x (not a parameter property, no default).
 .decl name_param(k: node, q: node, x: symbol)
 name_param(k, q, x) :- prefer_params(), ctor(k), fn_param(k, q, _), field(q, "pattern", n), kind(n, "identifier"),
@@ -59,11 +64,17 @@ name_param(k, q, x) :- prefer_params(), ctor(k), fn_param(k, q, _), field(q, "pa
 .decl head_assign(k: node, x: symbol)
 head_assign(k, x) :- prefer_params(), ctor(k), fn_block(k, b), this_assign(s, x), child(b, s, _),
     !broken_before(b, s).
-.decl this_assign(s: node, x: symbol)  // statement s is `this.y = x;`
+// this_assign(s, x): statement s is `this.y = x;`, parentheses aside; `this[y] = x` too (a computed member whose
+// property is an identifier), not `this["y"]` or `this.#y`.
+.decl this_assign(s: node, x: symbol)
 this_assign(s, x) :- kind(s, "expression_statement"), child(s, e, 0), deparen(e, a), kind(a, "assignment_expression"),
-    field(a, "left", l), kind(l, "member_expression"), field(l, "object", o), kind(o, "this"),
-    field(l, "property", p), kind(p, "property_identifier"), field(a, "right", r0), deparen(r0, r),
-    kind(r, "identifier"), text(r, x).
+    field(a, "left", l0), deparen(l0, l), this_member(l), field(a, "right", r0), deparen(r0, r), kind(r, "identifier"),
+    text(r, x).
+.decl this_member(l: node)
+this_member(l) :- kind(l, "member_expression"), field(l, "object", o), deparen(o, t), kind(t, "this"),
+    field(l, "property", p), kind(p, "property_identifier").
+this_member(l) :- kind(l, "subscript_expression"), field(l, "object", o), deparen(o, t), kind(t, "this"),
+    field(l, "index", i), deparen(i, p), kind(p, "identifier").
 .decl broken_before(b: node, s: node)  // a statement before s in block b is no such assignment
 broken_before(b, s) :- child(b, s, _), this_assign(s, _), child(b, o, _), precedes(o, s), !kind(o, "comment"),
     !this_assign(o, _).
@@ -72,3 +83,53 @@ broken_before(b, s) :- child(b, s, _), this_assign(s, _), child(b, o, _), preced
 same_type(f, q) :- bare_field(_, f, _), name_param(_, q, _), !field(f, "type", _), !field(q, "type", _).
 same_type(f, q) :- bare_field(_, f, _), name_param(_, q, _), field(f, "type", a), field(q, "type", b), text(a, t),
     text(b, t).
+
+// Tests (decision 0130): the review's counterexamples (review/typescript-03.review.md), against typescript-eslint
+// 8.74.0, each with prefer "parameter-property" (a test sets no options: prefer_params is given instead). `abstract x`
+// and `accessor x` are not recorded fields.
+.test abstract_and_accessor_fields_are_no_class_properties exactly
+    .given prefer_params
+    prefer_params().
+    .fixture "b1.ts" ```
+        export abstract class A {
+          abstract x: string;
+          constructor(x: string) { this.x = x; }
+        }
+        ```
+    .fixture "b2.ts" ```
+        export class A {
+          accessor x: string;
+          constructor(x: string) { this.x = x; }
+        }
+        ```
+.end
+
+// The run of assignments takes `this[x] = x` and a parenthesised `(this.q) = y`, and a field `[x]` is the field x.
+.test computed_and_parenthesised_shapes exactly
+    .given prefer_params
+    prefer_params().
+    .fixture "b3.ts" ```
+        export class A {
+          x: string;
+          constructor(x: string) { this[x] = x; }
+        }
+        ```
+    .fixture "b5.ts" ```
+        export class A {
+          x: string;
+          y: number;
+          constructor(x: string, y: number) { this.y = x; (this.q) = y; }
+        }
+        ```
+    .fixture "b4.ts" ```
+        const x = "x";
+        export class A {
+          [x]: string;
+          constructor(x: string) { this.x = x; }
+        }
+        ```
+    .expect "@typescript-eslint/parameter-properties" at "b3.ts":2
+    .expect "@typescript-eslint/parameter-properties" at "b5.ts":2
+    .expect "@typescript-eslint/parameter-properties" at "b5.ts":3
+    .expect "@typescript-eslint/parameter-properties" at "b4.ts":3
+.end

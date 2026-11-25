@@ -8,7 +8,7 @@ Ground truth: ESLint 9.39 with typescript-eslint 8.74.0 (`@typescript-eslint/par
 `rerail-typescript` (602 files) corpora and on the hand-written cases below, compared by (path, line) with
 `--no-inline-config` (for no-unused-vars on rerail-typescript also with inline config: the same 80 keys). The
 translations now report what ESLint reports on both corpora, line for line. Each changed translation's revision is one
-up; parameter-properties needed no change.
+up; parameter-properties changed only after the review (below).
 
 ## Results
 
@@ -16,7 +16,7 @@ up; parameter-properties needed no change.
 |---|---|---|
 | no-unnecessary-parameter-property-assignment | same | |
 | no-unused-private-class-members | same | |
-| no-unused-vars | different | 7 translation-only keys, all ESLint's; the original is wrong |
+| no-unused-vars | different | 6 translation-only keys, all ESLint's; the original is wrong |
 | no-use-before-define | same | |
 | parameter-properties | different | 2 original-only keys, ESLint has neither; the original is wrong |
 
@@ -65,15 +65,15 @@ Fixed:
 - `@Dec(M) class M {}`: the decorator reads the outer M (ESLint: used); tree-sitter hangs the decorator inside the
   class, where M resolves to the class's own name, a self reference. Found ad hoc.
 
-Left, 7 translation-only keys, every one reported by ESLint:
+Left, 6 translation-only keys, every one reported by ESLint:
 - fixtures, 6: consistent-indexed-object-style 037:1, 038:1, 039:2, 040:2, 088:2, 089:2, each "'Foo' is defined but
   never used". `type Foo = { [key: string] };`, `{ [] }`, `interface Foo { [key: string]; }`: index signatures
   without a type, which TypeScript's parser accepts and tree-sitter does not. The original refuses these files
   ("source-incomplete: file has syntax errors") and reports nothing; ESLint, and the translation, report Foo.
-- rerail-typescript, 1: `test/scripts/pack-test-data.test.mjs:1299`,
-  `const { "packs/p/…/LICENSES.md": _licences, ...withoutLicences } = …`. ESLint: "'_licences' is assigned a value
-  but never used." (ignoreRestSiblings is false by default and the JSON sets no varsIgnorePattern.) The original
-  misses a binding under a string-keyed pair pattern.
+
+The translation's `.scope` was `**/*`; it is the JSON's now (`.ts`, `.tsx`, `.mts`, `.cts`), which drops the one
+rerail-typescript difference, `test/scripts/pack-test-data.test.mjs:1299` (a `.mjs` file the original never looks at;
+ESLint reports `_licences` there only when configured to lint `.mjs` with the TypeScript parser).
 
 ## no-use-before-define: same
 
@@ -99,6 +99,64 @@ original adds 2 on rerail-typescript, `src/engine/storage/database.ts:35` and `:
 `function connectSqlite(path: string, readonly: boolean)` and `function openChecked(path: string, readonly: boolean, …)`.
 A parameter *named* `readonly` in a plain function is no parameter property; ESLint reports neither.
 
+## Review fixes (review/typescript-03.review.md)
+
+The reviewer's 18 defects, each confirmed against typescript-eslint 8.74.0 on a fleet box and fixed; each
+counterexample is now a `.test` of its rule (`rerail-engine test-rr`: 15 tests, all pass), and the five rules' suite
+verdicts are unchanged (ptcheck: three same; no-unused-vars and parameter-properties differ only as above).
+
+no-unnecessary-parameter-property-assignment:
+- An `accessor` field is an AccessorProperty, not a PropertyDefinition: a write in its value no longer counts as a
+  field write (`accessor b = (this.a = "x")` before `this.a = a`: reported).
+- A parenthesised field value `b = (foo(() => { this.a = "x"; }))` is the arrow IIFE's call (ESTree has no
+  parentheses): a field write, so `this.a = a` is not reported.
+
+no-unused-private-class-members:
+- `accessor #x`: the analyser's PrivateIdentifier visitor skips the key of a method or PropertyDefinition only, so an
+  AccessorProperty's own `#x` reads it; it is never reported.
+- `const o: C = …; o.x`: getObjectClass returns null for a variable whose first definition is a declarator not
+  `= this`; a variable's type is no longer read (a parameter's still is).
+- `m(o: C<number>)`: a generic type reference names C (`ref_type_name`), for parameters and `this: C<T>` alike.
+- `const { y: self } = this`: any name the declarator binds from `this` is self.
+- `self++`, `[self] = …`, `for (self of …)`, `({ self } = …)`: any write reference other than the initialiser ends
+  self (the analyser's `ref.isWrite() && ref.init !== true`).
+- Keys: a literal by `String(value)` (`[true]`, `[null]`, `[1n]`), a template without substitutions by its raw
+  text (`` [`a\x62`] `` is a\x62, so `this.ab` does not read it); member accesses `o[true]`, ``o[`k`]`` the same way.
+- A class method's frame is the method whatever its `this` parameter says (`static n(this: B) { this.y }` reads the
+  static map only); only other functions, an object literal's methods included, take `this: C`. A function that is
+  an `accessor` field's value is no field-value frame either.
+
+no-unused-vars:
+- A parameter named only by a type predicate (`x is string`, `asserts y`) is "only used as a type"
+  (`referenceContainsTypePredicate`). `ts-b-scope` makes no reference there (`in_predicate`); the rule adds the
+  type-only read itself.
+- `export interface Foo {}` with `const Foo = 1`: an interface or type alias of a variable that is also a value does
+  not export it (`isMergedTypeDeclaration`): `merged_type`.
+- `stored` is isStorableFunction now: from the reference's nearest function, climbing ESTree parents inside the right
+  side, an argument (call, `new`), an assignment, a tagged template, a yield or a statement stores it; a callee or a
+  non-last sequence element does not; anything else passes, and the right side's top stores nothing. So
+  `a = [() => a]` and `e = { f: () => e }` are unused, `c = foo(() => c)` is used. Ad hoc, matching ESLint line for
+  line: `(() => a)()`, `new Foo(() => b)`, a tagged template, a conditional, `as`, a spread, a sequence (either
+  place), a function returning an arrow, an object method, `m += (() => m)()`.
+- `args: "after-used"` counts a later parameter's references only when not type-only: `f(a, b): typeof b` reports
+  both a and b.
+- `ignoreRestSiblings`: a property with a default (`{ a = 1, ...rest }`) is no rest sibling (the name's parent is the
+  AssignmentPattern, no Property). Ad hoc: `{ p: q = 1, ...rest }` reports q, `{ r: s, ...rest }` does not.
+
+no-use-before-define:
+- `typedefs: false` exempts type parameters too (`<T extends U, U>`): the scope manager defines them, as `infer U` and
+  a mapped type's key, with a Type definition.
+
+parameter-properties (revision 4):
+- `abstract x` (TSAbstractPropertyDefinition) and `accessor x` (AccessorProperty) are not recorded fields.
+- The constructor's run of assignments takes `this[x] = x` (a computed member whose property is an Identifier) and
+  parenthesised targets `(this.q) = y`, `(this).q = y`.
+- A computed key that is an identifier, `[x]: string`, is the field x (the rule reads `key.type` only).
+
+Tests set no rule options (`option` is core's: a test cannot give it), so the option tests give the rule's own
+relation instead: `.given prefer_params`, `.given opt`, `.given ignore_rest_siblings` (a relation no-unused-vars
+now derives from the option for this).
+
 ## Library: `lib/tsx/typescript-03.rerail` (new)
 
 Two corrections to `tsx/ts-b-scope`, shared by no-unused-vars and no-use-before-define. Both belong in ts-b-scope;
@@ -114,6 +172,7 @@ Further `ts-b-scope` changes this batch worked around in its rules, for whoever 
 - `for (var …)` heads make no scope (scope manager: only `let`/`const`/`using` heads nest a for scope).
 - A decorator of a class is in the class's outer scope (the class name it reads is the outer variable), and with
   `export` it is the export statement's child.
+- A type predicate's name (`x is T`, `asserts x`) is a type-only reference to the parameter, not no reference.
 
 ## Engine gaps
 

@@ -12,12 +12,17 @@
 // typescript-eslint's no-unused-private-class-members: a `private` or `#private` member that nothing reads. Fields,
 // methods, accessors and `constructor(private x)` parameter properties count. Reads are found the way
 // typescript-eslint's class analyser finds them:
-//   this.x       in a method, or a function that is a field's value (static members from static ones); in a
-//                plain function only with a `this: C` parameter; arrow functions see the `this` around them
+//   this.x       in a method, or a function that is a (non-`accessor`) field's value (static members from static
+//                ones); in another function only with a `this: C` parameter; arrow functions see the `this` around them
 //   C.x          the class's own name: a static member
-//   self.x       `const self = this` never reassigned;   o.x for `o: C` (instance) or `o: typeof C` (static)
+//   self.x       a name a declarator binds from `= this` (`const self = this`, `const { y: self } = this`), never
+//                written again (`self = o`, `self++`, `[self] = a`, `for (self of a)`)
+//   o.x          o a parameter typed `C` or `C<T>` (instance) or `typeof C` (static); a variable's type is not read
 //   const { x } = this     destructuring this (a parameter's default `({ x } = this) => …` too)
-//   #x           anywhere inside the nearest class that has #x
+//   #x           anywhere inside the nearest class that has #x; an `accessor #x` field's own key counts, so it is
+//                never reported
+// Keys: a name, a literal as String(value) (`"a"`, `1`, `[true]`, `[null]`, `[1n]` is 1), a template without
+// substitutions by its raw text (`` [`a\x62`] `` is a\x62); other computed keys have none.
 // Writes are not reads: `this.x = v`, `this.x += v;` and `this.x++;` as statements, `for (this.x of xs)`, a
 // destructuring target. An accessor counts as used when written, too.
 //   class A { private a = 1; }   class A { #b() {} }   class A { constructor(private c) { this.c = 1; } }  → reported
@@ -40,15 +45,19 @@ member(c, p, x, x, n, "instance") :- kind(c, ck), class_kind(ck), field(c, "body
     fn_param(m, p, _), field(p, "pattern", n), kind(n, "identifier"), text(n, x),
     (child(p, a, _), kind(a, "accessibility_modifier") ; ((kind(p, "required_parameter") ; kind(p, "optional_parameter")), op(p, "readonly")) ; child(p, o, _),
     kind(o, "override_modifier")).
-// member_key(at, k): `x`, `#x`, `"x"`, `1`, `["x"]`, `[`x`]`; other computed keys have none.
+// member_key(at, k): `x`, `#x`, `"x"`, `1`, `["x"]`, `[true]`, `[`x`]`; other computed keys have none.
 .decl member_key(at: node, k: symbol)
 member_key(at, k) :- (kind(at, "property_identifier") ; kind(at, "private_property_identifier")), text(at, k).
-member_key(at, k) :- (kind(at, "string") ; kind(at, "number")), static_string(at, v), spelled(v, k).
-member_key(at, k) :- kind(at, "computed_property_name"), child(at, e, 0), deparen(e, s),
-    (kind(s, "string") ; kind(s, "number") ; kind(s, "template_string")), static_string(s, v), spelled(v, k).
-.decl spelled(v: symbol, k: symbol)  // the string key "#x" is not the private name #x
-spelled(v, v) :- static_string(_, v), !match("#.*", v).
-spelled(v, cat("'", v)) :- static_string(_, v), match("#.*", v).
+member_key(at, k) :- (kind(at, "string") ; kind(at, "number")), literal_key(at, k).
+member_key(at, k) :- kind(at, "computed_property_name"), child(at, e, 0), deparen(e, s), literal_key(s, k).
+// literal_key(s, k): extractComputedName's key of literal or template s. The string key "#x" is not the private
+// name #x.
+.decl literal_key(s: node, k: symbol)
+literal_key(s, k) :- literal_text(s, v), (!match("#.*", v), k = v ; match("#.*", v), k = cat("'", v)).
+.decl literal_text(s: node, v: symbol)
+literal_text(s, v) :- (kind(s, "string") ; kind(s, "number") ; kind(s, "true") ; kind(s, "false") ; kind(s, "null") ;
+    kind(s, "regex")), static_string(s, v).
+literal_text(s, v) :- kind(s, "template_string"), static_string(s, _), text(s, t), v = @slice(t, 1, -1).
 .decl final_member(c: node, m: node, k: symbol, st: symbol)  // the last member under a key: the analyser's Map
 final_member(c, m, k, st) :- member(c, m, k, _, _, st), !later_member(c, m, k, st).
 .decl later_member(c: node, m: node, k: symbol, st: symbol)
@@ -75,13 +84,26 @@ ctx(n, c, st) :- asks_this(n), nearest(n, f, class_frame), frame_ctx(f, c, st).
 frame_ctx(c, c, "instance") :- kind(c, k), class_kind(k).
 frame_ctx(f, c, st) :- kind(f, "method_definition"), child(b, f, _), field(c, "body", b),
     (is_static(f), st = "static" ; !is_static(f), st = "instance").
-frame_ctx(f, c, st) :- (kind(f, "function_expression") ; kind(f, "generator_function")), field(p, "value", f),
-    kind(p, "public_field_definition"), child(b, p, _), field(c, "body", b),
+frame_ctx(f, c, st) :- field_fn(f, p), child(b, p, _), field(c, "body", b),
     (op(p, "static"), st = "static" ; !op(p, "static"), st = "instance").
 frame_ctx(f, c, "static") :- kind(f, "class_static_block"), child(b, f, _), field(c, "body", b).
-frame_ctx(f, c, "instance") :- class_frame(k), kind(f, k), !class_kind(k), fn_param(f, p, 0), kind(p, "required_parameter"),
-    field(p, "pattern", t), kind(t, "this"), field(p, "type", a), child(a, r, 0), kind(r, "type_identifier"), text(r, x),
-    named_class(f, x, c).
+// Another function (an object literal's method too) with a `this: C` or `this: C<T>` parameter.
+frame_ctx(f, c, "instance") :- class_frame(k), kind(f, k), !class_kind(k), k != "class_static_block", !class_method(f),
+    !field_fn(f, _), this_param_type(f, x), named_class(f, x, c).
+// field_fn(f, p): function f is field p's value, parentheses aside. An `accessor` field is no PropertyDefinition.
+.decl field_fn(f: node, p: node)
+field_fn(f, p) :- (kind(f, "function_expression") ; kind(f, "generator_function")), deparen(v, f), field(p, "value", v),
+    kind(p, "public_field_definition"), !op(p, "accessor").
+.decl class_method(f: node)
+class_method(f) :- kind(f, "method_definition"), child(b, f, _), kind(b, "class_body").
+.decl this_param_type(f: node, x: symbol)  // f's first parameter is `this: x` or `this: x<…>`
+this_param_type(f, x) :- class_frame(k), kind(f, k), fn_param(f, p, 0), kind(p, "required_parameter"),
+    field(p, "pattern", t), kind(t, "this"), field(p, "type", a), ref_type_name(a, x).
+// ref_type_name(a, x): type annotation a is a TSTypeReference to the plain name x: `: C`, `: C<T>`.
+.decl ref_type_name(a: node, x: symbol)
+ref_type_name(a, x) :- kind(a, "type_annotation"), child(a, r, 0), kind(r, "type_identifier"), text(r, x).
+ref_type_name(a, x) :- kind(a, "type_annotation"), child(a, r, 0), kind(r, "generic_type"), field(r, "name", n),
+    kind(n, "type_identifier"), text(n, x).
 // named_class(n, x, c): c is the nearest class around n (or n itself) named x.
 .decl named_class(n: node, x: symbol, c: node)
 named_class(n, x, c) :- asks_name(n, x), (inside(n, c, class_kind) ; kind(n, k), class_kind(k), c = n),
@@ -90,18 +112,16 @@ named_class(n, x, c) :- asks_name(n, x), (inside(n, c, class_kind) ; kind(n, k),
 nearer_named(n, x, c) :- asks_name(n, x), inside(n, c, class_kind), field(c, "name", i), text(i, x),
     inside(n, d, class_kind), within(d, c), field(d, "name", j), text(j, x).
 .decl asks_name(n: node, x: symbol)
-asks_name(f, x) :- class_frame(k), kind(f, k), fn_param(f, p, 0), field(p, "pattern", t), kind(t, "this"),
-    field(p, "type", a), child(a, r, 0), text(r, x).
+asks_name(f, x) :- this_param_type(f, x).
 asks_name(e, x) :- object_of(e, o, _), kind(o, "identifier"), text(o, x).
 asks_name(e, x) :- object_of(e, o, _), ref_site(o, s), typed_site(s, _, x).
 
 // ---- accesses ----
-// object_of(e, o, k): e reads key k of object o: o.k, o["k"], o[`k`], o[1] (not o.#k).
+// object_of(e, o, k): e reads key k of object o: o.k, o["k"], o[`k`], o[1], o[true] (not o.#k).
 .decl object_of(e: node, o: node, k: symbol)
 object_of(e, o, k) :- kind(e, "member_expression"), field(e, "property", p), kind(p, "property_identifier"), text(p, k),
     field(e, "object", w), deparen(w, o).
-object_of(e, o, k) :- kind(e, "subscript_expression"), field(e, "index", i), deparen(i, s),
-    (kind(s, "string") ; kind(s, "number") ; kind(s, "template_string")), static_string(s, k),
+object_of(e, o, k) :- kind(e, "subscript_expression"), field(e, "index", i), deparen(i, s), literal_key(s, k),
     field(e, "object", w), deparen(w, o).
 .decl asks_this(n: node)
 asks_this(e) :- object_of(e, o, _), kind(o, "this").
@@ -119,23 +139,36 @@ access(q, c, k, st) :- this_pattern(p), ctx(p, c, st), child(p, q, _), pattern_k
 // For #x the analyser classifies its parent: `this.#x` or `#x in o`.
 access(a, c, k, st) :- kind(u, "private_property_identifier"), !holder_key(_, u), text(u, k), inside(u, c, class_kind),
     member(c, _, k, _, _, st), !hash_nearer(u, c, k), child(a, u, _).
+// Its visitor skips the key of a method or a PropertyDefinition only: an `accessor #x` field's own key reads #x.
+access(m, c, k, st) :- kind(m, "public_field_definition"), op(m, "accessor"), holder_key(m, u),
+    kind(u, "private_property_identifier"), member(c, m, k, _, _, st).
 .decl hash_nearer(u: node, c: node, k: symbol)
 hash_nearer(u, c, k) :- kind(u, "private_property_identifier"), text(u, k), inside(u, c, class_kind),
     member(c, _, k, _, _, _), inside(u, d, class_kind), within(d, c), member(d, _, k, _, _, _).
-// self_site(s): `const self = this` (or let/var), never assigned again.
+// self_site(s): a name a declarator binds from `= this`: `const self = this` (site: the declarator) or
+// `const { y: self } = this` (site: the name), never written again. The analyser reads the first definition's
+// declarator, and gives up on any write reference but the initialiser.
 .decl self_site(s: node)
-self_site(s) :- kind(s, "variable_declarator"), field(s, "value", v), deparen(v, t), kind(t, "this"),
-    field(s, "name", n), kind(n, "identifier"), !reassigned(s).
-.decl reassigned(s: node)
-reassigned(s) :- kind(s, "variable_declarator"), (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")),
-    field(a, "left", l), deparen(l, i), kind(i, "identifier"), ref_site(i, s).
-// typed_site(s, st, x): the name declared at s is annotated `: x` (instance) or `: typeof x` (static).
+self_site(s) :- this_bound(s), !reassigned(s).
+.decl this_bound(s: node)
+this_bound(d) :- this_declarator(d), field(d, "name", n), kind(n, "identifier").
+this_bound(p) :- this_declarator(d), pattern_name(p, _, d).
+.decl this_declarator(d: node)
+this_declarator(d) :- kind(d, "variable_declarator"), field(d, "value", v), deparen(v, t), kind(t, "this").
+.decl reassigned(s: node)  // `self = o`, `self += o`, `for (self of a)`, `self++`, `[self] = a`, `({ self } = o)`
+reassigned(s) :- this_bound(s), ref_site(i, s), deparen(w, i), field(a, "left", w),
+    (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression") ; kind(a, "for_in_statement")).
+reassigned(s) :- this_bound(s), ref_site(i, s), deparen(w, i), field(a, "argument", w), kind(a, "update_expression").
+reassigned(s) :- this_bound(s), ref_site(i, s), bound_name(i, _), (kind(a, "assignment_expression") ;
+    kind(a, "for_in_statement")), field(a, "left", l), (kind(l, "object_pattern") ; kind(l, "array_pattern")), within(i, l).
+// typed_site(s, st, x): the parameter declared at s is annotated `: x` or `: x<…>` (instance) or `: typeof x`
+// (static). A variable's annotation is never read: for a declarator only `= this` counts.
 .decl typed_site(s: node, st: symbol, x: symbol)
-typed_site(s, "instance", x) :- site_type(s, r), kind(r, "type_identifier"), text(r, x).
-typed_site(s, "static", x) :- site_type(s, r), kind(r, "type_query"), child(r, i, 0), kind(i, "identifier"), text(i, x).
-.decl site_type(s: node, r: node)
-site_type(s, r) :- kind(s, "variable_declarator"), field(s, "type", a), child(a, r, 0).
-site_type(s, r) :- kind(s, "identifier"), field(p, "pattern", s), field(p, "type", a), child(a, r, 0).
+typed_site(s, "instance", x) :- param_type(s, a), ref_type_name(a, x).
+typed_site(s, "static", x) :- param_type(s, a), child(a, r, 0), kind(r, "type_query"), child(r, i, 0),
+    kind(i, "identifier"), text(i, x).
+.decl param_type(s: node, a: node)
+param_type(s, a) :- kind(s, "identifier"), field(p, "pattern", s), field(p, "type", a).
 // this_pattern(p): object pattern p is destructured from this: `const { a } = this`, `({ a } = this)`, `{ a } = this`,
 // a parameter's `({ a } = this) => …`.
 .decl this_pattern(p: node)
@@ -168,3 +201,84 @@ target_of(e, p) :- access(e, _, _, _), deparen(w, e), field(p, "value", w), kind
 .decl up(n: node, p: node)  // p is n's parent, parentheses skipped
 up(n, p) :- (access(n, _, _, _) ; kind(n, "update_expression") ; kind(n, "augmented_assignment_expression")),
     deparen(w, n), child(p, w, _), !kind(p, "parenthesized_expression").
+
+// Tests (decision 0130): the review's counterexamples (review/typescript-03.review.md), against typescript-eslint
+// 8.74.0. `accessor #x`'s own key reads it; `private accessor y` is reported.
+.test an_accessor_hash_key_reads_itself exactly
+    .fixture "d1.ts" ```
+        export class A { accessor #x = 1; private accessor y = 2; }
+        ```
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d1.ts":1
+    .expect count unused_private_member = 1
+.end
+
+// A variable's type is not read (d2); a parameter's generic type is (d3); a name destructured from this is self (d4);
+// self written by `++` or a destructuring assignment is not (d6).
+.test access_paths exactly
+    .fixture "d2.ts" ```
+        export class C {
+          private x = 1;
+          static make() { const o: C = new C(); return o.x; }
+        }
+        ```
+    .fixture "d3.ts" ```
+        export class C<T> {
+          private x = 1;
+          m(o: C<number>) { return o.x; }
+          t?: T;
+        }
+        ```
+    .fixture "d4.ts" ```
+        export class A {
+          private x = 1;
+          private y = this;
+          m() { const { y: self } = this; return self.x; }
+        }
+        ```
+    .fixture "d6.ts" ```
+        export class A {
+          private x = 1;
+          private y = 1;
+          m() { let self = this; self++; return self.x; }
+          n() { let self = this; [self] = [this]; return self.y; }
+        }
+        ```
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d2.ts":2
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d6.ts":2
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d6.ts":3
+.end
+
+// Literal keys by String(value), a template by its raw text: `this.ab` reads no member here.
+.test literal_and_template_keys exactly
+    .fixture "d5.ts" ```
+        export class A {
+          private [true] = 1;
+          private [null] = 2;
+          private [1n] = 3;
+          private [`a\x62`] = 4;
+          m() { return this.ab; }
+        }
+        ```
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d5.ts":2
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d5.ts":3
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d5.ts":4
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d5.ts":5
+.end
+
+// A class method's frame is the method (static n: the static map), whatever its `this` parameter says; a plain
+// function's `this: A` is A's instance.
+.test a_method_this_parameter_is_not_read exactly
+    .fixture "d10.ts" ```
+        export class A {
+          private x = 1;
+          m() { function f(this: A) { return this.x; } return f; }
+        }
+        export class B {
+          private x = 1;
+          private y = 1;
+          m(this: B) { return this.x; }
+          static n(this: B) { return this.y; }
+        }
+        ```
+    .expect "@typescript-eslint/no-unused-private-class-members" at "d10.ts":7
+.end
