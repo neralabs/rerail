@@ -41,14 +41,16 @@ export const KILL_GRACE_MS = 5_000;
 
 /**
  * Stops `child` once it has run `timeoutMs`, calling `stopping` first: SIGTERM, then SIGKILL if it is still running
- * `KILL_GRACE_MS` later, since a command that ignores SIGTERM would otherwise never end. The function returned
- * cancels both; with no `timeoutMs` there is nothing to cancel.
+ * `KILL_GRACE_MS` later, since a command that ignores SIGTERM would otherwise never end. A child that has already
+ * exited gets neither: only `stopping` can end the wait on its output. The function returned cancels both; with no
+ * `timeoutMs` there is nothing to cancel.
  */
 function stopAfter(child: ChildProcess, timeoutMs: number | undefined, stopping: () => void): () => void {
   if (timeoutMs === undefined) return () => {};
   let kill: NodeJS.Timeout | undefined;
   const term = setTimeout(() => {
     stopping();
+    if (child.exitCode !== null || child.signalCode !== null) return;
     child.kill();
     kill = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS);
   }, timeoutMs);
@@ -77,8 +79,16 @@ export async function runCommand(command: string, args: readonly string[], optio
   let stdout = "";
   let stderr = "";
   let timedOut = false;
+  let exited = false;
+  /** Reports the stop, and stops reading output that a process the command started may hold open for good. */
+  const timeOut = (): void => {
+    child.stdout.destroy();
+    child.stderr.destroy();
+    reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(cleanCommandError(stderr || stdout))));
+  };
   const cancelStop = stopAfter(child, options.timeoutMs, () => {
     timedOut = true;
+    if (exited) timeOut();
   });
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
@@ -93,15 +103,18 @@ export async function runCommand(command: string, args: readonly string[], optio
     reject(error);
   });
   // A command stopped for running too long is reported as soon as it exits: a process it started may still hold its
-  // output open.
+  // output open. For the same reason the deadline holds past "exit", until "close".
   child.once("exit", () => {
+    exited = true;
+    if (!timedOut) return;
     cancelStop();
-    if (timedOut) reject(new CommandTimeoutError(command, options.timeoutMs!, lastLines(cleanCommandError(stderr || stdout))));
+    timeOut();
   });
   // Any other ends at "close", once the child's output is read to its end. "exit" can come first, and an answer taken
   // then can be missing what the child wrote last: on Linux, about one `npm view --json` in ten under load came back
   // empty, which the caller then read as JSON.
   child.once("close", (code, signal) => {
+    cancelStop();
     if (timedOut) return;
     if (code === 0) {
       resolveCommand({ stdout, stderr });
