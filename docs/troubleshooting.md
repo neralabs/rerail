@@ -8,6 +8,17 @@ Each entry: what you see, why, what to do. Supported systems are under
 
 Set-up checks Node, the computer and Git first. A failed check changes nothing: fix it, then rerun the same command.
 
+### `npx: command not found`
+
+```text
+zsh: command not found: npx
+```
+
+Node.js is not installed (`npx` comes with it), so set-up never starts. Bash says `npx: command not found`;
+PowerShell says `The term 'npx' is not recognized`. Install Node 24 or newer from [nodejs.org](https://nodejs.org) or
+with Homebrew (`brew install node`), nvm, fnm or Volta, open a new terminal, check that `node --version` prints `v24`
+or later, and rerun.
+
 ### Node is too old
 
 ```text
@@ -420,13 +431,15 @@ Set-up backs up each startup file it changes to `<file>.rerail.bak`, one backup 
 
 </details>
 
-### `rerail status` says `No repo found here` or `Rerail is not installed`
+### `rerail status` says `No Git repository here` or `Rerail is not installed`
 
 ```text
-No repo found here (/home/me). Run rerail status inside your project.
+No Git repository here (/home/me). Rerail works in a Git repository: run rerail status inside one, or start Rerail in one with rerail start --repo <folder>.
 ```
 
-`rerail status` reports on the repository you run it in. Run it inside your project.
+Rerail works per Git repository, and `rerail status` reports on the one you run it in. Run it inside your project, or
+start Rerail in your project from where you are with `rerail start --repo <folder>`, `<folder>` being the project's
+folder.
 
 ```text
 Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.

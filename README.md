@@ -27,6 +27,8 @@ In your repository, run this to install Rerail under `~/.rerail`, connect your c
 npx @neralabs/rerail setup
 ```
 
+That needs Node.js 24 or later; `npx` comes with Node. Check with `node --version`: `command not found` means Node is not installed, so set-up cannot start to say so. Install it from [nodejs.org](https://nodejs.org) or with Homebrew (`brew install node`), nvm, fnm or Volta, then run the command in a new terminal.
+
 In Windows PowerShell, if that says `npx.ps1 cannot be loaded`, run `npx.cmd @neralabs/rerail setup` ([why](docs/troubleshooting.md#windows-powershell-npxps1-cannot-be-loaded)).
 
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.

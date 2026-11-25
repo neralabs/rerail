@@ -538,7 +538,8 @@ async function summary(run: Run, repository: Repository, firstStart: boolean, ag
       ruleCount: checkout === undefined ? 0 : onRuleCount(database, checkout),
       others: otherStartedRepositories(database, scope.repositoryKey),
       // Set-up keeps a pack at the version installed, so it says which rules on here those versions have that this
-      // Rerail does not run: with `ruleCount`, they add up to the rules switched on.
+      // Rerail does not run. Neither these nor `ruleCount` count a rule whose options do not apply, or a conversation
+      // rule while conversation rules are off.
       notRun: checkout === undefined ? [] : checkoutRulesNotRun(database, checkout),
     };
   }) ?? { packNames: [], ruleCount: 0, others: [], notRun: [] };

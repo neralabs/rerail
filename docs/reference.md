@@ -237,6 +237,8 @@ In the repository you want Rerail in, run:
 npx @neralabs/rerail setup
 ```
 
+That needs Node.js 24 or newer; `npx` comes with Node. Check with `node --version`: `command not found` means Node is not installed, so set-up cannot start to say so. Install it from [nodejs.org](https://nodejs.org) or with Homebrew (`brew install node`), nvm, fnm or Volta, then run the command in a new terminal.
+
 From a Rerail checkout, `just rerail` does the same. For another repository, answer "Scan a different repo…" or pass `--repo ~/code/your-repo`.
 
 - **What it does.** Installs into `~/.rerail` without admin rights, proposes rule packs, and on your yes starts Rerail and connects your coding agents. Rerail starts in your next new session.
@@ -260,7 +262,7 @@ With `--relay`, set-up prints each question for the coding agent to ask you verb
 
 </details>
 
-Prerequisites (set-up checks them before changing anything, and says what to do):
+Prerequisites (set-up checks them before changing anything, and says what to do, except a missing Node, which stops `npx` before set-up starts):
 
 - Node.js 24 or newer.
 - Git on your `PATH`.
@@ -394,7 +396,7 @@ rerail update             # install and activate a newer version
 2. Installs the configured npm dist-tag's version under `~/.rerail/versions`.
 3. Validates its native runtime and event stream.
 4. Activates it atomically for new harness sessions; `rerail update status` names the replaced version.
-5. Updated or not, re-registers every connected coding agent (`rerail install --refresh`, which also runs on its own), adding new commands, skills and hooks and removing retired ones. A coding agent never connected is left alone.
+5. Updated or not, re-registers every connected coding agent (`rerail install --refresh`, which also runs on its own), adding new commands, skills and hooks and removing retired ones. A coding agent never connected is left alone. A daemon still running another version restarts on the active one, on the same port ([how updates hand over](how-setup-works.md#one-main-instance)).
 6. Updated or not, once the refresh succeeds, the active version runs `rerail packs update`: each installed rule pack moves to the newest version up to the channel's that the active core accepts by its core range (up to `next`'s for a pack the channel has no version of, which is where set-up installs it from; its line says `(from next)`), so the active core's engine checks it ([updating packs](rule-packs.md#rerail-packs)). A third party's new version runs in Log until you approve it. A pack npm cannot be asked about gets a `warning:` line. A pack that does not install or load, or whose npm install has not finished at 1 min 20 s, is put back alone, the others still move, and the update exits 1 with the new core active. If another Rerail process holds the rule packs past the 5 min Rerail waits for them, the packs after that one are not tried: each gets a line, and the packs already moved are still listed.
 
 Steps 2 to 4 and 6 each print a line on stderr as they start. On a terminal the line counts the step's time up; elsewhere (a coding agent, CI) a step that runs past 30 s prints `… still running after 30 s`, then again every 30 s. An npm request warns that npm may be stuck after 30 s and is stopped at 3 min; the download warns at 3 min and is stopped at 20. Step 6 asks npm about each pack with requests stopped at 1 min each, then installs each pack as a step of its own. A stopped npm that has not exited 5 s later is killed. A stopped step fails the update, and the version that was active stays active. A version change prints `Updated Rerail <old> → <new> in <time>` on stdout.
@@ -497,6 +499,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `rules_activity` | `GET /api/rules/activity?since=&repository=` | Per rule since a time: violations (log-only count), sessions, last sighting, `audits`, steers; removed rules with violations as `removed: true`. `sessions: { started, withViolations }`. |
 | `rule_packs_list` | `GET /api/rule-packs?checkout=` | Packs with npm package, publisher (`rerail`, or a third party's scope or package name) and rules (kind, title, group, mode, on/off, examples, and `dimensions` where the pack gives them: [rule dimensions](rule-dimensions.md)). With a checkout (MCP: the caller's), also its `.rerail/rules` as pack and publisher `worktree`, skipped files in `skipped`. Read-only. |
 | `rule_packs_recommend` | `GET /api/rule-packs/recommendations?repository=&checkout=` | Packs fitting a checkout: rule count, reason, folder. Local; changes nothing. |
+| `rule_packs_published` | `GET /api/rule-packs/published?repository=&checkout=` | The packs `rerail packs recommend` offers, installed or not: version, rule count, installed version, and reason and folder where it fits the checkout. A person's read asks npm when no list is held or it is a day old; an agent's gets what is held. Installs nothing. |
 | `coding_agents_list` | `GET /api/coding-agents` | Per coding agent: `found`, `connected`, `problem`, and whether its tools can read Rerail's data (`rerailData`: `access` is `kept-out`, `file-tools` or `open`, with `why`, and `fix`: what a person can do to keep the rest of its tools out, or null). Dry run; shown in Settings and `rerail status`. |
 | `rerail_rules_list` | `GET /api/rerail-rules?kind=` | By Rerail rules with their pack. |
 | `library_rules_list` | `GET /api/library-rules?kind=` | Rules created by you. |
