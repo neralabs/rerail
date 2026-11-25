@@ -244,6 +244,7 @@ jobs:
               - 'accel/**'
               - 'forest/**'
               - 'tools/bitlex/**'
+              - 'tray/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
@@ -1111,6 +1112,15 @@ jobs:
 
       - name: Tray tests
         run: cargo test -p rerail-tray --locked
+
+      # The tray exits when its stdin closes, so it never outlives the daemon. With no state read it shows nothing, so
+      # an empty stdin runs it headless: it must exit 0 at once. A hang fails the step at its time limit.
+      - name: Build the tray program
+        run: cargo build -p rerail-tray --locked
+
+      - name: Tray exits when its stdin closes
+        timeout-minutes: 2
+        run: ./target/debug/rerail-tray < /dev/null
 
       - name: Tray static Linux build
         if: runner.os == 'Linux'
