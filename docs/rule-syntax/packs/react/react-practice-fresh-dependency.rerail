@@ -1,0 +1,151 @@
+.policy "react-practice-fresh-dependency" revision 2
+.guests off
+.description "Keep values rebuilt on every render, such as filter or map results and the props object, out of effect, memo and callback dependency arrays."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+#include "tsx/react-practice-a.rerail"
+#include "tsx/react.rerail"
+
+// Rerail's practice rule: a dependency of useEffect, useLayoutEffect, useMemo or useCallback that is new on every
+// render, so the Hook reruns (or recomputes, or returns a new function) each time:
+//   const open = items.filter(i => i.open); useEffect(…, [open])        FRESH_DERIVED_DEPENDENCY: filter, map, flatMap,
+//                                                                        split, Object.keys/values/entries, Array.from
+//   const opts = Object.assign({}, base); useMemo(…, [opts])            FRESH_DERIVED_OBJECT_DEPENDENCY: also
+//                                                                        Object.fromEntries
+//   function Card(props) { useEffect(…, [props]) }                      FRESH_PROPS_DEPENDENCY
+//   function Card(props) { useMemo(() => f(props), [props]) }           FRESH_PROPS_MEMO: the callback passes props on
+// A derived value is a `const` of the function's own body (by name). The props object is a component's only
+// parameter (or its first beside a `ref`), untyped or of an object type, with no default; a component memoized
+// (memo, observer, React.memo, connect(…)) gets new props only when they change, so it is left out. React's Hooks:
+// a global, one imported from react (any case), React.x, or `const { x } = React`.
+
+// dep(x, c, f, h): identifier x is listed in the dependency array of c, a call of React's Hook h through callee f.
+.decl dep(x: node, c: node, f: node, h: symbol)
+dep(x, c, f, h) :- kind(x, "identifier"), child(a, x, _), kind(a, "array"), call_arg(c, a, 1), kind(c, "call_expression"),
+    field(c, "function", f), react_api(f, h, s, form), form != "alias", (s = "" ; iglob("react", s)),
+    (h = "useEffect" ; h = "useLayoutEffect" ; h = "useMemo" ; h = "useCallback").
+
+// The function the dependency is listed in: its nearest function.
+.decl dep_fn(x: node, fn: node)
+dep_fn(x, fn) :- dep(x, _, _, _), nearest(x, fn, function_kind).
+
+// derived(x, m, how): x names a `const` of its function's body whose value is a new array ("array") or object
+// ("object") from m, as written ("filter", "Object.keys").
+.decl derived(x: node, m: symbol, how: symbol)
+derived(x, m, how) :- dep_fn(x, fn), field(fn, "body", b), kind(b, "statement_block"), child(b, l, _),
+    kind(l, "lexical_declaration"), op(l, "const"), child(l, d, _), kind(d, "variable_declarator"), field(d, "name", n),
+    kind(n, "identifier"), text(n, t), text(x, t), field(d, "value", v), fresh(v, m, how).
+.decl fresh(v: node, m: symbol, how: symbol)  // in parentheses, a cast or `!`, or not
+fresh(v, m, how) :- fresh_call(v, m, how).
+fresh(v, m, how) :- (kind(v, "parenthesized_expression") ; kind(v, "as_expression") ; kind(v, "satisfies_expression") ;
+    kind(v, "non_null_expression")), first_named(v, w), fresh(w, m, how).
+.decl fresh_call(c: node, m: symbol, how: symbol)
+fresh_call(c, x, "array") :- method_call(c, f), field(f, "property", p), kind(p, "property_identifier"), text(p, x),
+    (x = "filter" ; x = "map" ; x = "flatMap" ; x = "split").
+fresh_call(c, m, "array") :- global_method(c, f, "Object", x), (x = "keys" ; x = "values" ; x = "entries"), text(f, m).
+fresh_call(c, m, "array") :- global_method(c, f, "Array", "from"), text(f, m).
+fresh_call(c, m, "object") :- global_method(c, f, "Object", "fromEntries"), text(f, m).
+fresh_call(c, m, "object") :- global_method(c, f, "Object", "assign"), call_arg(c, o, 0), kind(o, "object"), text(f, m).
+.decl method_call(c: node, f: node)
+method_call(c, f) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "member_expression").
+.decl global_method(c: node, f: node, o: symbol, x: symbol)  // Object.keys(…), Object a global
+global_method(c, f, o, x) :- method_call(c, f), field(f, "object", r), pr_global(r, o), field(f, "property", p),
+    kind(p, "property_identifier"), text(p, x).
+
+// props(x, fn): x is listed by its name as the props parameter of the component fn it is listed in.
+.decl props(x: node, fn: node)
+props(x, fn) :- dep_fn(x, fn), comp_fn(fn), text(x, t), props_param(fn, t), !memoized(fn).
+.decl props_param(fn: node, t: symbol)
+props_param(fn, t) :- kind(fn, "arrow_function"), field(fn, "parameter", p), kind(p, "identifier"), text(p, t).
+props_param(fn, t) :- field(fn, "parameters", ps), kind(ps, "formal_parameters"), first_named(ps, p), param_name(p, t),
+    !third_named(ps), !odd_second(ps).
+.decl param_name(p: node, t: symbol)  // an untyped or object-typed parameter without a default
+param_name(p, t) :- kind(p, "identifier"), text(p, t).
+param_name(p, t) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), text(i, t),
+    !field(p, "value", _), !scalar_type(p).
+.decl scalar_type(p: node)
+scalar_type(p) :- field(p, "type", a), kind(a, "type_annotation"), child(a, y, _),
+    (kind(y, "array_type") ; kind(y, "tuple_type") ; kind(y, "function_type") ; kind(y, "literal_type") ;
+     kind(y, "predefined_type"), match("string|number|boolean|symbol|bigint", y)).
+// A second parameter is a forwarded ref: `ref`, `forwardedRef`, `ref: Ref<T>`.
+.decl odd_second(ps: node)
+odd_second(ps) :- second_named(ps, p), !ref_param(p).
+.decl ref_param(p: node)
+ref_param(p) :- kind(p, "identifier"), match(".*(ref|Ref)", p).
+ref_param(p) :- kind(p, "required_parameter"), field(p, "pattern", i), kind(i, "identifier"), match(".*(ref|Ref)", i).
+
+// comp_fn(fn): fn is named with a capital (pr_fn_name: declared, stored, assigned, a property or a default), or
+// passed unnamed to memo, forwardRef or observer.
+.decl comp_fn(fn: node)
+comp_fn(fn) :- dep_fn(_, fn), pr_fn_name(fn, n), pr_ident(n), glob("[A-Z]**", n).
+comp_fn(fn) :- dep_fn(_, fn), !field(fn, "name", _), child(a, fn, _), kind(a, "arguments"), child(c, a, _),
+    kind(c, "call_expression"), field(c, "function", w),
+    (kind(w, "identifier"), (text(w, "memo") ; text(w, "forwardRef") ; text(w, "observer")) ;
+     kind(w, "member_expression"), field(w, "object", o), react_object(o, s), (s = "" ; iglob("react", s)),
+     field(w, "property", p), (text(p, "memo") ; text(p, "forwardRef"))).
+
+// memoized(fn): fn is passed to memo(…), observer(…), React.memo(…) or connect(…)(…), directly, inside one more call
+// (memo(forwardRef(fn))), or by its name or the name it is stored under, anywhere in the file.
+.decl memoized(fn: node)
+memoized(fn) :- dep_fn(_, fn), child(a, fn, _), kind(a, "arguments"), child(m, a, _), memo_call(m).
+memoized(fn) :- dep_fn(_, fn), child(a, fn, _), kind(a, "arguments"), child(c, a, _), kind(c, "call_expression"),
+    child(a2, c, _), kind(a2, "arguments"), child(m, a2, _), memo_call(m).
+memoized(fn) :- dep_fn(_, fn), (field(fn, "name", n) ; field(d, "value", fn), kind(d, "variable_declarator"),
+    field(d, "name", n)), kind(n, "identifier"), text(n, t), docof(fn, doc), memo_arg(doc, t).
+.decl memo_arg(doc: number, t: symbol)
+memo_arg(doc, t) :- memo_call(m), field(m, "arguments", a), first_named(a, i), kind(i, "identifier"), text(i, t),
+    docof(m, doc).
+.decl memo_call(m: node)
+memo_call(m) :- kind(m, "call_expression"), field(m, "function", w),
+    (kind(w, "identifier"), (text(w, "memo") ; text(w, "observer")) ;
+     kind(w, "member_expression"), field(w, "object", o), react_object(o, s), (s = "" ; iglob("react", s)),
+     field(w, "property", p), text(p, "memo") ;
+     kind(w, "call_expression"), field(w, "function", k), kind(k, "identifier"), text(k, "connect")).
+
+// passed_on(x, c): c's callback (its first argument) uses the props object whole: a name like x that is not the
+// object of a member or subscript, nor the value of `const { … } = props`.
+.decl passed_on(x: node, c: node)
+passed_on(x, c) :- props(x, _), dep(x, c, _, _), field(c, "arguments", a), first_named(a, cb), has(cb, i, "identifier"),
+    text(i, t), text(x, t), !read_through(i).
+.decl read_through(i: node)
+read_through(i) :- field(m, "object", i), (kind(m, "member_expression") ; kind(m, "subscript_expression")).
+read_through(i) :- field(d, "value", i), kind(d, "variable_declarator"), field(d, "name", n), kind(n, "object_pattern").
+
+// Children other than comments, by place.
+.decl first_named(p: node, c: node)
+first_named(p, c) :- counted(p), child(p, c, _), !kind(c, "comment"), !named_before(c).
+.decl second_named(p: node, c: node)
+second_named(p, c) :- counted(p), child(p, c, _), !kind(c, "comment"), named_before(c),
+    count : { child(p, o, _), !kind(o, "comment"), precedes(o, c) } = 1.
+.decl third_named(p: node)
+third_named(p) :- counted(p), child(p, c, _), !kind(c, "comment"),
+    count : { child(p, o, _), !kind(o, "comment"), precedes(o, c) } = 2.
+.decl named_before(c: node)
+named_before(c) :- counted(p), child(p, c, _), precedes(o, c), !kind(o, "comment").
+.decl counted(p: node)  // where the rule counts: wrappers, parameter and argument lists
+counted(p) :- kind(p, k), (k = "parenthesized_expression" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "non_null_expression" ; k = "formal_parameters" ; k = "arguments").
+
+// The verb for the Hook: an effect reruns, useMemo recomputes, useCallback returns a new function.
+.decl verb(h: symbol, v: symbol)
+verb("useEffect", "reruns"). verb("useLayoutEffect", "reruns"). verb("useMemo", "recomputes").
+verb("useCallback", "returns a new function").
+
+.violation FRESH_DERIVED_DEPENDENCY(at: node, x: symbol, m: symbol, hook: symbol, hverb: symbol)
+    "{x} is a new array from {m}() on every render, so this {hook} {hverb} each time; build {x} inside useMemo, or depend on the values it is built from."
+FRESH_DERIVED_DEPENDENCY(x, t, m, ht, v) :- derived(x, m, "array"), dep(x, _, f, h), verb(h, v), text(x, t), text(f, ht),
+    docof(x, d), react_doc(d).
+.violation FRESH_DERIVED_OBJECT_DEPENDENCY(at: node, x: symbol, m: symbol, hook: symbol, hverb: symbol)
+    "{x} is a new object from {m}() on every render, so this {hook} {hverb} each time; build {x} inside useMemo, or depend on the values it is built from."
+FRESH_DERIVED_OBJECT_DEPENDENCY(x, t, m, ht, v) :- derived(x, m, "object"), dep(x, _, f, h), verb(h, v), text(x, t),
+    text(f, ht), docof(x, d), react_doc(d).
+.violation FRESH_PROPS_DEPENDENCY(at: node, p: symbol, hook: symbol, hverb: symbol)
+    "{p} is a new object each time the parent renders, so this {hook} {hverb} with it; destructure the {p} fields it uses above the hook and list those instead of {p}."
+FRESH_PROPS_DEPENDENCY(x, t, ht, v) :- props(x, _), dep(x, c, f, h), !passed_on(x, c), verb(h, v), text(x, t),
+    text(f, ht), docof(x, d), react_doc(d).
+.violation FRESH_PROPS_MEMO(at: node, p: symbol, hook: symbol)
+    "{p} is a new object each time the parent renders, so this {hook} rarely reuses its result; destructure the {p} fields it needs above the hook, then pass and list those."
+FRESH_PROPS_MEMO(x, t, ht) :- props(x, _), dep(x, c, f, h), passed_on(x, c), (h = "useMemo" ; h = "useCallback"),
+    text(x, t), text(f, ht), docof(x, d), react_doc(d).

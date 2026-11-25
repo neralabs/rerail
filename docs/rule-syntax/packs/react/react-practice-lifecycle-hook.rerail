@@ -1,0 +1,89 @@
+.policy "react-practice-lifecycle-hook" revision 2
+.guests off
+.description "Use useEffect instead of once-on-mount hooks from hook libraries when the callback reads props or state; those hooks hide the reads from dependency checks."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+#include "tsx/react-practice-a.rerail"
+#include "tsx/react.rerail"
+
+// Rerail's practice rule: a run-once mount Hook of react-use, ahooks, @react-hookz/web or usehooks-ts (useMount,
+// useEffectOnce, useMountEffect) whose callback reads a value of the component that may change while it is mounted.
+//   import { useMount } from 'react-use';
+//   useMount(() => setTitle(`Invoice ${invoiceId}`));      reported: invoiceId is a prop
+//   useMount(() => { ref.current.focus(); });              not: a ref, a call's callee, a setter
+// A read is an identifier (or a shorthand `{ x }`) declared in a function, outside the Hook's arguments, and not in
+// a function that holds the Hook's call in a function of its own. Not reads: a callee `f()` or its object `o.f()`, an
+// object of `.current` or of `.defaultX`/`.initialX`, a name `defaultX`/`initialX`, a ref (`= useRef()`), a useId
+// result, a state setter (the second of `const [s, setS] = useState()`, useReducer, useTransition, useActionState), a
+// const literal, and names in types.
+
+// mount_hook(f, src): f is a mount Hook of a library.
+//   import { useMount } from 'react-use'      import useMount from 'react-use/esm/useMount'      import * as H … H.useMount
+.decl mount_hook(f: node)
+mount_hook(f) :- pr_import(f, s, x), mount_name(x), lib_source(s).
+mount_hook(f) :- pr_import(f, s, "default"),
+    match("(react-use|ahooks|@react-hookz/web|usehooks-ts)/(esm|es|lib|dist|cjs)/(useMount|useEffectOnce|useMountEffect)(/index)?(\\.[cm]?js)?", s).
+mount_hook(f) :- kind(f, "member_expression"), field(f, "object", o), pr_import(o, s, "*"), lib_source(s),
+    field(f, "property", p), kind(p, "property_identifier"), text(p, x), mount_name(x).
+.decl mount_name(x: symbol)
+mount_name("useMount"). mount_name("useEffectOnce"). mount_name("useMountEffect").
+.decl lib_source(s: symbol)
+lib_source(s) :- pr_import(_, s, _), match("(react-use|ahooks|@react-hookz/web|usehooks-ts)(/(esm|es|lib|dist))?", s).
+
+.decl mount_call(c: node, f: node)
+mount_call(c, f) :- kind(c, "call_expression"), field(c, "function", f), mount_hook(f).
+
+// The callback: the first argument, a function, or one in parentheses or a cast.
+.decl callback(c: node, fn: node)
+callback(c, a) :- mount_call(c, _), call_arg(c, a, 0), function_node(a).
+callback(c, fn) :- mount_call(c, _), call_arg(c, a, 0), (kind(a, "parenthesized_expression") ;
+    kind(a, "as_expression") ; kind(a, "satisfies_expression")), has(a, fn, function_kind).
+
+// read(r): r, in a callback, reads a value of the component.
+.decl read(r: node)
+read(r) :- candidate(r, site), inside(site, _, function_kind), !inside(site, _, mount_args), !holds_nested_call(site),
+    !not_read(r), !not_read_site(site).
+.decl candidate(r: node, site: node)
+candidate(r, site) :- callback(_, fn), has(fn, r, read_kind), ref_site(r, site).
+.decl read_kind(k: symbol)
+read_kind("identifier"). read_kind("shorthand_property_identifier").
+.decl mount_args(a: node)  // the argument list of a mount Hook call (a node set for `inside`)
+mount_args(a) :- kind(a, "arguments"), mount_call(c, _), field(c, "arguments", a).
+// The site's own function has a function in it that calls a mount Hook: the site is not of that component.
+.decl holds_nested_call(site: node)
+holds_nested_call(site) :- candidate(_, site), nearest(site, f, function_kind), has(f, g, function_kind),
+    mount_call(c, _), within(c, g).
+.decl not_read(r: node)
+not_read(r) :- candidate(r, _), field(c, "function", r), kind(c, "call_expression").
+not_read(r) :- candidate(r, _), field(m, "object", r), kind(m, "member_expression"),
+    (field(c, "function", m), kind(c, "call_expression") ;
+     field(m, "property", p), text(p, t), (t = "current" ; match("(default|initial)([A-Z_].*)?", t))).
+not_read(r) :- candidate(r, _), text(r, t), match("(default|initial)([A-Z_].*)?", t).
+not_read(r) :- candidate(r, _), (inside(r, _, "type_query") ; inside(r, _, "type_arguments")).
+.decl not_read_site(site: node)
+not_read_site(site) :- candidate(_, site), binding_value(site, v), hook_call(v, "useRef").
+not_read_site(site) :- candidate(_, site), binding_value(site, v), hook_call(v, x), state_hook(x),
+    field(v, "function", f), text(f, t), match("(.*\\.)?useId", t).
+// the setter of `const [s, setS] = useState()`: an occurrence of the variable, its declared name included
+not_read_site(site) :- candidate(_, site), (o = site ; site_occurrence(site, o)), child(ap, o, _),
+    kind(ap, "array_pattern"), second(ap, o), field(d, "name", ap), kind(d, "variable_declarator"), field(d, "value", v),
+    hook_call(v, x), state_hook(x).
+not_read_site(site) :- candidate(_, site), binding_value(site, v), (kind(v, "string") ; kind(v, "number") ;
+    kind(v, "true") ; kind(v, "false") ; kind(v, "null")), inside(v, l, "lexical_declaration"), op(l, "const").
+.decl second(ap: node, o: node)  // o is ap's second child other than a comment
+second(ap, o) :- kind(ap, "array_pattern"), child(ap, o, _), !kind(o, "comment"),
+    count : { child(ap, b, _), !kind(b, "comment"), precedes(b, o) } = 1.
+// hook_call(c, x): c calls React's Hook x, from "react" or a global.
+.decl hook_call(c: node, x: symbol)
+hook_call(c, x) :- kind(c, "call_expression"), field(c, "function", f), react_api(f, x, s, _), (s = "" ; s = "react"),
+    (x = "useRef" ; state_hook(x)).
+.decl state_hook(x: symbol)
+state_hook("useState"). state_hook("useReducer"). state_hook("useTransition"). state_hook("useActionState").
+state_hook("useId").
+
+.violation LIFECYCLE_HOOK_HIDES_DEPS(at: node, hook: symbol)
+    "{hook} runs once on mount, so dependency checks miss what its callback reads. If these values can change while mounted, use useEffect and list them as its dependencies; if reading them once is intended, keep {hook} (on React 19.2+, useEffectEvent makes that explicit)."
+LIFECYCLE_HOOK_HIDES_DEPS(c, h) :- mount_call(c, f), callback(c, fn), has(fn, r, read_kind), read(r), text(f, h),
+    docof(c, d), react_doc(d).

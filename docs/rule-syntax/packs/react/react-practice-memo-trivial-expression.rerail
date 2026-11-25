@@ -1,0 +1,118 @@
+.policy "react-practice-memo-trivial-expression" revision 2
+.guests off
+.description "Don't wrap a dependency, or a cheap operator or property-read expression over only the dependencies, in useMemo; use or compute it during render."
+.language typescript
+.mode steer
+.scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
+.scope exclude "**/*.test.*", "**/*.spec.*", "**/*.cy.*", "**/__tests__/**", "**/test/**", "**/tests/**", "**/e2e/**", "**/__mocks__/**", "**/*.stories.*", "**/*.story.*", "**/__stories__/**", "**/__fixtures__/**", "**/fixtures/**", "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.d.ts"
+#include "tsx/react-practice-a.rerail"
+#include "tsx/react.rerail"
+#include "tsx/eslint-b-control.rerail"
+
+// Rerail's practice rule: a useMemo whose callback, a plain one without parameters, only hands back a cheap
+// expression over its own non-empty dependency list. Cheap: identifiers, literals, operators and property reads, no
+// call, `new`, literal object or array, function, JSX, `${}`, await, assignment, `this`, `delete` or `void`; and no
+// `.current` read. Every name the callback reads is a dependency, or within a member chain that is one. Three kinds:
+//   useMemo(() => user, [user])               MEMO_IDENTITY          use `user` directly (also `user as T`, `user!`)
+//   useMemo(() => user.name, [user])          MEMO_PROPERTY_READ     read `user.name` during render
+//   useMemo(() => a + b, [a, b])              MEMO_TRIVIAL_EXPRESSION   compute `a + b` during render
+// The finding sits on the useMemo call. React's useMemo is a global useMemo, one imported from react or react-dom
+// (any case), React.useMemo, or one destructured from React's object.
+
+// memo(c, cb, e): c is React's useMemo(cb, [deps]) with exactly two arguments, and cb returns the cheap e.
+.decl memo(c: node, cb: node, e: node)
+memo(c, cb, e) :- kind(c, "call_expression"), field(c, "function", f), react_api(f, "useMemo", s, _),
+    (s = "" ; iglob("{react,react-dom}", s)), call_arg(c, cb, 0), deps(c, a), !call_arg(c, _, 2),
+    !match("\\[\\s*,?\\s*\\]", a), plain_callback(cb), returns(cb, e), cheap(e), !reads_current(cb),
+    !uncovered(c, cb), docof(c, d), react_doc(d).
+.decl deps(c: node, a: node)
+deps(c, a) :- call_arg(c, a, 1), kind(a, "array").
+
+// A callback without parameters that is not async.   () => x,  function () { return x; }
+.decl plain_callback(cb: node)
+plain_callback(cb) :- (kind(cb, "arrow_function") ; kind(cb, "function_expression")), !match("async\\b.*", cb),
+    !arrow_param(cb), (!field(cb, "parameters", _) ; field(cb, "parameters", ps), match("\\(\\s*\\)", ps)).
+.decl arrow_param(cb: node)  // x => …
+arrow_param(cb) :- field(cb, "parameter", p), kind(p, "identifier").
+
+// returns(cb, e): the body is the expression e, or a block of one statement, `return e;` (comments aside).
+.decl returns(cb: node, e: node)
+returns(cb, e) :- field(cb, "body", e), !kind(e, "statement_block").
+returns(cb, e) :- field(cb, "body", b), kind(b, "statement_block"), first_named(b, r), kind(r, "return_statement"),
+    !second_named(b), first_named(r, e).
+.decl first_named(p: node, c: node)  // c is p's first child other than a comment
+first_named(p, c) :- named_parent(p), child(p, c, _), !kind(c, "comment"), !named_before(c).
+.decl second_named(p: node)  // p has a second child other than a comment
+second_named(p) :- named_parent(p), child(p, c, _), !kind(c, "comment"), named_before(c).
+.decl named_before(c: node)  // a child other than a comment comes before c
+named_before(c) :- named_parent(p), child(p, c, _), precedes(o, c), !kind(o, "comment").
+.decl named_parent(p: node)  // where the rule counts children: a callback's block, a return, a cast
+named_parent(p) :- (kind(f, "arrow_function") ; kind(f, "function_expression")), field(f, "body", p),
+    kind(p, "statement_block").
+named_parent(p) :- kind(p, k), (k = "return_statement" ; k = "as_expression" ; k = "satisfies_expression" ;
+    k = "non_null_expression" ; k = "parenthesized_expression").
+
+// cheap(e): e reads a name and builds nothing.
+.decl cheap(e: node)
+cheap(e) :- returns(_, e), !costly(e), !has(e, _, costly_kind), !has_costly_unary(e),
+    (kind(e, "identifier") ; has(e, _, "identifier")).
+.decl costly(e: node)
+costly(e) :- kind(e, k), costly_kind(k).
+costly(e) :- kind(e, "unary_expression"), (op(e, "delete") ; op(e, "void")).
+.decl has_costly_unary(e: node)
+has_costly_unary(e) :- has(e, u, "unary_expression"), (op(u, "delete") ; op(u, "void")).
+.decl costly_kind(k: symbol)
+costly_kind("call_expression"). costly_kind("new_expression"). costly_kind("object"). costly_kind("array").
+costly_kind("arrow_function"). costly_kind("function_expression"). costly_kind("generator_function").
+costly_kind("class"). costly_kind("jsx_element"). costly_kind("jsx_self_closing_element").
+costly_kind("template_substitution"). costly_kind("await_expression"). costly_kind("yield_expression").
+costly_kind("assignment_expression"). costly_kind("augmented_assignment_expression").
+costly_kind("update_expression"). costly_kind("sequence_expression"). costly_kind("regex"). costly_kind("this").
+costly_kind("super"). costly_kind("import"). costly_kind("meta_property"). costly_kind("statement_block").
+costly_kind("spread_element").
+
+// `ref.current` is read when the memo runs, not when a dependency changes.
+.decl reads_current(cb: node)
+reads_current(cb) :- memo_shape(cb), has(cb, m, "member_expression"), field(m, "property", p), text(p, "current").
+.decl memo_shape(cb: node)
+memo_shape(cb) :- kind(c, "call_expression"), call_arg(c, cb, 0), deps(c, _), returns(cb, _).
+
+// Every identifier r in cb is listed in c's dependencies, or within a chain of member, subscript and `!` reads x
+// that is: in useMemo(() => a.b + c, [a.b, c]), a is covered by a.b.
+.decl uncovered(c: node, cb: node)
+uncovered(c, cb) :- memo_shape(cb), call_arg(c, cb, 0), has(cb, r, "identifier"), !listed(c, r), !chain_listed(c, r).
+.decl listed(c: node, x: node)
+listed(c, x) :- ref_same(e, x, "static"), deps(c, a), child(a, e, _).
+.decl chain_listed(c: node, r: node)
+chain_listed(c, r) :- chain(r, x), listed(c, x).
+.decl chain(r: node, x: node)  // x is r's parent, or its parent's, while each is a member, subscript or `!`
+chain(r, x) :- memo_shape(cb), has(cb, r, "identifier"), child(x, r, _), kind(x, k), chain_kind(k).
+chain(r, y) :- chain(r, x), child(y, x, _), kind(y, k), chain_kind(k).
+.decl chain_kind(k: symbol)
+chain_kind("member_expression"). chain_kind("subscript_expression"). chain_kind("non_null_expression").
+ref_same_ask(e, x, "static") :- memo_shape(cb), call_arg(c, cb, 0), deps(c, a), child(a, e, _), !kind(e, "comment"),
+    (has(cb, x, "identifier") ; has(cb, r, "identifier"), chain(r, x)).
+
+// The returned value is a dependency (or one cast: `user as T`, `user satisfies T`, `user!`).
+.decl identity(c: node, e: node)
+identity(c, e) :- memo(c, _, e), listed(c, e).
+identity(c, e) :- memo(c, _, e), (kind(e, "as_expression") ; kind(e, "satisfies_expression") ;
+    kind(e, "non_null_expression")), first_named(e, i), listed(c, i).
+ref_same_ask(x, i, "static") :- memo_shape(cb), call_arg(c, cb, 0), returns(cb, e), deps(c, a), child(a, x, _),
+    !kind(x, "comment"), first_named(e, i).
+// The returned value reads a property: a member or subscript, maybe cast or in parentheses.
+.decl property_read(e: node)
+property_read(e) :- memo(_, _, e), (kind(e, "member_expression") ; kind(e, "subscript_expression")).
+property_read(e) :- memo(_, _, e), (kind(e, "as_expression") ; kind(e, "satisfies_expression") ;
+    kind(e, "non_null_expression") ; kind(e, "parenthesized_expression")), first_named(e, a),
+    (kind(a, "member_expression") ; kind(a, "subscript_expression")).
+
+.violation MEMO_IDENTITY(at: node, e: symbol)
+    "Use `{e}` directly instead of this useMemo: it only hands back a value already in its dependency list, so other dependencies never give it a new identity."
+MEMO_IDENTITY(c, t) :- memo(c, _, e), identity(c, e), text(e, t).
+.violation MEMO_PROPERTY_READ(at: node, e: symbol)
+    "Read `{e}` inline during render instead of in useMemo, unless it is a getter that builds a new object or you mean to keep the first value while the object mutates in place."
+MEMO_PROPERTY_READ(c, t) :- memo(c, _, e), !identity(c, e), property_read(e), text(e, t).
+.violation MEMO_TRIVIAL_EXPRESSION(at: node, e: symbol)
+    "Compute `{e}` inline during render instead of in useMemo: it reads only the memo's dependencies and costs less than the dependency check."
+MEMO_TRIVIAL_EXPRESSION(c, t) :- memo(c, _, e), !identity(c, e), !property_read(e), text(e, t).
