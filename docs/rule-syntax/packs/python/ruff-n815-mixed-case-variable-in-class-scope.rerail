@@ -16,7 +16,7 @@
 .violation N815(at: node, x: symbol) code "N815"
     "Rename the class variable `{x}` to snake_case and update its uses; keep the name if outside code depends on it or it mirrors an external schema."
     suppress ruff "N815"
-N815(n, x) :- store_name(n, x, c), kind(c, "class_definition"), mixed_name(x), !store_makes(n, "namedtuple"),
-    !typed_dict(c), !naming_ignored(x).
+N815(n, x) :- store_name(n, x, c), kind(c, "class_definition"), mixed_name(n, x), !store_makes(n, "namedtuple"),
+    !typed_dict(c), !naming_ignored(n, x).
 .decl typed_dict(c: node)
 typed_dict(c) :- class_anc(c, b), (b = "typing.TypedDict" ; b = "typing_extensions.TypedDict").

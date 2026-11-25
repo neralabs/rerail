@@ -35,8 +35,8 @@ at_most(e, k) :- unparen(e, m), part(m, p), at_most(p, k).
 .decl level(m: node, k: number)  // what m is by its own form, before its parts
 level(m, 2) :- ruff_literal(m).
 level(m, 2) :- (kind(m, "tuple") ; kind(m, "list") ; kind(m, "dictionary")), !part(m, _).
-level(m, k) :- kind(m, "identifier"), text(m, x), (upper_name(x), k = 1 ; !upper_name(x), k = 0).
-level(m, k) :- attr_of(m, _, x), (upper_name(x), k = 1 ; !upper_name(x), k = 0).
+level(m, k) :- kind(m, "identifier"), (upper_name(m), k = 1 ; !upper_name(m), k = 0).
+level(m, k) :- attr_of(m, _, _), (upper_name(m), k = 1 ; !upper_name(m), k = 0).
 level(m, 0) :- kind(m, _), !ruff_literal(m), !kind(m, "identifier"), !kind(m, "attribute"), !kind(m, "tuple"),
     !kind(m, "list"), !kind(m, "dictionary"), !kind(m, "binary_operator"), !signed(m),
     !kind(m, "parenthesized_expression").
@@ -49,7 +49,9 @@ part(m, p) :- kind(m, "dictionary"), child(m, i, _), kind(i, "pair"), (field(i, 
 part(m, p) :- kind(m, "dictionary"), child(m, i, _), kind(i, "dictionary_splat"), child(i, p, 0).
 part(m, p) :- kind(m, "binary_operator"), (field(m, "left", p) ; field(m, "right", p)).
 part(m, p) :- signed(m), field(m, "argument", p).
-// upper_name(x): Ruff's is_cased_uppercase: a cased letter, and no lowercase one.
-.decl upper_name(x: symbol)
-upper_name(x) :- (kind(n, "identifier") ; kind(n, "attribute")), (text(n, x) ; attr_of(n, _, x)),
-    match(".*[A-Z].*", x), !match(".*[a-z].*", x).
+// upper_name(m): name m (an identifier, or an attribute by its last name) is Ruff's is_cased_uppercase: a cased
+// letter, and no lowercase one. Keyed by the node, in its own file: keyed by the name, it was a table of every file's
+// names, joined by name in the cross-file part (decision 0677).
+.decl upper_name(m: node)
+upper_name(m) :- kind(m, "identifier"), text(m, x), match(".*[A-Z].*", x), !match(".*[a-z].*", x).
+upper_name(m) :- attr_of(m, _, x), match(".*[A-Z].*", x), !match(".*[a-z].*", x).

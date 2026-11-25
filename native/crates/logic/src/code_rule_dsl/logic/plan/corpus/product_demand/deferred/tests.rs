@@ -249,6 +249,31 @@ other_jsx(d) :- doc(d, p, _), package_for(p, dir), deps_on(dir, "other").
         let _ = driven;
     }
 
+    /// A join of a file's nodes with a constant (ASYNC115/116's `async_sleep_call`) is a lookup in the constant, made in
+    /// each file: left as written, it makes no request, factor or pair cache that holds the file's nodes in the
+    /// cross-file part (decision 0677). Driven by its readers, its keys were a table of every file's values there.
+    #[test]
+    fn a_lookup_of_a_files_nodes_in_a_constant_is_left_as_written() {
+        let v = parse(r#"
+.decl kind(n: node, k: symbol)
+.decl text(n: node, x: symbol)
+.input kind, text
+.decl call(c: node, q: symbol)
+call(c, q) :- kind(c, "call"), text(c, q).
+.decl sleep_arg(q: symbol, x: symbol)
+sleep_arg("asyncio.sleep", "delay"). sleep_arg("trio.sleep", "seconds").
+.decl sleep_call(c: node, x: symbol)
+sleep_call(c, x) :- call(c, q), sleep_arg(q, x).
+.decl found(c: node)
+found(c) :- kind(c, "call"), text(c, x), sleep_call(c, x).
+.output found
+"#);
+        let (made, plan) = rewritten(&v);
+        let requests: Vec<String> = F::declared_names(&*made).into_iter().filter(|r| r.starts_with(DEFERRED_PAIRS)).collect();
+        assert!(requests.is_empty(), "{requests:?}");
+        assert_eq!(plan.constants, vec!["sleep_call".to_owned()]);
+    }
+
     /// A reader that asks for every key the producer makes (through an atom of the producer's own rule) makes the
     /// request, a union over the readers, restrict nothing: the join is left as written. Readers that each narrow
     /// the keys still drive it.

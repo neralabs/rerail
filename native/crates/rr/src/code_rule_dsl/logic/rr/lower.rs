@@ -4470,7 +4470,7 @@ impl Lowerer {
     /// `name(s, g_…)`: the matches of `re` over the texts of `input` (a unary relation), each named group a column
     /// (and the match's ordinal, start and end with `positions`), made natively (`front::Native::MatchAll`). Its one
     /// rule orders it after its input; the evaluator makes its rows.
-    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool) {
+    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool, places: usize) {
         let mut cols: Vec<_> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
         if positions {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
@@ -4483,7 +4483,8 @@ impl Lowerer {
         }
         self.fixed_rule_with(name, &head_args, false, |me| {
             let s = me.var_tm("s");
-            me.emit_atom(input, vec![s.clone()], false, false)?;
+            // The input's other columns place each text in its file (`text_matches`): read, not kept.
+            me.emit_atom(input, std::iter::once(s.clone()).chain(std::iter::repeat_n(Tm::Wild, places)).collect(), false, false)?;
             for g in gs {
                 let g = me.var_tm(&format!("g_{g}"));
                 me.emit_cmp(g, "=", s.clone())?;
@@ -4504,7 +4505,10 @@ impl Lowerer {
         }
         let ([h], [b0, b1]) = (heads, body) else { return false };
         let (L::Atom { rel: input, args: of, neg: false }, L::Atom { rel: m, args, neg: false }) = (self.lit(b0), self.lit(b1)) else { return false };
-        let ([s], Some(T::Str(re)), Some(T::Var(scanned))) = (of.as_slice(), args.first().map(|a| self.tv(a)), args.get(1).map(|a| self.tv(a))) else { return false };
+        let ([s, places @ ..], Some(T::Str(re)), Some(T::Var(scanned))) = (of.as_slice(), args.first().map(|a| self.tv(a)), args.get(1).map(|a| self.tv(a))) else { return false };
+        if !places.iter().all(|a| matches!(self.tv(a), T::Wild)) {
+            return false;
+        }
         let T::Var(s) = self.tv(s) else { return false };
         let (input, re) = (input.as_str(), re.as_str());
         if m != "match_all" || scanned != s || h.modal.is_some() || self.prog.natives().contains_key(h.rel.as_str()) {
@@ -4519,18 +4523,18 @@ impl Lowerer {
         if h.args.len() != want.len() || !h.args.iter().zip(&want).all(|(a, b)| self.same(a, b)) {
             return false;
         }
-        // Over texts, as print writes it: a relation of one text column read, and the head declared (if it is) with
-        // the native's columns. Over a node or span (`piece(t: loc)`) the matches are spans placed in the file,
-        // which `text_matches` makes.
+        // Over texts, as print writes it: a relation of a text column read (and the nodes that place each text, left
+        // unread), and the head declared (if it is) with the native's columns. Over a node or span (`piece(t: loc)`)
+        // the matches are spans placed in the file, which `text_matches` makes.
         let types = |rel: &str| self.prog.columns_of(rel).map(|cols| cols.into_iter().map(|(_, t)| t).collect::<Vec<String>>());
-        if !types(input).is_some_and(|t| t == ["sym"]) {
+        if !types(input).is_some_and(|t| t.len() == 1 + places.len() && t[0] == "sym" && t[1..].iter().all(|t| matches!(t.as_str(), "node" | "loc"))) {
             return false;
         }
         let made: Vec<&str> = std::iter::repeat_n("sym", 1 + gs.len()).chain(std::iter::repeat_n("int", coordinates.len())).collect();
         if types(&h.rel).is_some_and(|t| t != made) {
             return false;
         }
-        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty());
+        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty(), places.len());
         true
     }
 
@@ -4620,13 +4624,42 @@ impl Lowerer {
         let mut keep = keep.into_iter();
         self.siblings.retain(|_| keep.next().unwrap_or(false));
         // The text a pattern scans keeps the derived atoms that say which nodes or spans it is (decision 0081).
+        // The context also holds a node that places each text in its file: the nearest the text's literals reach
+        // through shared variables (`strip_arg(c, v)`'s c; era_line(n, l)'s n, for a capture of l). Keyed by the
+        // text alone, the context was a table of every file's texts, cross-file wherever its text came from
+        // (decision 0677); placed, it and the matches (a function of its texts) are derived in each file. The native
+        // reads the texts, column 0, once each. With no node reached, the context is the text's alone, as it was.
+        let place = {
+            let mut reach: BTreeSet<String> = BTreeSet::from([v.clone()]);
+            loop {
+                let mut new: Vec<String> = Vec::new();
+                for l in &self.siblings {
+                    let lv = self.vars_of(l);
+                    if !lv.is_disjoint(&reach) {
+                        for x in lv {
+                            if !reach.contains(&x) && !new.contains(&x) {
+                                new.push(x);
+                            }
+                        }
+                    }
+                }
+                if new.is_empty() {
+                    break None;
+                }
+                if let Some(x) = new.iter().find(|x| self.node_typed(x)) {
+                    break Some(x.clone());
+                }
+                reach.extend(new);
+            }
+        };
+        let asked: Vec<String> = std::iter::once(v.clone()).chain(place).collect();
         self.span_context = true;
-        let ctx = self.context(std::slice::from_ref(v));
+        let ctx = self.context(&asked);
         self.span_context = false;
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
-        self.match_all_native(&name, &ctx.0, re, &gs, !positions.is_empty());
+        self.match_all_native(&name, &ctx.0, re, &gs, !positions.is_empty(), asked.len() - 1);
         let mut args: Vec<Tm> = std::iter::once(v).chain(&gs).map(|g| self.var_tm(g)).collect();
         for p in positions {
             args.push(self.term_tm(p)?);

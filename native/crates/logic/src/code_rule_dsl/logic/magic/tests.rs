@@ -28,6 +28,37 @@ fn a_nullary_guard_is_ready_in_a_demanded_body() {
     }
 }
 
+/// A magic rule keeps no literal that the literals it leaves out had tied to its key, and that joins another
+/// document's nodes to the key's by a value alone (decision 0677). `pair(x, y)` ties x and y; kept as an extra it
+/// would close a negative cycle (`!leaf` reads `un`), so it is left out, and `child(y, d, i)` then joined y's file to
+/// c's by the index i: RUF034's `magic_unparen_bf`, which the split refused as a relation of one file joining two.
+/// Left out with it, the demand only widens.
+#[test]
+fn a_demand_joins_no_other_documents_nodes_by_a_value() {
+    let src = ".decl kind(n: node, k: symbol)\n.input kind\n.decl child(p: node, c: node, i: number)\n.input child\n\
+        .decl ask(a: node, b: node)\n.input ask\n.decl un(e: node, m: node)\n.pragma \"magic-transform\" \"un\"\n\
+        un(e, e) :- kind(e, \"x\").\nun(e, m) :- kind(e, \"paren\"), child(e, i, 0), un(i, m).\n\
+        .decl leaf(x: node)\nleaf(x) :- kind(x, _), un(x, m), kind(m, \"leaf\").\n\
+        .decl pair(x: node, y: node)\npair(x, y) :- ask(a, b), un(a, x), un(b, y).\n\
+        pair(u, v) :- pair(x, y), !leaf(x), child(x, c, i), child(y, d, i), un(c, u), un(d, v).\n\
+        .decl same(x: node, y: node)\n.output same\nsame(x, y) :- pair(x, y), kind(x, k), kind(y, k).\n";
+    for gate in [false, true] {
+        let v = parse_version(src).unwrap_or_else(|e| panic!("{e}"));
+        let mut p = Pipeline::new("listed demand", v);
+        p.program(&mut Prune::default());
+        let mut demand = ProgramDemand { gate, ..ProgramDemand::default() };
+        p.program(&mut demand);
+        let v = p.finish().unwrap_or_else(|e| panic!("{e}")).0;
+        assert!(matches!(demand.outcome, Some(Ok(_))), "gate {gate}: {:?}", demand.outcome);
+        let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let demand: Vec<&String> = rules.iter().filter(|r| r.starts_with("magic_un_") && r.contains("child(")).collect();
+        assert!(!demand.is_empty(), "gate {gate}: the demand of `un` from `pair`'s children: {rules:#?}");
+        for r in demand {
+            assert!(r.matches("child(").count() == 1 || r.contains("pair("), "gate {gate}: joins two documents' children by their index: {r}\n{rules:#?}");
+        }
+    }
+}
+
 /// T's `rdl.py sql` front over `src`: prune, demand (`mode`: `demand` is `.demand`'s magic sets, `adorn` the
 /// adornment of every derived relation, `gate` that with gated negations), prune.
 fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {

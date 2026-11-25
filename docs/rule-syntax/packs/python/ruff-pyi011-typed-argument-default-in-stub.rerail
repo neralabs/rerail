@@ -12,5 +12,5 @@
 
 .violation PYI011(at: node) code "PYI011" "Replace this default with `...`; type checkers ignore defaults in stubs, and only simple literals and short containers are worth keeping."
     suppress ruff "PYI011"
-PYI011(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), !unset(a), !unset(d),
+PYI011(d) :- kind(f, "function_definition"), in_stub(f), sig_param(f, _, _, _, _, a, d), !unset(a), kind(d, _),
     !simple_value(d, "top").

@@ -2,16 +2,18 @@
 // configuration exempts, and the definitions, parameters, stores and import aliases the rules name.
 //
 // Interface
-//   1. Case:     lower_name(x)            no uppercase letter (Ruff's str::is_lowercase): "x1", "_", "snake_case"
-//                upper_name(x)            no lowercase letter (str::is_uppercase)
-//                cased_lower(x)           lower_name and at least one lowercase letter (str::is_cased_lowercase)
-//                cased_upper(x)           upper_name and at least one uppercase letter (str::is_cased_uppercase)
-//                camel_name(x)            neither cased form, and no `_`: "CamelCase", "Camel" (helpers::is_camelcase)
-//                mixed_name(x)            not cased_lower, starts (after one `_`) lowercase: "mixedCase", "_mixed_Case"
-//                acronym_of(x, a)         a is x's capitals in order: ("AbcDef", "AD") (helpers::is_acronym)
-//                dunder(x)                starts with `__` and ends with `__`, overlapping: "__x__", "___", "__"
+//   1. Case, each of name x at node n (naming_word: an identifier and its text, or an aliased import and either name):
+//                lower_name(n, x)         no uppercase letter (Ruff's str::is_lowercase): "x1", "_", "snake_case"
+//                upper_name(n, x)         no lowercase letter (str::is_uppercase)
+//                cased_lower(n, x)        lower_name and at least one lowercase letter (str::is_cased_lowercase)
+//                cased_upper(n, x)        upper_name and at least one uppercase letter (str::is_cased_uppercase)
+//                camel_name(n, x)         neither cased form, and no `_`: "CamelCase", "Camel" (helpers::is_camelcase)
+//                mixed_name(n, x)         not cased_lower, starts (after one `_`) lowercase: "mixedCase", "_mixed_Case"
+//                acronym_of(a, x, l)      aliased import a's alias l is its name x's capitals in order: ("AbcDef",
+//                                         "AD") (helpers::is_acronym)
+//                dunder(n, x)             starts with `__` and ends with `__`, overlapping: "__x__", "___", "__"
 //                                         (visibility::is_magic)
-//   2. Options:  naming_ignored(x)        x matches `pep8-naming.ignore-names` (globs; Ruff's list of unittest names
+//   2. Options:  naming_ignored(n, x)     x matches `pep8-naming.ignore-names` (globs; Ruff's list of unittest names
 //                                         when unset) or `pep8-naming.extend-ignore-names`
 //   3. Decorators: dec_target(f, e)       e is a decorator of f with any call taken off (`@d(1)` gives `d`)
 //                typing_dec(f, x)         def f is decorated with typing.x / typing_extensions.x (`@overload`)
@@ -41,34 +43,38 @@
 #include "python/ast.rerail"
 
 // ---- 1. case -----------------------------------------------------------------------------------------------------
-// naming_word(x): every identifier's text, the vocabulary the case tests run over (once per distinct string).
-.decl naming_word(x: symbol)
-naming_word(x) :- kind(n, "identifier"), text(n, x).
-.decl lower_name(x: symbol)
-lower_name(x) :- naming_word(x), match("[^A-Z]*", x).
-.decl upper_name(x: symbol)
-upper_name(x) :- naming_word(x), match("[^a-z]*", x).
-.decl cased_lower(x: symbol)
-cased_lower(x) :- naming_word(x), match("[^A-Z]*[a-z][^A-Z]*", x).
-.decl cased_upper(x: symbol)
-cased_upper(x) :- naming_word(x), match("[^a-z]*[A-Z][^a-z]*", x).
-.decl camel_name(x: symbol)
-camel_name(x) :- naming_word(x), !cased_lower(x), !cased_upper(x), !contains("_", x).
-.decl mixed_name(x: symbol)
-mixed_name(x) :- naming_word(x), !cased_lower(x), match("_?[a-z].*", x).
-.decl acronym_of(x: symbol, a: symbol)
-acronym_of(x, a) :- alias_import(_, x, a), a = @replace_all(x, "[^A-Z]", "").
-.decl dunder(x: symbol)
-dunder(x) :- naming_word(x), prefix("__", x), suffix("__", x).
+// naming_word(n, x): the names the case tests run over, each at its node: every identifier's text, and an aliased
+// import's name and alias. Keyed by the node, each file's tests are made in that file: keyed by the name alone, each
+// test was a table of every file's names, joined by name in the cross-file part (decision 0677).
+.decl naming_word(n: node, x: symbol)
+naming_word(n, x) :- kind(n, "identifier"), text(n, x).
+naming_word(a, x) :- alias_import(a, x, _).
+naming_word(a, l) :- alias_import(a, _, l).
+.decl lower_name(n: node, x: symbol)
+lower_name(n, x) :- naming_word(n, x), match("[^A-Z]*", x).
+.decl upper_name(n: node, x: symbol)
+upper_name(n, x) :- naming_word(n, x), match("[^a-z]*", x).
+.decl cased_lower(n: node, x: symbol)
+cased_lower(n, x) :- naming_word(n, x), match("[^A-Z]*[a-z][^A-Z]*", x).
+.decl cased_upper(n: node, x: symbol)
+cased_upper(n, x) :- naming_word(n, x), match("[^a-z]*[A-Z][^a-z]*", x).
+.decl camel_name(n: node, x: symbol)
+camel_name(n, x) :- naming_word(n, x), !cased_lower(n, x), !cased_upper(n, x), !contains("_", x).
+.decl mixed_name(n: node, x: symbol)
+mixed_name(n, x) :- naming_word(n, x), !cased_lower(n, x), match("_?[a-z].*", x).
+.decl acronym_of(a: node, x: symbol, l: symbol)
+acronym_of(a, x, l) :- alias_import(a, x, l), l = @replace_all(x, "[^A-Z]", "").
+.decl dunder(n: node, x: symbol)
+dunder(n, x) :- naming_word(n, x), prefix("__", x), suffix("__", x).
 
 // ---- 2. options --------------------------------------------------------------------------------------------------
 // Ruff's ignore-names are globs over the whole name. Without the option the default list applies (literally);
 // extend-ignore-names adds to whichever list is in force.
 //   [tool.ruff.lint.pep8-naming] ignore-names = ["*allowed*"]     def badAllowed(): …   not N802
-.decl naming_ignored(x: symbol)
-naming_ignored(x) :- naming_word(x), option_item("pep8-naming.ignore-names", _, g), glob(g, x).
-naming_ignored(x) :- naming_word(x), !option_item("pep8-naming.ignore-names", _, _), naming_default_ignore(x).
-naming_ignored(x) :- naming_word(x), option_item("pep8-naming.extend-ignore-names", _, g), glob(g, x).
+.decl naming_ignored(n: node, x: symbol)
+naming_ignored(n, x) :- naming_word(n, x), option_item("pep8-naming.ignore-names", _, g), glob(g, x).
+naming_ignored(n, x) :- naming_word(n, x), !option_item("pep8-naming.ignore-names", _, _), naming_default_ignore(x).
+naming_ignored(n, x) :- naming_word(n, x), option_item("pep8-naming.extend-ignore-names", _, g), glob(g, x).
 .decl naming_default_ignore(x: symbol)
 naming_default_ignore("setUp"). naming_default_ignore("tearDown"). naming_default_ignore("setUpClass").
 naming_default_ignore("tearDownClass"). naming_default_ignore("setUpModule"). naming_default_ignore("tearDownModule").

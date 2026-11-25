@@ -954,6 +954,70 @@ fn keys_once<'v>(v: &'v Version, about: &About, demand: &[String]) -> Result<Opt
     Ok(Some((build(&keep)?, decls, extras)))
 }
 
+/// Leaves out of a magic rule's body (`ks`) each literal the key does not need that the literals left out had tied to
+/// it, and that now joins it by a value alone. A literal's places are its variables at a `node`, `loc` or `span`
+/// column, or a document's (`document_column`), anywhere in rule `r`. Counting every literal of the body, its places
+/// reach the key's; counting the kept ones, none do. Left in, it joins another document's nodes to the key's by a
+/// value, and makes the demand of a relation of one file read two (decision 0677):
+/// `magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)` was RUF034's, `same_pair(x, y)` left out (an
+/// extra that would unstratify the program), y's file joined to c's by the index i. A literal the program itself
+/// joins by a value (`magic_lookup_fbb(x, m)` beside a scope s) is the author's, and stays. Leaving a literal out
+/// only widens the demand. A key with no place is left as it is.
+fn drop_other_documents<'v>(v: &Version, r: RuleRef<'v>, key: &VarSet, pre: &[(M<'v>, bool)], needed: &[bool], ks: &mut [bool]) {
+    let mut places = VarSet::new();
+    let mut place = |a: AtomRef<'_>| {
+        let rel = v.rel_name(a.rel());
+        let Some(d) = v.decl_of(rel) else { return };
+        let document = crate::code_rule_dsl::logic::front::document_column(rel);
+        for (i, (t, (_, ty))) in a.args().zip(d.cols()).enumerate() {
+            if let TermRef::Var(x) = t
+                && (matches!(v.text(ty), "node" | "loc" | "span") || document == Some(i))
+            {
+                places.insert(x);
+            }
+        }
+    };
+    place(r.head());
+    for l in r.body() {
+        if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l.view() {
+            place(a);
+        }
+    }
+    let placed: Vec<VarSet> = pre
+        .iter()
+        .map(|(l, _)| {
+            let vars = l.vars(r);
+            vars.minus(&vars.minus(&places))
+        })
+        .collect();
+    let from = key.minus(&key.minus(&places));
+    if from.is_empty() {
+        return;
+    }
+    // The places the key reaches through the literals `with` keeps.
+    let reach = |with: &dyn Fn(usize) -> bool| {
+        let mut reach = from.clone();
+        loop {
+            let mut grew = false;
+            for (i, p) in placed.iter().enumerate() {
+                if with(i) && !p.is_disjoint(&reach) && !p.is_subset(&reach) {
+                    reach.extend(p);
+                    grew = true;
+                }
+            }
+            if !grew {
+                return reach;
+            }
+        }
+    };
+    let (every, kept) = (reach(&|_| true), reach(&|i| ks[i]));
+    for (i, p) in placed.iter().enumerate() {
+        if ks[i] && !needed[i] && !p.is_disjoint(&every) && p.is_disjoint(&kept) {
+            ks[i] = false;
+        }
+    }
+}
+
 /// A trial's program: its rules, and with `gate`, the gates its negations wait for and the gates' declarations.
 #[derive(Default)]
 struct Trial<'v> {
@@ -1008,6 +1072,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
         mh.1.iter().for_each(|t| tm_vars(r, *t, &mut key));
         // A left-out literal that binds a key variable, or what such a literal needs, stays.
         let (mut ks, mut need) = (ks.to_vec(), key.clone());
+        let mut needed = vec![false; pre.len()];
         for i in (0..pre.len()).rev() {
             let l = &pre[i].0;
             // What `l` gives, and the right side of a comparison (its own or a binding's).
@@ -1031,6 +1096,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
                 continue;
             }
             ks[i] = true;
+            needed[i] = true;
             // A split gives its parts from the whole, and the whole from its parts.
             let split = match cmp_right {
                 Some((Some(s), rt)) if is_cat(v, rt) && {
@@ -1066,6 +1132,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
                 _ => {}
             }
         }
+        drop_other_documents(v, r, &key, pre, &needed, &mut ks);
         let (mut bound, mut body) = (VarSet::new(), Vec::new());
         for ((l, _), k) in pre.iter().zip(&ks) {
             if !k {

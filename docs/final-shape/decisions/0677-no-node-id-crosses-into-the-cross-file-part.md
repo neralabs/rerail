@@ -726,6 +726,63 @@ policies of the python pack, in 8 runs of 70, the same CLI builds as batch 1:
 | python (546 policies) | 6,708, the same; F601 50, B009 27, PIE804 20, B010 13 of them | 1.968 → 1.937 × 10¹² | 0.86 → 0.79 GB |
 | FAST001/002/003, RUF009, UP013 cases | 7, the same | | |
 
+**Batch 3: the Python causes, and three engine-made crossings.** The list went from 256 to 214: python 40 (none
+left), node 1, react 1. Run alone in chunks of 70 under `RERAIL_STRICT_NODES=1`, the 546 policies of the python pack now leave nothing in the cross part
+holding a node. Before, 26 causes did.
+
+The rules: each table that was keyed by a value is now keyed by the node the value came from.
+- **Format strings.** The `%` and `.format` parsers (`pct_*`, `brace_*`, `spec_rest`) were keyed by the string's
+  value. They are now keyed by the format expression: `b` of `s % r`, and the call `c` of `.format`. The parse
+  rules are unchanged, and only the seed rows and the key's type moved. UP030, UP031 and UP032 key their own
+  relations the same way (`indexed`, `by_hand`, `mixed`), as F524 keys `open_call`.
+- **Names.** `naming_word(n, x)` and the tests over it (`lower_name`, `camel_name`, `dunder`, …) take the node with
+  the name. An import alias's two names are each that alias's (`acronym_of(a, x, l)`). The same goes for SIM300's
+  `upper_name(m)`, for the element keys of `__all__` and `__slots__` (`sort_key(e, …)`, `nat_key`, `member_group`),
+  and for `arg_dummy(nm)` and `zero_number(n)`.
+- **Airflow.** `air_kind(n, m, s)` and `air_dag(c)` are tests of the call or instance. Before, they were tables of
+  every file's qualified names. AIR301's hits and its callees are per call (`air301_hit`, `air301_callee`).
+- **A module's privacy** (D1xx's `doc_public`) reads `doc`'s module, which ingestion writes per file. Before, it
+  walked `file` for the package's directories, which is cross-file by design (0665). An unpackaged file is tested
+  by its own name. `!(…)` of two literals (N811, D412) lowers to a helper keyed by its values, so it is written as
+  a disjunction.
+- **A nullable column read with `!unset(x)` alone places nothing.** `typing_root`'s bound and default, PYI011/014's
+  default, and FBT001's `hint_part` read `kind(x, _)` instead, which both places x and leaves out the empty value.
+- B005, RUF043, UP015 and ERA001 key their text tests by the literal, the mode argument or the comment.
+  UP015's count over the mode's letters (`count : { flag(re), @count_matches(re, v) > 1 } = 0`) lowered to a
+  helper keyed by the mode's text. It is one regex now.
+
+The engine. Three crossings were the lowering's or the planner's, not the rules':
+- **Magic sets dropped the literal that tied two nodes.** A magic rule keeps the literals before the demanded atom.
+  It leaves out a derived one that would close a negative cycle. RUF034's `same_pair(x, y)` was left out, so
+  `magic_unparen_bf(c) :- same_child(x, i, c), same_child(y, i, d)` joined y's file to c's by the index i. Run
+  alone, RUF034 was refused (0652) and found nothing. Now a magic rule also leaves out a literal that the dropped
+  literals had tied to its key and that now reaches it by a value alone. Its places are its `node`, `loc` and
+  `span` columns, and the document columns. A join by a value that the program writes itself
+  (`magic_lookup_fbb(x, m)` beside a scope) stays. Leaving a literal out only widens the demand. T's five programs
+  transform as before. The same fix cleared `call_q`'s seven crossings.
+- **`match_all` over a text read every file's texts.** The context that a `match_all` over a symbol scans was keyed
+  by the text alone (batch 1). It now also holds the nearest node its literals reach, such as `strip_arg(c, v)`'s c,
+  or era_line's comment for a capture of its line. The native still reads column 0, each text once. Placed this
+  way, the context and the matches (a function of its texts) are derived in each file. A printed program reads back
+  as itself.
+- **A lookup in a constant was driven as a product.** `async_sleep_call(c, x) :- async_call(c, _, q),
+  async_sleep_arg(q, _, x)` is a join of a file's calls with a table of facts. The deferred joins (0488) drove it by
+  its readers' requests. Its keys became a table of every file's names, and its factors and pair cache held the
+  calls. A join of a file's nodes, one of whose two parts is a constant, is now left as written and made in each
+  file. A join with no node (`deps_on(dir, r)`) is driven as before.
+
+The two entries outside python went with them: react's `sandbox_token`, a `match_all` over an attribute's value,
+and node's `module_use`, whose rules join a file's uses with the traced modules' tables.
+
+Compared on the 473 files of batch 2, all 546 policies in 8 runs of 70, against the old engine with the old rules
+(fcc1ef18c3). Both are the CLI at O0 with `test-hooks`, on this Mac:
+
+| Pack | Findings, old and new | Instructions, old → new | Peak RSS, old → new |
+|---|---|---|---|
+| python (546 policies) | 6,708, the same: UP031 93, F507 47, SIM300 46, N801 36, F523 32, UP032 29, ERA001 18, B005 13, RUF034 1 of them | 1.968 → 1.827 × 10¹² | 0.86 → 0.78 GB |
+| AIR policies, on Airflow cases | 68, the same | | |
+| N8xx and D1xx, on packaged and unpackaged modules | 153, the same | | |
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
@@ -741,6 +798,11 @@ policies of the python pack, in 8 runs of 70, the same CLI builds as batch 1:
   kind(n, "property_identifier")` and `pk(n), match_all("[a-z]+", n, m)` give nothing. eslint-b-objects'
   `escape_piece` writes one rule per kind until the dispatch reads a node column's kinds from the span analysis.
   The span analysis's error for an unbounded subject then applies.
+
+- **An aggregate over a text's own rows is keyed by the text.** `count : { flag(re), @count_matches(re, v) > 1 } = 0`
+  lowers to a helper `rr_h_agg_…(v)` over a context of the text alone: a table of every file's texts, in the cross
+  part (UP015's, batch 3). UP015 writes its test as one regex. The aggregate's context can hold a node, as
+  `match_all`'s does now (batch 3), with its readers joining on both.
 
 - **Where a finding that pairs two files' nodes is written.** `call_target(call, def)` is an example. An output
   keeps its node (§ Built), but once its family is rewritten it names the second file's node by that node's symbol,

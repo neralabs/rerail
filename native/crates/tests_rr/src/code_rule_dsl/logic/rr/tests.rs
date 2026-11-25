@@ -1998,6 +1998,47 @@ NQ(m, c) :- hit(m, c).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `match_all` over a text a derived relation binds (`piece(c, v)`), or a capture of one: the context of the texts it
+/// scans holds a node that places each (decision 0677), so it and the matches, a function of its texts, are derived in each file. Keyed
+/// by the text alone, they were a table of every file's texts, in the cross-file part (B005's strip arguments). The
+/// program prints back as itself, and each text is scanned as before.
+#[test]
+fn a_match_all_over_a_derived_text_is_placed_by_its_node() {
+    let src = r#"
+.decl piece(c: node, v: symbol)
+piece(c, v) :- kind(c, "string_content"), text(c, v).
+.decl chars(c: node, i: number, x: symbol)
+chars(c, i, x) :- piece(c, v), match_all("(?<x>(?s:.))", v, i, _, _).
+.decl twice(x: symbol)
+twice(x) :- chars(c, i, x), chars(c, j, x), i < j.
+.decl tail(x: symbol)
+tail(x) :- piece(c, v), match("a(?<w>[\\s\\S]*)", v), match_all("(?<x>(?s:.))", w, _, _, _).
+.output twice, tail
+"#;
+    let v = parse(src).unwrap();
+    let contexts: Vec<Vec<String>> = v
+        .decls()
+        .iter()
+        .filter(|d| v.text(d.name()).contains("rr_h_ctx"))
+        .map(|d| d.cols().map(|(_, t)| v.text(t).to_owned()).collect())
+        .collect();
+    assert_eq!(contexts.len(), 2, "a context of the texts each scans: {contexts:?}");
+    assert!(contexts.iter().all(|c| c.get(1).map(String::as_str) == Some("node")), "each context places its texts by a node: {contexts:?}");
+    let printed = print_version(&v).and_then(|t| parse(&t)).unwrap();
+    assert_eq!(difference(&v, &printed), None);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("placedmatch");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "s = \"aba\"\nt = \"xyz\"\n").unwrap();
+    let rule = dir.join("m.rerail");
+    std::fs::write(&rule, src).unwrap();
+    let program = print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "twice").unwrap(), [["a"]]);
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "tail").unwrap(), [["a"], ["b"]]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A text test of a capture in the body that captured it tests the capture's text: `match_all("(?<w>…)", t),
 /// match("…", w)` over a string's content (RUF001's words). It once tested the span's id as a text, and never held.
 #[test]

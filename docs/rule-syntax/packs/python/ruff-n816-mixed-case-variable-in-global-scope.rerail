@@ -15,4 +15,5 @@
 .violation N816(at: node, x: symbol) code "N816"
     "Rename `{x}` to lowercase snake_case, such as `my_variable`, and update its uses; keep the name if other modules import it or it mirrors an external API."
     suppress ruff "N816"
-N816(n, x) :- store_name(n, x, m), kind(m, "module"), mixed_name(x), !store_makes(n, "namedtuple"), !naming_ignored(x).
+N816(n, x) :- store_name(n, x, m), kind(m, "module"), mixed_name(n, x), !store_makes(n, "namedtuple"),
+    !naming_ignored(n, x).

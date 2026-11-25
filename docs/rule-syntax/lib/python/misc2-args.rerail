@@ -8,7 +8,8 @@
 //                                first non-variadic parameter) is left out
 //   arg_stub(f)                  f's body is only `pass`, `...`, string literals and `raise NotImplementedError`
 //                                (Ruff's is_stub), or a message variable raised as NotImplementedError
-//   arg_dummy(x)                 x matches the option dummy-variable-rgx (default: `_`, `__`, `_x`, `_unused1`)
+//   arg_dummy(nm)                parameter name nm matches the option dummy-variable-rgx (default: `_`, `__`, `_x`,
+//                                `_unused1`)
 //
 // Options
 //   dummy-variable-rgx                              names that may go unused (Ruff's dummy-variable-rgx)
@@ -102,9 +103,11 @@ argt_tstr(e) :- string_form(e, "tstr").
 argt_tstr(e) :- kind(e, "concatenated_string"), child(e, p, _), string_form(p, "tstr").
 
 // ---- unused ------------------------------------------------------------------------------------------------------
-.decl arg_dummy(x: symbol)
-arg_dummy(x) :- sig_param(_, _, nm, _, _, _, _), text(nm, x), option("dummy-variable-rgx", re), match(re, x).
-arg_dummy(x) :- sig_param(_, _, nm, _, _, _, _), text(nm, x), !option("dummy-variable-rgx", _),
+// arg_dummy(nm): keyed by the parameter's name node, in its own file: keyed by the name, it was a table of every
+// file's parameter names, joined by name in the cross-file part (decision 0677).
+.decl arg_dummy(nm: node)
+arg_dummy(nm) :- sig_param(_, _, nm, _, _, _, _), text(nm, x), option("dummy-variable-rgx", re), match(re, x).
+arg_dummy(nm) :- sig_param(_, _, nm, _, _, _, _), text(nm, x), !option("dummy-variable-rgx", _),
     match("_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?", x).
 .decl argt_fixed(k: symbol)
 argt_fixed("posonly"). argt_fixed("pos"). argt_fixed("kwonly").
@@ -112,7 +115,7 @@ argt_fixed("posonly"). argt_fixed("pos"). argt_fixed("kwonly").
 argt_receiver(f, i) :- arg_checked(f, _, 1), i = min j : { sig_param(f, _, _, j, k, _, _), argt_fixed(k) }.
 .decl arg_unused(f: node, nm: node, x: symbol, code: symbol)
 arg_unused(f, nm, x, c) :- arg_checked(f, c, _), !argt_locals(f), sig_param(f, _, nm, i, k, _, _), !argt_receiver(f, i),
-    text(nm, x), !arg_dummy(x), !argt_read(f, x), !argt_rebound(f, x),
+    text(nm, x), !arg_dummy(nm), !argt_read(f, x), !argt_rebound(f, x),
     (argt_fixed(k) ; !option("flake8-unused-arguments.ignore-variadic-names", "true")).
 // argt_read(f, x): a Name x somewhere resolves to f's scope and is read or deleted. A bare annotation `x: int`
 // only stores (and binds nothing in Ruff's sense), so it neither reads nor rebinds the parameter.

@@ -34,7 +34,8 @@ pub struct Plans {
     pub cross: Vec<String>,
     /// The joins left as written because the split holds them constants (decision 0665): of facts and settings alone,
     /// the same for every file and made once. Read by a file's rule, the requests would be the files', and the
-    /// constant would read every file's rows. A constant only constants read is driven as any join is.
+    /// constant would read every file's rows. A constant only constants read is driven as any join is. And the joins
+    /// of a file's nodes one of whose two parts is a constant: a lookup in it, made in each file, not a product.
     pub constants: Vec<String>,
     pub cached: bool,
     pub author: Vec<Join>,
@@ -291,6 +292,25 @@ pub fn rewrite(p: &mut Program<'_>, input: &Arc<Version>, adaptive: bool, cache_
             pairs.retain(|(rel, _, _)| {
                 // A constant a file's rule reads (decision 0665): its requests would be the files'.
                 if split.constants.contains(rel) && readers[rel.as_str()].iter().any(|&(i, _)| !split.constants.contains(p.head_rel(rules[i]))) {
+                    plans.constants.push(rel.clone());
+                    return false;
+                }
+                // A join of a file's nodes with a constant (`async_sleep_call(c, x) :- async_call(c, _, q),
+                // async_sleep_arg(q, _, x)`): a lookup in the constant, made in the file. Driven by its readers'
+                // requests, its keys were a table of every file's values, and its factors and pair cache held the
+                // file's nodes, all in the cross-file part (decision 0677). A join with no node (`deps_on(dir, r)`, by
+                // a package's directory) is driven as before: its requests carry no node.
+                let nodes = p.columns(rel).unwrap_or_default().iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span"));
+                let lookup = nodes && rules.iter().find(|r| p.head_rel(**r) == rel).and_then(|r| self::split(v, *r).map(|(_, parts)| (*r, parts))).is_some_and(|(r, parts)| {
+                    let lits: Vec<_> = r.body().collect();
+                    // A constant: of facts and settings alone (the split's), or facts and no rule.
+                    let constant = |rel: &str| {
+                        split.constants.contains(rel)
+                            || (crate::code_rule_dsl::logic::program_image::fields::ProgramFields::states_facts(v, rel) && !rules.iter().any(|d| p.head_rel(*d) == rel))
+                    };
+                    parts.iter().any(|part| part.iter().all(|&i| lits[i].atom().is_none_or(|a| constant(v.rel_name(a.rel())))))
+                });
+                if lookup {
                     plans.constants.push(rel.clone());
                     return false;
                 }

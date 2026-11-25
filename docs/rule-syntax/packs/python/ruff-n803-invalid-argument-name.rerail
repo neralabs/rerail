@@ -17,4 +17,4 @@
     "Rename argument `{x}` to lowercase snake_case and update its uses in the body; keep the name if callers pass it by keyword."
     suppress ruff "N803"
 N803(nm, x) :- (kind(f, "function_definition") ; kind(f, "lambda")), sig_param(f, _, nm, _, _, _, _), text(nm, x),
-    !lower_name(x), !naming_ignored(x), !(in_class(f, _), typing_dec(f, "override")).
+    !lower_name(nm, x), !naming_ignored(nm, x), !(in_class(f, _), typing_dec(f, "override")).
