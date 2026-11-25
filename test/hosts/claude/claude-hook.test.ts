@@ -308,10 +308,9 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
       await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath).catch((error: unknown) => error),
     ];
     // Neither the capability nor an event reached the pipe. The hook's lookup wrote nothing to it; where daemon.json
-    // names it, the hook's start check asked it for a proof, as it does at main (docs/threat-model.md, what remains).
+    // names it, each hook's start check asked it for one proof, as it does at main (docs/threat-model.md, what remains).
     const received = await otherProcessReceived();
-    expect(received.filter(line => line !== "POST /proof no capability")).toEqual([]);
-    if (!inDaemonJson) expect(received).toEqual([]);
+    expect(received).toEqual(inDaemonJson ? ["POST /proof no capability", "POST /proof no capability"] : []);
     const notThisHome = { name: "DaemonUnreachableError", message: expect.stringContaining(`${otherProcessPipe} is not this Rerail home's daemon`) };
     expect(answers).toEqual([expect.objectContaining(notThisHome), expect.objectContaining(notThisHome)]);
     // Each event lost so is in the hook failure log `rerail status` reads, with that reason.
