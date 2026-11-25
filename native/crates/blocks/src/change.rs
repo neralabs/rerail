@@ -20,11 +20,19 @@
 //! values (an aggregate's key and value); a gone row's values are its before state's, an added row's its after
 //! state's. Nothing is collected but the keys an input's change touches (a semi-join's and an aggregate's), each
 //! once.
+//!
+//! Decision 0678 step 9: the operations whose change would otherwise read more than the change keep counts, each a
+//! relation in a block with a version and a delta like any other (`State`, `settle`): a projecting head its rows'
+//! derivation counts (`project`), a count or sum each group's count and sum (`counted`), an extreme each (group,
+//! value)'s count (`extreme`). Each costs O(1) a row changed; an extreme reads its group's distinct values once, when
+//! its extreme goes. `group` keeps nothing and reads each touched group whole. A recursive head keeps no count (a
+//! cycle can hold its own count up): its levels decide (decision 0364).
 
 use crate::bistate::{Bistate, Read};
 use crate::ids::{ColumnIndex, RowId};
+use crate::relation::{RelW, Relation, View};
 use crate::table::{Agg, Table, count, fold};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Whether an output row is gone or added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -158,7 +166,8 @@ pub fn semi<A: Table, B: Table>(a: &Bistate<A>, b: &Bistate<B>, on: &[(ColumnInd
 
 /// The change of `A` grouped by `by` under `agg` (a row `(key, value)` for each key `A` holds): each key whose value
 /// changed, its old row gone (where it had one) and its new one added (where it has one). Only the keys `A`'s change
-/// touches are read, each in both states.
+/// touches are read, each in both states: a key's every row, so its cost is the touched groups' sizes. It keeps
+/// nothing; `counted` and `extreme` keep counts and cost the change.
 pub fn group<A: Table>(a: &Bistate<A>, by: &[ColumnIndex], agg: Agg, each: &mut dyn FnMut(Sign, &[i64], i64)) {
     let value = |t: Option<&A>, key: &[i64]| t.filter(|t| count(*t, by, key) > 0).and_then(|t| fold(t, by, key, agg));
     for key in touched(a, by) {
@@ -173,6 +182,215 @@ pub fn group<A: Table>(a: &Bistate<A>, by: &[ColumnIndex], agg: Agg, each: &mut 
             each(Sign::Added, &key, v);
         }
     }
+}
+
+/// A change's sums by key (decision 0678 step 9): for each key the change touches, once, the signed sum of its rows'
+/// accumulators, a count first, then a sum of each summed column. Only the change's keys are held.
+pub struct Tally {
+    width: usize,
+    accs: usize,
+    at: FxHashMap<Box<[i64]>, Box<[i64]>>,
+}
+
+impl Tally {
+    /// A tally of keys of `width` values, each with `accs` accumulators (a count, then `accs - 1` sums).
+    pub fn new(width: usize, accs: usize) -> Tally {
+        assert!(accs >= 1, "a count first");
+        Tally { width, accs, at: FxHashMap::default() }
+    }
+
+    /// A row of key `key` gone or added, its summed values `sums` (`accs - 1` of them).
+    pub fn add(&mut self, sign: Sign, key: &[i64], sums: &[i64]) {
+        debug_assert_eq!((key.len(), sums.len() + 1), (self.width, self.accs));
+        let d = if sign == Sign::Added { 1 } else { -1 };
+        let e = self.at.entry(key.into()).or_insert_with(|| vec![0; self.accs].into());
+        e[0] += d;
+        for (a, &v) in e[1..].iter_mut().zip(sums) {
+            *a = a.wrapping_add(v.wrapping_mul(d));
+        }
+    }
+
+    /// `a`'s change onto columns `key`, with columns `sums` summed: each gone row less, each added row more; a row
+    /// `keep` refuses (a bounded extreme's row out of bounds) left out.
+    pub fn of<A: Table>(a: &Bistate<A>, key: &[ColumnIndex], sums: &[ColumnIndex], keep: &dyn Fn(&A, RowId) -> bool) -> Tally {
+        let mut t = Tally::new(key.len(), sums.len() + 1);
+        let (mut k, mut v) = (vec![0i64; key.len()], vec![0i64; sums.len()]);
+        let mut put = |t: &mut Tally, s: Sign, tab: &A, id: RowId| {
+            if keep(tab, id) {
+                read_key(tab, id, key, &mut k);
+                read_key(tab, id, sums, &mut v);
+                t.add(s, &k, &v);
+            }
+        };
+        if let Some(b) = a.before() {
+            for id in a.gone() {
+                put(&mut t, Sign::Gone, b, id);
+            }
+        }
+        for id in a.added() {
+            put(&mut t, Sign::Added, a.after(), id);
+        }
+        t
+    }
+
+    /// The keys it holds.
+    pub fn len(&self) -> usize {
+        self.at.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.at.is_empty()
+    }
+}
+
+/// A kept state of counts (decision 0678 step 9): `rel`, a frozen full relation of a tally's keys and their
+/// accumulators (`width + accs` columns, a key once, its count above 0; none before the first change), whose index
+/// `by_key` is on its key's columns in order.
+#[derive(Clone, Copy)]
+pub struct State<'a> {
+    pub rel: Option<&'a Relation>,
+    pub by_key: usize,
+}
+
+/// What `settle` tells of each key whose accumulators changed: the key, its accumulators before and after (`None`:
+/// no row).
+pub type Settled<'f> = dyn FnMut(&[i64], Option<&[i64]>, Option<&[i64]>) + 'f;
+
+/// Settles tally `t` against kept state `kept`. Each key's row is found by one probe; where its accumulators change, the row is killed and its new one
+/// pushed into `w` (a delta of `kept`), and a key whose count reaches 0 has none: the state's change, in the
+/// relation's block (0353: a derived fact written once). `each(key, old, new)` for each key whose accumulators
+/// changed: before and after, `None` for no row. So a key's count is the number of rows (or derivations) giving it.
+pub fn settle(kept: State, t: &Tally, w: &RelW, each: &mut Settled) {
+    let (view, ix) = (kept.rel.map(View::full), kept.by_key);
+    let mut row = vec![0i64; t.width + t.accs];
+    let mut old = vec![0i64; t.accs];
+    for (key, d) in &t.at {
+        let found = view.as_ref().and_then(|v| v.probe_iter(ix, key).next());
+        if let (Some(v), Some(id)) = (&view, found) {
+            for (j, o) in old.iter_mut().enumerate() {
+                *o = v.get(id, t.width + j);
+            }
+        } else {
+            old.fill(0);
+        }
+        row[..t.width].copy_from_slice(key);
+        for j in 0..t.accs {
+            row[t.width + j] = old[j].wrapping_add(d[j]);
+        }
+        let new = &row[t.width..];
+        assert!(new[0] >= 0, "{key:?}: a count below 0 (a row gone that was never counted)");
+        if new == &old[..] {
+            continue;
+        }
+        if let Some(id) = found {
+            w.kill(id);
+        }
+        if new[0] > 0 {
+            w.push(&row);
+        }
+        each(key, found.map(|_| &old[..]), (new[0] > 0).then_some(&row[t.width..]));
+    }
+}
+
+/// A projecting head's change by derivation counts (decision 0678 step 9): `t` its derivations' change onto the
+/// head's columns (one accumulator, the count), `kept` each head row's count (`settle`'s state, its delta written into
+/// `w`). A head row is gone when its count reaches 0 and added when it leaves 0: O(1) a derivation gained or lost,
+/// with no search for another derivation (0328's recheck searches the head's other derivations).
+pub fn project(kept: State, t: &Tally, w: &RelW, each: &mut dyn FnMut(Sign, &[i64])) {
+    settle(kept, t, w, &mut |key, old, new| match (old, new) {
+        (Some(_), None) => each(Sign::Gone, key),
+        (None, Some(_)) => each(Sign::Added, key),
+        _ => {}
+    });
+}
+
+/// A count's or a sum's change by group (`agg` `Count`, or `Sum` with a tally of a count and that sum): each group's
+/// count and sum kept (`settle`'s state, its delta written into `w`), so a row gone or added costs O(1), never a read
+/// of its group. A group whose value changed: its old row gone and its new one added; a group of no rows has none.
+pub fn counted(kept: State, t: &Tally, agg: Agg, w: &RelW, each: &mut dyn FnMut(Sign, &[i64], i64)) {
+    let at = match agg {
+        Agg::Count => 0,
+        Agg::Sum(_) => 1,
+        _ => panic!("{agg:?}: an extreme is `extreme`'s"),
+    };
+    settle(kept, t, w, &mut |key, old, new| {
+        let (o, n) = (old.map(|a| a[at]), new.map(|a| a[at]));
+        if o == n {
+            return;
+        }
+        if let Some(v) = o {
+            each(Sign::Gone, key, v);
+        }
+        if let Some(v) = n {
+            each(Sign::Added, key, v);
+        }
+    });
+}
+
+/// An extreme's change by group (`agg` `Min`, `Max`, `MinAbove`, `MaxBelow`): `t` the change's rows onto (group,
+/// value), the rows out of bounds left out (`Tally::of`'s `keep`), and `kept` a count of each (group, value)
+/// (`settle`'s state, its index `by_key` on both; `by_group` its index on the group's columns; its delta written
+/// into `w`).
+/// `out` is the output before (group, then its extreme), probed on the group's columns.
+///
+/// A group's new extreme is the old one or a value the change gave it, O(1) a row, while the old one's count stays
+/// above 0. When it reaches 0, the group's values are read by one probe of `kept` (its distinct values, not its rows).
+pub fn extreme<O: Table>(kept: State, by_group: usize, t: &Tally, out: Option<&O>, agg: Agg, w: &RelW, each: &mut dyn FnMut(Sign, &[i64], i64)) {
+    let max = match agg {
+        Agg::Max(_) | Agg::MaxBelow { .. } => true,
+        Agg::Min(_) | Agg::MinAbove { .. } => false,
+        _ => panic!("{agg:?}: a count or a sum is `counted`'s"),
+    };
+    let g = t.width - 1;
+    let better = |x: i64, y: i64| if max { x > y } else { x < y };
+    // Each touched group's values that came (from a count of 0) and went (to 0).
+    let mut groups: FxHashMap<Box<[i64]>, Moved> = FxHashMap::default();
+    settle(kept, t, w, &mut |key, old, new| {
+        let e = groups.entry(key[..g].into()).or_default();
+        match (old, new) {
+            (None, Some(_)) => e.came.push(key[g]),
+            (Some(_), None) => e.went.push(key[g]),
+            _ => {}
+        }
+    });
+    let gcols: Vec<ColumnIndex> = (0..g as u16).map(ColumnIndex::new).collect();
+    let view = kept.rel.map(View::full);
+    for (group, Moved { came, went }) in groups {
+        let mut old = None;
+        if let Some(o) = out {
+            o.probe(&gcols, &group, &mut |id| {
+                old = Some(o.get(id, ColumnIndex::new(g as u16)));
+                false
+            });
+        }
+        let best = |vals: &mut dyn Iterator<Item = i64>| vals.reduce(|a, b| if better(b, a) { b } else { a });
+        let gained = best(&mut came.iter().copied());
+        let new = match old {
+            Some(v) if !went.contains(&v) => Some(gained.filter(|&x| better(x, v)).unwrap_or(v)),
+            // The extreme went (or there was none): the group's values kept, less those gone, and those come.
+            _ => {
+                let kept_vals = view.iter().flat_map(|v| v.probe_iter(by_group, &group).map(|id| v.get(id, g)));
+                let mut all = kept_vals.filter(|x| !went.contains(x)).chain(came.iter().copied());
+                best(&mut all)
+            }
+        };
+        if old == new {
+            continue;
+        }
+        if let Some(v) = old {
+            each(Sign::Gone, &group, v);
+        }
+        if let Some(v) = new {
+            each(Sign::Added, &group, v);
+        }
+    }
+}
+
+/// A group's values that came into its kept counts (from 0) and went (to 0) in one change.
+#[derive(Default)]
+struct Moved {
+    came: Vec<i64>,
+    went: Vec<i64>,
 }
 
 /// Checks L1 for an operation's change against its cold form (decision 0678 step 5): `cold` gives the output of a
@@ -424,6 +642,162 @@ mod tests {
                 assert_eq!(*out, after.iter().cloned().collect(), "state {k}: {agg:?}");
                 check(Some(before), after, change);
             });
+        }
+    }
+
+    /// A kept state of counts (decision 0678 step 9) across a chain: a version (a full relation) and the delta a
+    /// change settles into it, rolled up into the next version.
+    struct Counts {
+        block: Block,
+        spec: Spec,
+        lock: Mutex<()>,
+    }
+
+    impl Counts {
+        /// Rows of `arity` columns, indexed on each of `indexes`.
+        fn new(arity: usize, indexes: &[&[u16]]) -> Counts {
+            let spec = Spec { widths: vec![8; arity], sort: None, indexes: indexes.iter().map(|k| k.to_vec()).collect(), min_log: crate::rows::MIN_LOG };
+            Counts { block: Block::anon(kind::FACTS, 64 << 20), spec, lock: Mutex::new(()) }
+        }
+
+        /// A delta of `kept` (none: a full relation), its writer given to `f`, then frozen.
+        fn change(&self, kept: Option<&Relation>, f: impl FnOnce(&RelW)) -> &Relation {
+            let d = Relation::create(&self.block, &self.spec, kept);
+            f(&RelW { block: &self.block, rel: d, lock: &self.lock });
+            relation::freeze(&self.block, d, &self.spec, kept);
+            d
+        }
+
+        /// The state after: `kept` and its delta `d` rolled up into a full relation.
+        fn roll<'a>(&'a self, kept: Option<&'a Relation>, d: &'a Relation) -> &'a Relation {
+            let Some(k) = kept else { return d };
+            let v = View { base: Some(k), top: d };
+            let rows: Vec<Vec<i64>> = v.ordered().into_iter().map(|id| v.row(id)).collect();
+            self.change(None, |w| rows.iter().for_each(|r| _ = w.push(r)))
+        }
+    }
+
+    fn live_rows(r: &Relation) -> std::collections::BTreeSet<Vec<i64>> {
+        let v = View::full(r);
+        v.ordered().into_iter().map(|id| v.row(id)).collect()
+    }
+
+    /// A chain of one relation's states, each its bistate, with the tally of its version's rows (a change from
+    /// nothing) given first.
+    fn each_change(steps: usize, mut f: impl FnMut(usize, &Bistate<View<'_>>)) {
+        let ca = Chain::new(0, &[&[0], &[1]]);
+        for (k, (v, add, kill)) in states(7, steps, 12).iter().enumerate() {
+            let base = ca.full(v);
+            let d = ca.delta(base, add, kill);
+            if k == 0 {
+                f(usize::MAX, &View::full(base).bistate());
+            }
+            f(k, &View { base: Some(base), top: d }.bistate());
+        }
+    }
+
+    /// Decision 0678 step 9. A head projecting a column away (the second column of `A`'s rows) changes by its
+    /// derivation counts: a head row goes only when its last derivation does. L1 at every state and L3 over the
+    /// chain; the kept counts are the cold counts of every state after.
+    #[test]
+    fn a_projections_change_by_derivation_counts_keeps_the_laws() {
+        let counts = Counts::new(2, &[&[0]]);
+        let mut kept: Option<&Relation> = None;
+        let mut applied = std::collections::BTreeSet::<Vec<i64>>::new();
+        each_change(12, |k, a| {
+            let distinct = |t: Option<&View>| -> Vec<Vec<i64>> {
+                let mut v: Vec<Vec<i64>> = t.map(|t| rows_of(t).iter().map(|r| vec![r[1]]).collect()).unwrap_or_default();
+                v.sort();
+                v.dedup();
+                v
+            };
+            let t = Tally::of(a, &[c(1)], &[], &|_, _| true);
+            let mut change = Vec::new();
+            let d = counts.change(kept, |w| project(super::State { rel: kept, by_key: 0 }, &t, w, &mut |s, key| change.push((s, key.to_vec()))));
+            kept = Some(counts.roll(kept, d));
+            for (s, row) in &change {
+                if *s == Sign::Gone {
+                    applied.remove(row);
+                } else {
+                    applied.insert(row.clone());
+                }
+            }
+            assert_eq!(applied.iter().cloned().collect::<Vec<_>>(), distinct(Some(a.after())), "state {k}: applied");
+            check(Some(distinct(a.before())), distinct(Some(a.after())), change);
+            let mut cold = std::collections::BTreeMap::<i64, i64>::new();
+            for r in rows_of(a.after()) {
+                *cold.entry(r[1]).or_default() += 1;
+            }
+            let want: std::collections::BTreeSet<Vec<i64>> = cold.into_iter().map(|(v, n)| vec![v, n]).collect();
+            assert_eq!(live_rows(kept.unwrap()), want, "state {k}: each head row's derivations counted");
+        });
+    }
+
+    /// Decision 0678 step 9. Every aggregate's change from kept counts keeps L1 and L3 and agrees with `group`'s cold
+    /// fold at every state: a count and a sum from each group's count and sum, an extreme (bounded or not) from each
+    /// (group, value)'s count.
+    #[test]
+    fn an_aggregates_change_from_kept_counts_keeps_the_laws() {
+        let aggs = [Agg::Count, Agg::Sum(c(1)), Agg::Min(c(1)), Agg::Max(c(1)), Agg::MaxBelow { col: c(1), bound: 5, or_eq: false }, Agg::MinAbove { col: c(1), bound: 3, or_eq: true }];
+        for agg in aggs {
+            let extreme_of = !matches!(agg, Agg::Count | Agg::Sum(_));
+            // (group, value, count) for an extreme; (group, count) for a count; (group, count, sum) for a sum.
+            let counts = match agg {
+                Agg::Count => Counts::new(2, &[&[0]]),
+                Agg::Sum(_) => Counts::new(3, &[&[0]]),
+                _ => Counts::new(3, &[&[0, 1], &[0]]),
+            };
+            let outs = Counts::new(2, &[&[0]]);
+            let (mut kept, mut out): (Option<&Relation>, Option<&Relation>) = (None, None);
+            let mut extremes = 0;
+            each_change(12, |k, a| {
+                let grouped = |t: Option<&View>| -> Vec<Vec<i64>> {
+                    let Some(t) = t else { return Vec::new() };
+                    let mut keys: Vec<i64> = rows_of(t).iter().map(|r| r[0]).collect();
+                    keys.sort_unstable();
+                    keys.dedup();
+                    keys.into_iter().filter_map(|key| fold(t, &[c(0)], &[key], agg).map(|v| vec![key, v])).collect()
+                };
+                let before = if k == usize::MAX { Vec::new() } else { grouped(a.before()) };
+                let after = grouped(Some(a.after()));
+                let mut change = Vec::new();
+                let d = if extreme_of {
+                    let inside = |t: &View, id: RowId| {
+                        let v = Read::get(t, id, c(1));
+                        match agg {
+                            Agg::MaxBelow { bound, or_eq, .. } => v < bound || (or_eq && v == bound),
+                            Agg::MinAbove { bound, or_eq, .. } => v > bound || (or_eq && v == bound),
+                            _ => true,
+                        }
+                    };
+                    let t = Tally::of(a, &[c(0), c(1)], &[], &inside);
+                    let o = out.map(View::full);
+                    counts.change(kept, |w| extreme(super::State { rel: kept, by_key: 0 }, 1, &t, o.as_ref(), agg, w, &mut |s, key, v| change.push((s, vec![key[0], v]))))
+                } else {
+                    let sums: &[ColumnIndex] = if agg == Agg::Count { &[] } else { &[c(1)] };
+                    let t = Tally::of(a, &[c(0)], sums, &|_, _| true);
+                    counts.change(kept, |w| counted(super::State { rel: kept, by_key: 0 }, &t, agg, w, &mut |s, key, v| change.push((s, vec![key[0], v]))))
+                };
+                kept = Some(counts.roll(kept, d));
+                let od = outs.change(out, |w| {
+                    let ov = out.map(View::full);
+                    for (s, row) in &change {
+                        match s {
+                            Sign::Gone => {
+                                let v = ov.as_ref().expect("gone, so in the output before");
+                                let id = v.probe_iter(0, &row[..1]).find(|&id| v.row(id) == *row).expect("in the output before");
+                                w.kill(id);
+                            }
+                            Sign::Added => _ = w.push(row),
+                        }
+                    }
+                });
+                out = Some(outs.roll(out, od));
+                extremes += change.len();
+                assert_eq!(live_rows(out.unwrap()), after.iter().cloned().collect(), "state {k}: {agg:?}, applied");
+                check(Some(before), after, change);
+            });
+            assert!(extremes > 0, "{agg:?}: the chain changed it");
         }
     }
 

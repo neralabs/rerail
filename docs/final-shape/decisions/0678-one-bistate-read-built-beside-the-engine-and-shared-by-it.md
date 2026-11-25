@@ -1,6 +1,6 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Steps 1, 3, 4, 5, 6, 7 and 8 done. Step 2 cut down by the user's constraints (below) to the reads of a column
+Status: in progress. Steps 1, 3, 4, 5, 6, 7, 8 and 9 done. Step 2 cut down by the user's constraints (below) to the reads of a column
 and of a chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
@@ -384,13 +384,23 @@ needs an order.
 - **Reads in order.** `View` merges a base and its delta on the sort column, the base's row first on a tie, and a
   probe's answer comes in that order. `View::digest` and `Packed::digest` are sums of each row's hash, so they need
   no order.
-- **The kept form keeps its canonical order** (`packed`: the sort column, then every other column), derived from the
-  same `Spec::sort`, and records its first `MAX_KEY` columns as before. This was kept on purpose: a kept entry is
-  content-addressed, so the same set must give the same bytes however its rows came, and the store merges and probes
-  kept entries on leading columns (`prefilter/kept.rs`'s merge, `Packed::probe` of several columns). `pack` of a view
-  now puts its rows into that order (`prepare`'s check, then its sort) rather than taking the view's order as
-  canonical. Whether the kept form should follow the one-column rule, with content addressing by an order-free digest
-  instead, is the user's to decide.
+- **The kept form sorts on one column too** (first kept on every column, then changed; the user, 2026-11-24: "do we
+  really need to content address the kept entries? please get rid of unnecessary sorting"). Nothing needs a kept
+  entry's bytes to be the same for the same set: every entry's digest is given by its put (a sum of its rows' hashes,
+  `retain`, or a hash of the rows as given), never read from its bytes. So `packed::Order` names what each put needs:
+  - `Column`: a relation's rows (a run's relation, a view's live rows, a documents' table, a relation flattened from
+    SQL), sorted on column 0 only, and not at all when they lie in that order (one pass checks); duplicates dropped by
+    hashing. Before, every one was sorted on every column. A relation declared sorted (0456 K7, `InRel::moved`) is
+    laid out on column 0 alone too. The entry records column 0 as its order, and `KeptSource::order` gives only what
+    is recorded.
+  - `Rows`: the store's own tables (`sorted_put`: the prefilter's runs, the search index, derivations, corpus runs),
+    sorted on every column, because their readers merge runs on keys of several columns. Their writers give the rows
+    in that order already, so the check finds them sorted and nothing is sorted.
+  - `AsGiven`: unchanged.
+
+  `Packed::probe` of a key of several columns takes the range of the recorded leading columns the key holds and checks
+  the key's other columns within it.
+- **`distinct_sorted` checks before it sorts**, so freeze sorts nothing that arrives in order.
 
 Tests:
 
@@ -403,6 +413,48 @@ Tests:
 
 On a farm host: blocks, clif and the tests of the crates that build a `Spec` (store's kept facts, facts-base's rows,
 setfix's blocks comparison), 173 pass; the store's and facts-base's whole quick tiers, 312 pass.
+
+## Step 9: counts in the change form
+
+Of the design page "Changes in their size", §A (2026-11-24); the user: "If the presence of some kinds of rules requires
+counts instead of deleted bits, then so be it". Step 5's `change::group` reads every row of each group the change
+touches, in both states: its cost is those groups' sizes, not the change's. And 0328's recheck of a lost head that
+projects a column away searches the head's other derivations.
+
+What was built (`blocks::change`):
+
+- **`Tally`**: a change's signed sums by key, each key the change touches once: a count, then a sum of each summed
+  column. `Tally::of` makes one from a bistate's gone and added rows; `add` from any change (a join's).
+- **`State` and `settle`**: the counts a rule keeps are a relation in a block, a version and its delta like any
+  other: a key once, with its accumulators, its count above 0. `settle` finds each tallied key's row with one probe
+  of the key's index, and where its accumulators change it kills the row and pushes the new one into the delta. A key
+  whose count reaches 0 has no row. This is the "counts instead of deleted bits" for the rules that need it: a reader
+  of the head reads its rows, not the counts.
+- **`project`**: a projecting head by derivation counts. A head row is gone when its count reaches 0 and added when it
+  leaves 0: O(1) a derivation gained or lost.
+- **`counted`**: a count or a sum by group, from each group's count and sum: O(1) a row.
+- **`extreme`**: min, max and the bounded extremes, from a count of each (group, value), the rows out of bounds left
+  out. While the old extreme's count stays above 0, the new one is it or a value the change brought: O(1) a row.
+  When it reaches 0, the group's values are read by one probe of the counts: its distinct values, not its rows.
+  The page proposed sorting the counts on one column packing (group, value) to make this a range read; that needs
+  the two to fit 64 bits together, which node ids and sums do not, so it is not built.
+- `group` stays as the form that keeps nothing.
+
+A recursive head keeps no count, because a cycle can hold its own count up: its levels decide (0364, step 11).
+
+Tests (`blocks::change::tests`):
+
+- `a_projections_change_by_derivation_counts_keeps_the_laws`: a head projecting a column away, over a chain of 12
+  changes from nothing: L1 at every state, L3 over the chain, and the kept counts equal to the cold counts of every
+  state after.
+- `an_aggregates_change_from_kept_counts_keeps_the_laws`: count, sum, min, max, max below and min above, each over the
+  same chain: L1, L3 (the applied output equal to the cold fold of every state), and the chain changes each.
+
+On a farm host: blocks, 106 pass, with clippy clean on the new code. The kept-form change also ran with store,
+store-base, setfix, planner, logic and facts-base: 875 of 880 pass. Of the 5 failures, one is fixed since (a probe of
+two columns on an entry recording one, `packed::tests::node_ids_split_at_their_granule`). One is the host's
+temporary folder, of mode 775, which the store refuses (`segments::tests::an_underestimated_batch_grows_segment_directories`).
+Three are logic's audits of files this work does not touch, failing before step 7.
 
 ## Next steps, proposed (Claude's, not agreed)
 
