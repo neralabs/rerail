@@ -271,10 +271,19 @@ without hooks or network.
     `git blame --contents` of a working file. The listing and the call are two Git processes (T11).
   - No network commands; `cat-file --batch` runs no textconv, and a `--name-only` diff runs no textconv or external
     diff.
-- **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
-  It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
+- **Git read in process** (`native/src/git_access/`): the ignore matcher and the workspace discovery open every
+  repository they read through one opener. Three reads of the code rules open gix directly instead, with its own
+  defaults (`@git_tracked`, `@git_commit`, `@git_has` and `git_rev`, a base revision's files, a `HEAD` tree's committed
+  sources): they read the index and objects, not ignore rules, and their opens take none of this paragraph's checks.
+  The first two open a repository another user owns outside `safe.directory`, which gix's defaults allow with reduced
+  trust; the third runs after the workspace discovery, which refuses one. On Windows the first of them in a process can
+  start the first `git.exe` on `PATH` to find the system config file. The
+  opener starts no Git process and runs no filter driver a repository or user configures: the config files outside the
   repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
-  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). Before
+  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse). In a
+  linked worktree it reads the includes Git reads there; where gix's own open fails on an include that only the main
+  checkout's condition selects, it opens that worktree again with includes off only in a repository the user owns,
+  since in another user's such an open would skip an included `safe.directory`. Before
   gix reads them it refuses the top-level config files (system, installation, global, the repository's `config` and
   `config.worktree`), `info/exclude`, `info/attributes` and the global exclude and attribute files when one holds more
   than 100 MiB or is neither a regular file nor a folder (a FIFO or a device, which a read would wait on for ever); the

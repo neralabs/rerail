@@ -153,14 +153,15 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
-  it("sends a new token when another process commits through Rerail's own opener, as the CLI's writes do", async () => {
-    // The writer syncs the write-ahead log between writing its commit and publishing it, so the daemon hears the
-    // write before it can read the commit, and no later notice comes.
+  it("sends a new token when another process commits through Rerail's own opener and closes it, as a CLI command does", async () => {
+    // On Linux and macOS the watch hears the commit's write of the write-ahead log; on Windows, where a commit that does
+    // not wait for the disk gives no notice, it hears the writer close the log at its end.
     const writer = await startDatabaseWriter(databasePath);
     const stream = await open();
     try {
       const first = await stream.next();
       await writer.commit("remote:github.com/acme/web");
+      await writer.close();
 
       expect((await stream.next()).data).not.toBe(first.data);
     } finally {
@@ -169,8 +170,33 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     }
   });
 
-  it("sends a new token when another connection of the daemon's process commits, as a hook's records do", async () => {
-    const stream = await open();
+  it("sends a new token by the next beat when another process commits and keeps the database open", async () => {
+    // On Windows no notice comes for such a commit: the beat reads the version, which every other connection's commit
+    // moves. The folder watches here report nothing, as Windows' does for it, so the case shows the beat on every system:
+    // on Linux and macOS the watch hears the commit before the beat.
+    const writer = await startDatabaseWriter(databasePath);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const silent = storesFor({ changeFeed: { beatMs: BEAT_MS, watch: drivenWatch().watch } });
+    const stream = messagesOf(await createRerailApi(silent, operations, { version: "0.0.0-test" }).request("/api/changes"));
+    try {
+      const first = await stream.next();
+      await writer.commit("remote:github.com/acme/web");
+      await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+      expect(await movedFrom(stream, first.data)).toBeDefined();
+    } finally {
+      await stream.stop();
+      await writer.close();
+      silent.close();
+    }
+  });
+
+  it("sends a new token when another connection of the daemon's process commits a record, as a hook's records do", async () => {
+    // The record writer tells the feed itself: on Windows the folder's watch hears nothing of a commit that does not wait
+    // for the disk. The folder watches here report nothing, as Windows' does, and no beat comes within the case, so on
+    // every system only the writer's notice can move the token.
+    const silent = storesFor({ changeFeed: { beatMs: 3_600_000, watch: drivenWatch().watch } });
+    const stream = messagesOf(await createRerailApi(silent, operations, { version: "0.0.0-test" }).request("/api/changes"));
     const first = await stream.next();
     const other = new SqliteSessionStore(databasePath);
     try {
@@ -180,6 +206,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     } finally {
       other.close();
       await stream.stop();
+      silent.close();
     }
   });
 
