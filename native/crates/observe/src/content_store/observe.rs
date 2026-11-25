@@ -2478,7 +2478,7 @@ pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {
 
 /// A hex digest, as records keep them.
 pub fn hex(d: &[u8; 32]) -> String {
-    d.iter().map(|b| format!("{b:02x}")).collect()
+    rerail_prof::code_rule_dsl::prof::lower_hex(d)
 }
 
 /// Whether the observer asks the file system's journal (decision 0105): on unless `RERAIL_JOURNAL=off` (a run's

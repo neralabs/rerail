@@ -555,7 +555,7 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
                 h.update(v.to_le_bytes());
             }
         }
-        out.insert(path.clone(), h.finalize().iter().map(|b| format!("{b:02x}")).collect());
+        out.insert(path.clone(), rerail_prof::code_rule_dsl::prof::lower_hex(&h.finalize()));
     }
     Ok(out)
 }

@@ -3615,7 +3615,7 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
             let Some(small) = sk.exact_counts() else { continue };
             let vals: Vec<String> = small.iter().map(|&[v, n]| {
                 let text = if r.types[c] == b's' { syms.name(v) } else { v.to_string() };
-                format!("{}={}", text.bytes().map(|b| format!("{b:02x}")).collect::<String>(), n)
+                format!("{}={}", rerail_prof::code_rule_dsl::prof::lower_hex(text.as_bytes()), n)
             }).collect();
             line.push_str(&format!(" |{c}:{}", vals.join(",")));
         }

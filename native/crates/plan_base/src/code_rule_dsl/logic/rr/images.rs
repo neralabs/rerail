@@ -181,7 +181,7 @@ pub fn export(key: HashKey, bytes: &[u8]) {
     let Some(digest) = key.sha256_bytes() else { return };
     let dir = PathBuf::from(dir);
     let _ = std::fs::create_dir_all(&dir);
-    let name: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    let name: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..]);
     let (tmp, path) = (dir.join(format!("{name}.tmp{}", std::process::id())), dir.join(format!("{name}.img")));
     if std::fs::write(&tmp, bytes).is_ok() {
         let _ = std::fs::rename(&tmp, &path);
