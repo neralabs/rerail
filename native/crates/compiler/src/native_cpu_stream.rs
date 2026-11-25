@@ -7503,53 +7503,76 @@ fn constant_fields(func: &mut cranelift_codegen::ir::Function, access: &dyn Fn(&
     let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
     let order: Vec<Block> = dom.cfg_rpo().copied().collect();
     let Some(entry) = func.layout.entry_block() else { return false };
-    let transfer = |func: &cranelift_codegen::ir::Function, b: Block, mut at: Vec<C>| -> Vec<C> {
-        for inst in func.layout.block_insts(b) {
-            match access(func, inst) {
-                Access::Store(k, v) => at[k] = constant(func, v).map_or(C::Unknown, C::Is),
-                Access::Clobbers(k) => at[k] = C::Unknown,
-                Access::All => at.iter_mut().for_each(|x| *x = C::Unknown),
-                _ => {}
+    // Each block's writes of the fields, in order, read once: the fixed point below goes over them, not the
+    // instructions.
+    let writes: std::collections::HashMap<Block, Vec<Option<(usize, C)>>> = order
+        .iter()
+        .map(|&b| {
+            let w = func
+                .layout
+                .block_insts(b)
+                .filter_map(|inst| match access(func, inst) {
+                    Access::Store(k, v) => Some(Some((k, constant(func, v).map_or(C::Unknown, C::Is)))),
+                    Access::Clobbers(k) => Some(Some((k, C::Unknown))),
+                    Access::All => Some(None),
+                    _ => None,
+                })
+                .collect();
+            (b, w)
+        })
+        .collect();
+    let transfer = |_: &cranelift_codegen::ir::Function, b: Block, mut at: Vec<C>| -> Vec<C> {
+        for w in &writes[&b] {
+            match *w {
+                Some((k, c)) => at[k] = c,
+                None => at.iter_mut().for_each(|x| *x = C::Unknown),
             }
         }
         at
     };
-    let mut start: std::collections::HashMap<Block, Vec<C>> = order.iter().map(|&b| (b, vec![C::Top; n])).collect();
-    start.insert(entry, vec![C::Unknown; n]);
-    let mut end: std::collections::HashMap<Block, Vec<C>> = std::collections::HashMap::new();
-    loop {
-        let mut changed = false;
-        for &b in &order {
-            let at = if b == entry {
-                vec![C::Unknown; n]
-            } else {
-                let mut at = vec![C::Top; n];
-                for p in cfg.pred_iter(b) {
-                    if let Some(e) = end.get(&p.block) {
-                        for k in 0..n {
-                            at[k] = meet(at[k], e[k]);
-                        }
-                    }
+    // To a fixed point over a worklist: a block's start is the meet of its predecessors' ends; a block whose end
+    // changed puts its successors back on the list. Flat, a block's row by its place in `order`.
+    let mut place: cranelift_codegen::entity::SecondaryMap<Block, u32> = cranelift_codegen::entity::SecondaryMap::with_default(u32::MAX);
+    for (i, &b) in order.iter().enumerate() {
+        place[b] = i as u32;
+    }
+    let preds: Vec<Vec<usize>> = order.iter().map(|&b| cfg.pred_iter(b).map(|p| place[p.block] as usize).filter(|&i| i != u32::MAX as usize).collect()).collect();
+    let succs: Vec<Vec<usize>> = order.iter().map(|&b| cfg.succ_iter(b).map(|s| place[s] as usize).filter(|&i| i != u32::MAX as usize).collect()).collect();
+    let mut ends: Vec<C> = vec![C::Top; order.len() * n];
+    let mut starts: Vec<C> = vec![C::Top; order.len() * n];
+    let mut queued = vec![true; order.len()];
+    let mut work: std::collections::VecDeque<usize> = (0..order.len()).collect();
+    while let Some(i) = work.pop_front() {
+        queued[i] = false;
+        let b = order[i];
+        let at = if b == entry {
+            vec![C::Unknown; n]
+        } else {
+            let mut at = vec![C::Top; n];
+            for &p in &preds[i] {
+                for k in 0..n {
+                    at[k] = meet(at[k], ends[p * n + k]);
                 }
-                at
-            };
-            if start.get(&b) != Some(&at) || !end.contains_key(&b) {
-                let e = transfer(func, b, at.clone());
-                start.insert(b, at);
-                if end.get(&b) != Some(&e) {
-                    end.insert(b, e);
+            }
+            at
+        };
+        starts[i * n..(i + 1) * n].copy_from_slice(&at);
+        let e = transfer(func, b, at);
+        if ends[i * n..(i + 1) * n] != e[..] {
+            ends[i * n..(i + 1) * n].copy_from_slice(&e);
+            for &s in &succs[i] {
+                if !queued[s] {
+                    queued[s] = true;
+                    work.push_back(s);
                 }
-                changed = true;
             }
         }
-        if !changed {
-            break;
-        }
     }
+    let start = |b: Block| -> Vec<C> { let i = place[b] as usize; starts[i * n..(i + 1) * n].to_vec() };
     // The loads of known fields, then the branches on constants.
     let mut any = false;
     for &b in &order {
-        let mut at = start[&b].clone();
+        let mut at = start(b);
         let insts: Vec<_> = func.layout.block_insts(b).collect();
         for inst in insts {
             let a = access(func, inst);
@@ -7616,14 +7639,21 @@ fn state_in_registers(func: &mut cranelift_codegen::ir::Function, pinned: bool) 
     // `ctx`: the entry's first argument; or `pinned`, in the pinned register through the run, any read of it (a word's
     // body inlined reads it again).
     let param = func.dfg.block_params(entry).first().copied();
-    let is_ctx = |func: &cranelift_codegen::ir::Function, v: Value| -> bool {
-        let v = func.dfg.resolve_aliases(v);
-        if pinned {
-            matches!(func.dfg.value_def(v), cranelift_codegen::ir::ValueDef::Result(i, _) if func.dfg.insts[i].opcode() == Opcode::GetPinnedReg)
-        } else {
-            Some(v) == param
+    // The values that are `ctx`, found once: the entry's parameter, or each read of the pinned register. Values
+    // the passes below make are none of them.
+    let mut ctx_values: cranelift_codegen::entity::SecondaryMap<Value, bool> = cranelift_codegen::entity::SecondaryMap::new();
+    if pinned {
+        for b in func.layout.blocks() {
+            for i in func.layout.block_insts(b) {
+                if func.dfg.insts[i].opcode() == Opcode::GetPinnedReg {
+                    ctx_values[func.dfg.first_result(i)] = true;
+                }
+            }
         }
-    };
+    } else if let Some(p) = param {
+        ctx_values[p] = true;
+    }
+    let is_ctx = |func: &cranelift_codegen::ir::Function, v: Value| -> bool { ctx_values[func.dfg.resolve_aliases(v)] };
     // Field `k` at offset `8k`: a full load or store of it, or another access of it.
     const FIELDS: i32 = STATE / 8 + Mem::COUNT as i32;
     const _: () = assert!(FIELDS <= 64);
@@ -7651,8 +7681,9 @@ fn state_in_registers(func: &mut cranelift_codegen::ir::Function, pinned: bool) 
                 let full = opcode == Opcode::Store && off % 8 == 0 && func.dfg.value_type(args[0]) == types::I64;
                 if full { Access::Store(k, args[0]) } else { Access::Clobbers(k) }
             }
+            // A branch's arguments too: a branch that passes `ctx` on leaves the function as it is (below).
             _ => {
-                if func.dfg.inst_values(inst).any(|v| is_ctx(func, v)) {
+                if func.dfg.inst_args(inst).iter().any(|&v| is_ctx(func, v)) || (op.is_branch() && func.dfg.inst_values(inst).any(|v| is_ctx(func, v))) {
                     Access::All
                 } else {
                     Access::None

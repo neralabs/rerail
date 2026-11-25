@@ -35,6 +35,18 @@ stored to `ctx` before the call and loaded back after it, and the token marks ea
 7. **An inlined instruction takes its caller word's place** (`srcloc`), since Cranelift's inliner drops the callee's.
    `word_ranges` and the profile then attribute each instruction to a word.
 
+8. **Jumps threaded** (`native_cpu_codegen::thread_jumps`), on every function the JIT defines, after the switches
+   are lowered: a block whose one instruction is a `brif` on one of its own parameters is passed over. A `jump` into
+   it becomes that `brif` on the argument it passes, and a branch into it with a constant argument goes to the side
+   the constant takes. A token mark's answer and an inlined word's result were made as 0 or 1 at both ends of the
+   test and tested again at the join; now neither is made. A block whose parameters are used anywhere but its own
+   branch stays.
+9. **`state_in_registers` reads each instruction once a pass.** The values that are `ctx` are found once (a set), and
+   the constant fields' fixed point is a worklist over each block's writes, not a sweep of every instruction.
+   Forwarding a field across a join (a value every predecessor holds) was tried and was slower: it holds the fields
+   in registers through the marks' chains, where reloading them from `ctx` costs less. It stays forwarding along
+   chains of one predecessor.
+
 ## Not done
 
 From the list the user asked for:
@@ -45,3 +57,4 @@ From the list the user asked for:
 - The state is not passed as the tail calls' arguments (`held`, `pass` stay empty). With the words inlined, most of
   what they carried is now in registers within a rule. Across the rules' tail calls it still goes through `ctx`.
 - Tier 2's tape: its buffers are made for each file (`Tape::sized`). A pool of them was tried and was slower.
+- Inlining makes the rules' code larger, and Cranelift's compile of tier 2 takes longer with it.

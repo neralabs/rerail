@@ -200,6 +200,8 @@ pub fn define_functions_inlining(module: &mut JITModule, items: Vec<(FuncId, Con
         // Each switch a tree of compares, as rustc lowers a match (0322): after the inlining, so
         // an inlined read's switches are lowered too.
         switch_trees(&mut context.func);
+        // A test's answer made as 0 or 1 at a join and branched on there: the branch taken where it is known.
+        thread_jumps(&mut context.func);
         context.cfg.clear();
         context.domtree.clear();
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
@@ -369,6 +371,140 @@ pub fn remat_consts(func: &mut cranelift_codegen::ir::Function) {
                     x
                 });
             }
+        }
+    }
+}
+
+/// Jumps threaded, as rustc's MIR jump threading and LLVM's do: a block whose one instruction is a `brif` on one of
+/// its parameters (a test's answer, 0 or 1, joined from the test's two ends: a token mark's, an inlined word's
+/// result) is passed over. A `jump` into it is that `brif`, on the argument it passes; a branch into it with a
+/// constant argument goes to the side the constant takes. Cranelift does not do this itself: without it each such
+/// answer is made in a register at both ends and tested again at the join. A block whose parameters are used
+/// anywhere but its own branch is left as it is, as is a branch into a block from itself.
+pub fn thread_jumps(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{BlockArg, BlockCall, InstructionData, Opcode, ValueDef};
+    let constant = |func: &cranelift_codegen::ir::Function, v: Value| -> Option<i64> {
+        match func.dfg.value_def(func.dfg.resolve_aliases(v)) {
+            ValueDef::Result(i, _) => match func.dfg.insts[i] {
+                InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } => Some(imm.bits()),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
+    for _ in 0..8 {
+        let blocks: Vec<Block> = func.layout.blocks().collect();
+        // The blocks that are only a `brif` on one of their parameters: that parameter, and each side's block and
+        // arguments.
+        let mut through: std::collections::HashMap<Block, (usize, [(Block, Vec<BlockArg>); 2])> = std::collections::HashMap::new();
+        for &b in &blocks {
+            let mut insts = func.layout.block_insts(b);
+            let (Some(only), None) = (insts.next(), insts.next()) else { continue };
+            let InstructionData::Brif { arg, blocks: sides, .. } = func.dfg.insts[only] else { continue };
+            let Some(k) = func.dfg.block_params(b).iter().position(|&p| p == func.dfg.resolve_aliases(arg)) else { continue };
+            let pool = &func.dfg.value_lists;
+            let side = |c: BlockCall| (c.block(pool), c.args(pool).collect::<Vec<_>>());
+            let arms = [side(sides[0]), side(sides[1])];
+            if arms.iter().any(|(t, args)| *t == b || args.iter().any(|a| !matches!(a, BlockArg::Value(_)))) {
+                continue;
+            }
+            through.insert(b, (k, arms));
+        }
+        if through.is_empty() {
+            return;
+        }
+        // A parameter used outside its block's own branch: its block stays.
+        let mut params: std::collections::HashMap<Value, Block> = std::collections::HashMap::new();
+        for &b in through.keys() {
+            for &p in func.dfg.block_params(b) {
+                params.insert(p, b);
+            }
+        }
+        for &b in &blocks {
+            for i in func.layout.block_insts(b) {
+                for v in func.dfg.inst_values(i) {
+                    if let Some(&owner) = params.get(&func.dfg.resolve_aliases(v))
+                        && owner != b
+                    {
+                        through.remove(&owner);
+                    }
+                }
+            }
+        }
+        let mut changed = false;
+        for &b in &blocks {
+            let Some(last) = func.layout.last_inst(b) else { continue };
+            // A call of `target` with `args`: the side its `brif` takes (`Some(side)`), or both (`None`), each with its
+            // arguments, the target's parameters replaced by `args`.
+            let resolve = |func: &mut cranelift_codegen::ir::Function, target: Block, args: &[Value], side: Option<usize>| -> Vec<BlockCall> {
+                let (_, arms) = &through[&target];
+                let ps: Vec<Value> = func.dfg.block_params(target).to_vec();
+                let sides: Vec<usize> = side.map_or(vec![0, 1], |s| vec![s]);
+                sides
+                    .into_iter()
+                    .map(|s| {
+                        let (to, targs) = arms[s].clone();
+                        let targs: Vec<BlockArg> = targs
+                            .into_iter()
+                            .map(|a| match a {
+                                BlockArg::Value(v) => BlockArg::Value(ps.iter().position(|&p| p == func.dfg.resolve_aliases(v)).map_or(v, |i| args[i])),
+                                other => other,
+                            })
+                            .collect();
+                        BlockCall::new(to, targs, &mut func.dfg.value_lists)
+                    })
+                    .collect()
+            };
+            let values = |func: &cranelift_codegen::ir::Function, c: BlockCall| -> Option<Vec<Value>> {
+                c.args(&func.dfg.value_lists)
+                    .map(|a| match a {
+                        BlockArg::Value(v) => Some(v),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            match func.dfg.insts[last] {
+                InstructionData::Jump { destination, .. } => {
+                    let target = destination.block(&func.dfg.value_lists);
+                    if target == b || !through.contains_key(&target) {
+                        continue;
+                    }
+                    let Some(args) = values(func, destination) else { continue };
+                    let cond = args[through[&target].0];
+                    match constant(func, cond) {
+                        Some(c) => {
+                            let call = resolve(func, target, &args, Some(usize::from(c == 0)))[0];
+                            func.dfg.insts[last] = InstructionData::Jump { opcode: Opcode::Jump, destination: call };
+                        }
+                        None => {
+                            let calls = resolve(func, target, &args, None);
+                            func.dfg.insts[last] = InstructionData::Brif { opcode: Opcode::Brif, arg: cond, blocks: [calls[0], calls[1]] };
+                        }
+                    }
+                    changed = true;
+                }
+                InstructionData::Brif { arg, blocks: mut sides, .. } => {
+                    let mut any = false;
+                    for side in &mut sides {
+                        let target = side.block(&func.dfg.value_lists);
+                        if target == b || !through.contains_key(&target) {
+                            continue;
+                        }
+                        let Some(args) = values(func, *side) else { continue };
+                        let Some(c) = constant(func, args[through[&target].0]) else { continue };
+                        *side = resolve(func, target, &args, Some(usize::from(c == 0)))[0];
+                        any = true;
+                    }
+                    if any {
+                        func.dfg.insts[last] = InstructionData::Brif { opcode: Opcode::Brif, arg, blocks: sides };
+                        changed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !changed {
+            return;
         }
     }
 }
