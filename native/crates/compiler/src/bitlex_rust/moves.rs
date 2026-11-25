@@ -115,6 +115,11 @@ impl Cond {
     }
 
     /// Whether it holds where one of two tests does (an `||` in it, its text's too).
+    /// The test that always holds (`true`): a take's where the code before it tested its token.
+    pub(crate) fn is_true(&self) -> bool {
+        matches!(self, Cond::Text(s) if s == "true")
+    }
+
     pub(crate) fn has_or(&self) -> bool {
         match self {
             Cond::Text(s) | Cond::Kind { test: s, .. } | Cond::Scan { tail: s, .. } => s.contains("||"),
@@ -248,15 +253,22 @@ pub(crate) fn take(t: Take) -> Op {
 }
 
 impl Take {
-    fn name(&self) -> &'static str {
+    /// The lean parser's helper the take is, and its arguments: `p` (a word the grammar implies, no leaf), `p_stored`
+    /// (a word, a leaf), `implied` and `implied_if` (a token the grammar implies, untested or tested), `id` (an
+    /// identifier given a field), `bump_as` (the token, a leaf of a kind), and `tk_as`, `merge_as`, `pass_as`,
+    /// `word_pass_as` for the rest.
+    pub(crate) fn call(&self) -> (&'static str, Vec<String>) {
         match self {
-            Take::Leaf { .. } => "tk",
-            Take::WordLeaf { .. } => "word_leaf",
-            Take::WordSkip { .. } => "word_skip",
-            Take::Skip { .. } => "skip",
-            Take::Merge { .. } => "merge",
-            Take::Pass { .. } => "pass",
-            Take::WordPass { .. } => "word_pass",
+            Take::Leaf { test: Cond::Kind { test, .. }, kind, field } if test == "self.kind() == t::IDENTIFIER" && kind == "k::IDENTIFIER" => ("id", vec![field.clone()]),
+            Take::Leaf { test, kind, field } if test.is_true() && field == "0" => ("bump_as", vec![kind.clone()]),
+            Take::Leaf { test, kind, field } => ("tk_as", vec![test.print(), kind.clone(), field.clone()]),
+            Take::WordLeaf { word, kind } => ("p_stored", vec![word.clone(), kind.clone()]),
+            Take::WordSkip { word } => ("p", vec![word.clone()]),
+            Take::Skip { test } if test.is_true() => ("implied", vec![]),
+            Take::Skip { test } => ("implied_if", vec![test.print()]),
+            Take::Merge { test, kind } => ("merge_as", vec![test.print(), kind.clone()]),
+            Take::Pass { test } => ("pass_as", vec![test.print()]),
+            Take::WordPass { word } => ("word_pass_as", vec![word.clone()]),
         }
     }
 
@@ -275,34 +287,54 @@ impl Take {
         }
     }
 
-    /// Its arguments, the first its test or its word.
-    fn args(&self) -> Vec<String> {
-        match self {
-            Take::Leaf { test, kind, field } => vec![test.print(), kind.clone(), field.clone()],
-            Take::WordLeaf { word, kind } => vec![word.clone(), kind.clone()],
-            Take::WordSkip { word } | Take::WordPass { word } => vec![word.clone()],
-            Take::Skip { test } | Take::Pass { test } => vec![test.print()],
-            Take::Merge { test, kind } => vec![test.print(), kind.clone()],
+    /// The take as Rust: its tests `M` and `F` its helper's const parameters where the takes ask more than one pair
+    /// (`Names`), else none.
+    fn print(&self, nf: bool, m: Option<bool>, names: &Names) -> String {
+        let (name, args) = self.call();
+        match m {
+            Some(m) if names.pairs.len() > 1 => format!("self.{name}::<{m}, {}>({})?;", !nf, args.join(", ")),
+            _ => format!("self.{name}({})?;", args.join(", ")),
         }
     }
+}
 
-    fn print(&self, nf: bool, m: Option<bool>) -> String {
-        let args = self.args().join(", ");
-        match m {
-            Some(m) => format!("self.{}_as::<{m}, {}>({args})?;", self.name(), !nf),
-            None => format!("self.{}{}({args})?;", self.name(), if nf { "_nf" } else { "" }),
+/// The takes of a parser's rules, once all of them are made: the pairs of tests (`M`, a mark no rule takes may hold
+/// at the token; `F`, the level open may refuse a mark there) they ask, and the lean parser's helpers they call
+/// (`Take::call`). Where they ask one pair, the helpers have no const parameters and ask only that pair, as the lean
+/// parser's one `p` and `id`.
+#[derive(Debug, Default)]
+pub(crate) struct Names {
+    pub pairs: std::collections::BTreeSet<(bool, bool)>,
+    pub calls: HashSet<&'static str>,
+}
+
+impl Names {
+    /// The takes of `bs`.
+    pub(crate) fn of(bs: &mut [Block]) -> Names {
+        let mut n = Names::default();
+        for b in bs {
+            takes_in(b, &mut |t, nf, m| {
+                n.pairs.insert((m.unwrap_or(true), !*nf));
+                n.calls.insert(t.call().0);
+            });
         }
+        n
     }
 }
 
 /// `b` as Rust, each line at `pad`.
 pub(crate) fn print(b: &[Op], pad: &str) -> String {
+    print_named(b, pad, &Names::default())
+}
+
+/// `b` as Rust, each line at `pad`, its takes as `names` has them.
+pub(crate) fn print_named(b: &[Op], pad: &str, names: &Names) -> String {
     let mut out = String::new();
-    print_into(b, pad, &mut out);
+    print_into(b, pad, names, &mut out);
     out
 }
 
-fn print_into(b: &[Op], pad: &str, out: &mut String) {
+fn print_into(b: &[Op], pad: &str, names: &Names, out: &mut String) {
     let q = format!("{pad}    ");
     for op in b {
         match op {
@@ -319,7 +351,7 @@ fn print_into(b: &[Op], pad: &str, out: &mut String) {
                 let _ = writeln!(out, "{pad}self.field_made({f});");
             }
             Op::Take { take, nf, m } => {
-                let _ = writeln!(out, "{pad}{}", take.print(*nf, *m));
+                let _ = writeln!(out, "{pad}{}", take.print(*nf, *m, names));
             }
             Op::If { arms, els } => {
                 for (i, (c, body)) in arms.iter().enumerate() {
@@ -328,14 +360,14 @@ fn print_into(b: &[Op], pad: &str, out: &mut String) {
                     } else {
                         let _ = writeln!(out, " else if {} {{", c.print());
                     }
-                    print_into(body, &q, out);
+                    print_into(body, &q, names, out);
                     out.push_str(pad);
                     out.push('}');
                 }
                 match els {
                     Some(e) => {
                         out.push_str(" else {\n");
-                        print_into(e, &q, out);
+                        print_into(e, &q, names, out);
                         let _ = writeln!(out, "{pad}}}");
                     }
                     None => out.push('\n'),
@@ -346,21 +378,21 @@ fn print_into(b: &[Op], pad: &str, out: &mut String) {
                 let _ = writeln!(out, "{pad}match {subject} {{");
                 for (pat, body) in arms {
                     let _ = writeln!(out, "{q}{} => {{", pat.print());
-                    print_into(body, &r, out);
+                    print_into(body, &r, names, out);
                     let _ = writeln!(out, "{q}}}");
                 }
                 let _ = writeln!(out, "{q}_ => {{");
-                print_into(default, &r, out);
+                print_into(default, &r, names, out);
                 let _ = writeln!(out, "{q}}}\n{pad}}}");
             }
             Op::Loop(body) => {
                 let _ = writeln!(out, "{pad}loop {{");
-                print_into(body, &q, out);
+                print_into(body, &q, names, out);
                 let _ = writeln!(out, "{pad}}}");
             }
             Op::While(c, body) => {
                 let _ = writeln!(out, "{pad}while {} {{", c.print());
-                print_into(body, &q, out);
+                print_into(body, &q, names, out);
                 let _ = writeln!(out, "{pad}}}");
             }
             Op::Break => {
@@ -372,7 +404,7 @@ fn print_into(b: &[Op], pad: &str, out: &mut String) {
             Op::Goto(l) => {
                 let _ = writeln!(out, "{pad}st = {l};\n{pad}continue 'run;");
             }
-            Op::At(p, b) => print_into(b, p, out),
+            Op::At(p, b) => print_into(b, p, names, out),
         }
     }
 }

@@ -1,6 +1,6 @@
 # 0681: Tier 2 is printed once from the lean parser's moves
 
-Status: done but the names (step 2) (the user, 2026-11-24: "what are the BIG FUCKING ROCKS?", then "so do 1"). Follows 0673. The bar is
+Status: done (the user, 2026-11-24: "what are the BIG FUCKING ROCKS?", then "so do 1"). Follows 0673. The bar is
 0673's: is the generated code the lean parser's (`rr_syntax/src/lean.rs`) shape?
 
 ## Intro
@@ -76,9 +76,8 @@ place one more move, and the same rewrites run on each place.
    `G::open_mark_words`. `G::rule` gives moves, and each form prints its rules once all of them are made, as whether
    any decision reads `marked` is known only then (`G::marked_read`). The changes: Kotlin's two `_ => {}` arms lose
    the empty line the text `one_arm_a_take` wrote in them; and a bracket's scan (`scan_fn`) writes its nest's tests
-   without outer parentheses itself, which the text `no_outer_parens` had taken off. Not yet: `lean_names` still
-   renames the takes in the whole text, the runtime's definitions with them, and `no_marked` still takes `marked`
-   out of the runtime and the methods' ends.)
+   without outer parentheses itself, which the text `no_outer_parens` had taken off. The names came after step 3,
+   below.)
 3. `decide` reads tests, not strings. (Done: a test is a `moves::Cond`: the word at a place one of some words
    (`Word`), the token's kind (`Kind`), a mark holding with its peek's tests (`Mark`, from `G::peek`), a bracket's scan
    (`Scan`), a clear flag (`Flag`), and `!`, `&&`, `||` of tests; a `match` arm's pattern is its words and a guard
@@ -90,6 +89,15 @@ place one more move, and the same rewrites run on each place.
    self.word() != w::…`) takes its token untested, so the arms of one take are one arm (`_ if a || b && c || d`),
    their jumps in the loop form one; a negated call is `!self.m_x()`, and a negated group has one pair of
    parentheses.)
+4. The names, and `marked`. (Done: a take prints as the lean parser's helper (`Take::call`: `p`, `p_stored`,
+   `implied`, `implied_if`, `id`, `bump_as`, `tk_as`, `merge_as`, `pass_as`, `word_pass_as`), and once every rule's and
+   place's moves are rewritten, `moves::Names` holds the helpers they call and the pairs of tests (`M`, `F`) they ask.
+   `G::take_helpers` writes `take` and those helpers from it: no const parameters where the takes ask one pair, and
+   `take` holds only the checks and state the parser has. The runtime's text of them, `one_take` and `lean_names` are
+   gone, and a rule is never named as a helper (`rule_fn`). `marked`: the parser has its field, a mark's write and a
+   statement's save of it only where a decision reads it (`G::marked_read`); a rule's end clearing it is a move of its
+   own that `moves::rewrite` drops otherwise; `no_marked` is gone. The change: rr's `pass_as` and `word_pass_as` are
+   written beside the other takes, not after `leaf_close`.)
 
 The passes over the runtime's text (`one_take`, `no_field`, `no_dead_methods`, `plain_writer`, the runtime's
 replacements in `assemble`) are not rule code and are not part of this decision.

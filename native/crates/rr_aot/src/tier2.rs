@@ -606,6 +606,23 @@ impl<'a, L: Layout> P<'a, L> {
         Ok(())
     }
 
+    /// The token, which must be word `w`: read into a `leaf`, no leaf of its own.
+    #[inline(always)]
+    fn word_pass_as(&mut self, w: u32) -> R {
+        self.pass_as(self.word() == w)
+    }
+
+    /// The token, which must pass `ok`: read into a `leaf`, no leaf of its own; the comments before it stay pending,
+    /// the leaf's text (`leaf_close`).
+    #[inline(always)]
+    fn pass_as(&mut self, ok: bool) -> R {
+        if !ok {
+            return self.refuse();
+        }
+        self.take()?;
+        Ok(())
+    }
+
     fn open_root(&mut self, kind: u16) {
         let at = self.w.push(u32::from(kind), 0);
         self.levels.push(std::mem::replace(&mut self.top, (at as u32, NONE)));
@@ -2339,23 +2356,6 @@ impl<L: Layout> P<'_, L> {
         }
         let at = self.w.plain_leaf(u32::from(kind), self.recs[self.leaf_from].start, self.last_end);
         self.set_made(at as u32);
-        Ok(())
-    }
-
-    /// The token, which must be word `w`: read into a `leaf`, no leaf of its own.
-    #[inline(always)]
-    fn word_pass_as(&mut self, w: u32) -> R {
-        self.pass_as(self.word() == w)
-    }
-
-    /// The token, which must pass `ok`: read into a `leaf`, no leaf of its own; the comments before it stay pending,
-    /// the leaf's text (`leaf_close`).
-    #[inline(always)]
-    fn pass_as(&mut self, ok: bool) -> R {
-        if !ok {
-            return self.refuse();
-        }
-        self.take()?;
         Ok(())
     }
 
