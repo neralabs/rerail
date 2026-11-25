@@ -456,6 +456,66 @@ two columns on an entry recording one, `packed::tests::node_ids_split_at_their_g
 temporary folder, of mode 775, which the store refuses (`segments::tests::an_underestimated_batch_grows_segment_directories`).
 Three are logic's audits of files this work does not touch, failing before step 7.
 
+## Step 8, continued: rows in another column's order stay in it
+
+The user (2026-11-24): "If relations arrive already sorted on a different column (common after joins), then we should
+keep it sorted on the different column". A join's output comes in its probe side's order, often sorted on a column
+other than the spec's.
+
+- **A relation records the column it is in order on** (`Relation::sort_col`): the spec's when it sorted, else the
+  first column the rows were found in order on (one pass checks each), else none. Freeze sorts only rows in order on no
+  column. A probe of the recorded column is a range; one of the spec's column goes through its index.
+- **The kept form too** (`packed::Order::Column`): an entry records the column its rows lie in order on. A reader that
+  searches on column 0 says so (`Order::Declared`: the documents' tables, `BlockFlat::on_column_0`), and its rows are
+  sorted on column 0 when they are not in that order.
+
+Tests: `packed::tests::rows_in_another_columns_order_stay_in_it`, `relation::tests` (the recorded column, and probes of
+it and of the spec's); the retain tests' documents' table put through `on_column_0`.
+
+## Step 10: one linear sketch
+
+Of the design page "Changes in their size", §C; the user: "go ahead". Five places kept a column's distinct count (the
+measured statistics, statkeep, setfix's sketch, `Held`, the kept statistics), each its own way. Step 10 builds the one
+sketch, kept beside a version of the bistate read and read with its change, in `blocks` (`rerail_blocks::sketch`).
+
+- **The sketch** (`Sketch`): per column, its join counters (`Counts`: 256 AMS counters, and while it has at most 64
+  values each one's rows), its exact counts past them while bounded (a page of 4096 counts for values in one aligned
+  range, else a label set of at most 1024 values under 2^32), and past those each HyperLogLog register's rows at each
+  rank (256 × 32). Every part is a count of rows, so a row is taken out as it was put in, and the sketch is that of its
+  live rows whatever came and went. Its arrays are in its room's blocks.
+- **A delta** (`Delta`) is the signed change of a version's rows: each value it touched, its rows added less those
+  taken. `Sketch::with` reads a state as its version's sketch with its delta, in the delta's size (each touched value's
+  rows before and after while exact; each touched register made again from its rank counts and the delta's, and the
+  join counters moved, past them). `apply` folds a delta in.
+- **A version's sketches** (`Version`): one sketch a column of a version's live rows, made once in the version's block
+  (`Version::of`, any `bistate::Read` state). A bistate's change is each column's delta, read from its `gone` and
+  `added` rows (`Version::change`), so in the change's size where the after state records its change. The later state
+  is read as the version's sketches with those deltas (`read`); the deltas are folded in when it becomes the next
+  version (`settle`).
+- **`merge`, `encode` and `decode`**: two sketches add to the sketch of both; the stored form is varints, the exact
+  counts or the rank counts that are not 0. `without_values` keeps the rows and none of the values (rank counts made
+  from the exact ones), for a writer that keeps the values apart. `from_counts` makes one from values and their rows.
+
+The approximation is the sketch's: exact while a column's values are few, or in one page, or labels; past them, about
+6.5% for the distinct values at 256 registers, and the sum of squares from the join counters.
+
+Its size: a column past its exact counts holds 32 KB of rank counts (256 registers × 32 ranks × 4 bytes) and about
+2 KB of counters and registers; a page holds 16 KB, a label set up to 32 KB.
+
+The old engine's owners are not moved onto it: this work is built beside the engine (the user, 2026-11-25). The
+commit before this one made setfix's column sketch a wrapper of it and `join_size`'s counters its counters.
+
+Tests (`sketch::tests`, a narrow Relax run of `rerail-blocks`, 10 pass):
+
+- `a_versions_sketches_read_with_a_change_are_the_later_states`: a base relation of 6,000 rows and its frozen delta
+  (40 rows pushed, 62 killed) in one block, the version's sketches in that block; one column past its exact counts, one
+  within. The deltas are no larger than the change; the version read with them gives the later state's readings; folded
+  in, each column's sketch is the later state's.
+- the forms' arrays in blocks; a delta read with its version equal to the version applied; churn; two sketches merged
+  equal to the sketch of both, in each pair of forms; read back from its bytes, the same bytes, readings, and rows added
+  and taken after; without its values, about its distinct values and holding none; skewed, uniform and few-valued
+  columns within a small factor.
+
 ## Next steps, proposed (Claude's, not agreed)
 
 The shape the constraints leave, for the user to accept or change:

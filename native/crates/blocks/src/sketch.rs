@@ -1108,6 +1108,81 @@ impl Sketch {
     }
 }
 
+/// A version's statistics (decision 0678 §10): one sketch a column of its live rows, made once, its arrays in the
+/// version's block. A later state of the version is read as the version's sketches with the change's deltas
+/// (`change`, `read`), in the change's size; the deltas are folded in when the state becomes the next version
+/// (`settle`).
+pub struct Version {
+    cols: Vec<Sketch>,
+}
+
+impl Version {
+    /// The sketches of `state`'s live rows, a column each, their arrays in `room` (the version's block).
+    pub fn of<S: crate::bistate::Read>(state: &S, room: &Arc<dyn Room>) -> Version {
+        use crate::bistate::{ColumnIndex, ColumnRead};
+        let cols = (0..state.arity())
+            .map(|c| {
+                let mut s = Sketch::new_in(Arc::clone(room));
+                let col = state.column(ColumnIndex::new(c as u16));
+                for id in state.live_ids() {
+                    s.add(col.get(id));
+                }
+                s
+            })
+            .collect();
+        Version { cols }
+    }
+
+    /// The change of `b` as each column's signed delta: its gone rows' values taken, its added rows' values added. Read
+    /// from `b`'s gone and added rows, so in the change's size where its after state records its change
+    /// (`Read::since`).
+    pub fn change<S: crate::bistate::Read>(b: &crate::bistate::Bistate<S>) -> Vec<Delta> {
+        use crate::bistate::{ColumnIndex, ColumnRead, Read};
+        let after = b.after();
+        (0..after.arity())
+            .map(|c| {
+                let c = ColumnIndex::new(c as u16);
+                let mut d = Delta::default();
+                if let Some(before) = b.before() {
+                    let col = before.column(c);
+                    for id in b.gone() {
+                        d.add(col.get(id), -1);
+                    }
+                }
+                let col = after.column(c);
+                for id in b.added() {
+                    d.add(col.get(id), 1);
+                }
+                d
+            })
+            .collect()
+    }
+
+    /// The later state's readings: each column's sketch read with its delta (`Sketch::with`), in the deltas' size.
+    pub fn read(&self, deltas: &[Delta]) -> Vec<Reading> {
+        debug_assert_eq!(deltas.len(), self.cols.len());
+        self.cols.iter().zip(deltas).map(|(s, d)| s.with(d)).collect()
+    }
+
+    /// Its readings alone.
+    pub fn reading(&self) -> Vec<Reading> {
+        self.cols.iter().map(Sketch::reading).collect()
+    }
+
+    /// The deltas folded in: the version's sketches become the later state's.
+    pub fn settle(&mut self, deltas: &[Delta]) {
+        debug_assert_eq!(deltas.len(), self.cols.len());
+        for (s, d) in self.cols.iter_mut().zip(deltas) {
+            s.apply(d);
+        }
+    }
+
+    /// Column `c`'s sketch.
+    pub fn column(&self, c: usize) -> &Sketch {
+        &self.cols[c]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1270,6 +1345,71 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Skewed, uniform and few-valued columns are estimated within a small factor (0096's test of its deletable
+    /// sketch, which this one replaced): a column of few values exactly.
+    #[test]
+    fn a_sketch_estimates_skewed_and_uniform_columns_within_a_small_factor() {
+        let zipf: Vec<(i64, i64)> = (0..20_000).map(|v| (v * 7919 + 13, (10_000 / (v + 1)).max(1))).collect();
+        let uniform: Vec<(i64, i64)> = (0..50_000).map(|v| (v << 33, 3)).collect();
+        let few: Vec<(i64, i64)> = (0..40).map(|v| (v, 100 + v)).collect();
+        for (name, rows) in [("zipf", zipf), ("uniform", uniform), ("few", few)] {
+            let s = Sketch::from_counts(room(), rows.iter().copied());
+            let ndv = rows.len() as f64;
+            let sq: f64 = rows.iter().map(|&(_, n)| (n * n) as f64).sum();
+            let (rn, rs) = (s.ndv() as f64 / ndv, s.sq() as f64 / sq);
+            assert!((0.8..1.25).contains(&rn), "{name}: ndv estimate {} of {ndv}", s.ndv());
+            assert!((0.6..1.6).contains(&rs), "{name}: sq estimate {} of {sq}", s.sq());
+            if name == "few" {
+                assert_eq!((s.ndv() as f64, s.sq() as f64), (ndv, sq), "few values exactly");
+            }
+        }
+    }
+
+    /// A version's sketches read with a change's deltas are the later state's (decision 0678 §10): the same readings
+    /// as sketches made of the later state's rows, from deltas in the change's size, and folded in, the same sketches.
+    /// Column 0 goes past its exact counts (rank counts), column 1 keeps them; the sketches lie in the version's block.
+    #[test]
+    fn a_versions_sketches_read_with_a_change_are_the_later_states() {
+        use crate::bistate::Read as _;
+        use crate::relation::{self, Relation, RelW, Spec};
+        let block = Arc::new(crate::block::Block::anon(crate::block::kind::FACTS, 64 << 20).with_free_list());
+        let room: Arc<dyn Room> = Arc::new(crate::maps::InBlock(Arc::clone(&block)));
+        let spec = Spec { widths: vec![8, 8], sort: Some(0), indexes: vec![vec![0]], min_log: crate::rows::MIN_LOG };
+        let lock = std::sync::Mutex::new(());
+        let row = |i: i64| [(i % 3000) << 33, i % 9];
+        let b = Relation::create(&block, &spec, None);
+        let w = RelW { block: &block, rel: b, lock: &lock };
+        for i in 0..6000 {
+            w.push(&row(i));
+        }
+        relation::freeze(&block, b, &spec, None);
+        let d = Relation::create(&block, &spec, Some(b));
+        let w = RelW { block: &block, rel: d, lock: &lock };
+        for i in 6000..6040 {
+            w.push(&row(i * 7));
+        }
+        for id in (0..6000).step_by(97) {
+            w.kill(id);
+        }
+        relation::freeze(&block, d, &spec, Some(b));
+        let view = relation::View { base: Some(b), top: d };
+        let state = view.bistate();
+        let version = Version::of(state.before().expect("a base"), &room);
+        assert!(!version.column(0).is_exact() && version.column(1).is_exact(), "a column past its exact counts, one within");
+        assert!((0..2).all(|c| version.column(c).in_blocks()), "in the version's block");
+        let deltas = Version::change(&state);
+        let (gone, added) = state.counts();
+        assert!(deltas.iter().all(|d| d.len() <= gone + added), "the deltas in the change's size");
+        let later = Version::of(state.after(), &room);
+        assert_eq!(version.read(&deltas), later.reading(), "read with the change: the later state's readings");
+        let mut settled = version;
+        settled.settle(&deltas);
+        for c in 0..2 {
+            assert_eq!(settled.column(c), later.column(c), "column {c} folded in: the later state's sketch");
+        }
+        assert_eq!(view.live_ids().count() as u64, later.column(0).rows());
     }
 
     /// A sketch without its values reads as the sketch of its rows (within the estimate's error) and holds none of them;
