@@ -1002,7 +1002,8 @@ DEFINE_KERNEL2(chase, chase,
     }
     /// A measurement (decision 0670): one SIMD group's chain of dependent operations of one kind, cycles each: a
     /// shuffle, a ballot, a match, a reduction, an exclusive sum, a group barrier with a threadgroup read, a
-    /// threadgroup read, a threadgroup atomic add, and a read of the device's memory that L1 holds.
+    /// threadgroup read, a threadgroup atomic add, a read of the device's memory that L1 holds, and a multiply-add (what
+    /// the loop itself costs a step). Each in a loop of its own.
     #[test]
     #[ignore]
     fn warp_operation_latency() {
@@ -1023,28 +1024,29 @@ DEFINE_KERNEL2(ops, ops,
     ukl_sg_barrier();
     uint32_t x = lane, op = args.op;
     uint64_t t = ukl_clock();
-    for (uint32_t s = 0u; s < args.steps; s++) {
-        if (op == 0u)
-            x = ukl_sg_shuffle(x, (x + 1u) & 31u __UKL_ARGS);
-        else if (op == 1u)
-            x = (uint32_t)ukl_sg_ballot(((x >> (lane & 7u)) & 1u) != 0u __UKL_ARGS) + lane;
-        else if (op == 2u)
-            x = (uint32_t)ukl_sg_match(x & 3u __UKL_ARGS) + lane;
-        else if (op == 3u)
-            x = ukl_sg_sum(x __UKL_ARGS) + lane;
-        else if (op == 4u)
-            x = ukl_sg_exclusive_sum(x & 7u, lane __UKL_ARGS) + 1u;
-        else if (op == 5u) {
-            sh[lane] = x;
-            ukl_sg_barrier();
-            x = sh[(x + 1u) & 31u];
-        } else if (op == 6u)
-            x = sh[x & 1023u];
-        else if (op == 7u)
-            x = ukl_atomic_add_local(sh + (x & 1023u), 1u) & 1023u;
-        else
-            x = buf[x & 1023u];
-    }
+    // Each operation its own loop: a step is the operation and its operands' arithmetic, no branch on `op`.
+#define OPS_LOOP(body) for (uint32_t s = 0u; s < args.steps; s++) { body; }
+    if (op == 0u)
+        OPS_LOOP(x = ukl_sg_shuffle(x, (x + 1u) & 31u __UKL_ARGS))
+    else if (op == 1u)
+        OPS_LOOP(x = (uint32_t)ukl_sg_ballot(((x >> (lane & 7u)) & 1u) != 0u __UKL_ARGS) + lane)
+    else if (op == 2u)
+        OPS_LOOP(x = (uint32_t)ukl_sg_match(x & 3u __UKL_ARGS) + lane)
+    else if (op == 3u)
+        OPS_LOOP(x = ukl_sg_sum(x __UKL_ARGS) + lane)
+    else if (op == 4u)
+        OPS_LOOP(x = ukl_sg_exclusive_sum(x & 7u, lane __UKL_ARGS) + 1u)
+    else if (op == 5u)
+        OPS_LOOP(sh[lane] = x; ukl_sg_barrier(); x = sh[(x + 1u) & 31u])
+    else if (op == 6u)
+        OPS_LOOP(x = sh[x & 1023u])
+    else if (op == 7u)
+        OPS_LOOP(x = ukl_atomic_add_local(sh + (x & 1023u), 1u) & 1023u)
+    else if (op == 8u)
+        OPS_LOOP(x = buf[x & 1023u])
+    else
+        OPS_LOOP(x = x * 3u + 1u)
+#undef OPS_LOOP
     if (lane == 0u) {
         out[0] = x;
         out[1] = (uint32_t)(ukl_clock() - t);
@@ -1070,7 +1072,7 @@ DEFINE_KERNEL2(ops, ops,
         q.flush().await_().expect("the copy");
         let out = alloc::<u32>(2).expect("out");
         let steps = 1u32 << 14;
-        let names = ["shuffle", "ballot", "match", "sum", "exclusive sum", "barrier and threadgroup read", "threadgroup read", "threadgroup atomic add", "device read (L1)"];
+        let names = ["shuffle", "ballot", "match", "sum", "exclusive sum", "barrier and threadgroup read", "threadgroup read", "threadgroup atomic add", "device read (L1)", "multiply-add (the loop's own cost)"];
         for (op, name) in names.iter().enumerate() {
             let mut cycles = 0u32;
             for _ in 0..2 {
