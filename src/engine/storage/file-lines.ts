@@ -16,7 +16,7 @@ export interface LastLine {
  * decoded from UTF-8 on its own. A "\n" byte is never part of a multi-byte character, so each line decodes as it would
  * in a decode of the whole file, a "\r" before the "\n" kept. It holds the bytes of one line at most: a file of any
  * size is read without a string longer than its longest line, where the text of the whole file could not be longer
- * than Node's longest string (`buffer.constants.MAX_STRING_LENGTH`, 536,870,888 characters in Node 22).
+ * than Node's longest string (`buffer.constants.MAX_STRING_LENGTH`, 536,870,888 characters in Node 22 and 24).
  */
 export class LineSplitter {
   readonly #onLine: (line: string) => void;

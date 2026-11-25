@@ -1098,18 +1098,32 @@ async function readLines(path: string, take: (value: unknown) => void): Promise<
   return appendState;
 }
 
-/** Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it. */
+/**
+ * Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it,
+ * first cutting off a last line a write left unfinished (`truncateTo`) through a descriptor of its own: on Windows one
+ * opened to append may only append, and its truncate fails with EPERM.
+ */
 async function appendJsonLine(path: string, value: unknown, state: JsonlAppendState): Promise<void> {
   await makeLedgerFolder(dirname(path));
+  if (state.truncateTo !== null) await truncateLedgerFile(path, state.truncateTo);
   const handle = await openLedgerFile(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT);
   try {
-    if (state.truncateTo !== null) await handle.truncate(state.truncateTo);
     await handle.appendFile(`${state.prefix}${JSON.stringify(value)}\n`, "utf8");
   } finally {
     await handle.close();
   }
   state.prefix = "";
   state.truncateTo = null;
+}
+
+/** Cuts the session record file at `path` to its first `bytes` bytes, through a descriptor that follows no symlink. */
+async function truncateLedgerFile(path: string, bytes: number): Promise<void> {
+  const handle = await openLedgerFile(path, constants.O_WRONLY | constants.O_CREAT);
+  try {
+    await handle.truncate(bytes);
+  } finally {
+    await handle.close();
+  }
 }
 
 /**

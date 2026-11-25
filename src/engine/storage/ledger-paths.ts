@@ -251,7 +251,7 @@ export async function readLedgerFile(path: string, directory: string): Promise<s
 /**
  * Hands each line of a session record file to `onLine` and returns its last line, the text after its last newline
  * (`eachLine`); undefined when it or its folder is missing. Refuses what `makeLedgerFolder` does. A file a session
- * appends to for its whole life can hold more text than one string can (536,870,888 characters in Node 22): read
+ * appends to for its whole life can hold more text than one string can (536,870,888 characters in Node 22 and 24): read
  * whole, a session open for weeks could no longer be opened again.
  */
 export async function readLedgerLines(path: string, directory: string, onLine: (line: string) => void): Promise<LastLine | undefined> {
