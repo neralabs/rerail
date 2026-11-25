@@ -25,7 +25,8 @@ typedef struct ViewDir {
     uint32_t nhomes;
     uint64_t rows;
     uint64_t homes;
-    uint64_t cache;
+    uint32_t cache;
+    uint32_t nbatch;
     uint64_t keys;
 } ViewDir;
 UKL_STATIC_ASSERT(sizeof(ViewRow) == 208, "ViewRow: size");

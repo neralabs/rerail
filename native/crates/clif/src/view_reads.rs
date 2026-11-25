@@ -95,10 +95,10 @@ const _: () = assert!(std::mem::size_of::<ViewHome>() == 16);
 /// A batch's documents as its views' reads find them, in the batch's block and self-relative: its own offset in the
 /// block (`at`: the block's start is the directory's address less it, whoever reads it), its documents' rows and its
 /// homes (offsets in the block), how many of each, its 16z cache's home (its number + 1, 0 for none: a block of
-/// its own, which both executors' reads share and write), and its documents' numbers in key order (`keys`, an offset
-/// in the block: `ndocs` `u32`s). The rows are in row order, which `doc_of_row` bisects; a chunk's tape values admitted
-/// after its batch (`values::Layered`) are past its documents, in the order admitted, so key order is an index of its
-/// own, which `doc_of_key` bisects.
+/// its own, which both executors' reads share and write), and its documents' keys (`keys`, an offset in the block:
+/// `ndocs` `u32`s in row order, each its row's entry's key), which `doc_of_key` searches alone. The first `nbatch` are
+/// the batch's documents, in key order; past them, a chunk's tape values admitted inside its fixpoint
+/// (`values::Layered`), in the order admitted, which a key's search scans.
 #[repr(C)]
 #[derive(Debug, Default)]
 pub struct ViewDir {
@@ -107,7 +107,8 @@ pub struct ViewDir {
     pub nhomes: u32,
     pub rows: u64,
     pub homes: u64,
-    pub cache: u64,
+    pub cache: u32,
+    pub nbatch: u32,
     pub keys: u64,
 }
 const _: () = assert!(std::mem::size_of::<ViewDir>() == 48);
@@ -162,7 +163,7 @@ impl ViewDir {
         }
         crate::ids::bisect_n(n, |m| first(m) <= r).saturating_sub(1)
     }
-    /// Its documents' numbers in key order (`keys`).
+    /// Its documents' keys, in row order (`keys`).
     ///
     /// # Safety
     /// As `rows`.
@@ -170,20 +171,41 @@ impl ViewDir {
         // SAFETY: the caller's.
         unsafe { std::slice::from_raw_parts(self.block().add(self.keys as usize).cast::<u32>(), self.ndocs as usize) }
     }
-    /// The document of key `key`, by the documents in key order (`keys`), or `NO_DOC`.
+    /// The document of key `key`, or `NO_DOC`: memo `memo` tried first (a hit ends it), then the batch's documents
+    /// by a lower bound of a fixed count of steps (`lower_bound`) and the values' by a scan, the first that is `key`.
+    /// Past the memo, the steps are the directory's alone and each a select: a group's lanes each searching a key go
+    /// in step (the CLIF's `dir_doc_of_key`).
     ///
     /// # Safety
     /// As `rows`.
     pub unsafe fn doc_of_key(&self, key: u32, memo: u32) -> u32 {
         // SAFETY: the caller's.
-        let (key_of, order) = (|m: u32| unsafe { self.entry(m) }.key, unsafe { self.keys() });
-        let n = self.ndocs;
-        if memo < n && key_of(memo) == key {
+        let keys = unsafe { self.keys() };
+        let (n, nbatch) = (self.ndocs, self.nbatch.min(self.ndocs));
+        if memo < n && keys[memo as usize] == key {
             return memo;
         }
-        let c = crate::ids::bisect_n(n, |i| key_of(order[i as usize]) <= key);
-        if c > 0 && key_of(order[c as usize - 1]) == key { order[c as usize - 1] } else { NO_DOC }
+        let c = lower_bound(&keys[..nbatch as usize], key);
+        if c < nbatch && keys[c as usize] == key {
+            return c;
+        }
+        (nbatch..n).rev().fold(NO_DOC, |found, i| if keys[i as usize] == key { i } else { found })
     }
+}
+
+/// The first place in `keys` (ascending) whose key is at least `key` (`keys.len()` where none is), in a count of steps
+/// `keys.len()` alone sets: each halves the span, its base moved by a select.
+pub fn lower_bound(keys: &[u32], key: u32) -> u32 {
+    let (mut base, mut len) = (0usize, keys.len());
+    if len == 0 {
+        return 0;
+    }
+    while len > 1 {
+        let half = len / 2;
+        base = if keys[base + half - 1] < key { base + half } else { base };
+        len -= half;
+    }
+    (base + usize::from(keys[base] < key)) as u32
 }
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
@@ -256,7 +278,7 @@ pub fn ukl() -> String {
     let mut s = format!(
         "#include <ukl/backend.h>\ntypedef struct ViewRow {{\n    uint64_t entry;\n    uint64_t tape;\n    uint64_t lines;\n    uint32_t homes[2];\n    uint32_t rows[{}];\n    uint32_t view[{}];\n}} ViewRow;\n\
          typedef struct ViewHome {{\n    uint64_t host;\n    UKL_GLOBAL const uint8_t* gpu;\n}} ViewHome;\n\
-         typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint64_t cache;\n    uint64_t keys;\n}} ViewDir;\n",
+         typedef struct ViewDir {{\n    uint64_t at;\n    uint32_t ndocs;\n    uint32_t nhomes;\n    uint64_t rows;\n    uint64_t homes;\n    uint32_t cache;\n    uint32_t nbatch;\n    uint64_t keys;\n}} ViewDir;\n",
         VIEWS.len(),
         std::mem::size_of::<crate::view::TapeView>() / 4,
     );
@@ -656,6 +678,7 @@ mod dir_at {
     pub const AT: i32 = offset_of!(ViewDir, at) as i32;
     pub const NDOCS: i32 = offset_of!(ViewDir, ndocs) as i32;
     pub const ROWS: i32 = offset_of!(ViewDir, rows) as i32;
+    pub const NBATCH: i32 = offset_of!(ViewDir, nbatch) as i32;
     pub const KEYS: i32 = offset_of!(ViewDir, keys) as i32;
     pub const ROW_SIZE: i64 = size_of::<ViewRow>() as i64;
     pub const ROW_ENTRY: i32 = offset_of!(ViewRow, entry) as i32;
@@ -680,17 +703,76 @@ impl B<'_, '_> {
         let p = self.item(row, k, 4);
         self.word_at(I32, p, dir_at::ROW_ROWS)
     }
-    /// The documents' numbers in key order (`ViewDir::keys`): their address.
+    /// The documents' keys in row order (`ViewDir::keys`): their address.
     fn dir_keys(&mut self) -> Value {
         let at = self.word_at(I64, self.tape, dir_at::AT);
         let block = self.f.ins().isub(self.tape, at);
         let keys = self.word_at(I64, self.tape, dir_at::KEYS);
         self.f.ins().iadd(block, keys)
     }
-    /// The number of the document `i`th in key order.
-    fn dir_by_key(&mut self, keys: Value, i: Value) -> Value {
+    /// Document `i`'s key (`ViewDir::keys`).
+    fn key_at(&mut self, keys: Value, i: Value) -> Value {
         let p = self.item(keys, i, 4);
         self.word_at(I32, p, 0)
+    }
+    /// `lower_bound` of `key` among the `n` ascending keys at `keys`: a fixed count of steps, `n` alone sets, each a
+    /// select.
+    fn lower_bound(&mut self, keys: Value, n: Value, key: Value) -> Value {
+        let (head, body, last, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(last, I32);
+        self.f.append_block_param(done, I32);
+        let zero = self.c32(0);
+        self.f.ins().jump(head, &[zero.into(), n.into()]);
+        self.f.switch_to_block(head);
+        let (base, len) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
+        self.f.ins().brif(more, body, &[], last, &[base.into()]);
+        self.f.switch_to_block(body);
+        let half = self.f.ins().ushr_imm(len, 1);
+        let at = self.f.ins().iadd(base, half);
+        let probe = self.f.ins().iadd_imm(at, -1);
+        let k = self.key_at(keys, probe);
+        let below = self.f.ins().icmp(IntCC::UnsignedLessThan, k, key);
+        let base = self.f.ins().select(below, at, base);
+        let len = self.f.ins().isub(len, half);
+        self.f.ins().jump(head, &[base.into(), len.into()]);
+        // The last span: one key, or none (`n` 0).
+        self.f.switch_to_block(last);
+        let base = self.f.block_params(last)[0];
+        let none = self.f.ins().icmp_imm(IntCC::Equal, n, 0);
+        let c = self.either(I32, none, |b| b.c32(0), |b| {
+            let k = b.key_at(keys, base);
+            let below = b.f.ins().icmp(IntCC::UnsignedLessThan, k, key);
+            let one = b.f.ins().uextend(I32, below);
+            b.f.ins().iadd(base, one)
+        });
+        self.f.ins().jump(done, &[c.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+    /// The first of documents `from..n` whose key is `key`, or `NO_DOC`: every one read, each a select.
+    fn scan_keys(&mut self, keys: Value, from: Value, n: Value, key: Value) -> Value {
+        let (head, body, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(head, I32);
+        self.f.append_block_param(done, I32);
+        let no = self.c32(i64::from(NO_DOC));
+        self.f.ins().jump(head, &[n.into(), no.into()]);
+        self.f.switch_to_block(head);
+        let (i, found) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedGreaterThan, i, from);
+        self.f.ins().brif(more, body, &[], done, &[found.into()]);
+        // From the last down, so the first that is `key` is kept.
+        self.f.switch_to_block(body);
+        let i = self.f.ins().iadd_imm(i, -1);
+        let k = self.key_at(keys, i);
+        let same = self.f.ins().icmp(IntCC::Equal, k, key);
+        let found = self.f.ins().select(same, i, found);
+        self.f.ins().jump(head, &[i.into(), found.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
     }
     /// Row `m`'s document's key (its entry's).
     fn dir_key(&mut self, rows: Value, m: Value) -> Value {
@@ -740,31 +822,27 @@ pub fn dir_doc_of_row(b: &mut B<'_, '_>) -> Value {
 #[cfg(feature = "ir")]
 pub fn dir_doc_of_key(b: &mut B<'_, '_>) -> Value {
     let (key, memo) = (b.arg(0), b.arg(1));
-    let (rows, n) = b.dir_rows();
+    let n = b.word_at(I32, b.tape, dir_at::NDOCS);
+    let keys = b.dir_keys();
+    let nbatch = b.word_at(I32, b.tape, dir_at::NBATCH);
+    let nbatch = b.f.ins().umin(nbatch, n);
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, memo, n);
     let held = b.either(I32, inside, |b| {
-        let k = b.dir_key(rows, memo);
+        let k = b.key_at(keys, memo);
         let same = b.f.ins().icmp(IntCC::Equal, k, key);
         b.f.ins().uextend(I32, same)
     }, |b| b.c32(0));
     let hit = b.f.ins().icmp_imm(IntCC::NotEqual, held, 0);
     b.either(I32, hit, |_| memo, |b| {
-        // By the documents in key order (`ViewDir::keys`): the rows are in row order.
-        let keys = b.dir_keys();
-        let c = b.bisect(n, &mut |b, i| {
-            let m = b.dir_by_key(keys, i);
-            let k = b.dir_key(rows, m);
-            b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, k, key)
-        });
-        let any = b.f.ins().icmp_imm(IntCC::NotEqual, c, 0);
-        b.either(I32, any, |b| {
-            let i = b.f.ins().iadd_imm(c, -1);
-            let m = b.dir_by_key(keys, i);
-            let k = b.dir_key(rows, m);
-            let same = b.f.ins().icmp(IntCC::Equal, k, key);
-            let no = b.c32(i64::from(NO_DOC));
-            b.f.ins().select(same, m, no)
-        }, |b| b.c32(i64::from(NO_DOC)))
+        // The batch's documents, in key order; then the values', in the order admitted.
+        let c = b.lower_bound(keys, nbatch, key);
+        let within = b.f.ins().icmp(IntCC::UnsignedLessThan, c, nbatch);
+        let at = b.either(I32, within, |b| b.key_at(keys, c), |b| b.c32(0));
+        let same = b.f.ins().icmp(IntCC::Equal, at, key);
+        let found = b.f.ins().band(within, same);
+        // The values' scan, whatever the batch's search found (none with no values): a select, not a branch.
+        let scanned = b.scan_keys(keys, nbatch, n, key);
+        b.f.ins().select(found, c, scanned)
     })
 }
 
@@ -998,50 +1076,57 @@ pub fn order(b: &mut B<'_, '_>) -> Value {
 
 #[cfg(all(test, feature = "ir"))]
 mod tests {
-    use super::{NO_DOC, ViewDir, ViewDoc, ViewRow};
-    use std::mem::size_of;
+    use super::{NO_DOC, ViewDir};
 
     /// A directory's documents in row order need not be in key order: a chunk's tape values follow its batch's
-    /// documents in the order admitted (`values::Layered`, `device_chunk::views_over`). The search by key goes through
-    /// the documents in key order (`ViewDir::keys`), on the host and in its CLIF, for every key, with a memo of the
-    /// right document, a wrong one and none. It bisected the rows, which found no admitted value whose key was below
-    /// one before it (a Vue piece's root had no children: a policy's findings came out wrong).
+    /// documents in the order admitted (`values::Layered`, `device_chunk::views_over`). The search by key bisects the
+    /// batch's keys and scans the values' (`ViewDir::keys`, `nbatch`), on the host and in its CLIF, for every key and
+    /// some of none, with a memo of the right document, a wrong one and none. It bisected every row, which found no
+    /// admitted value whose key was below one before it (a Vue piece's root had no children: a policy's findings came
+    /// out wrong).
     #[test]
     fn a_directorys_search_by_key_finds_documents_out_of_key_order() {
-        // The batch's documents (keys 3, 9), then three values admitted in this order.
-        let keys = [3u32, 9, 2_090_826_275, 1_786_418_522, 5];
-        let n = keys.len();
-        let (dir_at, rows_at) = (0usize, 64usize);
-        let entries_at = rows_at + n * size_of::<ViewRow>();
-        let order_at = entries_at + n * size_of::<ViewDoc>();
-        let mut block = vec![0u64; (order_at + 4 * n).div_ceil(8)];
-        let base = block.as_mut_ptr().cast::<u8>();
-        let mut order: Vec<u32> = (0..n as u32).collect();
-        order.sort_by_key(|&i| keys[i as usize]);
-        // SAFETY: each write within `block`, at an offset aligned for its type.
-        unsafe {
-            for (i, &k) in keys.iter().enumerate() {
-                let entry = entries_at + i * size_of::<ViewDoc>();
-                base.add(entry).cast::<ViewDoc>().write(ViewDoc { key: k, ..ViewDoc::default() });
-                base.add(rows_at + i * size_of::<ViewRow>()).cast::<ViewRow>().write(ViewRow { entry: entry as u64, rows: [i as u32; super::VIEWS.len()], ..ViewRow::default() });
-            }
-            std::ptr::copy_nonoverlapping(order.as_ptr(), base.add(order_at).cast::<u32>(), n);
-            base.add(dir_at).cast::<ViewDir>().write(ViewDir { at: dir_at as u64, ndocs: n as u32, nhomes: 0, rows: rows_at as u64, homes: 0, cache: 0, keys: order_at as u64 });
-        }
-        // SAFETY: the directory just written, in `block`, which outlives it.
-        let dir = unsafe { &*base.add(dir_at).cast::<ViewDir>() };
         let jit = crate::jit::Reads::new();
         type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
         // SAFETY: the read's signature: the directory, then its arguments.
         let by_key: ByKey = unsafe { std::mem::transmute(jit.function("dir_doc_of_key")) };
-        let mut asked: Vec<u32> = keys.to_vec();
-        asked.extend([0, 4, 10, u32::MAX]);
-        for key in asked {
-            let want = keys.iter().position(|&k| k == key).map_or(NO_DOC, |i| i as u32);
-            for memo in [0, 3, n as u32, NO_DOC] {
-                // SAFETY: as `dir`.
-                assert_eq!(unsafe { dir.doc_of_key(key, memo) }, want, "the host's, key {key}, memo {memo}");
-                assert_eq!(by_key(base.cast_const(), key, memo), want, "the CLIF's, key {key}, memo {memo}");
+        // Batches of 0 to 9 documents (each lower bound's count of steps), and none or three values admitted out of
+        // key order: below, among and past the batch's keys.
+        for nbatch in 0..10u32 {
+            for values in [&[][..], &[2_090_826_275u32, 4, 1_786_418_522][..]] {
+                let keys: Vec<u32> = (0..nbatch).map(|i| 3 * i + 5).chain(values.iter().copied()).collect();
+                let n = keys.len();
+                let (dir_at, keys_at) = (0usize, 64usize);
+                let mut block = vec![0u64; (keys_at + 4 * n).div_ceil(8) + 1];
+                let base = block.as_mut_ptr().cast::<u8>();
+                // SAFETY: each write within `block`, at an offset aligned for its type.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(keys.as_ptr(), base.add(keys_at).cast::<u32>(), n);
+                    base.add(dir_at).cast::<ViewDir>().write(ViewDir { at: dir_at as u64, ndocs: n as u32, nbatch, keys: keys_at as u64, ..ViewDir::default() });
+                }
+                // SAFETY: the directory just written, in `block`, which outlives it.
+                let dir = unsafe { &*base.add(dir_at).cast::<ViewDir>() };
+                let asked = keys.iter().copied().chain([0, 4, 6, 3 * nbatch + 5, u32::MAX]);
+                for key in asked {
+                    let want = keys.iter().position(|&k| k == key).map_or(NO_DOC, |i| i as u32);
+                    for memo in [0, 3, n as u32, NO_DOC] {
+                        // SAFETY: as `dir`.
+                        assert_eq!(unsafe { dir.doc_of_key(key, memo) }, want, "the host's, batch {nbatch}, values {values:?}, key {key}, memo {memo}");
+                        assert_eq!(by_key(base.cast_const(), key, memo), want, "the CLIF's, batch {nbatch}, values {values:?}, key {key}, memo {memo}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The lower bound of a fixed count of steps is the first place whose key is at least the one asked, for every
+    /// length to 40 and every key around each one held.
+    #[test]
+    fn a_lower_bound_in_steps_its_length_sets_is_the_first_at_least_the_key() {
+        for n in 0..40u32 {
+            let keys: Vec<u32> = (0..n).map(|i| 2 * i + 1).collect();
+            for key in 0..2 * n + 3 {
+                assert_eq!(super::lower_bound(&keys, key), keys.partition_point(|&k| k < key) as u32, "{n} keys, key {key}");
             }
         }
     }

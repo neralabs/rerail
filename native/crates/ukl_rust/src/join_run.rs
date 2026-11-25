@@ -151,7 +151,8 @@ struct ViewDir {
     nhomes: u32,
     rows: u64,
     homes: u64,
-    cache: u64,
+    cache: u32,
+    nbatch: u32,
     keys: u64,
 }
 #[repr(C)]

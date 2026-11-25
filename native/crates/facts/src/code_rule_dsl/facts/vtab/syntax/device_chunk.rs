@@ -226,7 +226,8 @@ pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsIn
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
-    build_dir(&chunk.block, &docs_of(batch, [0; NVIEWS]))
+    let docs = docs_of(batch, [0; NVIEWS]);
+    build_dir(&chunk.block, &docs, docs.len())
 }
 
 /// One document of a views' directory: its projection, its dialect (none: a text read as text only, no nodes), and
@@ -269,18 +270,19 @@ fn rows_of(batch: &Batch) -> [u32; NVIEWS] {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> {
     let mut docs = docs_of(batch, [0; NVIEWS]);
+    let nbatch = docs.len();
     let mut past = rows_of(batch);
     for v in values {
         docs.extend(docs_of(v, past));
         let more = rows_of(v);
         past = std::array::from_fn(|k| past[k] + more[k]);
     }
-    build_dir(&batch.block, &docs)
+    build_dir(&batch.block, &docs, nbatch)
 }
 
 /// The directory of `docs`, made in `b` (`ViewsInPlace`): each one's entry, tape and lines where the device reads them.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
+fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>], nbatch: usize) -> Option<ViewsInPlace> {
     use crate::code_rule_dsl::tape::placed;
     use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
@@ -428,16 +430,17 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
         // SAFETY: home `k` of the homes just allocated in `b`.
         unsafe { homes_at.add(k).write(ViewHome { host: h.host, gpu: h.device.as_ref().map_or(if host_reads { h.host } else { 0 }, |d| d.0) }) };
     }
-    // The documents' numbers in key order (`ViewDir::keys`): a chunk's tape values follow its batch's documents in
-    // the order admitted, not by key.
+    // The documents' keys in row order (`ViewDir::keys`), which a search by key reads alone: the batch's first, in
+    // key order (`Docs`), then a chunk's tape values, in the order admitted.
+    debug_assert!(docs[..nbatch].windows(2).all(|w| w[0].p.key < w[1].p.key), "a batch's documents in key order");
     let keys_at: *mut u32 = b.alloc_t(n.max(1));
-    let mut order: Vec<u32> = (0..n as u32).collect();
-    order.sort_by_key(|&i| docs[i as usize].p.key);
-    // SAFETY: `n` numbers, just allocated in `b`.
-    unsafe { std::ptr::copy_nonoverlapping(order.as_ptr(), keys_at, n) };
+    for (i, d) in docs.iter().enumerate() {
+        // SAFETY: key `i` of the `n` just allocated in `b`.
+        unsafe { keys_at.add(i).write(d.p.key) };
+    }
     let at = b.offset_of(dir);
     // SAFETY: the directory just allocated in `b`.
-    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: homes.len() as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes_at) as u64, cache: cache_home.map_or(0, |k| u64::from(k) + 1), keys: b.offset_of(keys_at) as u64 }) };
+    unsafe { dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: homes.len() as u32, rows: b.offset_of(rows) as u64, homes: b.offset_of(homes_at) as u64, cache: cache_home.map_or(0, |k| k + 1), nbatch: nbatch as u32, keys: b.offset_of(keys_at) as u64 }) };
     // The device's: the block's buffer made after the last allocation, so it covers them, and each 16z view's cache
     // offset, the cache's device address less its tape's (the kernels read the view where it lies).
     let mut buffers = Vec::new();
