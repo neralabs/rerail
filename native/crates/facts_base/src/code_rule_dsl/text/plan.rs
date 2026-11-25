@@ -132,8 +132,11 @@ impl Compiled {
             Self::Whole(set) => set.contains(text),
             Self::Literals { anchor: Anchor::Start, searcher } => searcher.find(Input::new(text).anchored(Anchored::Yes)).is_some(),
             Self::Literals { anchor: Anchor::End, searcher } => {
-                let reversed = text.iter().rev().copied().collect::<Vec<_>>();
-                searcher.find(Input::new(&reversed).anchored(Anchored::Yes)).is_some()
+                // The text reversed in the test's frame: a list a test was 1.33 M on cold PostHog.
+                rerail_blocks::frame::op(|fr| {
+                    let reversed = fr.collect(text.iter().rev().copied());
+                    searcher.find(Input::new(&reversed[..]).anchored(Anchored::Yes)).is_some()
+                })
             }
             Self::Literals { searcher, .. } => searcher.is_match(text),
             Self::Automaton(regex) => regex.is_match(text),
