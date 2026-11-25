@@ -384,3 +384,83 @@ committed by two operations (`cache_open` resets it to ∅ when the header is op
 indexes a plan asks for that a layer lacks (written by `order`), lines and the joins' memo, statistics past a
 layer's sketch, the versions chosen, slow lookups. What answers read (kept rows, levels, derivation counts) stays
 data, in traces. The caches written in datalog (0103) are the other kind.
+
+## B1 and B2 rebuilt to the pages (2026-11-25)
+
+The user asked for every divergence of B1 and B2 from the design pages (*0686: Operations*, P§, *Bootstrap from one
+tape*); the audit found 23. The user: "close all of these gaps with respect to the original plan". The sections "B1"
+and "B2: the program trace" above record what was built first; this section supersedes their as-built statements
+(e9c74edefc, 4fabca7c57). What the user approved stays as approved: std inside the twins, two states, roll-up policy
+after the target.
+
+What is built:
+
+- **Blocks refer to blocks** (O§2, E2). `blocks::gens`: a block's reference table (after the engine's header, at 64:
+  up to 30 block ids) and its body (at 192, its used length first). `delta_exec::dir::Directory` hands out block ids,
+  writes a reference only to a frozen block (refused otherwise, naming both), and holds a `Frozen` handle of each
+  referent while its referrer lives, so a generation lives until its referrer is rolled up and no reader holds it
+  (`sweep`). A freeze trims the body to its used length; blocks are free-listed, so a freeze gives back an operation's
+  work past it.
+- **A launch** pins every slot by its mode, read-pins every block the slots reach, transitively, and writes the CPU's
+  descriptor table (`Desc`: id, kind, version, address, length) in a block of its own; `gens::Table` resolves an id to
+  a pinned block's bytes. Any conflict refuses the start, naming it, with nothing left pinned (E1).
+- **Shapes are phases on the six axes** (O§4, "No enum of shapes"): `Phase{found, unit, inside, across, output,
+  bounds}` and an `Independence`; no numbered shapes. A twin is `TwinPhase`s (items, a tile's run, `again` for passes
+  and turns, bounded by `Bound::Turns`), its phases its signature's by name; state between phases lies in blocks. The
+  executor cuts each phase's items into tiles (`Tiling{tile, seed}`, the seed shuffling their order).
+- **Versions are registered checked** (O§3): `Registry::check` runs a candidate and the reference on cases at given
+  tilings and compares the written slots' facts by meaning (`Signature.facts`, rows sorted); `register` takes the
+  `Checked` it gives, for that version only.
+- **The trace is layer blocks** (O§7, O§10, P§11–§12). `blocks::layer`: a trace's `Shape` with every P§12 field;
+  δ runs, claimed by an atomic add, counting what overflows (`needed`); a layer block per generation, over the one
+  below by reference: rows in canonical order (partition first), a plus bit and a kill id each, its kills ascending
+  (`flips`) and by partition (`pflips`), the partition index (key, rows, flips, added, gone, digest), a sketch a column
+  (min, max, count, 8 AMS counters), the shape's order indexes, the header written last. Ids continue from the layer
+  below.
+- **consolidate and merge are the twins'** (O§10): one pipeline of 23 phases (sort by chunks and merge passes,
+  segmented sums, emit by count/scan/place, kills by a batched search of the layers below, partitions counted,
+  scanned and filled, flips sorted, indexes sorted, sketches by partials, the seal), every loop over rows in the
+  twins' crate. consolidate (scratch δ runs, write facts, rw control) sums each row's diffs, drops zeros and refuses
+  a change that is not a set change into control: diffs past ±1, a row gone not live, a row added already live.
+  merge (read the newest layer, older ones by reference; write facts) rolls layers up into one, an add and its later
+  kill cancelling.
+- **The host holds handles** (`delta_exec::trace::Trace`: its shape and its head's id). `commit` makes the layer's
+  block, refers it to the head, runs consolidate, reads control, freezes it; `roll_up` runs merge and lets the merged
+  generations go. A state is `Chain` (the layers through a launch's table): `bistate::Read` with scan, probe
+  (`matching`), part, stats and flips; `States` with restrict and changed_parts. `Bistate` gains invert, compose,
+  restrict and changed_parts; a change between adjacent layers is read in its size (the layer's flips and counts).
+- **Small ones:** the `node(d, n, k, start, end)` view, with the engine's columns; K-form's trace shapes 32 bits a
+  column but `k_num`'s value; delta_exec on blocks and rr_syntax alone.
+
+Checks, each passed under Relax on this machine (`relax test rerail-delta-exec --lib`: 20 of 20;
+`rerail-blocks --lib -- bistate`: 8 of 8; `-- region::`: 16 of 16):
+
+- [x] Map, emit, sort, merge and queue give the same, right facts at four tilings and orders
+  (`op::tests::each_shape_gives_the_same_facts_at_two_tilings_in_shuffled_order`); consolidate writes the same layer
+  at three, by the registry's check (`trace::tests::consolidate_writes_the_same_layer_at_every_tiling`).
+- [x] E1 conflicts refuse the start with nothing left pinned; a reference to a block not frozen fails; reading a
+  block read-pins what it refers to, and its table gives each by id (`op::tests::references_are_…`).
+- [x] A version is registered only once checked; a wrong one (the cube for the square) is refused; a 31st slot is
+  refused; a twin's phases must be its signature's, and a phase that runs again must bound its turns.
+- [x] A random trace of six runs reads as its brute-force set in every state, partition and probe; every change
+  between any two states passes `bistate::check` with the right rows gone and added, and the right changed
+  partitions; the sketches count the live rows (`trace::tests::a_random_trace_reads_as_its_set`).
+- [x] Compose and invert; the committed state read beside a commit; refusals with the head unchanged; a roll-up's
+  state, and its merged generations gone once no reader holds them; a referenced generation living until its
+  referrer is rolled up.
+- [x] `check_delta_exec_shape.py` (sections b1, b2, rewritten): no enum of shapes, the six axes, `register` taking
+  `Checked`; no trace in one block, no lock or frontier API on the host, `Chain` holding no list, `Trace` its shape and
+  head, the twins' crate free of `TwinFn` and of blocks code that computes over rows. `check_no_block_copies.py`
+  passes.
+
+Not built, and refused by name where a caller could ask for it:
+
+- Shape options: levels, encodings but `Open`, placements but `RunBlock`, retentions but `Run`, hash and Bloom
+  indexes, fences and prints (`Shape::encode` says "not built").
+- A read follows at most 8 layers by their own changes (`MAX_RUNS`); a deeper chain reads word by word, and
+  `changed_parts` across more than 8 layers reads the changed rows.
+- The descriptor table is the CPU's; a device's waits for a device executor. The twins' clippy.toml is written, not
+  run (clippy is a build outside the narrow Relax runs).
+- A partition index's key is 64 bits, as the widest partition column is; the rows' columns take their shape's width.
+- References of a block that is gone are let go at the directory's next `release`, `make` or `sweep`, not when its
+  last reader drops.
