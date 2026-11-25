@@ -6,10 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
-import { ENTRY_POINTS, LOCKS_DIR, resolveNativeBindingPath } from "../../src/engine/index.js";
-import type { DaemonState } from "../../src/runtime/index.js";
+import { ENTRY_POINTS, LOCKS_DIR, resolveNativeBindingPath } from "../../../src/engine/index.js";
+import type { DaemonState } from "../../../src/runtime/index.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
-/** How each Windows PowerShell start behaves in the uninstall's process (`support/slow-powershell.mjs`). */
+/** How each Windows PowerShell start behaves in the uninstall's process (`test/support/platform/slow-powershell.mjs`). */
 type PowerShellStart = { ms: number } | "blocked";
 
 /** What one uninstall beside a busy daemon came to. */
@@ -87,7 +88,7 @@ async function busyDaemon(home: string, state: DaemonState, pkg: string): Promis
 
 /** Runs `rerail install --remove` with `extra`, from the installed package `pkg`, with Windows PowerShell as `powershell` starts. */
 async function uninstall(pkg: string, env: NodeJS.ProcessEnv, powershell: PowerShellStart, extra: readonly string[]): Promise<Omit<Uninstalled, "daemonRuns" | "versionsGone">> {
-  const preload = pathToFileURL(join(process.cwd(), "integration", "support", "slow-powershell.mjs")).href;
+  const preload = pathToFileURL(join(process.cwd(), "test", "support", "platform", "slow-powershell.mjs")).href;
   const slow = powershell === "blocked" ? { RERAIL_TEST_POWERSHELL: "blocked" } : { RERAIL_TEST_POWERSHELL_MS: String(powershell.ms) };
   const started = Date.now();
   return await new Promise(done => {
@@ -120,23 +121,20 @@ async function uninstallBesideBusyDaemon(powershell: PowerShellStart, extra: rea
     const pkg = await installedPackage(home);
     daemon = await busyDaemon(home, await daemonRecord(home, env), pkg);
     const ran = await uninstall(pkg, env, powershell, extra);
-    const result = { ...ran, daemonRuns: runs(daemon.pid!), versionsGone: !existsSync(join(home, "versions")) };
-    const row = { powershell, command: ["install", "--remove", ...extra].join(" "), ...result, stdout: ran.stdout.split(/\r?\n/u).filter(line => /daemon|could not|did not answer|versions/iu.test(line)) };
-    process.stdout.write(`UNINSTALL-ROW ${JSON.stringify(row)}\n`);
-    return result;
+    return { ...ran, daemonRuns: runs(daemon.pid!), versionsGone: !existsSync(join(home, "versions")) };
   } finally {
     if (daemon !== undefined) await endChild(daemon);
     // The link goes first and alone, so removing the folder can never reach the checkout's own dependencies.
     await unlink(modules).catch(() => undefined);
     if (await lstat(modules).then(() => true, () => false)) throw new Error(`${modules} could not be unlinked, so ${root} is kept`);
-    await rm(root, { recursive: true, force: true, maxRetries: 5 });
+    await removeFolder(root);
   }
 }
 
 describe.runIf(process.platform === "win32")("rerail install --remove beside a busy daemon", () => {
   // A machine so busy that each Windows PowerShell takes 30 s to start: the stop's reads of the daemon's start do not
-  // go through PowerShell, so they answer, the daemon is ended and versions/ goes. The uninstall's other PowerShell, the
-  // one that takes Rerail off PATH, still waits out its own 30 s.
+  // go through PowerShell, so they answer, the daemon is ended and versions/ goes. This home recorded no change to PATH,
+  // so the uninstall starts no other PowerShell.
   test("stops its daemon and removes versions/ while each Windows PowerShell takes 30 s to start", async () => {
     const result = await uninstallBesideBusyDaemon({ ms: 30_000 });
     expect(result.stdout).toContain("Stopped the Rerail daemon.");
