@@ -319,8 +319,21 @@ impl<'a> G<'a> {
                     syms(body, true, &mut roots);
                 }
             }
-            if roots.iter().all(|r| refusing.contains_key(r)) {
-                leaf_refuses = roots.into_iter().map(|r| (r, bits.iter().copied().next().unwrap_or(0))).collect();
+            // A leaf whose rule refuses none reaches no rule that does: its leaf checks nothing.
+            let reaches = |r: &str| -> HashSet<String> {
+                let mut seen: HashSet<String> = HashSet::new();
+                let mut todo = vec![r.to_owned()];
+                while let Some(n) = todo.pop() {
+                    if let Some(Stmt::Node { body, .. } | Stmt::Choice { body, .. }) = rules.get(n.as_str())
+                        && seen.insert(n.clone())
+                    {
+                        syms(body, false, &mut todo);
+                    }
+                }
+                seen
+            };
+            if roots.iter().any(|r| refusing.contains_key(r)) && roots.iter().filter(|r| !refusing.contains_key(*r)).all(|r| reaches(r).iter().all(|n| !refusing.contains_key(n))) {
+                leaf_refuses = roots.into_iter().filter(|r| refusing.contains_key(r)).map(|r| (r, bits.iter().copied().next().unwrap_or(0))).collect();
                 refusing.clear();
             }
         }
@@ -1273,6 +1286,25 @@ impl<'a> G<'a> {
                 let arms: Vec<(Vec<First>, Block)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
                 let mut d = self.asking(&arms, &ex);
+                // A loop only its exit ends (the code after it begins with the exit's marks), of a part that must take a
+                // token: the part until the exit, as the lean parser's `while !end { statement }`. A token neither
+                // begins refuses in the part, as it did after the loop.
+                let (fr, may_end) = self.rest_first(rest)?;
+                if arms.len() == 1
+                    && d.is_empty()
+                    && unmarked.is_empty()
+                    && !ex.is_empty()
+                    && !may_end
+                    && !fr.is_empty()
+                    && fr.iter().all(|(t, f)| f.is_none() && matches!(t, Test::Mark(m) if ex.iter().any(|e| e.0 == *m && !e.1)))
+                    && !self.first(a)?.1
+                {
+                    let exit = Cond::Or(ex.iter().map(|e| self.mark_test(e.0)).collect());
+                    d.push(Op::If { arms: vec![(exit, vec![Op::Break])], els: None });
+                    d.extend(arms[0].1.clone());
+                    out.push(Op::Loop(d));
+                    return Ok(out);
+                }
                 d.extend(self.decide(&arms, &ex, &unmarked, &vec![Op::Break], &vec![Op::Break]));
                 out.push(Op::Loop(d));
                 out
@@ -1293,20 +1325,27 @@ impl<'a> G<'a> {
                 // can hold at its token, as the lean parser's `term` asks its own peeks (decision 0685 rock 4).
                 let mut alts = Vec::new();
                 Self::alts(g, &mut alts);
-                // A word of its was asked before the other arms' kinds: none of their kinds' tokens is one.
-                let others: Vec<(bool, Holds)> = arms[..arms.len().saturating_sub(1)].iter().flat_map(|a| a.0.iter().map(|(t, _)| (matches!(t, Test::Kind(_)), self.first_holds(t)))).collect();
+                // A word of its was asked before the other arms' kinds: none of their kinds' tokens is one (a soft word
+                // the lexer gives another kind too is). A test under a flag is asked where it is.
+                let others: Vec<(&Test, Holds)> = arms[..arms.len().saturating_sub(1)].iter().flat_map(|a| a.0.iter().map(|(t, _)| (t, self.first_holds(t)))).collect();
                 let marks_apart = |fs: &[First]| {
-                    fs.iter().all(|(t, _)| match t {
+                    // A test another arm has is that arm's (`decide` gives it to the first).
+                    fs.iter().filter(|(t, _)| !others.iter().any(|(o, _)| *o == t)).all(|(t, _)| match t {
                         // A mark that holds only at one kind's tokens, which the arm tests: that kind's test.
                         Test::Mark(m) if self.implied_kind(*m).is_some_and(|k| fs.iter().any(|x| matches!(&x.0, Test::Kind(j) if *j == k))) => true,
-                        Test::Mark(_) => others.iter().all(|o| self.apart(&self.first_holds(t), &o.1)),
-                        Test::Word(_) => others.iter().filter(|o| o.0).all(|o| self.apart(&self.first_holds(t), &o.1)),
+                        // Marks are asked in their order: another arm's asked first (or the same, its) took its token
+                        // before as now.
+                        Test::Mark(m) => others.iter().all(|(o, h)| matches!(o, Test::Mark(n) if n <= m) || self.apart(&self.first_holds(t), h)),
+                        Test::Word(_) => others.iter().filter(|o| matches!(o.0, Test::Kind(_))).all(|(_, h)| self.apart(&self.first_holds(t), h)),
                         Test::Kind(_) => true,
                     })
                 };
+                // A rule's code, a level's or not, asks its own first token: a rule that must take one refuses where none
+                // of its tests holds.
+                let rule_call = |a: &Gram| matches!(a, Gram::Sym(n) if self.mark_of(n).is_none() && self.token_of(a).is_none() && self.rules.contains_key(n.as_str()) && self.rule_first(n).is_ok_and(|f| !f.1));
                 let default = empty.is_none()
-                    && alts.last().is_some_and(|a| self.leads_with_call(a))
-                    && arms.last().is_some_and(|a| self.plain_tests(&a.0) || marks_apart(&a.0));
+                    && alts.last().is_some_and(|a| self.leads_with_call(a) || rule_call(a))
+                    && arms.last().is_some_and(|a| a.0.iter().all(|f| f.1.is_none()) && marks_apart(&a.0));
                 let none = match empty {
                     Some(i) => arms[i].1.clone(),
                     None if default => {
@@ -2361,7 +2400,7 @@ impl<'a> G<'a> {
             let texts: Vec<String> = made.iter().map(|(_, b)| moves::print(b, "")).collect();
             let one = (1..made.len()).find(|&i| {
                 let (f, b) = &made[i];
-                let Some(at) = method_body(b) else { return false };
+                let Some((at, _)) = node_method(b) else { return false };
                 let Op::At(_, inner) = &b[at] else { return false };
                 let text = moves::print(inner, "");
                 let header = moves::print(&b[..at], "");
@@ -2377,12 +2416,67 @@ impl<'a> G<'a> {
             });
             let Some(i) = one else { break };
             let f = made[i].0.clone();
-            let at = method_body(&made[i].1).expect("a method");
-            let Op::At(_, inner) = made[i].1[at].clone() else { unreachable!() };
+            let (at, node) = node_method(&made[i].1).expect("a method");
+            let Op::At(_, mut inner) = made[i].1[at].clone() else { unreachable!() };
+            // A node's method: its node opened and closed where it is written, as the lean parser's `violation` opens
+            // `SuppressLine`.
+            if let Some(k) = node {
+                inner.insert(0, Op::Open(k));
+                inner.push(Op::Close);
+            }
             for (_, b) in made.iter_mut() {
                 moves::inline_call(b, &f, &inner);
             }
             made[i].1.clear();
+        }
+    }
+
+    /// A leaf of one or more tokens a loop reads (`leaf K R`, `R = X+`, its first `X` the loop's but that it refuses where
+    /// the loop ends): the loop alone, and the leaf refused where it read none, as the lean parser's scan to the `)`.
+    fn leaf_loops(made: &mut [(String, Block)]) {
+        // Each method that is one loop of one match whose default ends it: that match's arms, printed.
+        let loops: HashMap<String, String> = made
+            .iter()
+            .filter_map(|(f, b)| {
+                let Op::At(_, inner) = &b[method_body(b)?] else { return None };
+                let [Op::Loop(body)] = inner.as_slice() else { return None };
+                let [Op::Match { subject, arms, default }] = body.as_slice() else { return None };
+                matches!(default.as_slice(), [Op::Break]).then(|| (f.clone(), moves::print(&[Op::Match { subject: subject.clone(), arms: arms.clone(), default: vec![Op::Refuse] }], "")))
+            })
+            .collect();
+        fn walk(b: &mut Block, loops: &HashMap<String, String>) {
+            let mut i = 0;
+            while i + 2 < b.len() {
+                let hit = matches!(&b[i], Op::Line(l) if l.trim() == "self.leaf_open();")
+                    && matches!(&b[i + 1], Op::Match { default, .. } if matches!(default.as_slice(), [Op::Refuse]))
+                    && matches!(&b[i + 2], Op::Call(f) if loops.get(f).is_some_and(|m| *m == moves::print(&b[i + 1..i + 2], "")));
+                if hit {
+                    b[i + 1] = Op::If { arms: vec![(Cond::Text("self.i == self.leaf_from".into()), vec![Op::Refuse])], els: None };
+                    b.swap(i + 1, i + 2);
+                    i += 3;
+                    continue;
+                }
+                i += 1;
+            }
+            for o in b.iter_mut() {
+                match o {
+                    Op::If { arms, els } => {
+                        arms.iter_mut().for_each(|(_, x)| walk(x, loops));
+                        if let Some(e) = els {
+                            walk(e, loops);
+                        }
+                    }
+                    Op::Match { arms, default, .. } => {
+                        arms.iter_mut().for_each(|(_, x)| walk(x, loops));
+                        walk(default, loops);
+                    }
+                    Op::Loop(x) | Op::While(_, x) | Op::At(_, x) => walk(x, loops),
+                    _ => {}
+                }
+            }
+        }
+        for (_, b) in made.iter_mut() {
+            walk(b, &loops);
         }
     }
 
@@ -2657,6 +2751,7 @@ impl<'a> G<'a> {
         if methods.len() == bs.len() {
             let mut made: Vec<(String, Block)> = methods.into_iter().zip(std::mem::take(&mut bs)).collect();
             Self::late_inline(&mut made);
+            Self::leaf_loops(&mut made);
             Self::same_methods(&mut made);
             bs = made.into_iter().map(|(_, b)| b).collect();
             bs.iter_mut().for_each(|b| {
@@ -3423,6 +3518,21 @@ const REPEATED_LINES: usize = 6;
 
 /// A method's block: its lines around one block of moves (`Op::At`), none of them a move of the tree's or a take; where
 /// that block is.
+/// A method's body (`method_body`), or a node's: its header opens the node (`self.open(K);`) and its footer closes it;
+/// where its body is, and the node's kind.
+fn node_method(b: &Block) -> Option<(usize, Option<String>)> {
+    if let Some(at) = method_body(b) {
+        return Some((at, None));
+    }
+    let at = b.iter().position(|o| matches!(o, Op::At(..)))?;
+    let [Op::Line(head), Op::At(..), Op::Line(close), Op::Line(tail)] = b.as_slice() else { return None };
+    let mut lines = head.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("///"));
+    let (Some(fn_line), Some(open), None) = (lines.next(), lines.next(), lines.next()) else { return None };
+    let kind = open.strip_prefix("self.open(")?.strip_suffix(");")?;
+    let plain_tail = tail.lines().map(str::trim).all(|l| l.is_empty() || matches!(l, "Ok(())" | "}"));
+    (fn_line.starts_with("fn ") && close.trim() == "self.close()?;" && plain_tail && kind.starts_with("k::")).then(|| (at, Some(kind.to_owned())))
+}
+
 fn method_body(b: &Block) -> Option<usize> {
     let at = b.iter().position(|o| matches!(o, Op::At(..)))?;
     let plain = b.iter().enumerate().all(|(i, o)| match o {

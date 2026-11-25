@@ -336,13 +336,16 @@ mark agg_word    = tokens "min" | "max" | "sum" | "product" | "mean" | "join" nu
 tree rr {
   # A `.end` outside a block is refused, as the lean parser refuses a statement that starts with one; a block's
   # statements end at theirs (`block_body`).
-  node source_file whole = (include | end_on refused | statement | clause)*
+  node source_file whole = (end_on refused | statement)*
   # A statement that fails: cut back to its first token, and one ERROR leaf from it to where the next can start, as the
   # engine's parser recovers (decision 0650): at a `#` word, at a `.` first on its line before a name, past any other `.`.
   recover source_file at hash_word | "#include", at first "." identifier, past "."
   node include          = '#include' path: string
-  # A statement at a `.`: the word after it says which, as the lean parser's `statement` (decision 0673 step 4).
-  choice statement      = test_on test_block | fixtures_on fixtures_block | directive
+  # A statement: a block or a directive at a `.` (the word after it says which), an `#include`, else a clause, as the
+  # lean parser's one `statement` (decision 0673 step 4); a block's are the same, blocks refused. A mark refused takes
+  # no token, so the one statement the two share holds no block (`plain_statement`).
+  choice statement      = test_on test_block | fixtures_on fixtures_block | plain_statement
+  choice plain_statement = include | directive | clause
   choice directive      = policy_on policy_document | decl_on declaration | violation_on violation_declaration
                         | edit_on edit_declaration | functor_on functor_declaration | type_on type_declaration
                         | io_on io_directive | lattice_on lattice_declaration | pragma_on pragma | setting
@@ -354,12 +357,12 @@ tree rr {
   node test_block       = '.' 'test' name: identifier [modifier: ('exactly' as identifier)] ['uses' argument: identifier (',' argument: identifier)*] block_body
   node fixtures_block   = '.' 'fixtures' name: identifier block_body
   choice block_body     = (body: block_statement)* end_on '.' 'end'
-  choice block_statement nested = include | test_on refused | fixtures_on refused | directive | clause
+  choice block_statement nested = test_on refused | fixtures_on refused | plain_statement
   # A word of a setting's, a declaration's tail: a leaf with a field.
   choice word nested    = identifier | float_at number as float | number | string | code_literal
   node edit_declaration = '.' 'edit' name: identifier columns: column_list
   # A declaration's `.` and a functor's are stored: their modifiers may hold one.
-  node functor_declaration = '.' 'functor' name: identifier columns: column_list ':' return_type: functor_type (modifier: word | punctuation | '{')* line
+  node functor_declaration = '.' 'functor' name: identifier columns: column_list ':' return_type: type (modifier: word | punctuation | '{')* line
   node declaration      = '.' 'decl' name: identifier columns: column_list (modifier: word | punctuation | '{')* line
   node type_declaration = '.' 'type' name: identifier (definition: raw_line | relabel definition line)
   # `.input`, `.output`: a level of its own, which takes every name after it as a relation.
@@ -368,15 +371,12 @@ tree rr {
   node lattice_declaration = '.' 'lattice' name: identifier '<' [base: identifier] '>' '{' [operation: lattice_operation (',' operation: lattice_operation)*] '}'
   node policy_document  = '.' 'policy' document: leaf json_object json_document
   node violation_declaration = '.' 'violation' name: identifier columns: column_list (code_part | tag: tag_column)* message: string (fix_on fix: fix_line | suppress_on suppress: suppress_line | options_on 'options' options: json)*
-  # A type of its own level: a `<` after its name is its own, not a modifier's (the engine reads
-  # the type first).
-  node functor_type nested = retag type name: identifier [empty_angle '<' '>' | implied '<' argument: identifier implied '>']
   # `.type`'s definition: the rest of the line, one leaf; none, and the name takes its field.
   choice raw_line       = any as raw_text (merge raw_text any)* line
-  node io_relation      = name: identifier [empty_parens parameters: '(' ')' | implied '(' parameters: io_parameters implied ')']
-  # The tokens inside the parentheses, pairs counted: one leaf.
-  choice io_parameters nested = (any except '(' ')' as raw_text | '(' as raw_text io_inner) (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)*
-  choice io_inner nested = (merge raw_text any except '(' ')' | merge raw_text '(' io_inner)* merge raw_text ')'
+  node io_relation      = name: identifier [empty_parens parameters: '(' ')' | implied '(' parameters: leaf raw_text io_parameters implied ')']
+  # The tokens inside the parentheses, pairs counted: one leaf, as the lean parser's scan to the `)`.
+  choice io_parameters nested = (any except '(' ')' | '(' io_inner)+
+  choice io_inner nested = (any except '(' ')' | '(' io_inner)* ')'
   # A value: `@` and a name with no `(` after it, a functor named, not called (`bare_functor`); else a term, as
   # the engine reads it.
   node lattice_operation = name: identifier '->' (bare_functor value: lattice_functor | value: term)
@@ -390,18 +390,20 @@ tree rr {
   refuse json_bad in json_document json_array
   # `code "X"`; `code {c}` and `tag {c}`, a node of the column, as the lean parser's `violation`.
   choice code_part      = code_str implied 'code' code: string | code: code_column
-  node code_column      = implied 'code' braced_column ['in' codes: string]
-  node tag_column       = implied 'tag' braced_column
+  node code_column      = implied 'code' column: braced_column ['in' codes: string]
+  node tag_column       = implied 'tag' column: braced_column
   # `{c}`: the name between the braces; any other braces, one `raw_text` leaf.
-  choice braced_column  = one_name '{' column: identifier '}' | column: raw_braces
+  choice braced_column nested = one_name '{' identifier '}' | raw_braces
   choice raw_braces     = balanced raw_text '{' '}'
   # `fix safe rel "…"`; before a string `safe` is the relation, as the lean parser's.
   node fix_line         = 'fix' [safe_on 'safe'] relation: identifier description: string
-  node suppress_line    = 'suppress' tool: identifier rule: string (comma_rule ',' rule: string)* [over_on 'over' (one_name '{' over: identifier '}' | over: raw_braces)]
+  node suppress_line    = 'suppress' tool: identifier rule: string (comma_rule ',' rule: string)* [over_on 'over' over: braced_column]
   choice json           = balanced json_object '{' '}'
   node column_list      = '(' [column: column (',' column: column)*] ')'
   node column           = name: identifier ':' type: type
-  node type             = name: identifier [empty_angle '<' '>' | implied '<' argument: identifier implied '>']
+  # A type is a level of its own: a `<` after its name is its own, not a functor's modifier's (the engine reads the
+  # type first), as the lean parser's `ty`.
+  node type nested      = name: identifier [empty_angle '<' '>' | implied '<' argument: identifier implied '>']
   node clause           = head: head (',' head: head)* [':-' body: body] ['=>' edit: term (',' edit: term)*] '.'
   # A head's modal: `must` or `may` before its relation, as the lean parser's; before a `(` it is the relation.
   node head             = [modal_on modal: ('must' | 'may')] relation: identifier arguments: argument_list
@@ -500,7 +502,7 @@ tree rr {
   implied violation_declaration '.' 'violation' 'options'
   implied code_column 'in'
   implied braced_column '{' '}'
-  implied suppress_line 'suppress' ',' 'over' '{' '}'
+  implied suppress_line 'suppress' ',' 'over'
   implied column_list '(' ',' ')'
   implied column ':'
   implied clause ',' ':-' '=>' '.'

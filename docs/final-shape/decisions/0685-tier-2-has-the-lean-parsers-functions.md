@@ -149,6 +149,37 @@ changed and how.
     `*peek() == ']'`. rr's JSON rules are simdjson's states: `json_document` a `{`, the members where a key follows,
     the `}`; `json_array` a `[`, the values unless the `]` follows, the `]`; `json_value` one `match` on the token, an
     array the default.
+13. One function for one part of the language, written where the lean parser writes it (the user's list of
+    2026-11-25: `include`, `io_parameters` and `io_inner`, `column_list`, `functor_type` and `suppress_line`, `-1`).
+    - **One statement.** The grammar's statements are one choice, as the lean parser's one `statement`: a block or a
+      directive at a `.`, an `#include`, else a clause. A block's statements are the same but that a block is
+      refused, so the two share `plain_statement` (an `#include`, a directive, a clause): a mark refused takes no
+      token, so the state machine (`grammar.rs`) cannot let a refusal go first over the same mark's way into a
+      block. `#include` is read in one place. A `.end` outside a block is refused where the file's statements are
+      read. A rule's call is a choice's default as a level's call is (step 11), a rule that must take a token
+      refusing where none of its tests holds: `statement`'s last arm and `block_statement`'s are
+      `else { self.plain_statement()?; }`, as the lean parser's `test` refuses a nested block and then calls
+      `statement`. Where the default's word may also be another arm's kind (Kotlin's soft words in a template, which
+      the lexer gives `interpolated_identifier`), or its test is under a flag, it has no default: the arms keep their
+      order.
+    - **The tokens in an I/O relation's parentheses: one leaf of one loop.** `parameters: leaf raw_text
+      io_parameters`, `io_parameters` the tokens with pairs counted, `io_inner` a pair's inside: no `merge` written
+      by hand (a `leaf`'s rule may hold `any except …`, `bitlex::syntax`). A leaf whose rule reads one or more
+      tokens by a loop (`G::leaf_loops`) is that loop, the leaf refused where it read none: rr's `io_relation` is
+      `leaf_open`, `io_inners`, `if self.i == self.leaf_from { refuse }`, `leaf_close`, as the lean parser's scan to
+      the `)` and its `leaf_over`. A leaf whose rule refuses no mark checks none (`leaf_refuses`, the rules it
+      reaches).
+    - **One type, one braced column.** `functor_type` is gone: a functor's return type is a `type`, a level of its
+      own, as the lean parser's one `ty`. `braced_column` (a name between braces, else one raw text) is read for a
+      code column, a tag column and `suppress … over`, as the lean parser's one reader.
+    - **A node's function of one caller written there** (`G::late_inline`, `node_method`): its node opened and closed
+      in its caller, as the lean parser's `violation` opens `SuppressLine`. `column_list` stays a function: it has
+      four callers, as the lean parser's `columns`.
+    - **A test the code already asked is not asked again** (`moves::known_takes`): an `if` whose first test holds by
+      what an enclosing test asked is its first arm's code; `-1`'s second token is a number its test asked
+      (`pass_as(true)`), and its kind asks only the float's mark. A leaf of two tokens whose last decision's arm
+      asks the pass's test is the `else` (`two_token_leaves`). `else { if … }` is `else if …`.
+    - Stays: `literal` and `paren_subject` (steps 11, 12) read as they did.
 
 ## Rocks 4 and 8: the grammar keeps its shape
 

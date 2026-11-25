@@ -2763,7 +2763,8 @@ pub fn desugar_leaves(stmts: &[Stmt]) -> Result<Vec<Stmt>, String> {
         let k = cx.kind.to_owned();
         let token = |t: Gram| if first { Gram::As(k.clone(), Box::new(t)) } else { Gram::Merge(k.clone(), Box::new(t)) };
         Ok(match g {
-            Gram::Lit(_) => token(g.clone()),
+            // A token, or any token but some (`any except '(' ')'`).
+            Gram::Lit(_) | Gram::Any(_) => token(g.clone()),
             Gram::Sym(n) => match rule(n) {
                 Some((_, _, true)) => return Err(format!("leaf {k}: rule `{n}` makes a node")),
                 Some(_) => {

@@ -804,11 +804,20 @@ pub(crate) fn two_token_leaves(b: &mut Block) {
                         i += 1;
                         continue;
                     };
+                    // A last arm whose test is the one the second token's pass asks: the `else`, the pass refusing where
+                    // it fails, as the lean parser's `if NUM { Number } else { Float }`.
+                    let last_is_pass = arms.len() > 1 && arms.last().is_some_and(|(c, _)| c.print() == test.print());
                     let mut t = "let kind = ".to_owned();
-                    for ((c, _), m) in arms.iter().zip(&ms) {
-                        let _ = write!(t, "if {} {{ {} }} else ", c.print(), m.3);
+                    for (k, ((c, _), m)) in arms.iter().zip(&ms).enumerate() {
+                        if last_is_pass && k + 1 == arms.len() {
+                            let _ = write!(t, "{{ {} }};", m.3);
+                        } else {
+                            let _ = write!(t, "if {} {{ {} }} else ", c.print(), m.3);
+                        }
                     }
-                    t.push_str("{ return self.refuse(); };");
+                    if !last_is_pass {
+                        t.push_str("{ return self.refuse(); };");
+                    }
                     (Op::Take { take: Take::Pass { test }, nf, m }, Some(t), "kind".to_owned())
                 }
                 Op::Match { subject, arms, default } if refuses(default) && arms.iter().all(|(_, a)| merge(a).is_some()) => {
@@ -953,6 +962,17 @@ pub(crate) fn known_takes(b: &mut Block) {
                 Op::Open(_) | Op::Field(_) => {}
                 Op::Line(l) if ["let kind", "self.retag(", "self.marked", "self.deeper()", "self.leaf_open()", "self.open(", "self.field_made(", "self.wrap(", "self.relabel_"].iter().any(|p| l.trim_start().starts_with(p)) => {}
                 Op::If { arms, els } => {
+                    // A first test the code before it asked (each of its parts a fact that holds): its code alone, as
+                    // the lean parser asks a token once.
+                    let known = arms.first().is_some_and(|(c, _)| {
+                        let cs = c.conjuncts();
+                        !cs.is_empty() && cs.iter().all(|x| fact(x).is_some_and(|f| facts.contains(&f)))
+                    });
+                    if known {
+                        let x = arms.remove(0).1;
+                        arms.clear();
+                        *els = Some(x);
+                    }
                     for (c, x) in arms.iter_mut() {
                         let mut f = facts.clone();
                         f.extend(facts_of(c));
@@ -991,6 +1011,16 @@ pub(crate) fn known_takes(b: &mut Block) {
         }
     }
     walk(b, Vec::new());
+    // An `if` of no arms left: its `else`.
+    blocks(b, &mut |x| {
+        *x = std::mem::take(x)
+            .into_iter()
+            .flat_map(|op| match op {
+                Op::If { arms, els: Some(e) } if arms.is_empty() => e,
+                op => vec![op],
+            })
+            .collect();
+    });
 }
 
 /// The words a test asks of the token `e` a scan found: `self.word_at(e) == w::A || …` or `matches!(self.word_at(e),
@@ -1055,6 +1085,16 @@ pub(crate) fn into_default(b: &mut Block, holds: &dyn Fn(&Cond) -> super::Holds,
             Op::If { arms, els: Some(e) } if arms.is_empty() => e,
             op => vec![op],
         }).collect();
+        // An `else` that is one `if`: its arms the chain's, `else if`.
+        for op in x.iter_mut() {
+            while let Op::If { arms, els } = op
+                && let Some([Op::If { .. }]) = els.as_deref()
+            {
+                let Some(Op::If { arms: more, els: last }) = els.take().and_then(|mut e| e.pop()) else { unreachable!() };
+                arms.extend(more);
+                *els = last;
+            }
+        }
     });
 }
 
