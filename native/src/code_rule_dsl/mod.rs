@@ -4754,12 +4754,12 @@ fn compile_rule(source: &str, format: &str, capabilities_json: &str) -> Result<C
         id,
         report_count_gt,
         rule_mode,
-        canonical,
+        canonical: canonical.into(),
         digest,
         required_capabilities: serde_json::to_string(&required).map_err(json_error)?,
-        clauses,
+        clauses: clauses.into(),
         scope,
-        capabilities,
+        capabilities: std::sync::Arc::new(capabilities),
     })
 }
 
