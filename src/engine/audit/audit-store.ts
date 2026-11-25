@@ -856,6 +856,43 @@ function sayHistoryLeftOut({ database, log }: AuditSource, auditId: string): voi
     + `violations of audit ${auditId}: the ${column} of its row holds no JSON object for them, which only a damaged file or a hand edit leaves.\n`);
 }
 
+/** The history rows `query` asks for, as a condition on `audit_violations`: its range, owner, rule and session. */
+function historyMatching(query: ViolationHistoryQuery, repositoryId?: Repository): SQL | undefined {
+  const ruleId = query.ruleId?.trim() || null;
+  const sessionId = query.sessionId?.trim() || null;
+  return and(
+    sql`${auditViolations.startedAt} >= ${query.since}`,
+    scopedOwner(auditViolations.sessionId, auditViolations.repositoryId, repositoryId),
+    ruleId === null ? undefined : eq(auditViolations.ruleId, ruleId),
+    sessionId === null ? undefined : eq(auditViolations.sessionId, sessionId),
+  );
+}
+
+/** The history rows after `cursor`'s place in newest-first order, as a condition; none without a cursor. */
+function historyContinuing(cursor: string | undefined): SQL | undefined {
+  if (cursor === undefined) return undefined;
+  const after = decodeCursor(cursor, historyCursorSchema);
+  return sql`(
+    ${auditViolations.startedAt} < ${after[0]}
+    OR (${auditViolations.startedAt} = ${after[0]} AND (${auditViolations.auditId} < ${after[1]}
+      OR (${auditViolations.auditId} = ${after[1]} AND ${auditViolations.ordinal} > ${after[2]})))
+  )`;
+}
+
+/**
+ * The page of `rows`, read `limit` and one more: the first `limit` rows' readable entries (`readableHistory`), and a
+ * cursor after the last of those rows, readable or not, when the one more exists.
+ */
+function historyPage(source: AuditSource, rows: readonly HistoryRow[], limit: number, total: number): ViolationHistoryPage {
+  const shown = rows.slice(0, limit);
+  const last = shown.at(-1);
+  return {
+    violations: readableHistory(source, shown),
+    total,
+    nextCursor: rows.length > limit && last !== undefined ? encodeCursor([last.at, last.auditId, last.ordinal]) : null,
+  };
+}
+
 /**
  * Violations newest first, one row per audit that produced them. Repeats within a single audit collapse;
  * repeats across audits stay, because the page shows a rule's history rather than its current state. Pages
@@ -866,20 +903,8 @@ function sayHistoryLeftOut({ database, log }: AuditSource, auditId: string): voi
 function listViolationHistory(source: AuditSource, query: ViolationHistoryQuery, repositoryId?: Repository): ViolationHistoryPage {
   const { database } = source;
   const { limit } = paging(query);
-  const ruleId = query.ruleId?.trim() || null;
-  const sessionId = query.sessionId?.trim() || null;
-  const matching = and(
-    sql`${auditViolations.startedAt} >= ${query.since}`,
-    scopedOwner(auditViolations.sessionId, auditViolations.repositoryId, repositoryId),
-    ruleId === null ? undefined : eq(auditViolations.ruleId, ruleId),
-    sessionId === null ? undefined : eq(auditViolations.sessionId, sessionId),
-  );
-  const after = query.cursor === undefined ? undefined : decodeCursor(query.cursor, historyCursorSchema);
-  const continuing = after === undefined ? undefined : sql`(
-    ${auditViolations.startedAt} < ${after[0]}
-    OR (${auditViolations.startedAt} = ${after[0]} AND (${auditViolations.auditId} < ${after[1]}
-      OR (${auditViolations.auditId} = ${after[1]} AND ${auditViolations.ordinal} > ${after[2]})))
-  )`;
+  const matching = historyMatching(query, repositoryId);
+  const continuing = historyContinuing(query.cursor);
   // The page and its total from one snapshot, so a commit between them cannot make them disagree.
   const { rows, total } = database.transaction(() => ({
     rows: database.all<HistoryRow>(sql`
@@ -901,13 +926,7 @@ function listViolationHistory(source: AuditSource, query: ViolationHistoryQuery,
   `),
     total: database.select({ total: count() }).from(auditViolations).where(matching).get()?.total ?? 0,
   }));
-  const shown = rows.slice(0, limit);
-  const last = shown.at(-1);
-  return {
-    violations: readableHistory(source, shown),
-    total,
-    nextCursor: rows.length > limit && last !== undefined ? encodeCursor([last.at, last.auditId, last.ordinal]) : null,
-  };
+  return historyPage(source, rows, limit, total);
 }
 
 function workspaceRoots(database: RerailDatabase, auditIds: readonly string[]): Map<string, string> {
