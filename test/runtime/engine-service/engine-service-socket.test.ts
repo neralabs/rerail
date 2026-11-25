@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
@@ -647,6 +647,36 @@ describe("the holder of a Windows named pipe", () => {
     }
   });
 
+  it.runIf(process.platform === "win32")("is named where the pipe's access list refuses this user the read right, and a hook sends it nothing, not even a connection for the proof", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-unreadable-${process.pid}-${Date.now()}`;
+    // Every right but reading, which Node's client still opens to write.
+    const holder = await accessListHolder(pipe, "FullControl", "ReadData");
+    const home = await mkdtemp(join(tmpdir(), "rerail-unreadable-pipe-"));
+    vi.stubEnv("RERAIL_HOME", home);
+    try {
+      await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 1, url: "http://127.0.0.1:1/", version: "test",
+        databasePath: join(home, "rerail.sqlite"), kernelSocketPath: pipe, ui: "bundled", startedAt: Date.now(), packageRoot: home, accessToken: "capability" }));
+      expect(await pipeServer(pipe, 1_000)).toMatchObject({ pid: holder.pid });
+      await expect(engineEndpointAt(pipe)).rejects.toThrow(`Windows names process ${holder.pid} as its holder`);
+      // One connection for each lookup, which wrote nothing, and none for the proof.
+      expect(await holder.connectionsBefore()).toEqual(["connection", "connection"]);
+    } finally {
+      vi.unstubAllEnvs();
+      holder.end();
+      await removeFolder(home);
+    }
+  });
+
+  it.runIf(process.platform === "win32")("is not named where the pipe's access list refuses this user even the right to read its attributes, and gives the error Windows gave", async () => {
+    const pipe = String.raw`\\.\pipe\rerail-holder-write-only-${process.pid}-${Date.now()}`;
+    const holder = await accessListHolder(pipe, "WriteData");
+    try {
+      expect(await pipeServer(pipe, 1_000)).toMatchObject({ windowsError: 5 });
+    } finally {
+      holder.end();
+    }
+  });
+
   it.runIf(process.platform !== "win32")("is no one off Windows, which has no named pipes", async () => {
     expect(await pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBe("no-pipe");
   });
@@ -663,3 +693,78 @@ describe("the holder of a Windows named pipe", () => {
     }
   });
 });
+
+/** What {@link accessListHolder} gives: the pipe's server process, the connections it took, and its end. */
+interface AccessListHolder {
+  pid: number;
+  /** One line for each connection the pipe took before this call, `connection` and what its client wrote. */
+  connectionsBefore(): Promise<string[]>;
+  end(): void;
+}
+
+/**
+ * A process that serves the Windows pipe `path`, one instance at a time, with an access list that allows everyone the
+ * rights `allow` names and denies everyone those `deny` names (.NET's `PipeAccessRights`): Node cannot set a pipe's
+ * access list, so PowerShell makes it, through .NET calls alone, as `oneInstancePipeLines` says why. It writes a line
+ * for each connection once its client closes, with what the client wrote. `connectionsBefore` has cmd.exe write
+ * `sentinel` to the pipe and gives the lines before the sentinel's: the holder takes one connection at a time, so each
+ * earlier connection has its line by then.
+ */
+async function accessListHolder(path: string, allow: string, deny?: string): Promise<AccessListHolder> {
+  const rule = (rights: string, type: string): string => `$security.AddAccessRule([System.IO.Pipes.PipeAccessRule]::new($everyone, [System.IO.Pipes.PipeAccessRights]'${rights}', [System.Security.AccessControl.AccessControlType]::${type}))`;
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$everyone = [System.Security.Principal.SecurityIdentifier]::new([System.Security.Principal.WellKnownSidType]::WorldSid, $null)",
+    "$security = [System.IO.Pipes.PipeSecurity]::new()",
+    ...(deny === undefined ? [] : [rule(deny, "Deny")]),
+    rule(allow, "Allow"),
+    `$pipe = [System.IO.Pipes.NamedPipeServerStream]::new('${pipeNameOf(path)}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 4096, 4096, $security)`,
+    "[Console]::Out.WriteLine('holding'); [Console]::Out.Flush()",
+    "$buffer = [byte[]]::new(64)",
+    "while ($true) {",
+    "  $pipe.WaitForConnection()",
+    "  $text = ''",
+    "  try { while (($read = $pipe.Read($buffer, 0, $buffer.Length)) -gt 0) { $text += [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read) } } catch { }",
+    "  [Console]::Out.WriteLine('connection ' + $text.Trim()); [Console]::Out.Flush()",
+    "  $pipe.Disconnect()",
+    "}",
+  ].join("\n");
+  const holder = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    stdio: ["ignore", "pipe", "inherit"],
+    windowsHide: true,
+  });
+  let said = "";
+  holder.stdout.on("data", (chunk: Buffer) => {
+    said += chunk.toString();
+  });
+  const closed = once(holder, "close");
+  /** Waits until the holder has written `text`; throws once it ends without it. */
+  const until = async (text: string): Promise<void> => {
+    while (!said.includes(text)) {
+      const ended = await Promise.race([once(holder.stdout, "data").then(() => false), closed.then(() => true)]);
+      if (ended) throw new Error(`the pipe holder ended before it wrote ${text}: ${said}`);
+    }
+  };
+  await until("holding").catch((error: unknown) => {
+    holder.kill();
+    throw error;
+  });
+  return {
+    pid: holder.pid!,
+    connectionsBefore: async () => {
+      writeSentinel(path);
+      await until("connection sentinel");
+      const lines = said.split(/\r?\n/u).map(line => line.trim());
+      return lines.slice(lines.indexOf("holding") + 1, lines.indexOf("connection sentinel"));
+    },
+    end: () => holder.kill(),
+  };
+}
+
+/** Writes `sentinel` to the pipe `path` through cmd.exe, again while its holder takes its one instance back from the last client. */
+function writeSentinel(path: string): void {
+  for (let tries = 1; tries <= 50; tries++) {
+    if (spawnSync("cmd.exe", ["/d", "/s", "/c", `"echo sentinel>${path}"`], { windowsHide: true, windowsVerbatimArguments: true }).status === 0) return;
+  }
+  throw new Error(`cmd.exe could not write to ${path} in 50 tries`);
+}

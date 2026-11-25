@@ -10,10 +10,13 @@ use napi_derive::napi;
 #[napi(object)]
 pub struct NamedPipeServer {
     /// The process holding it (`GetNamedPipeServerProcessId`); absent when other clients kept every instance of the
-    /// pipe taken until the wait ran out, so no instance could be opened to ask.
+    /// pipe taken until the wait ran out, so no instance could be opened to ask, or Windows gave `windows_error`.
     pub pid: Option<u32>,
     /// When it started, in milliseconds since the Unix epoch (`GetProcessTimes`); absent where this user may not ask.
     pub started_at: Option<f64>,
+    /// The error Windows gave where a pipe of that name is there but refused the open or would not name its holder:
+    /// `ERROR_ACCESS_DENIED` where its access list refuses this user the right to read its attributes. Absent otherwise.
+    pub windows_error: Option<u32>,
 }
 
 /// [`pipe_server`], run on a thread of the host's worker pool: the caller's own thread runs on while the lookup waits
@@ -57,8 +60,8 @@ impl napi::Task for NamedPipeServerTask {
 
 /// The process holding the server end of the Windows named pipe `path`, and when it started. Opening the pipe takes
 /// one of its instances as a client and sends nothing; while other clients hold every instance it waits for one to free
-/// and opens again until `timeout_ms` has passed ([`open_within`]), and then says no pid. None where no pipe of that
-/// name exists or this user may not open it, and on every other system, which has no named pipes.
+/// and opens again until `timeout_ms` has passed ([`open_within`]), and then says no pid. None where Windows says no
+/// pipe of that name exists, and on every other system, which has no named pipes.
 fn pipe_server(path: &str, timeout_ms: u32) -> Option<NamedPipeServer> {
     #[cfg(windows)]
     {
@@ -78,8 +81,10 @@ enum PipeOpen<H> {
     Opened(H),
     /// Other clients hold every instance (`ERROR_PIPE_BUSY`).
     Busy,
-    /// No pipe of that name exists, or this user may not open it.
-    Refused,
+    /// No pipe of that name exists (`ERROR_FILE_NOT_FOUND`).
+    Missing,
+    /// Windows refused the open with this error, `ERROR_ACCESS_DENIED` where this user may not open the pipe.
+    Refused(u32),
 }
 
 /// Opens an instance of a named pipe (`open`), waiting while other clients hold every instance: `wait` returns once one
@@ -117,9 +122,9 @@ mod windows {
     use std::ptr::{null, null_mut};
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{
-        ERROR_PIPE_BUSY, FILETIME, GENERIC_READ, GetLastError, INVALID_HANDLE_VALUE,
+        ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY, FILETIME, GetLastError, INVALID_HANDLE_VALUE,
     };
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
+    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, FILE_READ_ATTRIBUTES, OPEN_EXISTING};
     use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, WaitNamedPipeW};
     use windows_sys::Win32::System::Threading::{
         GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -131,23 +136,31 @@ mod windows {
     pub(super) fn named_pipe_server(path: &str, timeout_ms: u32) -> Option<NamedPipeServer> {
         let pipe = match open_pipe(path, timeout_ms) {
             PipeOpen::Opened(pipe) => pipe,
-            PipeOpen::Busy => {
-                return Some(NamedPipeServer {
-                    pid: None,
-                    started_at: None,
-                });
-            }
-            PipeOpen::Refused => return None,
+            PipeOpen::Busy => return Some(unnamed(None)),
+            PipeOpen::Missing => return None,
+            PipeOpen::Refused(error) => return Some(unnamed(Some(error))),
         };
         let mut pid = 0u32;
         // SAFETY: `pipe` is an open handle to an instance of the pipe, and `pid` outlives the call.
         if unsafe { GetNamedPipeServerProcessId(pipe.as_raw_handle(), &mut pid) } == 0 {
-            return None;
+            // SAFETY: reads the calling thread's last-error value, which the call just set.
+            return Some(unnamed(Some(unsafe { GetLastError() })));
         }
         Some(NamedPipeServer {
             pid: Some(pid),
             started_at: process_started_at(pid),
+            windows_error: None,
         })
+    }
+
+    /// What the lookup says of a pipe that is there when Windows names no holder: the error Windows gave
+    /// (`windows_error`), or none where other clients kept every instance taken.
+    fn unnamed(windows_error: Option<u32>) -> NamedPipeServer {
+        NamedPipeServer {
+            pid: None,
+            started_at: None,
+            windows_error,
+        }
     }
 
     /// A client handle to an instance of the pipe `path`, waiting for one to free until `timeout_ms` has passed.
@@ -169,6 +182,10 @@ mod windows {
     }
 
     fn open_pipe_once(name: &[u16]) -> PipeOpen<OwnedHandle> {
+        // Only the right to read the pipe's attributes, the least that opens it: the open neither reads nor writes,
+        // `GetNamedPipeServerProcessId` needs no more, and every open Node's client makes asks this right too, so a
+        // pipe Node could write to opens here. Asking to read as well refuses a pipe whose access list denies this
+        // user the read right, or that its server made inbound only.
         // No quality-of-service flags (the 0 after OPEN_EXISTING): this open writes nothing, so Windows lets the
         // process serving the pipe act as no one, which the case below checks. `SECURITY_SQOS_PRESENT` with
         // `SECURITY_IDENTIFICATION` would hand that process this user's identity at the open.
@@ -176,7 +193,7 @@ mod windows {
         let handle = unsafe {
             CreateFileW(
                 name.as_ptr(),
-                GENERIC_READ,
+                FILE_READ_ATTRIBUTES,
                 0,
                 null(),
                 OPEN_EXISTING,
@@ -189,10 +206,10 @@ mod windows {
             return PipeOpen::Opened(unsafe { OwnedHandle::from_raw_handle(handle) });
         }
         // SAFETY: reads the calling thread's last-error value, which the open just set.
-        if unsafe { GetLastError() } == ERROR_PIPE_BUSY {
-            PipeOpen::Busy
-        } else {
-            PipeOpen::Refused
+        match unsafe { GetLastError() } {
+            ERROR_PIPE_BUSY => PipeOpen::Busy,
+            ERROR_FILE_NOT_FOUND => PipeOpen::Missing,
+            error => PipeOpen::Refused(error),
         }
     }
 
@@ -347,12 +364,12 @@ mod tests {
     fn opens_once_more_after_a_wait_that_fails_and_takes_its_answer() {
         // The pipe's server closed its last instance during the wait.
         let expected = Run {
-            answer: PipeOpen::Refused,
+            answer: PipeOpen::Missing,
             waits: vec![30_000],
             opens: 2,
         };
         assert_eq!(
-            run(vec![PipeOpen::Busy, PipeOpen::Refused], vec![30_000], false),
+            run(vec![PipeOpen::Busy, PipeOpen::Missing], vec![30_000], false),
             expected
         );
     }
@@ -366,10 +383,10 @@ mod tests {
         };
         assert_eq!(run(vec![PipeOpen::Opened("pipe")], vec![], true), expected);
         let expected = Run {
-            answer: PipeOpen::Refused,
+            answer: PipeOpen::Refused(5),
             waits: vec![],
             opens: 1,
         };
-        assert_eq!(run(vec![PipeOpen::Refused], vec![], true), expected);
+        assert_eq!(run(vec![PipeOpen::Refused(5)], vec![], true), expected);
     }
 }

@@ -175,10 +175,10 @@ const NOTHING_SENT = "so nothing was sent to it";
  * capability daemon.json records, only once the pipe shows it is the home's own daemon: Windows says the process
  * holding the pipe's server end is the daemon daemon.json records ({@link heldByRecordedDaemon}), which wrote that
  * capability there itself, as a daemon of any Rerail version is, one before 0.1.1 that records none included; or else,
- * only where Windows did not name a holder, the engine on the pipe proves it holds that capability
- * ({@link provedEndpoint}). A holder Windows names that is not that daemon is sent nothing, not even the proof's
- * challenge: the server of a pipe can act as the account of a client that writes to it, since Node opens pipes without
- * `SECURITY_SQOS_PRESENT`. A proof the pipe gave this process for the same capability since the event arrived
+ * only where Windows says no pipe of that name exists or could not be asked, the engine on the pipe proves it holds
+ * that capability ({@link provedEndpoint}). A holder Windows names that is not that daemon, and a pipe that refuses to
+ * let Windows name its holder, are sent nothing, not even the proof's challenge: the server of a pipe can act as the
+ * account of a client that writes to it, since Node opens pipes without `SECURITY_SQOS_PRESENT`. A proof the pipe gave this process for the same capability since the event arrived
  * ({@link provedSinceArrival}) answers for both. Windows' wait for a free instance of the pipe stands where the event's
  * own wait to connect would, so the event keeps its whole wait from its request.
  */
@@ -194,8 +194,8 @@ async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): 
 }
 
 /**
- * The endpoint for the Windows engine pipe `pipe` once Windows named no holder (`unnamed`: no pipe took a connection, or
- * Windows could not be asked): the engine on it must prove it holds the capability daemon.json (`state`) records,
+ * The endpoint for the Windows engine pipe `pipe` once Windows named no holder (`unnamed`: it says no pipe of that name
+ * exists, or could not be asked): the engine on it must prove it holds the capability daemon.json (`state`) records,
  * whichever pipe daemon.json names, and the event then waits what the proof left of {@link ENGINE_ANSWER_WAIT_MS}
  * ({@link EngineEndpoint.proofTookMs}). An engine that does not prove it gets nothing, nor does any engine when
  * daemon.json records no capability: the error says why ({@link notSentReason}).
@@ -263,10 +263,12 @@ function heldByRecordedDaemon(holder: PipeServer, state: DaemonState): boolean {
 
 /**
  * Why the engine on the Windows pipe `RERAIL_ENGINE_SOCKET` names was sent nothing once Windows answered for it
- * (`holder`) but did not name the daemon daemon.json (`state`) records: other clients kept every instance taken past
- * the wait, so Windows could not be asked, or it names another process, which may have taken that daemon's pid.
+ * (`holder`) but did not name the daemon daemon.json (`state`) records: the pipe is there but Windows refused the
+ * lookup's open or would not name its holder, other clients kept every instance taken past the wait, so Windows could
+ * not be asked, or it names another process, which may have taken that daemon's pid.
  */
 function heldElsewhereReason({ socketPath, home }: NamedPipe, holder: PipeServer, state: DaemonState): string {
+  if (typeof holder.windowsError === "number") return `the engine pipe ${socketPath} is there, but Windows refused to say which process holds it (Windows error ${holder.windowsError}), so it could not be shown to be this Rerail home's daemon, ${NOTHING_SENT}`;
   if (typeof holder.pid !== "number") return `other clients kept every instance of the engine pipe ${socketPath} taken for ${ENGINE_ANSWER_WAIT_MS / 1_000} s, so Windows could not say whether this Rerail home's daemon holds it, ${NOTHING_SENT}`;
   const file = join(home, DAEMON_STATE_FILE);
   const which = holder.pid === state.pid ? `which Windows does not show to have started before ${file} recorded the daemon's start` : `and ${file} records process ${state.pid}`;
@@ -754,7 +756,7 @@ export interface DaemonMachine {
   /**
    * Windows: the process holding the server end of the named pipe `socketPath` and when it started, as Windows records
    * them, opening again while other clients hold every instance until `timeoutMs` has passed, with no pid once it has;
-   * `no-pipe` where no pipe takes a connection and `not-asked` where Windows could not be asked (`pipeServer`). This
+   * `no-pipe` where Windows says no pipe of that name exists and `not-asked` where it could not be asked (`pipeServer`). This
    * process's own thread runs on while it waits.
    */
   pipeServer(socketPath: string, timeoutMs: number): Promise<PipeServerAnswer>;

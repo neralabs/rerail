@@ -84,14 +84,15 @@ export function enginePipeListed(pipes: () => readonly string[] = listPipes): bo
 
 /**
  * What Windows says of the server end of a named pipe ({@link pipeServer}): the process holding it and when that process
- * started; with no pid, other clients kept every instance taken for the whole wait, so no instance could be opened to ask.
+ * started; with no pid, other clients kept every instance taken for the whole wait, so no instance could be opened to ask,
+ * or, with `windowsError`, the pipe is there but Windows refused the lookup's open or would not name its holder.
  */
 export type PipeServer = NativeNamedPipeServer;
 
 /**
- * What {@link pipeServer} gives: the server end Windows names ({@link PipeServer}); `no-pipe` where no pipe of that name
- * took a connection or Windows named no holder; `not-asked` where Windows could not be asked, since the native binding
- * would not load in this process, predates the question or threw.
+ * What {@link pipeServer} gives: what Windows says of the server end ({@link PipeServer}); `no-pipe` where Windows says no
+ * pipe of that name exists; `not-asked` where Windows could not be asked, since the native binding would not load in
+ * this process, predates the question or threw.
  */
 export type PipeServerAnswer = PipeServer | "no-pipe" | "not-asked";
 
@@ -100,7 +101,7 @@ export type PipeServerAnswer = PipeServer | "no-pipe" | "not-asked";
  * for each pipe instance (the native binding's `namedPipeServer`). While other clients hold every instance it waits for
  * one to free and opens again, as Node's own client does, until `timeoutMs` has passed, on a thread of the worker pool,
  * so this process's own thread and its timers run on meanwhile. Any local user can create a pipe of any name, but not
- * one Windows records as another process's. `no-pipe` where no such pipe takes a connection; `not-asked` where the
+ * one Windows records as another process's. `no-pipe` where Windows says no such pipe exists; `not-asked` where the
  * binding (`binding`, the engine's own unless a test stands in one) predates the question, will not load in this
  * process or throws. Either way the engine's proof decides, and with no capability in daemon.json nothing can; the
  * first load failure or throw is reported ({@link reportPipeServerFailure}).

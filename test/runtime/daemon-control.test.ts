@@ -2123,6 +2123,14 @@ describe("a state file Windows left behind", () => {
       expect(asked).toEqual([]);
     });
 
+    it("is sent nothing, not even the proof's challenge, and the hook says Windows refused to say who holds it, when the pipe is there but refuses the lookup's open", async () => {
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const refused = `the engine pipe ${PIPE} is there, but Windows refused to say which process holds it (Windows error 5), so it could not be shown to be this Rerail home's daemon, so nothing was sent to it`;
+      // As the native binding gives it, the pid and start absent or null.
+      for (const holder of [{ windowsError: 5 }, { pid: null, startedAt: null, windowsError: 5 }]) await expect(engineEndpointAt(PIPE, undefined, answering("proved", "win32", holder))).rejects.toThrow(refused);
+      expect(asked).toEqual([]);
+    });
+
     describe("named in a hook whose start check had the same pipe's proof", () => {
       /** A hook's deadline for an event that arrived at `arrived`. */
       const deadlineFrom = (arrived: number) => arrived + HOOK_DAEMON_WAIT_MS;
