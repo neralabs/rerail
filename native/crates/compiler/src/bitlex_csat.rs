@@ -34,10 +34,11 @@ pub struct Gates {
     /// has at most two, else where they begin in `args` (decision 0670: one load a gate, on the CPU and a device).
     rec: Grown<[Lit; 4]>,
     args: Grown<Lit>,
+    /// The wide gates (more than two arguments): each one's number among them is its record's fourth word, its
+    /// long clause's counter in the device's search (`bitlex_csat_gpu`'s `cs_occ`).
+    wides: usize,
 }
 
-/// A wide gate's (more than two arguments) record's fourth word: set where a literal is among its arguments twice.
-pub const REPEATS: u32 = 1 << 31;
 
 /// The kinds in a record's first word.
 const KINDS: [Kind; 3] = [Kind::And, Kind::Xor, Kind::One];
@@ -45,7 +46,7 @@ const KINDS: [Kind; 3] = [Kind::And, Kind::Xor, Kind::One];
 impl Gates {
     /// None yet, built in `block`, where a kernel reads them (`bitlex_grown`).
     pub fn in_block(block: &FormulaBlock) -> Gates {
-        Gates { rec: Grown::in_block(block), args: Grown::in_block(block) }
+        Gates { rec: Grown::in_block(block), args: Grown::in_block(block), wides: 0 }
     }
 
     /// Its records and wide arguments: their block and byte offsets there (`None` on the heap).
@@ -71,12 +72,20 @@ impl Gates {
             _ => {
                 let start = self.args.len() as Lit;
                 self.args.extend_from_slice(args);
-                let mut sorted = args.to_vec();
-                sorted.sort_unstable();
-                let repeats = if sorted.windows(2).any(|w| w[0] == w[1]) { REPEATS } else { 0 };
-                [head, out, start, repeats as Lit]
+                self.wides += 1;
+                [head, out, start, self.wides as Lit - 1]
             }
         });
+    }
+
+    /// The wide gates (more than two arguments).
+    pub fn wides(&self) -> usize {
+        self.wides
+    }
+
+    /// Gate `g`'s number among the wide gates (it is one).
+    pub fn wide_of(&self, g: usize) -> usize {
+        self.rec[g][3] as usize
     }
 
     /// `out` holds exactly when each of `args` does.
@@ -102,17 +111,8 @@ impl Gates {
         self.rec.truncate(n);
         let last = self.rec.iter().rev().find(|r| r[0] >> 2 > 2);
         let end = last.map_or(0, |r| (r[2] + (r[0] >> 2)) as usize);
+        self.wides = last.map_or(0, |r| r[3] as usize + 1);
         self.args.truncate(end);
-    }
-
-    /// Whether a literal is among gate `g`'s arguments twice (a wide gate's `REPEATS`).
-    pub fn repeats(&self, g: usize) -> bool {
-        let r = self.rec[g];
-        match r[0] >> 2 {
-            0 | 1 => false,
-            2 => r[2] == r[3],
-            _ => r[3] as u32 & REPEATS != 0,
-        }
     }
 
     pub fn kind(&self, g: usize) -> Kind {
@@ -230,10 +230,81 @@ pub struct Fanout {
     starts: Grown<u32>,
     gates: Grown<u32>,
     seeds: Vec<u32>,
-    /// Beside `gates`, entry for entry: how many of the gate's arguments are the variable's positive literal and its
-    /// negative one (`pos | neg << 16`; 0, 0 where it is only the gate's output). What a value adds to the gate's
-    /// counter in the device's search (`bitlex_csat_lanes`, `bitlex_csat_gpu`).
-    counts: Grown<u32>,
+    /// The device's propagation (`bitlex_csat_gpu`): each literal's occurrences (from `occ_starts[2 k]` to
+    /// `occ_starts[2 k + 2]`, its counted ones to `occ_starts[2 k + 1]`, `k` its slot `2 v + (l < 0)`), what its
+    /// truth does to each of its gates, `OCC` words each (`occurrences`).
+    occ_starts: Grown<u32>,
+    occ: Grown<u32>,
+    /// The device's narrow gates (at most two arguments, every Xor) by variable (from `narrow_starts[v]` to
+    /// `narrow_starts[v + 1]`), one word a gate: checked from their values when the variable is set, no state.
+    narrow_starts: Grown<u32>,
+    narrow: Grown<u32>,
+}
+
+/// A literal's occurrence's words: its gate and action (`g | action << 28`), and one by action.
+pub const OCC: usize = 2;
+/// It falsifies `m` literals of a wide gate's long clause (an And's `o | -a1 | ... | -an`, its output left out where
+/// it has none; a One's `a1 | ... | an`), at positions whose sum is `p` (an And's output 0, its arguments from 1;
+/// without an output, from 0): `m | p << 16`, modulo 2^16, what it adds to the gate's counter (`bitlex_csat_gpu`'s
+/// `cs_occ`, the clause's length and its counter's number read from the gate's record; Nadel et al. 2026, §4.3,
+/// with positions for literals' codes). A literal's counted occurrences come first in its list.
+pub const OCC_COUNT: u32 = 0;
+/// It is a wide And's output: every argument true.
+pub const OCC_OUT: u32 = 1;
+/// It is a wide And's argument (the second word) false: the output false.
+pub const OCC_ARG: u32 = 2;
+/// It is a wide One's argument (the second word) true: every other false.
+pub const OCC_HELD: u32 = 3;
+
+/// Whether the device checks gate `g` from its values alone (`Fanout::narrow`), not by its occurrences.
+fn narrow(gates: &Gates, g: usize) -> bool {
+    gates.args(g).len() <= 2 || gates.kind(g) == Kind::Xor
+}
+
+/// A wide gate's occurrences, each `(literal, words)`: its counted ones (`OCC_COUNT`) to `counted`, the rest to
+/// `rest`.
+fn occurrences(gates: &Gates, g: usize, counted: &mut Vec<(Lit, [u32; OCC])>, rest: &mut Vec<(Lit, [u32; OCC])>) {
+    let gw = g as u32;
+    let args = gates.args(g);
+    let o = gates.out(g);
+    let head = |action: u32| gw | action << 28;
+    if narrow(gates, g) {
+        return;
+    }
+    // The long clause's literals, by position; each literal falsifying some (their complement) counted once.
+    let lits: Vec<Lit> = match gates.kind(g) {
+        Kind::And => std::iter::once(o).filter(|&o| o != 0).chain(args.iter().map(|&a| -a)).collect(),
+        _ => args.to_vec(),
+    };
+    if lits.len() >= 1 << 16 {
+        // Past a counter's 16 bits: the device does not take its formula (`bitlex_csat_gpu::describe`).
+        return;
+    }
+    let mut by: Vec<(Lit, u32)> = lits.iter().enumerate().map(|(p, &y)| (-y, p as u32)).collect();
+    by.sort_unstable();
+    for run in by.chunk_by(|a, b| a.0 == b.0) {
+        let p = run.iter().fold(0u32, |s, &(_, p)| s.wrapping_add(p)) & 0xFFFF;
+        counted.push((run[0].0, [head(OCC_COUNT), run.len() as u32 | p << 16]));
+    }
+    let mut seen: Vec<Lit> = Vec::new();
+    if gates.kind(g) == Kind::And {
+        if o != 0 {
+            rest.push((o, [head(OCC_OUT), 0]));
+            for (i, &a) in args.iter().enumerate() {
+                if !seen.contains(&a) {
+                    seen.push(a);
+                    rest.push((-a, [head(OCC_ARG), i as u32]));
+                }
+            }
+        }
+    } else {
+        for (i, &a) in args.iter().enumerate() {
+            if !seen.contains(&a) {
+                seen.push(a);
+                rest.push((a, [head(OCC_HELD), i as u32]));
+            }
+        }
+    }
 }
 
 fn var(l: Lit) -> usize {
@@ -294,30 +365,70 @@ impl Fanout {
             }
         }
         let seeds = range.clone().filter(|&g| seed(gates, g)).map(|g| g as u32).collect();
-        // Each entry's argument counts: a gate's arguments of its variable, positive and negative.
-        let mut counts = Grown::like(&gates.rec);
-        counts.resize(out.len(), 0);
-        for v in 0..=vars {
-            for k in starts[v] as usize..starts[v + 1] as usize {
-                let (mut pos, mut neg) = (0u32, 0u32);
-                for &a in gates.args(out[k] as usize) {
-                    if var(a) == v {
-                        if a > 0 {
-                            pos += 1;
-                        } else {
-                            neg += 1;
-                        }
-                    }
+        // Each literal's occurrences, by its slot (`2 v + (l < 0)`), in gate order, its counted ones first:
+        // counted, then written in place (a gate's at a time). Two starts a slot: its list's, and its uncounted
+        // ones'; its end the next slot's.
+        let slots = 2 * (vars + 1);
+        let (mut one, mut two): (Vec<(Lit, [u32; OCC])>, Vec<(Lit, [u32; OCC])>) = (Vec::new(), Vec::new());
+        let mut n = vec![[0u32; 2]; slots];
+        for g in range.clone() {
+            assert!(g < 1 << 28, "the device's occurrences: a gate past 2^28");
+            one.clear();
+            two.clear();
+            occurrences(gates, g, &mut one, &mut two);
+            for (part, list) in [&one, &two].into_iter().enumerate() {
+                for &(l, _) in list {
+                    n[2 * var(l) + usize::from(l < 0)][part] += 1;
                 }
-                counts[k] = pos | neg << 16;
             }
         }
-        Fanout { starts, gates: out, seeds, counts }
+        let mut occ_starts = Grown::like(&gates.rec);
+        let mut at = 0u32;
+        for k in &n {
+            occ_starts.push(at);
+            occ_starts.push(at + k[0]);
+            at += k[0] + k[1];
+        }
+        occ_starts.push(at);
+        let mut occ = Grown::like(&gates.rec);
+        occ.resize(OCC * at as usize, 0);
+        let mut fill: Vec<[u32; 2]> = (0..slots).map(|k| [occ_starts[2 * k], occ_starts[2 * k + 1]]).collect();
+        for g in range {
+            one.clear();
+            two.clear();
+            occurrences(gates, g, &mut one, &mut two);
+            for (part, list) in [&one, &two].into_iter().enumerate() {
+                for &(l, w) in list {
+                    let k = 2 * var(l) + usize::from(l < 0);
+                    let at = OCC * fill[k][part] as usize;
+                    occ[at..at + OCC].copy_from_slice(&w);
+                    fill[k][part] += 1;
+                }
+            }
+        }
+        // The narrow gates by variable: the gates' lists, the wide ones left out.
+        let mut narrow_starts = Grown::like(&gates.rec);
+        let mut nar = Grown::like(&gates.rec);
+        for v in 0..=vars {
+            narrow_starts.push(nar.len() as u32);
+            for k in starts[v] as usize..starts[v + 1] as usize {
+                if narrow(gates, out[k] as usize) {
+                    nar.push(out[k]);
+                }
+            }
+        }
+        narrow_starts.push(nar.len() as u32);
+        Fanout { starts, gates: out, seeds, occ_starts, occ, narrow_starts, narrow: nar }
     }
 
-    /// Its entries' argument counts (`counts`, beside the gates): their byte offset in the block they are in.
-    pub fn placed_counts(&self) -> Option<usize> {
-        Some(self.counts.placed()?.1)
+    /// Its narrow gates' starts and gates (`narrow_starts`, `narrow`): their byte offsets in the block they are in.
+    pub fn placed_narrow(&self) -> Option<(usize, usize)> {
+        Some((self.narrow_starts.placed()?.1, self.narrow.placed()?.1))
+    }
+
+    /// Its literals' occurrences' starts and words (`occ_starts`, `occ`): their byte offsets in the block they are in.
+    pub fn placed_occ(&self) -> Option<(usize, usize)> {
+        Some((self.occ_starts.placed()?.1, self.occ.placed()?.1))
     }
 
     /// Its starts (a variable's gates from `starts[v]` to `starts[v + 1]`) and gates: their byte offsets in the
@@ -343,13 +454,6 @@ impl Fanout {
         &self.gates[self.starts[v] as usize..self.starts[v + 1] as usize]
     }
 
-    /// `of_var`'s entries' argument counts (`counts`), in its order.
-    pub(crate) fn counts_of(&self, v: usize) -> &[u32] {
-        if v + 1 >= self.starts.len() {
-            return &[];
-        }
-        &self.counts[self.starts[v] as usize..self.starts[v + 1] as usize]
-    }
 }
 
 /// No reason (a decision, or a unit given), and no link.

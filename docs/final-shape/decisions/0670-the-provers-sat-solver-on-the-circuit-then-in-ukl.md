@@ -571,3 +571,37 @@ formula").
   12.2 s. The hard dump: 889 conflicts and 104,091 rounds (706 and 98,043); 1 copy 1.95 s (1.57 s), 512 copies
   13.6 s (5.25 s), 1,024 copies 59.7 s (26 s); its gate items 2,291 M cycles (1,564 M) and its jumps back 551 M
   (189 M), which now take each value back from its gates' counters.
+- **Propagation as the paper's, the counters' two passes removed** (the user, 2026-11-25: "I already told you to
+  give up the step-for-step", "delete the incorrect version and write it the correct way"). The device's search no
+  longer keeps the twin's steps: its tests compare answers (each model holds; unsatisfiable, the whole formula is,
+  and still is without the own units its core leaves out; with no conflict to spend, unsatisfiable exactly where the
+  CPU's is; each carried clause the window's clauses and gates imply). Its propagation is Nadel et al.'s
+  (Algorithm 1, §4.3), with CDCL's undo:
+  - A wide gate (more than two arguments) has one counter word for its long clause (an And's `o | -a1 | ... | -an`,
+    a One's `a1 | ... | an`): the literals false (low 16 bits) and the sum of their positions in the clause (high 16,
+    modulo). A true literal's occurrence (`Fanout::occ`, two words: the gate and action, and `m | p << 16`, what it
+    adds) is one atomic add; the word it returns decides: all false, a conflict; one left, it is implied, at the
+    position the clause's sum less the counted sum is, its argument read then and only then. The paper keys the sum
+    by literal codes; positions keep it in 16 bits whatever the variables, and give the explanation's argument
+    directly. Counters are numbered among the wide gates (the record's fourth word again), the first 512 in
+    threadgroup memory.
+  - A wide And's output true, its argument false, a wide One's argument true: occurrences with no state, their
+    consequences spread over the gate's arguments by the group, 32 at a time.
+  - A narrow gate (at most two arguments, every Xor) has no state: it is checked from its values when one of its
+    variables is set (`Fanout::narrow`, one word a gate a variable), as the paper keeps binary clauses stateless.
+  - A literal's counted occurrences come first in its list; a jump back takes only those back from the counters.
+  - A formula of fewer than 2,000 gates and clauses propagates on lane 0 with plain reads and writes (the paper's
+    serial variant, `RERAIL_CSAT_SERIAL` to move the bound); larger ones as one stream of occurrences over the
+    lanes.
+  - The variables' words are separate arrays again (6 words a variable): the one-sector record made a value read
+    pull one variable's sector where the arrays pull eight variables' words, and with 512 searches resident that
+    traffic slowed every part of the search.
+- Measured (the Spark; other sessions' GPU work ran in some runs, so the old commit and this one alternated in the
+  same minutes): the device's tests on both propagation paths; cold Kotlin with the device alone, the shipped
+  bytes; Kotlin's 36 searches of over 100 ms on the device at once 11.8 s (none under the serial bound). The hard
+  dump: 916 conflicts and 106,437 rounds, 1 copy 1.65 s (1.60 s at the commit before the counters, the same
+  minutes), 512 copies 21.8 and 23.2 s (19.4 s); its gate items 1,301 M cycles alone (1,432 M), its jumps back
+  194 M (159 M). Along the way, with 16-byte occurrence entries, every narrow gate listed under both literals of
+  each variable and the one-sector record, 512 copies took 44–51 s against the old commit's 11–17 s; at one copy
+  they were the same, so the cost was each search's own data's traffic (every copy of a dump has its own gates in
+  the block, as distinct formulas do). On lane 0 alone the hard dump takes 7.3 s (1.6 s on the group).

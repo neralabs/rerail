@@ -1,14 +1,12 @@
-//! The device's search (`bitlex_csat_gpu.uglykl`, decision 0670, step 3) on the CPU, step for step: the same rounds
-//! (a round's literals, their watch lists, their values added to their gates' counters, their gates 32 at a time,
-//! each checked only where its counter says it can imply, what a step implies placed in lane order), the
-//! same decisions (the integer activities' heap), the same analysis, jumps back and reductions. A formula's answer,
-//! its model and every count are the kernel's on any backend, so a caller may take either's: the prover's answers
-//! then do not depend on whether the machine has a device.
+//! The device's search (`bitlex_csat_gpu.uglykl`, decision 0670, step 3) on the CPU: its parts (a round's
+//! literals, their watch lists, their gates 32 at a time, what a step implies placed in lane order; the integer
+//! activities' heap; the analysis, jumps back and reductions), where the machine has no device or the device fails.
+//! Not the device's steps: the device decides a wide gate by its counter's atomic add (Nadel et al. 2026), and the
+//! two searches may differ. Their answers agree where both have one; a model, a core or what a solve carries is
+//! sound from either (Kotlin's shipped answers are the same bytes from the device alone, decision 0670).
 //!
-//! The kernel runs a SIMD group's lanes at once; here a step's lanes are taken in lane order, each reading the state
-//! as the step began where the kernel's do (a gate's check, a literal's value before the step's writes). Each function
-//! names the kernel's it follows. Its working state is its own, as the kernel's is: the formula is read where it was
-//! built (decision 0353).
+//! Each function names the kernel's it follows. Its working state is its own, as the kernel's is: the formula is
+//! read where it was built (decision 0353).
 
 use crate::bitlex_csat::{Fanout, Gates, Kind};
 use crate::bitlex_grown::Grown;
@@ -240,10 +238,6 @@ struct Search<'a> {
     limits: Vec<u32>,
     seen: Vec<bool>,
     act: Vec<u32>,
-    /// Each gate's counter (`cs_cnt`): its arguments false (low 16 bits) and true (high 16), of the trail's first
-    /// `counted` values; a round counts its literals before it judges their gates (`may`).
-    cnt: Vec<u32>,
-    counted: usize,
     heap: Vec<u32>,
     hat: Vec<u32>,
     whead: Vec<u32>,
@@ -362,8 +356,6 @@ impl<'a> Search<'a> {
             limits: vec![0; n],
             seen: vec![false; n],
             act: vec![0; n],
-            cnt: vec![0; f.gates.len()],
-            counted: 0,
             heap: vec![0; n],
             hat: vec![NONE; n],
             whead: vec![NONE; 2 * n],
@@ -697,57 +689,6 @@ impl<'a> Search<'a> {
         r
     }
 
-    /// `cs_count`: the trail's values from `from` to `to` added to (or taken from) their gates' counters.
-    fn count(&mut self, from: usize, to: usize, add: bool) {
-        let f = self.f;
-        for i in from..to {
-            let l = self.trail[i];
-            let v = lvar(l);
-            let window: (&[u32], &[u32]) = if v <= f.fan.vars() { (f.fan.of_var(v), f.fan.counts_of(v)) } else { (&[], &[]) };
-            let own: (&[u32], &[u32]) = f.own.map_or((&[], &[]), |o| (o.of_var(v), o.counts_of(v)));
-            for (gs, cs) in [window, own] {
-                for (&g, &pn) in gs.iter().zip(cs) {
-                    let (pos, neg) = (pn & 0xFFFF, pn >> 16);
-                    let x = if l > 0 { neg | pos << 16 } else { pos | neg << 16 };
-                    let c = &mut self.cnt[g as usize];
-                    *c = if add { c.wrapping_add(x) } else { c.wrapping_sub(x) };
-                }
-            }
-        }
-    }
-
-    /// `cs_may`: whether gate `g`'s check can find anything, from its counter and its output's value alone (its
-    /// arguments not read). The counter lags the trail (its last values not counted yet): a gate passed over here
-    /// is judged again when they are, in their round.
-    fn may(&self, g: usize) -> bool {
-        let gates = self.f.gates;
-        let args = gates.args(g);
-        let n = args.len() as u32;
-        let x = self.cnt[g];
-        let (f, t) = (x & 0xFFFF, x >> 16);
-        match self.kind(g) {
-            1 => lvar(args[0]) == lvar(args[1]) || f + t + u32::from(self.value(gates.out(g)) != 0) >= 2,
-            _ if n >= 0x10000 => true,
-            2 => {
-                let u = n - f - t;
-                t >= 2 || (t == 1 && u > 0) || (t == 0 && u <= 1)
-            }
-            _ => {
-                let u = n - f - t;
-                let vo = self.value(gates.out(g));
-                if f > 0 {
-                    vo != -1
-                } else if vo == 1 {
-                    u > 0
-                } else if vo == 0 {
-                    u == 0
-                } else {
-                    u <= 1 || gates.repeats(g)
-                }
-            }
-        }
-    }
-
     /// `cs_items`: up to 32 gates, a lane each in order. A conflict (the first lane's, its clause in `cbuf`), or each
     /// step's literals on the trail: of the lanes that set one variable the first, if it is still unset. True on a
     /// conflict.
@@ -755,7 +696,7 @@ impl<'a> Search<'a> {
         let mut ks = [QUIET; LANES];
         let mut acts = false;
         for (i, &g) in gs.iter().enumerate() {
-            let k = if self.may(g as usize) { self.check(g as usize, false) } else { QUIET };
+            let k = self.check(g as usize, false);
             if k.mode == Mode::Conflict {
                 // The first lane's conflict: the lanes before it are quiet or imply, and a conflict ends the round.
                 self.check(g as usize, true);
@@ -941,10 +882,7 @@ impl<'a> Search<'a> {
             self.status = Status::Broken;
             return true;
         }
-        // Their values counted, then their gates in order, 32 at a time (the order `cs_round` takes them in).
-        let from = self.counted.max(hd);
-        self.count(from, hd + f, true);
-        self.counted = hd + f;
+        // Their gates in order, 32 at a time (the order `cs_round` takes them in).
         let total: usize = lits[..f].iter().map(|&l| self.fan_len(lvar(l))).sum();
         self.items = self.items.wrapping_add(total as u32);
         let mut chunk = [0u32; LANES];
@@ -1228,10 +1166,6 @@ impl<'a> Search<'a> {
     /// order.
     fn back_to(&mut self, to: u32) {
         let start = self.limits[to as usize] as usize;
-        if self.counted > start {
-            self.count(start, self.counted, false);
-            self.counted = start;
-        }
         for i in start..self.trail.len() {
             let v = lvar(self.trail[i]);
             self.val[v] = 0;
@@ -1440,8 +1374,6 @@ impl<'a> Search<'a> {
                 self.assign(t[0] as Lit, t[1], t[2]);
             }
             self.head = self.trail.len();
-            self.count(0, self.head, true);
-            self.counted = self.head;
             if r.start.broken {
                 self.refuted = r.start.conflict.to_vec();
                 self.status = Status::Unsat;
@@ -1644,15 +1576,6 @@ pub(crate) mod tests {
         }
         let base = g.len().saturating_sub(own);
         (g, c, vars, base)
-    }
-
-    /// The device's search and this one's: the same answer, model and counts.
-    pub(crate) fn same_search(i: usize, device: &Solved, here: &Solved) {
-        let counts = |x: &Solved| (x.conflicts, x.decisions, x.rounds, x.learned, x.learned_literals, x.visits, x.items, x.reductions, x.roomless);
-        assert_eq!(device.answer, here.answer, "formula {i}: the device's answer, and the CPU's of its search");
-        assert_eq!(counts(device), counts(here), "formula {i}: (conflicts, decisions, rounds, learned, literals, visits, items, reductions, roomless) on the device, and on the CPU");
-        assert_eq!(device.carry, here.carry, "formula {i}: what it carries out, on the device and on the CPU");
-        assert_eq!(device.used, here.used, "formula {i}: its core, on the device and on the CPU");
     }
 
     /// Random circuits, some with a solve's own gates: the answers are the CPU solver's (`bitlex_csat::Solver`), and
