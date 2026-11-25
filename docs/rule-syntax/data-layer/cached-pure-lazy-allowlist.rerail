@@ -374,12 +374,18 @@ pe_list(cat("opt:", to_string(i)), k, v) :- opt_entry(i, b),
     match_all("\"(?<k>[a-z_]+)\": \\[(?<v>(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*)\\]", b).
 pe_num(cat("opt:", to_string(i)), k, v) :- opt_entry(i, b), match_all("\"(?<k>[a-z_]+)\": (?<v>-?[0-9]+|null)", b).
 
-// pe_ord(e, n): the entry's place in its list; the verifier's dict keeps the last entry of a name (pe_last).
-.decl pe_ord(e: symbol, n: number)
-pe_ord(to_string(c), n) :- policy_call(c, _), visit_index(c, n).
-pe_ord(cat("opt:", to_string(i)), i) :- opt_entry(i, _).
+// The verifier's dict keeps the last entry of a name (pe_last): an entry a later one of its list names again is not
+// compared. The module's list is one file's, ordered there (pe_later_m, by `earlier`); the option's by its index
+// (pe_later_o). Neither reads a position in the cross-file part (decision 0695).
+.decl pe_fn_at(c: node, k: symbol, fn: symbol)
+pe_fn_at(c, k, fn) :- policy_call(c, k), cpl_kw(c, "function", n), plain_str(n, fn).
+.decl pe_later_m(e: symbol)
+pe_later_m(to_string(c)) :- pe_fn_at(c, k, fn), pe_fn_at(c2, k, fn), earlier(c, c2).
+.decl pe_later_o(e: symbol)
+pe_later_o(cat("opt:", to_string(i))) :- opt_entry(i, _), pe(cat("opt:", to_string(i)), k, fn), opt_entry(j, _), j > i,
+    pe(cat("opt:", to_string(j)), k, fn).
 .decl pe_last(e: symbol, k: symbol, fn: symbol)
-pe_last(e, k, fn) :- pe(e, k, fn), pe_ord(e, n), n = max j : { pe(e2, k, fn), pe_ord(e2, j) }.
+pe_last(e, k, fn) :- pe(e, k, fn), !pe_later_m(e), !pe_later_o(e).
 
 // pe_pair(e, f, a, b): one pair of a pair-list field; pe_elem(e, f, a): one element of a str-list field.
 .decl pe_pair(e: symbol, f: symbol, a: symbol, b: symbol)
@@ -399,8 +405,14 @@ py_tuple(j, r) :- cpl_want_tuple(j),
 .decl item_of(x: node, k: symbol, fn: symbol)
 item_of(x, "cached", fn) :- cpl_item(x, fn).
 item_of(x, "memoized", fn) :- mpl_item(x, fn).
+// The last item of a name is the last in its file (item_in, by `earlier`), and between files the one of the greatest
+// path: the verifier's order across files is rglob's, which the filesystem decides (decision 0695).
+.decl item_later(x: node)
+item_later(x) :- item_of(x, k, fn), item_of(y, k, fn), earlier(x, y).
+.decl item_in(x: node, k: symbol, fn: symbol, p: symbol)
+item_in(x, k, fn, p) :- item_of(x, k, fn), !item_later(x), docof(x, d), doc(d, p, _).
 .decl item_last(x: node, k: symbol, fn: symbol)
-item_last(x, k, fn) :- item_of(x, k, fn), visit_index(x, n), n = max j : { item_of(y, k, fn), visit_index(y, j) }.
+item_last(x, k, fn) :- item_in(x, k, fn, p), count : { item_in(_, k, fn, p2), p2 > p } = 0.
 .decl item_entry(x: node, e: symbol, k: symbol, fn: symbol)
 item_entry(x, e, k, fn) :- item_last(x, k, fn), pe_last(e, k, fn).
 // cpl_word(k, dup, w): the words of the kind's messages, "duplicate {dup}decorator entry", "unsigned {w} pure-lazy …".

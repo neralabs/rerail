@@ -255,6 +255,7 @@ impl FileLocal {
                         && alone.crossings.keys().all(|c| whole.crossings.contains_key(c))
                     {
                         taken.remove(&r);
+                        refused.insert(p.name(r).to_owned(), "not staged: the split makes it per-file once the others are staged".to_owned());
                         released = true;
                         break;
                     }

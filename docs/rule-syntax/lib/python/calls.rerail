@@ -34,6 +34,12 @@
 // enclosing function's).
 .decl owner(c: node, f: node)
 owner(c, f) :- kind(c, "call"), nearest(c, f, fdef).
+// order_key(n, q, i): node n's place, which an edit elsewhere does not move: its def's qualified name q ("" at
+// module level) and its offset i in the def's visit order. Per-file. A rule choosing one of several nodes across
+// files orders by it, where a position would make the cross-file part read one (decision 0695).
+.decl order_key(n: node, q: symbol, i: number)
+order_key(n, q, i) :- nearest(n, h, fdef), qualname(h, q), visit_index(h, a), visit_index(n, b), i = b - a.
+order_key(n, "", i) :- kind(n, _), !nearest(n, _, fdef), visit_index(n, i).
 // calls(f, g): the call graph edge "f may call g".
 .decl calls(f: node, g: node)
 calls(f, g) :- owner(c, f), call_target(c, g).

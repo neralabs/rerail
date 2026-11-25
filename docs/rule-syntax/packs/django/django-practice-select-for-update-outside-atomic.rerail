@@ -180,8 +180,16 @@ sfu_atomic_view(f) :- dj_atomic_requests(), (param(f, "request", _) ; dj_view_cl
 sfu_why(f, "no code in the project calls it, so it is an entry point (a view, task, command or receiver) and nothing opens a transaction around it") :-
     sfu_entry(f).
 sfu_why(f, cat("`", cat(g, cat("` calls it outside a transaction at ", cat(p, cat(":", to_string(l))))))) :-
-    sfu_bare_call(c, f), !sfu_entry(f), l = min m : { sfu_bare_call(b, f), line(b, m) }, line(c, l), owner(c, h), def_name(h, g),
-    docof(c, d), doc(d, p, _).
+    sfu_first_bare(f, c), !sfu_entry(f), line(c, l), owner(c, h), def_name(h, g), docof(c, d), doc(d, p, _).
+// sfu_first_bare(f, c): the bare call a message names, of several: the first by order_key (its def's name, then its
+// place there), which an edit in another file does not move (decision 0695).
+.decl sfu_bare_key(f: node, q: symbol, i: number)
+sfu_bare_key(f, q, i) :- sfu_bare_call(c, f), order_key(c, q, i).
+.decl sfu_bare_after(f: node, q: symbol)
+sfu_bare_after(f, q) :- sfu_bare_key(f, q, _), sfu_bare_key(f, q2, _), q2 < q.
+.decl sfu_first_bare(f: node, c: node)
+sfu_first_bare(f, c) :- sfu_bare_key(f, q, _), !sfu_bare_after(f, q), i = min j : { sfu_bare_key(f, q, j) },
+    sfu_bare_call(c, f), order_key(c, q, i).
 
 // The cases, `cases/django-practice-select-for-update-outside-atomic/`, read as one repository: each line ending in `#
 // caught` is reported, and no other line.

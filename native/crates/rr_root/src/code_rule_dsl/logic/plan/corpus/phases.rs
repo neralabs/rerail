@@ -460,11 +460,12 @@ pub fn stage(v: &std::sync::Arc<Version>, options: &serde_json::Value) -> Result
     let projected = existence_reads(v)?;
     let v = projected.as_ref().unwrap_or(v);
     let staging = crate::code_rule_dsl::typing::file_local::FileLocal::staging(v, &requests).map_err(Error::Plan)?;
-    if staging.staged.is_empty() && !phase_read {
-        return Ok(None);
-    }
+    // Why each relation of names is not staged, also when none is: the report's cause for a chain it flags.
     for (rel, cause) in &staging.refused {
         crate::code_rule_dsl::logic::profile::decision("staging", || format!("{rel}: {cause}"));
+    }
+    if staging.staged.is_empty() && !phase_read {
+        return Ok(None);
     }
     // The staged relations and every derived relation below them.
     let mut below: BTreeSet<String> = staging.staged.clone();

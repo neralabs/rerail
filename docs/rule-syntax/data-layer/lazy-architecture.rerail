@@ -356,8 +356,12 @@ la_at(f, w, l) :- la_canon_of(f, g), la_line(g, w, l).
 // la_find(c, p, l, sym): a finding with code c at line l of file p; sym is the allowlist symbol. la_ffind gives
 // the findings of a fact (its symbol, its file); la_nfind those at a node.
 .decl la_find(c: symbol, p: symbol, l: number, sym: symbol)
-la_find(c, p, l, s) :- la_ffind(c, f, l), la_fact(f, d, s, _, _), doc(d, p, _).
-la_find(c, p, l, s) :- la_nfind(c, n, s), docof(n, d), doc(d, p, _), line(n, l).
+la_find(c, p, l, s) :- la_hit(c, d, l, s), doc(d, p, _).
+// la_hit(c, d, l, sym): la_find at its document's id, which places it in its file: the budget counts these across
+// files (la_over), where la_find, placed by its path, is the findings' (decision 0695).
+.decl la_hit(c: symbol, d: number, l: number, sym: symbol)
+la_hit(c, d, l, s) :- la_ffind(c, f, l), la_fact(f, d, s, _, _).
+la_hit(c, d, l, s) :- la_nfind(c, n, s), docof(n, d), line(n, l).
 .decl la_nfind(c: symbol, n: node, sym: symbol)
 .decl la_ffind(c: symbol, f: node, l: number)
 la_ffind("LA-001", f, l) :- la_pure(f), la_at(f, "io", l).
@@ -398,11 +402,12 @@ la_ffind("LA-014", f, l) :- !la_skip(f), la_fact(f, d, _, _, _), la_in(d, "servi
 .decl la_server_phase(x: symbol)
 la_server_phase("lower"). la_server_phase("compile"). la_server_phase("preprocess"). la_server_phase("pre_op").
 la_server_phase("post_op").
-// la_eager_delegate(s): fact s does plan I/O itself, or calls something whose symbol ends in a plan I/O name.
-// Cross-file: a symbol deferred in one file, its facts in another (decision 0652).
-.decl la_eager_delegate(s: symbol) cross_file
-la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
-la_eager_delegate(s) :- la_deferred(_, _, s), la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
+// la_eager_delegate(s): fact s does plan I/O itself, or calls something whose symbol ends in a plan I/O name. The
+// linter looks a deferred symbol up in every file's facts (facts_by_symbol): this is the set of those names, each
+// file's own, and a deferring file reads it by name (a stage, decision 0675; decision 0695).
+.decl la_eager_delegate(s: symbol)
+la_eager_delegate(s) :- la_fact(t, _, s, _, _), la_canon(t), la_has(t, "io").
+la_eager_delegate(s) :- la_fact(t, _, s, _, _), la_canon(t), la_call(t, c), la_func(c, g),
     la_local_last(t, g, x), la_set("PLAN_IO_NAMES", x).
 
 // LA-008: in a transaction module, f (the last fact named f) and f_async: f uses grammar calls, f_async async
@@ -471,8 +476,10 @@ LA_000(@place("scripts/lint_lazy_architecture.py", 1)) :- allow_sig("lazy_archit
 la_ceil(c, n) :- la_ceiling(c, n).
 la_ceil(c, 0) :- la_ceiling(_, _), (c = "LA-013" ; c = "LA-017"), !la_ceiling(c, _).
 .violation LA_budget(at: loc, c: symbol) code {c} "{c} count exceeds signed budget"
-LA_budget(@place(".ratchet-baselines/lint_lazy_architecture.json", 1), c) :- la_ceil(c, n),
-    count : { la_find(c, _, _, _) } > n.
+LA_budget(@place(".ratchet-baselines/lint_lazy_architecture.json", 1), c) :- la_over(c).
+// la_over(c): code c's sites in every file, counted against its ceiling: a crossing meant (decision 0695).
+.decl la_over(c: symbol) cross_file
+la_over(c) :- la_ceil(c, n), count : { la_hit(c, _, _, _) } > n.
 // Like the signature check, only where the script itself is present.
 .violation LA_000_budget(at: loc) code "LA-000" "Could not load the lazy-architecture budget."
 .gate LA_000_budget

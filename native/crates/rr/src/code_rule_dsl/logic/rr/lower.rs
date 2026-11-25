@@ -3693,7 +3693,34 @@ impl Lowerer {
     /// the rule asks about (`cross_product`, PR #508's 3fe6f8227, t47).
     fn negated_conjunction(&mut self, lits: &[LitAt], outer: &BTreeSet<String>) -> Result<(String, Vec<Tm>), Error> {
         let shared: Vec<String> = self.shared_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
-        let bound: BTreeSet<String> = self.body_vars(&lits.iter().filter(|l| self.binds_columns(l)).cloned().collect::<Vec<_>>());
+        let mut bound: BTreeSet<String> = self.body_vars(&lits.iter().filter(|l| self.binds_columns(l)).cloned().collect::<Vec<_>>());
+        // `x = t` with t ground binds x too, as in a rule's own body: `!(doc_sphinx(s, c), k = 1)` needs no context
+        // for k. A context of k alone would hold no location, a join of documents the split refuses once the atoms
+        // beside it are per-file (decision 0695).
+        loop {
+            let more: Vec<String> = lits
+                .iter()
+                .filter_map(|l| match self.lit(l) {
+                    L::Cmp { l: a, op: "=", r: b } => {
+                        let ground = |t: &At| {
+                            let mut vs = Vec::new();
+                            self.term_vars(t, &mut vs);
+                            vs.iter().all(|v| bound.contains(v))
+                        };
+                        let var = |t: &At| match self.tv(t) {
+                            T::Var(v) if !bound.contains(&v) => Some(v),
+                            _ => None,
+                        };
+                        var(&a).filter(|_| ground(&b)).or_else(|| var(&b).filter(|_| ground(&a)))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            bound.extend(more);
+        }
         let needed: Vec<String> =
             if cross_product(self, lits, &shared, &bound) { shared.clone() } else { shared.iter().filter(|v| !bound.contains(*v)).cloned().collect() };
         let siblings = self.siblings.clone();

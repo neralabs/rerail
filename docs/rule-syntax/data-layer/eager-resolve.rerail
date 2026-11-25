@@ -125,13 +125,14 @@ er_param(f, x, a) :- er_sym(f, _), sig_param(f, _, nm, _, k, a, _), (k = "posonl
     text(nm, x).
 // er_mentions(a, x): annotation a names x: `x`, `m.x`, `Optional[x]`, `Dict[k, x]`, `x | None`. As the linter,
 // it looks through subscripts, `|` and tuples only: not into a list (`Callable[[x], int]`), a call or a string.
-.decl er_mentions(a: loc, x: symbol)
+// An annotation that is there is a node of its file: er_ann reads it so, and the split places every row (decision 0695).
+.decl er_mentions(a: node, x: symbol)
 er_mentions(a, x) :- er_ann_part(a, n), kind(n, "identifier"), text(n, x).
 er_mentions(a, x) :- er_ann_part(a, n), kind(n, "attribute"), field(n, "attribute", m), text(m, x).
-.decl er_ann(a: loc)
-er_ann(a) :- er_param(_, _, a).
+.decl er_ann(a: node)
+er_ann(a) :- er_param(_, _, a), kind(a, _).
 er_ann(t) :- assign_ann(_, t).
-.decl er_ann_part(a: loc, n: loc)
+.decl er_ann_part(a: node, n: node)
 er_ann_part(a, a) :- er_ann(a).
 er_ann_part(a, c) :- er_ann_part(a, n), kind(n, k), er_ann_through(k), child(n, c, _).
 .decl er_ann_through(k: symbol)
@@ -457,9 +458,10 @@ er_site(d, l, cat("external-io-boundary:", x, "()"), s) :- er_sym(f, s), er_dec_
     def_name(f, x), line(f, l), docof(f, d), source(d, sp), text(sp, t), contains("external_io_boundary_eager", t).
 
 // er_ignored(d, c, s): the linter's per-file exemptions for transitive sites; er_text_ignored for text sites.
-// Cross-file: every file's symbols, placed at the facade modules (decision 0652).
-.decl er_facade_site(d: number, s: symbol) cross_file
-er_facade_site(d, s) :- er_sym(_, s), doc(d, p, _), (p = "l2055_lazy_result/lazy_result.py" ;
+// A facade module's own symbols, by the file's path and the symbol's name, as _should_ignore_pattern_violation tests
+// them: every reader asks at a symbol of the file it is in (decision 0695).
+.decl er_facade_site(d: number, s: symbol)
+er_facade_site(d, s) :- er_sym(f, s), docof(f, d), doc(d, p, _), (p = "l2055_lazy_result/lazy_result.py" ;
     p = "l2055_lazy_result/lazy_seq.py"), (er_facade(s) ; er_facade_prefix(q), prefix(q, s)).
 .decl er_ignored(d: number, c: symbol, s: symbol)
 er_ignored(d, c, s) :- er_dirty(s, c), er_facade_site(d, s).

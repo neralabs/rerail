@@ -41,18 +41,37 @@
 
 .violation GetHandlerWrites(at: node, x: symbol, what: symbol, p: symbol, o: node)
     "`{x}` answers a safe method (GET/HEAD) but writes to the database: `{what}` at {p}:{o.line}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
-GetHandlerWrites(f, x, what, p, o) :- ghw_own(k, f), ghw_handler(k, f, x), o = min y : { ghw_write(y, f, _) },
+GetHandlerWrites(f, x, what, p, o) :- ghw_own(k, f), ghw_handler(k, f, x), ghw_first_write(f, o),
     ghw_write(o, _, what), docof(o, d), doc(d, p, _).
 .violation GetHandlerWritesVia(at: node, x: symbol, g: symbol, what: symbol, p: symbol, o: node)
     "`{x}` answers a safe method (GET/HEAD) but writes to the database in `{g}()`, which it calls: `{what}` at {p}:{o.line}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
 GetHandlerWritesVia(f, x, y, what, p, o) :- ghw_own(k, f), ghw_handler(k, f, x), !ghw_write(_, f, _),
-    o = min v : { ghw_hit(k, f, v, _) }, ghw_hit(k, f, o, h), ghw_write(o, h, what), def_name(h, y), docof(o, d),
-    doc(d, p, _).
+    ghw_first(k, f, o), ghw_hit(k, f, o, h), ghw_write(o, h, what), def_name(h, y), docof(o, d), doc(d, p, _).
 .violation GetHandlerWritesInherited(at: node, kx: symbol, x: symbol, g: symbol, what: symbol, p: symbol, o: node)
     "`{kx}` answers a safe method (GET/HEAD) with the inherited `{x}`, which for this class writes to the database in `{g}()`: `{what}` at {p}:{o.line}. Safe methods must be side-effect free; CSRF protection does not cover them. Move the write to a POST handler."
 GetHandlerWritesInherited(k, kx, x, y, what, p, o) :- ghw_handler(k, f, x), !ghw_own(k, f),
-    o = min v : { ghw_new(k, f, v) }, ghw_hit(k, f, o, h), ghw_write(o, h, what), def_name(h, y), def_name(k, kx),
+    ghw_first_new(k, f, o), ghw_hit(k, f, o, h), ghw_write(o, h, what), def_name(h, y), def_name(k, kx),
     docof(o, d), doc(d, p, _).
+
+// The write a message names, of several: the first by order_key (its def's name, then its place there), which an edit
+// in another file does not move (decision 0695). ghw_first_write(h, o): h's own; ghw_first(k, f, o): of those f runs;
+// ghw_first_new(k, f, o): of those only k's overrides make.
+.decl ghw_first_write(h: node, o: node)
+ghw_first_write(h, o) :- ghw_write(o, h, _), order_key(o, _, i), i = min j : { ghw_write(y, h, _), order_key(y, _, j) }.
+.decl ghw_hit_key(k: node, f: node, q: symbol, i: number)
+ghw_hit_key(k, f, q, i) :- ghw_hit(k, f, o, _), order_key(o, q, i).
+.decl ghw_hit_after(k: node, f: node, q: symbol)
+ghw_hit_after(k, f, q) :- ghw_hit_key(k, f, q, _), ghw_hit_key(k, f, q2, _), q2 < q.
+.decl ghw_first(k: node, f: node, o: node)
+ghw_first(k, f, o) :- ghw_hit_key(k, f, q, _), !ghw_hit_after(k, f, q), i = min j : { ghw_hit_key(k, f, q, j) },
+    ghw_hit(k, f, o, _), order_key(o, q, i).
+.decl ghw_new_key(k: node, f: node, q: symbol, i: number)
+ghw_new_key(k, f, q, i) :- ghw_new(k, f, o), order_key(o, q, i).
+.decl ghw_new_after(k: node, f: node, q: symbol)
+ghw_new_after(k, f, q) :- ghw_new_key(k, f, q, _), ghw_new_key(k, f, q2, _), q2 < q.
+.decl ghw_first_new(k: node, f: node, o: node)
+ghw_first_new(k, f, o) :- ghw_new_key(k, f, q, _), !ghw_new_after(k, f, q), i = min j : { ghw_new_key(k, f, q, j) },
+    ghw_new(k, f, o), order_key(o, q, i).
 
 // ghw_handler(k, f, x): f, named x, answers only safe methods: in view class k (its own method or an inherited
 // one), or as a function view (k = f).

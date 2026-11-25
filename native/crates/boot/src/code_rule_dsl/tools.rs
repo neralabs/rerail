@@ -824,7 +824,7 @@ fn run_pack(
     // `RERAIL_BATCH_PACK=strict`: a failed pack returns its error, not `None`.
     let fallback = |reason: String| {
         if std::env::var("RERAIL_BATCH_PACK").as_deref() == Ok("strict") {
-            Err(ProgramRunError::Evaluation(format!("combined run of {} policies failed: {reason}", texts.len())))
+            Err(ProgramRunError::Evaluation(format!("combined run of {} policies ({}) failed: {reason}", texts.len(), group.ids.join(", "))))
         } else {
             Ok(None)
         }
@@ -2622,6 +2622,11 @@ mod pack_split_tests {
 
     /// `policy`'s findings over `files` (path, text), each as (code, path, line, message), sorted.
     fn findings_of(policy: &str, files: &[(&str, &str)]) -> Vec<(String, String, i64, String)> {
+        findings_of_all(&[policy], files)
+    }
+
+    /// `findings_of` for several policies run together, as a pack's are.
+    fn findings_of_all(policies: &[&str], files: &[(&str, &str)]) -> Vec<(String, String, i64, String)> {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("root");
         for (path, text) in files {
@@ -2629,8 +2634,8 @@ mod pack_split_tests {
             std::fs::create_dir_all(to.parent().unwrap()).unwrap();
             std::fs::write(to, text).unwrap();
         }
-        let policy = crate::source_tree::native().join("../docs/rule-syntax").join(policy);
-        let report = super::run_policies(&[policy], &root, &tmp.path().join("out"), &serde_json::Value::Null).unwrap();
+        let policies: Vec<std::path::PathBuf> = policies.iter().map(|p| crate::source_tree::native().join("../docs/rule-syntax").join(p)).collect();
+        let report = super::run_policies(&policies, &root, &tmp.path().join("out"), &serde_json::Value::Null).unwrap();
         let errors: Vec<&str> = report["runs"].as_array().unwrap().iter().filter_map(|r| r["error"].as_str()).collect();
         assert!(errors.is_empty(), "{errors:?}");
         let mut found: Vec<(String, String, i64, String)> = report["diagnostics"]
@@ -2714,13 +2719,166 @@ mod pack_split_tests {
         }
     }
 
+    /// cached-pure-lazy-allowlist's cross-file part reads no position (decision 0695): the verifier keeps the last
+    /// item and the last policy entry of a name (its dicts), which is chosen in each file, by `earlier`, and between
+    /// files by path (the verifier's order across files is `rglob`'s, which the filesystem decides). A function
+    /// defined twice in one file is compared at its second definition, an entry listed twice at its second.
+    #[test]
+    fn cached_pure_lazy_compares_the_last_of_a_name_and_reads_no_position_across_files() {
+        // SAFETY: nextest runs each test in a process of its own.
+        let found = findings_of(
+            "data-layer/cached-pure-lazy-allowlist.rerail",
+            &[
+                ("data_layer/a.py", "from l2055_lazy_result import cached_pure_lazy\n\n\n@cached_pure_lazy(cache_args=(\"x\",))\ndef f(x):\n    return x.a\n\n\n@cached_pure_lazy(cache_args=(\"x\",))\ndef f(x):\n    return x.b\n"),
+                ("data_layer/b.py", "from l2055_lazy_result import cached_pure_lazy\n\n\n@cached_pure_lazy(cache_args=(\"y\",))\ndef g(y):\n    return y.c\n"),
+                ("l2055_lazy_result/cached_pure_lazy_policy.py", "CachedPureLazyPolicyEntry(function=\"data_layer.a.f\", cache_args=(\"x\",), cache_types=(), cache_members=((\"x\", \"a\"),), owner_scope=\"optimizer_run\", rationale=\"r\", body_hash=\"h\", signature_hash=\"h\")\nCachedPureLazyPolicyEntry(function=\"data_layer.a.f\", cache_args=(\"x\",), cache_types=(), cache_members=((\"x\", \"b\"),), owner_scope=\"optimizer_run\", rationale=\"\", body_hash=\"h\", signature_hash=\"h\")\n"),
+            ],
+        );
+        let mut messages: Vec<&str> = found.iter().map(|(_, _, _, m)| m.as_str()).collect();
+        messages.sort();
+        // The second entry's empty rationale is the one compared, and the second definition's member `x.b` matches it.
+        assert_eq!(
+            messages,
+            [
+                "data_layer.a.f: a cache argument cannot escape through return",
+                "data_layer.a.f: cache argument 'x' must be keyword-only",
+                "data_layer.a.f: cache argument 'x' requires an exact annotation",
+                "data_layer.a.f: cache type metadata must name each cache argument exactly once",
+                "data_layer.a.f: function body hash changed",
+                "data_layer.a.f: function signature hash changed",
+                "data_layer.a.f: review rationale is required",
+                "duplicate decorator entry: data_layer.a.f",
+                "duplicate policy entry: data_layer.a.f",
+                "unsigned cached pure-lazy function: data_layer.b.g",
+            ]
+        );
+    }
+
+    /// eager-resolve's cross-file part reads no position (decision 0695): a local made lazy by an annotation is lazy
+    /// after its statement only (`er_lazy_val`, by `earlier`, in its file), and the facade modules' symbols are
+    /// exempt by the file's path and the symbol's name alone (`_should_ignore_pattern_violation`), not by every
+    /// file's symbols.
+    #[test]
+    fn eager_resolve_finds_what_its_linter_finds_and_reads_no_position_across_files() {
+        // SAFETY: nextest runs each test in a process of its own.
+        let found = findings_of(
+            "data-layer/eager-resolve.rerail",
+            &[
+                ("impl/x.py", "def f(x: LazyResult):\n    y = x\n    return y.resolve()\n\n\ndef g(z):\n    w = z\n    return w.resolve()\n"),
+                ("l2055_lazy_result/lazy_result.py", "class LazyResult:\n    def peek(self):\n        return self.resolve()\n\n\nclass Other:\n    def peek(self):\n        return self.resolve()\n"),
+            ],
+        );
+        // The signed lists are not in the tree (EAGER-ALLOWLIST). LazyResult.peek is a facade symbol in its facade file.
+        let keys: Vec<(&str, &str, i64)> = found.iter().filter(|f| f.0 != "EAGER-ALLOWLIST").map(|(c, p, l, _)| (c.as_str(), p.as_str(), *l)).collect();
+        assert_eq!(
+            keys,
+            [
+                (".resolve()", "impl/x.py", 3),
+                (".resolve()", "impl/x.py", 8),
+                (".resolve()", "l2055_lazy_result/lazy_result.py", 8),
+                ("transitive:*.resolve()", "impl/x.py", 1),
+                ("transitive:*.resolve()", "impl/x.py", 6),
+                ("transitive:*.resolve()", "l2055_lazy_result/lazy_result.py", 7),
+            ],
+            "{found:#?}"
+        );
+    }
+
+    /// lazy-architecture's delegates are a set of names (decision 0695): a `_lazy` function that defers to a function
+    /// of another file which does plan I/O is LA-009 at its first such call, as `facts_by_symbol` finds it across files;
+    /// the set is every file's names of such functions, read per file, and the cross-file part reads no position.
+    #[test]
+    fn lazy_architecture_finds_a_delegate_in_another_file_and_reads_no_position_across_files() {
+        // SAFETY: nextest runs each test in a process of its own.
+        let found = findings_of(
+            "data-layer/lazy-architecture.rerail",
+            &[
+                ("impl/a.py", "from l2055_lazy_result import defer_lazy_result\nfrom impl.b import eager, quiet\n\n\ndef go_lazy():\n    x = defer_lazy_result(sync_resolve=quiet)\n    y = defer_lazy_result(sync_resolve=eager)\n    return defer_lazy_result(async_resolve=eager)\n"),
+                ("impl/b.py", "from l2060 import grammar_row_lazy\n\n\ndef eager():\n    return grammar_row_lazy(1)\n\n\ndef quiet():\n    return 1\n"),
+                ("impl/c.py", "from impl.b import eager\nfrom l2055_lazy_result import defer_lazy_result\n\n\ndef other_lazy():\n    return defer_lazy_result(sync_resolve=eager)\n"),
+                (".ratchet-baselines/lint_lazy_architecture.json", "{\"counts\": {\"LA-009\": 1, \"LA-013\": 9}}"),
+            ],
+        );
+        let keys: Vec<(&str, &str, i64)> = found.iter().map(|(c, p, l, _)| (c.as_str(), p.as_str(), *l)).collect();
+        // LA-009 at the first call deferring to `eager` (not `quiet`), once in each file; LA-013 at each file's first
+        // call. The budget counts every file's sites: LA-009's two are over its ceiling of 1, in no one file.
+        assert_eq!(
+            keys,
+            [
+                ("LA-009", ".ratchet-baselines/lint_lazy_architecture.json", 1),
+                ("LA-009", "impl/a.py", 7),
+                ("LA-009", "impl/c.py", 6),
+                ("LA-013", "impl/a.py", 6),
+                ("LA-013", "impl/c.py", 6),
+            ],
+            "{found:#?}"
+        );
+    }
+
+    /// A pack's resolution through re-exports is staged when a policy beside it negates a conjunction with a constant
+    /// test (decision 0695): D412's `!(doc_sphinx(s, c), k = 1)` made a negation context of `k` alone, with no
+    /// location, a join of documents that hid behind the exports' cone and kept the whole cone, `resolve_export` with
+    /// it, out of the stage. Run together, neither policy's cross-file part reads a position.
+    #[test]
+    fn a_packs_resolution_is_staged_beside_a_negated_conjunction() {
+        // SAFETY: nextest runs each test in a process of its own.
+        let found = findings_of_all(
+            &["packs/python/ruff-sim910-dict-get-with-none-default.rerail", "packs/python/ruff-d412-blank-lines-between-header-and-content.rerail"],
+            &[
+                ("pkg/__init__.py", "from pkg.m import f\n\n__all__ = [\"f\"]\n"),
+                ("pkg/m.py", "def f(k):\n    \"\"\"Do it.\n\n    Args:\n\n        k: the key.\n    \"\"\"\n    d = {}\n    return d.get(k, None)\n\n\ndef g():\n    \"\"\"Do it.\n\n    Notes:\n\n    .. note:: x\n    \"\"\"\n"),
+            ],
+        );
+        let keys: Vec<(&str, &str, i64)> = found.iter().map(|(c, p, l, _)| (c.as_str(), p.as_str(), *l)).collect();
+        // `f`'s Args header is followed by a blank line; `g`'s Notes header by one before an RST directive, which D412
+        // lets be (the negated conjunction, `k = 1`).
+        assert_eq!(keys, [("D412", "pkg/m.py", 4), ("SIM910", "pkg/m.py", 9)], "{found:#?}");
+    }
+
+    /// The Django practices name one write, query or caller of several, across files, by an order that edits elsewhere
+    /// do not move (decision 0695): its def's qualified name, then its place in the def. The cross-file part reads no
+    /// position.
+    #[test]
+    fn the_django_practices_name_one_of_several_by_a_key_edits_elsewhere_do_not_move() {
+        // SAFETY: nextest runs each test in a process of its own.
+        let found = findings_of_all(
+            &[
+                "packs/django/django-practice-get-handler-writes.rerail",
+                "packs/django/django-practice-sync-orm-reached-from-async.rerail",
+                "packs/django/django-practice-select-for-update-outside-atomic.rerail",
+            ],
+            &[
+                ("shop/__init__.py", ""),
+                ("shop/models.py", "from django.db import models\n\n\nclass Book(models.Model):\n    pass\n"),
+                ("shop/services.py", "from shop.models import Book\n\n\ndef record():\n    Book.objects.filter(a=1).update(b=2)\n    Book.objects.create(a=1)\n\n\ndef fetch():\n    x = 1\n    return Book.objects.get(pk=1)\n\n\ndef lock(pk):\n    return Book.objects.select_for_update().get(pk=pk)\n"),
+                ("shop/views.py", "from django.views.decorators.http import require_GET\nfrom shop.services import record, fetch, lock\n\n\n@require_GET\ndef detail(request):\n    record()\n\n\nasync def page(request):\n    return fetch()\n\n\ndef zed(request):\n    x = 1\n    lock(1)\n"),
+                ("shop/other.py", "from shop.services import lock\n\n\ndef alpha(request):\n    a = 1\n    b = 2\n    c = 3\n    d = 4\n    e = 5\n    f = 6\n    g = 7\n    h = 8\n    i = 9\n    j = 10\n    k = 11\n    l = 12\n    lock(2)\n"),
+            ],
+        );
+        let got: Vec<(&str, &str, i64, &str)> =
+            found.iter().map(|(c, p, l, m)| (c.as_str(), p.as_str(), *l, m.split(". ").next().unwrap_or(""))).collect();
+        // record's first write, fetch's query; lock's bare callers are views.py's zed (line 16) and other.py's alpha (line
+        // 17): alpha's def comes first by name, where the least line was zed's.
+        assert_eq!(
+            got,
+            [
+                ("GetHandlerWritesVia", "shop/views.py", 6, "`detail` answers a safe method (GET/HEAD) but writes to the database in `record()`, which it calls: `update()` at shop/services.py:5"),
+                ("SelectForUpdateOutsideAtomic", "shop/services.py", 15, "`select_for_update()` in `lock` runs outside transaction.atomic(): `alpha` calls it outside a transaction at shop/other.py:17"),
+                ("SyncOrmReached", "shop/views.py", 11, "`fetch()` runs a blocking ORM query (`get()` at shop/services.py:11) inside `async def`, where Django raises SynchronousOnlyOperation"),
+            ],
+            "{found:#?}"
+        );
+    }
+
     /// versioned-merged-identity finds what its checker finds (scripts/check_versioned_merged_identity.py, decision
     /// 0692): an unreviewed caller (VMI002), a reviewed one whose projection is assigned only after the call, through
     /// an imported alias (VMI003), one backed through `b = a` (nothing), each reviewed caller absent (VMI001, at the
     /// steps directory), and a caller two files share (`b.py:go`, under both roots) reported at the last path the
-    /// plugin recorded for it, the graph query's, each at its own line.
+    /// plugin recorded for it, the graph query's, each at its own line. Each line is its constructor's file's, given by
+    /// that file: the cross-file part joins callers' names to the path alone, and reads no position (decision 0695).
     #[test]
     fn versioned_merged_identity_finds_what_its_checker_finds() {
+        // SAFETY: nextest runs each test in a process of its own.
         let steps = "impl/common/l2070_server_plan/steps";
         let graph = "impl/common/l9700_sql_graph_query";
         let found = findings_of(

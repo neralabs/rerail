@@ -403,7 +403,7 @@ fn r4_a_changed_read_s_delta_leads_its_line() {
 
 /// R4 with readers: a stratum derived again past θ hands its readers its delta against its kept rows, and a reader
 /// maintained over that delta has versions of its own for the strata above it. On the O125 replay, `cls_q` derived
-/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a node here: one over a symbol is refused), was maintained and stopped:
+/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it (a `min` over a number here: one over a symbol is refused, and one over a node compares positions, refused in the cross-file part since decision 0695), was maintained and stopped:
 /// "type_of has no version".
 const AGAIN_THEN_MAINTAINED: &str = r#"
 .decl def(n: node, q: symbol)
@@ -419,8 +419,8 @@ a(n, q) :- def(n, q), edge(_, b), q = @dot(b, "f0").
 b(q, m) :- a(_, q), edge(m, _).
 .decl c(m: symbol)
 c(m) :- b(_, m).
-.decl first(n: node) cross_file
-first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
+.decl first(l: number) cross_file
+first(l) :- a(_, _), l = min x : { a(_, q), x = @strlen(q) }.
 .output c
 .output first
 "#;

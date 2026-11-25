@@ -136,7 +136,9 @@ sig_type(f, x) :- annotation(n), within(n, f), field(f, "body", b), !within(n, b
 data_layer_module(m) :- module_path(m, p), match("data_layer/[^/]+\\.py", p).
 // root(o, f): f is a root under owner o. Functions: o is the exporting data_layer module (Python linter
 // _scan_exported_module_functions). Methods: o is the exported class's qualified name (_scan_exported_class_methods).
-.decl root(o: symbol, f: node)
+// Cross-file: a class's root may be a base's method in another file (pub_member). Declared (decision 0652), so the
+// split stages the name resolution it reads, and the pack's other policies read theirs per file (decision 0695).
+.decl root(o: symbol, f: node) cross_file
 // An exported module-level function, public (no leading _), not defined under _internal/.
 root(m, f) :- data_layer_module(m), exports(m, x, q), public_name(m, x), qualname(f, q), kind(f, "function_definition"),
     !nearest(f, _, nonmod),

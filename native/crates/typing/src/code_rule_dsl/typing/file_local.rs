@@ -344,12 +344,6 @@ pub struct Programs {
 /// a cross-file rule reading one reads the whole edited file's rows again.
 pub const POSITIONS: &[&str] = &["visit_index", "node_order", "line", "col", "end_line", "ast_depth"];
 
-/// `RERAIL_STRICT_POSITIONS=1`: a program whose cross part reads a position is refused (decision 0649).
-fn strict_positions() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("RERAIL_STRICT_POSITIONS").is_ok_and(|v| !matches!(v.as_str(), "" | "0")))
-}
-
 /// The cross part's rules that read a position (`POSITIONS`), but for those whose head is one of the program's
 /// outputs: a finding is placed by its line and column, once, where it is written.
 fn position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, outputs: &std::collections::BTreeSet<&str>) -> Vec<(String, String)> {
@@ -372,21 +366,20 @@ fn position_reads(cross: &crate::code_rule_dsl::logic::program_image::Version, o
     out.into_iter().collect()
 }
 
-/// The cross part's position reads `positions` (`position_reads`) refused under `strict`, else reported once per
-/// process for each program that has them.
-pub fn positions_checked(positions: &[(String, String)], strict: bool) -> Result<(), String> {
+/// The cross part's position reads `positions` (`position_reads`) refused: an edit moves a position for every node
+/// after it, so a cross-file rule reading one reads the whole edited file's rows again (decision 0649). Decision 0652
+/// item 5 made this an error once the engine kept every pack's and data-layer policy's positions per file (decision
+/// 0695); before, it was reported, and refused under `RERAIL_STRICT_POSITIONS`.
+pub fn positions_checked(positions: &[(String, String)]) -> Result<(), String> {
     if positions.is_empty() {
         return Ok(());
     }
     let line = positions.iter().map(|(h, p)| format!("{h} reads {p}")).collect::<Vec<_>>().join(", ");
-    if strict {
-        return Err(format!("RERAIL_STRICT_POSITIONS: the cross-file part reads positions, which every edit moves (decision 0649): {line}"));
-    }
-    static SAID: std::sync::Mutex<Option<std::collections::BTreeSet<String>>> = std::sync::Mutex::new(None);
-    if SAID.lock().map(|mut s| s.get_or_insert_with(Default::default).insert(line.clone())).unwrap_or(true) {
-        eprintln!("rerail: the cross-file part reads positions, which every edit moves (decision 0649): {line}");
-    }
-    Ok(())
+    Err(format!(
+        "the cross-file part reads positions, which every edit moves (decisions 0649, 0652 item 5): {line}. Compare \
+         positions in the per-file part, or choose across files by a key an edit elsewhere does not move (`order_key`, \
+         decision 0695)"
+    ))
 }
 
 /// The versions of a split's parts (`Programs::versions`): the file-local and the cross-file part.
@@ -454,7 +447,7 @@ pub fn assemble(
     }
     let outputs: std::collections::BTreeSet<&str> = f.outputs().collect();
     let positions = position_reads(&versions.cross, &outputs);
-    positions_checked(&positions, strict_positions())?;
+    positions_checked(&positions)?;
     Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, views, versions, program: version, causes: Default::default(), positions, crossings: Default::default() })
 }
 

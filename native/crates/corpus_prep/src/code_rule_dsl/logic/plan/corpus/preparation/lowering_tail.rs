@@ -324,6 +324,44 @@ impl AggregateDemand {
             },
         }
     }
+    /// Item `i`'s places: its variables at a `node`, `loc` or `span` column or a document's column
+    /// (`front::document_column`), a nearest's two nodes, a placed demand's place columns.
+    fn places(v: &Version, p: &Placement, i: Item) -> VarSet {
+        let place = |ty: &str| matches!(ty, "node" | "loc" | "span");
+        let mut out = VarSet::new();
+        match i {
+            Item::Placed(r) => {
+                let rule = v.rule(r).expect("a rule of the input");
+                let (demand, positions) = &p.prefix[&r];
+                let cols = p.decls.iter().find(|(d, _)| d == demand).map(|(_, c)| c.clone()).unwrap_or_default();
+                for ((_, t), (_, ty)) in rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).zip(&cols) {
+                    if place(ty) {
+                        crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut out);
+                    }
+                }
+            }
+            Item::Own(r, n) => match lit_at(v, r, n).view() {
+                L::Atom(a) | L::Agg { atom: a, .. } => {
+                    let rel = v.rel_name(a.rel());
+                    let cols = v.columns_of(rel).unwrap_or_default();
+                    let document = crate::code_rule_dsl::logic::front::document_column(rel);
+                    for (k, t) in a.args().enumerate() {
+                        if let TermRef::Var(x) = t
+                            && (cols.get(k).is_some_and(|(_, ty)| place(ty)) || document == Some(k))
+                        {
+                            out.insert(x);
+                        }
+                    }
+                }
+                L::Nearest { n, a, .. } => {
+                    out.insert(n);
+                    out.insert(a);
+                }
+                _ => {}
+            },
+        }
+        out
+    }
     fn vars(v: &Version, p: &Placement, i: Item) -> VarSet {
         match i {
             Item::Placed(r) => {
@@ -347,9 +385,14 @@ fn lit_at(v: &Version, r: RuleId, n: u32) -> crate::code_rule_dsl::logic::progra
 
 /// Safe positive guards, then comparisons whose inputs those guards bind (a context is a superset of the consumer,
 /// never an assumption about a not-yet-computed aggregate or recursive result), over rule `r`'s items: its safe positive guards joined to the keys, then the
-/// comparisons they let run.
+/// comparisons they let run. With `by_place` (every key a place: a node, `loc` or `span`), a guard joins through its
+/// places alone (`AggregateDemand::places`): a node's demand is its own document's, and a guard reached through a
+/// value (a name) joins another document's rows to it and asks nothing more of this one. public-api-triples' demand
+/// of a class's Protocol count joined `pub_member(cq, n, f)`, a base's method in another file, by the class's name: a
+/// crossing that kept the program's name resolution from being staged (decision 0695). Leaving a guard out only
+/// widens the demand.
 #[allow(clippy::too_many_arguments)]
-fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, keys: &VarSet, deps: &BTreeMap<String, BTreeSet<String>>, reach: &crate::code_rule_dsl::logic::rr::aggregate_demand::Reach) -> Option<Vec<Item>> {
+fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, keys: &VarSet, by_place: bool, deps: &BTreeMap<String, BTreeSet<String>>, reach: &crate::code_rule_dsl::logic::rr::aggregate_demand::Reach) -> Option<Vec<Item>> {
     let rule = v.rule(r).expect("a rule of the input");
     let head = v.rel_name(rule.head().rel());
     let safe: Vec<(Item, VarSet)> = items
@@ -358,7 +401,7 @@ fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, k
             Item::Own(_, n) if matches!(lit_at(v, r, n).view(), L::Nearest { .. }) => true,
             i => matches!(AggregateDemand::rel(v, p, i), Some((rel, true, false)) if !reach.reaches(deps, rel, helper) && !reach.reaches(deps, rel, head)),
         })
-        .map(|&i| (i, AggregateDemand::vars(v, p, i)))
+        .map(|&i| (i, if by_place { AggregateDemand::places(v, p, i) } else { AggregateDemand::vars(v, p, i) }))
         .collect();
     let cmps: Vec<(usize, u32, VarSet)> = items
         .iter()
@@ -384,8 +427,9 @@ fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, k
             joined[k] = true;
             connected.extend(vars);
             if AggregateDemand::rel(v, p, *i).is_some() {
-                grounded.extend(vars);
-                bound.extend(vars);
+                let all = AggregateDemand::vars(v, p, *i);
+                grounded.extend(&all);
+                bound.extend(&all);
             }
         }
         // A nearest binds its node once its subject is an atom's.
@@ -403,7 +447,7 @@ fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, k
             }
             if let L::Cmp { l, op, r: right } = lit_at(v, r, *n).view()
                 && let Some(more) = body.cmp_binds(l, op, right, &bound)
-                && (vars.is_empty() || !vars.is_disjoint(&connected))
+                && (vars.is_empty() || !vars.is_disjoint(&connected) || (by_place && vars.is_subset(&bound)))
             {
                 bound.extend(&more);
                 connected.extend(vars);
@@ -580,7 +624,9 @@ impl ProgramPass for AggregateDemand {
                     for (_, t) in atom.args().enumerate().filter(|(k, _)| positions.contains(k)) {
                         crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut keys);
                     }
-                    let Some(body) = guards(v, &p, r, &items, name, &keys, &deps, &reach) else {
+                    // Every key a place: the demand is a node's, its guards joined through places.
+                    let by_place = v.columns_of(name).is_some_and(|cols| positions.iter().all(|&k| cols.get(k).is_some_and(|(_, ty)| matches!(ty.as_str(), "node" | "loc" | "span"))));
+                    let Some(body) = guards(v, &p, r, &items, name, &keys, by_place, &deps, &reach) else {
                         refused = true;
                         break 'readers;
                     };

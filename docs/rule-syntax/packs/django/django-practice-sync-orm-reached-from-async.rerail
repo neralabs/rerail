@@ -37,12 +37,29 @@ SyncOrmInAsync(o, what, fx) :- sora_query(o, f, what), is_async(f), def_name(f, 
 .violation SyncOrmReached(at: node, g: symbol, what: symbol, p: symbol, o: node)
     "`{g}()` runs a blocking ORM query (`{what}` at {p}:{o.line}) inside `async def`, where Django raises SynchronousOnlyOperation. Call it through `await sync_to_async({g})(...)`, or use the async ORM."
 SyncOrmReached(c, x, what, p, o) :- sora_start(k, c, g), sora_own(k, c), field(c, "function", fn), text(fn, x),
-    o = min y : { sora_reach(k, g, h), sora_query(y, h, _) }, sora_query(o, _, what), docof(o, d), doc(d, p, _).
+    sora_first(k, g, o), sora_query(o, _, what), docof(o, d), doc(d, p, _).
 .violation SyncOrmReachedInherited(at: node, kx: symbol, fx: symbol, x: symbol, c: node, what: symbol, p: symbol, o: node)
     "`{kx}` inherits `async def {fx}`, whose call `{x}()` at line {c.line} runs, for this class, a blocking ORM query (`{what}` at {p}:{o.line}), where Django raises SynchronousOnlyOperation. Call it through `sync_to_async`, or use the async ORM."
 SyncOrmReachedInherited(k, kx, fx, x, c, what, p, o) :- sora_start(k, c, g), !sora_own(k, c), def_name(g, x),
-    o = min y : { sora_new(k, c, y) }, sora_query(o, _, what), def_name(k, kx), nearest(c, f, dj_region_stop),
+    sora_first_new(k, c, o), sora_query(o, _, what), def_name(k, kx), nearest(c, f, dj_region_stop),
     def_name(f, fx), docof(o, d), doc(d, p, _).
+// The query a message names, of several: the first by order_key (its def's name, then its place there), which an
+// edit in another file does not move (decision 0695). sora_first(k, g, o): of those g reaches for k; sora_first_new(k,
+// c, o): of those only k's overrides make c reach.
+.decl sora_reach_key(k: node, g: node, q: symbol, i: number)
+sora_reach_key(k, g, q, i) :- sora_reach(k, g, h), sora_query(o, h, _), order_key(o, q, i).
+.decl sora_reach_after(k: node, g: node, q: symbol)
+sora_reach_after(k, g, q) :- sora_reach_key(k, g, q, _), sora_reach_key(k, g, q2, _), q2 < q.
+.decl sora_first(k: node, g: node, o: node)
+sora_first(k, g, o) :- sora_reach_key(k, g, q, _), !sora_reach_after(k, g, q), i = min j : { sora_reach_key(k, g, q, j) },
+    sora_reach(k, g, h), sora_query(o, h, _), order_key(o, q, i).
+.decl sora_new_key(k: node, c: node, q: symbol, i: number)
+sora_new_key(k, c, q, i) :- sora_new(k, c, o), order_key(o, q, i).
+.decl sora_new_after(k: node, c: node, q: symbol)
+sora_new_after(k, c, q) :- sora_new_key(k, c, q, _), sora_new_key(k, c, q2, _), q2 < q.
+.decl sora_first_new(k: node, c: node, o: node)
+sora_first_new(k, c, o) :- sora_new_key(k, c, q, _), !sora_new_after(k, c, q), i = min j : { sora_new_key(k, c, q, j) },
+    sora_new(k, c, o), order_key(o, q, i).
 // sora_own(k, c): call c is written in an async def of k's own body (or in a plain async def, k = f). sora_new(k, c,
 // o): k inherits c's async def, and only for k does c reach the query o.
 .decl sora_own(k: node, c: node)
