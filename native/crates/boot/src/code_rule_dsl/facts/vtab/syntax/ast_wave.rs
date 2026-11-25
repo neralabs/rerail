@@ -201,6 +201,10 @@ impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         let started = std::time::Instant::now();
+        crate::code_rule_dsl::logic::profile::decision("ast matcher wave: matchers, passes, tapes, node-passes", || {
+            let nodes: usize = self.tapes.iter().map(|t| t.transducer_len()).sum();
+            format!("{} matchers, {} passes, {} tapes, {} node-passes", self.active.len(), self.wave.passes(), self.tapes.len(), nodes * self.wave.passes().max(1))
+        });
         // On the cores, parts of the tapes side by side: a tape's labels and roots read that tape alone, so each part's
         // roots are the whole's at its tapes (a corpus batch's wave over every file ran on one core, 8 s on t50's
         // product run). Each part's limited roots are placed back at their tapes.
