@@ -176,6 +176,43 @@ fn a_symbol_built_from_a_files_module_stays_per_file() {
     assert!(!split.local.contains("last_tail"), "a symbol the module does not lead: {:?}", split.local);
 }
 
+/// A name built from a file's path (`cat(p, "::", q)`) places a row in that file, but `doc` holds no such name, so
+/// `locate` finds a row's document by a key that is the path as it is (`FileLocal::paths`, decision 0665). A relation
+/// keyed by both, which per-file rules and a cross-file rule read, is relayed by its path: by the built name, every
+/// row was looked up in `doc` and found in no document, and the cross-file part read none (data-layer's
+/// `plp_find_k`, 0677 fix 3f). One keyed by the built name alone is not relayed by it, and moves to the cross-file part;
+/// its rule then reads the relayed relation from there, in a later round, through the relay already made (it was
+/// blocked, and moved too: eager-resolve's `er_edge`).
+#[test]
+fn a_row_is_located_by_its_path_not_a_name_built_from_it() {
+    let text = ".decl doc(d: number, path: symbol, module: symbol)\n.input doc\n.decl qual(f: node, q: symbol)\n.input qual\n\
+                .decl docof(n: node, d: number)\n.input docof\n\
+                .decl keyed(k: symbol, p: symbol)\nkeyed(cat(p, \"::\", q), p) :- qual(f, q), docof(f, d), doc(d, p, _).\n\
+                .decl copied(k: symbol, p: symbol)\ncopied(k, p) :- keyed(k, p).\n\
+                .decl mine(p: symbol)\nmine(p) :- copied(_, p).\n.output mine\n\
+                .decl pair(k: symbol, j: symbol)\npair(k, j) :- copied(k, _), copied(j, _), k != j.\n.output pair\n\
+                .decl kpair(k: symbol, j: symbol)\nkpair(k, j) :- keyed(k, _), keyed(j, _), k != j.\n.output kpair\n\
+                .decl built(k: symbol)\nbuilt(k) :- keyed(k, _).\n\
+                .decl own(k: symbol)\nown(k) :- built(k).\n.output own\n\
+                .decl any(k: symbol)\nany(k) :- built(k), built(j), k != j.\n.output any\n";
+    let v = read(text);
+    let split = split_of(&v);
+    for rel in ["keyed", "copied"] {
+        assert_eq!(split.path_keys.get(rel).map(|c| c.as_slice()), Some(&[0, 1][..]), "{rel}: both place its row: {:?}", split.path_keys);
+        assert_eq!(split.paths.get(rel).map(|c| c.as_slice()), Some(&[1][..]), "{rel}: the path alone is one: {:?}", split.paths);
+    }
+    assert_eq!(split.path_keys.get("built").map(|c| c.as_slice()), Some(&[0][..]), "{:?}", split.path_keys);
+    assert!(!split.paths.contains_key("built"), "a built name is no path: {:?}", split.paths);
+    let (out, found) = located(v);
+    let relay: Vec<String> = out.rules().filter(|r| out.rel_name(r.head().rel()).starts_with("copied_at")).map(|r| out.show_rule(r)).collect();
+    assert!(found.is_ok() && relay.len() == 1, "{found:?} {relay:?}");
+    assert!(relay[0].contains("doc($__located_d, $__c1"), "found through the path, column 1: {relay:?}");
+    assert!(moved(&out).iter().any(|r| r == "built"), "not relayed by the built name: {:?}", moved(&out));
+    assert!(!moved(&out).iter().any(|r| r == "keyed" || r == "copied"), "relayed, not moved: {:?}", moved(&out));
+    let built: Vec<Vec<String>> = rules_of(&out, "built").into_iter().map(|r| reads(&out, r)).collect();
+    assert!(built.iter().all(|r| r.iter().any(|a| a.starts_with("keyed_at"))), "the moved rule reads the relay: {built:?}");
+}
+
 /// Module resolution handed on by a phase (decision 0665, tsx/names.rerail over the phase `tsx_names`): the phase's
 /// export, symbols alone and every file's rows, is read as a setting is, and a file's own targets are its rows by
 /// its path, so a rule resolving a file's imports through it stays per-file. The same resolution made in the run
@@ -495,6 +532,34 @@ named(t) :- node(_, a, "identifier", _, _), text(a, t), docof(a, d), node(_, b, 
     }
     let parts = programs_of(Arc::clone(&v)).unwrap();
     assert!(!parts.base.iter().any(|b| b == "text" || b == "docof"), "the cross part reads no base relation: {:?}", parts.base);
+}
+
+/// A bound of an id's range, as lowering writes it (`$d < 1610612736`, `$n < 6917529027641081856`), goes with the
+/// pushed join: every row of the right kind of id passes it, so it hands on no node or document that the reader needs
+/// for nothing else (decision 0677; eager-resolve's `er_dirty` handed its def and document to the cross part).
+#[test]
+fn an_id_range_bound_goes_with_the_pushed_join() {
+    let text = r#"
+.decl doc(d: number, path: symbol, module: symbol)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl field(p: node, f: symbol, c: node)
+.decl text(n: node, s: symbol)
+.decl docof(n: node, d: number)
+.input doc, node, field, text, docof
+.decl defined(s: symbol)
+defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text(c, s).
+.decl called(s: symbol)
+.output called
+called(s) :- node(_, n, "call", _, _), field(n, "function", c), text(c, s), docof(n, d), d < 1610612736, n < 6917529027641081856, !defined(s).
+"#;
+    let (v, made) = pushed(read(text));
+    assert_eq!(made.len(), 1, "{made:?}");
+    let join = rules_of(&v, &made[0])[0];
+    let shown = v.show_rule(join);
+    assert_eq!(join.head().args().count(), 1, "the name alone is handed on: {shown}");
+    assert!(shown.contains("1610612736") && shown.contains("6917529027641081856"), "the bounds go with it: {shown}");
+    let called = rules_of(&v, "called");
+    assert_eq!(reads(&v, called[0]), [made[0].as_str(), "defined"], "{}", v.show_rule(called[0]));
 }
 
 /// Position comparisons must retain the semantic candidate filters. Document equality alone

@@ -215,42 +215,68 @@ plp_plugin() :- !option("entryPoint", _).
 plp_explicit(f) :- decorator(f, e), short_name(e, x), (plp_name("PURE_DECORATOR_NAMES", x) ; x = "lazy").
 .decl plp_legacy(f: node)
 plp_legacy(f) :- decorator(f, e), short_name(e, x), plp_name("LEGACY_DECORATOR_NAMES", x).
-.decl plp_terminal(f: node)  // f targets or calls a plan-helper terminal
-plp_terminal(f) :- pc_edge(f, g, _), pc_sym(_, q, g), plp_name("PLAN_HELPER_TERMINAL_NAMES", q).
-plp_terminal(f) :- pc_rec(f), ast_walk(f, c), kind(c, "call"), short_name(c, x), plp_name("PLAN_HELPER_TERMINAL_NAMES", x).
-.decl plp_owner_seed(f: node)
-plp_owner_seed(f) :- pc_rec(f), def_name(f, x), suffix("_lazy", x), pc_param(f, p), !plp_name("receiver_names", p),
-    plp_name("RUNTIME_OWNER_PARAM_NAMES", p), plp_terminal(f).
-// The files scan_paths reads (its shared-facts narrowing): those whose text has a pure-lazy trigger, those
-// defining a global-state factory, and those a seed reaches without a base class. When there is none, every file.
-.decl plp_shared(f: node)
-plp_shared(f) :- pc_rec(f), plp_explicit(f).
-plp_shared(f) :- plp_owner_seed(f).
+// The cross part (decision 0677) knows each record by its key (purity-calls' pc_key), never by its node: plp_rk(k, p),
+// record k is in the file at path p; plp_kexplicit(k), plp_klegacy(k), its decorators.
+.decl plp_rk(k: symbol, p: symbol)
+plp_rk(k, p) :- pc_key(f, k), docof(f, d), doc(d, p, _).
+.decl plp_kexplicit(k: symbol)
+plp_kexplicit(k) :- pc_key(f, k), plp_explicit(f).
+.decl plp_klegacy(k: symbol)
+plp_klegacy(k) :- pc_key(f, k), plp_legacy(f).
+// plp_terminal(k): k targets or calls a plan-helper terminal; plp_kterminal(k): k is one, by its qualname.
+.decl plp_kterminal(k: symbol)
+plp_kterminal(k) :- pc_sym(_, q, f), plp_name("PLAN_HELPER_TERMINAL_NAMES", q), pc_key(f, k).
+.decl plp_calls_terminal(k: symbol)
+plp_calls_terminal(k) :- pc_rec(f), ast_walk(f, c), kind(c, "call"), short_name(c, x),
+    plp_name("PLAN_HELPER_TERMINAL_NAMES", x), pc_key(f, k).
+.decl plp_terminal(k: symbol)
+plp_terminal(k) :- pc_edge(k, g, _), plp_kterminal(g).
+plp_terminal(k) :- plp_calls_terminal(k).
+// plp_owner_seed(k): a *_lazy record with an owner parameter (plp_owner_shape) that reaches a terminal.
+.decl plp_owner_shape(k: symbol)
+plp_owner_shape(k) :- pc_rec(f), def_name(f, x), suffix("_lazy", x), pc_param(f, p), !plp_name("receiver_names", p),
+    plp_name("RUNTIME_OWNER_PARAM_NAMES", p), pc_key(f, k).
+.decl plp_owner_seed(k: symbol)
+plp_owner_seed(k) :- plp_owner_shape(k), plp_terminal(k).
+// The files scan_paths reads (its shared-facts narrowing), by path: those whose text has a pure-lazy trigger, those
+// defining a global-state factory (plp_cand0, each file's own), and those a seed reaches without a base class. When
+// there is none, every file.
+.decl plp_shared(k: symbol)
+plp_shared(k) :- plp_kexplicit(k).
+plp_shared(k) :- plp_owner_seed(k).
 plp_shared(g) :- plp_shared(f), pc_edge(f, g, 0).
-.decl plp_cand(d: number)
-plp_cand(d) :- source(d, sp), text(sp, t), plp_name("file_triggers", x), contains(x, t).
-plp_cand(d) :- pc_rec(f), def_name(f, x), docof(f, d), plp_name("global_state_factories", x).
-plp_cand(d) :- plp_shared(f), docof(f, d).
+.decl plp_cand0(p: symbol)
+plp_cand0(p) :- source(d, sp), text(sp, t), plp_name("file_triggers", x), contains(x, t), doc(d, p, _).
+plp_cand0(p) :- pc_rec(f), def_name(f, x), plp_name("global_state_factories", x), docof(f, d), doc(d, p, _).
+.decl plp_cand(p: symbol)
+plp_cand(p) :- plp_cand0(p).
+plp_cand(p) :- plp_shared(k), plp_rk(k, p).
 .decl plp_anycand()
 plp_anycand() :- plp_cand(_).
-.decl plp_docin(d: number)
-plp_docin(d) :- plp_cand(d).
-plp_docin(d) :- doc(d, _, _), !plp_anycand().
-.decl plp_in_rec(f: node)
-plp_in_rec(f) :- pc_rec(f), docof(f, d), plp_docin(d).
-.decl plp_colored(f: node)
-plp_colored(f) :- plp_in_rec(f), plp_explicit(f).
-plp_colored(g) :- plp_colored(f), pc_edge(f, g, _), plp_in_rec(g), !plp_legacy(g).
-.decl plp_owner(f: node)
-plp_owner(f) :- plp_in_rec(f), plp_owner_seed(f).
-plp_owner(g) :- plp_owner(f), pc_edge(f, g, _), plp_in_rec(g), !plp_legacy(g).
+.decl plp_docin(p: symbol)
+plp_docin(p) :- plp_cand(p).
+plp_docin(p) :- doc(_, p, _), !plp_anycand().
+.decl plp_in_rec(k: symbol)
+plp_in_rec(k) :- plp_rk(k, p), plp_docin(p).
+.decl plp_colored(k: symbol)
+plp_colored(k) :- plp_in_rec(k), plp_kexplicit(k).
+plp_colored(g) :- plp_colored(f), pc_edge(f, g, _), plp_in_rec(g), !plp_klegacy(g).
+.decl plp_owner(k: symbol)
+plp_owner(k) :- plp_in_rec(k), plp_owner_seed(k).
+plp_owner(g) :- plp_owner(f), pc_edge(f, g, _), plp_in_rec(g), !plp_klegacy(g).
+// plp_kan(k, owner): scan_paths analyses record k; owner: only PLP-001…005 are kept (an owner seed's reach that no
+// pure-lazy def's reaches).
+.decl plp_kan(k: symbol, owner: number)
+plp_kan(k, 0) :- !plp_src_mode(), plp_colored(k).
+plp_kan(k, 1) :- !plp_src_mode(), plp_owner(k), !plp_colored(k).
 
-// plp_an(f, strict, owner): f is analysed; strict: any receiver of a protected attribute counts; owner: only
-// PLP-001…005 are kept.
-.decl plp_an(f: node, strict: number, owner: number)
-plp_an(f, 0, 0) :- !plp_src_mode(), plp_colored(f), plp_explicit(f).
-plp_an(f, 1, 0) :- !plp_src_mode(), plp_colored(f), !plp_explicit(f).
-plp_an(f, 1, 1) :- !plp_src_mode(), plp_owner(f), !plp_colored(f).
+// plp_an(f, strict): each file analyses its defs; strict: any receiver of a protected attribute counts. scan_paths
+// analyses every record, in the one mode it can have: an explicit def of a file read is colored, so it is not strict,
+// and any other def analysed is. Which of them count is plp_kan's, over keys; the findings of the others are dropped
+// there (plp_kept), so the analysis needs no fact of another file and stays each file's own (decision 0677).
+.decl plp_an(f: node, strict: number)
+plp_an(f, 0) :- !plp_src_mode(), pc_rec(f), plp_explicit(f).
+plp_an(f, 1) :- !plp_src_mode(), pc_rec(f), !plp_explicit(f).
 // scan_source: a def decorated @pure_lazy, and any def inside one, in a file whose text names a trigger and whose
 // path has no tests/ directory.
 .decl plp_src_doc(d: number)
@@ -258,12 +284,12 @@ plp_src_doc(d) :- source(d, sp), text(sp, t), plp_name("PURE_SOURCE_TRIGGERS", x
     !prefix("tests/", p), !contains("/tests/", p).
 .decl plp_pure_dec(f: node)
 plp_pure_dec(f) :- kind(f, "function_definition"), decorator(f, e), short_name(e, x), plp_name("PURE_DECORATOR_NAMES", x).
-plp_an(f, 0, 0) :- plp_src_mode(), plp_pure_dec(f), docof(f, d), plp_src_doc(d).
-plp_an(g, 0, 0) :- plp_src_mode(), plp_pure_dec(f), within(g, f), kind(g, "function_definition"), docof(f, d),
+plp_an(f, 0) :- plp_src_mode(), plp_pure_dec(f), docof(f, d), plp_src_doc(d).
+plp_an(g, 0) :- plp_src_mode(), plp_pure_dec(f), within(g, f), kind(g, "function_definition"), docof(f, d),
     plp_src_doc(d).
 // plp_in(f, n): n is in f's body, nested defs included: the analyser's visit.
 .decl plp_in(f: node, n: node)
-plp_in(f, n) :- plp_an(f, _, _), field(f, "body", b), within(n, b).
+plp_in(f, n) :- plp_an(f, _), field(f, "body", b), within(n, b).
 .decl plp_named(n: node)
 plp_named(n) :- plp_in(_, n).
 // plp_surface(f): f's nearest class sets `__pure_lazy_surface__ = True`: `self` and `self._txn` / `self._plan` …
@@ -271,14 +297,14 @@ plp_named(n) :- plp_in(_, n).
 .decl plp_classk(k: symbol)
 plp_classk("class_definition").
 .decl plp_surface(f: node)
-plp_surface(f) :- plp_an(f, _, _), nearest(f, c, plp_classk), field(c, "body", b), child(b, st, _), asgstmt(a, st),
+plp_surface(f) :- plp_an(f, _), nearest(f, c, plp_classk), field(c, "body", b), child(b, st, _), asgstmt(a, st),
     assign_target(a, t), kind(t, "identifier"), text(t, "__pure_lazy_surface__"), assign_value(a, v), kind(v, "true").
 .decl plp_carrier(f: node, o: node, a: symbol)
 plp_carrier(f, o, a) :- plp_surface(f), plp_in(f, o), kind(o, "identifier"), text(o, "self"),
     plp_name("PURE_SURFACE_CARRIER_ATTRS", a).
 // plp_gstate(f, x): module state x is visible in f (not shadowed by a parameter or local); plp_gmutf: mutable.
 .decl plp_gstate(f: node, x: symbol)
-plp_gstate(f, x) :- plp_an(f, _, _), docof(f, d), (plp_gmut(d, x) ; plp_grt(d, x)), !pc_param(f, x), !pc_local(f, x).
+plp_gstate(f, x) :- plp_an(f, _), docof(f, d), (plp_gmut(d, x) ; plp_grt(d, x)), !pc_param(f, x), !pc_local(f, x).
 .decl plp_gmutf(f: node, x: symbol)
 plp_gmutf(f, x) :- plp_gstate(f, x), docof(f, d), plp_gmut(d, x).
 
@@ -309,7 +335,7 @@ plp_trecv(f, e) :- kind(e, "call"), field(e, "function", o), plp_trecv(f, o).
 plp_trecv(f, e) :- kind(e, "parenthesized_expression"), unparen(e, o), o != e, plp_trecv(f, o).
 // plp_rb(f, e): _receiver_is_runtime_bound: the same without calls; anything, in a strict def.
 .decl plp_rb(f: node, e: node)
-plp_rb(f, e) :- plp_an(f, 1, _), plp_in(f, e).
+plp_rb(f, e) :- plp_an(f, 1), plp_in(f, e).
 plp_rb(f, e) :- plp_in(f, e), kind(e, "identifier"), text(e, x), pc_param(f, x), !plp_self_carrier(f, x).
 plp_rb(f, e) :- plp_tnt_at(f, e), text(e, x), !plp_self_carrier(f, x).
 plp_rb(f, e) :- attr_of(e, o, a), plp_rb(f, o), !plp_carrier(f, o, a).
@@ -456,7 +482,7 @@ plp_find(f, c, "PLP-002", cat("pure-lazy functions must not dynamically access r
     plp_c_getattr(f, c, x), plp_seen(f, c).
 plp_find(f, r, c, m, "-") :- plp_rfirst(f, r, i), plp_rhit(f, r, i, c, m), c != "".
 plp_find(f, f, "PLP-006", "pure-lazy functions must not declare runtime-handle return types", "-") :-
-    plp_an(f, _, _), plp_ann_hit(f).
+    plp_an(f, _), plp_ann_hit(f).
 plp_find(f, c, "PLP-008", cat("pure-lazy functions must not pass module-level runtime state '", g,
     "' into runtime sink '", k, "'"), "-") :- plp_c_sink(f, c, k, g), plp_seen(f, c).
 plp_find(f, c, "PLP-008", cat("pure-lazy functions must not read ambient module-level runtime state '", g, "'"), "-") :-
@@ -464,23 +490,30 @@ plp_find(f, c, "PLP-008", cat("pure-lazy functions must not read ambient module-
 plp_find(f, n, "PLP-009", cat("pure-lazy global cache/state access requires signed allowlist for '", g, "' (", k,
     ") via '", a, "'"), cat("global=", g, " category=", k, " access=", a)) :-
     plp_access(f, n, g, a), !plp_exempt(f, g, a), docof(f, d), plp_gcat(d, g, k).
-plp_find(g, g, "PLP-007", "exported public *_lazy functions must be decorated with @pure_lazy", "-") :-
-    !plp_src_mode(), plp_xres(_, g), pc_sym(_, q, g), !contains(".", q), suffix("_lazy", q), !prefix("_", q),
-    !plp_explicit(g).
-// plp_kept(f, c): owner-only defs keep PLP-001…005 only.
-.decl plp_kept(f: node, c: symbol)
-plp_kept(f, c) :- plp_find(f, _, c, _, _), plp_an(f, _, 0).
-plp_kept(f, c) :- plp_find(f, _, c, _, _), plp_an(f, _, 1), plp_name("STRICT_OWNER_VIOLATION_CODES", c).
-plp_kept(g, "PLP-007") :- plp_find(g, _, "PLP-007", _, _).
-// plp_payload(n, p, c, q, s, m): the allowlist payload of the finding at n: path, code, qualname, scope, message.
-.decl plp_payload(n: node, p: symbol, c: symbol, q: symbol, s: symbol, m: symbol)
-plp_payload(n, p, c, q, s, m) :- plp_find(f, n, c, m, s), plp_kept(f, c), pc_qn(f, q), docof(n, d), doc(d, p, _).
+// plp_at(n, k, p, c, q, s, m, l): the finding at n, of the def whose key is k (purity-calls' pc_key; in scan_source
+// any def's, by the same path and qualname), with its allowlist payload: path, code, qualname, scope, message; l is
+// its line. plp_find_k is the same without the node, for the cross part.
+.decl plp_at(n: node, k: symbol, p: symbol, c: symbol, q: symbol, s: symbol, m: symbol, l: number)
+plp_at(n, cat(p, "::", q), p, c, q, s, m, l) :- plp_find(f, n, c, m, s), pc_qn(f, q), docof(n, d), doc(d, p, _),
+    line(n, l).
+plp_at(g, k, p, "PLP-007", q, "-", "exported public *_lazy functions must be decorated with @pure_lazy", l) :-
+    !plp_src_mode(), plp_lazy(g), pc_key(g, k), pc_qn(g, q), docof(g, d), doc(d, p, _), line(g, l).
+.decl plp_find_k(k: symbol, p: symbol, c: symbol, q: symbol, s: symbol, m: symbol, l: number)
+plp_find_k(k, p, c, q, s, m, l) :- plp_at(_, k, p, c, q, s, m, l).
+// plp_kept(k, c): code c of def k stands: every code of a def analysed in full (and of every def in scan_source),
+// PLP-001…005 of an owner-only def, and PLP-007 of a def exported without its decorator.
+.decl plp_kept(k: symbol, c: symbol)
+plp_kept(k, c) :- plp_find_k(k, _, c, _, _, _, _), c != "PLP-007", plp_kan(k, 0).
+plp_kept(k, c) :- plp_find_k(k, _, c, _, _, _, _), c != "PLP-007", plp_kan(k, 1),
+    plp_name("STRICT_OWNER_VIOLATION_CODES", c).
+plp_kept(k, c) :- plp_find_k(k, _, c, _, _, _, _), plp_src_mode().
+plp_kept(k, "PLP-007") :- plp_x7(k).
 
 // ---- PLP-007: what data_layer/*.py exports ----
 // The names: the first top-level `__all__ = [...]` (a list, tuple or set display) when it is one; otherwise
 // (none, or the first is not a display) the module's public from-imports and top-level defs.
 .decl plp_dl_doc(d: number, m: symbol)
-plp_dl_doc(d, m) :- doc(d, p, m), glob("data_layer/*.py", p), plp_docin(d).
+plp_dl_doc(d, m) :- doc(d, p, m), glob("data_layer/*.py", p).
 .decl plp_all_asg(d: number, a: node)
 plp_all_asg(d, a) :- plp_dl_doc(d, _), modnode(d, mn), child(mn, st, _), asgstmt(a, st), assign_target(a, t),
     kind(t, "identifier"), text(t, "__all__").
@@ -491,18 +524,32 @@ plp_all_first(d, v) :- plp_all_asg(d, a), count : { plp_all_asg(d, a2), earlier(
 plp_export(d, x) :- plp_all_first(d, v), child(v, e, _), str_const(e, x), !prefix("_", x).
 plp_export(d, x) :- plp_dl_doc(d, _), !plp_all_first(d, _), modnode(d, mn), pc_imp(mn, x, _, "sym"), !prefix("_", x).
 plp_export(d, x) :- plp_dl_doc(d, _), !plp_all_first(d, _), pc_sym(d, x, _), !contains(".", x), !prefix("_", x).
-// plp_xq(s) asks where "module.name" s is defined, following re-exports; plp_xres answers.
-.decl plp_fq(s: symbol, f: node)
-plp_fq(s, f) :- pc_fq(s, f), plp_in_rec(f).
+// plp_xq0(p, s): the module at path p exports "module.name" s; plp_modimp(p, pm, x, q): module pm, at path p,
+// imports x as q (`from m import y`). Each file's own, by symbol.
+.decl plp_xq0(p: symbol, s: symbol)
+plp_xq0(p, q) :- plp_export(d, x), modnode(d, mn), pc_imp(mn, x, q, "sym"), doc(d, p, _).
+plp_xq0(p, cat(m, ".", x)) :- plp_export(d, x), modnode(d, mn), !pc_imp(mn, x, _, "sym"), doc(d, p, m).
+.decl plp_modimp(p: symbol, pm: symbol, x: symbol, q: symbol)
+plp_modimp(p, pm, x, q) :- doc(d, p, pm), modnode(d, mn), pc_imp(mn, x, q, "sym").
+// plp_xq(s) asks where "module.name" s is defined, following re-exports through the files read; plp_xres answers,
+// by the record's key.
+.decl plp_fq(s: symbol, k: symbol)
+plp_fq(s, k) :- pc_kfq(s, k), plp_in_rec(k).
 .decl plp_xq(s: symbol)
-plp_xq(q) :- plp_export(d, x), modnode(d, mn), pc_imp(mn, x, q, "sym").
-plp_xq(cat(m, ".", x)) :- plp_export(d, x), modnode(d, mn), !pc_imp(mn, x, _, "sym"), doc(d, _, m).
-plp_xq(q2) :- plp_xq(s), !plp_fq(s, _), split_dot(s, pm, nm), doc(d, _, pm), plp_docin(d), modnode(d, mn),
-    pc_imp(mn, nm, q2, "sym").
-.decl plp_xres(s: symbol, g: node)
-plp_xres(s, g) :- plp_xq(s), plp_fq(s, g).
-plp_xres(s, g) :- plp_xq(s), !plp_fq(s, _), split_dot(s, pm, nm), doc(d, _, pm), plp_docin(d), modnode(d, mn),
-    pc_imp(mn, nm, q2, "sym"), plp_xres(q2, g).
+plp_xq(q) :- plp_xq0(p, q), plp_docin(p).
+plp_xq(q2) :- plp_xq(s), !plp_fq(s, _), split_dot(s, pm, nm), plp_modimp(p, pm, nm, q2), plp_docin(p).
+.decl plp_xres(s: symbol, k: symbol)
+plp_xres(s, k) :- plp_xq(s), plp_fq(s, k).
+plp_xres(s, k) :- plp_xq(s), !plp_fq(s, _), split_dot(s, pm, nm), plp_modimp(p, pm, nm, q2), plp_docin(p),
+    plp_xres(q2, k).
+// plp_lazy(g): record g is a public top-level *_lazy def without @pure_lazy (plp_klazy: by its key); plp_x7(k): one
+// that is exported.
+.decl plp_lazy(g: node)
+plp_lazy(g) :- pc_sym(_, q, g), !contains(".", q), suffix("_lazy", q), !prefix("_", q), !plp_explicit(g).
+.decl plp_klazy(k: symbol)
+plp_klazy(k) :- plp_lazy(g), pc_key(g, k).
+.decl plp_x7(k: symbol)
+plp_x7(k) :- !plp_src_mode(), plp_xres(_, k), plp_klazy(k).
 
 // ==== 5. the plugin's grandfathered allowlist =====================================================================
 // One fragment per source file under the directory, `path<TAB>id<TAB>code<TAB>qualname<TAB>scope<TAB>message` per
@@ -524,15 +571,15 @@ allow_entry("plp_ceiling", e) :- plp_ceiling_line(_, t), match("\\s*(?<e>[^\\t]+
 plp_approved(p, c, q, s, m, a) :- plp_entry(_, p, c, q, s, m), a = count : { plp_entry(_, p, c, q, s, m) }.
 // plp_found(p, c, q, s, m, l): one finding per line (the linter dedupes on code, file, line and message).
 .decl plp_found(p: symbol, c: symbol, q: symbol, s: symbol, m: symbol, l: number)
-plp_found(p, c, q, s, m, l) :- plp_payload(n, p, c, q, s, m), line(n, l).
+plp_found(p, c, q, s, m, l) :- plp_find_k(k, p, c, q, s, m, l), plp_kept(k, c).
 .decl plp_found_n(p: symbol, c: symbol, q: symbol, s: symbol, m: symbol, k: number)
 plp_found_n(p, c, q, s, m, k) :- plp_found(p, c, q, s, m, _), k = count : { plp_found(p, c, q, s, m, _) }.
-// plp_report(n): the finding at n stands: not the plugin, or beyond its payload's approved count.
-.decl plp_report(n: node)
-plp_report(n) :- plp_payload(n, _, _, _, _, _), !plp_plugin().
-plp_report(n) :- plp_payload(n, p, c, q, s, m), plp_plugin(), !plp_approved(p, c, q, s, m, _).
-plp_report(n) :- plp_payload(n, p, c, q, s, m), plp_plugin(), plp_approved(p, c, q, s, m, a), plp_found_n(p, c, q, s, m, k),
-    line(n, l), r = count : { plp_found(p, c, q, s, m, l2), l2 < l }, r < k - a.
+// plp_report(p, c, q, s, m, l): the finding at line l stands: not the plugin, or beyond its payload's approved count.
+.decl plp_report(p: symbol, c: symbol, q: symbol, s: symbol, m: symbol, l: number)
+plp_report(p, c, q, s, m, l) :- plp_found(p, c, q, s, m, l), !plp_plugin().
+plp_report(p, c, q, s, m, l) :- plp_found(p, c, q, s, m, l), plp_plugin(), !plp_approved(p, c, q, s, m, _).
+plp_report(p, c, q, s, m, l) :- plp_found(p, c, q, s, m, l), plp_plugin(), plp_approved(p, c, q, s, m, a),
+    plp_found_n(p, c, q, s, m, k), r = count : { plp_found(p, c, q, s, m, l2), l2 < l }, r < k - a.
 // The list's own errors.
 .decl plp_list_error(m: symbol)
 plp_list_error(cat("spurious allowlist entry: ", e)) :- plp_entry(e, p, c, q, s, m), plp_approved(p, c, q, s, m, a),
@@ -553,7 +600,7 @@ plp_list_error("burn-down allowlist signature is invalid; this list can only dec
 plp_list_error(cat("cannot read ", p)) :- input_error(p, _, _), contains("pure_lazy_runtime_purity", p).
 
 .violation PLP(at: node, c: symbol, q: symbol, m: symbol) code {c} "{q}: {m}"
-PLP(n, c, q, m) :- plp_payload(n, _, c, q, _, m), plp_report(n).
+PLP(n, c, q, m) :- plp_at(n, k, p, c, q, s, m, l), plp_kept(k, c), plp_report(p, c, q, s, m, l).
 .violation PLP_ALLOWLIST(at: span, m: symbol) code "PLP-ALLOWLIST" "{m}"
 PLP_ALLOWLIST(@place("scripts/allowlists/architecture_grandfathered/pure_lazy_runtime_purity", 1), m) :-
     plp_plugin(), plp_list_error(m).

@@ -354,9 +354,14 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     }
                 }
                 // A bound (`$x < k`) is the reader's, its variable handed on: two rules that differ only in their
-                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
+                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join. Not a
+                // bound of an id's range, as lowering writes it (`$f < 6917529027641081856`, `$d < 1610612736`): every
+                // copy has the same, so it stays with the join, and a node or document the reader needs for nothing
+                // else is not handed on to the cross part (decision 0677; eager-resolve's `er_dirty`).
                 for &j in &lits {
-                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(_) } = body[j].view() {
+                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(c) } = body[j].view()
+                        && c.unsigned_abs() < 1 << 30
+                    {
                         outside.extend(lit_vars(v, rule, body[j]));
                     }
                 }

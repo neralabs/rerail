@@ -172,7 +172,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    Class hierarchy (3a), class members and a Django model read by its symbol (3b): **done (2026-11-24)**, § Fix 3:
    built. A model's `Meta` options and managers (3c), and its hooks (3d): **done (2026-11-25)**, § Fix 3c: built,
    § Fix 3d: built. Points-to (3e), the phase `points_to`, and Django's four call-graph policies over symbols:
-   **done (2026-11-25)**, § Fix 3e: built (note t55 is its design). `plp_anycand` and `item_parts` remain.
+   **done (2026-11-25)**, § Fix 3e: built (note t55 is its design). The data layer's purity call graph
+   (`plp_anycand`, 3f): **done (2026-11-25)**, § Fix 3f: built. `item_parts` remains.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
@@ -584,10 +585,84 @@ The loads differ, so the instructions are the comparison: 8% fewer. A first vers
 rows). The old rule's `sfu_in_atomic(i)` had bound it. It now starts from the lock calls. The phase's own largest
 costs are `pt_tm` over every node, about 1.6 s of CPU between the two parts.
 
+### Fix 3f: built (2026-11-25): the data layer's purity call graph by key, and three engine fixes
+
+**The list.** 328 entries, from 440:
+- 69 left with the rewrite below: every `pc_` and `plp_` relation of `data-layer` and `data-layer:alone`.
+- 43 more left with the push fix (below), across packs: the data layer's 16 and 14 alone (`app_semantic`, `er_site`,
+  `la_find`, `pos_reachable`, …), Django's 5 (`dar_view`, `ghw_model_call`, `sfu_atomic_view`, …), python's 5,
+  typescript's 2 and python-main's 1 (`exported`).
+
+`rr_found_through` stays on the list. It is the tail's.
+
+**The rewrite.** `lib/data-layer/purity-calls.rerail` built the call graph between defs by node (`pc_edge(f, g)`), and
+`pure-lazy-runtime-purity.rerail` walked it in the cross part. Now a def is its key: its file's path and its
+qualified name, `cat(p, "::", q)` (`pc_key(f, k)`).
+- Each file states what its records call as requests: a name or a dotted call (`pc_ask_s`), and a method of the
+  record's own class through `self` or `cls` (`pc_ask_m`).
+- The cross part answers them over keys (`pc_res`, `pc_mans`), so `pc_edge(f, g)` is over keys.
+- The purity analysis (`plp_kterminal`, `plp_owner`, `plp_colored`, …) runs over keys too, and decides which defs
+  count (`plp_kan`).
+- The findings are each file's own, at its own nodes (`plp_at`). They are kept by key (`plp_kept`), and PLP-007
+  reads its lazy targets by key (`plp_klazy`).
+
+eager-resolve's same-file walk (`er_dirty` over `er_edge`) carries the file's path. Its skip list is tested in the file
+(`er_part`), so the walk reads no def.
+
+**Three engine fixes.** The rewrite found them. The first two dropped or refused rows without saying why.
+- **A row is located by its path, not by a name built from it.** A built name (`cat(p, "::", q)`) places a row in
+  its file, and 0665 counts it among a relation's path keys. But `doc` holds no such name. `locate` relayed
+  `plp_find_k` by its key column, every row's lookup in `doc` found no document, and the cross part read no row: the
+  first run of the rewrite reported nothing. `FileLocal::paths` holds the columns that are a path as it is (a
+  derived relation's, by the fixpoint that finds path keys, without the name builders). The relay and `ByPath` find
+  a row's document by one of them. A relation placed by a built name alone is not relayed. It moves to the cross
+  part. Before, eager-resolve's `er_edge` and `er_skip` were relayed by their symbol column in the same way.
+- **A later round reads a relay an earlier round made.** `locate` repeats until nothing is blocked. A target relayed
+  in one round, whose reader a later round moves to the cross part, was blocked in the later round, and refused by
+  0652. The later round now rewrites the moved reader to read the existing relay.
+- **A bound of an id's range goes with a pushed join.** The push pass (`PushLocalJoins`) hands a join's bounded
+  variables on to the reader, so that a narrow copy and its original push one join (0575). Lowering writes a bound on
+  every node and document (`$f < 6917529027641081856`, `$d < 1610612736`), so every pushed join handed its nodes and
+  documents on to the cross part, though no reader read them. Such a bound now stays with the join. It is the same
+  in every copy, so the copies still share their join. This fix took the 43 relations off the list.
+
+**Tests.**
+- `a_row_is_located_by_its_path_not_a_name_built_from_it` covers:
+  - the path columns of a relation keyed by a built name and a path;
+  - the relay by the path;
+  - a relation keyed by a built name alone, which moves to the cross part;
+  - its rule, moved in the next round, reading the relay made in the first.
+- `an_id_range_bound_goes_with_the_pushed_join`: the join hands on the name alone, and keeps both bounds.
+- Every pack's split test, every rule file's own tests, the corpus tests, the plan tests and the file-local tests.
+- boot's quick tier, apart from two Metal tests that a Linux host cannot run (no device).
+
+The data layer's tests reach no finding of these two policies. So the rewrite was compared on a 224-file sample of
+the data layer's repository: the old engine with the old rules against the new engine with the new rules, in each
+of the purity policy's three modes. The policy's `input_error` rule was removed from both copies, because the CLI
+refuses a policy that reads it, and nothing derives it.
+
+**Cost.** The CLI at O0 with `test-hooks` on this Mac, one run each. CPU is user time.
+
+| Policy, mode | Findings, old and new | Instructions, old → new | Peak RSS, old → new |
+|---|---|---|---|
+| purity, plugin (the default) | the same | 0.574 → 0.494 × 10¹² (CPU 27.4 → 24.7 s) | 2.83 → 2.69 GB |
+| purity, `scan_paths` | the same, 8 | 0.574 → 0.493 × 10¹² | 2.85 → 2.68 GB |
+| purity, `scan_source` | the same, 8 | 0.205 → 0.202 × 10¹² | 0.80 → 0.65 GB |
+| eager-resolve | the same (the allowlist's one diagnostic) | 0.304 → 0.309 × 10¹² | 1.39 → 1.36 GB |
+
+The purity analysis runs once per key, not once per def node, and its findings join in their own file. That is the
+14% fewer instructions.
+
+**For the list's work.** With `RERAIL_SHOW_CROSSINGS=1`, a pack split test prints each relation it finds and the
+crossing it is under (run with `--no-capture`). This fix's stale entries, those of the `:alone` and sharded runs
+included, came from the union of one run's printed lines (§ Open).
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
-  can say a listed relation no longer crosses. Fix 3's were found by comparing the shards' logs with the list by hand.
+  can say a listed relation no longer crosses. Fix 3's were found by comparing the shards' logs with the list by hand,
+  and fix 3f's from the union of one run's `RERAIL_SHOW_CROSSINGS` lines. The same holds for a run of each policy
+  alone (`data-layer:alone`).
   The gate needs a test that unions the shards' logs and refuses a listed relation none of them names.
 
 - **Where a finding that pairs two files' nodes is written.** `call_target(call, def)` is an example. An output

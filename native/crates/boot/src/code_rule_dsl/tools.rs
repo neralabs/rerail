@@ -2767,6 +2767,12 @@ mod pack_split_tests {
         let under: std::collections::BTreeMap<String, String> =
             std::fs::read_to_string(&crossings).unwrap_or_default().lines().filter_map(|l| l.split_once(' ')).map(|(r, u)| (r.to_owned(), u.to_owned())).collect();
         let found: std::collections::BTreeSet<String> = under.keys().cloned().collect();
+        // `RERAIL_SHOW_CROSSINGS=1`: each relation found, with its crossing, for the fixes' work (`--no-capture`).
+        if std::env::var_os("RERAIL_SHOW_CROSSINGS").is_some() {
+            for (r, u) in &under {
+                println!("crossing: {dir} {r} under {u}");
+            }
+        }
         let listed: std::collections::BTreeSet<String> =
             NODE_CROSSINGS.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once(' ')).filter(|(d, _)| *d == dir).map(|(_, r)| r.trim().to_owned()).collect();
         let new: Vec<&String> = found.difference(&listed).collect();

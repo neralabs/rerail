@@ -68,6 +68,11 @@ pub struct FileLocal {
     /// value, which a path is not, so `locations` (and `same_doc`, `row_documents`) leave it out, and `locate` names
     /// the document a path key's row is of through `doc` (`passes::Locate`).
     pub path_keys: BTreeMap<String, Vector<usize>>,
+    /// The path keys that hold a file's path as it is, not a name built from one (`cat(p, "::", q)`, `name_built`):
+    /// those every rule fills from `doc`'s path, or from such a key, unchanged. `locate` finds a row's document by
+    /// one, through `doc(d, p, …)`, which a built name is not (decision 0665): a key built alone places a row in one
+    /// document, but names no document `doc` can find.
+    pub paths: BTreeMap<String, Vector<usize>>,
     pub no_document: bool,
     keys: Keys,
 }
@@ -90,6 +95,7 @@ impl PartialEq for FileLocal {
             && self.cover_deps == o.cover_deps
             && self.row_documents == o.row_documents
             && self.path_keys == o.path_keys
+            && self.paths == o.paths
             && self.no_document == o.no_document
             && self.keys == o.keys
     }
@@ -131,7 +137,7 @@ impl Analysis for FileLocal {
     /// `(2, rel, columns)` locations, `(3, rel)` filters, `(4, rel, cause)`, `(5, rel, columns)` same-document,
     /// `(6, no document)`, its keys, `(7, global)` and `(8, head, key)`, and `(9, rel, columns)` nullable locations, `(10, rel, cause)` crossings
     /// and `(11, rel)` covered views, `(12, rel, dep)` what placed each, `(13, rel, columns)` one document's rows, and
-    /// `(14, rel, columns)` path keys.
+    /// `(14, rel, columns)` path keys, and `(15, rel, columns)` the path keys that are paths.
     fn rows(&self, _v: &Version) -> Option<Vec<crate::code_rule_dsl::logic::program_image::manager::Row>> {
         use crate::code_rule_dsl::logic::front::Value;
         let str = |s: &str| Value::Str(s.to_owned().into());
@@ -153,6 +159,7 @@ impl Analysis for FileLocal {
         out.extend(self.cover_deps.iter().flat_map(|(r, d)| d.iter().map(move |x| (r, x))).map(|(r, x)| vec![tag(12), str(r), str(x)]));
         out.extend(self.row_documents.iter().map(|(r, c)| vec![tag(13), str(r), cols(c)]));
         out.extend(self.path_keys.iter().map(|(r, c)| vec![tag(14), str(r), cols(c)]));
+        out.extend(self.paths.iter().map(|(r, c)| vec![tag(15), str(r), cols(c)]));
         Some(out)
     }
     fn of_rows(_v: &Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<FileLocal> {
@@ -176,6 +183,7 @@ impl Analysis for FileLocal {
                 [Value::Int(12), Value::Str(n), Value::Str(x)] => drop(f.cover_deps.entry(n.to_string()).or_default().insert(x.to_string())),
                 [Value::Int(13), Value::Str(n), Value::Str(c)] => drop(f.row_documents.insert(n.to_string(), cols(c)?)),
                 [Value::Int(14), Value::Str(n), Value::Str(c)] => drop(f.path_keys.insert(n.to_string(), cols(c)?)),
+                [Value::Int(15), Value::Str(n), Value::Str(c)] => drop(f.paths.insert(n.to_string(), cols(c)?)),
                 _ => return None,
             }
         }
@@ -313,6 +321,7 @@ impl<'v> Program<'v> {
                 match w.split_once('=') {
                     Some(("part:loc", c)) => drop(given.locations.insert(rel.to_owned(), cols(c).into_iter().collect())),
                     Some(("part:key", c)) => drop(given.path_keys.insert(rel.to_owned(), cols(c))),
+                    Some(("part:path", c)) => drop(given.paths.insert(rel.to_owned(), cols(c))),
                     Some(("part:same", c)) => drop(given.same_doc.insert(rel.to_owned(), cols(c).into_iter().collect())),
                     _ => match w {
                         "part:local" => {
@@ -608,6 +617,33 @@ impl<'v> Program<'v> {
             .map(|r| (self.name(r).to_owned(), locs[r as usize].iter().copied().filter(|c| !real[r as usize].contains(c)).collect::<Vector<usize>>()))
             .filter(|(_, c)| !c.is_empty())
             .collect();
+        // Which path keys are paths as they are (`FileLocal::paths`): the fixpoint `real`'s is, from the path keys down,
+        // over `doc`'s path and the path columns alone, a built name (`placed_classes`' `built`) not counted.
+        let base_paths: Vec<Vector<usize>> = (0..n).map(|r| rels.base_locs[r].iter().copied().filter(|c| !rels.base_real[r].contains(c)).collect()).collect();
+        let mut plain: Vec<Vector<usize>> = (0..n)
+            .map(|r| match was(r) {
+                Some(p) => p.paths.get(self.name(r as u32)).cloned().unwrap_or_default(),
+                None => locs[r].iter().copied().filter(|c| !real[r].contains(c)).collect(),
+            })
+            .collect();
+        let mut round: Vector<u32> = (0..n as u32).filter(|&r| in_scope[r as usize] && !plain[r as usize].is_empty()).collect();
+        while !round.is_empty() {
+            let changed: Vec<(u32, Vector<usize>)> = round
+                .iter()
+                .filter_map(|&r| {
+                    let rules = &rels.rules[r as usize];
+                    let placed: Vec<Bits> = rules.iter().map(|&k| forms.get(k).placed_classes_over(rels, &plain, &base_paths)).collect();
+                    let kept: Vector<usize> = plain[r as usize].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(&k, p)| forms.get(k).head_placed(self.rules[k], c, p))).collect();
+                    (kept != plain[r as usize]).then_some((r, kept))
+                })
+                .collect();
+            let next = rels.heads_reading(changed.iter().map(|(r, _)| *r), |h| in_scope[h as usize]);
+            for (r, kept) in changed {
+                plain[r as usize] = kept;
+            }
+            round = next;
+        }
+        let paths: BTreeMap<String, Vector<usize>> = derived().map(|r| (self.name(r).to_owned(), plain[r as usize].clone())).filter(|(_, c)| !c.is_empty()).collect();
         let nullable: BTreeMap<String, Vector<usize>> = derived().filter(|&r| !nulls[r as usize].is_empty()).map(|r| (self.name(r).to_owned(), nulls[r as usize].clone())).collect();
         // String filters (decision 0037).
         // A covered view of values is in `filters` too (read as a test, below), but it is no string filter: outside the
@@ -883,7 +919,7 @@ impl<'v> Program<'v> {
         // Their location columns alone (decision 0665): a demand ties two by `@doc`, which a path is not.
         let row_documents: BTreeMap<String, Vector<usize>> = derived().filter(|&r| one_row[r as usize] && real[r as usize].len() > 1).map(|r| (self.name(r).to_owned(), real[r as usize].clone())).collect();
         // The same-document columns and the rest: `finish`.
-        self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, covered, cover_deps, row_documents, path_keys, ..Default::default() }, self.keys())
+        self.finish(FileLocal { local, constants, locations, filters, causes, nullable, crossings, covered, cover_deps, row_documents, path_keys, paths, ..Default::default() }, self.keys())
     }
 
     /// The keyed families of relations of values: by relation, its family's root. A root is a file-local relation of

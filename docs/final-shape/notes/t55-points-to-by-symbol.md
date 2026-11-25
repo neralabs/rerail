@@ -130,4 +130,5 @@ as they are.
   same host. (Measured once built, 0677 § Fix 3e: built: 8% fewer instructions on 143 files of posthog, peak memory
   1.18 to 1.40 GB.)
 - **Data-layer's own call graph** (`pc_edge`, `plp_anycand`) is the same shape as the call-graph readers above, and
-  is rewritten the same way after step 5.
+  is rewritten the same way after step 5. Built (2026-11-25), 0677 § Fix 3f: built: a def is its key, its file's path and
+  its qualified name, since the data layer has no phase of its own to name it.
