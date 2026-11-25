@@ -15,6 +15,7 @@ import type {
   IgnoredEditMatch,
   WalkView,
 } from "./code-rule.js";
+import { appendToGroup } from "./code-rule.js";
 import type { AuditMode, AuditOwner } from "../audit/audit.js";
 import { fileStamp, stampTime } from "../file-stamp.js";
 import {
@@ -4170,11 +4171,15 @@ export class CodeRuleBridge {
     while (discovery !== undefined && discovery.listingsAgain.size > 0) await Promise.all(discovery.listingsAgain);
   }
 
-  /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */
+  /**
+   * The changes the walk found, in path order; `uncaptured` receives the digest each changed source was observed with
+   * before. A path gives one change at most, so sorting the changes gives the order a sort of every path would, and a
+   * walk of n files that finds k changes compares about k log k paths, not n log n.
+   */
   #discoverEdits(discovery: SourceDiscovery, walk: WalkStart, current: ReadonlyMap<string, Source>, uncaptured: Map<string, string>): CodeRuleEdit[] {
     const toolChanged = this.#toolChanges(discovery, walk);
     const edits: CodeRuleEdit[] = [];
-    for (const path of [...walkedPaths(walk, current)].sort(compareDeterministicStrings)) {
+    for (const path of walkedPaths(walk, current)) {
       if (!walkAnswersFor(discovery, walk, path) || toolChanged(path, current.get(path))) continue;
       const previous = walk.previous.get(path);
       const edit = this.#discoveredEdit(discovery, path, previous, current.get(path), walk.baseline);
@@ -4184,7 +4189,7 @@ export class CodeRuleBridge {
       const before = uncapturedDigest(edit, previous, this.#baselinePath(discovery, path, previous, walk.baseline));
       if (before !== undefined) uncaptured.set(path, before);
     }
-    return edits;
+    return edits.sort((left, right) => compareDeterministicStrings(left.path, right.path));
   }
 
   /**
@@ -4270,7 +4275,7 @@ export class CodeRuleBridge {
     uncaptured: Map<string, string>,
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[]; repository: CodeRuleEdit[] }> {
     const sorted: SortedWrites = { unwritten: [], notOwn: [], uncaptured };
-    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
+    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, "walked");
     sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const listed = walk.listedAtFirstSight?.get(checkout);
@@ -4957,17 +4962,33 @@ export class CodeRuleBridge {
 
   /**
    * `items` by the checkout that owns each one's path, whose Git holds its blobs (a worktree in the session's folder is
-   * not the session's checkout); `unowned` has those no checkout owns, which no lane audits.
+   * not the session's checkout); `unowned` has those no checkout owns, which no lane audits. A group holds its items in
+   * the order of `items`, and the groups come in the order of their first item. A walk's paths (`walked`) are files it
+   * found, which are no symbolic links, or files the session took before, which the router accepts only where a link
+   * stays in its folder's checkout (`acceptsPath`): the checkout of each is its folder's, looked up once a folder
+   * (`walkView`). Any other path is looked up whole.
    */
-  #byOwningCheckout<T>(root: string, items: readonly T[], pathOf: (item: T) => string): { owned: Map<string, T[]>; unowned: T[] } {
+  #byOwningCheckout<T>(
+    root: string,
+    items: readonly T[],
+    pathOf: (item: T) => string,
+    paths: "walked" | "named" = "named",
+  ): { owned: Map<string, T[]>; unowned: T[] } {
     const owned = new Map<string, T[]>();
     const unowned: T[] = [];
+    const checkoutOf = paths === "walked" ? this.#walkedCheckoutOf(root) : (path: string) => this.#owningCheckout(root, path);
     for (const item of items) {
-      const checkout = this.#owningCheckout(root, pathOf(item));
+      const checkout = checkoutOf(pathOf(item));
       if (checkout === undefined) unowned.push(item);
-      else owned.set(checkout, [...(owned.get(checkout) ?? []), item]);
+      else appendToGroup(owned, checkout, item);
     }
     return { owned, unowned };
+  }
+
+  /** `#owningCheckout` of the paths a walk found, through a view of the auditor that looks each folder up once. */
+  #walkedCheckoutOf(root: string): (path: string) => string | undefined {
+    const view = this.#auditor.walkView?.();
+    return view?.sourceRoot === undefined ? path => this.#owningCheckout(root, path) : path => view.sourceRoot?.(path);
   }
 
   /** The checkout that owns `path`: the session folder for an auditor that judges one folder. */
@@ -5006,7 +5027,7 @@ export class CodeRuleBridge {
   async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
     const listed: string[] = [];
-    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path).owned) {
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, "walked").owned) {
       const seen = new Set(paths);
       const changed = await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }));
       if (changed === undefined) {
