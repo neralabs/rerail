@@ -444,6 +444,26 @@ impl<'v> Body<'v> {
             _ => None,
         }
     }
+    /// Whether `order` reads a join that shares no variable with what is bound before it while a join that shares
+    /// one remains (decision 0038's cross product): the order whose price is the least to be trusted, as a cross
+    /// product's rows are each binding's times every row it reads (`rf_qn`'s `rf_def($f, $x)` read before
+    /// `rr_nearest_rf_dc($f, $s)`: 11 M rows for 89, priced within twice the best).
+    pub fn crosses(&self, order: &[super::base::Step]) -> bool {
+        let mut bound = VarSet::new();
+        for (k, step) in order.iter().enumerate() {
+            let i = step.at;
+            if self.is_join(i)
+                && !bound.is_empty()
+                && self.vars(i).is_disjoint(&bound)
+                && order[k + 1..].iter().any(|r| self.is_join(r.at) && !self.vars(r.at).is_disjoint(&bound))
+            {
+                return true;
+            }
+            bound.extend(self.vars(i));
+        }
+        false
+    }
+
     /// Whether literal `i` joins: a positive atom, or `nearest`.
     pub fn is_join(&self, i: usize) -> bool {
         match self.view(i) {

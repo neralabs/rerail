@@ -2295,6 +2295,40 @@ fn a_solved_axis_reads_a_nodes_rows_as_it_finds_them() {
     }
 }
 
+/// A solved axis probed by `a` gives exactly the rows whose outer node is `a`, ascending, for every node: what its
+/// scan holds (`by_outer`, made once from the solve, where a probe walked `a`'s subtree and searched each run).
+#[test]
+fn a_solved_axis_by_its_outer_node_is_the_scans_rows_of_it() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-by-outer")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = batch.nodes().total();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.f().kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag(), batch.dialects[p.tag()].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    for (name, axis) in [("nearest", within::Axis::Nearest), ("inside", within::Axis::Inside)] {
+        let source = within::Within::axis(Arc::clone(&batch), axis, &set, Binding::Cpu);
+        let _ = source.value(0, 0);
+        assert!(source.is_solved(), "{name}: solved by a scan's read");
+        let len = source.len();
+        let mut by_outer: std::collections::BTreeMap<i64, Vec<usize>> = std::collections::BTreeMap::new();
+        for row in 0..len {
+            by_outer.entry(source.value(row, 1)).or_default().push(row);
+        }
+        assert!(by_outer.values().any(|rows| rows.len() > 1), "{name}: some member holds several nodes");
+        for r in 0..nodes {
+            let a = batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
+            let got: Vec<usize> = source.lookup(1, &[a]).unwrap().into_iter().collect();
+            assert_eq!(got, by_outer.get(&a).cloned().unwrap_or_default(), "{name}: node row {r}");
+        }
+    }
+}
+
 /// A measurement (the reads, after t50): ns per call of `text`'s probe by node over a chunk's documents, bare (its
 /// batch's relation) and layered with a value admitted (a chunk with a parsed string's parts), against `node`'s.
 #[test]

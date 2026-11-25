@@ -3227,14 +3227,14 @@ impl Model {
         if !joins::noted(&key) && !joins::pricing() {
             return got;
         }
-        let mut candidates = vec![joins::Candidate { order: got.0.0.clone(), est: got.0.1, steps: Vec::new() }];
-        candidates.extend(alternatives.into_iter().map(|(order, est)| joins::Candidate { order, est, steps: Vec::new() }));
+        let mut candidates = vec![joins::Candidate { crosses: b.crosses(&got.0.0), order: got.0.0.clone(), est: got.0.1, steps: Vec::new() }];
+        candidates.extend(alternatives.into_iter().map(|(order, est)| joins::Candidate { crosses: b.crosses(&order), order, est, steps: Vec::new() }));
         {
             for o in joins::proposals(&key) {
                 if let Ok(((order, est, _), _)) = self.plan_inner(pf, b, first, Some(&o), false)
                     && self.valid_live_driver(&order, b, first)
                 {
-                    candidates.push(joins::Candidate { order, est, steps: Vec::new() });
+                    candidates.push(joins::Candidate { crosses: b.crosses(&order), order, est, steps: Vec::new() });
                 }
             }
         }

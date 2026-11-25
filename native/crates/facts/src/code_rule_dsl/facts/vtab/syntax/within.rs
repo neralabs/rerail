@@ -157,6 +157,9 @@ pub struct Within {
 struct Solved {
     start: Vector<u32>,
     rows: crate::code_rule_dsl::facts::rows::Part,
+    /// Its rows by their outer node (`a`): per node row, its rows as the outer, `by_outer.1[by_outer.0[row] as usize..
+    /// by_outer.0[row + 1] as usize]`, ascending. Made once, at the first lookup by `a` (`Within::by_outer`).
+    by_outer: OnceLock<(Vector<u32>, Vector<u32>)>,
     /// The starts' offset in the batch's block, when the device made them.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     start_in_block: Option<usize>,
@@ -514,6 +517,7 @@ impl Within {
         Solved {
             start,
             rows,
+            by_outer: OnceLock::new(),
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             start_in_block: None,
         }
@@ -559,6 +563,40 @@ impl Within {
         self.binding == Binding::Metal && crate::code_rule_dsl::facts::nearest::axis_solve().is_some()
     }
 
+    /// The solve's rows by their outer node (`Solved::by_outer`): each row's outer id found as a node row once, then
+    /// counted and placed. A lookup by `a` walked `a`'s subtree and searched each node's run for `a` (`nearest` by its
+    /// definition in `rf_qn`: 885 k rows in 9.7 s on all, where a scan's rows by `a` take one read each).
+    fn by_outer(&self) -> (&[u32], &[u32]) {
+        let s = self.solved();
+        let (starts, rows) = s.by_outer.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "kind-set axis: its rows by the outer node".into());
+            let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+            let solved = &s.rows;
+            let n = self.batch.nodes().total();
+            let outer: Vector<u32> = (0..solved.len())
+                .map(|r| match self.batch.node(solved.get(r, 1), &mut memo) {
+                    Some((doc, local)) => (self.batch.nodes().at(doc) + local as usize) as u32,
+                    None => u32::MAX,
+                })
+                .collect();
+            let mut starts: Vector<u32> = (0..n + 1).map(|_| 0).collect();
+            for &o in outer.iter().filter(|&&o| o != u32::MAX) {
+                starts[o as usize + 1] += 1;
+            }
+            for i in 0..n {
+                starts[i + 1] += starts[i];
+            }
+            let mut at: Vector<u32> = starts.iter().copied().collect();
+            let mut rows: Vector<u32> = (0..starts[n]).map(|_| 0).collect();
+            for (r, &o) in outer.iter().enumerate().filter(|(_, o)| **o != u32::MAX) {
+                rows[at[o as usize] as usize] = r as u32;
+                at[o as usize] += 1;
+            }
+            (starts, rows)
+        });
+        (starts, rows)
+    }
+
     /// The solve's rows: the axis's relation.
     fn solved_rows(&self) -> &crate::code_rule_dsl::facts::rows::Part {
         &self.solved().rows
@@ -570,7 +608,7 @@ impl Within {
     fn solved_on_device(&self) -> Option<Solved> {
         let views = super::device_chunk::views_in_place(&self.batch)?;
         let keep = Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync>;
-        self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, start_in_block: Some(c.start) })
+        self.solved_over(views, keep).map(|c| Solved { start: Vector::new(), rows: c.rows, by_outer: OnceLock::new(), start_in_block: Some(c.start) })
     }
 
     /// Its solve and those of the tape values `more` (decision 0431 §8), made on the device in one relation over
@@ -1142,19 +1180,18 @@ impl Source for Within {
             // By `a`, where the rows a scan reads are made (the batch's solve, or every node's containers), its
             // rows are those: in each contained node's run, the pair whose outer node is `a`. A lookup's rows are
             // then the scan's, as a reader of both (a relation's version, `Before`) takes them.
-            if column == 1 && (self.solved.get().is_some() || self.all.get().is_some()) {
+            // Solved: its rows by `a` (`by_outer`), each a read.
+            if column == 1 && self.solved.get().is_some() {
+                let (starts, rows) = self.by_outer();
+                out.extend(rows[starts[row] as usize..starts[row + 1] as usize].iter().map(|&r| r as usize));
+                continue;
+            }
+            // Every node's containers made (a scan): in each contained node's run, the pair whose outer node is `a`.
+            if column == 1 && self.all.get().is_some() {
                 let base = self.batch.nodes().at(doc);
-                let solved = self.solved.get().is_some();
                 for c in self.contained(doc, local) {
-                    let inner = (base + c as usize) as u32;
-                    if solved {
-                        // The solve's relation holds ids (decision 0353 step 5): the row whose outer id is `a`'s.
-                        let (start, rows) = (self.starts(), self.solved_rows());
-                        out.extend((start[inner as usize]..start[inner as usize + 1]).filter(|&r| rows.get(r, 1) == v).map(|r| r as usize));
-                    } else {
-                        let (from, n) = self.rows(0, inner);
-                        out.extend((from as usize..(from + n) as usize).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64));
-                    }
+                    let (from, n) = self.rows(0, (base + c as usize) as u32);
+                    out.extend((from as usize..(from + n) as usize).filter(|&r| self.pair(r) & 0xffff_ffff == row as u64));
                 }
                 continue;
             }
