@@ -271,3 +271,61 @@ room's own cost: a small region taken without three shared `Arc`s and two locks 
 bumped), and a wave's rows read a chunk at a time in the sort, not one span-and-column lookup a value. The largest
 takers: `ast_wave::captured_rows` (a capture's one-node `Vector`, about 2,100 samples) and `Within::rows` (a
 vector a probe, about 970).
+
+## 10. The merged head against W, again (2026-11-25)
+
+The head after the merge of django-bugs (de3b8fc8b3, with Typing-support's rooms and t60's step 2) and W's Rust
+(6970a3e539), each run profiled and sampled over the whole run on `all`, back to back on m3 at load 9: W 54.1 s CPU
+and 595 G instructions, the head 128.8 s and 1,679 G. The spans' own CPU is 46.5 s and 111.6 s. §9's account was of
+the run room the merge has since replaced, so this one starts again from the spans.
+
+**The two runs do different work.** W resolves Python's names and references in Rust as it builds each document
+("W's reference graph", 5.7 s). The head resolves them in rules: `references.rerail`, `names.rerail` and the
+helpers the planner makes for them (`pre_*`). The program both run, `internal_dead_code`, is cheaper on the head: its
+strata's join steps take 8.1 s, against W's 14.7 s (`reach_edges` 7.9 s → 0.5 s).
+
+| Own CPU of the spans, by kind of work | W s | head s | difference |
+|---|---|---|---|
+| The per-file joins (`joins: wait`, `joins: phase 1`) | 3.7 | 65.0 | +61.2 |
+| The per-file facts outside the joins (W: `local`, its reference graph; the head: the AST matchers' waves, node rows) | 22.4 | 13.8 | −8.6 |
+| The cross-file joins | 13.5 | 15.5 | +2.1 |
+| Measuring sources (the AST matchers run for `measure pkg`) | 0.1 | 5.1 | +5.0 |
+| Parsing | 3.5 | 5.0 | +1.5 |
+| Live statistics, bookkeeping | 0.1 | 2.4 | +2.4 |
+| Planning (strata, join order) | 0.1 | 1.2 | +1.0 |
+| The rest | 3.0 | 3.6 | +0.6 |
+| All | 46.5 | 111.6 | +65.1 |
+
+Outside every span: 7.0 s and 11.2 s.
+
+**Where the per-file joins go.** The steps' CPU of each stratum, summed by the file that defines its head:
+
+| Rule file | Step CPU, head |
+|---|---|
+| `references.rerail` (`rf_*`) | 22.1 s |
+| `names.rerail` (`wstart`, `bind_only`, `nameref`, `cls_early`, `param`, `binding`, `look/walk`, `tgt`, `tp_*`) | 10.0 s |
+| their helpers (`pre_387`, `pre_434`, …) | 2.8 s |
+| `internal_dead_code.rerail` | 8.1 s (W: 14.7 s) |
+| the rest of the library | 5.3 s |
+
+So name resolution costs the head about 35 s of steps, plus the joins' work around the steps, where W's Rust takes
+5.7 s. That is most of the gap: the 3.5x is the rules for references against Rust, not the engine's overhead.
+
+**The AST matchers.** Their spans take 13.0 s on the head (the wave run 8.65, captures 2.83, confirmations 1.20, rows
+0.33), against 4.7 s on W, and their threads allocate about 12 GB, against about 2 GB on W. `literal_str`'s
+batch is the largest: 6.0 GB in 29 calls, because the matcher's rows are made on its first read.
+
+**Smaller items.** `look/walk` takes 3.17 s but only 0.7 s in steps; its recursion's rounds cost the rest.
+String annotations 2.08 s, identity maps 1.42 s (W 0.11), `Fresh::settle` 0.58 s.
+
+**Memory.** Peak footprint 2,426 MB against 1,075 MB. What the run wrote is close on both (1,236 MB at most against
+1,056 MB, decision 0435). W's peak is what it wrote, and the head's is twice that: about 1.2 GB the account of
+0435 doesn't cover. It needs its own breakdown.
+
+**What follows, in order of CPU:**
+1. The references and names rules (about 35 s of steps): their heaviest heads are `rf_in`, `wstart`, `bind_only`,
+   `rf_ref`, `nameref`, `rf_bind`, `cls_early`, `rf_expr` and `rf_selfish` (§8: E7, E4, E6, E9, E10).
+2. The AST matchers (13.0 s against 4.7, 12 GB of allocation): the captures written as rows, the kind read from the
+   code alone.
+3. `look/walk`'s rounds, the live statistics, the identity maps.
+4. The 1.2 GB of peak memory that 0435's account doesn't cover.
