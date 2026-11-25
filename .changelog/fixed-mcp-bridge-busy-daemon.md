@@ -1,1 +1,0 @@
-An MCP tool call while the daemon is busy, as in an audit, now waits: 30 s for the bridge's checks, then 30 s to answer. Before, the bridge's first call, and on Windows every call, failed after 2 s with "Rerail daemon is not running". A daemon still silent is reported as running but not answering.

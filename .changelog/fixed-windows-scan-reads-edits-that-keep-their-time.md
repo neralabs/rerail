@@ -1,1 +1,0 @@
-On Windows, whole-repository audits on NTFS and ReFS drives, such as `rerail scan` (internal testing), and code rules that read `file.package.serverGraph` now read a file edited with its size and modification time kept. Untouched files, offline files and cloud placeholders stay unread; a file whose times were set after its last write is read every time.

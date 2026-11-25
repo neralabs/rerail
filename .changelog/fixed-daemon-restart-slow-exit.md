@@ -1,1 +1,0 @@
-A daemon restarting at its heap limit no longer leaves none running when the old daemon is slow to exit, and a daemon started beside a running one stops as soon as that one answers instead of a second later.
