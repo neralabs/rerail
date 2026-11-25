@@ -1,0 +1,18 @@
+[
+  {
+    "id": "typescript-eslint-prefer-for-of",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-unified-signatures",
+    "status": "same"
+  },
+  {
+    "id": "vitest-no-disabled-tests",
+    "status": "same"
+  },
+  {
+    "id": "vitest-no-focused-tests",
+    "status": "same"
+  }
+]

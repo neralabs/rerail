@@ -87,9 +87,14 @@ computed(m) :- field(m, "name", n), kind(n, "computed_property_name").
 .decl group_size(a: node, k: number)
 group_size(a, k) :- overload(g, key, a), k = count : { overload(g, key, _) }.
 .decl pair(a: node, b: node)  // a comes first, both in one group, and they can be unified
-pair(a, b) :- overload(g, k, a), overload(g, k, b), earlier(a, b), same_return(a, b), same_tparams(a, b),
+pair(a, b) :- overload(g, k, a), overload(g, k, b), member_of(g, a, ta), member_of(g, b, tb), precedes(ta, tb),
+    same_return(a, b), same_tparams(a, b),
     (uses_tparam(g, a), uses_tparam(g, b) ; !uses_tparam(g, a), !uses_tparam(g, b)), !named_apart(a, b),
     !doc_apart(a, b).
+// member_of(g, s, t): t is the child of container g that holds signature s (s, or its `declare`/`export`). Overloads
+// are siblings, so "first" is by precedes (earlier has no rows under run-policies).
+.decl member_of(g: node, s: node, t: node)
+member_of(g, s, t) :- overload(g, _, s), child(g, t, _), (lifted(s, t) ; t = s).
 
 // ---- signature parts ----
 .decl sig_param(s: node, i: number, p: node)

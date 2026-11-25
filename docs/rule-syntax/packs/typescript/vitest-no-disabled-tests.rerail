@@ -6,7 +6,9 @@
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
 
 #include "tsx/ts-b-vitest.rerail"
-//   vitest_call, vitest_member, mode_option, unresolved
+//   vitest_call, vitest_member, unresolved
+#include "tsx/typescript-04.rerail"
+//   set_mode_option
 
 // @vitest/eslint-plugin's no-disabled-tests: a test or suite that will not run.
 //   describe.skip("s", fn)   test("t", { skip: true }, fn)      → at skip
@@ -18,7 +20,7 @@
     suppress eslint "vitest/no-disabled-tests"
     suppress oxlint "no-disabled-tests"
 disabled_test(m) :- vitest_call(c, _, _), vitest_member(c, m, "skip", _).
-disabled_test(k) :- mode_option(_, "skip", k).
+disabled_test(k) :- set_mode_option(_, "skip", k).
 disabled_test(c) :- vitest_call(c, g, _), (g = "xtest" ; g = "xdescribe").
 disabled_test(c) :- kind(c, "call_expression"), field(c, "function", f), kind(f, "identifier"), text(f, "pending"),
     unresolved(f, "pending").

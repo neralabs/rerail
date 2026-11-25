@@ -1,0 +1,29 @@
+// tsx/typescript-04: a Vitest test's mode option as @vitest/eslint-plugin (1.6) reads it, for no-disabled-tests
+// and no-focused-tests of batch typescript-04.
+//
+// What a rule gets from this library:
+//   set_mode_option(c, x, k)  test or suite c's options object (its second argument) sets mode x (only, skip):
+//                             its last `x` property is `x: true`, k that property's key
+//
+// Examples:
+//   no-focused-tests:   test("t", { only: true }, fn)                  set_mode_option(c, "only", only)
+//                       test("t", { only: true, only() {} }, fn)       none: the method is the last only
+//   no-disabled-tests:  test("t", { skip: true }, fn)                  set_mode_option(c, "skip", skip)
+//                       test("t", { skip: true, get skip() {…} }, fn)  none: the getter is the last skip
+//
+// The plugin's findVitestModeProperty takes the last Property whose key is the mode's name (`x: v`, `x() {}`,
+// `get x() {}`, `set x(v) {}`, the shorthand `{ x }`; a spread is no Property) and wants its value the literal
+// true. tsx/ts-b-vitest's mode_option says the same, but finds "last" by `earlier`, which has no rows under
+// run-policies: there every `x: true` counted. The properties of one object are siblings, so "last" here is: no
+// later sibling has the name, by `precedes`.
+//
+// Builds on tsx/ts-b-vitest (mode_option, option_entry) and core.
+#include "tsx/ts-b-vitest.rerail"
+
+.decl set_mode_option(c: node, x: symbol, k: node)
+set_mode_option(c, x, k) :- mode_option(c, x, k), child(e, k, _), child(o, e, _), !later_mode_key(o, e, x).
+// later_mode_key(o, e, x): a property of o after e is named x.
+.decl later_mode_key(o: node, e: node, x: symbol)
+later_mode_key(o, e, x) :- mode_option(_, x, k), child(e, k, _), child(o, e, _), option_entry(o, f, x, _), precedes(e, f).
+later_mode_key(o, e, x) :- mode_option(_, x, k), child(e, k, _), child(o, e, _), child(o, f, _),
+    kind(f, "shorthand_property_identifier"), text(f, x), precedes(e, f).
