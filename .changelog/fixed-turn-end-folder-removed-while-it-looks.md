@@ -1,0 +1,1 @@
+On Windows, a folder that a build or a test run removes while a turn ends is no longer recorded as a place the session could not check, so the dashboard and the session's record no longer say part of the repository went unchecked when nothing did.
