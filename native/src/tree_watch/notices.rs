@@ -118,8 +118,9 @@ impl Notices {
         state.unheard.insert(root.to_owned());
     }
 
-    /// Whether no handle reports on `root` for now (see [`Notices::unheard`]).
-    #[cfg(test)]
+    /// Whether no handle reports on `root` for now (see [`Notices::unheard`]). Only the Windows
+    /// watcher's tests ask it, so it is built for them alone.
+    #[cfg(all(windows, test))]
     pub(crate) fn is_unheard(&self, root: &str) -> bool {
         self.state().unheard.contains(root)
     }
