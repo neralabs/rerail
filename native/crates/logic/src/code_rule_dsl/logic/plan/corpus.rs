@@ -5943,11 +5943,12 @@ fn run_observed_within(
         }
         // The files a row is attributed to: its document's (a guest's is its host file's), or every file that asked
         // for its value document. Rows are sets, so a value's rows kept by each of its files restore as one.
-        let owners = |v: i64| -> Vector<i64> {
+        // Lent where they lie, or the one file: a list made a run of rows was 7.4 M on cold PostHog.
+        let owners = |v: i64| -> Owners<'_> {
             let d = memo::document_of(v);
             match askers.get(&d) {
-                Some(files) => files.clone(),
-                None => rerail_blocks::vector![host_of.get(&d).copied().unwrap_or(d)],
+                Some(files) => Owners::Of(files),
+                None => Owners::One([host_of.get(&d).copied().unwrap_or(d)]),
             }
         };
         if chunk_nodes_built > 0 {
@@ -6049,7 +6050,7 @@ fn run_observed_within(
                 // location's node is of.
                 let mut cells: Vec<output::Cell<'_>> = Vec::with_capacity(rows.width());
                 for i in 0..rows.len() {
-                    let files = at.filter(|&c| c < rows.width()).and_then(|c| match rows.cell(i, c) { output::Cell::Int(v) => Some(v), output::Cell::Text(_) => None }).map(owners).unwrap_or_default();
+                    let files = at.filter(|&c| c < rows.width()).and_then(|c| match rows.cell(i, c) { output::Cell::Int(v) => Some(v), output::Cell::Text(_) => None }).map(owners).unwrap_or(Owners::Of(&[]));
                     if files.is_empty() || !files.iter().all(|d| entries.contains_key(d)) {
                         memo_why.insert(format!("output {rel}: {}", if files.is_empty() { "no location" } else { "another chunk's document" }));
                         attributable = false;
@@ -6057,7 +6058,7 @@ fn run_observed_within(
                     }
                     cells.clear();
                     cells.extend((0..rows.width()).map(|c| rows.cell(i, c)));
-                    for d in files {
+                    for &d in files.iter() {
                         let e = entries.get_mut(&d).expect("checked");
                         e.outputs.entry(rel.clone()).or_insert_with(|| (got.nodes[rel].clone(), output::Rows::new(rows.types().to_vec()))).1.push(&cells);
                     }
@@ -6075,7 +6076,7 @@ fn run_observed_within(
                     attributable = false;
                     break;
                 }
-                for d in files {
+                for &d in files.iter() {
                     asked.push(by_file.entry(d).or_insert_with(memo::Answered::rows));
                 }
             }
@@ -6099,8 +6100,8 @@ fn run_observed_within(
             };
             let mut runs: Vec<(i64, u32, u32)> = Vec::new();
             // The run under way: its document, its owners, and its first row.
-            let mut run: Option<(i64, Vector<i64>, u32)> = None;
-            let close = |runs: &mut Vec<(i64, u32, u32)>, run: &Option<(i64, Vector<i64>, u32)>, end: u32| {
+            let mut run: Option<(i64, Owners<'_>, u32)> = None;
+            let close = |runs: &mut Vec<(i64, u32, u32)>, run: &Option<(i64, Owners<'_>, u32)>, end: u32| {
                 if let Some((_, files, lo)) = run {
                     runs.extend(files.iter().map(|&f| (f, *lo, end)));
                 }
@@ -10638,6 +10639,21 @@ struct ChunkCounted {
     /// Each semi-join's rows at the chunk's held nodes (`chunk_held_rows`).
     held: Vec<(String, (Vector<i64>, Vector<i64>))>,
 }
+/// A run of rows' owning files (`owners` in the export's attribution): the askers' list where it lies, or one file.
+enum Owners<'a> {
+    Of(&'a [i64]),
+    One([i64; 1]),
+}
+impl std::ops::Deref for Owners<'_> {
+    type Target = [i64];
+    fn deref(&self) -> &[i64] {
+        match self {
+            Owners::Of(f) => f,
+            Owners::One(f) => f,
+        }
+    }
+}
+
 /// The most strings a text test's union holds before it is given up (counted off the batch instead).
 const UNION_MOST: usize = 1 << 16;
 impl ChunkCounts {
