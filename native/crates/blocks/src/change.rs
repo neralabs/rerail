@@ -273,6 +273,7 @@ pub fn settle(kept: State, t: &Tally, w: &RelW, each: &mut Settled) {
         } else {
             old.fill(0);
         }
+        // copy: derived (the key's new row of counts, written once into the state's delta)
         row[..t.width].copy_from_slice(key);
         for j in 0..t.accs {
             row[t.width + j] = old[j].wrapping_add(d[j]);
