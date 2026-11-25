@@ -243,7 +243,9 @@ class ThreadGit extends EventEmitter implements GitProcess {
     super();
     this.stdin = new Writable({
       write: (chunk: Buffer | string, encoding: BufferEncoding, written: () => void) => {
-        this.#post({ id: this.#asked.id, op: "write", chunk: typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk });
+        // A copy of the bytes written alone: a Buffer from Node's pool would carry the whole pool to the thread. It is not
+        // transferred, as a write before the thread took the start is kept to hand to another thread ({@link lost}).
+        this.#post({ id: this.#asked.id, op: "write", chunk: Uint8Array.from(typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk) });
         written();
       },
       final: (ended: () => void) => {

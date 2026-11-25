@@ -550,6 +550,23 @@ describe("Git started in starter threads, when a read ends or a thread does", ()
     expect(await output).toEqual({ error: "read EIO", code: "EIO" });
     await closed;
   }, 30_000);
+
+  it("hands the thread only the bytes a write holds, not the pooled buffer they sit in", async () => {
+    expect(startGitInThread("win32")).toBe(true);
+    const counter = "let n = 0; process.stdin.on('data', c => { n += c.length; }); process.stdin.on('end', () => process.stdout.write(String(n)));";
+    const child = startGit(process.execPath, ["-e", counter], process.env, "pipe");
+    const posts = starters().map(worker => vi.spyOn(worker, "postMessage"));
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+    const closed = once(child, "close");
+    const pooled = Buffer.from("abc");
+    child.stdin.end(pooled);
+    await closed;
+    const writes = posts.flatMap(post => post.mock.calls.map(([asked]) => asked as { op: string; chunk?: Uint8Array })).filter(asked => asked.op === "write");
+    for (const post of posts) post.mockRestore();
+    expect({ pooled: pooled.buffer.byteLength > pooled.byteLength, stdout, sent: writes.map(asked => asked.chunk?.buffer.byteLength) })
+      .toEqual({ pooled: true, stdout: "3", sent: [3] });
+  }, 30_000);
 });
 
 /** How a run of `run` with Node's `-e script` and `timeoutMs` ended: its output, or the fields of its error. */
