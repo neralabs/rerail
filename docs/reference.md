@@ -136,6 +136,8 @@ Weak:
 
 One SQLite file per Rerail home holds all rule configuration, your rules and the machine's execution history.
 
+A change you make to rules or settings, with the `rerail` command or in the dashboard, is on the disk before Rerail says it is made. History is written without waiting for the disk at each write, and the daemon syncs it to the disk about every 5 s while writes wait; a sync that fails is said once in `daemon.log` and tried again every 5 s. When only Rerail stops, however it stops, nothing is lost and the file is never damaged. A power cut or an operating system crash can take about the last 5 s of history, more while the disk is too busy to finish a sync. The next start closes the checks that history left running, and a session's next open records which of its events went, how many and when; neither brings back what they held.
+
 The file is `$RERAIL_HOME/rerail.sqlite` (`~/.rerail/rerail.sqlite` when `RERAIL_HOME` is unset). Its main tables:
 
 - **Rule configuration**: `repositories`, `checkouts`, `rule_attachments`, `rule_settings`, `library_rules` and bookkeeping tables ([Rule scoping](rule-scoping.md)).
@@ -447,8 +449,8 @@ The daemon writes rules and work links; the shared runtime records harness event
   update check's last answer, `{ latest, checkedAt }`, or null; [Update](#update)), and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
 - `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
-  is sent at once, again when any process's commit to the database becomes readable or a pack is installed or
-  removed, and every 5 s, so the page can tell a daemon that stopped answering from one with nothing to say; the
+  is sent at once, again when a commit to the database becomes readable or a pack is installed or removed, and
+  every 5 s, so the page can tell a daemon that stopped answering from one with nothing to say; the
   checkout's own rules and branches, and while Merge Assist is on for its GitHub repository the daemon's gh hosts file,
   are read at that 5 s message, and a token that moved is sent once read, so a login, logout or switch made with gh
   shows on an open Merge Assist page within about 5 s. A message
@@ -462,7 +464,11 @@ The daemon writes rules and work links; the shared runtime records harness event
   they end, makes the page read every 5 s until a stream brings a message, whatever earlier streams did. Behind such a
   proxy the page shows Connecting… for those 12 s after it loads, and after a daemon restart reads nothing for the 12 s
   after the read that found the daemon back. A browser without Web Locks, or a page that is not a secure context, holds
-  no stream and reads every 5 s. A daemon that stops closes the stream.
+  no stream and reads every 5 s. A daemon that stops closes the stream. The records the daemon writes for sessions and
+  checks, and the dashboard's own writes, are sent at once, and so is another process's commit on Linux and macOS. On
+  Windows a commit of the `rerail` command, which waits for the disk, is sent at once too; another process's other
+  commits, which do not wait for it, are sent when that process closes the database, and otherwise at the next 5 s
+  message: Windows reports no change to the database's files for such a commit until the file is flushed or closed.
 - UI client-side routes fall back to `index.html`.
 
 Without the native addon the daemon still runs: `status`, `/healthz` and the UI header report the kernel unavailable, and transcripts stay readable. Model files can fail `model/manifest.json`; a clone without Git LFS has a pointer for `model.safetensors`. Then `rerail status` prints `Model: checksum mismatch (model.safetensors)` and exits 5, and `/healthz` reports it. The dashboard header turns red naming the file, and session attaches fail until the files are fetched and the daemon restarted.
@@ -523,7 +529,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 
 `src/api/http.ts` mounts the operations with Hono and emits OpenAPI; `src/api/mcp.ts` registers them as MCP tools.
 
-Validation failures return `400 { error: "invalid-request", issues }`. Handler errors carry a status and a code: `rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`, `invalid-cursor`.
+Validation failures return `400 { error: "invalid-request", issues }`. Handler errors carry a status and a code: `rule-not-found`, `rule-id-mismatch`, `rule-conflict`, `repository-audit-not-found`, `target-required`, `target-mismatch`, `agent-not-permitted`, `invalid-cursor`. A write whose change was made but could not be confirmed on the disk (its log's sync failed) answers `503 not-on-disk`, whose message says so and that trying it again may make the change twice; the dashboard shows that message, and MCP, `rerail scan` and `rerail settings` show `not-on-disk: <message>`.
 
 </details>
 

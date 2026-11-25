@@ -6,7 +6,7 @@ import {
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import { delimiter, join, sep } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { gitHead, gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
 import { looksOutsideFolder } from "../../../src/engine/git-guard/submodule-state.js";
@@ -22,9 +22,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
-/** The test's own Git, which looks into submodules and runs every driver their config names. */
+/**
+ * The test's own Git, which looks into submodules and runs every driver their config names. It starts no automatic
+ * maintenance after a commit or a fetch, which no case reads: one Git fewer for each of the file's commits.
+ */
 function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "-c", "protocol.file.allow=always", ...args], {
+  return execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "-c", "protocol.file.allow=always", "-c", "maintenance.auto=false", ...args], {
     cwd, encoding: "utf8",
   });
 }
@@ -1018,9 +1021,28 @@ function setGitmodules(work: string, ignore: string): void {
 }
 
 describe("Rerail's diffs list the submodules Git's own diff lists", () => {
+  // Built once, about 300 Gits, and copied for each case, which starts none: each submodule's `.git` file and
+  // `core.worktree` name its Git folder by a relative path, so a copy diffs as the original does. The URLs its config
+  // names stay in `built`, and no case fetches from them.
+  let built = "";
+  beforeAll(async () => {
+    built = await mkdtemp(join(tmpdir(), "rerail-git-submodules-"));
+    await submodulesInEachState(built);
+  }, 120_000);
+  afterAll(async () => {
+    if (built !== "") await removeFolder(built);
+  });
+
+  /** A copy of `built`'s checkout in `root`, as {@link submodulesInEachState} leaves it. */
+  function inEachState(root: string): string {
+    const work = join(root, "work");
+    cpSync(join(built, "work"), work, { recursive: true });
+    return work;
+  }
+
   it.each(CONFIGS)("with %s", async (_name, configure) => {
     const root = await folder();
-    const work = await submodulesInEachState(root);
+    const work = inEachState(root);
     await configure(work, root);
 
     const rerail = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF), await runGitWithoutBlocking(join(work, "deep"), AUDIT_DIFF)];
@@ -1032,7 +1054,7 @@ describe("Rerail's diffs list the submodules Git's own diff lists", () => {
 
   it("in the defaults, which list a submodule with untracked files for the audit, and not for the scan", async () => {
     const root = await folder();
-    const work = await submodulesInEachState(root);
+    const work = inEachState(root);
 
     expect(listed((await runGitWithoutBlocking(work, AUDIT_DIFF)).stdout)).toEqual([
       "deep/moved", "deleted", "modified", "moved", "nested-modified", "nested-untracked", "staged", "untracked",

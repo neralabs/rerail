@@ -110,6 +110,26 @@ export async function follow(path, onMessage, signal) {
   }
 }
 
+/**
+ * What a write that did not answer OK throws: an Error "<method> <path> answered <status>: <body>", or for a change the
+ * daemon made but could not confirm on the disk (`503 not-on-disk`), a `NotOnDisk` Error in the daemon's own words,
+ * which say the change was made: the page must not tell a person it failed.
+ */
+function writeRefused(method, path, status, text) {
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch {}
+  if (body?.error === "not-on-disk" && typeof body.message === "string") return Object.assign(new Error(body.message), { name: "NotOnDisk" });
+  return new Error(`${method} ${path} answered ${status}: ${text.slice(0, 200)}`);
+}
+
+/**
+ * Whether a write's error is a change the daemon made but could not confirm on the disk (`writeRefused`'s
+ * `NotOnDisk`): the page keeps what it shows of the change and sends the writes after it.
+ */
+export const madeButUnconfirmed = error => error?.name === "NotOnDisk";
+
 /** `signal`, when given, aborts the request: `send` then rejects with the signal's reason. */
 export async function send(method, path, body, { signal } = {}) {
   const response = await fetch(apiUrl(path), {
@@ -121,6 +141,6 @@ export async function send(method, path, body, { signal } = {}) {
   const etag = response.headers.get("etag") ?? undefined;
   const text = await response.text();
   if (response.status === 401) throw accessRequired();
-  if (!response.ok) throw new Error(`${method} ${path} answered ${response.status}: ${text.slice(0, 200)}`);
+  if (!response.ok) throw writeRefused(method, path, response.status, text);
   return { status: response.status, etag, body: text === "" ? undefined : JSON.parse(text) };
 }
