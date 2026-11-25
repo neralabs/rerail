@@ -21,9 +21,11 @@ k_var(d, t, v) :- kind(d, t, "variable"), text(d, t, v).
 k_str(d, t, s) :- kind(d, t, "string"), value(d, t, s).
 k_num(d, t, n) :- kind(d, t, "number"), value(d, t, n).
 k_wild(d, t) :- kind(d, t, "wildcard").
+k_fn(d, t, op, l, r) :- kind(d, t, "binary_expression"), field(d, t, "left", l), field(d, t, "operator", o), text(d, o, op), field(d, t, "right", r).
 
-// The kernel, in order: a loaded file's module runs as stratum k.
-load("kernel/k1-binding-1.rerail", 1).
-load("kernel/k1-binding-2.rerail", 2).
-load("kernel/k1-binding-3.rerail", 3).
-k_order(d, k) :- load(p, k), doc(d, p).
+// A file states its strata: `stratum("head", k).` puts the rules that write `head` in stratum k (a head with none
+// is stratum 0). The executor computes no strata; it checks the ones stated.
+k_order(d, h, k) :- kind(d, c, "clause"), field(d, c, "head", hd), field(d, hd, "relation", n), text(d, n, "stratum"), field(d, hd, "arguments", l), child(d, l, a, 0), value(d, a, h), child(d, l, b, 1), value(d, b, k).
+
+// The kernel.
+load("kernel/k1-binding.rerail").

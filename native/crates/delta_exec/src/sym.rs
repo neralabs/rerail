@@ -18,7 +18,9 @@ impl Default for Symbols {
 
 impl Symbols {
     pub fn new() -> Symbols {
-        Symbols { atoms: Mutex::new(AtomsW::anon(1, 1 << 20, 64 << 20)) }
+        Symbols {
+            atoms: Mutex::new(AtomsW::anon(1, 1 << 20, 64 << 20)),
+        }
     }
 
     /// The id of `s`, made when it has none.
@@ -34,13 +36,20 @@ impl Symbols {
     /// The id of `s`, when it has one.
     pub fn find(&self, s: &str) -> Option<i64> {
         let h = rerail_blocks::maps::hash_bytes(s.as_bytes());
-        self.atoms.lock().expect("the symbols").find(s, h).map(i64::from)
+        self.atoms
+            .lock()
+            .expect("the symbols")
+            .find(s, h)
+            .map(i64::from)
     }
 
     /// The string of `id`, for messages and tests.
     pub fn name(&self, id: i64) -> String {
         let a = self.atoms.lock().expect("the symbols");
         // copy: not block data (a message's text)
-        u32::try_from(id).ok().and_then(|i| a.str(i)).map_or_else(|| format!("#{id}"), str::to_owned)
+        u32::try_from(id)
+            .ok()
+            .and_then(|i| a.str(i))
+            .map_or_else(|| format!("#{id}"), str::to_owned)
     }
 }
