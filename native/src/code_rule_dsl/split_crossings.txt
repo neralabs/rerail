@@ -7,8 +7,6 @@ data-layer cpl_msg
 data-layer er_facade_site
 data-layer la_eager_delegate
 data-layer ma_branch_aware
-data-layer pc_modattr
-data-layer pc_shadowed
 data-layer pos_allow_broken
 data-layer pos_bypass
 data-layer stale_entry
@@ -23,8 +21,6 @@ data-layer:alone cpl_msg
 data-layer:alone er_facade_site
 data-layer:alone la_eager_delegate
 data-layer:alone ma_branch_aware
-data-layer:alone pc_modattr
-data-layer:alone pc_shadowed
 data-layer:alone pos_allow_broken
 data-layer:alone pos_bypass
 data-layer:alone stale_entry
@@ -36,4 +32,4 @@ django sfu_atomic_def
 javascript types_apart
 python copy_only
 python PERF401
-python-main SIM113
+vue vprop_name

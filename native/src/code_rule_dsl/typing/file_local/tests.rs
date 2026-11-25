@@ -336,6 +336,187 @@ same_ann(f, g) :- ann_of(f, a), ann_of(g, a), f != g.
     assert_eq!(split.same_doc.get("ann_of").map(Vec::as_slice), Some(&[0][..]), "{:?}", split.same_doc);
 }
 
+/// A view of values its readers cover is file-local (decision 0652): `clash(x, v, w)` is built from every file's
+/// attributes, but each reader holds the two attributes it is built from, in its own document, so derived per chunk
+/// it answers each reader as over every file, positive or negated. `defined(x)`, read by a rule holding only a
+/// reference, is not covered: another file's definition answers it, so it is a crossing.
+#[test]
+fn a_view_its_readers_cover_is_file_local() {
+    let base = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl attr(e: node, a: node, x: symbol, v: symbol)
+.decl text(n: node, s: symbol)
+.input node, attr, text
+.decl solo(x: symbol)
+solo("id").
+.decl clash(x: symbol, v: symbol, w: symbol)
+clash(x, v, w) :- attr(_, _, x, v), attr(_, _, x, w), v = w.
+clash(x, v, w) :- attr(_, _, x, v), attr(_, _, x, w), solo(x).
+.decl duplicate(a: node, x: symbol)
+duplicate(a, x) :- attr(e, a, x, w), attr(e, b, x, v), a != b, clash(x, v, w).
+.decl distinct(a: node, x: symbol)
+distinct(a, x) :- attr(e, a, x, w), attr(e, b, x, v), a != b, !clash(x, v, w).
+.output duplicate, distinct
+"#;
+    let split = split_of(&read(base));
+    for rel in ["clash", "duplicate", "distinct"] {
+        assert!(split.local.contains(rel), "{rel}: {:?} {:?}", split.local, split.causes);
+    }
+    assert!(split.filters.contains("clash"), "{:?}", split.filters);
+    crossings_checked(&programs_of(read(base)).unwrap(), true).unwrap();
+    let refused = crossings_checked(&programs_of(read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.input node, text
+.decl defined(x: symbol)
+defined(x) :- node(_, n, "def", _, _), text(n, x).
+.decl undefined_ref(n: node)
+undefined_ref(n) :- node(_, n, "ref", _, _), text(n, x), !defined(x).
+.output undefined_ref
+"#)).unwrap(), true).unwrap_err();
+    assert!(refused.contains("undefined_ref"), "{refused}");
+    // A located view joining two documents by a name (`pc_modattr`): each rule's reads are tied to a head location
+    // column, and its reader holds both columns in its own document, so it reads only rows of its document.
+    let located = r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.decl imp(m: node, x: symbol)
+.input node, child, text, imp
+.decl modattr(m: node, o: node)
+modattr(m, o) :- node(_, o, "identifier", _, _), text(o, x), imp(m, x).
+.decl bare(e: node)
+bare(e) :- node(d, e, "attribute", _, _), child(e, o, _), node(d, m, "module", _, _), !modattr(m, o).
+.output bare
+"#;
+    let split = split_of(&read(located));
+    assert!(split.local.contains("modattr") && split.covered.contains("modattr"), "{:?} {:?}", split.local, split.causes);
+    assert!(!split.filters.contains("modattr"), "a located view is read by its locations: {:?}", split.filters);
+    crossings_checked(&programs_of(read(located)).unwrap(), true).unwrap();
+    // A reader leaving a location column to the view (`o` placed by nothing else) asks of every document's rows.
+    let open = located.replace("child(e, o, _), node(d, m, \"module\", _, _), !modattr(m, o)", "node(d, m, \"module\", _, _), modattr(m, o), e = m");
+    assert_ne!(open, located);
+    let refused = crossings_checked(&programs_of(read(&open)).unwrap(), true).unwrap_err();
+    assert!(refused.contains("modattr"), "{refused}");
+}
+
+/// A covered view is placed by its readers, which its own rules' digests do not hold (decision 0652): `alt` joins any
+/// file's name with a parameter by text, and is covered through `param_eq`'s head, which `user` places in one function.
+/// An edit removing `user` leaves `param_eq` read by no one, so `alt` is no longer covered: the split maintained across
+/// it asks `alt` again (`cover_deps`), and is the whole split.
+#[test]
+fn a_covered_view_is_asked_again_when_a_reader_that_placed_it_goes() {
+    use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW};
+    let mut text = String::from(
+        r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl alt(n: node, k: node)
+alt(n, k) :- node(_, k, "name", _, _), node(_, n, "identifier", _, _), text(k, t), text(n, t).
+.decl param_eq(n: node, k: node)
+param_eq(n, k) :- alt(n, k).
+.decl user(f: node)
+user(f) :- node(_, f, "def", _, _), child(f, n, 0), child(f, k, 1), param_eq(n, k).
+.output user
+"#,
+    );
+    // Relations the edit does not reach: the cone stays under half of them.
+    for k in 0..8 {
+        text.push_str(&format!(".decl other{k}(n: node)\nother{k}(n) :- node(_, n, \"k{k}\", _, _).\n.output other{k}\n"));
+    }
+    let mut p = Pipeline::new("test", read(&text));
+    let before = p.get::<FileLocal>().unwrap();
+    assert!(before.covered.contains("alt") && before.local.contains("alt"), "{:?} {:?}", before.covered, before.causes);
+    struct DropUser;
+    impl ProgramPass for DropUser {
+        const NAME: &'static str = "drop user";
+        fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+            let user = cx.v().rel("user").unwrap();
+            w.keep(|r| r.head().rel() != user)
+        }
+    }
+    p.program(&mut DropUser);
+    let after = p.get::<FileLocal>().unwrap();
+    assert!(!after.covered.contains("alt") && !after.local.contains("alt"), "alt has no reader placing it: {:?}", after.covered);
+    let (out, _) = p.finish().unwrap();
+    let fresh = crate::code_rule_dsl::logic::program_image::Builder::of_program(&out.program(&Default::default()).unwrap()).unwrap().finish().unwrap().0;
+    assert_eq!(*after, *split_of(&fresh), "the maintained split is a whole split's");
+}
+
+/// A covered view of values is in `filters`, read as a test, but it is no string filter: a maintained split whose cone
+/// leaves it out takes it as it was, and reads it as the whole split does (React's `jsx-no-target-blank`: `noreferrer`,
+/// a test over its reader's own attribute values, made `agg`'s rows each one document's in one split and not the
+/// other's).
+#[test]
+fn a_covered_view_of_values_outside_the_cone_is_read_as_the_whole_split_reads_it() {
+    use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW};
+    let mut text = String::from(
+        r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl val(o: node, r: node, s: symbol)
+val(o, r, s) :- node(_, o, "attr", _, _), child(o, r, 0), text(r, s).
+.decl nr(s: symbol)
+nr(s) :- val(_, _, s), @rx(@lower(s), "^(.* )?noreferrer( .*)?$") = 1.
+.decl dem(o: node, r: node)
+dem(o, r) :- node(_, o, "attr", _, _), child(o, r, 0).
+.decl agg(o: node, r: node)
+agg(o, r) :- dem(o, r), val(o, r, s), !nr(s).
+.output agg
+"#,
+    );
+    for k in 0..8 {
+        text.push_str(&format!(".decl other{k}(n: node)\nother{k}(n) :- node(_, n, \"k{k}\", _, _).\n.output other{k}\n"));
+    }
+    let mut p = Pipeline::new("test", read(&text));
+    let before = p.get::<FileLocal>().unwrap();
+    assert!(before.covered.contains("nr") && before.filters.contains("nr"), "{:?} {:?}", before.covered, before.causes);
+    assert_eq!(before.row_documents.get("agg"), Some(&vec![0, 1]), "{:?}", before.row_documents);
+    struct DropOther;
+    impl ProgramPass for DropOther {
+        const NAME: &'static str = "drop other0";
+        fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+            let other = cx.v().rel("other0").unwrap();
+            w.keep(|r| r.head().rel() != other)
+        }
+    }
+    p.program(&mut DropOther);
+    let after = p.get::<FileLocal>().unwrap();
+    let (out, _) = p.finish().unwrap();
+    let fresh = crate::code_rule_dsl::logic::program_image::Builder::of_program(&out.program(&Default::default()).unwrap()).unwrap().finish().unwrap().0;
+    assert_eq!(*after, *split_of(&fresh), "the maintained split is a whole split's");
+}
+
+/// `row_documents` (decision 0652): a relation whose rules place its location columns in one document through reads
+/// whose rows are each one document's, file-local or not. `pair` reads `named`, cross-file (a call's name meets any
+/// file's definition) but of one location column, so `pair`'s rows are each one call's: listed, though cross-file.
+/// `uses` joins two files' nodes by a name: not listed.
+#[test]
+fn a_relation_whose_rows_are_each_one_documents_is_listed_cross_file_or_not() {
+    let split = split_of(&read(
+        r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl child(p: node, c: node, i: number)
+.decl text(n: node, s: symbol)
+.input node, child, text
+.decl named(n: node)
+named(n) :- node(_, n, "call", _, _), text(n, x), node(_, m, "def", _, _), text(m, x).
+.decl pair(a: node, f: node)
+pair(a, f) :- node(_, c, "call", _, _), child(c, a, 0), child(c, f, 1), named(a).
+.decl uses(n: node, f: node)
+uses(n, f) :- node(_, n, "ref", _, _), text(n, x), node(_, f, "def", _, _), text(f, x).
+.output pair, uses
+"#,
+    ));
+    assert!(!split.local.contains("pair") && !split.local.contains("named"), "{:?}", split.causes);
+    assert_eq!(split.row_documents.get("pair"), Some(&vec![0, 1]), "{:?}", split.row_documents);
+    assert!(!split.row_documents.contains_key("uses"), "{:?}", split.row_documents);
+}
+
 #[test]
 fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node() {
     use crate::code_rule_dsl::logic::rr::parse;

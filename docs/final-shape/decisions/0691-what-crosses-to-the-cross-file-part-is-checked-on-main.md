@@ -105,6 +105,23 @@ Found on the way and fixed:
    - Policies not run: 25 → 0. React's and Node's failures were the missing `tsconfig` rows and unbound library
      inputs. `spec_resolved` and `npm_ignored` are bound empty until their producers are ported, so n-no-missing-import
      and n-no-missing-require find every import missing: see Open.
+3. **Covered views and each relation's one-document rows** (the branch's 0652 follow-up). A view of values that every
+   reader covers is file-local (`covers`): each of its rules finds its rows in the reader's own. The split lists the
+   relations whose rows are each one document's (`row_documents`), and a maintained split asks a covered view again
+   when a reader that placed it changes (`cover_deps`). The maintained split's cone now takes in the views of values
+   its rules read, as the whole split reads them. The JSON translator declares a helper that reads a guest capture
+   by text alone `cross_file`, and a `$$$X` capture binds nothing.
+   - Not ported, as main lacks what they extend: the reader-demand ties (oscar's `product_demand`), the `op`
+     vocabulary (`op` is not a view on main), `Given::of`'s qualifiers, check-rr's `.from`.
+   - Rule texts stay main's. The branch put rules back "as written" (TRY301, UP008, no-useless-constructor ×2,
+     no-misused-new, parameter-properties, Vue's no-duplicate-attributes and valid-v-for, python/modules, Django's
+     bnl_number). Those rely on the reader-demand pass to stay per document. On main they cross, while main's
+     rewrites are per document.
+   - Split list: 38 → 34. SIM113 is gone; Vue's `vprop_name` is new (a join through a guest's `xd_` copy).
+   - Node list: 3,025 → 3,121. 123 relations of React (55), TypeScript (32), Node (20) and Vue (16) are new. They are
+     not new crossings: main's maintained split had kept them file-local where a whole split does not. `fn_component`
+     reads `cap_name(x)` by value, which places no document, and the old cone left `cap_name` out. The branch's
+     rewrites (`fn_component` inlines the test) come with its later fixes.
 
 ## Consequences
 
