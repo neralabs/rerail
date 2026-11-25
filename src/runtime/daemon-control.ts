@@ -28,7 +28,7 @@ import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { BUSY_DAEMON_WAIT_MS, HOOK_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer, type EngineProofOptions } from "./daemon/engine-proof.js";
 import { untakenFor } from "../engine/storage/untaken-events.js";
-import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf, pipeServer, type PipeServer } from "./daemon/engine-pipe.js";
+import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf, pipeServer, type PipeServer, type PipeServerAnswer } from "./daemon/engine-pipe.js";
 import {
   endProcessStartedBy,
   endProcessStartedByPowerShell,
@@ -174,11 +174,13 @@ const NOTHING_SENT = "so nothing was sent to it";
  * The endpoint for the Windows engine pipe `RERAIL_ENGINE_SOCKET` names. A hook sends its event there, with the
  * capability daemon.json records, only once the pipe shows it is the home's own daemon: Windows says the process
  * holding the pipe's server end is the daemon daemon.json records ({@link heldByRecordedDaemon}), which wrote that
- * capability there itself, as a daemon of any Rerail version is, one before 0.1.1 that records none included; or else
- * the engine on the pipe proves it holds that capability ({@link provedEndpoint}). A proof the pipe gave this process
- * for the same capability since the event arrived ({@link provedSinceArrival}) answers for both. Windows' wait for a
- * free instance of the pipe stands where the event's own wait to connect would, so the event keeps its whole wait from
- * its request.
+ * capability there itself, as a daemon of any Rerail version is, one before 0.1.1 that records none included; or else,
+ * only where Windows says no pipe of that name exists or could not be asked, the engine on the pipe proves it holds
+ * that capability ({@link provedEndpoint}). A holder Windows names that is not that daemon, and a pipe that refuses to
+ * let Windows name its holder, are sent nothing, not even the proof's challenge: the server of a pipe can act as the
+ * account of a client that writes to it, since Node opens pipes without `SECURITY_SQOS_PRESENT`. A proof the pipe gave this process for the same capability since the event arrived
+ * ({@link provedSinceArrival}) answers for both. Windows' wait for a free instance of the pipe stands where the event's
+ * own wait to connect would, so the event keeps its whole wait from its request.
  */
 async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): Promise<EngineEndpoint> {
   const { socketPath, machine } = pipe;
@@ -186,25 +188,26 @@ async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): 
   const recorded = engineEndpointOf({ ...state, kernelSocketPath: socketPath });
   if (provedSinceArrival(pipe, state.accessToken, deadline)) return recorded;
   const holder = await machine.pipeServer(socketPath, ENGINE_ANSWER_WAIT_MS);
+  if (typeof holder === "string") return await provedEndpoint(pipe, state, holder);
   if (heldByRecordedDaemon(holder, state)) return recorded;
-  return await provedEndpoint(pipe, state, holder);
+  throw new Error(heldElsewhereReason(pipe, holder, state));
 }
 
 /**
- * The endpoint for the Windows engine pipe `pipe` once Windows named another holder or none (`holder`): the engine on
- * it must prove it holds the capability daemon.json (`state`) records, whichever pipe daemon.json names, and the event
- * then waits what the proof left of {@link ENGINE_ANSWER_WAIT_MS} ({@link EngineEndpoint.proofTookMs}). Another process
- * holding the pipe's name gets nothing, nor does any engine when daemon.json records no capability: the error says why
- * ({@link notSentReason}).
+ * The endpoint for the Windows engine pipe `pipe` once Windows named no holder (`unnamed`: it says no pipe of that name
+ * exists, or could not be asked): the engine on it must prove it holds the capability daemon.json (`state`) records,
+ * whichever pipe daemon.json names, and the event then waits what the proof left of {@link ENGINE_ANSWER_WAIT_MS}
+ * ({@link EngineEndpoint.proofTookMs}). An engine that does not prove it gets nothing, nor does any engine when
+ * daemon.json records no capability: the error says why ({@link notSentReason}).
  */
-async function provedEndpoint(pipe: NamedPipe, state: DaemonState, holder: PipeServer | undefined): Promise<EngineEndpoint> {
+async function provedEndpoint(pipe: NamedPipe, state: DaemonState, unnamed: Exclude<PipeServerAnswer, PipeServer>): Promise<EngineEndpoint> {
   const { socketPath, machine } = pipe;
   const { accessToken } = state;
-  if (pipeStayedBusy(holder) || accessToken === undefined) throw new Error(notSentReason(pipe, undefined, holder));
+  if (accessToken === undefined) throw new Error(notSentReason(pipe, unnamed, undefined));
   const asked = Date.now();
   const answer = await machine.capabilityProof(socketPath, accessToken, ENGINE_ANSWER_WAIT_MS);
   if (answer === "proved") return { socketPath, accessToken, proofTookMs: Date.now() - asked };
-  throw new Error(notSentReason(pipe, answer, holder));
+  throw new Error(notSentReason(pipe, unnamed, answer));
 }
 
 /**
@@ -254,28 +257,43 @@ function provedSinceArrival({ socketPath, machine }: NamedPipe, accessToken: str
  * process that started no later than the daemon recorded its start. A process keeps its pid for life, so one that started
  * later took a dead daemon's pid; a start Windows does not say counts as later.
  */
-function heldByRecordedDaemon(holder: PipeServer | undefined, state: DaemonState): boolean {
-  return holder?.pid === state.pid && (holder.startedAt ?? Number.POSITIVE_INFINITY) <= state.startedAt;
-}
-
-/** Whether other clients kept every instance of the pipe taken for the whole wait, so Windows could not be asked its holder. */
-function pipeStayedBusy(holder: PipeServer | undefined): boolean {
-  return holder !== undefined && typeof holder.pid !== "number";
+function heldByRecordedDaemon(holder: PipeServer, state: DaemonState): boolean {
+  return holder.pid === state.pid && (holder.startedAt ?? Number.POSITIVE_INFINITY) <= state.startedAt;
 }
 
 /**
- * Why the engine on the Windows pipe `RERAIL_ENGINE_SOCKET` names was sent nothing, once neither Windows nor a proof
- * (`answer`, undefined where none was asked) showed it to be the home's own daemon: nothing listens on the pipe, other
- * clients kept it busy past the wait, daemon.json records no capability to prove, its engine said nothing within the
- * wait, or it is another process.
+ * Why the engine on the Windows pipe `RERAIL_ENGINE_SOCKET` names was sent nothing once Windows answered for it
+ * (`holder`) but did not name the daemon daemon.json (`state`) records: the pipe is there but Windows refused the
+ * lookup's open or would not name its holder, other clients kept every instance taken past the wait, so Windows could
+ * not be asked, or it names another process, which may have taken that daemon's pid.
  */
-function notSentReason({ socketPath, home, machine }: NamedPipe, answer: EngineProofAnswer | undefined, holder: PipeServer | undefined): string {
+function heldElsewhereReason({ socketPath, home }: NamedPipe, holder: PipeServer, state: DaemonState): string {
+  if (typeof holder.windowsError === "number") return `the engine pipe ${socketPath} is there, but Windows refused to say which process holds it (Windows error ${holder.windowsError}), so it could not be shown to be this Rerail home's daemon, ${NOTHING_SENT}`;
+  if (typeof holder.pid !== "number") return `other clients kept every instance of the engine pipe ${socketPath} taken for ${ENGINE_ANSWER_WAIT_MS / 1_000} s, so Windows could not say whether this Rerail home's daemon holds it, ${NOTHING_SENT}`;
+  const file = join(home, DAEMON_STATE_FILE);
+  const which = holder.pid === state.pid ? `which Windows does not show to have started before ${file} recorded the daemon's start` : `and ${file} records process ${state.pid}`;
+  return `the engine pipe ${socketPath} is not this Rerail home's daemon: Windows names process ${holder.pid} as its holder, ${which}, ${NOTHING_SENT}`;
+}
+
+/** Why Windows named no holder of a pipe ({@link PipeServerAnswer}), as a hook's error says it. */
+const UNNAMED_HOLDER: Readonly<Record<Exclude<PipeServerAnswer, PipeServer>, string>> = {
+  "no-pipe": "Windows named no process as its holder",
+  "not-asked": "Windows could not be asked which process holds it, since the engine's native binding would not load in this process, predates that question or failed while asking",
+};
+
+/**
+ * Why the engine on the Windows pipe `RERAIL_ENGINE_SOCKET` names was sent nothing once Windows named no holder
+ * (`unnamed`) and no proof (`answer`, undefined where none was asked) showed it to be the home's own daemon: nothing
+ * listens on the pipe, or else it could not be shown to be that daemon, and why: daemon.json records no capability to
+ * prove, its engine said nothing within the wait, or it did not prove it. The home's own daemon of Rerail 0.1.4 or
+ * earlier, which gives no proof, is one of those, so the error never says the pipe is another process's.
+ */
+function notSentReason({ socketPath, home, machine }: NamedPipe, unnamed: Exclude<PipeServerAnswer, PipeServer>, answer: EngineProofAnswer | undefined): string {
   if (!pipeListed(socketPath, () => machine.pipes())) return nothingListens(socketPath);
-  const waited = `${ENGINE_ANSWER_WAIT_MS / 1_000} s`;
-  if (pipeStayedBusy(holder)) return `other clients kept every instance of the engine pipe ${socketPath} taken for ${waited}, so Windows could not say whether this Rerail home's daemon holds it, ${NOTHING_SENT}`;
-  if (answer === undefined) return `the engine pipe ${socketPath} is not this Rerail home's daemon: Windows did not name the daemon ${join(home, DAEMON_STATE_FILE)} records as its holder, and that file records no capability for the engine to prove, ${NOTHING_SENT}`;
-  if (answer === "silent") return `the engine on the pipe ${socketPath} did not prove within ${waited} that it is this Rerail home's daemon, ${NOTHING_SENT}`;
-  return `the engine pipe ${socketPath} is not this Rerail home's daemon: it did not prove it holds the capability in ${join(home, DAEMON_STATE_FILE)}, ${NOTHING_SENT}`;
+  const file = join(home, DAEMON_STATE_FILE);
+  const unproved = answer === undefined ? `${file} records no capability for the engine to prove`
+    : `the engine on it did not prove ${answer === "silent" ? `within ${ENGINE_ANSWER_WAIT_MS / 1_000} s that ` : ""}it holds the capability in ${file}`;
+  return `the engine pipe ${socketPath} could not be shown to be this Rerail home's daemon: ${UNNAMED_HOLDER[unnamed]}, and ${unproved}, ${NOTHING_SENT}`;
 }
 
 /** How a Rerail process sends one request to the daemon: `fetch`'s shape, over the transport the daemon serves. */
@@ -738,9 +756,10 @@ export interface DaemonMachine {
   /**
    * Windows: the process holding the server end of the named pipe `socketPath` and when it started, as Windows records
    * them, opening again while other clients hold every instance until `timeoutMs` has passed, with no pid once it has;
-   * undefined where Windows does not say (`pipeServer`). This process's own thread runs on while it waits.
+   * `no-pipe` where Windows says no pipe of that name exists and `not-asked` where it could not be asked (`pipeServer`). This
+   * process's own thread runs on while it waits.
    */
-  pipeServer(socketPath: string, timeoutMs: number): Promise<PipeServer | undefined>;
+  pipeServer(socketPath: string, timeoutMs: number): Promise<PipeServerAnswer>;
   /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
   forgetMainInstanceHolder(pid: number): void;
   /**

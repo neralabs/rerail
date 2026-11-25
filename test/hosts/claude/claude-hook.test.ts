@@ -40,6 +40,32 @@ vi.mock("../../../src/runtime/daemon/daemon-waits.js", async () => {
   };
 });
 
+/**
+ * The pipe or socket of each proof this process asks an engine for (`engineCapabilityProof`) and of each question it
+ * asks Windows of who serves a pipe (`pipeServer`); both answer as they do.
+ */
+const asked = vi.hoisted(() => ({ proofs: [] as string[], holders: [] as string[] }));
+vi.mock("../../../src/runtime/daemon/engine-proof.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/runtime/daemon/engine-proof.js")>("../../../src/runtime/daemon/engine-proof.js");
+  return {
+    ...actual,
+    engineCapabilityProof: async (...args: Parameters<typeof actual.engineCapabilityProof>) => {
+      asked.proofs.push(args[0]);
+      return await actual.engineCapabilityProof(...args);
+    },
+  };
+});
+vi.mock("../../../src/runtime/daemon/engine-pipe.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/runtime/daemon/engine-pipe.js")>("../../../src/runtime/daemon/engine-pipe.js");
+  return {
+    ...actual,
+    pipeServer: async (...args: Parameters<typeof actual.pipeServer>) => {
+      asked.holders.push(args[0]);
+      return await actual.pipeServer(...args);
+    },
+  };
+});
+
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
 /** A code rule that steers every `print(` in a Python file. */
@@ -266,7 +292,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     { names: "the pipe another process holds", inDaemonJson: true },
     // As daemon.json does when another process held the default pipe's name as the daemon started.
     { names: "the daemon's own pipe", inDaemonJson: false },
-  ])("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names until what holds it proves it is this home's daemon (daemon.json names $names)", { timeout: 60_000 }, async ({ inDaemonJson }) => {
+  ])("sends nothing to the engine pipe RERAIL_ENGINE_SOCKET names, its lookup not even a proof's challenge, when Windows names another process as its holder (daemon.json names $names)", { timeout: 60_000 }, async ({ inDaemonJson }) => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_AUTOSTART", "0");
@@ -281,11 +307,10 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
       await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath).catch((error: unknown) => error),
       await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath).catch((error: unknown) => error),
     ];
-    // Only challenges reached the pipe, each hook's own and, where daemon.json names the pipe, its start check's: neither
-    // the capability nor an event.
+    // Neither the capability nor an event reached the pipe. The hook's lookup wrote nothing to it; where daemon.json
+    // names it, each hook's start check asked it for one proof, as it does at main (docs/threat-model.md, what remains).
     const received = await otherProcessReceived();
-    expect(received.filter(line => line !== "POST /proof no capability")).toEqual([]);
-    expect(received).toContain("POST /proof no capability");
+    expect(received).toEqual(inDaemonJson ? ["POST /proof no capability", "POST /proof no capability"] : []);
     const notThisHome = { name: "DaemonUnreachableError", message: expect.stringContaining(`${otherProcessPipe} is not this Rerail home's daemon`) };
     expect(answers).toEqual([expect.objectContaining(notThisHome), expect.objectContaining(notThisHome)]);
     // Each event lost so is in the hook failure log `rerail status` reads, with that reason.
@@ -324,6 +349,26 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
     await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
     expect(eventIds()).toEqual(expect.arrayContaining(["named-session:SessionStart", "named-session:prompt:p1"]));
+  });
+
+  // On Windows the proof the hook's start check asks of the pipe daemon.json names also shows the pipe the variable
+  // names to be the daemon's, for an event that arrived before it: the hook asks no second proof and does not ask
+  // Windows. Off Windows the daemon's socket sits in a folder only the person can open, and nothing is asked.
+  it("asks one proof, its start check's, and Windows nothing, for a prompt hook whose RERAIL_ENGINE_SOCKET names the daemon's pipe", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    const daemon = await startNativeTestDaemon(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", daemon.kernelSocketPath);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "one-proof-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    asked.proofs.length = 0;
+    asked.holders.length = 0;
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect(asked.proofs).toEqual(process.platform === "win32" ? [daemon.kernelSocketPath] : []);
+    expect(asked.holders).toEqual([]);
+    expect(eventIds()).toContain("one-proof-session:prompt:p1");
   });
 
   /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */
