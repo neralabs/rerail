@@ -2849,31 +2849,31 @@ impl Extra {
             out.push(("col", relation(&["n", "c"], &mut self.cols.iter().map(|r| r.to_vec()))));
         }
         if self.node_text {
-            out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| vec![n, atom(s)]))));
+            out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| vec![n, atom(s)])).with_atoms(&[false, true])));
         }
         if self.docof {
             out.push(("docof", relation(&["n", "d"], &mut self.docofs.iter().map(|r| r.to_vec()))));
         }
         if self.value {
-            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| vec![n, atom(v)]))));
+            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| vec![n, atom(v)])).with_atoms(&[false, true])));
         }
         if self.value_lit {
-            out.push(("rr_value_lit", relation(&["n", "v"], &mut self.value_lits.iter().map(|&[n, v]| vec![n, atom(v)]))));
+            out.push(("rr_value_lit", relation(&["n", "v"], &mut self.value_lits.iter().map(|&[n, v]| vec![n, atom(v)])).with_atoms(&[false, true])));
         }
         if self.static_value {
-            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| vec![n, atom(v)]))));
+            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| vec![n, atom(v)])).with_atoms(&[false, true])));
         }
         if self.value_type_of {
-            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| vec![n, atom(t)]))));
+            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| vec![n, atom(t)])).with_atoms(&[false, true])));
         }
         if self.value_type {
-            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| vec![atom(v), atom(t)]))));
+            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| vec![atom(v), atom(t)])).with_atoms(&[true, true])));
         }
         if self.comment {
-            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| vec![n, atom(s)]))));
+            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| vec![n, atom(s)])).with_atoms(&[false, true])));
         }
         if self.rx_span {
-            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| vec![atom(p), c, j, atom(g), m]))));
+            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| vec![atom(p), c, j, atom(g), m])).with_atoms(&[true, false, false, true, false])));
         }
         let mut matched = Vec::new();
         for found in self.matches {
@@ -2882,7 +2882,7 @@ impl Extra {
             }
             if found.groups {
                 let rows = &mut found.group_rows.iter().map(|&[sp, m, g, gsp]| vec![sp, m, atom(g), gsp]);
-                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::GROUPS, found.k), relation(&["sp", "m", "g", "gsp"], rows)));
+                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::GROUPS, found.k), relation(&["sp", "m", "g", "gsp"], rows).with_atoms(&[false, false, true, false])));
             }
         }
         (out, matched)
@@ -3579,11 +3579,11 @@ impl Batch {
         // A value alone's rows are staged: they are written once, past the chunk's relations' rows (`Grower::admit`).
         let relation: Make = if first { Relation::from_rows } else { Relation::staged };
         let pairs = |columns: &[&str], rows: &[[i64; 2]], sym: [bool; 2]| {
-            relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
+            relation(columns, &mut rows.iter().map(|&[a, b]| vec![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }])).with_atoms(&sym)
         };
         let mut relations = vec![
             (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| vec![n]))),
-            ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)]))),
+            ("doc", relation(&["d", "path", "module"], &mut doc.iter().map(|&[d, p, m]| vec![d, atom(p), atom(m)])).with_atoms(&[false, true, true])),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
             ("unpackaged", relation(&["d"], &mut unpackaged.iter().map(|&d| vec![d]))),
             // The tape's own verdict: tree-sitter's ERROR and MISSING nodes (`Facts::syntax_errors`).
@@ -3822,16 +3822,25 @@ impl Viewed {
             View::Loc(Place::Report) => &["n", "line", "column", "end_line", "end_column"],
         }
     }
-    /// What column `column` holds, its documents made or not: a document's key, a node of the batch's, a child's
-    /// place among its siblings. `tape` (its root's parent is `-1`; read in place), a kind, a field, a position, a
-    /// line or a column: not known.
+    /// What column `column` holds, its documents made or not (`value_of`, `loc_value`): a document's key, a node of
+    /// the batch's (`node_order`'s key is one: `key << 32 | order`), or a `u32` (a kind, a field, a position, a
+    /// line, a column, a depth, a size, a child's place, a tape id). Not known: `tape`'s parent (its root's is `-1`)
+    /// and the report's columns (`col + 1`, past a `u32` at its greatest).
     pub(super) fn col_kind(&self, column: usize) -> Option<made::ColKind> {
         use made::ColKind;
         match (self.view, *Self::columns(self.view).get(column)?) {
-            (View::Tape, _) | (View::Loc(Place::Col), "c") => None,
+            (View::Tape, "par") | (View::Loc(Place::Report), "column" | "end_column") => None,
             (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
-            (View::Child, "idx") => Some(ColKind::Place),
-            (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
+            (View::Loc(Place::Col), "c") => Some(ColKind::U32),
+            (View::Order, "k") | (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
+            (View::Node, "kind" | "start" | "end_")
+            | (View::Child, "idx")
+            | (View::Field, "f")
+            | (View::Tape, "size" | "depth")
+            | (View::Core, "t")
+            | (View::Depth, "k")
+            | (View::Line | View::Loc(Place::Line | Place::EndLine), "l")
+            | (View::Loc(Place::Report), "line" | "end_line") => Some(ColKind::U32),
             _ => None,
         }
     }

@@ -1544,6 +1544,9 @@ pub struct Relation {
     grows: bool,
     /// Each column's least and greatest value, measured from its cells when first asked (`Source::col_bounds`).
     bounds: OnceLock<Vec<[i64; 2]>>,
+    /// Per column, whether its builder writes atoms there (`with_atoms`): a `u32` whatever rows come, so a source
+    /// that makes it later bounds it before its rows are made.
+    atoms: Box<[bool]>,
 }
 struct ColumnIndex {
     rows: Vec<u32>,
@@ -1572,7 +1575,19 @@ impl Relation {
             identity: OnceLock::new(),
             grows: false,
             bounds: OnceLock::new(),
+            atoms: columns.iter().map(|_| false).collect(),
         }
+    }
+
+    /// This relation, its builder writing atoms (`u32`) in each column `atoms` marks.
+    pub fn with_atoms(mut self, atoms: &[bool]) -> Self {
+        assert_eq!(atoms.len(), self.columns.len(), "an atom flag per column");
+        self.atoms = atoms.into();
+        self
+    }
+    /// Whether column `column` holds atoms (`with_atoms`).
+    pub fn atom_column(&self, column: usize) -> bool {
+        self.atoms.get(column).copied().unwrap_or(false)
     }
 
     /// This relation as one a later relation goes on from (`grown`): its rows frozen in their block (`Rows::freeze`),
@@ -1603,6 +1618,7 @@ impl Relation {
             identity: OnceLock::new(),
             grows: true,
             bounds: OnceLock::new(),
+            atoms: self.atoms.clone(),
         };
         let Relation { staged, cells, rows, .. } = more;
         match cells.into_inner() {

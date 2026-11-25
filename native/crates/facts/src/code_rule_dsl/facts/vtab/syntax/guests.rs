@@ -193,17 +193,17 @@ impl GuestRows {
 
     pub(super) fn relations(&self, atom: &dyn Fn(i64) -> i64, rel: super::Make) -> Vec<(&'static str, Relation)> {
         vec![
-            ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| vec![d, f, atom(s)]))),
-            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| vec![d, atom(g)]))),
-            ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| vec![d, atom(t)]))),
-            ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r]))),
-            ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)]))),
+            ("rr_program", rel(&["d", "file", "grammar"], &mut self.program.iter().map(|&[d, f, s]| vec![d, f, atom(s)])).with_atoms(&[false, false, true])),
+            ("doc_grammar", rel(&["d", "g"], &mut self.grammar.iter().map(|&[d, g]| vec![d, atom(g)])).with_atoms(&[false, true])),
+            ("tape_of", rel(&["d", "t"], &mut self.tape.iter().map(|&[d, t]| vec![d, atom(t)])).with_atoms(&[false, true])),
+            ("parsed", rel(&["s", "grammar", "root"], &mut self.parsed.iter().map(|&[s, g, r]| vec![s, atom(g), r])).with_atoms(&[false, true, false])),
+            ("sub_tape", rel(&["at", "grammar", "t"], &mut self.sub_tape.iter().map(|&[a, g, t]| vec![a, atom(g), atom(t)])).with_atoms(&[false, true, true])),
             ("host_node", rel(&["n", "h"], &mut self.host_node.iter().map(|r| r.to_vec()))),
             ("guest_of", rel(&["n", "s"], &mut self.guest_of.iter().map(|r| r.to_vec()))),
             ("guest_place", rel(&["n", "s", "l", "c"], &mut self.guest_place.iter().map(|r| r.to_vec()))),
-            ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| vec![atom(x), atom(g), atom(t)]))),
-            ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| vec![atom(t), n, atom(t2), atom(t3)]))),
-            ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| vec![atom(t), atom(x)]))),
+            ("parse_of", rel(&["x", "g", "t"], &mut self.parse_of.iter().map(|&[x, g, t]| vec![atom(x), atom(g), atom(t)])).with_atoms(&[true, true, true])),
+            ("splice_of", rel(&["t", "n", "t2", "t3"], &mut self.splice_of.iter().map(|&[t, n, t2, t3]| vec![atom(t), n, atom(t2), atom(t3)])).with_atoms(&[true, false, true, true])),
+            ("unparse_of", rel(&["t", "x"], &mut self.unparse_of.iter().map(|&[t, x]| vec![atom(t), atom(x)])).with_atoms(&[true, true])),
         ]
     }
 }

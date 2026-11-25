@@ -597,8 +597,8 @@ pub(super) enum ColKind {
     Node,
     /// A text: an atom (`content_store::atoms::Sym`, 32 bits), one interned after it is asked too.
     Atom,
-    /// A place among a node's children: 32 bits.
-    Place,
+    /// A value the engine makes as a `u32`: a kind, a field, a position, a line, a depth, a child's place.
+    U32,
 }
 
 impl Batch {
@@ -615,7 +615,7 @@ impl Batch {
             ColKind::Key => keys,
             ColKind::Node if keys[0] > keys[1] => keys,
             ColKind::Node => [keys[0] << 32, (keys[1] << 32) | i64::from(u32::MAX)],
-            ColKind::Atom | ColKind::Place => [0, i64::from(u32::MAX)],
+            ColKind::Atom | ColKind::U32 => [0, i64::from(u32::MAX)],
         }
     }
 
@@ -951,7 +951,9 @@ impl MadeRows {
         if rows.also[self.rel].contains(&column) {
             return Some(ColKind::Node);
         }
-        (rows.path_column[self.rel] == Some(column) || rows.module_column[self.rel] == Some(column)).then_some(ColKind::Atom)
+        // Its builder's atom columns (`Relation::with_atoms`), as the batch's empty group made it (`template`).
+        let atoms = rows.template[self.rel].atom_column(column);
+        (atoms || rows.path_column[self.rel] == Some(column) || rows.module_column[self.rel] == Some(column)).then_some(ColKind::Atom)
     }
     /// Whether every document's rows are made: a whole read reads them, and makes none.
     pub(super) fn is_done(&self) -> bool {

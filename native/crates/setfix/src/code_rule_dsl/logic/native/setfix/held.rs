@@ -27,6 +27,9 @@ pub(super) struct Held {
     index: Vec<OnceLock<Option<usize>>>,
     /// The host's sorted index of a column past the directory.
     sorted: Vec<OnceLock<Sorted>>,
+    /// Each source column's least and greatest value, taken as its rows are written (`Source::col_bounds`): a column
+    /// not held reads 0; `[MAX, MIN]` with no rows.
+    bounds: Vec<[i64; 2]>,
 }
 
 impl Held {
@@ -44,17 +47,21 @@ impl Held {
             }
         }
         let k = held.len();
+        let mut range = vec![[i64::MAX, i64::MIN]; k];
         let mut rows = if n > 0 && k > 0 { Rows::with_index_room(k, Life::Kept, n, rerail_blocks::relation::ADDED_INDEXES) } else { Rows::living(k, Life::Kept) };
         if k > 0 {
             let mut row = vec![0i64; k];
             for r in 0..n {
                 for (c, col) in held.iter().enumerate() {
                     row[c] = col.get(r).copied().unwrap_or(0);
+                    range[c] = [range[c][0].min(row[c]), range[c][1].max(row[c])];
                 }
                 rows.extend_from_slice(&row);
             }
         }
         drop(held);
+        let empty = [i64::MAX, i64::MIN];
+        let bounds = slot.iter().map(|s| match s { Some(s) => range[usize::from(*s)], None if n > 0 => [0, 0], None => empty }).collect();
         let rows = rows.freeze(n);
         let ib = rows.in_block();
         let k_all = slot.len();
@@ -62,7 +69,7 @@ impl Held {
         if let Some(st) = statistics {
             let _ = kept.set(st);
         }
-        Held { columns, slot, rows, ib, n, statistics: kept, distinct: (0..k_all).map(|_| OnceLock::new()).collect(), index: (0..k_all).map(|_| OnceLock::new()).collect(), sorted: (0..k_all).map(|_| OnceLock::new()).collect() }
+        Held { columns, slot, rows, ib, n, statistics: kept, distinct: (0..k_all).map(|_| OnceLock::new()).collect(), index: (0..k_all).map(|_| OnceLock::new()).collect(), sorted: (0..k_all).map(|_| OnceLock::new()).collect(), bounds }
     }
 
     fn at(&self, r: usize, s: u16) -> i64 {
@@ -160,6 +167,7 @@ impl Held {
 
 impl Source for Held {
     fn columns(&self) -> Vec<String> { self.columns.clone() }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> { self.bounds.get(column).copied() }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         Some(self.statistics.get_or_init(|| self.measured()).clone())
     }
