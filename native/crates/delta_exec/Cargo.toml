@@ -7,17 +7,16 @@ description = "A delta executor that loads itself from one tape (decision 0686):
 
 [features]
 default = []
-test-hooks = ["rerail-blocks/test-hooks", "rerail-delta-twins/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-tape-format/test-hooks"]
+test-hooks = ["rerail-blocks/test-hooks", "rerail-delta-twins/test-hooks", "rerail-rr-syntax/test-hooks"]
 
 [dependencies]
 # Relations, bistates and their change operations (decision 0678): every fact this executor keeps lies in them.
 rerail-blocks = { path = "../blocks" }
 # The operations' Rust twins: each one's reference version, in phases over blocks (std inside, no state of their own).
 rerail-delta-twins = { path = "../delta_twins" }
-# The rr parser: a `.rerail` file's tape, the only reader of its text.
+# The rr parser: a `.rerail` file's tape, the only reader of its text; the tape's reads in place (format 16) come
+# through it (`rerail_rr_syntax::tape_format`), so this crate depends on blocks and the rr parser alone (B§7).
 rerail-rr-syntax = { path = "../rr_syntax" }
-# The tape's reads in place (format 16).
-rerail-tape-format = { path = "../tape_format" }
 
 [dev-dependencies]
 rerail-delta-exec = { path = ".", features = ["test-hooks"] }

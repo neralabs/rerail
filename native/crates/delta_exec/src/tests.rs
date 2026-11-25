@@ -30,7 +30,8 @@ fn views_over_a_three_line_tape() {
     let t = text("a(1, x).\n// a comment\nb(2) :- a(2, _).\nc(\"x\", 3).\n");
     let (path, module) = (sym.intern("three.rerail"), sym.intern("three"));
     let v = |view| TapeView::new(view, 1, path, module, &t, &sym, &names);
-    let (kind, field, child, txt, value, doc) = (
+    let (node, kind, field, child, txt, value, doc) = (
+        v(View::Node),
         v(View::Kind),
         v(View::Field),
         v(View::Child),
@@ -68,6 +69,13 @@ fn views_over_a_three_line_tape() {
     assert_eq!(nums, [1, 2, 3].into());
     assert_eq!(probe(&doc, &[0], &[1], 1), vec![path]);
     assert_eq!(probe(&doc, &[0, 1], &[1, path], 2), vec![module]);
+    // node(d, n, k, start, end): each clause's kind and its span, the clause's own text.
+    for &c in &clauses {
+        assert_eq!(probe(&node, &[0, 1], &[1, c], 2), vec![s("clause")]);
+        let (start, end) = (probe(&node, &[0, 1], &[1, c], 3)[0], probe(&node, &[0, 1], &[1, c], 4)[0]);
+        assert_eq!(probe(&txt, &[0, 1], &[1, c], 2), vec![s(&t.src[start as usize..end as usize])]);
+    }
+    assert_eq!(probe(&node, &[0, 2], &[1, s("clause")], 1), clauses, "node's kind column answers as kind's");
     // Another document's key finds nothing here.
     assert!(probe(&kind, &[0], &[2], 1).is_empty());
 }
@@ -103,6 +111,45 @@ fn k0_pass_rows_by_hand() {
         assert_eq!(&got(i), w, "{}\n{dump}", RELATIONS[i].0);
     }
     assert!(got(7).is_empty(), "k_order is boot's, not the pass's");
+}
+
+/// K-form's rows stored as traces of their shapes (`kform::shape`): 32-bit columns but a number's value, each row read
+/// back as written.
+#[test]
+fn k_form_rows_are_stored_in_32_bits() {
+    use crate::dir::Directory;
+    use crate::op::{Registry, Tiling};
+    use crate::trace::{Trace, TraceOps};
+    use rerail_blocks::layer::{ColType, RunsW};
+    use rerail_blocks::region::pin_block;
+    let sym = Symbols::new();
+    let t = text("e(1, 2).\np(x, z) :- e(x, y), e(y, z), !q(y), x != z.\nq(\"s\") :- e(_, -3).\n");
+    let rows = k0::rows(&t, 7, &sym).expect("K0");
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let mut dir = Directory::default();
+    for (i, (name, arity)) in RELATIONS.iter().enumerate() {
+        let shape = crate::kform::shape(i);
+        let wide: Vec<usize> = (0..*arity).filter(|&c| shape.columns[c] == ColType::I64).collect();
+        assert_eq!(wide, if *name == "k_num" { vec![2] } else { vec![] }, "{name}: only a number's value is 64 bits");
+        let mut tr = Trace::new(&shape).unwrap();
+        let want: Rows = rows[i].iter().map(|r| r.to_vec()).collect();
+        let runs = tr.open(&mut dir, want.len().max(1));
+        {
+            let b = dir.block(runs).unwrap();
+            let pin = pin_block(&b, "k0", true).unwrap();
+            let w = RunsW::new(&pin);
+            for r in &want {
+                w.push(r, 1).unwrap();
+            }
+        }
+        let h = tr.commit(&reg, &ops, &mut dir, runs, Tiling::WHOLE).unwrap();
+        let l = tr.read(&dir, &[Some(h)]).unwrap();
+        let table = l.table();
+        let st = tr.state(&table, Some(h)).unwrap();
+        let got: Rows = st.scan().map(|id| ColumnIndex::all(*arity).map(|c| st.get(id, c)).collect()).collect();
+        assert_eq!(got, want, "{name}");
+    }
 }
 
 /// The hand-written rows of `k0_pass_rows_by_hand`'s file, module 7.

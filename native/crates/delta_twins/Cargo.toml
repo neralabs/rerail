@@ -3,14 +3,15 @@ name = "rerail-delta-twins"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The Rust twins of the delta executor's operations (decision 0686, Operations §3): each operation's reference version, a function of its pinned blocks and params alone."
+description = "The Rust twins of the delta executor's operations (decision 0686, Operations §3): each operation's reference version: phases over tiles of independent items, reading its pinned slots, the blocks they reach and its params alone."
 
 [features]
 default = []
 test-hooks = ["rerail-blocks/test-hooks"]
 
 [dependencies]
-# The blocks a twin reads and writes in place, and their layouts (relations, rows, indexes): one definition, there.
+# The blocks a twin reads and writes in place, and their formats (references, descriptor tables, layers): one
+# definition, there.
 rerail-blocks = { path = "../blocks" }
 
 [dev-dependencies]

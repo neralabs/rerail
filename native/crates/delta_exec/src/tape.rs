@@ -2,6 +2,7 @@
 //! nothing makes its rows). Each view's first column is the document's id, the partition column (node ids are the
 //! document's own, L9):
 //!
+//! - `node(d, n, k, start, end)`: node `n`, its kind (a symbol) and its source span, as the engine's `node` is;
 //! - `kind(d, n, k)`: node `n`'s kind, a symbol;
 //! - `field(d, p, f, c)`: `c` is `p`'s child in field `f`;
 //! - `child(d, p, c, i)`: `c` is `p`'s `i`-th child, counting named children that are no comment;
@@ -18,8 +19,8 @@ use crate::sym::Symbols;
 use rerail_blocks::bistate::{ColumnIndex, ColumnRead, Read, RowId, WordIndex, below};
 use rerail_blocks::table::{Run, Runs, Table};
 use rerail_rr_syntax::tape::{FIELD_NAMES, FIRST_ANONYMOUS, KIND_NAMES, Kind, entry_kind_field};
-use rerail_tape_format::f16::{F16, Tape16};
-use rerail_tape_format::tape::Tape as _;
+use rerail_rr_syntax::tape_format::f16::{F16, Tape16};
+use rerail_rr_syntax::tape_format::tape::Tape as _;
 
 /// A document's text: its source, loaded from disk, and its tape, made by the rr parser.
 pub struct Text {
@@ -45,6 +46,7 @@ impl Text {
 /// The views, by name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
+    Node,
     Kind,
     Field,
     Child,
@@ -54,7 +56,8 @@ pub enum View {
 }
 
 impl View {
-    pub const ALL: [(View, &'static str, usize); 6] = [
+    pub const ALL: [(View, &'static str, usize); 7] = [
+        (View::Node, "node", 5),
         (View::Kind, "kind", 3),
         (View::Field, "field", 4),
         (View::Child, "child", 4),
@@ -70,7 +73,7 @@ impl View {
     /// The column that names a row's node, which is the row's id.
     fn node_column(self) -> usize {
         match self {
-            View::Kind | View::Text | View::Value => 1,
+            View::Node | View::Kind | View::Text | View::Value => 1,
             View::Field => 3,
             View::Child => 2,
             View::Doc => 0,
@@ -128,7 +131,7 @@ impl<'t> Reads<'t> {
     pub fn node(&self, i: usize) -> (u16, u16, bool) {
         let e = self.r.table().entry(self.r.code(i));
         let (k, f) = entry_kind_field(e);
-        (k, f, e.flags & rerail_tape_format::CODE_EXTRA != 0)
+        (k, f, e.flags & rerail_rr_syntax::tape_format::CODE_EXTRA != 0)
     }
 
     pub fn parent(&self, i: usize) -> Option<usize> {
@@ -147,9 +150,18 @@ impl<'t> Reads<'t> {
         !extra && k < FIRST_ANONYMOUS
     }
 
+    /// Node `i`'s source span: its first byte, and the byte past its last.
+    pub fn start(&self, i: usize) -> u32 {
+        self.r.start(i) as u32
+    }
+
+    pub fn end(&self, i: usize) -> u32 {
+        self.r.end(i) as u32
+    }
+
     /// Node `i`'s source text.
     pub fn text(&self, i: usize) -> &'t str {
-        &self.src[self.r.start(i) as usize..self.r.end(i) as usize]
+        &self.src[self.start(i) as usize..self.end(i) as usize]
     }
 
     /// A string's unescaped contents, when node `i` is one.
@@ -228,7 +240,7 @@ impl<'t> TapeView<'t> {
     fn live_at(&self, n: usize) -> bool {
         let r = &self.reads;
         match self.view {
-            View::Kind | View::Text => true,
+            View::Node | View::Kind | View::Text => true,
             View::Field => r.node(n).1 != 0 && r.parent(n).is_some(),
             View::Child => r.counted(n) && r.parent(n).is_some(),
             View::Value => r.has_value(n),
@@ -243,7 +255,9 @@ impl<'t> TapeView<'t> {
             (_, 0) => self.d,
             (View::Doc, 1) => self.path,
             (View::Doc, 2) => self.module,
-            (View::Kind, 2) => self.names.kind(r.node(n).0),
+            (View::Node, 2) | (View::Kind, 2) => self.names.kind(r.node(n).0),
+            (View::Node, 3) => i64::from(r.start(n)),
+            (View::Node, 4) => i64::from(r.end(n)),
             (View::Field, 1) | (View::Child, 1) => r.parent(n).map_or(-1, |x| x as i64),
             (View::Field, 2) => self.names.field(r.node(n).1),
             (View::Child, 3) => r.parent(n).map_or(-1, |x| r.index(x, n)),

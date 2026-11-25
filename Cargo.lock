@@ -3803,7 +3803,6 @@ dependencies = [
  "rerail-delta-exec",
  "rerail-delta-twins",
  "rerail-rr-syntax",
- "rerail-tape-format",
 ]
 
 [[package]]
