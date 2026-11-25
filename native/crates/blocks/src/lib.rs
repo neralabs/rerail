@@ -52,6 +52,7 @@ pub mod order;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
+pub mod sketch;
 pub mod sort;
 pub mod table;
 
@@ -91,7 +92,7 @@ scalar!(u8 => "uint8_t", u16 => "uint16_t", u32 => "uint32_t", u64 => "uint64_t"
 // A field that changes while its block is open (a counter, a chunk's offset, a span set at freeze) is an atomic:
 // written through a shared reference, which Rust allows only by interior mutability. On ARM a relaxed load is a
 // plain load. UKL declares it as the plain type; a kernel that claims passes it to `ukl_atomic_add`.
-scalar!(std::sync::atomic::AtomicU32 => "uint32_t", std::sync::atomic::AtomicU64 => "uint64_t", std::sync::atomic::AtomicI64 => "int64_t");
+scalar!(std::sync::atomic::AtomicU16 => "uint16_t", std::sync::atomic::AtomicU32 => "uint32_t", std::sync::atomic::AtomicU64 => "uint64_t", std::sync::atomic::AtomicI64 => "int64_t");
 
 impl<T: KernelField, const N: usize> KernelField for [T; N] {
     fn ty() -> String {

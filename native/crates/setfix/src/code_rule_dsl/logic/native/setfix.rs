@@ -6526,10 +6526,11 @@ impl InRel {
             killed.sort_unstable();
             killed.dedup();
         }
-        // Declared sorted (decision 0456 K7): laid out sorted on column 0, unless its rows are numbered as the kept
-        // relation it started from numbers them (its versions are read by id, decision 0364).
+        // Declared sorted (decision 0456 K7): laid out sorted on column 0, or on the column its rows came in order on,
+        // unless its rows are numbered as the kept relation it started from numbers them (its versions are read by
+        // id, decision 0364).
         if rel.ordered && rel.from.is_none() && rel.lat.is_none() && rel.k > 0 {
-            return InRel::sorted_on_first(rel);
+            return InRel::sorted_on_one(rel);
         }
         let rows = rel.data.freeze(rel.n);
         let chains = in_block_orders(rel.idx, &rows, rel.k, rel.n);
@@ -6542,16 +6543,20 @@ impl InRel {
         InRel { vers: Default::default(), viewed: false, keyed: None, k: rel.k, n: rel.n, rows, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains, sorted,
                 sketches: rel.sketches, serves: rel.serves, dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
     }
-    /// `rel`'s live rows sorted on column 0, stably (one sort column, decision 0678 step 8; as the keep sorts a kept
-    /// relation): one sort here, unless they lie in that order already, so the keep sorts nothing and its readers
-    /// probe column 0 as a range of rows in place (`runs::Sorted` over every row, on column 0). Its levels follow
-    /// their rows; its orders are made again as probed.
-    fn sorted_on_first(rel: Rel) -> InRel {
+    /// `rel`'s live rows sorted on one column, stably (decision 0678 step 8; as the keep sorts a kept relation):
+    /// column 0, unless they lie in order on it or on another column already (a join's output, in its probe side's
+    /// order), which is then kept (the user, 2026-11-25). So the keep sorts nothing, and its readers probe that column
+    /// as a range of rows in place (`runs::Sorted` over every row, on it). Its levels follow their rows; its orders
+    /// are made again as probed.
+    fn sorted_on_one(rel: Rel) -> InRel {
         let k = rel.k;
         let mut ids: Vector<u32> = (0..rel.n as u32).filter(|&id| !is_dead(&rel.dead, id)).collect();
-        if !ids.windows(2).all(|w| rel.data.value(w[0], k, 0) <= rel.data.value(w[1], k, 0)) {
+        let sorted = |c: usize| ids.windows(2).all(|w| rel.data.value(w[0], k, c) <= rel.data.value(w[1], k, c));
+        let on = (0..k).find(|&c| sorted(c));
+        if on.is_none() {
             ids.sort_by_key(|&id| rel.data.value(id, k, 0));
         }
+        let on = on.unwrap_or(0);
         let n = ids.len();
         let mut flat = rerail_blocks::vector::Vector::with_capacity(n * k);
         for &id in &ids {
@@ -6559,7 +6564,7 @@ impl InRel {
         }
         let level = if rel.level.len() == rel.n { ids.iter().map(|&id| rel.level[id as usize]).collect() } else { Vec::new() };
         let mut sorted = runs::Sorted::default();
-        let lead: Vector<usize> = [0].into_iter().collect();
+        let lead: Vector<usize> = [on].into_iter().collect();
         sorted.note(&flat[..], k, &lead, 0, n as u32);
         let rows = Rows::frozen(k, flat, n);
         // Its known-sorted ranges and its levels in its block too (decision 0478 steps 5c, R5).
@@ -10130,7 +10135,8 @@ pub mod posted_tests {
 
     /// K-R11 (decision 0456 K7): a relation declared sorted is laid out sorted on column 0 when its component is
     /// done: its live rows (a dead one left out) sorted on that column alone, stably (decision 0678 step 8), known
-    /// sorted on it for the whole of them, so an order on it is its rows in place.
+    /// sorted on it for the whole of them, so an order on it is its rows in place; rows that came in order on another
+    /// column are left in it instead.
     #[test]
     fn a_relation_declared_sorted_is_laid_out_in_order() {
         let mut rel = Rel::new("t", b"ii");
@@ -10144,6 +10150,16 @@ pub mod posted_tests {
         let rows: Vector<[i64; 2]> = (0..r.n).map(|i| [r.at(i).at(0), r.at(i).at(1)]).collect();
         assert_eq!(rows, [[1, 1], [2, 3], [5, 1], [5, 0]], "on column 0, ties as they came");
         assert_eq!((r.ndead, r.sorted.within(&[0], 2, 0, r.n as u32)), (0, vec![(0, 4)]));
+        // Rows that come in order on column 1 (a join's output, in its probe side's order) stay so, known sorted on it.
+        let mut rel = Rel::new("t", b"ii");
+        rel.ordered = true;
+        for row in [[5, 0], [2, 1], [9, 1], [1, 4]] {
+            assert!(rel.push(&row));
+        }
+        let r = InRel::moved(rel);
+        let rows: Vector<[i64; 2]> = (0..r.n).map(|i| [r.at(i).at(0), r.at(i).at(1)]).collect();
+        assert_eq!(rows, [[5, 0], [2, 1], [9, 1], [1, 4]], "left in column 1's order");
+        assert_eq!(r.sorted.within(&[1], 2, 0, r.n as u32), vec![(0, 4)]);
     }
 
     /// Decision 0456 K7: a source whose rows lie in an order (`Source::order`, a kept relation read in place) is known

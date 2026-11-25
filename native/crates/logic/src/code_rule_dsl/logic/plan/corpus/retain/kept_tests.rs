@@ -31,6 +31,12 @@ fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: 
     let rows = crate::content_store::kept_facts::BlockFlat::of_rows(&rows, types.len(), part != DOCS_PART);
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest, reads, what: crate::content_store::kept_facts::KeptWhat::Picked(Box::new(rows)), types }
 }
+/// An input's documents' table (`DOCS_PART`: `[document, sum, rows]` a row), searched on column 0 as the run's own
+/// are written (`DocRows`, `Order::Declared`).
+fn put_docs(rel: &KeptRel, digest: u64, rows: rerail_blocks::vector::Vector<i64>) -> KeptPut {
+    let rows = crate::content_store::kept_facts::BlockFlat::of_rows(&rows, 3, false).on_column_0();
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part: DOCS_PART, digest, reads: vec![], what: crate::content_store::kept_facts::KeptWhat::Picked(Box::new(rows)), types: vec![b'i'; 3] }
+}
 fn gone(rel: &KeptRel, part: i64) -> KeptPut {
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }
 }
@@ -50,7 +56,7 @@ fn fixture(store: &ContentStore, count: usize) -> (V, HashMap<String, u64>, InKe
         let d = digest(source.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(1));
         assert_eq!(digest_of_docs(&docs), d);
         now.insert(input.clone(), d);
-        puts.push(put(&frames.names[&input], DOCS_PART, d, vec![], vec![b'i';3], docs.iter().flat_map(|(doc,(sum,n))| [*doc,*sum as i64,*n as i64]).collect()));
+        puts.push(put_docs(&frames.names[&input], d, docs.iter().flat_map(|(doc,(sum,n))| [*doc,*sum as i64,*n as i64]).collect()));
         for &row in &rows {
             puts.push(put(&frames.names[&input], granule(row >> 32, None), 0, vec![], vec![b'i'], rerail_blocks::vector![row]));
         }

@@ -94,12 +94,13 @@ pub(crate) fn canonical(spec: &Spec, a: usize) -> Vec<usize> {
     s.into_iter().chain((0..a).filter(|&c| Some(c) != s)).collect()
 }
 
-/// The order a packed relation records (`Packed::okey`): in `Order::Rows`, the canonical order's first `MAX_KEY`
-/// columns; in `Order::Column`, the sort column; none as given, or with no sort column.
+/// The order a packed relation records (`Packed::okey`) in `Order::Rows`: the canonical order's first `MAX_KEY`
+/// columns; none as given, or with no sort column. (`Order::Column` records the column its rows lie sorted on,
+/// `prepare_column`.)
 fn recorded(spec: &Spec, a: usize, kind: Order) -> Vec<u16> {
     match (kind, spec.sort) {
         (Order::AsGiven, _) | (_, None) => Vec::new(),
-        (Order::Column, Some(c)) => vec![c],
+        (Order::Column | Order::Declared, Some(c)) => vec![c],
         (Order::Rows, Some(_)) => canonical(spec, a).into_iter().take(crate::relation::MAX_KEY).map(|c| c as u16).collect(),
     }
 }
@@ -331,12 +332,11 @@ enum Rel {
     Never,
 }
 
-fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, order_kind: Order, src: Src<'s>, order: Option<&'s [u32]>, n: usize) -> Plan<'s> {
+fn plan<'s>(scratch: &'s Scratch, arity: usize, spec: &Spec, lead: &[u16], src: Src<'s>, order: Option<&'s [u32]>, n: usize) -> Plan<'s> {
     use crate::col::Vals;
     let mut indexes = Vec::new();
-    let lead = recorded(spec, arity, order_kind);
     for ix in &spec.indexes {
-        if on_order(&lead, ix) {
+        if on_order(lead, ix) {
             continue;
         }
         assert_eq!(ix.len(), 1, "a packed index off the order is on one column");
@@ -536,9 +536,13 @@ fn in_canonical_order(src: Src<'_>, n: usize, key: &[usize]) -> bool {
 /// The order `prepare` lays rows out in. None sorts rows already in it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Order {
-    /// Sorted on the spec's sort column, stably (none: as given); duplicates dropped by hashing the rows. The order
-    /// recorded is that column. A relation's (decision 0678 step 8).
+    /// Sorted on the spec's sort column, stably (none: as given), unless the rows lie in order on it or on another
+    /// column already; duplicates dropped by hashing the rows. The order recorded is the column they lie sorted on.
+    /// A relation's (decision 0678 step 8).
     Column,
+    /// Sorted on the spec's sort column whatever order the rows came in (unless they lie in it already); duplicates
+    /// dropped by hashing. For an entry whose reader searches that column (a documents' entry, by its document).
+    Declared,
     /// Sorted on every column (the spec's sort column, then the rest); duplicates dropped. The order recorded is its
     /// first `MAX_KEY` columns: a table the store merges with others on leading columns (`sorted_put`).
     Rows,
@@ -567,13 +571,13 @@ pub fn prepare_rows<'s>(s: &'s Scratch, rows: &'s dyn RowsIn, spec: &Spec, level
 
 fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
     assert!(levels.is_none_or(|l| l.len() == n), "a level a row");
-    if given == Order::Column {
-        return prepare_column(s, src, n, a, spec, levels);
+    if matches!(given, Order::Column | Order::Declared) {
+        return prepare_column(s, src, n, a, spec, levels, given == Order::Column);
     }
     let key = canonical(spec, a);
     let as_given = given == Order::AsGiven;
     let in_order = as_given || in_canonical_order(src, n, &key);
-    let (order, lv, m): (Option<&'s [u32]>, Option<&'s [i64]>, usize) = if in_order {
+    let (order_ids, lv, m): (Option<&'s [u32]>, Option<&'s [i64]>, usize) = if in_order {
         let lv = levels.map(|l| {
             let out: &mut [i64] = s.take(n);
             for (o, &x) in out.iter_mut().zip(l) {
@@ -615,15 +619,17 @@ fn prepare_src<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec
         });
         (Some(order), lv, m)
     };
-    let mut plan = plan(s, a, spec, given, src, order, m);
-    plan.levels = lv.map(|v| (v, choose(v)));
     let order = recorded(spec, a, given);
+    let mut plan = plan(s, a, spec, &order, src, order_ids, m);
+    plan.levels = lv.map(|v| (v, choose(v)));
     Prepared { plan, order, in_order: in_order && !as_given }
 }
 
-/// `prepare_src` in `Order::Column`: the rows sorted on the spec's one column unless they lie in its order already,
-/// and distinct by a table of their hashes (`relation::distinct_sorted`), never sorted on every column.
-fn prepare_column<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>) -> Prepared<'s> {
+/// `prepare_src` in `Order::Column`: the rows sorted on the spec's one column unless they lie in its order, or in
+/// another column's, already (that column is then the one recorded), and distinct by a table of their hashes
+/// (`relation::distinct_sorted`), never sorted on every column.
+/// `others`: whether another column's order is kept (`Order::Column`; `Order::Declared` keeps only the spec's).
+fn prepare_column<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, others: bool) -> Prepared<'s> {
     let sort = spec.sort.map(|c| c as usize).filter(|&c| c < a);
     let range = sort.map(|c| {
         let (lo, hi) = (0..n).fold((i64::MAX, i64::MIN), |(l, h), r| {
@@ -636,7 +642,7 @@ fn prepare_column<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &S
     for (i, id) in ids.iter_mut().enumerate() {
         *id = i as u32;
     }
-    let m = crate::relation::distinct_sorted(s, |c, i| src.get(i, c), a, range, ids);
+    let (m, on) = crate::relation::distinct_sorted(s, |c, i| src.get(i, c), a, range, others, ids);
     let ids = &ids[..m];
     let in_order = m == n && ids.iter().enumerate().all(|(i, &id)| id as usize == i);
     let order = (!in_order).then_some(ids);
@@ -647,10 +653,10 @@ fn prepare_column<'s>(s: &'s Scratch, src: Src<'s>, n: usize, a: usize, spec: &S
         }
         &*out
     });
-    let mut plan = plan(s, a, spec, Order::Column, src, order, m);
+    let lead: Vec<u16> = on.map(|c| c as u16).into_iter().collect();
+    let mut plan = plan(s, a, spec, &lead, src, order, m);
     plan.levels = lv.map(|v| (v, choose(v)));
-    let order = recorded(spec, a, Order::Column);
-    Prepared { plan, order, in_order }
+    Prepared { plan, order: lead, in_order }
 }
 
 /// Sorts `ids` (positions of `src`'s rows, column `c` ranging over `lo[c]..=hi[c]`) into the canonical order of
@@ -1061,6 +1067,35 @@ mod tests {
         assert_eq!(b, sorted);
     }
 
+    /// Rows that come in order on a column other than the spec's (a join's output, in its probe side's order) are
+    /// left in it, and that column is the order recorded: a probe of it is a range, one of the spec's column goes
+    /// through its index.
+    #[test]
+    fn rows_in_another_columns_order_stay_in_it() {
+        let rows: Vec<[i64; 2]> = (0..3000).map(|i| [(i * 7919) % 1000, i / 3]).collect();
+        let block = Block::anon(kind::KEPT, 16 << 20);
+        let spec = Spec { widths: vec![8; 2], sort: Some(0), indexes: vec![vec![0]], min_log: 0 };
+        let p = crate::scratch::with(|s| {
+            let c = s.take::<i64>(6000);
+            // copy: not block data (the test's rows, as the input a writer hands)
+            c.copy_from_slice(&columns(&rows));
+            let p = prepare(s, c, 3000, 2, &spec, None, Order::Column);
+            assert!(p.in_order, "nothing sorted");
+            p.place_in(&block).0
+        });
+        assert_eq!(read(p), rows);
+        assert!(p.leads(1) && !p.leads(0));
+        let by = |c: u16, k: i64| -> Vec<usize> {
+            let mut got: Vec<usize> = p.probe(&[c], &[k]).collect();
+            got.sort();
+            got
+        };
+        assert!(matches!(p.probe(&[1], &[400]), Probe::Range(_)));
+        assert_eq!(by(1, 400), vec![1200, 1201, 1202]);
+        let want: Vec<usize> = (0..3000).filter(|&i| rows[i][0] == 919).collect();
+        assert_eq!(by(0, 919), want);
+    }
+
     /// K-R12 (decision 0456 K2): node ids (`document << 32 | slot << 18 | index`, documents numbered as digests are)
     /// are split at `ID_SPLIT`, a child's id relative to its parent's in column 0; every value reads back, by `get`,
     /// `for_each` and the order's probe, in fewer bytes than whole columns take.
@@ -1158,7 +1193,8 @@ mod tests {
     /// K-R3: each row's level is read at its packed position, the rows sorted or not.
     #[test]
     fn levels_follow_their_rows() {
-        let rows: Vec<[i64; 2]> = (0..3000).map(|i| [(i * 7919) % 3001, i]).collect();
+        // In order on neither column (column 1 descends), so they are sorted.
+        let rows: Vec<[i64; 2]> = (0..3000).map(|i| [(i * 7919) % 3001, 3000 - i]).collect();
         let levels: Vec<u32> = (0..3000).map(|i| (i % 13) as u32).collect();
         let block = Block::anon(kind::KEPT, 16 << 20);
         crate::scratch::with(|s| {
@@ -1169,7 +1205,7 @@ mod tests {
             let (packed, _) = p.place_in(&block);
             let lv = packed.levels().expect("levels kept");
             for i in 0..packed.len() {
-                let orig = packed.get(i, 1) as usize;
+                let orig = (3000 - packed.get(i, 1)) as usize;
                 assert_eq!(lv.get(i), levels[orig] as i64, "row {i}");
             }
             assert!(packed.get(0, 0) <= packed.get(1, 0));

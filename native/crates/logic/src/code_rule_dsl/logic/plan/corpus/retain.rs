@@ -3833,9 +3833,10 @@ impl DocRows {
 }
 
 impl crate::content_store::kept_facts::KeptPicked for DocRows {
-    /// A relation's rows: sorted on column 0 alone (decision 0678 step 8).
+    /// Sorted on column 0, the document, whatever order they came in: `Docs::get` finds a document by a search of
+    /// it (decision 0678 step 8).
     fn order(&self) -> rerail_blocks::packed::Order {
-        rerail_blocks::packed::Order::Column
+        rerail_blocks::packed::Order::Declared
     }
 }
 

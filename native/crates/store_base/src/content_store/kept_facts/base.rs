@@ -47,8 +47,8 @@ pub struct BlockFlat {
 }
 
 impl BlockFlat {
-    /// `n` rows of `width` columns, every value 0, kept as given (`given`) or as a relation's rows, sorted on column 0
-    /// (`packed::Order::Column`).
+    /// `n` rows of `width` columns, every value 0, kept as given (`given`) or as a relation's rows (`packed::Order::Column`:
+    /// sorted on column 0, or on another column the rows already lie in order on, decision 0678 step 8).
     pub fn new(n: usize, width: usize, given: bool) -> BlockFlat {
         Self::with_levels(n, width, given, false)
     }
@@ -62,6 +62,13 @@ impl BlockFlat {
         let levels = levels.then(|| block.alloc(level_bytes.max(4), 4));
         use rerail_blocks::packed::Order;
         BlockFlat { block, at, n, width, levels, order: if given { Order::AsGiven } else { Order::Column } }
+    }
+
+    /// Kept sorted on column 0 whatever order they come in (`packed::Order::Declared`): a table its readers search
+    /// on column 0, as a documents' table (`Docs::kept`).
+    pub fn on_column_0(mut self) -> BlockFlat {
+        self.order = rerail_blocks::packed::Order::Declared;
+        self
     }
 
     /// Kept sorted on every column (`packed::Order::Rows`): a store table its readers merge on leading columns

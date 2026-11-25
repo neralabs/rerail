@@ -171,6 +171,8 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/record.rs", "KINDS"),
     // This thread's run's binding (CPU or Metal).
     ("code_rule_dsl/logic/device/binding.rs", "Device"),
+    // This thread's run's frame keys while the run is under way, for its manifest to name: the run's binding.
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
     // The coverage check's census of the shipped rule files, read once by a test process.
@@ -206,9 +208,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/lanes.rs", "DONE"),
     ("code_rule_dsl/logic/lanes.rs", "QUEUED"),
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
-    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
-    // pending atoms no committed row may hold yet, not a result kept.
-    ("content_store/atoms.rs", "RESERVING"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
@@ -247,6 +246,8 @@ const STATE: &[(&str, &str)] = &[
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
+    // Each nameless system thread's dispatch queue as last seen, naming its CPU in the report: records, no results.
+    ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
     // Each thread's shard of its run's profile records, merged into the run's as they are read: records, no
     // reusable results.
     ("code_rule_dsl/logic/profile.rs", "SHARD"),

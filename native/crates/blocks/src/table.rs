@@ -383,7 +383,7 @@ fn merge_join<A: Table, B: Table>(a: &A, b: &B, on: &[(ColumnIndex, ColumnIndex)
 impl Table for View<'_> {
     fn sort(&self) -> Option<ColumnIndex> {
         let frozen = self.top.is_frozen() && self.base.is_none_or(|b| b.is_frozen());
-        (frozen && self.top.nokey > 0).then(|| ColumnIndex::new(self.top.okey[0]))
+        self.top.sort_col().filter(|_| frozen).map(|c| ColumnIndex::new(c as u16))
     }
 
     fn runs(&self) -> Runs {

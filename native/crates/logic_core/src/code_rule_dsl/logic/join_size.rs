@@ -15,200 +15,10 @@
 //! The planner prices a probe by one atom's column at `J / rows` of that atom a binding: rows that meet and bindings
 //! that miss alike (`plan::Model::atom_rows`), where the error is a fraction of J (`Joined::tells`).
 
-use rerail_blocks::vector::Vector;
-/// The counters a column keeps.
-pub const BUCKETS: usize = 256;
-/// The values a column keeps exact counts of, at most.
-pub const EXACT: usize = 64;
-
-/// A key's counter and its sign there, from its hash (`bloom::hash`).
-#[inline(always)]
-pub fn bucket(h: u64) -> (usize, i32) {
-    (((h >> 8) & 0xff) as usize, if h & 1 == 0 { 1 } else { -1 })
-}
-
-/// A column's join-size counts, in a block (decision 0478 step 6c): its counters (`BUCKETS`) and, while it has at
-/// most `EXACT` values, each value's rows (`[value, rows]`). Its sketch (`native::setfix::sketch::Sketch`) is its one
-/// writer, as the rows come; the planner's `JoinCounts` and the statistics' keys (`bloom::Keys::Few`) read it where
-/// it lies, held by both (decision 0353: read in place, never copied). Every cell is read and written as an atomic of
-/// its width, relaxed: the writer's stores are plain stores, and a reader on another thread reads a value whole.
-pub struct Counts {
-    counters: rerail_blocks::vector::Vector<i32>,
-    few: rerail_blocks::vector::Vector<[i64; 2]>,
-    /// `few`'s values in use, or `PAST` once the column has had more than `EXACT`.
-    len: std::sync::atomic::AtomicU32,
-}
-
-/// `Counts::len` once its values outgrew `EXACT`: the counters alone tell its joins.
-const PAST: u32 = u32::MAX;
-
-use std::sync::atomic::Ordering::Relaxed;
-use std::sync::atomic::{AtomicI32, AtomicI64};
-
-impl Counts {
-    /// No rows: its arrays at their full size, in a block, so they never move while they are read.
-    pub fn new() -> Counts {
-        let mut counters = crate::code_rule_dsl::facts::rows::vector_in(None, 0);
-        counters.resize(BUCKETS, 0i32);
-        let mut few = crate::code_rule_dsl::facts::rows::vector_in(None, 0);
-        few.resize(EXACT, [0i64; 2]);
-        Counts { counters, few, len: std::sync::atomic::AtomicU32::new(0) }
-    }
-
-    fn counter(&self, b: usize) -> &AtomicI32 {
-        assert!(b < BUCKETS);
-        // SAFETY: counter `b` of the array, which lives and stays where it is while `self` does; an `i32`'s layout
-        // is an `AtomicI32`'s, and every access to it is atomic.
-        unsafe { &*self.counters.as_ptr().cast::<AtomicI32>().add(b) }
-    }
-
-    fn few_cell(&self, i: usize) -> &[AtomicI64; 2] {
-        assert!(i < EXACT);
-        // SAFETY: as `counter`, for entry `i` of `few`.
-        unsafe { &*self.few.as_ptr().cast::<[AtomicI64; 2]>().add(i) }
-    }
-
-    /// Adds a row of the key whose hash is `h` to its counter. Its one writer only.
-    #[inline(always)]
-    pub fn count(&self, h: u64) {
-        let (b, s) = bucket(h);
-        let c = self.counter(b);
-        c.store(c.load(Relaxed) + s, Relaxed);
-    }
-
-    /// Takes a row of the key whose hash is `h` out of its counter: `count`'s inverse (the counters are linear, so a
-    /// removed row leaves them as if it was never added). Its one writer only.
-    #[inline(always)]
-    pub fn uncount(&self, h: u64) {
-        let (b, s) = bucket(h);
-        let c = self.counter(b);
-        c.store(c.load(Relaxed) - s, Relaxed);
-    }
-
-    /// Takes a row of value `v` out of the exact counts, while they are kept: its rows left, or `None` where they
-    /// are not kept or hold no row of `v`. A value left with no rows keeps its entry, at 0: a reader may be reading
-    /// the entries as the column's keys, and keys may hold more than the column, never fewer. Its one writer only.
-    pub fn remove_few(&self, v: i64) -> Option<i64> {
-        let n = self.len.load(Relaxed);
-        if n == PAST {
-            return None;
-        }
-        let e = (0..n as usize).map(|i| self.few_cell(i)).find(|e| e[0].load(Relaxed) == v)?;
-        let rows = e[1].load(Relaxed);
-        if rows <= 0 {
-            return None;
-        }
-        e[1].store(rows - 1, Relaxed);
-        Some(rows - 1)
-    }
-
-    /// Adds a row of value `v` to the exact counts, while they are kept: false when `v` would be value `EXACT + 1`
-    /// (nothing changed: the writer then ends them, `end_few`, once it has read them). Its one writer only.
-    pub fn add_few(&self, v: i64) -> bool {
-        let n = self.len.load(Relaxed);
-        if n == PAST {
-            return false;
-        }
-        for i in 0..n as usize {
-            let e = self.few_cell(i);
-            if e[0].load(Relaxed) == v {
-                e[1].store(e[1].load(Relaxed) + 1, Relaxed);
-                return true;
-            }
-        }
-        if n as usize == EXACT {
-            return false;
-        }
-        let e = self.few_cell(n as usize);
-        e[0].store(v, Relaxed);
-        e[1].store(1, Relaxed);
-        // Released: a reader that sees the length sees the entry.
-        self.len.store(n + 1, std::sync::atomic::Ordering::Release);
-        true
-    }
-
-    /// `add_few` of `n` rows of `v`.
-    fn add_few_n(&self, v: i64, n: i64) -> bool {
-        if !self.add_few(v) {
-            return false;
-        }
-        if n > 1 {
-            let k = self.len.load(Relaxed) as usize;
-            let e = (0..k).map(|i| self.few_cell(i)).find(|e| e[0].load(Relaxed) == v).expect("added");
-            e[1].store(e[1].load(Relaxed) + n - 1, Relaxed);
-        }
-        true
-    }
-
-    /// Ends the exact counts: past `EXACT` values, the counters alone tell its joins. Its one writer only.
-    pub fn end_few(&self) {
-        self.len.store(PAST, std::sync::atomic::Ordering::Release);
-    }
-
-    /// Each value's rows (`[value, rows]`), while it keeps them, read where they lie.
-    pub fn few(&self) -> Option<impl Iterator<Item = [i64; 2]> + '_> {
-        let n = self.len.load(std::sync::atomic::Ordering::Acquire);
-        (n != PAST).then(|| (0..n as usize).map(|i| self.few_cell(i)).map(|e| [e[0].load(Relaxed), e[1].load(Relaxed)]))
-    }
-
-    /// Its values with rows while it keeps them: how many (`few_len` less those `remove_few` left at none).
-    pub fn few_live(&self) -> Option<usize> {
-        Some(self.few()?.filter(|e| e[1] > 0).count())
-    }
-
-    /// Its values while it keeps them: how many.
-    pub fn few_len(&self) -> Option<usize> {
-        let n = self.len.load(std::sync::atomic::Ordering::Acquire);
-        (n != PAST).then_some(n as usize)
-    }
-
-    /// Its counters, read where they lie.
-    pub fn counters(&self) -> impl Iterator<Item = i32> + '_ {
-        (0..BUCKETS).map(|b| self.counter(b).load(Relaxed))
-    }
-
-    /// Its arrays' bytes.
-    pub fn bytes(&self) -> usize {
-        4 * BUCKETS + 16 * EXACT
-    }
-
-    /// Whether its arrays are in a block (decision 0478 step 6c).
-    pub fn in_blocks(&self) -> bool {
-        use rerail_blocks::maps::Placed;
-        self.counters.place().is_some() && self.few.place().is_some()
-    }
-}
-
-/// A new writer's own counts, from these (a sketch's clone at its first add: its filter is made so too, `Kept`'s
-/// `Clone`): written once, by that writer, in a block of its own.
-impl Clone for Counts {
-    fn clone(&self) -> Counts {
-        let made = Counts::new();
-        for (b, c) in self.counters().enumerate() {
-            made.counter(b).store(c, Relaxed);
-        }
-        match self.few() {
-            Some(few) => {
-                let mut n = 0;
-                for (i, [v, r]) in few.enumerate() {
-                    let e = made.few_cell(i);
-                    e[0].store(v, Relaxed);
-                    e[1].store(r, Relaxed);
-                    n = i + 1;
-                }
-                made.len.store(n as u32, Relaxed);
-            }
-            None => made.end_few(),
-        }
-        made
-    }
-}
-
-impl Default for Counts {
-    fn default() -> Counts {
-        Counts::new()
-    }
-}
+/// A column's join-size counts, its counters and constants: the one linear sketch's (`rerail_blocks::sketch`, decision
+/// 0678 step 10). Its sketch is their one writer, as the rows come; the planner's `JoinCounts` and the statistics' keys
+/// (`bloom::Keys::Few`) read them where they lie (decision 0353: read in place, never copied).
+pub use rerail_blocks::sketch::{BUCKETS, Counts, FEW as EXACT, bucket};
 
 /// A column's counts as the planner reads them: its sketch's `Counts`, read where they lie, with its rows and sum
 /// of squared rows a value (`F2`) as the statistics read them.
@@ -274,9 +84,7 @@ impl JoinCounts {
             if n == 0 {
                 continue;
             }
-            let (b, s) = bucket(super::bloom::hash(v));
-            let c = counts.counter(b);
-            c.store(c.load(Relaxed) + s * n as i32, Relaxed);
+            counts.count_n(super::bloom::hash(v), n as i64);
             if !counts.add_few_n(v, n as i64) {
                 counts.end_few();
             }
@@ -303,7 +111,7 @@ impl JoinCounts {
             Some(mut few) => few.find(|e| e[0] == v).map_or(0.0, |e| e[1] as f64),
             None => {
                 let (b, s) = bucket(super::bloom::hash(v));
-                f64::from(self.counts.counter(b).load(Relaxed) * s)
+                f64::from(self.counts.counter_at(b) * s)
             }
         }
     }
@@ -332,6 +140,7 @@ impl JoinCounts {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rerail_blocks::vector::Vector;
 
     /// Two skewed columns of 20,000 rows, a few keys heavy in both: the estimate is the join's rows within its error,
     /// and its error a small part of them; two of few values join exactly; one of few values against the other's
