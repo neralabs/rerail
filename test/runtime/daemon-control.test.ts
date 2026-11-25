@@ -3670,8 +3670,9 @@ describe("launching the daemon", () => {
     const daemon = launchDetached({ args: ["daemon.js"], cwd: undefined, env: {}, logFile: join(home, DAEMON_LOG_FILE) }, machine);
     expect(daemon.exitReason()).toBeUndefined();
     expect(daemon.exitReason()).toBe("exited with code 3");
-    // Asked again once the handle is closed, it gives the same reason.
+    // Asked again once the handle is closed, it gives the same reason, and the code it read.
     expect(daemon.exitReason()).toBe("exited with code 3");
+    expect(daemon.exitCode()).toBe(3);
   });
 
   it("goes through the native spawn on Windows, whose hidden console the daemon's Git and npm share, never Node's detached spawn", () => {
@@ -3689,6 +3690,7 @@ describe("launching the daemon", () => {
     const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, machine);
     expect(daemon.pid).toBe(process.pid);
     expect(daemon.exitReason()).toBe("exited");
+    expect(daemon.exitCode()).toBeNull();
     expect(launched).toEqual([{
       program: String.raw`C:\Program Files\nodejs\node.exe`, args: ["cli.js", "daemon", "start"], cwd: null, env: { A: "1" }, logFile: log,
     }]);

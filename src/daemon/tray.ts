@@ -8,6 +8,7 @@
  * daemon ends. The tray is an extra: nothing it does or fails to do may stop the daemon, so a failure is logged once,
  * and the tray is never started again in that daemon.
  */
+import type { ChildProcess } from "node:child_process";
 import { accessSync, chmodSync, constants, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,7 +17,7 @@ import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { nativeTrayFileName, resolveNativeTrayPath } from "../engine/native/native.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
-import { DAEMON_LOG_FILE, launchDetached, openInBrowser, type DaemonHealth } from "../runtime/daemon-control.js";
+import { DAEMON_LOG_FILE, launchDetached, openInBrowser, type DaemonHealth, type DaemonMachine } from "../runtime/daemon-control.js";
 
 /** What {@link trayGate} decides from: this process's environment and system, and what the daemon knows of itself. */
 export type TrayGateFacts = {
@@ -196,13 +197,23 @@ export function startTray(options: TrayOptions): TrayHandle {
   };
 
   makeExecutable(options.trayPath);
-  let child: ReturnType<typeof spawnTray>;
+  let child: ChildProcess;
   try {
     child = spawnTray(options.trayPath, options.args ?? []);
   } catch (error) {
     end(`rerail tray: could not start: ${(error as Error).message}`);
     return { close: () => undefined };
   }
+  child.once("error", error => end(`rerail tray: could not start: ${error.message}`));
+  const { stdin, stdout, stderr } = child;
+  if (stdin === null || stdout === null || stderr === null) {
+    // A spawn that ran out of file descriptors (EMFILE, ENFILE) opens no pipes, and says why in an error event on the
+    // next tick, which runs before this.
+    setImmediate(() => end("rerail tray: could not start: its pipes could not be opened"));
+    return { close: () => end(undefined) };
+  }
+  /** Set once a menu state could not be made, so that is logged once, not at every tick. */
+  let menuFailed = false;
 
   /** The newer Rerail the daemon's update check found, if any. */
   const newer = (health: DaemonHealth): string | null => {
@@ -224,13 +235,15 @@ export function startTray(options: TrayOptions): TrayHandle {
     let line: string;
     try {
       line = JSON.stringify(menu());
-    } catch {
-      // A health read that throws shows in /healthz and `rerail status`; the menu keeps its last state.
+    } catch (error) {
+      // The menu keeps its last state, and the next tick tries again.
+      if (!menuFailed) log(`rerail tray: could not read the daemon's state for the menu: ${(error as Error).message}`);
+      menuFailed = true;
       return;
     }
     if (line === sent) return;
     sent = line;
-    child.stdin.write(`${line}\n`);
+    stdin.write(`${line}\n`);
   };
 
   const update = (): void => {
@@ -240,7 +253,8 @@ export function startTray(options: TrayOptions): TrayHandle {
     if (version === null) return;
     run = { state: "running", version };
     send();
-    void options.runUpdate().then(
+    // Through a promise, so a runUpdate that throws as it is called fails the update like one that rejects.
+    void Promise.resolve().then(() => options.runUpdate()).then(
       code => code === 0,
       () => false,
     ).then(succeeded => {
@@ -255,7 +269,7 @@ export function startTray(options: TrayOptions): TrayHandle {
     stop: () => daemon.stop(),
   };
 
-  eachLine(child.stdout, line => {
+  eachLine(stdout, line => {
     const action = actionOf(line);
     if (action === undefined || !Object.hasOwn(actions, action)) return;
     try {
@@ -264,10 +278,9 @@ export function startTray(options: TrayOptions): TrayHandle {
       log(`rerail tray: could not ${action}: ${(error as Error).message}`);
     }
   });
-  eachLine(child.stderr, line => log(`rerail tray: ${line.startsWith(TRAY_PREFIX) ? line.slice(TRAY_PREFIX.length) : line}`));
+  eachLine(stderr, line => log(`rerail tray: ${line.startsWith(TRAY_PREFIX) ? line.slice(TRAY_PREFIX.length) : line}`));
   // A write after the tray has gone fails with EPIPE here; its exit says why it went.
-  child.stdin.on("error", () => undefined);
-  child.once("error", error => end(`rerail tray: could not start: ${error.message}`));
+  stdin.on("error", () => undefined);
   // On close, not exit: the tray's last stderr lines, which say why it went, are logged first.
   child.once("close", (code, signal) => end(`rerail tray: exited (${code ?? signal})`));
 
@@ -278,7 +291,7 @@ export function startTray(options: TrayOptions): TrayHandle {
   return {
     close: () => {
       end(undefined);
-      child.stdin.end();
+      stdin.end();
     },
   };
 }
@@ -321,6 +334,8 @@ function actionOf(line: string): string | undefined {
 function eachLine(stream: NodeJS.ReadableStream, take: (line: string) => void): void {
   let pending = "";
   stream.setEncoding("utf8");
+  // A pipe that fails to read ends with the tray, whose exit is logged; unheard, its error would end the daemon.
+  stream.on("error", () => undefined);
   stream.on("data", (chunk: string) => {
     pending += chunk;
     let newline = pending.indexOf("\n");
@@ -365,7 +380,7 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
     defaultHome: defaultRerailHome({}),
     isNewer: deps.isNewer,
     openUrl: url => void openInBrowser(url),
-    runUpdate: async () => await runUpdate(home, env),
+    runUpdate: async () => await runRerailUpdate(home, env),
     log,
   });
 }
@@ -373,17 +388,15 @@ export function startDaemonTray(daemon: TrayDaemon, deps: { isNewer(latest: stri
 /**
  * Runs `rerail update` with the active launcher's CLI, detached, with its output appended to daemon.log, as
  * `autostartDaemon` runs `daemon start` (`launchDetached`): on Windows it then opens no console window, and an update
- * that stops this daemon to rebuild the SQLite binding still finishes. Its exit code; 1 when it could not start or was
- * ended by a signal.
+ * that stops this daemon to rebuild the SQLite binding still finishes. Its exit code; 1 when it could not start, was
+ * ended by a signal, or is gone where no code was kept. `machine` is `launchDetached`'s, this one unless a test's.
  */
-async function runUpdate(home: string, env: NodeJS.ProcessEnv): Promise<number> {
-  const launched = launchDetached({ args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "update"], cwd: home, env, logFile: join(home, DAEMON_LOG_FILE) });
+export async function runRerailUpdate(home: string, env: NodeJS.ProcessEnv, machine?: DaemonMachine): Promise<number> {
+  const args = [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "update"];
+  const launched = launchDetached({ args, cwd: home, env, logFile: join(home, DAEMON_LOG_FILE) }, machine);
   for (;;) {
-    const exit = launched.exitReason();
-    if (exit !== undefined) {
-      const code = /^exited with code (\d+)$/u.exec(exit)?.[1];
-      return code === undefined ? 1 : Number(code);
-    }
+    const code = launched.exitCode();
+    if (code !== undefined) return code ?? 1;
     await delay(UPDATE_POLL_MS, undefined, { ref: false });
   }
 }

@@ -4,11 +4,25 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DaemonHealth } from "../../src/runtime/index.js";
-import { startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
+import { runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { until } from "../support/processes/daemon-home.js";
+
+/** A test sets `next` to answer the tray's next spawn itself; every other spawn is Node's own. */
+const spawned = vi.hoisted(() => ({ next: undefined as (() => unknown) | undefined }));
+vi.mock("../../src/engine/child-process.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/child-process.js")>("../../src/engine/child-process.js");
+  const spawn = (...args: Parameters<typeof actual.spawn>) => {
+    const next = spawned.next;
+    spawned.next = undefined;
+    return next === undefined ? actual.spawn(...args) : next();
+  };
+  return { ...actual, spawn };
+});
 
 const FAKE_TRAY = join(dirname(fileURLToPath(import.meta.url)), "../support/processes/fake-tray.mjs");
 
@@ -316,10 +330,77 @@ describe("startTray", () => {
     const calls = start();
     await until(() => calls.logs.some(line => line.startsWith("rerail tray: exited")), 10_000, "the exit");
     const healthReads = calls.health;
+    const pid = readFileSync(join(folder, "pid"), "utf8");
     await delay(200);
     expect(calls.logs).toEqual(["rerail tray: no system tray host", "rerail tray: exited (2)"]);
     expect(calls.health).toBe(healthReads);
-    expect(readFileSync(join(folder, "pid"), "utf8")).not.toBe("");
+    // A second tray would have written its own pid.
+    expect(readFileSync(join(folder, "pid"), "utf8")).toBe(pid);
+  });
+
+  it("an update that throws as it is called fails, and can be retried", async () => {
+    let throws = true;
+    const calls = start({
+      current: offered,
+      replies: ['{"action":"update"}\n', null, '{"action":"update"}\n'],
+      runUpdate: () => {
+        if (throws) {
+          throws = false;
+          throw new Error("no node");
+        }
+        return Promise.resolve(0);
+      },
+    });
+    await until(() => received().length === 5, 10_000, "the retried update");
+    expect(calls.updates).toBe(2);
+    expect(updateLabels().slice(1, 3)).toEqual(["Updating to 0.2.3…", "Update failed, see daemon.log"]);
+  });
+
+  it("a menu state that cannot be made is logged once, and the menu keeps its last state", async () => {
+    let fails = false;
+    const calls = start({
+      current: () => {
+        if (fails) throw new Error("database closed");
+        return health();
+      },
+      intervalMs: 20,
+    });
+    await until(() => received().length === 1, 10_000, "the first state");
+    fails = true;
+    await until(() => calls.logs.length > 0, 10_000, "the failed read");
+    await delay(150);
+    expect(calls.logs).toEqual(["rerail tray: could not read the daemon's state for the menu: database closed"]);
+    expect(received()).toHaveLength(1);
+  });
+
+  it("a tray whose pipes could not be opened is logged once", async () => {
+    const options = (logs: string[]): TrayOptions => ({
+      trayPath: process.execPath,
+      daemon: { health: () => health(), url: () => "http://127.0.0.1:4737/", dashboardLink: () => "", loopback: true, stop: () => undefined },
+      home: "/h",
+      defaultHome: "/h",
+      isNewer: () => false,
+      openUrl: () => undefined,
+      runUpdate: async () => 0,
+      log: line => void logs.push(line),
+    });
+    // As Node's spawn answers when it runs out of file descriptors: no pipes, and an error on the next tick.
+    const logged: string[] = [];
+    spawned.next = () => {
+      const child = Object.assign(new EventEmitter(), { stdin: null, stdout: null, stderr: null });
+      process.nextTick(() => child.emit("error", Object.assign(new Error("spawn EMFILE"), { code: "EMFILE" })));
+      return child;
+    };
+    startTray(options(logged));
+    await delay(50);
+    expect(logged).toEqual(["rerail tray: could not start: spawn EMFILE"]);
+
+    // With no error at all, it still says so.
+    const silent: string[] = [];
+    spawned.next = () => Object.assign(new EventEmitter(), { stdin: null, stdout: null, stderr: null });
+    startTray(options(silent));
+    await delay(50);
+    expect(silent).toEqual(["rerail tray: could not start: its pipes could not be opened"]);
   });
 
   it("a tray that cannot start is logged once", async () => {
@@ -374,6 +455,59 @@ describe("startTray", () => {
     await until(() => !alive(pid), 10_000, "the tray's exit");
     await delay(100);
     expect(calls.logs).toEqual([]);
+  });
+});
+
+describe("runRerailUpdate", () => {
+  let home: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), "rerail-update-"));
+  });
+
+  afterEach(async () => {
+    await removeFolder(home);
+  });
+
+  /** A machine whose Node spawn starts nothing and hands back a process that has already `ended`. */
+  const ended = (end: { exit: number | null } | { error: Error }, launches: Array<readonly string[]> = []) => fakeMachine("linux", {
+    nodeExecutable: () => "/usr/bin/node",
+    spawn: (_command, args) => {
+      launches.push(args);
+      return {
+        pid: 4242,
+        once: (event: string, listener: (value: never) => void) => {
+          if (event === "exit" && "exit" in end) (listener as (code: number | null) => void)(end.exit);
+          if (event === "error" && "error" in end) (listener as (error: Error) => void)(end.error);
+        },
+        unref: () => undefined,
+      };
+    },
+  });
+
+  it("runs rerail update and resolves with its exit code", async () => {
+    const launches: Array<readonly string[]> = [];
+    await expect(runRerailUpdate(home, {}, ended({ exit: 0 }, launches))).resolves.toBe(0);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]!.slice(1)).toEqual(["update"]);
+    expect(launches[0]![0]).toMatch(/cli\.js$/u);
+    await expect(runRerailUpdate(home, {}, ended({ exit: 3 }))).resolves.toBe(3);
+  });
+
+  it("resolves non-zero for an update ended by a signal or never started", async () => {
+    await expect(runRerailUpdate(home, {}, ended({ exit: null }))).resolves.toBe(1);
+    await expect(runRerailUpdate(home, {}, ended({ error: new Error("spawn ENOENT") }))).resolves.toBe(1);
+  });
+
+  it("reads the code the Windows native spawn kept, and 1 where it kept none", async () => {
+    const windows = (exitCode?: () => number | null) => fakeMachine("win32", {
+      nodeExecutable: () => String.raw`C:\Program Files\nodejs\node.exe`,
+      spawnDetached: () => ({ pid: 4242, ...(exitCode === undefined ? {} : { exitCode }) }),
+    });
+    await expect(runRerailUpdate(home, {}, windows(() => 0))).resolves.toBe(0);
+    await expect(runRerailUpdate(home, {}, windows(() => 5))).resolves.toBe(5);
+    // A binary that keeps no handle: the pid is gone (the fake machine's kill says so), with no code.
+    await expect(runRerailUpdate(home, {}, windows())).resolves.toBe(1);
   });
 });
 
