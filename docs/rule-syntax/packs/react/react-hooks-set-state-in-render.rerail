@@ -9,20 +9,27 @@
 //   const [n, setN] = useState(0); setN(1);                        reported
 //   if (p !== prev) setPrev(p);                                     not: conditional
 //   const reset = () => setN(0); reset();                           reported at reset(): it always sets state
-//   useMemo(() => { setN(1); return 1; }, [])                       reported: a memo must not set state
-//   useMemo(async () => { setN(await f()); }, [])                    reported: set it from an effect instead
-#include "tsx/react-compiler.rerail"
+//   useMemo(() => { if (a) setN(1); return 1; }, [])                reported at each setter: a memo must not set state
+//   useMemo(async () => { setN(await f()); }, [])                    reported once, at the callback, when a setter
+//                                                                    in it is unconditional: set it from an effect
+#include "tsx/react-02.rerail"
 
 .violation set_state_in_render(at: node, msg: symbol)
     code "react-hooks/set-state-in-render"
     "{msg}"
     suppress eslint "react-hooks/set-state-in-render"
     suppress oxlint "set-state-in-render"
-set_state_in_render(c, m) :- rc_set_state(c), rc_compiled(f), rc_always(c, f), says("render", m).
-set_state_in_render(k, m) :- rc_called_fn(k, g, f), rc_always(k, f), rc_set_state(c), rc_always(c, g),
+set_state_in_render(c, m) :- rcx_set_state(c), rc_compiled(f), always(c, f), says("render", m).
+set_state_in_render(k, m) :- rc_called_fn(k, g, f), always(k, f), rcx_set_state(c), always(c, g),
     says("render", m).
-set_state_in_render(c, m) :- rc_set_state(c), rc_own(c, g), rc_memo_callback(g, u), rc_own(u, h), rc_render_fn(h, _),
-    (!op(g, "async"), says("memo", m) ; op(g, "async"), says("async-memo", m)).
+set_state_in_render(c, m) :- rcx_set_state(c), rc_own(c, g), !op(g, "async"), rendered_memo(g), says("memo", m).
+set_state_in_render(g, m) :- rendered_memo(g), op(g, "async"), rcx_set_state(c), always(c, g), says("async-memo", m).
+.decl rendered_memo(g: node)  // g is the callback of a useMemo in a compiled function's render code
+rendered_memo(g) :- rc_memo_callback(g, u), rc_own(u, h), rc_render_fn(h, _).
+// always(n, g): rc_always, with "no return or throw before n" read off start offsets (tsx/react-02).
+//   if (x) return null; setN(1);   not always
+.decl always(n: node, g: node)
+always(n, g) :- rc_always(n, g), count : { has(g, r, rc_exit_kind), rc_own(r, g), rcx_before(r, n) } = 0.
 
 .decl says(id: symbol, m: symbol)
 says("render", "Don't set state unconditionally during render; it re-renders forever. Compute the value during render, or call the setter only when a stored previous value differs.").

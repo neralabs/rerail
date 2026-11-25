@@ -1,0 +1,48 @@
+[
+ {
+  "id": "react-hooks-rules-of-hooks",
+  "status": "different",
+  "reason": "All 28 keys are translation-only on samples-react. 23 are under suppression comments the original honours and `rerail-engine run-policies` does not apply (the translation declares the same suppress lines): 19 `eslint-disable` comments, 4 `// oxlint-disable react-hooks/rules-of-hooks` (radix avatar.tsx); ESLint reports them only with noInlineConfig. 5 ESLint reports and the original misses: a top-level `use(chaiAsPromised)` imported from chai (cypress parse-changelog-spec.ts:6), a top-level `Md.use(...)` (lepton markdown/index.js:13), and Playwright fixtures calling `use` in async functions (polar e2e/utils/test.ts:48, 54, 57). NOTES-react-02.md.",
+  "right": "neither",
+  "counts": {
+   "examples": { "originalOnly": 0, "translationOnly": 0 },
+   "fixtures": { "originalOnly": 0, "translationOnly": 0 },
+   "samples-react": { "originalOnly": 0, "translationOnly": 28 }
+  }
+ },
+ {
+  "id": "react-hooks-set-state-in-effect",
+  "status": "different",
+  "reason": "8 translation-only keys on samples-react. 7 are under `eslint-disable` comments the original honours and `run-policies` does not apply (AppFrameBanner.tsx:29, render-error.tsx:73, BenefitSearchComplex.tsx:100/111, useComboBox.ts:430, SidebarNav.tsx:211/237); ESLint reports them only with noInlineConfig. BenefitGrant.tsx:134 (a setter after early returns whose tests read no ref) ESLint reports and the original misses. NOTES-react-02.md.",
+  "right": "neither",
+  "counts": {
+   "examples": { "originalOnly": 0, "translationOnly": 0 },
+   "fixtures": { "originalOnly": 0, "translationOnly": 0 },
+   "samples-react": { "originalOnly": 0, "translationOnly": 8 }
+  }
+ },
+ { "id": "react-hooks-set-state-in-render", "status": "same" },
+ { "id": "react-hooks-static-components", "status": "same" },
+ {
+  "id": "react-jsx-key",
+  "status": "different",
+  "reason": "All 36 translation-only keys are under `eslint-disable` comments (file-level `/* eslint-disable react/jsx-key */` in the slate benchmarks and koenig SettingsPanel.stories.jsx, `eslint-disable-next-line react/jsx-key` in gatsby plugins.tsx, ant-design useModal/index.tsx, superset controlPanel.tsx). The original honours them; `rerail-engine run-policies` does not apply the translation's identical `suppress eslint` line. ESLint reports all 36 with noInlineConfig and none with directives honoured.",
+  "right": "original",
+  "counts": {
+   "examples": { "originalOnly": 0, "translationOnly": 0 },
+   "fixtures": { "originalOnly": 0, "translationOnly": 0 },
+   "samples-react": { "originalOnly": 0, "translationOnly": 36 }
+  }
+ },
+ {
+  "id": "react-jsx-no-comment-textnodes",
+  "status": "different",
+  "reason": "The one translation-only key, polar Monetization.tsx:69, is under a file-level `/* eslint-disable react/jsx-no-comment-textnodes */`. The original honours it; `rerail-engine run-policies` does not apply the translation's identical `suppress eslint` line. ESLint reports it only with noInlineConfig.",
+  "right": "original",
+  "counts": {
+   "examples": { "originalOnly": 0, "translationOnly": 0 },
+   "fixtures": { "originalOnly": 0, "translationOnly": 0 },
+   "samples-react": { "originalOnly": 0, "translationOnly": 1 }
+  }
+ }
+]

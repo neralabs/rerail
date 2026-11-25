@@ -8,9 +8,15 @@
 // render then makes a new component type, and React unmounts the old tree and mounts a new one.
 //   function List() { const Row = () => <li/>; return <Row/>; }      reported at the tag
 //   function List() { const Row = useMemo(() => make(), []); return <Row/>; }   reported: a call's result is new
+//   function List() { const Row = registry.get(k) ?? Default; return <Row/>; }   reported: the call may be it
 //   function List({ Row }) { … <Row/> }  const Row = rows[kind]  const Row = cond ? A : B   not: nothing new
-// A value is new when it is a function, a class, a call or a `new`, directly or as a branch of ?: && || ??,
-// in the binding's initializer or a later assignment to it. Tagged templates (styled.div`…`) are not.
+//   function List() { function Row() {…} return <Row/>; }            reported: a nested declaration is new too
+//   function List() { const Row = () => <li/>; return xs.map(() => <Row/>); }   not: the compiler checks the
+//                                                    component's own code, and the tag is in a callback
+// A value is new when it is a function, a class, a call or a `new`, or a name holding one, directly or as a branch
+// of ?: && || ??, in the binding's initializer or a later assignment to it. Binding, assignment and tag must be in
+// the component's own code, where a useMemo callback counts (the compiler inlines it). Tagged templates
+// (styled.div`…`) are not new.
 #include "tsx/react-compiler.rerail"
 
 .violation static_components(at: node, tag: node)
@@ -19,16 +25,22 @@
     suppress eslint "react-hooks/static-components"
     suppress oxlint "static-components"
 static_components(t, t) :- jsx_open(e, o), field(o, "name", t), kind(t, "identifier"), ref_site(t, s),
-    rc_local_of(s, f), within(e, f), made_here(s).
+    own(e, f), own(s, f), made_here(s).
 
+// own(n, f): n is in compiled f's own code, or in a useMemo callback there.
+.decl own(n: node, f: node)
+own(n, f) :- rc_own(n, h), rc_render_fn(h, f).
 // made_here(s): binding s holds a value made during render.
 .decl made_here(s: node)
 made_here(s) :- kind(s, "function_declaration").
 made_here(s) :- kind(s, "variable_declarator"), field(s, "value", v), fresh(v).
-made_here(s) :- kind(a, "assignment_expression"), field(a, "left", n), ref_site(n, s), field(a, "right", v), fresh(v).
+made_here(s) :- kind(a, "assignment_expression"), field(a, "left", n), ref_site(n, s), own(a, f), own(s, f),
+    field(a, "right", v), fresh(v).
 .decl fresh(v: node)
 fresh(v) :- kind(v, k), (k = "arrow_function" ; k = "function_expression" ; k = "class" ; k = "new_expression").
 fresh(v) :- kind(v, "call_expression"), field(v, "arguments", a), !kind(a, "template_string").  // not styled.div`…`
+fresh(v) :- kind(v, "identifier"), ref_site(v, s), made_here(s), own(s, f), own(v, f).
 fresh(v) :- kind(v, "parenthesized_expression"), child(v, x, _), fresh(x).
 fresh(v) :- kind(v, "ternary_expression"), (field(v, "consequence", x) ; field(v, "alternative", x)), fresh(x).
-fresh(v) :- kind(v, "binary_expression"), (op(v, "&&") ; op(v, "||") ; op(v, "??")), field(v, "right", x), fresh(x).
+fresh(v) :- kind(v, "binary_expression"), (op(v, "&&") ; op(v, "||") ; op(v, "??")),
+    (field(v, "left", x) ; field(v, "right", x)), fresh(x).

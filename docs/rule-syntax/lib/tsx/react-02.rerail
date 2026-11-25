@@ -1,0 +1,28 @@
+// tsx/react-02: what the React Compiler's setState rules (batch react-02: set-state-in-effect, set-state-in-render)
+// need beyond tsx/react-compiler.
+//
+// What a rule gets from this library:
+//   rcx_before(m, n)       m starts before n in the same file (start offsets)
+//   rcx_setter_site(s)     s binds a useState setter: the second element of `const [v, setV] = useState(…)`,
+//                          holes counted: `const [, setV] = useState(…)` too
+//   rcx_set_state(c)       c calls such a setter: setV(…)
+//
+//   const [, forceRefresh] = useState(false); forceRefresh((p) => !p);   rcx_set_state(forceRefresh(…))
+//
+// Why not core's earlier and tsx/react-compiler's rc_state_setter alone: `earlier` and `visit_index` have no rows
+// for TypeScript under `rerail-engine run-policies`, so an order read through them never holds; and `child(p, s, 1)`
+// counts named children only, so in `[, setV]` the setter is child 0.
+#include "tsx/react-compiler.rerail"
+
+.decl rcx_before(m: node, n: node)
+rcx_before(m, n) :- node(d, m, _, i, _), node(d, n, _, j, _), i < j.
+
+// `[, setV]`: one hole, then the setter, read off the pattern's text (the tape keeps no comma tokens there).
+.decl rcx_setter_site(s: node)
+rcx_setter_site(s) :- rc_state_setter(s).
+rcx_setter_site(s) :- kind(d, "variable_declarator"), field(d, "value", c), rc_react_call(c, "useState"),
+    field(d, "name", p), kind(p, "array_pattern"), child(p, s, 0), kind(s, "identifier"),
+    match("(?s)\\[\\s*,\\s*[A-Za-z_$][\\w$]*\\s*\\]", p).
+.decl rcx_set_state(c: node)
+rcx_set_state(c) :- kind(c, "call_expression"), field(c, "function", n), kind(n, "identifier"), ref_site(n, s),
+    rcx_setter_site(s).
