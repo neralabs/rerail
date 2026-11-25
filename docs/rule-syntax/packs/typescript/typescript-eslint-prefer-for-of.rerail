@@ -50,12 +50,18 @@ other_use(f, s, x, a) :- counting(f, s, x, a), field(f, "body", b), resolves(r, 
 element_read(r, a) :- resolves(r, _, _), estree_parent(r, m), kind(m, "subscript_expression"), field(m, "index", ix),
     deparen(ix, r), field(m, "object", o), deparen(o, ao), !kind(ao, "this"), text(ao, a), !assignee(m).
 // assignee(m): m, through parentheses, `!`, `as`, `satisfies` and `<T>` casts, is written: `a[i] = 1`, `a[i]++`,
-// `delete a[i]`, `[a[i]] = xs`, `[...a[i]] = xs`. The rule misses `({ k: a[i] } = o)` (its object test wants an
-// object expression, which ESTree's pattern is not) and `for (a[i] of b)`; so does this.
+// `delete a[i]`, `[a[i]] = xs`, `[...a[i]] = xs`, and a property value of an object literal that is itself written:
+// `({ k: a[i] }) = o`, which ESTree keeps an object expression (the parentheses make it no pattern). The rule
+// misses `({ k: a[i] } = o)` (its object test wants an object expression, which ESTree's pattern is not) and
+// `for (a[i] of b)`; so does this.
 .decl assignee(m: node)
-assignee(m) :- kind(m, "subscript_expression"), lifted(m, u), estree_parent(u, p), written_by(p, u).
+assignee(m) :- place(m), lifted(m, u), estree_parent(u, p), written_by(p, u).
+.decl place(m: node)  // a[i], and each object literal that holds one as a property value
+place(m) :- kind(m, "subscript_expression").
+place(o) :- place(m), lifted(m, u), estree_parent(u, p), kind(p, "pair"), field(p, "value", v), deparen(v, u),
+    child(o, p, _), kind(o, "object").
 .decl lifted(m: node, u: node)
-lifted(m, m) :- kind(m, "subscript_expression").
+lifted(m, m) :- place(m).
 lifted(m, u) :- lifted(m, w), child(u, w, _), (kind(u, "parenthesized_expression") ; kind(u, "non_null_expression") ;
     kind(u, "as_expression") ; kind(u, "satisfies_expression") ; kind(u, "type_assertion")).
 .decl written_by(p: node, u: node)
@@ -64,3 +70,4 @@ written_by(p, u) :- (kind(p, "assignment_expression") ; kind(p, "augmented_assig
 written_by(p, u) :- kind(p, "unary_expression"), op(p, "delete"), field(p, "argument", u).
 written_by(p, u) :- kind(p, "update_expression"), field(p, "argument", u).
 written_by(p, u) :- (kind(p, "array_pattern") ; kind(p, "rest_pattern")), child(p, u, _).
+written_by(p, u) :- kind(p, "pair"), field(p, "value", v), deparen(v, u), child(o, p, _), kind(o, "object"), assignee(o).
