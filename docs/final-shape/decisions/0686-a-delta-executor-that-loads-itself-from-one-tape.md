@@ -144,3 +144,46 @@ Checklist:
 Open, for the user: B§5 writes the view `doc(d, p, _)` with a third column the pages do not define; the view is
 `doc(d, path)` until it is said what that column holds. B§3 also lists a `node` view, which nothing reads yet; it
 comes when a rule needs it.
+
+`doc` (2026-11-25): the user, "take a look at the other engine in this branch which defines it". The engine's
+`doc(d: number, path: symbol, module: symbol)`: the module its load named (`Document::module`), else named from its
+path. The view has that column (1301743933).
+
+## Operations: the execution shape (2026-11-25, being designed)
+
+The user: "We eventually want to be able to run these computations entirely on GPUs … chunk the computation into
+"operations" which can be handled by a kernel launch, and whose logic can be expressed in an uglykl file … a fixed
+number of blocks (less than 31) of both readable, writable, read/write and write-only (scratch), perform a meaningful
+quantum of work, and then be chained together … a pure-Rust implementation as well as an uglykl one … a pure function
+of its blocks and kernel: no globals or other ways of sneaking state in. Rust heap-allocated objects may be used to
+keep track of the actual operation graph, etc but not to perform the actual computation."
+
+Further constraints, in the user's words:
+
+- "the CPU-side will be replaced with SIMD-optimized UKL kernels … and the executor will schedule across both CPU and
+  GPU simultaneously. So the data-structures should be SIMD and GPU friendly and we can't use Rust data-structures."
+- "We may need some blocks to refer to blocks that contain previous generations, so we will need for anything that is
+  backed by blocks to have APIs to manage those blocks and dependencies."
+- "I want a strict Rust one-writer or multiple-readers invariant for operations."
+- "We may want to generate specialized ukl kernels for some operations; these need to be able to run on an
+  interpreted/generic operation while we're waiting for the specialization to compile."
+- "All execution requires planning. This will be a major part of the work."
+
+Decided on the proposal's first revision (*0686: Operations*, https://claude.ai/artifact/YcK6jLbuHuF74LftE3TvU9):
+
+- D1, agreed: an operation binds at most 30 whole blocks (Metal's 31 argument entries, one of them the params'); a
+  relation, layer or segment is a region inside a block.
+- D2, agreed: an operation's outputs are the same bytes on every executor and tiling.
+- D3: "that won't be possible in practice; tiles may need to size following tiles and launch them from the tile
+  itself, and we have some work shapes that need work queues. How we implement the tile execution will depend on the
+  hardware."
+- D4 (batching steps across terms): "as much as possible, but up to the executor". D5 (loops): "up to the executor".
+- D6, agreed: an operation over its output's capacity writes what it needs and places nothing; the executor grows the
+  block and runs it again.
+- D7: "as much as possible, planning is part of the device path as only it may have the information necessary. In
+  either case, planning needs to be able to happen on either side to avoid host/device switches."
+- D8: reading files on the host, "and this needs to be handled carefully"; parsing on the host "okay for now, but we
+  are close to much parsing being doable on the GPU".
+
+The second revision's points E1–E6 (ownership types, references, forms, work shapes, where planning is split between
+rules and kernels, reading files) wait on the user.
