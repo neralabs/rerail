@@ -8,7 +8,8 @@ Details: [How set-up works](how-setup-works.md). Problems: [Troubleshooting](tro
 
 ## Requirements
 
-Set-up checks these first and changes nothing if one is missing.
+Set-up checks these first and changes nothing if one is missing. With no Node at all there is no `npx` to start
+set-up, so check Node yourself: [Install](#install) says how.
 
 - **Node.js 24** or newer.
 - **Git** on your `PATH`; Rerail reads every repository through it.
@@ -33,6 +34,10 @@ Run set-up in your repository; it turns nothing on until you say yes.
 ```sh
 npx @neralabs/rerail setup
 ```
+
+That needs Node.js 24 or newer; `npx` comes with Node. Check with `node --version`: `command not found` means Node is not
+installed, so set-up cannot start to say so. Install it from [nodejs.org](https://nodejs.org) or with Homebrew
+(`brew install node`), nvm, fnm or Volta, then run the command in a new terminal.
 
 It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Developer Mode, and asks:
 
