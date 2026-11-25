@@ -70,8 +70,11 @@ const SPAN_FIRST: u32 = SLOTS - SPAN_SLOTS;
 /// Slots of `Extra`'s spans (`ExtraSpan`): one for the lines, one for the comments, `MATCH_SLOTS` for the matches,
 /// below the positions'. Sixteen in all, so the granules' slots (and every node's id) are as they were.
 const MATCH_SLOTS: u32 = 14;
-pub const EXTRA_SLOTS: u32 = 2 + MATCH_SLOTS;
+pub const EXTRA_SLOTS: u32 = rerail_clif::ids::EXTRA_SLOTS;
+const _: () = assert!(EXTRA_SLOTS == 2 + MATCH_SLOTS, "the lines', the comments' and the matches' slots");
 const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
+// The lines' slot, which the views' reads decode a line's id by (`view_line_span`): the extra spans' first.
+const _: () = assert!(EXTRA_FIRST + ExtraSpan::Line.first() == rerail_clif::ids::LINE_SLOT, "a line's slot is the views' reads'");
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 

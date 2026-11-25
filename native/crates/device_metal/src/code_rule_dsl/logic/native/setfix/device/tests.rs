@@ -2188,12 +2188,14 @@ use rerail_blocks::vector::Vector;
     /// Decision 0287 §2: a node's text (`@rr_node_text_any`, at any length, and the long-text twin's `@rr_node_text`,
     /// past `text`'s inline bound alone) is read by the device where its document's source lies, through the batch's
     /// `node` view, and made a text of the arena: the CPU's rows are the host's reads (`node_read`), and the device's
-    /// rows and counts per step are the CPU's. A comment span, no node, is read on the host.
+    /// rows and counts per step are the CPU's. A comment span, no node, is read on the host. A document's `source` span
+    /// and its `src_line` spans are read there too (decision 0353 row 7: `view_line_span`), by `@rr_node_text_any`:
+    /// lines a CRLF, a CR and none end, a final empty one, and an empty document's one.
     #[test]
     fn a_nodes_text_on_the_device_is_read_where_its_source_lies() {
         use crate::code_rule_dsl::facts::core::{self, Built};
         use crate::code_rule_dsl::facts::vtab::Source as _;
-        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, Projection, shaped};
         use crate::code_rule_dsl::facts::vtab::LONG_TEXT_NODES;
         use crate::code_rule_dsl::model::FileInput;
         use std::sync::Arc;
@@ -2203,7 +2205,7 @@ use rerail_blocks::vector::Vector;
         crate::test_languages();
         // A function body past 256 bytes, so `@rr_node_text` has rows; names past ASCII; an empty document.
         let long = format!("def big(a):\n{}    return a\n", (0..12).map(|i| format!("    a = a + {i} * len('ü{i}')\n")).collect::<String>());
-        let texts = ["import os\nx = f(1, y=[2, g(3)])  # note\n".to_owned(), long, String::new(), "class Ç(B):\n    def m(self, é):\n        return [é for é in self]\n".to_owned()];
+        let texts = ["import os\nx = f(1, y=[2, g(3)])  # note\n".to_owned(), long, String::new(), "class Ç(B):\r\n    def m(self, é):\r    return [é for é in self]".to_owned()];
         let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
             let path = format!("d{at}.py");
             // Its source in a room the device reads, as a loader reads a file's (`placed::read_text`).
@@ -2212,13 +2214,19 @@ use rerail_blocks::vector::Vector;
             let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
             Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         }).collect();
+        // Each document's line spans' ids: line 0 the whole source (`ExtraSpan::Line`'s, `rerail_clif::ids::LINE_SLOT`).
+        let line_ids: Vec<i64> = docs.iter().flat_map(|d| {
+            let (key, count) = (i64::from(d.key), d.facts.lines.count() as u32);
+            (0..=count).map(move |l| key << 32 | i64::from(rerail_clif::ids::LINE_SLOT << rerail_clif::ids::INDEX_BITS | l))
+        }).collect();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-node-text-{}-{nonce}.sqlite", std::process::id()))).unwrap();
-        let all = sources(&content, docs).unwrap();
+        // core.rerail's shape, whose documents have their line spans (`Locs`).
+        let all = shaped(&content, docs, &Projection::core()).unwrap();
         let node = &all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).unwrap().1;
         let nodes = Arc::clone(&all.iter().find(|(n, _)| *n == LONG_TEXT_NODES).expect("the long-text nodes").1);
         assert!(nodes.node_view().is_some(), "the batch's sources are read in place");
-        let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).collect();
+        let ids: Vec<i64> = (0..node.len()).map(|r| node.value(r, 1)).chain(line_ids.iter().copied()).collect();
         let store = crate::code_rule_dsl::fixtures::temp();
         drop(crate::code_rule_dsl::fixtures::open(&store));
         let db = Connection::open(&store).unwrap();
@@ -2236,6 +2244,9 @@ use rerail_blocks::vector::Vector;
             let mut want: Vec<(String, i64)> = ids.iter().filter_map(|&id| nodes.node_read(f, id, &[]).map(|t| (t, id))).collect();
             want.sort_unstable();
             assert!(want.len() > if f == "rr_node_text" { 0 } else { 50 }, "{f}: {} texts", want.len());
+            // The lines' texts among the any-length read's, none among the long-text twin's.
+            let lines = want.iter().filter(|(_, id)| line_ids.contains(id)).count();
+            assert_eq!(lines, if f == "rr_node_text" { 0 } else { line_ids.len() }, "{f}: the lines' texts");
             let rule = format!("pos {q} v0\nfunc {f} v1 v0\nhead v1 v0");
             let mut got = Vec::new();
             for device in [false, true] {

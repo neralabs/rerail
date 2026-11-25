@@ -3041,6 +3041,9 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
     let cases: &[(&str, &str)] = &[
         ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
         ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+        // Lines a CRLF, a lone CR and none end, and one U+2028 ends (ESLint's terminators): each line's text read.
+        ("python", "x = f(1) + 2\r\n\r\ny = 'é'\rz = [y]"),
+        ("typescript", "let a = g(1); // c\u{2028}let b = a + 2;\r\nimport { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
     ];
     let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
     let mut tried = 0;
@@ -3153,6 +3156,36 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         assert_eq!(doc.depth(l), p.depth(l as usize), "{at}: node {l}'s depth");
                         assert_eq!(doc.order_row(l, 1), i64::from(p.key()) << 32 | i64::from(p.order(l)), "{at}: node {l}'s order");
                     }
+                    // A line's text read where its source lies (decision 0353 row 7): the JIT's range and terminator
+                    // length, the Rust read's, and its text `LineTable::text_of`'s (the whole source at 0); a guest's
+                    // lines are its host's, read on the host.
+                    let line_span: extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> i64 = unsafe { std::mem::transmute(jit.function("view_line_span")) };
+                    // SAFETY: `lines_terminator_length`'s signature: the source's base, the terminator's last byte.
+                    let terminator: extern "C" fn(*const u8, u32) -> u32 = unsafe { std::mem::transmute(jit.function("lines_terminator_length")) };
+                    // SAFETY: `view_line_terminated`'s signature, as the probes'.
+                    let terminated = probe_of("view_line_terminated");
+                    let facts = p.f();
+                    let lines = &facts.lines;
+                    let own = facts.source.as_str();
+                    let line_low = |l: u32| rerail_clif::ids::LINE_SLOT << rerail_clif::ids::INDEX_BITS | l;
+                    // Another id is no line's: a node's.
+                    assert_eq!(doc.line_span(p.global(0) as u32), rerail_clif::view_reads::NO_SPAN, "{at}: a node is no line");
+                    for l in 0..=lines.count() as u32 + 1 {
+                        let low = line_low(l);
+                        assert_eq!(line_span(e, t, v, ll, low) as u64, doc.line_span(low), "{at}: line {l}'s span, the JIT's");
+                        assert_eq!(terminated(e, t, v, ll, low) != 0, doc.line_terminated(low), "{at}: line {l} terminated, the JIT's");
+                        if doc.line_span(low) == rerail_clif::view_reads::NO_SPAN {
+                            assert!(doc.entry.own_text == 0 || l > lines.count() as u32, "{at}: line {l} read");
+                            continue;
+                        }
+                        let want = if l == 0 { own } else { let [a, b] = lines.text_of(l as usize, own.as_bytes()); &own[a as usize..b as usize] };
+                        assert_eq!(doc.line_text(low), Some(want), "{at}: line {l}'s text");
+                        let stop = doc.line_span(low) as u32;
+                        if doc.line_terminated(low) {
+                            let length = rerail_tape_format::newlines::length_ending_at(own.as_bytes(), stop as usize - 1) as u32;
+                            assert_eq!(terminator(own.as_ptr(), stop - 1), length, "{at}: line {l}'s terminator, the JIT's");
+                        }
+                    }
                     for i in 0..p.after_siblings() {
                         let (l, _) = doc.after_sibling(i);
                         assert_eq!(doc.sibling(i, 0), p.prev_sibling(l).map_or(-1, |a| p.global(a)), "{at}: sibling row {i}'s before");
@@ -3228,7 +3261,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
             }
         }
     }
-    assert_eq!(tried, 2 * Format::ALL.len() * 3, "every case, format and shape");
+    assert_eq!(tried, cases.len() * Format::ALL.len() * 3, "every case, format and shape");
 }
 
 /// Decision 0494, R1 and R3: a batch read whole makes one group, whose relations hold the rows the eager batch's do;

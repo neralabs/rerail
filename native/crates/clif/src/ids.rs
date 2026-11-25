@@ -30,6 +30,12 @@ pub const SLOT_BITS: u32 = 14;
 pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
 /// The top slots, from the last down, that hold a document's spans past its nodes and tokens (`span_low`).
 pub const SPAN_SLOTS: u32 = 16;
+/// The slots below the spans' that hold the spans a batch makes beside a document's tape (the facts' `ExtraSpan`:
+/// its lines, its comments no node is, its matches): two, then the matches' 14.
+pub const EXTRA_SLOTS: u32 = 16;
+/// The slot of a document's `source` span and its `src_line` spans (`ExtraSpan::Line`, the extra spans' first): line
+/// `l`'s id has low bits `LINE_SLOT << INDEX_BITS | l`, line 0 the whole source (`view_line_span`).
+pub const LINE_SLOT: u32 = (1 << SLOT_BITS) - SPAN_SLOTS - EXTRA_SLOTS;
 /// An order key's low bits: its index in its granule; above them, its run's rank.
 pub const ORDER_INDEX_BITS: u32 = 18;
 /// The items a granule jump stands for (`Numbering::jumps`).

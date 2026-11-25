@@ -119,6 +119,8 @@ UKL_INLINE uint64_t clif_view_depth(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_
 UKL_INLINE uint64_t clif_view_order(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_op(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_text_span(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4);
+UKL_COLD uint64_t clif_view_line_span(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4);
+UKL_COLD uint32_t clif_view_line_terminated(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4);
 UKL_INLINE uint64_t clif_view_core(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4,uint32_t a5){
  uint64_t v0=0;
  uint64_t v1=0;
@@ -345,6 +347,89 @@ UKL_INLINE uint64_t clif_view_order(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_
   {uint64_t t0=v32;v7=t0;}
  }
  return v7;
+}
+UKL_COLD uint64_t clif_view_line_span(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4){
+ uint64_t v0=0;
+ uint64_t v1=0;
+ uint64_t v2=0;
+ uint64_t v3=0;
+ uint32_t v4=0;
+ uint32_t v7=0;
+ uint64_t v14=0;
+ uint64_t v15=0;
+ uint32_t v16=0;
+ uint64_t v18=0;
+ uint32_t v25=0;
+ uint32_t v28=0;
+ v0=a0;
+ v1=0;
+ v2=0;
+ v3=0;
+ v4=a4;
+ uint32_t v5=((uint32_t)((uint32_t)(v4)>>(((uint32_t)(18))&31u)));
+ uint8_t v6=((uint8_t)((uint32_t)(v5)!=(uint32_t)(((uint32_t)(16352ul)))));
+ v7=v4&((uint32_t)(262143ul));
+ uint32_t v8=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+(v0+((uint64_t)(((int64_t)(84))))))));
+ uint32_t v9=clif_lines_count(ll,la);
+ uint8_t v10=((uint8_t)((uint32_t)(v7)>(uint32_t)(v9)));
+ uint8_t v11=((uint8_t)((uint32_t)(v8)==(uint32_t)(((uint32_t)(0ul)))));
+ uint8_t v12=v11|v10;
+ uint8_t v13=v12|v6;
+ v14=((uint64_t)(18446744073709551615ul));
+ if(v13!=0){
+  {uint64_t t0=v14;v15=t0;}
+ }else{
+  v16=((uint32_t)(*(CLIF_BLOCK_SPACE const uint32_t*)(t+(v0+((uint64_t)(((int64_t)(92))))))));
+  uint8_t v17=((uint8_t)((uint32_t)(v7)==(uint32_t)(((uint32_t)(0ul)))));
+  if(v17!=0){
+   uint32_t v19=((uint32_t)(0ul));
+   uint64_t v20=((uint64_t)(v19));
+   uint64_t v21=((uint64_t)((uint64_t)(v20)<<(((uint32_t)(32))&63u)));
+   uint64_t v22=((uint64_t)(v16));
+   uint64_t v23=v21|v22;
+   {uint64_t t0=v23;v18=t0;}
+  }else{
+   uint32_t v24=v7+((uint32_t)(18446744073709551615ul));
+   v25=clif_lines_start(ll,la,v24);
+   uint32_t v26=clif_lines_count(ll,la);
+   uint8_t v27=((uint8_t)((uint32_t)(v7)>=(uint32_t)(v26)));
+   if(v27!=0){
+    {uint32_t t0=v16;v28=t0;}
+   }else{
+    uint32_t v29=clif_lines_start(ll,la,v7);
+    {uint32_t t0=v29;v28=t0;}
+   }
+   uint64_t v30=((uint64_t)(v25));
+   uint64_t v31=((uint64_t)((uint64_t)(v30)<<(((uint32_t)(32))&63u)));
+   uint64_t v32=((uint64_t)(v28));
+   uint64_t v33=v31|v32;
+   {uint64_t t0=v33;v18=t0;}
+  }
+  {uint64_t t0=v18;v15=t0;}
+ }
+ return v15;
+}
+UKL_COLD uint32_t clif_view_line_terminated(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint64_t la,uint32_t a4){
+ uint64_t v0=0;
+ uint64_t v1=0;
+ uint64_t v2=0;
+ uint64_t v3=0;
+ uint32_t v4=0;
+ v0=a0;
+ v1=0;
+ v2=0;
+ v3=0;
+ v4=a4;
+ uint32_t v5=((uint32_t)((uint32_t)(v4)>>(((uint32_t)(18))&31u)));
+ uint8_t v6=((uint8_t)((uint32_t)(v5)==(uint32_t)(((uint32_t)(16352ul)))));
+ uint32_t v7=v4&((uint32_t)(262143ul));
+ uint32_t v8=clif_lines_count(ll,la);
+ uint8_t v9=((uint8_t)((uint32_t)(v7)!=(uint32_t)(((uint32_t)(0ul)))));
+ uint8_t v10=((uint8_t)((uint32_t)(v7)<(uint32_t)(v8)));
+ uint8_t v11=v6&v9;
+ uint8_t v12=v11&v10;
+ uint32_t v13=((uint32_t)(v12));
+ return v13;
 }
 #define CLIF_F(name) clif_f16_##name
 #define CLIF_V(name) clif_f16_##name

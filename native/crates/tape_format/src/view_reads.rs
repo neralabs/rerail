@@ -11,7 +11,7 @@
 use crate::reads::{NONE, f16, f16z::Z};
 use rerail_clif::ids::{INDEX_BITS, Numbering, SLOT_BITS, SPAN_SLOTS};
 use rerail_clif::view::{F16Z_FORMAT, TapeView};
-use rerail_clif::view_reads::{NO_ROW, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
+use rerail_clif::view_reads::{NO_ROW, NO_SPAN, PLACED_AT, PLACED_COPIED, PLACED_SEGMENTS, PLACED_TABLE, ViewDoc};
 
 /// A document's tape as the views read it: its bytes from its view's base, its view, in its format; a 16z tape with
 /// the cache its reads share.
@@ -548,6 +548,44 @@ impl<'a> Doc<'a> {
     pub fn text_span(&self, l: u32) -> u64 {
         let x = self.tape_node(l);
         u64::from(self.tape.start(x)) << 32 | u64::from(self.tape.end(x))
+    }
+    /// `view_line_span(low)`: the line whose span's id has low bits `low` (`LINE_SLOT << INDEX_BITS | l`: line `l`
+    /// from 1, 0 the whole source) as its bytes in the document's own source, `start << 32 | stop`, `stop` one past
+    /// its terminator's last byte, or the source's end on its last line and on line 0; `NO_SPAN` for another id, a
+    /// guest's (its lines are its host's) or a line past its last.
+    #[inline]
+    pub fn line_span(&self, low: u32) -> u64 {
+        let l = low & ((1 << INDEX_BITS) - 1);
+        let count = self.loc_count();
+        if low >> INDEX_BITS != rerail_clif::ids::LINE_SLOT || self.entry.own_text == 0 || l > count {
+            return NO_SPAN;
+        }
+        let len = self.entry.source_len;
+        if l == 0 {
+            return u64::from(len);
+        }
+        let stop = if l >= count { len } else { self.loc_start(l) };
+        u64::from(self.loc_start(l - 1)) << 32 | u64::from(stop)
+    }
+    /// `view_line_terminated(low)`: whether that line ends with a terminator (from 1, before the last).
+    #[inline]
+    pub fn line_terminated(&self, low: u32) -> bool {
+        let l = low & ((1 << INDEX_BITS) - 1);
+        low >> INDEX_BITS == rerail_clif::ids::LINE_SLOT && l != 0 && l < self.loc_count()
+    }
+    /// The text of the line whose span's id has low bits `low` (`line_span`), read where the source lies, its
+    /// terminator's length off the source's bytes where it has one (`lines_terminator_length`), as
+    /// `LineTable::text_of` gives it.
+    pub fn line_text(&self, low: u32) -> Option<&'a str> {
+        let span = self.line_span(low);
+        if span == NO_SPAN {
+            return None;
+        }
+        let (start, mut stop) = ((span >> 32) as usize, span as u32 as usize);
+        if self.line_terminated(low) {
+            stop -= crate::newlines::length_ending_at(self.source, stop - 1);
+        }
+        std::str::from_utf8(self.source.get(start..stop)?).ok()
     }
     /// Numbered node `l`'s text, read where its source lies (`text_span`): none where the range is not the source's
     /// text (a tape and a source that disagree).

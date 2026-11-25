@@ -1066,6 +1066,8 @@ pub fn dir_doc_of_key(b: &mut B<'_, '_>) -> Value {
 
 /// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
 pub const NO_ROW: u32 = u32::MAX;
+/// `view_line_span`'s answer where the line is not read there (a guest's lines are its host's; past the last line).
+pub const NO_SPAN: u64 = u64::MAX;
 
 #[cfg(feature = "ir")]
 impl B<'_, '_> {
@@ -1196,6 +1198,60 @@ pub fn text_span(b: &mut B<'_, '_>) -> Value {
     let high = b.f.ins().ishl_imm(start, 32);
     let end = b.f.ins().uextend(I64, end);
     b.f.ins().bor(high, end)
+}
+
+/// `view_line_span(low)`: the line whose span's id has low bits `low` (`LINE_SLOT << INDEX_BITS | l`: a `src_line`
+/// span, from 1; 0 the document's `source` span), as its bytes in its document's own source, `start << 32 | stop`:
+/// from its first byte (`lines_start`) to one past its terminator's last (the next line's start), or to the source's
+/// end on its last line and on line 0. Its text ends `lines_terminator_length(stop - 1)` bytes before `stop` where the
+/// line has a terminator (`0 < l < lines_count`), read off the source's bytes (`Doc::line_text`, as
+/// `LineTable::text_of`: decision 0353 row 7). `NO_SPAN` (all ones) for another id, a line past the last, or a
+/// document whose lines are its host's (a guest's, `own_text` 0).
+#[cfg(feature = "ir")]
+pub fn line_span(b: &mut B<'_, '_>) -> Value {
+    let low = b.arg(0);
+    let slot = b.f.ins().ushr_imm(low, i64::from(crate::ids::INDEX_BITS));
+    let other = b.f.ins().icmp_imm(IntCC::NotEqual, slot, i64::from(crate::ids::LINE_SLOT));
+    let l = b.f.ins().band_imm(low, i64::from((1u32 << crate::ids::INDEX_BITS) - 1));
+    let own = b.word_at(I32, b.tape, at::OWN_TEXT);
+    let count = b.loc_count();
+    let past = b.f.ins().icmp(IntCC::UnsignedGreaterThan, l, count);
+    let guest = b.f.ins().icmp_imm(IntCC::Equal, own, 0);
+    let refused = b.f.ins().bor(guest, past);
+    let refused = b.f.ins().bor(refused, other);
+    let unread = b.f.ins().iconst(I64, -1);
+    b.either(I64, refused, |_| unread, |b| {
+        let len = b.word_at(I32, b.tape, at::SOURCE_LEN);
+        let whole = b.f.ins().icmp_imm(IntCC::Equal, l, 0);
+        b.either(I64, whole, |b| {
+            let zero = b.c32(0);
+            b.pair(zero, len)
+        }, |b| {
+            let k = b.f.ins().iadd_imm(l, -1);
+            let start = b.loc_start(k);
+            let count = b.loc_count();
+            let last = b.f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, l, count);
+            let stop = b.either(I32, last, |_| len, |b| b.loc_start(l));
+            b.pair(start, stop)
+        })
+    })
+}
+
+/// `view_line_terminated(low)`: 1 where the line whose span's id has low bits `low` (`view_line_span`'s) ends with a
+/// terminator, so its text ends `lines_terminator_length` bytes before its span's stop: a line from 1 and before the
+/// last (`l < lines_count`). 0 for line 0, the last line, and another id.
+#[cfg(feature = "ir")]
+pub fn line_terminated(b: &mut B<'_, '_>) -> Value {
+    let low = b.arg(0);
+    let slot = b.f.ins().ushr_imm(low, i64::from(crate::ids::INDEX_BITS));
+    let line = b.f.ins().icmp_imm(IntCC::Equal, slot, i64::from(crate::ids::LINE_SLOT));
+    let l = b.f.ins().band_imm(low, i64::from((1u32 << crate::ids::INDEX_BITS) - 1));
+    let count = b.loc_count();
+    let some = b.f.ins().icmp_imm(IntCC::NotEqual, l, 0);
+    let before = b.f.ins().icmp(IntCC::UnsignedLessThan, l, count);
+    let yes = b.f.ins().band(line, some);
+    let yes = b.f.ins().band(yes, before);
+    b.f.ins().uextend(I32, yes)
 }
 
 /// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's

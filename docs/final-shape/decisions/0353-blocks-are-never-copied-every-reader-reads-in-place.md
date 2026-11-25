@@ -1032,7 +1032,8 @@ Tests: `text_of_a_bound_node_is_read_in_place` (the source, a line, a file-local
 and `a_line_spans_text_is_read_off_the_source_as_its_rows_give_it` (every span's read equals its row: an empty
 line, a CRLF one, a last one with no terminator, an empty file). On the 300-file bench (M1 Max, CPU, strict): 463
 violations, each of the 661 relations' row counts as before; the "text read as rows" line names 6 heads, from 8 (p297's
-`after` and its span aggregate read their lines off the source; p279's `coding` reads a regex capture's span).
+`after` and its span aggregate read their lines off the source; p279's `coding` reads a regex capture's span). On
+the device the same read runs where the source lies (0287 §2, `view_line_span`).
 
 **Step 4: the GPU reads every view in place** (2026-11-22). The chunk is gone: `device_chunk::build`, its node
 columns and codes (row 3), `expand_view` and the views made from them (row 4), and the line starts and spans copied

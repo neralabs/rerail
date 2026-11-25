@@ -98,6 +98,23 @@ comment span, another batch's), run on the host. Tests: `a_nodes_text_on_the_dev
 (the CPU's rows are the host's `node_read`, the device's rows and counts per step the CPU's, on CUDA),
 `the_view_reads_are_the_hosts_rows` (the span and the text, every node, both formats).
 
+A line's text too (2026-11-24, 0353 row 7). `@rr_node_text_any` of a document's `source` span or a `src_line` span
+(read so on the host since b6c6e26f34) is read where its source lies on the device, from three reads written once in
+CLIF beside the node's:
+- `view_line_span(low)` decodes the span's id (`rerail_clif::ids::LINE_SLOT`, the facts' `ExtraSpan::Line` slot,
+  asserted one) and gives the line's bytes from its first to one past its terminator's last, by the lines' index;
+- `view_line_terminated(low)` says whether the line ends with a terminator;
+- `lines_terminator_length(last)`, a read of the lines' family whose base is the source's home (`homes[2]`), reads
+  the terminator's length off the source's bytes, as `newlines::length_ending_at`.
+
+A guest's lines are its host's, so its line spans are read on the host (`NO_SPAN`), and so is any line where a
+document has no core.rerail positions (`own_text` 0). `@rr_node_text` (the long-text twin) has no row for a line, as
+the host's `long_text`. The Rust twins are `Doc::line_span`, `line_terminated` and `line_text`. Tests:
+`the_view_reads_are_the_hosts_rows` (every line's span and terminator, the JIT's and the Rust reads', and its text
+`LineTable::text_of`'s, with CRLF, a lone CR, U+2028 and no final terminator among its cases), and
+`a_nodes_text_on_the_device_is_read_where_its_source_lies` (each document's line spans among the nodes asked, in
+core.rerail's shape: the device's rows and counts per step are the CPU's, on CUDA).
+
 The draft as written:
 
 - `@rr_node_text(n)` is the node's byte range in its document's source: `node(d, n, _, start, end)`.
