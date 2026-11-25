@@ -52,6 +52,7 @@ pub mod relation;
 pub mod rows;
 pub mod scratch;
 pub mod sort;
+pub mod table;
 
 /// The flag an anonymous mapping takes to be address space reserved, its pages committed as they are written: Linux's
 /// `MAP_NORESERVE`. Without it Linux's overcommit heuristic refuses a reservation larger than memory and swap (a 64

@@ -1,7 +1,7 @@
 # 0678: One bistate read, built beside the engine and shared by it
 
-Status: in progress. Step 1 done. Step 2 cut down by the user's constraints (below) to the reads of a column and of a
-chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
+Status: in progress. Steps 1 and 3 done. Step 2 cut down by the user's constraints (below) to the reads of a column
+and of a chunk. The user, 2026-11-24: "I want to work on this in parallel with the current
 engine (modify the current code so that we can build the new structure alongside it and share it, rather than get
 rid of the old structure)."
 
@@ -141,6 +141,81 @@ The first build of step 2 (commit `6cbc4e3d6e`) was a trace of many versions: a 
 chains and kept files as traces, and `Upto` for earlier frontiers. Constraints 1, 4 and 6 leave no reader of more
 than two versions and no history to read, so all of it was removed (`blocks/src/trace.rs`, `KeptChain::trace`). The
 design choices it raised are on the page *Trace design choices*.
+
+## Step 3: the fact table (`blocks::table`)
+
+The user, 2026-11-24: "next, the fact table abstraction. we need to be able to access, join, query, and perform other
+operations on the fact tables. please survey and build the abstraction and the operations that it needs to afford".
+
+### What its readers ask today (the survey)
+
+| Reader | Where | What it asks of a relation |
+|---|---|---|
+| The native join | setfix `steps::Step::Atom`, `Scalar`; `spec::JoinItem` | a scan of a delta or all of it; a probe of bound columns, through an index (`Csr`); tests of a repeated variable; a negated probe (anti-join); `count`, `sum`, `min`, `max` and the bounded extremes (decision 0511) of a key's rows; `strjoin`; a version: `Old`, `New`, `Minus`, `Plus` (decision 0364) |
+| SQL | facts_base `vtab::Source` (about 80 methods) | `len`, `row_at` and `for_rows(_in)` (scan, chunks); `lookup` of one column's values, `lookup_columns` and `lookup_all` of several; `range_lookup`; `ordered` and `ordered_range`; `holds`; the planner's `estimated_matches`, `lookup_cost`, `scan_cost`, `statistics`, `value_counts`; `write` for a mutable relation; `frozen`, `revision` |
+| Every compiled reader | clif `reads.rs` (the JIT, Metal, SQLite's vtabs) | `rel_get` down a chain, `rel_dead`, `rel_len`, `rel_group` and `rel_group_row` (a hashed index's bucket), `rel_key_mix`, the bloom reads |
+| Kept facts | blocks `kept`, `packed` | a key's newest entry (`KeptRead`); `Packed::probe` (a range of the order's leading columns, or a permutation index); `ColDec::equal_range`, `equal_range_from` (a merge join's inner side), `lower_bound` |
+| Writers | blocks `relation::RelW`, `freeze`, `packed::pack` | `push`, `extend`, `kill`, `insert_unique`; freeze (set semantics, canonical order, indexes, statistics); pack (a version and its delta rolled into one) |
+
+Under the user's constraints, these reduce to one state's reads (`Read`: cells, columns, chunks), the two states of
+a change (`Bistate`), and four ways rows are found: a scan, an equal key, a range of the sort column, and the sort
+order.
+
+### What was built
+
+`blocks::table::Table: Read`, three things a state says beyond its cells:
+
+- `sort()`: the column its runs are sorted on, or none (constraint 2).
+- `runs()`: its ids as one or two runs, each sorted on that column: the version's, then the delta's (constraint 1).
+- `probe(cols, key, each)`, with `access(cols)` saying how: `Sorted` (the sort column's range in each run, the
+  rest tested), `Indexed` (an index of its own on exactly those columns), or `Scan`. `equal_range` and
+  `lower_bound` default to binary searches through the column; a table with its own search gives it.
+
+The operations, each written once over any `Table`:
+
+- `ordered(t)`, `range(t, bounds)`: live ids in the sort order, the two runs merged as they are walked; any
+  `RangeBounds<i64>`.
+- `holds(t, row)`, `count(t, cols, key)`.
+- `fold(t, cols, key, Agg)`: `Count`, `Sum`, `Min`, `Max`, `MaxBelow` and `MinAbove` (strict or not), the engine's
+  aggregates.
+- `semi(a, b, on, neg, each)`: the semi-join, and with `neg` the anti-join (a negated atom).
+- `join(a, b, on, each) -> Shape`: `Merge` when a pair of `on` is both sides' sort column (`a` in its order, each
+  of `b`'s runs searched only from the last key's start). Otherwise `Probe(access)`: `a` scanned, `b` probed. This
+  is the join shape the sort column affords.
+
+Two stores are tables:
+
+- `View`: frozen, a base and its delta lie in canonical order, so they are sorted on the order's first column and
+  are the two runs. Its probes use a hashed index on exactly the probe's columns in both relations (`probe_iter`).
+- `Kept`: one run, sorted when its packing records an order (a granule kept as given records none). Its searches
+  are its packed column's (`ColDec::equal_range`, `lower_bound`), and its probes are `Packed::probe`'s where that
+  answers the columns.
+
+The change between two states of a table is `Bistate<T>`, as in step 1. No operation holds rows. Each reads ids and
+cells where they lie, with at most two cursors a side.
+
+Tests (`table::tests`), each against the same answer read a cell at a time:
+
+- a view's probes by every access;
+- its ordered and range reads, with every kind of bound;
+- a key's aggregates;
+- every join shape (merged on one column or two, probed by index, by sort ranges and by scan), the semi- and
+  anti-joins, and a join stopped early;
+- a kept relation's probes, ordered reads and merge joins with a view, both ways round.
+
+16 tests pass with bistate's and kept's.
+
+### Gaps left, proposed (Claude's, not agreed)
+
+- **A CLIF read of the sort column's range** (`rel_lower_bound`), so the JIT, Metal and SQLite share `range` and
+  the merge join, as they share `rel_group` (decision 0310). The operators here are the CPU's form and the
+  reference.
+- **Statistics on the table** for the planner (`Relation::stats`' min and max, `Packed::col_max`, a key's
+  estimated rows), so `access` can carry a cost.
+- **Adapters:** `vtab::Source` read through a `Table` (its lookups, ranges, orders and `holds`), and setfix's `InRel`
+  as one (its open rows are unsorted: `sort()` none until it is frozen).
+- **Writes:** a delta's writer with resurrection (constraint 1); today a row back is pushed again.
+- **Sort on one column:** freeze still sorts on every column in turn. The table relies only on the first.
 
 ## Next steps, proposed (Claude's, not agreed)
 
