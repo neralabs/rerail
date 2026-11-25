@@ -1,0 +1,364 @@
+//! B1's checks (*0686: Operations* §13): a second writer, a writer beside a reader and a write to a frozen block each
+//! fail when the operation starts, naming it, with nothing left pinned; a reference to a block not frozen fails;
+//! reading a block read-pins what it refers to; an operation of each shape the twins need first (map, emit, sort,
+//! merge, queue) gives the same facts at two tilings and in shuffled order; a version is registered only once checked
+//! against the reference; a 31st slot is refused. (A referenced generation living until its referrer is rolled up is
+//! `trace`'s.)
+
+use super::*;
+use rerail_blocks::block::kind;
+use rerail_blocks::region::{pin_block, whole};
+use rerail_delta_twins::samples::{self, EVENS, MERGE as MERGE2, REACH, SORT, SQUARE};
+use rerail_delta_twins::{NoParams, TwinPhase};
+
+const NONE_P: ParamsLayout = ParamsLayout::of::<NoParams>();
+
+fn lanes(name: &'static str, found: Found, across: Across, output: Output, bounds: &'static [Bound]) -> Phase {
+    Phase::lanes(name, found, across, output, bounds)
+}
+
+/// A values block's facts: `(position, value)`.
+fn values(_: &Table<'_>, _: usize, b: &[u8]) -> Vec<Vec<i64>> {
+    samples::vals(b).iter().enumerate().map(|(i, &v)| vec![i as i64, v]).collect()
+}
+
+/// A visited set's facts: the nodes marked.
+fn marked(_: &Table<'_>, _: usize, b: &[u8]) -> Vec<Vec<i64>> {
+    samples::vals(b).iter().enumerate().filter(|&(_, &v)| v == 1).map(|(i, _)| vec![i as i64]).collect()
+}
+
+const R: Mode = Mode::Read;
+const W: Mode = Mode::Write;
+const S: Mode = Mode::Scratch;
+
+fn slot(name: &'static str, mode: Mode, kind: u32) -> SlotSpec {
+    SlotSpec { name, mode, kind }
+}
+
+fn sig(name: &'static str, slots: Vec<SlotSpec>, shape: Vec<Phase>, facts: FactsFn) -> &'static Signature {
+    Box::leak(Box::new(Signature::new(name, Box::leak(slots.into_boxed_slice()), NONE_P, Box::leak(shape.into_boxed_slice()), Independence::Along("items"), facts)))
+}
+
+/// The five shapes' signatures, each placed on the six axes.
+fn shapes() -> Vec<(&'static Signature, &'static [TwinPhase])> {
+    use Across::*;
+    use Found::*;
+    use Output::*;
+    let io = |w| vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS), slot("work", S, w)];
+    vec![
+        (sig("square", vec![slot("in", R, kind::FACTS), slot("out", W, kind::FACTS)], vec![lanes("map", Fixed, Nothing, ByIndex, &[])], values), SQUARE),
+        (
+            sig(
+                "evens",
+                io(kind::SCRATCH),
+                vec![lanes("count", Fixed, Nothing, ByIndex, &[]), lanes("scan", Fixed, Combine, ByScan, &[]), lanes("place", Fixed, Nothing, ByScan, &[])],
+                values,
+            ),
+            EVENS,
+        ),
+        (
+            sig(
+                "sort",
+                io(kind::SCRATCH),
+                vec![lanes("chunks", Fixed, Nothing, ByIndex, &[]), lanes("passes", Indirect, Ordered, ByIndex, &[Bound::Turns(16)]), lanes("settle", Fixed, Nothing, ByIndex, &[])],
+                values,
+            ),
+            SORT,
+        ),
+        (sig("merge2", vec![slot("a", R, kind::FACTS), slot("b", R, kind::FACTS), slot("out", W, kind::FACTS)], vec![lanes("merge", Fixed, Nothing, ByIndex, &[])], values), MERGE2),
+        (
+            sig(
+                "reach",
+                io(kind::SCRATCH),
+                vec![lanes("seed", Fixed, Nothing, InPlace, &[]), lanes("turn", Queue, Rounds, Claim, &[Bound::Turns(1024)])],
+                marked,
+            ),
+            REACH,
+        ),
+    ]
+}
+
+fn rng(seed: u64) -> impl FnMut() -> u64 {
+    let mut z = seed;
+    move || {
+        z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        rerail_blocks::layer::mix(z)
+    }
+}
+
+/// A values block of `v`, frozen.
+fn values_block(dir: &mut Directory, v: &[i64]) -> BlockId {
+    let id = dir.make(kind::FACTS, samples::vals_bytes(v.len()));
+    {
+        let b = dir.block(id).unwrap();
+        let mut w = pin_block(&b, "fill", true).unwrap();
+        samples::vals_mut(w.bytes_mut().unwrap(), v.len()).copy_from_slice(v);
+    }
+    dir.freeze(id).unwrap();
+    id
+}
+
+/// Each shape's launch over 1,000 values (or a 300-node graph), and what it must write.
+fn case(name: &str, dir: &mut Directory) -> (Case, Vec<Vec<i64>>) {
+    let mut r = rng(7);
+    let v: Vec<i64> = (0..1000).map(|_| (r() % 5000) as i64 - 2500).collect();
+    let out = |dir: &mut Directory, n: usize| dir.make(kind::FACTS, samples::vals_bytes(n));
+    let work = |dir: &mut Directory, bytes: usize| dir.make(kind::SCRATCH, bytes);
+    let rows = |v: Vec<i64>| v.into_iter().enumerate().map(|(i, x)| vec![i as i64, x]).collect::<Vec<_>>();
+    match name {
+        "square" => {
+            let (i, o) = (values_block(dir, &v), out(dir, v.len()));
+            (Case { slots: vec![i, o], params: vec![] }, rows(v.iter().map(|x| x * x).collect()))
+        }
+        "evens" => {
+            let (i, o, w) = (values_block(dir, &v), out(dir, v.len()), work(dir, 8 + 8 * 8));
+            (Case { slots: vec![i, o, w], params: vec![] }, rows(v.iter().copied().filter(|x| x % 2 == 0).collect()))
+        }
+        "sort" => {
+            let (i, o, w) = (values_block(dir, &v), out(dir, v.len()), work(dir, 24 + 8 * v.len()));
+            let mut s = v.clone();
+            s.sort();
+            (Case { slots: vec![i, o, w], params: vec![] }, rows(s))
+        }
+        "merge2" => {
+            let (mut a, mut b) = (v[..400].to_vec(), v[400..].to_vec());
+            a.sort();
+            b.sort();
+            let (ia, ib, o) = (values_block(dir, &a), values_block(dir, &b), out(dir, v.len()));
+            let mut s = v.clone();
+            s.sort();
+            (Case { slots: vec![ia, ib, o], params: vec![] }, rows(s))
+        }
+        "reach" => {
+            // 300 nodes; each has two edges, to (3i + 1) and (5i + 2) mod 300, but node 7's are cut: some unreachable.
+            let n = 300usize;
+            let mut offsets = vec![0u64];
+            let mut targets = Vec::new();
+            for i in 0..n {
+                if i != 7 {
+                    targets.push(((3 * i + 1) % n) as u64);
+                    targets.push(((5 * i + 2) % n) as u64);
+                }
+                offsets.push(targets.len() as u64);
+            }
+            let g = dir.make(kind::FACTS, samples::graph_bytes(n, targets.len()));
+            {
+                let b = dir.block(g).unwrap();
+                let mut w = pin_block(&b, "fill", true).unwrap();
+                let bytes = w.bytes_mut().unwrap();
+                use rerail_blocks::gens::{BODY_AT, set_word, words_mut};
+                set_word::<u64>(bytes, BODY_AT, samples::graph_bytes(n, targets.len()) as u64);
+                set_word::<u64>(bytes, BODY_AT + 8, n as u64);
+                set_word::<u64>(bytes, BODY_AT + 16, targets.len() as u64);
+                words_mut::<u64>(bytes, BODY_AT + 24, n + 1).copy_from_slice(&offsets);
+                words_mut::<u64>(bytes, BODY_AT + 24 + 8 * (n + 1), targets.len()).copy_from_slice(&targets);
+            }
+            dir.freeze(g).unwrap();
+            let (o, w) = (out(dir, n), work(dir, 32 + 8 * n));
+            // The oracle: a plain search.
+            let mut seen = vec![false; n];
+            let mut stack = vec![0usize];
+            seen[0] = true;
+            while let Some(u) = stack.pop() {
+                for &t in &targets[offsets[u] as usize..offsets[u + 1] as usize] {
+                    if !seen[t as usize] {
+                        seen[t as usize] = true;
+                        stack.push(t as usize);
+                    }
+                }
+            }
+            let want = (0..n).filter(|&i| seen[i]).map(|i| vec![i as i64]).collect();
+            (Case { slots: vec![g, o, w], params: vec![] }, want)
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// O§13: an operation of each shape the twins need first gives the same facts at two tilings and with its tiles in
+/// shuffled order, and the right ones.
+#[test]
+fn each_shape_gives_the_same_facts_at_two_tilings_in_shuffled_order() {
+    let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 3 }, Tiling { tile: 3, seed: 11 }, Tiling { tile: 2, seed: 0 }];
+    for (sig, twin) in shapes() {
+        let mut reg = Registry::default();
+        let op = reg.declare(sig).unwrap();
+        reg.register_reference(Version::twin(op, "twin", twin, sig.shape)).unwrap();
+        let mut first = None;
+        for t in tilings {
+            let mut dir = Directory::default();
+            let (c, want) = case(sig.name, &mut dir);
+            run_cpu(&reg, &dir, op, &c.slots, &c.params, t).unwrap_or_else(|e| panic!("{}: {e}", sig.name));
+            let got = written_facts(sig, &dir, &c.slots).unwrap();
+            let mut want = want;
+            want.sort();
+            assert_eq!(got[0], want, "{} at {t:?} wrote the right facts", sig.name);
+            match &first {
+                None => first = Some(got),
+                Some(f) => assert_eq!(&got, f, "{}: the same facts at every tiling and order", sig.name),
+            }
+        }
+    }
+}
+
+/// E1: a second writer, a writer beside a reader, and a write of a frozen block each refuse the start, naming
+/// the operation and what holds the block, and leave nothing pinned.
+#[test]
+fn a_conflict_refuses_the_start_and_leaves_nothing_pinned() {
+    let (sig, twin) = shapes().remove(0);
+    let mut reg = Registry::default();
+    let op = reg.declare(sig).unwrap();
+    reg.register_reference(Version::twin(op, "twin", twin, sig.shape)).unwrap();
+    let mut dir = Directory::default();
+    let (c, _) = case("square", &mut dir);
+    let (input, out) = (c.slots[0], c.slots[1]);
+    let ob = dir.block(out).unwrap();
+
+    let other = pin_block(&ob, "consolidate", true).unwrap();
+    let e = run_cpu(&reg, &dir, op, &c.slots, &[], Tiling::WHOLE).unwrap_err();
+    assert!(e.starts_with(&format!("square could not start: slot 1 ({out})")) && e.contains("a CPU write by consolidate"), "{e}");
+    // Slot 0's read pin was taken, then let go.
+    assert_eq!(whole(&dir.block(input).unwrap()).region().cpu_reads(), 0, "slot 0 was left unpinned");
+    drop(other);
+
+    let reader = pin_block(&ob, "step", false).unwrap();
+    let e = run_cpu(&reg, &dir, op, &c.slots, &[], Tiling::WHOLE).unwrap_err();
+    assert!(e.contains("a CPU write by square while a CPU read by step"), "{e}");
+    drop(reader);
+
+    let e = run_cpu(&reg, &dir, op, &[input, input], &[], Tiling::WHOLE).unwrap_err();
+    assert!(e.contains("slot 1") && e.contains("frozen block"), "a write of a frozen block: {e}");
+
+    let o2 = dir.make(kind::FACTS, 1 << 16);
+    let e = run_cpu(&reg, &dir, op, &[o2, o2], &[], Tiling::WHOLE).unwrap_err();
+    assert!(e.contains("slot 1") && e.contains("a CPU read by square"), "one operation does not read and write one block: {e}");
+
+    run_cpu(&reg, &dir, op, &c.slots, &[], Tiling::WHOLE).expect("nothing is left pinned by the refused starts");
+}
+
+/// A slot takes the kind of block its signature names; the params are the declared size.
+#[test]
+fn a_slot_takes_its_kind_of_block_and_the_params_their_size() {
+    let (sig, twin) = shapes().remove(0);
+    let mut reg = Registry::default();
+    let op = reg.declare(sig).unwrap();
+    reg.register_reference(Version::twin(op, "twin", twin, sig.shape)).unwrap();
+    let mut dir = Directory::default();
+    let (c, _) = case("square", &mut dir);
+    let atoms = dir.make(kind::ATOMS, 64);
+    let e = run_cpu(&reg, &dir, op, &[c.slots[0], atoms], &[], Tiling::WHOLE).unwrap_err();
+    assert!(e.contains("slot 1 (out) takes a block of kind"), "{e}");
+    let e = run_cpu(&reg, &dir, op, &c.slots, &[0u8; 3], Tiling::WHOLE).unwrap_err();
+    assert!(e.contains("3 bytes of params for NoParams (0)"), "{e}");
+}
+
+/// Operations §2: a block refers only to a frozen block; reading a block read-pins what it refers to, transitively,
+/// and its launch's descriptor table gives each of them by id, where it lies; the pins go with the launch.
+#[test]
+fn references_are_to_frozen_blocks_and_reading_one_pins_what_it_refers_to() {
+    let mut dir = Directory::default();
+    let a = values_block(&mut dir, &[1, 2, 3]);
+    let open = dir.make(kind::FACTS, 64);
+    let b = dir.make(kind::FACTS, 64);
+    let e = dir.refer(b, open).unwrap_err();
+    assert!(e.contains("not frozen"), "{e}");
+    dir.refer(b, a).unwrap();
+    dir.freeze(b).unwrap();
+    let c = dir.make(kind::FACTS, 64);
+    dir.refer(c, b).unwrap();
+    let e = dir.refer(b, a).unwrap_err();
+    assert!(e.contains("a block frozen"), "a frozen block's references are fixed: {e}");
+
+    let ab = dir.block(a).unwrap();
+    {
+        let l = dir.read("probe", &[c]).unwrap();
+        let t = l.table();
+        assert_eq!(t.rows().iter().map(|d| d.id).collect::<Vec<_>>(), vec![a.0, b.0, c.0], "the table: c and what it reaches");
+        assert_eq!(samples::vals(t.block(a.0).unwrap()), &[1, 2, 3], "a reached block read by id, in place");
+        assert_eq!(rerail_blocks::gens::refs(t.block(c.0).unwrap()), &[b.0], "c's reference table names b");
+        assert_eq!(whole(&ab).region().cpu_reads(), 1, "reading c read-pinned a, which b refers to");
+    }
+    assert_eq!(whole(&ab).region().cpu_reads(), 0, "the launch's pins went with it");
+}
+
+/// D1: a 31st slot is refused where the operation is declared.
+#[test]
+fn a_thirty_first_slot_is_refused() {
+    let slots: &'static [SlotSpec] = Box::leak(vec![slot("s", R, kind::FACTS); MAX_SLOTS + 1].into_boxed_slice());
+    let s: &'static Signature = Box::leak(Box::new(Signature {
+        name: "wide",
+        slots,
+        params: NONE_P,
+        shape: Box::leak(vec![lanes("map", Found::Fixed, Across::Nothing, Output::ByIndex, &[])].into_boxed_slice()),
+        independent: Independence::Not("a test"),
+        facts: values,
+    }));
+    let e = Registry::default().declare(s).unwrap_err();
+    assert!(e.contains("31 slots; an operation binds at most 30"), "{e}");
+}
+
+/// A broken square: the cube.
+static CUBE: &[TwinPhase] = &[TwinPhase { name: "map", items: SQUARE[0].items, run: cube_tile, again: None }];
+
+fn cube_tile(c: &mut rerail_delta_twins::Ctx<'_, '_, '_>, t: rerail_delta_twins::Tile) {
+    let ([input], [out]) = c.views([0], [1]);
+    let src = samples::vals(input).to_vec();
+    let dst = samples::vals_mut(out, src.len());
+    for i in t.items() {
+        dst[i] = src[i] * src[i] * src[i];
+    }
+}
+
+/// E3 and Operations §3: the twin is the one reference, registered first; another version is registered only with
+/// a check against it that found the same facts, at the tilings the check ran.
+#[test]
+fn a_version_is_registered_only_once_checked_against_the_reference() {
+    let (sig, twin) = shapes().remove(0);
+    let mut reg = Registry::default();
+    let op = reg.declare(sig).unwrap();
+    let ukl = Version { imp: Impl::Ukl { source: "", entry: "square" }, status: Status::Candidate, devices: Devices::METAL, ..Version::twin(op, "square ukl", twin, sig.shape) };
+    assert!(reg.register_reference(ukl).unwrap_err().contains("not the twin"));
+    reg.register_reference(Version::twin(op, "twin", twin, sig.shape)).unwrap();
+    assert!(reg.register_reference(Version::twin(op, "twin 2", twin, sig.shape)).unwrap_err().contains("a second reference"));
+
+    let case = |dir: &mut Directory| case("square", dir).0;
+    let tilings = [Tiling::WHOLE, Tiling { tile: 7, seed: 5 }];
+    let e = reg.check(&ukl, &case, &tilings).err().unwrap();
+    assert!(e.contains("not a twin"), "the CPU checks twins: {e}");
+    let cube = Version { status: Status::Candidate, ..Version::twin(op, "cube", CUBE, sig.shape) };
+    let e = reg.check(&cube, &case, &tilings).err().unwrap();
+    assert!(e.contains("wrote other facts than the reference"), "{e}");
+
+    let tiled = Version { status: Status::Default, ..Version::twin(op, "square, tiled", twin, sig.shape) };
+    let checked = reg.check(&tiled, &case, &tilings).unwrap();
+    let other = Version { name: "unchecked", ..tiled };
+    assert!(reg.register(other, reg.check(&tiled, &case, &tilings).unwrap()).unwrap_err().contains("not the version checked"));
+    reg.register(tiled, checked).unwrap();
+    assert_eq!(reg.versions(op).len(), 2);
+    assert!(reg.declare(sig).unwrap_err().contains("declared twice"));
+}
+
+/// A twin's phases are its signature's, and a phase that runs again bounds its turns.
+#[test]
+fn a_twin_fits_its_signature() {
+    let shapes = shapes();
+    let (square, _) = shapes[0];
+    let (_, sort) = shapes[2];
+    let mut reg = Registry::default();
+    let op = reg.declare(square).unwrap();
+    let e = reg.register_reference(Version::twin(op, "sort as square", sort, square.shape)).unwrap_err();
+    assert!(e.contains("the twin's phases (chunks, passes, settle) are not the signature's (map)"), "{e}");
+    let unbounded = sig("unbounded", vec![slot("in", R, kind::FACTS)], vec![lanes("chunks", Found::Fixed, Across::Nothing, Output::ByIndex, &[]), lanes("passes", Found::Indirect, Across::Ordered, Output::ByIndex, &[]), lanes("settle", Found::Fixed, Across::Nothing, Output::ByIndex, &[])], values);
+    let op = reg.declare(unbounded).unwrap();
+    let e = reg.register_reference(Version::twin(op, "sort", sort, unbounded.shape)).unwrap_err();
+    assert!(e.contains("phase passes runs again, and its shape bounds no turns"), "{e}");
+}
+
+/// Params are declared once in Rust; UKL's declaration comes from that one.
+#[test]
+fn params_give_ukl_their_layout() {
+    let u = ParamsLayout::of::<rerail_delta_twins::trace::MergeP>().ukl();
+    assert!(u.contains("typedef struct MergeP {\n    uint32_t count;\n    uint32_t below;\n} MergeP;"), "{u}");
+    assert!(u.contains("UKL_OFFSETOF(MergeP, below) == 4"), "{u}");
+    assert_eq!(Mode::Read.ukl(), "ROBUFFER");
+    assert_eq!(Mode::Scratch.ukl(), "RWBUFFER");
+}

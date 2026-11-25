@@ -230,6 +230,11 @@ impl Region {
         }
     }
 
+    /// How many CPU reads of it are open now (E1's tests: what a refused start left pinned).
+    pub fn cpu_reads(&self) -> usize {
+        self.lock().reads.len()
+    }
+
     /// The domain whose copy holds its latest version (0: the host's): the one a write may begin in without moving it.
     pub fn owner(&self) -> u32 {
         self.lock().owner(self.top().version.load(Acquire))
@@ -527,6 +532,38 @@ impl BlockPin {
         }
         // SAFETY: a write pin is the block's only use while it lives (`pin_block`).
         Some(unsafe { std::slice::from_raw_parts_mut(self.r.bytes(), self.r.len) })
+    }
+
+    /// Where the block lies in the host's memory: a CPU descriptor table's address of it (`gens::Desc`).
+    pub fn addr(&self) -> usize {
+        self.r.bytes() as usize
+    }
+
+    /// The bytes it pins: the block's whole reservation.
+    pub fn len(&self) -> usize {
+        self.r.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.r.len == 0
+    }
+
+    /// The block's version: its writes so far.
+    pub fn version(&self) -> u64 {
+        self.r.version()
+    }
+
+    /// `n` atomic words at byte `at` of a block pinned to write (`None` for a read pin): claims and cells that many
+    /// writers fill at once through one pin (host threads, or a GPU's), as a kernel writes them (P§12 item 5).
+    pub fn atomics<A: crate::gens::Atomic>(&self, at: usize, n: usize) -> Option<&[A]> {
+        if !self.write {
+            return None;
+        }
+        assert!(at + n * size_of::<A>() <= self.r.len, "atomics past the block");
+        // SAFETY: a write pin is the block's only use; atomics are written through shared references by design.
+        let p = unsafe { self.r.bytes().add(at) };
+        assert!((p as usize).is_multiple_of(align_of::<A>()), "atomics at {at}, not aligned");
+        Some(unsafe { std::slice::from_raw_parts(p as *const A, n) })
     }
 }
 

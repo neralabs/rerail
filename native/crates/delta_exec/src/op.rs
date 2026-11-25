@@ -6,20 +6,27 @@
 //! shape as phases (Operations §4). What it writes is a function of its params and the bytes of its slots, and of
 //! nothing else.
 //!
+//! Each operation's shape is a list of phases, each placed on the six axes of Operations §4 (how work is found, an
+//! item's unit, what is shared inside it, how units relate, where output goes, its bounds): there is no enum of
+//! shapes. The signature also says the axis its items are independent along, and how its written slots' facts are
+//! read by meaning.
+//!
 //! Each operation has registered **versions** (`Version`, Operations §3, E3), chosen by their metadata. Its Rust
-//! twin (`rerail_delta_twins`: a function of its pinned blocks and params alone, no state outliving a call) is its
-//! reference: registered first, and the one every other version is checked against.
+//! twin (`rerail_delta_twins`: its phases, each a function of its pinned blocks, its descriptor table and its params)
+//! is its reference: registered first (`register_reference`), and the one every other version is checked against. A
+//! version is registered only after `Registry::check` has run it against the reference and found the same facts.
 //!
 //! **Starting** an operation pins every slot from its signature through the blocks' own regions (0491's checks,
-//! `rerail_blocks::region::pin_block`), naming the operation: a second writer, a writer beside a reader, or a write of
-//! a frozen block refuses the start, and nothing stays pinned (E1). The CPU executor (`run_cpu`) then runs the twin
-//! on the pinned bytes, in place. The registry and the executor are host Rust, which may keep track of the operation
-//! graph; the computation is the twin's alone.
+//! `rerail_blocks::region::pin_block`), naming the operation, and read-pins every block a slot refers to (a referenced
+//! generation, `dir`): a second writer, a writer beside a reader, or a write of a frozen block refuses the start, and
+//! nothing stays pinned (E1). The CPU's descriptor table of the reached blocks is written for the launch (E2). The
+//! CPU executor (`run_cpu`) then runs the twin's phases on the pinned bytes, in place, each phase cut into tiles of
+//! its items, run in any order (`Tiling`). The registry and the executor are host Rust, handles only; the computation
+//! is the twin's alone.
 
-use rerail_blocks::Block;
-use rerail_blocks::region::{BlockPin, pin_block};
-use rerail_delta_twins::{Field, Params, Slot, TwinFn};
-use std::sync::Arc;
+use crate::dir::{BlockId, Directory};
+use rerail_blocks::gens::Table;
+use rerail_delta_twins::{Ctx, Field, Params, Slot, Tile, Twin};
 
 /// The most slots an operation binds: Metal's argument table has 31 entries, one of them the params' (D1).
 pub const MAX_SLOTS: usize = 30;
@@ -57,30 +64,135 @@ pub struct SlotSpec {
     pub kind: u32,
 }
 
-/// A work shape of Operations §4, by its number there.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Shape(pub u8);
+// ---- Work shapes (Operations §4): no enum of shapes; a shape is a list of phases, each placed on six axes ---------
 
-impl Shape {
-    pub const MAP: Shape = Shape(1);
-    pub const UNEVEN_SEGMENTS: Shape = Shape(3);
-    pub const REDUCE: Shape = Shape(7);
-    pub const HISTOGRAM: Shape = Shape(8);
-    pub const SCAN: Shape = Shape(10);
-    pub const EMIT: Shape = Shape(11);
-    pub const SORT: Shape = Shape(14);
-    pub const RUNS: Shape = Shape(15);
-    pub const MERGE: Shape = Shape(16);
-    pub const HASH_BUILD: Shape = Shape(18);
-    pub const CODEC: Shape = Shape(22);
-    pub const WORK_QUEUE: Shape = Shape(32);
+/// How a phase's work is found.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Found {
+    /// A fixed count.
+    Fixed,
+    /// A count made on the device by an earlier phase (an indirect size).
+    Indirect,
+    JobTable,
+    /// Spawned by an item.
+    Spawned,
+    /// Pushed onto a queue.
+    Queue,
+    /// Taken from a cursor.
+    Cursor,
+    /// Requested by a reader.
+    Requested,
 }
 
-/// One phase of an operation's work, with its shape.
+/// An item's unit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Unit {
+    Lane,
+    SimdGroup,
+    /// A threadgroup: a tile.
+    Threadgroup,
+    SimdGroups,
+    /// A whole partition: a file, a unit, a piece, a component.
+    Partition,
+}
+
+/// What is shared inside a unit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Inside {
+    Nothing,
+    /// SIMD-group operations: ballot, shuffle, scan.
+    SimdOps,
+    /// Group memory and barriers.
+    GroupMemory,
+    MatrixFragments,
+    /// A thread's stacks.
+    Stacks,
+}
+
+/// How units relate.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Across {
+    Nothing,
+    /// An associative combine.
+    Combine,
+    /// Phases in order.
+    Ordered,
+    DependencyCount,
+    /// Rounds to a fixpoint.
+    Rounds,
+    /// Speculation and a check.
+    Speculation,
+    /// Requests memoized.
+    Memoized,
+}
+
+/// Where output goes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Output {
+    ByIndex,
+    /// By a scan of counts.
+    ByScan,
+    /// By an atomic claim.
+    Claim,
+    /// In place: CAS, OR, max.
+    InPlace,
+    WriterState,
+    Sketch,
+}
+
+/// What a phase past its output capacity does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Over {
+    Refuse,
+    Grow,
+    Rerun,
+}
+
+/// A bound on a phase.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Bound {
+    /// Steps an item.
+    Steps(u32),
+    /// Turns of a phase that runs again (a queue's, a fixpoint's rounds, a merge's passes): past it, a hard failure.
+    Turns(u32),
+    /// The launch budget (0540, 0601).
+    LaunchBudget,
+    Capacity(Over),
+    StackDepth(u32),
+    /// A sample's size.
+    Sample(u32),
+}
+
+/// One phase of an operation's work, placed on the six axes (Operations §4), with its bounds.
 #[derive(Clone, Copy, Debug)]
 pub struct Phase {
     pub name: &'static str,
-    pub shape: Shape,
+    pub found: Found,
+    pub unit: Unit,
+    pub inside: Inside,
+    pub across: Across,
+    pub output: Output,
+    pub bounds: &'static [Bound],
+}
+
+impl Phase {
+    /// A phase of lanes, each an item, sharing nothing: placed on the other axes by the caller.
+    pub const fn lanes(name: &'static str, found: Found, across: Across, output: Output, bounds: &'static [Bound]) -> Phase {
+        Phase { name, found, unit: Unit::Lane, inside: Inside::Nothing, across, output, bounds }
+    }
+
+    /// The most turns it runs: its `Turns` bound (one turn without one).
+    pub fn turns(&self) -> u32 {
+        self.bounds.iter().find_map(|b| if let Bound::Turns(n) = b { Some(*n) } else { None }).unwrap_or(1)
+    }
+}
+
+/// The axis an operation's items are independent along, so the executor may batch, cut into morsels, hand off and
+/// split it (Operations §4, family G), or why they are not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Independence {
+    Along(&'static str),
+    Not(&'static str),
 }
 
 /// A params struct's layout, from its one declaration (`params!`).
@@ -111,12 +223,19 @@ impl ParamsLayout {
     }
 }
 
-/// What an operation is: its slots, params and shape. Declared once, as a constant; `Registry::declare` takes it.
+/// The facts a written slot holds, read by meaning (F1): rows compared as a set, so two versions agree when they
+/// wrote the same facts, whatever their order or ids. Given the slot's index, its bytes and the launch's table.
+pub type FactsFn = fn(&Table<'_>, usize, &[u8]) -> Vec<Vec<i64>>;
+
+/// What an operation is: its slots, params, shape, the axis its items are independent along, and how its written
+/// slots' facts are read. Declared once, as a constant; `Registry::declare` takes it.
 pub struct Signature {
     pub name: &'static str,
     pub slots: &'static [SlotSpec],
     pub params: ParamsLayout,
     pub shape: &'static [Phase],
+    pub independent: Independence,
+    pub facts: FactsFn,
 }
 
 impl Signature {
@@ -126,9 +245,11 @@ impl Signature {
         slots: &'static [SlotSpec],
         params: ParamsLayout,
         shape: &'static [Phase],
+        independent: Independence,
+        facts: FactsFn,
     ) -> Signature {
         assert!(slots.len() <= MAX_SLOTS, "an operation binds at most 30 slots");
-        Signature { name, slots, params, shape }
+        Signature { name, slots, params, shape, independent, facts }
     }
 }
 
@@ -140,7 +261,7 @@ pub struct OpId(u32);
 #[derive(Clone, Copy)]
 pub enum Impl {
     /// The Rust twin (`rerail_delta_twins`): the reference every other version is checked against.
-    Twin(TwinFn),
+    Twin(Twin),
     Ukl { source: &'static str, entry: &'static str },
     /// Compiled ahead and kept per machine (0395), found by its key.
     Compiled(ArtifactKey),
@@ -200,19 +321,20 @@ pub struct Version {
     pub imp: Impl,
     pub devices: Devices,
     pub needs: Features,
-    pub shape: &'static [Shape],
+    /// The shape it runs the work as: its phases on the six axes.
+    pub shape: &'static [Phase],
     pub limits: Limits,
     pub cost: CostKey,
     pub status: Status,
 }
 
 impl Version {
-    /// An operation's twin as its reference version.
-    pub fn twin(op: OpId, name: &'static str, f: TwinFn, shape: &'static [Shape]) -> Version {
+    /// An operation's twin as its reference version, running the work as the signature's shape.
+    pub fn twin(op: OpId, name: &'static str, twin: Twin, shape: &'static [Phase]) -> Version {
         Version {
             op,
             name,
-            imp: Impl::Twin(f),
+            imp: Impl::Twin(twin),
             devices: Devices::CPU,
             needs: Features::default(),
             shape,
@@ -223,6 +345,31 @@ impl Version {
     }
 }
 
+/// How the executor cuts a launch's phases: items a tile (0: one tile of every item), and the order the tiles run in
+/// (a seed shuffles them; 0 runs them in order). An operation's result is correct at every tiling and order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Tiling {
+    pub tile: u32,
+    pub seed: u64,
+}
+
+impl Tiling {
+    pub const WHOLE: Tiling = Tiling { tile: 0, seed: 0 };
+}
+
+/// A launch to run: the blocks of its slots, in its signature's order, and its params' bytes.
+pub struct Case {
+    pub slots: Vec<BlockId>,
+    pub params: Vec<u8>,
+}
+
+/// A version's check against its operation's reference: made only by `Registry::check`, and the only way a version
+/// other than the reference is registered.
+pub struct Checked {
+    op: OpId,
+    name: &'static str,
+}
+
 /// The operations and their versions.
 #[derive(Default)]
 pub struct Registry {
@@ -231,13 +378,17 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// An operation, by its signature. Refused past `MAX_SLOTS` slots, or under a name already declared.
+    /// An operation, by its signature. Refused past `MAX_SLOTS` slots, under a name already declared, or with a phase
+    /// that names no bound on its turns.
     pub fn declare(&mut self, sig: &'static Signature) -> Result<OpId, String> {
         if sig.slots.len() > MAX_SLOTS {
             return Err(format!("{}: {} slots; an operation binds at most {MAX_SLOTS}", sig.name, sig.slots.len()));
         }
         if self.ops.iter().any(|s| s.name == sig.name) {
             return Err(format!("{}: declared twice", sig.name));
+        }
+        if sig.shape.is_empty() {
+            return Err(format!("{}: an operation's shape has at least one phase", sig.name));
         }
         self.ops.push(sig);
         Ok(OpId(self.ops.len() as u32 - 1))
@@ -247,230 +398,187 @@ impl Registry {
         self.ops[op.0 as usize]
     }
 
-    /// A version. An operation's first is its reference, and only a twin is a reference; a version's name is its
-    /// operation's once.
-    pub fn register(&mut self, v: Version) -> Result<(), String> {
-        let sig = self.ops.get(v.op.0 as usize).ok_or("a version of an operation not declared")?;
-        let mine = self.versions(v.op);
-        if mine.iter().any(|w| w.name == v.name) {
+    /// Whether a twin's phases are its signature's: the same names, in order; a phase that runs again has a bound on
+    /// its turns.
+    fn fits(sig: &Signature, twin: Twin) -> Result<(), String> {
+        let names = |p: &mut dyn Iterator<Item = &'static str>| p.collect::<Vec<_>>().join(", ");
+        if sig.shape.len() != twin.len() || sig.shape.iter().zip(twin).any(|(p, t)| p.name != t.name) {
+            return Err(format!(
+                "{}: the twin's phases ({}) are not the signature's ({})",
+                sig.name,
+                names(&mut twin.iter().map(|t| t.name)),
+                names(&mut sig.shape.iter().map(|p| p.name))
+            ));
+        }
+        if let Some((p, _)) = sig.shape.iter().zip(twin).find(|(p, t)| t.again.is_some() && p.turns() < 2) {
+            return Err(format!("{}: phase {} runs again, and its shape bounds no turns", sig.name, p.name));
+        }
+        Ok(())
+    }
+
+    /// An operation's reference: its twin, registered first and once.
+    pub fn register_reference(&mut self, v: Version) -> Result<(), String> {
+        let sig = *self.ops.get(v.op.0 as usize).ok_or("a version of an operation not declared")?;
+        let Impl::Twin(twin) = v.imp else {
+            return Err(format!("{}: {} is a reference but not the twin", sig.name, v.name));
+        };
+        if v.status != Status::Reference {
+            return Err(format!("{}: {} is registered as a reference with status {:?}", sig.name, v.name, v.status));
+        }
+        if !self.versions(v.op).is_empty() {
+            return Err(format!("{}: a second reference ({})", sig.name, v.name));
+        }
+        Self::fits(sig, twin)?;
+        self.versions.push(v);
+        Ok(())
+    }
+
+    /// A version other than the reference, once a test has run it against the reference and found the same facts
+    /// (`check`): `checked` names it.
+    pub fn register(&mut self, v: Version, checked: Checked) -> Result<(), String> {
+        let sig = *self.ops.get(v.op.0 as usize).ok_or("a version of an operation not declared")?;
+        if checked.op != v.op || checked.name != v.name {
+            return Err(format!("{}: {} was not the version checked ({})", sig.name, v.name, checked.name));
+        }
+        if v.status == Status::Reference {
+            return Err(format!("{}: a second reference ({})", sig.name, v.name));
+        }
+        if self.versions(v.op).iter().any(|w| w.name == v.name) {
             return Err(format!("{}: version {} registered twice", sig.name, v.name));
         }
-        let twin = matches!(v.imp, Impl::Twin(_));
-        match (mine.iter().any(|w| w.status == Status::Reference), v.status == Status::Reference) {
-            (false, false) => Err(format!("{}: {} before the operation's reference (its twin)", sig.name, v.name)),
-            (true, true) => Err(format!("{}: a second reference ({})", sig.name, v.name)),
-            (_, true) if !twin => Err(format!("{}: {} is a reference but not the twin", sig.name, v.name)),
-            _ => {
-                self.versions.push(v);
-                Ok(())
-            }
-        }
+        self.versions.push(v);
+        Ok(())
     }
 
     pub fn versions(&self, op: OpId) -> Vec<&Version> {
         self.versions.iter().filter(|v| v.op == op).collect()
     }
 
-    /// The twin the CPU executor runs: the default when a twin is, else the reference.
-    fn cpu_twin(&self, op: OpId) -> Option<TwinFn> {
-        let twin = |status| {
-            self.versions.iter().find_map(|v| match v.imp {
-                Impl::Twin(f) if v.op == op && v.status == status => Some(f),
-                _ => None,
-            })
-        };
+    fn reference(&self, op: OpId) -> Option<&Version> {
+        self.versions.iter().find(|v| v.op == op && v.status == Status::Reference)
+    }
+
+    /// The version the CPU executor runs: a default twin when one is registered, else the reference.
+    fn cpu_version(&self, op: OpId) -> Option<&Version> {
+        let twin = |status| self.versions.iter().find(|v| v.op == op && v.status == status && matches!(v.imp, Impl::Twin(_)));
         twin(Status::Default).or_else(|| twin(Status::Reference))
+    }
+
+    /// Runs `candidate` and the reference on the launches `case` makes (each in a directory of its own), at each of
+    /// `tilings`, and compares the facts every written slot holds after, by meaning (F1). The `Checked` it gives is
+    /// what `register` takes. A version the CPU cannot run (UKL, compiled) cannot be checked here yet.
+    pub fn check(&self, candidate: &Version, case: &dyn Fn(&mut Directory) -> Case, tilings: &[Tiling]) -> Result<Checked, String> {
+        let sig = *self.ops.get(candidate.op.0 as usize).ok_or("a version of an operation not declared")?;
+        let reference = self.reference(candidate.op).ok_or_else(|| format!("{}: no reference to check against", sig.name))?;
+        let Impl::Twin(twin) = candidate.imp else {
+            return Err(format!("{}: {} is not a twin, and the CPU runs only twins", sig.name, candidate.name));
+        };
+        Self::fits(sig, twin)?;
+        let run = |v: &Version, tiling: Tiling| -> Result<Vec<Vec<Vec<i64>>>, String> {
+            let mut dir = Directory::default();
+            let c = case(&mut dir);
+            execute(sig, v, &dir, &c.slots, &c.params, tiling)?;
+            written_facts(sig, &dir, &c.slots)
+        };
+        let want = run(reference, Tiling::WHOLE)?;
+        for &t in tilings {
+            let got = run(candidate, t)?;
+            if got != want {
+                return Err(format!("{}: {} at {t:?} wrote other facts than the reference", sig.name, candidate.name));
+            }
+        }
+        Ok(Checked { op: candidate.op, name: candidate.name })
     }
 }
 
-/// Runs `op` on the CPU: its twin on `blocks`, one a slot in its signature's order, with `params`' bytes.
+/// The facts each written slot of a launch holds, each slot's rows sorted (F1: compared by meaning).
+pub fn written_facts(sig: &Signature, dir: &Directory, slots: &[BlockId]) -> Result<Vec<Vec<Vec<i64>>>, String> {
+    let mut out = Vec::new();
+    for (i, (spec, &id)) in sig.slots.iter().zip(slots).enumerate() {
+        if !matches!(spec.mode, Mode::Write | Mode::ReadWrite) {
+            continue;
+        }
+        let mut l = dir.launch("facts", &[(id, false)])?;
+        let (pins, table) = l.parts();
+        let mut rows = (sig.facts)(&table, i, pins[0].bytes());
+        rows.sort();
+        out.push(rows);
+    }
+    Ok(out)
+}
+
+/// Runs `op` on the CPU: its default twin, else its reference, on the blocks `slots` name, with `params`' bytes, its
+/// phases cut by `tiling`.
 ///
-/// Every slot is pinned first, by its mode, naming the operation. If any cannot be (a second writer, a writer beside
-/// a reader, a write of a frozen block, the wrong kind of block), the operation does not start, every pin taken so far
-/// is let go, and the `Err` names the operation, the slot and what holds its block.
-pub fn run_cpu(reg: &Registry, op: OpId, blocks: &[&Arc<Block>], params: &[u8]) -> Result<(), String> {
+/// Every slot is pinned first, by its mode, naming the operation, and every block a slot refers to is pinned to read;
+/// the CPU's descriptor table of those is written (`Directory::launch`). If any cannot be (a second writer, a writer
+/// beside a reader, a write of a frozen block, the wrong kind of block), the operation does not start, every pin
+/// taken so far is let go, and the `Err` names the operation, the slot and what holds its block.
+pub fn run_cpu(reg: &Registry, dir: &Directory, op: OpId, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
     let sig = reg.signature(op);
-    let twin = reg.cpu_twin(op).ok_or_else(|| format!("{}: no twin registered", sig.name))?;
-    if blocks.len() != sig.slots.len() {
-        return Err(format!("{}: {} blocks for {} slots", sig.name, blocks.len(), sig.slots.len()));
+    let v = reg.cpu_version(op).ok_or_else(|| format!("{}: no twin registered", sig.name))?;
+    execute(sig, v, dir, slots, params, tiling)
+}
+
+/// Item `i` of a shuffle of `0..n` by `seed` (Fisher–Yates, splitmix64): the order tiles run in.
+fn shuffled(n: usize, seed: u64) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).collect();
+    let mut z = seed;
+    for i in (1..n).rev() {
+        z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let j = (rerail_blocks::layer::mix(z) % (i as u64 + 1)) as usize;
+        order.swap(i, j);
+    }
+    order
+}
+
+fn execute(sig: &Signature, v: &Version, dir: &Directory, slots: &[BlockId], params: &[u8], tiling: Tiling) -> Result<(), String> {
+    let Impl::Twin(twin) = v.imp else {
+        return Err(format!("{}: {} is not a twin; the CPU executor runs twins", sig.name, v.name));
+    };
+    if slots.len() != sig.slots.len() {
+        return Err(format!("{}: {} blocks for {} slots", sig.name, slots.len(), sig.slots.len()));
     }
     if params.len() != sig.params.size {
         return Err(format!("{}: {} bytes of params for {} ({})", sig.name, params.len(), sig.params.name, sig.params.size));
     }
-    let mut pins: Vec<BlockPin> = Vec::with_capacity(blocks.len());
-    for (i, (b, spec)) in blocks.iter().zip(sig.slots).enumerate() {
+    for (i, (spec, &id)) in sig.slots.iter().zip(slots).enumerate() {
+        let b = dir.block(id).ok_or_else(|| format!("{} could not start: slot {i} ({}): {id} is held by nothing", sig.name, spec.name))?;
         let kind = b.header().kind;
         if kind != spec.kind {
             return Err(format!("{} could not start: slot {i} ({}) takes a block of kind {}, given one of kind {kind}", sig.name, spec.name, spec.kind));
         }
-        let pin = pin_block(b, sig.name, spec.mode.writes())
-            .map_err(|e| format!("{} could not start: slot {i} ({}): {e}", sig.name, spec.name))?;
-        pins.push(pin);
     }
-    let mut slots: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
-    twin(&mut slots, params);
+    let modes: Vec<(BlockId, bool)> = slots.iter().zip(sig.slots).map(|(&id, s)| (id, s.mode.writes())).collect();
+    let mut launch = dir.launch(sig.name, &modes)?;
+    let (pins, table) = launch.parts();
+    let mut slot_views: Vec<Slot<'_>> = pins.iter_mut().map(|p| if p.writes() { Slot::Write(p) } else { Slot::Read(p) }).collect();
+    let mut ctx = Ctx { slots: &mut slot_views, table: &table, params };
+    for (phase, tp) in sig.shape.iter().zip(twin) {
+        let mut turn = 0;
+        loop {
+            turn += 1;
+            let n = (tp.items)(&ctx) as usize;
+            let t = if tiling.tile == 0 { n.max(1) } else { tiling.tile as usize };
+            let tiles = n.div_ceil(t);
+            let order = if tiling.seed == 0 { (0..tiles).collect() } else { shuffled(tiles, tiling.seed ^ turn as u64) };
+            for k in order {
+                let lo = k * t;
+                (tp.run)(&mut ctx, Tile { lo: lo as u32, hi: (lo + t).min(n) as u32 });
+            }
+            match tp.again {
+                Some(again) if again(&mut ctx) => {
+                    if turn >= phase.turns() {
+                        return Err(format!("{}: phase {} ran past its bound of {} turns", sig.name, phase.name, phase.turns()));
+                    }
+                }
+                _ => break,
+            }
+        }
+    }
     Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use rerail_blocks::block::kind;
-    use rerail_blocks::region::{pin_block, whole};
-    use rerail_delta_twins::{Params, Scalar};
-
-    rerail_delta_twins::params! {
-        pub struct SumP {
-            /// Where the values start in slot 0's block, and where the sum goes in slot 1's.
-            pub at: u64,
-            pub n: u32,
-            pub pad: u32,
-        }
-    }
-
-    /// A test twin: the sum of `n` u64s at `at` in slot 0, written at `at` in slot 1.
-    fn sum(slots: &mut [Slot<'_>], params: &[u8]) {
-        let p = SumP::read(params);
-        let at = p.at as usize;
-        let src = slots[0].bytes();
-        let total: u64 = (0..p.n as usize).map(|i| u64::read(&src[at + 8 * i..])).sum();
-        total.write(&mut slots[1].bytes_mut().unwrap()[at..]);
-    }
-
-    static SUM: Signature = Signature::new(
-        "sum",
-        &[
-            SlotSpec { name: "values", mode: Mode::Read, kind: kind::FACTS },
-            SlotSpec { name: "total", mode: Mode::Write, kind: kind::FACTS },
-        ],
-        ParamsLayout::of::<SumP>(),
-        &[Phase { name: "reduce", shape: Shape::REDUCE }],
-    );
-
-    fn reg() -> (Registry, OpId) {
-        let mut r = Registry::default();
-        let op = r.declare(&SUM).unwrap();
-        r.register(Version::twin(op, "sum twin", sum, &[Shape::REDUCE])).unwrap();
-        (r, op)
-    }
-
-    fn facts() -> Arc<Block> {
-        Arc::new(Block::anon(kind::FACTS, 1 << 20))
-    }
-
-    fn params() -> Vec<u8> {
-        let mut b = vec![0u8; SumP::SIZE];
-        SumP { at: 4096, n: 4, pad: 0 }.write(&mut b);
-        b
-    }
-
-    fn filled() -> Arc<Block> {
-        let b = facts();
-        let mut w = pin_block(&b, "fill", true).unwrap();
-        for i in 0..4u64 {
-            (i + 1).write(&mut w.bytes_mut().unwrap()[4096 + 8 * i as usize..]);
-        }
-        b
-    }
-
-    fn total(b: &Arc<Block>) -> u64 {
-        u64::read(&pin_block(b, "look", false).unwrap().bytes()[4096..])
-    }
-
-    /// A twin reads only its slots and params: the same blocks give the same facts, run after run; a run's write
-    /// moves its output block's version.
-    #[test]
-    fn an_operation_runs_its_twin_on_its_blocks_in_place() {
-        let (r, op) = reg();
-        let (v, out) = (filled(), facts());
-        run_cpu(&r, op, &[&v, &out], &params()).unwrap();
-        assert_eq!(total(&out), 10);
-        // The block's own region lives while a handle holds it (0491): held here across the run.
-        let held = whole(&out);
-        let ver = held.version();
-        run_cpu(&r, op, &[&v, &out], &params()).unwrap();
-        assert_eq!(total(&out), 10, "the same blocks and params, the same facts");
-        assert_eq!(held.version(), ver + 1);
-    }
-
-    /// E1: a second writer, a writer beside a reader, and a write of a frozen block each refuse the start, naming
-    /// the operation and what holds the block, and leave nothing pinned.
-    #[test]
-    fn a_conflict_refuses_the_start_and_leaves_nothing_pinned() {
-        let (r, op) = reg();
-        let (v, out) = (filled(), facts());
-
-        let other = pin_block(&out, "consolidate", true).unwrap();
-        let e = run_cpu(&r, op, &[&v, &out], &params()).unwrap_err();
-        assert!(e.starts_with("sum could not start: slot 1 (total)") && e.contains("a CPU write by consolidate"), "{e}");
-        // Slot 0's read pin was taken, then let go: a writer of it starts.
-        drop(pin_block(&v, "intern", true).expect("slot 0 was left unpinned"));
-        drop(other);
-
-        let reader = pin_block(&out, "step", false).unwrap();
-        let e = run_cpu(&r, op, &[&v, &out], &params()).unwrap_err();
-        assert!(e.contains("a CPU write by sum while a CPU read by step"), "{e}");
-        drop(reader);
-
-        let e = run_cpu(&r, op, &[&out, &out], &params()).unwrap_err();
-        assert!(e.contains("slot 1 (total)") && e.contains("a CPU read by sum"), "one operation does not read and write one block: {e}");
-
-        let frozen = Block::anon(kind::FACTS, 1 << 20).freeze();
-        let e = run_cpu(&r, op, &[&v, frozen.arc()], &params()).unwrap_err();
-        assert!(e.contains("a CPU write by sum of a frozen block"), "{e}");
-
-        run_cpu(&r, op, &[&v, &out], &params()).expect("nothing is left pinned by the refused starts");
-        assert_eq!(total(&out), 10);
-    }
-
-    /// A slot takes the kind of block its signature names; the params are the declared size.
-    #[test]
-    fn a_slot_takes_its_kind_of_block_and_the_params_their_size() {
-        let (r, op) = reg();
-        let atoms = Arc::new(Block::anon(kind::ATOMS, 1 << 20));
-        let e = run_cpu(&r, op, &[&filled(), &atoms], &params()).unwrap_err();
-        assert!(e.contains("slot 1 (total) takes a block of kind"), "{e}");
-        let e = run_cpu(&r, op, &[&filled(), &facts()], &[0u8; 3]).unwrap_err();
-        assert!(e.contains("3 bytes of params for SumP (16)"), "{e}");
-    }
-
-    /// D1: a 31st slot is refused where the operation is declared.
-    #[test]
-    fn a_thirty_first_slot_is_refused() {
-        let slots: &'static [SlotSpec] =
-            Box::leak(vec![SlotSpec { name: "s", mode: Mode::Read, kind: kind::FACTS }; MAX_SLOTS + 1].into_boxed_slice());
-        let sig: &'static Signature = Box::leak(Box::new(Signature {
-            name: "wide",
-            slots,
-            params: ParamsLayout::of::<rerail_delta_twins::NoParams>(),
-            shape: &[],
-        }));
-        let e = Registry::default().declare(sig).unwrap_err();
-        assert!(e.contains("31 slots; an operation binds at most 30"), "{e}");
-    }
-
-    /// E3: the twin is registered first, as the one reference; any other version comes after it.
-    #[test]
-    fn the_twin_is_the_reference_and_comes_first() {
-        let mut r = Registry::default();
-        let op = r.declare(&SUM).unwrap();
-        let ukl = Version { imp: Impl::Ukl { source: "", entry: "sum" }, status: Status::Candidate, devices: Devices::METAL, ..Version::twin(op, "sum ukl", sum, &[Shape::REDUCE]) };
-        assert!(r.register(ukl).unwrap_err().contains("before the operation's reference"));
-        assert!(r.register(Version { status: Status::Reference, ..ukl }).unwrap_err().contains("not the twin"));
-        r.register(Version::twin(op, "sum twin", sum, &[Shape::REDUCE])).unwrap();
-        assert!(r.register(Version::twin(op, "sum twin 2", sum, &[Shape::REDUCE])).unwrap_err().contains("a second reference"));
-        r.register(ukl).unwrap();
-        assert_eq!(r.versions(op).len(), 2);
-        assert!(r.declare(&SUM).unwrap_err().contains("declared twice"));
-    }
-
-    /// Params are declared once in Rust; UKL's declaration comes from that one.
-    #[test]
-    fn params_give_ukl_their_layout() {
-        let u = ParamsLayout::of::<SumP>().ukl();
-        assert!(u.contains("typedef struct SumP {\n    uint64_t at;\n    uint32_t n;\n    uint32_t pad;\n} SumP;"), "{u}");
-        assert!(u.contains("UKL_OFFSETOF(SumP, n) == 8"), "{u}");
-        assert_eq!(Mode::Read.ukl(), "ROBUFFER");
-        assert_eq!(Mode::Scratch.ukl(), "RWBUFFER");
-    }
-}
+#[path = "op_tests.rs"]
+mod tests;

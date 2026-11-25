@@ -4,11 +4,14 @@
 //!
 //! It holds the pieces that are already the final shape:
 //!
-//! - `op`: operations over blocks (B1): signatures of at most 30 slots, pinned through the blocks' regions when an
-//!   operation starts; the registry of versions, each operation's twin (`rerail_delta_twins`) its reference; the CPU
-//!   executor;
-//! - `trace`: the program trace's operation (B2), `consolidate`, which freezes a run's layer in its trace's block; the
-//!   trace itself, its two states and its layers, is `rerail_blocks::trace`, beside `Relation` and `Bistate`;
+//! - `dir`: the directory (B1): block ids, references between generations (only to frozen blocks, each holding its
+//!   referent), and a launch's pins and descriptor table;
+//! - `op`: operations over blocks (B1): signatures of at most 30 slots, each placed as phases on the six axes; the
+//!   registry of versions, each operation's twin (`rerail_delta_twins`) its reference and every other version
+//!   registered only once checked against it; the CPU executor, which cuts each phase's items into tiles;
+//! - `trace`: the program trace (B2), on the host as handles only: a chain of frozen layer blocks, each written by
+//!   `consolidate` (or rolled up by `merge`) into a block of its own over the one below; its two states and the
+//!   change between them read where the layers lie (`rerail_blocks::layer::Chain`, `Bistate`);
 //! - `sym`: the symbol table, the one program global;
 //! - `tape`: a document's text and its views (`kind`, `field`, `child`, `text`, `value`, `doc`), read where the
 //!   tape lies;
@@ -22,6 +25,7 @@
 //! The milestones toward one boot operation, L1 (the rebuild plan's §4), come after: the operator contract (B3), l0's
 //! tape through the file layer (B4), symbols (B5) and L1 itself (B6).
 
+pub mod dir;
 pub mod k0;
 pub mod kform;
 pub mod op;

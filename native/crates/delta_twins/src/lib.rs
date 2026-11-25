@@ -4,21 +4,33 @@
 //! twin is that function in plain Rust, registered as the operation's reference version, against which every other
 //! version (UKL, compiled) is checked.
 //!
-//! **The rules.** A twin is `TwinFn`: its slots, pinned by the executor from its signature, and its params' bytes.
-//! It reads only those, and writes only its write slots' blocks. Rust data structures inside a call are allowed for
+//! **The rules.** A twin is a list of phases (`Twin`), as its operation's shape is (Operations §4). Each phase says
+//! how many items it has (`items`) and runs a tile of them (`run`): the items `lo..hi`, in any order of tiles and at
+//! any tiling the executor picks, so a phase's items must be independent, as the shape says. A phase may run again
+//! (`again`: rounds to a fixpoint, a queue's turns, a merge's passes). Between phases is a sync point: what one phase
+//! leaves for the next lies in the operation's blocks (its scratch and control slots), never in Rust state, as it
+//! would on a GPU.
+//!
+//! A twin reads only its slots, the blocks its descriptor table reaches (`Table`: what its slots refer to, by block
+//! id) and its params, and writes only its write slots. Rust data structures inside one tile's call are allowed for
 //! now (the user, 2026-11-25: "using Rust data structures internally is going to be slow but not wrong"), and so is
-//! the blocks crate's code (a relation's freeze, its layouts, read in place). Nothing may outlive a call or come from
-//! outside it: no `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's scratch
-//! (`rerail_blocks::scratch::with`: make a `Scratch` of the call's own); no file, environment, process, network or
-//! time. `unsafe` is forbidden. `check_delta_exec_shape.py` refuses each of these here, and this crate's
-//! `clippy.toml` disallows them by path.
+//! the blocks crate's format code (`gens`, `layer`): offsets, typed views, the reads every reader shares (`Chain`),
+//! and the format's definitions of one value (`row_hash`, a sketch's `add` and `combine`), each written once. Nothing may outlive a call or
+//! come from outside it: no `static`, thread-local, `Once`/`Lazy` cell, lock or atomic of the twin's own; no thread's
+//! scratch; no file, environment, process, network or time. The work itself is the twin's: it calls no blocks code
+//! that computes over rows (a relation's freeze, `blocks::change`, `blocks::relation`): every loop over rows is here. `unsafe` is forbidden. `check_delta_exec_shape.py`
+//! refuses each of these here, and this crate's `clippy.toml` disallows them by path.
 //!
 //! A params struct is declared once, here, by `params!`; the executor gives UKL its declaration from `Params::FIELDS`.
 
 #![forbid(unsafe_code)]
 
+use rerail_blocks::gens::Table;
 use rerail_blocks::region::BlockPin;
 
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod samples;
+pub mod sort;
 pub mod trace;
 
 /// One slot's block as a twin sees it: pinned by the executor, to read or to write (`BlockPin`). A twin reads a
@@ -49,8 +61,62 @@ impl Slot<'_> {
     }
 }
 
-/// A twin: its slots in its signature's order, and its params' bytes (`Params::read`).
-pub type TwinFn = fn(slots: &mut [Slot<'_>], params: &[u8]);
+/// What a twin's phase reads and writes: its slots in its signature's order, the launch's descriptor table (the blocks
+/// its slots refer to, by id) and its params' bytes (`Params::read`).
+pub struct Ctx<'c, 'p, 't> {
+    pub slots: &'c mut [Slot<'p>],
+    pub table: &'c Table<'t>,
+    pub params: &'c [u8],
+}
+
+impl<'p> Ctx<'_, 'p, '_> {
+    /// The bytes of slots `reads`, to read, and of slots `writes`, to write, at once (each slot once).
+    pub fn views<const R: usize, const W: usize>(&mut self, reads: [usize; R], writes: [usize; W]) -> ([&[u8]; R], [&mut [u8]; W]) {
+        let mut r: [Option<&[u8]>; R] = [None; R];
+        let mut w: [Option<&mut [u8]>; W] = std::array::from_fn(|_| None);
+        for (i, s) in self.slots.iter_mut().enumerate() {
+            if let Some(k) = writes.iter().position(|&x| x == i) {
+                w[k] = Some(s.bytes_mut().unwrap_or_else(|| panic!("slot {i} is written, and pinned to read")));
+            } else if let Some(k) = reads.iter().position(|&x| x == i) {
+                r[k] = Some(s.bytes());
+            }
+        }
+        (r.map(|x| x.expect("a slot read")), w.map(|x| x.expect("a slot written")))
+    }
+
+    /// Slot `i`'s bytes, to read.
+    pub fn read(&self, i: usize) -> &[u8] {
+        self.slots[i].bytes()
+    }
+}
+
+/// A phase's tile: its items `lo..hi`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tile {
+    pub lo: u32,
+    pub hi: u32,
+}
+
+impl Tile {
+    pub fn items(self) -> std::ops::Range<usize> {
+        self.lo as usize..self.hi as usize
+    }
+}
+
+/// One phase of a twin, by its signature's phase's name.
+#[derive(Clone, Copy)]
+pub struct TwinPhase {
+    pub name: &'static str,
+    /// How many items the phase has now: a fixed count, or one an earlier phase made (an indirect size).
+    pub items: fn(&Ctx<'_, '_, '_>) -> u32,
+    /// Runs a tile of its items.
+    pub run: fn(&mut Ctx<'_, '_, '_>, Tile),
+    /// After every tile ran: whether the phase runs again (its finisher, one item).
+    pub again: Option<fn(&mut Ctx<'_, '_, '_>) -> bool>,
+}
+
+/// A twin: its phases, in order.
+pub type Twin = &'static [TwinPhase];
 
 /// A fixed-width integer a params struct holds, with its C type for UKL. Native byte order, as blocks are.
 pub trait Scalar: Copy {

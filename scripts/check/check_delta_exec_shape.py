@@ -64,7 +64,7 @@ def m0(failures: list) -> None:
     forbidden = [
         (r"\bBoot\b", "a driver of fixed levels (the loop is B§8's, M8)"),
         (r"\bExec\b", "the first build's executor"),
-        (r"\bRounds\b", "a second table type for a fixpoint's rounds"),
+        (r"\bstruct\s+Rounds\b|\bRounds\s*(::|<|\{)", "a second table type for a fixpoint's rounds (Across::Rounds, the axis, is a phase's)"),
         (r"\bsettle\b", "a roll-up that rewrites rows (traces roll up geometrically, M1)"),
         (r"\bDb\b", "a store of its own beside the traces"),
         (r"with_prefix|\bk1_", "a level's program named by a prefix (the export is K-form, O6)"),
@@ -89,11 +89,13 @@ def m0(failures: list) -> None:
 
 
 def b1(failures: list) -> None:
-    """B1, operations on blocks: a twin is a function of its pinned slots and params alone (Operations §3). Rust data
+    """B1, operations on blocks (Operations §2–§4, §13). A twin is phases over tiles of independent items, a function of
+    its pinned slots, the blocks its descriptor table reaches, and its params alone (Operations §3). Rust data
     structures inside a call are allowed for now (the user, 2026-11-25); nothing may outlive a call or come from
     outside it. The twins' crate forbids unsafe, depends on blocks alone, and names no static, thread-local,
     Once/Lazy cell, lock or atomic, no thread's scratch, and no file, environment, process, network or time. Its
-    clippy.toml disallows the same by path."""
+    clippy.toml disallows the same by path. An operation's shape is phases on the six axes, with no enum of shapes
+    ("No enum of shapes"); a version other than the reference is registered only with a check against it."""
     lib = TWINS / "src/lib.rs"
     if "#![forbid(unsafe_code)]" not in lib.read_text():
         failures.append(f"{lib.relative_to(ROOT)}: the twins' crate lacks #![forbid(unsafe_code)]")
@@ -112,18 +114,33 @@ def b1(failures: list) -> None:
         (r"scratch::with\b", "a thread's scratch (it outlives the call: make a Scratch of the call's own)"),
         (r"std::(fs|env|net|process|time)\b|\bInstant\b|\bSystemTime\b", "the world (files, environment, processes, network, time)"),
         (r"\bunsafe\b", "unsafe"),
+        (r"\bTwinFn\b", "a twin as one function (a twin is phases over tiles)"),
+        (r"\brelation::|\bchange::|\bRelation\b", "blocks code that computes over rows (every loop over rows is the twin's)"),
     ]
     for path in sorted((TWINS / "src").rglob("*.rs")):
         code = strip_rust(path.read_text())
         code = re.sub(r"'static", "", code)
         for pattern, why in forbidden:
             hits(path, code, pattern, why, failures)
+    op = CRATE / "src/op.rs"
+    code = strip_rust(op.read_text())
+    hits(op, code, r"\benum\s+Shape\b|\bShape::[A-Z]", "an enum of shapes (a shape is phases on the axes)", failures)
+    for axis in ("Found", "Unit", "Inside", "Across", "Output", "Bound"):
+        if not re.search(rf"\bpub enum {axis}\b", code):
+            failures.append(f"{op.relative_to(ROOT)}: the {axis} axis is missing")
+    if not re.search(r"pub fn register\(&mut self, v: Version, checked: Checked\)", code):
+        failures.append(f"{op.relative_to(ROOT)}: register takes the Checked its check gave")
+    if not re.search(r"pub struct Checked \{\s*op:", code):
+        failures.append(f"{op.relative_to(ROOT)}: Checked's fields are private (only check makes one)")
+    if "pub const MAX_SLOTS: usize = 30;" not in code:
+        failures.append(f"{op.relative_to(ROOT)}: an operation binds at most 30 slots")
 
 
 def b2(failures: list) -> None:
-    """B2, the program trace: one bistate definition (0678's `Bistate`, in blocks); a trace with two states, the
-    committed one and the run's layer (the user, 2026-11-25), so no frontier API (`at`, `between`, `fork`, `pin`);
-    its layers `Relation`s, each continuing the one below; `consolidate` an operation whose twin is in the twins'
+    """B2, the program trace (Operations §7, §10; P§11–§12): one bistate definition (0678's `Bistate`, in blocks); a
+    trace with two states (the user, 2026-11-25), so no frontier API (`at`, `between`, `fork`, `pin`); each layer a
+    frozen block of its own that refers to the one below by block id, read through a launch's descriptor table; the
+    host holds handles only (no rows, no chain of its own, no lock); `consolidate` and `merge` phases in the twins'
     crate."""
     crates = ROOT / "native/crates"
     defs = []
@@ -135,15 +152,32 @@ def b2(failures: list) -> None:
             defs.append(path.relative_to(ROOT))
     if [str(d) for d in defs] != ["native/crates/blocks/src/bistate.rs"]:
         failures.append(f"one Bistate, in blocks' bistate.rs: found {', '.join(map(str, defs)) or 'none'}")
-    trace = crates / "blocks/src/trace.rs"
+    if (crates / "blocks/src/trace.rs").exists():
+        failures.append("native/crates/blocks/src/trace.rs: a trace in one block (each layer is a block of its own)")
+    layer = crates / "blocks/src/layer.rs"
+    host = [layer, CRATE / "src/trace.rs", CRATE / "src/dir.rs"]
+    for path in host:
+        code = strip_rust(path.read_text())
+        hits(path, code, r"\bMutex\b|\bRwLock\b", "a lock (claims are atomic; a block has one writer)", failures)
+        hits(path, code, r"\bpub fn\s+(at|between|fork|pin|frontier)\b|\bstruct\s+Frontier\b", "a frontier API (a trace has two states)", failures)
+    code = strip_rust(layer.read_text())
+    chain = re.search(r"pub struct Chain<'a> \{(.*?)\}", code, flags=re.S)
+    if not chain or "Vec" in chain.group(1) or "table: &'a Table<'a>" not in chain.group(1):
+        failures.append(f"{layer.relative_to(ROOT)}: Chain reads its layers through the descriptor table, holding no list")
+    trace = CRATE / "src/trace.rs"
     code = strip_rust(trace.read_text())
-    hits(trace, code, r"\bfn\s+(at|between|fork|pin|frontier)\b|\bstruct\s+(Frontier|Version)\b", "a frontier API (a trace has two states)", failures)
-    if "Relation::try_continue" not in code:
-        failures.append(f"{trace.relative_to(ROOT)}: a layer continues the one below (Relation::try_continue)")
-    for path in sorted(list((ROOT / "native/crates/delta_exec/src").rglob("*.rs")) + list((TWINS / "src").rglob("*.rs"))):
-        hits(path, strip_rust(path.read_text()), r"\bstruct\s+(Bistate|Trace|Layer|Frontier)\b", "a second trace or bistate (blocks holds the one)", failures)
-    if "pub fn consolidate(slots: &mut [Slot<'_>], params: &[u8])" not in (TWINS / "src/trace.rs").read_text():
-        failures.append("the consolidate twin is a TwinFn in the twins' crate")
+    hits(trace, code, r"\bVec<\s*(Layer|Chain|BlockId)\b|\bVec<Vec<i64>>\s*[,;)]", "the host holding layers or rows", failures)
+    tstruct = re.search(r"pub struct Trace \{(.*?)\}", code, flags=re.S)
+    if not tstruct or re.sub(r"\s+", " ", tstruct.group(1)).strip() != "shape: ShapeW, head: Option<BlockId>,":
+        failures.append(f"{trace.relative_to(ROOT)}: a Trace is its shape and its head's block id")
+    if "dir.refer(out" not in code:
+        failures.append(f"{trace.relative_to(ROOT)}: a new layer refers to the one below by block id")
+    for path in sorted(list((CRATE / "src").rglob("*.rs")) + list((TWINS / "src").rglob("*.rs"))):
+        hits(path, strip_rust(path.read_text()), r"\bstruct\s+(Bistate|Frontier|Layer|Chain)\b", "a second trace or bistate (blocks holds the one)", failures)
+    twins = (TWINS / "src/trace.rs").read_text()
+    for name in ("pipeline!(CONSOLIDATE, Cons);", "pipeline!(MERGE, Merge);"):
+        if name not in twins:
+            failures.append(f"the twins' trace.rs lacks {name}")
 
 
 def main() -> int:

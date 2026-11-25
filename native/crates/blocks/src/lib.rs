@@ -31,6 +31,7 @@ pub mod col;
 pub mod deferrable;
 pub mod facts;
 pub mod free;
+pub mod gens;
 pub mod ids;
 /// A relation's reads in UKL, for every kernel that reads a relation in its block (decision 0325; the host's are
 /// written directly, decision 0536, and the CLIF's are the JIT's, `rerail_clif::relation`): the library's header,
@@ -55,7 +56,7 @@ pub mod scratch;
 pub mod sketch;
 pub mod sort;
 pub mod table;
-pub mod trace;
+pub mod layer;
 
 /// The flag an anonymous mapping takes to be address space reserved, its pages committed as they are written: Linux's
 /// `MAP_NORESERVE`. Without it Linux's overcommit heuristic refuses a reservation larger than memory and swap (a 64
