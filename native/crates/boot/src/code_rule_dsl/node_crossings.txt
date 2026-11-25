@@ -237,10 +237,6 @@ packs/django dj_app_defers
 packs/django dj_deferring_task_class
 packs/django dj_dispatch_in_failing_handler
 packs/django dj_dispatch_result_used
-packs/django dj_fetch_call
-packs/django dj_instance_class
-packs/django dj_instance_value
-packs/django dj_qs_model
 packs/django dj_side_effect
 packs/django dj_task_ref
 packs/django dj_task_waits_for_commit
@@ -248,17 +244,14 @@ packs/django dj_view_class
 packs/django exported
 packs/django fdm_case
 packs/django fdm_drf
-packs/django fir_row
 packs/django ghw_fetch_call
 packs/django ghw_handler
 packs/django ghw_instance_class
 packs/django ghw_instance_value
 packs/django ghw_model_call
 packs/django ghw_model_instance
-packs/django ghw_model_ref
 packs/django ghw_own_method
 packs/django ghw_self_bound
-packs/django ghw_view_attr
 packs/django ghw_write
 packs/django goc_call
 packs/django goc_cond_group
@@ -343,8 +336,6 @@ packs/django pt_vopen
 packs/django pt_wbind
 packs/django pt_wcall
 packs/django pt_xknown
-packs/django rmw_class
-packs/django rmw_model
 packs/django rr_found_through
 packs/django sfu_atomic_cm
 packs/django sfu_atomic_def
@@ -368,7 +359,6 @@ packs/django sora_own_method
 packs/django sora_query
 packs/django sora_self_bound
 packs/django tam_instance
-packs/django tam_instance_value
 packs/django tam_task_call
 packs/django type_open
 packs/javascript allowed

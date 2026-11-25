@@ -2731,7 +2731,7 @@ fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
-    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth"]
+    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth", "dq", "df", "dk", "dm"]
         .into_iter()
         .filter_map(|name| {
             let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
@@ -2830,6 +2830,65 @@ meth(q, x) :- class_anc_method(c, x), class_def(c, q).
     );
     assert_eq!(rows["ref"], [r(&["use.Leaf", "objects", "django.db.models.Manager"])], "{rows:?}");
     assert_eq!(rows["meth"], [r(&["app.base.Mid", "label"]), r(&["use.Leaf", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A model class read by its symbol in another file (decision 0677 fix 3b: python/django's dj_model_named,
+/// dj_model_field, dj_model_field_kw, dj_model_has_method): a queryset in views.py starts at `Book`, defined in
+/// shop/models.py, and reads Book's own fields and method and those it inherits from `Base`, in a module views.py
+/// never imports, each at the queryset's own root.
+#[test]
+fn a_django_model_is_read_by_its_symbol_in_another_file() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Base(models.Model):\n    name = models.CharField(max_length=10, unique=True)\n",
+        ),
+        ("shop/__init__.py", ""),
+        (
+            "shop/models.py",
+            "from django.db import models\nfrom models_base import Base\n\n\nclass Book(Base):\n    pages = models.IntegerField()\n    author = models.ForeignKey(\"Author\", to_field=\"code\")\n\n    def label(self):\n        return self.pages\n",
+        ),
+        ("views.py", "from shop.models import Book\n\n\ndef count():\n    return Book.objects.filter(pages=1).count()\n"),
+    ];
+    let dir = py_classes_workspace("dj-models", &edits);
+    let program = r#".language python
+#include "python/django.rerail"
+.decl dq(p: symbol, mq: symbol)
+dq(p, mq) :- dj_qs_class(q, mq), docof(q, d), doc(d, p, _).
+.output dq
+.decl df(p: symbol, x: symbol, t: symbol)
+df(p, x, t) :- dj_qs_model(q, r), dj_model_field(r, x, t), docof(q, d), doc(d, p, _).
+.output df
+.decl dk(p: symbol, x: symbol, k: symbol, v: symbol)
+dk(p, x, k, v) :- dj_qs_model(q, r), dj_model_field_kw(r, x, k, v), docof(q, d), doc(d, p, _).
+.output dk
+.decl dm(p: symbol, x: symbol)
+dm(p, x) :- dj_qs_model(q, r), dj_model_has_method(r, x), docof(q, d), doc(d, p, _).
+.output dm
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(rows["dq"], [r(&["views.py", "shop.models.Book"])], "{rows:?}");
+    assert_eq!(
+        rows["df"],
+        [
+            r(&["views.py", "author", "ForeignKey"]),
+            r(&["views.py", "name", "CharField"]),
+            r(&["views.py", "pages", "IntegerField"]),
+        ],
+        "Book's own fields and Base's: {rows:?}"
+    );
+    assert_eq!(
+        rows["dk"],
+        [
+            r(&["views.py", "author", "to_field", "\"code\""]),
+            r(&["views.py", "name", "max_length", "10"]),
+            r(&["views.py", "name", "unique", "True"]),
+        ],
+        "{rows:?}"
+    );
+    assert_eq!(rows["dm"], [r(&["views.py", "label"])], "{rows:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

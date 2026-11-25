@@ -169,8 +169,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    the list. The design is below (§ Fix 2), and what it took (§ Fix 2: built).
 3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
-   Class hierarchy (3a) and class members (3b's first half): **done (2026-11-24)**, § Fix 3: built. Models by symbol
-   (3b's second half), points-to, `plp_anycand` and `item_parts` remain.
+   Class hierarchy (3a), class members and a Django model read by its symbol (3b): **done (2026-11-24)**, § Fix 3:
+   built. `goc_call` (a model's `Meta`), bwh's hooks, points-to, `plp_anycand` and `item_parts` remain.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
@@ -306,13 +306,13 @@ split never checked them. Each is fixed at its root:
 
 ### Fix 3: built (2026-11-24): class hierarchy and class members
 
-**The list.** 559 entries, from 592:
+**The list.** 549 entries, from 592:
 
 | Pack | Before | After |
 |---|---:|---:|
 | python-main | 11 | 10 |
 | python | 85 | 77 |
-| django | 180 | 157 |
+| django | 180 | 147 |
 | data-layer | 102 | 101 |
 | data-layer:alone | 108 | 108 |
 | the others | 106 | 106 |
@@ -338,16 +338,35 @@ use.py's `Leaf(Mid)` reads app's module, and Mid's base is in models_base, which
 relations drop the call node: `dj_has_field(c, x, t)`, `dj_attname(c, a, x)` and `dj_field_kw(c, x, k, v)`, where
 their users read the keyword arguments (`unique`, `primary_key`, `to_field`). `dj_model_super` is gone.
 
-**The second half, not yet.** Four relations pair a call or expression with another file's model class node:
-`dj_qs_model(q, c)`, `goc_call(c, m, mc)`, `rmw_class(e, mc)`, and `tam_instance` / `tam_instance_value` (rules 4–5,
-`class_def(k, q), dj_model(k)`). They were cross-file before, through `dj_model_q`, and listed. They are now declared
-`cross_file`, with the fix named at each. Their rewrite is a model's facts by its symbol, for the modules a file reads.
+**3b, second half: a model read by its symbol.** `dj_qs_model(q, c)`, `rmw_class(e, mc)` and `tam_instance_value`
+paired a use with the model's class node in its own file (`sym_of(r, mq), class_def(c, mq), dj_model(c)`), and their
+users read the model's fields through it. `py_names` also hands on each class's own members (`member_call`,
+`member_kw`, `member_method`), and python/django reads a model at a node of the reading file:
+- `dj_model_ref(e, mq, m)`: e names class mq of module m (sym_of), or is that class, and e's file reads m.
+- `dj_model_named(e, mq)`: that class is a model, by dj_model's tests on the phase's rows: a known base itself or
+  among its ancestors, or a field in its own body that is no query expression's `output_field`.
+- `dj_model_field(e, x, t)`, `dj_model_field_kw(e, x, k, v)`, `dj_model_has_method(e, x)`: the model's own and
+  inherited fields, their keyword arguments, and its methods.
+
+`dj_qs_model(q, r)` now pairs a queryset with its root `r`, which names the model in q's own file, and its users read
+the model through `r`. A user that holds the model's own class node (`self`'s class) reads through that node. tam's
+typed values ask the same of a proven type (`tam_model_type`), in tam's own relation: the type program's facts cross
+files (points-to), and asking through python/django's key took that key into the cross part.
+`rmw_class` is gone, and 10 more Django entries are out of the list (549 now).
+
+**What remains of Django's crossings.** `goc_call(c, m, mc)` still pairs a call with another file's model class: its
+users read the model's `Meta` (`unique_together`, constraints, `managed`), whose shape is no member call. bwh's hooks
+read each model's `save()`/`delete()` bodies and the signal receivers of every file. Both stay listed, declared
+`cross_file` where they pair nodes, until each is summarised by symbol.
 
 **Tests.**
 - `python_class_ancestry_through_the_phase_is_the_cross_file_closures`: every class's ancestors and library ancestors,
   re-exports followed, equal to the old cross-file rules' answers, run beside them in one program.
 - `python_class_members_reach_each_subclass_through_the_phase`: an ancestor's field call, keyword arguments, manager
   and method reach a subclass two modules away, and a class's own members are not among them.
+- `a_django_model_is_read_by_its_symbol_in_another_file`: a queryset in views.py reads its model's own fields, those it
+  inherits from a base in a module views.py never imports, their keyword arguments and the model's method, each at
+  the queryset's root.
 - `a_python_files_entry_is_kept_under_its_own_classes_ancestry`: a body edit misses its own file alone, and a changed
   base misses every file but the one that reaches no module whose ancestry changed.
 - The pack split tests take the list above.

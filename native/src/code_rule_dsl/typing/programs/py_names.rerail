@@ -19,6 +19,8 @@
 //   anc_kw(m, q, x, k, v)     that call's keyword argument k, its value's text v
 //   anc_ref(m, q, x, s)       the right side of such an ancestor's `x = …` names s, at any depth (python/scopes' sym_of)
 //   anc_method(m, q, x)       such an ancestor defines method x (a def whose nearest scope is the class)
+//   member_call(m, q, x, f), member_kw(m, q, x, k, v), member_method(m, q, x)
+//                             the same of class q's own body: a file naming q (read through reads_at) reads them
 // An ancestor's members are handed on under the class's own module, not the ancestor's: a file need not read the
 // module an ancestor is defined in (`use.py`'s `Leaf(Mid)`, Mid's base in a module use.py never imports).
 // python/names reads them as `py_names__reads_at`, `py_names__exports`, … . This program includes python/scopes, not
@@ -28,7 +30,8 @@
 #include "python/scopes.rerail"
 
 .phase py_names
-.export reads_at, exports, class, defined, public, ancestor, library_ancestor, anc_call, anc_kw, anc_ref, anc_method
+.export reads_at, exports, class, defined, public, ancestor, library_ancestor, anc_call, anc_kw, anc_ref, anc_method,
+    member_call, member_kw, member_method
 
 // imported(p, q): an import statement of the file at path p names q: a module (`import a.b`, `from .m import x`'s
 // "pkg.m"), or a name of one ("pkg.m.x").
@@ -119,6 +122,12 @@ own_ref(q, x, s) :- own_ref_name(q, x, s0), split_dot(s0, m, y), exports(m, y, s
 own_ref(q, x, s0) :- own_ref_name(q, x, s0), count : { split_dot(s0, m, y), exported(m, y) } = 0.
 .decl own_method(q: symbol, x: symbol)
 own_method(q, x) :- class_def(c, q), kind(f, "function_definition"), nearest(f, c, scope), def_name(f, x).
+.decl member_call(m: symbol, q: symbol, x: symbol, f: symbol)
+member_call(m, q, x, f) :- class(m, q), own_call(q, x, f).
+.decl member_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)
+member_kw(m, q, x, k, v) :- class(m, q), own_kw(q, x, k, v).
+.decl member_method(m: symbol, q: symbol, x: symbol)
+member_method(m, q, x) :- class(m, q), own_method(q, x).
 .decl anc_call(m: symbol, q: symbol, x: symbol, f: symbol)
 anc_call(m, q, x, f) :- class(m, q), anc(q, o), own_call(o, x, f).
 .decl anc_kw(m: symbol, q: symbol, x: symbol, k: symbol, v: symbol)

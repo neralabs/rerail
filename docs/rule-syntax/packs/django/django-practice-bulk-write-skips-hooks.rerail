@@ -27,7 +27,7 @@
 .violation BulkWriteSkipsHooks(at: node, op: symbol, model: symbol, hooks: symbol) "`{op}()` writes {model} rows in bulk and skips {hooks}. Django's bulk writes call no save()/delete() method and send no pre_save/post_save signal; if this write needs that work, do it here or save the objects one by one (for a counter, `obj.n = F(\"n\") + 1` then `obj.save()`, so no concurrent change is lost)."
 
 BulkWriteSkipsHooks(c, m, mn, hs) :- dj_qs_call(c, m), bwh_skips(m, k), field(c, "function", fn), attr_of(fn, o, _),
-    dj_qs_model(o, mc), class_def(mc, mq), def_name(mc, mn), bwh_hook(mq, k, _), !bwh_in_hook(c, mq),
+    dj_qs_class(o, mq), split_dot(mq, _, mn), bwh_hook(mq, k, _), !bwh_in_hook(c, mq),
     !bwh_counter_update(c), docof(c, d), !dj_test_doc(d), !path_part(d, "unittests"), !dj_migration_doc(d),
     hs = join h by h sep "; " : { bwh_hook(mq, k, h) }, hs != "".
 
