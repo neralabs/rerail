@@ -17,7 +17,7 @@
 // Options, each true by default but the last two:
 //   functions   function declarations count (false: never reported). The string option "nofunc" sets it false.
 //   classes, variables, enums   false: only uses from another function than the declaration's are exempt
-//   typedefs    type aliases and interfaces count (they only matter with ignoreTypeReferences false)
+//   typedefs    type aliases, interfaces and type parameters count (they only matter with ignoreTypeReferences false)
 //   ignoreTypeReferences (true)   uses in type positions and `typeof x` types are never reported
 //   allowNamedExports (false)     `export { a }` before `const a` is fine; otherwise it is reported even when a
 //                                 is not declared at all
@@ -71,7 +71,8 @@ exempt_kind("function", "functions"). exempt_kind("function-name", "functions").
 exempt_kind("class", "classes"). exempt_kind("class-name", "classes").
 exempt_kind("var", "variables"). exempt_kind("let", "variables"). exempt_kind("const", "variables").
 exempt_kind("using", "variables"). exempt_kind("enum", "enums").
-exempt_kind("type", "typedefs"). exempt_kind("interface", "typedefs").
+// The scope manager's Type definitions: aliases, interfaces, and type parameters (`<T>`, `infer U`, a mapped key).
+exempt_kind("type", "typedefs"). exempt_kind("interface", "typedefs"). exempt_kind("type-param", "typedefs").
 // outer_ok(o, r, s): option o, when false, exempts r: functions and typedefs always, the others only from another
 // function scope (eslint-scope's variableScope).
 .decl outer_ok(o: symbol, r: node, s: node)
@@ -88,3 +89,35 @@ in_signature(r) :- scope_of(r, s), scope_type(s, "functionType").
 decorator_self(r, s, x) :- resolves(r, s, x), first_decl(s, x, id, k), (k = "class" ; k = "class-name"), field(c, "name", id),
     inside(r, dc, "decorator"), (child(c, dc, _) ; child(b, dc, _), field(c, "body", b) ;
     child(e, dc, _), kind(e, "export_statement"), field(e, "declaration", c)).
+
+// Tests (decision 0130): the review's counterexamples (review/typescript-03.review.md), against typescript-eslint
+// 8.74.0. A test sets no options, so opt is given: ignoreTypeReferences false, allowNamedExports true, the rest as
+// their defaults, and typedefs false in the first test, true in the second.
+.test type_parameters_are_typedefs exactly
+    .given opt
+    opt("functions", "true"). opt("classes", "true"). opt("enums", "true"). opt("variables", "true").
+    opt("typedefs", "false"). opt("ignoreTypeReferences", "false"). opt("allowNamedExports", "true").
+    .fixture "h1.ts" ```
+        export function f<T extends U, U>(a: T, b: U) { return [a, b]; }
+        export let x: I;
+        interface I {}
+        export const y = <V,>(v: V): W => v as any;
+        type W = number;
+        ```
+.end
+
+.test typedefs_count_by_default exactly
+    .given opt
+    opt("functions", "true"). opt("classes", "true"). opt("enums", "true"). opt("variables", "true").
+    opt("typedefs", "true"). opt("ignoreTypeReferences", "false"). opt("allowNamedExports", "true").
+    .fixture "h1.ts" ```
+        export function f<T extends U, U>(a: T, b: U) { return [a, b]; }
+        export let x: I;
+        interface I {}
+        export const y = <V,>(v: V): W => v as any;
+        type W = number;
+        ```
+    .expect "@typescript-eslint/no-use-before-define" at "h1.ts":1
+    .expect "@typescript-eslint/no-use-before-define" at "h1.ts":2
+    .expect "@typescript-eslint/no-use-before-define" at "h1.ts":4
+.end

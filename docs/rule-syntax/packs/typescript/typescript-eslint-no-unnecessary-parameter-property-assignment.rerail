@@ -69,9 +69,34 @@ compound_before(a, k, x) :- ctor_write(a, k, x, "="), ctor_write(c, k, x, o), o 
 param_write_before(a, k, x) :- ctor_write(a, k, x, "="), ctor_assign(w, k), field(w, "left", l), deparen(l, i),
     kind(i, "identifier"), text(i, x), resolves(i, s, x), variable(s, x, _, "param"), src_before(w, a).
 // field_write(b, x): a field initialiser of class body b assigns this.x, outside any function (or in an arrow
-// IIFE that is the field's value).
+// IIFE that is the field's value, parentheses aside). An `accessor` field is no PropertyDefinition: its value's
+// writes do not count.
 .decl field_write(b: node, x: symbol)
 field_write(b, x) :- this_write(a, x, _), nearest(a, b, "class_body"), inside(a, p, "public_field_definition"),
-    child(b, p, _), !inside(a, _, function_kind).
+    !op(p, "accessor"), child(b, p, _), !inside(a, _, function_kind).
 field_write(b, x) :- this_write(a, x, _), nearest(a, b, "class_body"), nearest(a, f, function_kind), arrow_iife(f, c),
-    child(b, p, _), kind(p, "public_field_definition"), field(p, "value", c), !inside(p, _, function_kind).
+    child(b, p, _), kind(p, "public_field_definition"), !op(p, "accessor"), field(p, "value", v), deparen(v, c),
+    !inside(p, _, function_kind).
+
+// Tests (decision 0130): the review's counterexamples (review/typescript-03.review.md), against typescript-eslint
+// 8.74.0. A write in an `accessor` field's value is no field write: the constructor's assignment is reported.
+.test an_accessor_field_write_does_not_count exactly
+    .fixture "c1.ts" ```
+        export class A {
+          accessor b = (this.a = "x");
+          constructor(public a: string) { this.a = a; }
+        }
+        ```
+    .expect "@typescript-eslint/no-unnecessary-parameter-property-assignment" at "c1.ts":3
+.end
+
+// A field whose value is a parenthesised call of an arrow IIFE writes this.a first (ESTree has no parentheses).
+.test a_parenthesised_field_value_is_a_field_write exactly
+    .fixture "c3.ts" ```
+        export class A {
+          b = (foo(() => { this.a = "x"; }));
+          constructor(public a: string) { this.a = a; }
+        }
+        declare function foo(f: () => void): void;
+        ```
+.end

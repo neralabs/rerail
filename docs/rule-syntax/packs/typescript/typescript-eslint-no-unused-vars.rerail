@@ -2,11 +2,12 @@
 .description "Remove TypeScript variables, parameters, caught errors, imports and types that are declared but never used, and don't use names marked as ignored."
 .language typescript
 .mode steer
-.scope include "**/*"
+.scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
 #include "tsx/ts-b-scope.rerail"
 //   variable, first_decl, declaring_stmt, resolves, use, reads, writes, initialised, variable_scope, scope_type, definition_file,
-//   declarator_name, for_head, param_target, deparen, estree_parent, source_type, program
+//   declarator_name, for_head, param_target, deparen, estree_parent, source_type, program, in_predicate, scope_node,
+//   space, fn_owner
 #include "tsx/eslint-b-scope.rerail"
 //   global_item
 #include "tsx/next-01.rerail"
@@ -20,16 +21,19 @@
 //   let a = 1;   function f(x, y) { return y; }   import { B } from "b";   type T = 1;      → a, B, T (x: below)
 //   let c = 0; c++; c += 1;                 a variable that only updates itself is unused
 //   function g() { g(); }   interface I { next: I }      a use inside its own function, type, namespace or enum
-//   let d; type D = typeof d;               "only used as a type" (an import so used is fine)
-// Always used: exported declarations, enum members, parameters of type signatures and of setters, parameter
+//   let d; type D = typeof d;               "only used as a type" (an import so used is fine); so is a parameter
+//   function f(x): x is T { … }             named only by a type predicate (`x is T`, `asserts x`)
+// Always used: exported declarations (not an exported interface or type alias whose name a value shares: the
+// value is not exported), enum members, parameters of type signatures and of setters, parameter
 // properties, a mapped type's key, `for (const k in o) return …` loops' names, and in a .d.ts file (or a
 // `declare module`) the top-level declarations, unless an `export { … }`, `export *`, `export =` or
 // `export default name` there says what is exported. `/* global x */` items nothing reads are reported too.
 // Options:
 //   vars ("all"; "local": a script's top-level variables are not checked)  varsIgnorePattern
-//   args ("after-used": a parameter before a used one is fine; "all"; "none")  argsIgnorePattern
+//   args ("after-used": a parameter before a used one is fine, a `typeof` use of the later one aside; "all"; "none")
+//      argsIgnorePattern
 //   caughtErrors ("all"; "none")  caughtErrorsIgnorePattern     destructuredArrayIgnorePattern
-//   ignoreRestSiblings (false): `const { a, ...rest } = o` does not report a
+//   ignoreRestSiblings (false): `const { a, ...rest } = o` does not report a (`{ a = 1, ...rest }` still does)
 //   ignoreClassWithStaticInitBlock (false), ignoreUsingDeclarations (false)
 //   reportUsedIgnorePattern (false): report a used name that an ignore pattern matches
 .violation no_unused_vars(at: node, msg: symbol) code "@typescript-eslint/no-unused-vars" "{msg}"
@@ -53,8 +57,13 @@ var(s, x) :- variable(s, x, _, k), k != "function-name".
 // ---- used ------------------------------------------------------------------------------------------------------
 .decl used(s: node, x: symbol)
 used(s, x) :- marked(s, x).
-used(s, x) :- var(s, x), variable(s, x, id, _), declaring_stmt(id, n), (child(e, n, _) ; child(a, n, _), kind(a, "ambient_declaration"),
-    child(e, a, _)), kind(e, "export_statement").
+used(s, x) :- var(s, x), variable(s, x, id, k), declaring_stmt(id, n), (child(e, n, _) ; child(a, n, _),
+    kind(a, "ambient_declaration"), child(e, a, _)), kind(e, "export_statement"), !merged_type(s, x, k).
+// merged_type(s, x, k): k is an interface or type alias of a variable that is a value too; exporting it does not
+// export the variable (typescript-eslint's isMergedTypeDeclaration): `export interface Foo {} const Foo = 1;`.
+.decl merged_type(s: node, x: symbol, k: symbol)
+merged_type(s, x, k) :- variable(s, x, _, k), (k = "type" ; k = "interface"), variable(s, x, _, k2),
+    (space(k2, "value") ; space(k2, "both")).
 used(s, x) :- var(s, x), resolves(r, s, x), reads(r), !itself(r, s, x), !type_read(r, s, x), !self_ref(r, s, x),
     !reexport_name(r).
 // `@dec(C) class C {}`: the decorator runs outside the class, so it reads the outer C (tree-sitter hangs it inside
@@ -114,12 +123,42 @@ later(w, s) :- resolves(w, s, _), inside(w, l, loop_kind), !fn_within(w, l).
 fn_within(w, l) :- resolves(w, _, _), inside(w, l, loop_kind), inside(w, f, fn_owner), within(f, l).
 .decl loop_kind(k: symbol)
 loop_kind("for_statement"). loop_kind("for_in_statement"). loop_kind("while_statement"). loop_kind("do_statement").
-.decl stored(r: node, v: node)  // r is in a function inside v that v keeps (not called on the spot)
-stored(r, v) :- itself_rhs(v), within(r, v), inside(r, f, fn_owner), within(f, v), !called_here(f).
+// stored(r, v): r's nearest function f is right side v or inside it, and v keeps f (isStorableFunction). The walk
+// climbs ESTree parents from f while inside v: a call's or `new`'s argument, an assignment, a tagged template, a
+// yield or a statement keeps f; a callee or a sequence's element before the last does not; anything else (an
+// array, an object, a conditional, `as`) passes the climb on, and reaching v's top keeps nothing.
+//   a = [() => a];   b = () => b;   d = (() => d)();      a, b and d read for themselves (unused)
+//   c = foo(() => c);   e = { f: () => [g(() => e)] };    stored: c and e are used
+.decl stored(r: node, v: node)
+stored(r, v) :- itself_rhs(v), resolves(r, _, _), within(r, v), nearest(r, f, fn_owner), storable(f, v).
 .decl itself_rhs(v: node)
 itself_rhs(v) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "right", v).
-.decl called_here(f: node)  // `(function () {})()`
-called_here(f) :- kind(c, "call_expression"), field(c, "function", g), deparen(g, f).
+.decl storable(f: node, v: node)
+storable(f, v) :- climb(f, v, n), estree_parent(n, p), in_rhs(p, v), keeps(n, p).
+.decl climb(f: node, v: node, n: node)  // the walk from function f in right side v reaches n
+climb(f, v, f) :- itself_rhs(v), kind(f, k), fn_owner(k), in_rhs(f, v).
+climb(f, v, p) :- climb(f, v, n), estree_parent(n, p), in_rhs(p, v), !keeps(n, p), !drops(n, p).
+.decl in_rhs(n: node, v: node)
+in_rhs(n, v) :- itself_rhs(v), (n = v ; within(n, v)).
+.decl keeps(n: node, p: node)  // n's parent p stores it
+keeps(n, p) :- in_rhs(n, _), estree_parent(n, p), kind(p, "arguments").
+keeps(n, p) :- in_rhs(n, _), estree_parent(n, p), kind(p, "call_expression"), field(p, "arguments", t),
+    kind(t, "template_string").
+keeps(n, p) :- in_rhs(n, _), estree_parent(n, p), kind(p, k), (k = "assignment_expression" ;
+    k = "augmented_assignment_expression" ; k = "yield_expression" ; stmt_kind(k)).
+.decl stmt_kind(k: symbol)  // ESTree's *Statement and *Declaration nodes that can hold a function
+stmt_kind("expression_statement"). stmt_kind("return_statement"). stmt_kind("throw_statement").
+stmt_kind("if_statement"). stmt_kind("while_statement"). stmt_kind("do_statement"). stmt_kind("for_statement").
+stmt_kind("for_in_statement"). stmt_kind("switch_statement"). stmt_kind("try_statement").
+stmt_kind("labeled_statement"). stmt_kind("with_statement"). stmt_kind("export_statement").
+stmt_kind("statement_block"). stmt_kind("lexical_declaration"). stmt_kind("variable_declaration").
+stmt_kind("using_declaration"). stmt_kind("class_declaration"). stmt_kind("abstract_class_declaration").
+stmt_kind("function_declaration"). stmt_kind("generator_function_declaration"). stmt_kind("internal_module").
+stmt_kind("enum_declaration").
+.decl drops(n: node, p: node)  // n's parent p settles that it is not stored: n is the callee, or not the last element
+drops(n, p) :- in_rhs(n, _), estree_parent(n, p), (kind(p, "call_expression") ; kind(p, "new_expression")),
+    !keeps(n, p), (field(p, "function", w) ; field(p, "constructor", w)), deparen(w, n).
+drops(n, q) :- in_rhs(n, _), estree_parent(n, q), kind(q, "sequence_expression"), !last_child(q, n).
 // type_query(r): r is in a `typeof r` type, maybe as `typeof r.a.b`.
 .decl type_query(r: node)
 type_query(r) :- resolves(r, _, _), up_query(r).
@@ -139,8 +178,11 @@ own_body(id, n) :- variable(_, _, id, k), (k = "function" ; k = "interface" ; k 
     declaring_stmt(id, n).
 own_body(id, f) :- variable(_, _, id, k), (k = "var" ; k = "let" ; k = "const" ; k = "using"), declarator_name(d, id, _),
     field(d, "name", id), field(d, "value", v), deparen(v, f), (kind(f, "function_expression") ; kind(f, "arrow_function")).
-.decl only_type(s: node, x: symbol)  // read in a `typeof` type, and nowhere else
+// only_type(s, x): a type-only reference reads x: in a `typeof` type, or a type predicate naming parameter x
+// (`x is T`, `asserts x`; ts-b-scope makes that no use).
+.decl only_type(s: node, x: symbol)
 only_type(s, x) :- var(s, x), resolves(r, s, x), type_query(r).
+only_type(f, x) :- in_predicate(r), text(r, x), nearest(r, f, scope_node), variable(f, x, _, "param").
 
 // ---- what is reported ---------------------------------------------------------------------------------------------
 // unused(s, x): not used, and no option exempts it. A type-only use of an import is no report.
@@ -163,8 +205,10 @@ exempt(s, x) :- first_decl(s, x, _, "param"), option("args", "none").
 exempt(s, x) :- first_decl(s, x, id, "param"), !option("args", "all"), !option("args", "none"), bare_param(id, f),
     later_param_used(id, f).
 exempt(s, x) :- first_decl(s, x, _, "using"), option("ignoreUsingDeclarations", "true").
-exempt(s, x) :- option("ignoreRestSiblings", "true"), variable(s, x, id, _), rest_sibling(id).
-exempt(s, x) :- option("ignoreRestSiblings", "true"), resolves(r, s, x), rest_sibling(r).
+exempt(s, x) :- ignore_rest_siblings(), variable(s, x, id, _), rest_sibling(id).
+exempt(s, x) :- ignore_rest_siblings(), resolves(r, s, x), rest_sibling(r).
+.decl ignore_rest_siblings()
+ignore_rest_siblings() :- option("ignoreRestSiblings", "true").
 // ignored(s, x): an ignore pattern matches the name, by the first declaration's kind.
 .decl ignored(s: node, x: symbol)
 ignored(s, x) :- first_decl(s, x, id, _), array_name(id), option("destructuredArrayIgnorePattern", p), finds(p, x).
@@ -186,14 +230,17 @@ array_name(id) :- variable(_, _, id, _), estree_parent(id, a), kind(a, "array_pa
 bare_param(id, f) :- variable(f, _, id, "param"), field(f, "parameters", ps), child(ps, p, _), param_target(p, id),
     !kind(p, "assignment_pattern"), !field(p, "value", _).
 bare_param(id, f) :- variable(f, _, id, "param"), field(f, "parameter", id).
-// later_param_used(id, f): a parameter after id has a reference (a default is a write reference), or is marked used.
+// later_param_used(id, f): a parameter after id has a reference that is not type-only (a default is a write
+// reference; `typeof y` does not count), or is marked used.
 .decl later_param_used(id: node, f: node)
 later_param_used(id, f) :- bare_param(id, f), variable(f, y, j, "param"), src_before(id, j),
-    (resolves(_, f, y) ; marked(f, y) ; initialised(j)).
-.decl rest_sibling(id: node)  // id is a property of an object pattern that ends in `...rest`
-rest_sibling(id) :- (kind(id, "shorthand_property_identifier_pattern") ; estree_parent(id, pp), kind(pp, "pair_pattern"),
-    field(pp, "value", id) ; kind(id, "identifier"), estree_parent(id, ap), kind(ap, "object_assignment_pattern")),
-    inside(id, o, "object_pattern"), last_child_of(o, r), kind(r, "rest_pattern").
+    (resolves(r, f, y), !type_query(r) ; marked(f, y) ; initialised(j)).
+// rest_sibling(id): id is a property's value in an object pattern that ends in `...rest`: `{ a, ...r }`,
+// `{ k: a, ...r }`. With a default (`{ a = 1, ...r }`) id's parent is the default, no Property: not a sibling.
+.decl rest_sibling(id: node)
+rest_sibling(id) :- (kind(id, "shorthand_property_identifier_pattern"), child(o, id, _) ; estree_parent(id, pp),
+    kind(pp, "pair_pattern"), field(pp, "value", id), child(o, pp, _)), kind(o, "object_pattern"), last_child_of(o, r),
+    kind(r, "rest_pattern").
 .decl last_child_of(o: node, c: node)
 last_child_of(o, c) :- kind(o, "object_pattern"), child(o, c, i), i = max j : { child(o, _, j), !kind_at(o, j, "comment") }.
 .decl kind_at(o: node, j: number, k: symbol)
@@ -233,3 +280,67 @@ array_cue(id) :- array_name(id), option("destructuredArrayIgnorePattern", _).
 global_read(c, x) :- global_item(c, x, _, _), docof(c, d), unresolved(r, x), docof(r, d), reads(r).
 .decl script_declared(c: node, x: symbol)  // a script's top level declares x: that is the global's definition
 script_declared(c, x) :- global_item(c, x, _, _), docof(c, d), program(d, p), source_type(d, "script"), variable(p, x, _, _).
+
+// Tests (decision 0130): the review's counterexamples (review/typescript-03.review.md), against typescript-eslint
+// 8.74.0, default options. A parameter named only by a type predicate is "only used as a type".
+.test a_type_predicate_is_a_type_only_reference exactly
+    .fixture "v1.ts" ```
+        export function f(x: unknown): x is string { return true; }
+        export function g(y: unknown): asserts y { }
+        ```
+    .expect "@typescript-eslint/no-unused-vars" at "v1.ts":1
+    .expect "@typescript-eslint/no-unused-vars" at "v1.ts":2
+    .expect only_type(_, "x")
+    .expect only_type(_, "y")
+.end
+
+// An exported interface does not export the const that shares its name.
+.test an_exported_type_merged_with_a_value exactly
+    .fixture "v2.ts" ```
+        export interface Foo { a: number }
+        const Foo = 1;
+        ```
+    .expect "@typescript-eslint/no-unused-vars" at "v2.ts":2
+.end
+
+// An arrow in an array, or the whole right side, reads for itself; one passed to a call is stored.
+.test which_functions_a_right_side_stores exactly
+    .fixture "v3.ts" ```
+        let a: unknown = 0;
+        a = [() => a];
+        let b: unknown = 0;
+        b = () => b;
+        let c: unknown = 0;
+        c = foo(() => c);
+        declare function foo(f: unknown): unknown;
+        ```
+    .expect "@typescript-eslint/no-unused-vars" at "v3.ts":2
+    .expect "@typescript-eslint/no-unused-vars" at "v3.ts":4
+.end
+
+// args "after-used": a later parameter's `typeof` reference does not make it used. Both findings are on line 1:
+// a "never used", b "only used as a type".
+.test after_used_skips_typeof_references
+    .fixture "v5.ts" ```
+        export function f(a: number, b: number): typeof b { return 0; }
+        ```
+    .expect count "@typescript-eslint/no-unused-vars" = 2
+    .expect unused(_, "a")
+    .expect unused(_, "b")
+    .expect only_type(_, "b")
+    .expect no only_type(_, "a")
+.end
+
+// ignoreRestSiblings (given: a test sets no options): a property with a default is no rest sibling.
+.test rest_siblings_with_a_default exactly
+    .given ignore_rest_siblings
+    ignore_rest_siblings().
+    .fixture "w1.ts" ```
+        export function f(o: any) { const { a = 1, ...rest } = o; return rest; }
+        export function g(o: any) { const { b, ...rest } = o; return rest; }
+        export function h(o: any) { let c; ({ c, ...o } = o); return o; }
+        export function k(o: any) { let d; ({ d = 1, ...o } = o); return o; }
+        ```
+    .expect "@typescript-eslint/no-unused-vars" at "w1.ts":1
+    .expect "@typescript-eslint/no-unused-vars" at "w1.ts":4
+.end
