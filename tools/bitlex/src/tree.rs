@@ -304,6 +304,8 @@ impl<'a> Parser<'a> {
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.first(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.first(body),
             Gram::Balanced { open, .. } => (self.look_bit(open), false),
+            // Desugared before (`desugar_leaves`).
+            Gram::Leaf { .. } => (0, false),
             Gram::Any(_) => (0, false),
         }
     }
@@ -333,14 +335,51 @@ impl<'a> Parser<'a> {
             Gram::Plus(a) | Gram::Field(_, a) | Gram::Retag(_, a) | Gram::Merge(_, a) | Gram::As(_, a) | Gram::Flag { body: a, .. } | Gram::Unless { body: a, .. } => self.starts(a),
             Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts(body),
             Gram::Balanced { open, .. } => (Starts::of(open), false),
+            Gram::Leaf { .. } => (Starts::default(), false),
             Gram::Any(except) => (Starts { kinds: Default::default(), any: Some(except.iter().cloned().collect()) }, false),
         }
     }
 
     /// The grammar token at `at` (no mark) starts `g`: the machine, which decides by the token,
     /// takes `g` there and does not go back.
+    /// A way the flags the level runs with guard (`unless F` with `F` set) starts nothing, as the machine's guard
+    /// takes it out of the decision.
     fn predicts(&self, g: &Gram, at: usize) -> bool {
-        self.tokens.get(at).is_some_and(|t| !t.mark && self.starts(g).0.has(t))
+        self.tokens.get(at).is_some_and(|t| !t.mark && self.starts_flagged(g, &self.flags).0.has(t))
+    }
+
+    /// `starts`, with the flags `flags` set: where `unless F` has `F` set, it starts nothing and matches nothing.
+    fn starts_flagged(&self, g: &Gram, flags: &[String]) -> (Starts, bool) {
+        match g {
+            Gram::Unless { flag, .. } if flags.contains(flag) => (Starts::default(), false),
+            Gram::Unless { body, .. } | Gram::Plus(body) | Gram::Field(_, body) | Gram::Retag(_, body) | Gram::Merge(_, body) | Gram::As(_, body) => self.starts_flagged(body, flags),
+            Gram::Wrap { body, .. } | Gram::Relabel { body, .. } | Gram::Fold { body, .. } | Gram::Reread { body, .. } => self.starts_flagged(body, flags),
+            Gram::Flag { flag, set, body } => {
+                let mut f: Vec<String> = flags.iter().filter(|x| *x != flag).cloned().collect();
+                if *set {
+                    f.push(flag.clone());
+                }
+                self.starts_flagged(body, &f)
+            }
+            Gram::Seq(items) => {
+                let mut s = Starts::default();
+                for i in items {
+                    let (b, empty) = self.starts_flagged(i, flags);
+                    s.add(&b);
+                    if !empty {
+                        return (s, false);
+                    }
+                }
+                (s, true)
+            }
+            Gram::Alt(alts) => alts.iter().fold((Starts::default(), false), |(mut s, e), a| {
+                let (x, y) = self.starts_flagged(a, flags);
+                s.add(&x);
+                (s, e || y)
+            }),
+            Gram::Opt(a) | Gram::Star(a) => (self.starts_flagged(a, flags).0, true),
+            Gram::Lit(_) | Gram::Sym(_) | Gram::Balanced { .. } | Gram::Any(_) | Gram::Leaf { .. } => self.starts(g),
+        }
     }
 
     fn first_seq(&self, items: &[Gram]) -> (u128, bool) {
@@ -516,6 +555,8 @@ impl<'a> Parser<'a> {
                 self.ask(at + 1, follow);
                 self.past_marks(at + 1, follow)
             }
+            // Desugared before (`desugar_leaves`).
+            Gram::Leaf { .. } => None,
             Gram::Balanced { kind, open, close } => {
                 // The opener's leaf, then every token to its matching closer, marks skipped:
                 // one leaf of `kind`.
@@ -976,10 +1017,6 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             out[i].size -= before[e] - before[i];
         }
         out.retain(|x| x.kind != crate::syntax::GONE);
-    }
-    // A provisional field left: no tree of the grammar's.
-    if let Some(x) = out.iter().find(|x| x.field.as_ref().is_some_and(|f| decl.provisional.contains(f))) {
-        return Err(format!("a provisional field {} left at byte {}", x.field.as_deref().unwrap_or_default(), x.start));
     }
     // The root runs from its first token (or byte 0, when whole) to the end of the file.
     out[0].end = n;

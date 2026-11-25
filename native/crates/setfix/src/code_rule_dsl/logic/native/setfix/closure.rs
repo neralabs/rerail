@@ -319,6 +319,11 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         return None;
     }
     let nrels = store.rels.len();
+    // A lattice relation folds each row it is given, one a key; the closure writes rows by distinct node and pends its
+    // seeds as a plain relation's. A component holding one runs semi-naive.
+    if store.rels.iter().any(|r| r.lat.is_some()) {
+        return None;
+    }
     // The walking relation: the one a probe reads the delta of to make more of (with readers beside it, decision 0561).
     let wi = c.probes.iter().find(|p| matches!(p.body, Body::Join(_)) && p.delta == p.head && p.delta != SEED).map(|p| p.head)?;
     let ks: Vec<usize> = store.rels.iter().map(|r| r.k).collect();

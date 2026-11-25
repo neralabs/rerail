@@ -26,8 +26,8 @@ array_type(at, id, cat(cat(cat("Array type using '", p), cat(t, "[]' is forbidde
     use = cat(cat(". Use '", c), cat(cat("<", t), ">' instead.")).
 // Array<T> where T[] is wanted:  Array type using 'Array<string>' is forbidden. Use 'string[]' instead.
 array_type(g, id, cat(cat(cat("Array type using '", c), cat(cat("<", t), ">' is forbidden")), cat(why, use))) :-
-    long_form(g, c, ro, x), mode(ro, m), (m = "array", why = "" ; m = "array-simple", simple_arg(x),
-    why = " for simple types"), names(ro, _, p), shown_arg(x, t), message_id(m, c, id),
+    long_form(g, c, ro, _), mode(ro, m), (m = "array", why = "" ; m = "array-simple", simple_arg(g),
+    why = " for simple types"), names(ro, _, p), shown_arg(g, t), message_id(m, c, id),
     (c = "Readonly", sfx = "" ; c != "Readonly", sfx = "[]"), use = cat(cat(". Use '", p), cat(t, cat(sfx, "' instead."))).
 
 // short_form(a, at, ro): array_type a, `readonly` (ro "readonly", reported at the operator) or not ("").
@@ -37,7 +37,7 @@ short_form(a, a, "") :- kind(a, "array_type"), !readonly_parent(a).
 .decl readonly_parent(a: node)
 readonly_parent(a) :- kind(a, "array_type"), type_parent(a, r), kind(r, "readonly_type").
 // long_form(g, c, ro, x): a reference to Array, ReadonlyArray or Readonly<…[]> with c its name and x its one
-// type argument (0 when it has none: `Array` alone means any[]).
+// type argument (`unset` when it has none: `Array` alone means any[]; a node or none, x is of g's file, decision 0649).
 .decl long_form(g: node, c: symbol, ro: symbol, x: node)
 // An `extends` or `implements` entry (`interface I extends Array<string> {}`) is no type reference: heritage.
 long_form(g, c, ro, x) :- kind(g, "generic_type"), !heritage(g), field(g, "name", n), kind(n, "type_identifier"), text(n, c),
@@ -45,7 +45,7 @@ long_form(g, c, ro, x) :- kind(g, "generic_type"), !heritage(g), field(g, "name"
     count : { child(l, o, _), !kind(o, "comment") } = 1, child(l, w, _), !kind(w, "comment"), type_child(w, x).
 long_form(g, "Readonly", "readonly", x) :- kind(g, "generic_type"), !heritage(g), field(g, "name", n), text(n, "Readonly"),
     field(g, "type_arguments", l), child(l, w, 0), type_child(w, x), kind(x, "array_type").
-long_form(g, c, ro, 0) :- kind(g, "type_identifier"), text(g, c), (c = "Array", ro = "" ;
+long_form(g, c, ro, x) :- kind(g, "type_identifier"), unset(x), text(g, c), (c = "Array", ro = "" ;
     c = "ReadonlyArray", ro = "readonly"), !field(_, "name", g), !heritage(g).
 .decl mode(ro: symbol, m: symbol)  // the option for plain ("") and readonly arrays
 mode("", m) :- option("default", m).
@@ -71,15 +71,17 @@ simple(x) :- kind(x, "generic_type"), field(x, "name", n), text(n, "Array"), fie
 simple_keyword("any"). simple_keyword("boolean"). simple_keyword("never"). simple_keyword("number").
 simple_keyword("bigint"). simple_keyword("object"). simple_keyword("string"). simple_keyword("symbol").
 simple_keyword("unknown"). simple_keyword("void"). simple_keyword("null"). simple_keyword("undefined").
-.decl simple_arg(x: node)  // no argument (any) counts as simple
-simple_arg(0) :- long_form(_, _, _, 0).
-simple_arg(x) :- long_form(_, _, _, x), simple(x).
+// simple_arg(g), shown_arg(g, t): of long form g's argument, keyed by g (decision 0652: keyed by the argument,
+// every file's forms met at the argument's "none").
+.decl simple_arg(g: node)  // no argument (any) counts as simple
+simple_arg(g) :- long_form(g, _, _, x), unset(x).
+simple_arg(g) :- long_form(g, _, _, x), simple(x).
 .decl shown(x: node, t: symbol)  // a simple type's text, else T
 shown(x, t) :- simple(x), text(x, t).
 shown(x, "T") :- type_child(_, x), !simple(x).
-.decl shown_arg(x: node, t: symbol)
-shown_arg(0, "any") :- long_form(_, _, _, 0).
-shown_arg(x, t) :- long_form(_, _, _, x), x != 0, shown(x, t).
+.decl shown_arg(g: node, t: symbol)
+shown_arg(g, "any") :- long_form(g, _, _, x), unset(x).
+shown_arg(g, t) :- long_form(g, _, _, x), !unset(x), shown(x, t).
 
 // Fixes: T[] → Array<T> (parentheses go: `(A | B)[]` → Array<A | B>), and back, with parentheses where the
 // element would otherwise bind wrongly: a union, intersection, function, `keyof`, conditional or ReadonlyArray.
@@ -88,9 +90,9 @@ rewrite(at, id, _) :- (id = "errorStringGeneric" ; id = "errorStringGenericSimpl
 rewrite(g, id, _) :- long_form(g, _, _, _), id != "errorStringGeneric", id != "errorStringGenericSimple",
     long_text(g, t), outer(g, t, r) => replace(g, `$r`).
 .decl long_text(g: node, t: symbol)
-long_text(g, cat(p, cat(w, s))) :- long_form(g, c, ro, x), x != 0, names(ro, _, p), wrapped(x, w),
+long_text(g, cat(p, cat(w, s))) :- long_form(g, c, ro, x), !unset(x), names(ro, _, p), wrapped(x, w),
     (c = "Readonly", s = "" ; c != "Readonly", s = "[]").
-long_text(g, cat(p, "any[]")) :- long_form(g, _, ro, 0), names(ro, _, p).
+long_text(g, cat(p, "any[]")) :- long_form(g, _, ro, x), unset(x), names(ro, _, p).
 // outer(g, t, r): a readonly array written as the element of another array needs parentheses:
 // ReadonlyArray<string>[] → (readonly string[])[], not readonly string[][].
 .decl outer(g: node, t: symbol, r: symbol)

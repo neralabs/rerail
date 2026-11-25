@@ -113,9 +113,87 @@ impl Layout for Widths {
 /// this bound no file is parsed twice; at 160,000, six were.
 pub const SIZE_GUESS_BYTES: usize = 320_000;
 
-const NO_CODE: u16 = u16::MAX;
-/// The id table's slots: a key is below this (`kf` 16 bits, flags 3).
+/// A key is below this (`kf` 16 bits, flags 3).
 const ID_SLOTS: usize = 1 << 19;
+/// An empty slot of the writer's id table (`Ids`).
+const NO_ID: u64 = u64::MAX;
+/// The id table's first size, in slots (a power of two): a document uses a few hundred codes at most.
+const IDS_FIRST: u32 = 9;
+
+/// The writer's codes' ids by key, open-addressed (linear probing, at most half full): each slot a key and its id
+/// (`key << 16 | id`), or `NO_ID`. Indexed by the key itself it was the whole key space, a 1 MB table filled at
+/// each writer, which was most of a small document's parse (a rule file's, written five times a run).
+struct Ids {
+    slots: Vector<u64>,
+    bits: u32,
+}
+
+impl Ids {
+    fn new() -> Self {
+        Ids { slots: filled(1 << IDS_FIRST, NO_ID), bits: IDS_FIRST }
+    }
+
+    #[inline(always)]
+    fn home(&self, key: u32) -> usize {
+        (u64::from(key).wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - self.bits)) as usize
+    }
+
+    /// `key`'s id, or where it goes (`Err`: its empty slot).
+    #[inline(always)]
+    fn find(&self, key: u32) -> Result<u16, usize> {
+        let mask = self.slots.len() - 1;
+        let mut at = self.home(key);
+        loop {
+            let e = self.slots[at];
+            if e == NO_ID {
+                return Err(at);
+            }
+            if (e >> 16) as u32 == key {
+                return Ok(e as u16);
+            }
+            at = (at + 1) & mask;
+        }
+    }
+
+    /// `key`'s id, given it as `next` where it has none (`codes` the ids' keys, in order, which a full table is
+    /// made again from).
+    #[inline(always)]
+    fn id_of(&mut self, key: u32, next: usize, codes: &[[u32; 2]]) -> (u16, bool) {
+        match self.find(key) {
+            Ok(id) => (id, false),
+            Err(at) => {
+                let at = if 2 * (next + 1) > self.slots.len() { self.grow(key, codes) } else { at };
+                self.slots[at] = u64::from(key) << 16 | next as u64;
+                (next as u16, true)
+            }
+        }
+    }
+
+    /// Twice the slots, each code put again in its order (as if inserted so: `forget` stays exact); `key`'s slot.
+    #[cold]
+    #[inline(never)]
+    fn grow(&mut self, key: u32, codes: &[[u32; 2]]) -> usize {
+        self.bits += 1;
+        self.slots = filled(1 << self.bits, NO_ID);
+        for (id, &[k, _]) in codes.iter().enumerate() {
+            let Err(at) = self.find(k) else { unreachable!("a code twice") };
+            self.slots[at] = u64::from(k) << 16 | id as u64;
+        }
+        self.find(key).expect_err("a new code")
+    }
+
+    /// `key`, the code given last, taken back: its slot emptied. Exact because codes are taken back last first
+    /// (`uncode_from`): no code given before it was placed past its slot.
+    fn forget(&mut self, key: u32) {
+        let mask = self.slots.len() - 1;
+        let mut at = self.home(key);
+        while (self.slots[at] >> 16) as u32 != key {
+            debug_assert_ne!(self.slots[at], NO_ID, "a code forgotten that was never given");
+            at = (at + 1) & mask;
+        }
+        self.slots[at] = NO_ID;
+    }
+}
 
 /// `v[from..to]` moved up by `by` cells (an insert's room). A span that fits a fixed window of
 /// `W` cells, with room for the window past it, moves as one fixed-size copy: a vector load and
@@ -156,7 +234,7 @@ pub struct Writer<L: Layout = Widths> {
     codes: Vector<[u32; 2]>,
     /// The nodes before this have their codes written; the rest only their keys.
     coded: usize,
-    id_of: Vector<u16>,
+    ids: Ids,
     layout: L,
     /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
     /// node is marked (then every node does, and its marks are kept exact).
@@ -443,7 +521,7 @@ impl<L: Layout> Writer<L> {
             cap,
             codes: Vector::new(),
             coded: 0,
-            id_of: filled(ID_SLOTS, NO_CODE),
+            ids: Ids::new(),
             layout,
             wide_from: 0x10000,
             marks: Vector::new(),
@@ -780,7 +858,7 @@ impl<L: Layout> Writer<L> {
             if (first as usize) < node {
                 break;
             }
-            self.id_of[key as usize] = NO_CODE;
+            self.ids.forget(key);
             self.codes.pop();
         }
         self.coded = node;
@@ -797,15 +875,13 @@ impl<L: Layout> Writer<L> {
         // The columns as locals: a store to one is not a store to the writer's fields.
         let keys = &self.keys[a..b];
         let code = &mut self.code[a..b];
-        let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, ID_SLOTS - 1);
+        let (ids, codes) = (&mut self.ids, &mut self.codes);
         for (k, (&key, cell)) in keys.iter().zip(code).enumerate() {
-            // A key is below `ID_SLOTS` (`push`'s assertion): the mask is no change, and no check.
-            let slot = &mut id_of[(key as usize) & mask];
-            if *slot == NO_CODE {
-                *slot = codes.len() as u16;
+            let (id, new) = ids.id_of(key, codes.len(), codes);
+            if new {
                 codes.push([key, (from + k) as u32]);
             }
-            *cell = *slot;
+            *cell = id;
         }
         self.coded = to;
         if self.sixteen.is_ok() {

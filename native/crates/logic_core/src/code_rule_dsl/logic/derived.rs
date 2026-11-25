@@ -30,6 +30,9 @@ const MOST: usize = 1 << 16;
 pub(in crate::code_rule_dsl) struct Memo {
     keys: (RandomState, RandomState),
     values: FxHashMap<(&'static str, u128), Arc<dyn Any + Send + Sync>>,
+    /// Where what it keeps is made (`placed`): its own free-listed blocks (decision 0342 amended), not the stack of
+    /// whichever thread planned it, which a value kept for the run held under everything made after it.
+    room: Arc<dyn rerail_blocks::maps::Room>,
 }
 
 /// The memo of a run, shared by the threads its strata run on (decision 0113): a stratum's job enters it (`enter`).
@@ -50,7 +53,7 @@ pub struct Keep(#[allow(dead_code)] crate::code_rule_dsl::logic::profile::Bound)
 
 impl Keep {
     pub fn start() -> Self {
-        Keep(crate::code_rule_dsl::logic::profile::bind(Memoized(Some(Arc::new(parking_lot::Mutex::new(Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default() }))))))
+        Keep(crate::code_rule_dsl::logic::profile::bind(Memoized(Some(Arc::new(parking_lot::Mutex::new(Memo { keys: (RandomState::default(), RandomState::default()), values: FxHashMap::default(), room: rerail_blocks::maps::FreeRoom::owner() }))))))
     }
 }
 
@@ -103,6 +106,19 @@ pub fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128 {
     Inputs::over(&KEYS, inputs)
 }
 
+/// `f`, what it makes with no room made in the run's memo's room, where the memo keeps it (a kept value's section,
+/// `join_spec`'s): `value` gives its maker no room, so a value's temporaries stay on the thread's stack and only what
+/// is kept lies in the memo's blocks. Outside a run's memo, `f` as it is.
+pub fn placed<R>(f: impl FnOnce() -> R) -> R {
+    match share() {
+        Some(memo) => {
+            let room = Arc::clone(&memo.lock().room);
+            rerail_blocks::maps::within(&room, f)
+        }
+        None => f(),
+    }
+}
+
 /// The value `name` over the inputs `inputs` writes: kept from an earlier request with the same digest, or `make`'s.
 /// Counted per name as a hit or a miss in the profile's decisions ("derived values").
 pub fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl FnOnce(&mut Inputs), make: impl FnOnce() -> V) -> V {
@@ -136,6 +152,21 @@ pub fn value<V: Clone + Send + Sync + 'static>(name: &'static str, inputs: impl 
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    /// What the run's memo keeps is made in its room (`placed`, decision 0342 amended), not on the stack of the thread
+    /// that planned it; outside a run's memo, where a structure is made as ever.
+    #[test]
+    fn a_kept_value_is_made_in_the_memos_room() {
+        use rerail_blocks::maps::{default_room, place_of};
+        let block = |r: &rerail_blocks::maps::Region| place_of(r).map(|(b, _)| Arc::as_ptr(b) as usize);
+        let outside = placed(|| default_room().region(64, 8, "a test's"));
+        let _keep = Keep::start();
+        let (a, b) = (placed(|| default_room().region(64, 8, "a test's")), placed(|| default_room().region(100, 8, "a test's")));
+        let elsewhere = default_room().region(64, 8, "a test's");
+        assert!(block(&a).is_some() && block(&a) == block(&b), "the memo's block holds both");
+        assert_ne!(block(&a), block(&elsewhere), "a structure made outside `placed` is not in the memo's room");
+        assert_ne!(block(&a), block(&outside), "outside a memo, `placed` gives no room");
+    }
 
     #[test]
     fn a_value_is_kept_by_its_inputs_and_made_again_when_one_changes() {

@@ -11470,3 +11470,59 @@ locals; a pub(in ...) re-export keeps its visibility; per-compile proc-macro
 statics; more NEON intrinsics) and the farm's test slots first come, first
 served. No engine source changes; nothing to run here beyond the hub's own
 Relax, which is installed apart from this record.
+
+### Q550. Roll-up 122 (Parser-generators-final-shape b51cf66526 onto Pulling-it-all-together): what the merge chose
+
+0673 steps 1 to 11 (tier 2 takes the lean parser's forms) and 0668 step 4.
+
+- bitlex_rust: the feeder's one take and no-dead-methods pass over tier 2's
+  code (0673 step 7), with the hub's wording of `parse`'s doc and
+  `plain_writer`'s (0626/0631: tier 2 writes format 16 to `finish`'s target
+  as it goes; roll-up 114 settled it so).
+- `provisional` and `settled` are gone, as the feeder decided (0673 step 5: a
+  bare term is refused where its literal ends). The hub's provisional checks
+  in native_cpu_stream (the table loop) and stream_facts (the AOT refusal,
+  `plain`) go with them. The hub's 0650 `recover` term in `plain` stays.
+- rr_parser: the hub's `Compiled::image` (0631's format 16 path) with the
+  feeder's deeper nesting test (30,000 past STACK_BYTES).
+- Generated: rr_aot's tier1/tier2/tier2_loop and kotlin_aot's tier2 written
+  again by `rust_is_current` (RERAIL_BLESS=1) from the merged generator.
+
+Checked under Relax (RERAIL_GPU=cpu): check of bitlex, compiler, rr,
+kotlin-aot, rr-aot, rr-parser and kotlin-parser, 0 errors. Tests:
+rr-parser 58, kotlin-parser 70 (red before: it now runs under Relax
+5b2d68c26a51-128339291b98, built with the fix rolled up in 121 but not yet
+installed), compiler 46, bitlex 11 (without its oracle: Relax's --allow-c
+does not run tree-sitter-json's build script), parser-tests rr_tests 4.
+
+### Q551. Roll-up 123 (Go-C-and-C-support af00dd2818 onto Pulling-it-all-together): what the merge chose
+
+0613: a refused unit's pieces stop at their next step and the queue drains.
+On 0653's shape: the piece's refusal check (each 16 steps) beside the hub's
+work spend (each 256), and the queue's loop spends an item's work and drains,
+where roll-up 120 had carried the first form (leaving the queue on a
+refusal, which Go-C found left end words unread: CUDA error 700).
+
+Checked under Relax (RERAIL_GPU=cpu): rerail-metal 22/22 (the bound test
+asks for the new check), c-directives eval::tests 50.
+
+### Q552. Roll-up 124 (Typing-support-final-shape 060e5b9a76 onto Pulling-it-all-together): what the merge chose
+
+- The run's default room: the hub's 0628 one run room (`rows::install_run_room`, the run's open relation block) met the feeder's 0342 amendment (the calling thread's stack, a large room a thread, owners' rooms). The user chose the stack for now and asked for both to be measured on the 15-file edit sequence. Boot, logic's and device_metal's test binaries install `rerail_blocks::maps::install`; `rows::install_run_room` is gone; 0628 records the change; the vector crate's docs name the blocks crate as installer.
+- phase0: one `p0g_module` writer (the hub's). Both read-back tests are kept; `through_kept_forms` reads its facts through the feeder's `Graph::kept_and_read`.
+- blocks maps.rs: the feeder's (FreeRoom, OwnerRoom, within, default_room, install).
+- A leftover of roll-up 122: transducer_base no longer digests `Readings::provisional` (removed by 0673 step 5).
+- Relax: blocks 101, vector 1, tape-format 51, facts-base 84, the text readers' guard, tests-corpus's phase0, template, cold-run and warm tests (31), all green; checks 0 errors on every touched crate.
+
+### Q553. Roll-up 125 (final-rerail-shape ce38ee7d1d onto Pulling-it-all-together): what the merge chose
+
+- One mechanism for a small free chunk's pages: the feeder's `ledger::GIVE_MIN` (256 KB, on the merged chunk, every listed block) and the hub's `Block::keeping_pages_below(LARGE_RESIDENT)` (256 KB, the large and owners' rooms) kept the same pages for the same reason. GIVE_MIN stays; `keeping_pages_below`, `resident_below`, `LARGE_RESIDENT`, `push_never_live`'s `pages` and the hub's test of the switch are gone (the feeder's `a_small_free_keeps_its_pages` covers it); 0342 says so.
+- scratch.rs: the hub's stack (the feeder's only change there was `Extent::default()` in the `Scratch` the stack replaced).
+- gate/executor-coverage/packs.tsv blessed again (RERAIL_BLESS_COVERAGE=1); both coverage tests pass.
+- The feeder's 31 cost-shape cases (t57 §7, slow tier): 14 pass here; the feeder's note says 13 of 31 with E1. The 17 red are its open targets, not this merge's.
+- Relax: blocks 102, facts-base 84, setfix 137, vector, tape-format 51, typing 13; the feeder's changed tests in tests-corpus (21), tests-logic, tests-rr, tests-lang: green. Checks: 0 errors.
+
+### Q554. Roll-up 126 (django-bugs 2f20b02a6f onto Pulling-it-all-together): what the merge chose
+
+- 0679 (a program cut from another runs once that one is whole): a clean merge; device-metal checks with 0 errors under Relax.
+- Its test (a_program_cut_from_one_that_parks_reads_its_rows) is Metal-only: not run here (no Metal on this Mac); it goes with the farm Metal checks.

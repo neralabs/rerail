@@ -98,6 +98,13 @@ pub struct Statements {
     at: Vector<[u32; 2]>,
 }
 
+impl Statements {
+    /// The file a read of one text's statements are of (`RrFile::statements`): `None` for an empty text's.
+    pub fn first_file(&self) -> Option<&std::sync::Arc<RrFile>> {
+        self.files.first()
+    }
+}
+
 impl std::fmt::Debug for Statements {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Statements({} of {} files)", self.at.len(), self.files.len())

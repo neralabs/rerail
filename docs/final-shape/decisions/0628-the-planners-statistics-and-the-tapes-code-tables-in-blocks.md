@@ -45,9 +45,10 @@ buffers; simdjson's columns) were `Vec`s, and `finish` handed the engine a `Vec<
 - `rerail-vector`, a crate below `tape_format`, holds `Pod`, `Region`, `Room` (a region of a size and alignment,
   `Room::region`) and `Vector`, the growable array over a room's regions. `rerail_blocks` re-exports them
   unchanged, so there is one `Vector` and one `Pod` in the workspace.
-- The engine installs the run's room at load (`rows::install_run_room`, which calls
+- The engine installs the run's room at load (`rerail_blocks::maps::install`, which calls
   `rerail_vector::install_default_room`; §8). A `Vector` or map made with no room takes its regions from it: the
-  run's open relation block. A crate's own tests, run without the engine, take theirs from the heap (`HeapRoom`).
+  calling thread's stack since roll-up 124 (decision 0342, amended; below). A crate's own tests, run without the
+  engine, take theirs from the heap (`HeapRoom`).
 - Every writer column is a `Vector`. `Writer::finish` returns the image as a `Vector<u8>`, `finish_columns`
   its columns as `Vector`s, and a tape's own home (`home::Home::Own`) holds that `Vector`: the bytes the writer
   wrote are the bytes every reader reads, in the block they were written in. The code column of
@@ -182,3 +183,10 @@ map made with no room (`Vector::new`, a map's `Default`) now takes `rows::run_ro
 (`LifeRoom(Life::Run)`): beside its relations, under the ledger's R4 check, counted in a heap profile and in its
 chunk's blocks. Boot installs it (`rows::install_run_room`), as do the test binaries that stand in for boot
 (`logic`'s, `device_metal`'s); a crate's own tests below them take the heap's.
+
+**Changed at roll-up 124 (2026-11-24).** Decision 0342's amendment, made on another branch, makes the calling
+thread's stack the default room (`scratch::StackRoom`), large regions a thread's free-listed blocks and an owner's
+family its own room (`maps::within`), and rules out `LifeRoom(Life::Run)` for what outlives a chunk. The user chose it
+for the hub, to be measured against this run block on the same 15-file edit sequence. Boot and the two test binaries
+install `rerail_blocks::maps::install`; `rows::install_run_room` is gone. `rows::run_room` stays the room a relation's
+life places.

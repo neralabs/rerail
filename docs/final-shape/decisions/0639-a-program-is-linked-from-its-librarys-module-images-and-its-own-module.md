@@ -164,6 +164,21 @@ and key (`rr::planned_module`). A library file or a phase program as a seed is a
 so its graph holds its own module and the template plans and lowers every one; a program file of the run's own is
 no module.
 
+**Held images, read before the first wave (2026-11-23).** The answer reads no store (decision 0104), so a new
+process lowered every module again, even those its store held; T4 passed only because an earlier run in the same
+process had lowered them (it ran because the graphs kept as facts lacked their plan, t33 step 2, now kept:
+`p0g_module`, `p0g_lowered`). Before its run, `phase0::derive` reads the kept graphs of its seeds (`planning`: each
+file seed, and the library files a text seed includes by name) and holds their planned modules' images in the process
+(`rr::hold_planned_modules`, one read of the store). A module whose key changed, or that no store holds, is lowered
+in the waves as before. A wrong guess costs a read, never an answer.
+
+**The packs' tables are modules too (2026-11-23).** A file seed is a module only under the library or the phase
+programs: elsewhere it is a program's own text. The run's library (`rr::planned_library`) seeded every library file
+as a file, so the packs' tables beside the library (`#include "../packs/python/….stdlib.rerail"`) were in no module,
+and a program that includes one, lowered in its scope with any other program, met its relations undeclared.
+`Dirs::module_seed` seeds such a file as a text that includes it by its name from the library, as its program names
+it. Test: `every_library_file_a_pack_includes_is_a_planned_module`.
+
 **Precedent for rounds over answers.** `bootstrap.rerail` already derives requests through negation over an answer:
 `load` ← `p0_resolved` ← `!p0_before` ← `p0_exists` ← `dir_entry`, the answer to `rr_dir_req`. The count over
 `p0_module_lowered` is the same pattern.

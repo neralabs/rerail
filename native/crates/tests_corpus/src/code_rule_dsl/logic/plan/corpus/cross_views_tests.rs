@@ -16,7 +16,7 @@ const PROGRAM: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl shape(f: node, k: symbol, l: number, c: number)
 shape(f, k, l, c) :- uses(_, f), child(f, b, _), kind(b, k), line(b, l), col(b, c).
@@ -271,7 +271,7 @@ const AT_HELD: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl at_line(f: node, l: number)
 at_line(f, l) :- uses(_, f), line(f, l).
@@ -418,7 +418,7 @@ const GUESTS: &str = r#"
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
 .decl imp(n: node, q: symbol)
 imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
+.decl uses(n: node, f: node) cross_file
 uses(n, f) :- imp(n, q), def(f, q).
 .decl shape(f: node, k: symbol)
 shape(f, k) :- uses(_, f), child(f, b, _), kind(b, k).

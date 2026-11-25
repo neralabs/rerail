@@ -195,9 +195,10 @@ pub const NO_MEMO: u32 = rerail_clif::view_reads::NO_DOC;
 /// (the syntax table's `LongTexts`).
 pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 
-/// The functions that read a node's text or value from the run's batch (`Source::node_read`): their values are the run's,
-/// so `functions::eval` gives none.
-pub const NODE_READS: [&str; 4] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str"];
+/// The functions that read a node's text, value or order from the run's batch (`Source::node_read`): their values are
+/// the run's, so `functions::eval` gives none. `rr_node_order` is a node's preorder key, `node_order`'s `k`: what a
+/// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join.
+pub const NODE_READS: [&str; 5] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_order"];
 
 /// A lookup's rows read by position (`Source::lookup_seq`): how many, and the `i`th, where they lie (a list the source
 /// holds, its runs of rows), or a list made of them.
@@ -252,9 +253,9 @@ pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
     fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> { None }
-    /// Node `n`'s text or value as the function `name` reads it (`NODE_READS`), for a binding of
+    /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), for a binding of
     /// `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
-    fn node_read(&self, _name: &str, _n: i64) -> Option<String> { None }
+    fn node_read(&self, _name: &str, _n: i64) -> Option<rusqlite::types::Value> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -1932,7 +1933,7 @@ impl Relation {
     /// the span's prints, then the rows whose print is the value's).
     fn equal(&self, column: usize, value: i64) -> Range<usize> {
         let ix = self.index(column);
-        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, &[value], true, |p| self.value(ix.row(p) as usize, column).cmp(&value));
+        let (s, e) = rerail_blocks::order::find(self.len(), &ix.fences, &[], &ix.prints, 1, &[value], |p, _| self.value(ix.row(p) as usize, column).cmp(&value));
         s..e
     }
     /// The rows with values in `lo..=hi`, in value order.

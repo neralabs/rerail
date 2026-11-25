@@ -74,19 +74,53 @@ claims(e, "initialized")   :- declarator(e, v, _), initialized(v), !apart(v), de
 claims(e, "require")       :- declarator(e, v, _), apart(v), decl(e, k), mode(k, "initialized", "always").
 .decl apart(v: node)
 apart(v) :- require_call(v), option("separateRequires", "true").
-.decl same(d: node, e: node, k: symbol)  // d and e declare kind k in one scope
-same(d, e, k) :- decl(d, k), decl_scope(d, s), decl(e, k), decl_scope(e, s), d != e.
 // crowded(d): an earlier declaration e already holds d's place, so d should join it (ESLint's hasOnlyOneStatement
 // is false). Only an e that was not crowded itself claims anything: ESLint records a declaration's classes only
-// when it passes. Hence `ordered by earlier`: crowded at d reads crowded at earlier e.
-.decl crowded(d: node) ordered by earlier
+// when it passes. So d is crowded when, for a class it conflicts with, that class's first claim in its scope and
+// kind came before it: the first passing declaration claiming it.
+//
+// The claims made so far only grow, over three classes, and a declaration passes or not by them alone. So the first
+// claims are found in rounds, without reading crowded back (ESLint's walk, unrolled; the engine has no `ordered by
+// earlier`): round 1's is the group's first declaration that claims anything; round n+1's, the first one after
+// round n's that no claim so far crowds and that claims a class not yet claimed. Each round claims a class more, so
+// three rounds claim every class there is.
+.decl group(d: node, s: node, k: symbol)  // declaration d of kind k in scope s
+group(d, s, k) :- decl(d, k), decl_scope(d, s).
+// conflict(d, c): an earlier claim of c crowds d.
+.decl conflict(d: node, c: symbol)
 // Both classes always: any claim but a require, unless d has a require (requires may stand alone).
-crowded(d) :- same(d, e, k), earlier(e, d), !crowded(e), mode(k, "all", "always"), claims(e, c), c != "require",
-    !requires(d).
-crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), declares(d, "uninitialized"), claims(e, "uninitialized").
-crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), declares(d, "initialized"), claims(e, "initialized"),
-    !requires(d).
-crowded(d) :- same(d, e, _), earlier(e, d), !crowded(e), requires(d), claims(e, "require").
+conflict(d, c) :- decl(d, k), mode(k, "all", "always"), !requires(d), (c = "uninitialized" ; c = "initialized").
+conflict(d, "uninitialized") :- declares(d, "uninitialized").
+conflict(d, "initialized") :- declares(d, "initialized"), !requires(d).
+conflict(d, "require") :- requires(d).
+.decl first1(s: node, k: symbol, e: node)
+first1(s, k, e) :- group(_, s, k), e = min x : { group(x, s, k), claims(x, _) }.
+.decl claim1(s: node, k: symbol, c: symbol, e: node)
+claim1(s, k, c, e) :- first1(s, k, e), claims(e, c).
+.decl has1(s: node, k: symbol, c: symbol)
+has1(s, k, c) :- claim1(s, k, c, _).
+.decl hit1(d: node)
+hit1(d) :- group(d, s, k), conflict(d, c), has1(s, k, c).
+.decl next2(s: node, k: symbol, d: node)
+next2(s, k, d) :- first1(s, k, e), group(d, s, k), earlier(e, d), !hit1(d), claims(d, c), !has1(s, k, c).
+.decl first2(s: node, k: symbol, e: node)
+first2(s, k, e) :- next2(s, k, _), e = min x : { next2(s, k, x) }.
+.decl claim2(s: node, k: symbol, c: symbol, e: node)
+claim2(s, k, c, e) :- claim1(s, k, c, e).
+claim2(s, k, c, e) :- first2(s, k, e), claims(e, c), !has1(s, k, c).
+.decl has2(s: node, k: symbol, c: symbol)
+has2(s, k, c) :- claim2(s, k, c, _).
+.decl hit2(d: node)
+hit2(d) :- group(d, s, k), conflict(d, c), has2(s, k, c).
+.decl next3(s: node, k: symbol, d: node)
+next3(s, k, d) :- first2(s, k, e), group(d, s, k), earlier(e, d), !hit2(d), claims(d, c), !has2(s, k, c).
+.decl first3(s: node, k: symbol, e: node)
+first3(s, k, e) :- next3(s, k, _), e = min x : { next3(s, k, x) }.
+.decl claim3(s: node, k: symbol, c: symbol, e: node)
+claim3(s, k, c, e) :- claim2(s, k, c, e).
+claim3(s, k, c, e) :- first3(s, k, e), claims(e, c), !has2(s, k, c).
+.decl crowded(d: node)
+crowded(d) :- group(d, s, k), conflict(d, c), claim3(s, k, c, e), earlier(e, d).
 // Reported as "combine" when both classes are always, else by d's classes in always mode. A for head's
 // variable is not reported for "uninitialized" alone.
 COMBINE(t, k, "all") :- crowded(d), decl(d, k), keyword(d, t), mode(k, "all", "always").

@@ -380,10 +380,12 @@ impl<T: Pod> Vector<T> {
         other.clear();
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         self
     }
 
+    #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         self
     }
@@ -665,18 +667,21 @@ impl<T: Pod + Copy> From<&Vector<T>> for Vector<T> {
 }
 
 impl<T: Pod + Copy> std::borrow::Borrow<[T]> for Vector<T> {
+    #[inline]
     fn borrow(&self) -> &[T] {
         self
     }
 }
 
 impl<T: Pod> AsRef<[T]> for Vector<T> {
+    #[inline]
     fn as_ref(&self) -> &[T] {
         self
     }
 }
 
 impl<T: Pod> AsMut<[T]> for Vector<T> {
+    #[inline]
     fn as_mut(&mut self) -> &mut [T] {
         self
     }

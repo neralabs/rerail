@@ -23,6 +23,14 @@ pub mod alloc;
 pub mod atoms;
 pub mod block;
 pub mod bloom;
+#[cfg(target_vendor = "apple")]
+mod census;
+#[cfg(not(target_vendor = "apple"))]
+mod census {
+    pub(crate) fn counted(_: &'static str, _: usize) -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
+        None
+    }
+}
 pub mod chunk;
 pub mod col;
 #[cfg(any(unix, windows))]

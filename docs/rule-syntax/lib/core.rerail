@@ -231,12 +231,12 @@
 // fields, and the policy's sibling links (`.references`, at the end). What dead-code and caller checks walk.
 // reference_edge(f, g, "self"): f's body refers to g, here as `self.g`. f and g are function_definition or
 // class_definition nodes; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
-.decl reference_edge(src: node, dst: node, via: symbol)
+.decl reference_edge(src: node, dst: node, via: symbol) extensible
 // reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
 // is not all known.
-.decl reference_open(n: node)
+.decl reference_open(n: node) extensible
 // Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
-// file that derives them.
+// file that derives them; `extensible` (decision 0263) since core.rerail is in that file's scope (0639).
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog

@@ -80,8 +80,6 @@ pub struct TreeDecl {
     pub nested: Vec<String>,
     /// Each `reading NAME = …`, by name (`reread`).
     pub readings: Vec<(String, crate::syntax::Reading)>,
-    /// The `provisional` fields: none may be left in a finished tree.
-    pub provisional: Vec<String>,
     /// The `remember` choices: the token each takes is its level's word (`as CHOICE`).
     pub remember: Vec<String>,
     /// The flags a level runs with (`flag F`, `with F A`, `unless F A`).
@@ -449,7 +447,8 @@ impl<'a> Ev<'a> {
             Stmt::Assume { .. } | Stmt::AssumeEnds { .. } => {}
             Stmt::Tree { body, .. } => {
                 self.tree.get_or_insert_with(TreeDecl::default);
-                self.exec(body)?;
+                // `leaf K R` as the grammar's other elements say it (`desugar_leaves`).
+                self.exec(&crate::syntax::desugar_leaves(body).map_err(|e| e.to_string())?)?;
             }
             Stmt::Node { kind, nested, whole, body, .. } => {
                 let tree = self.tree.get_or_insert_with(TreeDecl::default);
@@ -475,7 +474,6 @@ impl<'a> Ev<'a> {
             Stmt::Untaken(kinds) => self.tree.get_or_insert_with(TreeDecl::default).untaken.extend(kinds.iter().cloned()),
             Stmt::Refuse { mark, levels } => self.tree.get_or_insert_with(TreeDecl::default).refuse.push((mark.clone(), levels.clone())),
             Stmt::Reading { name, reading } => self.tree.get_or_insert_with(TreeDecl::default).readings.push((name.clone(), reading.clone())),
-            Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
             Stmt::Flags(names) => self.tree.get_or_insert_with(TreeDecl::default).flags.extend(names.iter().cloned()),
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
@@ -1540,7 +1538,7 @@ fn byte_ends(g: &Gram, text: &[u8], at: usize, classes: &HashMap<String, Vec<(u3
             }
             out
         }
-        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } => return Err("check: a tree's notation in a byte grammar".into()),
+        Gram::Field(..) | Gram::Retag(..) | Gram::Merge(..) | Gram::Wrap { .. } | Gram::Relabel { .. } | Gram::Fold { .. } | Gram::Reread { .. } | Gram::Balanced { .. } | Gram::Any(_) | Gram::As(..) | Gram::Flag { .. } | Gram::Unless { .. } | Gram::Leaf { .. } => return Err("check: a tree's notation in a byte grammar".into()),
     })
 }
 
