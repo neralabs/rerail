@@ -284,6 +284,8 @@ declare module "*/ui/pack-model.js" {
   export function suggestedReason(recommendations: readonly Recommendation[] | null, packId: string): string | null;
   export function suggestedSplit<P extends Pack>(packs: readonly P[], recommendations: readonly Recommendation[] | null): { suggested: P[]; others: P[] } | null;
   export function startGroups<R extends { on?: boolean }>(rows: readonly R[]): { on: R[]; off: R[] };
+  /** What the toast after adding `pack` says it turns on, and which rules it starts on that do not run. */
+  export function addedRulesText(pack: { rules: ReadonlyArray<{ on: boolean; inactive?: unknown }> } | undefined): string;
 }
 
 declare module "*/ui/routes.js" {

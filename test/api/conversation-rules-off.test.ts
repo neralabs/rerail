@@ -10,7 +10,7 @@ import { DatabaseApiStores } from "../../src/api/stores.js";
 import { experimentOffMessage, experimentVariable, lookupCheckout, openRerailDatabase, type ConversationRule } from "../../src/engine/index.js";
 import { onRuleCount } from "../../src/runtime/index.js";
 import { isRunning, notRunningReason } from "../../ui/derive.js";
-import { enforcementCounts } from "../../ui/pack-model.js";
+import { addedRulesText, enforcementCounts } from "../../ui/pack-model.js";
 import { toStoredRules } from "../../ui/poll.js";
 import { ruleCountsOf } from "../../ui/repo-rules.js";
 import { installPackDirectory, removeInstalledPacks, versionOf, withConversationRule } from "../support/installed-packs.js";
@@ -81,9 +81,11 @@ describe("a pack's conversation rule switched on", () => {
         database.$client.close();
       }
       const stored = toStoredRules(rules);
+      const pack = packs.find(candidate => candidate.id === "complexity")!;
       return {
         entry: rules.find(entry => entry.rule.id === RULE.id),
-        packRule: packs.find(pack => pack.id === "complexity")!.rules.find(rule => rule.id === RULE.id),
+        packRule: pack.rules.find(rule => rule.id === RULE.id),
+        added: addedRulesText(pack),
         activity: activity[RULE.id],
         stored: stored.get(RULE.id)!,
         cli,
@@ -114,6 +116,10 @@ describe("a pack's conversation rule switched on", () => {
     expect(isRunning(on.stored)).toBe(true);
     expect(off.overview).toBe(on.overview - 1);
     expect(off.steer).toBe(on.steer - 1);
+
+    // Adding the pack says the rule it starts on does not run, and why, only while the experiment is off.
+    expect(off.added).toContain("One it starts on doesn’t run while conversation rules are off.");
+    expect(on.added).not.toContain("conversation rules");
 
     // Overview's Rules on, Settings' repository row and `rerail`'s own count agree, the experiment on or off.
     for (const counts of [off, on]) expect([counts.settings, counts.cli]).toEqual([counts.overview, counts.overview]);

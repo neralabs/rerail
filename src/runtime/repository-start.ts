@@ -247,8 +247,9 @@ export function checkoutRuleCounts(database: RerailDatabase, checkout: CheckoutC
 }
 
 /**
- * The packs whose rules on in `checkout` this Rerail does not run (`EffectiveRule.notRun`), each with how many: with
- * {@link onRuleCount}, they add up to the rules switched on there.
+ * The packs whose rules on in `checkout` this Rerail does not run (`EffectiveRule.notRun`), each with how many. With
+ * {@link onRuleCount} they need not add up to the rules switched on there: neither counts a rule whose options do not
+ * apply (`configError`), nor a conversation rule while this process runs without conversation rules.
  */
 export function checkoutRulesNotRun(database: RerailDatabase, checkout: CheckoutContext): { name: string; version: string | null; ruleCount: number }[] {
   const catalog = loadRuleCatalog();

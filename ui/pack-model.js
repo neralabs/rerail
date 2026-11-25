@@ -1,7 +1,8 @@
 /**
  * What the pack pages (`#pack/<id>`, `#created`), the catalog (`#packs`) and the pack sheet derive from the rules and
  * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, the catalog's kinds,
- * order and the packs suggested for the repository, and the sheet's rules. Nothing here touches the DOM.
+ * order and the packs suggested for the repository, the sheet's rules, and what adding a pack turns on. Nothing here
+ * touches the DOM.
  */
 import { categoryLabel, isLog, isRunning, RISK_LABELS } from "./derive.js";
 import { activityOf, dimensionsOf, fires, matches, RISK_FILTER, ruleSections, titleOf, ui } from "./state.js";
@@ -119,3 +120,25 @@ export function sheetRules(pack, query) {
 
 /** A sheet's rows for a pack not added yet, by how each starts once it is: on, then off, each in the order given. */
 export const startGroups = rows => ({ on: rows.filter(r => r.on), off: rows.filter(r => !r.on) });
+
+/** The sentence for the `rules` a pack starts on that Rerail keeps but does not run for `code`, `why`; `null` for none. */
+function startsOnNotRunning(rules, code, why) {
+  const n = rules.filter(r => r.on && r.inactive?.code === code).length;
+  if (n === 0) return null;
+  return `${n === 1 ? "One it starts on doesn’t" : `${n} it starts on don’t`} run ${why}.`;
+}
+
+/**
+ * What an added `pack` turns on: its rules, but not the opt-in ones the pack starts off; and of those it starts on, how
+ * many this Rerail no longer runs as the pack writes them (`reads-left-out-token`), which its next version runs again,
+ * and how many are conversation rules while the daemon runs without them (`experimental-off`).
+ */
+export function addedRulesText(pack) {
+  const rules = pack?.rules ?? [];
+  const off = rules.filter(r => !r.on).length;
+  return [
+    off === 0 ? "Its rules are on." : `${off} of its rules start off; turn them on from its page.`,
+    startsOnNotRunning(rules, "reads-left-out-token", "on this Rerail until the pack’s next version"),
+    startsOnNotRunning(rules, "experimental-off", "while conversation rules are off"),
+  ].filter(sentence => sentence !== null).join(" ");
+}
