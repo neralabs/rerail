@@ -160,7 +160,13 @@ def b2(failures: list) -> None:
         code = strip_rust(path.read_text())
         hits(path, code, r"\bMutex\b|\bRwLock\b", "a lock (claims are atomic; a block has one writer)", failures)
         hits(path, code, r"\bpub fn\s+(at|between|fork|pin|frontier)\b|\bstruct\s+Frontier\b", "a frontier API (a trace has two states)", failures)
+    for path in [layer, crates / "blocks/src/bistate.rs", TWINS / "src/trace.rs"]:
+        hits(path, strip_rust(path.read_text()), r"\bMAX_RUNS\b", "a bound on the layers a read or a merge follows", failures)
     code = strip_rust(layer.read_text())
+    hits(layer, code, r"pub key: i64", "a partition's key in 64 bits (a module's or a document's id is 32)", failures)
+    for kind in ("IX_FENCES", "IX_PRINTS", "IX_HASH", "IX_BLOOM"):
+        if kind not in code:
+            failures.append(f"{layer.relative_to(ROOT)}: the index kind {kind} (P§11.2) is missing")
     chain = re.search(r"pub struct Chain<'a> \{(.*?)\}", code, flags=re.S)
     if not chain or "Vec" in chain.group(1) or "table: &'a Table<'a>" not in chain.group(1):
         failures.append(f"{layer.relative_to(ROOT)}: Chain reads its layers through the descriptor table, holding no list")

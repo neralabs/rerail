@@ -453,14 +453,33 @@ Checks, each passed under Relax on this machine (`relax test rerail-delta-exec -
   head, the twins' crate free of `TwinFn` and of blocks code that computes over rows. `check_no_block_copies.py`
   passes.
 
-Not built, and refused by name where a caller could ask for it:
+Then (the same day) the rest of P§12's shape a run block's trace holds, and no bound on a chain:
 
-- Shape options: levels, encodings but `Open`, placements but `RunBlock`, retentions but `Run`, hash and Bloom
-  indexes, fences and prints (`Shape::encode` says "not built").
-- A read follows at most 8 layers by their own changes (`MAX_RUNS`); a deeper chain reads word by word, and
-  `changed_parts` across more than 8 layers reads the changed rows.
-- The descriptor table is the CPU's; a device's waits for a device executor. The twins' clippy.toml is written, not
-  run (clippy is a build outside the narrow Relax runs).
-- A partition index's key is 64 bits, as the widest partition column is; the rows' columns take their shape's width.
-- References of a block that is gone are let go at the directory's next `release`, `make` or `sweep`, not when its
-  last reader drops.
+- **Every index kind** (P§11.2), in the formats that exist, written once: an order with fences and prints
+  (`blocks::order`'s, searched by `order::find`), a hash order (positions by the lead's 16-bit tag, then the key, with
+  prints), a permutation, and a Bloom filter (`blocks::bloom`'s hash and mask, about ten bits a key). consolidate and
+  merge write them (phases `iaux`: a chunk an item; `bloom`: a word an item, the keys sorted by word first, so no two
+  items write one word); a probe skips a layer whose filter rules its key out.
+- **No bound on a chain:** `Scan`, `Flips`, `changed_parts` and merge follow every layer (a cursor a layer); the
+  first build's `Scan` asserted past 8.
+- **A partition's key is 32 bits:** a partition column is a module's or a document's id; a wider one is refused.
+
+Checks (Relax, local; `rerail-delta-exec --lib` 22 of 22, `rerail-blocks --lib -- bistate` 8 of 8, `-- order::` 1):
+every probe of a random trace with all four index kinds finds the brute-force set's rows, before and after a roll-up;
+the filter holds each key of its layer and rules out most absent ones; the indexed layer is the same at three tilings
+(`every_index_kind_answers_its_probes`; breaking the prints, the tags or the fences each fails it). A chain of 14
+layers scans, changes and gives its changed partitions as its sets do, and rolls 12 layers into one
+(`a_deep_chain_reads_as_its_set`).
+
+What a run block's trace refuses, each saying where the plan puts it (`a_shape_the_plan_puts_elsewhere_is_refused_…`):
+
+- `levels`: a recursive stratum's level column (0364), run by Δfix, after L1.
+- `Packed`, `Ranged`, `Dict`: P§13's form of a block that leaves its run (kept, journaled, a pinned slab); a run
+  block's layers are `Open`.
+- `KeptFile`, `PinnedSlab`: the kept stores and the device executor, after L1.
+- `Cache`: the operator cache (P§11.3), B3, one state mutated in place; `History`: named frontiers, which the user's
+  two states rule out.
+
+Outside these runs: the descriptor table is the CPU's (a device's comes with a device executor; no Metal runs here);
+the twins' clippy.toml and a cargo build of these crates were not run (only narrow Relax runs on this machine are
+allowed); references of a block that is gone are let go at the directory's next `release`, `make` or `sweep`.

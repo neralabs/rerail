@@ -27,8 +27,9 @@ const fn ph(name: &'static str, found: Found, unit: Unit, inside: Inside, across
 }
 
 /// The phases `consolidate` and `merge` share (Operations §4): sort (14), segmented scan (10), emit (11), a batched
-/// search (17), histogram (8) for the partition index, sorts for the flips and indexes, the sketch (9), the seal.
-static PIPELINE: [Phase; 23] = {
+/// search (17), histogram (8) for the partition index, sorts for the flips and indexes, the indexes' fences, tags and
+/// prints, Bloom words (18), the sketch (9), the seal.
+static PIPELINE: [Phase; 25] = {
     use Found::*;
     use Output::*;
     use Unit::*;
@@ -54,6 +55,8 @@ static PIPELINE: [Phase; 23] = {
         ph("isort", Indirect, Threadgroup, Inside::GroupMemory, Across::Nothing, ByIndex, &[]),
         ph("ipasses", Indirect, Threadgroup, Inside::Nothing, Across::Ordered, ByIndex, PASSES),
         ph("isettle", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("iaux", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
+        ph("bloom", Indirect, Lane, Inside::Nothing, Across::Nothing, ByIndex, &[]),
         ph("sketch", Indirect, Threadgroup, Inside::GroupMemory, Across::Combine, Sketch, &[]),
         ph("sketches", Fixed, Lane, Inside::Nothing, Across::Combine, Sketch, &[]),
         ph("seal", Fixed, Lane, Inside::Nothing, Across::Ordered, InPlace, &[]),
@@ -102,7 +105,7 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
         out.push(r);
     }
     for p in l.parts() {
-        out.push(vec![1, p.key, p.lo.into(), p.hi.into(), p.flo.into(), p.fhi.into(), p.added.into(), p.gone.into(), p.digest as i64]);
+        out.push(vec![1, p.key.into(), p.lo.into(), p.hi.into(), p.flo.into(), p.fhi.into(), p.added.into(), p.gone.into(), p.digest as i64]);
     }
     out.extend(l.flips().iter().enumerate().map(|(i, &f)| vec![2, i as i64, f.into()]));
     out.extend(l.pflips().iter().enumerate().map(|(i, &f)| vec![3, i as i64, f.into()]));
@@ -112,7 +115,14 @@ pub fn facts_of(_: &Table<'_>, slot: usize, bytes: &[u8]) -> Vec<Vec<i64>> {
         out.push(r);
     }
     for x in 0..l.head.shape.nidx as usize {
+        if l.head.shape.index_kind(x) & rerail_blocks::layer::IX_BLOOM != 0 {
+            out.extend(l.bloom(x).iter().enumerate().map(|(i, &w)| vec![9, x as i64, i as i64, w as i64]));
+            continue;
+        }
         out.extend(l.index(x).iter().enumerate().map(|(i, &p)| vec![5, x as i64, i as i64, p.into()]));
+        out.extend(l.fences(x).iter().enumerate().map(|(i, &f)| vec![7, x as i64, i as i64, f]));
+        out.extend(l.tags(x).iter().enumerate().map(|(i, &t)| vec![8, x as i64, i as i64, t.into()]));
+        out.extend(l.prints(x).iter().enumerate().map(|(i, &p)| vec![10, x as i64, i as i64, p.into()]));
     }
     let h = l.head;
     out.push(vec![6, h.start.into(), h.n.into(), h.added.into(), h.gone.into(), h.nparts.into(), h.digest as i64, h.below.into()]);

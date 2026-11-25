@@ -93,8 +93,8 @@ pub trait Read {
     }
 
     /// The ids below `end` whose liveness may differ from the state that ended at `end`, ascending, each once: its
-    /// recorded change, over as many of its own versions as lie between (a trace's layers above `end`, at most
-    /// `MAX_RUNS`). `None` when it records none: the change is then read word by word.
+    /// recorded change, over as many of its own versions as lie between (a trace's layers above `end`, however
+    /// many). `None` when it records none: the change is then read word by word.
     fn flips_from(&self, end: RowId) -> Option<Flips<'_>> {
         self.since().filter(|s| s.end == end).map(|s| Flips::one(s.flips))
     }
@@ -265,12 +265,12 @@ pub struct ColStats {
 }
 
 /// A state's recorded change over several of its versions (`Read::flips_from`): each version's flipped ids, merged
-/// ascending, each once. No more than `layer::MAX_RUNS` versions; nothing is built.
-#[derive(Clone, Copy, Default)]
+/// ascending, each once, over as many versions as it has. The ids are read where they lie; it holds only a handle and
+/// a cursor a version.
+#[derive(Clone, Default)]
 pub struct Flips<'s> {
-    runs: [&'s [u32]; crate::layer::MAX_RUNS],
-    at: [u32; crate::layer::MAX_RUNS],
-    n: usize,
+    // copy: not block data (a handle and a cursor a version)
+    runs: Vec<(&'s [u32], u32)>,
     last: Option<u32>,
 }
 
@@ -281,19 +281,14 @@ impl<'s> Flips<'s> {
         f
     }
 
-    /// Adds one version's flips: false when it holds as many as it can.
-    pub fn push(&mut self, run: &'s [u32]) -> bool {
-        if self.n == self.runs.len() {
-            return false;
-        }
-        self.runs[self.n] = run;
-        self.n += 1;
-        true
+    /// Adds one version's flips.
+    pub fn push(&mut self, run: &'s [u32]) {
+        self.runs.push((run, 0));
     }
 
     /// Whether no id flipped.
     pub fn is_empty(&self) -> bool {
-        (0..self.n).all(|k| self.runs[k].len() == self.at[k] as usize)
+        self.runs.iter().all(|(r, at)| r.len() == *at as usize)
     }
 }
 
@@ -302,9 +297,9 @@ impl Iterator for Flips<'_> {
 
     fn next(&mut self) -> Option<RowId> {
         loop {
-            let k = (0..self.n).filter(|&k| (self.at[k] as usize) < self.runs[k].len()).min_by_key(|&k| self.runs[k][self.at[k] as usize])?;
-            let id = self.runs[k][self.at[k] as usize];
-            self.at[k] += 1;
+            let k = (0..self.runs.len()).filter(|&k| (self.runs[k].1 as usize) < self.runs[k].0.len()).min_by_key(|&k| self.runs[k].0[self.runs[k].1 as usize])?;
+            let id = self.runs[k].0[self.runs[k].1 as usize];
+            self.runs[k].1 += 1;
             if self.last != Some(id) {
                 self.last = Some(id);
                 return Some(RowId::new(id));

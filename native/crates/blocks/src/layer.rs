@@ -137,17 +137,39 @@ impl Shape {
         {
             return Err(format!("rows are grouped by partition first (P§11.2): the order starts with column {p}"));
         }
+        if let Some(p) = self.partition
+            && self.columns[p as usize] != ColType::I32
+        {
+            return Err(format!("the partition column {p} is a module's or a document's id: 32 bits"));
+        }
+        // What a run block's trace is not, each where the plan puts it.
         if self.levels {
-            return Err("a level column (0364) comes with recursive strata: not built".into());
+            return Err("a level column (0364) is a recursive stratum's, run by Δfix after L1 (the rebuild plan, \
+                        after the target): not in B2"
+                .into());
         }
         if self.encoding != Encoding::Open {
-            return Err(format!("encoding {:?}: not built (Open is)", self.encoding));
+            return Err(format!(
+                "encoding {:?} is the form of a block that leaves its run (P§13: kept, journaled or a pinned slab); a run \
+                 block's layers are Open",
+                self.encoding
+            ));
         }
         if self.placement != Placement::RunBlock {
-            return Err(format!("placement {:?}: not built (RunBlock is)", self.placement));
+            return Err(format!(
+                "placement {:?}: kept files and pinned slabs come with the kept stores and the device executor, after L1 \
+                 (the rebuild plan); B2's traces are run blocks",
+                self.placement
+            ));
         }
-        if self.retention != Retention::Run {
-            return Err(format!("retention {:?}: not built (Run is)", self.retention));
+        match self.retention {
+            Retention::Run => {}
+            Retention::Cache => {
+                return Err("retention Cache is the operator cache's (P§11.3), B3's: one state mutated in place, not a trace".into());
+            }
+            Retention::History => {
+                return Err("retention History keeps named frontiers; a trace has two states (the user, 2026-11-25)".into());
+            }
         }
         if self.indexes.len() > MAX_IX {
             return Err(format!("at most {MAX_IX} indexes beside the canonical order"));
@@ -172,14 +194,16 @@ impl Shape {
             w.order[i] = c as u8;
         }
         for (i, ix) in self.indexes.iter().enumerate() {
-            let key = match ix {
-                IndexSpec::Order { key, fences: false, prints: false } | IndexSpec::Perm(key) => key,
-                other => return Err(format!("index {other:?}: not built (an order or a permutation without fences or prints is)")),
+            let (kind, key) = match ix {
+                IndexSpec::Order { key, fences, prints } => (IX_ORDER | u32::from(*fences) * IX_FENCES | u32::from(*prints) * IX_PRINTS, key),
+                IndexSpec::Perm(key) => (IX_ORDER, key),
+                IndexSpec::Hash(key) => (IX_HASH | IX_PRINTS, key),
+                IndexSpec::Bloom(key) => (IX_BLOOM, key),
             };
             if key.is_empty() || key.len() > MAX_KEY || key.iter().any(|&c| c as usize >= a) {
                 return Err(format!("index {i}'s key {key:?}"));
             }
-            w.indexes[i].kind = IX_ORDER;
+            w.indexes[i].kind = kind;
             w.indexes[i].ncols = key.len() as u32;
             for (j, &c) in key.iter().enumerate() {
                 w.indexes[i].cols[j] = c as u8;
@@ -189,7 +213,16 @@ impl Shape {
     }
 }
 
-const IX_ORDER: u32 = 1;
+/// An index's kind, as its blocks hold it: an order (the rows' positions sorted by its key), and beside it the
+/// leading value of every `order::FENCE`th position (fences) and each position's 8-bit print of its whole key
+/// (prints), the search `blocks::order::find` reads; a hash order (sorted by the lead's 16-bit `order::tag`, then the
+/// key: a tag a position, and prints); a Bloom filter of the key (`blocks::bloom`'s hash and mask, its words a power of
+/// two). One format each, written once, the existing ones.
+pub const IX_ORDER: u32 = 1;
+pub const IX_FENCES: u32 = 2;
+pub const IX_PRINTS: u32 = 4;
+pub const IX_HASH: u32 = 8;
+pub const IX_BLOOM: u32 = 16;
 
 /// One index of a shape, as its blocks hold it.
 #[repr(C)]
@@ -241,6 +274,29 @@ impl ShapeW {
     pub fn index_key(&self, i: usize) -> &[u8] {
         &self.indexes[i].cols[..self.indexes[i].ncols as usize]
     }
+
+    /// Index `i`'s kind bits (`IX_*`).
+    pub fn index_kind(&self, i: usize) -> u32 {
+        self.indexes[i].kind
+    }
+}
+
+/// A Bloom filter's words for `n` keys: about ten bits a key, a power of two.
+pub fn bloom_words(n: usize) -> usize {
+    (n * 10).div_ceil(64).max(1).next_power_of_two()
+}
+
+/// The one value a Bloom filter hashes for a key: the value itself for one column, else the key's `row_hash`.
+pub fn bloom_key(key: impl ExactSizeIterator<Item = i64>) -> i64 {
+    if key.len() == 1 {
+        let mut k = key;
+        k.next().expect("one value")
+    } else {
+        row_hash(key) as i64
+    }
+}
+
+impl ShapeW {
 }
 
 fn round_up(n: usize, to: usize) -> usize {
@@ -385,13 +441,15 @@ impl<'a> Runs<'a> {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct PartW {
-    pub key: i64,
+    /// The partition's value: a module's or a document's id, 32 bits.
+    pub key: i32,
     pub lo: u32,
     pub hi: u32,
     pub flo: u32,
     pub fhi: u32,
     pub added: u32,
     pub gone: u32,
+    pub pad: u32,
     pub digest: u64,
 }
 
@@ -482,8 +540,12 @@ pub struct LayerHead {
     pub pflips_at: u64,
     pub parts_at: u64,
     pub sketch_at: u64,
-    /// Each index's row positions in its key's order.
+    /// Each index's row positions in its key's order (a Bloom filter's: its words).
     pub idx_at: [u64; MAX_IX],
+    /// Each index's fences (`i64`, a `FENCE`th position's lead) or tags (`u16` a position), where it keeps them.
+    pub aux_at: [u64; MAX_IX],
+    /// Each index's prints (`u8` a position), where it keeps them.
+    pub prints_at: [u64; MAX_IX],
 }
 
 unsafe impl crate::Pod for LayerHead {}
@@ -506,9 +568,23 @@ pub fn layer_layout(shape: &ShapeW, n: usize) -> LayerHead {
     let pflips_at = next(4 * n);
     let parts_at = next(size_of::<PartW>() * n);
     let sketch_at = next(size_of::<SketchW>() * shape.arity());
-    let mut idx_at = [0u64; MAX_IX];
-    for slot in idx_at.iter_mut().take(shape.nidx as usize) {
-        *slot = next(4 * n);
+    let (mut idx_at, mut aux_at, mut prints_at) = ([0u64; MAX_IX], [0u64; MAX_IX], [0u64; MAX_IX]);
+    for x in 0..shape.nidx as usize {
+        let k = shape.index_kind(x);
+        if k & IX_BLOOM != 0 {
+            idx_at[x] = next(8 * bloom_words(n));
+            continue;
+        }
+        idx_at[x] = next(4 * n);
+        if k & IX_FENCES != 0 {
+            aux_at[x] = next(8 * n.div_ceil(crate::order::FENCE));
+        }
+        if k & IX_HASH != 0 {
+            aux_at[x] = next(2 * n);
+        }
+        if k & IX_PRINTS != 0 {
+            prints_at[x] = next(n);
+        }
     }
     LayerHead {
         len: (at - BODY_AT) as u64,
@@ -530,6 +606,8 @@ pub fn layer_layout(shape: &ShapeW, n: usize) -> LayerHead {
         parts_at,
         sketch_at,
         idx_at,
+        aux_at,
+        prints_at,
     }
 }
 
@@ -619,6 +697,22 @@ impl<'a> LayerOut<'a> {
 
     pub fn index(&mut self, i: usize) -> &mut [u32] {
         words_mut(self.bytes, self.head.idx_at[i] as usize, self.head.n as usize)
+    }
+
+    pub fn fences(&mut self, i: usize) -> &mut [i64] {
+        words_mut(self.bytes, self.head.aux_at[i] as usize, (self.head.n as usize).div_ceil(crate::order::FENCE))
+    }
+
+    pub fn tags(&mut self, i: usize) -> &mut [u16] {
+        words_mut(self.bytes, self.head.aux_at[i] as usize, self.head.n as usize)
+    }
+
+    pub fn prints(&mut self, i: usize) -> &mut [u8] {
+        words_mut(self.bytes, self.head.prints_at[i] as usize, self.head.n as usize)
+    }
+
+    pub fn bloom(&mut self, i: usize) -> &mut [u64] {
+        words_mut(self.bytes, self.head.idx_at[i] as usize, bloom_words(self.head.n as usize))
     }
 
     /// Writes the header with its counts and its state, committed: last.
@@ -711,9 +805,49 @@ impl<'a> Layer<'a> {
         words(self.bytes, self.head.idx_at[i] as usize, self.n())
     }
 
+    /// Index `i`'s fences, when it keeps them.
+    pub fn fences(&self, i: usize) -> &'a [i64] {
+        if self.head.shape.index_kind(i) & IX_FENCES == 0 {
+            return &[];
+        }
+        words(self.bytes, self.head.aux_at[i] as usize, self.n().div_ceil(crate::order::FENCE))
+    }
+
+    /// Index `i`'s tags, when it is a hash order.
+    pub fn tags(&self, i: usize) -> &'a [u16] {
+        if self.head.shape.index_kind(i) & IX_HASH == 0 {
+            return &[];
+        }
+        words(self.bytes, self.head.aux_at[i] as usize, self.n())
+    }
+
+    /// Index `i`'s prints, when it keeps them.
+    pub fn prints(&self, i: usize) -> &'a [u8] {
+        if self.head.shape.index_kind(i) & IX_PRINTS == 0 {
+            return &[];
+        }
+        words(self.bytes, self.head.prints_at[i] as usize, self.n())
+    }
+
+    /// Index `i`'s Bloom words.
+    pub fn bloom(&self, i: usize) -> &'a [u64] {
+        words(self.bytes, self.head.idx_at[i] as usize, bloom_words(self.n()))
+    }
+
+    /// Whether the layer may hold a row whose `cols` are `key`: false only when a Bloom filter on exactly those columns
+    /// says it holds none.
+    pub fn may_hold(&self, cols: &[u8], key: &[i64]) -> bool {
+        let s = &self.head.shape;
+        (0..s.nidx as usize).filter(|&x| s.index_kind(x) & IX_BLOOM != 0 && s.index_key(x) == cols).all(|x| {
+            let (w, m) = crate::bloom::place(crate::bloom::hash(bloom_key(key.iter().copied())), bloom_words(self.n()));
+            self.bloom(x)[w] & m == m
+        })
+    }
+
     /// Partition `p`'s entry.
     pub fn part(&self, p: i64) -> Option<&'a PartW> {
         let parts = self.parts();
+        let p = i32::try_from(p).ok()?;
         parts.binary_search_by_key(&p, |e| e.key).ok().map(|i| &parts[i])
     }
 
@@ -751,9 +885,23 @@ impl<'a> Layer<'a> {
         if cols.len() > ikey.len() || ikey[..cols.len()] != *cols {
             return None;
         }
+        let kind = s.index_kind(x);
+        if kind & IX_BLOOM != 0 {
+            return None;
+        }
         let perm = self.index(x);
-        let lo = perm.partition_point(|&i| self.cmp_key(i as usize, cols, key) == Ordering::Less);
-        let hi = perm.partition_point(|&i| self.cmp_key(i as usize, cols, key) != Ordering::Greater);
+        let n = perm.len();
+        let (tags, fences) = (self.tags(x), self.fences(x));
+        let cmp = |p: usize| self.cmp_key(perm[p] as usize, cols, key);
+        let (lo, hi) = if !tags.is_empty() || !fences.is_empty() {
+            // The search written once (`blocks::order::find`): the tags' or fences' span, then prints or bisection.
+            // In a hash order, positions are sorted by the lead's tag and then by the key.
+            let whole = cols.len() == ikey.len();
+            crate::order::find(n, fences, tags, self.prints(x), key, whole, cmp)
+        } else {
+            let lo = partition_point(n, |p| cmp(p) == Ordering::Less);
+            (lo, lo + partition_point(n - lo, |p| cmp(lo + p) != Ordering::Greater))
+        };
         Some(&perm[lo..hi])
     }
 }
@@ -767,9 +915,6 @@ fn partition_point(n: usize, pred: impl Fn(usize) -> bool) -> usize {
     }
     lo
 }
-
-/// The most layers one read follows at once by their own changes (`Flips`): more read the state word by word.
-pub const MAX_RUNS: usize = 8;
 
 /// A trace's state at a layer, read in place through a launch's descriptor table: `bistate::Read`. With a partition
 /// key (`restrict`), only that partition's rows: each layer's range of it, from its partition index.
@@ -911,9 +1056,7 @@ impl Read for Chain<'_> {
                 None => l.flips(),
                 Some(p) => l.part(p).map_or(&[][..], |e| &l.pflips()[e.flo as usize..e.fhi as usize]),
             };
-            if !f.push(run) {
-                return None;
-            }
+            f.push(run);
             if l.start() == end.get() {
                 return Some(f);
             }
@@ -995,6 +1138,9 @@ impl Iterator for ProbeIter<'_> {
             let l = self.chain.at(self.layer?);
             self.layer = l.below();
             let (cs, ks) = (&self.cs[..self.n], &self.k[..self.n]);
+            if !l.may_hold(cs, ks) {
+                continue;
+            }
             self.inner = Some(if let Some(r) = l.prefix_range(cs, ks) {
                 (l, r, None)
             } else if let Some(p) = (0..l.head.shape.nidx as usize).find_map(|x| l.index_range(x, cs, ks)) {
@@ -1006,21 +1152,22 @@ impl Iterator for ProbeIter<'_> {
     }
 }
 
-/// A chain's live rows in canonical order: a merge of its layers' runs (each layer is sorted), at most `MAX_RUNS`
-/// layers at once (a chain is rolled up before it is deeper).
+/// A chain's live rows in canonical order: a merge of its layers' runs (each layer is sorted), as many as it has.
 pub struct Scan<'a> {
     chain: Chain<'a>,
-    heads: [Option<(Layer<'a>, u32, u32)>; MAX_RUNS],
+    // copy: not block data (a cursor a layer: its handle and its place)
+    heads: Vec<(Layer<'a>, u32, u32)>,
 }
 
 impl<'a> Scan<'a> {
     fn new(chain: &Chain<'a>) -> Scan<'a> {
-        let mut heads = [None; MAX_RUNS];
-        for (n, l) in chain.layers().enumerate() {
-            assert!(n < MAX_RUNS, "a chain deeper than {MAX_RUNS} layers is scanned after a roll-up");
-            let s = chain.span(&l);
-            heads[n] = Some((l, s.start as u32, s.end as u32));
-        }
+        let heads = chain
+            .layers()
+            .map(|l| {
+                let s = chain.span(&l);
+                (l, s.start as u32, s.end as u32)
+            })
+            .collect();
         Scan { chain: *chain, heads }
     }
 }
@@ -1031,14 +1178,14 @@ impl Iterator for Scan<'_> {
     fn next(&mut self) -> Option<RowId> {
         loop {
             let mut best: Option<usize> = None;
-            for k in 0..MAX_RUNS {
-                let Some((lk, ik, hi)) = self.heads[k] else { continue };
+            for k in 0..self.heads.len() {
+                let (lk, ik, hi) = self.heads[k];
                 if ik >= hi {
                     continue;
                 }
                 best = match best {
                     Some(b) => {
-                        let (lb, ib, _) = self.heads[b].expect("a live head");
+                        let (lb, ib, _) = self.heads[b];
                         let o = lb.head.shape.order().iter().map(|&c| lk.get(ik as usize, c as usize).cmp(&lb.get(ib as usize, c as usize))).find(|o| o.is_ne());
                         if o == Some(Ordering::Less) { Some(k) } else { Some(b) }
                     }
@@ -1046,10 +1193,8 @@ impl Iterator for Scan<'_> {
                 };
             }
             let k = best?;
-            let (l, i, _) = self.heads[k].expect("a live head");
-            if let Some(h) = &mut self.heads[k] {
-                h.1 += 1;
-            }
+            let (l, i, _) = self.heads[k];
+            self.heads[k].1 += 1;
             let id = l.start() + i;
             if l.is_plus(i as usize) && !self.chain.killed_above(&l, id) {
                 return Some(RowId::new(id));
@@ -1073,26 +1218,23 @@ impl<'a> States for Chain<'a> {
     }
 
     fn changed_parts_from(&self, end: RowId, out: &mut dyn FnMut(i64)) -> bool {
-        // The layers above `end`: their partition lists merged by key, digests summed (`MAX_RUNS` at most).
-        let mut runs: [&[PartW]; MAX_RUNS] = [&[]; MAX_RUNS];
-        let mut n = 0;
+        // The layers above `end`: their partition lists merged by key, digests summed.
+        let mut runs: Vec<&[PartW]> = Vec::new(); // copy: not block data (a handle a layer's partition index)
         for l in self.layers() {
             if l.start() < end.get() {
                 return false;
             }
-            if n == MAX_RUNS {
-                return false;
-            }
-            runs[n] = l.parts();
-            n += 1;
+            runs.push(l.parts());
             if l.start() == end.get() {
                 break;
             }
         }
-        let mut at = [0usize; MAX_RUNS];
+        let n = runs.len();
+        let mut at = vec![0usize; n]; // copy: not block data (a cursor a layer)
         loop {
             let key = (0..n).filter_map(|k| runs[k].get(at[k]).map(|e| e.key)).min();
             let Some(key) = key else { return true };
+            let key: i32 = key;
             let (mut digest, mut moved) = (0u64, 0u64);
             for k in 0..n {
                 if let Some(e) = runs[k].get(at[k]).filter(|e| e.key == key) {
@@ -1104,8 +1246,8 @@ impl<'a> States for Chain<'a> {
             // One layer's partition changed when it holds a row of it; across layers, when their digests do not
             // cancel (an add and its undo sum to zero).
             if (n == 1 && moved > 0) || digest != 0 {
-                if self.part.is_none_or(|p| p == key) {
-                    out(key);
+                if self.part.is_none_or(|p| p == i64::from(key)) {
+                    out(i64::from(key));
                 }
             }
         }

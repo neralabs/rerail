@@ -295,12 +295,132 @@ fn consolidate_writes_the_same_layer_at_every_tiling() {
     reg.register(tiled, checked).unwrap();
 }
 
-/// What a trace cannot store yet is refused by name; a partition not first in the order is refused.
+/// A run block's trace refuses what the plan puts elsewhere, saying where: levels (Δfix, after L1), encodings other
+/// than Open (a block that leaves its run), kept files and pinned slabs (after L1), the operator cache's retention
+/// (B3) and History's named frontiers (two states). A partition not first in the order, or wider than 32 bits, is
+/// refused.
 #[test]
-fn a_shape_not_built_is_refused_by_name() {
-    let mut s = shape();
-    s.levels = true;
-    assert!(Trace::new(&s).err().unwrap().contains("not built"));
+fn a_shape_the_plan_puts_elsewhere_is_refused_saying_where() {
+    use rerail_blocks::layer::{Encoding, Placement, Retention};
+    let refused = |f: &dyn Fn(&mut Shape), why: &str| {
+        let mut s = shape();
+        f(&mut s);
+        let e = Trace::new(&s).err().unwrap();
+        assert!(e.contains(why), "{e}");
+    };
+    refused(&|s| s.levels = true, "Δfix");
+    refused(&|s| s.encoding = Encoding::Packed, "leaves its run");
+    refused(&|s| s.placement = Placement::KeptFile, "kept stores");
+    refused(&|s| s.placement = Placement::PinnedSlab, "device executor");
+    refused(&|s| s.retention = Retention::Cache, "operator cache");
+    refused(&|s| s.retention = Retention::History, "two states");
     let s = Shape::run(vec![ColType::I32, ColType::I64], vec![1, 0], Some(0));
     assert!(Trace::new(&s).err().unwrap().contains("first"));
+    let s = Shape::run(vec![ColType::I64, ColType::I32], vec![0, 1], Some(0));
+    assert!(Trace::new(&s).err().unwrap().contains("32 bits"));
+}
+
+/// The shape's indexes (P§11.2): an order with fences and prints, a hash order, a permutation and a Bloom filter,
+/// written by consolidate and merge, at any tiling, and read by the probes: every probe of a random trace finds the
+/// brute-force set's rows; a Bloom filter holds every key of its layer and rules out most absent keys.
+#[test]
+fn every_index_kind_answers_its_probes() {
+    use rerail_blocks::layer::{IndexSpec, Layer};
+    let mut s = shape();
+    s.indexes = vec![
+        IndexSpec::Order { key: vec![1], fences: true, prints: true },
+        IndexSpec::Hash(vec![2, 1]),
+        IndexSpec::Perm(vec![2]),
+        IndexSpec::Bloom(vec![1, 2]),
+    ];
+    let mut reg = Registry::default();
+    let ops = TraceOps::declare(&mut reg).unwrap();
+    let mut dir = Directory::default();
+    let mut t = Trace::new(&s).unwrap();
+    let mut r = rng(21);
+    let mut set = Rows::new();
+    let tilings = [Tiling::WHOLE, Tiling { tile: 1, seed: 5 }, Tiling { tile: 3, seed: 0 }];
+    for step in 0..5 {
+        let (mut pairs, next) = random_run(&mut r, &set);
+        // Many rows sharing a value of column 1, so its runs cross fences.
+        for k in 0..200 {
+            let x = vec![1, 7, k];
+            if !set.contains(&x) && !next.contains(&x) && step == 0 {
+                pairs.push((x, 1));
+            }
+        }
+        let next: Rows = if step == 0 { next.into_iter().chain((0..200).map(|k| vec![1, 7, k])).collect() } else { next };
+        let id = runs(&mut dir, &t, &pairs);
+        t.commit(&reg, &ops, &mut dir, id, tilings[step % 3]).unwrap();
+        set = next;
+    }
+    let check_probes = |dir: &Directory, t: &Trace, set: &Rows| {
+        let l = t.read(dir, &[t.head()]).unwrap();
+        let table = l.table();
+        let st = t.state(&table, t.head()).unwrap();
+        let probes: [&[u16]; 5] = [&[1], &[2, 1], &[2], &[1, 2], &[0, 1]];
+        let mut keys: Vec<Vec<i64>> = set.iter().take(40).cloned().collect();
+        keys.push(vec![1, 7, 3]);
+        keys.push(vec![5, 123_456, 999]);
+        for cols in probes {
+            let cs: Vec<ColumnIndex> = cols.iter().map(|&c| ColumnIndex::new(c)).collect();
+            for x in &keys {
+                let key: Vec<i64> = cols.iter().map(|&c| x[c as usize]).collect();
+                let got: Rows = st.matching(&cs, &key).map(|id| row(&st, id)).collect();
+                let want: Rows = set.iter().filter(|y| cols.iter().zip(&key).all(|(&c, &k)| y[c as usize] == k)).cloned().collect();
+                assert_eq!(got, want, "probe {cols:?} = {key:?}");
+            }
+        }
+        // The Bloom filter: every key of a layer may be held; most absent keys are ruled out.
+        let (mut present, mut ruled_out) = (0, 0);
+        for layer in st.layers() {
+            let layer: Layer<'_> = layer;
+            for i in 0..layer.n() {
+                assert!(layer.may_hold(&[1, 2], &[layer.get(i, 1), layer.get(i, 2)]), "a layer's own key");
+                present += 1;
+            }
+            ruled_out += (0..1000).filter(|k| !layer.may_hold(&[1, 2], &[-1_000_000 - k, 5])).count();
+        }
+        assert!(present > 0 && ruled_out > 900 * st.layers().count(), "most absent keys ruled out: {ruled_out}");
+    };
+    check_probes(&dir, &t, &set);
+    t.roll_up(&reg, &ops, &mut dir, 3, Tiling { tile: 2, seed: 9 }).unwrap();
+    check_probes(&dir, &t, &set);
+
+    // The same indexed layer at every tiling and order.
+    let (pairs, _) = random_run(&mut rng(8), &Rows::new());
+    let tiled = Version { status: Status::Default, ..Version::twin(ops.consolidate, "consolidate, tiled", rerail_delta_twins::trace::CONSOLIDATE, &PIPELINE) };
+    reg.check(&tiled, &consolidate_case(&s, &pairs), &[Tiling::WHOLE, Tiling { tile: 1, seed: 2 }, Tiling { tile: 5, seed: 6 }]).unwrap();
+}
+
+/// A chain of any depth is read whole: 14 layers with no roll-up scan, probe and change as their set does, and a
+/// roll-up of 12 layers into one keeps the state.
+#[test]
+fn a_deep_chain_reads_as_its_set() {
+    let (reg, ops, mut dir, mut t) = setup();
+    let mut r = rng(99);
+    let mut sets = vec![Rows::new()];
+    let mut heads = vec![None];
+    for _ in 0..14 {
+        let (pairs, next) = random_run(&mut r, sets.last().unwrap());
+        let id = runs(&mut dir, &t, &pairs);
+        heads.push(Some(t.commit(&reg, &ops, &mut dir, id, Tiling::WHOLE).unwrap()));
+        sets.push(next);
+    }
+    {
+        let l = t.read(&dir, &[t.head()]).unwrap();
+        let table = l.table();
+        assert_eq!(rows_of(&t.state(&table, t.head()).unwrap()), sets[14]);
+        for j in [0, 1, 5] {
+            let b = t.change(&table, heads[j], heads[14]).unwrap();
+            check(&b);
+            let mut ps = Vec::new();
+            b.changed_parts(&mut |p| ps.push(p));
+            ps.sort();
+            assert_eq!(ps, changed(&sets[j], &sets[14]), "{j}→14 across {} layers", 14 - j);
+        }
+    }
+    t.roll_up(&reg, &ops, &mut dir, 12, Tiling { tile: 4, seed: 1 }).unwrap();
+    let l = t.read(&dir, &[t.head()]).unwrap();
+    assert_eq!(rows_of(&t.state(&l.table(), t.head()).unwrap()), sets[14]);
 }

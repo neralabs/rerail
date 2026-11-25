@@ -21,7 +21,12 @@ use crate::sort::{CHUNK, chunks, merge_pairs, more, pairs, sort_chunks};
 use crate::{Ctx, Tile, TwinPhase};
 use rerail_blocks::bistate::{ColumnIndex, Read};
 use rerail_blocks::gens::{BODY_AT, Table, set_word, word, words, words_mut};
-use rerail_blocks::layer::{Chain, Layer, LayerOut, MAX_IX, MAX_RUNS, NONE, PartW, Runs, ShapeW, SketchW, layer_bytes, layer_end, row_hash};
+use rerail_blocks::bloom;
+use rerail_blocks::layer::{
+    Chain, IX_BLOOM, IX_FENCES, IX_HASH, IX_PRINTS, Layer, LayerOut, MAX_IX, NONE, PartW, Runs, ShapeW, SketchW, bloom_key, bloom_words,
+    layer_bytes, layer_end, row_hash,
+};
+use rerail_blocks::order::{FENCE, print_vals, tag};
 use std::cmp::Ordering;
 
 crate::params! {
@@ -59,28 +64,29 @@ pub const CONTROL_BYTES: usize = 40;
 /// The rows a layer is made from: a run's δ runs, or the layers merged (newest first, each sorted).
 enum Src<'a> {
     Runs(Runs<'a>),
-    Layers { layers: [Option<Layer<'a>>; MAX_RUNS], off: [usize; MAX_RUNS + 1], k: usize },
+    // copy: not block data (a handle and a first row a merged layer)
+    Layers { layers: Vec<Layer<'a>>, off: Vec<usize> },
 }
 
 impl<'a> Src<'a> {
     fn n(&self) -> usize {
         match self {
             Src::Runs(r) => r.len(),
-            Src::Layers { off, k, .. } => off[*k],
+            Src::Layers { off, .. } => off[off.len() - 1],
         }
     }
 
     fn shape(&self) -> ShapeW {
         match self {
             Src::Runs(r) => r.head.shape,
-            Src::Layers { layers, .. } => layers[0].expect("a merged layer").head.shape,
+            Src::Layers { layers, .. } => layers[0].head.shape,
         }
     }
 
     fn at(&self, i: usize) -> (Layer<'a>, usize) {
-        let Src::Layers { layers, off, k } = self else { unreachable!() };
-        let j = (0..*k).rfind(|&j| off[j] <= i).expect("a merged row");
-        (layers[j].expect("a merged layer"), i - off[j])
+        let Src::Layers { layers, off } = self else { unreachable!() };
+        let j = off.partition_point(|&o| o <= i) - 1;
+        (layers[j], i - off[j])
     }
 
     fn get(&self, i: usize, c: usize) -> i64 {
@@ -135,20 +141,20 @@ impl Op for Cons {
 impl Op for Merge {
     fn src<'a>(src: &'a [u8], table: &Table<'a>, params: &[u8]) -> Src<'a> {
         let p = <MergeP as crate::Params>::read(params);
-        let mut layers = [None; MAX_RUNS];
-        let mut off = [0usize; MAX_RUNS + 1];
-        assert!((1..=MAX_RUNS as u32).contains(&p.count), "a merge of 1 to {MAX_RUNS} layers");
+        assert!(p.count >= 1, "a merge of one layer or more");
+        let mut layers = Vec::with_capacity(p.count as usize);
+        let mut off = vec![0usize];
         let mut l = Layer::new(src).expect("the newest merged layer, committed");
         for k in 0..p.count as usize {
-            layers[k] = Some(l);
-            off[k + 1] = off[k] + l.n();
+            layers.push(l);
+            off.push(off[k] + l.n());
             if k + 1 < p.count as usize {
                 let below = l.below().expect("as many layers as merged");
                 l = Layer::new(table.block(below).expect("a merged layer reached by reference")).expect("committed");
             }
         }
         assert_eq!(l.below().unwrap_or(NONE), p.below, "the merged layers lie over the layer below them");
-        Src::Layers { layers, off, k: p.count as usize }
+        Src::Layers { layers, off }
     }
     fn below(params: &[u8]) -> u32 {
         <MergeP as crate::Params>::read(params).below
@@ -520,6 +526,7 @@ fn pindex<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         for o in k * CHUNK..((k + 1) * CHUNK).min(n_out) {
             if part_head(&out, o) {
                 let key = part_key(&out, o);
+                let key = i32::try_from(key).expect("a partition column holds 32 bits");
                 out.parts()[e] = PartW { key, lo: o as u32, ..PartW::default() };
                 e += 1;
             }
@@ -646,8 +653,33 @@ fn nidx(shape: ShapeW) -> usize {
     shape.nidx as usize
 }
 
-fn icmp(out: &LayerOut<'_>, key: &[u8], x: u32, y: u32) -> Ordering {
-    key.iter().map(|&c| out.get(x as usize, c as usize).cmp(&out.get(y as usize, c as usize))).find(|o| o.is_ne()).unwrap_or(x.cmp(&y))
+/// Index `x`'s order of out rows `p` and `q`: by its key (an order); by the lead's tag, then the key (a hash order);
+/// by the Bloom word the key falls in (a filter's work); position last.
+fn icmp(out: &LayerOut<'_>, x: usize, p: u32, q: u32) -> Ordering {
+    let shape = &out.head.shape;
+    let key = shape.index_key(x);
+    let kind = shape.index_kind(x);
+    let by_key = || key.iter().map(|&c| out.get(p as usize, c as usize).cmp(&out.get(q as usize, c as usize))).find(|o| o.is_ne());
+    let first = if kind & IX_BLOOM != 0 {
+        bloom_word(out, x, p as usize).cmp(&bloom_word(out, x, q as usize)).then_with(|| by_key().unwrap_or(Ordering::Equal))
+    } else if kind & IX_HASH != 0 {
+        let lead = |r: u32| out.get(r as usize, key[0] as usize);
+        tag(lead(p)).cmp(&tag(lead(q))).then_with(|| by_key().unwrap_or(Ordering::Equal))
+    } else {
+        by_key().unwrap_or(Ordering::Equal)
+    };
+    first.then(p.cmp(&q))
+}
+
+/// The Bloom word index `x`'s key of out row `o` falls in, and that word's bits for it.
+fn bloom_place(out: &LayerOut<'_>, x: usize, o: usize) -> (usize, u64) {
+    let key = out.head.shape.index_key(x);
+    let h = bloom::hash(bloom_key(key.iter().map(|&c| out.get(o, c as usize))));
+    bloom::place(h, bloom_words(out.head.n as usize))
+}
+
+fn bloom_word(out: &LayerOut<'_>, x: usize, o: usize) -> usize {
+    bloom_place(out, x, o).0
 }
 
 fn isort_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
@@ -669,8 +701,7 @@ fn isort<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
         for i in r.clone() {
             a[i] = i as u32;
         }
-        let key = shape.index_key(x);
-        a[r].sort_by(|&p, &q| icmp(&out, key, p, q));
+        a[r].sort_by(|&p, &q| icmp(&out, x, p, q));
     }
 }
 
@@ -686,16 +717,14 @@ fn ipass<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     let (n_out, width, which) = (v.n_out(), v.word(W_IWIDTH) as usize, v.word(W_IWHICH));
     let pp = pairs(n_out, width) as usize;
     let out = LayerOut::new(v.layer);
-    let shape = out.head.shape;
     let cap = v.w.cap;
     let (a_all, b_all) = v.work[v.w.ix_a..].split_at_mut(v.w.ix_b - v.w.ix_a);
     for item in t.items() {
         let (x, p) = (item / pp, item % pp);
         let a = words_mut::<u32>(a_all, 4 * cap * x, n_out);
         let b = words_mut::<u32>(b_all, 4 * cap * x, n_out);
-        let key = shape.index_key(x);
         let one = Tile { lo: p as u32, hi: p as u32 + 1 };
-        let cmp = |p: u32, q: u32| icmp(&out, key, p, q);
+        let cmp = |p: u32, q: u32| icmp(&out, x, p, q);
         if which == 0 { merge_pairs(a, b, one, width, cmp) } else { merge_pairs(b, a, one, width, cmp) }
     }
 }
@@ -716,8 +745,68 @@ fn isettle<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
     for item in t.items() {
         let (x, k) = (item / ch, item % ch);
         let sorted: &[u32] = words(v.work, base + 4 * cap * x, n_out);
+        if out.head.shape.index_kind(x) & IX_BLOOM != 0 {
+            continue;
+        }
         let r = k * CHUNK..((k + 1) * CHUNK).min(n_out);
         out.index(x)[r.clone()].copy_from_slice(&sorted[r]); // copy: derived (the layer's index, from the sort's work)
+    }
+}
+
+/// Each order's fences (a `FENCE`th position's lead), a hash order's tags, and the prints (a position's whole key):
+/// a chunk of positions of an index an item, read from the order just settled.
+fn iaux<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    let v = view::<O>(c);
+    let n_out = v.n_out();
+    let ch = chunks(n_out) as usize;
+    let mut out = LayerOut::new(v.layer);
+    let shape = out.head.shape;
+    for item in t.items() {
+        let (x, k) = (item / ch, item % ch);
+        let (kind, key) = (shape.index_kind(x), shape.index_key(x));
+        if kind & IX_BLOOM != 0 {
+            continue;
+        }
+        for p in k * CHUNK..((k + 1) * CHUNK).min(n_out) {
+            let row = out.index(x)[p] as usize;
+            let lead = out.get(row, key[0] as usize);
+            if kind & IX_FENCES != 0 && p % FENCE == 0 {
+                out.fences(x)[p / FENCE] = lead;
+            }
+            if kind & IX_HASH != 0 {
+                out.tags(x)[p] = tag(lead);
+            }
+            if kind & IX_PRINTS != 0 {
+                let print = print_vals(key.iter().map(|&c| out.get(row, c as usize)));
+                out.prints(x)[p] = print;
+            }
+        }
+    }
+}
+
+fn bloom_items<O: Op>(c: &Ctx<'_, '_, '_>) -> u32 {
+    items_of::<O>(c, |s, wb, _| nidx(s.shape()) * bloom_words(word::<u64>(wb, W_NOUT) as usize))
+}
+
+/// A Bloom filter's words, a word an item: the keys that fall in word `w` lie together in the filter's sorted work
+/// (sorted by word), found by bisection, and OR-ed. No two items write one word.
+fn bloom_fill<O: Op>(c: &mut Ctx<'_, '_, '_>, t: Tile) {
+    let v = view::<O>(c);
+    let n_out = v.n_out();
+    let nw = bloom_words(n_out);
+    let base = if v.word(W_IWHICH) == 0 { v.w.ix_a } else { v.w.ix_b };
+    let cap = v.w.cap;
+    let mut out = LayerOut::new(v.layer);
+    for item in t.items() {
+        let (x, w) = (item / nw, item % nw);
+        if out.head.shape.index_kind(x) & IX_BLOOM == 0 {
+            continue;
+        }
+        let sorted: &[u32] = words(v.work, base + 4 * cap * x, n_out);
+        let lo = sorted.partition_point(|&o| bloom_word(&out, x, o as usize) < w);
+        let hi = sorted.partition_point(|&o| bloom_word(&out, x, o as usize) <= w);
+        let bits = sorted[lo..hi].iter().fold(0u64, |m, &o| m | bloom_place(&out, x, o as usize).1);
+        out.bloom(x)[w] = bits;
     }
 }
 
@@ -844,6 +933,8 @@ macro_rules! pipeline {
             TwinPhase { name: "isort", items: isort_items::<$o>, run: isort::<$o>, again: None },
             TwinPhase { name: "ipasses", items: ipass_items::<$o>, run: ipass::<$o>, again: Some(ipass_next::<$o>) },
             TwinPhase { name: "isettle", items: isettle_items::<$o>, run: isettle::<$o>, again: None },
+            TwinPhase { name: "iaux", items: isettle_items::<$o>, run: iaux::<$o>, again: None },
+            TwinPhase { name: "bloom", items: bloom_items::<$o>, run: bloom_fill::<$o>, again: None },
             TwinPhase { name: "sketch", items: out_chunks::<$o>, run: sketch::<$o>, again: None },
             TwinPhase { name: "sketches", items: arity::<$o>, run: sketches::<$o>, again: None },
             TwinPhase { name: "seal", items: |_| 1, run: seal::<$o>, again: None },
