@@ -202,6 +202,15 @@ Checks, each passed under Relax on this machine (`relax test rerail-delta-exec -
 - Also: a slot takes its kind of block and the params their declared size; the twin is the one reference and comes
   first; params give UKL their layout.
 
+## B2's trace: two states, layers as storage (2026-11-25)
+
+P§12 gives a trace any frontier (`at`, `between`, `fork`, named `pin`s). The user on 2026-11-24 (0678): "Nothing
+reads more than two versions. I don't want a generic MVCC system." O5 chose geometric roll-up, which keeps one state
+as about log n layers. Asked which governs B2, the user: "yes build it that way", to this reading: layers are only how
+one state is stored; a trace has two states, the committed one and the run's open layer on it; 0678's `Bistate<S>`
+stays the one definition, with `S` a `View` widened to n layers; no reads at other frontiers, no `fork`, no named
+pins. B2's check is that a random chain of layers reads as a flat set at both states.
+
 ## Operations: the execution shape (2026-11-25, being designed)
 
 The user: "We eventually want to be able to run these computations entirely on GPUs … chunk the computation into
