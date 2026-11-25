@@ -537,6 +537,80 @@ pub(crate) fn classes(b: &mut Block, anon: &[(String, HashSet<String>)]) {
     });
 }
 
+/// The loops in `b` (`while` and `loop`), each, outer ones first: each alone, and with the move after it.
+pub(crate) fn loops(b: &Block, out: &mut Vec<Block>) {
+    for (i, op) in b.iter().enumerate() {
+        if matches!(op, Op::Loop(_) | Op::While(..)) {
+            out.push(vec![op.clone()]);
+            if let Some(next) = b.get(i + 1) {
+                out.push(vec![op.clone(), next.clone()]);
+            }
+        }
+        match op {
+            Op::If { arms, els } => {
+                arms.iter().for_each(|(_, x)| loops(x, out));
+                if let Some(e) = els {
+                    loops(e, out);
+                }
+            }
+            Op::Match { arms, default, .. } => {
+                arms.iter().for_each(|(_, x)| loops(x, out));
+                loops(default, out);
+            }
+            Op::Loop(x) | Op::While(_, x) | Op::At(_, x) => loops(x, out),
+            _ => {}
+        }
+    }
+}
+
+/// `b` with each run of moves `seq` a call of `f` instead.
+pub(crate) fn call_for(b: &mut Block, seq: &[Op], f: &str) {
+    blocks(b, &mut |x| {
+        let mut i = 0;
+        while i + seq.len() <= x.len() {
+            if x[i..i + seq.len()] == *seq {
+                x.splice(i..i + seq.len(), [Op::Call(f.to_owned())]);
+            }
+            i += 1;
+        }
+    });
+}
+
+/// What a run of moves reads, for its function's name: the one field it sets (`f::…`), else the one kind of leaf it
+/// makes (`k::…`), else the one rule it calls.
+pub(crate) fn what_of(seq: &[Op]) -> Option<String> {
+    let mut b = seq.to_vec();
+    let (mut fields, mut kinds, mut calls) = (Vec::new(), Vec::new(), Vec::new());
+    blocks(&mut b, &mut |x| {
+        for o in x.iter() {
+            let add = |v: &mut Vec<String>, s: &str| {
+                if !v.iter().any(|x| x == s) {
+                    v.push(s.to_owned());
+                }
+            };
+            match o {
+                Op::Field(f) => add(&mut fields, f),
+                Op::Take { take, .. } => {
+                    if let Take::Leaf { field, .. } = take
+                        && field != "0"
+                    {
+                        add(&mut fields, field);
+                    }
+                    if let Take::Leaf { kind, .. } | Take::WordLeaf { kind, .. } | Take::Merge { kind, .. } = take
+                        && kind.starts_with("k::")
+                    {
+                        add(&mut kinds, kind);
+                    }
+                }
+                Op::Call(f) => add(&mut calls, f),
+                _ => {}
+            }
+        }
+    });
+    let one = |v: Vec<String>| if let [x] = v.as_slice() { Some(x.rsplit("::").next().unwrap_or(x).trim_start_matches("r_").to_ascii_lowercase()) } else { None };
+    one(fields).or_else(|| one(kinds)).or_else(|| one(calls))
+}
+
 /// `b` with each call of `f` its code `body` (`G::inlined`): whether it had one.
 pub(crate) fn inline_call(b: &mut Block, f: &str, body: &Block) -> bool {
     let mut found = false;

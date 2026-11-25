@@ -60,4 +60,11 @@ changed and how.
    so a setting's, a declaration's and a functor's tail ask a punctuation, then a `#` word, once each, and take the
    `#` word as `bump_as(k::IDENTIFIER)`. A negated word test is `!=` or `!matches!`. The changes: rr's and Kotlin's
    lists of a choice's words are its table's test, its takes' kinds its table's, in both forms.)
-4. Repeated code as functions.
+4. Repeated code as functions. (Done for loops: `G::repeated`, before the inlining, finds a loop of 6 lines or more
+   (`REPEATED_LINES`) that is the same in more than one place, with the move after it where each place has the same
+   (a must-hold of the line's end), and makes it one function called from each, named for what it reads
+   (`moves::what_of`: its one field, else its one leaf's kind, else its one rule). Not a loop that reads a local of
+   the code around it. rr: `modifiers` (a declaration's and a functor's tail to the line's end, the lean parser's
+   `rest_of_line`) and `raw_texts`; Kotlin: `delegation_specifiers`, `type_names`, `quests`, `trail_brackets`. With
+   the modifiers one call, the declaration and functor directives are short enough to be `directive`'s arms, as the
+   lean parser's. Not yet: code that differs in a field only is not one function with the field its parameter.)

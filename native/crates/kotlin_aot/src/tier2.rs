@@ -1934,22 +1934,7 @@ impl<L: Layout> P<'_, L> {
                 if self.word() == w::COLON_4 {
                     self.implied()?;
                     self.delegation_specifier()?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::COMMA_20 => {
-                                    self.implied()?;
-                                    self.delegation_specifier()?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    self.delegation_specifiers()?;
                 }
             }
             self.ask_semi(false)?;
@@ -1992,22 +1977,7 @@ impl<L: Layout> P<'_, L> {
                 if self.word() == w::COLON_4 {
                     self.implied()?;
                     self.delegation_specifier()?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::COMMA_20 => {
-                                    self.implied()?;
-                                    self.delegation_specifier()?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    self.delegation_specifiers()?;
                 }
             }
             self.ask_semi(false)?;
@@ -2051,22 +2021,7 @@ impl<L: Layout> P<'_, L> {
                         if self.word() == w::COLON_4 {
                             self.implied()?;
                             self.delegation_specifier()?;
-                            loop {
-                                self.ask_semi(false)?;
-                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                                    break;
-                                } else {
-                                    match self.word() {
-                                        w::COMMA_20 => {
-                                            self.implied()?;
-                                            self.delegation_specifier()?;
-                                        }
-                                        _ => {
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
+                            self.delegation_specifiers()?;
                         }
                     }
                     self.ask_semi(false)?;
@@ -2209,22 +2164,7 @@ impl<L: Layout> P<'_, L> {
             if self.word() == w::COLON_4 {
                 self.implied()?;
                 self.delegation_specifier()?;
-                loop {
-                    self.ask_semi(false)?;
-                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                        break;
-                    } else {
-                        match self.word() {
-                            w::COMMA_20 => {
-                                self.implied()?;
-                                self.delegation_specifier()?;
-                            }
-                            _ => {
-                                break;
-                            }
-                        }
-                    }
-                }
+                self.delegation_specifiers()?;
             }
         }
         self.ask_semi(false)?;
@@ -2756,22 +2696,7 @@ impl<L: Layout> P<'_, L> {
             if self.word() == w::COLON_4 {
                 self.implied()?;
                 self.delegation_specifier()?;
-                loop {
-                    self.ask_semi(false)?;
-                    if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                        break;
-                    } else {
-                        match self.word() {
-                            w::COMMA_20 => {
-                                self.implied()?;
-                                self.delegation_specifier()?;
-                            }
-                            _ => {
-                                break;
-                            }
-                        }
-                    }
-                }
+                self.delegation_specifiers()?;
             }
         }
         self.ask_semi(false)?;
@@ -3171,22 +3096,7 @@ impl<L: Layout> P<'_, L> {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
                     self.p_stored(w::QUEST_40, k::QUEST)?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::QUEST_40 => {
-                                    self.bump_as(k::QUEST)?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    self.close()?;
+                    self.quests()?;
                 }
             }
         } else if SOFT_WORD[self.word() as usize] != 0 || self.word() == w::FILE_3 || self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) || self.kind() == t::BACKTICK_NAME {
@@ -3197,22 +3107,7 @@ impl<L: Layout> P<'_, L> {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
                     self.p_stored(w::QUEST_40, k::QUEST)?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::QUEST_40 => {
-                                    self.bump_as(k::QUEST)?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    self.close()?;
+                    self.quests()?;
                 }
             }
         } else {
@@ -3756,22 +3651,7 @@ impl<L: Layout> P<'_, L> {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
                     self.p_stored(w::QUEST_40, k::QUEST)?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::QUEST_40 => {
-                                    self.bump_as(k::QUEST)?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    self.close()?;
+                    self.quests()?;
                 }
             }
         } else if SOFT_WORD[self.word() as usize] != 0 || self.word() == w::FILE_3 || self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) || self.kind() == t::BACKTICK_NAME {
@@ -3782,22 +3662,7 @@ impl<L: Layout> P<'_, L> {
                 if self.word() == w::QUEST_40 {
                     self.wrap(k::NULLABLE_TYPE, 0)?;
                     self.p_stored(w::QUEST_40, k::QUEST)?;
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::QUEST_40 => {
-                                    self.bump_as(k::QUEST)?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    self.close()?;
+                    self.quests()?;
                 }
             }
         } else {
@@ -3814,22 +3679,7 @@ impl<L: Layout> P<'_, L> {
         self.type_name()?;
         self.ask_semi(false)?;
         if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-            loop {
-                self.ask_semi(false)?;
-                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                    break;
-                } else {
-                    match self.word() {
-                        w::DOT_32 => {
-                            self.implied()?;
-                            self.type_name()?;
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-            }
+            self.type_names()?;
         } else if self.m_generic() {
             self.type_arguments()?;
         } else {
@@ -3838,40 +3688,10 @@ impl<L: Layout> P<'_, L> {
                     self.type_arguments()?;
                 }
                 w::DOT_32 => {
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::DOT_32 => {
-                                    self.implied()?;
-                                    self.type_name()?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    self.type_names()?;
                 }
                 _ => {
-                    loop {
-                        self.ask_semi(false)?;
-                        if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-                            break;
-                        } else {
-                            match self.word() {
-                                w::DOT_32 => {
-                                    self.implied()?;
-                                    self.type_name()?;
-                                }
-                                _ => {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    self.type_names()?;
                 }
             }
         }
@@ -4531,7 +4351,15 @@ impl<L: Layout> P<'_, L> {
             self.close()?;
         } else if self.word() == w::LBRACK_5 {
             self.wrap(k::INDEXING_EXPRESSION, 0)?;
-            self.indexing_suffix()?;
+            self.open(k::INDEXING_SUFFIX);
+            self.p(w::LBRACK_5)?;
+            let asks = self.asks;
+            self.asks = asks & 0x0 | 0x0;
+            self.r_expression()?;
+            self.asks = asks;
+            self.trail_brackets()?;
+            self.close()?;
+            self.marked = false;
             self.close()?;
         } else if matches!(self.word(), w::PLUS_PLUS_80 | w::MINUS_MINUS_81 | w::BANG_BANG_82) {
             self.wrap(k::POSTFIX_EXPRESSION, 0)?;
@@ -4701,45 +4529,6 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// `indexing_suffix`.
-    fn indexing_suffix(&mut self) -> R {
-        self.open(k::INDEXING_SUFFIX);
-        self.p(w::LBRACK_5)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x0;
-        self.r_expression()?;
-        self.asks = asks;
-        while !(self.word() == w::COMMA_20 && matches!(self.word_at(self.i + 1), w::RPAREN_21 | w::GT_27 | w::RBRACK_6 | w::RBRACE_18 | w::MINUS_GT_41)) {
-            match self.word() {
-                w::COMMA_20 => {
-                    self.implied()?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.r_expression()?;
-                    self.asks = asks;
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        if self.word() == w::COMMA_20 && matches!(self.word_at(self.i + 1), w::RPAREN_21 | w::GT_27 | w::RBRACK_6 | w::RBRACE_18 | w::MINUS_GT_41) {
-            self.trail_bracket()?;
-        } else {
-            match self.word() {
-                w::RBRACK_6 => {
-                    self.implied()?;
-                }
-                _ => {
-                    return self.refuse();
-                }
-            }
-        }
-        self.close()?;
-        self.marked = false;
-        Ok(())
-    }
-
     /// `value_arguments`.
     fn value_arguments(&mut self) -> R {
         self.open(k::VALUE_ARGUMENTS);
@@ -4872,7 +4661,15 @@ impl<L: Layout> P<'_, L> {
             self.close()?;
             self.marked = false;
         } else if self.word() == w::LBRACK_5 {
-            self.collection_literal()?;
+            self.open(k::COLLECTION_LITERAL);
+            self.p(w::LBRACK_5)?;
+            let asks = self.asks;
+            self.asks = asks & 0x0 | 0x0;
+            self.r_expression()?;
+            self.asks = asks;
+            self.trail_brackets()?;
+            self.close()?;
+            self.marked = false;
         } else if SOFT_WORD[self.word() as usize] != 0 || matches!(self.word(), w::FILE_3 | w::OUT_93 | w::BY_25) || self.kind() == t::SIMPLE_IDENTIFIER && !matches!(self.word(), w::AS_10 | w::BREAK_62 | w::CLASS_13 | w::CONTINUE_61 | w::DO_45 | w::ELSE_54 | w::FALSE_117 | w::FOR_42 | w::FUN_14 | w::IF_53 | w::IN_43 | w::INTERFACE_15 | w::IS_75 | w::NULL_118 | w::OBJECT_31 | w::RETURN_60 | w::SUPER_38 | w::THIS_37 | w::THROW_59 | w::TRUE_116 | w::TRY_56 | w::TYPEALIAS_11 | w::VAL_22 | w::VAR_23 | w::WHEN_55 | w::WHILE_44 | w::VARARG_103 | w::NOINLINE_104 | w::CROSSINLINE_105) || self.kind() == t::BACKTICK_NAME {
             self.name()?;
         } else if matches!(self.kind(), t::QUOTE | t::QUOTE__CLOSE) {
@@ -4898,45 +4695,6 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
-        self.marked = false;
-        Ok(())
-    }
-
-    /// `collection_literal`.
-    fn collection_literal(&mut self) -> R {
-        self.open(k::COLLECTION_LITERAL);
-        self.p(w::LBRACK_5)?;
-        let asks = self.asks;
-        self.asks = asks & 0x0 | 0x0;
-        self.r_expression()?;
-        self.asks = asks;
-        while !(self.word() == w::COMMA_20 && matches!(self.word_at(self.i + 1), w::RPAREN_21 | w::GT_27 | w::RBRACK_6 | w::RBRACE_18 | w::MINUS_GT_41)) {
-            match self.word() {
-                w::COMMA_20 => {
-                    self.implied()?;
-                    let asks = self.asks;
-                    self.asks = asks & 0x0 | 0x0;
-                    self.r_expression()?;
-                    self.asks = asks;
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        if self.word() == w::COMMA_20 && matches!(self.word_at(self.i + 1), w::RPAREN_21 | w::GT_27 | w::RBRACK_6 | w::RBRACE_18 | w::MINUS_GT_41) {
-            self.trail_bracket()?;
-        } else {
-            match self.word() {
-                w::RBRACK_6 => {
-                    self.implied()?;
-                }
-                _ => {
-                    return self.refuse();
-                }
-            }
-        }
-        self.close()?;
         self.marked = false;
         Ok(())
     }
@@ -5534,14 +5292,99 @@ impl<L: Layout> P<'_, L> {
         Ok(())
     }
 
-    /// `trail_bracket`.
-    fn trail_bracket(&mut self) -> R {
-        if !(self.word() == w::COMMA_20 && matches!(self.word_at(self.i + 1), w::RPAREN_21 | w::GT_27 | w::RBRACK_6 | w::RBRACE_18 | w::MINUS_GT_41)) {
-            return self.refuse();
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn trail_brackets(&mut self) -> R {
+        while !(self.word() == w::COMMA_20 && matches!(self.word_at(self.i + 1), w::RPAREN_21 | w::GT_27 | w::RBRACK_6 | w::RBRACE_18 | w::MINUS_GT_41)) {
+            match self.word() {
+                w::COMMA_20 => {
+                    self.implied()?;
+                    let asks = self.asks;
+                    self.asks = asks & 0x0 | 0x0;
+                    self.r_expression()?;
+                    self.asks = asks;
+                }
+                _ => {
+                    break;
+                }
+            }
         }
-        self.p_stored(w::COMMA_20, k::COMMA)?;
-        self.p_stored(w::RBRACK_6, k::RBRACK)?;
-        self.marked = false;
+        if self.word() == w::COMMA_20 && matches!(self.word_at(self.i + 1), w::RPAREN_21 | w::GT_27 | w::RBRACK_6 | w::RBRACE_18 | w::MINUS_GT_41) {
+            self.p_stored(w::COMMA_20, k::COMMA)?;
+            self.p_stored(w::RBRACK_6, k::RBRACK)?;
+            self.marked = false;
+        } else {
+            match self.word() {
+                w::RBRACK_6 => {
+                    self.implied()?;
+                }
+                _ => {
+                    return self.refuse();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn delegation_specifiers(&mut self) -> R {
+        loop {
+            self.ask_semi(false)?;
+            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                break;
+            } else {
+                match self.word() {
+                    w::COMMA_20 => {
+                        self.implied()?;
+                        self.delegation_specifier()?;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn quests(&mut self) -> R {
+        loop {
+            self.ask_semi(false)?;
+            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                break;
+            } else {
+                match self.word() {
+                    w::QUEST_40 => {
+                        self.bump_as(k::QUEST)?;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+        }
+        self.close()?;
+        Ok(())
+    }
+
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn type_names(&mut self) -> R {
+        loop {
+            self.ask_semi(false)?;
+            if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                break;
+            } else {
+                match self.word() {
+                    w::DOT_32 => {
+                        self.implied()?;
+                        self.type_name()?;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

@@ -845,7 +845,14 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                 }
                 w::DECL_67 => {
-                    self.declaration()?;
+                    self.open(k::DECLARATION);
+                    self.p_stored(w::DOT_13, k::DOT)?;
+                    self.p(w::DECL_67)?;
+                    self.id(f::NAME)?;
+                    self.column_list()?;
+                    self.field_made(f::COLUMNS);
+                    self.modifiers()?;
+                    self.close()?;
                 }
                 w::VIOLATION_68 => {
                     self.violation_declaration()?;
@@ -860,7 +867,17 @@ impl<L: Layout> P<'_, L> {
                     self.close()?;
                 }
                 w::FUNCTOR_70 => {
-                    self.functor_declaration()?;
+                    self.open(k::FUNCTOR_DECLARATION);
+                    self.p_stored(w::DOT_13, k::DOT)?;
+                    self.p(w::FUNCTOR_70)?;
+                    self.id(f::NAME)?;
+                    self.column_list()?;
+                    self.field_made(f::COLUMNS);
+                    self.p_stored(w::COLON_15, k::COLON)?;
+                    self.functor_type()?;
+                    self.field_made(f::RETURN_TYPE);
+                    self.modifiers()?;
+                    self.close()?;
                 }
                 w::TYPE_2 => {
                     self.open(k::TYPE_DECLARATION);
@@ -1028,61 +1045,6 @@ impl<L: Layout> P<'_, L> {
         } else {
             return self.refuse();
         }
-        Ok(())
-    }
-
-    /// `functor_declaration`.
-    fn functor_declaration(&mut self) -> R {
-        self.open(k::FUNCTOR_DECLARATION);
-        self.p_stored(w::DOT_13, k::DOT)?;
-        self.p(w::FUNCTOR_70)?;
-        self.id(f::NAME)?;
-        self.column_list()?;
-        self.field_made(f::COLUMNS);
-        self.p_stored(w::COLON_15, k::COLON)?;
-        self.functor_type()?;
-        self.field_made(f::RETURN_TYPE);
-        while !(self.i >= self.n || self.bit_at(self.i, 1)) {
-            if PUNCTUATION[self.word() as usize] != 0 {
-                self.bump_as(PUNCTUATION[self.word() as usize])?;
-            } else if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
-                self.bump_as(k::IDENTIFIER)?;
-            } else if self.word() == w::LBRACE_20 {
-                self.p_stored(w::LBRACE_20, k::LBRACE)?;
-            } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
-                self.r_word()?;
-                self.field_made(f::MODIFIER);
-            } else {
-                return self.refuse();
-            }
-        }
-        self.close()?;
-        Ok(())
-    }
-
-    /// `declaration`.
-    fn declaration(&mut self) -> R {
-        self.open(k::DECLARATION);
-        self.p_stored(w::DOT_13, k::DOT)?;
-        self.p(w::DECL_67)?;
-        self.id(f::NAME)?;
-        self.column_list()?;
-        self.field_made(f::COLUMNS);
-        while !(self.i >= self.n || self.bit_at(self.i, 1)) {
-            if PUNCTUATION[self.word() as usize] != 0 {
-                self.bump_as(PUNCTUATION[self.word() as usize])?;
-            } else if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
-                self.bump_as(k::IDENTIFIER)?;
-            } else if self.word() == w::LBRACE_20 {
-                self.p_stored(w::LBRACE_20, k::LBRACE)?;
-            } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
-                self.r_word()?;
-                self.field_made(f::MODIFIER);
-            } else {
-                return self.refuse();
-            }
-        }
-        self.close()?;
         Ok(())
     }
 
@@ -1282,46 +1244,14 @@ impl<L: Layout> P<'_, L> {
                 return self.refuse();
             }
         }
-        loop {
-            match self.word() {
-                _ if PUNCTUATION[self.word() as usize] != 0 && !matches!(self.word(), w::LPAREN_10 | w::RPAREN_11) || self.word() == w::LBRACE_20 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                w::LPAREN_10 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                    self.io_inner()?;
-                }
-                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
+        self.raw_texts()?;
         Ok(())
     }
 
     /// `io_inner`.
     fn io_inner(&mut self) -> R {
         self.deeper()?;
-        loop {
-            match self.word() {
-                _ if PUNCTUATION[self.word() as usize] != 0 && !matches!(self.word(), w::LPAREN_10 | w::RPAREN_11) || self.word() == w::LBRACE_20 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                w::LPAREN_10 => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                    self.io_inner()?;
-                }
-                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.merge_as(true, k::RAW_TEXT)?;
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
+        self.raw_texts()?;
         self.merge_as(self.word() == w::RPAREN_11, k::RAW_TEXT)?;
         self.depth -= 1;
         Ok(())
@@ -2084,6 +2014,47 @@ impl<L: Layout> P<'_, L> {
         }
         self.merge_as(self.word() == w::RBRACE_21, k::JSON_OBJECT)?;
         self.depth -= 1;
+        Ok(())
+    }
+
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn raw_texts(&mut self) -> R {
+        loop {
+            match self.word() {
+                _ if PUNCTUATION[self.word() as usize] != 0 && !matches!(self.word(), w::LPAREN_10 | w::RPAREN_11) || self.word() == w::LBRACE_20 => {
+                    self.merge_as(true, k::RAW_TEXT)?;
+                }
+                w::LPAREN_10 => {
+                    self.merge_as(true, k::RAW_TEXT)?;
+                    self.io_inner()?;
+                }
+                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
+                    self.merge_as(true, k::RAW_TEXT)?;
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The loop the parser reads in more than one place (decision 0685 step 4).
+    fn modifiers(&mut self) -> R {
+        while !(self.i >= self.n || self.bit_at(self.i, 1)) {
+            if PUNCTUATION[self.word() as usize] != 0 {
+                self.bump_as(PUNCTUATION[self.word() as usize])?;
+            } else if self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 {
+                self.bump_as(k::IDENTIFIER)?;
+            } else if self.word() == w::LBRACE_20 {
+                self.p_stored(w::LBRACE_20, k::LBRACE)?;
+            } else if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL {
+                self.r_word()?;
+                self.field_made(f::MODIFIER);
+            } else {
+                return self.refuse();
+            }
+        }
         Ok(())
     }
 

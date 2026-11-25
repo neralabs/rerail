@@ -2270,6 +2270,7 @@ impl<'a> G<'a> {
             let inl = self.inline.borrow().get(&f).cloned();
             (f, b, inl)
         }).collect();
+        self.repeated(&mut made);
         let mut kept: HashSet<String> = HashSet::new();
         loop {
             let text: String = made.iter().map(|(_, b, _)| moves::print(b, "")).collect();
@@ -2290,6 +2291,53 @@ impl<'a> G<'a> {
             }
         }
         made.into_iter().map(|(_, b, _)| b).collect()
+    }
+
+    /// The loops the rules repeat (the same moves in more than one place, `REPEATED_LINES` or more): each one function,
+    /// called where it was, as the lean parser's `rest_of_line` (decision 0685 step 4). Named for the one field it
+    /// sets (`modifiers`). Not a loop that reads a local of the code around it.
+    fn repeated(&self, made: &mut Vec<(String, Block, Option<Block>)>) {
+        let mut n = 0;
+        loop {
+            let mut all = Vec::new();
+            for (_, b, _) in made.iter() {
+                moves::loops(b, &mut all);
+            }
+            let mut counts: Vec<(Block, usize)> = Vec::new();
+            for seq in all {
+                match counts.iter_mut().find(|(o, _)| *o == seq) {
+                    Some(c) => c.1 += 1,
+                    None => counts.push((seq, 1)),
+                }
+            }
+            let own = |seq: &Block| {
+                let text = moves::print(seq, "");
+                let locals = ["asks", "flags", "word", "refusing", "first", "at", "kind"];
+                text.lines().count() >= REPEATED_LINES
+                    && !locals.iter().any(|l| {
+                        let uses = text.match_indices(l).any(|(i, _)| {
+                            let before = text[..i].chars().next_back();
+                            let after = text[i + l.len()..].chars().next();
+                            !before.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == ':') && !after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '(' || c == ':' || c == '!')
+                        });
+                        uses && !text.contains(&format!("let {l} "))
+                    })
+                    && !text.contains("past_")
+            };
+            // The longest first: a loop inside it goes with it, and the move after it where each place has the same.
+            let Some((seq, _)) = counts.into_iter().filter(|(o, c)| *c > 1 && own(o)).max_by_key(|(o, _)| moves::print(o, "").len()) else { break };
+            let name = moves::what_of(&seq).map_or_else(|| format!("part_{n}"), |w| format!("{w}s"));
+            let name = if made.iter().any(|(f, _, _)| *f == name) || rule_fn(&name) != name { format!("{name}_{n}") } else { name };
+            n += 1;
+            for (_, b, inl) in made.iter_mut() {
+                moves::call_for(b, &seq, &name);
+                if let Some(i) = inl {
+                    moves::call_for(i, &seq, &name);
+                }
+            }
+            let block = vec![line(format!("    /// The loop the parser reads in more than one place (decision 0685 step 4).\n    fn {name}(&mut self) -> R {{\n")), Op::At("        ".into(), seq), line("        Ok(())\n    }\n\n")];
+            made.push((name, block, None));
+        }
     }
 
     /// Each block's moves in the lean parser's forms (`moves::rewrite`), then printed, once all of them are rewritten:
@@ -3055,6 +3103,9 @@ fn no_field(code: &str, f: &str) -> String {
     }
     (out.join("\n") + "\n").replace(&format!("{f}: 0, "), "")
 }
+
+/// The fewest lines of a loop the rules repeat that is a function of its own (`G::repeated`).
+const REPEATED_LINES: usize = 6;
 
 /// The most lines a rule's code written in its one caller has (`G::inlined`).
 const INLINE_LINES: usize = 20;
