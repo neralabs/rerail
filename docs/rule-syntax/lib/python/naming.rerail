@@ -118,7 +118,7 @@ naming_plain_method(f, c, x) :- in_class(f, c), kind(f, "function_definition"), 
 .decl naming_metaclass(c: node)
 naming_metaclass(c) :- naming_meta_any(c), !naming_call_base(c).
 .decl naming_meta_any(c: node)
-naming_meta_any(c) :- class_def(c, q), subclass(q, b), naming_meta_base(b).
+naming_meta_any(c) :- class_anc(c, b), naming_meta_base(b).
 naming_meta_any(c) :- naming_base(c, s), kind(s, "subscript"), field(s, "value", v), sym_of(v, "builtins.type").
 naming_meta_any(c) :- naming_base(c, e), kind(e, "call"), field(e, "function", g), sym_of(g, "builtins.type"),
     field(e, "arguments", al), count : { child(al, a, _), !kind(a, "comment") } = 1.

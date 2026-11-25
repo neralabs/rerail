@@ -1,9 +1,9 @@
 //! Per-thread SQLite connections, connection pragmas, and the busy retry every store write runs
 //! under.
 
-use rerail_blocks::block::Flush;
 use super::{ContentStore, StoreError, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex as ParkingMutex, RawMutex};
+use rerail_blocks::block::Flush;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -276,7 +276,8 @@ pub(super) fn held_here(path: &Path) -> Option<i64> {
     THREAD_CONNECTIONS.with(|connections| {
         let connections = connections.borrow();
         let (identity, file, connection) = connections.get(&(number, path.to_path_buf()))?;
-        (*file == Some(now) && connection.try_lock().is_some_and(|c| c.is_some())).then_some(*identity)
+        (*file == Some(now) && connection.try_lock().is_some_and(|c| c.is_some()))
+            .then_some(*identity)
     })
 }
 
@@ -298,7 +299,11 @@ impl Default for Connections {
     fn default() -> Self {
         /// The registries' numbers, unique in the process.
         static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        Connections { all: Default::default(), handles: Default::default(), number: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) }
+        Connections {
+            all: Default::default(),
+            handles: Default::default(),
+            number: MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        }
     }
 }
 
@@ -340,19 +345,40 @@ impl std::ops::DerefMut for ConnectionGuard {
 impl ThreadConnection {
     pub(super) fn new(database_path: PathBuf, identity: i64, flush: Flush) -> Self {
         let connections = connections();
-        *connections.handles.lock().entry(database_path.clone()).or_default() += 1;
-        Self { database_path, connections, identity, pinned: None, flush }
+        *connections
+            .handles
+            .lock()
+            .entry(database_path.clone())
+            .or_default() += 1;
+        Self {
+            database_path,
+            connections,
+            identity,
+            pinned: None,
+            flush,
+        }
     }
 
     /// Keep the verified file open for all phases of collection, including after a path replacement.
-    pub(super) fn pinned(database_path: PathBuf, connection: Connection, identity: i64, flush: Flush) -> Self {
+    pub(super) fn pinned(
+        database_path: PathBuf,
+        connection: Connection,
+        identity: i64,
+        flush: Flush,
+    ) -> Self {
         let mut counted = Self::new(database_path, identity, flush);
         counted.pinned = Some(Arc::new(ParkingMutex::new(Some(connection))));
         counted
     }
 
     pub(super) fn memory(connection: Connection, identity: i64, flush: Flush) -> Self {
-        Self { database_path: PathBuf::new(), connections: connections(), identity, pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))), flush }
+        Self {
+            database_path: PathBuf::new(),
+            connections: connections(),
+            identity,
+            pinned: Some(Arc::new(ParkingMutex::new(Some(connection)))),
+            flush,
+        }
     }
 
     /// How the store's writes reach the disk.
@@ -373,7 +399,9 @@ impl ThreadConnection {
         }
         let last = {
             let mut handles = self.connections.handles.lock();
-            let open = handles.get_mut(&self.database_path).expect("a handle counted when made");
+            let open = handles
+                .get_mut(&self.database_path)
+                .expect("a handle counted when made");
             *open -= 1;
             let last = *open == 0;
             if last {
@@ -406,7 +434,10 @@ impl ThreadConnection {
     /// Records the file this thread's connection to the store opened.
     fn opened(&self, file: Option<FileKey>) {
         THREAD_CONNECTIONS.with(|connections| {
-            if let Some(entry) = connections.borrow_mut().get_mut(&(self.connections.number, self.database_path.clone())) {
+            if let Some(entry) = connections
+                .borrow_mut()
+                .get_mut(&(self.connections.number, self.database_path.clone()))
+            {
                 entry.1 = file;
             }
         });
@@ -418,7 +449,9 @@ impl ThreadConnection {
             let mut connections = connections.borrow_mut();
             let key = (self.connections.number, self.database_path.clone());
             match connections.get(&key) {
-                Some((identity, _, connection)) if *identity == self.identity => Arc::clone(connection),
+                Some((identity, _, connection)) if *identity == self.identity => {
+                    Arc::clone(connection)
+                }
                 _ => {
                     let connection = SharedConnection::default();
                     self.connections
@@ -503,7 +536,12 @@ fn release_in(connections: &Connections, database_path: &Path) {
 #[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn holding(database_path: &Path) -> (usize, usize) {
     let connections = connections();
-    let handles = connections.handles.lock().get(database_path).copied().unwrap_or(0);
+    let handles = connections
+        .handles
+        .lock()
+        .get(database_path)
+        .copied()
+        .unwrap_or(0);
     let open = connections
         .all
         .lock()
@@ -577,7 +615,8 @@ pub fn set_connection_functions(install: fn(&Connection) -> rusqlite::Result<()>
 /// blocks the store's rows name, which follow it. `RERAIL_FLUSH` (`synced`, `os`, `none`) names it; by default
 /// `os`, and `none` in the store's own tests (the engine's test binary sets `none` too, `test_flush`).
 pub fn store_flush() -> StoreResult<Flush> {
-    Flush::from_env_or(if cfg!(test) { Flush::None } else { Flush::Os }).map_err(StoreError::Invalid)
+    Flush::from_env_or(if cfg!(test) { Flush::None } else { Flush::Os })
+        .map_err(StoreError::Invalid)
 }
 
 /// SQLite's `synchronous` for `flush`: `FULL` waits for the disk at each commit, as `Synced` blocks do; `NORMAL` (in
@@ -593,14 +632,16 @@ fn synchronous(flush: Flush) -> &'static str {
 // `flush_of` is the store base's (`base.rs`), re-exported here.
 pub use super::base::flush_of;
 
-
 pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) -> StoreResult<()> {
     trace_for_hazards(connection);
     connection.set_prepared_statement_cache_capacity(256);
     // A statement is planned once, whatever is bound to it: without this, SQLite 3.54 re-plans a cached statement at
     // each new value of a parameter it reads as a possible integer constant, so every source lookup by its hash
     // (`h.lane0 = ?2`, …) was prepared again at each call, some 800 times in an unchanged run.
-    connection.set_db_config(rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true)?;
+    connection.set_db_config(
+        rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
+        true,
+    )?;
     connection.busy_handler(Some(wait_for_writer))?;
     // `auto_vacuum` takes only on an empty file, before `journal_mode = WAL` writes its header: set later, inside the
     // creating transaction, it was ignored, so no store returned freed pages (decision 0053 §4).
@@ -619,7 +660,9 @@ pub(super) fn configure_connection(connection: &mut Connection, flush: Flush) ->
     // Reads through a map of the file (the OS's page cache, shared by every connection and not the process's own
     // memory), not `pread` into the 1 MB cache: with the map off, a one-file edit spent 0.5 s in `pread`, the writer's
     // index descents reading the same pages again. `RERAIL_STORE_MMAP_MB` sets the map's bound (0: off).
-    let mmap = rerail_prof::code_rule_dsl::logic::profile::setting(|| mmap_bytes(std::env::var("RERAIL_STORE_MMAP_MB").ok().as_deref()));
+    let mmap = rerail_prof::code_rule_dsl::logic::profile::setting(|| {
+        mmap_bytes(std::env::var("RERAIL_STORE_MMAP_MB").ok().as_deref())
+    });
     connection.pragma_update(None, "mmap_size", mmap)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
@@ -856,6 +899,46 @@ impl ContentStore {
 thread_local! {
     /// Whether this thread runs the store writer's batch (`ContentStore::in_one_transaction`).
     static BATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The write scopes open on this thread (a transaction of `begin`'s, the writer's batch), and the kept-facts spaces
+    /// their transaction has written, by store (`first_write_of_space`).
+    static WRITTEN_SPACES: std::cell::RefCell<(u32, std::collections::HashSet<(std::path::PathBuf, [u8; 32])>)> =
+        std::cell::RefCell::new((0, std::collections::HashSet::new()));
+}
+
+/// Whether this is the first write of `space` (of the store at `store`) in the transaction open on this thread: its
+/// chain's rows as the transaction reads them are then the store's last commit's (a write holds the write lock from its
+/// `BEGIN`), and a later write reads the rows the first one left, uncommitted. A sweep by those removed files the
+/// committed chain still named, which every other connection read ("corrupt content store", the writer's batch
+/// merging a space's newest files in one job and writing the space again in another). Outside a scope of `begin`'s or
+/// the batch's, each write is its own transaction: always the first.
+pub(super) fn first_write_of_space(store: &std::path::Path, space: &[u8; 32]) -> bool {
+    WRITTEN_SPACES.with(|w| {
+        let (open, written) = &mut *w.borrow_mut();
+        *open == 0 || written.insert((store.to_owned(), *space))
+    })
+}
+
+/// A write scope opened on this thread (`first_write_of_space`), closed when dropped: its spaces are forgotten once
+/// none is open.
+struct WriteScope;
+
+impl WriteScope {
+    fn open() -> WriteScope {
+        WRITTEN_SPACES.with(|w| w.borrow_mut().0 += 1);
+        WriteScope
+    }
+}
+
+impl Drop for WriteScope {
+    fn drop(&mut self) {
+        WRITTEN_SPACES.with(|w| {
+            let (open, written) = &mut *w.borrow_mut();
+            *open -= 1;
+            if *open == 0 {
+                written.clear();
+            }
+        });
+    }
 }
 
 /// A store write's transaction: its own, or a savepoint inside the writer's batch, which commits every job it
@@ -869,6 +952,7 @@ pub(super) enum Tx<'c> {
 pub(super) struct Begun<'c> {
     connection: &'c mut Connection,
     open: bool,
+    _scope: WriteScope,
 }
 
 impl std::ops::Deref for Begun<'_> {
@@ -947,6 +1031,7 @@ pub(super) fn begin(
     Ok(Tx::Top(Begun {
         connection,
         open: true,
+        _scope: WriteScope::open(),
     }))
 }
 
@@ -975,6 +1060,8 @@ impl ContentStore {
         // its own savepoint) comes after rows the jobs before it made with this process's ids (decision 0170).
         let forked_before = self.atoms.forked();
         BATCH.with(|b| b.set(true));
+        // Before the batch's `BATCH` guard, so dropped after it: no job writes outside the scope.
+        let _scope = WriteScope::open();
         let batch = Batch;
         let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
         drop(batch);
@@ -1014,7 +1101,6 @@ impl ContentStore {
         }
     }
 }
-
 
 #[cfg(test)]
 mod mmap_tests {

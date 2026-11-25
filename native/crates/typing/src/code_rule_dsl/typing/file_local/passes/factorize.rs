@@ -287,6 +287,21 @@ fn choose<'v>(v: &'v Version, f: Fields<'v>, scope: Scope<'_>, keys: &Keys) -> (
             if fans < 2 {
                 break;
             }
+            // Decision 0677: no node crosses into the cross-file part. Its readers (an export's, or a pair cache's,
+            // whose guard counts the whole factors) join the parts in the cross part, so a key that is a node
+            // carries it there. A relation that holds no node is handed on whole, its rows symbols; one that does
+            // holds a node already, a crossing the check names, and is factorized as before until its family is
+            // keyed by symbols. `base_name(q, q0) :- base_expr(q, e), qn(e, q0)` (py_names) held `e` in the cross
+            // part, by its pair cache.
+            let node_at = |rel: &str, c: usize| f.columns(rel).and_then(|cols| cols.get(c).map(|(_, t)| super::super::node_crossings::NODE_TYPES.contains(t))).unwrap_or(false);
+            let key_is_node = lits.iter().any(|l| match l.view() {
+                L::Atom(a) if !a.neg() => a.args().enumerate().any(|(c, t)| matches!(t, TermRef::Var(s) if name(v, *rule, s) == key) && node_at(v.rel_name(a.rel()), c)),
+                _ => false,
+            });
+            let head_holds_node = (0..rule.head().args().count()).any(|c| node_at(rel, c));
+            if key_is_node && !head_holds_node {
+                break;
+            }
             plan.push((key, parts));
         }
         if plan.len() != of.len() {

@@ -35,7 +35,7 @@ srl_rows(q) :- dj_qs(q), kind(q, "call"), !dj_qs_has(q, "values"), !dj_qs_has(q,
     !dj_qs_has(q, "raw").
 // srl_m2m(mc, x): model mc has x as a many-to-many field, declared in its body or in a base class of the run.
 .decl srl_m2m(mc: node, x: symbol)
-srl_m2m(mc, x) :- dj_has_field(mc, x, _, t), (t = "ManyToManyField" ; t = "ParentalManyToManyField").
+srl_m2m(mc, x) :- dj_has_field(mc, x, t), (t = "ManyToManyField" ; t = "ParentalManyToManyField").
 // srl_loop(q, x, b): a loop over queryset q (or over `q.iterator(...)`) binds each row to name x, and b holds the
 // code that runs per row: a for statement's body, or a comprehension (whose iterable, q, is excluded where uses are
 // read).
@@ -69,18 +69,18 @@ srl_cached(c, u) :- kind(c, "call"), field(c, "function", f), attr_of(f, u, m), 
 SelectRelatedInLoop(q, x, rel, "prefetch_related") :- srl_use(q, x, u, rel), srl_cached(_, u),
     !dj_qs_has(q, "prefetch_related"), !srl_not_manager(q, rel), !srl_unchunked(q), docof(q, d), !dj_test_doc(d).
 SelectRelatedInLoop(q, x, rel, "select_related") :- srl_use(q, x, u, rel), attr_of(_, u, a), a != "id", a != "pk",
-    dj_qs_model(q, mc), dj_has_field(mc, rel, _, t), dj_fk_class(t), !dj_qs_has(q, "select_related"),
+    dj_qs_model(q, mc), dj_has_field(mc, rel, t), dj_fk_class(t), !dj_qs_has(q, "select_related"),
     !dj_qs_has(q, "prefetch_related"), docof(q, d), !dj_test_doc(d).
 // srl_not_manager(q, rel): the iterated model is known and rel is not one of its many-to-many fields, but a field
 // of another kind or a method or property it (or a base class of the run) defines.
 .decl srl_not_manager(q: node, rel: symbol)
-srl_not_manager(q, rel) :- dj_qs_model(q, mc), dj_has_field(mc, rel, _, _), !srl_m2m(mc, rel).
+srl_not_manager(q, rel) :- dj_qs_model(q, mc), dj_has_field(mc, rel, _), !srl_m2m(mc, rel).
 srl_not_manager(q, rel) :- dj_qs_model(q, mc), srl_defines(mc, rel), !srl_m2m(mc, rel).
-// srl_defines(mc, x): model mc's body, or the body of a class of the run among its bases, defines method x
-// (`@property` and `@cached_property` included).
+// srl_defines(mc, x): model mc's body, or the body of a class of the run among its ancestors, defines method x
+// (`@property` and `@cached_property` included): an ancestor's by symbol (python/names' class_anc_method, 0677 fix 3b).
 .decl srl_defines(mc: node, x: symbol)
 srl_defines(mc, x) :- dj_model_method(mc, _, x).
-srl_defines(mc, x) :- dj_model_super(mc, b), kind(f, "function_definition"), nearest(f, b, scope), def_name(f, x).
+srl_defines(mc, x) :- dj_model(mc), class_anc_method(mc, x).
 
 // The cases, `cases/django-practice-select-related-in-loop/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.

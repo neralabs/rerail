@@ -36,7 +36,7 @@ goc_chain("all"). goc_chain("using"). goc_chain("select_for_update").
 .decl goc_root(q: node, r: node)
 goc_root(q, o) :- dj_manager(q), attr_of(q, o, _).
 goc_root(q, r) :- kind(q, "call"), field(q, "function", f), attr_of(f, o, m), goc_chain(m), goc_root(o, r).
-.decl goc_call(c: node, m: symbol, mc: node)
+.decl goc_call(c: node, m: symbol, mc: node) cross_file  // pairs two files' class nodes: decision 0677 fix 3b (models by symbol)
 goc_call(c, m, mc) :- goc_method(m), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), goc_root(o, r),
     sym_of(r, q), class_def(mc, q), dj_model(mc).
 goc_call(c, m, mc) :- goc_method(m), kind(c, "call"), field(c, "function", f), attr_of(f, o, m), goc_root(o, r),
@@ -45,10 +45,11 @@ goc_call(c, m, mc) :- goc_method(m), kind(c, "call"), field(c, "function", f), a
 .decl goc_mgr(q: node, mn: symbol)
 goc_mgr(q, mn) :- dj_manager(q), attr_of(q, _, mn).
 goc_mgr(q, mn) :- kind(q, "call"), field(q, "function", f), attr_of(f, o, m), goc_chain(m), goc_mgr(o, mn).
-// goc_mgr_def(mc, mn, r): model mc, or a base class of the run, sets manager `mn = r` in its body.
-.decl goc_mgr_def(mc: node, mn: symbol, r: node)
-goc_mgr_def(mc, mn, r) :- dj_model(mc), goc_body_asg(mc, mn, r).
-goc_mgr_def(mc, mn, r) :- dj_model_super(mc, cb), goc_body_asg(cb, mn, r).
+// goc_mgr_ref(mc, mn, q): model mc, or a class of the run among its ancestors, sets manager `mn = r` in its body, r
+// naming q at any depth (an ancestor's by symbol: python/names' class_anc_ref, 0677 fix 3b).
+.decl goc_mgr_ref(mc: node, mn: symbol, q: symbol)
+goc_mgr_ref(mc, mn, q) :- dj_model(mc), goc_body_asg(mc, mn, r), (e = r ; within(e, r)), sym_of(e, q).
+goc_mgr_ref(mc, mn, q) :- dj_model(mc), class_anc_ref(mc, mn, q).
 .decl goc_body_asg(c: node, x: symbol, r: node)
 goc_body_asg(c, x, r) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _), child(s, a, 0),
     kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r).
@@ -60,8 +61,8 @@ goc_abstract(mc) :- goc_meta_of(mc, "abstract", v), text(v, "True").
 .decl goc_kw(c: node, k: symbol)
 goc_kw(c, k) :- goc_call(c, _, _), call_arg(c, -1, k, _), k != "defaults", k != "create_defaults".
 .decl goc_key(c: node, k: symbol, f: symbol)
-goc_key(c, k, k) :- goc_kw(c, k), goc_call(c, _, mc), dj_has_field(mc, k, _, _).
-goc_key(c, k, x) :- goc_kw(c, k), goc_call(c, _, mc), dj_has_field(mc, x, _, t),
+goc_key(c, k, k) :- goc_kw(c, k), goc_call(c, _, mc), dj_has_field(mc, k, _).
+goc_key(c, k, x) :- goc_kw(c, k), goc_call(c, _, mc), dj_has_field(mc, x, t),
     (t = "ForeignKey" ; t = "OneToOneField"), k = cat(x, "_id").
 // goc_unknown(c): the lookup holds something the rule cannot read.
 .decl goc_unknown(c: node)
@@ -73,8 +74,8 @@ goc_unknown(c) :- goc_call(c, _, mc), goc_opaque(mc).
 goc_unknown(c) :- goc_call(c, _, mc), goc_cond_group(mc, g), !goc_missing(c, g).
 // The manager is the model's own and its class (or queryset class, or the queryset class its get_queryset() builds)
 // in the run defines the method: it may add a key.
-goc_unknown(c) :- goc_call(c, m, mc), field(c, "function", f), attr_of(f, o, m), goc_mgr(o, mn), goc_mgr_def(mc, mn, r),
-    (e = r ; within(e, r)), sym_of(e, q), goc_mgr_class(q, k), mro_method(k, m, _).
+goc_unknown(c) :- goc_call(c, m, mc), field(c, "function", f), attr_of(f, o, m), goc_mgr(o, mn), goc_mgr_ref(mc, mn, q),
+    goc_mgr_class(q, k), mro_method(k, m, _).
 // goc_mgr_class(q, k): manager class q runs queries through class k: itself, or the class of a call in its
 // get_queryset() (`return SlugQuerySet(self.model, using=self._db)`).
 .decl goc_mgr_class(q: symbol, k: symbol)
@@ -112,9 +113,9 @@ goc_meta_of(c, k, v) :- goc_meta_class(c, mt), field(mt, "body", b), body_stmt(b
 // goc_unique(c, mc): the database keeps some subset of c's lookup unique.
 .decl goc_unique(c: node, mc: node)
 goc_unique(c, mc) :- goc_call(c, _, mc), (goc_kw(c, "pk") ; goc_kw(c, "id")).
-goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), dj_has_field(mc, x, _, "OneToOneField").
-goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), dj_has_field(mc, x, call, _), call_arg(call, -1, o, v),
-    (o = "unique" ; o = "primary_key"), !text(v, "False").
+goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), dj_has_field(mc, x, "OneToOneField").
+goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), dj_field_kw(mc, x, o, v), (o = "unique" ; o = "primary_key"),
+    v != "False".
 goc_unique(c, mc) :- goc_call(c, _, mc), goc_group(mc, g), !goc_missing(c, g).
 .decl goc_missing(c: node, g: node)
 goc_missing(c, g) :- goc_call(c, _, mc), (goc_group(mc, g) ; goc_cond_group(mc, g)), goc_member(g, x), !goc_covers(c, x).

@@ -19,4 +19,4 @@
 N815(n, x) :- store_name(n, x, c), kind(c, "class_definition"), mixed_name(x), !store_makes(n, "namedtuple"),
     !typed_dict(c), !naming_ignored(x).
 .decl typed_dict(c: node)
-typed_dict(c) :- class_def(c, q), subclass(q, b), (b = "typing.TypedDict" ; b = "typing_extensions.TypedDict").
+typed_dict(c) :- class_anc(c, b), (b = "typing.TypedDict" ; b = "typing_extensions.TypedDict").

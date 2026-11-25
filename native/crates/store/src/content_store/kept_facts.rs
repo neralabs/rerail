@@ -619,6 +619,22 @@ pub fn sweep_space(store: &Path, space: &[u8; 32], rows: &ChainRows) {
     sweep(&space_dir(store, space), rows);
 }
 
+/// The files of `space` its chain does not name, removed, in `t`, a transaction holding the store's write lock: the
+/// chain as it is now, its rows read in `t`, and none committed while it sweeps. After a collection's commit, its own
+/// rows are not the chain's for long: a sweep by them, outside a transaction, removed the file another context's
+/// commit had just named, and every reader then found a chain naming a file not there ("corrupt content store").
+/// A file a writer makes is made inside its own write transaction, and a staged one holds `STAGING_LOCK`, so neither is
+/// unnamed and unguarded here. The space's directory goes where its chain is empty (`drop_space_files`).
+pub fn sweep_committed(store: &Path, t: &Connection, space: &[u8; 32]) -> StoreResult<ChainRows> {
+    let rows = chain_rows(t, space)?;
+    if rows.is_empty() {
+        drop_space_files(store, space);
+    } else {
+        sweep_space(store, space, &rows);
+    }
+    Ok(rows)
+}
+
 /// `write_space`, or with `keep`, `rewrite_space`.
 fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut>, map: Option<MapIds>, keep: Option<&dyn Fn(&FactKey<'_>) -> bool>) -> StoreResult<Option<ChainRows>> {
     if puts.is_empty() && keep.is_none() {
@@ -640,7 +656,11 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
     private_dir(&dir).map_err(io)?;
     let opened = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the space's files opened".into());
     let rows = chain_rows(t, space)?;
-    sweep(&dir, &rows);
+    // By the committed chain only: a later write of the space in the same transaction reads the rows an earlier one
+    // left, uncommitted, and the next transaction's first write sweeps what they replaced.
+    if super::connection::first_write_of_space(store, space) {
+        sweep(&dir, &rows);
+    }
     let old = KeptSpace::open(store, space, &rows)?;
     drop(opened);
     let chain = old.view();
@@ -1091,13 +1111,12 @@ impl super::ContentStore {
                 };
                 rewrite_space(&path, t, &space, &keep)
             })?;
-            let Some(rows) = written else { continue };
-            done += 1;
-            if rows.is_empty() {
-                drop_space_files(&path, &space);
-            } else {
-                sweep_space(&path, &space, &rows);
+            if written.is_none() {
+                continue;
             }
+            done += 1;
+            // Swept by the chain as it is now, under the write lock (`sweep_committed`), not by the rows written.
+            let rows = self.immediate_transaction(|t| sweep_committed(&path, t, &space))?;
             super::held::snapshot_kept(&path, |kept| {
                 if let Some(kept) = kept {
                     kept.insert(space, rows);

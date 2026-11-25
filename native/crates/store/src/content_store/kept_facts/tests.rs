@@ -720,3 +720,71 @@ fn a_staged_file_outlives_another_contexts_sweep_until_its_commit() {
     assert!(!staged.exists(), "with no run staging, a staged file no chain names is a crashed run's, swept");
     assert!(space.join(STAGING_LOCK).exists(), "the lock itself is never swept");
 }
+
+/// A collection's sweep after its commit reads the chain as it is then, under the write lock (`sweep_committed`): a
+/// commit another context made after the collection's is named, and its file kept. Swept by the collection's own rows,
+/// it was removed.
+#[test]
+fn a_sweep_after_a_commit_keeps_a_later_commits_file() {
+    let (path, c) = store("sweep-committed");
+    write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(lent(&[(1, 10)])))]);
+    let stale = chain_rows(&c, &SPACE).unwrap();
+    // Another context's commit, after the collection's: a file the stale rows do not name. Big enough to be a file of
+    // its own, not merged into the newest.
+    let big: Vec<i64> = (0..100_000i64).flat_map(|i| [(i * 7919) % 100_003, (i * 104_729) % 150_001]).collect();
+    write(&path, &c, vec![put("q", 0, 2, flat(&big))]);
+    let now = chain_rows(&c, &SPACE).unwrap();
+    let later: Vec<&String> = now.iter().map(|(_, n, _)| n).filter(|n| !stale.iter().any(|(_, s, _)| s == *n)).collect();
+    assert!(!later.is_empty(), "the later commit named a file of its own: {now:?} after {stale:?}");
+    let junk = space_dir(&path, &SPACE).join("c99-00000000000000cc.blk");
+    std::fs::write(&junk, b"rolled back").unwrap();
+    c.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let swept = sweep_committed(&path, &c, &SPACE).unwrap();
+    c.execute_batch("COMMIT").unwrap();
+    assert_eq!(swept, now, "the chain as it is now");
+    for name in &later {
+        assert!(space_dir(&path, &SPACE).join(name).exists(), "the later commit's {name} is kept");
+    }
+    assert!(!junk.exists(), "a file no row names is swept");
+    assert_eq!(read(&path, &c).len(), 2, "both commits' entries read");
+}
+
+/// In the writer's batch, a space written twice: the first job's write merges the space's newest file into a new one,
+/// uncommitted, and the second's sweeps by the chain as its transaction reads it only where it is the space's first
+/// write of the transaction (`first_write_of_space`). Swept by those rows, the merged file went while the committed
+/// chain still named it, and a reader on its own connection found it gone ("corrupt content store").
+#[test]
+fn a_second_write_in_one_batch_keeps_the_committed_chains_files() {
+    let (path, c) = store("batch-second-write");
+    write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(lent(&[(1, 10)])))]);
+    let committed = chain_rows(&c, &SPACE).unwrap();
+    let cs = crate::content_store::ContentStore::open(&path).unwrap();
+    let readable = |rows: &ChainRows| KeptSpace::open(&path, &SPACE, rows).map(|_| ()).map_err(|e| e.to_string());
+    cs.in_one_transaction(|| {
+        for (rel, d) in [("q", 2), ("r", 3)] {
+            let mut connection = cs.connection.lock().unwrap();
+            let t = crate::content_store::connection::begin(&mut connection, rusqlite::TransactionBehavior::Immediate).unwrap();
+            write_space(&path, &t, &SPACE, vec![put(rel, 0, d, KeptWhat::Rows(lent(&[(d as i64, 1)])))], None).unwrap();
+            t.commit().unwrap();
+            // Another connection's reader: the last commit's chain, its files all there.
+            let other = Connection::open(&path).unwrap();
+            assert_eq!(chain_rows(&other, &SPACE).unwrap(), committed, "the batch has not committed");
+            assert_eq!(readable(&committed), Ok(()), "the committed chain's files, after the batch's write of {rel}");
+        }
+    })
+    .unwrap();
+    let now = chain_rows(&c, &SPACE).unwrap();
+    assert_ne!(now, committed, "the batch committed its writes");
+    assert_eq!(read(&path, &c).len(), 3, "every write's entry");
+    // The next transaction's first write sweeps what the batch replaced, by the chain it committed: what stays is that
+    // chain's and the write's own (the newest file it merged goes at the write after).
+    let batch: Vec<String> = now.iter().map(|(_, n, _)| n.clone()).collect();
+    write(&path, &c, vec![put("s", 0, 4, KeptWhat::Rows(lent(&[(4, 1)])))]);
+    let named: Vec<String> = chain_rows(&c, &SPACE).unwrap().into_iter().map(|(_, n, _)| n).collect();
+    for f in files(&path) {
+        assert!(named.contains(&f) || batch.contains(&f), "{f}: neither the chain's nor the batch's: {named:?} {batch:?}");
+    }
+    for (_, f, _) in &committed {
+        assert!(named.contains(f) || !space_dir(&path, &SPACE).join(f).exists(), "{f}, which the batch replaced, is swept");
+    }
+}

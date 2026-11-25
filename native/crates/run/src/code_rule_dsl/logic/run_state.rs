@@ -191,6 +191,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/store/src/content_store/connection.rs", "OPERATION_WAITED", Thread, "this thread's SQLite connections and their waits"),
     ("crates/store/src/content_store/connection.rs", "THREAD_CONNECTIONS", Thread, "this thread's SQLite connections and their waits"),
     ("crates/store/src/content_store/connection.rs", "WAIT_SPENT", Thread, "this thread's SQLite connections and their waits"),
+    ("crates/store/src/content_store/connection.rs", "WRITTEN_SPACES", Thread, "this thread's open write transaction's kept spaces"),
 ];
 
 /// How many thread-locals are run context not carried yet ([`NotYet`]): lowered as each is carried, never raised.

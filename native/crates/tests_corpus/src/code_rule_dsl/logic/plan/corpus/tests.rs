@@ -2678,6 +2678,183 @@ fn a_python_files_entry_is_kept_under_its_own_names_resolution() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// 0677 fix 3a: a class's ancestors through the phase `py_names` (`ancestor`, keyed by the class's module): a chain
+/// across three modules through a package's re-export, a library base through a module alias, an `enum` base, a
+/// builtin, and a base of the class's own module.
+const PY_CLASSES_FILES: [(&str, &str); 5] = [
+    ("models_base.py", "from django.db import models\n\n\nclass Base(models.Model):\n    pass\n"),
+    ("app/__init__.py", "from .base import Mid\n"),
+    ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    pass\n"),
+    ("other.py", "import os\n\n\nclass Other(Exception):\n    pass\n"),
+    ("use.py", "import enum\nfrom app import Mid\n\n\nclass Leaf(Mid):\n    pass\n\n\nclass Color(enum.Enum):\n    pass\n\n\nclass Plain:\n    pass\n\n\nclass Local(Plain):\n    pass\n"),
+];
+
+const PY_CLASSES_PROGRAM: &str = r#".language python
+#include "python/names.rerail"
+.decl anc(p: symbol, q: symbol, b: symbol)
+anc(p, q, b) :- class_anc(c, b), class_def(c, q), docof(c, d), doc(d, p, _).
+.output anc
+.decl lib(p: symbol, q: symbol, b: symbol)
+lib(p, q, b) :- class_lib_anc(c, b), class_def(c, q), docof(c, d), doc(d, p, _).
+.output lib
+"#;
+
+/// The rule `class_anc` replaced for a class's own ancestry (python/scopes' `subclass`, a closure over every file's
+/// classes).
+const PY_CLASSES_OLD: &str = r#"
+.decl old_anc(p: symbol, q: symbol, b: symbol) cross_file
+old_anc(p, q, b) :- class_def(c, q), subclass(q, b), docof(c, d), doc(d, p, _).
+.output old_anc
+.decl old_lib(p: symbol, q: symbol, b: symbol) cross_file
+old_lib(p, q, b) :- class_def(c, q), subclass(q, b), !class_def(_, b), docof(c, d), doc(d, p, _).
+.output old_lib
+"#;
+
+/// The workspace `PY_CLASSES_FILES` (with `edits` written over them) in a fresh directory named for `name`.
+fn py_classes_workspace(name: &str, edits: &[(&str, &str)]) -> std::path::PathBuf {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    for (path, text) in PY_CLASSES_FILES.iter().chain(edits) {
+        let to = dir.join("ws").join(path);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::write(to, text).unwrap();
+    }
+    dir
+}
+
+/// `anc` and `old_anc`'s rows of a run of `program` over `dir`'s workspace.
+fn py_classes_run(dir: &std::path::Path, program: &str) -> (super::Report, std::collections::BTreeMap<String, Vec<Vec<String>>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let outputs = super::super::output::Outputs::open(&dir.join("out")).unwrap();
+    let rows = ["anc", "old_anc", "lib", "old_lib", "call", "kw", "ref", "meth"]
+        .into_iter()
+        .filter_map(|name| {
+            let mut rows: Vec<Vec<String>> = outputs.get(name).map(|r| r.shown())?;
+            rows.sort();
+            Some((name.to_owned(), rows))
+        })
+        .collect();
+    (report, rows)
+}
+
+#[test]
+fn python_class_ancestry_through_the_phase_is_the_cross_file_closures() {
+    let dir = py_classes_workspace("py-classes", &[]);
+    let (_, rows) = py_classes_run(&dir, &format!("{PY_CLASSES_PROGRAM}{PY_CLASSES_OLD}"));
+    let row = |p: &str, q: &str, b: &str| vec![p.to_owned(), q.to_owned(), b.to_owned()];
+    assert_eq!(
+        rows["anc"],
+        [
+            row("app/base.py", "app.base.Mid", "django.db.models.Model"),
+            row("app/base.py", "app.base.Mid", "models_base.Base"),
+            row("models_base.py", "models_base.Base", "django.db.models.Model"),
+            row("other.py", "other.Other", "builtins.Exception"),
+            row("use.py", "use.Color", "enum.Enum"),
+            row("use.py", "use.Leaf", "app.base.Mid"),
+            row("use.py", "use.Leaf", "django.db.models.Model"),
+            row("use.py", "use.Leaf", "models_base.Base"),
+            row("use.py", "use.Local", "use.Plain"),
+        ],
+        "each class's ancestors, re-exports followed, a library's base by its name: {rows:?}"
+    );
+    assert_eq!(rows["anc"], rows["old_anc"], "class_anc finds what the cross-file closure found");
+    assert_eq!(
+        rows["lib"],
+        [
+            row("app/base.py", "app.base.Mid", "django.db.models.Model"),
+            row("models_base.py", "models_base.Base", "django.db.models.Model"),
+            row("other.py", "other.Other", "builtins.Exception"),
+            row("use.py", "use.Color", "enum.Enum"),
+            row("use.py", "use.Leaf", "django.db.models.Model"),
+        ],
+        "each class's library ancestors: {rows:?}"
+    );
+    assert_eq!(rows["lib"], rows["old_lib"], "class_lib_anc finds what the cross-file rule found");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// What a class's ancestors of the run assign and define, by symbol (decision 0677 fix 3b: python/names' class_anc_call,
+/// class_anc_kw, class_anc_ref, class_anc_method): an ancestor's in a module the class's file never imports
+/// (models_base, for use.py's Leaf) included, a callee resolved through its file's imports, and a class's own members
+/// not among them.
+#[test]
+fn python_class_members_reach_each_subclass_through_the_phase() {
+    let edits = [
+        (
+            "models_base.py",
+            "from django.db import models\n\n\nclass Base(models.Model):\n    name = models.CharField(max_length=10, unique=True)\n\n    def label(self):\n        return self.name\n",
+        ),
+        ("app/base.py", "from django.db import models\nfrom models_base import Base\n\n\nclass Mid(Base):\n    objects = models.Manager()\n"),
+    ];
+    let dir = py_classes_workspace("py-members", &edits);
+    let program = r#".language python
+#include "python/names.rerail"
+.decl call(q: symbol, x: symbol, f: symbol)
+call(q, x, f) :- class_anc_call(c, x, f), class_def(c, q).
+.output call
+.decl kw(q: symbol, x: symbol, k: symbol, v: symbol)
+kw(q, x, k, v) :- class_anc_kw(c, x, k, v), class_def(c, q).
+.output kw
+.decl ref(q: symbol, x: symbol, s: symbol)
+ref(q, x, s) :- class_anc_ref(c, x, s), class_def(c, q), s = "django.db.models.Manager".
+.output ref
+.decl meth(q: symbol, x: symbol)
+meth(q, x) :- class_anc_method(c, x), class_def(c, q).
+.output meth
+"#;
+    let (_, rows) = py_classes_run(&dir, program);
+    let r = |xs: &[&str]| xs.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rows["call"],
+        [
+            r(&["app.base.Mid", "name", "django.db.models.CharField"]),
+            r(&["use.Leaf", "name", "django.db.models.CharField"]),
+            r(&["use.Leaf", "objects", "django.db.models.Manager"]),
+        ],
+        "each class's ancestors' calls, its own not among them: {rows:?}"
+    );
+    assert_eq!(
+        rows["kw"],
+        [
+            r(&["app.base.Mid", "name", "max_length", "10"]),
+            r(&["app.base.Mid", "name", "unique", "True"]),
+            r(&["use.Leaf", "name", "max_length", "10"]),
+            r(&["use.Leaf", "name", "unique", "True"]),
+        ],
+        "{rows:?}"
+    );
+    assert_eq!(rows["ref"], [r(&["use.Leaf", "objects", "django.db.models.Manager"])], "{rows:?}");
+    assert_eq!(rows["meth"], [r(&["app.base.Mid", "label"]), r(&["use.Leaf", "label"])], "{rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A body edit misses its own file alone; a changed base misses the files that read the modules whose ancestry rows
+/// change (decision 0665's keys: a file's own module's rows, and those of the modules its imports reach), not a file
+/// that reaches none of them.
+#[test]
+fn a_python_files_entry_is_kept_under_its_own_classes_ancestry() {
+    let body = ("app/base.py", "from models_base import Base\n\n\nclass Mid(Base):\n    x = 1\n");
+    let rebased = ("models_base.py", "from django.db import models\n\n\nclass Base(Exception):\n    pass\n");
+    let dir = py_classes_workspace("py-classes-memo", &[]);
+    let (_, before) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    std::fs::write(dir.join("ws").join(body.0), body.1).unwrap();
+    let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    assert_eq!(rows, before, "a body edit changes no ancestry");
+    assert_eq!(edited.memo.0, edited.files - 1, "a body edit misses its own file alone: {:?} of {}", edited.memo, edited.files);
+    std::fs::write(dir.join("ws").join(rebased.0), rebased.1).unwrap();
+    let (edited, rows) = py_classes_run(&dir, PY_CLASSES_PROGRAM);
+    assert_eq!(edited.memo.0, 1, "only other.py, which reaches no module of the hierarchy, hits: {:?} of {}", edited.memo, edited.files);
+    let fresh = py_classes_workspace("py-classes-memo-fresh", &[body, rebased]);
+    assert_eq!(rows, py_classes_run(&fresh, PY_CLASSES_PROGRAM).1, "the rows are a fresh run's");
+    let _ = std::fs::remove_dir_all(&fresh);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0665: a rule over another file's rows, read through an option (`doc_ignored`: a decorator the
 /// `pydocstyle.ignore-decorators` option lists, resolved across files), and a constant of the run's settings
 /// (`py_version`: `env`, else a file read, else a default). The option's name reaches `option_item` from its

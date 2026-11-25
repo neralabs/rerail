@@ -38,5 +38,5 @@ slots_base(c, b) :- kind(c, "class_definition"), field(c, "superclasses", al), c
     !kind(x, "keyword_argument"), !kind(x, "dictionary_splat"), !kind(x, "comment"), unparen(x, b).
 
 .decl slots_enum(c: node)
-slots_enum(c) :- class_def(c, q), subclass(q, b), split_dot(b, "enum", x),
+slots_enum(c) :- class_anc(c, b), split_dot(b, "enum", x),
     (x = "Enum" ; x = "Flag" ; x = "IntEnum" ; x = "IntFlag" ; x = "StrEnum" ; x = "ReprEnum" ; x = "CheckEnum").

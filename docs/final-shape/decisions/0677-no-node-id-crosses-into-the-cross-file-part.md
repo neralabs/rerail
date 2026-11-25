@@ -169,6 +169,8 @@ policies split alone). It held 3,190 when the check was built; fix 1 took out 18
    the list. The design is below (§ Fix 2), and what it took (§ Fix 2: built).
 3. **The library crossings, one by one:** points-to (`pt_*`), Django's models (`dj_model_q`), class hierarchy
    (`subclass`, family 3), the TSX scope tables (`item_parts`). Each is rewritten to symbols under tests written first.
+   Class hierarchy (3a) and class members (3b's first half): **done (2026-11-24)**, § Fix 3: built. Models by symbol
+   (3b's second half), points-to, `plp_anycand` and `item_parts` remain.
 4. **The tail:** 146 crossings of 1–14 relations each, read one by one, as 0652's were.
 
 ### Fix 2: the design of `py_names`
@@ -302,7 +304,88 @@ split never checked them. Each is fixed at its root:
 - *The switches.* `RERAIL_STRICT_NODES` and `RERAIL_NODE_CROSSINGS` are classified as preparing switches
   (`every_switch_lowering_reads_is_classified`).
 
+### Fix 3: built (2026-11-24): class hierarchy and class members
+
+**The list.** 559 entries, from 592:
+
+| Pack | Before | After |
+|---|---:|---:|
+| python-main | 11 | 10 |
+| python | 85 | 77 |
+| django | 180 | 157 |
+| data-layer | 102 | 101 |
+| data-layer:alone | 108 | 108 |
+| the others | 106 | 106 |
+
+**3a: a class's ancestors, by symbol.** `py_names` now hands on `ancestor(m, q, b)`: class q of module m inherits from b,
+at any depth. Each base is resolved as python/scopes' `class_base` resolves it, through the same three rules `base`
+reads: the file's own binding, a name through an import by the modules' exports, else the name itself. It also hands on
+`library_ancestor(m, q, b)`, the ancestors no module of the run defines. python/names reads them as
+`class_anc(c, b)` and `class_lib_anc(c, b)`, through `reads_at` (below). Eight policies' `subclass(q, b)` and Django's
+`dj_model_q` closure read them now. `dj_model_q` is gone. `mcs_base` and `cfr_form_base`, the bases outside the run
+that every file's classes named, are `class_lib_anc` and no longer `cross_file`.
+
+**3b, first half: a class's ancestors' members, by symbol.** Django's `dj_model_super(c, b)` paired a model with its
+bases' class nodes in their own files, for their fields (`dj_has_field`), managers (`goc_mgr_def`) and methods
+(`srl_defines`). `py_names` now hands on what each class's ancestors of the run hold, under the class's own module:
+- `anc_call(m, q, x, f)`: an ancestor's body assigns `x = f(...)`.
+- `anc_kw(m, q, x, k, v)`: that call's keyword argument k, of text v.
+- `anc_ref(m, q, x, s)`: an ancestor's `x = …` names s at any depth.
+- `anc_method(m, q, x)`: an ancestor defines method x.
+
+They are joined in the phase, not by the reader, because a file need not read the module an ancestor is defined in.
+use.py's `Leaf(Mid)` reads app's module, and Mid's base is in models_base, which use.py never imports. Django's field
+relations drop the call node: `dj_has_field(c, x, t)`, `dj_attname(c, a, x)` and `dj_field_kw(c, x, k, v)`, where
+their users read the keyword arguments (`unique`, `primary_key`, `to_field`). `dj_model_super` is gone.
+
+**The second half, not yet.** Four relations pair a call or expression with another file's model class node:
+`dj_qs_model(q, c)`, `goc_call(c, m, mc)`, `rmw_class(e, mc)`, and `tam_instance` / `tam_instance_value` (rules 4–5,
+`class_def(k, q), dj_model(k)`). They were cross-file before, through `dj_model_q`, and listed. They are now declared
+`cross_file`, with the fix named at each. Their rewrite is a model's facts by its symbol, for the modules a file reads.
+
+**Tests.**
+- `python_class_ancestry_through_the_phase_is_the_cross_file_closures`: every class's ancestors and library ancestors,
+  re-exports followed, equal to the old cross-file rules' answers, run beside them in one program.
+- `python_class_members_reach_each_subclass_through_the_phase`: an ancestor's field call, keyword arguments, manager
+  and method reach a subclass two modules away, and a class's own members are not among them.
+- `a_python_files_entry_is_kept_under_its_own_classes_ancestry`: a body edit misses its own file alone, and a changed
+  base misses every file but the one that reaches no module whose ancestry changed.
+- The pack split tests take the list above.
+
+**Faults found on the way, each fixed at its root.**
+- *A phase's export read by a module no key covers.* `class_anc` first read `doc(d, _, m)`: the module from the
+  document's own column. The memo's settings scopes (0665) key a file's rows by its path and the modules its
+  `reads_at` rows name, so this read was of every module's ancestry, and a changed base missed every file (0 of 5).
+  Every reader of the phase reads through `py_names__reads_at(p, m)`, its own module among them.
+- *The factorizer moved nodes into the cross part.* An export the factorizer (0099, 0488) handed on as parts joined in
+  readers was keyed by its factor's join variable. Where that variable was a node and the head held none
+  (`base_name(q, q0) :- base_expr(q, e), qn(e, q0)`), the parts paired a node with its symbols in the cross part.
+  The factorizer no longer factors on a node key unless the head holds a node (`factorize::choose`). That is the
+  root of fix 4's `exported` crossing too.
+- *A collection's sweep after its commit.* The collection (0401 F4) swept a space by the rows it had written,
+  after its commit and outside a transaction. Another context's commit could land in between, and its new file was
+  removed. It now sweeps by the chain as it is then, under the write lock (`sweep_committed`,
+  `a_sweep_after_a_commit_keeps_a_later_commits_file`).
+- *A second write of a space in one transaction.* The writer's batch runs its jobs as savepoints of one transaction.
+  A write sweeps the files its chain's rows do not name, by the rows as its transaction reads them. In a space's
+  second write of the batch those were the first write's rows, uncommitted. The sweep removed the files the first
+  write had merged away, while the committed chain still named them, and every reader on another connection found a
+  chain naming a missing file ("corrupt content store"). It failed now and then in `rule_files_pass_their_own_tests`:
+  a log of each removal showed `c653` removed by a sweep naming `c655`, while the reader's last commit named `c653`.
+  A space is now swept only in its first write of a transaction (`connection::first_write_of_space`). That write's
+  rows are the last commit's, because a write holds the write lock from its `BEGIN`. The next transaction's first
+  write sweeps what the batch replaced (`a_second_write_in_one_batch_keeps_the_committed_chains_files`). Three runs of
+  the rule-file test in a row had no such error.
+- *A shard cannot see an entry it fixed.* A pack split in shards fails on a new crossing only, so a fixed relation of
+  a sharded pack stays listed. The Python shards' logs, compared with the list, held 8 such (`exports` among them,
+  a leftover of fix 2), and python-main's 1. They are out. A check that runs all of a pack's shards and refuses a
+  stale entry is open (below).
+
 ## Open
+
+- **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
+  can say a listed relation no longer crosses. Fix 3's were found by comparing the shards' logs with the list by hand.
+  The gate needs a test that unions the shards' logs and refuses a listed relation none of them names.
 
 - **Where a finding that pairs two files' nodes is written.** `call_target(call, def)` is an example. An output
   keeps its node (§ Built), but once its family is rewritten it names the second file's node by that node's symbol,

@@ -58,7 +58,7 @@ bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body
 // x as a number field (python/django's dj_number_field). Cross-file: the run's models are in any file (decision 0652).
 .decl bnl_number(x: symbol, n: node) cross_file
 bnl_number(x, n) :- attr_of(_, _, x), unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
-bnl_number(x, n) :- attr_of(_, _, x), kind(n, _), dj_has_field(_, x, _, t), dj_number_field(t).
+bnl_number(x, n) :- attr_of(_, _, x), kind(n, _), dj_has_field(_, x, t), dj_number_field(t).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may

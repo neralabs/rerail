@@ -12,7 +12,7 @@ use crate::code_rule_dsl::logic::plan::fields::Fields;
 use crate::code_rule_dsl::logic::program_image::{AggRef, CmpOp, Lit, RuleRef, Slot, TermRef, Version};
 
 /// The declared types whose values are node ids: `node`, and `loc` (`node | span`), which may hold one.
-const NODE_TYPES: [&str; 2] = ["node", "loc"];
+pub(crate) const NODE_TYPES: [&str; 2] = ["node", "loc"];
 
 /// The functions of a node whose answer is what the node says, not which node it is: its document (a document key
 /// may cross, 0677 §2), its text and value reads (`NODE_READS`), its subtree's digest and its source again. A value

@@ -60,13 +60,13 @@ rmw_model(f, o, mc) :- kind(a, "assignment"), nearest(a, f, fdef), field(a, "lef
 rmw_model(f, o, mc) :- kind(s, "for_statement"), nearest(s, f, fdef), field(s, "left", l), kind(l, "identifier"),
     text(l, o), field(s, "right", r), unparen(r, q), dj_qs_model(q, mc).
 // rmw_class(e, mc): e names model class mc of the run.
-.decl rmw_class(e: node, mc: node)
+.decl rmw_class(e: node, mc: node) cross_file  // pairs two files' class nodes: decision 0677 fix 3b (models by symbol)
 rmw_class(e, mc) :- sym_of(e, q), class_def(mc, q), dj_model(mc).
 
 // rmw_numeric(mc, x): model mc has numeric field x (python/django's dj_number_field, or a DurationField), declared in
 // its body or in a base class of the run.
 .decl rmw_numeric(mc: node, x: symbol)
-rmw_numeric(mc, x) :- dj_has_field(mc, x, _, t), (dj_number_field(t) ; t = "DurationField").
+rmw_numeric(mc, x) :- dj_has_field(mc, x, t), (dj_number_field(t) ; t = "DurationField").
 
 // The cases, `cases/django-practice-read-modify-write/`, read as one repository: each line ending in `# caught` is
 // reported, and no other line.
