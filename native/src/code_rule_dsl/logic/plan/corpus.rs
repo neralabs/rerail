@@ -3696,33 +3696,8 @@ fn run_observed(
             let split = crate::code_rule_dsl::typing::file_local::programs_of(version.clone()).map_err(Error::Plan)?;
             // No relation is cross-file without a declaration (decision 0652).
             crate::code_rule_dsl::typing::file_local::crossings_checked(&split, crate::code_rule_dsl::typing::file_local::strict_crossings()).map_err(Error::Plan)?;
-            // Only the debug check below edits the tree: a build without debug assertions keeps it immutable.
-            #[cfg(debug_assertions)]
-            let mut program = program;
-            // While passes before the image edit the tree, a debug build checks the version's split and domains are
-            // the tree's (the tree's inputs pruned as `preparation::InputsRead` prunes the version's).
-            #[cfg(debug_assertions)]
-            if std::env::var_os("RERAIL_RULE_ORDER").is_none() {
-                assert_eq!(crate::code_rule_dsl::typing::file_local::push_local_joins(&mut program), pushed, "the version's joins are pushed as the tree's");
-                let tree_factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut program) } else { Vec::new() };
-                assert_eq!(tree_factorized, factorized, "the version's exports are factorized as the tree's");
-                assert_eq!(crate::code_rule_dsl::typing::file_local::demand_exports(&mut program), found.demand, "the version's exports are cut as the tree's");
-                assert_eq!(crate::code_rule_dsl::typing::file_local::locate(&mut program), located, "the version's rows are located as the tree's");
-                let tree_merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
-                    crate::code_rule_dsl::logic::simplify::merge_identical(&mut program)
-                } else {
-                    let (m, s, _) = merge_and_drop_repeats(&mut program);
-                    (m, s)
-                };
-                assert_eq!(tree_merged, merged, "the version's merges are the tree's");
-                let read: BTreeSet<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
-                let outputs = program.outputs.clone();
-                program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
-                let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's program is the tree's after the merges");
-                assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
-                crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
-            }
+            // The version is the only path (decision 0276): the tree's split and passes are not checked beside it, so the
+            // version's split takes fixes the tree's does not have (decisions 0649, 0652).
             drop(program);
             // The run's program: the image alone; no tree is kept.
             let lowered = lower::Lowered::of_placed(super::body::Placed::whole(version), lowered.domains, lowered.ops, lowered.dialect);
@@ -4278,6 +4253,21 @@ fn run_observed(
             let mut counts = crate::code_rule_dsl::logic::plan::statkeep::RelStats::new(source.columns());
             counts.delta(&flat(source.as_ref()), &[], width);
             let measured = counts.statistics(&|_| true);
+            repository.push((rel.clone(), source, measured));
+        }
+        // A library's own input that core does not make and no fact gives (`tsx/node-package.rerail`'s
+        // `npm_ignored`, "until core has it"): no rows, under its declared columns. A cross-file rule reads it as an
+        // input like any other (decision 0652 moves such readers there), so it is bound, empty.
+        let unbound: Vec<&String> = split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        for rel in unbound {
+            let own = projection.columns(rel).is_none() && !prog.facts.contains_key(rel.as_str());
+            let Some(cols) = prog.decls.get(rel.as_str()).filter(|_| own) else { continue };
+            // Its columns by position (`c0`, …), as a phase's export's (`atoms_source`): the cross part reads a
+            // relation core does not shape by position.
+            let names: Vec<String> = (0..cols.len()).map(|c| format!("c{c}")).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = Arc::new(crate::code_rule_dsl::facts::vtab::Relation::new(&names));
+            let measured = syntax::statistics(source.as_ref());
             repository.push((rel.clone(), source, measured));
         }
         repository

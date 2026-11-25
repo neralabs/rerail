@@ -791,7 +791,7 @@ out_of_loop(c) :- callee(n, c), !inside(n, _, stop).
 fn_with_call(f) :- fname(a, f), has(a, n, stop), node(_, n, "block", _, _).
 .decl own(c: symbol, f: symbol)
 own(c, f) :- callee(n, c), fname(a, f), within_stop(n, a, stop).
-.decl lonely(c: symbol)
+.decl lonely(c: symbol) cross_file   // a name called in one file, defined in none (decision 0652)
 lonely(c) :- callee(_, c), !(callee(m, c), fname(f, c)), !(c = "h", callee(_, "f")).
 .output near, out_of_loop, fn_with_call, own, lonely
 "#;
@@ -1942,7 +1942,7 @@ g(d)
 comma(l, c) :- kind(n, "argument_list"), match_all(",", n, m), line(m, l), col(m, c).
 .decl in_node(t: symbol, k: number)
 in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", n, _) }.
-.decl in_text(t: symbol, k: number)
+.decl in_text(t: symbol, k: number) cross_file   // texts and counts: values of the corpus (decision 0652)
 in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
 .output comma, in_node, in_text
 "#).unwrap();
@@ -2376,7 +2376,7 @@ objects(x, l, c) :- guest(g, _, _, "sql"), node(g, n, "object_reference", _, _),
 unscoped(k) :- node(_, _, k, _, _).
 .decl qualified(x: symbol)
 qualified(x) :- kind(n, "sql:object_reference"), text(n, x).
-.decl counted(c: number)
+.decl counted(c: number) cross_file   // the corpus's count (decision 0652)
 counted(c) :- c = count : { kind(_, "sql:object_reference") }.
 .output sqlkinds, docs, objects, unscoped, qualified, counted
 "#;
@@ -2991,7 +2991,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
         crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
     };
     let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), def_at(g, s), f != g.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- def_at(f, s), def_at(g, s), f != g.\n.violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3030,7 +3030,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     }
     let policy = |name: &str, scope: &str, body: &str| format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rerail\"\n.scope dirs \"{scope}\"\n{body}\n");
     let a = policy("a", "a", ".violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).");
-    let b = policy("b", "b", ".violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), call_name(d, s), c != d.");
+    let b = policy("b", "b", ".decl twice(s: symbol) cross_file\ntwice(s) :- call_name(c, s), call_name(d, s), c != d.\n.violation Dup(at: node) \"two calls\"\nDup(c) :- call_name(c, s), twice(s).");
     let run = |programs: &[&str], out: &str| -> Vec<String> {
         let out = dir.join(out);
         crate::code_rule_dsl::logic::plan::corpus::run_all(programs, &dir.join("src"), &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -3101,9 +3101,9 @@ fn ordering_nodes_follows_preorder_across_granules() {
 xs(n) :- node(_, n, "identifier", _, _), text(n, "x").
 .decl before(a: number, b: number)
 before(la, lb) :- xs(a), xs(b), a < b, line(a, la), line(b, lb).
-.decl last(l: number)
+.decl last(l: number) cross_file
 last(l) :- m = max k : { xs(k) }, line(m, l).
-.decl first(l: number)
+.decl first(l: number) cross_file
 first(l) :- m = min k : { xs(k) }, line(m, l).
 .output before, last, first
 "#;
@@ -4105,7 +4105,7 @@ fn a_cone_is_taken_without_the_attributes_requests() {
 fn an_attribute_a_cross_file_reader_asks_for_is_eager() {
     let rule = r#"
 .policy "t:values" revision 1
-.decl pick(n: node)
+.decl pick(n: node) cross_file   // a node with its twin in another document (decision 0652)
 pick(n) :- kind(n, "integer"), kind(m, "integer"), docof(n, d), docof(m, e), d != e.
 .decl cv(v: symbol)
 cv(v) :- pick(n), value(n, v).

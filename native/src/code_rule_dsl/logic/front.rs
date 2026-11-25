@@ -448,6 +448,11 @@ impl Parser<'_> {
                     });
                     self.i += 1;
                 }
+                // `cross_file` (decision 0652), as `.rerail` writes it.
+                if self.is_id(ast::CROSS_FILE) {
+                    self.i += 1;
+                    prog.qualifiers.entry(name.to_string()).or_default().insert(ast::CROSS_FILE.to_owned());
+                }
                 // T: `.lattice` makes the last column the lattice; `.decl` with `;` (or `merge`) does here too.
                 if d == "lattice" || keys.is_some() || merge.is_some() {
                     let ty = cols.last().map(|c| c.1.clone()).unwrap_or_default();
@@ -604,7 +609,14 @@ fn order_nodes(prog: &mut Program) {
             continue;
         }
         let mut body = Vec::with_capacity(r.body.len());
-        for l in std::mem::take(&mut r.body) {
+        // Each literal's variables, and the head's: an aggregate's arguments bound outside it (decision 0652).
+        let head_vars: BTreeSet<String> = {
+            let mut h = BTreeSet::new();
+            r.head.args.iter().for_each(|t| t.vars(&mut h));
+            h
+        };
+        let lit_vars: Vec<BTreeSet<String>> = r.body.iter().map(|l| l.vars()).collect();
+        for (at, l) in std::mem::take(&mut r.body).into_iter().enumerate() {
             match l {
                 Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } if matches!(op, "<" | "<=" | ">" | ">=") && nodes.contains(x.as_str()) && nodes.contains(y.as_str()) => {
                     let (kx, ky) = (format!("rr_ord{fresh}"), format!("rr_ord{}", fresh + 1));
@@ -638,12 +650,26 @@ fn order_nodes(prog: &mut Program) {
                     let kv = format!("rr_ord{}", fresh + 1);
                     fresh += 2;
                     let name = format!("rr_ordered{}", helpers.len());
+                    // The aggregated row's own node is read back from the helper at the key, not `node_order(v, kv)`:
+                    // the key names one node, but the split cannot see a document in a number, and took that rule for a
+                    // join of two documents (decision 0652). The helper's row holds the group and its node together, as
+                    // the aggregated atom did; its columns bound only inside the aggregate are `_` there.
+                    let outside: BTreeSet<&str> = head_vars.iter().map(String::as_str).chain(lit_vars.iter().enumerate().filter(|(i, _)| *i != at).flat_map(|(_, vs)| vs.iter().map(String::as_str))).collect();
+                    let mut at_args: Vec<Term> = agg_args.iter().map(|t| match t {
+                        Term::Var(x) if outside.contains(x.as_ref()) => t.clone(),
+                        _ => Term::Wild,
+                    }).collect();
+                    at_args.push(Term::Var(var.clone().into()));
+                    at_args.push(Term::Var(kv.clone().into()));
+                    head_args.push(Term::Var(o.clone().into()));
+                    head_cols.push(("n".to_owned(), "node".to_owned()));
                     head_args.push(Term::Var(k.clone().into()));
+                    agg_args.push(Term::Wild);
                     agg_args.push(Term::Var(k.clone().into()));
                     head_cols.push(("k".to_owned(), "int".to_owned()));
                     helpers.push((Rule { head: Atom { rel: name.clone().into(), args: head_args.into(), neg: false, gated: false }, body: [Literal::Atom(atom), order(&o, &k)].into() }, head_cols));
-                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.into(), args: agg_args.into(), neg: false, gated: false } });
-                    body.push(order(&var, &kv));
+                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.clone().into(), args: agg_args.into(), neg: false, gated: false } });
+                    body.push(Literal::Atom(Atom { rel: name.into(), args: at_args.into(), neg: false, gated: false }));
                     used = true;
                 }
                 other => body.push(other),

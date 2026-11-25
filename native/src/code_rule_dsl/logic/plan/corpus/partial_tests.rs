@@ -43,7 +43,7 @@ fn program(kind: &str) -> String {
 called(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x).
 .decl defined(d: node, x: symbol)
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
-.decl at(x: symbol, k: number)
+.decl at(x: symbol, k: number) cross_file
 at(x, k) :- called(c, x), defined(_, x), col(c, k).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").
@@ -124,11 +124,11 @@ fn spans_program(kind: &str) -> String {
 defined(d, x) :- kind(d, "function_definition"), field(d, "name", n), text(n, x).
 .decl noted(c: node, x: symbol)
 noted(c, x) :- comment(c, x).
-.decl remark(x: symbol, l: number, k: number)
+.decl remark(x: symbol, l: number, k: number) cross_file
 remark(x, l, k) :- noted(c, x), defined(_, x), line(c, l), col(c, k).
 .decl said(sp: span, x: symbol)
 said(sp, x) :- src_line(_, _, sp), text(sp, x).
-.decl spoken(x: symbol, l: number, k: number)
+.decl spoken(x: symbol, l: number, k: number) cross_file
 spoken(x, l, k) :- said(sp, x), defined(_, x), line(sp, l), col(sp, k).
 .decl flagged(n: node)
 flagged(n) :- kind(n, "assert_statement"), !kind(n, "{kind}").

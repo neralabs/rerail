@@ -84,6 +84,27 @@ Found on the way and fixed:
      crossing is a demand of an aggregate that drops the aggregate's `@doc(c) = @doc(N)` tie (`rr_demand_agg`). The
      branch's split keeps that tie (`row_documents`, `same_document_ties`); that is one of the split gaps under Open.
    - Test: `json_rules_value_type_is_the_nodes_own`: over `a = "12"` / `b = 12`, the int alone; the old join, both.
+2. **0649's nullable columns and computed views, and 0652's split gaps** (the branch's 0649 steps 2–3 and 0652's
+   split commit). The version split places:
+   - a functional native (`match_all`) with its input's row, and other natives by their rules;
+   - `@doc(a) = @doc(b)` and `d = @doc(n)` as one document (`Lit::Same`), and a `sub_tape` splice with its tape;
+   - a negated read of a nullable location column with its row's anchor;
+   - a view computed by comparisons inlined where its domain is read (`simplify::computed`).
+
+   The lowering ties nothing by a test (`!=`, `<`) in a context, its span binder reads `field` as a child, and min/max
+   over nodes reads its node back from the ordering helper (`front::order_nodes`). Preparation refuses a head
+   variable no body literal binds (`head_bound`). The repository makes `tsconfig`, `tsconfig_for` and
+   `tsconfig_path`, and a library input no producer binds is bound empty. `.rdl` reads `cross_file`.
+   Main's debug check that the tree's split and passes match the version's goes (decision 0276: the version is the
+   only path), as the branch's did: the version's split now has fixes the tree's lacks.
+   - Split list: 130 → 38 (data layer 32, Django 2, Python 2, JavaScript and python-main 1 each).
+   - Node list: 3,354 → 3,025. Python's ruff_qual root no longer crosses; 7 relations are new to the list, whose node
+     now enters directly where it followed that root (`air301_callee`, `air_needs_guard`, `fast_dep_name`,
+     `fast_pydantic`, `in_collection_call`, `violation_at`; the data layer's `ca_conditional`). The branch rewrote
+     these rules in its later fixes.
+   - Policies not run: 25 → 0. React's and Node's failures were the missing `tsconfig` rows and unbound library
+     inputs. `spec_resolved` and `npm_ignored` are bound empty until their producers are ported, so n-no-missing-import
+     and n-no-missing-require find every import missing: see Open.
 
 ## Consequences
 
@@ -94,9 +115,9 @@ Found on the way and fixed:
 
 ## Open
 
-- The split's gaps that the branches fixed (0652's natives placed by their rules, functional relations, `@doc(a) =
-  @doc(b)`, a nullable negated read; 0665's placeless settings and path keys; 0676's `nearest`) are not ported: some
-  of main's crossings are these gaps, not rule faults.
+- The split's gaps still to port: 0652's follow-up (`row_documents`, `same_document_ties`: SIM113), 0665's placeless
+  settings and path keys, 0676's `nearest`.
+- Producers for `spec_resolved` (from main's `import_target` resolver) and `npm_ignored` (package.json `files`,
+  `.npmignore`, `.gitignore`).
 - `resolve_export`'s family needs Python's names as a phase over symbols (oscar's `py_names`), an engine change of its
   own.
-- 0652's `head_bound` check is not ported.

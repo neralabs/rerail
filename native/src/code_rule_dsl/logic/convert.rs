@@ -493,12 +493,15 @@ impl Emitter {
         match p {
             PatternNode::MetaVar { meta_var } => match meta_var {
                 MetaVariable::Capture(name, _) => match captures.get(name).cloned() {
-                    // Bound before: the same name, as ast-grep compares their text.
+                    // Bound before: the same name, as ast-grep compares their text. Both are nodes of one match, so
+                    // of one document (decision 0652): a helper of the comparison alone joins no two files.
                     Some(prior) if prior != n => {
                         self.approx.insert("a metavariable twice: equal names".into());
-                        let t = self.var();
+                        let (t, d) = (self.var(), self.var());
                         body.push(format!("text({prior}, {t})"));
                         body.push(format!("text({n}, {t})"));
+                        body.push(format!("docof({prior}, {d})"));
+                        body.push(format!("docof({n}, {d})"));
                     }
                     Some(_) => {}
                     None => {

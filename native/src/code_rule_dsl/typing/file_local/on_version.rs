@@ -377,12 +377,17 @@ impl<'v> Program<'v> {
             let rel = self.v.rel_name(r);
             self.fact(rel) && !self.f.is_input(rel)
         };
+        // A native relation is judged by its rules, which the lowering keeps beside it with its rows' shape (decision
+        // 0652): a walk (`dfs_first`, `reach`, `components`) over edges of one document each stays in it, and one over
+        // edges between documents is cross-file by its rules as any rule is. A function of strings (`match_all`, a
+        // text test) is judged by its input (`functional`). Python's natives over a cross-file target are made in the
+        // cross-file part.
         let cross_native = |rel: &str| {
             self.f.native(rel).is_some_and(|nat| match &nat.spec {
                 NativeSpec::TextTest { .. } => false,
                 NativeSpec::PythonCandidates { targets, .. } => !constants.contains(self.v.rel_name(*targets)) && !fact_not_input(*targets),
                 NativeSpec::Python { targets, .. } => targets.is_some_and(|t| !constants.contains(self.v.rel_name(t)) && !fact_not_input(t)),
-                _ => true,
+                _ => false,
             })
         };
         // A relation `locate` moved (`CROSS_FILE`), its rows naming no document (decision 0290), or one declared
@@ -413,6 +418,14 @@ impl<'v> Program<'v> {
             let explain = |k: usize, local_now: &[bool]| self.why_not_local(self.rules[k], local_now, &constants, &filters, &locations, &nullable);
             let check = |k: usize| -> Option<(u32, String)> {
                 let head = rels.head[k];
+                // A function of strings is where its input is: its rows are its input strings' values.
+                if rels.functional[head as usize] {
+                    let crossed = forms.get(k).lits.iter().find_map(|l| match l {
+                        Lit::Read { rel: x, .. } if rels.is_derived(*x) && !local_now[*x as usize] && !placeless[*x as usize] => Some(*x),
+                        _ => None,
+                    });
+                    return crossed.map(|x| (head, format!("reads cross-file {}", self.name(x))));
+                }
                 if forms.get(k).one_document(head, rels, &placeless, &local_now, &filtering, &locs, &nulls) {
                     debug_assert!(explain(k, &local_now).is_none(), "the numbered check and the text's agree on {}", self.name(head));
                     return None;
@@ -474,7 +487,7 @@ impl<'v> Program<'v> {
                     .filter(|l| match l {
                         Lit::Read { rel: x, .. } => !placeless_or_input[*x as usize],
                         Lit::Ast | Lit::Nearest(..) => true,
-                        Lit::Cmp => false,
+                        Lit::Cmp | Lit::Same(..) => false,
                     })
                     .collect();
                 let union = matches!(documents.as_slice(), [] | [Lit::Read { neg: false, plain: true, .. }]);
@@ -486,6 +499,7 @@ impl<'v> Program<'v> {
                 break;
             }
         }
+        // The same-document columns and the rest: `finish`.
         // The same-document columns (`file_local::split_explained`) and the rest: `finish`.
         self.finish(FileLocal { local, constants, locations, filters, causes, crossings, nullable, ..Default::default() }, self.keys())
     }
@@ -509,12 +523,34 @@ impl<'v> Program<'v> {
             }
         }
         super::close_under(&mut strict, &equal_names);
+        // `one_document`'s `nullable_row`: a nullable column's variable no location column places, to its positive
+        // row's first location variable.
+        let mut nullable_row: BTreeMap<String, String> = BTreeMap::new();
+        for l in rule.body() {
+            if let L::Atom(a) = l.view()
+                && !a.neg()
+                && self.f.derives(v.rel_name(a.rel()))
+                && let Some(nc) = nullable.get(v.rel_name(a.rel()))
+            {
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                let Some(anchor) = locations.get(v.rel_name(a.rel())).and_then(|cs| cs.iter().find_map(|&c| args.get(c).and_then(|t| t.var()))) else { continue };
+                for &c in nc {
+                    if let Some(x) = args.get(c).and_then(|t| t.var()).map(|s| v.text(rule.var(s)).to_owned())
+                        && !strict.contains(&x)
+                    {
+                        nullable_row.entry(x).or_insert_with(|| v.text(rule.var(anchor)).to_owned());
+                    }
+                }
+            }
+        }
         let head = v.rel_name(rule.head().rel());
         let var = |s: Slot| v.text(rule.var(s)).to_owned();
         let local = |rel: &str| v.rel(rel).is_some_and(|r| local_now[r.0 as usize]);
         let placed = ValueTapes::of(v, rule);
         let tape = |c: u32| format!("rr_value_tape:{}", var(Slot(c)));
         let mut groups: Vec<BTreeSet<String>> = Vec::new();
+        // `@doc(a) = @doc(b)` and `d = @doc(n)`: one document's (`Lit::Same`).
+        let mut same_doc: Vec<(String, String)> = Vec::new();
         for &(n, t) in &placed.splices {
             groups.push(BTreeSet::from([var(n), tape(t)]));
         }
@@ -527,13 +563,22 @@ impl<'v> Program<'v> {
                     groups.push(BTreeSet::from([var(n), var(a)]));
                     continue;
                 }
+                L::Cmp { l, op: CmpOp::Eq, r } => {
+                    if let (Some((a, x)), Some((b, y))) = (doc_side(v, l), doc_side(v, r))
+                        && (x || y)
+                    {
+                        same_doc.push((var(a), var(b)));
+                    }
+                    continue;
+                }
                 L::Cmp { .. } => continue,
             };
             let rel = v.rel_name(atom.rel());
             let derived = self.f.derives(rel);
             let constant = (!derived && self.fact(rel) && !self.f.is_input(rel)) || constants.contains(rel) || self.run_constant(rel);
             let chunk_value = !derived && CHUNK_VALUES.contains(&rel);
-            if constant || chunk_value || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) || filters.contains(rel) || filters.contains(head) {
+            let functional = local(rel) && (self.f.native(rel).is_some_and(|nat| matches!(nat.spec, NativeSpec::MatchAll { .. })));
+            if constant || chunk_value || functional || rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) || filters.contains(rel) || filters.contains(head) {
                 continue;
             }
             if derived && !local(rel) {
@@ -542,6 +587,9 @@ impl<'v> Program<'v> {
             let columns = if derived { locations[rel].clone() } else { self.base_locations(rel) };
             let args: Vec<TermRef<'_>> = atom.args().collect();
             let mut vars: BTreeSet<String> = columns.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(var).collect();
+            if atom.neg() {
+                vars = vars.into_iter().map(|x| nullable_row.get(&x).cloned().unwrap_or(x)).collect();
+            }
             if derived && let Some(nc) = nullable.get(rel) {
                 vars.extend(nc.iter().filter_map(|&c| args.get(c).and_then(|t| t.var())).map(var).filter(|x| strict.contains(x)));
             }
@@ -563,7 +611,8 @@ impl<'v> Program<'v> {
             }
             groups.push(vars);
         }
-        let equal: Vec<(String, String)> = super::var_equalities_in(v, rule).into_iter().map(|(a, b)| (var(a), var(b))).collect();
+        let mut equal: Vec<(String, String)> = super::var_equalities_in(v, rule).into_iter().map(|(a, b)| (var(a), var(b))).collect();
+        equal.extend(same_doc);
         for g in &mut groups {
             super::close_under(g, &equal);
         }
@@ -642,6 +691,9 @@ struct Rels<'v> {
     run_constant: Vec<bool>,
     chunk_value: Vec<bool>,
     test: Vec<bool>,
+    /// Placed where its inputs are, and read as a test is where it is per-file: a native function of strings
+    /// (`match_all`).
+    functional: Vec<bool>,
     text: Vec<Option<&'static [usize]>>,
     base_locs: Vec<Vec<usize>>,
     candidate: Vec<bool>,
@@ -678,6 +730,7 @@ impl<'v> Rels<'v> {
         let name = |r: usize| v.rel_name(RelId(r as u32));
         let base = |r: usize| !derived[r] && read[r];
         let test = |r: &str| r.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+        let functional = |r: &str| f.native(r).is_some_and(|nat| matches!(nat.spec, NativeSpec::MatchAll { .. }));
         Rels {
             n,
             derived_count: derived.iter().filter(|d| **d).count(),
@@ -685,6 +738,7 @@ impl<'v> Rels<'v> {
             run_constant: (0..n).map(|r| (derived[r] || read[r]) && p.run_constant(name(r))).collect(),
             chunk_value: (0..n).map(|r| base(r) && CHUNK_VALUES.contains(&name(r))).collect(),
             test: (0..n).map(|r| (derived[r] || read[r]) && test(name(r))).collect(),
+            functional: (0..n).map(|r| derived[r] && functional(name(r))).collect(),
             text: (0..n).map(|r| if derived[r] || read[r] { crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(t, _)| *t == name(r)).map(|(_, c)| *c) } else { None }).collect(),
             base_locs: (0..n).map(|r| if base(r) { p.base_locations(name(r)) } else { Vec::new() }).collect(),
             candidate: (0..n).map(|r| derived[r] && f.native(name(r)).is_none() && !f.lattice(name(r)) && !f.is_input(name(r))).collect(),
@@ -697,7 +751,7 @@ impl<'v> Rels<'v> {
     }
 
     fn empty() -> Rels<'v> {
-        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), run_constant: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
+        Rels { n: 0, derived_count: 0, derived: Vec::new(), fact: Vec::new(), run_constant: Vec::new(), chunk_value: Vec::new(), test: Vec::new(), functional: Vec::new(), text: Vec::new(), base_locs: Vec::new(), candidate: Vec::new(), rules: Vec::new(), reading: Vec::new(), head: Vec::new(), _v: std::marker::PhantomData }
     }
 
     fn is_derived(&self, r: u32) -> bool {
@@ -780,6 +834,9 @@ impl ValueTapes {
                     }
                 }
                 ("splice_of", [_, TermRef::Var(n), _, TermRef::Var(t3)]) => out.splices.push((*n, out.class[t3.0 as usize])),
+                // A guest's tape stands with its node: a guest and its host are one file (decision 0055), as a splice's
+                // tape with its node (decision 0652: the lowering's finding for a guest that does not parse).
+                ("sub_tape", [TermRef::Var(n), _, TermRef::Var(t)]) => out.splices.push((*n, out.class[t.0 as usize])),
                 _ => {}
             }
         }
@@ -799,6 +856,20 @@ enum Lit {
     Ast,
     Nearest(u32, u32),
     Cmp,
+    /// `@doc(a) = @doc(b)`, or `d = @doc(n)`: the two classes are of one document (decision 0652), as `docof` says.
+    Same(u32, u32),
+}
+
+/// A side of `@doc(a) = @doc(b)` or `d = @doc(n)`: its variable, and whether it is the `@doc` call.
+fn doc_side(v: &Version, t: TermRef<'_>) -> Option<(Slot, bool)> {
+    match t {
+        TermRef::Var(s) => Some((s, false)),
+        TermRef::Call(f, mut args) if v.text(f) == "doc" => match (args.next(), args.next()) {
+            (Some(TermRef::Var(s)), None) => Some((s, true)),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// A rule body numbered for the split (`shape::Form`): its slots, each with its class under the body's equalities;
@@ -876,6 +947,10 @@ impl Form {
                 }
                 L::Ast { .. } => Lit::Ast,
                 L::Nearest { n, a, .. } => Lit::Nearest(class[n.0 as usize], class[a.0 as usize]),
+                L::Cmp { l, op: CmpOp::Eq, r } => match (doc_side(v, l), doc_side(v, r)) {
+                    (Some((a, x)), Some((b, y))) if x || y => Lit::Same(class[a.0 as usize], class[b.0 as usize]),
+                    _ => Lit::Cmp,
+                },
                 L::Cmp { .. } => Lit::Cmp,
             });
         }
@@ -895,7 +970,7 @@ impl Form {
                 let r = *rel as usize;
                 constant[r] || rels.run_constant[r] || rels.fact[r]
             }
-            Lit::Cmp => true,
+            Lit::Cmp | Lit::Same(..) => true,
             _ => false,
         })
     }
@@ -955,7 +1030,7 @@ impl Form {
                     false
                 }
             }
-            Lit::Cmp => true,
+            Lit::Cmp | Lit::Same(..) => true,
             _ => false,
         });
         reads_only_text && rule.head().args().all(|t| self.var(t).is_some_and(|v| strings.has(v)))
@@ -966,6 +1041,24 @@ impl Form {
         // A nullable column joins its row's group only where a location column of this rule places its variable
         // (decision 0649): then it is no -1.
         let strict = self.placed_classes(rels, locs);
+        // A negated read of a nullable column's variable that no location column places (decision 0652): where it
+        // is -1 the negated read matches no row and reads no document, and otherwise it is a node of the row's
+        // document, so the negated read is placed with the positive row that holds the column.
+        let mut nullable_row: Vec<(u32, u32)> = Vec::new();
+        for l in &self.lits {
+            if let Lit::Read { neg: false, rel, args, .. } = l
+                && rels.is_derived(*rel)
+                && let Some(&anchor) = locs[*rel as usize].iter().find_map(|&c| args.get(c).copied().flatten()).as_ref()
+            {
+                for &c in &nulls[*rel as usize] {
+                    if let Some(v) = args.get(c).copied().flatten()
+                        && !strict.has(self.class[v as usize])
+                    {
+                        nullable_row.push((self.class[v as usize], self.class[anchor as usize]));
+                    }
+                }
+            }
+        }
         let mut root: Vec<u32> = (0..self.ids as u32).collect();
         let mut firsts: Vec<u32> = Vec::new();
         for &(n, t) in &self.splices {
@@ -975,10 +1068,11 @@ impl Form {
         let mut group: Vec<u32> = Vec::new();
         for (index, l) in self.lits.iter().enumerate() {
             match l {
-                Lit::Read { plain, rel, args, binder, tapes, .. } => {
+                Lit::Read { neg, plain, rel, args, binder, tapes } => {
                     let r = *rel;
                     let derived = rels.is_derived(r);
-                    if placeless[r as usize] || (derived && filters[r as usize]) || head_filter {
+                    // A function of strings where it is per-file is read as a test is.
+                    if placeless[r as usize] || (derived && filters[r as usize]) || head_filter || (rels.functional[r as usize] && local[r as usize]) {
                         continue;
                     }
                     if derived && !local[r as usize] {
@@ -987,6 +1081,13 @@ impl Form {
                     let columns = if derived { &locs[r as usize] } else { &rels.base_locs[r as usize] };
                     group.clear();
                     group.extend(columns.iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])));
+                    if *neg {
+                        for k in group.iter_mut() {
+                            if let Some(&(_, anchor)) = nullable_row.iter().find(|(x, _)| x == k) {
+                                *k = anchor;
+                            }
+                        }
+                    }
                     if derived {
                         group.extend(nulls[r as usize].iter().filter_map(|&c| args.get(c).copied().flatten().map(|v| self.class[v as usize])).filter(|&k| strict.has(k)));
                     }
@@ -1008,6 +1109,7 @@ impl Form {
                     firsts.push(*n);
                 }
                 Lit::Cmp => {}
+                Lit::Same(a, b) => join(&mut root, *a, *b),
             }
         }
         let mut roots: Vec<u32> = firsts.iter().map(|&f| find(&mut root, f)).collect();

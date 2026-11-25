@@ -707,6 +707,8 @@ pub fn layout(prog: &mut Program, spec: &Obj, v: &str, vs: &mut Vars) -> Option<
                     format!("node(_, {v}, _, {s1}, {e1})"),
                     format!("node(_, {c}, _, {s2}, {e2})"),
                     if side == "before" { format!("{e2} <= {s1}") } else { format!("{s2} >= {e1}") },
+                    // Offsets compare within a file: the capture is in v's (decision 0652).
+                    format!("@doc({v}) = @doc({c})"),
                 ];
             }
             _ => return None,

@@ -31,11 +31,11 @@ src_not_assignment(p, e) :- dflt(p, e, src), src != "assignment".
 .decl mode(src: symbol, m: symbol)
 mode("assignment", "plain"). mode("withDefaults", "factory"). mode("defaultProperty", "factory").
 
-// ---- the props: prop(p, x, v, c), p's name x and definition v, from defineProps call c (0 for the others) ----------
+// ---- the props: prop(p, x, v, c), p's name x and definition v, from defineProps call c (unset for the others) ----------
 .decl prop(p: node, x: symbol, v: node, c: node)
-prop(p, x, v, 0) :- vopt(_, "props", _, po), kind(po, "object"), entry(po, p, x, v), kind(v, "object").
+prop(p, x, v, c) :- vopt(_, "props", _, po), kind(po, "object"), entry(po, p, x, v), kind(v, "object"), unset(c).
 prop(p, x, v, c) :- vprops_call(c), call_arg(c, a, 0), vunwrap(a, po), kind(po, "object"), entry(po, p, x, v).
-prop(m, x, v, 0) :- vmacro(m, "defineModel"), !field(m, "type_arguments", _),
+prop(m, x, v, c) :- vmacro(m, "defineModel"), !field(m, "type_arguments", _), unset(c),
     (call_arg(m, s, 0), kind(s, "string"), str(s, x), call_arg(m, a, 1) ;
      call_arg(m, a, 0), !kind(a, "string"), x = "modelValue"), vunwrap(a, v), kind(v, "object").
 .decl entry(po: node, p: node, x: symbol, v: node)  // a pair; a key with no static name is named by its text: `[k]`
