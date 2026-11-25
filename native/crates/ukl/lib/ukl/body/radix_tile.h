@@ -47,7 +47,7 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_hist_tile)(UKL_RADIX_SPACE const UKL_RA
 #endif
 }
 
-// The tile's rows at their places. `counts`: `UKL_RADIX_GROUPS * UKL_RADIX_DIGITS` threadgroup words (the round's
+// The tile's rows at their places (its keys alone where `outValues` is null). `counts`: `UKL_RADIX_GROUPS * UKL_RADIX_DIGITS` threadgroup words (the round's
 // rows of each digit, by rank group); `before`, `base`: `UKL_RADIX_DIGITS` each (the digit's rows in the earlier
 // rounds; its offset for the tile); `digits`: `UKL_RADIX_SPILL` (each thread's digit, where a rank group is not a SIMD
 // group). `t` of `lsz` threads, as the histogram's: a thread's SIMD group runs the tile's SIMD groups of its threads
@@ -100,7 +100,7 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL
         if (live) {
             uint32_t at = base[d] + before[d] + counts[sg * UKL_RADIX_DIGITS + d] + rank;
             outKeys[at] = key;
-            outValues[at] = values[r];
+            if (outValues != 0) outValues[at] = values[r];
         }
         ukl_tg_barrier();
         before[t] += acc;
@@ -169,7 +169,7 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL
             if (live[m]) {
                 uint32_t at = base[d[m]] + before[d[m]] + counts[((t + m * lsz) / UKL_RADIX_RG) * UKL_RADIX_DIGITS + d[m]] + rank[m];
                 outKeys[at] = key[m];
-                outValues[at] = values[row[m]];
+                if (outValues != 0) outValues[at] = values[row[m]];
             }
         ukl_tg_barrier();
         for (uint32_t m = 0u; m < nv; m++)

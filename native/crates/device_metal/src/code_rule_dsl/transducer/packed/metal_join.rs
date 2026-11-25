@@ -2333,7 +2333,10 @@ impl Batch {
         // Sorted (t58 increment A): its keys in the level's wide sort, no places.
         if let Some(k) = key {
             d[25] = 1;
+            // Its rows decoded from their keys (`head_row`): every column a part, and none held (no row to probe).
             assert!(k.parts.len() <= 16 && k.bits <= 64 && k.parts.iter().all(|&(c, _, _)| (c as usize) < cols.len()));
+            assert!((0..cols.len() as u32).all(|c| k.parts.iter().any(|p| p.0 == c)), "a sorted dedup's every column in its key");
+            assert!(held.is_none(), "a sorted dedup less held rows");
         }
         // Its places placed with its input where that is placed: twice its rows, a power of two (5d); and as many
         // again past them, each row's place (`dedup_claim_one`'s, its mark's). A sorted one has none.
@@ -2859,7 +2862,7 @@ impl Batch {
         let passes = bits / 8;
         // Where the sorted keys and places end: in the first pair after an even number of passes.
         let sorted = sort.as_ref().map(|(a, b, ..)| if passes % 2 == 0 { a } else { b });
-        // The wide sort's (t58 increment A): its sorted dedups' keys end to end, 64 bits each with its place, in a
+        // The wide sort's (t58 increment A): its sorted dedups' keys end to end, 64 bits each (a key its row), in a
         // region of the arena its level's size script claims from the rows counted (`WideAt`); as many passes as its
         // keys' and ranks' bits take, a byte each. Its rows as guessed: its items and its arena's bytes.
         let wide_rows: usize = wide_jobs.iter().map(|&i| jobs[i].wide).sum();
@@ -2995,7 +2998,7 @@ impl Batch {
                     prog.seg_late.push((prog.segs.len() - 1, Late::Sort(x as usize, word_at!(SortPass, w.tiles))));
                 }
             }
-            prog.arena += units(24 * wide_rows.max(1) + 4 * (256 * tiles + 1));
+            prog.arena += units(16 * wide_rows.max(1) + 4 * (256 * tiles + 1));
         }
         job_phase(prog, &[
             (JobKind::Stage, PK_STAGE_COUNT, |j| j.count),
@@ -3444,7 +3447,7 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
     if let Some(ws) = wide {
         // The level's sorted dedups' keys end to end (t58 increment A): each one's first (`eb`), its rows as its
         // input's count says (the device's: its input's room is too); then its region claimed for them (`WideAt`:
-        // 24 bytes a key, and its tiles' histograms), its first word and its keys into each pass and each dedup, and
+        // 16 bytes a key, and its tiles' histograms), its first word and its keys into each pass and each dedup, and
         // its histograms' scan, from their place in it.
         let (sum, r, rg, b) = (12u32, 13u32, 11u32, 4u32);
         prog.op(OpAt::of(SZ_CONST, sum, 0, 0).c(Late::Abs(0)));
@@ -3458,7 +3461,7 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
         prog.op(OpAt::of(SZ_MAX, r, r, 0).c(Late::Abs(1)));
         prog.op(OpAt::of(SZ_MUL, b, r, 0).c(Late::Abs(4 * 256)));
         prog.op(OpAt::of(SZ_ADD, b, b, ZERO).c(Late::Abs(4)));
-        prog.op(OpAt::of(SZ_MUL, rg, sum, 0).c(Late::Abs(24)));
+        prog.op(OpAt::of(SZ_MUL, rg, sum, 0).c(Late::Abs(16)));
         prog.op(OpAt::of(SZ_ADD, b, b, rg));
         claim(prog, top, rg, b, 4, true);
         for x in ws.first..ws.first + ws.passes {
@@ -3470,8 +3473,8 @@ fn level_sizes(prog: &mut Program, jobs: &[Job], first_job: usize, total: usize,
             prog.op(OpAt::of(SZ_PUT32, rg, 0, 0).w(desc(i, word_at!(JobDesc, at.h_at))));
             prog.op(OpAt::of(SZ_PUT32, sum, 0, 0).w(site(i, 4, HK_TOTAL)));
         }
-        // Its histograms past its keys and places: its first word less one, and six words a key.
-        prog.op(OpAt::of(SZ_MUL, b, sum, 0).c(Late::Abs(6)));
+        // Its histograms past its keys: its first word less one, and four words a key.
+        prog.op(OpAt::of(SZ_MUL, b, sum, 0).c(Late::Abs(4)));
         prog.op(OpAt::of(SZ_ADD, b, b, rg));
         prog.op(OpAt::of(SZ_SUB, b, b, R_ONE));
         prog.op(OpAt::of(SZ_PUT32, b, 0, 0).w(Late::Scan(ws.hist, word_at!(ScanLevel, w.at))));

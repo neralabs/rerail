@@ -2241,21 +2241,20 @@ struct HeadKeyP {
 const _: () = assert!(size_of::<HeadKeyP>() == 288);
 
 /// The level's wide sort's region in the arena (t58 increment A), from its first word (`h_at`, `SortWords::wide`, its
-/// size script's claim) and its keys: keys A and B (64 bits each), places A and B, then its tiles' histograms.
+/// size script's claim) and its keys: keys A and B (64 bits each), then its tiles' histograms. A key holds its whole
+/// row (`head_key`), so the sort moves keys alone, and the kept rows are decoded from them (`head_row`).
 #[derive(Clone, Copy)]
 struct WideAt {
     keys: [*mut u64; 2],
-    places: [*mut u32; 2],
     hist: *mut u32,
 }
 
 /// # Safety
-/// `base` is the region's first word, and it holds `n` keys and their places, and the histograms past them.
+/// `base` is the region's first word, and it holds `n` keys twice, and the histograms past them.
 unsafe fn wide_at(base: *mut u32, n: u32) -> WideAt {
     let n = n as usize;
     let k = base as *mut u64;
-    let p = base.add(4 * n);
-    WideAt { keys: [k, k.add(n)], places: [p, p.add(n)], hist: base.add(6 * n) }
+    WideAt { keys: [k, k.add(n)], hist: base.add(4 * n) }
 }
 
 /// Row `x`'s key (`head_key`).
@@ -2277,54 +2276,52 @@ unsafe fn head_key(t: *const i64, d: &Dedup, p: &HeadKeyP, x: u32) -> u64 {
     if p.rank_shift >= 64 { k } else { k | u64::from(p.rank) << p.rank_shift }
 }
 
-/// Rows `x0..x1`' keys and places at `eb` of the level's wide sort (`dedup_key_one`).
-unsafe fn dedup_key_range(t: *const i64, totals: *const u32, keys: *mut u64, places: *mut u32, d: &Dedup, p: &HeadKeyP, eb: u32, x0: u32, x1: u32) {
+/// Key `k`'s row (`head_key`'s, read back): each part from the key's low bits up, its least added, into its column of
+/// `o`'s row `at`. Every column of the dedup's is a part (`HeadKey`: the order is on every column).
+#[inline(always)]
+unsafe fn head_row(mut k: u64, p: &HeadKeyP, o: *mut i64, ocap: u32, at: u32) {
+    for part in p.part[..p.nparts.min(16) as usize].iter().rev() {
+        let w = part[1];
+        let v = if w >= 64 { k } else { k & ((1u64 << w) - 1) };
+        k = if w >= 64 { 0 } else { k >> w };
+        *colp_mut(o, part[0], ocap, at) = v.wrapping_add(u64::from(part[2]) | u64::from(part[3]) << 32) as i64;
+    }
+}
+
+/// Rows `x0..x1`' keys at `eb` of the level's wide sort (`dedup_key_one`).
+unsafe fn dedup_key_range(t: *const i64, totals: *const u32, keys: *mut u64, d: &Dedup, p: &HeadKeyP, eb: u32, x0: u32, x1: u32) {
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     for x in x0..x1.min(n) {
         *keys.add((eb + x) as usize) = head_key(t, d, p, x);
-        *places.add((eb + x) as usize) = eb + x;
     }
 }
 
-/// Sorted places `t0..t1`: each kept where its key is not the one before it's (`dedup_mark_sorted_one`).
-#[allow(clippy::too_many_arguments)]
-unsafe fn dedup_mark_sorted_range(t: *const i64, totals: *const u32, keys: *const u64, places: *const u32, counts: *mut u32, r: *const u8, hb: *const u8, d: &Dedup, eb: u32,
-                                  t0: u32, t1: u32) {
+/// Sorted keys `t0..t1`: each kept where it is not the one before it (`dedup_mark_sorted_one`).
+unsafe fn dedup_mark_sorted_range(totals: *const u32, keys: *const u64, counts: *mut u32, d: &Dedup, eb: u32, t0: u32, t1: u32) {
     let t1 = t1.min(d.cap.saturating_add(1));
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     fill_u32(counts, t0.max(n), t1, 0);
+    let k = keys.add(eb as usize);
     for s in t0..t1.min(n) {
-        let at = (eb + s) as usize;
-        let mut keep = s == 0 || *keys.add(at) != *keys.add(at - 1);
-        if keep && d.seen != 0 {
-            keep = !dedup_lanes::dedup_held_row(t, r, hb, d, *places.add(at) - eb);
-        }
-        *counts.add(s as usize) = u32::from(keep);
+        *counts.add(s as usize) = u32::from(s == 0 || *k.add(s as usize) != *k.add(s as usize - 1));
     }
 }
 
-/// Sorted places `t0..t1`' rows where they were kept, in their keys' order (`dedup_scatter_sorted_one`).
+/// Sorted keys `t0..t1`' rows where they were kept, decoded from them, in their order (`dedup_scatter_sorted_one`).
 #[allow(clippy::too_many_arguments)]
-unsafe fn dedup_scatter_sorted_range(rd: Reads, t: *const i64, totals: *mut u32, offsets: *const u32, o: *mut i64, r: *const u8, hb: *mut u8, d: &Dedup, places: *const u32, eb: u32,
-                                     t0: u32, t1: u32) {
+unsafe fn dedup_scatter_sorted_range(totals: *mut u32, offsets: *const u32, o: *mut i64, d: &Dedup, p: &HeadKeyP, keys: *const u64, eb: u32, t0: u32, t1: u32) {
     let o0 = *offsets;
-    let had = if d.seen != 0 { rd.rows_len(r, d.r_rows_at) } else { 0 };
     let n = (*totals.add(d.in_slot as usize)).min(d.cap);
     if t0 == 0 && t1 > 0 {
         *totals.add(d.out_slot as usize) = (*offsets.add(n as usize)).wrapping_sub(o0);
     }
+    let k = keys.add(eb as usize);
     for s in t0..t1.min(n) {
         let at = (*offsets.add(s as usize)).wrapping_sub(o0);
         if (*offsets.add(s as usize + 1)).wrapping_sub(o0) == at || at >= d.ocap {
             continue;
         }
-        let x = *places.add((eb + s) as usize) - eb;
-        for c in 0..d.ncols.min(16) {
-            *colp_mut(o, c, d.ocap, at) = *colp(t, d.cols[c as usize], d.cap, x);
-        }
-        if d.seen != 0 {
-            dedup_lanes::dedup_place_lanes::<{ stage_lanes::LANES }>(t, hb, d, x, 1, had + at);
-        }
+        head_row(*k.add(s as usize), p, o, d.ocap, at);
     }
 }
 
@@ -2686,20 +2683,31 @@ unsafe fn radix_hist_tile(keys: *const u32, hist: *mut u32, n: u32, shift: u32, 
 
 /// The wide sort's (64-bit keys, `SortWords::wide`) tile histogram, as `radix_hist_tile`'s.
 unsafe fn radix_hist_tile64(keys: *const u64, hist: *mut u32, n: u32, shift: u32, tiles: u32, tile: u32) {
-    let mut h = [0u32; RADIX_DIGITS];
+    // Four tables, a key each in turn: consecutive keys of one digit do not wait on one counter.
+    let mut h = [[0u32; RADIX_DIGITS]; 4];
     let first = tile.saturating_mul(RADIX_TILE);
-    for r in first..first.saturating_add(RADIX_TILE).min(n) {
-        h[((*keys.add(r as usize) >> shift) & 255) as usize] += 1;
+    let end = first.saturating_add(RADIX_TILE).min(n);
+    let dg = |r: u32| ((*keys.add(r as usize) >> shift) & 255) as usize;
+    let mut r = first;
+    while r + 4 <= end {
+        h[0][dg(r)] += 1;
+        h[1][dg(r + 1)] += 1;
+        h[2][dg(r + 2)] += 1;
+        h[3][dg(r + 3)] += 1;
+        r += 4;
     }
-    for (d, &c) in h.iter().enumerate() {
-        *hist.add(d * tiles as usize + tile as usize) = c;
+    while r < end {
+        h[0][dg(r)] += 1;
+        r += 1;
+    }
+    for d in 0..RADIX_DIGITS {
+        *hist.add(d * tiles as usize + tile as usize) = h[0][d] + h[1][d] + h[2][d] + h[3][d];
     }
 }
 
 /// The wide sort's tile's rows at their places, as `radix_scatter_tile`'s.
 unsafe fn radix_scatter_tile64(wa: WideAt, from: usize, n: u32, shift: u32, tiles: u32, tile: u32) {
     let (keys, out_keys) = (wa.keys[from] as *const u64, wa.keys[1 - from]);
-    let (values, out_values) = (wa.places[from] as *const u32, wa.places[1 - from]);
     let mut next = [0u32; RADIX_DIGITS];
     for (d, x) in next.iter_mut().enumerate() {
         *x = *wa.hist.add(d * tiles as usize + tile as usize);
@@ -2711,7 +2719,6 @@ unsafe fn radix_scatter_tile64(wa: WideAt, from: usize, n: u32, shift: u32, tile
         let a = next[d] as usize;
         next[d] += 1;
         *out_keys.add(a) = k;
-        *out_values.add(a) = *values.add(r as usize);
     }
 }
 
@@ -3215,13 +3222,11 @@ impl Prog {
             // places sorted.
             PK_DEDUP_KEY => {
                 let p = &*(j.p as *const HeadKeyP);
-                let wa = wide_at(b.h, p.total);
-                dedup_key_range(b.l, j.totals, wa.keys[0], wa.places[0], &*j.dd, p, b.eb, t0, t1)
+                dedup_key_range(b.l, j.totals, wide_at(b.h, p.total).keys[0], &*j.dd, p, b.eb, t0, t1)
             }
             PK_DEDUP_MARK if (*j.dd).sorted != 0 => {
                 let p = &*(j.p as *const HeadKeyP);
-                let (wa, s) = (wide_at(b.h, p.total), p.odd as usize);
-                dedup_mark_sorted_range(b.l, j.totals, wa.keys[s], wa.places[s], b.c, j.s_, j.vc, &*j.dd, b.eb, t0, t1)
+                dedup_mark_sorted_range(j.totals, wide_at(b.h, p.total).keys[p.odd as usize], b.c, &*j.dd, b.eb, t0, t1)
             }
             PK_DEDUP_MARK => dedup_mark_range(b.l, j.totals, b.h, b.c, j.s_, j.vc, &*j.dd, t0, t1),
             PK_STAGE_SCATTER => stage_scatter_range(&stage(j.ws), j, b, t0, t1),
@@ -3229,8 +3234,7 @@ impl Prog {
             PK_ROW_SCATTER => row_scatter_range(&stage(j.s), j, b, t0, t1),
             PK_DEDUP_SCATTER if (*j.dd).sorted != 0 => {
                 let p = &*(j.p as *const HeadKeyP);
-                let wa = wide_at(b.h, p.total);
-                dedup_scatter_sorted_range(rd, b.l, j.totals, b.c, b.o, j.s_, j.vc, &*j.dd, wa.places[p.odd as usize], b.eb, t0, t1)
+                dedup_scatter_sorted_range(j.totals, b.c, b.o, &*j.dd, p, wide_at(b.h, p.total).keys[p.odd as usize], b.eb, t0, t1)
             }
             PK_DEDUP_SCATTER => dedup_scatter_range(rd, b.l, j.totals, b.c, b.o, j.s_, j.vc, &*j.dd, t0, t1),
             PK_LAT_HCLEAR => lat_hclear_range(j.vc, lat(), t0, t1),

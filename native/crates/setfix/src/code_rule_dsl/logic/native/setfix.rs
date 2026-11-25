@@ -650,6 +650,34 @@ enum Origin {
     /// it added; `removed`, the old rows it left out, row-major.
     Compacted { at: usize, old_n: usize, kept: usize, removed: Vec<i64> },
 }
+/// Rows `lo..hi`' values of column `c`, read where they lie (`Rows::each_value`), for a sketch (`Sketch::add_batch`),
+/// with their bounds kept in `bounds` as they are read.
+struct ColValues<'a> {
+    data: &'a Rows,
+    c: usize,
+    lo: usize,
+    hi: usize,
+    bounds: Option<&'a std::cell::Cell<[i64; 2]>>,
+}
+
+impl sketch::Values for ColValues<'_> {
+    #[inline]
+    fn each(&self, mut f: impl FnMut(i64)) {
+        let (lo, hi) = (self.lo as u32, self.hi as u32);
+        match self.bounds {
+            Some(b) => {
+                let mut r = b.get();
+                self.data.each_value(lo, hi, self.c, |v| {
+                    r = [r[0].min(v), r[1].max(v)];
+                    f(v)
+                });
+                b.set(r);
+            }
+            None => self.data.each_value(lo, hi, self.c, f),
+        }
+    }
+}
+
 impl Rel {
     pub fn new(table: &str, types: &[u8]) -> Rel {
         let k = types.len();
@@ -1154,32 +1182,28 @@ impl Rel {
     fn indexed_to_n(&mut self) {
         let _s = (self.n - self.indexed >= SPANNED_ROWS).then(|| crate::code_rule_dsl::logic::profile::span(|| "rows sketched and counted (indexed_to_n)".into()));
         let (data, k, lo, hi) = (&self.data, self.k, self.indexed, self.n);
-        // Each column's bounds, over the rows the sketches take (a read of each value, as theirs is).
-        for (c, r) in self.ranges.iter_mut().enumerate() {
-            for id in lo..hi {
-                let v = data.value(id as u32, k, c);
-                r[0] = r[0].min(v);
-                r[1] = r[1].max(v);
-            }
-        }
-        let sketch = |c: usize, sk: &mut Sketch| {
-            for id in lo..hi { sk.add(data.value(id as u32, k, c)); }
-            sk.grow(|| (0..hi).map(|id| data.value(id as u32, k, c)));
+        // Each column's sketch and its bounds, over the rows the sketches take, in one read of each value.
+        let sketch = |c: usize, sk: &mut Sketch, r: &mut [i64; 2]| {
+            // (Read twice by the sketch where its filter takes the keys after their counts: the same bounds again.)
+            let b = std::cell::Cell::new(*r);
+            let batch = ColValues { data, c, lo, hi, bounds: Some(&b) };
+            sk.add_batch(&batch, &ColValues { data, c, lo: 0, hi, bounds: None });
+            *r = b.get();
         };
         let count = |stats: &mut Option<KeptStats>| if let Some(stats) = stats { stats.0.delta(&data.to_vec(lo, hi, k), &[], k); };
         // Many rows: each column's sketch, and the statistics, a job of its own (decision 0294). A sketch takes its
         // column's values in the rows' order, as one thread gives them (its exact counts give way in that order).
         if hi - lo >= SPANNED_ROWS && crate::threads::max() > 1 {
-            let (sketches, stats) = (&mut self.sketches, &mut self.stats);
+            let (sketches, stats, ranges) = (&mut self.sketches, &mut self.stats, &mut self.ranges);
             crate::threads::scope(|jobs| {
-                for (c, sk) in sketches.iter_mut().enumerate() {
-                    jobs.spawn("a column sketched", move |_| sketch(c, sk));
+                for (c, (sk, r)) in sketches.iter_mut().zip(ranges.iter_mut()).enumerate() {
+                    jobs.spawn("a column sketched", move |_| sketch(c, sk, r));
                 }
                 jobs.spawn("rows counted", move |_| count(stats));
             });
         } else {
-            for (c, sk) in self.sketches.iter_mut().enumerate() {
-                sketch(c, sk);
+            for (c, (sk, r)) in self.sketches.iter_mut().zip(self.ranges.iter_mut()).enumerate() {
+                sketch(c, sk, r);
             }
             count(&mut self.stats);
         }
