@@ -5174,6 +5174,8 @@ fn run_observed_within(
         chunks_at_once,
         size_limit,
         start.total(),
+        // The corpus's files, whose nodes the chunks spread over those that evaluate at once (decision 0690).
+        docs.len(),
         std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map(|n| n.clamp(1, chunk_nodes)),
     ));
     // The chunks begun, numbered in the order they are filed.
@@ -5892,7 +5894,7 @@ fn run_observed_within(
                     if chunk_nodes_built > 0 {
                         let mut s = schedule.lock();
                         let n = s.counts().1;
-                        let d = s.file(n, sizing::Measured { nodes: chunk_nodes_built, ..Default::default() });
+                        let d = s.file(n, sizing::Measured { nodes: chunk_nodes_built, files: chunk_docs.len(), ..Default::default() });
                         at_once_allowed.store(d.at_once, std::sync::atomic::Ordering::Relaxed);
                     }
                     phase("local", statements.count());
@@ -5979,7 +5981,7 @@ fn run_observed_within(
             let d = {
                 let mut s = schedule.lock();
                 let n = s.counts().1;
-                s.file(n, sizing::Measured { nodes: chunk_nodes_built, bytes: written.measure(), held: written.held })
+                s.file(n, sizing::Measured { nodes: chunk_nodes_built, bytes: written.measure(), held: written.held, files: chunk_docs.len() })
             };
             at_once_allowed.store(d.at_once, std::sync::atomic::Ordering::Relaxed);
             // What the chunk's own work held at its most (`rows::Chunk::held_most`, Q203 item 3): a report beside what its
@@ -6025,9 +6027,10 @@ fn run_observed_within(
                     sizing::By::Grown => "grown from this",
                     sizing::By::Most => "the caller's most",
                     sizing::By::Room => "what the room holds",
+                    sizing::By::Spread => "the corpus spread over the chunks at once, decision 0690",
                 };
                 format!(
-                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) wrote {} MB in its blocks and its scopes' heap rose {} MB at their most ({:.0} bytes a node), {} MB of the blocks' held past it; its own work held {held_mb} MB at its most; chunk {} is {} nodes ({by}; {} MB of room left of a limit of {} MB holds {}), {} at once",
+                    "a chunk of {chunk_nodes_built} nodes ({at_once} at once) wrote {} MB in its blocks and its scopes' heap rose {} MB at their most ({:.0} bytes a node), {} MB of the blocks' held past it; its own work held {held_mb} MB at its most; chunk {} is {} nodes ({by}; {} MB of room left of a limit of {} MB holds {}; the spread {}), {} at once",
                     written.bytes >> 20,
                     written.heap >> 20,
                     d.per_node,
@@ -6037,6 +6040,7 @@ fn run_observed_within(
                     d.room >> 20,
                     size_limit >> 20,
                     d.fit,
+                    d.spread.map_or("not estimated".to_owned(), |n| format!("{n} nodes")),
                     d.at_once
                 )
             });
