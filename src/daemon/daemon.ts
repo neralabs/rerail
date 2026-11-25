@@ -14,8 +14,9 @@ import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { prepareDaemonGit } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, dashboardLink, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
+import type { TrayDaemon, TrayHandle } from "./tray.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
@@ -348,7 +349,7 @@ async function closeHttpServer(server: DaemonServer): Promise<void> {
 /** The hosts the daemon binds and answers to, and whether it is reachable off loopback. */
 function daemonHosts(options: RerailDaemonOptions): { bindHost: string; publicHosts: ReturnType<typeof publicHostSet>; remote: boolean } {
   const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
-  const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
+  const loopbackBind = loopbackBindHost(bindHost);
   // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
   // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
   // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
@@ -1015,13 +1016,18 @@ interface DaemonArguments {
 
 const LOOPBACK_BIND_HOSTS: readonly string[] = ["127.0.0.1", "localhost", "::1"];
 
+/** Whether a daemon bound to `host` is reached from this computer alone. */
+function loopbackBindHost(host: string): boolean {
+  return LOOPBACK_BIND_HOSTS.includes(host.toLowerCase());
+}
+
 /**
  * Binding off loopback hands the write API to everything on the network, so it is an explicit
  * opt-in (`--allow-remote`), not a side effect of `--host`. Shared by `rerail start` and the daemon
  * itself, so the check holds for whichever launcher ran first.
  */
 export function assertHostBindable(host: string, allowRemote: boolean): void {
-  if (allowRemote || LOOPBACK_BIND_HOSTS.includes(host.toLowerCase())) return;
+  if (allowRemote || loopbackBindHost(host)) return;
   throw new Error(
     `--host ${host} is not a loopback address; every host on the network could then read and write this daemon. `
     + "Pass --allow-remote to bind it anyway, and --public-host <name> for each hostname it should answer to.",
@@ -1448,12 +1454,14 @@ async function packageVersion(): Promise<string> {
 /**
  * What starts the daemon with besides its arguments: what the process entry point (`src/cli/daemon-entry.ts`) supplies
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
- * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
+ * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets. `tray` starts the tray icon
+ * for the daemon once it listens (`startDaemonTray`), and is closed with it: the process's daemon alone has one, never
+ * a `RerailDaemon` a test or a check constructs.
  */
 type RerailDaemonServices = Pick<
   RerailDaemonOptions,
   "codingAgents" | "publishedRulePacks" | "lateChecked" | "updateChecks" | "statusLines" | "recordCheck" | "homeLease" | "remoteRefused"
->;
+> & { tray?: (daemon: TrayDaemon) => TrayHandle | undefined };
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
@@ -1611,6 +1619,7 @@ function reportStart(daemon: RerailDaemon): void {
 }
 
 async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+  const { tray, ...daemonServices } = services;
   const arguments_ = parseDaemonArguments(argv);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
   // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them. Only
@@ -1640,12 +1649,17 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
     accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
-    ...services,
+    ...daemonServices,
     ...optionalDaemonOptions(arguments_, tls),
   });
   reportStart(daemon);
+  let trayHandle: TrayHandle | undefined;
   const way = daemonExit({
-    close: async () => await daemon.close(),
+    // The icon goes first, so it never offers a daemon that is closing.
+    close: async () => {
+      trayHandle?.close();
+      await daemon.close();
+    },
     release: () => mainInstance?.release(),
     // The same arguments and the same launch as `rerail daemon start`, once this daemon's port, socket and state are free.
     relaunch: () => {
@@ -1655,6 +1669,13 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
     log: line => process.stderr.write(line),
   });
   shutdown = way.stop;
+  trayHandle = tray?.({
+    health: () => daemon.health(),
+    url: () => daemon.url,
+    dashboardLink: () => dashboardLink(daemon.state()),
+    loopback: loopbackBindHost(arguments_.host),
+    stop: way.stop,
+  });
   process.once("SIGTERM", way.stop);
   process.once("SIGINT", way.stop);
   watchHeap({

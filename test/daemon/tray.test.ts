@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DaemonHealth } from "../../src/runtime/index.js";
+import { DAEMON_STATE_FILE, probeDaemon, readDaemonState, type DaemonHealth } from "../../src/runtime/index.js";
+import { serveRerailDaemon } from "../../src/daemon/daemon.js";
 import { runRerailUpdate, startDaemonTray, startTray, trayGate, trayMenuState, type TrayDaemon, type TrayGateFacts, type TrayHandle, type TrayOptions, type TrayUpdateRun } from "../../src/daemon/tray.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -519,3 +520,68 @@ function alive(pid: number): boolean {
     return false;
   }
 }
+
+describe("the daemon's tray service", () => {
+  let root: string | undefined;
+  let given: TrayDaemon | undefined;
+  const originalRerailHome = process.env.RERAIL_HOME;
+
+  afterEach(async () => {
+    // A test that failed before its stop leaves no daemon listening, and no signal handler of it on this process.
+    if (given !== undefined) {
+      const exit = vi.mocked(process.exit);
+      if (exit.mock.calls.length === 0) {
+        given.stop();
+        await until(() => exit.mock.calls.length > 0, 30_000, "the daemon's close");
+      }
+      process.removeListener("SIGTERM", given.stop);
+      process.removeListener("SIGINT", given.stop);
+    }
+    given = undefined;
+    vi.restoreAllMocks();
+    if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
+    else process.env.RERAIL_HOME = originalRerailHome;
+    if (root !== undefined) await removeFolder(root);
+    root = undefined;
+  });
+
+  it("hands the running daemon to the tray, and closes the tray when the daemon closes", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tray-"));
+    const home = join(root, "home");
+    await mkdir(home, { recursive: true });
+    process.env.RERAIL_HOME = home;
+    // The daemon's way out ends the process; here it only says it would.
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    // Whether the daemon was still there when its tray closed: the icon goes first, before the daemon's close.
+    const close = vi.fn(() => existsSync(stateFile));
+    const tray = vi.fn((daemon: TrayDaemon): TrayHandle => {
+      given = daemon;
+      return { close };
+    });
+
+    // `--dev` serves the committed page: a checkout's tests have no built one.
+    await serveRerailDaemon(["--port", "0", "--dev", "--workspace-root", root, "--state-file", stateFile], { tray });
+
+    expect(tray).toHaveBeenCalledTimes(1);
+    const state = await readDaemonState(stateFile);
+    if (state === undefined || given === undefined) throw new Error("the daemon wrote no state file, or gave the tray nothing");
+    expect(given.loopback).toBe(true);
+    expect(given.url()).toBe(state.url);
+    // The dashboard on the daemon's own origin, with the capability it keeps in the home.
+    const link = new URL(given.dashboardLink());
+    expect(link.origin).toBe(new URL(state.url).origin);
+    expect(state.accessToken).toBeDefined();
+    expect([...link.searchParams.values()]).toContain(state.accessToken);
+    expect(given.health().pid).toBe(process.pid);
+    expect(close).not.toHaveBeenCalled();
+
+    given.stop();
+    await until(() => exit.mock.calls.length > 0, 30_000, "the daemon's close");
+    expect(exit).toHaveBeenCalledWith(0);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close).toHaveReturnedWith(true);
+    expect(existsSync(stateFile)).toBe(false);
+    expect((await probeDaemon(state)).status).toBe("unreachable");
+  }, 60_000);
+});

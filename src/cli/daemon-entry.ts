@@ -10,12 +10,14 @@ import { startGitWithoutCopying } from "../engine/git-start.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
+import { startDaemonTray } from "../daemon/tray.js";
 import type { RerailApiStores } from "../api/operation.js";
 import { keepClaudeStatusFiles } from "../presentation/claude-status-files.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { startUpdateChecks, updateCheckApplies } from "../setup/update-check.js";
 import { publishedPackReader } from "../setup/published-packs.js";
+import { isNewerRelease } from "../setup/updater.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 import { recordLateCheck } from "../harness/hook-failures.js";
 import { stampLines } from "./daemon-log.js";
@@ -56,6 +58,8 @@ try {
     ...(process.platform === "win32" ? {} : {
       statusLines: (stores: RerailApiStores) => keepClaudeStatusFiles({ stores, folder: join(defaultRerailHome(), STATUS_LINES_FOLDER) }),
     }),
+    // The icon of a main daemon on a desktop, while it runs; the tray decides whether it starts (`trayGate`).
+    tray: daemon => startDaemonTray(daemon, { isNewer: isNewerRelease }),
   });
 } catch (error) {
   process.stderr.write(`rerail daemon: ${(error as Error).message}\n`);
