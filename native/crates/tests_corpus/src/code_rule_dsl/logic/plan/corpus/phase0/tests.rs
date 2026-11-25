@@ -128,6 +128,35 @@
         assert!(super::composed_here(&super::Seed::File(lib.join("python/env.rerail"))).unwrap().is_none());
     }
 
+    /// Seeds composed of the library's modules take the modules none holds from one run for them all, not a run a seed:
+    /// a build's first run composed its 300 rule files' graphs one after another, each its modules' run (36 runs).
+    #[test]
+    fn composed_seeds_take_their_modules_from_one_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let seeds: Vec<super::Seed> = [("a.rerail", "python/env.rerail"), ("b.rerail", "python/conditions.rerail")]
+            .iter()
+            .map(|(name, module)| {
+                let path = dir.path().join(name);
+                std::fs::write(&path, format!("#include \"core.rerail\"\n#include \"{module}\"\n.decl {}(s: symbol)\n", &name[..1])).unwrap();
+                super::Seed::File(dunce::canonicalize(&path).unwrap())
+            })
+            .collect();
+        // No images, as a build's first run finds none.
+        super::without_images(|| {
+            let before = super::derive_runs();
+            let graphs = super::graphs(&seeds).unwrap();
+            assert_eq!(graphs.len(), 2);
+            assert_eq!(super::derive_runs() - before, 1, "the seeds' modules in one run");
+            for s in &seeds {
+                assert!(super::composed_here(s).unwrap().is_some(), "{s:?} is composed of the library's modules");
+            }
+            for (s, g) in seeds.iter().zip(&graphs) {
+                let derived = super::derive(std::slice::from_ref(s)).unwrap().of(s, 0);
+                assert!(super::same_graph(g, &derived), "{s:?}: {}", g.differences(&derived));
+            }
+        });
+    }
+
     /// A phase program's graph from a run shared with other file seeds is its own (`Graph::of`): its walk through the
     /// phase programs' includes names no other seed's `core.rerail` (a module that was a seed of the run names it as a
     /// file seed), which held `<the module's dir>/core.rerail` absent in every graph that reached it.

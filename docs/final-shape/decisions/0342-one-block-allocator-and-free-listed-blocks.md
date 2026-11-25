@@ -374,3 +374,31 @@ its families.
 What remains is not the rooms: with every structure on the heap, the edit's peak is 1.06 times the pre-merge
 engine's, its jemalloc heap at the peak a sixth larger. The structures this engine keeps hold more than the
 pre-merge engine's did, wherever they lie; that is the next question.
+
+## Amended (2026-11-24, user): the rooms' own costs in the edit
+
+A time profile of the edit against the pre-merge engine had three costs of the rooms themselves, none of them in the
+pre-merge engine's profile:
+
+1. **A long room's emptied run gave its pages back at once** (`mem::give_back`), and the next run taken faulted them in
+   again (`reuse_pages`): a region made and freed in a loop did both each time, 56 `madvise` calls against 1. A room
+   now keeps the pages of up to 16 emptied runs (`long::RESIDENT`, 1 MB) and takes those first. Past that, the
+   pages go back as before.
+2. **Every thread reserved 64 GiB twice**, its stack and its long room. A reservation that large costs the kernel's
+   map about 60 times a 1 GiB one, and freeing it 6 times. With the threads making theirs at once, that was about a
+   fortieth of the edit's CPU. Both are 4 GiB now (`scratch::ANON`, `long::RESERVE`): a stack's bytes under its top
+   stay resident, so a thread that filled 4 GiB would hold that much memory anyway.
+3. **A vector's every growth read the registry's lock** (`default_room`, a lock every thread shares) to find the run's
+   room. The provider is registered once, at load, so a thread keeps it once found.
+
+Test: `emptied_runs_keep_their_pages_up_to_resident`.
+
+### Measured (2026-11-24, M3, 15 files of corpus0, one-file edits, against the pre-merge engine)
+
+| Engine | Instructions | CPU | Wall |
+|---|---|---|---|
+| One long-lived room a thread (`84e7b917c1`) | 1.09 | 1.06 | 0.98 |
+| These three, and phase 0's batch (0639) | 1.07 | 1.01 | 0.95 |
+
+The edit's CPU is now the pre-merge engine's. The instructions still left are spread out: the merged engine's own
+work (the background write-back's packing, the strands' joins), with no single cost of the rooms among them.

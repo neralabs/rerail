@@ -158,7 +158,17 @@ pub fn install_default_room(provider: &'static str, room: fn() -> Arc<dyn Room>)
 
 /// The room of the run under way (the blocks', once installed), else the heap's.
 pub fn default_room() -> Arc<dyn Room> {
-    match DEFAULT_ROOM.try_get() {
+    // The provider, kept a thread once found: the slot's lock is every thread's, and a vector's every growth asks.
+    // Registered once, at load, and never taken back, so a found one stays right.
+    thread_local! {
+        static FOUND: std::cell::Cell<Option<fn() -> Arc<dyn Room>>> = const { std::cell::Cell::new(None) };
+    }
+    let found = FOUND.try_with(|f| f.get()).ok().flatten();
+    match found.or_else(|| {
+        let room = DEFAULT_ROOM.try_get();
+        let _ = FOUND.try_with(|f| f.set(room));
+        room
+    }) {
         Some(room) => room(),
         None => Arc::new(HeapRoom),
     }

@@ -262,6 +262,31 @@ struct PhaseZeroGraphs(Mutex<HashMap<(Option<Dirs>, Seed), Arc<Graph>>>);
 #[derive(Default)]
 struct PhaseZeroRetained(Mutex<std::collections::HashSet<(Option<PathBuf>, crate::content_store::HashKey)>>);
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static DERIVES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+/// The bootstrap runs `graphs` started on this thread, for the engine's tests of phase 0.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn derive_runs() -> usize {
+    DERIVES.with(|d| d.get())
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static NO_IMAGES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f` with no graph images read or kept (neither the shipped bundle nor a store's), as a build's first run finds
+/// none: for the engine's tests of phase 0.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn without_images<R>(f: impl FnOnce() -> R) -> R {
+    NO_IMAGES.with(|n| n.set(true));
+    let r = f();
+    NO_IMAGES.with(|n| n.set(false));
+    r
+}
+
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let dirs = Dirs::here();
     let kept_held = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>();
@@ -355,8 +380,20 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     };
     if !wanted.is_empty() && compose != "off" && wanted.iter().all(own_seed) && let Some(dirs) = dirs_here.clone() {
         let mut made = HashMap::new();
-        for seed in &wanted {
-            let Some(g) = composed(seed, &dirs)? else { continue };
+        // Every composition's modules and phase programs first, their graphs derived in one run for all where no image
+        // holds them: composed one seed at a time, each seed whose modules had none ran `bootstrap.rerail` for those
+        // alone (a build's first run: a run of its own for nearly every module of the library, one after another).
+        let comps: Vec<(&Seed, Option<Composition>)> = wanted.iter().map(|seed| (seed, composition(seed, &dirs))).collect();
+        let mut modules: Vec<Seed> = comps.iter().filter_map(|(_, c)| c.as_ref()).flat_map(|c| c.files.iter().cloned()).collect();
+        modules.sort();
+        modules.dedup();
+        if !modules.is_empty() {
+            graphs(&modules)?;
+        }
+        for (seed, c) in comps {
+            let Some(c) = c else { continue };
+            let parts = graphs(&c.files)?;
+            let g = c.assemble(seed, &parts);
             // `RERAIL_PHASE0_COMPOSE=check`: the composed graph against the one its own run derives.
             if compose == "check" {
                 let derived = derive(std::slice::from_ref(seed)).map_err(|e| Error::Syntax(format!("phase 0: {e}")))?.of(seed, 0);
@@ -383,6 +420,8 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         kept.lock().expect("phase 0's graphs").extend(made.into_iter().map(|(seed, graph)| ((Some(dirs.clone()), seed), graph)));
     }
     if !wanted.is_empty() {
+        #[cfg(any(test, feature = "test-hooks"))]
+        DERIVES.with(|d| d.set(d.get() + 1));
         if std::env::var_os("RERAIL_PHASE0_TRACE").is_some() {
             eprintln!("rerail: phase 0 derives {} seeds (images {})", wanted.len(), if images.is_some() { "on" } else { "off" });
         }
@@ -482,6 +521,29 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
 /// derives it, and reports a missing one. The modules' graphs each hold what their modules reach through their
 /// phases (`rules`) and the candidates their includes found absent, which the text's graph holds as well.
 fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Error> {
+    match composition(seed, dirs) {
+        Some(c) => {
+            let parts = graphs(&c.files)?;
+            Ok(Some(c.assemble(seed, &parts)))
+        }
+        None => Ok(None),
+    }
+}
+
+/// What a composed graph is made of (`composed`): the seed's node, what it asks for and where, the modules' and
+/// phase programs' file seeds, the candidates absent, its phases, and, for a file, its digest.
+struct Composition {
+    start: String,
+    asks: Vec<(i64, String, PathBuf)>,
+    files: Vec<Seed>,
+    absent: Vec<PathBuf>,
+    named: Vec<(String, PathBuf)>,
+    own: Option<(PathBuf, [u8; 32])>,
+}
+
+/// `seed`'s composition (`composed`), found without a graph: none where it is not composed.
+#[inline(never)]
+fn composition(seed: &Seed, dirs: &Dirs) -> Option<Composition> {
     use crate::content_store::observe::Kind;
     // The seed's node in the graph, its names (offset, name; `core.rerail` at -1 outside T's shape) and phases, and,
     // for a file, its digest.
@@ -493,11 +555,11 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
         // test's rule file): those are seeds of the template's run, which `graphs` derives in one run for all.
         Seed::File(path) => {
             if path.starts_with(&dirs.lib) || path.starts_with(&dirs.phases) {
-                return Ok(None);
+                return None;
             }
-            let (Some((bytes, _)), Some(digest)) = (super::observe(|o| o.read(path)), super::observe(|o| o.digest(path))) else { return Ok(None) };
-            let Ok(text) = String::from_utf8(bytes) else { return Ok(None) };
-            let Ok((includes, t_shape, phases)) = crate::code_rule_dsl::logic::rr::includes_and_phases(&text) else { return Ok(None) };
+            let (Some((bytes, _)), Some(digest)) = (super::observe(|o| o.read(path)), super::observe(|o| o.digest(path))) else { return None };
+            let Ok(text) = String::from_utf8(bytes) else { return None };
+            let Ok((includes, t_shape, phases)) = crate::code_rule_dsl::logic::rr::includes_and_phases(&text) else { return None };
             let names = includes.into_iter().chain((!t_shape).then(|| (-1, "core.rerail".to_owned()))).collect();
             (path.to_string_lossy().into_owned(), names, phases, Some((path.clone(), digest)))
         }
@@ -505,7 +567,7 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
     // A program in T's shape reads its files without `core.rerail`: its modules are the plan's `bare` variant, which
     // the library's own graphs (each a file seed, read with it) do not hold. Its run derives them.
     if !names.iter().any(|(at, n)| *at == -1 && n == "core.rerail") {
-        return Ok(None);
+        return None;
     }
     let lib = dirs.lib.to_string_lossy();
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(names.len());
@@ -514,15 +576,15 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
     for (at, name) in names {
         let path = candidate_path(&lib, &name);
         if super::observe(|o| o.kind(&path)) != Kind::File {
-            return Ok(None);
+            return None;
         }
         // Each name a file has (its own `core.rerail` too) has its candidate beside the file, held absent
         // (`p0_absent`: every candidate not there); one there is the run's to resolve.
         if let Some((own_path, _)) = &own {
-            let Some((dir, _)) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned())) else { return Ok(None) };
+            let Some((dir, _)) = bootstrap_spelling(&own_path.to_string_lossy()).rsplit_once('/').map(|(d, f)| (d.to_owned(), f.to_owned())) else { return None };
             let beside = candidate_path(&dir, &name);
             if super::observe(|o| o.kind(&beside)) != Kind::Missing {
-                return Ok(None);
+                return None;
             }
             absent.push(beside);
         }
@@ -537,7 +599,7 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
         match super::observe(|o| o.kind(&path)) {
             Kind::File => files.push(Seed::File(path.clone())),
             Kind::Missing => absent.push(path.clone()),
-            _ => return Ok(None),
+            _ => return None,
         }
         named.push((p.clone(), path));
     }
@@ -545,55 +607,62 @@ fn composed(seed: &Seed, dirs: &Dirs) -> std::result::Result<Option<Graph>, Erro
     named.dedup();
     files.sort();
     files.dedup();
-    let parts = graphs(&files)?;
-    let mut whole = Graph::default();
-    for g in &parts {
-        for (from, to) in &g.includes {
-            whole.includes.entry(from.clone()).or_insert_with(|| to.clone());
+    Some(Composition { start, asks, files, absent, named, own })
+}
+
+impl Composition {
+    /// The composed graph of `seed`, its modules' and phase programs' graphs `parts` (one a file seed, in order).
+    fn assemble(self, seed: &Seed, parts: &[Arc<Graph>]) -> Graph {
+        let Composition { start, asks, files, absent, named, own } = self;
+        let mut whole = Graph::default();
+        for g in parts {
+            for (from, to) in &g.includes {
+                whole.includes.entry(from.clone()).or_insert_with(|| to.clone());
+            }
+            whole.missing.extend(g.missing.iter().cloned());
+            whole.absent.extend(g.absent.iter().cloned());
+            whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
+            whole.rules.extend(g.rules.iter().map(|(p, d)| (p.clone(), *d)));
+            whole.plans.extend(g.plans.iter().copied());
+            whole.plan.extend(g.plan.iter().map(|(m, row)| (m.clone(), row.clone())));
+            whole.lowered.extend(g.lowered.iter().map(|(k, d)| (k.clone(), d.clone())));
         }
-        whole.missing.extend(g.missing.iter().cloned());
-        whole.absent.extend(g.absent.iter().cloned());
-        whole.digests.extend(g.digests.iter().map(|(p, d)| (p.clone(), *d)));
-        whole.rules.extend(g.rules.iter().map(|(p, d)| (p.clone(), *d)));
-        whole.plans.extend(g.plans.iter().copied());
-        whole.plan.extend(g.plan.iter().map(|(m, row)| (m.clone(), row.clone())));
-        whole.lowered.extend(g.lowered.iter().map(|(k, d)| (k.clone(), d.clone())));
+        whole.absent.extend(absent);
+        whole.includes.insert(start.clone(), asks);
+        if !named.is_empty() {
+            whole.phases.insert(start, named);
+        }
+        if let Some((path, digest)) = own {
+            whole.digests.insert(path, digest);
+        }
+        let mut g = whole.of(seed, 0);
+        // What the modules reach through their phases, and the candidates they found absent: their graphs' (`of` reads a
+        // module's phases only from a run's graph, which theirs hold as `rules`, with the candidates beside what those
+        // reach). But one: a module taken as a file seed names `core.rerail` itself (`<its dir>/core.rerail`, absent), which
+        // a module a text includes does not, unless a module beside it names `core.rerail` too.
+        for (part, seed) in parts.iter().zip(&files) {
+            g.rules.extend(part.rules.iter().filter(|(p, _)| !g.digests.contains_key(*p)).map(|(p, d)| (p.clone(), *d)));
+            let Seed::File(start) = seed else { continue };
+            let start_key = start.to_string_lossy().into_owned();
+            let dir = |from: &str| bootstrap_spelling(from).rsplit_once('/').map(|(d, _)| d.to_owned());
+            let own_dir = dir(&start_key);
+            let named = part.includes.iter().any(|(from, to)| {
+                to.iter().any(|(at, n, _)| n == "core.rerail" && !(*from == start_key && *at == -1) && dir(from) == own_dir)
+            });
+            let implicit = own_dir.as_deref().map(|d| candidate_path(d, "core.rerail"));
+            g.absent.extend(part.absent.iter().filter(|p| named || Some(*p) != implicit.as_ref()).cloned());
+        }
+        // The phase programs the text names, which `of` reached as `rules`: a phase program that is one of the text's
+        // modules too is a module.
+        g.rules.retain(|p, _| !g.digests.contains_key(p));
+        g.absent.sort();
+        g.absent.dedup();
+        g.missing.sort();
+        g.missing.dedup();
+        g.plans.sort();
+        g.plans.dedup();
+        g
     }
-    whole.absent.extend(absent);
-    whole.includes.insert(start.clone(), asks);
-    if !named.is_empty() {
-        whole.phases.insert(start, named);
-    }
-    if let Some((path, digest)) = own {
-        whole.digests.insert(path, digest);
-    }
-    let mut g = whole.of(seed, 0);
-    // What the modules reach through their phases, and the candidates they found absent: their graphs' (`of` reads a
-    // module's phases only from a run's graph, which theirs hold as `rules`, with the candidates beside what those
-    // reach). But one: a module taken as a file seed names `core.rerail` itself (`<its dir>/core.rerail`, absent), which
-    // a module a text includes does not, unless a module beside it names `core.rerail` too.
-    for (part, seed) in parts.iter().zip(&files) {
-        g.rules.extend(part.rules.iter().filter(|(p, _)| !g.digests.contains_key(*p)).map(|(p, d)| (p.clone(), *d)));
-        let Seed::File(start) = seed else { continue };
-        let start_key = start.to_string_lossy().into_owned();
-        let dir = |from: &str| bootstrap_spelling(from).rsplit_once('/').map(|(d, _)| d.to_owned());
-        let own_dir = dir(&start_key);
-        let named = part.includes.iter().any(|(from, to)| {
-            to.iter().any(|(at, n, _)| n == "core.rerail" && !(*from == start_key && *at == -1) && dir(from) == own_dir)
-        });
-        let implicit = own_dir.as_deref().map(|d| candidate_path(d, "core.rerail"));
-        g.absent.extend(part.absent.iter().filter(|p| named || Some(*p) != implicit.as_ref()).cloned());
-    }
-    // The phase programs the text names, which `of` reached as `rules`: a phase program that is one of the text's
-    // modules too is a module.
-    g.rules.retain(|p, _| !g.digests.contains_key(p));
-    g.absent.sort();
-    g.absent.dedup();
-    g.missing.sort();
-    g.missing.dedup();
-    g.plans.sort();
-    g.plans.dedup();
-    Ok(Some(g))
 }
 
 /// `composed`, with this checkout's directories, for the engine's tests of phase 0 (`phase0::tests`).
@@ -665,6 +734,10 @@ struct Images {
 
 impl Images {
     fn here() -> Option<Images> {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if NO_IMAGES.with(|n| n.get()) {
+            return None;
+        }
         let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?;
         Some(Images { lib: format!("{}/", bootstrap_spelling(&lib.to_string_lossy())), phases: format!("{}/", bootstrap_spelling(&phase_lib()?.to_string_lossy())), store: OnceLock::new() })
     }

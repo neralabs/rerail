@@ -12,9 +12,10 @@
 use crate::block::Block;
 use std::sync::{Arc, Mutex};
 
-/// Address space a thread's long room reserves (nothing resident until written).
+/// Address space a thread's long room reserves (nothing resident until written): 4 GiB, as a stack's
+/// (`scratch::ANON`).
 #[cfg(any(unix, windows))]
-const RESERVE: usize = 1 << 36;
+const RESERVE: usize = 1 << 32;
 #[cfg(not(any(unix, windows)))]
 const RESERVE: usize = 256 << 20;
 /// A run's bytes: four pages, every slot of one class.
@@ -53,9 +54,15 @@ struct State {
     runs: Vec<Run>,
     /// By class, the runs that may have a free slot (a full one is dropped when it is reached).
     partial: Vec<Vec<u32>>,
-    /// Runs no class holds.
+    /// Runs no class holds whose pages are kept: at most `RESIDENT`, taken first.
+    resident: Vec<u32>,
+    /// Runs no class holds whose pages went back.
     spare: Vec<u32>,
 }
+
+/// The emptied runs a room keeps its pages for (1 MB): a run made and emptied again and again (one region taken and
+/// freed in a loop) then neither gives its pages back nor faults them in each time.
+const RESIDENT: usize = 16;
 
 /// The room's block and its runs: what a region holds to be freed from any thread.
 pub struct Long {
@@ -75,7 +82,7 @@ impl Long {
         let block = Arc::new(Block::anon(crate::block::kind::SCRATCH, reserved));
         let base = block.base_ptr();
         let floor = block.used().next_multiple_of(RUN);
-        Long { block, base, floor, state: Mutex::new(State { runs: Vec::new(), partial: vec![Vec::new(); CLASSES.len()], spare: Vec::new() }) }
+        Long { block, base, floor, state: Mutex::new(State { runs: Vec::new(), partial: vec![Vec::new(); CLASSES.len()], resident: Vec::new(), spare: Vec::new() }) }
     }
 
     fn run_at(&self, run: u32) -> usize {
@@ -107,8 +114,8 @@ impl Long {
             run.listed = false;
             s.partial[class].pop();
         }
-        // A new run: a spare one, else the next the block has.
-        let r = match s.spare.pop() {
+        // A new run: a resident spare one, else a spare one, else the next the block has.
+        let r = match s.resident.pop().or_else(|| s.spare.pop()) {
             Some(r) => r,
             None => {
                 let r = s.runs.len() as u32;
@@ -138,8 +145,10 @@ impl Long {
         let size = CLASSES[class] as usize;
         let slot = ((at - self.run_at(r)) / size) as u32;
         if run.live == 1 {
-            // Its last slot: the run goes back whole, its pages to the OS while no GPU work binds the block.
-            let given = self.block.ledger().quiet();
+            // Its last slot: the run goes back whole; past `RESIDENT` such runs its pages go to the OS, while no GPU work
+            // binds the block.
+            let resident = s.resident.len() < RESIDENT;
+            let given = !resident && self.block.ledger().quiet();
             if given {
                 // SAFETY: the run's own pages: no region of it is live.
                 unsafe { crate::mem::give_back(self.base.add(self.run_at(r)), RUN) };
@@ -148,7 +157,7 @@ impl Long {
                 s.partial[class].retain(|&x| x != r);
             }
             s.runs[r as usize] = Run { class: NONE, listed: false, given, live: 0, bump: 0, free: 0 };
-            s.spare.push(r);
+            if resident { s.resident.push(r) } else { s.spare.push(r) }
             return;
         }
         // SAFETY: the slot is free now: its first 8 bytes hold the list's next.
@@ -252,6 +261,25 @@ mod tests {
         let y = r.region(3000, 8, "y");
         assert_eq!(crate::maps::place_of(&y).unwrap().1, first, "the emptied run is the next class's");
         assert!(r.0.state.lock().unwrap().runs.len() == 1, "no second run was taken");
+    }
+
+    /// Emptied runs keep their pages up to `RESIDENT`; past that their pages go back. A resident one is taken first.
+    #[test]
+    fn emptied_runs_keep_their_pages_up_to_resident() {
+        let r = room();
+        let n = (RESIDENT + 4) * (RUN / 3072);
+        let all: Vec<_> = (0..n).map(|_| r.region(3000, 8, "x")).collect();
+        let runs: std::collections::BTreeSet<_> = all.iter().map(|a| (crate::maps::place_of(a).unwrap().1 - r.0.floor) / RUN).collect();
+        drop(all);
+        let s = r.0.state.lock().unwrap();
+        assert_eq!(runs.len(), RESIDENT + 4);
+        assert_eq!(s.resident.len(), RESIDENT);
+        assert_eq!(s.spare.len(), runs.len() - s.resident.len());
+        assert!(s.resident.iter().all(|&x| !s.runs[x as usize].given), "a resident run kept its pages");
+        let last = *s.resident.last().unwrap();
+        drop(s);
+        let y = r.region(64, 8, "y");
+        assert_eq!((crate::maps::place_of(&y).unwrap().1 - r.0.floor) / RUN, last as usize, "a resident run is taken first");
     }
 
     /// A region freed on another thread goes back to its room, and the room takes it again.

@@ -26,9 +26,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 
 /// Address space a thread's stack reserves (nothing resident until written; on Windows nothing committed until
 /// touched, `crate::windows`). Without a mapping (`crate::mem`) the reservation is allocated whole, so it is a working
-/// size there.
+/// size there. 4 GiB: a stack's bytes under its top stay resident, so a thread past that holds as much memory; and a
+/// thread's 64 GiB reservation cost the kernel's map, with every thread making its own at once, about a fortieth of
+/// an edit's CPU.
 #[cfg(any(unix, windows))]
-const ANON: usize = 1 << 36;
+const ANON: usize = 1 << 32;
 #[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
 /// The least bytes of a large region: it goes to the thread's free-listed blocks (`maps::FreeRoom::large`), not the stack.
