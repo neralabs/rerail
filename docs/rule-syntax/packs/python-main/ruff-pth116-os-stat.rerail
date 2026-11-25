@@ -74,7 +74,7 @@ pth116_number(n) :- pth116_bool_type(n).
 
 // int_type(n): the JSON util `int-type`, used where the JSON says `matches: "int-type"`
 .decl pth116_int_type(n: node)
-pth116_int_type(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth116_int_type(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pth116_int_type(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pth116_int_type(c2).
 pth116_int_type(n) :- kind(n, "named_expression"), field(n, "value", c3), pth116_int_type(c3).
 pth116_int_type(n) :- kind(n, "unary_operator"), field(n, "argument", c4), pth116_number(c4).
@@ -120,7 +120,7 @@ pth116_int_attribute(n) :- kind(n, "attribute"), field(n, "attribute", c1),
 
 // file_descriptor(n): the JSON util `file-descriptor`, used where the JSON says `matches: "file-descriptor"`
 .decl pth116_file_descriptor(n: node)
-pth116_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pth116_file_descriptor(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int").
 pth116_file_descriptor(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     pth116_file_descriptor(c2).
 pth116_file_descriptor(n) :- pth116_name_root(n).

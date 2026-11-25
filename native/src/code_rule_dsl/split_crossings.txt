@@ -109,6 +109,7 @@ python-main PIE810
 python-main rr_diagnostic_9e32c4c509fe6ad6
 python-main RUF018
 python-main SIM109
+python-main SIM113
 python-main violation
 react replaced
 rust left_run

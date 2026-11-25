@@ -10,7 +10,7 @@
 
 // zero(n): the JSON util `zero`, used where the JSON says `matches: "zero"`
 .decl ruf015_zero(n: node)
-ruf015_zero(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 0.
+ruf015_zero(n) :- kind(n, "integer"), value(n, v1), value_type_of(n, "int"), v1 = 0.
 ruf015_zero(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf015_zero(c2).
 
 // list_callee(n): the JSON util `list-callee`, used where the JSON says `matches: "list-callee"`

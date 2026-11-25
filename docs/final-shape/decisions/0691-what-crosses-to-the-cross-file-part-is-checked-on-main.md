@@ -72,6 +72,19 @@ Found on the way and fixed:
   table name. The blade pack could not run as one program.
 - clippy-redundant-field-names' message wrote `{ x }`, which was read as a column.
 
+## Fixes ported
+
+1. **A value's type is the node's own** (the branch's 0677 fix 1). The JSON translator wrote a value's `type` test (and
+   `numeric`, `truthy`, `bitsAny`) as `value(n, x), value_type(x, T)`. `value_type` is keyed by the text, which `"12"`
+   and `12` share: a false finding, and a join of every file's types. It now writes `value_type_of(n, T)`; a value
+   followed through a binding (`static_value`) keeps `value_type`. python-main is regenerated (41 files).
+   - Node list, python-main: 2,473 → 2,303. None is left under `value_type`. 7 are new, all under `resolve_export`: their
+     node now enters through a relation that is per-file.
+   - Split list, python-main: SIM113 is added. It was cross-file before, as a follower of `value_type`. Its own
+     crossing is a demand of an aggregate that drops the aggregate's `@doc(c) = @doc(N)` tie (`rr_demand_agg`). The
+     branch's split keeps that tie (`row_documents`, `same_document_ties`); that is one of the split gaps under Open.
+   - Test: `json_rules_value_type_is_the_nodes_own`: over `a = "12"` / `b = 12`, the int alone; the old join, both.
+
 ## Consequences
 
 - A new rule that adds a crossing or a node id fails its pack's test; its author fixes it or declares the relation.

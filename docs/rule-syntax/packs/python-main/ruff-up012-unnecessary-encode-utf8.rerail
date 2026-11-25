@@ -31,7 +31,7 @@ up012_string_only_escape(n) :- kind(n, "parenthesized_expression"), child(n, c3,
 
 // utf8_name(n): the JSON util `utf8-name`, used where the JSON says `matches: "utf8-name"`
 .decl up012_utf8_name(n: node)
-up012_utf8_name(n) :- up012_plain_text(n), value(n, v1), value_type(v1, "str"),
+up012_utf8_name(n) :- up012_plain_text(n), value(n, v1), value_type_of(n, "str"),
     iglob("{utf-8,utf8,utf_8,u8,utf,cp65001}", v1).
 
 // arg_node(n): the JSON util `arg-node`, used where the JSON says `matches: "arg-node"`
