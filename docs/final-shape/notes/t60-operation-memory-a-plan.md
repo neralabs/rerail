@@ -475,6 +475,7 @@ the same session as each batch, cold PostHog on m1max, CPU, with the probe off:
 | Batches 1–3 (`151426b629`) | 2.656 T (−1.8%) | 249.7 s (−1.6%) | 63.9 s | 7.57 GB (−0.26 GB) | 29,930 |
 | Batches 1–4 (`bf7c57a584`) | 2.644 T (−2.3%) | 248.9 s | 64.8 s | 7.22 GB (−0.68 GB) | 29,930 |
 | Batches 1–5 (`6a9e50c610`) | 2.597 T (−4.1%) | 256.4 s (−2.6%) | 76.6 s | 7.28 GB (−0.58 GB) | 29,930 |
+| Batches 1–7 (`5ad1f1d34b`) | 2.573 T (−5.0%) | 243.3 s (−4.2%) | 62.4 s (−7.3%) | 7.22 GB (−0.68 GB) | 29,930 |
 
 Batch 5's session ran on a busier host: its merged engine took 263.3 s and 76.8 s there, so its CPU and wall are
 read against that run, not the range above.
@@ -513,9 +514,21 @@ The merged engine's survey (`RERAIL_PROBE_SCRATCH`, 327 M arrays, 13,306 makers)
      slice (`Entries::put_with`; 2.72 M + 2.39 M).
    - A string test finds its matcher by borrowed texts (2.76 M); a join's test reads its pattern into the
      interner's buffer, and `cat` tests emptiness in place (3.33 M).
-6. **After batch 5** (`127229e53c` … `bd5cae4bfa`, not yet measured): a keyed probe walked once gives its rows to a
-   closure (`each_keyed`, 2.7 M); a document found by its key makes no list (2.06 M); a memo entry's postings are
-   named once a column and its covered rows written once (1.32 M).
+6. **After batch 5** (`127229e53c` … `bd5cae4bfa`): a keyed probe walked once gives its rows to a closure
+   (`each_keyed`, 2.7 M); a document found by its key makes no list (2.06 M); a memo entry's postings are named once a
+   column and its covered rows written once (1.32 M).
+7. **The b7 survey's makers** (`b7`: 181 M arrays, against 327 M merged and 242 M at `b4`; `f15167aa74` …
+   `5ad1f1d34b`).
+   - A morsel's deferred text is held once (1.62 M); a document's path parts are read in place.
+   - Every per-byte hex is `prof::lower_hex` (the observer's rows 1.26 M, World's loads 0.96 M, and 30 more).
+   - A tape view's keyed probe sorts its rows in the probe's frame (`RowsView::lookup_each`, 2.07 M).
+   - A join's function call reads its arguments into the interner's buffer (3.7 M).
+   - A kind's or field's row is kept in the tape's index once made, as a grammar class's (1.72 M); a suffix test
+     reverses its text in a frame (1.33 M).
+   - A thread's transducer runs share one arena (`SPARE_ARENA`, census `Thread`: 5 × 1.16 M).
+   - A memo entry's tree rows are sorted where they are written (1.13 M); a callee's last segment is borrowed
+     (1.22 M); a made group shares its strings' list (1.18 M); a traced statement's words are joined in a thread
+     buffer (the hazard profile's, 2.1 M).
 
 The merge's red tests, fixed on the way:
 
@@ -533,6 +546,9 @@ Left, by the survey:
   admit lock and read under theirs.
 - The batch's `Vector<i64>` makers inlined into `make_rows` (7.46 M + 1.15 M), found by line in the next survey.
 - The rayon collects (3.7 M).
-- `scope::Builder::bind` (4.9 M, from the Python visitor's `bind_name`).
-- `Interner::id` (1.62 M).
+- `scope::Builder::bind` (4.9 M, from the Python visitor's `bind_name`): the scope table is the document's output, a
+  key string and a list a name bound; 282 uses outside its module.
+- `make_rows`' inlined makers (4.28 M at no line) and the AST wave's matches (`Wave::matched`, 1.31 M).
+- `run_state::Shared::enter` (1.32 M): a box a carried part a job.
+- `Asks::came` (1.31 M, run-long).
 - The footprints: `chunk_held_rows` (the run's held rows, real data), `placed::place`, `build_in_wave_as`.
