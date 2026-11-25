@@ -137,8 +137,8 @@ export function blockModeEnabled(env: NodeJS.ProcessEnv = process.env): boolean 
 }
 
 /**
- * Experimental: the remote sink. Off, the daemon sends nothing to a remote added earlier, `rerail remote` refuses, and
- * a headless scan queues no report. `RERAIL_EXPERIMENTAL_REMOTE_SINK`.
+ * Experimental: the remote sink. Off, the daemon sends nothing to a remote added earlier, `rerail remote add` and `push`
+ * refuse, and a headless scan queues no report. `RERAIL_EXPERIMENTAL_REMOTE_SINK`.
  */
 export function remoteSinkEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return experimentEnabled("REMOTE_SINK", env);

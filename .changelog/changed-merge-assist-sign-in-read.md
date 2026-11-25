@@ -1,0 +1,1 @@
+Merge Assist (internal testing): its dashboard page and the `merge_assist_get` tool no longer wait for the GitHub CLI, up to 20 s when it stalls, once its sign-in reading is five minutes old. They show the kept reading while it is read again, and a `gh` login, logout or switch shows at the next status.
