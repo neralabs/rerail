@@ -211,9 +211,9 @@ unsorted(b, h) :- out_of_group(m, _), ranked(b, m, _, _, h).
 // or, when the ranks are out of order, upstream's groupMembersByType over the body (below).
 .decl out_of_name(m: node, x: symbol, y: symbol)
 out_of_name(m, x, y) :- before(m, o), member_label(m, x), member_label(o, y), x != y, mem(b, m, _), ordered_body(b, k, _), sorting(k, w),
-    sort_key(w, x, kx), sort_key(w, y, ky), kx < ky.
+    sort_key(w, m, x, kx), sort_key(w, o, y, ky), kx < ky.
 out_of_name(m, x, y) :- before(m, o), member_label(m, x), member_label(o, y), x != y, mem(b, m, _), ordered_body(b, k, _),
-    sorting(k, w), prefix("natural", w), sort_key(w, x, k0), sort_key(w, y, k0).  // naturalCompare gives 0
+    sorting(k, w), prefix("natural", w), sort_key(w, m, x, k0), sort_key(w, o, y, k0).  // naturalCompare gives 0
 .decl before(m: node, o: node)
 before(m, o) :- ranked(b, m, i, r, h), ordered_body(b, k, _), typed_order(k), !unsorted(b, h),
     j0 = max j : { ranked(b, _, j, _, h), j < i }, ranked(b, o, j0, r, h).
@@ -250,10 +250,12 @@ member_label(m, "(index signature)") :- mem(_, m, _), kind(m, "index_signature")
 member_label(m, x) :- mem(_, m, _), !kind_of(m, "constructor"), ts_member_name(m, y, t),
     (t = "Quoted", x = substr(y, 1, strlen(y) - 2) ; t = "Private", x = substr(y, 1, strlen(y) - 1) ;
     t != "Quoted", t != "Private", x = y).
-.decl sort_key(w: symbol, x: symbol, k: symbol)
-sort_key("alphabetically", x, x) :- member_label(_, x).
-sort_key("alphabetically-case-insensitive", x, @lower(x)) :- member_label(_, x).
-sort_key("natural", x, k) :- member_label(_, x), natural_key(x, k).
-sort_key("natural-case-insensitive", x, k) :- member_label(_, x), natural_key(@lower(x), k).
-nat_ask(x) :- member_label(_, x), sorting(_, "natural").
-nat_ask(@lower(x)) :- member_label(_, x), sorting(_, "natural-case-insensitive").
+// sort_key(w, m, x, k): member m's key for its label x under ordering w, keyed by the member, not the label
+// (decision 0677).
+.decl sort_key(w: symbol, m: node, x: symbol, k: symbol)
+sort_key("alphabetically", m, x, x) :- member_label(m, x).
+sort_key("alphabetically-case-insensitive", m, x, @lower(x)) :- member_label(m, x).
+sort_key("natural", m, x, k) :- member_label(m, x), natural_key(m, x, k).
+sort_key("natural-case-insensitive", m, x, k) :- member_label(m, x), natural_key(m, @lower(x), k).
+nat_ask(m, x) :- member_label(m, x), sorting(_, "natural").
+nat_ask(m, @lower(x)) :- member_label(m, x), sorting(_, "natural-case-insensitive").

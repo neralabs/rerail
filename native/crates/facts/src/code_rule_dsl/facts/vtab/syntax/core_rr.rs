@@ -546,7 +546,7 @@ pub(super) struct Skip {
     pub(super) literal: bool,
     /// `str`'s strings, where the literals are read for another relation: each literal's contents interned.
     pub(super) str: bool,
-    /// The literal values (`value`, `static_value`, `value_type`, `rr_value_lit`), likewise.
+    /// The literal values (`value`, `static_value`, `static_value_type_of`, `value_type`, `rr_value_lit`), likewise.
     pub(super) literal_value: bool,
     /// `str`, `strprefix`, `value` rows themselves. `literal` may be off for `text` alone (a prefix makes a node
     /// token-like), which reads no literal's value: 139 k of execution_authority_bypass's strings were string values.
@@ -885,6 +885,7 @@ impl CoreRows {
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);
         let value: Vector<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
+        let value_type_of: Vector<[i64; 2]> = self.value.iter().map(|&[n, _, t]| [n, t]).collect();
         let mut value_type: Vector<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         vec![
@@ -895,6 +896,7 @@ impl CoreRows {
             // Named as `Extra`'s W's values are, which a batch binds instead where the program reads them.
             ("value", make(&["n", "v"], &value, [false, true], atom)),
             ("static_value", make(&["n", "v"], &value, [false, true], atom)),
+            ("static_value_type_of", make(&["n", "t"], &value_type_of, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),

@@ -19,9 +19,11 @@
 // last one's type.
 
 .decl doc_comment(n: node, c: node)
-doc_comment(n, c) :- kind(c, "comment"), prefix("/**", c), precedes_stop(c, n, doc_code_kind).
-.decl doc_code_kind(k: symbol)  // every kind but comment: what ends the run of comments before n
-doc_code_kind(k) :- kind(_, k), k != "comment".
+doc_comment(n, c) :- kind(c, "comment"), prefix("/**", c), precedes_stop(c, n, doc_code).
+// doc_code(s): every node but a comment, what ends the run of comments before n. A set of the file's nodes, not of
+// the kinds every file has (decision 0677).
+.decl doc_code(s: node)
+doc_code(s) :- kind(s, k), k != "comment".
 
 .decl doc_type(c: node, t: symbol, ty: symbol)
 doc_type(c, "return", ty) :- kind(c, "comment"), text(c, s), prefix("/**", s),

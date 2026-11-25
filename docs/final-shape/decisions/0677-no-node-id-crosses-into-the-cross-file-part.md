@@ -783,6 +783,70 @@ Compared on the 473 files of batch 2, all 546 policies in 8 runs of 70, against 
 | AIR policies, on Airflow cases | 68, the same | | |
 | N8xx and D1xx, on packaged and unpackaged modules | 153, the same | | |
 
+**Batch 4: the other packs' value tables, and three engine fixes.** The list went from 214 to 170. Every pack but
+the data layer, Django and python-main: javascript, typescript, vue, node, php, blade, sql, rust, react and next.
+
+The rules: each table keyed by a value is keyed by the node it came from.
+- **Libraries keyed by an asked string.** PHP's format strings (`printf_needs`, `scanf_assigns`, …) are keyed by the
+  format argument, as Python's were in batch 3. natural-compare's key (`natural_key(n, s, k)`, eslint-b-objects) is
+  keyed by the asker: sort-keys asks at a property, member-ordering at a member.
+- **Tests of a node's own text**, keyed by the node: PHP's `php_falsy(n)` and `php_key_of(x, k)`, Rust's digit
+  groups (by literal and part) and hex digits (`hex_upper(n, h)`), sort-imports' `key(m, k)`, default-case's
+  `note(c)`, no-warning-comments' `shown_text(c, s)`, ban-ts-comment's `trimmed_length(c, n)`, React's prop names
+  (`normal(a, n)`, `standard(a, std)`), next's `unwanted(o, f)`, Vue's `vns_step(e, c, n)`, `empty_alias(a, w)`,
+  `says(f, w, m)` and the hyphenation and no-unused-vars `ignored`/`wrong` tests. typescript no-unused-vars tests
+  its ignore patterns in each rule.
+- **Tables of a fixed set, drawn from every file's rows.** no-duplicate-imports' `apart` and explicit-member-
+  accessibility's `level` enumerated the shapes and member kinds some file had. They are facts now. PHPDoc's stop
+  set (`doc_code_kind`, every kind any file had) is the file's non-comment nodes, `precedes_stop`'s node set.
+- **Two lookups by a type's name** (`type_decl` in consistent-indexed-object-style, `vprops_type` in Vue's
+  `defineProps<Props>()`) found a declaration of that name in any file. ESLint reads the file's own scopes. They
+  are keyed by document. This was wrong as well as misplaced.
+- SQL AL05's `use(u)` read `column_ref`'s empty qualifier (`unset`), which places nothing: `kind(u, _)`.
+- no-useless-computed-key's `!(is_static(h), v = "prototype")` is a disjunction (the batch 3 pattern).
+
+The engine:
+- **`static_value_type_of(n, t)`**, beside `value_type_of`: the type of the followed value (`static_value`'s),
+  per node. no-implied-eval's `code_string` read `static_value(a, v), value_type(v, "string")`. `value_type` is
+  every file's (value, type) pairs, cross-file by design. W's followed reading gave each node's types already, and
+  they were dropped. The literal path (documents W reads no values of) fills it from the literal's type, as
+  `static_value` and `value_type` are filled there.
+- **The factorization (0099) leaves a lookup in a constant whole.** `export_all(e, m) :- star_export(e, s),
+  node_module(s, m)` was handed on as parts. The constant's part (`node_module`) and the key (the specifiers) were
+  tables of every file's values. Their readers joined them at the file's nodes and went to the cross part (node's
+  `use`). An export of a file's nodes, one of whose parts reads only constants, is left as written. The deferred
+  joins have done the same since batch 3. Test: `an_export_that_looks_a_files_nodes_up_in_a_constant_is_left_whole`.
+  Each node policy run alone now holds no crossing. The whole pack still holds 13, `export_all` among them, under
+  `node_module`: the pack's programs together are another split, read next.
+- **A Blade view's kinds are PHP's.** PHPDoc's new stop set (`doc_code(s) :- kind(s, k), k != "comment"`), read
+  over a Blade template's compiled view, never finished planning. Hiding (0058 §2) names a kind compared over a
+  guest's node in the guest's grammar (`php:comment`), by `kinds_label`. That knew fragments and on-demand
+  embeddings, not one built at the file's load: `compiled-view` named its own kinds, `compiled-view:comment` is no
+  dialect's (`qualified` refuses it), and each round qualified it again. `kinds_label` now takes any embedding of one
+  dialect, and hiding qualifies a kind only in a grammar whose label is a dialect's, so a round cannot repeat an
+  edit. Test: `a_kind_compared_over_a_blade_view_is_phps_and_ends`. `blade_code` itself holds no row in either
+  engine: it reads `parsed(document, "compiled-view", program)`, and the engine gives no `parsed` row for a compiled
+  view yet (NOTES-blade, request 3). So the three policies over the view (bladestan's two, duplicate-condition-expressions) find
+  nothing, before and after, and the Blade comparison below says nothing about them.
+
+Compared on the ESLint sample of batch 1 (121 rules' cases): 53 policies, the 14 changed javascript, typescript, react
+and next ones and every node policy. The old engine with the old rules (fcc1ef18c3) against the new, both the CLI at
+O0 with `test-hooks`, on this Mac:
+
+| Policies | Findings, old and new | Instructions, old → new | Peak RSS, old → new |
+|---|---|---|---|
+| 53, on 3,671 files | 2,934, the same | 726 → 686 × 10⁹ | 1.79 → 1.59 GB |
+
+Each other changed pack's policies on its fixtures, the same way (each engine reads its own rules and libraries):
+
+| Pack | Policies, files | Findings, old and new | Instructions, old → new (× 10⁹) |
+|---|---|---|---|
+| php | 15, 116 | 241, the same | 45.5 → 42.7 |
+| blade | 10, 55 | 2, the same | 24.8 → 22.0 |
+| vue | 23, 21 | 2, the same | 78.1 → 72.7 |
+| sql | 21, 20 | 118, the same | 20.8 → 20.3 |
+| rust | 33, 60 | 286, the same | 38.2 → 37.2 |
+
 ## Open
 
 - **A sharded pack's stale entries.** Each shard runs in a process of its own and sees its own policies, so no shard
@@ -804,6 +868,12 @@ Compared on the 473 files of batch 2, all 546 policies in 8 runs of 70, against 
   part (UP015's, batch 3). UP015 writes its test as one regex. The aggregate's context can hold a node, as
   `match_all`'s does now (batch 3), with its readers joining on both.
 
+- **A located output's unplaced check.** An output at a `loc` whose rows include a place built from a path
+  (`no_redeclare`'s `@place(f, l)` for a `/* global */` item on a later line) has no location column, so `locate`
+  relays it and the cross part reads it back (0665, `READ_LOCATED`). The lowering's check of findings at no file's
+  node (`rr_unplaced`, 0431 R9) reads the read-back rows. Its negation helper (`exists_N(d) :- no_redeclare(v, _),
+  docof(v, d)`) then holds a node in the cross part: javascript's and typescript's no-redeclare, node's
+  no-unpublished-bin. The check is a test of each row. It belongs with the rows in each file, before the relay.
 - **Where a finding that pairs two files' nodes is written.** `call_target(call, def)` is an example. An output
   keeps its node (§ Built), but once its family is rewritten it names the second file's node by that node's symbol,
   or by the definition's place read in its own file. This is settled family by family, as each is rewritten.

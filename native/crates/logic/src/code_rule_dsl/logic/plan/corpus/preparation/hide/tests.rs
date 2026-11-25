@@ -127,6 +127,28 @@
         assert!(out.iter().any(|r| r.contains("rr_in_sql_0_none(")), "{out:?}");
     }
 
+    /// A kind compared over a Blade template's compiled view (`compiled-view`, built at the file's load) is named in
+    /// PHP, the one dialect the embedding gives (`kinds_label`). The embedding's own name is no dialect's label: a kind
+    /// qualified by it was not `qualified`, so each round qualified it again (`compiled-view:compiled-view:comment`)
+    /// and hiding did not end (phpdoc's `doc_code`, `k != "comment"`, in bladestan-if-always-true).
+    #[test]
+    fn a_kind_compared_over_a_blade_view_is_phps_and_ends() {
+        let (done, wait) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let v = hidden(
+                concat!(
+                    ".decl parsed(s: node, g: symbol, r: node)\n.input parsed\n",
+                    ".decl out(p: node)\n.output out\n",
+                    "out(p) :- parsed(_, \"compiled-view\", g), within(p, g), kind(p, k), k != \"comment\".\n",
+                ),
+                1 << 30,
+            );
+            let _ = done.send(rules_of(&v, "out"));
+        });
+        let out = wait.recv_timeout(std::time::Duration::from_secs(20)).expect("hide ends");
+        assert!(out.iter().all(|r| r.contains("\"php:comment\"")), "{out:?}");
+    }
+
     /// A tree axis read over a node that may be a guest's is the clone's copy of the axis, over a copy of its kind set
     /// (`rr_inside_rr_in_annotation_<set>`), and the set is the program's: the clone's `!inside(t, _, S)` reads S's
     /// copy, never an axis naming no set (main's #862, where the set went and the axis stayed). The output shows `t`'s

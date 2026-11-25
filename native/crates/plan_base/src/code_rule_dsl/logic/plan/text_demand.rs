@@ -763,7 +763,7 @@ pub fn node_anchors(v: &Version, settings: &[(String, String)], matchers: &Match
     let node_col = |rel: &str, c: usize| rel.starts_with(ast) || types(rel).and_then(|ts| ts.get(c).copied()).is_some_and(is_node);
     // What a node holds itself; `child` and `field` go down from their first column. `rr_long_text_node(n)` is a
     // long-text twin's (`long_text_twins`): that `n`'s text is past the inline bound, made from the projected nodes.
-    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
+    const LOCAL: &[&str] = &["kind", "node", "text", "name", "str", "strprefix", "value", "static_value", "static_value_type_of", "docof", "line", "col", "end_line", "intval", "op", "op_at", "comment", "rr_long_text_node"];
     let down = |rel: &str| match rel {
         "child" => Some(1),
         "field" => Some(2),

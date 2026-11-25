@@ -247,14 +247,18 @@ impl ProgramPass for Hide {
                 // A kind read off a guest's node is its grammar's (decision 0222): `kind(f, k), fn_scope(k)` over a view's
                 // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
                 // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rerail
-                // read over a Vue component's view) finds none of its kinds.
+                // read over a Vue component's view) finds none of its kinds. Only in a grammar whose kinds are named by a
+                // dialect's label: a name qualified by anything else is not `qualified`, and was qualified again each
+                // round, without end (Blade's `compiled-view` before `kinds_label` knew it, a `k != "comment"`).
                 let kind_of: BTreeMap<Slot, String> = rule
                     .body
                     .iter()
                     .filter_map(|(_, l)| {
                         let a = l.positive()?;
                         match (a.rel.as_str(), a.args.as_slice()) {
-                            ("kind", [S::Var(x), S::Var(k)]) | ("node", [_, S::Var(x), S::Var(k), _, _]) => grammar_of(*x).map(|g| (*k, g)),
+                            ("kind", [S::Var(x), S::Var(k)]) | ("node", [_, S::Var(x), S::Var(k), _, _]) => {
+                                grammar_of(*x).filter(|g| crate::code_rule_dsl::language::dialect_by_label(dialect_label(g)).is_some()).map(|g| (*k, g))
+                            }
                             _ => None,
                         }
                     })

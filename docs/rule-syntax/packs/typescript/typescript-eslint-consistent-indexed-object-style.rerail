@@ -54,7 +54,7 @@ circular(b) :- mapped_type(b, _), owner_name(b, x), type_parent(b, p), deep(p, x
 .decl deep_root(r: node)
 deep_root(n) :- lone_signature(n, _).
 deep_root(p) :- mapped_type(b, _), type_parent(b, p).
-deep_root(d) :- deep_root(r), reach(r, t), kind(t, "type_identifier"), text(t, y), type_decl(y, d).
+deep_root(d) :- deep_root(r), reach(r, t), kind(t, "type_identifier"), text(t, y), docof(t, f), type_decl(f, y, d).
 .decl reach(r: node, t: node)
 reach(r, c) :- deep_root(r), walk(r, c).
 reach(r, c) :- reach(r, m), walk(m, c).
@@ -67,11 +67,15 @@ walk(p, c) :- kind(p, k), deep_kind(k), child(p, c, _), !kind(c, "comment").
 .decl deep_kind(k: symbol)
 deep_kind("union_type"). deep_kind("intersection_type"). deep_kind("conditional_type"). deep_kind("lookup_type").
 deep_kind("parenthesized_type"). deep_kind("generic_type"). deep_kind("type_arguments"). deep_kind("type_annotation").
-.decl type_decl(x: symbol, d: node)
-type_decl(x, d) :- (kind(d, "type_alias_declaration") ; kind(d, "interface_declaration")), field(d, "name", i), text(i, x).
+// type_decl(f, x, d): document f declares type x at d. ESLint finds it through the file's scopes: a type of
+// another file's is no declaration here (decision 0677).
+.decl type_decl(f: number, x: symbol, d: node)
+type_decl(f, x, d) :- (kind(d, "type_alias_declaration") ; kind(d, "interface_declaration")), field(d, "name", i),
+    text(i, x), docof(d, f).
 .decl deep(r: node, x: symbol)
 deep(r, x) :- reach(r, t), kind(t, "type_identifier"), text(t, x).
-deep(r, x) :- reach(r, t), kind(t, "type_identifier"), text(t, y), y != x, type_decl(y, d), deep(d, x).
+deep(r, x) :- reach(r, t), kind(t, "type_identifier"), text(t, y), y != x, docof(t, f), type_decl(f, y, d),
+    deep(d, x).
 
 // free_mapped(b): `{ [K in X]: V }` that a Record can say: V does not use K, X is no bare `keyof T`, and the type
 // is not circular.

@@ -191,7 +191,9 @@ cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix
 .decl touch_pair(a: symbol, b: symbol) extensible  // filled by the including rule: the token texts its fix puts side by side
 
 // ---- natural order -------------------------------------------------------------------------------------------------
-// natural_key(s, k): natural-compare 1.4 orders strings by a remapped alphabet: the control characters and
+// natural_key(n, s, k): natural-compare 1.4's key k of string s, which node n asks for (nat_ask(n, s)). Keyed by
+// the asker, not the string, so each file orders its own strings (decision 0677). natural-compare orders strings
+// by a remapped alphabet: the control characters and
 // ' ' … ',' first, then '.', '/', ':' … '@', '[' … '`', '{' … '~', DEL, '-', the digits, 'A' … 'Z', 'a' … 'z',
 // and other characters by code; and a run of digits that starts with 1-9 compares as a number when both strings
 // have one at the same place:
@@ -200,19 +202,20 @@ cannot_touch(a, b) :- touch_pair(a, b), (suffix("+", a), prefix("+", b) ; suffix
 // non-ASCII character as "9" and itself (after all ASCII, then by code point). A number run is "07", its length
 // in two digits, then its digits: it sorts between "066" ('0') and "076" ('A'), as natural-compare's codes for
 // the digits do, and two runs compare by length, then digit by digit, which is by value.
-.decl nat_ask(s: symbol) extensible  // filled by the including rule
-.decl natural_key(s: symbol, k: symbol)
+.decl nat_ask(n: node, s: symbol) extensible  // filled by the including rule
+.decl natural_key(n: node, s: symbol, k: symbol)
 // The pieces of s, each encoded on its own and joined in order: one step, so no value grows by recursion.
-natural_key(s, k) :- nat_ask(s), k = join x by o : { nat_piece(s, o, x) }.
-// nat_part(s, o, p): piece o of s, a run of digits that starts with 1-9 (leftmost, longest) or one character.
-.decl nat_part(s: symbol, o: number, p: symbol)
-nat_part(s, o, p) :- nat_ask(s), match_all("(?<p>[1-9][0-9]*|(?s:.))", s, o, _, _).
-.decl nat_piece(s: symbol, o: number, x: symbol)
-nat_piece(s, o, cat("07", cat(w, p))) :- nat_part(s, o, p), match("[1-9][0-9]*", p),
-    n = cat("0", to_string(strlen(p))), w = @slice(n, strlen(n) - 2, strlen(n)).
-nat_piece(s, o, x) :- nat_part(s, o, p), nat_code(p, x).
-nat_piece(s, o, x) :- nat_part(s, o, p), nat_control(re, x), match(re, p).
-nat_piece(s, o, cat("9", p)) :- nat_part(s, o, p), !match("[1-9].*", p), !nat_code(p, _), !match("[\\x00-\\x1f\\x7f]", p).
+natural_key(n, s, k) :- nat_ask(n, s), k = join x by o : { nat_piece(n, s, o, x) }.
+// nat_part(n, s, o, p): piece o of s, a run of digits that starts with 1-9 (leftmost, longest) or one character.
+.decl nat_part(n: node, s: symbol, o: number, p: symbol)
+nat_part(n, s, o, p) :- nat_ask(n, s), match_all("(?<p>[1-9][0-9]*|(?s:.))", s, o, _, _).
+.decl nat_piece(n: node, s: symbol, o: number, x: symbol)
+nat_piece(n, s, o, cat("07", cat(w, p))) :- nat_part(n, s, o, p), match("[1-9][0-9]*", p),
+    l = cat("0", to_string(strlen(p))), w = @slice(l, strlen(l) - 2, strlen(l)).
+nat_piece(n, s, o, x) :- nat_part(n, s, o, p), nat_code(p, x).
+nat_piece(n, s, o, x) :- nat_part(n, s, o, p), nat_control(re, x), match(re, p).
+nat_piece(n, s, o, cat("9", p)) :- nat_part(n, s, o, p), !match("[1-9].*", p), !nat_code(p, _),
+    !match("[\\x00-\\x1f\\x7f]", p).
 // nat_control(re, x): the control characters, as a regex for the one character and its code: 0-31 keep their own
 // code (natural-compare maps every code below 45 to itself), DEL (127) becomes 64. `{"\x01a": 1, " b": 2}` sorts
 // \x01a first.

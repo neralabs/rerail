@@ -120,7 +120,7 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "doc" | "pkg" | "unpackaged" | "tape_error" | "path_part" | "file_name" | "source" | "src_line" | "line_count" | "syntax_error" | "doc_grammar" | "tape_of" => (&[], &[0]),
         // A program's document underneath is its file's shard's.
         "rr_program" => (&[], &[1]),
-        "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "rr_value_lit" | "intval"
+        "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "static_value_type_of" | "rr_value_lit" | "intval"
         | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth" | "node_order"
         | "tree_digest" | "def_digest" | "spread" | "str_part_start" | "structural_before" | "structural_after" => (&[0], &[]),
         "first_token" | "last_token" | "token_before" | "token_after" | "end_point" => (&[0, 1], &[]),
