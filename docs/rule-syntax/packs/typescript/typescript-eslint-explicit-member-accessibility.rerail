@@ -1,4 +1,4 @@
-.policy "typescript-eslint-explicit-member-accessibility" revision 4
+.policy "typescript-eslint-explicit-member-accessibility" revision 5
 .description "Declare public, private or protected on every TypeScript class member and parameter property; #private members are exempt."
 .language typescript
 .mode steer
@@ -50,15 +50,24 @@ modified(m) :- child(m, a, _), kind(a, "accessibility_modifier").
 .decl public(m: node)
 public(m) :- child(m, a, _), kind(a, "accessibility_modifier"), text(a, "public").
 
+// Each negation sits on `holder`, which reads only tape facts: the engine loses `member(m, …), !modified(m)`, as
+// member reads ts_member_name (NOTES-typescript-01, engine gap 1), and then reported every member.
+.decl holder(m: node)
+holder(m) :- kind(m, "method_definition") ; kind(m, "method_signature") ; kind(m, "abstract_method_signature") ;
+    kind(m, "public_field_definition") ; kind(m, "required_parameter") ; kind(m, "optional_parameter").
+.decl bare(m: node)  // no accessibility modifier
+bare(m) :- holder(m), !modified(m).
+.decl kept(m: node)  // not skipped by ignoredMethodNames
+kept(m) :- holder(m), !ignored(m).
+
 .decl missing(m: node, t: symbol, x: symbol)
-missing(m, t, x) :- member(m, c, t, x), level(c, "explicit"), !modified(m), !ignored(m, c, x).
+missing(m, t, x) :- member(m, c, t, x), level(c, "explicit"), bare(m), kept(m).
 .decl unwanted(m: node, t: symbol, x: symbol)
-unwanted(m, t, x) :- member(m, c, t, x), level(c, "no-public"), public(m), !ignored(m, c, x),
+unwanted(m, t, x) :- member(m, c, t, x), level(c, "no-public"), public(m), kept(m),
     (c != "parameterProperties" ; op(m, "readonly")).
 // ignoredMethodNames covers methods, constructors and accessors, not properties.
-.decl ignored(m: node, c: symbol, x: symbol)
-ignored(m, c, x) :- member(m, c, _, x), c != "properties", c != "parameterProperties",
-    option_item("ignoredMethodNames", _, x).
+.decl ignored(m: node)
+ignored(m) :- class_member(m), ts_member_name(m, x, _), option_item("ignoredMethodNames", _, x).
 
 // The fixes. `public` is deleted as a node: a regex over the member could find `public` in a decorator's
 // string (`@Dec('public') public x`). The space after it stays.

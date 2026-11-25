@@ -1,0 +1,36 @@
+[
+  {
+    "id": "typescript-eslint-class-literal-property-style",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-class-methods-use-this",
+    "status": "same"
+  },
+  {
+    "id": "typescript-eslint-consistent-indexed-object-style",
+    "status": "different",
+    "reason": "fixtures, 1 translation-only key: typescript-eslint/consistent-indexed-object-style/088.ts:2, `interface Foo { [key: string]: Bar; }` beside `interface Bar { [key: string]; }`. typescript-eslint 8.74.0 reports Foo at 2:1 (A record is preferred over an index signature). The file has a syntax error to tree-sitter (Bar's index signature has no type), so the original skips it (source-incomplete); the translation reads the rest of the file and reports Foo, which refers to Bar, not to itself.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 1 },
+      "rerail-typescript": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  {
+    "id": "typescript-eslint-consistent-type-definitions",
+    "status": "different",
+    "reason": "fixtures, 2 translation-only keys: typescript-eslint/consistent-indexed-object-style/037.ts:1 `type Foo = { [key: string] };` and 038.ts:1 `type Foo = { [] };`. typescript-eslint 8.74.0 reports both at 1:6 (Use an `interface` instead of a `type`): TypeScript parses each as a type literal. tree-sitter gives each an ERROR node, so the original skips the files (source-partial / source-incomplete); the translation still sees an object type alias.",
+    "right": "translation",
+    "counts": {
+      "examples": { "originalOnly": 0, "translationOnly": 0 },
+      "fixtures": { "originalOnly": 0, "translationOnly": 2 },
+      "rerail-typescript": { "originalOnly": 0, "translationOnly": 0 }
+    }
+  },
+  {
+    "id": "typescript-eslint-explicit-member-accessibility",
+    "status": "same"
+  }
+]

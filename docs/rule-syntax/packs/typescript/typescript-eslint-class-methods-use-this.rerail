@@ -1,4 +1,4 @@
-.policy "typescript-eslint-class-methods-use-this" revision 5
+.policy "typescript-eslint-class-methods-use-this" revision 6
 .description "Make TypeScript class methods and function-valued fields that never use this or super static or standalone functions."
 .language typescript
 .mode steer
@@ -20,7 +20,7 @@
 //   ignoreOverrideMethods         skip `override` methods
 //   ignoreClassesThatImplementAnInterface   true: skip classes with `implements`; "public-fields": only their
 //                                 members without `private` or `protected` (a #private one counts as public)
-.violation class_methods_use_this(at: node, name: symbol) code "@typescript-eslint/class-methods-use-this"
+.violation class_methods_use_this(at: loc, name: symbol) code "@typescript-eslint/class-methods-use-this"
     "Expected 'this' to be used by class {name}. Make it static or move it out of the class."
     suppress eslint "@typescript-eslint/class-methods-use-this"
     suppress oxlint "class-methods-use-this"
