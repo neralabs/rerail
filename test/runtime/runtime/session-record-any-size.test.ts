@@ -205,6 +205,21 @@ describe("a session record of any size", () => {
     }
   });
 
+  it("takes the watermarks file's last snapshot back at an open, each line holding every assignment of its revision", async () => {
+    const at = await world();
+    const watermark = { namespace: "review", key: "seen", value: true, owner: "agent", visibility: "private", createdAt: 1 };
+    const assignment = (id: string) => ({ id, target: { source: "host:event", id: "prompt" }, watermark });
+    const snapshots = [{ revision: 1, assignments: [assignment("first")] }, { revision: 2, assignments: [assignment("second")] }];
+    await writeFile(join(dirname(at.record), "watermarks.jsonl"), snapshots.map(line => `${JSON.stringify(line)}\n`).join(""));
+    const runtime = runtimeIn(at);
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session: { ...SESSION, cwd: at.root } });
+      expect(await runtime.mark(SESSION.sessionId, { kind: "detach", assignmentIds: ["first", "second"] })).toEqual({ revision: "3", assignmentIds: ["second"] });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("reads no line of a record that is a symbolic link", async context => {
     const at = await world();
     const elsewhere = join(at.root, "elsewhere.jsonl");
