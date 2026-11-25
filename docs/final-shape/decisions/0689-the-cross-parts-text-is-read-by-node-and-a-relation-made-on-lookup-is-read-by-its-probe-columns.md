@@ -68,8 +68,9 @@ The 300-file bench, on the M1 Max, CPU, one run each, against HEAD's run of the 
 - The decision line: "the cross part's: read by node, off the tape, by p297_rr_h_agg_…, q13_same_leaf, q4_same_leaf,
   q6_same_leaf, rr_diagnostic_33ab31c6…, rr_diagnostic_8dba1432…".
 - The cross phase took 3.48 s CPU, from 3.74 s. Statistics took 1.31 s, from 1.38 s.
-- `combine` took 2.47 s, from 0.72 s. Not investigated: one run each, and it is not known whether this change is the
-  cause.
+- `combine` took 0.74 s, against 0.72 s, on the new binary's second run. Its first run took 2.47 s. That run's
+  combine spans were the 317 programs lowered ("a program's version in scope: its image, or lowered"), not taken as
+  kept images: a new binary's first run lowers them, and the next reuses them. Compare second runs.
 
 ## Tests
 
