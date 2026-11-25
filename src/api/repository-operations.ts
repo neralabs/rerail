@@ -355,7 +355,7 @@ function libraryRecord(rule: LibraryRule): z.infer<typeof libraryRuleRecordSchem
   };
   return rule.document.kind === "code"
     ? { kind: "code", rule: rule.document.rule, ...shared, ...inactiveOf("code", rule.document.rule) }
-    : { kind: "conversation", rule: rule.document.rule, ...shared };
+    : { kind: "conversation", rule: rule.document.rule, ...shared, ...inactiveOf("conversation", rule.document.rule) };
 }
 
 interface SettingChange {
