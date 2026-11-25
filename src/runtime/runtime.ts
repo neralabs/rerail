@@ -274,16 +274,55 @@ function sampleOwner(source: AdapterSample["source"]): "user" | "assistant" | "t
 /** A ledger line that says it is an `owed` entry, whether or not this build can read the rest of it. */
 const OwedTypeSchema = z.object({ type: z.literal("owed") });
 
-function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
-  return values.flatMap((value): LedgerEntry[] => {
-    const parsed = LedgerEntrySchema.safeParse(value);
-    if (parsed.success) return [compactValidated<LedgerEntry>(parsed.data)];
-    if (!OwedTypeSchema.safeParse(value).success) return [];
-    // An `owed` line this build cannot read (a later build's) may say that what an earlier one listed has gone out: the
-    // session owes nothing from either, rather than give it out again.
-    process.stderr.write("rerail: a session's ledger holds an owed entry this version cannot read; the session owes nothing from it\n");
-    return [{ type: "owed", steers: [], findings: [] }];
+/** A value of a ledger line as this build reads it: its entry, or undefined for a line it does not know. */
+function ledgerEntryOf(value: unknown): LedgerEntry | undefined {
+  const parsed = LedgerEntrySchema.safeParse(value);
+  if (parsed.success) return compactValidated<LedgerEntry>(parsed.data);
+  if (!OwedTypeSchema.safeParse(value).success) return undefined;
+  // An `owed` line this build cannot read (a later build's) may say that what an earlier one listed has gone out: the
+  // session owes nothing from either, rather than give it out again.
+  process.stderr.write("rerail: a session's ledger holds an owed entry this version cannot read; the session owes nothing from it\n");
+  return { type: "owed", steers: [], findings: [] };
+}
+
+/** A session's ledger as it was read back, and where its next line goes. */
+export interface ReadLedger {
+  readonly entries: readonly LedgerEntry[];
+  /** How many lines held a value, entries or not. */
+  readonly lines: number;
+  readonly appendState: JsonlAppendState;
+}
+
+/**
+ * Reads a session's ledger back a line at a time (`readLines`), each value taken to its entry as it is read
+ * (`ledgerEntryOf`). A code-rule call's preimages, the text each file it edits held before the edit, are let go once
+ * its result is read, or once a later call takes its id: only a call still open is begun again with them
+ * (`unresolvedCodeRuleCalls`), and a session open for weeks holds one for nearly every edit it made.
+ */
+export async function readSessionLedger(path: string): Promise<ReadLedger> {
+  const entries: LedgerEntry[] = [];
+  const openCalls = new Map<string, number>();
+  let lines = 0;
+  const appendState = await readLines(path, value => {
+    lines += 1;
+    const entry = ledgerEntryOf(value);
+    if (entry === undefined) return;
+    if (entry.type === "policy-call" || entry.type === "policy-result") closeCall(entries, openCalls, entry.toolCallId);
+    if (entry.type === "policy-call") openCalls.set(entry.toolCallId, entries.length);
+    entries.push(entry);
   });
+  return { entries, lines, appendState };
+}
+
+/** Replaces the entry of the open call `toolCallId` in `entries` with one without its preimages; nothing when none is open. */
+function closeCall(entries: LedgerEntry[], openCalls: Map<string, number>, toolCallId: string): void {
+  const index = openCalls.get(toolCallId);
+  if (index === undefined) return;
+  openCalls.delete(toolCallId);
+  const call = entries[index];
+  if (call?.type !== "policy-call" || call.preimages === undefined) return;
+  const { preimages: _preimages, ...closed } = call;
+  entries[index] = closed;
 }
 
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
@@ -616,10 +655,11 @@ interface JsonlAppendState {
   truncateTo: number | null;
 }
 
-interface JsonlReadResult {
-  values: unknown[];
-  appendState: JsonlAppendState;
-}
+/** A line of `watermarks.jsonl`: every assignment as of one revision. */
+const WatermarkSnapshotSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  assignments: z.array(z.object({ id: z.string(), target: ContentRefSchema, watermark: WatermarkSchema })),
+});
 
 class JsonlWatermarkStore implements WatermarkStore {
   readonly #path: string;
@@ -633,26 +673,14 @@ class JsonlWatermarkStore implements WatermarkStore {
   }
 
   static async open(path: string): Promise<JsonlWatermarkStore> {
-    const { values: lines, appendState } = await readLines(path);
-    const store = new JsonlWatermarkStore(path, appendState);
-    const snapshots = lines.flatMap((line) => {
-      const parsed = z
-        .object({
-          revision: z.number().int().nonnegative(),
-          assignments: z.array(
-            z.object({
-              id: z.string(),
-              target: ContentRefSchema,
-              watermark: WatermarkSchema,
-            }),
-          ),
-        })
-        .safeParse(line);
-      return parsed.success
-        ? [compactValidated<{ revision: number; assignments: WatermarkAssignment[] }>(parsed.data)]
-        : [];
+    // Each line holds every assignment as of its revision, so only the last one that parses is kept.
+    const read: { latest?: { revision: number; assignments: WatermarkAssignment[] } } = {};
+    const appendState = await readLines(path, value => {
+      const parsed = WatermarkSnapshotSchema.safeParse(value);
+      if (parsed.success) read.latest = compactValidated<{ revision: number; assignments: WatermarkAssignment[] }>(parsed.data);
     });
-    const latest = snapshots.at(-1);
+    const store = new JsonlWatermarkStore(path, appendState);
+    const { latest } = read;
     if (latest !== undefined) {
       store.#revision = latest.revision;
       for (const assignment of latest.assignments) store.#assignments.set(assignment.id, assignment);
@@ -1029,24 +1057,27 @@ interface SessionStart {
 }
 
 /**
- * The values of a JSON-lines record file, read a line at a time (`readLedgerLines`), and where its next line goes. A
- * line that is no JSON fails the read, except the last when no newline ends it: a write cut short, which the next
- * append cuts off (`truncateTo`, its first byte); a last line that is whole gets its newline first (`prefix`).
+ * Hands `take` the value of each line of a JSON-lines record file, read a line at a time (`readLedgerLines`), and says
+ * where its next line goes. A line that is no JSON fails the read, except the last when no newline ends it: a write cut
+ * short, which the next append cuts off (`truncateTo`, its first byte); a last line that is whole gets its newline first
+ * (`prefix`).
  */
-async function readLines(path: string): Promise<JsonlReadResult> {
-  const values: unknown[] = [];
+async function readLines(path: string, take: (value: unknown) => void): Promise<JsonlAppendState> {
   const last = await readLedgerLines(path, dirname(path), line => {
-    if (line !== "") values.push(JSON.parse(line));
+    if (line !== "") take(JSON.parse(line));
   });
   const appendState: JsonlAppendState = { prefix: "", truncateTo: null };
-  if (last === undefined || last.text === "") return { values, appendState };
+  if (last === undefined || last.text === "") return appendState;
+  let value: unknown;
   try {
-    values.push(JSON.parse(last.text));
-    appendState.prefix = "\n";
+    value = JSON.parse(last.text);
   } catch {
     appendState.truncateTo = last.start;
+    return appendState;
   }
-  return { values, appendState };
+  appendState.prefix = "\n";
+  take(value);
+  return appendState;
 }
 
 /** Appends one line through a descriptor that follows no symlink, in a folder checked as `makeLedgerFolder` checks it. */
@@ -1538,8 +1569,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async #dropLedgerOwed(sessionId: string): Promise<void> {
     const path = join(sessionDirectory(this.#storageRoot, sessionId), "events.jsonl");
     try {
-      const { values, appendState } = await readLines(path);
-      if (restoredOwed(validatedLedger(values)).recorded === 0) return;
+      const { entries, appendState } = await readSessionLedger(path);
+      if (restoredOwed(entries).recorded === 0) return;
       await appendJsonLine(path, { type: "owed", steers: [], findings: [] } satisfies OwedEntry, appendState);
     } catch (error) {
       process.stderr.write(`rerail: could not drop what session ${sessionId} owed its agent: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -2756,11 +2787,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await makeLedgerFolder(directory, { repair: this.#storageRootIsDefault });
     keepFolderPrivate(directory);
     const path = join(directory, "events.jsonl");
-    const { values, appendState } = await readLines(path);
-    const entries = validatedLedger(values);
+    const { entries, lines, appendState } = await readSessionLedger(path);
     // The ledger marker survives a database reset. Never mistake resumed or reset history for a fresh session.
     // With no DB, ledger, or native replay history, this is the session's first observed Rerail participation.
-    const completeTracking = unrecorded && values.length === 0 && (this.#nativeSession?.turn ?? 0) === 0;
+    const completeTracking = unrecorded && lines === 0 && (this.#nativeSession?.turn ?? 0) === 0;
     if (!entries.some(entry => entry.type === "hud-tracking-start")) {
       await appendJsonLine(path, { type: "hud-tracking-start" }, appendState);
     }

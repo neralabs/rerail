@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, open, readFile, stat, writeFile } from "node:fs/promise
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { RerailRuntime } from "../../../src/runtime/runtime.js";
+import { readSessionLedger, RerailRuntime } from "../../../src/runtime/runtime.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
 
@@ -149,6 +149,23 @@ describe("a session record of any size", () => {
     await writeFile(at.record, text);
     await expect(openedRules(at)).rejects.toThrow(jsonError("not json"));
     expect(await readFile(at.record, "utf8")).toBe(text);
+  });
+
+  it("keeps the preimages of the calls still open and lets go of those of a call whose result came or whose id a later call took", async () => {
+    const at = await world();
+    const call = (toolCallId: string, text: string) => ({ type: "policy-call", toolCallId, toolName: "Edit", paths: ["a.py"], preimages: { "a.py": { text } } });
+    const [closedCall, open, firstTaken, secondTaken] = [
+      call("closed", "before the closed call"), call("open", "before the open call"),
+      call("taken", "before the first call of the id"), call("taken", "before the second call of the id"),
+    ] as const;
+    const result = { type: "policy-result", toolCallId: "closed" };
+    const lines = [closedCall, result, open, firstTaken, secondTaken];
+    await writeFile(at.record, lines.map(line => `${JSON.stringify(line)}\n`).join(""));
+    const { preimages: _closed, ...closed } = closedCall;
+    const { preimages: _first, ...first } = firstTaken;
+    expect(await readSessionLedger(at.record)).toEqual({
+      entries: [closed, result, open, first, secondTaken], lines: 5, appendState: { prefix: "", truncateTo: null },
+    });
   });
 
   it("refuses a record that is a symbolic link and writes nothing where it leads", async context => {
