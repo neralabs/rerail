@@ -830,11 +830,11 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     (got, want, rung, launches)
 }
 
-/// A device run's outputs (`DeviceRun`) and the givings back it made.
-type GivingRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
+/// A device run's outputs (`DeviceRun`) and its heap's words past the memo table (`Expanded::heap`).
+type HeapRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
 
-/// `expanded_in`, and the givings back the run made (decision 0486 §10).
-fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> GivingRun {
+/// `expanded_in`, and its heap's words (t51 §4: the records, lists, results, call sites and occurrences).
+fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> HeapRun {
     use rerail_c_pp::files::Search;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
     let dirs: Vec<(String, rerail_c_pp::files::DirKind)> = dirs.iter().map(|&(d, k)| (d.to_string(), k)).collect();
@@ -848,9 +848,9 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let x = &*s.part.x;
     if x.refused != 0 {
-        return (Err(x.refused), serial.0, x.rung, x.launches, x.gives);
+        return (Err(x.refused), serial.0, x.rung, x.launches, x.heap);
     }
-    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.gives)
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.heap)
 }
 
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
@@ -1211,7 +1211,7 @@ fn an_argument_passed_on_is_read_once() {
     let mut steps = Vec::new();
     for terms in [4usize, 40] {
         let src = chain(terms);
-        let (got, want, _, _, _, n) = expanded_steps(&[("main.c", &src)], false);
+        let (got, want, _, _, n) = expanded_steps(&[("main.c", &src)], false);
         same(show(&got.expect("refused")), show(&want), format!("{terms} terms"));
         steps.push(n);
     }
@@ -1306,15 +1306,16 @@ fn a_disabled_macro_paints_alike_in_a_memoized_expansion() {
     shapes_agree(shapes);
 }
 
-/// Decision 0613 §1: a definition changed between two calls (a directive between them): the second
-/// is expanded again; two calls with no directive between are one.
+/// Decision 0613 §1, t51 §4: a definition changed between two calls (a directive between them): the second is
+/// expanded again; two calls with no directive between are one. Every call is a request, one a key: `F`, `A` and
+/// `G` once before the change and once after (6), the last `F()` the second's, and each `F`'s 19 `A`s after its
+/// first the first's (39 hits).
 #[test]
 fn a_definition_changed_between_uses_is_expanded_again() {
-    // `F` dear enough to be looked up (`LP_MEMO_COST`), from its first call on.
     let src = "#define G 1\n#define A G\n#define F() A A A A A A A A A A A A A A A A A A A A\nF()\n#undef G\n#define G 2\nF() F()\n";
-    let (got, want, (hits, _)) = expanded_memo(&[("main.c", src)], false);
+    let (got, want, (hits, made)) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "G changed");
-    same(hits, 1, "the hits: the last call's");
+    same((hits, made), (39, 6), "the memo's hits and requests");
 }
 
 /// Decision 0613 §4, stage 4: a call's arguments are requests of their own, read by groups that are free (another
@@ -1451,19 +1452,22 @@ fn expansions_are_the_serial_passes() {
     }
 }
 
-/// Decision 0613 §1: a result that reads a place's built-in (`__LINE__`, `__COUNTER__`) or the text
-/// past its `)` (a function-like name at its end) is not kept; nor (§4) one whose call inside it, a request
-/// of its own, reads one (`C`'s `L()`, on four lines: a tensorflow test printed another line's `__LINE__`).
+/// t51 §4: a place's built-in (`__LINE__`, `__COUNTER__`) is an entry resolved at its occurrence, and a function-like
+/// name at a result's end its open tail, read by its reader: so a result that holds either is memoized as any other,
+/// and each occurrence still gives its own place's value or its own call. `L(a)` four times on three lines: `L` and
+/// its argument once, three hits. `f(1)` four times, twice called on by its tail: `f`, `g(2)`, `g(3)` and their
+/// arguments once each, three hits. And (§4) a call inside a result, a request of its own, that reads one (`C`'s
+/// `L()`, on four lines: a tensorflow test printed another line's `__LINE__`).
 #[test]
-fn place_builtins_are_not_memoized() {
+fn place_builtins_and_open_tails_are_memoized() {
     let src = "#define L(x) x __LINE__\nL(a)\nL(a)\nL(a) L(a)\n";
-    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", src)], false);
+    let (got, want, memo) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "__LINE__");
-    same((hits, kept), (0, 0), "the memo's hits and results");
+    same(memo, (3, 2), "the memo's hits and requests");
     let src = "#define g(x) <x>\n#define f(x) x g\nf(1)(2) f(1) f(1)(3) f(1) x\n";
-    let (got, want, (hits, kept)) = expanded_memo(&[("main.c", src)], false);
+    let (got, want, memo) = expanded_memo(&[("main.c", src)], false);
     same(show(&got.expect("refused")), show(&want), "an open tail");
-    same((hits, kept), (0, 0), "the memo's hits and results");
+    same(memo, (3, 6), "the memo's hits and requests");
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define C(x) x __COUNTER__\nC(a) C(a)\nC(a)\n")],
         &[("main.c", "#define L() __LINE__\n#define C(x) [x L()]\nC(a)\nC(a)\n\nC(a) C(a)\n")],
@@ -1472,7 +1476,7 @@ fn place_builtins_are_not_memoized() {
     shapes_agree(shapes);
 }
 
-/// `expanded_run`, and the memo's hits and results.
+/// `expanded_run`, and the memo's hits and the requests made.
 fn expanded_memo(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, (u32, u32)) {
     use rerail_c_pp::files::Search;
     let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
@@ -1493,7 +1497,7 @@ fn expanded_memo(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32
 }
 
 /// `expanded_run`, and the longest piece's steps.
-fn expanded_steps(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32, u32) {
+fn expanded_steps(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32) {
     use rerail_c_pp::files::Search;
     let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
@@ -1507,9 +1511,9 @@ fn expanded_steps(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u3
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let x = &*s.part.x;
     if x.refused != 0 {
-        return (Err(x.refused), serial.0, x.rung, x.launches, x.gives, x.steps);
+        return (Err(x.refused), serial.0, x.rung, x.launches, x.steps);
     }
-    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.gives, x.steps)
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.steps)
 }
 
 /// R6 of decision 0448, its second part: `#`, a parameter's raw argument as one string literal:
@@ -2673,17 +2677,15 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// Decision 0486 §10: what no reader reads again is given back, and used again: the loop gives
-/// back what is dead below a substitution's list (decision 0588). Chains of calls each passing a
-/// state of 120 tokens on: each gives back, settles at rung 0 and gives the serial pass's tokens. The state passed through
-/// plain calls, through an argument scanned at each level (a dead argument's list), and through
-/// an exit at each level (a join); `__LINE__` in it (its origin read from the lists' `lref`, not
-/// their tokens), `#` of it at the end, and in C and C++.
+/// t51 §4: an argument passed on is a reference whatever its size. Chains of 40 calls each passing a state on, of 120
+/// tokens and of 6: the heap's words differ by less than a level's do, so no level holds the state's tokens. The
+/// state passed through plain calls, through an argument scanned at each level, and through an exit at each level
+/// (a join); `__LINE__` in it, `#` of it at the end, calls beside it; each the serial pass's at rung 0, in C and C++.
 #[test]
-fn reclaimed_tokens_keep_a_chain_at_rung_0() {
-    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+fn a_chains_heap_is_the_same_whatever_its_states_size() {
     let levels = 40;
-    let chain = |body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
+    let chain = |n: usize, body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
+        let state = (0..n).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
         let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n#define G(x) -\n");
         t += &format!("#define L0(s) {last}\n");
         for k in 1..=levels {
@@ -2692,36 +2694,39 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
         t += &format!("L{levels}({state}{tail})\nend\n");
         t
     };
-    let shapes = [
-        ("plain", chain(&|k| format!("L{}(s)", k - 1), "[s]", "")),
-        ("an argument scanned", chain(&|k| format!("L{}(ID(s))", k - 1), "[s]", "")),
-        ("an exit", chain(&|k| format!("CAT(L, {})(s)", k - 1), "<s>", "")),
-        ("__LINE__", chain(&|k| format!("L{}(s)", k - 1), "[s]", " __LINE__")),
-        ("stringized", chain(&|k| format!("L{}(ID(s))", k - 1), "X(s)", "")),
-        ("calls beside it", chain(&|k| format!("G(s) a L{}(s) b G(s) c", k - 1), "[s]", "")),
+    let shapes: [(&str, &dyn Fn(usize) -> String, &str, &str); 6] = [
+        ("plain", &|k| format!("L{}(s)", k - 1), "[s]", ""),
+        ("an argument scanned", &|k| format!("L{}(ID(s))", k - 1), "[s]", ""),
+        ("an exit", &|k| format!("CAT(L, {})(s)", k - 1), "<s>", ""),
+        ("__LINE__", &|k| format!("L{}(s)", k - 1), "[s]", " __LINE__"),
+        ("stringized", &|k| format!("L{}(ID(s))", k - 1), "X(s)", ""),
+        ("calls beside it", &|k| format!("G(s) a L{}(s) b G(s) c", k - 1), "[s]", ""),
     ];
-    for (what, text) in &shapes {
-        let files = [("main.c", text.as_str())];
+    for (what, body, last, tail) in &shapes {
         for cpp in [false, true] {
-            let (got, want, rung, _, gives) = expanded_run(&files, rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
-            let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
-            same(show(&got), show(&want), what);
-            assert_eq!(rung, 0, "{what}: grew to rung {rung}");
-            assert!(gives > 0, "{what}: gave nothing back");
-            eprintln!("{what}: {gives} givings");
+            let heap: Vec<u32> = [20usize, 1]
+                .iter()
+                .map(|&n| {
+                    let text = chain(n, *body, last, tail);
+                    let (got, want, rung, _, heap) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
+                    let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
+                    same(show(&got), show(&want), what);
+                    assert_eq!(rung, 0, "{what}: grew to rung {rung}");
+                    heap
+                })
+                .collect();
+            eprintln!("{what}, C++ {cpp}: the heap's words, a state of 20 and of 1: {heap:?}");
+            let level = heap[1] / levels as u32;
+            assert!(heap[0] <= heap[1] + level, "{what}, C++ {cpp}: the state's size costs {} words, a level {level}", heap[0] - heap[1]);
         }
     }
 }
 
-/// R1 of decision 0520: what a chain holds at once is flat in its length. The chains of
-/// `reclaimed_tokens_keep_a_chain_at_rung_0` at 25, 50 and 100 levels, each store's most use
-/// (`Exp::room`, as the serial pass's): a store whose use grows with the chain's length holds what
-/// no reader reads again, which is what made Boost's units climb the rungs. A pending level keeps
-/// a word for its macro, as the serial pass keeps its frame (its macro is disabled until its
-/// result is read).
+/// t51 §4: a chain's records are a level's each, so the heap's use is linear in its length (no level's record holds
+/// another's: there are no frames). The chains of `a_chains_heap_is_the_same_whatever_its_states_size` at 25, 50 and
+/// 100 levels: the heap's words from 50 to 100 levels at most twice those from 25 to 50.
 #[test]
-fn a_chains_use_is_flat_in_its_length() {
-    use rerail_metal::pp_expand::ROOM_STORES;
+fn a_chains_heap_is_linear_in_its_length() {
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let chain = |levels: usize, body: &dyn Fn(usize) -> String| {
         let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define L0(s) [s]\n");
@@ -2736,50 +2741,36 @@ fn a_chains_use_is_flat_in_its_length() {
         ("an argument scanned", &|k| format!("L{}(ID(s))", k - 1)),
         ("an exit", &|k| format!("CAT(L, {})(s)", k - 1)),
     ];
-    let mut flat = true;
+    let mut linear = true;
     for (what, body) in &shapes {
-        let uses: Vec<Vec<u32>> = [25, 50, 100]
+        let heaps: Vec<u32> = [25, 50, 100]
             .iter()
             .map(|&n| {
                 let text = chain(n, body);
-                let (got, want, room, _, rows) = expanded_x(&[("main.c", text.as_str())], false);
+                let (got, want, _, _, heap) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(false)), &[]);
                 let got = got.unwrap_or_else(|why| panic!("{what}, {n} levels: refused {why}"));
                 same(show(&got), show(&want), what);
-                room.iter().map(|&(used, _)| used).chain([rows]).collect()
+                heap
             })
             .collect();
-        // The runs' logs (decision 0613 §6): the expansions' rows, output the roll-up reads, a region each run
-        // grows by doubling (twice its rows at most).
-        let logs = 2 * (uses[2][ROOM_STORES.len()] - uses[0][ROOM_STORES.len()]);
-        eprintln!("{what}: log rows: {} {} {}", uses[0][ROOM_STORES.len()], uses[1][ROOM_STORES.len()], uses[2][ROOM_STORES.len()]);
-        for (s, name) in ROOM_STORES.iter().enumerate() {
-            // The output and the scratch grow with the input (the state written out once, the
-            // literals and the `#line` rows' room, two tokens a directive); the tokens' use at 100
-            // levels is at most its use at 25, a 16th more, a word a level, and the logs' rows.
-            let (a, b, c) = (uses[0][s], uses[1][s], uses[2][s]);
-            eprintln!("{what}: {name}: {a} {b} {c}");
-            let grows = ["output", "scratch bytes", "scratch tokens"].contains(name);
-            let bound = a + a / 16 + 75 + 64 + if *name == "tokens" { logs } else { 0 };
-            if !grows && c > bound {
-                flat = false;
-            }
+        eprintln!("{what}: the heap's words: {heaps:?}");
+        if heaps[2] - heaps[1] > 2 * (heaps[1] - heaps[0]) + 64 {
+            linear = false;
         }
     }
-    assert!(flat, "a store's use grows with the chain's length (above)");
+    assert!(linear, "the heap grows faster than the chain (above)");
 }
 
-/// A done call's span is given back through its exits' chain, to the chain's last `)` (decision
-/// 0588: the substitution gives back what is dead below its list). Each level of a chain has a
-/// done call beside its pending one whose exits chain two deep in the level's list
-/// (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`), the last's arguments 31 pieces. A
-/// level adds 64 tokens (its expansion, which the output holds); stopping at the first exit's `)`
-/// would keep the last's arguments too (96 a level), so the bound is 80.
+/// t51 §4: a done call's exits (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`) are requests of their own,
+/// their results referred to. Each level of a chain has three beside its pending call, the last's argument 31 tokens
+/// (16 uses of the level's parameter) or 3: the heap's words at 48 levels are 3 times those at 16 (linear), and a
+/// level's words grow with its own body (an entry a parameter's use, in its lists), at most 16 words a token more,
+/// never with the state its parameter holds.
 #[test]
-fn a_done_calls_exits_are_given_back_to_their_last() {
-    use rerail_metal::pp_expand::ROOM_STORES;
+fn a_done_calls_exits_are_records_linear_in_the_chain() {
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
-    let last = (0..16).map(|_| "s").collect::<Vec<_>>().join(" a ");
-    let chain = |levels: usize| {
+    let chain = |levels: usize, n: usize| {
+        let last = (0..n).map(|_| "s").collect::<Vec<_>>().join(" a ");
         let mut t = String::from("#define L0(s) [s]\n#define F2(x) x G2\n#define G2(x) x H2\n#define H2(x) x\n");
         for k in 1..=levels {
             t += &format!("#define L{k}(s) F2(s)(s)({last}) a L{}(s) b\n", k - 1);
@@ -2787,21 +2778,17 @@ fn a_done_calls_exits_are_given_back_to_their_last() {
         t += &format!("L{levels}({state})\nend\n");
         t
     };
-    let tokens = ROOM_STORES.iter().position(|s| *s == "tokens").unwrap();
-    let uses: Vec<(u32, u32)> = [16usize, 48]
-        .iter()
-        .map(|&n| {
-            let text = chain(n);
-            let (got, want, room, _, rows) = expanded_x(&[("main.c", text.as_str())], false);
-            let got = got.unwrap_or_else(|why| panic!("{n} levels: refused {why}"));
-            same(show(&got), show(&want), "a chain of exits beside it");
-            (room[tokens].0, rows)
-        })
-        .collect();
-    eprintln!("tokens, log rows: {:?} {:?}", uses[0], uses[1]);
-    // The logs' rows (decision 0613 §6) are the expansions', output the roll-up reads: twice their rows at most.
-    let logs = 2 * (uses[1].1 - uses[0].1);
-    assert!(uses[1].0 <= uses[0].0 + 80 * 32 + logs, "the tokens grow {} a level", (uses[1].0 - uses[0].0) / 32);
+    let heap = |levels: usize, n: usize| {
+        let text = chain(levels, n);
+        let (got, want, _, _, heap) = expanded_run(&[("main.c", text.as_str())], rerail_c_pp::Config::new(crate::pp::options(false)), &[]);
+        let got = got.unwrap_or_else(|why| panic!("{levels} levels: refused {why}"));
+        same(show(&got), show(&want), "a chain of exits beside it");
+        heap
+    };
+    let (h16, h48, small) = (heap(16, 16), heap(48, 16), heap(48, 2));
+    eprintln!("the heap's words: 16 levels {h16}, 48 levels {h48}; 48 levels, the last argument 3 pieces: {small}");
+    assert!(h48 <= 3 * h16 + 1024, "the heap grows faster than the chain: {h16} {h48}");
+    assert!(h48 <= small + 48 * 16 * 28, "the last argument's 28 tokens more cost {} words a level", (h48 - small) / 48);
 }
 
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
@@ -2930,22 +2917,43 @@ fn a_reading_waits_for_its_holes_result() {
     assert!(handled >= 1, "no hole waited for or read in place");
 }
 
-/// A run's frames are as deep as its input nests: past the group's `LP_DEPTH` they are the run's region 6
-/// (`lp_fpush`), never refused. Each level keeps a tail to read under the next, as Boost.Preprocessor's
-/// `BOOST_PP_REPEAT_1_n(m, d)` is `BOOST_PP_REPEAT_1_{n-1}(m, d) m(2, n-1, d)` (256 deep): object-like and
-/// function-like chains 100 and 300 deep, at the top and in an argument, each the serial pass's, none refused.
+/// Expansions as deep as the input nests (t51 §4, §5), as Boost.Preprocessor's `BOOST_PP_REPEAT_1_n(m, d)` is
+/// `BOOST_PP_REPEAT_1_{n-1}(m, d) m(2, n-1, d)` (256 deep): object-like and function-like chains 100 and 300 deep, at
+/// the top and in an argument, each the serial pass's. Each key is one request: a level's `O`, `R`, `M` calls and
+/// `R`'s and `M`'s arguments' pre-expansions (an argument's key holds the macros disabled where it is read, so `m`
+/// is one a level), the second chain's calls the first's (one hit at its root); and the heap's use is linear in the
+/// depth: there are no frames.
 #[test]
-fn the_frames_are_as_deep_as_the_input() {
+fn expansions_are_as_deep_as_the_input_and_one_request_a_key() {
+    use rerail_c_pp::files::Search;
+    let mut uses = vec![];
     for depth in [100usize, 300] {
         let mut text = String::from("#define O0 o\n#define R0(m) m(0)\n#define ID(x) x\n#define M(k) <k>\n");
         for k in 1..=depth {
             text += &format!("#define O{k} O{} t{k}\n#define R{k}(m) R{}(m) m({k})\n", k - 1, k - 1);
         }
         text += &format!("int a = O{depth};\nint b = R{depth}(M);\nint c = ID(R{depth}(M) O{depth});\n");
-        let (got, want, refused, _) = expanded(&[("main.c", text.as_str())], false);
-        same(refused, 0, format!("refused at depth {depth}"));
-        same(got.map(|g| show(&g)), Ok(show(&want)), format!("the output at depth {depth}"));
+        let cfg = rerail_c_pp::Config::new(crate::pp::options(false));
+        let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), text.as_bytes().to_vec())].into_iter().collect();
+        let mut serial = Spelled::default();
+        let m2 = m.clone();
+        let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+        let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+        assert!(pp.run("main.c"));
+        drop(pp);
+        let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+        let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+        let x = &s.part.x;
+        same(x.refused, 0, format!("refused at depth {depth}"));
+        same(show(&part_tokens(&s.part, &s.loaded.files, &tapes)), show(&serial.0), format!("the output at depth {depth}"));
+        // `O` a level and its root; `R`, `M` and their arguments 4 a level; `ID` and its argument; the top piece.
+        let (hits, made) = x.memo;
+        same(made as usize, 6 * depth + 9, format!("the requests at depth {depth}"));
+        assert!(hits >= 1, "depth {depth}: the second chain is not the first's");
+        uses.push(x.heap as usize);
     }
+    eprintln!("the heap's words: {uses:?}");
+    assert!(uses[1] <= 3 * uses[0] + 1024, "the heap's use grows faster than the depth: {uses:?}");
 }
 
 /// Decision 0613 §4: a call takes its arguments as references. An argument passed on through `depth` calls is a
@@ -3196,3 +3204,4 @@ fn a_round_lexes_only_its_new_files() {
     same(second.len(), again.len(), "the documents");
     same(first.len(), 1, "the first round's documents");
 }
+

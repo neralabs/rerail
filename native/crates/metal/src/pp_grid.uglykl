@@ -27,7 +27,7 @@
 #define ONE(t) for (uint32_t t = 0u; g.group == 0u && g.lid == 0u && t < 1u; t++)
 // A measurement's stop (`STOP`): the kernel ends before its phase `stop` (0: never). A phase
 // that ends the kernel leaves it by `PX_QUIT`: a return in the kernel, a false in a phase
-// function (`lp_loop`), which gives its phase count back.
+// function (`rx_loop`), which gives its phase count back.
 #define PX_QUIT return
 // A trace (`STOP` at `PP_TRACE_ON`): each phase's source line and the device's clock (`ukl_clock_ns`), written by the
 // grid's first thread at the phase's tick into `GRID`'s words past the grid's 8.
@@ -156,23 +156,12 @@ typedef struct PpTg {
     uint32_t flag;
     // The group's ticket and the grid's count (`ukl_grid_join`).
     uint32_t join[2];
-    // The group's place in its dispatch (`lp_run_slot`): a team's group or a helper, it reads one unit at a time.
+    // The group's place in its dispatch: a team's group or a helper, it reads one unit at a time.
     uint32_t hw;
     uint32_t scratch[UKL_TG_SCRATCH];
     uint32_t big[PP_TG_BIG];
 } PpTg;
 
-// Each SIMD group's piece's run (`lp_piece`: its stacks, indexed as it goes) is its own slot of the dispatch's runs
-// (`LPRUN`, the host's `pp_arena::runs`), in device memory: `LP_SLOTS` a group, by the group's place in the dispatch
-// (`PpTg::hw`), each `LP_RUN_BYTES`, past the parked runs' slots (`LP_PARK_AREA`). Not the group's memory: there the M3's back end (G15) lost the run's writes, a
-// thread's store not seen by its own next load (decision 0613 §4's notes, 2026-11-24). A power of two, a slot masked
-// by a constant.
-#define LP_SLOTS (256u / UKL_SIMD_WIDTH)
-UKL_STATIC_ASSERT(sizeof(LpRun) <= LP_RUN_BYTES, "a run fits its slot (LP_RUN_BYTES, pp_arena::RUN_BYTES)");
-UKL_INLINE UKL_GLOBAL LpRun* lp_run_slot(PP_GLOBAL uint8_t* runs, uint32_t hw, uint32_t lid) {
-    uint32_t at = LP_PARK_AREA + (hw * LP_SLOTS + ((lid / UKL_SIMD_WIDTH) & (LP_SLOTS - 1u))) * LP_RUN_BYTES;
-    return (UKL_GLOBAL LpRun*)(runs + (uint64_t)at);
-}
 
 // The stage word of `GRID` (after the grid's four: the barrier's three and the join's tickets,
 // `ukl/grid.h`): 2 where the setup reached its end.
@@ -180,11 +169,11 @@ UKL_INLINE UKL_GLOBAL LpRun* lp_run_slot(PP_GLOBAL uint8_t* runs, uint32_t hw, u
 // Set where P1 ends the round before the expansion (requests, or a refusal: decision 0467 §1).
 #define PG_STOP (5u)
 // The unit's loop open to helpers (decision 0613 §4: a group with no team left reads another unit's items,
-// `lp_help`): 0 closed, 1 the text's, 2 the tests' lines'; and the helpers in it now, whom the team waits out
+// `rx_help`): 0 closed, 1 the text's, 2 the tests' lines'; and the helpers in it now, whom the team waits out
 // before its queue is emptied for another loop.
 #define PG_LOOP (6u)
 #define PG_HELP (7u)
-// A team's wait for its helpers to leave, at most (they poll an empty queue `LP_HELP_POLLS` times).
+// A team's wait for its helpers to leave, at most (they poll an empty queue `RX_HELP_POLLS` times).
 #define PG_HELP_WAIT (1u << 20)
 
 // The rows of every grid kernel: the arena, the slab, the layout, the group's memory, and where
@@ -218,7 +207,7 @@ UKL_INLINE UKL_GLOBAL LpRun* lp_run_slot(PP_GLOBAL uint8_t* runs, uint32_t hw, u
     UklScanJob jobs[UKL_GRID_SCANS];                                                                   \
     (void)data; (void)files; (void)nf; (void)sl; (void)stop; (void)phase; (void)jobs;
 
-// A top as the loop reads it (`lp_loop`, compiled once for both calls): the tests' lines (`is_if`)
+// A top as the loop reads it (`rx_loop`, compiled once for both calls): the tests' lines (`is_if`)
 // or the text.
 #define DR_TOP                                                                                         \
     is_if ? AT(const uint32_t, IF_NODES) : AT(const uint32_t, TEXT_NODES),                             \
@@ -235,26 +224,58 @@ UKL_INLINE UKL_GLOBAL LpRun* lp_run_slot(PP_GLOBAL uint8_t* runs, uint32_t hw, u
              is_if ? AT(const uint32_t, IF_INST) : AT(const uint32_t, SINST),                          \
              is_if ? AT(const uint32_t, DSLOT) : AT(const uint32_t, SSLOT)),                           \
     TFACTS
-// The loop's items read by this SIMD group (`lp_run`), a team's or a helper's (`lp_help`).
-#define LP_RUN_CALL(idle)                                                                                                       \
-    lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),       \
-           AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),                                           \
-           AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl,         \
-           AT(const uint32_t, XPOS), g.lid & (UKL_SIMD_WIDTH - 1u), lp_run_slot(AT(uint8_t, LPRUN), tg->hw, g.lid), AT(uint8_t, LPRUN), (idle) __UKL_ARGS)
+// What the requests read besides the unit (`RxIn`): the tops' lookups, the lines' marks and states, the tops'
+// requests (`XFLAG`), the counts, the rows, the tops' places.
+#define RX_IN(in)                                                                                      \
+    RxIn in;                                                                                           \
+    in.lookups = AT(const uint32_t, LOOKUPS); in.ops = AT(const uint32_t, IF_OPS); in.state = AT(uint32_t, STATE); \
+    in.tops = AT(uint32_t, XFLAG); in.trn = AT(uint32_t, TRN); in.xrows = AT(uint32_t, XROWS); in.xrows_cap = W(XROWS_CAP); \
+    in.obase = AT(uint32_t, OBASE); in.is_if = is_if ? 1u : 0u;                                       \
+    in.close = AT(const uint32_t, DEPTH); in.tp0 = AT(const uint32_t, LOB); in.tp1 = AT(const uint32_t, PLAST); \
+    in.tpt0 = AT(const uint32_t, XTOTAL); in.tpt1 = AT(const uint32_t, VTOTAL);                       \
+    in.nt = (is_if ? AT(const uint32_t, IF_TOTAL) : AT(const uint32_t, GTOTAL))[0]
 // A helper's reading of the loop open at `lay` (`PG_LOOP`: the tests' lines' where `is_if`), by a group with no
-// team left (`pp_teams`): the unit's items until its queue has none waiting.
-UKL_ONCE void lp_help(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg, UklGrid g, bool is_if __UKL_PARAMS)
+// team left (`pp_teams`): the unit's items until its queue has none active.
+UKL_ONCE void rx_help(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg, UklGrid g, bool is_if __UKL_PARAMS)
 {
     UKL_GLOBAL const PpFile* files = IN(const PpFile, FILES);
-    (void)files;
+    (void)files; (void)tg;
     PX_UA(DR);
-    LP_RUN_CALL(LP_HELP_POLLS);
+    RX_IN(in);
+    rx_work(xu, xa, in, g.lid & (UKL_SIMD_WIDTH - 1u), RX_HELP_POLLS __UKL_ARGS);
 }
 #undef PX_QUIT
 #define PX_QUIT return (*phasep = phase, false)
-// The loop over a top (decision 0588), compiled once for the text and the tests' lines (`is_if`):
-// a piece a thread, written where it is made, then placed.
-UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg,
+// The unit's queue emptied for a loop's next stage (its helpers gone first, `PG_HELP`: one still polling would take
+// this stage's items as the last one's), its items pushed, the groups' workers (and helpers) until none is active.
+#define RX_QUEUE_RESET()                                                                               \
+    ONE(x) {                                                                                           \
+        uint32_t t = 0u;                                                                               \
+        for (; t < PG_HELP_WAIT && ukl_atomic_poll(&g.ctl[PG_HELP]) != 0u; t++) ukl_poll_yield();      \
+        if (t == PG_HELP_WAIT) px_refuse(AT(uint32_t, CTL), X_ROOM);                                   \
+    }                                                                                                  \
+    BARRIER();                                                                                         \
+    EACH(i, ukl_min(AT(const uint32_t, LPQ)[0], qcap)) AT(uint32_t, LPQ)[RXQ_CTL + i] = 0u;            \
+    BARRIER();                                                                                         \
+    ONE(x) for (uint32_t i = 0u; i < 5u; i++) AT(uint32_t, LPQ)[i] = 0u;                               \
+    BARRIER()
+#define RX_WORK()                                                                                      \
+    ONE(x) { ukl_fence_device(); ukl_atomic_store(&g.ctl[PG_LOOP], is_if ? 2u : 1u); }                 \
+    {                                                                                                  \
+        PX_UA(DR);                                                                                     \
+        RX_IN(in);                                                                                     \
+        EACH(s, g.groups * g.lsz) rx_work(xu, xa, in, g.lid & (UKL_SIMD_WIDTH - 1u), RX_IDLE_POLLS __UKL_ARGS); \
+    }                                                                                                  \
+    BARRIER();                                                                                         \
+    ONE(x) ukl_atomic_store(&g.ctl[PG_LOOP], 0u);                                                      \
+    /* Items left (an idle bound reached) or the queue past its room: refused. */                      \
+    ONE(x) if (AT(const uint32_t, LPQ)[2] != 0u || AT(const uint32_t, LPQ)[3] != 0u) px_refuse(AT(uint32_t, CTL), X_ROOM); \
+    BARRIER()
+// The expansion of a top (decision 0613; notes t51), compiled once for the text and the tests' lines (`is_if`):
+// each run a request, every call a request found by its key or made, run by the SIMD groups from a queue with
+// continuations (`pp_req.uglykl`); then the roll-up: the tops' places and rows by scans, the occurrences and rows
+// top down, the pieces written where they go and sorted by their places.
+UKL_ONCE bool rx_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg,
                       UklGrid g, UKL_PRIVATE uint32_t* phasep, uint32_t stop, bool is_if __UKL_PARAMS)
 {
     PP_SORT_LOCAL;
@@ -264,117 +285,112 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     (void)sl; (void)jobs; (void)files;
     PP_GLOBAL const uint32_t* toks = is_if ? AT(const uint32_t, IF_TOTAL) : AT(const uint32_t, GTOTAL);
     uint32_t nt = toks[0];
-    // What a pass run again starts from (a piece read past its end, below): the givings back, the
-    // pieces, the pragmas' rows.
-    uint32_t keep_gives = AT(const uint32_t, CTL)[16], keep_pieces = AT(const uint32_t, TRN)[13];
-    uint32_t keep_rows = AT(const uint32_t, TRN)[0], keep_once = AT(const uint32_t, TRN)[1];
-    ONE(x) { AT(uint32_t, TRN)[15] = 0u; AT(uint32_t, CTL)[20] = 0u; }
-    BARRIER();
-    // The pieces (`lp_marks`, `lp_starts`): the depth, each token's marks, the starts.
+    uint32_t tc = AT(const uint32_t, WORDS)[1], qcap = 8u * W(LPQ_TOP) + 64u + tc / 3u;
+    // The memo's table at the heap's front: a power of two of slots, four words each, at most half a word a room token.
+    uint32_t mslots = 16u;
+    while (mslots * 2u * 4u <= tc && mslots < (1u << 24)) mslots *= 2u;
+    ONE(x) {
+        PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
+        c_[RX_MSLOTS] = mslots; c_[RX_FRONT] = 4u * mslots; c_[RX_PIECES] = 0u; c_[0] = 0u;
+        // Record ids are heap words below 2^30 (`QI_KIND`'s bits above them).
+        if (RX_HEAP * tc >= (1u << 30) - 64u) px_refuse(c_, X_ROOM);
+        for (uint32_t i = 5u; i < RXQ_CTL; i++) AT(uint32_t, LPQ)[i] = 0u;
+    }
+    RX_QUEUE_RESET();
+    EACH(i, 4u * mslots) AT(uint32_t, TOKENS)[i] = 0u;
+    // The top text's parentheses paired and its prefix hashes (`rx_top_terms`; t51 §3): its depth by a scan, its
+    // pairs by a sort by depth and place.
     {
         PX_UA(DR);
-        EACH(s, nt) lp_parens(xu, AT(uint32_t, THEADS), AT(uint32_t, DELTA), s);
+        EACH(s, nt) rx_top_terms(xu, AT(uint32_t, DELTA), AT(uint32_t, XAT), AT(uint32_t, XPOS), s);
     }
     BARRIER();
-    SEG(UKL_SEG_ADD, nt, DELTA, THEADS, DEPTH);
-    EACH(s, nt) lp_marks(AT(const uint32_t, THEADS), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), toks, AT(uint32_t, OFLAG), s);
-    BARRIER();
-    EACH(s, nt) lp_starts(AT(const uint32_t, OFLAG), toks, AT(uint32_t, XFLAG), s);
-    BARRIER();
-    // One pass: each piece writes what it makes (`lp_flush`). A piece that read past its end (rare)
-    // took the pieces it read (`lp_swallow`), and those wrote as well: the pass runs again without
-    // them, from the stores' fronts.
-    for (uint32_t pass = 0u; pass < 2u; pass++) {
-        if (pass == 1u) {
-            if (AT(const uint32_t, TRN)[15] == 0u) break;
-            SCAN(nt, OFLAG, XAT, XTOTAL);
-            EACH(s, nt) lp_overruns(AT(const uint32_t, OFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
-            BARRIER();
-            ONE(x) lp_swallow(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, DELTA), AT(uint32_t, XFLAG), AT(uint32_t, V), AT(uint32_t, OPV));
-            // The tokens' store from its front (its first use is the room's: `CTL` 8), the scratch's, the
-            // `__COUNTER__` uses', the output's chunks, the counts.
-            ONE(x) {
-                PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL); PP_GLOBAL uint32_t* n_ = AT(uint32_t, TRN);
-                c_[8] = ukl_max(c_[8], c_[0]); c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7]; AT(uint32_t, CNT)[1] = 0u;
-                c_[16] = keep_gives; c_[20] = 0u; n_[13] = keep_pieces; n_[0] = keep_rows; n_[1] = keep_once; n_[15] = 0u;
-            }
-            BARRIER();
-        }
-        // The unit's queue emptied (`LPQ`: its control and slots), then its pieces pushed (`lp_queue`), the items
-        // the SIMD groups take (decision 0613 §4). Its last loop's helpers gone first (`PG_HELP`): one still
-        // polling would take this loop's items as that loop's.
-        ONE(x) {
-            uint32_t t = 0u;
-            for (; t < PG_HELP_WAIT && ukl_atomic_poll(&g.ctl[PG_HELP]) != 0u; t++) ukl_poll_yield();
-            if (t == PG_HELP_WAIT) px_refuse(AT(uint32_t, CTL), X_ROOM);
-            for (uint32_t i = 0u; i < LPQ_CTL; i++) AT(uint32_t, LPQ)[i] = 0u;
-        }
-        // Its slots (`lpq_cap`: `WORDS[1]` the tokens' room).
-        EACH(i, 3u * W(LPQ_TOP) + 64u + AT(const uint32_t, WORDS)[1] / 3u) AT(uint32_t, LPQ)[LPQ_CTL + i] = 0u;
-        // The memo's table (`lp_memo_*`): the tokens' store's first pairs, free (the store is empty here: its
-        // front is 0), its definitions' hot and own bits (`LP_MEMO_HOT` each), the requests' table (`lp_rq_table`,
-        // `lp_rq_size`); the front past them.
-        uint32_t mt = lp_memo_size(nt, AT(const uint32_t, WORDS)[1]);
-        EACH(i, mt) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * i] = 0u;
-        EACH(i, mt != 0u ? 2u * LP_MEMO_HOT + lp_rq_size(mt) : 0u) AT(uint32_t, TOKENS)[LP_MEMO_STRIDE * mt + i] = 0u;
-        ONE(x) { AT(uint32_t, TRN)[30] = mt; AT(uint32_t, CTL)[0] = mt != 0u ? lp_rq_table(mt) + lp_rq_size(mt) : 0u; }
-        BARRIER();
-        {
-            PX_UA(DR);
-            EACH(s, nt) lp_queue(xa, AT(const uint32_t, XFLAG), toks, s);
-        }
-        BARRIER();
-        // Open to helpers: groups with no team left take its items too (`lp_help`).
-        ONE(x) { ukl_fence_device(); ukl_atomic_store(&g.ctl[PG_LOOP], is_if ? 2u : 1u); }
-        {
-            PX_UA(DR);
-            // A piece a SIMD group at a time, claimed from the list (`lp_run`): its lanes look ahead for it
-            // (`lp_piece`). Each thread once: its SIMD group claims until the list is empty.
-            EACH(s, g.groups * g.lsz) LP_RUN_CALL(LP_IDLE_POLLS);
-        }
-        BARRIER();
-        ONE(x) ukl_atomic_store(&g.ctl[PG_LOOP], 0u);
-        // Items left (an idle bound reached) or the queue past its room: refused.
-        ONE(x) if (AT(const uint32_t, LPQ)[2] != 0u || AT(const uint32_t, LPQ)[3] != 0u) px_refuse(AT(uint32_t, CTL), X_ROOM);
-    }
-    // The roll-up (decision 0613 §6): each piece's holes' tokens and leaves in its counts (`lp_roll_count`).
+    SCAN(nt, DELTA, THEADS, OPTOTAL);
+    SCAN(nt, XAT, LOB, XTOTAL);
+    SCAN(nt, XPOS, PLAST, VTOTAL);
     {
         PX_UA(DR);
-        EACH(s, nt) lp_roll_count(xa, toks, AT(const uint32_t, XFLAG), AT(uint32_t, V), AT(uint32_t, OPV), s);
+        EACH(s, nt) rx_top_keys(xu, AT(const uint32_t, THEADS), AT(uint64_t, OKEYS), AT(uint32_t, OVA), AT(uint32_t, DEPTH), s);
     }
     BARRIER();
-    // The pieces' joins (`lp_join`): their ends and join words, in the stores the marks no longer need.
-    EACH(s, nt) lp_join(toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, OPV), s);
+    SORT(nt, 64u, OKEYS, OVA, OKB, OVB, OHIST);
+    {
+        PX_UA(DR);
+        EACH(i, nt) rx_top_pairs(xu, AT(const uint64_t, OKEYS), AT(const uint32_t, OVA), AT(uint32_t, DEPTH), nt, i);
+    }
+    BARRIER();
+    // Each run a top request (`rx_top`), pushed.
+    {
+        PX_UA(DR);
+        RX_IN(in);
+        EACH(s, nt) rx_top(xu, xa, in, toks, s);
+    }
+    BARRIER();
+    RX_WORK();
+    // The tops' lengths and rows, their places and first rows by scans.
+    {
+        PX_UA(DR);
+        RX_IN(in);
+        EACH(s, nt) rx_roll_count(xa, in, toks, AT(uint32_t, V), AT(uint32_t, OPV), s);
+    }
     BARRIER();
     SCAN(nt, V, OBASE, VTOTAL);
     SCAN(nt, OPV, OPBASE, OPTOTAL);
-    // The output past its room (its pieces, or the chunks they took): refused, the next run sized
-    // from them (`CTL` 14).
-    uint32_t chunks = AT(const uint32_t, CTL)[20];
     ONE(x) {
         PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
-        uint32_t need = ukl_max(AT(const uint32_t, OPTOTAL)[0], chunks * LP_OCHUNK);
-        c_[14] = ukl_max(c_[14], need);
-        if (need > W(OUT_CAP)) px_refuse(c_, X_ROOM);
+        c_[26] = AT(const uint32_t, OPTOTAL)[0];
+        if (c_[26] > W(XROWS_CAP)) px_refuse(c_, X_ROOM);
     }
-    // The output's order and places (`lp_roll_place`), the joins' lengths (`lp_extend`), then each top
-    // token's place (`lp_obase`: `lp_roll_place` reads its piece's first's, the scan's).
+    BARRIER();
+    // The occurrences, top down, and their rows.
+    RX_QUEUE_RESET();
     {
         PX_UA(DR);
-        EACH(s, nt) lp_roll_place(xa, toks, AT(const uint32_t, XFLAG), AT(const uint32_t, THEADS), AT(const uint32_t, OBASE), AT(const uint32_t, OPBASE), s);
-        // The expansions' rows (decision 0613 §6).
-        EACH(s, nt) lp_roll_rows(xu, xa, toks, AT(const uint32_t, XFLAG), AT(uint32_t, XROWS), W(XROWS_CAP), s);
+        RX_IN(in);
+        EACH(s, nt) rx_root(xa, in, toks, AT(const uint32_t, OPBASE), s);
     }
-    EACH(s, nt) lp_extend(AT(uint32_t, OUT), W(OUT_CAP), toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(const uint32_t, THEADS), AT(const uint32_t, OPV), AT(const uint32_t, PLAST), s);
     BARRIER();
-    EACH(s, nt) lp_obase(toks, AT(const uint32_t, LOB), AT(uint32_t, OBASE), s);
+    RX_WORK();
+    {
+        PX_UA(DR);
+        RX_IN(in);
+        EACH(r, ukl_min(AT(const uint32_t, CTL)[26], W(XROWS_CAP))) rx_row(xu, xa, in, r);
+    }
+    BARRIER();
+    // The pieces, each where it goes.
+    RX_QUEUE_RESET();
+    {
+        PX_UA(DR);
+        RX_IN(in);
+        EACH(s, nt) rx_root_emit(xa, in, toks, AT(const uint32_t, OBASE), s);
+    }
+    BARRIER();
+    RX_WORK();
+    // The output past its room: refused, the next run sized from it (`CTL` 14); the heap's use as the tokens'
+    // rows (`CTL` 0: `Exp::room`).
+    uint32_t np = ukl_min(AT(const uint32_t, CTL)[RX_PIECES], W(OUT_CAP));
+    ONE(x) {
+        PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
+        c_[14] = ukl_max(c_[14], c_[RX_PIECES]);
+        if (c_[RX_PIECES] > W(OUT_CAP)) px_refuse(c_, X_ROOM);
+        c_[0] = (c_[RX_FRONT] + RX_HEAP - 1u) / RX_HEAP;
+        AT(uint32_t, OPTOTAL)[0] = np;
+    }
+    // Their order: sorted by their places (the output's sixth column).
+    EACH(i, np) {
+        AT(uint64_t, OKEYS)[i] = (uint64_t)AT(const uint32_t, OUT)[3u * W(OUT_CAP) + i];
+        AT(uint32_t, OVA)[i] = i;
+    }
+    BARRIER();
+    SORT(np, 32u, OKEYS, OVA, OKB, OVB, OHIST);
+    EACH(i, np) AT(uint32_t, OUT)[5u * W(OUT_CAP) + i] = AT(const uint32_t, OVA)[i];
     BARRIER();
     *phasep = phase;
     return true;
 }
 #undef PX_QUIT
 #define PX_QUIT return
-#define LP_LOOP_CALL(is_if) if (!lp_loop(arena, data, lay, tg, g, &phase, stop, (is_if) __UKL_ARGS)) return
+#define RX_LOOP_CALL(is_if) if (!rx_loop(arena, data, lay, tg, g, &phase, stop, (is_if) __UKL_ARGS)) return
 
 // One unit's setup over the arena laid out as `lay`, by the grid `g`: the whole dispatch's groups
 // (`pp_setup`), or one group, the unit's team (`pp_teams`, decision 0588 §6), whose barriers are its
@@ -588,7 +604,7 @@ UKL_ONCE void pp_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
                                          AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(uint32_t, IF_NODES), AT(uint32_t, IF_OPS), AT(uint32_t, LOOKUPS), AT(uint32_t, TROWS), AT(uint32_t, P1_FLAGS), AT(uint32_t, VBAD), s);
             }
             BARRIER();
-            LP_LOOP_CALL(true);
+            RX_LOOP_CALL(true);
             {
                 IF_UX(u);
                 PX_COUNTERS(u, 1u);
@@ -702,7 +718,7 @@ UKL_ONCE void pp_unit(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         ONE(x) { PP_GLOBAL uint32_t* n_ = AT(uint32_t, TRN); n_[0] = 0u; n_[1] = 0u; n_[4] = 0u; n_[5] = 0u; n_[8] = 0u; n_[9] = AT(const uint32_t, CTL)[2]; n_[10] += 1u; n_[13] = 0u; }
         uint32_t nt = N(GTOTAL);
         // The loop (decision 0588): a piece a thread, written where it is made, then placed.
-        LP_LOOP_CALL(false);
+        RX_LOOP_CALL(false);
         {
             TEXT_UX(u);
             PX_COUNTERS(u, 0u);
@@ -781,7 +797,7 @@ DEFINE_KERNEL2(pp, pp_teams,
     // waiting (`PG_LOOP`), from a unit of its own turn on, so the helpers spread. It registers (`PG_HELP`) before it
     // looks at the loop again, so a loop closed since is not read; it ends where every unit is done, or past its
     // bound of looks that found nothing.
-    for (uint32_t look = 0u, miss = 0u; miss < LP_IDLE_POLLS; look++) {
+    for (uint32_t look = 0u, miss = 0u; miss < RX_IDLE_POLLS; look++) {
         ukl_tg_barrier();
         if (lid == 0u) {
             uint32_t pick = 0xffffffffu, kind = 0u;
@@ -811,7 +827,7 @@ DEFINE_KERNEL2(pp, pp_teams,
         ROBUFFER(uint32_t) lay = (ROBUFFER(uint32_t))(arena + e[0]);
         UklGrid g;
         g.ctl = IN(uint32_t, GRID); g.groups = 1u; g.group = 0u; g.lid = lid; g.lsz = lsz;
-        lp_help(arena, data, lay, tg, g, kind == 2u __UKL_ARGS);
+        rx_help(arena, data, lay, tg, g, kind == 2u __UKL_ARGS);
         ukl_tg_barrier();
         if (lid == 0u) { ukl_fence_device(); ukl_atomic_sub(&g.ctl[PG_HELP], 1u); }
     }

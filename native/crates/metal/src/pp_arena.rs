@@ -186,7 +186,7 @@ pub fn source() -> &'static str {
             include_str!("pp_expand.uglykl"),
             include_str!("pp_p1.uglykl"),
             include_str!("pp_if.uglykl"),
-            include_str!("pp_loop.uglykl"),
+            include_str!("pp_req.uglykl"),
             include_str!("pp_grid.uglykl"),
             include_str!("pp_probes.uglykl")
         )
@@ -456,6 +456,7 @@ pub const SLOTS: &[&str] = &[
     "THEADS", "DELTA", "DEPTH", "STATE", "OFLAG", "CTL", "XFLAG", "XAT", "XTOTAL", "XPOS", "V", "OBASE", "LOB", "PLAST", "VTOTAL", "OPV", "OPBASE",
     "OPTOTAL", "OUT", "SC_DEPTH", "SC_CLOSE", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CKEYS", "SC_KB", "SC_VA", "SC_VB", "SC_HIST",
     "SC_CAP", "TOKENS", "WORDS", "SCRATCH", "OUT_CAP", "LPRUN", "LPQ", "LPQ_TOP", "XROWS", "XROWS_CAP",
+    "OKEYS", "OKB", "OVA", "OVB", "OHIST",
 ];
 
 fn slot(name: &str) -> usize {
