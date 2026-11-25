@@ -10,8 +10,12 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { readSessionLedger, RerailRuntime } from "../../../src/runtime/runtime.js";
+import { withExperiments } from "../../support/environment/experiments.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
+
+// The cases read what an open restored through the session's conversation rules, which `manageRules` lists.
+withExperiments("CONVERSATION_RULES");
 
 const roots: string[] = [];
 afterEach(async () => {
