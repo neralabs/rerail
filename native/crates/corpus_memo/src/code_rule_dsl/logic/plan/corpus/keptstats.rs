@@ -1064,6 +1064,9 @@ pub mod tests {
 /// count of each value in it. So counts of disjoint documents add (each chunk's, of the documents it claimed; a kept
 /// count's unchanged documents'; the documents walked in the stats phase), and a document's are dropped whole (an
 /// edit's changed documents). Kept as they are (`encode`): a derived fact, the counts, not the rows they were read of.
+/// Written as the maps hold them, with no sort (the host never sorts): the maps' hasher has no seed and the counts
+/// are added in the same order on every run (the chunks' in the order they are filed, each in its walk's), so the
+/// words are the same on every run too.
 /// Exact: each value's count, and its count in each document as `syntax::measured` reads it (the first column's high
 /// half, the node's document where the first column is the node, else one document for every row).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -1184,19 +1187,17 @@ impl SemijoinCounts {
     }
 
     /// As words: the width, the node's column and the documents' number, each document (its key, rows, `measured`'s
-    /// document and every row), then each column's counts' number and each count (value, document, count).
+    /// document and every row), then each column's counts' number and each count (value, document, count), as the
+    /// maps hold them.
     pub fn encode(&self, out: &mut Vec<i64>) {
+        out.reserve(3 + 4 * self.docs.len() + self.by_doc.iter().map(|by| 1 + 3 * by.len()).sum::<usize>());
         out.extend([self.width as i64, self.node as i64, self.docs.len() as i64]);
-        let mut docs: Vec<(&i64, &[i64; 3])> = self.docs.iter().collect();
-        docs.sort_unstable();
-        for (&d, e) in docs {
+        for (&d, e) in &self.docs {
             out.extend([d, e[0], e[1], e[2]]);
         }
         for by in &self.by_doc {
             out.push(by.len() as i64);
-            let mut counts: Vec<(&(i64, i64), &i64)> = by.iter().collect();
-            counts.sort_unstable();
-            for (&(v, d), &n) in counts {
+            for (&(v, d), &n) in by {
                 out.extend([v, d, n]);
             }
         }

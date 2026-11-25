@@ -38,6 +38,14 @@ for one relation).
    same documents and plan takes the kept statistics as they are. An edit takes the kept counts of the documents it did
    not change. `SemijoinRows`, `ChunkHeld`, the run-wide set of held nodes and the exports' digest that keyed them are
    gone.
+
+   *Amended 2026-11-25:* the counts are kept as their maps hold them, with no sort (the host never sorts).
+   `SemijoinCounts::encode` sorted every (value, document) count first, on the main thread at the end of the cross
+   part: on PostHog about 1.1 s of the main thread, 840 of its 1,091 samples in the sort. The maps' hasher has no seed
+   and the chunks' counts are added in the order the chunks are filed, so the words are the same on every run without
+   it. On PostHog, in turns on the M3 (after the hub merge 41654b2e52), the cross part's main thread went from
+   5.19–5.68 s to 3.80–4.38 s, and the run from 2,415–2,416 G to 2,407–2,409 G instructions. The peak stayed within
+   its noise (7.35–7.44 GB, then 7.45–7.50 GB).
 5. **A view's keyed walk probes its keys.** `for_rows_keyed` on a view finds each key's row by its node and reads the
    rows in row order, where it read every row of each document a key named. A token's view (`op`), whose rows are not
    found by their node, is still walked.
