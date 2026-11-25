@@ -1,4 +1,4 @@
-# 0668. A regex's capture group on the device is a Pike VM over its NFA
+# 0688. A regex's capture group on the device is a Pike VM over its NFA
 
 Status: done (2026-11-24). `rx_group` and the component's other terms run on the device; the component itself is
 refused at run time for its gates and requests (below).

@@ -184,9 +184,8 @@ map made with no room (`Vector::new`, a map's `Default`) now takes `rows::run_ro
 chunk's blocks. Boot installs it (`rows::install_run_room`), as do the test binaries that stand in for boot
 (`logic`'s, `device_metal`'s); a crate's own tests below them take the heap's.
 
-**Changed at roll-up 124 (2026-11-24).** Decision 0342's amendment, made on another branch, makes the calling
-thread's stack the default room (`scratch::StackRoom`), large regions a thread's free-listed blocks and an owner's
-family its own room (`maps::within`), and rules out `LifeRoom(Life::Run)` for what outlives a chunk. The user chose it
-for the hub, to be measured against this run block on the same 15-file edit sequence. Boot and the two test binaries
-install `rerail_blocks::maps::install`; `rows::install_run_room` is gone. `rows::run_room` stays the room a relation's
-life places.
+Superseded as the default (merge of 2026-11-25): decision 0342's amendment of 2026-11-24 makes the calling thread's
+stack the default room, with an owner's room within its making (`maps::within`, `maps::long`), and rejects
+`LifeRoom(Life::Run)` for it (0342, "The run's own rooms", item 4: a structure kept past a chunk held the chunk's
+block, and its one mutex a life is every thread's). Boot and the test binaries install the blocks crate's
+(`rerail_blocks::maps::install`); `rows::run_room` stays a room a caller names.

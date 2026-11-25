@@ -1264,6 +1264,7 @@ mod tests {
         assert!(unsafe { std::slice::from_raw_parts(b.ptr::<u8>(at), 1 << 20) }.iter().all(|&x| x == 0));
     }
 
+    /// A lease handed to a command buffer goes back to the pool when it completes.
     #[test]
     #[cfg(target_os = "macos")]
     fn a_lease_after_a_command_returns_when_it_completes() {

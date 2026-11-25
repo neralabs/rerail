@@ -303,8 +303,103 @@ does not move. Three trials found the same, each reverted:
 - the component's open (`Fx::open`) in the run's room as well (the replay: about 2.4 times live): the same peak
   resident, and the edit's CPU about 1.5 times, every input it loads a zeroed region under the room's mutex.
 
-So the stacks' dead bytes are not what raises the edit's peak. At the run's exit, the pre-merge engine's anonymous
-blocks (its anonymous room's, tagged) hold about as much as this engine's tagged blocks and its untagged stacks and
-free-listed blocks together, give or take a tenth of the footprint. The peak's excess lies in the census's blind spot:
-the regions of `scratch::LARGE` and more, which go to the threads' free-listed blocks and are not counted. Next: count
-them in the census (their sizes, sites and lives), and find what the peak holds there.
+That conclusion was wrong: those trials measured the peak resident set (`time -l`, clean file pages in it), each
+lever alone, and the census then counted only the stacks. Measured again at the footprint's peak (the process stopped
+there, `vmmap`), and with the census counting every room, the next section has the cause.
+
+## Amended (2026-11-24, user): one long-lived room a thread, beside its stack
+
+### Where the edit's memory went
+
+The edit's physical footprint at its peak (the process polled every 2 ms and stopped there): jemalloc's heap holds the
+same in both engines, and the whole excess is in the run's rooms. With every structure that names no room on the heap
+instead (an experiment build), the edit's peak is the pre-merge engine's. Each part on the heap alone, the rest as it
+was:
+
+| Part on the heap | Peak footprint, against all on the heap |
+|---|---|
+| None (the three owner rooms) | 1.22 |
+| The threads' stacks (regions under `scratch::LARGE`) | 1.09 |
+| The owners' rooms | 1.14 |
+| The threads' large rooms | 1.20 |
+
+The stacks' cost is pinning: at the peak they held about ten times what was live in them, the dead regions under a
+few long-lived small ones. The census names them: the component's relations, input views and indexes
+(`setfix::open_spec`), the run's priced plans' sizes (`live_sizes_at`) and observations (`Obs::rule_mut`), the issue
+board's and the components' sections. With those in owners' rooms, the stacks cost half as much, but the owners'
+rooms more: each owner opened blocks of its own, a freed chunk under `LARGE_RESIDENT` kept its pages, and a table that
+grew by doubling left each old one's pages dirty.
+
+### Decided
+
+1. **Two places a thread: its stack, and its long-lived room** (`maps::long`, `long::LongRoom`). The stack stays the
+   default room of a structure that names none. What is known to outlive the work it is made in is made within the
+   thread's long room. Nothing else changes room.
+2. **The long room is one a thread, shared by every long-lived family made on it**, not one an owner: the families
+   share its pages, and a chunk one frees the next takes.
+3. **Small regions in runs of one size class** (`long::CLASSES`, four classes a doubling, as jemalloc's, so a region
+   wastes an eighth on average, not a quarter): a run is 64 KB of slots of its class, a freed slot on its run's list,
+   a run whose slots are all free gives its pages back and is taken by any class next. Regions of `scratch::LARGE`
+   and more go to the thread's large room, as on the stack.
+4. **Any thread frees a region of it** (a structure made on a strand is freed by its parent): the room's one mutex,
+   uncontended but for those.
+5. **What is long-lived is the census's to say**: a site whose regions live while many regions are taken and freed
+   above them on its stack. Those of the edit's census are made in the long room: the component's open, the memo's
+   kept values (`derived::placed`), the native engine's statistics (`Fx::stats`), the planner's observations, the
+   priced plans' sizes and the store's plans read, a chunk's syntax values' keys, and the run's decoded outputs. A
+   family no one marked is found by the next census as a pinner.
+6. **The owners' rooms go** (`FreeRoom::owner`, `OwnerRoom`, `Run::room`, `Memo::room`, `Values::room`).
+
+Tests: a long room's region lies in its block and reads zero; a freed slot is taken again by its class; a run whose
+slots are all freed gives its pages back and is taken by another class; a region freed on another thread goes back to
+its room; what the memo keeps is made in the long room. Then the census and the footprint at the peak against the
+pre-merge engine.
+
+The issue board's sections were not marked: once the rest were, the census found a larger pinner, the run's decoded
+outputs (`decoded_outputs`, made `long`), and the board's dead bytes are no longer the stacks' largest. The stack
+keeps 1 MB of pages above its top (`scratch::KEEP`), not 16 MB: with nothing pinned it pops, and 16 MB a thread held
+each thread's high-water mark.
+
+### Measured (2026-11-24, M3, 15 files of corpus0, one-file edits, against the pre-merge engine)
+
+| Engine | Instructions | CPU | Peak footprint | Peak resident (`time -l`) |
+|---|---|---|---|---|
+| The owners' rooms (`060e5b9a76`) | 1.09 | 1.05 | 1.25 | 1.24 |
+| One long-lived room a thread | 1.09 | 1.06 | 1.11 | 1.16 |
+
+At the footprint's peak the census has the stacks holding 9.6 MB for 1.8 MB live, from 31.5 MB for 4.7 MB; the
+long rooms 20.8 MB for 14.8 MB live. With the stacks' regions on the heap instead (the experiment build), the peak
+falls by about another 2%, and with the long rooms' on the heap it rises: the long room is denser than jemalloc for
+its families.
+
+What remains is not the rooms: with every structure on the heap, the edit's peak is 1.06 times the pre-merge
+engine's, its jemalloc heap at the peak a sixth larger. The structures this engine keeps hold more than the
+pre-merge engine's did, wherever they lie; that is the next question.
+
+## Amended (2026-11-24, user): the rooms' own costs in the edit
+
+A time profile of the edit against the pre-merge engine had three costs of the rooms themselves, none of them in the
+pre-merge engine's profile:
+
+1. **A long room's emptied run gave its pages back at once** (`mem::give_back`), and the next run taken faulted them in
+   again (`reuse_pages`): a region made and freed in a loop did both each time, 56 `madvise` calls against 1. A room
+   now keeps the pages of up to 16 emptied runs (`long::RESIDENT`, 1 MB) and takes those first. Past that, the
+   pages go back as before.
+2. **Every thread reserved 64 GiB twice**, its stack and its long room. A reservation that large costs the kernel's
+   map about 60 times a 1 GiB one, and freeing it 6 times. With the threads making theirs at once, that was about a
+   fortieth of the edit's CPU. Both are 4 GiB now (`scratch::ANON`, `long::RESERVE`): a stack's bytes under its top
+   stay resident, so a thread that filled 4 GiB would hold that much memory anyway.
+3. **A vector's every growth read the registry's lock** (`default_room`, a lock every thread shares) to find the run's
+   room. The provider is registered once, at load, so a thread keeps it once found.
+
+Test: `emptied_runs_keep_their_pages_up_to_resident`.
+
+### Measured (2026-11-24, M3, 15 files of corpus0, one-file edits, against the pre-merge engine)
+
+| Engine | Instructions | CPU | Wall |
+|---|---|---|---|
+| One long-lived room a thread (`84e7b917c1`) | 1.09 | 1.06 | 0.98 |
+| These three, and phase 0's batch (0639) | 1.07 | 1.01 | 0.95 |
+
+The edit's CPU is now the pre-merge engine's. The instructions still left are spread out: the merged engine's own
+work (the background write-back's packing, the strands' joins), with no single cost of the rooms among them.

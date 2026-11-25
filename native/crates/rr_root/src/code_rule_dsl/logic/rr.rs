@@ -722,8 +722,11 @@ fn declared_in(statements: &Statements) -> impl Iterator<Item = (String, bool)> 
 /// file declaring each and whether it is extensible.
 fn closed_heads(file: &str, statements: &Statements, open: &std::collections::HashMap<String, (&Path, bool)>) -> Result<(), Error> {
     let own: BTreeSet<String> = declared_in(statements).map(|(n, _)| n).collect();
+    // A relation `core.rerail` declares that one library file derives (`DERIVED_BY`, decision 0483:
+    // `python/references.rerail`'s `reference_edge`) is that file's to derive, as `check_names` allows it.
+    let derives = |h: &str| DERIVED_BY.iter().any(|(rel, by)| *rel == h && library().join(by).canonical().is_ok_and(|by| by == Path::new(file)));
     for s in statements {
-        for h in s.heads().into_iter().filter(|h| !own.contains(*h)) {
+        for h in s.heads().into_iter().filter(|h| !own.contains(*h) && !derives(h)) {
             if let Some((home, false)) = open.get(h) {
                 return Err(Error::Syntax(format!(
                     "{file}:{}: `{h}` is declared in {}, and not `extensible`: a file that includes it adds no rules or facts to it (decision 0263)",
@@ -1082,6 +1085,26 @@ pub fn planned_modules_held(keys: &[&str]) -> Vec<bool> {
     held
 }
 
+/// The statements of a module's files (`files`, paths one a line), their includes left out, each file checked to add to
+/// no relation of the files its scope reaches (`reached`, one a line) but their `extensible` ones (decision 0263);
+/// files that include each other are one module, and write each other's relations. `lower_planned_module`'s.
+pub fn module_statements(files: &str, reached: &str) -> Result<Statements, Error> {
+    let mut open = std::collections::HashMap::new();
+    let reached: Vec<(PathBuf, Statements)> = reached.lines().filter(|f| !f.is_empty()).map(|f| Ok((PathBuf::from(f), read(Path::new(f))?.0))).collect::<Result<_, Error>>()?;
+    for (path, statements) in &reached {
+        for (rel, ext) in declared_in(statements) {
+            open.entry(rel).or_insert((path.as_path(), ext));
+        }
+    }
+    let mut own = Statements::default();
+    for f in files.lines() {
+        let statements = read(Path::new(f))?.0;
+        closed_heads(f, &statements, &open)?;
+        own.extend(statements.into_iter().filter(|s| !is_include(s)));
+    }
+    Ok(own)
+}
+
 /// Phase 0's answer to a module's lowering (`p0_lower_req`): the module of plan key `key`, whose files are `files`
 /// (paths, one a line) and whose scope's keys are `scope` (comma-separated), lowered against its scope's images and
 /// kept under its key; or found held by the process or the store. Its image's digest.
@@ -1097,21 +1120,7 @@ pub fn lower_planned_module(key: &str, files: &str, scope: &str, reached: &str) 
     let k = planned_key(key).ok_or_else(|| Error::Syntax(format!("{key}: no module key")))?;
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a module lowered for phase 0's plan".to_owned());
     let scope: Vec<lower::Module> = scope.split(',').filter(|s| !s.is_empty()).map(|s| held_or_ahead(s).map(|(m, _)| m).ok_or_else(|| Error::Syntax(format!("module {key}: its scope's module {s} is not lowered")))).collect::<Result<_, _>>()?;
-    // Each file adds to no relation of its scope's files but their `extensible` ones (decision 0263); files that include
-    // each other are one module, and write each other's relations.
-    let mut open = std::collections::HashMap::new();
-    let reached: Vec<(PathBuf, Statements)> = reached.lines().filter(|f| !f.is_empty()).map(|f| Ok((PathBuf::from(f), read(Path::new(f))?.0))).collect::<Result<_, Error>>()?;
-    for (path, statements) in &reached {
-        for (rel, ext) in declared_in(statements) {
-            open.entry(rel).or_insert((path.as_path(), ext));
-        }
-    }
-    let mut own = Statements::default();
-    for f in files.lines() {
-        let statements = read(Path::new(f))?.0;
-        closed_heads(f, &statements, &open)?;
-        own.extend(statements.into_iter().filter(|s| !is_include(s)));
-    }
+    let own = module_statements(files, reached)?;
     let refs: Vec<&lower::Module> = scope.iter().collect();
     let m = lower::lower_module_in_written(own, &refs).map_err(|e| match e {
         Error::Syntax(m) => Error::Syntax(format!("{}: {m}", files.lines().next().unwrap_or_default())),

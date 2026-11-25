@@ -686,6 +686,9 @@ pub mod heap {
             if on() {
                 alloc(p as usize, layout.size());
             }
+            if rerail_vector::probe::heap_on() && !p.is_null() {
+                rerail_vector::probe::heap_alloc(p as usize, layout.size());
+            }
             p
         }
         #[inline]
@@ -694,12 +697,18 @@ pub mod heap {
             if on() {
                 alloc(p as usize, layout.size());
             }
+            if rerail_vector::probe::heap_on() && !p.is_null() {
+                rerail_vector::probe::heap_alloc(p as usize, layout.size());
+            }
             p
         }
         #[inline]
         unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
             if on() {
                 free(ptr as usize);
+            }
+            if rerail_vector::probe::heap_on() {
+                rerail_vector::probe::heap_free(ptr as usize);
             }
             unsafe { tikv_jemallocator::Jemalloc.dealloc(ptr, layout) }
         }
@@ -709,6 +718,9 @@ pub mod heap {
             if on() && !q.is_null() {
                 free(ptr as usize);
                 alloc(q as usize, new_size);
+            }
+            if rerail_vector::probe::heap_on() && !q.is_null() {
+                rerail_vector::probe::heap_realloc(ptr as usize, q as usize, new_size);
             }
             q
         }

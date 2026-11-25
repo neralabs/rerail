@@ -5267,7 +5267,7 @@ fn run_observed_within(
         /// which holds them: absorbed into the run's totals there, not measured on its thread.
         export_totals: Totals,
         /// The base relations the cross part reads, counted over its own files' rows (`chunk_base_count`,
-        /// `chunk_held_rows`; `None`: not countable here), and how many own files it counted.
+        /// `chunk_held_counts`; `None`: not countable here), and how many own files it counted.
         base_counts: Option<ChunkCounted>,
         /// Its documents, its guests' with them, for the corpus batch the cross part reads its base relations off
         /// (decision 0458); none where the cross part reads none.

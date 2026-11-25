@@ -2874,7 +2874,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     let zc = cache.as_ref().map_or(std::ptr::null(), |c| c.at().cast_const());
                     // SAFETY: the reader's view, the tape's bytes, the entry in its block, which the projection holds.
                     let rv = unsafe { &*v };
-                    let doc = Doc { entry: unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, tape: Tape::new(tape, rv, zc), lines: &words, source: source.as_bytes() };
+                    let doc = Doc::new(unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, Tape::new(tape, rv, zc), &words, source.as_bytes());
                     let rust: Vec<i64> = (0..n)
                         .flat_map(|l| {
                             let mut row: Vec<i64> = (0..5).map(|c| doc.node(l, c)).collect();
@@ -3522,16 +3522,16 @@ fn a_probe_by_a_node_and_another_document_makes_no_document() {
 #[test]
 fn a_relation_of_runs_reads_them_where_they_lie() {
     let cols = ["a", "b"];
-    let base = Relation::from_rows(&cols, &mut (0..10i64).map(|i| Vector::from([i, 100 + i]))).growable();
+    let base = Relation::from_rows(&cols, &mut (0..10i64).map(|i| [i, 100 + i].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>())).growable();
     let names: Vec<String> = cols.iter().map(|c| (*c).to_owned()).collect();
     let runs = Relation::of_runs(&names, &[(&base, 2..5), (&base, 7..9)]);
     let rows = |r: &Relation| -> Vec<(i64, i64)> { (0..Source::len(r)).map(|i| (Source::value(r, i, 0), Source::value(r, i, 1))).collect() };
     assert_eq!(rows(&runs), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108)], "the runs' rows, in order");
     assert!(runs.shares_rows(&base), "read in the base's part, not copied");
-    let grown = runs.grown(Relation::from_rows(&cols, &mut [Vector::from([50, 150]), Vector::from([51, 151])].into_iter()));
+    let grown = runs.grown(Relation::from_rows(&cols, &mut [[50, 150].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>(), [51, 151].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>()].into_iter()));
     assert_eq!(rows(&grown), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108), (50, 150), (51, 151)], "the rows grown after them follow");
     assert_eq!(rows(&base), (0..10).map(|i| (i, 100 + i)).collect::<Vec<_>>(), "the base is as it was");
-    let more = grown.grown(Relation::from_rows(&cols, &mut [Vector::from([52, 152])].into_iter()));
+    let more = grown.grown(Relation::from_rows(&cols, &mut [[52, 152].into_iter().collect::<crate::code_rule_dsl::facts::vtab::Row>()].into_iter()));
     assert_eq!(Source::len(&more), 8);
     assert_eq!(Source::value(&more, 7, 0), 52);
     assert_eq!(more.bound_rows(), Some(8), "a reader binding it whole reads every row");

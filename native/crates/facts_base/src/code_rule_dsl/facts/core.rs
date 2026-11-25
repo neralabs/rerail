@@ -948,8 +948,9 @@ impl<'a> FactsIn<'a> {
             deepest as u32
         })
     }
-    /// The node's children, in order.
-    pub fn children(&self, id: u32) -> Vector<u32> {
+    /// The node's children, in order: on the stack (a node's children are few; past 16, on the heap). A caller that
+    /// reads each once takes `each_child`.
+    pub fn children(&self, id: u32) -> rerail_blocks::frame::InlineVec<u32, 16> {
         on_tape!(self, |t| rerail_tape_format::tape::children(&t, id as usize).map(|c| c as u32).collect())
     }
     /// `id`'s children in order, each handed to `f`, read off the tape with no list made (a probe's).

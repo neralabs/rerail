@@ -4635,6 +4635,26 @@ fn walk_rr(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
+/// Decision 0263 against decision 0483: `python/references.rerail` derives `core.rerail`'s `reference_edge`
+/// (`DERIVED_BY`), so its module passes the check phase 0's lowering of a module makes against the files its scope
+/// reaches (`module_statements`, `lower_planned_module`'s). It was refused there, while the whole program's check
+/// (`check_names`) allowed it: a run of a program file reading the reference graph (`all`'s) failed before it began.
+/// Another file deriving it is still refused. (Ported from the hub's e292486a32.)
+#[test]
+fn a_module_derives_the_core_relation_its_file_is_named_for() {
+    let lib = super::library();
+    let path = |f: &str| lib.join(f).canonical().unwrap().to_string_lossy().into_owned();
+    let (references, core) = (path("python/references.rerail"), path("core.rerail"));
+    let checked = super::module_statements(&references, &core);
+    assert!(checked.is_ok(), "{:?}", checked.err());
+    let dir = tempfile::tempdir().unwrap();
+    let other = dir.path().join("other.rerail");
+    std::fs::write(&other, "reference_edge(a, a, \"x\") :- kind(a, \"call\").\n").unwrap();
+    let other = other.canonical().unwrap().to_string_lossy().into_owned();
+    let refused = super::module_statements(&other, &core).map(|_| ()).expect_err("another file derives no reference_edge");
+    assert!(refused.to_string().contains("`reference_edge` is declared in") && refused.to_string().contains("decision 0263"), "{refused}");
+}
+
 /// Decision 0263: a library's relations are closed. A program adds no rules or facts to a relation a library file it
 /// includes declares, unless the declaration says `extensible` (`cmp_same_ask`, a request of `python/compare.rerail`).
 #[test]

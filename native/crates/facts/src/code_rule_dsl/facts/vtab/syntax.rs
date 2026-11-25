@@ -425,18 +425,28 @@ impl LongTexts {
     /// (whose text `text` holds), a span, or a node of a document not in the batch. Only the nodes a rule binds are
     /// read and interned (decision 0108 §1).
     pub fn long_text(&self, n: i64) -> Option<String> {
+        self.long_text_ref(n).map(str::to_owned)
+    }
+
+    /// `long_text`, lent from the tape.
+    fn long_text_ref(&self, n: i64) -> Option<&str> {
         let (key, low) = ((n >> 32) as u32, n as u32);
         let p = &self.batch.docs[*self.docs.get(&key)?];
         let local = p.local_of(low)?;
         let core = p.ranks().select(Item::Node, local)?;
         let text = p.f().text(core);
-        (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
+        (text.len() > core_rr::TEXT_INLINE).then_some(text)
     }
 
     /// Node `n`'s exact source text at any length, or a comment span's (a comment no node is: `Extra`'s `node_text`
     /// rows); none for another span or a node of a document not in the batch. It answers `node_text`'s requests
     /// (decision 0174): only the nodes a rule asks for are read and interned.
     pub fn text_any(&self, n: i64) -> Option<String> {
+        self.text_any_ref(n).map(str::to_owned)
+    }
+
+    /// `text_any`, lent from the tape.
+    fn text_any_ref(&self, n: i64) -> Option<&str> {
         let (key, low) = ((n >> 32) as u32, n as u32);
         let p = &self.batch.docs[*self.docs.get(&key)?];
         let f = p.f();
@@ -452,14 +462,14 @@ impl LongTexts {
                 if p.local_of_node(id) == NONE {
                     j += 1;
                     if j == k {
-                        return Some(f.text(id).to_owned());
+                        return Some(f.text(id));
                     }
                 }
             }
             return None;
         }
         let core = p.ranks().select(Item::Node, p.local_of(low)?)?;
-        Some(f.text(core).to_owned())
+        Some(f.text(core))
     }
 
     /// Node `n`'s value as W reads it (`value(n, v)`, the plain reading), read off its document's tape: the
@@ -531,6 +541,13 @@ impl Source for LongTexts {
             _ => None,
         }
     }
+    fn node_read_ref(&self, name: &str, n: i64) -> Option<super::NodeRead<'_>> {
+        match name {
+            "rr_node_text" => self.long_text_ref(n).map(super::NodeRead::Text),
+            "rr_node_text_any" => self.text_any_ref(n).map(super::NodeRead::Text),
+            _ => self.node_read(name, n).map(super::NodeRead::Value),
+        }
+    }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<rerail_blocks::vector::Vector<usize>> {
         self.nodes.rows_of_documents(docs)
     }
@@ -591,7 +608,7 @@ impl Source for LongTexts {
 /// The batch's relation `name` as a source: `rr_long_text_node` with the batch (`LongTexts`), any other as rows.
 /// How a batch's relations are made of their rows: written into a block (`Relation::from_rows`), or staged
 /// (`Relation::staged`).
-pub(super) type Make = fn(&[&str], &mut dyn Iterator<Item = Vector<i64>>) -> Relation;
+pub(super) type Make = fn(&[&str], &mut dyn Iterator<Item = crate::code_rule_dsl::facts::vtab::Row>) -> Relation;
 
 fn as_source(name: &str, rows: Arc<dyn Source>, batch: &Arc<Batch>) -> Arc<dyn Source> {
     if name == LONG_TEXT_NODES { Arc::new(LongTexts::new(rows, batch)) } else { rows }
@@ -775,8 +792,38 @@ pub fn unparsed<'a>(f: FactsIn<'a>, d: &Document) -> &'a str {
 }
 
 /// A document's tape: its content key, hex (`tape_of`).
-pub fn tape_hex(digest: &[u8; 32]) -> String {
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+pub fn tape_hex(digest: &[u8; 32]) -> TapeHex {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = [0u8; 64];
+    for (i, b) in digest.iter().enumerate() {
+        out[2 * i] = HEX[(b >> 4) as usize];
+        out[2 * i + 1] = HEX[(b & 15) as usize];
+    }
+    TapeHex(out)
+}
+
+/// A tape's digest as text (`tape_hex`): its 64 hex digits, held inline.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TapeHex([u8; 64]);
+
+impl std::ops::Deref for TapeHex {
+    type Target = str;
+    fn deref(&self) -> &str {
+        // SAFETY: hex digits only (`tape_hex`), ASCII.
+        unsafe { std::str::from_utf8_unchecked(&self.0) }
+    }
+}
+
+impl std::fmt::Display for TapeHex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self)
+    }
+}
+
+impl std::fmt::Debug for TapeHex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&**self, f)
+    }
 }
 
 /// Where a guest's bytes stand in its host's source.
@@ -3390,57 +3437,57 @@ impl Extra {
     fn relations(self, atom: &dyn Fn(i64) -> i64, relation: Make) -> (Vec<(&'static str, Relation)>, Vec<(String, Relation)>) {
         let mut out = Vec::new();
         if self.source {
-            out.push(("source", relation(&["d", "sp"], &mut self.sources.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+            out.push(("source", relation(&["d", "sp"], &mut self.sources.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.src_line {
-            out.push(("src_line", relation(&["d", "l", "sp"], &mut self.src_lines.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+            out.push(("src_line", relation(&["d", "l", "sp"], &mut self.src_lines.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.line_count {
-            out.push(("line_count", relation(&["d", "k"], &mut self.line_counts.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+            out.push(("line_count", relation(&["d", "k"], &mut self.line_counts.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.line_rows() {
-            out.push(("line", relation(&["n", "l"], &mut self.lines.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+            out.push(("line", relation(&["n", "l"], &mut self.lines.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.end_line {
-            out.push(("end_line", relation(&["n", "l"], &mut self.end_lines.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+            out.push(("end_line", relation(&["n", "l"], &mut self.end_lines.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.col {
-            out.push(("col", relation(&["n", "c"], &mut self.cols.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+            out.push(("col", relation(&["n", "c"], &mut self.cols.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.node_text {
-            out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| rerail_blocks::vector![n, atom(s)]))));
+            out.push(("node_text", relation(&["n", "s"], &mut self.node_texts.iter().map(|&[n, s]| rerail_facts_base::row![n, atom(s)]))));
         }
         if self.docof {
-            out.push(("docof", relation(&["n", "d"], &mut self.docofs.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+            out.push(("docof", relation(&["n", "d"], &mut self.docofs.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
         }
         if self.value {
-            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| rerail_blocks::vector![n, atom(v)]))));
+            out.push(("value", relation(&["n", "v"], &mut self.values.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)]))));
         }
         if self.value_lit {
-            out.push(("rr_value_lit", relation(&["n", "v"], &mut self.value_lits.iter().map(|&[n, v]| rerail_blocks::vector![n, atom(v)]))));
+            out.push(("rr_value_lit", relation(&["n", "v"], &mut self.value_lits.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)]))));
         }
         if self.static_value {
-            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| rerail_blocks::vector![n, atom(v)]))));
+            out.push(("static_value", relation(&["n", "v"], &mut self.static_values.iter().map(|&[n, v]| rerail_facts_base::row![n, atom(v)]))));
         }
         if self.value_type_of {
-            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| rerail_blocks::vector![n, atom(t)]))));
+            out.push(("value_type_of", relation(&["n", "t"], &mut self.value_types_of.iter().map(|&[n, t]| rerail_facts_base::row![n, atom(t)]))));
         }
         if self.value_type {
-            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| rerail_blocks::vector![atom(v), atom(t)]))));
+            out.push(("value_type", relation(&["v", "t"], &mut self.value_types.iter().map(|&[v, t]| rerail_facts_base::row![atom(v), atom(t)]))));
         }
         if self.comment {
-            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| rerail_blocks::vector![n, atom(s)]))));
+            out.push(("comment", relation(&["n", "s"], &mut self.comments.iter().map(|&[n, s]| rerail_facts_base::row![n, atom(s)]))));
         }
         if self.rx_span {
-            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| rerail_blocks::vector![atom(p), c, j, atom(g), m]))));
+            out.push(("rx_span", relation(&["p", "c", "j", "g", "m"], &mut self.rx_spans.iter().map(|&[p, c, j, g, m]| rerail_facts_base::row![atom(p), c, j, atom(g), m]))));
         }
         let mut matched = Vec::new();
         for found in self.matches {
             if found.all {
-                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::MATCHES, found.k), relation(&["sp", "m"], &mut found.rows.iter().map(|r| r.iter().copied().collect::<rerail_blocks::vector::Vector<_>>()))));
+                matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::MATCHES, found.k), relation(&["sp", "m"], &mut found.rows.iter().map(|r| r.iter().copied().collect::<rerail_facts_base::code_rule_dsl::facts::vtab::Row>()))));
             }
             if found.groups {
-                let rows = &mut found.group_rows.iter().map(|&[sp, m, g, gsp]| rerail_blocks::vector![sp, m, atom(g), gsp]);
+                let rows = &mut found.group_rows.iter().map(|&[sp, m, g, gsp]| rerail_facts_base::row![sp, m, atom(g), gsp]);
                 matched.push((format!("{}{}", crate::code_rule_dsl::logic::strings::GROUPS, found.k), relation(&["sp", "m", "g", "gsp"], rows)));
             }
         }
@@ -4260,14 +4307,14 @@ impl Batch {
         // A value alone's rows are staged: they are written once, past the chunk's relations' rows (`Grower::admit`).
         let relation: Make = if first { Relation::from_rows } else { Relation::staged };
         let pairs = |columns: &[&str], rows: &[[i64; 2]], sym: [bool; 2]| {
-            relation(columns, &mut rows.iter().map(|&[a, b]| rerail_blocks::vector![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
+            relation(columns, &mut rows.iter().map(|&[a, b]| rerail_facts_base::row![if sym[0] { atom(a) } else { a }, if sym[1] { atom(b) } else { b }]))
         };
         let mut relations = vec![
-            (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| rerail_blocks::vector![n]))),
+            (LONG_TEXT_NODES, relation(&["n"], &mut long_text_nodes.iter().map(|&n| rerail_facts_base::row![n]))),
             ("pkg", pairs(&["d", "p"], &pkg, [false, true])),
-            ("unpackaged", relation(&["d"], &mut unpackaged.iter().map(|&d| rerail_blocks::vector![d]))),
+            ("unpackaged", relation(&["d"], &mut unpackaged.iter().map(|&d| rerail_facts_base::row![d]))),
             // The tape's own verdict: tree-sitter's ERROR and MISSING nodes (`Facts::syntax_errors`).
-            ("tape_error", relation(&["d"], &mut errors.iter().map(|&d| rerail_blocks::vector![d]))),
+            ("tape_error", relation(&["d"], &mut errors.iter().map(|&d| rerail_facts_base::row![d]))),
             ("path_part", pairs(&["d", "s"], &path_part, [false, true])),
             ("file_name", pairs(&["d", "s"], &file_name, [false, true])),
             ("intval", pairs(&["n", "v"], &rows.intval, [false, false])),
@@ -4300,7 +4347,7 @@ impl Batch {
             let syntax_error = if projection.verdict {
                 c.relations(&atom).into_iter().find(|(name, _)| *name == "syntax_error").map(|(_, r)| r).expect("core_rr makes syntax_error")
             } else {
-                relation(&["d"], &mut errors.iter().map(|&d| rerail_blocks::vector![d]))
+                relation(&["d"], &mut errors.iter().map(|&d| rerail_facts_base::row![d]))
             };
             relations.extend([
                 ("text", pairs(&["n", "s"], &rows.text, [false, true])),
@@ -6244,7 +6291,11 @@ impl Grower {
             .tests
             .iter()
             .zip(tests.rows(|i| strings[i].as_str(), &symbols))
-            .map(|((name, _), rows)| (name.clone(), Relation::staged(&["s"], &mut rows.into_iter().map(|s| rerail_blocks::vector![s]))))
+            .map(|((name, _), rows)| {
+                let mut r = Relation::new(&["s"]);
+                rows.into_iter().for_each(|s| r.push(&[s]));
+                (name.clone(), r)
+            })
             .collect();
         for (name, r) in tested {
             out.push((name.clone(), self.admitted(&name, r, &batch)));

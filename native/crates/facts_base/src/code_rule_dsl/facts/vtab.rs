@@ -200,6 +200,20 @@ pub const LONG_TEXT_NODES: &str = "rr_long_text_node";
 /// comparison of two nodes reads (`lowering_tail::OrderNodes`), with no join.
 pub const NODE_READS: [&str; 5] = ["rr_node_text", "rr_node_text_any", "rr_node_value", "rr_node_str", "rr_node_order"];
 
+/// A row a producer hands a relation (`Relation::from_rows`, `staged`): its values on the stack, as the relation
+/// copies them into its block (decision 0687); a row past 8 columns goes on the heap.
+pub type Row = rerail_blocks::frame::InlineVec<i64, 8>;
+
+/// A `Row` of its values: `row![a, b]`.
+#[macro_export]
+macro_rules! row {
+    ($($v:expr),* $(,)?) => {{
+        let mut r = $crate::code_rule_dsl::facts::vtab::Row::new();
+        $(r.push($v);)*
+        r
+    }};
+}
+
 /// A lookup's rows read by position (`Source::lookup_seq`): how many, and the `i`th, where they lie (a list the source
 /// holds, its runs of rows), or a list made of them.
 pub struct Seq<'a> {
@@ -249,6 +263,12 @@ impl<'a> Seq<'a> {
     }
 }
 
+/// A node read (`Source::node_read_ref`): a text the source lends, or a value made.
+pub enum NodeRead<'a> {
+    Text(&'a str),
+    Value(rusqlite::types::Value),
+}
+
 pub trait Source: Send + Sync {
     /// The syntax batch it reads (the syntax table's `Batch`, rerail-facts'), which its readers take as their own
     /// type (`syntax::PythonBatch`).
@@ -256,6 +276,9 @@ pub trait Source: Send + Sync {
     /// Node `n`'s text, value or order as the function `name` reads it (`NODE_READS`), for a binding of
     /// `LONG_TEXT_NODES` (the syntax table's `LongTexts`); none for another source or function.
     fn node_read(&self, _name: &str, _n: i64) -> Option<rusqlite::types::Value> { None }
+    /// `node_read`, a text lent where the source holds it, with none made: what a join's walk reads
+    /// (`NodeRead::Text`).
+    fn node_read_ref(&self, name: &str, n: i64) -> Option<NodeRead<'_>> { self.node_read(name, n).map(NodeRead::Value) }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
     /// one's nodes); `None` otherwise.
     fn column_counts(&self, _c: usize) -> Option<Vec<(i64, u64)>> { None }
@@ -516,6 +539,18 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<rerail_blocks::vector::Vector<usize>>;
+    /// `lookup`'s rows, each given to `each` as it is found, in `lookup`'s order, with no list made (decision 0687: a
+    /// probe's rows are the caller's to keep, in its own memory); false where it scans (`lookup`'s `None`). The
+    /// default reads `lookup`'s list; a source probed often gives its rows as it finds them.
+    fn lookup_each(&self, column: usize, values: &[i64], each: &mut dyn FnMut(usize)) -> bool {
+        match self.lookup(column, values) {
+            Some(rows) => {
+                rows.iter().for_each(|&r| each(r));
+                true
+            }
+            None => false,
+        }
+    }
     /// `lookup`'s rows for `value`, read by position (`Seq`), in its order; `None` where it scans. A source whose
     /// lookups are runs of rows (a view's document) or a list it holds (a kind's nodes) gives them made into no list
     /// of its own: what a probe's candidates number (`setfix::InRel::probe_size`) and are drawn from (`probe_sample`)
@@ -1840,14 +1875,14 @@ impl Relation {
     }
     /// A relation of `rows`, staged (`push`), not yet written into a block: rows a relation that goes on from another
     /// writes once, past that one's (`grown`: a tape value's rows admitted inside a chunk's fixpoint, decision 0431 §8).
-    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
+    pub fn staged(columns: &[&str], rows: &mut dyn Iterator<Item = Row>) -> Self {
         let mut r = Relation::new(columns);
         rows.for_each(|row| r.push(&row));
         r
     }
     /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
     /// (no staging, no growth or move); else staged, as `push` stages them.
-    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vector<i64>>) -> Self {
+    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Row>) -> Self {
         let mut r = Relation::new(columns);
         if let (n, Some(m)) = rows.size_hint()
             && n == m

@@ -232,3 +232,42 @@ joins' steps took 154 ms before the work below and 116 ms after.
 The cost cases pass 13 of 31 (with E1). The remaining heads by step CPU: `rf_target` 12.8 ms (its `text` read and
 `rf_named`), `wstart` 8.1 (E7: `nearest` per name read, then the scope's kind), `rf_in` 6.0, `bind_only` 2.6–5.2
 (E4), `target_form` 3.9, `rf_local` 3.6.
+
+## 9. The merge's cost, function by function (2026-11-24)
+
+Before the merge, `all` cost the head 132 s and 1,571 G instructions. After it, 152.7 s and 1,896 G (§7: 2,246 G before
+9b6d39a4c1's two fixes). Both builds ran profiled and sampled on m3 over the whole run, the same corpus, back to back:
+the pre-merge commit 83fe3f5449 with its own library and programs, and HEAD.
+
+**What did not change.** The joins' own step CPU is the same: 51.7 s before, 50.9 s after. `text` got cheaper (7.1
+s → 2.4 s, read by its string, 37f8fd8c9e). The cross-file part got cheaper (31.1 s → 15.9 s, 0652), and the
+per-file part took that work. So the plans are not the regression.
+
+**What did.** The non-wait samples went from 110.9 k to 141.9 k. Most of the 31 k extra are in code the merge
+brought, outside the steps:
+
+| Where | Samples before → after | What it is |
+|---|---|---|
+| `Guard::cpu_read`/`cpu_write` | 0 → 2,819 | every checked access of a run-room vector called its block's ledger through `dyn Guard` (decision 0487 R4), for a check that is one relaxed load |
+| `Numbering::select` from `Viewed::read_value` | 990 (`Ranks::select`) → 3,470 | a view's row read through its document's directory row selects the row's tape node once per column, not once per row |
+| `Docs::read`, `doc_of_row` | ~0 → 2,456 | a view's value read alone (`Source::value`) finds its document and remakes its read for each value |
+| `TapeDoc::transducer_kind` → `entry` | → 1,117 | the AST matcher reads a node's kind through a whole `EntryRef` (alias string, classes) |
+| `rows::placed`, `open_blocks`, `InChunk`, `Ledger::take_in`, BTreeMap removes, `memmove` | ~1,400 → ~6,300 | each small vector of a run (a clone, a capture's rows, a `collect`) takes a region in a block: three shared `Arc`s cloned (the chunk's, the run's, the run's `Open`), a lane's lock, the ledger's lock, a region with two `Arc`s and a box. Before the merge, one jemalloc call. |
+| `Fresh::settle` | 647 → 2,561 | a wave's rows moved from a `Vec<i64>` into a relation's wave room: each comparison of the sort looks up the span, the region's `OnceLock`, the part's column and its chunk |
+
+`literal_str`'s 8.4 s (0.3 s before) is the AST matcher's work charged there (its rows are made on first read);
+the matcher's own span fell by as much.
+
+**Fixed:**
+- the guard (359dc17781): the region keeps a pointer to the ledger's queued-use count and reads it inline. 1,896 G →
+  1,797 G, 152.7 s → 140.8 s;
+- a row's tape node is selected once for all its columns (`view_reads::Doc` remembers the node it last selected);
+- a node's kind and field are read from its code's record alone (`CodeTable::kind_field`). These two: 1,797 G →
+  1,759 G on m3 (load 19, so its CPU of 147.7 s says nothing).
+
+**Still owed:** the run room's small allocations, and the wave room's reads in `settle`. Both come from the hub's
+run room: every vector in the run's blocks (8f4fdb7293, the user's call). That stays. What has to change is the
+room's own cost: a small region taken without three shared `Arc`s and two locks (a thread's own open stretch,
+bumped), and a wave's rows read a chunk at a time in the sort, not one span-and-column lookup a value. The largest
+takers: `ast_wave::captured_rows` (a capture's one-node `Vector`, about 2,100 samples) and `Within::rows` (a
+vector a probe, about 970).

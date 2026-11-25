@@ -157,7 +157,7 @@ pub(in crate::code_rule_dsl) const TEXTFN_STR_BETWEEN: u32 = 12;
 /// `pkg_up(x, k)`: X less its last key 5 dotted parts; empty past its first.
 pub(in crate::code_rule_dsl) const TEXTFN_PKG_UP: u32 = 13;
 /// `rx_group(x, re, name)`: the range of X that regex `re`'s group `name` captures, by its program (the stage's
-/// automaton, `text::table::GroupProgram`, decision 0668); no row where `re` does not match or the group took no part.
+/// automaton, `text::table::GroupProgram`, decision 0688); no row where `re` does not match or the group took no part.
 pub(in crate::code_rule_dsl) const TEXTFN_RX_GROUP: u32 = 14;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// A `ROW_VERDICT` stage met a symbol the atoms directory does not hold: the stratum runs on the host.

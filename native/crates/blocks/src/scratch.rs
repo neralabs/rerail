@@ -26,9 +26,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 
 /// Address space a thread's stack reserves (nothing resident until written; on Windows nothing committed until
 /// touched, `crate::windows`). Without a mapping (`crate::mem`) the reservation is allocated whole, so it is a working
-/// size there.
+/// size there. 4 GiB: a stack's bytes under its top stay resident, so a thread past that holds as much memory; and a
+/// thread's 64 GiB reservation cost the kernel's map, with every thread making its own at once, about a fortieth of
+/// an edit's CPU.
 #[cfg(any(unix, windows))]
-const ANON: usize = 1 << 36;
+const ANON: usize = 1 << 32;
 #[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
 /// The least bytes of a large region: it goes to the thread's free-listed blocks (`maps::FreeRoom::large`), not the stack.
@@ -37,9 +39,9 @@ const ANON: usize = 256 << 20;
 /// footprint at about a third of what it is with them (decision 0342, amended 2026-11-24).
 pub const LARGE: usize = 4096;
 /// Bytes above the top kept resident; past them, freed pages go back to the OS.
-const KEEP: usize = 16 << 20;
+const KEEP: usize = 1 << 20;
 /// The fewest bytes past `KEEP` given back at once, so a top that swings round it does not advise at each pop.
-const GIVE_STEP: usize = 4 << 20;
+const GIVE_STEP: usize = 1 << 20;
 /// A region's header: the previous header's offset (0: none) with, above `PREV_BITS`, the padding between the top
 /// before it and itself; and its state.
 const HEAD: usize = 16;
@@ -207,6 +209,14 @@ impl Drop for OnStack {
     }
 }
 
+/// A large region (`LARGE` and more): the calling thread's free-listed blocks' (`maps::FreeRoom::large`), as the
+/// stack's and the long room's large regions are.
+pub(crate) fn large_region(bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
+    use crate::maps::Room;
+    thread_local! { static LARGE_ROOM: crate::maps::FreeRoom = crate::maps::FreeRoom::large(); }
+    LARGE_ROOM.try_with(|r| r.region(bytes, align, name)).unwrap_or_else(|_| crate::maps::FreeRoom::large().region(bytes, align, name))
+}
+
 /// The room of a thread's stack: a region of the calling thread's (`Room`; the run's default, decision 0342 amended).
 #[derive(Default)]
 pub struct StackRoom;
@@ -214,8 +224,7 @@ pub struct StackRoom;
 impl crate::maps::Room for StackRoom {
     fn region(&self, bytes: usize, align: usize, name: &'static str) -> crate::maps::Region {
         if bytes >= LARGE {
-            thread_local! { static LARGE_ROOM: crate::maps::FreeRoom = crate::maps::FreeRoom::large(); }
-            return LARGE_ROOM.try_with(|r| r.region(bytes, align, name)).unwrap_or_else(|_| crate::maps::FreeRoom::large().region(bytes, align, name));
+            return large_region(bytes, align, name);
         }
         let stack = mine(bytes + align);
         let (head, at) = stack.push(bytes, align, LIVE);
@@ -224,7 +233,7 @@ impl crate::maps::Room for StackRoom {
         // Zeroed, as every room's region reads (a free list's chunk, the heap's `alloc_zeroed`).
         // SAFETY: the region's own `bytes`.
         unsafe { std::ptr::write_bytes(ptr, 0, bytes) };
-        let census = crate::census::counted(name, bytes);
+        let census = crate::census::counted(crate::census::STACK, name, bytes);
         // SAFETY: `bytes` writable bytes at `ptr`, aligned as asked, held by `OnStack` while the region lives.
         unsafe { crate::maps::Region::new(ptr, bytes, Box::new(OnStack { stack, head, at, _census: census })) }
     }

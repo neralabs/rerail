@@ -51,12 +51,13 @@ impl<'a> Rows<'a> {
                 }
             } else {
                 last.spare = list;
-                let ids = s.view.find_keyed(s.cols, &s.key[..s.len], s.lead);
+                let mut ids = last.ids();
+                s.view.find_keyed_into(s.cols, &s.key[..s.len], s.lead, Arc::get_mut(&mut ids).expect("the step's own list"));
                 hit = ids.iter().any(|&id| f(id, self.row_need(id, need)));
-                if let Some((_, q)) = &mut last.memo { *q = Probed::Ids(ids); }
+                if let Some((_, q)) = &mut last.memo { Probed::put(q, Probed::Ids(ids), &mut last.spare_ids); }
                 return hit;
             };
-            if let Some((_, q)) = &mut last.memo { *q = Probed::Read(answer, need); }
+            if let Some((_, q)) = &mut last.memo { Probed::put(q, Probed::Read(answer, need), &mut last.spare_ids); }
             return hit;
         }
         if let (Rows::In(r), &Cands::Range(lo, hi)) = (self, &cands)
@@ -108,7 +109,7 @@ fn stream_probe<'a>(v: &'a View, cols: &'a [usize], lead: usize, key: &[i64], la
             mk.clear();
             // copy: not block data (a probe key's values, kept to compare the next probe with)
             mk.extend_from_slice(key);
-            *q = Probed::Pending;
+            Probed::put(q, Probed::Pending, &mut last.spare_ids);
         }
         None => last.memo = Some((key.iter().copied().collect(), Probed::Pending)),
     }
@@ -215,7 +216,8 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                         // The memo's list, which the probe before's candidates no longer hold, is this probe's.
                         // (Its answer alone is taken: its key's buffer is kept for the next.)
                         if let Some((_, q)) = &mut last.memo
-                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Ids(rerail_blocks::vector::Vector::new()))
+                            && matches!(&*q, Probed::Read(Found::Many(_), _))
+                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Pending)
                         {
                             last.spare = Some(rows);
                         }
@@ -226,14 +228,18 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                         let read = v.find_read(&ix.cols, key, ix.lead, need, &mut last.cursor, &mut last.spare);
                         let p = match read {
                             Some(rows) => Probed::Read(rows, need),
-                            None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),
+                            None => {
+                                let mut ids = last.ids();
+                                v.find_keyed_into(&ix.cols, key, ix.lead, Arc::get_mut(&mut ids).expect("the step's own list"));
+                                Probed::Ids(ids)
+                            }
                         };
                         match &mut last.memo {
                             Some((k, q)) => {
                                 k.clear();
                                 // copy: not block data (a probe key's values, kept to compare the next probe with)
                                 k.extend_from_slice(key);
-                                *q = p.clone();
+                                Probed::put(q, p.clone(), &mut last.spare_ids);
                             }
                             None => last.memo = Some((key.iter().copied().collect(), p.clone())),
                         }
@@ -241,7 +247,7 @@ pub(super) fn candidates<'a>(j: &'a JoinRule, src: &'a Src, store: &'a Store, ke
                     }
                 };
                 match probed {
-                    Probed::Ids(ids) => (Rows::Source(v), Cands::Owned(ids)),
+                    Probed::Ids(ids) => (Rows::Source(v), Cands::Shared(ids)),
                     Probed::Read(rows, _) => (Rows::Source(v), Cands::Read(rows)),
                     Probed::Pending => unreachable!("a pending probe is no memo's answer"),
                 }

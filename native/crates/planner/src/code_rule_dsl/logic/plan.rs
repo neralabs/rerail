@@ -153,8 +153,6 @@ impl Outcome {
 struct Fx<'a> {
     db: crate::code_rule_dsl::facts::vtab::Db<'a>,
     direct: bool,
-    /// The run's room (`Run::room`), where the statistics the run keeps in its model are made.
-    room: &'a Arc<dyn rerail_blocks::maps::Room>,
 }
 impl Fx<'_> {
     /// The planner's spec goes to the engine as values in process. Over text symbols the SQL functions are T's
@@ -201,8 +199,8 @@ impl Fx<'_> {
     fn stats(&self, name: &str, symbols_text: &dyn Fn(usize, usize) -> bool) -> Result<Vec<LiveRel>> {
         let _span = super::profile::span(|| "engine live statistics".into());
         if self.direct {
-            // Made in the run's room: the model keeps them for the run (decision 0342 amended).
-            return rerail_blocks::maps::within(self.room, || Ok(super::native::component::live(self.db, name)?.into_iter().map(LiveRel::of_native).collect()));
+            // Made in the thread's long-lived room: the model keeps them for the run (decision 0342 amended).
+            return rerail_blocks::maps::long(|| Ok(super::native::component::live(self.db, name)?.into_iter().map(LiveRel::of_native).collect()));
         }
         let text: String = self.db.query_row("SELECT set_fixpoint_stats(?1)", [name], |r| r.get(0))?;
         Ok(text.split('\n').enumerate().map(|(i, line)| LiveRel::parse(line, &|c| symbols_text(i, c))).collect())
@@ -218,7 +216,7 @@ impl Fx<'_> {
         if rerail_prof::code_rule_dsl::logic::profile::setting(|| matches!(std::env::var("RERAIL_LIVE_ALL").as_deref(), Ok("on"))) {
             seen.clear();
         }
-        rerail_blocks::maps::within(self.room, || Ok(super::native::component::live_changed(self.db, name, seen)?.into_iter().map(|l| l.map(LiveRel::of_native)).collect()))
+        rerail_blocks::maps::long(|| Ok(super::native::component::live_changed(self.db, name, seen)?.into_iter().map(|l| l.map(LiveRel::of_native)).collect()))
     }
     fn reprobe(&self, name: &str, i: usize, new: &Reprobe) -> Result<()> {
         let _span = super::profile::span(|| "engine reprobe".into());
@@ -384,9 +382,6 @@ pub struct Run<'a, 'b> {
     /// The static check of the program the run's part is of (decision 0364 §5): given by the caller
     /// (`Maintain::proofs`), else made of the run's own version when first asked.
     proofs: std::sync::OnceLock<Arc<wellfounded::Proofs>>,
-    /// The run's room (decision 0342 amended): its free-listed blocks, where what its model keeps from the native
-    /// engine is made (`Fx::stats`), shared with its strands, whose forks the run takes back into its model.
-    room: Arc<dyn rerail_blocks::maps::Room>,
 }
 
 /// The runner's answer to requests (`Run::answer`): a request relation and its new rows (atoms and integers), to the
@@ -455,9 +450,12 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vector<i64>>
         by.entry(p).or_default().extend(got);
     }
     if let Some(log) = log {
-        for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
-            log.entry(p.clone()).or_default().extend(rows.iter().cloned());
-        }
+        // The log lives the run: its rows made in the thread's long room (decision 0342, amended 2026-11-24).
+        rerail_blocks::maps::long(|| {
+            for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
+                log.entry(p.clone()).or_default().extend(rows.iter().cloned());
+            }
+        });
     }
     for (p, rows) in by {
         if let Some(req) = p.strip_prefix(super::answers::HELD_BACK) {
@@ -1928,7 +1926,6 @@ impl<'a> Run<'a, '_> {
             answer_logs: HashMap::new(),
             quiet: Arc::clone(&self.quiet),
             proofs: self.proofs.clone(),
-            room: Arc::clone(&self.room),
         }, arena, (0, 0), keep))
     }
 
@@ -2381,7 +2378,7 @@ impl<'a> Run<'a, '_> {
     }
 
     fn fx(&self) -> Fx<'_> {
-        Fx { db: self.db, direct: self.model.inputs.atoms.is_some(), room: &self.room }
+        Fx { db: self.db, direct: self.model.inputs.atoms.is_some() }
     }
 
     /// Makes the tables of `rels` not yet made (`pending`).
@@ -3030,7 +3027,7 @@ impl<'a> Run<'a, '_> {
         }
         let name = format!("mm_{h}");
         let spec = ComponentSpec { name: name.clone(), lines }.encode();
-        let fx = Fx { db: self.db, direct: true, room: &self.room };
+        let fx = Fx { db: self.db, direct: true };
         for r in scc {
             super::native::component::hold_maintained(self.db, r, Arc::clone(&olds[r]));
         }
@@ -4003,7 +4000,9 @@ impl<'a> Run<'a, '_> {
             let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
             for ((o, &rule), line) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).zip(&order_rules).zip(&steps) {
                 if !idle(line) {
-                    observe(&mut self.model.stats, rule, o, line);
+                    // The run's observations live through it: made in the thread's long-lived room (decision 0342
+                    // amended), not on its stack.
+                    rerail_blocks::maps::long(|| observe(&mut self.model.stats, rule, o, line));
                 }
             }
             // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
@@ -6773,7 +6772,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     let mut unread: BTreeSet<String> = BTreeSet::new();
     let mut prepared_to = 0usize;
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default(), room: rerail_blocks::maps::FreeRoom::owner() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), proofs: Default::default(), mode_reads: Default::default(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     if let Some(p) = maintaining.as_deref().and_then(|m| m.proofs()) {
         let _ = run.proofs.set(p);
     }
@@ -8750,6 +8749,23 @@ pub fn decode_bound(
 /// `outputs` the outputs to decode; `is_input` and `arity` the program's (its inputs, its declarations' widths).
 #[allow(clippy::too_many_arguments)]
 fn decoded_outputs(
+    outputs_of: &[&str],
+    is_input: &dyn Fn(&str) -> bool,
+    types: &dyn Fn(&str) -> Option<Vec<String>>,
+    db: &Connection,
+    lowered: Option<lower::Lowering<'_>>,
+    facts: &str,
+    atoms: bool,
+    kept: &BTreeSet<String>,
+    native: &BTreeSet<String>,
+) -> Result<(BTreeMap<String, std::sync::Arc<output::Rows>>, BTreeMap<String, Vector<usize>>)> {
+    // The run's outputs live to its end: made in the thread's long-lived room (decision 0342 amended 2026-11-24). On
+    // the stack they held every region the run took after them.
+    rerail_blocks::maps::long(|| decoded_outputs_within(outputs_of, is_input, types, db, lowered, facts, atoms, kept, native))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn decoded_outputs_within(
     outputs_of: &[&str],
     is_input: &dyn Fn(&str) -> bool,
     types: &dyn Fn(&str) -> Option<Vec<String>>,

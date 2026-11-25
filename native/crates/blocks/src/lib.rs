@@ -27,11 +27,15 @@ pub mod bloom;
 mod census;
 #[cfg(not(target_vendor = "apple"))]
 mod census {
-    pub(crate) fn counted(_: &'static str, _: usize) -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
+    pub(crate) const STACK: u64 = 0;
+    pub(crate) const LARGE: u64 = 1;
+        pub(crate) const LONG: u64 = 3;
+    pub(crate) fn counted(_: u64, _: &'static str, _: usize) -> Option<std::sync::Arc<dyn std::any::Any + Send + Sync>> {
         None
     }
 }
 pub mod chunk;
+pub mod long;
 pub mod col;
 #[cfg(any(unix, windows))]
 pub mod deferrable;
@@ -47,6 +51,8 @@ pub mod ledger;
 pub mod maps;
 pub mod mapped;
 pub use rerail_vector::vector;
+/// An operation's own memory: the thread's bump frame and the stack's short arrays (decision 0687).
+pub use rerail_vector::frame;
 pub mod mem;
 pub mod packed;
 pub mod ranged;

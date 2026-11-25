@@ -216,6 +216,20 @@ impl Interner {
         let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return String::new() };
         self.atoms.with_str(atom, str::to_owned).or_else(|| self.atoms.value(atom).ok().flatten()).unwrap_or_default()
     }
+    /// `f` of atom `v`'s text, as `name` reads it, borrowed where the arena holds it (no text made). `f` runs under
+    /// the arena's read lock: it must not intern or read atoms.
+    pub fn with_name<R>(&self, v: i64, f: impl FnOnce(&str) -> R) -> R {
+        if let Some(t) = self.deferred_text(v) {
+            return f(t);
+        }
+        let Ok(atom) = crate::content_store::atoms::Sym::try_from(v) else { return f("") };
+        let mut f = Some(f);
+        if let Some(r) = self.atoms.with_str(atom, |s| (f.take().expect("called once"))(s)) {
+            return r;
+        }
+        let owned = self.atoms.value(atom).ok().flatten().unwrap_or_default();
+        (f.take().expect("called once"))(&owned)
+    }
     /// Whether `v` is an atom of the database, read as `name` reads it.
     fn known(&self, v: i64) -> Result<bool> {
         if self.deferred_text(v).is_some() {
@@ -1345,6 +1359,9 @@ struct LastProbe {
     memo: Option<(Vector<i64>, Probed)>,
     cursor: crate::code_rule_dsl::facts::vtab::ProbeCursor,
     spare: Option<Arc<Vec<(u32, [i64; READ])>>>,
+    /// A probe's list of ids the memo let go and no candidates hold (`Probed::put`): the next probe's to fill, so a
+    /// step's probes fill one list (decision 0687), not one each.
+    spare_ids: Option<Arc<Vector<u32>>>,
     /// The run's settings a probe reads, read at the step's first probe (`Settings`), not at each.
     settings: Option<ProbeSettings>,
 }
@@ -1355,6 +1372,25 @@ struct ProbeSettings {
     within_test: bool,
 }
 impl LastProbe {
+    /// An empty list of ids for a probe to fill: the memo's own, where no candidates hold it now, or the one it let go
+    /// (`spare_ids`); else a new one.
+    fn ids(&mut self) -> Arc<Vector<u32>> {
+        if let Some((_, q)) = &mut self.memo
+            && matches!(&*q, Probed::Ids(a) if Arc::strong_count(a) == 1)
+            && let Probed::Ids(mut a) = std::mem::replace(q, Probed::Pending)
+        {
+            Arc::get_mut(&mut a).expect("the step's own list").clear();
+            return a;
+        }
+        match self.spare_ids.take() {
+            Some(mut a) => {
+                Arc::get_mut(&mut a).expect("the step's own list").clear();
+                a
+            }
+            None => Arc::new(Vector::new()),
+        }
+    }
+
     /// A join's steps' probe states, their cursors sharing one node memo (`ProbeCursor::node`): a rule's body probes
     /// several views by the same node in turn, each step from inside the read of the step before.
     fn for_steps(n: usize) -> Vec<LastProbe> {
@@ -1374,7 +1410,17 @@ impl LastProbe {
 /// A probe's candidates: their ids, or their ids with their rows' values read as they were found (`View::find_read`);
 /// `Pending`: a probe read into its step as found (`Cands::Stream`) and not yet read through, which is no answer.
 #[derive(Clone)]
-enum Probed { Ids(Vector<u32>), Read(Found, u64), Pending }
+enum Probed { Ids(Arc<Vector<u32>>), Read(Found, u64), Pending }
+impl Probed {
+    /// Puts `new` in `q`; a list of ids it held that no candidates hold goes to `spare` (`LastProbe::ids`).
+    fn put(q: &mut Probed, new: Probed, spare: &mut Option<Arc<Vector<u32>>>) {
+        if let Probed::Ids(a) = std::mem::replace(q, new)
+            && Arc::strong_count(&a) == 1
+        {
+            *spare = Some(a);
+        }
+    }
+}
 /// A read probe's rows, each with the values the step reads: none or one (the usual answer of a node's view or axis
 /// probe) held as they are, more in a list the step's last-probe memo shares, so a probe of one row allocates nothing.
 #[derive(Clone)]
@@ -1389,7 +1435,10 @@ impl Found {
     }
 }
 #[derive(Clone)]
-enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Owned(Vector<u32>), Runs(runs::Found<'a>), Pending(runs::Found<'a>, u32, u32),
+enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Owned(Vector<u32>),
+    /// A probe's ids, shared with its step's memo (`Probed::Ids`).
+    Shared(Arc<Vector<u32>>),
+    Runs(runs::Found<'a>), Pending(runs::Found<'a>, u32, u32),
     /// Rows with the values a step reads, read as the probe found them (`View::find_read`).
     Read(Found),
     /// A probe of a view read into the step as it finds its rows (`Rows::each`).
@@ -1415,6 +1464,7 @@ impl Cands<'_> {
             Cands::Range(lo, hi) => (lo..hi).any(f),
             Cands::Slice(ids) => ids.iter().any(|&id| f(id)),
             Cands::Owned(ids) => ids.into_iter().any(f),
+            Cands::Shared(ids) => ids.iter().any(|&id| f(id)),
             Cands::Runs(found) => found.ids().any(f),
             Cands::Pending(found, lo, hi) => found.ids().any(&mut f) || (lo..hi).any(f),
             Cands::Read(rows) => rows.rows().iter().any(|&(id, _)| f(id)),
@@ -2432,6 +2482,13 @@ pub fn open(conn: &Connection, spec: &str) -> Result<String> {
 
 /// Opens a component from its spec's section (decision 0628 §4): the planner's, in process, or one read from text.
 pub fn open_spec(conn: impl Scoped, section: &Spec) -> Result<String> {
+    // The component lives through its run: its relations, their indexes and the views of its inputs are made in the
+    // thread's long-lived room (decision 0342 amended 2026-11-24), each growing where it was made. On the thread's
+    // stack they held every region taken after them while the component ran.
+    rerail_blocks::maps::long(|| open_spec_within(conn, section))
+}
+
+fn open_spec_within(conn: impl Scoped, section: &Spec) -> Result<String> {
     let conn = conn.db();
     let spec = section.get();
     // A line's join: the section it names.
@@ -4713,18 +4770,27 @@ impl View {
     /// one document (a held `node` view's kind, decision 0329), that document's alone: a probe by kind otherwise
     /// reads every document of the language, and by document every node of it. Every key is checked by the step.
     fn find_keyed(&self, cols: &[usize], key: &[i64], lead: usize) -> Vector<u32> {
+        let mut out = Vector::new();
+        self.find_keyed_into(cols, key, lead, &mut out);
+        out
+    }
+    /// `find_keyed`'s rows, written into `out` (emptied first): the caller's list, which a step's probes fill in turn.
+    fn find_keyed_into(&self, cols: &[usize], key: &[i64], lead: usize, out: &mut Vector<u32>) {
+        out.clear();
         if self.eqs.is_empty()
             && let Some(dc) = self.src.doc_column()
             && let Some(j) = cols.iter().position(|&k| self.cols[k] == dc)
             && let Some(i) = cols.iter().position(|&k| self.src.kept_to_doc(self.cols[k]))
             && let Some(rows) = self.src.lookup_in(self.cols[cols[i]], &[key[i]], key[j])
         {
-            return rows.into_iter().map(|r| r as u32).collect();
+            out.extend(rows.iter().map(|&r| r as u32));
+            return;
         }
         if let Some(rows) = self.find_columns(cols, key) {
-            return rows;
+            out.extend_from_slice(&rows);
+            return;
         }
-        self.find(cols[lead], key[lead])
+        self.find_into(cols[lead], key[lead], out)
     }
     /// The rows of a probe binding several key columns, where the source keeps it to the rows they name together
     /// (`Source::lookup_columns`: a made relation's documents every column routes to, none made for the others).
@@ -4914,11 +4980,22 @@ impl View {
         })
     }
     fn find(&self, c: usize, v: i64) -> Vector<u32> {
+        let mut out = Vector::new();
+        self.find_into(c, v, &mut out);
+        out
+    }
+    /// `find`'s rows, added to `out`: the source's rows given as it finds them (`Source::lookup_each`), no list of its own.
+    fn find_into(&self, c: usize, v: i64, out: &mut Vector<u32>) {
         if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
-            return rows.into_iter().map(|r| r as u32).collect();
+            out.extend(rows.iter().map(|&r| r as u32));
+            return;
         }
-        let rows = self.src.lookup(self.cols[c], &[v]).unwrap_or_default();
-        rows.into_iter().filter(|&r| self.eqs.iter().all(|&(c, v)| self.src.value(r, c) == v)).map(|r| r as u32).collect()
+        let eqs = &self.eqs;
+        self.src.lookup_each(self.cols[c], &[v], &mut |r| {
+            if eqs.iter().all(|&(c, v)| self.src.value(r, c) == v) {
+                out.push(r as u32);
+            }
+        });
     }
 }
 /// One row of an input relation: a slice of its flat rows, or a row of its view.
@@ -8689,18 +8766,18 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     /// from `m`, and `j` a `join` this walk made), where a row of a relation it probes never holds one
     /// (`before_walk`). Read as a probe's, the test dropped every row whose `j` the walk had made: phase 0's modules
     /// of two files (`core:a+b`) were planned by no row.
-    fn text_value(cx: &mut Ctx<'_, '_>, probe: u8, bind: bool, t: String) -> i64 {
+    fn text_value(cx: &mut Ctx<'_, '_>, probe: u8, bind: bool, t: &str) -> i64 {
         if probe & TEXT_OUT != 0 {
-            cx.texts.push(t);
+            cx.texts.push(t.to_owned());
             SCRATCH + cx.texts.len() as i64 - 1
         } else if probe & UNREAD_OUT != 0 {
             0
         } else if probe & PROBE_OUT != 0 && !bind {
-            cx.syms.held(&t).unwrap_or(-1)
+            cx.syms.held(t).unwrap_or(-1)
         } else if probe & PROBE_OUT != 0 {
-            cx.syms.before_walk(cx.syms.held(&t)).unwrap_or(-1)
+            cx.syms.before_walk(cx.syms.held(t)).unwrap_or(-1)
         } else {
-            cx.syms.id(&t)
+            cx.syms.id(t)
         }
     }
     /// Enters step `i` (past the last, the head's row): profiled, its time is charged to it until it returns.
@@ -8801,6 +8878,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         Cands::Range(lo, hi) => Some(cx.screening.select(f, *lo..*hi, key)),
                         Cands::Slice(ids) => Some(cx.screening.select(f, ids.iter().copied(), key)),
                         Cands::Owned(ids) => Some(cx.screening.select(f, ids.iter().copied(), key)),
+                        Cands::Shared(ids) => Some(cx.screening.select(f, ids.iter().copied(), key)),
                         _ => None,
                     };
                     if let Some(ids) = selected {
@@ -8841,7 +8919,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         };
                         bump(0, s.rows as u64);
                         let added = std::cell::Cell::new(s.rows as u64);
-                        let words = f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }).to_vec();
+                        // On the stack (decision 0687): a chunk's words, `CHUNK / 64` at most.
+                        let words: rerail_blocks::frame::InlineVec<u64, { rowcode::CHUNK / 64 }> =
+                            f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }).iter().copied().collect();
                         // The chunk's filter work is charged after its rows run (below): charged first, a chunk
                         // whose filters alone spend the budget cut before its first row, every run (no progress).
                         'rows: for (w, &word) in words.iter().enumerate() {
@@ -9061,8 +9141,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let mark = cx.texts.len();
                 let v = match joined {
                     None if j.probes[i] & TEXT_OUT != 0 || scratch(cx, y).is_none() => y,
-                    None => text_value(cx, j.probes[i], *bind, text(cx, y)),
-                    Some(t) => text_value(cx, j.probes[i], *bind, t),
+                    None => {
+                        let t = text(cx, y);
+                        text_value(cx, j.probes[i], *bind, &t)
+                    }
+                    Some(t) => text_value(cx, j.probes[i], *bind, &t),
                 };
                 if v == -1 && j.probes[i] & PROBE_OUT != 0 { return }
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
@@ -9122,13 +9205,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         Some(s) if probe & UNREAD_A != 0 => slots[*s] = 0,
                         Some(s) if probe & PROBE_A != 0 => match held(cx, ax, x) { Some(v) => slots[*s] = v, None => continue },
                         Some(s) => slots[*s] = cx.syms.id(x),
-                        None => if cx.syms.name(val(slots, *ka)) != x { continue },
+                        None => if !cx.syms.with_name(val(slots, *ka), |t| t == x) { continue },
                     }
                     match b {
                         Some(s) if probe & UNREAD_B != 0 => slots[*s] = 0,
                         Some(s) if probe & PROBE_B != 0 => match held(cx, by, y) { Some(v) => slots[*s] = v, None => continue },
                         Some(s) => slots[*s] = cx.syms.id(y),
-                        None => if cx.syms.name(val(slots, *kb)) != y { continue },
+                        None => if !cx.syms.with_name(val(slots, *kb), |t| t == y) { continue },
                     }
                     go(cx, i + 1, slots);
                 }
@@ -9136,21 +9219,37 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Eq { a, b } => if val(slots, *a) == val(slots, *b) { go(cx, i + 1, slots) },
             Step::Ne { a, b } => if val(slots, *a) != val(slots, *b) { go(cx, i + 1, slots) },
             Step::Func { name, kinds, args, out, bind, texts, kept } => {
-                use crate::code_rule_dsl::logic::strings::functions::{eval, node_read, Kind};
+                use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
+                use crate::code_rule_dsl::facts::vtab::NodeRead;
+                use rusqlite::types::Value;
                 // A text kept for its symbol (decision 0478 step 2e), the CPU's or the device's.
                 let keep = kept.and_then(|f| u32::try_from(val(slots, args[0])).ok().filter(|_| !matches!(args[0], Key::Const(_))).map(|s| (f, s)));
                 let found = keep.and_then(|(f, s)| cx.syms.atoms.kept().text(f, s));
-                let value = if let Some(t) = found {
-                    rusqlite::types::Value::Text(t)
+                let mark = cx.texts.len();
+                // A text is read where it lies (a node's, on its tape) and given its value (`text_value`).
+                let probe = j.probes[i];
+                let text_v = |cx: &mut Ctx<'_, '_>, t: &str| match text_value(cx, probe, *bind, t) {
+                    // Looked up and no atom: no row holds it.
+                    -1 if probe & PROBE_OUT != 0 => None,
+                    v => Some(v),
+                };
+                let at_nodes;
+                let v = if let Some(t) = found {
+                    text_v(cx, &t)
                 } else if let Some(nodes) = texts.as_ref().map(|h| &**j.bound(h)) {
-                    let read = match nodes {
-                        NodeTexts::Held(nodes) => node_read(name, Some(&**nodes), val(slots, args[0])),
+                    let nodes: Option<&dyn crate::code_rule_dsl::facts::vtab::Source> = match nodes {
+                        NodeTexts::Held(nodes) => Some(&**nodes),
                         NodeTexts::At(at) => {
-                            let nodes = at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES));
-                            node_read(name, nodes.as_deref(), val(slots, args[0]))
+                            at_nodes = at.upgrade().and_then(|d| crate::code_rule_dsl::facts::vtab::bound_source_in(&d, crate::code_rule_dsl::facts::vtab::syntax::LONG_TEXT_NODES));
+                            at_nodes.as_deref()
                         }
                     };
-                    read.unwrap_or(rusqlite::types::Value::Null)
+                    match nodes.and_then(|s| s.node_read_ref(name, val(slots, args[0]))) {
+                        Some(NodeRead::Text(t)) => text_v(cx, t),
+                        Some(NodeRead::Value(Value::Text(t))) => text_v(cx, &t),
+                        Some(NodeRead::Value(Value::Integer(n))) => Some(n),
+                        _ => None,
+                    }
                 } else {
                     let mut strs = Vec::new();
                     let mut numbers = Vec::new();
@@ -9159,21 +9258,16 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     }
                     let strs: Vec<&str> = strs.iter().map(String::as_str).collect();
                     let v = eval(name, &strs, &numbers);
-                    if let (Some((f, s)), rusqlite::types::Value::Text(t)) = (keep, &v) {
+                    if let (Some((f, s)), Value::Text(t)) = (keep, &v) {
                         cx.syms.atoms.kept().keep_text(f, s, t);
                     }
-                    v
+                    match v {
+                        Value::Integer(n) => Some(n),
+                        Value::Text(t) => text_v(cx, &t),
+                        _ => None,
+                    }
                 };
-                let mark = cx.texts.len();
-                let v = match value {
-                    rusqlite::types::Value::Integer(n) => n,
-                    // Looked up and no atom: no row holds it.
-                    rusqlite::types::Value::Text(s) => match text_value(cx, j.probes[i], *bind, s) {
-                        -1 if j.probes[i] & PROBE_OUT != 0 => return,
-                        v => v,
-                    },
-                    _ => return,
-                };
+                let Some(v) = v else { return };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
                 cx.texts.truncate(mark);
@@ -9194,14 +9288,17 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                             crate::content_store::atoms::PASSES => true,
                             crate::content_store::atoms::FAILS => false,
                             _ => {
-                                let hit = m.is_match(&cx.syms.name(v));
+                                let hit = cx.syms.with_name(v, |t| m.is_match(t));
                                 verdicts.put(*t, sym, hit);
                                 hit
                             }
                         }
                     }
-                    (Some(m), ..) => m.is_match(&cx.syms.name(v)),
-                    (None, ..) => crate::code_rule_dsl::logic::strings::test(op, &cx.syms.name(v), &cx.syms.name(val(slots, *p))),
+                    (Some(m), ..) => cx.syms.with_name(v, |t| m.is_match(t)),
+                    (None, ..) => {
+                        let pattern = cx.syms.name(val(slots, *p));
+                        cx.syms.with_name(v, |t| crate::code_rule_dsl::logic::strings::test(op, t, &pattern))
+                    }
                 };
                 if hit == *want { go(cx, i + 1, slots) }
             }
