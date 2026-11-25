@@ -3822,6 +3822,19 @@ impl Viewed {
             View::Loc(Place::Report) => &["n", "line", "column", "end_line", "end_column"],
         }
     }
+    /// What column `column` holds, its documents made or not: a document's key, a node of the batch's, a child's
+    /// place among its siblings. `tape` (its root's parent is `-1`; read in place), a kind, a field, a position, a
+    /// line or a column: not known.
+    pub(super) fn col_kind(&self, column: usize) -> Option<made::ColKind> {
+        use made::ColKind;
+        match (self.view, *Self::columns(self.view).get(column)?) {
+            (View::Tape, _) | (View::Loc(Place::Col), "c") => None,
+            (View::Node | View::Core | View::Loc(Place::Docof), "d") => Some(ColKind::Key),
+            (View::Child, "idx") => Some(ColKind::Place),
+            (_, "n" | "p" | "c" | "a" | "b") => Some(ColKind::Node),
+            _ => None,
+        }
+    }
     /// The column holding the row's own node, which ranges and direct lookups address.
     fn own(&self) -> usize {
         match self.view {
@@ -3954,6 +3967,12 @@ impl Source for Viewed {
     }
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()
+    }
+    fn col_bounds(&self, column: usize) -> Option<[i64; 2]> {
+        self.col_kind(column).map(|k| self.batch.bounds_of(k))
+    }
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
     fn len(&self) -> usize {
         *self.batch.offsets(self.view).last().unwrap()
