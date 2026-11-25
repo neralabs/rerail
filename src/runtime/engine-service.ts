@@ -1490,9 +1490,10 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         // After the runtimes' stores: the last use of a writer makes what still waits for the lock, within its bound.
         for (const writer of routing.receiptWriters.values()) writer.close();
         routing.receiptWriters.clear();
-        // No reader is left to take an answer: ending the asks waits for their Git to exit, never for Git to answer.
-        await endGitAsks();
       } finally {
+        // No reader is left to take an answer, also when the server's or a runtime's close failed: ending the asks waits
+        // for their Git to exit, never for Git to answer, and never fails.
+        await endGitAsks();
         // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
         // daemon. Its lock goes once its sessions have ended, and its file stays, so a later sweep ends any session a
         // failed close left open (`OwnerLock.release`). The engine's watch thread and its handles go however the sessions'
@@ -1521,10 +1522,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     try {
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     } finally {
+      // First, as it never fails: what follows may.
+      await endGitAsks();
       closeWalks();
       ownerLock.release();
     }
-    await endGitAsks();
     throw error;
   }
   // In the same turn as the listen, before any request is read: a session this service opens is its own.
