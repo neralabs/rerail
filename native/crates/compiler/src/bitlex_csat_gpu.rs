@@ -19,7 +19,8 @@
 
 pub use crate::bitlex_csat_lanes::{Answer, Formula, Solved};
 use crate::bitlex_csat_lanes::{arena, carry_vars, learned, CARRY_ROOM};
-use crate::bitlex_grown::FormulaBlock;
+use crate::bitlex_csat::ClauseOcc;
+use crate::bitlex_grown::{FormulaBlock, Grown};
 use rerail_gpu::device::ComputeQueue;
 use rerail_gpu::kernels::{alloc, alloc_working, launch, program, read};
 
@@ -75,12 +76,12 @@ struct Args {
 unsafe impl rerail_gpu::Pod for Args {}
 
 /// A formula's state, in words (the kernel's layout, `cs_setup`), its widest gate `wide - 2` wide, its plain
-/// clauses (and carried ones) `clauses`, its wide gates `wides`: a variable's record (`VR` words), its trail entry,
-/// level limit, activity and level mark; the tree; a counter a wide gate; the buffers, the learned clauses and
-/// their watches. Whole 32-byte sectors.
-fn state_words(vars: usize, clauses: usize, wide: usize, wides: usize) -> usize {
+/// clauses (and carried ones) `clauses`, its long clauses `longs`: a variable's words (`VR`), its trail entry, level
+/// limit, activity and level mark; the tree; a clause word a long clause; the assignment's bitmap, a bit a literal;
+/// the buffers, the learned clauses and their watches. Whole 32-byte sectors.
+fn state_words(vars: usize, clauses: usize, wide: usize, longs: usize) -> usize {
     let (n, l, a) = (vars + 1, learned(vars) as usize, arena(vars) as usize);
-    (HEADER + (VR + 4) * n + 2 * tree_nodes(n) + wides + 2 * wide + l + (l + 1) + 4 * (clauses + l) + a).next_multiple_of(8)
+    (HEADER + (VR + 4) * n + 2 * tree_nodes(n) + longs + (2 * n).div_ceil(32) + 2 * wide + l + (l + 1) + 4 * (clauses + l) + a).next_multiple_of(8)
 }
 
 /// The decisions' tree's nodes over `n` activities (the kernel's `cs_tcount` levels): `n` divided by 32 again and
@@ -109,8 +110,8 @@ fn wide(gates: &crate::bitlex_csat::Gates) -> usize {
     (0..gates.len()).map(|g| gates.args(g).len()).max().unwrap_or(0).max(2) + 2
 }
 
-/// Formulas of fewer gates and clauses than this propagate on one lane, their counters plain words (Nadel et al.
-/// 2026, §4.5: below about 2,000 clauses the group's steps cost more than they share).
+/// Formulas of fewer clauses than this (the gates' and the plain ones) propagate serially within their group, with
+/// plain loads and stores rather than atomics (Nadel et al. 2026, §4.5: "fewer than roughly 2,000 clauses").
 const SERIAL: usize = 2000;
 
 /// `SERIAL`, or `RERAIL_CSAT_SERIAL` (a measurement aid, and the tests' way to the group's propagation).
@@ -161,6 +162,9 @@ pub struct Desc {
     carries: bool,
     slot_words: usize,
     block: FormulaBlock,
+    /// The formula's plain and carried clauses' index (`ClauseOcc`), in the block: the batch holds it while the
+    /// device reads it (`Batch::add`).
+    plain: ClauseOcc,
 }
 
 /// `f`'s descriptor: an error where a part of it is not in its gates' block.
@@ -168,23 +172,44 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
     let elsewhere = || "the prover's GPU: a formula not in its block".to_string();
     let (b, rec, args) = f.gates.placed().ok_or_else(elsewhere)?;
     let (b2, lits, ends) = f.clauses.placed().ok_or_else(elsewhere)?;
-    let (fs, fg) = f.fan.placed_narrow().ok_or_else(elsewhere)?;
     if !b2.same(b) {
         return Err(elsewhere());
     }
-    let (fos, fo) = f.fan.placed_occ().ok_or_else(elsewhere)?;
-    let (os, og, oos, oo) = match f.own {
-        Some(o) => {
-            let (s, g) = o.placed_narrow().ok_or_else(elsewhere)?;
-            let (qs, q) = o.placed_occ().ok_or_else(elsewhere)?;
-            (words(s)?, words(g)?, words(qs)?, words(q)?)
-        }
-        None => (u32::MAX, u32::MAX, u32::MAX, u32::MAX),
+    // The gates' clauses (the window's, a solve's own) and the formula's plain and carried clauses, each indexed
+    // as the kernel's propagation reads them (`ClauseOcc`); the plain ones a solve's own (an own clause with
+    // `-assume`, as the kernel reads it).
+    let fcl = words(f.fan.cnf().placed().ok_or_else(elsewhere)?)?;
+    let ocl = match f.own {
+        Some(o) => words(o.cnf().placed().ok_or_else(elsewhere)?)?,
+        None => u32::MAX,
     };
-    let wide = wide(f.gates);
-    if wide - 1 >= 1 << 16 {
-        return Err(format!("the prover's GPU: a gate {} wide, past a counter's 16 bits", wide - 2));
+    let mut plain: Vec<Vec<crate::bitlex_sat::Lit>> = Vec::with_capacity(f.clauses.len());
+    let own_from = f.resume.as_ref().filter(|x| x.assume != 0).map_or(usize::MAX, |x| x.window_clauses);
+    for (k, c) in f.clauses.iter().enumerate() {
+        let mut c = c.to_vec();
+        if k >= own_from {
+            c.push(-f.resume.as_ref().expect("a window's solve").assume);
+        }
+        plain.push(c);
     }
+    if let Some(x) = &f.resume {
+        plain.extend(x.carried.iter().map(|c| c.to_vec()));
+    }
+    let pcl = ClauseOcc::of(&Grown::<u32>::in_block(b), f.vars, &plain, false);
+    let pcl_at = words(pcl.placed().ok_or_else(elsewhere)?)?;
+    let longest = [f.fan.cnf().longest(), f.own.map_or(0, |o| o.cnf().longest()), pcl.longest()].into_iter().max().unwrap_or(0);
+    // A clause word's count bits (Nadel et al. 2026, §4.2): 16 where every literal's index fits the other 16,
+    // else 8 (a clause of 255 literals at most); past both, not the device's.
+    let shift = if 2 * f.vars <= 0xFFFF {
+        16
+    } else if longest <= 255 && 2 * f.vars <= 0xFF_FFFF {
+        8
+    } else {
+        return Err(format!("the prover's GPU: {} variables and a clause of {longest} literals: past a clause word", f.vars));
+    };
+    let all = f.fan.cnf().clauses() + f.own.map_or(0, |o| o.cnf().clauses()) + plain.len();
+    let longs = f.fan.cnf().longs() + f.own.map_or(0, |o| o.cnf().longs()) + pcl.longs();
+    let wide = wide(f.gates);
     // A window's solve: its window's level 0 and the clauses earlier solves carried, in the block too.
     let none = u32::MAX;
     let mut r = [0u32, none, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, none];
@@ -224,10 +249,10 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
         f.gates.len() as u32,
         words(rec)?,
         words(args)?,
-        words(fs)?,
-        words(fg)?,
-        os,
-        og,
+        0,
+        0,
+        0,
+        0,
         words(lits)?,
         words(ends)?,
         f.clauses.len() as u32,
@@ -250,12 +275,12 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
         r[10],
         r[11],
         r[12],
-        words(fos)?,
-        words(fo)?,
-        oos,
-        oo,
-        f.gates.wides() as u32,
-        u32::from(f.gates.len() + f.clauses.len() < serial_below()),
+        fcl,
+        ocl,
+        pcl_at,
+        shift,
+        longs as u32,
+        u32::from(all < serial_below()),
         0,
         0,
         0,
@@ -266,8 +291,9 @@ pub fn describe(f: &Formula) -> Result<Desc, String> {
         resume: f.resume.is_some(),
         carries: cv != 0,
         vars: f.vars,
-        slot_words: state_words(f.vars, f.clauses.len() + carried, wide, f.gates.wides()),
+        slot_words: state_words(f.vars, f.clauses.len() + carried, wide, longs),
         block: b.clone(),
+        plain: pcl,
     })
 }
 
@@ -303,6 +329,8 @@ pub struct Batch {
     queue: rerail_gpu::device::Buffer,
     /// Each formula's variables, whether it resumes a window, where its model and what it carries are.
     meta: Vec<(usize, bool, usize, Option<usize>)>,
+    /// Each formula's clauses' index (`Desc::plain`), in the block while the device reads it.
+    held: Vec<ClauseOcc>,
     /// The formulas not yet reported, to look at.
     open: Vec<usize>,
     left: usize,
@@ -345,11 +373,11 @@ impl Batch {
     /// block the others are.
     pub fn new(formulas: &[Formula], state_bytes: usize) -> Result<Batch, String> {
         let descs = formulas.iter().map(describe).collect::<Result<Vec<_>, _>>()?;
-        Batch::of(&descs, state_bytes)
+        Batch::of(descs, state_bytes)
     }
 
     /// A batch of formulas described (`describe`), all in one block.
-    pub fn of(descs: &[Desc], state_bytes: usize) -> Result<Batch, String> {
+    pub fn of(descs: Vec<Desc>, state_bytes: usize) -> Result<Batch, String> {
         let first = descs.first().ok_or("the prover's GPU: an empty batch")?;
         let models = descs.iter().map(|d| (d.vars + 1).div_ceil(32)).sum();
         let carries = descs.iter().filter(|d| d.carries).count() * (1 + CARRY_ROOM);
@@ -357,7 +385,7 @@ impl Batch {
         let slots = (state_bytes / (4 * slot_words)).clamp(1, SLOTS).min(descs.len());
         let mut b = Batch::open(&first.block, descs.len(), models, carries, slot_words, slots)?;
         for d in descs {
-            b.add(d)?.ok_or("the prover's GPU: a batch without the room its formulas took")?;
+            b.add(d)?.map_err(|_| "the prover's GPU: a batch without the room its formulas took")?;
         }
         Ok(b)
     }
@@ -394,6 +422,7 @@ impl Batch {
             carry: alloc::<u32>(carry_cap.max(1))?,
             queue: alloc::<u32>(Q_SLOT + slots)?,
             meta: Vec::with_capacity(cap),
+            held: Vec::with_capacity(cap),
             open: Vec::with_capacity(cap),
             left: 0,
             running: None,
@@ -412,15 +441,16 @@ impl Batch {
         Ok(b)
     }
 
-    /// `d` added, at any time: its place, or `None` where the batch has no room for it (or it is in another block, or
+    /// `d` added, at any time: its place, or `d` back where the batch has no room for it (or it is in another block, or
     /// its state is larger than a slot). A running launch takes it where the block's extent it sees holds it, else the
-    /// launch is stopped and the next takes it.
-    pub fn add(&mut self, d: &Desc) -> Result<Option<usize>, String> {
+    /// launch is stopped and the next takes it. The batch holds its clauses' index (`Desc::plain`) while the device
+    /// reads it.
+    pub fn add(&mut self, d: Desc) -> Result<Result<usize, Desc>, String> {
         use std::sync::atomic::Ordering::Relaxed;
         let model = (d.vars + 1).div_ceil(32);
         let carry = if d.carries { 1 + CARRY_ROOM } else { 0 };
         if self.n == self.cap || self.model_words + model > self.model_cap || self.carry_words + carry > self.carry_cap || d.slot_words > self.slot_words || !d.block.same(&self.block) {
-            return Ok(None);
+            return Ok(Err(d));
         }
         let mut w = d.words;
         w[D_MODEL] = u32::try_from(self.model_words).map_err(|_| "the prover's GPU: a batch's models past 16 GiB".to_string())?;
@@ -434,6 +464,7 @@ impl Batch {
         }
         shared_word(&self.out, k * OUT).store(0, Relaxed);
         self.meta.push((d.vars, d.resume, self.model_words, carry_at));
+        self.held.push(d.plain);
         self.open.push(k);
         self.need.push(self.block.block().used());
         self.model_words += model;
@@ -443,7 +474,7 @@ impl Batch {
         if self.running.is_some() {
             self.publish();
         }
-        Ok(Some(k))
+        Ok(Ok(k))
     }
 
     /// The formulas added that the running launch can read, published to it (in order); where one lies past its
@@ -759,12 +790,12 @@ impl Service {
             // Each added to the batch on the device, the next launch on; a new batch where it has no room.
             for (d, reply) in handed {
                 let added = match live.last_mut() {
-                    Some(l) => l.batch.add(&d)?,
-                    None => None,
+                    Some(l) => l.batch.add(d)?,
+                    None => Err(d),
                 };
                 let l = match added {
-                    Some(_) => live.last_mut().expect("added"),
-                    None => {
+                    Ok(_) => live.last_mut().expect("added"),
+                    Err(d) => {
                         let slot_words = 2 * d.slot_words;
                         // A measurement aid: `RERAIL_PROVER_STATE_MB`, the slots' states at most.
                         let state_bytes = std::env::var("RERAIL_PROVER_STATE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(STATE_BYTES, |m| m << 20);
@@ -777,7 +808,7 @@ impl Service {
                         }
                         live.push(Live { batch, replies: Vec::new(), handed_at: Vec::new(), at: std::time::Instant::now() });
                         let l = live.last_mut().expect("opened");
-                        l.batch.add(&d)?.ok_or("the prover's GPU: a formula without room in an empty batch")?;
+                        l.batch.add(d)?.map_err(|_| "the prover's GPU: a formula without room in an empty batch")?;
                         l
                     }
                 };
@@ -1023,12 +1054,50 @@ DEFINE_KERNEL2(ops, ops,
     }
 
     use crate::bitlex_csat::{Fanout, Gates, Solver};
+
+    /// Whether unit propagation over `clauses` alone (no decision) meets a clause all false: what the device's
+    /// propagation (Nadel et al.'s, over the gates' clauses and the plain ones) refutes at level 0, in any order.
+    fn refuted_at_0(clauses: &[Vec<crate::bitlex_sat::Lit>]) -> bool {
+        let vars = clauses.iter().flatten().map(|l| l.unsigned_abs() as usize).max().unwrap_or(0);
+        let mut val = vec![0i8; vars + 1];
+        let value = |val: &[i8], l: crate::bitlex_sat::Lit| if l > 0 { val[l as usize] } else { -val[(-l) as usize] };
+        loop {
+            let mut changed = false;
+            for c in clauses {
+                let (mut sat, mut free, mut n) = (false, 0, 0);
+                for &l in c {
+                    match value(&val, l) {
+                        1 => sat = true,
+                        0 if l != free => {
+                            free = l;
+                            n += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                if sat {
+                    continue;
+                }
+                if n == 0 {
+                    return true;
+                }
+                if n == 1 {
+                    val[free.unsigned_abs() as usize] = if free > 0 { 1 } else { -1 };
+                    changed = true;
+                }
+            }
+            if !changed {
+                return false;
+            }
+        }
+    }
     use crate::bitlex_csat_lanes::tests::{circuit, holds, Rng};
 
     /// The device's solve of `f` against the CPU's search (`here`): their answers agree where both have one (the
     /// device's search is its own, not the CPU's step for step, decision 0670); its model holds; unsatisfiable, the
     /// whole formula is, and still is without the own units its core (`used`) leaves out; with no conflict to spend,
-    /// it is unsatisfiable where the CPU's is (level 0's propagation, the same in any order); each clause it carries
+    /// it is unsatisfiable where unit propagation of its clauses (the gates' and the plain ones) is (level 0's, the
+    /// same in any order); each clause it carries
     /// the window's clauses and gates imply.
     fn checked(i: usize, f: &Formula, device: &Solved, here: &Solved) {
         use crate::bitlex_sat;
@@ -1059,8 +1128,12 @@ DEFINE_KERNEL2(ops, ops,
                 assert!(f.conflicts < 100_000 || device.roomless, "formula {i}: the device has no answer, the CPU {a:?}");
             }
         }
-        if f.conflicts == 0 {
-            assert_eq!(matches!(device.answer, Answer::Unsat), matches!(here.answer, Answer::Unsat), "formula {i}: level 0's propagation");
+        if f.conflicts == 0 && f.resume.is_none() {
+            let mut all: Vec<Vec<bitlex_sat::Lit>> = f.clauses.iter().map(|c| c.to_vec()).collect();
+            for g in 0..f.gates.len() {
+                f.gates.clauses_of(g, &mut all);
+            }
+            assert_eq!(matches!(device.answer, Answer::Unsat), refuted_at_0(&all), "formula {i}: level 0's propagation");
         }
         if let Some(r) = &f.resume {
             let mut window = Clauses::default();
@@ -1240,8 +1313,9 @@ DEFINE_KERNEL2(ops, ops,
         assert!(sat >= 100 && unsat >= 100 && searched >= 40 && carried >= 50, "{sat} sat, {unsat} unsat, {searched} searched, {carried} carried");
     }
 
-    /// With no conflict to spend, the device is unsatisfiable exactly where the CPU's solver is with none spent (a
-    /// conflict at level 0): the prover's rounds rest on it (decision 0654, its kernel's test ported).
+    /// With no conflict to spend, the device is unsatisfiable exactly where unit propagation of the formula's
+    /// clauses (its gates' and its plain ones) meets a clause all false; the CPU's solver is then unsatisfiable too:
+    /// the prover's rounds rest on it (decision 0654, its kernel's test ported).
     #[test]
     fn with_no_conflicts_the_device_is_level_0s_propagation() {
         if rerail_gpu::shared::get().is_none() {
@@ -1275,10 +1349,15 @@ DEFINE_KERNEL2(ops, ops,
             }
             let before = s.conflicts;
             let cpu = s.solve(g, fan, *base, 100_000);
-            let cpu_at_0 = cpu == CpuAnswer::Unsat && s.conflicts == before;
-            assert_eq!(x.answer == Answer::Unsat, cpu_at_0, "formula {i}: the device {:?}, the CPU {cpu:?} after {} conflicts", x.answer, s.conflicts - before);
+            let mut all: Vec<Vec<crate::bitlex_sat::Lit>> = c.iter().map(|c| c.to_vec()).collect();
+            for k in 0..g.len() {
+                g.clauses_of(k, &mut all);
+            }
+            let refuted = refuted_at_0(&all);
+            assert_eq!(x.answer == Answer::Unsat, refuted, "formula {i}: the device {:?}, unit propagation of its clauses refuted: {refuted}", x.answer);
+            assert!(!refuted || cpu == CpuAnswer::Unsat, "formula {i}: refuted by its clauses, the CPU {cpu:?}");
             assert_eq!(x.conflicts, 0, "formula {i}");
-            at_0 += usize::from(cpu_at_0);
+            at_0 += usize::from(refuted);
             searched += usize::from(s.conflicts > before);
         }
         assert!(at_0 >= 100 && searched >= 40, "{at_0} unsatisfiable at level 0, {searched} searched");
@@ -1334,7 +1413,7 @@ DEFINE_KERNEL2(ops, ops,
                 Answer::Unknown => "Unknown",
             };
             eprintln!(
-                "{}: the device {answer}{}, {} conflicts, {} decisions, {} rounds, {} learned ({} literals), {} watch visits, {} gate items, {} reductions, Mcycles visit/items/analyze/back/decide/reduce {:?}; the CPU {cpu:?}, {} conflicts, {ms:.1} ms",
+                "{}: the device {answer}{}, {} conflicts, {} decisions, {} rounds, {} learned ({} literals), {} watch visits, {} occurrence entries, {} reductions, Mcycles visit/items/analyze/back/decide/reduce {:?}; the CPU {cpu:?}, {} conflicts, {ms:.1} ms",
                 p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
                 if x.roomless { " (room full)" } else { "" },
                 x.conflicts,

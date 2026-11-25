@@ -605,3 +605,48 @@ formula").
   each variable and the one-sector record, 512 copies took 44–51 s against the old commit's 11–17 s; at one copy
   they were the same, so the cost was each search's own data's traffic (every copy of a dump has its own gates in
   the block, as distinct formulas do). On lane 0 alone the hard dump takes 7.3 s (1.6 s on the group).
+- **Propagation is the paper's Algorithm 1, over clauses; the gate occurrences removed** (the user, 2026-11-25:
+  "delete the existing structure (again) and implement points 1, 2 and 3 EXACTLY ACCORDING TO THE PAPER"). The
+  bullet above kept structures of its own: gate actions, spreads over a gate's arguments, narrow gates checked from
+  their values, placement in lock-step. They are deleted (`Fanout::occ` and `narrow`, `Gates::wides`, the
+  kernel's checks, items, spreads and placement). What the device propagates now:
+  - **The clauses**: each gate's clauses (`Gates::clauses_of`: an `And`'s `-o | a` for each argument and
+    `o | -a1 | ... | -an`, an `Xor`'s four, a `One`'s `a1 | ... | an` and each pair's `-a | -b`), the window's and a
+    solve's own, and the formula's plain and carried clauses (own ones with `-assume`). Each set is indexed as the
+    paper's (`bitlex_csat::ClauseOcc`): a literal's index `2 (v - 1)`, plus 1 where negative; each literal's negated
+    occurrence list, back to back, with offsets by literal; each long clause's initial word. A reason is a clause:
+    a gate clause is `CNF | n`, read by the analysis, the core and the carry as any other.
+  - **A clause word** for every clause of three literals or more, the formula's own included: `(sum << r) + cnt`,
+    `cnt` its literals not falsified, `sum` their indices' sum, `r` 16 where `2N <= 2^16 - 1`, else 8 (a clause of
+    255 literals at most), else the formula is not the device's (§4.2). Binary clauses have none.
+  - **A round is one pass of the paper's loop**: up to W = 32 trail literals popped, a lane each; their lists
+    concatenated, W entries a step, a lane an entry. A long entry is `old <- AtomicAdd(st[c], -(1 + (~l << r)))`:
+    `old.cnt = 1` a conflict, `old.cnt = 2` the literal `u = (old.sum - ~l) mod 2^(32 - r)`. Then
+    `prev <- AtomicOr(bitmap[u / 32], 1 << (u mod 32))`: bit `u ^ 1` set a conflict, bit `u` clear `u` pushed. The
+    assignment is that bitmap, a bit a literal (its first words in threadgroup memory, the rest in the state).
+  - **Below 2,000 clauses** (the gates' and the plain ones) a job runs serially on lane 0 with plain loads and
+    stores (§4.5).
+- **What the paper does not say, and what the kernel does there**:
+  - **Binary clauses**: "need none, since falsifying one literal immediately implies the other". An entry carries
+    the other literal's index (`BIN`), which goes straight to the bitmap's OR.
+  - **The trail's push**: an atomic add on its tail.
+  - **A conflict stops the job**; the paper's job is then discarded, and a CDCL search goes on. So the popped
+    literals' entries left after it are counted (line 4 alone), and a jump back takes back exactly the popped
+    literals' long entries ("solvers that backtrack must undo these updates", §2.1). A conflict on a bit (`u ^ 1`
+    set) clears `u`'s bit where this lane set it, so that no bit is set that no trail entry holds.
+  - **Learned clauses**: the paper learns none. They keep two watched literals.
+  - **Units** (clauses of one literal) are set at level 0 with their clause as the reason, and an empty clause
+    refutes the formula there.
+- **Level 0 is unit propagation over the clauses.** It can refute where the gates' checks did not (a `One` of one
+  variable twice is `x` and `-x`), so the level-0 test's reference is unit propagation of the formula's clauses;
+  the CPU's solver is unsatisfiable there too. An `Xor` of one variable twice is its one unit (`-o` or `o`), as the
+  gates' seeds had it.
+- **A formula's clause index lives as long as its batch** (`Batch::add` takes the descriptor, `Batch::held`): its
+  plain and carried clauses' index is made with the descriptor, and dropping it with the descriptor freed block
+  room the device still read (a resumed window broke on a literal past its variables, a different formula each
+  run).
+- Measured (the Spark): the device's tests on both paths; cold Kotlin with the device alone, the shipped bytes;
+  Kotlin's 36 searches of over 100 ms on the device at once 8.0–8.2 s (11.8 s), 49,177 conflicts. The hard dump:
+  1,510 conflicts and 199,509 rounds (916 and 106,437), 1 copy 2.5 s (1.65 s); 256 copies 6.3 s; 512 copies 48–59 s
+  in 512 slots, but 14.0 s in 263 slots (21.8 s): every part's cycles grow about ninefold from 256 resident searches
+  to 512, the searches' own words (a word a long clause, the bitmap) past what the GPU's cache holds.

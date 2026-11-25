@@ -689,7 +689,7 @@ impl<'a> Search<'a> {
         r
     }
 
-    /// `cs_items`: up to 32 gates, a lane each in order. A conflict (the first lane's, its clause in `cbuf`), or each
+    /// Up to 32 gates, a lane each in order. A conflict (the first lane's, its clause in `cbuf`), or each
     /// step's literals on the trail: of the lanes that set one variable the first, if it is still unset. True on a
     /// conflict.
     fn items(&mut self, gs: &[u32]) -> bool {
@@ -1477,7 +1477,7 @@ impl<'a> Search<'a> {
         }
     }
 
-    /// `cs_seed`: whether a gate can imply with nothing set.
+    /// Whether a gate can imply with nothing set.
     fn seed(&self, g: usize) -> bool {
         let n = self.f.gates.args(g).len();
         match self.kind(g) {
