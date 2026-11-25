@@ -75,4 +75,9 @@ changed and how.
    the code around it. rr: `modifiers` (a declaration's and a functor's tail to the line's end, the lean parser's
    `rest_of_line`) and `raw_texts`; Kotlin: `delegation_specifiers`, `type_names`, `quests`, `trail_brackets`. With
    the modifiers one call, the declaration and functor directives are short enough to be `directive`'s arms, as the
-   lean parser's. Not yet: code that differs in a field only is not one function with the field its parameter.)
+   lean parser's. Then `G::lists`: a run of moves around a loop (up to two moves before it, one after) that the rules
+   repeat but for the rule it calls and the field it sets (`moves::abstracted`), of 4 lines or more
+   (`LIST_LINES`), is one function whose parameters are those (`field: u16`, `item: fn(&mut Self) -> R`), called
+   with each place's (`self.list(f::RELATION, Self::io_relation)?`), as the lean parser's `list(close, field,
+   item)`. rr's relations, heads, literals, columns, arguments, keys, edits and operations are one `list`, JSON's
+   members and values one `list_1`; Kotlin's parameters, conditions and declarations three.)

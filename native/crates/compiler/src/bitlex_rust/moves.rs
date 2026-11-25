@@ -563,6 +563,92 @@ pub(crate) fn loops(b: &Block, out: &mut Vec<Block>) {
     }
 }
 
+/// The runs of moves around each loop in `b` (`while` and `loop`): the loop with up to two moves before it and one
+/// after it, for `G::lists`.
+pub(crate) fn runs(b: &Block, out: &mut Vec<Block>) {
+    for (i, op) in b.iter().enumerate() {
+        if matches!(op, Op::Loop(_) | Op::While(..)) {
+            for s in i.saturating_sub(2)..=i {
+                for e in i + 1..=(i + 2).min(b.len()) {
+                    if e - s >= 2 {
+                        out.push(b[s..e].to_vec());
+                    }
+                }
+            }
+        }
+        match op {
+            Op::If { arms, els } => {
+                arms.iter().for_each(|(_, x)| runs(x, out));
+                if let Some(e) = els {
+                    runs(e, out);
+                }
+            }
+            Op::Match { arms, default, .. } => {
+                arms.iter().for_each(|(_, x)| runs(x, out));
+                runs(default, out);
+            }
+            Op::Loop(x) | Op::While(_, x) | Op::At(_, x) => runs(x, out),
+            _ => {}
+        }
+    }
+}
+
+/// A run of moves with the rules it calls and the fields it sets each a slot (`#c0`, `#f0`, … in the order met): the
+/// run as the slots leave it, and what each slot was, the calls' then the fields'.
+pub(crate) fn abstracted(seq: &[Op]) -> (Block, Vec<String>, Vec<String>) {
+    let mut b = seq.to_vec();
+    let (mut calls, mut fields): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    let slot = |v: &mut Vec<String>, s: &str, p: &str| -> String {
+        let k = v.iter().position(|x| x == s).unwrap_or_else(|| {
+            v.push(s.to_owned());
+            v.len() - 1
+        });
+        format!("#{p}{k}")
+    };
+    blocks(&mut b, &mut |x| {
+        for o in x.iter_mut() {
+            match o {
+                Op::Call(f) => *f = slot(&mut calls, f, "c"),
+                Op::Field(f) => *f = slot(&mut fields, f, "f"),
+                Op::Take { take: Take::Leaf { field, .. }, .. } if field != "0" => *field = slot(&mut fields, field, "f"),
+                _ => {}
+            }
+        }
+    });
+    (b, calls, fields)
+}
+
+/// `b` (an `abstracted` run) with its slots filled: a call's slot by `call`'s move, a field's by `field`'s name.
+pub(crate) fn filled(b: &Block, call: &dyn Fn(usize) -> Op, field: &dyn Fn(usize) -> String) -> Block {
+    let mut b = b.clone();
+    let k = |s: &str, p: &str| s.strip_prefix(p).and_then(|r| r.parse::<usize>().ok());
+    blocks(&mut b, &mut |x| {
+        for o in x.iter_mut() {
+            match o {
+                Op::Call(f) if let Some(i) = k(f, "#c") => *o = call(i),
+                Op::Field(f) if let Some(i) = k(f, "#f") => *f = field(i),
+                Op::Take { take: Take::Leaf { field: f, .. }, .. } if let Some(i) = k(f, "#f") => *f = field(i),
+                _ => {}
+            }
+        }
+    });
+    b
+}
+
+/// `b` with each run of moves that is `norm` once abstracted (`abstracted`) the move `call` makes of its slots.
+pub(crate) fn call_for_run(b: &mut Block, norm: &Block, call: &dyn Fn(&[String], &[String]) -> Op) {
+    blocks(b, &mut |x| {
+        let mut i = 0;
+        while i + norm.len() <= x.len() {
+            let (a, calls, fields) = abstracted(&x[i..i + norm.len()]);
+            if a == *norm {
+                x.splice(i..i + norm.len(), [call(&calls, &fields)]);
+            }
+            i += 1;
+        }
+    });
+}
+
 /// `b` with each run of moves `seq` a call of `f` instead.
 pub(crate) fn call_for(b: &mut Block, seq: &[Op], f: &str) {
     blocks(b, &mut |x| {

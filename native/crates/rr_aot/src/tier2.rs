@@ -904,7 +904,19 @@ impl<L: Layout> P<'_, L> {
                     self.io_directive()?;
                 }
                 w::LATTICE_71 => {
-                    self.lattice_declaration()?;
+                    self.p(w::DOT_13)?;
+                    self.p(w::LATTICE_71)?;
+                    self.id(f::NAME)?;
+                    self.p(w::LT_17)?;
+                    if self.kind() == t::IDENTIFIER {
+                        self.tk_as(true, k::IDENTIFIER, f::BASE)?;
+                    }
+                    self.p(w::GT_18)?;
+                    self.p(w::LBRACE_20)?;
+                    if self.kind() == t::IDENTIFIER {
+                        self.list(f::OPERATION, Self::lattice_operation)?;
+                    }
+                    self.p(w::RBRACE_21)?;
                 }
                 w::PRAGMA_1 => {
                     self.p(w::DOT_13)?;
@@ -1064,40 +1076,10 @@ impl<L: Layout> P<'_, L> {
         }
         if self.word() == w::DOT_13 {
         } else if self.kind() == t::IDENTIFIER {
-            self.io_relation()?;
-            self.field_made(f::RELATION);
-            while self.word() == w::COMMA_12 {
-                self.implied()?;
-                self.io_relation()?;
-                self.field_made(f::RELATION);
-            }
+            self.list(f::RELATION, Self::io_relation)?;
         } else {
             return self.refuse();
         }
-        Ok(())
-    }
-
-    /// `lattice_declaration`.
-    fn lattice_declaration(&mut self) -> R {
-        self.p(w::DOT_13)?;
-        self.p(w::LATTICE_71)?;
-        self.id(f::NAME)?;
-        self.p(w::LT_17)?;
-        if self.kind() == t::IDENTIFIER {
-            self.tk_as(true, k::IDENTIFIER, f::BASE)?;
-        }
-        self.p(w::GT_18)?;
-        self.p(w::LBRACE_20)?;
-        if self.kind() == t::IDENTIFIER {
-            self.lattice_operation()?;
-            self.field_made(f::OPERATION);
-            while self.word() == w::COMMA_12 {
-                self.implied()?;
-                self.lattice_operation()?;
-                self.field_made(f::OPERATION);
-            }
-        }
-        self.p(w::RBRACE_21)?;
         Ok(())
     }
 
@@ -1278,11 +1260,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.word_pass_as(w::LBRACE_20)?;
         if self.kind() == t::STRING {
-            self.json_member()?;
-            while self.word() == w::COMMA_12 {
-                self.pass_as(true)?;
-                self.json_member()?;
-            }
+            self.list_1(Self::json_member)?;
         }
         self.word_pass_as(w::RBRACE_21)?;
         self.depth -= 1;
@@ -1325,11 +1303,7 @@ impl<L: Layout> P<'_, L> {
         self.deeper()?;
         self.word_pass_as(w::LBRACK_25)?;
         if matches!(self.word(), w::MINUS_27 | w::TRUE_61 | w::FALSE_62 | w::NULL_63 | w::LBRACE_20 | w::LBRACK_25) || self.kind() == t::STRING || self.kind() == t::NUMBER {
-            self.json_value()?;
-            while self.word() == w::COMMA_12 {
-                self.pass_as(true)?;
-                self.json_value()?;
-            }
+            self.list_1(Self::json_value)?;
         }
         self.word_pass_as(w::RBRACK_26)?;
         self.depth -= 1;
@@ -1433,13 +1407,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::COLUMN_LIST);
         self.p(w::LPAREN_10)?;
         if self.kind() == t::IDENTIFIER {
-            self.column()?;
-            self.field_made(f::COLUMN);
-            while self.word() == w::COMMA_12 {
-                self.implied()?;
-                self.column()?;
-                self.field_made(f::COLUMN);
-            }
+            self.list(f::COLUMN, Self::column)?;
         }
         self.p(w::RPAREN_11)?;
         self.close()?;
@@ -1478,13 +1446,7 @@ impl<L: Layout> P<'_, L> {
     /// `clause`.
     fn clause(&mut self) -> R {
         self.open(k::CLAUSE);
-        self.head()?;
-        self.field_made(f::HEAD);
-        while self.word() == w::COMMA_12 {
-            self.implied()?;
-            self.head()?;
-            self.field_made(f::HEAD);
-        }
+        self.list(f::HEAD, Self::head)?;
         if self.word() == w::COLON_MINUS_3 {
             self.implied()?;
             self.body()?;
@@ -1492,13 +1454,7 @@ impl<L: Layout> P<'_, L> {
         }
         if self.word() == w::EQ_GT_4 {
             self.implied()?;
-            self.term()?;
-            self.field_made(f::EDIT);
-            while self.word() == w::COMMA_12 {
-                self.implied()?;
-                self.term()?;
-                self.field_made(f::EDIT);
-            }
+            self.list(f::EDIT, Self::term)?;
         }
         self.p(w::DOT_13)?;
         self.close()?;
@@ -1524,13 +1480,7 @@ impl<L: Layout> P<'_, L> {
         self.open(k::ARGUMENT_LIST);
         self.p(w::LPAREN_10)?;
         if self.word() == w::COUNT_47 && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && self.past_lparen(self.i + 1).is_some_and(|e| self.word_at(e) == w::COLON_15) || self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::LPAREN_10 || self.flags & FLAG_NO_NAMED == 0 && self.kind_at(self.i) == t::IDENTIFIER && self.word_at(self.i + 1) == w::COLON_15 || matches!(self.word(), w::MIN_48 | w::MAX_49 | w::SUM_50 | w::PRODUCT_60 | w::MEAN_51 | w::JOIN_52) && (self.kind_at(self.i + 1) == t::NUMBER || self.kind_at(self.i + 1) == t::STRING || self.kind_at(self.i + 1) == t::CODE_LITERAL || self.kind_at(self.i + 1) == t::IDENTIFIER || self.word_at(self.i + 1) == w::LBRACE_20 || self.word_at(self.i + 1) == w::AT_23) || matches!(self.word(), w::X_65 | w::MINUS_27 | w::AT_23 | w::LBRACE_20 | w::LPAREN_10) || self.kind() == t::NUMBER || self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::IDENTIFIER {
-            self.term()?;
-            self.field_made(f::ARGUMENT);
-            while self.word() == w::COMMA_12 {
-                self.implied()?;
-                self.term()?;
-                self.field_made(f::ARGUMENT);
-            }
+            self.list(f::ARGUMENT, Self::term)?;
         }
         self.p(w::RPAREN_11)?;
         self.close()?;
@@ -1560,13 +1510,7 @@ impl<L: Layout> P<'_, L> {
     fn conjunction(&mut self) -> R {
         self.deeper()?;
         self.open(k::CONJUNCTION);
-        self.literal()?;
-        self.field_made(f::LITERAL);
-        while self.word() == w::COMMA_12 {
-            self.implied()?;
-            self.literal()?;
-            self.field_made(f::LITERAL);
-        }
+        self.list(f::LITERAL, Self::literal)?;
         self.close()?;
         self.depth -= 1;
         Ok(())
@@ -1885,13 +1829,7 @@ impl<L: Layout> P<'_, L> {
                 if self.word() == w::BY_45 && self.word_at(self.i + 1) == w::LPAREN_10 {
                     self.p_stored(w::BY_45, k::BY)?;
                     self.p_stored(w::LPAREN_10, k::LPAREN)?;
-                    self.term()?;
-                    self.field_made(f::KEY);
-                    while self.word() == w::COMMA_12 {
-                        self.implied()?;
-                        self.term()?;
-                        self.field_made(f::KEY);
-                    }
+                    self.list(f::KEY, Self::term)?;
                     self.p_stored(w::RPAREN_11, k::RPAREN)?;
                     match self.word() {
                         w::SEP_46 => {
@@ -2030,6 +1968,30 @@ impl<L: Layout> P<'_, L> {
             } else {
                 return self.refuse();
             }
+        }
+        Ok(())
+    }
+
+    /// A list the parser reads in more than one place, its field and its item each place's (decision 0685 step
+    /// 4), as the lean parser's `list`.
+    fn list(&mut self, field: u16, item: fn(&mut Self) -> R) -> R {
+        item(self)?;
+        self.field_made(field);
+        while self.word() == w::COMMA_12 {
+            self.implied()?;
+            item(self)?;
+            self.field_made(field);
+        }
+        Ok(())
+    }
+
+    /// A list the parser reads in more than one place, its field and its item each place's (decision 0685 step
+    /// 4), as the lean parser's `list`.
+    fn list_1(&mut self, item: fn(&mut Self) -> R) -> R {
+        item(self)?;
+        while self.word() == w::COMMA_12 {
+            self.pass_as(true)?;
+            item(self)?;
         }
         Ok(())
     }

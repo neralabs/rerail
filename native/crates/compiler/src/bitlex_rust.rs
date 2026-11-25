@@ -2274,11 +2274,12 @@ impl<'a> G<'a> {
             (f, b, inl)
         }).collect();
         self.repeated(&mut made);
+        self.lists(&mut made);
         let mut kept: HashSet<String> = HashSet::new();
         loop {
             let text: String = made.iter().map(|(_, b, _)| moves::print(b, "")).collect();
             // The rules' own order is the caller's first: the last first, so a rule's size is that of what is written in it.
-            let Some(i) = made.iter().rposition(|(f, _, inl)| inl.as_ref().is_some_and(|b| moves::print(b, "").lines().count() <= INLINE_LINES) && !kept.contains(f) && text.matches(&format!("self.{f}()")).count() == 1) else { break };
+            let Some(i) = made.iter().rposition(|(f, _, inl)| inl.as_ref().is_some_and(|b| moves::print(b, "").lines().count() <= INLINE_LINES) && !kept.contains(f) && text.matches(&format!("self.{f}()")).count() + text.matches(&format!("Self::{f})")).count() == 1) else { break };
             let (f, b, inl) = made.remove(i);
             let body = inl.expect("an inline form");
             let mut found = false;
@@ -2316,7 +2317,7 @@ impl<'a> G<'a> {
         // A rule's method, of one call, its inline form a node's: open, its code, close, `marked` cleared.
         let split: HashMap<String, Block> = made
             .iter()
-            .filter_map(|(f, _)| inline.get(f).filter(|b| text.matches(&format!("self.{f}()")).count() == 1 && matches!(b.first(), Some(Op::Open(_))) && b.len() >= 3 && matches!(b[b.len() - 2], Op::Close)).map(|b| (f.clone(), b.clone())))
+            .filter_map(|(f, _)| inline.get(f).filter(|b| text.matches(&format!("self.{f}()")).count() + text.matches(&format!("Self::{f})")).count() == 1 && matches!(b.first(), Some(Op::Open(_))) && b.len() >= 3 && matches!(b[b.len() - 2], Op::Close)).map(|b| (f.clone(), b.clone())))
             .collect();
         let mut opened: Vec<String> = Vec::new();
         for (_, b) in made.iter_mut() {
@@ -2383,6 +2384,76 @@ impl<'a> G<'a> {
                 }
             }
             let block = vec![line(format!("    /// The loop the parser reads in more than one place (decision 0685 step 4).\n    fn {name}(&mut self) -> R {{\n")), Op::At("        ".into(), seq), line("        Ok(())\n    }\n\n")];
+            made.push((name, block, None));
+        }
+    }
+
+    /// The runs around a loop the rules repeat but for the rules they call and the fields they set: each one function
+    /// whose parameters are those (`field: u16`, `item: fn(&mut Self) -> R`), called with each place's, as the lean
+    /// parser's `list(close, field, item)` (decision 0685 step 4). Of 4 lines or more, not reading a local.
+    fn lists(&self, made: &mut Vec<(String, Block, Option<Block>)>) {
+        let mut n = 0;
+        loop {
+            let mut all = Vec::new();
+            for (_, b, _) in made.iter() {
+                moves::runs(b, &mut all);
+            }
+            // Each abstracted run, and each place's slots.
+            let mut groups: Vec<(Block, Vec<(Vec<String>, Vec<String>)>)> = Vec::new();
+            for seq in all {
+                let (a, c, f) = moves::abstracted(&seq);
+                if c.is_empty() && f.is_empty() {
+                    continue;
+                }
+                match groups.iter_mut().find(|(x, _)| *x == a) {
+                    Some(g) => g.1.push((c, f)),
+                    None => groups.push((a, vec![(c, f)])),
+                }
+            }
+            let fits = |a: &Block, places: &[(Vec<String>, Vec<String>)]| {
+                let text = moves::print(a, "");
+                let varies = |pick: &dyn Fn(&(Vec<String>, Vec<String>)) -> &Vec<String>| (0..pick(&places[0]).len()).filter(|&k| places.iter().any(|p| pick(p)[k] != pick(&places[0])[k])).count();
+                let (vc, vf) = (varies(&|p| &p.0), varies(&|p| &p.1));
+                places.len() > 1
+                    && vc + vf > 0
+                    && vc <= 1
+                    && vf <= 1
+                    && text.lines().count() >= LIST_LINES
+                    && !["asks", "flags", "refusing", "past_", "word;", "let "].iter().any(|l| text.contains(l))
+            };
+            let Some((norm, places)) = groups.into_iter().filter(|(a, p)| fits(a, p)).max_by_key(|(a, p)| (moves::print(a, "").len(), p.len())) else { break };
+            let first = &places[0];
+            let call_varies = (0..first.0.len()).find(|&k| places.iter().any(|p| p.0[k] != first.0[k]));
+            let field_varies = (0..first.1.len()).find(|&k| places.iter().any(|p| p.1[k] != first.1[k]));
+            let name = if n == 0 { "list".to_owned() } else { format!("list_{n}") };
+            let name = if made.iter().any(|(f, _, _)| *f == name) || rule_fn(&name) != name { format!("{name}_{n}") } else { name };
+            n += 1;
+            // Its code: a varying slot its parameter's, a slot all places fill alike that filling.
+            let body = moves::filled(&norm, &|i| if Some(i) == call_varies { line("item(self)?;") } else { Op::Call(first.0[i].clone()) }, &|i| if Some(i) == field_varies { "field".to_owned() } else { first.1[i].clone() });
+            let mut params = String::new();
+            if field_varies.is_some() {
+                params.push_str(", field: u16");
+            }
+            if call_varies.is_some() {
+                params.push_str(", item: fn(&mut Self) -> R");
+            }
+            let call = |c: &[String], f: &[String]| {
+                let mut args = Vec::new();
+                if let Some(k) = field_varies {
+                    args.push(f[k].clone());
+                }
+                if let Some(k) = call_varies {
+                    args.push(format!("Self::{}", c[k]));
+                }
+                line(format!("self.{name}({})?;", args.join(", ")))
+            };
+            for (_, b, inl) in made.iter_mut() {
+                moves::call_for_run(b, &norm, &call);
+                if let Some(i) = inl {
+                    moves::call_for_run(i, &norm, &call);
+                }
+            }
+            let block = vec![line(format!("    /// A list the parser reads in more than one place, its field and its item each place's (decision 0685 step\n    /// 4), as the lean parser's `list`.\n    fn {name}(&mut self{params}) -> R {{\n")), Op::At("        ".into(), body), line("        Ok(())\n    }\n\n")];
             made.push((name, block, None));
         }
     }
@@ -3161,6 +3232,9 @@ fn no_field(code: &str, f: &str) -> String {
 
 /// The fewest lines of a loop the rules repeat that is a function of its own (`G::repeated`).
 const REPEATED_LINES: usize = 6;
+
+/// The fewest lines of a run the rules repeat but for its calls and fields that is a function of its own (`G::lists`).
+const LIST_LINES: usize = 4;
 
 /// The most lines a rule's code written in its one caller has (`G::inlined`).
 const INLINE_LINES: usize = 20;
