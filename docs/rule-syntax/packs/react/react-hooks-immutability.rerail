@@ -177,10 +177,12 @@ memo_returns(g, x) :- field(g, "body", x), !kind(x, "statement_block").
 memo_returns(g, x) :- kind(r, "return_statement"), rc_own(r, g), child(r, x, 0).
 .decl created(x: node, k: symbol)  // x makes a collection of kind k, or names a declarator whose value does
 created(x, k) :- made(x, k).
-created(x, k) :- kind(x, "identifier"), ref_site(x, s), kind(s, "variable_declarator"), field(s, "value", v), made(v, k).
+created(x, k) :- kind(x, "identifier"), ref_site(x, s), kind(s, "variable_declarator"), field(s, "value", v),
+    made(v, k).
 .decl made(x: node, k: symbol)
 made(x, "array") :- kind(x, "array").
-made(x, k) :- kind(x, "new_expression"), field(x, "constructor", c), kind(c, "identifier"), text(c, t), collection(t, k).
+made(x, k) :- kind(x, "new_expression"), field(x, "constructor", c), kind(c, "identifier"), text(c, t),
+    collection(t, k).
 .decl collection(t: symbol, k: symbol)
 collection("Set", "set"). collection("Map", "map"). collection("WeakSet", "weakset"). collection("WeakMap", "weakmap").
 .decl mutator(k: symbol, m: symbol)  // the methods the compiler knows to change a collection of kind k
@@ -223,8 +225,9 @@ early_site(r, s, d, f) :- kind(r, "identifier"), ref_site(r, s), rc_compiled(f),
 .decl assign(n: node)
 assign(n) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression"), !logical_assign(a)),
     field(a, "left", n), kind(n, "identifier").
-assign(n) :- kind(a, "assignment_expression"), field(a, "left", p), (kind(p, "array_pattern") ; kind(p, "object_pattern")),
-    within(n, p), (kind(n, "identifier") ; kind(n, "shorthand_property_identifier_pattern")), !field(_, "object", n),
+assign(n) :- kind(a, "assignment_expression"), field(a, "left", p),
+    (kind(p, "array_pattern") ; kind(p, "object_pattern")), within(n, p),
+    (kind(n, "identifier") ; kind(n, "shorthand_property_identifier_pattern")), !field(_, "object", n),
     !default_value(n).
 .decl default_value(n: node)  // `[a = n] = …`: n is read, not assigned
 default_value(n) :- (kind(q, "assignment_pattern") ; kind(q, "object_assignment_pattern")), field(q, "right", v),

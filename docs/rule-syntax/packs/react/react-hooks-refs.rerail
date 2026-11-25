@@ -167,9 +167,9 @@ holder_load(m) :- mem_load(m), field(m, "object", o), kind(o, "identifier"), ref
 holder(s) :- ref_site(r, s), field(m, "object", r), kind(m, "member_expression"), !has(m, _, "optional_chain"),
     jsx_ref_value(m).
 .decl ref_attr(a: node, t: symbol, g: node)  // a is `ref={t.x}` in g's own code
-ref_attr(a, t, g) :- kind(a, "jsx_attribute"), child(a, n, 0), text(n, "ref"), child(a, j, _), kind(j, "jsx_expression"),
-    child(j, m, _), kind(m, "member_expression"), !has(m, _, "optional_chain"), field(m, "object", o),
-    kind(o, "identifier"), text(o, t), rc_own(a, g).
+ref_attr(a, t, g) :- kind(a, "jsx_attribute"), child(a, n, 0), text(n, "ref"), child(a, j, _),
+    kind(j, "jsx_expression"), child(j, m, _), kind(m, "member_expression"), !has(m, _, "optional_chain"),
+    field(m, "object", o), kind(o, "identifier"), text(o, t), rc_own(a, g).
 .decl load_after(a: node, t: symbol, g: node)  // g's own code loads a member of t after attribute a
 load_after(a, t, g) :- ref_attr(a, t, g), mem_load(m), field(m, "object", o), kind(o, "identifier"), text(o, t),
     rc_own(m, g), node(d, a, _, _, e), node(d, m, _, i, _), e <= i.
@@ -236,7 +236,8 @@ literal_slot(x) :- child(p, x, _), kind(p, "pair"), field(p, "value", x), child(
     !memo_deps(o).
 literal_slot(x) :- kind(x, "shorthand_property_identifier"), child(o, x, _), kind(o, "object"), alive(o), !memo_deps(o).
 .decl branch_kind(s: node)
-branch_kind(s) :- kind(s, k), (k = "if_statement" ; k = "while_statement" ; k = "do_statement" ; k = "switch_statement").
+branch_kind(s) :- kind(s, k), (k = "if_statement" ; k = "while_statement" ; k = "do_statement" ;
+    k = "switch_statement").
 // alive(n): n's value goes somewhere: not a statement of its own, a sequence, or an unread const.
 .decl alive(n: node)
 alive(n) :- child(p, n, _), !dead_parent(p, n).
@@ -364,9 +365,7 @@ in_literal(x, y) :- in_literal(x, z), (kind(z, "array") ; kind(z, "object") ; ki
 effect_expr(v) :- (kind(v, "array") ; kind(v, "object")), holds_effect(v).
 effect_expr(v) :- fn_value(v), reads_refs(v).
 effect_expr(v) :- kind(v, "identifier"), fn_name_reads(v).
-effect_expr(v) :- (kind(v, "parenthesized_expression"), child(v, y, 0) ; kind(v, "ternary_expression"),
-    (field(v, "consequence", y) ; field(v, "alternative", y)) ; logical(v), (field(v, "left", y) ; field(v, "right", y))),
-    effect_expr(y).
+effect_expr(v) :- (kind(v, "parenthesized_expression"), child(v, y, 0) ; passes(v, y)), effect_expr(y).
 .decl effect_fn(x: node)  // x is, names or holds a function that reads refs
 effect_fn(x) :- fn_value(x), reads_refs(x).
 effect_fn(x) :- fn_name_reads(x).
