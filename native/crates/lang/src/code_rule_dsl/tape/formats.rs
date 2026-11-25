@@ -70,17 +70,10 @@ impl Format {
     }
 }
 
-thread_local! {
-    /// This thread's format 16 writer between documents (`TreeOps`): taken by a document's walk and given back at
-    /// its end, its parts' buffers kept.
-    static SPARE: std::cell::Cell<Option<f16::Writer>> = const { std::cell::Cell::new(None) };
-}
-
 impl Drop for TreeOps {
     fn drop(&mut self) {
         // SAFETY: taken once, here, and not used after.
-        let w = unsafe { std::mem::ManuallyDrop::take(&mut self.w) };
-        let _ = SPARE.try_with(|s| s.set(Some(w)));
+        unsafe { std::mem::ManuallyDrop::take(&mut self.w) }.give_back();
     }
 }
 
@@ -170,8 +163,7 @@ impl TreeOps {
         // The thread's writer, used again: its parts are a document's working memory (about 20 buffers), and a new
         // writer a document made them each again (1.14 M arrays, 14,091 GB·s on cold PostHog). Its tape is the
         // document's own (`finish` takes it out).
-        let mut w = SPARE.try_with(|s| s.take()).ok().flatten().unwrap_or_else(f16::Writer::empty);
-        w.begin(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
+        let w = f16::Writer::reused(lang, source, crate::code_rule_dsl::lines::terminators(language), tag, z, true, nodes);
         Ok(TreeOps { lang, w: std::mem::ManuallyDrop::new(w), ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
     }
 

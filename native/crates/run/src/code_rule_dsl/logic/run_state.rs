@@ -135,7 +135,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "ACCOUNTED", Thread, "the time this thread's profiled scopes have charged, read and set by its own scopes as they open and close"),
     ("crates/facts_base/src/code_rule_dsl/facts/vtab.rs", "NEAR", Thread, "this thread's view of the process's interned column lists (`column_names`): the same list on any thread"),
-    ("crates/lang/src/code_rule_dsl/tape/formats.rs", "SPARE", Thread, "this thread's format 16 writer between documents: its parts' buffers, the same on any thread"),
+    ("crates/tape_format/src/f16/ops.rs", "SPARE", Thread, "this thread's format 16 writer between documents: its parts' buffers, the same on any thread"),
     ("crates/vector/src/frame.rs", "ARENA", Thread, "this thread's frames' memory (decision 0687, `frame::op`): an operation's working memory, popped as it returns"),
     ("crates/vector/src/probe.rs", "BUSY", Thread, "this thread is in the allocation probe (a measuring aid, off by default)"),
     ("crates/prof/src/code_rule_dsl/logic/profile.rs", "COMMAND", Outermost, "the command's clocks, on the thread that runs it and its outermost run"),
