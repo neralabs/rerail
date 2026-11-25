@@ -213,7 +213,11 @@ facts keyed by content, path and plan.
 The page's third revision surveys the file layer and the caches as they are, and the work shapes of the engine's
 kernels (23, on six axes). On it the user decided (2026-11-25):
 
-- E4: "no idea, be thorough". The survey is to be done again, thoroughly.
+- E4: "no idea, be thorough". The survey was done again (the page's revision 4, §4): every `.uglykl` file, the
+  UKL library, the kernels inside Rust sources, MLDB's forest and Metal kernels, the CPU executors' forms and the
+  decisions on how work runs. It found 46 shapes in seven families, placed on six axes (how work is found, an item's
+  unit, what is shared inside it, what joins the units, where output goes, the bounds). The seventh family is how the
+  executor places work (batches, morsels, handoffs, splits, the scoreboard), not an operation's shape.
 - F1 (a search with several valid answers): "so may a CPU search, so what? ANything numeric can vary. The results
   need to be correct; determinism is nice to have but not required". This revises D2: a result must be correct on
   every executor and tiling; the same bytes are not required. Tests check correctness (the same set of facts, a valid
@@ -222,3 +226,11 @@ kernels (23, on six axes). On it the user decided (2026-11-25):
   bootstrapping than load, we already agreed before to not have a separate strata fact". The bootstrap's files are
   `boot(path, k)`, a file's place in the bootstrap being its stratum (O4), and `k_order(d, k) :- boot(p, k), doc(d,
   p, _).`; `load` is the engine's. `check_delta_exec_shape.py` refuses `load(` in the crate's `.rerail` files.
+
+Revision 4 also corrects revision 3, which drew a new ledger for E1. The engine already has the tracker E1 asks
+for: one ledger a block (0487) and region handles (0491: `Mutable`, `Shared`, `Frozen`, every use counted and
+checked, naming the operation, versions, a mirror a memory domain), built on the user's words of 2026-11-20. E2's
+tables exist as the job address tables (0100 §9), the slabs' address lists (0471) and the directory of domains and
+replicas (0440 §7.2). The operation layer is to use them as they are, adding three things: slots pinned from an
+operation's signature when it starts (the step 0491 leaves below it), references to earlier generations as
+`Frozen` handles kept by the operation graph, and a descriptor table a launch and device.
