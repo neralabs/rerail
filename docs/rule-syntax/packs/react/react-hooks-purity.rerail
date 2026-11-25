@@ -11,7 +11,9 @@
 //   useEffect(() => { Date.now(); });  <b onClick={() => performance.now()}/>   not: they run later
 //   useState(() => Date.now())                                not: an initializer argument is not called here
 // The compiler also follows aliases (`const now = Date.now; now()`); this rule does not (NOTES).
-#include "tsx/react-compiler.rerail"
+// A named function is live only through a reference that may call it, not one that stores it (tsx/react-01):
+//   useMemo(() => { const begin = () => performance.now(); return { begin }; }, [])   not reported
+#include "tsx/react-01.rerail"
 
 .violation purity(at: node, msg: symbol)
     code "react-hooks/purity"
@@ -21,7 +23,19 @@
 purity(c, "Move this call out of render: into an effect or event handler, or into a lazy useState initializer when the value should be read once per mount.") :-
     impure_call(c), rc_own(c, h), rc_render_fn(h, _).
 purity(c, "This function runs during render, so this call runs there too; move the call into an effect or event handler, or read the value once in a lazy useState initializer.") :-
-    impure_call(c), rc_own(c, h), rc_live_fn(h, _).
+    impure_call(c), rc_own(c, h), (r01_live_fn(h, _) ; callback_call(h)).
+
+// callback_call(g): the compiler also takes g, a named function of the render code, to run during render when a
+// handler written inside a render callback calls it with a value of that callback:
+//   updates.map((u) => <Row onConfirm={() => void submit(u)}/>)        submit's impure calls are reported
+.decl callback_call(g: node)
+callback_call(g) :- rc_fn_at(s, g), rc_own(g, h), rc_render_fn(h, f), ref_site(r, s), kind(c, "call_expression"),
+    field(c, "function", r), rc_own(c, k), handed_in_place(k), !rc_render_fn(k, _), rc_own(k, l), !rc_render_fn(l, _),
+    call_arg(c, a, _), kind(a, "identifier"), ref_site(a, v), rc_own(v, l2), handed_in_place(l2),
+    !rc_render_fn(l2, _), rc_own(l2, h2), rc_render_fn(h2, f).
+.decl handed_in_place(k: node)  // function k is written as a JSX attribute's value or as an argument
+handed_in_place(k) :- rc_fn(k), child(j, k, _), kind(j, "jsx_expression"), child(t, j, _), kind(t, "jsx_attribute").
+handed_in_place(k) :- rc_fn(k), child(l, k, _), kind(l, "arguments").
 
 // impure_call(c): Date.now(), Math.random() or performance.now() on the global object (not a local `Math`).
 .decl impure_call(c: node)

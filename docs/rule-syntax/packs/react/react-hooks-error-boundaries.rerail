@@ -9,8 +9,9 @@
 //   function Page() { try { return <Feed/>; } catch { return null; } }          reported at <Feed/>
 //   function Page() { try { const x = <Feed/>; } catch {} … }                   not: x is never read
 //   try { … } catch { return <Fallback/>; }                                      not: in the catch block
-// The compiler drops JSX whose value is unused before it validates, so a discarded or never-read element is not
-// reported. One finding per outermost element.
+// The compiler drops JSX whose value is unused before it validates, so a discarded or never-read element, and the
+// elements inside it, are not reported. Every other element is: an element nested in another is an instruction of
+// its own (`try { return <a><b/></a>; }` reports both lines).
 #include "tsx/react-compiler.rerail"
 
 .violation error_boundaries(at: node)
@@ -18,8 +19,11 @@
     "Build this JSX outside the try block: React renders it later, so the catch never sees its errors. Wrap the component in an error boundary to handle rendering errors."
     suppress eslint "react-hooks/error-boundaries"
     suppress oxlint "error-boundaries"
-error_boundaries(e) :- jsx_el(e), rc_own(e, f), rc_compiled(f), in_try(e, f), !inside(e, _, "jsx_element"),
-    !unused(e).
+error_boundaries(e) :- jsx_el(e), rc_own(e, f), rc_compiled(f), in_try(e, f), !dead(e).
+
+.decl dead(e: node)  // e's value goes nowhere, or e is part of an element whose value goes nowhere
+dead(e) :- unused(e).
+dead(e) :- unused(o), within(e, o), jsx_el(e).
 
 // in_try(e, f): e is in the block of a try with a catch, in f's own code.
 .decl in_try(e: node, f: node)

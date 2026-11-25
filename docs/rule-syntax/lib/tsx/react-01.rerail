@@ -1,0 +1,40 @@
+// tsx/react-01: which functions made while a component renders may run then, read closer to the React Compiler
+// than react-compiler.rerail's rc_live_fn. Used by react-hooks-globals and react-hooks-purity.
+//
+// What a rule gets from this library:
+//   r01_live_fn(g, f)   g, a function made while f renders (not f's own code), may be called during that render
+//   r01_held(g)         g is written inside an object or array literal handed on as a JSX prop or a hook argument
+//
+// rc_live_fn counts every reference to a named function in live code, and every function written in place there.
+// The compiler (its escape and aliasing analysis, as eslint-plugin-react-hooks 7.1.1 reports on the corpora) is
+// narrower in two ways:
+//   - a named function becomes live through a reference that may call it: `g()`, an argument `h(g)`, or a member
+//     read `g.x`. Storing it is not a call: `useMemo(() => { const begin = () => …; return { begin }; }, [])`
+//     leaves begin uncalled during render.
+//   - a function written inside an object or array literal that is itself a JSX prop's value or a hook's argument
+//     is handed on with the literal, as a function written as the prop is:
+//       <Palette items={[{ perform: () => { pwaEvent = null; } }]}/>       perform runs later
+// Everything else is rc_live_fn's: a function written in place in live code (an argument, a rendered child, a
+// value stored in a local), not a JSX prop, a hook argument or a useMemo callback.
+#include "tsx/react-compiler.rerail"
+
+.decl r01_live_fn(g: node, f: node)
+r01_live_fn(g, f) :- function_node(g), !rc_fn_at(_, g), !rc_handed(g), !rc_memo_callback(g, _), !r01_held(g),
+    rc_own(g, h), (rc_render_fn(h, f) ; r01_live_fn(h, f)).
+r01_live_fn(g, f) :- rc_fn_at(s, g), within(g, f), ref_site(r, s), !rc_later_ref(r), r01_may_call(r), rc_own(r, h),
+    (rc_render_fn(h, f) ; r01_live_fn(h, f)).
+
+// r01_may_call(r): reference r hands its function to code that may call it.
+.decl r01_may_call(r: node)
+r01_may_call(r) :- kind(c, "call_expression"), field(c, "function", r).
+r01_may_call(r) :- kind(l, "arguments"), child(l, r, _).
+r01_may_call(r) :- kind(m, "member_expression"), field(m, "object", r).
+
+.decl r01_held(g: node)
+r01_held(g) :- r01_up(g, l), rc_later_slot(l).
+.decl r01_up(g: node, x: node)  // x is an object, array, pair, spread or parentheses around function g, or around one
+r01_up(g, x) :- function_node(g), child(x, g, _), r01_literal(x).
+r01_up(g, x) :- r01_up(g, y), child(x, y, _), r01_literal(x).
+.decl r01_literal(x: node)
+r01_literal(x) :- kind(x, k), (k = "object" ; k = "array" ; k = "pair" ; k = "spread_element" ;
+    k = "parenthesized_expression").
