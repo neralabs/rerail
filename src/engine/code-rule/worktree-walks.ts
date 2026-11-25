@@ -490,19 +490,28 @@ function firstSeenIn(walking: ReadonlyMap<Watching, WatcherWalk>): Map<string, n
 }
 
 /**
- * Whether `sources`, a worktree's snapshot, holds a file stamped at or after `since`: of the files a session opened then
- * first sees, only such a file goes to Git's verdicts (`CodeRuleBridge.#firstSightPaths`). Any other is its baseline,
- * and a `.gitignore` it takes for its rules is no change unless stamped since.
+ * Whether `source` was stamped at or after `since`, when a session opened: a write that session may have made, which
+ * its first sight of the source's worktree takes (`CodeRuleBridge.#firstSightPaths`). A source the walk did not read
+ * has no stamp, and was not.
  */
-function stampedSince(sources: ReadonlyMap<string, ObservedSource>, since: number): boolean {
-  for (const source of sources.values()) if ((source.modifiedAt ?? -Infinity) >= since) return true;
+export function stampedSince(source: Pick<ObservedSource, "modifiedAt">, since: number): boolean {
+  return (source.modifiedAt ?? -Infinity) >= since;
+}
+
+/**
+ * Whether `sources`, a worktree's snapshot, holds a file stamped since `since` (`stampedSince`): of the files a session
+ * opened then first sees, only such a file goes to Git's verdicts. Any other is its baseline, and a `.gitignore` it
+ * takes for its rules is no change unless stamped since.
+ */
+function anyStampedSince(sources: ReadonlyMap<string, ObservedSource>, since: number): boolean {
+  for (const source of sources.values()) if (stampedSince(source, since)) return true;
   return false;
 }
 
 /**
  * `WorktreeFindings.listed` and `byHead` of the worktree at `root` whose `HEAD` the walk read as `head` and whose
  * snapshot holds `sources`: listed when the walk shows a session it first (`firstSeen`), and `byHead` asked only where
- * that first sight takes a file for Git to judge (`stampedSince`). A session that opens beside worktrees Git added
+ * that first sight takes a file for Git to judge (`anyStampedSince`). A session that opens beside worktrees Git added
  * before it takes none of their files, and the index's three listings cost each of them, one worktree after another:
  * on Windows 11, beside 104 worktrees, the walk that first showed a new session the worktrees took 26 to 78 s.
  */
@@ -514,7 +523,7 @@ async function listedFor(
 ): Promise<FirstSightListings> {
   const since = firstSeen.get(root);
   if (since === undefined) return { listed: new Map(), byHead: new Map() };
-  return await listChanged(git, root, checkouts, stampedSince(sources, since) ? head : undefined);
+  return await listChanged(git, root, checkouts, anyStampedSince(sources, since) ? head : undefined);
 }
 
 /** The list `learnt` stored for the registry, read with no Git, which the walk's list takes in the same synchronous run. */

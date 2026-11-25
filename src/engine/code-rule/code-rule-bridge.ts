@@ -51,7 +51,7 @@ import { type CallPlace, type CallPlacesOf, type CallsAsked, type CallsCounted, 
 import { capturedOtherThanMade, placesBeforeWrite, type ReportedPreimage, reportedText, textBeforeWrite, unprovenCaptureBefore } from "./tool-result/reported-preimage.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  storedRegistry, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords, type WorktreeScan,
+  stampedSince, storedRegistry, type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeRecords, type WorktreeScan,
   type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
 import type { WorktreeListLearning, WorktreeRegistry } from "../catalog/repository-identity.js";
@@ -1398,7 +1398,7 @@ function uncapturedDigest(edit: CodeRuleEdit, before: ObservedSource | undefined
 }
 /** A first observation made after the session started may hold its shell writes, and is not a trustworthy preimage. */
 function changedSinceStart(discovery: Pick<SourceDiscovery, "startedAt">, after: Source | undefined): boolean {
-  return after?.modifiedAt !== undefined && after.modifiedAt >= discovery.startedAt;
+  return after !== undefined && stampedSince(after, discovery.startedAt);
 }
 /** A linked worktree's `.git` is a file, and no more a source than the folder would be. */
 function neverWalked(entry: Dirent): boolean {
@@ -3741,7 +3741,7 @@ export class CodeRuleBridge {
   #firstSightPaths(discovery: SourceDiscovery, snapshot: WorktreeSnapshot, heldByGit: (path: string, source: ObservedSource) => boolean): string[] {
     const ignoreFiles = this.#onIgnoreRulesChanged !== undefined;
     const taken = (path: string, source: ObservedSource): boolean => (ignoreFiles && basename(path) === GITIGNORE)
-      || ((source.modifiedAt ?? -Infinity) >= discovery.startedAt && !heldByGit(path, source));
+      || (stampedSince(source, discovery.startedAt) && !heldByGit(path, source));
     const paths: string[] = [];
     for (const [path, source] of snapshot.sources) if (taken(path, source)) paths.push(path);
     return paths;
