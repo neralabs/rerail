@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -30,8 +30,8 @@ async function installOutsideGit(root: string): Promise<string> {
 }
 
 async function rerail(cli: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<{ code: number | null; stdout: string }> {
-  const { promise, resolve } = Promise.withResolvers<{ code: number | null; stdout: string }>();
-  const child = execFile(process.execPath, [cli, ...args], { env }, (_error, stdout) => resolve({ code: child.exitCode, stdout }));
+  const { promise, resolve: settle } = Promise.withResolvers<{ code: number | null; stdout: string }>();
+  const child = execFile(process.execPath, [cli, ...args], { env }, (_error, stdout) => settle({ code: child.exitCode, stdout }));
   return await promise;
 }
 
@@ -43,6 +43,22 @@ function running(pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Waits for `pid` to exit and, when the wait runs out (a `daemon stop` that failed), ends it and waits again, so the
+ * folder it runs in is removed after it. Never throws: the case's own failure stays the one reported.
+ */
+async function endProcess(pid: number): Promise<void> {
+  const exited = async (): Promise<boolean> =>
+    await expect.poll(() => running(pid), { timeout: 30_000, interval: 50 }).toBe(false).then(() => true, () => false);
+  if (await exited()) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // It exited between the wait and the signal.
+  }
+  await exited();
 }
 
 describe("a Rerail package with no content store", () => {
@@ -59,9 +75,11 @@ describe("a Rerail package with no content store", () => {
       cli = join(packageRoot, "dist", "cli", "cli.js");
       const why = `no code rule can run: Rerail at ${packageRoot} is neither the managed installation under ` +
         `${join(home, "versions")} nor in a Git checkout, so it has no content store`;
-      expect((await rerail(cli, ["daemon", "start", "--port", "0"], env)).stdout).toContain(`Engine: unavailable: ${why}\n`);
-      // Test boundary: the state file the start wrote, read for the pid whose exit the clean-up waits for.
-      daemonPid = (JSON.parse(await readFile(join(home, "daemon.json"), "utf8")) as { pid: number }).pid;
+      const started = await rerail(cli, ["daemon", "start", "--port", "0"], env);
+      // Test boundary: the state file the start wrote, read before any assertion for the pid the clean-up ends.
+      const state = join(home, "daemon.json");
+      if (existsSync(state)) daemonPid = (JSON.parse(await readFile(state, "utf8")) as { pid: number }).pid;
+      expect(started.stdout).toContain(`Engine: unavailable: ${why}\n`);
       expect(await rerail(cli, ["status"], env)).toMatchObject({ code: 5, stdout: expect.stringContaining(`Engine: unavailable: ${why}\n`) });
       expect(await readFile(join(home, "daemon.log"), "utf8")).toContain(`native kernel: unavailable: ${why}\n`);
       const bundle = join(root, "bundle.json");
@@ -70,11 +88,13 @@ describe("a Rerail package with no content store", () => {
       const redacted = /^no code rule can run: Rerail at .+ is neither the managed installation under .+ nor in a Git checkout, so it has no content store$/u;
       expect(JSON.parse(await readFile(bundle, "utf8"))).toMatchObject({ daemon: { status: "running", engine: { ok: false, error: expect.stringMatching(redacted) } } });
     } finally {
-      if (cli !== undefined) await rerail(cli, ["daemon", "stop"], env);
-      // The daemon runs in the Rerail home, inside the folder removed next: its exit comes first.
-      const pid = daemonPid;
-      if (pid !== undefined) await expect.poll(() => running(pid), { timeout: 30_000, interval: 50 }).toBe(false);
-      await removeFolder(root);
+      try {
+        if (cli !== undefined) await rerail(cli, ["daemon", "stop"], env);
+        // The daemon runs in the Rerail home, inside the folder removed next: its exit comes first.
+        if (daemonPid !== undefined) await endProcess(daemonPid);
+      } finally {
+        await removeFolder(root);
+      }
     }
   }, 120_000);
 });

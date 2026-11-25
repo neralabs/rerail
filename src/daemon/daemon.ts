@@ -619,8 +619,9 @@ export class RerailDaemon {
     const { bindHost, publicHosts, remote } = daemonHosts(options);
     const accessToken = await daemonAccessToken(options, remote);
     const { uiRoot, ui } = daemonUi(options);
-    // The daemon's entry point (`runRerailDaemon`) took the main instance before this start, and only the main instance
-    // may open the machine-wide store, so the store question is asked here, once.
+    // A main build's entry point (`runRerailDaemon`) takes the main-instance lease before this start; a checkout or npx
+    // build takes none and never names the machine-wide store unless RERAIL_CONTENT_STORE_PATH does. Only the main
+    // instance may open that store, so the store question is asked here, once.
     const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth, options.contentStoreProblem ?? contentStoreProblem);
     const databasePath = resolve(options.databasePath ?? defaultRerailDatabasePath());
     // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a

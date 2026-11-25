@@ -48,7 +48,11 @@ vi.mock("node:fs", { spy: true });
 
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
+afterEach(async () => {
+  // A case that stubs the environment and throws before its own clean-up leaves no stub for the next.
+  vi.unstubAllEnvs();
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
+});
 
 function needleCodeRule(revision: number, pattern = "NEEDLE", code = "NEEDLE") {
   return codeRuleSchema.parse({
@@ -631,7 +635,6 @@ describe("mechanical code rule regressions", () => {
       })]);
     } finally {
       await enforcer.close();
-      vi.unstubAllEnvs();
     }
   });
 
