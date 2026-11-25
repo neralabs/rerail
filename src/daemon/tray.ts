@@ -87,8 +87,10 @@ export interface TrayMenuState {
 /**
  * The menu for a daemon whose health is `health`, serving `url`, in the Rerail home `home`. `newer` is the newer Rerail
  * the update check found, or null; `update` is where the menu's update is. The badge asks for attention while the
- * daemon is unhealthy or an update is there to click. Once an update is done the item says so, and the badge goes back
- * to the plain dot, though `health.update.latest` stays newer until a hook from the new version replaces this daemon.
+ * daemon is unhealthy or an update is there to click. The update's refresh replaces this daemon with the new version's,
+ * whose icon no longer offers it, so the item says it is done only where this daemon outlives the update: when the
+ * refresh keeps it running or could not replace it. The badge then goes back to the plain dot, though
+ * `health.update.latest` stays newer until the new version replaces this daemon.
  */
 export function trayMenuState(input: {
   health: DaemonHealth;
@@ -403,8 +405,9 @@ export function accountRerailHome(): string {
 /**
  * Runs `rerail update` with the active launcher's CLI, detached, with its output appended to daemon.log, as
  * `autostartDaemon` runs `daemon start` (`launchDetached`): on Windows it then opens no console window, and an update
- * that stops this daemon to rebuild the SQLite binding still finishes. Its exit code; 1 when it could not start, was
- * ended by a signal, or is gone where no code was kept. `machine` is `launchDetached`'s, this one unless a test's.
+ * that stops this daemon still finishes: its refresh stops it to start the new version's in its place, and an update
+ * that rebuilds the SQLite binding stops it first. Its exit code; 1 when it could not start, was ended by a signal, or
+ * is gone where no code was kept. `machine` is `launchDetached`'s, this one unless a test's.
  */
 export async function runRerailUpdate(home: string, env: NodeJS.ProcessEnv, machine?: DaemonMachine): Promise<number> {
   const args = [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "update"];
