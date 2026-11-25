@@ -1,0 +1,1 @@
+Rerail now shows an icon in the macOS menu bar, the Windows notification area or the Linux system tray while its daemon runs on a desktop. Its menu shows whether Rerail is running, its version and dashboard address, and offers Open dashboard, Update when a newer release is out, and Stop daemon. `RERAIL_TRAY=0` turns it off.
