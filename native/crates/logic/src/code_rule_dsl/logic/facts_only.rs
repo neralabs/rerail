@@ -208,7 +208,6 @@ const STATE: &[(&str, &str)] = &[
     // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
     // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
     // pending atoms no committed row may hold yet, not a result kept.
-    ("content_store/atoms.rs", "RESERVING"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
@@ -252,6 +251,10 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile.rs", "SHARD"),
     ("code_rule_dsl/logic/profile.rs", "STACK"),
     ("code_rule_dsl/logic/profile.rs", "THREADS"),
+    // Each nameless system thread's dispatch queue as last seen (macOS), to name its CPU in the report.
+    ("code_rule_dsl/logic/profile.rs", "QUEUE_LABELS"),
+    // The frame keys of the run under way, for its manifest to name: bound while the run runs, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/reuse.rs", "RunFrame"),
     ("code_rule_dsl/logic/profile/memory.rs", "DOING"),
     ("code_rule_dsl/logic/profile/memory.rs", "SAMPLED"),
     // The width census's counts by relation and by span (`RERAIL_WIDTH_CENSUS`), printed at the run's end: a
