@@ -11,7 +11,7 @@ import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import { text } from "node:stream/consumers";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -27,6 +27,7 @@ import { DAEMON_STATE_FILE } from "../src/runtime/index.js";
 import { fixturesPath } from "../test/support/oracles.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
+import { awaitCodeRulesOpenThrough } from "./support/code-rules-open.js";
 
 const PACKAGE_ROOT = resolve(".");
 const CLI = join(PACKAGE_ROOT, "dist", "cli", "cli.js");
@@ -126,6 +127,19 @@ class Session {
     return await hook({ ...tool, hook_event_name: "PreToolUse" });
   }
 
+  /**
+   * Waits for the session's code rules, through Read calls that edit nothing. A session's first start answers its tool
+   * calls without code rules while they open (the first index of the checkout, its rules compiled), and the first pass
+   * after checks what was edited meanwhile; only an edit made once they run is steered at its own result.
+   */
+  async awaitCodeRules(): Promise<void> {
+    await awaitCodeRulesOpenThrough(this.id, async () => {
+      const tool = { session_id: this.id, cwd: repo, tool_name: "Read", tool_use_id: `toolu_${this.id}_${(this.#tool += 1)}`, tool_input: { file_path: join(repo, "app", "legacy.py") } };
+      await hook({ ...tool, hook_event_name: "PreToolUse" });
+      await hook({ ...tool, hook_event_name: "PostToolUse", tool_response: { type: "text" } });
+    });
+  }
+
   /** The turn's end: `Stop`'s answer. */
   async endTurn(): Promise<HookAnswer> {
     return await hook({ session_id: this.id, cwd: repo, hook_event_name: "Stop", prompt_id: `prompt-${this.#prompt}`, last_assistant_message: "Done." });
@@ -148,10 +162,29 @@ async function rerailAuditOf(path: string): Promise<AuditRecord> {
   return found!;
 }
 
-/** The `.rerail` runner's children of the daemon still running. */
+/** The `.rerail` runner's children of the daemon still running, by their command lines. */
 async function runnerChildren(): Promise<string[]> {
+  const parent = daemon!.pid!;
+  return (process.platform === "win32" ? await windowsChildren(parent) : await posixChildren(parent)).filter(line => line.includes("rr-child"));
+}
+
+async function posixChildren(parent: number): Promise<string[]> {
   const { stdout } = await promisify(execFile)("ps", ["-A", "-o", "ppid=,command="]);
-  return stdout.split("\n").filter(line => line.trim().startsWith(`${daemon!.pid} `) && line.includes("rr-child"));
+  return stdout.split("\n").filter(line => line.trim().startsWith(`${parent} `));
+}
+
+/**
+ * Windows has no `ps` of its own, and Git Bash's answers `unknown option -- A`: Windows PowerShell reads the process
+ * table through CIM there, its cmdlet named with its module, so PowerShell loads that one module by its name and reads
+ * no other installed module first.
+ */
+async function windowsChildren(parent: number): Promise<string[]> {
+  const powershell = win32.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const { stdout } = await promisify(execFile)(powershell, [
+    "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+    `(CimCmdlets\\Get-CimInstance -ClassName Win32_Process -Filter 'ParentProcessId=${parent}').CommandLine`,
+  ], { windowsHide: true });
+  return stdout.split(/\r?\n/u).filter(line => line.trim() !== "");
 }
 
 const VIEWS = "def view(user):\n    assert user.is_admin\n    return user\n";
@@ -234,6 +267,8 @@ describe("rules written in .rerail, against a daemon of this build", () => {
     try {
       const session = new Session("rr-deadline-session");
       await session.start();
+      // The JSON rule's steer is read at the edit's own result, so the edit waits for the session's code rules.
+      await session.awaitCodeRules();
       const answer = await session.write("app/slow.py", TOO_COMPLEX);
       expect(contextOf(answer)).toContain(`[${JSON_RULE}]`);
       await session.endTurn();
