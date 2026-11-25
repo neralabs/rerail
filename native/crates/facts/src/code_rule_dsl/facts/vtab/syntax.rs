@@ -4169,13 +4169,14 @@ impl Batch {
             if py_file && d.unpackaged {
                 unpackaged.push(key);
             }
-            let parts: Vec<&str> = d.path.split('/').filter(|s| !s.is_empty()).collect();
-            if let Some(last) = parts.last() {
+            // A path's parts read where it lies, each once: a few, so each is checked against those before it (a
+            // list and a set a document before).
+            let parts = || d.path.split('/').filter(|s| !s.is_empty());
+            if let Some(last) = parts().last() {
                 file_name.push([key, string(last) as i64]);
             }
-            let mut seen = std::collections::HashSet::new();
-            for part in parts {
-                if seen.insert(part) {
+            for (i, part) in parts().enumerate() {
+                if !parts().take(i).any(|q| q == part) {
                     path_part.push([key, string(part) as i64]);
                 }
             }

@@ -129,10 +129,24 @@ pub fn identities_of(entry: &Entry) -> Entry {
 
 /// Records that `entry` holds the relations of `identities`.
 pub fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
-    let mut words: Vector<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
-    words.sort_unstable();
-    words.dedup();
-    entry.rows.insert(COVERED.to_owned(), (2, words.into_iter().flatten().collect()));
+    // The rows written once, flat, sorted as pairs in place: a set of the held words, a list of pairs and the rows
+    // made of it were 0.43 M on cold PostHog.
+    let mut flat: Vector<i64> = entry.rows.get(COVERED).map(|(_, v)| v.as_slice()).unwrap_or_default().iter().copied().collect();
+    flat.extend(identities.flat_map(covered_words));
+    let (pairs, _) = flat.as_chunks_mut::<2>();
+    pairs.sort_unstable();
+    let mut kept = 0;
+    for i in 0..pairs.len() {
+        if kept == 0 || pairs[i] != pairs[kept - 1] {
+            pairs[kept] = pairs[i];
+            kept += 1;
+        }
+    }
+    flat.truncate(2 * kept);
+    match entry.rows.get_mut(COVERED) {
+        Some(held) => *held = (2, flat),
+        None => { entry.rows.insert(COVERED.to_owned(), (2, flat)); }
+    }
 }
 
 /// Each of `rels`' identity in the file-local program `local` (decision 0225 §2): `plan::identities`, a digest of its
@@ -373,7 +387,7 @@ pub fn program_digest(v: &crate::code_rule_dsl::logic::program_image::Version) -
     let digest: [u8; 32] = hash.finalize().into();
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
-        let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
+        let name: String = rerail_prof::code_rule_dsl::prof::lower_hex(&digest[..6]);
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), v.show());
     }
     digest

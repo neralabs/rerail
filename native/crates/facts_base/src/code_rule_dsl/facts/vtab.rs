@@ -1755,7 +1755,9 @@ pub struct Relation {
 /// A relation's column: its index (made when it is first probed), and its distinct values while its values have come
 /// in nondecreasing order, else `None`.
 struct Col {
-    index: OnceLock<ColumnIndex>,
+    /// Boxed: most columns are never probed, and an index held in place made every relation's column list ~140
+    /// bytes a column (981 bytes a relation on average, 4,799 GB·s on cold PostHog).
+    index: OnceLock<Box<ColumnIndex>>,
     ordered: Option<usize>,
 }
 impl Col {
@@ -1981,7 +1983,7 @@ impl Relation {
         })
     }
     fn index(&self, column: usize) -> &ColumnIndex {
-        crate::code_rule_dsl::logic::profile::once(&self.cols[column].index, "relation: a column's index built", || {
+        crate::code_rule_dsl::logic::profile::once::<Box<ColumnIndex>>(&self.cols[column].index, "relation: a column's index built", || {
             use super::rows::collect_in;
             use rerail_blocks::order::print_vals;
             let home = self.cells().home();
@@ -1991,17 +1993,21 @@ impl Relation {
                 let vals = (0..self.len()).map(|r| self.value(r, column));
                 let prints = collect_in(home.as_ref(), vals.map(print));
                 let fences = collect_in(home.as_ref(), (0..self.len()).step_by(FENCE).map(|r| self.value(r, column)));
-                return ColumnIndex { ids: collect_in(home.as_ref(), std::iter::empty()), distinct, fences, prints };
+                return Box::new(ColumnIndex { ids: collect_in(home.as_ref(), std::iter::empty()), distinct, fences, prints });
             }
             // Each value read once, and the pairs sorted (ties by row, as a stable sort by value): a sort reading the
             // rows' values at every comparison read each of them about 2 log n times.
-            let mut pairs: Vec<(i64, u32)> = (0..self.len()).map(|r| (self.value(r, column), r as u32)).collect();
-            pairs.sort_unstable();
-            let distinct = 1 + pairs.windows(2).filter(|w| w[0].0 != w[1].0).count();
-            let fences = collect_in(home.as_ref(), pairs.iter().step_by(FENCE).map(|p| p.0));
-            let prints = collect_in(home.as_ref(), pairs.iter().map(|p| print(p.0)));
-            let ids = collect_in(home.as_ref(), pairs.into_iter().map(|p| p.1));
-            ColumnIndex { ids, distinct, fences, prints }
+            // The pairs are the build's working memory: in a frame. The index is written once, in the block.
+            rerail_blocks::frame::op(|fr| {
+                // Each pair its value and its row.
+                let mut pairs = fr.collect((0..self.len()).map(|r| [self.value(r, column), r as i64]));
+                pairs.sort_unstable();
+                let distinct = 1 + pairs.windows(2).filter(|w| w[0][0] != w[1][0]).count();
+                let fences = collect_in(home.as_ref(), pairs.iter().step_by(FENCE).map(|p| p[0]));
+                let prints = collect_in(home.as_ref(), pairs.iter().map(|p| print(p[0])));
+                let ids = collect_in(home.as_ref(), pairs.iter().map(|p| p[1] as u32));
+                Box::new(ColumnIndex { ids, distinct, fences, prints })
+            })
         })
     }
     /// Whether `column`'s values were pushed in order, so that it is its own index.

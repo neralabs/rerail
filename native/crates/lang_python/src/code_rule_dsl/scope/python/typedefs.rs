@@ -127,13 +127,12 @@ pub(super) const SUBSCRIPT_MEMBERS: &[&str] = &[
 pub use crate::code_rule_dsl::scope::{RootKind, TypeRoot};
 
 /// The name a subscript's value or a call's callee ends with.
-pub(super) fn last_segment<D: Doc>(node: &Node<'_, D>) -> String {
+/// Borrowed from the source where it lies (an owned name a callee was 1.22 M on cold PostHog); owned only where an
+/// escape is decoded.
+pub(super) fn last_segment<'r, D: Doc>(node: &Node<'r, D>) -> std::borrow::Cow<'r, str> {
     match node.kind().as_ref() {
-        "attribute" => node
-            .field("attribute")
-            .map(|attribute| python_identifier(&attribute).into_owned())
-            .unwrap_or_default(),
-        _ => python_identifier(node).into_owned(),
+        "attribute" => node.field("attribute").map(|attribute| python_identifier(&attribute)).unwrap_or_default(),
+        _ => python_identifier(node),
     }
 }
 
