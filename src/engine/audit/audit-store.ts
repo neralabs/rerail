@@ -6,7 +6,7 @@ import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } f
 import { decodeCursor, encodeCursor } from "../storage/page-cursor.js";
 import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../storage/record-writes.js";
 import { holdsTable } from "../storage/table-probe.js";
-import { ITEMS, nameOnce, storedList, type StoredItem, type StoredListLog } from "../storage/stored-list.js";
+import { isStoredItem, ITEMS, nameOnce, storedList, type StoredItem, type StoredListLog } from "../storage/stored-list.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../secret-scrub.js";
 import {
@@ -800,7 +800,7 @@ function sessionsWithViolations(database: RerailDatabase, since: number, reposit
 /** A history row's place in newest-first order: audit start, then audit id (both descending), then report order. */
 const historyCursorSchema = z.tuple([z.number().int(), z.string(), z.number().int().nonnegative()]);
 
-/** A row of the history's page: its stored violation as JSON text, NULL where its audit's text holds none there. */
+/** A row of the history's page: its stored violation as JSON text, NULL where its audit's text does not parse. */
 interface HistoryRow {
   payload: string | null;
   auditId: string;
@@ -812,31 +812,32 @@ interface HistoryRow {
 }
 
 /**
- * The text of the violation at `ordinal` in an audit's `violations_json`, in SQL, or NULL when the text holds no JSON
- * object there: text that does not parse, which `json_extract` would raise on for the whole page, or another JSON value
- * at that place, which the page could not read as a violation. `json_valid` comes first, since `json_type` raises too.
+ * The violation a history row reads: the JSON text of its audit's stored item at its place, when that is a JSON
+ * object. None for a row whose audit's text does not parse (its payload NULL) or holds another JSON value there, or
+ * no item at all.
  */
-function storedViolation(ordinal: SQL): SQL<string | null> {
-  const place = sql`'$[' || ${ordinal} || ']'`;
-  return sql<string | null>`(CASE WHEN NOT json_valid(${audits.violations}) THEN NULL
-    WHEN json_type(${audits.violations}, ${place}) = 'object' THEN json_extract(${audits.violations}, ${place}) END)`;
+function rowViolation(row: HistoryRow): CodeRuleViolation | undefined {
+  if (row.payload === null) return undefined;
+  const value: unknown = JSON.parse(row.payload); // `->` gives JSON text, never anything else
+  // The payload is this daemon's own serialized violation, re-read from the audit that wrote it.
+  return isStoredItem(value, "object") ? value as CodeRuleViolation : undefined;
 }
 
 /**
- * The entries of the history's `rows` whose stored violation reads (`storedViolation`). A row whose audit's text holds
+ * The entries of the history's `rows` whose stored violation reads (`rowViolation`). A row whose audit's text holds
  * none there is left out, and the line that names the audit goes to the log once, so one damaged audit costs its own
  * violations, never the page.
  */
 function readableHistory(source: AuditSource, rows: readonly HistoryRow[]): ViolationHistoryPage["violations"] {
   const entries: ViolationHistoryPage["violations"] = [];
   for (const row of rows) {
-    if (row.payload === null) {
+    const violation = rowViolation(row);
+    if (violation === undefined) {
       sayHistoryLeftOut(source, row.auditId);
       continue;
     }
     entries.push({
-      // The payload is this daemon's own serialized violation, re-read from the audit that wrote it.
-      violation: JSON.parse(row.payload) as CodeRuleViolation,
+      violation,
       sessionId: row.sessionId,
       auditId: row.auditId,
       at: row.at,
@@ -905,21 +906,30 @@ function listViolationHistory(source: AuditSource, query: ViolationHistoryQuery,
   const { limit } = paging(query);
   const matching = historyMatching(query, repositoryId);
   const continuing = historyContinuing(query.cursor);
-  // The page and its total from one snapshot, so a commit between them cannot make them disagree.
+  // The page and its total from one snapshot, so a commit between them cannot make them disagree. Each audit on the
+  // page has its text tested once (`held`), and only a text that parses is read at each row's place, with `->`, the one
+  // JSON call a row makes: `json_extract` raises on text that does not parse, and each further call on a row costs
+  // another pass over the audit's text, a page of a 2 MB list twice its time.
   const { rows, total } = database.transaction(() => ({
     rows: database.all<HistoryRow>(sql`
-    SELECT
-      ${storedViolation(sql`page.ordinal`)} AS payload,
-      page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
-      ${sessions.host} AS host, page.logged AS logged
-    FROM (
+    WITH page AS (
       SELECT ${auditViolations.auditId}, ${auditViolations.ordinal}, ${auditViolations.sessionId}, ${auditViolations.startedAt},
         ${auditViolations.logged}
       FROM ${auditViolations}
       WHERE ${and(matching, continuing)}
       ORDER BY ${auditViolations.startedAt} DESC, ${auditViolations.auditId} DESC, ${auditViolations.ordinal}
       LIMIT ${limit + 1}
-    ) page
+    ),
+    held AS MATERIALIZED (
+      SELECT ${audits.auditId} AS audit_id, json_valid(${audits.violations}) AS readable FROM ${audits}
+      WHERE ${audits.auditId} IN (SELECT audit_id FROM page)
+    )
+    SELECT
+      (CASE WHEN held.readable THEN ${audits.violations} -> ('$[' || page.ordinal || ']') END) AS payload,
+      page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
+      ${sessions.host} AS host, page.logged AS logged
+    FROM page
+    JOIN held ON held.audit_id = page.audit_id
     JOIN ${audits} ON ${audits.auditId} = page.audit_id
     LEFT JOIN ${sessions} ON ${sessions.sessionId} = page.session_id
     ORDER BY page.started_at DESC, page.audit_id DESC, page.ordinal

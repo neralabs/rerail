@@ -13,6 +13,11 @@ const IS_ITEM: Record<StoredItem, (item: unknown) => boolean> = {
   object: item => typeof item === "object" && item !== null && !Array.isArray(item),
 };
 
+/** Whether `value`, one parsed item of a stored list, is of JSON type `item`, as `storedList` tests each item. */
+export function isStoredItem(value: unknown, item: StoredItem): boolean {
+  return IS_ITEM[item](value);
+}
+
 /** What a list of each `StoredItem` type holds, in the words a log line or a failure uses. */
 export const ITEMS: Record<StoredItem, string> = { text: "strings", object: "objects" };
 
@@ -25,7 +30,7 @@ export function storedList(text: string, item: StoredItem): unknown[] | string {
     return (error as SyntaxError).message; // JSON.parse throws nothing else
   }
   if (!Array.isArray(value)) return "it parses to another JSON value";
-  return value.every(IS_ITEM[item]) ? value : "an item of it is another JSON value";
+  return value.every(entry => isStoredItem(entry, item)) ? value : "an item of it is another JSON value";
 }
 
 /** Where a reader writes the line that names a row whose stored text does not read. */
