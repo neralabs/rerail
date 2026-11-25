@@ -10,6 +10,7 @@ import type { AuditReader } from "../engine/audit/audit-store.js";
 import type { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
 import type { ApiCaller, RuleCatalog, CheckoutContext, RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import type { PublishedRulePackReader } from "../engine/catalog/rule-packs.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
@@ -61,6 +62,8 @@ export interface RerailApiStores {
   health(): z.infer<typeof presentationDaemonSchema>;
   /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
   codingAgents(): Promise<CodingAgentState[]> | undefined;
+  /** The rule packs published on npm that fit this Rerail; undefined when this process does not read npm. */
+  publishedRulePacks(): PublishedRulePackReader | undefined;
   /**
    * Starts opening again a session this daemon suspended while it was quiet, so a scan just queued for it runs now;
    * nothing for any other session. Returns at once and never throws: a failure goes to the daemon's log, and the scan

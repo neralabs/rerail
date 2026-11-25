@@ -76,7 +76,7 @@ without `CONCURRENTLY` is the same hazard in a Prisma `migration.sql`, an Alembi
 
 - **Dashboard.** A pack's page offers each risk its rules have under Risk in the Filter, with how many rules have it,
   and each row shows the rule's risk and severity; its layer and hazard show on hover. Search finds a rule by its risk
-  or hazard.
+  (its name or its value: `data safety` or `data-safety`), severity, layer or hazard.
 - **API.** `GET /api/rule-packs` (`rule_packs_list`) returns each rule's `dimensions` where its pack gives them.
 - **Packs.** Rerail's own rules give them, starting with the `django` and `rerail` packs. The React pack's practice
   rules wait for its next move to a newer Rerail line: giving them now would make the pack need Rerail 0.2.2. A port

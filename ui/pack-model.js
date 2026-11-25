@@ -1,7 +1,8 @@
 /**
  * What the pack pages (`#pack/<id>`, `#created`), the catalog (`#packs`) and the pack sheet derive from the rules and
  * packs the page holds: a page's rules as filtered and sorted, the whole-pack switch's state, the catalog's kinds,
- * order and the packs suggested for the repository, and the sheet's rules. Nothing here touches the DOM.
+ * order and the packs suggested for the repository, the sheet's rules, and what adding a pack turns on. Nothing here
+ * touches the DOM.
  */
 import { categoryLabel, isLog, isRunning, RISK_LABELS } from "./derive.js";
 import { activityOf, dimensionsOf, fires, matches, RISK_FILTER, ruleSections, titleOf, ui } from "./state.js";
@@ -82,11 +83,34 @@ export function catalogKinds(packs) {
   return [["all", "All"], ...present.map(c => [c, categoryLabel(c) || c])];
 }
 
-/** The packs of kind `kind` ("all": every one), alphabetical by name. */
+/** The packs of kind `kind` ("all": every one): the installed ones, then those only published, each alphabetical by name. */
 export function catalogPacks(packs, kind) {
   return packs.filter(p => kind === "all" || p.category === kind)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    .sort((a, b) => Number(a.published === true) - Number(b.published === true) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 }
+
+/**
+ * Every pack the catalog lists: the installed ones (`GET /api/rule-packs`), then each pack `published` lists
+ * (`GET /api/rule-packs/published`) that is not installed, marked `published: true`. A pack installed since the list was
+ * read is the installed one.
+ */
+export function catalogEntries(installed, published) {
+  const ids = new Set(installed.map(p => p.id));
+  return [...installed, ...(published?.packs ?? []).filter(p => !ids.has(p.id)).map(p => ({ ...p, published: true }))];
+}
+
+/**
+ * What the catalog splits on: the recommendations of the installed packs, and each published pack of `entries` that fits
+ * this repository; `null` while neither is read.
+ */
+export function catalogSuggestions(recommendations, entries) {
+  const fitting = entries.filter(p => p.published && p.reason !== undefined).map(p => ({ packId: p.id, reason: p.reason }));
+  return recommendations === null && fitting.length === 0 ? null : [...(recommendations ?? []), ...fitting];
+}
+
+/** The command that installs published pack `pack` at its version: one of Rerail's own by its id, any other by its package. */
+export const installCommand = pack =>
+  `rerail packs add ${pack.packageName === `@neralabs/rerail-pack-${pack.id}` ? pack.id : pack.packageName}@${pack.version}`;
 
 /**
  * Why Rerail suggested pack `packId` for this repository, from `GET /api/rule-packs/recommendations` (`""` when it gave
@@ -119,3 +143,25 @@ export function sheetRules(pack, query) {
 
 /** A sheet's rows for a pack not added yet, by how each starts once it is: on, then off, each in the order given. */
 export const startGroups = rows => ({ on: rows.filter(r => r.on), off: rows.filter(r => !r.on) });
+
+/** The sentence for the `rules` a pack starts on that Rerail keeps but does not run for `code`, `why`; `null` for none. */
+function startsOnNotRunning(rules, code, why) {
+  const n = rules.filter(r => r.on && r.inactive?.code === code).length;
+  if (n === 0) return null;
+  return `${n === 1 ? "One it starts on doesn’t" : `${n} it starts on don’t`} run ${why}.`;
+}
+
+/**
+ * What an added `pack` turns on: its rules, but not the opt-in ones the pack starts off; and of those it starts on, how
+ * many this Rerail no longer runs as the pack writes them (`reads-left-out-token`), which its next version runs again,
+ * and how many are conversation rules while the daemon runs without them (`experimental-off`).
+ */
+export function addedRulesText(pack) {
+  const rules = pack?.rules ?? [];
+  const off = rules.filter(r => !r.on).length;
+  return [
+    off === 0 ? "Its rules are on." : `${off} of its rules start off; turn them on from its page.`,
+    startsOnNotRunning(rules, "reads-left-out-token", "on this Rerail until the pack’s next version"),
+    startsOnNotRunning(rules, "experimental-off", "while conversation rules are off"),
+  ].filter(sentence => sentence !== null).join(" ");
+}

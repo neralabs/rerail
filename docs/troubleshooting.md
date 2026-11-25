@@ -8,6 +8,17 @@ Each entry: what you see, why, what to do. Supported systems are under
 
 Set-up checks Node, the computer and Git first. A failed check changes nothing: fix it, then rerun the same command.
 
+### `npx: command not found`
+
+```text
+zsh: command not found: npx
+```
+
+Node.js is not installed (`npx` comes with it), so set-up never starts. Bash says `npx: command not found`;
+PowerShell says `The term 'npx' is not recognized`. Install Node 24 or newer from [nodejs.org](https://nodejs.org) or
+with Homebrew (`brew install node`), nvm, fnm or Volta, open a new terminal, check that `node --version` prints `v24`
+or later, and rerun.
+
 ### Node is too old
 
 ```text
@@ -420,13 +431,15 @@ Set-up backs up each startup file it changes to `<file>.rerail.bak`, one backup 
 
 </details>
 
-### `rerail status` says `No repo found here` or `Rerail is not installed`
+### `rerail status` says `No Git repository here` or `Rerail is not installed`
 
 ```text
-No repo found here (/home/me). Run rerail status inside your project.
+No Git repository here (/home/me). Rerail works in a Git repository: run rerail status inside one, or start Rerail in one with rerail start --repo <folder>.
 ```
 
-`rerail status` reports on the repository you run it in. Run it inside your project.
+Rerail works per Git repository, and `rerail status` reports on the one you run it in. Run it inside your project, or
+start Rerail in your project from where you are with `rerail start --repo <folder>`, `<folder>` being the project's
+folder.
 
 ```text
 Rerail is not installed on this computer. Install it with npx @neralabs/rerail setup.
@@ -788,6 +801,19 @@ pid to end; if the stop finds none and a start prints this line again, end the p
 The Rerail home was moved or removed while its daemon ran. The daemon writes this line to `daemon.log` and stops
 writing `daemon.json`, so a home made again at that path never names it, but it still runs, recording into the
 database of the home it lost. End the pid it names, then run `rerail daemon start`.
+
+### `not-on-disk: the change was made, but Rerail could not confirm it is on the disk …`
+
+The daemon made a change you asked for in the dashboard, with `rerail settings` or `rerail scan` (in internal testing),
+or through an MCP tool, then waited for the disk to keep it, and the disk gave the error the message ends with. The
+dashboard shows the same message. Rerail says a change is made only once it is on the disk, so a power cut cannot undo
+it; this one is made, but a power cut or an operating system crash may still undo it. Do not make it again unless you
+see it is gone: making it again can make it twice, such as a second audit request.
+
+The daemon's background sync of the history syncs the same file. While that sync fails, `daemon.log` says
+`rerail daemon: syncing the history to the disk failed, trying again every 5 s: …` once, and
+`rerail daemon: syncing the history to the disk works again` once a sync succeeds. Until then a power cut or an
+operating system crash can take more than the last 5 s of history ([Rerail database](reference.md#rerail-database)).
 
 ### Containers: the dashboard does not open from the host
 
