@@ -1821,11 +1821,10 @@ export interface FirstSightListing {
   readonly changed: string[] | undefined;
   /**
    * What the listings say of each file against the commit `head` (`HeadListing`). Undefined when any listing failed,
-   * ran past its time limit or passed `MAX_LISTED_PATH_BYTES`, without `head`, and when `HEAD`'s newest move is a
-   * commit (`headMovedOnlyByCommits` with no `from`): that commit may hold what a command wrote. A reflog Git cannot
-   * read counts as a newest move that is no commit, as the session's reading of `HEAD`'s moves takes it. `ls-files -v`
-   * prints the whole index under that bound (64 MiB, about a million paths), so the checkout of a larger index goes to
-   * Git's reading.
+   * ran past its time limit or passed `MAX_LISTED_PATH_BYTES`, without `head`, and unless `HEAD`'s newest move is
+   * known to be no commit (`headNewestMove`): a commit may hold what a command wrote, and a reflog Git could not read
+   * does not say. `ls-files -v` prints the whole index under that bound (64 MiB, about a million paths), so the checkout
+   * of a larger index goes to Git's reading.
    */
   readonly byHead: HeadListing | undefined;
 }
@@ -1843,7 +1842,7 @@ async function indexEntries(cwd: string, options: GitReadOptions): Promise<Index
   if (listing.ended !== "printed") return listing;
   const plain: string[] = [];
   const marked: string[] = [];
-  for (const entry of listing.paths) (entry.startsWith("H ") ? plain : marked).push(entry.slice(entry.indexOf(" ") + 1));
+  for (const entry of listing.paths) (entry.startsWith("H ") ? plain : marked).push(entry.slice(2));
   return { ended: "printed", plain, marked };
 }
 
@@ -1861,6 +1860,17 @@ async function headListing(cwd: string, head: string, changed: readonly string[]
 }
 
 /**
+ * How `HEAD` in `cwd` last moved, by its reflog's newest entry: `commit` for any form of `git commit` (`COMMIT_SUBJECT`),
+ * `other` for any other move, and for none (a worktree Git added detached has none until `HEAD` moves); undefined
+ * where Git could not read the reflog.
+ */
+async function headNewestMove(cwd: string, options: GitReadOptions): Promise<"commit" | "other" | undefined> {
+  const newest = await gitOutput(cwd, ["reflog", "show", "-n", "1", "--format=%gs", "HEAD"], options.signal);
+  if (newest === undefined) return undefined;
+  return COMMIT_SUBJECT.test(newest) ? "commit" : "other";
+}
+
+/**
  * The files of the checkout at `cwd` that `gitModifiedOrUntrackedPaths` answers, and what the listings say of each
  * against the commit `head` (`FirstSightListing`): one Git process, and three more once the first printed and `head`
  * is known.
@@ -1868,7 +1878,7 @@ async function headListing(cwd: string, head: string, changed: readonly string[]
 export async function gitFirstSightListing(cwd: string, head: string | undefined, options: GitReadOptions = {}): Promise<FirstSightListing> {
   const listing = await gitModifiedOrUntrackedListing(cwd, options);
   const changed = modifiedOrUntracked(listing);
-  if (listing.ended !== "printed" || head === undefined || await headMovedOnlyByCommits(cwd, undefined, options)) return { changed, byHead: undefined };
+  if (listing.ended !== "printed" || head === undefined || await headNewestMove(cwd, options) !== "other") return { changed, byHead: undefined };
   return { changed, byHead: await headListing(cwd, head, listing.paths, options) };
 }
 
