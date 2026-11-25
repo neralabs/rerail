@@ -5,7 +5,7 @@
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
 //! - `file_line(path, i, text)`: the lines of a file, from 1;
 //! - `file_digest(path, c)`: the SHA-256 of a file's bytes, hex (what a cache key names a file's content by);
-//! - `module_file(k, f)`: the file a module specifier resolves to, `k` being the importing file's path, the specifier
+//! - `module_target(k, f)`: the file a module specifier resolves to, `k` being the importing file's path, the specifier
 //!   and its style, joined by `\n` (Node's resolution as eslint-plugin-n reads it, `import_target`: the phase
 //!   `node_resolve`);
 //!
@@ -87,7 +87,7 @@ pub(super) struct World {
     /// Documents loaded this run and taken back since (`unload`): out of the budget, their rows still held where
     /// they were made, so a load asked again takes them back in place (`reload`).
     taken: BTreeMap<String, Loaded>,
-    /// Each module request's answer (`module_file`), and the resolver that gave them, made at the first request.
+    /// Each module request's answer (`module_target`), and the resolver that gave them, made at the first request.
     modules: BTreeMap<String, Option<String>>,
     resolver: Option<Box<dyn Fn(&str, &str, &str) -> Option<String>>>,
 }
@@ -104,7 +104,7 @@ pub fn install_module_resolver(resolver: ModuleResolver) {
     let _ = MODULE_RESOLVER.set(resolver);
 }
 
-/// The request relation of `module_file`, whose key names no path (`still` asks it again every run).
+/// The request relation of `module_target`, whose key names no path (`still` asks it again every run).
 pub(super) const MODULE_REQ: &str = "rr_module_req";
 
 impl World {
@@ -196,7 +196,7 @@ impl World {
         Some(d)
     }
 
-    /// The file a module request resolves to (`module_file`): its key is the importing file's path, the specifier and
+    /// The file a module request resolves to (`module_target`): its key is the importing file's path, the specifier and
     /// its style, joined by `\n`. None where it does not resolve, or the key is not three parts.
     pub(super) fn module(&mut self, asked: &str) -> Option<String> {
         if let Some(found) = self.modules.get(asked) {

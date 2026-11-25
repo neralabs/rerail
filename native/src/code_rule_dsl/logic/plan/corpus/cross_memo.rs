@@ -30,7 +30,7 @@ const PREFIX: &str = "rr_cx_";
 pub(super) const SUFFIX: &str = "__cross";
 pub(super) const DOCS: &str = "rr_cross_doc";
 /// The facts `world` gives a run (its answers), not in the plan's digest.
-const WORLD_FACTS: [&str; 4] = ["dir_entry", "file_line", "module_file", "loaded"];
+const WORLD_FACTS: [&str; 4] = ["dir_entry", "file_line", "module_target", "loaded"];
 const SCHEMA: &str = "rerail.cross-rows/v2";
 /// The stored rows' encoding version: bumped when its meaning changes.
 const ROWS_SCHEMA: u32 = 2;

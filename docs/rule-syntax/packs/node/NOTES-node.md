@@ -95,7 +95,7 @@ never ran those rules on:
 
 **C1. core: module resolution.** Done (decision 0691): the phase `node_resolve`
 (`native/src/code_rule_dsl/typing/programs/node_resolve.rerail`) resolves each file's specifiers through core's
-`module_file` request, answered by the engine's `import_target`, and `node-resolve.rerail` derives `spec_resolved` from
+`module_target` request, answered by the engine's `import_target`, and `node-resolve.rerail` derives `spec_resolved` from
 its export at the file's own path. As first requested:
 
 ```

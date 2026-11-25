@@ -271,9 +271,10 @@ Found on the way and fixed:
    - Tests: the repository asks each file's nearest package (a stand-in publication, in the facts crate), and a
      program reads what npm leaves out (`files`, `.npmignore`, no package), with the real reader.
 11. **`spec_resolved` comes from the phase `node_resolve`** (new on main; the branch binds it empty).
-   - Core has a fourth file-system request, `module_file(k, f)`: `k` is the importing file's path, the specifier
+   - Core has a fourth file-system request, `module_target(k, f)`: `k` is the importing file's path, the specifier
      and its style (`require`, `import`, `type`), joined by `\n`. `rr::WORLD` names it with `rr_module_req`, so it is
-     asked as `dir_entry` is: by a rule that binds `k`.
+     asked as `dir_entry` is: by a rule that binds `k`. (Not `module_file`: P1, `struct.rerail`, includes core and
+     derives a relation of that name.)
    - The engine answers it with `import_target`, eslint-plugin-n's resolution at default options
      (`import_target::resolver`): resolved where the target has no error, as the plugin reads `resolveError`. The
      answer is workspace-relative, or absolute outside the root. Corpus lies below the ecma crate, so the engine

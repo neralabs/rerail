@@ -6790,7 +6790,7 @@ fn run_observed(
         let load_f = load_placed.fields()?;
         let load_answers: Vec<(&str, &str)> = load_f.answers().iter().map(|&(q, a)| (load_f.rel_name(q), load_f.rel_name(a))).collect();
         // The per-file relations the cone reads: those a load answers, and those it reads as inputs whatever it asks.
-        // A cone of file-system requests alone (a phase keying `module_file` by its files' own rows) loads nothing,
+        // A cone of file-system requests alone (a phase keying `module_target` by its files' own rows) loads nothing,
         // and its per-file reads were bound to nothing (no statistics, no rows).
         let mut per_file: Vec<String> = load_answers.iter().filter(|(q, a)| *q == world::LOAD && split.exports.iter().any(|e| e == a)).map(|(_, a)| (*a).to_owned()).collect();
         for rel in split.exports.iter().filter(|e| load_f.is_input(e) && !crate::code_rule_dsl::typing::file_local::run_constant(prog, e)) {
@@ -7110,7 +7110,7 @@ fn run_observed(
                         for ((_, is_dir), name) in entries.iter().zip(atoms(&names)?) {
                             out.push(vec![row[0], name, i64::from(*is_dir)]);
                         }
-                    } else if *produced == "module_file" {
+                    } else if *produced == "module_target" {
                         if let Some(file) = world.module(&asked) {
                             out.push(vec![row[0], atoms(&[file.as_str()])?[0]]);
                         }

@@ -2548,7 +2548,7 @@ fn a_files_npm_leaves_out_are_npm_ignored() {
 }
 
 /// Decision 0691: `spec_resolved` comes from the phase `node_resolve`, which resolves each file's specifiers natively
-/// (`module_file`, main's `import_target`) and hands the files on by path. A relative file, an installed package (its
+/// (`module_target`, main's `import_target`) and hands the files on by path. A relative file, an installed package (its
 /// `main`, in node_modules, which the repository walk skips), a builtin and a dynamic import resolve; a missing file
 /// does not, and is the one `spec_failed`. Adding the file resolves it on the next run.
 #[test]

@@ -1,7 +1,7 @@
 // The phase `node_resolve` (decision 0083; 0691): the file each module specifier resolves to, as Node resolves it with
 // eslint-plugin-n's options (main's `import_target`, a port of enhanced-resolve). Resolution reads other files
 // (package.json, tsconfig, node_modules), so a file's own part cannot answer it: each file states the strings a
-// specifier may be, by symbol, the cross part asks the engine for each (`module_file`, answered natively), and the
+// specifier may be, by symbol, the cross part asks the engine for each (`module_target`, answered natively), and the
 // files are handed on by path. A phase naming no `.language` takes its reader's.
 //   file_at(p, x, st, f)  specifier x, of style st ("require", "import", "type"), in the file at path p resolves to f:
 //                         workspace-relative, or absolute outside the root; no row where resolution fails
@@ -36,4 +36,4 @@ name_at(p, x, st) :- spec_at(p, v, st), match("(?<x>[^!]*)!.*", v).
 .decl ask_at(p: symbol, x: symbol, st: symbol, k: symbol)
 ask_at(p, x, st, cat(p, cat("\n", cat(x, cat("\n", st))))) :- name_at(p, x, st).
 .decl file_at(p: symbol, x: symbol, st: symbol, f: symbol)
-file_at(p, x, st, f) :- ask_at(p, x, st, k), module_file(k, f).
+file_at(p, x, st, f) :- ask_at(p, x, st, k), module_target(k, f).
