@@ -236,8 +236,10 @@ describe("scrubSecrets", () => {
       quarters = Math.min(quarters, elapsed(4, quarter));
       megabyte = Math.min(megabyte, elapsed(1, whole));
     }
+    // The ratio is the guard, and the case's own time limit its only clock: a fixed bound on one pass reads a busy
+    // runner's load as well as a slow rule. A rule linear in the text but slow on each character reads 1 here too; the
+    // five turns scan 10 MB, so vitest's 5 s limit on Linux ends a case whose rule takes about 500 ms a megabyte.
     expect(megabyte).toBeLessThan(2 * quarters);
-    expect(megabyte).toBeLessThan(500);
   });
 
   it("tells whether text holds a secret", () => {
