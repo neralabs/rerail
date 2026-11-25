@@ -53,9 +53,10 @@ report(c, at, cat("Copy `", x, ".current` to a variable inside the effect and us
     cleanup_read(c, r, at), text(r, x), at = max a : { cleanup_read(c, q, a), ref_site(q, site), ref_site(r, site) },
     ref_site(r, site), !current_assigned(site).
 .decl cleanup_read(c: node, r: node, at: node)  // r.current read in the outermost function v returns
+// The returned function may sit in parentheses, `return (() => …)`: ESTree has none.
 cleanup_read(c, r, p) :- deps_hook(c, x, _, _), deps_effect(x), deps_visit(c, v), deps_component(v, _),
     deps_ref(v, r, _), field(m, "object", r), kind(m, "member_expression"), field(m, "property", p), text(p, "current"),
-    nearest(r, g, function_kind), outer_fn(v, g, h), child(rs, h, _), kind(rs, "return_statement").
+    nearest(r, g, function_kind), outer_fn(v, g, h), child(rs, hp, _), kind(rs, "return_statement"), deparen(hp, h).
 .decl outer_fn(v: node, g: node, h: node)  // h is the outermost function in v that holds g (or g itself)
 outer_fn(v, g, g) :- deps_visit(_, v), nearest(g, v, function_kind).
 outer_fn(v, g, h) :- deps_visit(_, v), function_node(g), within(g, v), nearest(g, p, function_kind), p != v,
@@ -65,7 +66,9 @@ current_assigned(site) :- (kind(a, "assignment_expression") ; kind(a, "augmented
     field(a, "left", m), field(m, "property", p), text(p, "current"), field(m, "object", o), ref_site(o, site).
 
 // An assignment to a component variable from the callback is lost on the next render. Reported once per
-// variable, and then nothing else is checked for this Hook.
+// variable, at what is assigned, and then nothing else is checked for this Hook. eslint-scope gives every name an
+// assignment writes the assignment's right side: `x = v`, `x += v`, each name of a pattern (`[a, b] = v`,
+// `({ a } = v)`), and the left of a `for (x of v)` or `for (x in v)`. `x++` has none.
 // The plugin meets references scope by scope (the callback's own, then each nested block or function in order),
 // so the first assignment is the earliest in the outermost scope that has one:
 //   if (a) { v = {}; }  v = 43;      reported at 43
@@ -73,9 +76,10 @@ current_assigned(site) :- (kind(a, "assignment_expression") ; kind(a, "augmented
 report(c, w, cat("Keep `", x, "` in a useRef and assign its `.current` instead, or declare it inside the callback; this assignment is lost after each render.")) :-
     stale(c, x, w, i, j), i = min i2 : { stale(c, x, _, i2, _) }, j = min j2 : { stale(c, x, _, i, j2) }.
 .decl stale(c: node, x: symbol, w: node, scope: number, at: number)
-stale(c, k, w, i, j) :- deps_visit(c, v), deps_component(v, _), deps_ref(v, r, _), deps_key(r, k),
-    (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression")), field(a, "left", r),
-    field(a, "right", w), nearest(r, sc, block_scope), node(_, sc, _, i, _), node(_, r, _, j, _).
+stale(c, k, w, i, j) :- deps_visit(c, v), deps_component(v, _), deps_ref(v, r, _), deps_key(r, k), write_expr(r, w),
+    nearest(r, sc, block_scope), node(_, sc, _, i, _), node(_, r, _, j, _).
+.decl write_expr(r: node, w: node)  // name r is written with w (eslint-scope's writeExpr)
+write_expr(r, w) :- write_target(r, a), (field(a, "left", r) ; bound_name(r, _)), field(a, "right", w).
 .decl analysed(c: node)  // the dependency check proper runs: a component scope, and no lost assignment
 analysed(c) :- deps_visit(c, v), deps_component(v, _), !stale(c, _, _, _, _).
 
@@ -132,3 +136,108 @@ construction(e) :- kind(e, "assignment_expression"), field(e, "right", x), const
 construction_kind("object"). construction_kind("array"). construction_kind("arrow_function").
 construction_kind("function_expression"). construction_kind("class"). construction_kind("jsx_element").
 construction_kind("jsx_self_closing_element"). construction_kind("new_expression"). construction_kind("regex").
+
+// Review react-01, exhaustive-deps 1: ESTree has no parentheses, so `(() => …)` is a function without captured values.
+.test a_parenthesised_function_is_stable exactly
+    .fixture "src/e1.jsx" ```
+        import { useEffect } from "react";
+        export function Clock() {
+          const log = (() => console.log("tick"));
+          useEffect(() => {
+            log();
+          }, []);
+          return null;
+        }
+        ```
+.end
+
+// A cast is not a function: `(() => …) as any` must be listed.
+.test a_cast_function_is_not_stable exactly
+    .fixture "src/ze2.tsx" ```
+        import { useEffect } from "react";
+        export function A() {
+          const log = (() => console.log(2)) as any;
+          useEffect(() => {
+            log();
+          }, []);
+          return null;
+        }
+        ```
+    .expect "react-hooks/exhaustive-deps" at "src/ze2.tsx":6
+.end
+
+// Review react-01, exhaustive-deps 2: each name a pattern or a for-of assigns is written with the right side.
+.test pattern_and_for_of_writes_are_lost_assignments exactly
+    .fixture "src/e2.jsx" ```
+        import { useEffect } from "react";
+        export function Pair({ items }) {
+          let first;
+          useEffect(() => {
+            [first] =
+              items;
+          }, [items]);
+          return first;
+        }
+        ```
+    .fixture "src/e3.jsx" ```
+        import { useEffect } from "react";
+        export function Last({ items }) {
+          let last;
+          useEffect(() => {
+            for (last of
+              items) {}
+          }, [items]);
+          return last;
+        }
+        ```
+    .expect "react-hooks/exhaustive-deps" at "src/e2.jsx":6
+    .expect "react-hooks/exhaustive-deps" at "src/e3.jsx":6
+.end
+
+// Review react-01, exhaustive-deps 3: `return (() => …)` returns the cleanup.
+.test a_parenthesised_cleanup_is_a_cleanup exactly
+    .fixture "src/e4.jsx" ```
+        import { useEffect, useRef } from "react";
+        export function Box() {
+          const ref = useRef(null);
+          useEffect(() => {
+            return (() => {
+              ref.current.blur();
+            });
+          }, []);
+          return <div ref={ref} />;
+        }
+        ```
+    .expect "react-hooks/exhaustive-deps" at "src/e4.jsx":6
+.end
+
+// Review react-01, exhaustive-deps minor: `10n` is neither a string nor a number.
+.test a_bigint_const_is_not_stable exactly
+    .fixture "src/e5.jsx" ```
+        import { useEffect } from "react";
+        export function Big({ f }) {
+          const N = 10n;
+          useEffect(() => {
+            f(N);
+          }, [f]);
+          return null;
+        }
+        ```
+    .expect "react-hooks/exhaustive-deps" at "src/e5.jsx":6
+.end
+
+// Review react-01, exhaustive-deps minor: `undefined` is an unresolved identifier in ESTree; the problem stops the construction check.
+.test undefined_in_the_array_is_an_unnecessary_outer_value exactly
+    .fixture "src/e6.jsx" ```
+        import { useEffect } from "react";
+        export function U({ f }) {
+          const opts = { a: 1 };
+          useEffect(() => {
+            f(opts);
+          }, [f, opts,
+            undefined]);
+          return null;
+        }
+        ```
+    .expect "react-hooks/exhaustive-deps" at "src/e6.jsx":6
+.end

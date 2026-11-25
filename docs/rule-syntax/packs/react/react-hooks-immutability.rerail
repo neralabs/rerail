@@ -10,15 +10,20 @@
 //                                                                    results are frozen, in the component's own
 //                                                                    code or a function written in it
 //   const list = useMemo(() => [], []); list.push(x);                 reported: a memoized value is frozen too
+//   const x = {}; useFoo(x); x.a = 1;   const xs = []; <Row xs={xs}/>; xs.push(1);
+//                                                                    reported: a local passed to JSX or a hook is
+//                                                                    frozen from there on
 //   window.title = "x"  (during render)                               reported: a value outside the component
 //   let n = 0; <b onClick={() => { n = 1; }}/>                        reported twice: the assignment, and the
 //                                                                    handler that does it after render
+//   let n = 0; const h = () => { n = 1; }; <b cb={{ h }}/>            reported once: the handler goes inside a literal
+//   let n = 0; <b onClick={() => { [n] = [1]; }}/>                    not: the compiler checks only `n = …` here
 //   const f = () => { props = {}; }                                   reported: a parameter reassigned in a closure
 //   function C({ x }) { x = x ?? 1; return <b onClick={() => x}/>; }   reported: a closure captures x
 // The compiler stops at a value's first error in a closure, so a closure reports a name once.
 // Frozen values are followed through `const { a } = props` and `const t = state.items`, not further. The compiler
 // knows more mutating calls (its type signatures) and more aliasing; NOTES has the clauses left out.
-#include "tsx/react-compiler.rerail"
+#include "tsx/react-01.rerail"   // react-compiler, and r01_held_ref
 
 .violation immutability(at: node, msg: symbol)
     code "react-hooks/immutability"
@@ -39,6 +44,18 @@ immutability(m, cat("Copy `", x, "` into a new local value and change the copy; 
     kind(c, "call_expression"), field(c, "function", m), field(m, "object", r), kind(r, "identifier"),
     field(m, "property", p), text(p, y), rc_own(c, f), rc_compiled(f), ref_site(r, s), memo_kind(s, k),
     mutator(k, y), text(r, x).
+// A local of the compiled function given to JSX (a prop, a child, a spread) or to a hook other than useRef, then
+// changed: in its own code each change, in a used function written in it the first change of each name, and a
+// collection's changing method in its own code, as above.
+immutability(r, cat("Change `", x, "` before passing it to JSX or a hook, or change a copy; a value React has been given must not be modified afterwards.")) :-
+    given_change(r, f), rc_compiled(f), text(r, x).
+immutability(r, cat("Change `", x, "` before passing it to JSX or a hook, or change a copy; a value React has been given must not be modified afterwards.")) :-
+    given_change(r, g), !rc_compiled(g), text(r, x), node(_, r, _, i, _),
+    i = min j : { mutated(_, r2), rc_own(r2, g), text(r2, x), node(_, r2, _, j, _) }.
+immutability(m, cat("Change `", x, "` before passing it to JSX or a hook, or change a copy; a value React has been given must not be modified afterwards.")) :-
+    kind(c, "call_expression"), field(c, "function", m), field(m, "object", r), kind(r, "identifier"),
+    field(m, "property", p), text(p, y), rc_own(c, f), ref_site(r, s), given_after(r, s, f), field(s, "value", v),
+    made(v, k), mutator(k, y), text(r, x).
 // A value of the module, or an undeclared global, changed by the compiled function's own code or by a function
 // it calls or hands to a call during render.
 immutability(m, cat("Move this change to `", x, "` into an effect or a handler passed straight to JSX; code that may run during render must not change values defined outside the component.")) :-
@@ -82,6 +99,24 @@ frozen_change(r, g) :- mutated(_, r), !ref_named(r), ref_site(r, s), frozen(s, f
     !inside(s, _, "rest_pattern"), rc_own(r, g), (g = f ; rc_own(g, f), used_fn(g)).
 frozen_change(r, g) :- mutated(_, r), ref_site(r, s), hoisted(s, f), !reassigned(s), rc_own(r, g),
     (g = f ; rc_own(g, f), used_fn(g)).
+// given_change(r, g): as frozen_change, for a local given to JSX or a hook before r (given_after) and frozen no
+// other way.
+.decl given_change(r: node, g: node)
+given_change(r, g) :- mutated(_, r), !ref_named(r), ref_site(r, s), given_after(r, s, f), !frozen(s, f),
+    !rc_ref_site(s), !reassigned(s), rc_own(r, g), (g = f ; rc_own(g, f), used_fn(g)).
+// given_after(r, s, f): r reads s, a const or let of compiled f with a plain name, after f's own code has passed s
+// to JSX or a hook (the compiler's Freeze effect on JSX operands and on a hook's arguments; useRef only captures).
+//   const x = {}; const el = <Row x={x}/>; x.a = 1;     x.a is after the JSX
+.decl given_after(r: node, s: node, f: node)
+given_after(r, s, f) :- ref_site(r, s), given(g, s, f), node(e, g, _, i, _), node(e, r, _, j, _), i < j.
+.decl given(g: node, s: node, f: node)  // reference g, in compiled f's own code, gives local s away
+given(g, s, f) :- freeze_ref(g), ref_site(g, s), kind(s, "variable_declarator"), field(s, "name", n),
+    kind(n, "identifier"), rc_own(s, f), rc_compiled(f), rc_own(g, f).
+.decl freeze_ref(g: node)  // g is an operand of JSX (a prop's value, a child, a spread) or a hook's argument
+freeze_ref(g) :- kind(g, "identifier"), deparen(v, g), child(j, v, _), kind(j, "jsx_expression").
+freeze_ref(g) :- kind(g, "identifier"), child(sp, g, _), kind(sp, "spread_element"), child(j, sp, _),
+    kind(j, "jsx_expression").
+freeze_ref(g) :- kind(g, "identifier"), deparen(v, g), call_arg(c, v, _), rc_hook_call(c), !rc_react_call(c, "useRef").
 // hoisted(s, f): a ref of f that a hook's callback reads above its declaration, or a const holding part of one.
 // The compiler hoists the declaration, and the ref becomes a frozen value:
 //   useEffect(() => { show(r.current); });  const r = useRef(v);  useEffect(() => { r.current = v; });  reported
@@ -191,15 +226,21 @@ mutator("set", "add"). mutator("set", "clear"). mutator("set", "delete").
 mutator("map", "set"). mutator("map", "clear"). mutator("map", "delete").
 mutator("weakset", "add"). mutator("weakset", "delete"). mutator("weakmap", "delete").
 
-// late_assign(n, g): `n = …` in deferred function g reassigns a `let` or `var` of the compiled function around g.
+// late_assign(n, g): `n = …` in function g, which runs after render, reassigns a `let` or `var` of the compiled
+// function around g. The compiler sees only a plain reassignment (its StoreContext), not a pattern's.
 .decl late_assign(n: node, g: node)
-late_assign(n, g) :- assign(n), rc_own(n, g), rc_deferred(g), ref_site(n, s), kind(s, "variable_declarator"),
+late_assign(n, g) :- plain_assign(n), rc_own(n, g), late_fn(g), ref_site(n, s), kind(s, "variable_declarator"),
     rc_compiled(f), within(g, f), rc_own(s, f).
+// late_fn(g): g runs after render: rc_deferred, or a named function each reference to which is a JSX prop's value,
+// a hook's argument, or inside an object or array literal that is one (`<Child cb={{ onClick }}/>`).
+.decl late_fn(g: node)
+late_fn(g) :- rc_deferred(g).
+late_fn(g) :- rc_fn_at(s, g), count : { ref_site(r, s), !rc_later_ref(r), !r01_held_ref(r) } = 0.
 // late_mutate(g): deferred g changes a member of a local of the compiled function: obj.foo = true. A ref by its
-// name (`latestRef.current = v`) is not a local value.
+// name (`latestRef.current = v`) is not a local value, and a local given to JSX or a hook before is a frozen one.
 .decl late_mutate(g: node)
 late_mutate(g) :- mutated(m, r), !ref_named(r), rc_own(m, g), rc_deferred(g), ref_site(r, s),
-    kind(s, "variable_declarator"), rc_compiled(f), within(g, f), rc_own(s, f), !frozen(s, f).
+    kind(s, "variable_declarator"), rc_compiled(f), within(g, f), rc_own(s, f), !frozen(s, f), !given_after(r, s, f).
 // early_read(r): r reads a variable or function of the compiled function before its declaration has run. Either r
 // is in the function's own code, inside the initializer or before the declaration (`const foo = useCallback(…,
 // [foo])`), or, when there is no such read of it, r is in a function passed to a call that comes before the
@@ -220,11 +261,13 @@ initializer(n, d) :- kind(d, "variable_declarator"), field(d, "value", v), (n = 
 early_site(r, s, d, f) :- kind(r, "identifier"), ref_site(r, s), rc_compiled(f), rc_own(s, f), within(r, f),
     (kind(s, "variable_declarator"), d = s ; kind(s, "function_declaration"), d = s ;
      nearest(s, d, "variable_declarator"), field(d, "name", n), within(s, n)), !rc_ref_site(d).
-// assign(n): n is a variable an `=` or `+=` assigns (not `||=`, `&&=`, `??=`), or one of a pattern assigned to:
-// `[props, ref] = useContextProps(props, ref)`.
-.decl assign(n: node)
-assign(n) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression"), !logical_assign(a)),
+// assign(n): n is a variable an `=` or `+=` assigns (plain_assign: not `||=`, `&&=`, `??=`), or one of a pattern
+// assigned to: `[props, ref] = useContextProps(props, ref)`.
+.decl plain_assign(n: node)
+plain_assign(n) :- (kind(a, "assignment_expression") ; kind(a, "augmented_assignment_expression"), !logical_assign(a)),
     field(a, "left", n), kind(n, "identifier").
+.decl assign(n: node)
+assign(n) :- plain_assign(n).
 assign(n) :- kind(a, "assignment_expression"), field(a, "left", p),
     (kind(p, "array_pattern") ; kind(p, "object_pattern")), within(n, p),
     (kind(n, "identifier") ; kind(n, "shorthand_property_identifier_pattern")), !field(_, "object", n),
@@ -232,10 +275,11 @@ assign(n) :- kind(a, "assignment_expression"), field(a, "left", p),
 .decl default_value(n: node)  // `[a = n] = …`: n is read, not assigned
 default_value(n) :- (kind(q, "assignment_pattern") ; kind(q, "object_assignment_pattern")), field(q, "right", v),
     (n = v ; within(n, v)).
-// handed(g, at): g goes to a JSX prop or a hook at `at`: written there, or a reference to the const holding it.
+// handed(g, at): g goes to a JSX prop or a hook at `at`: written there, or a reference to the const or function
+// declaration holding it.
 .decl handed(g: node, at: node)
 handed(g, g) :- rc_later_slot(v), deparen(v, g).
-handed(g, r) :- deparen(v, g), field(d, "value", v), kind(d, "variable_declarator"), ref_site(r, d), rc_later_ref(r).
+handed(g, r) :- rc_fn_at(s, g), ref_site(r, s), rc_later_ref(r).
 
 // memo_object(o, b, f): useMemo's callback, written in compiled f, has body b, which returns object o.
 .decl memo_object(o: node, b: node, f: node)
@@ -267,7 +311,7 @@ memo_reach(h, h) :- memo_entry(_, _, h).
 memo_reach(h, g) :- memo_reach(h, x), !memo_reassign(_, x), memo_calls(x, g).
 // memo_reassign(n, g): n, in g, reassigns a let of a useMemo callback's body, or a let or var of a compiled function.
 .decl memo_reassign(n: node, g: node)
-memo_reassign(n, g) :- assign(n), rc_own(n, g), ref_site(n, s), (memo_let(s) ; own_let(s, _)).
+memo_reassign(n, g) :- plain_assign(n), rc_own(n, g), ref_site(n, s), (memo_let(s) ; own_let(s, _)).
 .decl memo_let(s: node)
 memo_let(s) :- kind(s, "variable_declarator"), child(l, s, _), kind(l, "lexical_declaration"), op(l, "let"),
     child(b, l, _), rc_memo_callback(g, _), field(g, "body", b).
@@ -275,4 +319,93 @@ memo_let(s) :- kind(s, "variable_declarator"), child(l, s, _), kind(l, "lexical_
 own_let(s, f) :- kind(s, "variable_declarator"), rc_own(s, f), rc_compiled(f), !rc_ref_site(s), child(l, s, _),
     (kind(l, "variable_declaration") ; kind(l, "lexical_declaration"), op(l, "let")).
 .decl closure_reassigning(f: node)  // a function written in compiled f reassigns f's own let
-closure_reassigning(f) :- assign(n), rc_own(n, h), ref_site(n, s), own_let(s, f), rc_own(h, f), h != f.
+closure_reassigning(f) :- plain_assign(n), rc_own(n, h), ref_site(n, s), own_let(s, f), rc_own(h, f), h != f.
+
+// Review react-01, immutability 1: JSX operands and a hook's arguments are frozen; useRef only captures.
+.test a_local_given_to_jsx_or_a_hook_is_frozen exactly
+    .fixture "src/i1.jsx" ```
+        export function List({ a }) {
+          const items = [];
+          const el = <Row items={items} />;
+          items.push(a);
+          return el;
+        }
+        ```
+    .fixture "src/i7.jsx" ```
+        export function C({ a }) {
+          const x = {};
+          useFoo(x);
+          x.a = a;
+          return null;
+        }
+        ```
+    .fixture "src/i8.jsx" ```
+        export function C({ a }) {
+          const x = {};
+          const el = <Row x={x} />;
+          x.a = a;
+          return el;
+        }
+        ```
+    .fixture "src/useref.jsx" ```
+        import { useRef } from "react";
+        export function C() {
+          const x = {};
+          useRef(x);
+          x.a = 1;
+          return null;
+        }
+        ```
+    .expect "react-hooks/immutability" at "src/i1.jsx":4
+    .expect "react-hooks/immutability" at "src/i7.jsx":4
+    .expect "react-hooks/immutability" at "src/i8.jsx":4
+.end
+
+// Review react-01, immutability 2: the reassignment, and where the declared function is handed on.
+.test a_function_declaration_handed_to_jsx exactly
+    .fixture "src/i12.jsx" ```
+        export function C() {
+          let x = 0;
+          function onClick() {
+            x = 1;
+          }
+          return <b onClick={onClick}>{x}</b>;
+        }
+        ```
+    .expect "react-hooks/immutability" at "src/i12.jsx":4
+    .expect "react-hooks/immutability" at "src/i12.jsx":6
+.end
+
+// Review react-01, immutability 3: a handler held in a literal prop runs after render.
+.test a_handler_inside_an_object_prop_runs_later exactly
+    .fixture "src/i16.jsx" ```
+        export function C() {
+          let x = 0;
+          const onClick = () => {
+            x = 1;
+          };
+          return <Child cb={{ onClick }}>{x}</Child>;
+        }
+        ```
+    .expect "react-hooks/immutability" at "src/i16.jsx":4
+.end
+
+// Review react-01, immutability 4: the compiler checks only a plain reassignment (StoreContext) after render.
+.test a_pattern_reassignment_after_render_is_not_checked exactly
+    .fixture "src/i17.jsx" ```
+        export function C() {
+          let x = 0;
+          return <b onClick={() => { [x] = [1]; }}>{x}</b>;
+        }
+        ```
+    .fixture "src/i19.jsx" ```
+        import { useEffect } from "react";
+        export function C() {
+          let x = 0;
+          useEffect(() => {
+            [x] = [1];
+          });
+          return <b>{x}</b>;
+        }
+        ```
+.end

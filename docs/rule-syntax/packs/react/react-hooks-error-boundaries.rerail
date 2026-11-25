@@ -7,11 +7,16 @@
 // react-hooks/error-boundaries (React Compiler): JSX built inside `try { … } catch` in render code. Making an
 // element does not render it, so the catch never sees the errors of the component it names.
 //   function Page() { try { return <Feed/>; } catch { return null; } }          reported at <Feed/>
+//   useMemo(() => { try { return <Feed/>; } catch { return null; } }, [])       reported: the compiler inlines a
+//                                                                               useMemo callback into render code
 //   function Page() { try { const x = <Feed/>; } catch {} … }                   not: x is never read
 //   try { … } catch { return <Fallback/>; }                                      not: in the catch block
-// The compiler drops JSX whose value is unused before it validates, so a discarded or never-read element, and the
-// elements inside it, are not reported. Every other element is: an element nested in another is an instruction of
-// its own (`try { return <a><b/></a>; }` reports both lines).
+// The compiler drops values nothing uses before it validates, to a fixed point: a value made without side effects
+// (JSX, an array or object literal, a member read, an operator, parentheses, a cast) is dropped when it is a
+// statement of its own or held only by a const that is dropped too. `const a = <A/>; const b = [a];` with b unread
+// drops b, then a. A value that reaches a call, a return, a test (`a ?? x`'s a, `c ? … : …`'s c), a closure or an
+// assignment is kept. Every element kept is reported: an element nested in another is an instruction of its own
+// (`try { return <a><b/></a>; }` reports both lines).
 #include "tsx/react-compiler.rerail"
 
 .violation error_boundaries(at: node)
@@ -19,26 +24,117 @@
     "Build this JSX outside the try block: React renders it later, so the catch never sees its errors. Wrap the component in an error boundary to handle rendering errors."
     suppress eslint "react-hooks/error-boundaries"
     suppress oxlint "error-boundaries"
-error_boundaries(e) :- jsx_el(e), rc_own(e, f), rc_compiled(f), in_try(e, f), !dead(e).
+error_boundaries(e) :- jsx_el(e), rc_own(e, g), rc_render_fn(g, _), in_try(e, g), !unused(e).
 
-.decl dead(e: node)  // e's value goes nowhere, or e is part of an element whose value goes nowhere
-dead(e) :- unused(e).
-dead(e) :- unused(o), within(e, o), jsx_el(e).
-
-// in_try(e, f): e is in the block of a try with a catch, in f's own code.
-.decl in_try(e: node, f: node)
-in_try(e, f) :- kind(t, "try_statement"), field(t, "handler", _), field(t, "body", b), within(e, b), rc_own(t, f).
-// unused(e): the element's value goes nowhere: a statement of its own, `void <b/>`, or stored in a variable no one
-// reads (through parentheses, ?:, && and ||).
+// in_try(e, g): e is in the block of a try with a catch, in g's own code.
+.decl in_try(e: node, g: node)
+in_try(e, g) :- kind(t, "try_statement"), field(t, "handler", _), field(t, "body", b), within(e, b), rc_own(t, g).
+// unused(e): the element's value goes nowhere: carried to a statement of its own, to a const that is dropped, or to
+// a variable assigned and never read.
 .decl unused(e: node)
-unused(e) :- holder(e, x), (child(s, x, _), kind(s, "expression_statement") ;
-    child(u, x, _), kind(u, "unary_expression"), op(u, "void")).
-unused(e) :- holder(e, x), field(d, "value", x), kind(d, "variable_declarator"), !ref_site(_, d).
+unused(e) :- holder(e, x), child(s, x, _), kind(s, "expression_statement").
+unused(e) :- holder(e, x), field(d, "value", x), tracked(d), !kept(d).
 unused(e) :- holder(e, x), field(a, "right", x), kind(a, "assignment_expression"), field(a, "left", n),
     ref_site(n, d), count : { ref_site(r, d), r != n, !assigned(r) } = 0.
-.decl holder(e: node, x: node)  // x carries e's value up
+.decl holder(e: node, x: node)  // x carries element e's value up
 holder(e, e) :- jsx_el(e).
-holder(e, x) :- holder(e, y), child(x, y, _), (kind(x, "parenthesized_expression") ; kind(x, "ternary_expression"),
-    !field(x, "condition", y) ; kind(x, "binary_expression"), (op(x, "&&") ; op(x, "||") ; op(x, "??"))).
+holder(e, x) :- holder(e, y), carries(x, y).
 .decl assigned(r: node)  // r is the target of `=`
 assigned(r) :- kind(a, "assignment_expression"), field(a, "left", r).
+
+// carries(x, y): x's value is made from its child y's without a side effect, so dropping x drops y (the compiler's
+// pruneable instructions). The test of ?: and the left of && || ?? are a branch's operands, which are kept.
+.decl carries(x: node, y: node)
+carries(x, y) :- child(x, y, _), kind(x, k), carrier_kind(k).
+carries(x, y) :- kind(x, "ternary_expression"), child(x, y, _), !field(x, "condition", y).
+carries(x, y) :- kind(x, "binary_expression"), (op(x, "&&") ; op(x, "||") ; op(x, "??")), field(x, "right", y).
+carries(x, y) :- kind(x, "binary_expression"), !op(x, "&&"), !op(x, "||"), !op(x, "??"), child(x, y, _).
+carries(x, y) :- kind(x, "unary_expression"), !op(x, "delete"), child(x, y, _).
+.decl carrier_kind(k: symbol)
+carrier_kind("parenthesized_expression"). carrier_kind("array"). carrier_kind("object"). carrier_kind("pair").
+carrier_kind("spread_element"). carrier_kind("member_expression"). carrier_kind("subscript_expression").
+carrier_kind("template_string"). carrier_kind("template_substitution"). carrier_kind("as_expression").
+carrier_kind("satisfies_expression"). carrier_kind("non_null_expression"). carrier_kind("jsx_element").
+carrier_kind("jsx_self_closing_element"). carrier_kind("jsx_opening_element"). carrier_kind("jsx_attribute").
+carrier_kind("jsx_expression").
+
+// tracked(d): a const or let of render code with a plain name. kept(d): some read of it is carried to a place that
+// keeps it, or into a tracked declarator that is kept.
+.decl tracked(d: node)
+tracked(d) :- kind(d, "variable_declarator"), field(d, "name", n), kind(n, "identifier"), rc_own(d, g),
+    rc_render_fn(g, _).
+.decl carried(r: node, x: node)  // x carries the value of r, a read of a tracked declarator
+carried(r, r) :- ref_site(r, d), tracked(d).
+carried(r, x) :- carried(r, y), carries(x, y).
+.decl feeds(r: node, d: node)  // r's value goes only into tracked declarator d's value
+feeds(r, d) :- carried(r, x), field(d, "value", x), tracked(d).
+.decl idle(r: node)  // r's value goes only into a statement of its own
+idle(r) :- carried(r, x), child(s, x, _), kind(s, "expression_statement").
+.decl kept(d: node)
+kept(d) :- tracked(d), ref_site(r, d), !feeds(r, _), !idle(r).
+kept(d) :- tracked(d), ref_site(r, d), feeds(r, d2), kept(d2).
+
+// Review react-01, error-boundaries 1: the compiler inlines a useMemo callback, so its try is checked.
+.test a_try_in_a_usememo_callback_is_render_code exactly
+    .fixture "src/b1.jsx" ```
+        import { useMemo } from "react";
+        export function Page({ a }) {
+          const el = useMemo(() => {
+            try {
+              return <A x={a} />;
+            } catch {
+              return null;
+            }
+          }, [a]);
+          return el;
+        }
+        ```
+    .expect "react-hooks/error-boundaries" at "src/b1.jsx":5
+.end
+
+// Review react-01, error-boundaries 2: dead-code elimination runs to a fixed point; b is unread, so a is too.
+.test an_element_only_a_dropped_value_reads_is_dropped exactly
+    .fixture "src/b2.jsx" ```
+        export function Page() {
+          try {
+            const a = <A />;
+            const b = [a];
+          } catch {}
+          return null;
+        }
+        ```
+    .fixture "src/b6.jsx" ```
+        export function Page() {
+          try {
+            const a = <A />;
+            const b = { a };
+          } catch {}
+          return null;
+        }
+        ```
+.end
+
+// A value passed to a call, or tested by `??`, is kept.
+.test an_element_passed_on_or_tested_is_kept exactly
+    .fixture "src/zb5.jsx" ```
+        export function Page() {
+          try {
+            const a = <A />;
+            foo([a]);
+          } catch {}
+          return null;
+        }
+        ```
+    .fixture "src/zb6.jsx" ```
+        export function Page() {
+          try {
+            const a = <A />;
+            const b = a ?? null;
+            [b];
+          } catch {}
+          return null;
+        }
+        ```
+    .expect "react-hooks/error-boundaries" at "src/zb5.jsx":3
+    .expect "react-hooks/error-boundaries" at "src/zb6.jsx":3
+.end

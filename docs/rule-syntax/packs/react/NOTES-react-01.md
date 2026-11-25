@@ -31,10 +31,19 @@ product's path, its translation through `rerail-engine run-policies`, and ESLint
 ## Library added: tsx/react-01.rerail
 
 `r01_live_fn(g, f)`: rc_live_fn narrowed the way the compiler (and both originals) are, used by globals and purity.
-A named function becomes live only through a reference that may call it (`g()`, `h(g)`, `g.x`), not one that stores
-it (`return { begin }`); a function written inside an object or array literal that is a JSX prop or a hook argument
-is handed on with it (`<Palette items={[{ perform: () => … }]}/>`). Proposed for react-compiler.rerail, replacing
-rc_live_fn's second clause.
+A named function becomes live only through a reference that may call it (`g()`, `h(g)`, `g.x`, or a child of an
+element, `<b>{g}</b>`: the compiler's Render effect on a JsxExpression's children; a fragment's children and an
+attribute's value get none), not one that stores it (`return { begin }`); a function written inside an object or
+array literal that is a JSX prop or a hook argument is handed on with it (`<Palette items={[{ perform: () => … }]}/>`).
+`r01_held_ref(r)`: the same for a reference, `<Child cb={{ onClick }}/>` (immutability). Proposed for
+react-compiler.rerail, replacing rc_live_fn's second clause.
+Not modelled: the Render effect the compiler also puts on a JSX prop whose function returns JSX (a render prop).
+
+## Library changes made (review fixes)
+
+tsx/react-hooks.rerail, used by exhaustive-deps alone for these relations: `deps_fn_site` takes the declarator's
+value through parentheses (not a cast), `deps_stable_site` leaves out a bigint literal, and `deps_dkey`/`deps_root`
+key an `undefined` element as the outer value "undefined".
 
 ## Library changes requested (existing files, not edited)
 
@@ -51,12 +60,20 @@ rc_live_fn's second clause.
 
 ## Per rule
 
+Each rule's `.test`s hold the review's counterexamples (and a few checked neighbours), with ESLint's lines as
+`exactly` expectations; `rerail-engine test-rr` passes all 21.
+
 ### react-hooks-error-boundaries: same
 
 The compiler validates each JSX instruction in a `try` block, so an element nested in another is reported on its own
 line too; the translation had reported only outermost elements. Counterexample (samples, SuperUserSagas.tsx
 110-112): `try { … actionElement = (<><br /><span onClick={…}>…</span></>); } catch {…}`: ESLint and the original
 report the fragment, `<br />` and `<span>`. An element inside a discarded one (`<p><i/></p>;`) is still not reported.
+Review fixes (react-01.review.md): a useMemo callback's try is render code (the compiler inlines the callback);
+dead-code elimination is a fixed point over the compiler's pruneable instructions (`const a = <A/>; const b = [a];`
+with b unread drops a), and a value tested by a branch (`a ?? x`'s a, a ?: test) or passed to a call is kept.
+Checked against ESLint on the review's b1/b2/b6 and on `{ x: [a] }`, `a.props`, `<B>{a}</B>` (dropped) and
+`foo([a])`, `a ?? null` (kept).
 
 ### react-hooks-exhaustive-deps: different (the suppression gap, and one oxlint comment)
 
@@ -66,7 +83,13 @@ assigned variable. Ordered by start offset now. A generator callback (`useCallba
 inline function to the plugin, not "pass an inline function" (samples, excalidraw App.tsx:836).
 Samples, 32 translation-only: 31 are lines under an `eslint-disable-next-line` (named or bare), the suppression gap.
 The 32nd, useVoiceInput.ts:294, is under `// oxlint-disable-next-line react-hooks/exhaustive-deps`: the original
-honours it, ESLint does not and reports the line, as the translation does.
+honours it, ESLint does not and reports the line, as the translation does. So neither side matches ESLint on all 32
+(result file: right "neither").
+Review fixes: `const log = (() => …)` is a function without captured values (ESTree has no parentheses; `(() => …)
+as any` still is not, checked); every name eslint-scope gives a writeExpr is a lost assignment, reported at the right
+side: pattern names (`[first] = items`, `({ a: first } = items)`, `[first = 1] = items`) and the left of `for (x of
+v)`; a cleanup returned in parentheses is a cleanup; a bigint const is not stable; an `undefined` element is the outer
+value "undefined" (unnecessary, and it stops the construction check).
 
 ### react-hooks-globals: different (the suppression gap)
 
@@ -74,6 +97,9 @@ Liveness now goes through tsx/react-01 (above): `<CommandPalette items={[{ perfo
 (samples, excalidraw App.tsx:1285) is not reported, as in ESLint and the original. The 1 translation-only line is
 Maybe.test.tsx:38, under `// eslint-disable-next-line react-hooks/globals -- …`. Both sides miss useMessage.tsx:159
 (`keyIndex += 1` in a function stored in the object a useMemo returns), which ESLint reports.
+Review fixes: each name a destructuring assignment reassigns is reported (`[a, b] = …`, `({ last } = …)`, `({ a: b }
+= o)`, rest and nested names too); a function rendered as an element's child may run (`<b>{bump}</b>` reported,
+`<>{bump}</>` not, as ESLint).
 
 ### react-hooks-purity: different (the suppression gap)
 
@@ -83,6 +109,9 @@ Added the compiler's handler-in-callback case, as the original has it: `updates.
 void submit(u)}/>)` makes `submit`'s impure calls render code (ghost-updates.tsx:249/250, reported by ESLint). The 2
 translation-only lines (Upload.tsx:108, Particles.tsx:51) are under `eslint-disable-next-line react-hooks/purity`.
 Not followed, as before: aliases of `Date.now` (`const now = Date.now; now()`).
+Review fixes: a function rendered as an element's child (the header's `return <b>{get}</b>`, through tsx/react-01);
+`globalThis.Date.now()`, `globalThis.Math.random()`, `globalThis.performance.now()` are the globals (`window.Math`
+is not resolved by the compiler, nor here).
 
 ### react-hooks-immutability: different (the suppression gap; the original's deps-frozen clause)
 
@@ -111,11 +140,23 @@ Rewritten after the original's clauses, each checked against ESLint on probe fil
 - A function that changes a local after render is reported where it is first handed on only (GoogleFields.js:153,
   not again at 162/170/178).
 
+Review fixes, each checked against ESLint:
+- A local (const or let, plain name) passed to JSX (a prop, a child, a spread; elements and fragments) or to a hook
+  other than useRef is frozen from there on (the compiler's Freeze effect): a later member write, `delete`, or a known
+  collection method (`items.push`, `map.set`) in the component's own code is reported each time, in a used function
+  the first time per name. Before the JSX or hook it is not; useRef(x) and a deps array `[x]` do not freeze.
+- A function declaration handed to JSX by name is reported where it is handed, as a const holding one is.
+- A function every reference to which is a JSX prop, a hook argument or inside a literal that is one
+  (`cb={{ onClick }}`, `cb={[onClick]}`, `useFoo({ onClick })`) runs after render: its reassignment is reported (the
+  place it is handed is not, as ESLint).
+- A pattern reassignment after render (`[x] = [1]` in an effect or a handler) is not reported: the compiler's check
+  sees only StoreContext, a plain `x = …`. Parameter reassignment still counts patterns (Table.tsx:451).
+
 Left, samples: 2 original-only, useResizeObserver.test.tsx:71/73 (`elementRef.current = node` in a useCallback that
 lists elementRef): the original's deps-frozen clause reports them, ESLint does not. 1 translation-only, DataFrame.tsx:445,
 under `eslint-disable-next-line react-hooks/immutability`.
 
-### react-hooks-refs: different (the suppression gap; one shorthand the original reports)
+### react-hooks-refs: different (the suppression gap; one shorthand the original reports; five lines it misses)
 
 Rewritten after the original's model (98 original-only lines before). What the compiler reports is a ref's value
 used, at the place it was loaded:
@@ -136,12 +177,20 @@ used, at the place it was loaded:
 - Functions that read refs handed to a call or `new`, tested, or used as a receiver (`new MutationObserver(onResize)`,
   `useState(() => \`${reseeds.current}\`)`); refs handed to such calls (`createObservableMap(map, mapRef, setMap)`),
   unless the call makes a ref.
-- Calling a local function that reads a ref (`read()` in render) is not reported, as the original; the earlier
-  translation reported it.
+- Render code calling by name a local function that uses a ref (`get()`, `reset()`, a useCallback's result, a
+  function declaration) is reported at the call, whatever becomes of the result. The first version said this was
+  "not reported, as the original"; ESLint reports it (review react-01, refs 1). The original misses it.
+- A const holding a ref is a ref (`const local = ref; local.current`); `const { current } = ref` (or `{ current: c }`)
+  loads the value, reported where it is used; a useMemo callback or an IIFE gives its result to the call, so `const
+  m = useMemo(() => ref.current, [])` is reported at the load when m is used (not when m is unread).
 Left out of the original: two literals holding two different refs (`literal-lost` by ref name), `literal-passed`
 (the same lines as literal-element on the corpora), `ref-beside-lost-load`, `alias-prop-load`, `alias-lost-load`.
 
 Left, samples: 1 original-only, Modal.tsx:335, the shorthand `modalRef` (a useRef) in the object of a context value:
 the original's literal-element clause reports it, and ESLint does; no value relation of the original's that I could
-trace makes a bare useRef binding a ref value, so it is not modelled. Right: original. 1 translation-only,
-UnitAmountInput.tsx:49, under `eslint-disable-next-line react-hooks/refs -- …`.
+trace makes a bare useRef binding a ref value, so it is not modelled. Right: original. 6 translation-only:
+UnitAmountInput.tsx:49, under `eslint-disable-next-line react-hooks/refs -- …` (original right); and 5 the review
+fixes added, which ESLint reports with inline comments honoured and the original misses: mui Ad.tsx:131/135/139
+(`const { current: randomAdblock } = React.useRef(Math.random())`, then `randomAdblock < 0.2`) and react-bootstrap
+Offcanvas.tsx:341 (`manager={getModalManager()}`, a function that reads and writes `modalManager.current`). Right:
+neither.

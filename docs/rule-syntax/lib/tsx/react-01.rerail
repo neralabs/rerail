@@ -1,16 +1,18 @@
 // tsx/react-01: which functions made while a component renders may run then, read closer to the React Compiler
-// than react-compiler.rerail's rc_live_fn. Used by react-hooks-globals and react-hooks-purity.
+// than react-compiler.rerail's rc_live_fn. Used by react-hooks-globals, -purity and -immutability.
 //
 // What a rule gets from this library:
 //   r01_live_fn(g, f)   g, a function made while f renders (not f's own code), may be called during that render
 //   r01_held(g)         g is written inside an object or array literal handed on as a JSX prop or a hook argument
+//   r01_held_ref(r)     reference r is inside such a literal: `<Child cb={{ onClick }}/>`, `useFoo([onClick])`
 //
 // rc_live_fn counts every reference to a named function in live code, and every function written in place there.
 // The compiler (its escape and aliasing analysis, as eslint-plugin-react-hooks 7.1.1 reports on the corpora) is
 // narrower in two ways:
-//   - a named function becomes live through a reference that may call it: `g()`, an argument `h(g)`, or a member
-//     read `g.x`. Storing it is not a call: `useMemo(() => { const begin = () => …; return { begin }; }, [])`
-//     leaves begin uncalled during render.
+//   - a named function becomes live through a reference that may call it: `g()`, an argument `h(g)`, a member
+//     read `g.x`, or a child of an element `<b>{g}</b>` (the compiler's Render effect on a JsxExpression's
+//     children; a fragment's children and an attribute's value get none). Storing it is not a call:
+//     `useMemo(() => { const begin = () => …; return { begin }; }, [])` leaves begin uncalled during render.
 //   - a function written inside an object or array literal that is itself a JSX prop's value or a hook's argument
 //     is handed on with the literal, as a function written as the prop is:
 //       <Palette items={[{ perform: () => { pwaEvent = null; } }]}/>       perform runs later
@@ -29,6 +31,8 @@ r01_live_fn(g, f) :- rc_fn_at(s, g), within(g, f), ref_site(r, s), !rc_later_ref
 r01_may_call(r) :- kind(c, "call_expression"), field(c, "function", r).
 r01_may_call(r) :- kind(l, "arguments"), child(l, r, _).
 r01_may_call(r) :- kind(m, "member_expression"), field(m, "object", r).
+r01_may_call(r) :- deparen(v, r), child(j, v, _), kind(j, "jsx_expression"), child(e, j, _), kind(e, "jsx_element"),
+    field(e, "open_tag", o), field(o, "name", _).
 
 .decl r01_held(g: node)
 r01_held(g) :- r01_up(g, l), rc_later_slot(l).
@@ -38,3 +42,9 @@ r01_up(g, x) :- r01_up(g, y), child(x, y, _), r01_literal(x).
 .decl r01_literal(x: node)
 r01_literal(x) :- kind(x, k), (k = "object" ; k = "array" ; k = "pair" ; k = "spread_element" ;
     k = "parenthesized_expression").
+.decl r01_held_ref(r: node)
+r01_held_ref(r) :- r01_ref_up(r, l), rc_later_slot(l).
+.decl r01_ref_up(r: node, x: node)  // as r01_up, from a reference: `onClick` in `{ onClick }`, `[onClick]`, `{ a: onClick }`
+r01_ref_up(r, x) :- (kind(r, "identifier") ; kind(r, "shorthand_property_identifier")), ref_site(r, _), child(x, r, _),
+    r01_literal(x).
+r01_ref_up(r, x) :- r01_ref_up(r, y), child(x, y, _), r01_literal(x).

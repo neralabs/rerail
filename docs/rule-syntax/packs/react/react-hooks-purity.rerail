@@ -37,8 +37,37 @@ callback_call(g) :- rc_fn_at(s, g), rc_own(g, h), rc_render_fn(h, f), ref_site(r
 handed_in_place(k) :- rc_fn(k), child(j, k, _), kind(j, "jsx_expression"), child(t, j, _), kind(t, "jsx_attribute").
 handed_in_place(k) :- rc_fn(k), child(l, k, _), kind(l, "arguments").
 
-// impure_call(c): Date.now(), Math.random() or performance.now() on the global object (not a local `Math`).
+// impure_call(c): Date.now(), Math.random() or performance.now() on the global object (not a local `Math`), named
+// bare or through `globalThis` (`globalThis.Date.now()`; the compiler does not resolve `window.Math`).
 .decl impure_call(c: node)
 impure_call(c) :- kind(c, "call_expression"), field(c, "function", m), kind(m, "member_expression"),
-    field(m, "object", o), kind(o, "identifier"), !ref_site(o, _), field(m, "property", p),
-    (text(o, "Date"), text(p, "now") ; text(o, "Math"), text(p, "random") ; text(o, "performance"), text(p, "now")).
+    field(m, "object", o), field(m, "property", p), impure_global(o, x), text(p, y), impure(x, y).
+.decl impure(x: symbol, y: symbol)
+impure("Date", "now"). impure("Math", "random"). impure("performance", "now").
+.decl impure_global(o: node, x: symbol)  // o names the global x
+impure_global(o, x) :- kind(o, "identifier"), !ref_site(o, _), text(o, x).
+impure_global(o, x) :- kind(o, "member_expression"), field(o, "object", g), kind(g, "identifier"), text(g, "globalThis"),
+    !ref_site(g, _), field(o, "property", p), text(p, x).
+
+// Review react-01, purity 1: the header's own example.
+.test a_function_rendered_as_a_child_may_run exactly
+    .fixture "src/p4.jsx" ```
+        export function C() {
+          const get = () => Math.random();
+          return <b>{get}</b>;
+        }
+        ```
+    .expect "react-hooks/purity" at "src/p4.jsx":2
+.end
+
+// Review react-01, purity minor: `globalThis.Date` is Date; `window.Math` is not resolved.
+.test globalthis_names_the_global exactly
+    .fixture "src/p6.jsx" ```
+        export function C() {
+          const t = globalThis.Date.now();
+          const r = window.Math.random();
+          return <b>{t}{r}</b>;
+        }
+        ```
+    .expect "react-hooks/purity" at "src/p6.jsx":2
+.end

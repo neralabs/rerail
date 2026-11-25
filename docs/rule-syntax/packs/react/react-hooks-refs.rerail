@@ -13,9 +13,13 @@
 //   if (ref.current == null) { ref.current = make(); }          not: lazy initialisation is allowed
 //   useEffect(() => { ref.current = v; });  <b onClick={() => ref.current.focus()}/>   not: they run later
 //   new MutationObserver(onResize)   (onResize reads a ref)     reported: render code hands it to a caller
+//   const get = () => ref.current;  get();                       reported at the call: render code runs it
 //   measure(boxRef)                                             reported: the ref itself handed to a caller
-// Refs are useRef's results and any name `ref` or ending in `Ref`. An object whose member is passed as a JSX `ref`
-// is taken for a ref holder too: after `<div ref={splitter.ref}>`, `splitter.sizes` read in render is reported.
+//   const m = useMemo(() => ref.current, []);  <b>{m}</b>       reported at the load: the callback runs in place
+//   const { current } = ref;  <b>{current.a}</b>                reported at the use
+// Refs are useRef's results, a const holding one (`const local = ref`), and any name `ref` or ending in `Ref`. An
+// object whose member is passed as a JSX `ref` is taken for a ref holder too: after `<div ref={splitter.ref}>`,
+// `splitter.sizes` read in render is reported.
 // Render code is the compiled function's own code, and useMemo callbacks and functions called in place there.
 #include "tsx/react-compiler.rerail"
 
@@ -32,6 +36,7 @@ refs(u, m) :- negation_use(u), says("read", m).
 refs(x, m) :- literal_mixed(x), says("read", m).
 refs(x, m) :- fn_handed(x), says("read", m).
 refs(x, m) :- ref_handed(x), says("read", m).
+refs(c, m) :- reader_call(c), says("read", m).
 
 .decl says(w: symbol, m: symbol)
 says("read", "Move this read of a ref's current value into an effect or event handler, or keep the value in state; rendering must not depend on a ref.").
@@ -63,16 +68,22 @@ mem_load(x) :- kind(x, "member_expression") ; kind(x, "subscript_expression").
 // ref_obj(o): a ref: useRef(…), a name bound to it, or a local named `ref` or `…Ref`.
 .decl ref_obj(o: node)
 ref_obj(o) :- rc_react_call(o, "useRef").
-ref_obj(o) :- kind(o, "identifier"), ref_site(o, s), rc_own(s, _), (use_ref_site(s) ; ref_name(o)).
+ref_obj(o) :- kind(o, "identifier"), ref_site(o, s), rc_own(s, _), (use_ref_site(s) ; ref_name(o) ; ref_alias_site(s)).
 ref_obj(o) :- wrapper(o), child(o, x, 0), ref_obj(x).
 .decl use_ref_site(s: node)
 use_ref_site(s) :- kind(s, "variable_declarator"), field(s, "value", c), rc_react_call(c, "useRef").
+.decl ref_alias_site(s: node)  // const local = ref: a plain name holding a ref
+ref_alias_site(s) :- kind(s, "variable_declarator"), field(s, "name", n), kind(n, "identifier"), field(s, "value", v),
+    deparen(v, x), kind(x, "identifier"), ref_obj(x).
 // typed_ref(o): a ref the compiler has typed as one: useRef's value, a `…Ref` name read as `x.current`, or a name
 // passed as a JSX `ref`.
 .decl typed_ref(o: node)
 typed_ref(o) :- rc_react_call(o, "useRef").
 typed_ref(o) :- named_read(o), ref_site(o, s), rc_own(s, _), (use_ref_site(s) ; ref_name(o), current_of(s) ;
-    jsx_ref_of(s)).
+    jsx_ref_of(s) ; typed_alias_site(s)).
+.decl typed_alias_site(s: node)  // const local = r, r a typed ref
+typed_alias_site(s) :- kind(s, "variable_declarator"), field(s, "name", n), kind(n, "identifier"), field(s, "value", v),
+    deparen(v, x), kind(x, "identifier"), typed_ref(x).
 typed_ref(o) :- wrapper(o), child(o, x, 0), typed_ref(x).
 .decl ref_name(o: node)
 ref_name(o) :- named_read(o), (text(o, "ref") ; glob("?*Ref", o)).
@@ -100,6 +111,14 @@ rv_direct(x, l) :- wrapper(x), child(x, y, 0), rv_direct(y, l).
 rv_fresh(x, l) :- rv_direct(x, l).
 rv_fresh(x, l) :- wrapper(x), child(x, y, 0), rv_fresh(y, l).
 rv_fresh(x, l) :- passes(x, y), rv_fresh(y, l).
+// useMemo(g, deps) and (g)() run g in place: the call gives what g returns.
+rv_fresh(c, l) :- inlined_call(c, g), gives(g, x), rv_fresh(x, l).
+.decl inlined_call(c: node, g: node)  // call c runs inlined function g
+inlined_call(c, g) :- inlined(g), child(l, g, 0), kind(l, "arguments"), field(c, "arguments", l).
+inlined_call(c, g) :- inlined(g), child(p, g, 0), field(c, "function", p).
+.decl gives(g: node, x: node)  // g's expression body, or the value of a return of g's own code
+gives(g, x) :- field(g, "body", x), !kind(x, "statement_block").
+gives(g, x) :- kind(r, "return_statement"), rc_own(r, g), child(r, x, 0).
 .decl passes(x: node, y: node)  // ?: passes on its branches, && || ?? their operands
 passes(x, y) :- kind(x, "ternary_expression"), (field(x, "consequence", y) ; field(x, "alternative", y)).
 passes(x, y) :- logical(x), (field(x, "left", y) ; field(x, "right", y)).
@@ -138,10 +157,16 @@ alias_typed(x, l) :- alias_of(x, v), rv_direct(v, l).
 alias_phi(x, l) :- alias_of(x, v), rv_fresh(v, l), !rv_direct(v, _).
 .decl alias_chain(x: node)
 alias_chain(x) :- alias_of(x, v), rv(v, _), !rv_fresh(v, _).
-.decl alias_destructured(x: node)  // const { a } = ref.current: a
+.decl alias_destructured(x: node)  // const { a } = ref.current: a; const { current } = ref: current
 alias_destructured(x) :- named_read(x), ref_site(x, s), nearest(s, d, "variable_declarator"), field(d, "name", n),
     (kind(n, "object_pattern") ; kind(n, "array_pattern")), within(s, n), at_render(d), field(d, "value", v),
     rv(v, _).
+alias_destructured(x) :- named_read(x), ref_site(x, s), nearest(s, d, "variable_declarator"), field(d, "name", n),
+    kind(n, "object_pattern"), within(s, n), at_render(d), field(d, "value", v), deparen(v, o), ref_obj(o),
+    current_binding(s).
+.decl current_binding(s: node)  // s binds the `current` a pattern takes: `{ current }`, `{ current: c }`
+current_binding(s) :- kind(s, "shorthand_property_identifier_pattern"), text(s, "current").
+current_binding(s) :- kind(p, "pair_pattern"), field(p, "key", k), text(k, "current"), field(p, "value", s).
 .decl alias_fresh(x: node, l: node)
 alias_fresh(x, l) :- alias_phi(x, l).
 alias_fresh(x, l) :- alias_typed(x, l), !load_object(x), !read_before(x).
@@ -351,6 +376,11 @@ fn_name_reads(i) :- named_read(i), ref_site(i, s), rc_own(s, _), fn_site_reads(s
 fn_site_reads(s) :- kind(s, "variable_declarator"), field(s, "name", n), kind(n, "identifier"), field(s, "value", v),
     (fn_value(v), reads_refs(v) ; rc_react_call(v, "useCallback"), call_arg(v, a, 0), fn_value(a), reads_refs(a)).
 fn_site_reads(s) :- kind(s, "function_declaration"), reads_refs(s).
+// reader_call(c): render code calls by name a local function that uses a ref: `get()`, `reset()`, a useCallback's
+// result. The compiler reports the call, whatever becomes of its result.
+.decl reader_call(c: node)
+reader_call(c) :- kind(c, "call_expression"), field(c, "function", i), kind(i, "identifier"), fn_name_reads(i),
+    at_render(c).
 // holds_effect(x): an array or object literal holding such a function (at any depth of literals), or a const of
 // render code whose value does.
 .decl holds_effect(x: node)
@@ -408,3 +438,62 @@ makes_ref(c) :- kind(d, "variable_declarator"), field(d, "value", c), field(d, "
 .decl holds_reader_pair(x: node)  // object x has a pair whose value is a function that reads refs
 holds_reader_pair(x) :- child(x, p, _), kind(p, "pair"), field(p, "value", v), (fn_value(v), reads_refs(v) ;
     fn_name_reads(v)).
+
+// Review react-01, refs 1: the call in render code is reported.
+.test calling_a_function_that_reads_a_ref exactly
+    .fixture "src/r1.jsx" ```
+        import { useRef } from "react";
+        export function C() {
+          const ref = useRef(0);
+          const get = () => ref.current;
+          const v = get();
+          return <b>{v}</b>;
+        }
+        ```
+    .expect "react-hooks/refs" at "src/r1.jsx":5
+.end
+
+// Review react-01, refs 2: `const { current } = ref`, reported where it is used.
+.test destructuring_current_loads_the_value exactly
+    .fixture "src/r3.jsx" ```
+        import { useRef } from "react";
+        export function C() {
+          const ref = useRef({ a: 1 });
+          const { current } = ref;
+          return <b>{current.a}</b>;
+        }
+        ```
+    .expect "react-hooks/refs" at "src/r3.jsx":5
+.end
+
+// Review react-01, refs 3: the callback runs in place, so its result is the ref's value, reported at the load.
+.test a_usememo_result_carries_the_value exactly
+    .fixture "src/r7.jsx" ```
+        import { useRef, useMemo } from "react";
+        export function C({ v }) {
+          const ref = useRef(null);
+          const m = useMemo(() => ref.current, []);
+          const s = String(ref.current);
+          return <b>{m}{s}</b>;
+        }
+        ```
+    .expect "react-hooks/refs" at "src/r7.jsx":4
+    .expect "react-hooks/refs" at "src/r7.jsx":5
+.end
+
+// Review react-01, refs 4: `const local = ref` keeps the ref's type.
+.test an_alias_of_a_ref_is_a_ref exactly
+    .fixture "src/r8.jsx" ```
+        import { useRef } from "react";
+        export function C({ v }) {
+          const ref = useRef(0);
+          ref.current += 1;
+          ref.current++;
+          const local = ref;
+          return <b>{local.current}</b>;
+        }
+        ```
+    .expect "react-hooks/refs" at "src/r8.jsx":4
+    .expect "react-hooks/refs" at "src/r8.jsx":5
+    .expect "react-hooks/refs" at "src/r8.jsx":7
+.end
