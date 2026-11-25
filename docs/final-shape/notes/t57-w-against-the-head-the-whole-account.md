@@ -329,3 +329,36 @@ String annotations 2.08 s, identity maps 1.42 s (W 0.11), `Fresh::settle` 0.58 s
    code alone.
 3. `look/walk`'s rounds, the live statistics, the identity maps.
 4. The 1.2 GB of peak memory that 0435's account doesn't cover.
+
+## 11. The list of §10 not taken elsewhere (2026-11-25)
+
+After merging phased-facts (ca60a3ad0c), django-bugs (58029a3b26) and Typing-support (53269b48ad). Typing-support
+took E4, E7, `literal_str` and the per-value tape reads; django-bugs t60's allocations. This is the rest.
+
+**The debug relations** (`dbg_cls`, `dbg_rd`) were the measurement's, not the engine's: its copy of the program
+(`idc_dbg`) added them, and `dbg_cls` ran an AST matcher of 1.4 M rows. The runs now take `idc_head`, W's program as
+the head reads it. `rr_embed_req` is the engine's request for embedded parses (string annotations), not a debug
+relation; W has no such parse.
+
+**The AST matchers.** Without `dbg_cls`, the head's matchers take 7.9 s against W's 10.0 s in the same run (wave
+7.9 s → 5.3 s, captures 2.2 s, confirmations 0.4 s): no longer a gap. The captures now write a tape's rows into one
+buffer as W's match binds them (`findings::captured_each`), no `Vector` a capture and no row cloned a capture; the
+cost case `the_matcher_wave_allocates_little` passes since.
+
+**E6 and E10: a plan's tests in the order that drops rows soonest** (`tests_ordered`). Cost cases: `cls_late` 945 →
+657 units, `rf_builtin` 3,441 → 2,881. Their orders are now as the cases ask; what keeps them over their bounds is a
+unit a row for each comparison step, which E3 measured at under 1% of the steps' CPU. `rf_crossing` (0.3 s on `all`)
+and `rf_fcond` (under 0.03 s) are one `nearest` read a row each; E9's `rf_same_qn` costs 0.07 s on `all` (59 k pairs,
+mostly a name with itself). None of the three is built: each is under 0.3% of the head's CPU.
+
+**`look/walk`**: 3.9 s, 0.63 s of it in its steps. Its delta plans show no rows (the profile's steps see none of
+its rounds), and the closure form has a few dozen samples. Where the rest goes is still open: the rounds of its
+recursion inside `engine run (joins)`, unspanned.
+
+**The peak** (`all`, profiled, 2,523 MB; the profile now counts the threads' stacks and long rooms, and the free
+chunks whose pages went back): heap 528 MB (379 live); blocks in memory 1,263 MB, of which 764 MB are live and
+499 MB free on their lists; the threads' stacks 302 MB; their long rooms 42 MB; the device's idle buffers 19 MB;
+the rest 368 MB (code, thread stacks, maps). W's 1,075 MB: heap 1,001 MB, blocks 124 MB. So the head's excess is
+blocks (+690 MB live, +450 MB free and resident) and the stacks (+302 MB), against 470 MB less heap. Next: the
+free lists' resident chunks (499 MB) given back at a high-water mark, and which stacks hold 302 MB at the peak
+(the census, `RERAIL_ANON_CENSUS`).
