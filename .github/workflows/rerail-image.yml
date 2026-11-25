@@ -1,0 +1,106 @@
+name: Rerail image
+
+# Builds ghcr.io/neralabs/rerail:<version>, a published Rerail installed in a Node 24 image
+# (scripts/release/image/Dockerfile), for the reviewer's Rerail module (reviewer.yml) to run in as `:next`. release.yml
+# calls this once a release is published to `next`, so the reviewer follows every release candidate with no pin to move
+# by hand.
+#
+# Nothing is pushed unless the image passes what the reviewer does here: approve the packs main's .rerail/packs.json
+# keeps in the repository, then scan a change with them (scripts/release/image/smoke.sh). So `:next` stays on the last
+# Rerail that could, and the run fails, naming why. `:next` also moves only while npm's own `next` is this version, so
+# a run for an older version pushes `:<version>` alone and never moves it back.
+#
+# Run it by hand with a version npm already has, for a release published before this workflow existed, or to retry one
+# whose image failed: it changes no npm dist-tag and nothing else the release made.
+#
+# The package is linux/amd64 only, the runners the reviewer uses. It must be public: the reviewer pulls it with no
+# credentials. GitHub makes a new container package private, so its first push needs an organization owner to set
+# its visibility to public (docs/release.md, "Rerail image").
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The @neralabs/rerail version to build, published on npm
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The @neralabs/rerail version to build, published on npm (for example 0.2.2)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    name: Build, check and push ghcr.io/neralabs/rerail:${{ inputs.version }}
+    # One at a time, so two runs never read npm's `next` and then move `:next` in the wrong order.
+    concurrency:
+      group: rerail-image
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/neralabs/rerail
+      VERSION: ${{ inputs.version }}
+    steps:
+      # main's, whatever ref started the run: the reviewer judges every pull request by main's .rerail/packs.json.
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 2
+          persist-credentials: false
+
+      # npm can lag a publish by minutes, and the build installs this exact version.
+      - name: Wait for npm to serve @neralabs/rerail@${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-next\.[0-9]+)?$ ]]; then
+            echo "::error::version takes a released version on next, such as 0.2.2 or 0.2.2-next.1, not ${VERSION}"
+            exit 1
+          fi
+          for _ in $(seq 1 30); do
+            if [ "$(npm view "@neralabs/rerail@${VERSION}" version 2>/dev/null)" = "$VERSION" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "::error::npm does not serve @neralabs/rerail@${VERSION}"
+          exit 1
+
+      - name: Build the image
+        run: |
+          docker build --pull --build-arg "RERAIL_VERSION=${VERSION}" --tag "${IMAGE}:${VERSION}" \
+            scripts/release/image
+
+      # As the checkout's owner, the runner's user: Git, and Rerail's own Git reader, refuse a repository another user
+      # owns, and Rerail's reader does not take safe.directory from the environment.
+      - name: Scan main's packs with it, as the reviewer does
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/repo" --workdir /repo \
+            "${IMAGE}:${VERSION}" bash scripts/release/image/smoke.sh
+
+      - name: Log in to the GitHub container registry
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Push ${{ inputs.version }}
+        run: docker push "${IMAGE}:${VERSION}"
+
+      - name: Move next to ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          next="$(npm view @neralabs/rerail dist-tags.next)"
+          if [ "$next" != "$VERSION" ]; then
+            echo "::notice::npm's next is ${next}, not ${VERSION}: ${IMAGE}:next stays where it is"
+            exit 0
+          fi
+          docker tag "${IMAGE}:${VERSION}" "${IMAGE}:next"
+          docker push "${IMAGE}:next"
+          echo "::notice::${IMAGE}:next is Rerail ${VERSION}"

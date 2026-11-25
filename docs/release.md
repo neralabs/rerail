@@ -273,6 +273,26 @@ that version's Release the repository's latest.
 
 </details>
 
+### Rerail image
+
+`ghcr.io/neralabs/rerail:next` is the Rerail on `next` in a Docker image, for the reviewer's Rerail module to scan this
+repository's pull requests in, so it follows every release candidate with no pin to move by hand. A release on `next`
+builds the image once it is published: its **Rerail image** job (`.github/workflows/rerail-image.yml`) installs that
+exact version in Node 24 (`scripts/release/image/Dockerfile`) and pushes it as `ghcr.io/neralabs/rerail:<version>`.
+
+- **It is checked first.** The image must approve the packs main's `.rerail/packs.json` keeps in the repository and scan
+  a change with every pack the file lists, as the reviewer does (`scripts/release/image/smoke.sh`). A Rerail that
+  cannot, for a pack's core range or a field it does not read, is not pushed, and the run fails saying why. `:next`
+  stays on the last Rerail that passed.
+- **`:next` follows npm's `next`.** It moves only while npm's `next` is the version built, so a run for an older version
+  never moves it back.
+- **Nothing waits on it.** A failed image holds back no publish and no promotion.
+- **A failed image is built again by hand:** `gh workflow run rerail-image.yml --ref main -f version=<version>`, once
+  the cause is fixed on `main`. The same command builds the image of a release published before the job existed.
+
+The package must be public, since the reviewer pulls it with no credentials. GitHub makes a new container package
+private: after its first push, an organization owner sets its visibility to public in the package's settings.
+
 ### Build cache
 
 `.github/workflows/release-cache.yml` keeps the native builds' compile cache warm: on `main` it builds each engine and

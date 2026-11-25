@@ -81,3 +81,12 @@ updates:
         patterns: ["neralabs/reviewer*"]
       actions:
         patterns: ["*"]
+  # The Rerail image's base (scripts/release/image/Dockerfile), pinned by digest. CI does not build the image: a base
+  # that breaks it fails the next release's image job, which leaves the reviewer's `:next` where it was.
+  - package-ecosystem: docker
+    directory: /scripts/release/image
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 1

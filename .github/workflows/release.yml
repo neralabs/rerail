@@ -13,7 +13,8 @@ name: Release
 # than core's `latest`. Merging the Release pull request makes the tag: release-pr.yml tags the version it set
 # (docs/distribution-model.md, "Release channels"). After publishing, the dist-tags job lists the dist-tags of core
 # and the engine packages in the run summary and fails if a package's dist-tag for the channel is not the version just
-# published, or, for a `next` release, its `next` is older than its `latest`.
+# published, or, for a `next` release, its `next` is older than its `latest`. A release on `next` then becomes the
+# Docker image the reviewer's Rerail module runs in (the image job, rerail-image.yml).
 #
 # `workflow_dispatch` with no inputs builds and uploads the tarballs as a run artifact without publishing, so a build
 # can be installed and checked by hand. With `latest`, for a put-back or a promotion whose approval GitHub failed after
@@ -361,6 +362,20 @@ jobs:
           set -euo pipefail
           engines="$(node scripts/release/engine/release.mjs specs "$VERSION" "$CHANNEL")"
           RELEASED="@neralabs/rerail@${VERSION}:${CHANNEL} ${engines}" node scripts/release/dist-tags-check.mjs
+
+  # A release on `next` becomes ghcr.io/neralabs/rerail:<version>, and `:next` once it scans main's packs as the
+  # reviewer does; the reviewer's Rerail module runs in `:next` (rerail-image.yml). Nothing waits on it: an image that
+  # fails holds back no promotion, and the run says so.
+  image:
+    name: Rerail image
+    needs: [metadata, dist-tags]
+    if: needs.metadata.outputs.channel == 'next'
+    uses: ./.github/workflows/rerail-image.yml
+    with:
+      version: ${{ needs.metadata.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
 
   # Promotes core to `latest`, or puts it back. A release run of a plain version ends here: once the release is tested
   # on `next`, a person approves the `release` environment and this job points `latest` at it (docs/release.md,
