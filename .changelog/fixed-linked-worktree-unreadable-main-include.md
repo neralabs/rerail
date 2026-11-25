@@ -1,0 +1,1 @@
+In a linked worktree of a repository you own, Rerail now follows Git's ignore rules when a config file that only the main checkout's `includeIf "gitdir:..."` names cannot be read (it includes itself, is unreadable, or does not parse), as Git does there. It used to follow none of them in that worktree.

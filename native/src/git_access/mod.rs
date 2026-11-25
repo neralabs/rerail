@@ -1,5 +1,6 @@
-//! Every in-process Git read of the engine goes through this module, so the engine answers as the
-//! Git Rerail runs does, or gives no answer.
+//! The engine's ignore matcher and workspace discovery read Git in process through this module, so
+//! they answer as the Git Rerail runs does, or give no answer. Three reads of the code rules open
+//! gix directly still ([`opener`] names them).
 //!
 //! - [`opener`]: the one opener. It refuses where Git refuses, names the config files Rerail's
 //!   Git reads, and never lets gix start a Git of its own to find them.

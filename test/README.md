@@ -10,7 +10,8 @@ Unit tests, run by `npm test` (vitest over this directory). They mirror the laye
   Git configuration, `workspace.ts`, real repositories and a database with a fake `gh`, and `status.ts`, sample
   statuses and a recording service), in `support/processes/` processes racing for one lock, and in
   `support/environment/experiments.ts` `withExperiments`, which turns experimental features on for a test file (every one
-  starts off). A layer's own helpers live in
+  starts off), and in `support/engine/power-cut.ts` the database as a power cut leaves it, its log cut at an earlier
+  commit. A layer's own helpers live in
   `test/<layer>/support/` (`runtime/merge-assist/support/` holds the files and session runtime the conflict tests
   share); a helper a second layer needs moves here.
 - `scripts/`: tests of the repository scripts under `scripts/`; `ensure-sqlite.test.mjs` runs under `node --test`
