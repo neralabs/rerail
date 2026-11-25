@@ -1042,16 +1042,12 @@ impl<L: Layout> P<'_, L> {
 
     /// `word`.
     fn r_word(&mut self) -> R {
-        if self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER || self.kind() == t::STRING {
-            if self.kind() == t::IDENTIFIER {
-                self.bump_as(k::IDENTIFIER)?;
-            } else if self.kind() == t::NUMBER {
-                self.numeric()?;
-            } else if self.kind() == t::STRING {
-                self.bump_as(k::STRING)?;
-            } else {
-                return self.refuse();
-            }
+        if self.kind() == t::IDENTIFIER {
+            self.bump_as(k::IDENTIFIER)?;
+        } else if self.kind() == t::NUMBER {
+            self.numeric()?;
+        } else if self.kind() == t::STRING {
+            self.bump_as(k::STRING)?;
         } else if self.kind() == t::CODE_LITERAL {
             self.bump_as(k::CODE_LITERAL)?;
         } else {
@@ -1351,7 +1347,7 @@ impl<L: Layout> P<'_, L> {
     fn json(&mut self) -> R {
         self.leaf_open();
         self.word_pass_as(w::LBRACE_20)?;
-        self.json_object_x_1()?;
+        self.raw_text_x_0()?;
         self.leaf_close(k::JSON_OBJECT)?;
         Ok(())
     }
@@ -1812,31 +1808,6 @@ impl<L: Layout> P<'_, L> {
                 w::LBRACE_20 => {
                     self.pass_as(true)?;
                     self.raw_text_x_0()?;
-                }
-                _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
-                    self.pass_as(true)?;
-                }
-                _ => {
-                    break;
-                }
-            }
-        }
-        self.pass_as(self.word() == w::RBRACE_21)?;
-        self.depth -= 1;
-        Ok(())
-    }
-
-    /// `json_object 1`.
-    fn json_object_x_1(&mut self) -> R {
-        self.deeper()?;
-        loop {
-            match self.word() {
-                _ if PUNCTUATION[self.word() as usize] != 0 && self.word() != w::RBRACE_21 => {
-                    self.pass_as(true)?;
-                }
-                w::LBRACE_20 => {
-                    self.pass_as(true)?;
-                    self.json_object_x_1()?;
                 }
                 _ if self.kind() == t::STRING || self.kind() == t::CODE_LITERAL || self.kind() == t::HASH_WORD && self.word() != w::HASH_INCLUDE_34 || self.kind() == t::IDENTIFIER || self.kind() == t::NUMBER => {
                     self.pass_as(true)?;

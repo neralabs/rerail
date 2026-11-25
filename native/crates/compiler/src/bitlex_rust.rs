@@ -2342,6 +2342,33 @@ impl<'a> G<'a> {
         }
     }
 
+    /// Methods whose code is the same but for their names (the inside of a brace pair read for a raw text and for a JSON
+    /// object, alike once each is one leaf, `leaves`): one, the first, called for each, as the lean parser's one
+    /// `braces`.
+    fn same_methods(made: &mut [(String, Block)]) {
+        for j in 1..made.len() {
+            let g = made[j].0.clone();
+            if made[j].1.is_empty() {
+                continue;
+            }
+            // Its code, its doc and its name aside.
+            let code = |b: &Block, name: &str| -> String {
+                moves::print(b, "").lines().filter(|l| !l.trim_start().starts_with("///")).collect::<Vec<_>>().join("\n").replace(&format!("fn {name}("), "fn _(").replace(&format!("self.{name}()"), "self._()")
+            };
+            let Some(i) = (0..j).find(|&i| {
+                let f = &made[i].0;
+                !made[i].1.is_empty() && method_body(&made[i].1).is_some() && code(&made[j].1, &g) == code(&made[i].1, f)
+            }) else {
+                continue;
+            };
+            let f = made[i].0.clone();
+            made[j].1.clear();
+            for (_, b) in made.iter_mut() {
+                moves::rename_calls(b, &g, &f);
+            }
+        }
+    }
+
     /// A leaf the rules grow a token at a time (a take of the token as a leaf of kind `K`, then merges into it, here
     /// and in the functions they call that only merge) is one leaf over the tokens: `leaf_open`, the tokens passed,
     /// `leaf_close(K)`, as the lean parser scans and then writes one `leaf_over` (rock 3). For a kind each of whose
@@ -2578,6 +2605,7 @@ impl<'a> G<'a> {
         if methods.len() == bs.len() {
             let mut made: Vec<(String, Block)> = methods.into_iter().zip(std::mem::take(&mut bs)).collect();
             Self::late_inline(&mut made);
+            Self::same_methods(&mut made);
             bs = made.into_iter().map(|(_, b)| b).collect();
             bs.iter_mut().for_each(|b| {
                 moves::known_takes(b);

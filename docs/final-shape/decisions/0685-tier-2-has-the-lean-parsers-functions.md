@@ -118,3 +118,8 @@ changed and how.
    then `if` a comparison operator `wrap`, the operator, the right term, `else if` `~` the pattern; `literal_tail`,
    `paren_inner`, `io_directive`, `code_part`, `r_statement` and `block_statement` are written in their callers.
    rr's calls form has 45 rules' functions, the lean parser's count, and two `list`s.
+9. One test asked once, and one function for one code (`moves::joined`, `G::same_methods`). `if A || B || C { if A
+   { x } else if B { y } else if C { z } else { refuse } }` is `if A { x } else if B { y } else if C { z }`: rr's
+   `r_word` asks each kind once, as the lean parser's `match self.kind()`. Methods whose code is the same but for
+   their names are one, the first, called for each: rr's inside of a brace pair (`raw_text_x_0`), read for a raw
+   text and for a JSON object alike once each is one leaf, as the lean parser's one `braces`.

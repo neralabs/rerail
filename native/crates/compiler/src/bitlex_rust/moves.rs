@@ -764,6 +764,19 @@ pub(crate) fn merge_kinds(b: &mut Block, out: &mut Vec<String>) {
     });
 }
 
+/// `b` with each call of `f` one of `g`.
+pub(crate) fn rename_calls(b: &mut Block, f: &str, g: &str) {
+    blocks(b, &mut |x| {
+        for o in x.iter_mut() {
+            match o {
+                Op::Call(c) if c == f => *c = g.to_owned(),
+                Op::Line(l) if l.contains(&format!("Self::{f})")) => *l = l.replace(&format!("Self::{f})"), &format!("Self::{g})")),
+                _ => {}
+            }
+        }
+    });
+}
+
 /// How many calls of `f` `b` makes.
 pub(crate) fn calls_of(b: &mut Block, f: &str) -> usize {
     let mut n = 0;
@@ -1018,6 +1031,29 @@ pub(crate) fn joined(b: &mut Block) {
                     *body.last_mut().expect("a match") = chain;
                 }
             }
+        }
+        // `if A || B { if A { x } else if B { y } else { refuse } } else …`: `if A { x } else if B { y } else …`, each
+        // asked once, as the lean parser's `match self.kind()`.
+        for op in x.iter_mut() {
+            let Op::If { arms, .. } = op else { continue };
+            let mut out = Vec::new();
+            for (c, body) in std::mem::take(arms) {
+                let ors: Vec<String> = match c.core() {
+                    Cond::Or(cs) => cs.iter().map(|c| bare(&c.print()).to_owned()).collect(),
+                    c => vec![bare(&c.print()).to_owned()],
+                };
+                if let [Op::If { arms: inner, els: Some(e) }] = body.as_slice()
+                    && matches!(e.as_slice(), [Op::Refuse])
+                    && ors.len() > 1
+                    && inner.len() == ors.len()
+                    && inner.iter().zip(&ors).all(|((d, _), o)| bare(&d.print()) == o)
+                {
+                    out.extend(inner.iter().cloned());
+                } else {
+                    out.push((c, body));
+                }
+            }
+            *arms = out;
         }
         // `if c {} else { y }`: `if !c { y }`.
         for op in x.iter_mut() {
