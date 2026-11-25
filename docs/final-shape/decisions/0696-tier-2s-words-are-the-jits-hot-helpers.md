@@ -64,8 +64,15 @@ stored to `ctx` before the call and loaded back after it, and the token marks ea
 
 From the list the user asked for:
 
-- Metal's path to the tier 2 of its own stride (`tier2_on::image_on`) is not run: Metal runs are paused.
-- The working row (format 15's key, start and end) is still written and read back. Nodes are not written directly.
-- The state is not passed as the tail calls' arguments (`held`, `pass` stay empty). With the words inlined, most of
-  what they carried is now in registers within a rule. Across the rules' tail calls it still goes through `ctx`.
-- Inlining makes the rules' code larger, and Cranelift's compile of tier 2 takes longer with it.
+- Metal's path to the tier 2 of its own stride (`tier2_on::image_on`) is not run: Metal runs are paused. So is a
+  token mark asked switch-first in Metal's lowering.
+- The working row (format 15's key, start and end) is still written and read back; nodes are not written to the
+  columns directly. The generated Rust's writer (`rerail_tape_format::Writer`) also keeps each node's key, start and
+  end and finishes them into the image, so the row is not the JIT's alone. The JIT's passes over the rows (blocks,
+  commit, uncode, finish) are about a sixteenth of tier 2's samples in the profile.
+- The state is not passed as the words' and rules' arguments (`held`, `pass` stay empty). The generated Rust keeps
+  its state in `self` as the JIT keeps it in `ctx`, and Cranelift's code reloads a field where rustc's forwards it.
+  Forwarding every field across joins (what arguments would give inlined words) was slower (decision 9 above).
+- Inlining makes the rules' code larger, and Cranelift's compile of tier 2 takes longer with it. The words of 80 to
+  150 instructions, inlined, are what the run's time needs: leaving them calls takes back most of the compile and
+  most of the run's gain.
