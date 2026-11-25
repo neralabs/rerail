@@ -83,7 +83,7 @@ interface Seen {
 
 /**
  * Sessions on `root` that watch the worktrees `roots` lists, through one shared walk, each with what it was told. A
- * worktree is listed once `roots` names it: `place` adds one there and lists it.
+ * worktree is listed once `roots` names it: `add` adds one at `place` and lists it, `remove` removes it and unlists it.
  */
 async function sessions(root: string) {
   const place = join(await folder(), "w");
@@ -115,7 +115,11 @@ async function sessions(root: string) {
     roots.push(worktree);
     return worktree;
   };
-  return { open, add, seen, named: relative(root, place).split(sep).join("/") };
+  const remove = (): void => {
+    git(root, "worktree", "remove", "--force", place);
+    roots.length = 0;
+  };
+  return { open, add, remove, seen, named: relative(root, place).split(sep).join("/") };
 }
 
 /** Each session's turn end, then the shared walk settled, twice: a worktree's first read, then the read after it. */
@@ -249,5 +253,38 @@ describe("a later read of a worktree", () => {
     await settle(reopened);
     // Recorded for the repository before the suspension; the reopened session's first read of the worktree finds it again.
     expect({ recorded: seen.audited[0]?.owner, told: places(seen, "session-1") }).toEqual({ recorded: "repository", told: [] });
+  });
+});
+
+describe("a marked worktree Git stops listing", () => {
+  const editor = (worktree: string) => async () => { await writeFile(join(worktree, "src", "editor.py"), "violation\n"); };
+
+  it("leaves every later checkpoint, and the session's record keeps the place it holds", async () => {
+    const root = await repository();
+    const { open, add, remove, seen, named } = await sessions(root);
+    const worktree = await add();
+    const bridge = await open("session-1");
+    await atFirstRead(worktree, editor(worktree), bridge);
+    const marked = (await bridge.checkpoint("turn")).failures.map(failure => failure.message);
+    remove();
+    await settle(bridge);
+    const { failures } = await bridge.checkpoint("turn");
+    expect({ marked, later: failures.map(failure => failure.message), record: places(seen, "session-1") })
+      .toEqual({ marked: [`${named}: ${NOT_CHECKED}`], later: [], record: [{ path: named, reason: NOT_CHECKED }] });
+  });
+
+  it("is marked again when Git adds it again at its path and its new first read finds a file no call wrote, with the record's one place", async () => {
+    const root = await repository();
+    const { open, add, remove, seen, named } = await sessions(root);
+    const worktree = await add();
+    const bridge = await open("session-1");
+    await atFirstRead(worktree, editor(worktree), bridge);
+    remove();
+    await settle(bridge);
+    await add();
+    await atFirstRead(worktree, editor(worktree), bridge);
+    const { failures } = await bridge.checkpoint("turn");
+    expect({ said: failures.map(failure => failure.message), record: places(seen, "session-1") })
+      .toEqual({ said: [`${named}: ${NOT_CHECKED}`], record: [{ path: named, reason: NOT_CHECKED }] });
   });
 });

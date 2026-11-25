@@ -831,7 +831,7 @@ interface WorktreeDiscovery {
   readonly listed: Map<string, symbol>;
   /**
    * By worktree, a place the record takes (`walkGaps`): its first read found a change no rule checked
-   * (`#markUncheckedFirstRead`).
+   * (`#markUncheckedFirstRead`). One Git no longer lists leaves it (`#forgetWorktrees`).
    */
   readonly unchecked: Map<string, WalkGap>;
 }
@@ -3299,10 +3299,11 @@ export class CodeRuleBridge {
    * worktree at its path again by then (`walkHeld`).
    */
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
-    const { fresh, listed } = discovery.worktrees;
+    const { fresh, listed, unchecked } = discovery.worktrees;
     for (const worktree of removed) {
       fresh.delete(worktree);
       listed.delete(worktree);
+      unchecked.delete(worktree);
     }
     discovery.worktrees.unrecorded = new Set([...discovery.worktrees.unrecorded].filter(path => !underBaselineRoot(removed, path)));
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
