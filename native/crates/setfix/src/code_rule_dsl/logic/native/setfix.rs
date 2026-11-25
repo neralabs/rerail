@@ -5124,8 +5124,26 @@ pub struct Csr { cols: Vector<usize>, source: bool, sorted: bool, chain: Option<
                  /// candidates, checked against the key by the reader.
                  block: Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>,
                  /// A test's whole key's index (`sorted_hash`, t50 step 5): made at its first test of a derived input.
-                 hashed: OnceLock<sorted_hash::SortedHash> }
+                 hashed: OnceLock<sorted_hash::SortedHash>,
+                 /// A one-column key's node-keyed index in its relation's block (decision 0694 step 1): a test of a bound
+                 /// value is one bit there. Found or built at its first test; `None` when it has none.
+                 bits: OnceLock<Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)>> }
 impl Csr {
+    /// Whether `rel`'s rows hold `v` in this index's one column, by its node-keyed index (decision 0694 step 1):
+    /// `None` when it has none (a view, dead rows, rows in several parts).
+    fn node_bits_has(&self, rel: &InRel, v: i64, hint: &mut u32) -> Option<bool> {
+        let (ib, i) = self.bits.get_or_init(|| {
+            let bits = if cands::node_bits_on() { rel.node_bits(self.cols[0]) } else { None };
+            run_counts().node_bits[usize::from(bits.is_none())].fetch_add(1, AtomicOrdering::Relaxed);
+            if env_set!("RERAIL_SPIKE_INDEX") {
+                let one = rel.rows.in_one_block().map(|b| (b.rows as usize == rel.n, b.relation().base_rows, b.far().is_some()));
+                let sample: Vec<String> = if rel.view.is_none() && rel.len() > 0 { [0, rel.len() / 2, rel.len() - 1].iter().map(|&r| format!("{:#x}", rel.at(r).at(self.cols[0]))).collect() } else { Vec::new() };
+                eprintln!("E7 node bits {} col={} rows={} view={} dead={} block={one:?} rel={:?} sample={sample:?}", if bits.is_some() { "built" } else { "none" }, self.cols[0], rel.len(), rel.view.is_some(), rel.ndead, rel.name.get());
+            }
+            bits
+        }).as_ref()?;
+        Some(ib.relation().node_bits_has(*i, v, hint))
+    }
     /// The sorted hash of `rel`'s rows by this index's columns, made at its first ask.
     fn hashed(&self, rel: &InRel) -> &sorted_hash::SortedHash {
         self.hashed.get_or_init(|| {
@@ -7224,12 +7242,22 @@ impl InRel {
         let mut idx = self.idx.lock().unwrap();
         idx.entry(mask).or_insert_with(|| {
             run_counts().orders_opened.fetch_add(1, AtomicOrdering::Relaxed);
-            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new() })
+            Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: Some(false), order: OnceLock::new(), block: None, then: Some(c), hashed: OnceLock::new(), bits: OnceLock::new() })
         }).clone()
     }
     /// Its rows' index on `cols` in their block (decision 0478 step 5, R2): the one the device finds and builds, over
     /// every row, dead ones too (a reader skips them by its dead bits, as the device reads a delta's). Built now when
     /// `build` and none is; `None` for a view, rows in several parts, or a block with no room for it.
+    /// Its rows' node-keyed index on column `col` in their block (decision 0694 step 1): found, or built now. `None`
+    /// for a view, dead rows, or rows in several parts.
+    fn node_bits(&self, col: usize) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
+        if self.view.is_some() || self.k == 0 || self.ndead != 0 || col >= self.k {
+            return None;
+        }
+        let ib = self.rows.in_one_block().filter(|b| b.rows as usize == self.n)?;
+        let i = ib.own_node_bits(col as u16)?;
+        Some((ib, i))
+    }
     fn block_index(&self, cols: &[usize], build: bool) -> Option<(crate::code_rule_dsl::facts::rows::InBlock, usize)> {
         if self.view.is_some() || self.k == 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
             return None;
@@ -7269,7 +7297,7 @@ impl InRel {
             let (t0, c0) = (Instant::now(), thread_cpu());
             // No key columns: the step reads every row, not an index.
             let path = |i: usize| { run_counts().index_paths[i].fetch_add(1, AtomicOrdering::Relaxed); };
-            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() };
+            let empty = |source, sorted| Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source, sorted, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new() };
             let m = if cols.is_empty() {
                 path(0); empty(false, false)
             } else if let Some(b) = self.block_index(cols, false) {
@@ -8172,7 +8200,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &ArchivedJoinSpec, syms: &mut Intern
     use steps::{Src, Step};
     use rerail_section::Bound;
     let conn = conn.db();
-    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new() });
+    let unindexed = |cols: &[usize]| Arc::new(Csr { cols: cols.iter().copied().collect::<rerail_blocks::vector::Vector<_>>(), source: false, sorted: false, chain: None, lead: 0, composite: false, keyed: false, ordered: None, order: OnceLock::new(), block: None, then: None, hashed: OnceLock::new(), bits: OnceLock::new() });
     let mut bound: Vec<bool> = Vec::new();
     for &s in pre {
         if bound.len() <= s { bound.resize(s + 1, false) }
@@ -8867,6 +8895,15 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 let given = if i == 0 { cx.first.take() } else { None };
                 let handed = given.is_some();
+                // A test of one bound column of a derived input with a node-keyed index (decision 0694 step 1): one bit
+                // read, no candidates. Not a first step (its rows are a cut's), one whose rows are restricted (a delta's,
+                // `only`), or one read by a filter.
+                if i > 0 && (*neg || binds.is_empty()) && i != cx.only_step && j.fused[i].is_none() && j.ranges[i].is_none()
+                    && let Some(found) = cands::node_bits_test(j, src, keys, tests, cx.key.first().copied().unwrap_or(0), &mut cx.hints[i][0])
+                {
+                    if found != *neg { go(cx, i + 1, slots); }
+                    return;
+                }
                 // The key columns the probe matched exactly, which its rows need not be read or checked for
                 // (`cands::exact_cols`). Candidates handed to the step were not found by its probe. A membership probe
                 // of a view by several columns, nothing else read, is a test of the source (`View::tests_keys`).
@@ -10662,6 +10699,9 @@ pub struct SetfixCounts {
     /// directory (a maintained relation's, `Rel::based`); kept as they were, their arrays in another block or the
     /// directory full.
     pub orders_kept: [std::sync::atomic::AtomicU64; 3],
+    /// One-column keys of derived inputs whose tests read a node-keyed index (decision 0694 step 1), and those that
+    /// have none (a view, dead rows, rows in several parts): counted at a key's first test.
+    pub node_bits: [std::sync::atomic::AtomicU64; 2],
 }
 
 /// The run's `SetfixCounts`.

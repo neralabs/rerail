@@ -604,3 +604,4 @@ This continues the series in PIAT's `docs/rule-engine-direction/decisions/`
 | 0687 | [An operation's own memory is the stack and its frame, not blocks](0687-an-operations-own-memory-is-the-stack-and-its-frame-not-blocks.md) |
 | 0688 | [A regex's capture group on the device is a Pike VM over its NFA](0688-a-regexs-capture-group-on-the-device-is-a-pike-vm-over-its-nfa.md): `rx_group` walks regex-automata's Thompson NFA as its PikeVM does, leftmost-first; `substr` of row numbers and `str_between` of cats on the device. | done |
 | 0690 | [A corpus is spread over the chunks that evaluate at once](0690-a-corpus-is-spread-over-the-chunks-that-evaluate-at-once.md) |
+| 0694 | [A relation keyed by one node is read by the node](0694-a-relation-keyed-by-one-node-is-read-by-the-node.md): t57's E7; a test of one bound node column is one bit in the relation's node-keyed index, in its block; then values, writes, the planner's form, CLIF. | step 1 built |

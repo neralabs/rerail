@@ -2287,6 +2287,21 @@ impl InBlock {
         }
     }
 
+    /// The relation's node-keyed index on column `col` over its rows (decision 0694 step 1): found, or built now into
+    /// its block. `None` for a delta (dead rows), a continuation, a chain past its block, or a block with no room.
+    pub fn own_node_bits(&self, col: u16) -> Option<usize> {
+        let r = self.relation();
+        if self.dead != 0 || r.base_rows != 0 || self.far().is_some() {
+            return None;
+        }
+        let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(i) = r.find_node_bits(col, self.rows) {
+            return Some(i);
+        }
+        // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
+        unsafe { r.try_add_node_bits(&self.facts.block, col, self.rows) }
+    }
+
     fn own_index_if(&self, cols: &[u16], keys: usize, build: bool) -> Option<usize> {
         let r = self.relation();
         // A chain reaching another block (`far`) is indexed by the device, which binds both; the host reads it by part.

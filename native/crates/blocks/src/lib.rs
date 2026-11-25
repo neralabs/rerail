@@ -54,6 +54,8 @@ pub use rerail_vector::vector;
 /// An operation's own memory: the thread's bump frame and the stack's short arrays (decision 0687).
 pub use rerail_vector::frame;
 pub mod mem;
+/// A relation keyed by one node of one document, read by its local id (t57 E7; a spike).
+pub mod node_keyed;
 pub mod packed;
 pub mod ranged;
 pub mod program;
