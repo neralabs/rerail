@@ -8308,7 +8308,9 @@ fn run_observed_within(
                                 rows.extend_from_slice(row);
                             }
                         }
-                        walk.retain(|n| !chunks.walked.contains(n));
+                        for n in chunks.walked.iter().flat_map(|s| s.iter()) {
+                            walk.remove(n);
+                        }
                     }
                     if !walk.is_empty() {
                         source
@@ -10621,12 +10623,15 @@ struct ChunkCounts {
     held: HashMap<String, ChunkHeld>,
 }
 /// A semi-join's rows the chunks walked at their held nodes: in its input's column order, as `for_rows_keyed` hands
-/// them, and the nodes walked. Each chunk's rows stay where the chunk wrote them (in its thread's long room,
-/// `chunk_held_rows`), one segment a chunk: none is copied into a run-long array grown by each chunk.
+/// them, and the nodes walked. Each chunk's rows and nodes stay where the chunk wrote them (in its thread's long room,
+/// `chunk_held_rows`), one segment a chunk: none is copied into a run-long array or set grown by each chunk (the set
+/// of every node walked was the run's largest footprint after the held rows, 151 MB at most). The run's walk removes
+/// each chunk's walked nodes from its own set. A document's nodes are not known by their document alone: a value
+/// document is counted by the chunk that claims it first, while another chunk's exports may hold its nodes too.
 #[derive(Default)]
 struct ChunkHeld {
     segments: Vec<Vector<i64>>,
-    walked: rustc_hash::FxHashSet<i64>,
+    walked: Vec<Vector<i64>>,
 }
 /// One chunk's counts (`Evaluated::base_counts`).
 struct ChunkCounted {
@@ -10636,7 +10641,7 @@ struct ChunkCounted {
     counts: Vec<(String, Option<super::statkeep::RelStats>)>,
     /// Each text test's distinct values.
     unions: Vec<(String, Vec<i64>)>,
-    /// Each semi-join's rows at the chunk's held nodes (`chunk_held_rows`).
+    /// Each semi-join's rows at the chunk's held nodes (`chunk_held_rows`), and those nodes.
     held: Vec<(String, (Vector<i64>, Vector<i64>))>,
 }
 /// A run of rows' owning files (`owners` in the export's attribution): the askers' list where it lies, or one file.
@@ -10661,7 +10666,7 @@ impl ChunkCounts {
         let Some(ChunkCounted { files, counts, unions, held }) = counts else { return };
         for (rel, (rows, walked)) in held {
             let have = self.held.entry(rel).or_default();
-            have.walked.extend(walked.iter().copied());
+            have.walked.push(walked);
             have.segments.push(rows);
         }
         for (rel, values) in unions {
@@ -10779,7 +10784,7 @@ fn chunk_held_rows(rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::So
             })
             .then_some(flat)
     })?;
-    Some((flat, held_nodes.iter().copied().collect()))
+    Some((flat, rerail_blocks::maps::long(|| held_nodes.iter().copied().collect())))
 }
 
 /// A chunk's rows of a relation (columns `c0`, `c1`, …), read once to measure them.
